@@ -13,7 +13,7 @@ name = "manosube-agent-civilization-os"
 version = "0.1.0.dev0"
 description = "A state-centric canonical kernel for evidence-backed, authority-bounded software development cycles."
 readme = "README.md"
-license = { file = "LICENSE.md" }
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 authors = [
   { name = "SHUKOU" },
@@ -77,7 +77,7 @@ packages = ["src/manosube_agent_civilization"]
 [tool.hatch.build.targets.sdist]
 include = [
   "/README.md",
-  "/LICENSE.md",
+  "/LICENSE",
   "/ORIGIN.md",
   "/SECURITY.md",
   "/pyproject.toml",

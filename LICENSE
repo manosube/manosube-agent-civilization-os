@@ -1,35 +1,3 @@
-# MANOSUBE Agent Civilization OS — License
-
-```text
-PROJECT=MANOSUBE Agent Civilization OS
-COPYRIGHT_HOLDER=SHUKOU
-COPYRIGHT_YEAR=2026
-SPDX_LICENSE_IDENTIFIER=Apache-2.0
-LICENSE_STATUS=CANONICAL
-```
-
-Copyright 2026 SHUKOU
-
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use this project except in compliance with the License. You may obtain a copy of the License at:
-
-https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
-
-## Origin and attribution notice
-
-MANOSUBE Agent Civilization OS is an independent software-development-domain derivation of the principles documented by MANOSUBE Civilization OS.
-
-The parent project is identified at:
-
-https://github.com/manosube/manosube-civilization-os
-
-The canonical derivation relationship, sealed parent baseline, inherited principles, and non-replacement covenant are recorded separately in `ORIGIN.md`. This notice identifies provenance and does not add restrictions to, replace, or modify the Apache License 2.0 terms below.
-
-## Apache License 2.0
-
-The standard Apache License 2.0 text follows.
-
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
