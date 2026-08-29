@@ -1,0 +1,15 @@
+[
+  {"name":"missing_human_authority_ref","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/objective/objective.schema.json","instance":{"schema_version":"0.1"}},
+  {"name":"empty_mandatory_predicate_set","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/objective/objective.schema.json","instance":{"schema_version":"0.1","objective_id":"OBJ-1","project_id":"PRJ-1","statement":"x","owner_authority_ref":{"kind":"human","id":"AUTH-1"},"target_predicates":[],"completion_policy":{"mode":"ALL","contradiction_policy":"BLOCK"},"boundary_ref":{"kind":"boundary","id":"BOUNDARY-1"},"constitutional_constraints":[],"status":"ACTIVE","revision":0,"previous_objective_ref":null,"change_reason":"x"}},
+  {"name":"unknown_property","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/common/reference.schema.json","instance":{"kind":"evidence","id":"EVID-1","extra":true}},
+  {"name":"invalid_identity","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/common/identity.schema.json","instance":"github-issue-1"},
+  {"name":"invalid_fingerprint_profile_length","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/common/fingerprint.schema.json","instance":{"profile":"sha256","digest":"abc"}},
+  {"name":"naive_timestamp","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/common/timestamp.schema.json","instance":"2026-08-29T09:00:00"},
+  {"name":"duplicate_set_identity","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/state/semantic_state.schema.json","instance":{"schema_version":"0.1","open_differences":[{"kind":"difference","id":"DIFF-1"},{"kind":"difference","id":"DIFF-1"}]}},
+  {"name":"secret_bearing_metadata_field","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_metadata.schema.json","instance":{"password":"secret"}},
+  {"name":"successor_missing_previous_fingerprint","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/state/project_state.schema.json","instance":{"schema_version":"0.1","project_id":"PRJ-1","objective_revision_id":"OBJREV-1","state_revision":1,"previous_state_fingerprint":null}},
+  {"name":"initial_state_non_null_previous","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/state/project_state.schema.json","instance":{"schema_version":"0.1","project_id":"PRJ-1","objective_revision_id":"OBJREV-1","state_revision":0,"previous_state_fingerprint":{"profile":"MANOSUBE-STATE-SHA256-0.1","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},
+  {"name":"metadata_inside_semantic_state","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/state/semantic_state.schema.json","instance":{"schema_version":"0.1","observed_at":"2026-08-29T09:00:00Z"}},
+  {"name":"unknown_status","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/common/status.schema.json","instance":"PASS"},
+  {"name":"unknown_schema_version","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_metadata.schema.json","instance":{"schema_version":"9.9"}}
+]
