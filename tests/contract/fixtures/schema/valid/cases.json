@@ -1,0 +1,61 @@
+[
+  {
+    "name": "minimal_objective",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/objective/objective.schema.json",
+    "instance": {
+      "schema_version": "0.1", "objective_id": "OBJ-0001", "project_id": "PRJ-0001",
+      "statement": "Prove one canonical state cycle",
+      "owner_authority_ref": {"kind": "human_authority", "id": "AUTH-0001"},
+      "target_predicates": [{"predicate_id": "PRED-0001", "subject": "cycle.result", "operator": "equals", "expected_value": "PASS", "observation_scope": "minimal_fixture", "evidence_requirement": "E4", "unknown_policy": "INCOMPLETE", "criticality": "mandatory"}],
+      "completion_policy": {"mode": "ALL", "contradiction_policy": "BLOCK", "minimum_evidence": "E4"},
+      "boundary_ref": {"kind": "boundary", "id": "BOUNDARY-0001"},
+      "constitutional_constraints": ["ONE_KERNEL"], "status": "ACTIVE", "revision": 0,
+      "previous_objective_ref": null, "change_reason": "Initial human objective"
+    }
+  },
+  {
+    "name": "objective_revision_with_lineage",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/objective/objective_revision.schema.json",
+    "instance": {
+      "schema_version": "0.1", "objective_id": "OBJ-0001", "project_id": "PRJ-0001",
+      "statement": "Prove one canonical state cycle",
+      "owner_authority_ref": {"kind": "human_authority", "id": "AUTH-0001"},
+      "target_predicates": [{"predicate_id": "PRED-0001", "subject": "cycle.result", "operator": "equals", "expected_value": "PASS", "observation_scope": "minimal_fixture", "evidence_requirement": "E4", "unknown_policy": "INCOMPLETE", "criticality": "mandatory"}],
+      "completion_policy": {"mode": "ALL", "contradiction_policy": "BLOCK"},
+      "boundary_ref": {"kind": "boundary", "id": "BOUNDARY-0001"},
+      "constitutional_constraints": ["ONE_KERNEL"], "status": "ACTIVE", "revision": 1,
+      "previous_objective_ref": {"kind": "objective_revision", "id": "OBJREV-0000"}, "change_reason": "Clarify scope",
+      "objective_revision_id": "OBJREV-0001",
+      "base_semantic_fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "semantic_change_summary": "Scope clarification", "human_authority_ref": {"kind": "human_authority", "id": "AUTH-0001"},
+      "recorded_at": "2026-08-29T09:00:00Z"
+    }
+  },
+  {
+    "name": "initial_state_revision_zero",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/project_state.schema.json",
+    "instance": {
+      "schema_version": "0.1", "project_id": "PRJ-0001", "objective_revision_id": "OBJREV-0001", "state_revision": 0,
+      "previous_state_fingerprint": null,
+      "semantic_state": {"schema_version":"0.1","project":{"status":"KNOWN","claims":{"bound":true},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"objective":{"status":"KNOWN","claims":{"active":true},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"repository":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"requirements":{"status":"UNKNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"code":{"status":"UNOBSERVED","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"tests":{"status":"UNOBSERVED","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"runtime":{"status":"BLOCKED","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":["runtime unavailable"]},"infrastructure":{"status":"UNKNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"deployment":{"status":"INCOMPLETE","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"open_differences":[],"active_changes":[],"evidence":[],"authority":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"lineage":{"status":"EMPTY","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]}},
+      "semantic_fingerprint": {"profile":"MANOSUBE-STATE-SHA256-0.1","digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+      "state_metadata": {"schema_version":"0.1","serialization_version":"MANOSUBE-CANONICAL-JSON-0.1","created_at":"2026-08-29T09:00:00Z","observed_at":"2026-08-29T09:00:00Z","recorded_at":"2026-08-29T09:00:00Z","producer":"fixture","observer":"fixture","execution_context":{"session_id":"A","redaction_applied":false},"source_snapshot_refs":[],"observation_scope_refs":[],"confidence":"NOT_EVALUATED","blind_spots":{"status":"NOT_EVALUATED","items":[]},"warnings":[]},
+      "evidence_refs": [], "lineage_head_ref": null
+    }
+  },
+  {
+    "name": "successor_state_revision_one",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/project_state.schema.json",
+    "instance": {
+      "schema_version":"0.1","project_id":"PRJ-0001","objective_revision_id":"OBJREV-0001","state_revision":1,
+      "previous_state_fingerprint":{"profile":"MANOSUBE-STATE-SHA256-0.1","digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+      "semantic_state":{"schema_version":"0.1","project":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"objective":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"repository":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"requirements":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"code":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"tests":{"status":"INCOMPLETE","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"runtime":{"status":"UNOBSERVED","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"infrastructure":{"status":"UNKNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"deployment":{"status":"ABSENT","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"open_differences":[],"active_changes":[],"evidence":[],"authority":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]},"lineage":{"status":"KNOWN","claims":{},"identity_refs":[],"evidence_refs":[],"blind_spots":[]}},
+      "semantic_fingerprint":{"profile":"MANOSUBE-STATE-SHA256-0.1","digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+      "state_metadata":{"schema_version":"0.1","serialization_version":"MANOSUBE-CANONICAL-JSON-0.1","created_at":"2026-08-29T09:01:00Z","observed_at":"2026-08-29T09:01:00Z","recorded_at":"2026-08-29T09:01:00Z","producer":"fixture","observer":"fixture","execution_context":{"session_id":"B","redaction_applied":false},"source_snapshot_refs":[],"observation_scope_refs":[],"confidence":"LOW","blind_spots":{"status":"KNOWN_BLIND_SPOTS_PRESENT","items":["runtime"]},"warnings":[]},
+      "evidence_refs":[],"lineage_head_ref":{"kind":"transition","id":"TRANS-0001"}
+    }
+  },
+  {"name":"metadata_variant_a","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_metadata.schema.json","instance":{"schema_version":"0.1","serialization_version":"MANOSUBE-CANONICAL-JSON-0.1","created_at":"2026-08-29T09:00:00Z","observed_at":"2026-08-29T09:00:00Z","recorded_at":"2026-08-29T09:00:00Z","producer":"agent-a","observer":"agent-a","execution_context":{"session_id":"A","redaction_applied":true},"source_snapshot_refs":[],"observation_scope_refs":[],"confidence":"HIGH","blind_spots":{"status":"NONE_KNOWN","items":[]},"warnings":[]}},
+  {"name":"empty_domain","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/common/status.schema.json","instance":"EMPTY"},
+  {"name":"unknown_unobserved_blocked_vocabulary","schema_id":"https://schemas.manosube.org/agent-civilization-os/v0.1/common/status.schema.json","instance":"BLOCKED"}
+]

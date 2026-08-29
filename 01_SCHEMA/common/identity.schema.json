@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://schemas.manosube.org/agent-civilization-os/v0.1/common/identity.schema.json","title":"Canonical identity","type":"string","pattern":"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+$","minLength":3,"maxLength":128}
