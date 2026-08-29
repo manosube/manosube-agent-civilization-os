@@ -72,9 +72,11 @@ FACT_EVALUATION
 + evidence_refs
 ```
 
-`conflict_fact_refs`は競合するPositive Factを参照し、`conflict_negative_observation_refs`は競合するNegative Observationを参照する。Negative ObservationをEvidence referenceへ偽装してはならない。競合の両側は相互に追跡可能でなければならず、Negative Observation側の`positive_fact_refs`とFact Evaluation側の`conflict_negative_observation_refs`を対応させる。
+`conflict_fact_refs`は競合するPositive Factを参照し、`conflict_negative_observation_refs`は競合するNegative Observationを参照する。Negative ObservationをEvidence referenceへ偽装してはならない。競合の両側は相互に追跡可能でなければならず、Negative Observation側の最新の連続した`NEGATIVE_OBSERVATION_EVALUATION.conflict_fact_refs`とFact Evaluation側の`conflict_negative_observation_refs`を対応させる。
 
-`evaluation_revision`はFact単位で0から単調増加し、`evaluation_id`は`fact_id + evaluation_revision`から決定する。新しいBinding、競合Fact、または競合Negative Observationが発見された場合、既存recordを変更せず次revisionをappendする。同一revision・同一payloadはidempotent、異なるpayloadまたはrevision gapはFail Closedする。
+`evaluation_revision`はFact単位で0から単調増加し、`evaluation_id`は`fact_id + evaluation_revision`から決定する。revision 0の`previous_evaluation_id`は明示的な`null`とする。revision n（n > 0）は、同じFactに属するrevision n - 1の`evaluation_id`を`previous_evaluation_id`として必ず参照する。異なるFact、直前以外のrevision、欠落したpredecessorへの参照はFail Closedする。
+
+新しいBinding、競合Fact、または競合Negative Observationが発見された場合、既存recordを変更せず次revisionをappendする。同一revision・同一payloadはidempotent、異なるpayload、revision gapまたはpredecessor不整合はFail Closedする。
 
 # 2. Fact Identity
 
@@ -208,6 +210,7 @@ SOURCE_PROVENANCE_EXCLUDED_FROM_FACT_BODY=true
 SOURCE_OCCURRENCE_IDENTITY_DEFINED=true
 OBSERVATION_QUALITY_EXCLUDED_FROM_FACT_BODY=true
 FACT_EVALUATION_APPEND_ONLY=true
+FACT_EVALUATION_PREDECESSOR_EXACT=true
 CONFLICT_EVALUATION_REVISIONED=true
 NEGATIVE_OBSERVATION_CONFLICT_TRACEABLE=true
 IMMUTABLE_BINDING_NOT_REEVALUATED_IN_PLACE=true
