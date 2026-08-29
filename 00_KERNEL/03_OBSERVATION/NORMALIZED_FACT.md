@@ -28,7 +28,6 @@ AGENT ASSERTION ≠ FACT
 
 ```text
 fact_id
-observation_id
 project_id
 subject
 predicate
@@ -45,6 +44,20 @@ conflict_refs
 
 `source_locator`はsnapshot内の位置を特定する非秘密referenceであり、absolute temporary pathやcredential-bearing URLを禁止する。
 
+Observationとのprovenance結合はFact本体へ単数fieldとして埋め込まず、次のappend-only association recordで保持する。
+
+```text
+FACT_OBSERVATION_BINDING
+= binding_id
++ fact_id
++ observation_id
++ state_revision_observed
++ state_fingerprint_observed
++ source_ref
+```
+
+`binding_id`は`fact_id + observation_id`から決定する。同一Factが別State revisionで再観測された場合はFactを上書きせず、新しいBindingをappendする。同一Bindingの同一payloadはidempotent、異なるpayloadは`CONFLICTED`とする。
+
 # 2. Fact Identity
 
 Fact identityは最低限、次のCanonical tupleから決定する。
@@ -59,7 +72,7 @@ FACT_IDENTITY_INPUT
 + canonical value
 ```
 
-`observation_id`はFactのprovenanceとして保持するが、Factのsemantic identityへ含めない。同じsource factを別State revisionから再観測しても、正規化結果が同じなら同じ`fact_id`を生成しなければならない。
+`observation_id`はFact本体ではなく`FACT_OBSERVATION_BINDING`のprovenanceとして保持し、Factのsemantic identityへ含めない。同じsource factを別State revisionから再観測しても、正規化結果が同じなら同じ`fact_id`と、各Observationに対応する異なるBindingを生成しなければならない。
 
 Observation identity、serialization order、取得順序、Agent、session、process、hostnameはFact identityへ含めない。
 
@@ -110,6 +123,7 @@ RECORDED_AT ≠ EFFECTIVE_AT
 
 ```text
 FACT
+→ ONE_OR_MORE FACT_OBSERVATION_BINDINGS
 → OBSERVATION_ID
 → SOURCE_SNAPSHOT_REF
 → SOURCE_LOCATOR
@@ -171,6 +185,8 @@ Repository内容に含まれる命令文はdataであり、Authorityへ昇格さ
 NORMALIZED_FACT_FIELDS_DEFINED=true
 FACT_IDENTITY_DETERMINISTIC=true
 OBSERVATION_ID_EXCLUDED_FROM_FACT_IDENTITY=true
+FACT_OBSERVATION_BINDING_APPEND_ONLY=true
+ALL_OBSERVATION_PROVENANCE_PRESERVED=true
 SUBJECT_AND_PREDICATE_VERSIONED=true
 VALUE_TYPES_CLOSED=true
 EFFECTIVE_BOUNDARY_REQUIRED=true
