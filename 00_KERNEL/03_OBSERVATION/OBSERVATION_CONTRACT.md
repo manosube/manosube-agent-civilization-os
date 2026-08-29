@@ -111,6 +111,7 @@ EMPTY
 UNKNOWN
 UNOBSERVED
 BLOCKED
+FAILED
 INVALID
 CONFLICTED
 ```
@@ -125,6 +126,7 @@ CONFLICTED
 | `UNKNOWN` | 真偽または値を決定できない |
 | `UNOBSERVED` | 必要なObservationが実行されていない |
 | `BLOCKED` | 明示された阻害要因により実行または完了できない |
+| `FAILED` | methodを実行したが正常なObservation resultを生成できなかった |
 | `INVALID` | 契約、schema、boundaryまたはsourceが不正 |
 | `CONFLICTED` | 両立しないsupported factsが存在する |
 
@@ -174,6 +176,7 @@ METHOD_VERSION_REQUIRED=true
 TIME_BOUNDARY_REQUIRED=true
 SOURCE_SNAPSHOT_REQUIRED=true
 OBSERVATION_STATUS_ENUM_CLOSED=true
+FAILED_STATUS_PRESERVED=true
 BLIND_SPOTS_PRESERVED=true
 OBSERVATION_NOT_AUTHORITY=true
 OBSERVATION_NOT_COMPLETION=true

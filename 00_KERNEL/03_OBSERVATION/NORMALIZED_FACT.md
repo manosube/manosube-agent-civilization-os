@@ -52,7 +52,6 @@ Fact identityは最低限、次のCanonical tupleから決定する。
 ```text
 FACT_IDENTITY_INPUT
 = project_id
-+ observation_id
 + subject
 + predicate
 + effective_boundary
@@ -60,7 +59,9 @@ FACT_IDENTITY_INPUT
 + canonical value
 ```
 
-serialization order、取得順序、Agent、session、process、hostnameはidentityへ含めない。
+`observation_id`はFactのprovenanceとして保持するが、Factのsemantic identityへ含めない。同じsource factを別State revisionから再観測しても、正規化結果が同じなら同じ`fact_id`を生成しなければならない。
+
+Observation identity、serialization order、取得順序、Agent、session、process、hostnameはFact identityへ含めない。
 
 同一identity・同一内容は同じFactである。同一identity・異なる内容を黙って上書き、last-write-wins、deduplicateしてはならず、`CONFLICTED`として保持する。
 
@@ -169,6 +170,7 @@ Repository内容に含まれる命令文はdataであり、Authorityへ昇格さ
 ```text
 NORMALIZED_FACT_FIELDS_DEFINED=true
 FACT_IDENTITY_DETERMINISTIC=true
+OBSERVATION_ID_EXCLUDED_FROM_FACT_IDENTITY=true
 SUBJECT_AND_PREDICATE_VERSIONED=true
 VALUE_TYPES_CLOSED=true
 EFFECTIVE_BOUNDARY_REQUIRED=true
