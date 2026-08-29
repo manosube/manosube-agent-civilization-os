@@ -1,0 +1,285 @@
+# MANOSUBE Agent Civilization OS
+#
+# Repository boundary contract:
+#   Git tracks Kernel Source, schemas, tests, examples, and public contracts.
+#   Git does not track Canonical State, secrets, local authority, generated
+#   evidence, caches, partial writes, or machine-specific state.
+#
+# .gitignore is defense in depth, not a security boundary.
+# SECURITY.md and Binding Authority remain canonical.
+
+# -----------------------------------------------------------------------------
+# Canonical State World — never commit
+# -----------------------------------------------------------------------------
+
+# A bound project's local Canonical State Backend.
+**/.manosube/
+
+# Alternate local state-backend roots used during development or recovery.
+/.manosube-state/
+/state-backend/
+/state-backend-*/
+
+# Local transition journals, snapshots, quarantine, locks, and recovery output.
+/runtime-state/
+/recovery-work/
+/quarantine/
+
+# Generated observations, evidence, receipts, and external projections.
+# Canonical examples and deterministic fixtures belong under tests/ or examples/.
+/artifacts/
+/evidence/
+/observations/
+/projections/
+/receipts/
+/reports/
+
+# -----------------------------------------------------------------------------
+# Local Objective / Boundary / Authority — never commit
+# -----------------------------------------------------------------------------
+
+/objective.local.yaml
+/objective.local.yml
+/boundary.local.yaml
+/boundary.local.yml
+/authority.local.yaml
+/authority.local.yml
+/project-binding.local.yaml
+/project-binding.local.yml
+/observation-sources.local.yaml
+/observation-sources.local.yml
+/command-policy.local.yaml
+/command-policy.local.yml
+
+# -----------------------------------------------------------------------------
+# Secrets and credentials — never commit
+# -----------------------------------------------------------------------------
+
+.env
+.env.*
+!.env.example
+!.env.template
+
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+*.token
+
+credentials.json
+credentials.*.json
+secrets.json
+secrets.yaml
+secrets.yml
+secrets.*.json
+secrets.*.yaml
+secrets.*.yml
+
+# Cloud and provider credentials.
+.aws/
+.azure/
+.config/gcloud/
+.kube/
+.terraform.d/
+
+# Allow explicit, non-secret documentation templates.
+!credentials.example.json
+!secrets.example.json
+!secrets.example.yaml
+!secrets.example.yml
+
+# -----------------------------------------------------------------------------
+# Python bytecode and interpreter caches
+# -----------------------------------------------------------------------------
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+.python_history
+.pythonstartup
+
+# Native extension build products.
+*.so
+*.dylib
+*.dll
+
+# -----------------------------------------------------------------------------
+# Virtual environments
+# -----------------------------------------------------------------------------
+
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# -----------------------------------------------------------------------------
+# Build and package output
+# -----------------------------------------------------------------------------
+
+/build/
+/dist/
+/.hatch/
+.eggs/
+*.egg
+*.egg-info/
+pip-wheel-metadata/
+wheelhouse/
+
+# Keep the reproducibility lock file under version control.
+!uv.lock
+
+# -----------------------------------------------------------------------------
+# Tests, coverage, typing, linting, and security-tool caches
+# -----------------------------------------------------------------------------
+
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+.cache/
+.pip-audit-cache/
+.bandit/
+
+# Mutation, benchmark, and profiling output.
+.mutmut-cache/
+.benchmarks/
+*.prof
+*.lprof
+
+# -----------------------------------------------------------------------------
+# Logs and process residue
+# -----------------------------------------------------------------------------
+
+*.log
+logs/
+*.pid
+*.pid.lock
+*.seed
+*.stackdump
+
+# Atomic-write and interrupted-transfer residue.
+*.tmp
+*.temp
+*.partial
+*.incomplete
+*.pending-write
+*.swap
+*.swp
+*.swo
+*~
+
+# Backup and recovery copies are not canonical lineage.
+*.bak
+*.backup
+*.orig
+*.rej
+
+# -----------------------------------------------------------------------------
+# Notebooks and interactive work
+# -----------------------------------------------------------------------------
+
+.ipynb_checkpoints/
+.jupyter/
+.ipython/
+
+# -----------------------------------------------------------------------------
+# Editors and local workspace state
+# -----------------------------------------------------------------------------
+
+.idea/
+.vscode/
+.fleet/
+.project
+.pydevproject
+*.code-workspace
+
+# -----------------------------------------------------------------------------
+# Operating-system metadata
+# -----------------------------------------------------------------------------
+
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100/
+.fseventsd/
+.Spotlight-V100/
+.TemporaryItems/
+.Trashes/
+
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# -----------------------------------------------------------------------------
+# External infrastructure and deployment state
+# -----------------------------------------------------------------------------
+
+# Terraform state may contain secrets and must never become MANOSUBE evidence.
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local container and orchestration overrides.
+docker-compose.override.yml
+docker-compose.override.yaml
+compose.override.yml
+compose.override.yaml
+
+# -----------------------------------------------------------------------------
+# Local downloads and scratch work
+# -----------------------------------------------------------------------------
+
+/downloads/
+/scratch/
+/tmp/
+/temp/
+
+# -----------------------------------------------------------------------------
+# Explicitly tracked canonical surfaces
+# -----------------------------------------------------------------------------
+
+# These negations document intent. They do not override an ignored parent path.
+!README.md
+!ORIGIN.md
+!SECURITY.md
+!pyproject.toml
+!.gitignore
+!.gitattributes
+!.editorconfig
+!uv.lock
+
+# Canonical source, schemas, tests, examples, and public documentation belong in Git.
+!00_KERNEL/
+!01_SCHEMA/
+!03_BINDING/
+!src/
+!tests/
+!examples/
+!docs/
+
