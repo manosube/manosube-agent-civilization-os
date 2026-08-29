@@ -48,6 +48,25 @@ positive_fact_refs
 conclusion
 ```
 
+Negative Observation本体は生成時点の不変recordである。後からPositive Factが発見された場合も、`negative_status`または`positive_fact_refs`を上書きせず、次のappend-only evaluation recordへ現在の評価を保存する。
+
+```text
+NEGATIVE_OBSERVATION_EVALUATION
+= evaluation_id
++ negative_observation_id
++ evaluation_revision
++ previous_evaluation_id
++ evaluation_status
++ conflict_fact_refs
++ evidence_refs
+```
+
+`evaluation_revision`はNegative Observation単位で0から単調増加し、`evaluation_id`は`negative_observation_id + evaluation_revision`から決定する。revision 0はNegative Observation生成時に作成し、`previous_evaluation_id`を明示的な`null`とする。revision 0の`evaluation_status`は本体の`negative_status`と等しく、`conflict_fact_refs`は本体の`positive_fact_refs`と集合として完全一致しなければならない。不一致はFail Closedする。
+
+revision n（n > 0）は、同じNegative Observationに属するrevision n - 1の`evaluation_id`を必ず参照する。
+
+同一revision・同一payloadはidempotentである。異なるpayload、revision gap、異なるNegative Observationへのpredecessor、または直前以外のpredecessorはFail Closedする。現在のnegative statusと競合位置は、最新の連続したEvaluationから導出する。
+
 # 2. Negative Status
 
 Negative statusは次のclosed enumとする。
@@ -153,7 +172,9 @@ termination_reason
 
 不在結論へ影響するblind spotがある場合、statusは`INCOMPLETE`、`BLOCKED`または`UNKNOWN`である。
 
-Positive FactとNegative Observationが同じ`subject`、`predicate`、`effective_boundary`で競合する場合、どちらかを消さず`CONFLICTED`としてDifference入力へ送る。これら三つをclaim coordinateとし、`target_identity`や`time_boundary`から暗黙推論しない。対応するPositive Factは`positive_fact_refs`で明示する。
+Positive FactとNegative Observationが同じ`subject`、`predicate`、`effective_boundary`で競合する場合、どちらかを消さず`CONFLICTED`としてDifference入力へ送る。これら三つをclaim coordinateとし、`target_identity`や`time_boundary`から暗黙推論しない。生成時に既知だったPositive Factは本体の`positive_fact_refs`へ保持する。生成後に判明した競合を含む現在の全競合Factは、新しい`NEGATIVE_OBSERVATION_EVALUATION`の`conflict_fact_refs`へ保持し、本体を変更しない。
+
+Fact側の最新の連続した`FACT_EVALUATION.conflict_negative_observation_refs`とNegative側の最新の連続した`NEGATIVE_OBSERVATION_EVALUATION.conflict_fact_refs`は、同じ競合pairを相互参照しなければならない。片側だけを`CONFLICTED`へ進めてはならない。
 
 # 8. Evidence Boundary
 
@@ -198,6 +219,12 @@ TIMEOUT_NE_ABSENT=true
 EMPTY_NE_MISSING=true
 PROVEN_ABSENCE_GATE_DEFINED=true
 NEGATIVE_OBSERVATION_BOUNDED=true
+NEGATIVE_OBSERVATION_IMMUTABLE=true
+NEGATIVE_OBSERVATION_EVALUATION_APPEND_ONLY=true
+NEGATIVE_EVALUATION_PREDECESSOR_EXACT=true
+NEGATIVE_EVALUATION_REVISION_ZERO_ANCHORED=true
+LATE_POSITIVE_CONFLICT_REVISIONED=true
+POSITIVE_NEGATIVE_CONFLICT_BIDIRECTIONAL=true
 ATTEMPTS_AND_TIME_RECORDED=true
 BLIND_SPOT_BLOCKS_ABSENCE=true
 NEGATIVE_OBSERVATION_NOT_EVIDENCE_SUFFICIENCY=true
