@@ -13,7 +13,8 @@ name = "manosube-agent-civilization-os"
 version = "0.1.0.dev0"
 description = "A state-centric canonical kernel for evidence-backed, authority-bounded software development cycles."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE.md"]
 requires-python = ">=3.12"
 authors = [
   { name = "SHUKOU" },
@@ -31,7 +32,6 @@ keywords = [
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
   "Natural Language :: Japanese",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
@@ -78,6 +78,7 @@ packages = ["src/manosube_agent_civilization"]
 include = [
   "/README.md",
   "/LICENSE",
+  "/NOTICE.md",
   "/ORIGIN.md",
   "/SECURITY.md",
   "/pyproject.toml",
