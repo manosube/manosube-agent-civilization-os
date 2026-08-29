@@ -8,16 +8,30 @@ import sys
 from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
+from observation_contract_validator import validate_fixture_suite
 from referencing import Registry, Resource
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = ROOT / "01_SCHEMA"
 FIXTURE_ROOT = ROOT / "tests" / "contract" / "fixtures" / "schema"
+OBSERVATION_FIXTURE_ROOT = ROOT / "tests" / "contract" / "fixtures" / "observation"
 
 
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_fixture_cases(directory: Path) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    for path in sorted(directory.glob("*.json")):
+        document = load_json(path)
+        if not isinstance(document, list):
+            raise SystemExit(f"fixture case file must contain an array: {path}")
+        cases.extend(document)
+    names = [case.get("name") for case in cases]
+    if None in names or len(names) != len(set(names)):
+        raise SystemExit(f"fixture names must be present and unique: {directory}")
+    return cases
 
 
 def iter_refs(value: Any) -> list[str]:
@@ -37,7 +51,7 @@ def main() -> int:
     paths = sorted(SCHEMA_ROOT.rglob("*.schema.json"))
     schemas = [load_json(path) for path in paths]
     ids = [schema.get("$id") for schema in schemas]
-    if len(paths) != 14 or len(set(ids)) != 14 or None in ids:
+    if len(paths) != 21 or len(set(ids)) != 21 or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
@@ -56,8 +70,8 @@ def main() -> int:
             except Exception:
                 unresolved_refs.append(f"{schema['$id']} -> {reference}")
 
-    valid_cases = load_json(FIXTURE_ROOT / "valid" / "cases.json")
-    invalid_cases = load_json(FIXTURE_ROOT / "invalid" / "cases.json")
+    valid_cases = load_fixture_cases(FIXTURE_ROOT / "valid")
+    invalid_cases = load_fixture_cases(FIXTURE_ROOT / "invalid")
     valid_failures: list[str] = []
     invalid_escapes: list[str] = []
 
@@ -83,10 +97,29 @@ def main() -> int:
     print(f"INVALID_FIXTURE_COUNT={len(invalid_cases)}")
     print(f"VALID_FIXTURE_FAILURE_COUNT={len(valid_failures)}")
     print(f"INVALID_FIXTURE_ESCAPE_COUNT={len(invalid_escapes)}")
-    if unresolved_refs or valid_failures or invalid_escapes:
+    print("OBSERVATION_SCHEMA_COUNT=7")
+    (
+        observation_valid_count,
+        observation_invalid_count,
+        observation_valid_errors,
+        observation_invalid_escapes,
+    ) = validate_fixture_suite(OBSERVATION_FIXTURE_ROOT)
+    print(f"OBSERVATION_CONFORMANCE_VALID_FIXTURE_COUNT={observation_valid_count}")
+    print(f"OBSERVATION_CONFORMANCE_INVALID_FIXTURE_COUNT={observation_invalid_count}")
+    print(f"OBSERVATION_CONFORMANCE_VALID_FAILURE_COUNT={len(observation_valid_errors)}")
+    print(f"OBSERVATION_CONFORMANCE_INVALID_ESCAPE_COUNT={len(observation_invalid_escapes)}")
+    if (
+        unresolved_refs
+        or valid_failures
+        or invalid_escapes
+        or observation_valid_errors
+        or observation_invalid_escapes
+    ):
         print(f"UNRESOLVED_REFS={unresolved_refs}")
         print(f"VALID_FAILURES={valid_failures}")
         print(f"INVALID_ESCAPES={invalid_escapes}")
+        print(f"OBSERVATION_VALID_ERRORS={observation_valid_errors}")
+        print(f"OBSERVATION_INVALID_ESCAPES={observation_invalid_escapes}")
         return 1
     print("SCHEMA_VALIDATION=PASS")
     return 0

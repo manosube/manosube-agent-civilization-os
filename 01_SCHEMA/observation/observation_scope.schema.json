@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/observation_scope.schema.json",
+  "$defs": {
+    "blind_spot": {"type": "object", "required": ["blind_spot_id", "affected_subjects", "reason", "impact", "discovered_at", "resolvable", "required_follow_up"], "properties": {"blind_spot_id": {"$ref": "../common/identity.schema.json"}, "affected_subjects": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "reason": {"type": "string", "minLength": 1}, "impact": {"enum": ["NON_BLOCKING", "BLOCKS_COMPLETION", "BLOCKS_ABSENCE"]}, "discovered_at": {"$ref": "../common/timestamp.schema.json"}, "resolvable": {"type": "boolean"}, "required_follow_up": {"type": ["string", "null"]}}, "additionalProperties": false},
+    "window": {"type": "object", "required": ["start", "end"], "properties": {"start": {"$ref": "../common/timestamp.schema.json"}, "end": {"$ref": "../common/timestamp.schema.json"}}, "additionalProperties": false}
+  },
+  "type": "object",
+  "required": ["schema_version", "scope_id", "project_id", "target_identity", "included_subjects", "excluded_subjects", "boundary_root", "path_policy", "observation_window", "target_effective_window", "freshness_limit_seconds", "cutoff", "source_snapshot_refs", "enumeration_rule", "completion_predicate", "method_ref", "attempt_policy", "blind_spots", "scope_status"],
+  "properties": {
+    "schema_version": {"const": "0.1"}, "scope_id": {"$ref": "../common/identity.schema.json"}, "project_id": {"$ref": "../common/identity.schema.json"}, "target_identity": {"$ref": "../common/identity.schema.json"},
+    "included_subjects": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "excluded_subjects": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "boundary_root": {"type": "string", "pattern": "^/[^\\r\\n]*$"}, "path_policy": {"type": "object", "required": ["relative_locators_only", "symlink_escape", "submodule_traversal", "mount_escape", "credential_paths"], "properties": {"relative_locators_only": {"const": true}, "symlink_escape": {"const": "BLOCK"}, "submodule_traversal": {"const": "DECLARED_ONLY"}, "mount_escape": {"const": "BLOCK"}, "credential_paths": {"const": "EXCLUDE"}}, "additionalProperties": false},
+    "observation_window": {"$ref": "#/$defs/window"}, "target_effective_window": {"$ref": "#/$defs/window"}, "freshness_limit_seconds": {"type": "integer", "minimum": 0}, "cutoff": {"$ref": "../common/timestamp.schema.json"},
+    "source_snapshot_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}, "enumeration_rule": {"$ref": "../common/reference.schema.json"}, "completion_predicate": {"$ref": "../common/reference.schema.json"}, "method_ref": {"$ref": "../common/reference.schema.json"},
+    "attempt_policy": {"type": "object", "required": ["max_attempts", "timeout_seconds", "retry_on"], "properties": {"max_attempts": {"type": "integer", "minimum": 1}, "timeout_seconds": {"type": "integer", "minimum": 1}, "retry_on": {"type": "array", "uniqueItems": true, "items": {"enum": ["TRANSIENT_FAILURE", "TIMEOUT", "SOURCE_UNAVAILABLE"]}}}, "additionalProperties": false},
+    "blind_spots": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/blind_spot"}}, "scope_status": {"enum": ["COMPLETE", "INCOMPLETE", "UNOBSERVED", "BLOCKED", "INVALID", "CONFLICTED"]}
+  },
+  "allOf": [{"if": {"properties": {"scope_status": {"const": "COMPLETE"}}, "required": ["scope_status"]}, "then": {"not": {"properties": {"blind_spots": {"contains": {"properties": {"impact": {"enum": ["BLOCKS_COMPLETION", "BLOCKS_ABSENCE"]}}, "required": ["impact"]}}}, "required": ["blind_spots"]}}}],
+  "additionalProperties": false
+}

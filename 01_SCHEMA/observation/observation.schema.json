@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/observation.schema.json",
+  "title": "Canonical Observation",
+  "type": "object",
+  "required": ["schema_version", "observation_id", "project_id", "state_revision_observed", "state_fingerprint_observed", "target", "scope_ref", "method_ref", "time_boundary", "source_snapshot_refs", "normalization_profile", "normalized_fact_refs", "status", "blind_spots", "attempts", "observation_evidence_refs"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "observation_id": {"$ref": "../common/identity.schema.json"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "state_revision_observed": {"type": "integer", "minimum": 0},
+    "state_fingerprint_observed": {"$ref": "../common/fingerprint.schema.json"},
+    "target": {"type": "object", "required": ["target_identity", "kind"], "properties": {"target_identity": {"$ref": "../common/identity.schema.json"}, "kind": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}}, "additionalProperties": false},
+    "scope_ref": {"$ref": "../common/reference.schema.json"},
+    "method_ref": {"$ref": "../common/reference.schema.json"},
+    "time_boundary": {"type": "object", "required": ["observation_started_at", "observation_ended_at", "target_effective_start", "target_effective_end", "source_snapshot_time"], "properties": {"observation_started_at": {"$ref": "../common/timestamp.schema.json"}, "observation_ended_at": {"$ref": "../common/timestamp.schema.json"}, "target_effective_start": {"$ref": "../common/timestamp.schema.json"}, "target_effective_end": {"$ref": "../common/timestamp.schema.json"}, "source_snapshot_time": {"$ref": "../common/timestamp.schema.json"}}, "additionalProperties": false},
+    "source_snapshot_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "normalization_profile": {"type": "string", "pattern": "^[A-Z][A-Z0-9_.-]*-[0-9]+\\.[0-9]+$"},
+    "normalized_fact_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "status": {"enum": ["COMPLETE", "INCOMPLETE", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "FAILED", "INVALID", "CONFLICTED"]},
+    "blind_spots": {"type": "object", "required": ["status", "items"], "properties": {"status": {"enum": ["NONE_KNOWN", "KNOWN_BLIND_SPOTS_PRESENT", "NOT_EVALUATED"]}, "items": {"type": "array", "uniqueItems": true, "items": {"$ref": "observation_scope.schema.json#/$defs/blind_spot"}}}, "additionalProperties": false},
+    "attempts": {"type": "array", "items": {"type": "object", "required": ["attempt_id", "method_ref", "started_at", "ended_at", "result", "failure_class"], "properties": {"attempt_id": {"$ref": "../common/identity.schema.json"}, "method_ref": {"$ref": "../common/reference.schema.json"}, "started_at": {"$ref": "../common/timestamp.schema.json"}, "ended_at": {"$ref": "../common/timestamp.schema.json"}, "result": {"enum": ["COMPLETE", "EMPTY", "PARTIAL", "BLOCKED", "FAILED"]}, "failure_class": {"type": ["string", "null"]}}, "additionalProperties": false}},
+    "observation_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}
+  },
+  "allOf": [{"if": {"properties": {"status": {"const": "COMPLETE"}}, "required": ["status"]}, "then": {"properties": {"attempts": {"minItems": 1}}}}, {"if": {"properties": {"status": {"const": "EMPTY"}}, "required": ["status"]}, "then": {"properties": {"normalized_fact_refs": {"maxItems": 0}, "attempts": {"minItems": 1}}}}],
+  "additionalProperties": false
+}

@@ -1,0 +1,28 @@
+{
+  "facts": [
+    {"fact_id": "FACT-0001"},
+    {"fact_id": "FACT-0002"}
+  ],
+  "observations": [
+    {"observation_id": "OBS-0001", "state_revision_observed": 2, "state_fingerprint_observed": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+    {"observation_id": "OBS-0002", "state_revision_observed": 3, "state_fingerprint_observed": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+  ],
+  "bindings": [
+    {"binding_id": "BIND-0001", "fact_id": "FACT-0001", "observation_id": "OBS-0001", "state_revision_observed": 2, "state_fingerprint_observed": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "source_occurrence_id": "SOURCE-OCC-0001"},
+    {"binding_id": "BIND-0002", "fact_id": "FACT-0001", "observation_id": "OBS-0001", "state_revision_observed": 2, "state_fingerprint_observed": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "source_occurrence_id": "SOURCE-OCC-0002"},
+    {"binding_id": "BIND-0003", "fact_id": "FACT-0001", "observation_id": "OBS-0002", "state_revision_observed": 3, "state_fingerprint_observed": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "source_occurrence_id": "SOURCE-OCC-0003"},
+    {"binding_id": "BIND-0004", "fact_id": "FACT-0002", "observation_id": "OBS-0001", "state_revision_observed": 2, "state_fingerprint_observed": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "source_occurrence_id": "SOURCE-OCC-0001"}
+  ],
+  "fact_evaluations": [
+    {"evaluation_id": "FACT-EVAL-0001-0", "fact_id": "FACT-0001", "evaluation_revision": 0, "previous_evaluation_id": null, "binding_refs": [{"kind": "fact_observation_binding", "id": "BIND-0001"}, {"kind": "fact_observation_binding", "id": "BIND-0002"}], "evaluation_status": "SUPPORTED", "conflict_fact_refs": [], "conflict_negative_observation_refs": []},
+    {"evaluation_id": "FACT-EVAL-0001-1", "fact_id": "FACT-0001", "evaluation_revision": 1, "previous_evaluation_id": "FACT-EVAL-0001-0", "binding_refs": [{"kind": "fact_observation_binding", "id": "BIND-0001"}, {"kind": "fact_observation_binding", "id": "BIND-0002"}, {"kind": "fact_observation_binding", "id": "BIND-0003"}], "evaluation_status": "CONFLICTED", "conflict_fact_refs": [], "conflict_negative_observation_refs": [{"kind": "negative_observation", "id": "NEG-0001"}]},
+    {"evaluation_id": "FACT-EVAL-0002-0", "fact_id": "FACT-0002", "evaluation_revision": 0, "previous_evaluation_id": null, "binding_refs": [{"kind": "fact_observation_binding", "id": "BIND-0004"}], "evaluation_status": "SUPPORTED", "conflict_fact_refs": [], "conflict_negative_observation_refs": []}
+  ],
+  "negative_observations": [
+    {"negative_observation_id": "NEG-0001", "negative_status": "ABSENT", "positive_fact_refs": []}
+  ],
+  "negative_evaluations": [
+    {"evaluation_id": "NEG-EVAL-0001-0", "negative_observation_id": "NEG-0001", "evaluation_revision": 0, "previous_evaluation_id": null, "evaluation_status": "ABSENT", "conflict_fact_refs": []},
+    {"evaluation_id": "NEG-EVAL-0001-1", "negative_observation_id": "NEG-0001", "evaluation_revision": 1, "previous_evaluation_id": "NEG-EVAL-0001-0", "evaluation_status": "CONFLICTED", "conflict_fact_refs": [{"kind": "normalized_fact", "id": "FACT-0001"}]}
+  ]
+}

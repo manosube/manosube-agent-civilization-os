@@ -1,0 +1,46 @@
+[
+  {
+    "name": "failed_observation_preserved",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/observation.schema.json",
+    "instance": {
+      "schema_version": "0.1", "observation_id": "OBS-0001", "project_id": "PRJ-0001", "state_revision_observed": 2,
+      "state_fingerprint_observed": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "target": {"target_identity": "TARGET-0001", "kind": "REPOSITORY"},
+      "scope_ref": {"kind": "observation_scope", "id": "SCOPE-0001"}, "method_ref": {"kind": "observation_method", "id": "METHOD-0001"},
+      "time_boundary": {"observation_started_at": "2026-08-29T09:00:00Z", "observation_ended_at": "2026-08-29T09:01:00Z", "target_effective_start": "2026-08-29T08:00:00Z", "target_effective_end": "2026-08-29T09:00:00Z", "source_snapshot_time": "2026-08-29T08:59:00Z"},
+      "source_snapshot_refs": [{"kind": "source_snapshot", "id": "SNAP-0001"}], "normalization_profile": "REPOSITORY-0.1", "normalized_fact_refs": [], "status": "FAILED",
+      "blind_spots": {"status": "KNOWN_BLIND_SPOTS_PRESENT", "items": [{"blind_spot_id": "BLIND-0001", "affected_subjects": ["repository.files"], "reason": "parser failure", "impact": "BLOCKS_COMPLETION", "discovered_at": "2026-08-29T09:01:00Z", "resolvable": true, "required_follow_up": "repair parser"}]},
+      "attempts": [{"attempt_id": "ATTEMPT-0001", "method_ref": {"kind": "observation_method", "id": "METHOD-0001"}, "started_at": "2026-08-29T09:00:00Z", "ended_at": "2026-08-29T09:01:00Z", "result": "FAILED", "failure_class": "PARSER_FAILURE"}], "observation_evidence_refs": [{"kind": "observation_evidence", "id": "EVID-0001"}]
+    }
+  },
+  {
+    "name": "stable_normalized_fact",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/normalized_fact.schema.json",
+    "instance": {"schema_version": "0.1", "fact_id": "FACT-0001", "project_id": "PRJ-0001", "subject": "repository.file", "predicate": "exists@v1", "value": true, "value_type": "BOOLEAN", "unit": null, "effective_boundary": {"kind": "SOURCE_SNAPSHOT", "identity": "SNAP-0001", "start": null, "end": null}, "normalization_profile": "REPOSITORY-0.1"}
+  },
+  {
+    "name": "source_occurrence_binding",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/fact_observation_binding.schema.json",
+    "instance": {"schema_version": "0.1", "binding_id": "BIND-0001", "fact_id": "FACT-0001", "observation_id": "OBS-0001", "state_revision_observed": 2, "state_fingerprint_observed": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "source_occurrence_id": "SOURCE-OCC-0001", "source_ref": {"kind": "source_snapshot", "id": "SNAP-0001"}, "source_locator": "src/kernel.py", "observed_quality_status": "SUPPORTED"}
+  },
+  {
+    "name": "fact_evaluation_revision_zero",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/fact_evaluation.schema.json",
+    "instance": {"schema_version": "0.1", "evaluation_id": "FACT-EVAL-0001-0", "fact_id": "FACT-0001", "evaluation_revision": 0, "previous_evaluation_id": null, "binding_refs": [{"kind": "fact_observation_binding", "id": "BIND-0001"}], "evaluation_status": "SUPPORTED", "conflict_fact_refs": [], "conflict_negative_observation_refs": [], "evidence_refs": [{"kind": "observation_evidence", "id": "EVID-0001"}]}
+  },
+  {
+    "name": "complete_observation_scope",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/observation_scope.schema.json",
+    "instance": {"schema_version": "0.1", "scope_id": "SCOPE-0001", "project_id": "PRJ-0001", "target_identity": "TARGET-0001", "included_subjects": ["repository.files"], "excluded_subjects": ["credentials"], "boundary_root": "/workspace/project", "path_policy": {"relative_locators_only": true, "symlink_escape": "BLOCK", "submodule_traversal": "DECLARED_ONLY", "mount_escape": "BLOCK", "credential_paths": "EXCLUDE"}, "observation_window": {"start": "2026-08-29T09:00:00Z", "end": "2026-08-29T09:01:00Z"}, "target_effective_window": {"start": "2026-08-29T08:00:00Z", "end": "2026-08-29T09:00:00Z"}, "freshness_limit_seconds": 300, "cutoff": "2026-08-29T09:00:00Z", "source_snapshot_refs": [{"kind": "source_snapshot", "id": "SNAP-0001"}], "enumeration_rule": {"kind": "enumeration_rule", "id": "ENUM-0001"}, "completion_predicate": {"kind": "completion_predicate", "id": "COMPLETE-0001"}, "method_ref": {"kind": "observation_method", "id": "METHOD-0001"}, "attempt_policy": {"max_attempts": 2, "timeout_seconds": 60, "retry_on": ["TRANSIENT_FAILURE"]}, "blind_spots": [], "scope_status": "COMPLETE"}
+  },
+  {
+    "name": "bounded_proven_absence",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/negative_observation.schema.json",
+    "instance": {"schema_version": "0.1", "negative_observation_id": "NEG-0001", "observation_id": "OBS-0002", "project_id": "PRJ-0001", "target_identity": "TARGET-0001", "subject": "repository.file", "predicate": "exists@v1", "effective_boundary": {"kind": "SOURCE_SNAPSHOT", "identity": "SNAP-0001", "start": null, "end": null}, "negative_status": "ABSENT", "scope_ref": {"kind": "observation_scope", "id": "SCOPE-0001"}, "method_ref": {"kind": "observation_method", "id": "METHOD-0001"}, "time_boundary": {"observation_started_at": "2026-08-29T09:00:00Z", "observation_ended_at": "2026-08-29T09:01:00Z", "target_effective_start": "2026-08-29T08:00:00Z", "target_effective_end": "2026-08-29T09:00:00Z", "source_snapshot_time": "2026-08-29T08:59:00Z"}, "source_snapshot_refs": [{"kind": "source_snapshot", "id": "SNAP-0001"}], "attempt_refs": [{"kind": "observation_attempt", "id": "ATTEMPT-0002"}], "completion_evaluation": {"target_defined": true, "scope_complete": true, "method_complete": true, "time_boundary_complete": true, "source_snapshots_identified": true, "required_attempts_completed": true, "no_blocking_blind_spot": true, "no_conflicting_positive_fact": true}, "blind_spot_refs": [], "negative_evidence_refs": [{"kind": "negative_evidence", "id": "EVID-NEG-0001"}], "positive_fact_refs": [], "conclusion": {"state_candidate": "ABSENT", "reason": "bounded complete enumeration"}}
+  },
+  {
+    "name": "negative_evaluation_revision_zero",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/negative_observation_evaluation.schema.json",
+    "instance": {"schema_version": "0.1", "evaluation_id": "NEG-EVAL-0001-0", "negative_observation_id": "NEG-0001", "evaluation_revision": 0, "previous_evaluation_id": null, "evaluation_status": "ABSENT", "conflict_fact_refs": [], "evidence_refs": [{"kind": "negative_evidence", "id": "EVID-NEG-0001"}]}
+  }
+]

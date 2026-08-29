@@ -1,0 +1,17 @@
+[
+  {"name": "duplicate_source_occurrence_id", "path": ["bindings", 1, "source_occurrence_id"], "value": "SOURCE-OCC-0001"},
+  {"name": "binding_state_revision_mismatch", "path": ["bindings", 0, "state_revision_observed"], "value": 99},
+  {"name": "binding_state_fingerprint_mismatch", "path": ["bindings", 0, "state_fingerprint_observed", "digest"], "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+  {"name": "cross_fact_binding_reference", "path": ["fact_evaluations", 0, "binding_refs", 0, "id"], "value": "BIND-0004"},
+  {"name": "fact_evaluation_revision_gap", "path": ["fact_evaluations", 1, "evaluation_revision"], "value": 2},
+  {"name": "fact_evaluation_wrong_predecessor", "path": ["fact_evaluations", 1, "previous_evaluation_id"], "value": "FACT-EVAL-9999-0"},
+  {"name": "negative_revision_zero_status_mismatch", "path": ["negative_evaluations", 0, "evaluation_status"], "value": "UNKNOWN"},
+  {"name": "negative_revision_zero_conflict_set_mismatch", "path": ["negative_evaluations", 0, "conflict_fact_refs"], "value": [{"kind": "normalized_fact", "id": "FACT-0001"}]},
+  {"name": "negative_evaluation_wrong_predecessor", "path": ["negative_evaluations", 1, "previous_evaluation_id"], "value": "NEG-EVAL-9999-0"},
+  {"name": "one_sided_positive_negative_conflict", "path": ["negative_evaluations", 1, "conflict_fact_refs"], "value": []},
+  {"name": "negative_observation_without_revision_zero", "path": ["negative_evaluations"], "value": []},
+  {"name": "fact_without_provenance_binding", "path": ["bindings", 3], "value": {"$delete": true}},
+  {"name": "wrong_binding_reference_kind", "path": ["fact_evaluations", 0, "binding_refs", 0, "kind"], "value": "evidence"},
+  {"name": "wrong_negative_conflict_reference_kind", "path": ["fact_evaluations", 1, "conflict_negative_observation_refs", 0, "kind"], "value": "evidence"},
+  {"name": "wrong_fact_conflict_reference_kind", "path": ["negative_evaluations", 1, "conflict_fact_refs", 0, "kind"], "value": "evidence"}
+]
