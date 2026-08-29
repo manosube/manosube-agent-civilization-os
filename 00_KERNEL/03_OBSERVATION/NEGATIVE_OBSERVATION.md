@@ -32,6 +32,9 @@ negative_observation_id
 observation_id
 project_id
 target_identity
+subject
+predicate
+effective_boundary
 negative_status
 scope_ref
 method_ref
@@ -41,6 +44,7 @@ attempt_refs
 completion_evaluation
 blind_spot_refs
 negative_evidence_refs
+positive_fact_refs
 conclusion
 ```
 
@@ -56,6 +60,7 @@ UNKNOWN
 UNOBSERVED
 BLOCKED
 INCOMPLETE
+FAILED
 INVALID
 CONFLICTED
 ```
@@ -71,6 +76,7 @@ CONFLICTED
 | `UNOBSERVED` | 必要な観測を実行していない |
 | `BLOCKED` | 阻害要因により観測できない |
 | `INCOMPLETE` | scopeまたはmethodが部分完了 |
+| `FAILED` | methodを実行したが正常なObservation resultを生成できなかった |
 | `INVALID` | 入力、boundary、methodまたはrecordが不正 |
 | `CONFLICTED` | 不在と存在を支持する両立不能な事実がある |
 
@@ -147,7 +153,7 @@ termination_reason
 
 不在結論へ影響するblind spotがある場合、statusは`INCOMPLETE`、`BLOCKED`または`UNKNOWN`である。
 
-Positive FactとNegative Observationが同じsubject、predicate、effective boundaryで競合する場合、どちらかを消さず`CONFLICTED`としてDifference入力へ送る。
+Positive FactとNegative Observationが同じ`subject`、`predicate`、`effective_boundary`で競合する場合、どちらかを消さず`CONFLICTED`としてDifference入力へ送る。これら三つをclaim coordinateとし、`target_identity`や`time_boundary`から暗黙推論しない。対応するPositive Factは`positive_fact_refs`で明示する。
 
 # 8. Evidence Boundary
 
@@ -173,14 +179,19 @@ Observation statusからState knowledge statusへの写像は明示的に行う�
 | `UNOBSERVED` | `UNOBSERVED` |
 | `BLOCKED` | `BLOCKED` |
 | `INCOMPLETE` | `INCOMPLETE` |
+| `FAILED` | `UNKNOWN`（failure自体はEvidenceへ保持） |
+| `INVALID` | State候補にせず`REJECT_OR_QUARANTINE` |
 | `CONFLICTED` | `CONFLICTED` |
 
 この写像はStateを直接更新しない。Canonical Stateへの反映はEvidence評価後のAtomic Reflowだけが行う。
+
+`INVALID`は合法な検証結果ではあるが、合法なCanonical State claimではない。推測で別statusへ変換せず、原recordとreasonを保持してrejectまたはquarantineする。
 
 # 10. Acceptance
 
 ```text
 NEGATIVE_STATUS_ENUM_CLOSED=true
+NEGATIVE_CLAIM_COORDINATES_REQUIRED=true
 NO_RESULT_NE_PROVEN_ABSENCE=true
 UNOBSERVED_NE_ABSENT=true
 TIMEOUT_NE_ABSENT=true
@@ -191,6 +202,7 @@ ATTEMPTS_AND_TIME_RECORDED=true
 BLIND_SPOT_BLOCKS_ABSENCE=true
 NEGATIVE_OBSERVATION_NOT_EVIDENCE_SUFFICIENCY=true
 NEGATIVE_OBSERVATION_NOT_STATE_TRANSITION=true
+INVALID_NEGATIVE_OBSERVATION_QUARANTINED=true
 ```
 
 ```text
