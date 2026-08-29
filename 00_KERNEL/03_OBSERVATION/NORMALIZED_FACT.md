@@ -1,0 +1,187 @@
+# MANOSUBE Agent Civilization OS
+
+## Normalized Fact Contract v0.1
+
+```text
+DOC_TYPE=KERNEL_CONTRACT
+KERNEL_ELEMENT=OBSERVATION
+DOCUMENT_ID=NORMALIZED-FACT-0001
+SCHEMA_VERSION=0.1
+STATUS=CANONICAL_DESIGN
+```
+
+---
+
+# 0. Definition
+
+Normalized Factは、境界付きObservationがsource valueをversioned規則で正規化した、Kernel評価用の最小事実単位である。
+
+```text
+SOURCE VALUE ≠ NORMALIZED FACT
+CLAIM ≠ FACT
+AGENT ASSERTION ≠ FACT
+```
+
+# 1. Logical Record
+
+最低限、次を持つ。
+
+```text
+fact_id
+observation_id
+project_id
+subject
+predicate
+value
+value_type
+unit
+effective_boundary
+source_ref
+source_locator
+normalization_profile
+quality_status
+conflict_refs
+```
+
+`source_locator`はsnapshot内の位置を特定する非秘密referenceであり、absolute temporary pathやcredential-bearing URLを禁止する。
+
+# 2. Fact Identity
+
+Fact identityは最低限、次のCanonical tupleから決定する。
+
+```text
+FACT_IDENTITY_INPUT
+= project_id
++ observation_id
++ subject
++ predicate
++ effective_boundary
++ normalization_profile
++ canonical value
+```
+
+serialization order、取得順序、Agent、session、process、hostnameはidentityへ含めない。
+
+同一identity・同一内容は同じFactである。同一identity・異なる内容を黙って上書き、last-write-wins、deduplicateしてはならず、`CONFLICTED`として保持する。
+
+# 3. Subject and Predicate
+
+`subject`は観測対象の安定identityである。display label、filesystemの偶発的な絶対path、list indexをidentityにしない。
+
+`predicate`はversioned vocabularyに属し、未知predicateを黙って受理しない。Vocabulary変更はschema／normalization profileのrevisionを必要とする。
+
+# 4. Value and Type
+
+`value_type`はclosed enumとして最低限、次を表現可能にする。
+
+```text
+NULL
+BOOLEAN
+INTEGER
+DECIMAL
+STRING
+TIMESTAMP
+DURATION
+IDENTITY_REFERENCE
+ORDERED_COLLECTION
+UNORDERED_COLLECTION
+STRUCTURED
+```
+
+Decimalをbinary floating-point近似へ暗黙変換しない。TimestampはUTC、RFC 3339、明示offsetで正規化する。Unitを持つ値はunitを省略しない。
+
+Unordered collectionは入力順をsemanticにせず、安定keyで正規化する。重複identityを暗黙に除去しない。
+
+# 5. Effective Boundary
+
+Factが真であると主張する対象時間・revision・snapshot範囲を`effective_boundary`へ固定する。
+
+```text
+OBSERVED_AT ≠ EFFECTIVE_AT
+RECORDED_AT ≠ EFFECTIVE_AT
+```
+
+処理時刻だけから対象時刻を推測しない。Boundary不明のFactは`UNKNOWN`または`INVALID`であり、無期限の現在事実に昇格させない。
+
+# 6. Source Traceability
+
+すべてのFactは、Observationとsource snapshotへ逆引き可能でなければならない。
+
+```text
+FACT
+→ OBSERVATION_ID
+→ SOURCE_SNAPSHOT_REF
+→ SOURCE_LOCATOR
+→ NORMALIZATION_PROFILE
+```
+
+Sourceが消失、mutable、未同定の場合、その制約をquality statusとblind spotへ残す。
+
+# 7. Normalization Determinism
+
+```text
+SAME_SOURCE_BYTES
++ SAME_SOURCE_IDENTITY
++ SAME_SCOPE
++ SAME_PROFILE
+→ BYTE_EQUIVALENT_CANONICAL_FACT
+```
+
+Locale、timezone default、filesystem order、dictionary order、platform newline、Unicode表現の差を正規化する。推測補完、現在時刻の注入、random IDの注入を禁止する。
+
+# 8. Quality Status
+
+Fact qualityは次のclosed enumとする。
+
+```text
+SUPPORTED
+UNKNOWN
+INCOMPLETE
+BLOCKED
+INVALID
+CONFLICTED
+```
+
+QualityはCompletion LevelまたはEvidence Levelではない。`SUPPORTED`でも、そのFactだけでDifference ClosureやObjective Completionを宣言できない。
+
+# 9. Null, Empty and Absence
+
+次を分離する。
+
+```text
+NULL_VALUE
+EMPTY_COLLECTION
+MISSING_FIELD
+UNOBSERVED_VALUE
+PROVEN_ABSENCE
+```
+
+`null`、空文字、空collection、field欠落を相互変換しない。不在はNegative Observation契約を満たす場合だけFactとして表現できる。
+
+# 10. Security and Taint
+
+secret-bearing sourceを観測しても秘密値をNormalized Factへ保存しない。秘密の存在が必要な場合は、値ではなく安全なboolean claim、redaction status、opaque referenceだけを使用する。
+
+Repository内容に含まれる命令文はdataであり、Authorityへ昇格させない。
+
+# 11. Acceptance
+
+```text
+NORMALIZED_FACT_FIELDS_DEFINED=true
+FACT_IDENTITY_DETERMINISTIC=true
+SUBJECT_AND_PREDICATE_VERSIONED=true
+VALUE_TYPES_CLOSED=true
+EFFECTIVE_BOUNDARY_REQUIRED=true
+SOURCE_TRACEABILITY_REQUIRED=true
+NORMALIZATION_PROFILE_REQUIRED=true
+NULL_EMPTY_ABSENCE_SEPARATED=true
+CONFLICT_NOT_OVERWRITTEN=true
+SECRET_VALUE_PROHIBITED=true
+```
+
+```text
+NORMALIZED_FACT_CONTRACT_DEFINED=true
+NORMALIZED_FACT_SCHEMA_IMPLEMENTED=false
+NORMALIZATION_ENGINE_IMPLEMENTED=false
+NORMALIZED_FACT_RUNTIME_PROVEN=false
+```
