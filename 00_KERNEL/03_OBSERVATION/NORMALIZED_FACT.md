@@ -76,6 +76,8 @@ FACT_EVALUATION
 
 `evaluation_revision`はFact単位で0から単調増加し、`evaluation_id`は`fact_id + evaluation_revision`から決定する。revision 0の`previous_evaluation_id`は明示的な`null`とする。revision n（n > 0）は、同じFactに属するrevision n - 1の`evaluation_id`を`previous_evaluation_id`として必ず参照する。異なるFact、直前以外のrevision、欠落したpredecessorへの参照はFail Closedする。
 
+すべての`binding_refs`は、そのEvaluationの`fact_id`と同一の`FACT_OBSERVATION_BINDING.fact_id`を持たなければならない。別FactのBinding、存在しないBinding、またはBinding identityとpayloadが不一致のreferenceを支持根拠として受理せず、Fail Closedする。
+
 新しいBinding、競合Fact、または競合Negative Observationが発見された場合、既存recordを変更せず次revisionをappendする。同一revision・同一payloadはidempotent、異なるpayload、revision gapまたはpredecessor不整合はFail Closedする。
 
 # 2. Fact Identity
@@ -211,6 +213,7 @@ SOURCE_OCCURRENCE_IDENTITY_DEFINED=true
 OBSERVATION_QUALITY_EXCLUDED_FROM_FACT_BODY=true
 FACT_EVALUATION_APPEND_ONLY=true
 FACT_EVALUATION_PREDECESSOR_EXACT=true
+FACT_EVALUATION_BINDINGS_SAME_FACT=true
 CONFLICT_EVALUATION_REVISIONED=true
 NEGATIVE_OBSERVATION_CONFLICT_TRACEABLE=true
 IMMUTABLE_BINDING_NOT_REEVALUATED_IN_PLACE=true
