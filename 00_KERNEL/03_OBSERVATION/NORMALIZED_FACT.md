@@ -68,10 +68,13 @@ FACT_EVALUATION
 + binding_refs
 + evaluation_status
 + conflict_fact_refs
++ conflict_negative_observation_refs
 + evidence_refs
 ```
 
-`evaluation_revision`はFact単位で0から単調増加し、`evaluation_id`は`fact_id + evaluation_revision`から決定する。新しいBindingまたは競合Factが発見された場合、既存recordを変更せず次revisionをappendする。同一revision・同一payloadはidempotent、異なるpayloadまたはrevision gapはFail Closedする。
+`conflict_fact_refs`は競合するPositive Factを参照し、`conflict_negative_observation_refs`は競合するNegative Observationを参照する。Negative ObservationをEvidence referenceへ偽装してはならない。競合の両側は相互に追跡可能でなければならず、Negative Observation側の`positive_fact_refs`とFact Evaluation側の`conflict_negative_observation_refs`を対応させる。
+
+`evaluation_revision`はFact単位で0から単調増加し、`evaluation_id`は`fact_id + evaluation_revision`から決定する。新しいBinding、競合Fact、または競合Negative Observationが発見された場合、既存recordを変更せず次revisionをappendする。同一revision・同一payloadはidempotent、異なるpayloadまたはrevision gapはFail Closedする。
 
 # 2. Fact Identity
 
@@ -206,6 +209,7 @@ SOURCE_OCCURRENCE_IDENTITY_DEFINED=true
 OBSERVATION_QUALITY_EXCLUDED_FROM_FACT_BODY=true
 FACT_EVALUATION_APPEND_ONLY=true
 CONFLICT_EVALUATION_REVISIONED=true
+NEGATIVE_OBSERVATION_CONFLICT_TRACEABLE=true
 IMMUTABLE_BINDING_NOT_REEVALUATED_IN_PLACE=true
 ALL_OBSERVATION_PROVENANCE_PRESERVED=true
 SUBJECT_AND_PREDICATE_VERSIONED=true
