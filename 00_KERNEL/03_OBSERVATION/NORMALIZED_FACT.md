@@ -36,8 +36,6 @@ value_type
 unit
 effective_boundary
 normalization_profile
-quality_status
-conflict_refs
 ```
 
 Observationとのprovenance結合はFact本体へ単数fieldとして埋め込まず、次のappend-only association recordで保持する。
@@ -52,6 +50,8 @@ FACT_OBSERVATION_BINDING
 + source_occurrence_id
 + source_ref
 + source_locator
++ quality_status
++ conflict_refs
 ```
 
 `source_occurrence_id`は、同一Observation内の各contributing sourceを`source_ref + source_locator`から決定論的に同定する。`source_locator`はsnapshot内の位置を特定する非秘密referenceであり、absolute temporary pathやcredential-bearing URLを禁止する。
@@ -72,7 +72,7 @@ FACT_IDENTITY_INPUT
 + canonical value
 ```
 
-`observation_id`、`source_ref`、`source_locator`はFact本体ではなく`FACT_OBSERVATION_BINDING`のprovenanceとして保持し、Factのsemantic identityへ含めない。同じsemantic factを別State revisionまたは別sourceから再観測しても、正規化結果が同じなら同じ`fact_id`と、各source occurrenceに対応する異なるBindingを生成しなければならない。
+`observation_id`、`source_ref`、`source_locator`、`quality_status`、`conflict_refs`はFact本体ではなく`FACT_OBSERVATION_BINDING`のprovenance／evaluationとして保持し、Factのsemantic identityへ含めない。同じsemantic factを別State revisionまたは別sourceから再観測しても、正規化結果が同じなら同じ`fact_id`と、各source occurrenceに対応する異なるBindingを生成しなければならない。
 
 Observation identity、serialization order、取得順序、Agent、session、process、hostnameはFact identityへ含めない。
 
@@ -146,7 +146,7 @@ Locale、timezone default、filesystem order、dictionary order、platform newli
 
 # 8. Quality Status
 
-Fact qualityは次のclosed enumとする。
+Fact Observation Bindingのqualityは次のclosed enumとする。
 
 ```text
 SUPPORTED
@@ -157,7 +157,7 @@ INVALID
 CONFLICTED
 ```
 
-QualityはCompletion LevelまたはEvidence Levelではない。`SUPPORTED`でも、そのFactだけでDifference ClosureやObjective Completionを宣言できない。
+QualityはObservation/source occurrenceごとの評価であり、Factのsemantic payloadではない。また、Completion LevelまたはEvidence Levelでもない。`SUPPORTED`でも、そのFactだけでDifference ClosureやObjective Completionを宣言できない。
 
 # 9. Null, Empty and Absence
 
@@ -188,6 +188,7 @@ OBSERVATION_ID_EXCLUDED_FROM_FACT_IDENTITY=true
 FACT_OBSERVATION_BINDING_APPEND_ONLY=true
 SOURCE_PROVENANCE_EXCLUDED_FROM_FACT_BODY=true
 SOURCE_OCCURRENCE_IDENTITY_DEFINED=true
+OBSERVATION_QUALITY_EXCLUDED_FROM_FACT_BODY=true
 ALL_OBSERVATION_PROVENANCE_PRESERVED=true
 SUBJECT_AND_PREDICATE_VERSIONED=true
 VALUE_TYPES_CLOSED=true
