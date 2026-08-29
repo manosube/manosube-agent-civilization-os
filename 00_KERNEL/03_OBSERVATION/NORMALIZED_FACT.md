@@ -35,14 +35,10 @@ value
 value_type
 unit
 effective_boundary
-source_ref
-source_locator
 normalization_profile
 quality_status
 conflict_refs
 ```
-
-`source_locator`はsnapshot内の位置を特定する非秘密referenceであり、absolute temporary pathやcredential-bearing URLを禁止する。
 
 Observationとのprovenance結合はFact本体へ単数fieldとして埋め込まず、次のappend-only association recordで保持する。
 
@@ -53,10 +49,14 @@ FACT_OBSERVATION_BINDING
 + observation_id
 + state_revision_observed
 + state_fingerprint_observed
++ source_occurrence_id
 + source_ref
++ source_locator
 ```
 
-`binding_id`は`fact_id + observation_id`から決定する。同一Factが別State revisionで再観測された場合はFactを上書きせず、新しいBindingをappendする。同一Bindingの同一payloadはidempotent、異なるpayloadは`CONFLICTED`とする。
+`source_occurrence_id`は、同一Observation内の各contributing sourceを`source_ref + source_locator`から決定論的に同定する。`source_locator`はsnapshot内の位置を特定する非秘密referenceであり、absolute temporary pathやcredential-bearing URLを禁止する。
+
+`binding_id`は`fact_id + observation_id + source_occurrence_id`から決定する。同一Factが別State revisionで再観測された場合、または一つのObservationで複数sourceが同じFactを支持した場合もFactを上書きせず、source occurrenceごとに新しいBindingをappendする。同一Bindingの同一payloadはidempotent、異なるpayloadは`CONFLICTED`とする。
 
 # 2. Fact Identity
 
@@ -72,7 +72,7 @@ FACT_IDENTITY_INPUT
 + canonical value
 ```
 
-`observation_id`はFact本体ではなく`FACT_OBSERVATION_BINDING`のprovenanceとして保持し、Factのsemantic identityへ含めない。同じsource factを別State revisionから再観測しても、正規化結果が同じなら同じ`fact_id`と、各Observationに対応する異なるBindingを生成しなければならない。
+`observation_id`、`source_ref`、`source_locator`はFact本体ではなく`FACT_OBSERVATION_BINDING`のprovenanceとして保持し、Factのsemantic identityへ含めない。同じsemantic factを別State revisionまたは別sourceから再観測しても、正規化結果が同じなら同じ`fact_id`と、各source occurrenceに対応する異なるBindingを生成しなければならない。
 
 Observation identity、serialization order、取得順序、Agent、session、process、hostnameはFact identityへ含めない。
 
@@ -186,6 +186,8 @@ NORMALIZED_FACT_FIELDS_DEFINED=true
 FACT_IDENTITY_DETERMINISTIC=true
 OBSERVATION_ID_EXCLUDED_FROM_FACT_IDENTITY=true
 FACT_OBSERVATION_BINDING_APPEND_ONLY=true
+SOURCE_PROVENANCE_EXCLUDED_FROM_FACT_BODY=true
+SOURCE_OCCURRENCE_IDENTITY_DEFINED=true
 ALL_OBSERVATION_PROVENANCE_PRESERVED=true
 SUBJECT_AND_PREDICATE_VERSIONED=true
 VALUE_TYPES_CLOSED=true
