@@ -50,13 +50,28 @@ FACT_OBSERVATION_BINDING
 + source_occurrence_id
 + source_ref
 + source_locator
-+ quality_status
-+ conflict_refs
++ observed_quality_status
 ```
 
 `source_occurrence_id`は、同一Observation内の各contributing sourceを`source_ref + source_locator`から決定論的に同定する。`source_locator`はsnapshot内の位置を特定する非秘密referenceであり、absolute temporary pathやcredential-bearing URLを禁止する。
 
 `binding_id`は`fact_id + observation_id + source_occurrence_id`から決定する。同一Factが別State revisionで再観測された場合、または一つのObservationで複数sourceが同じFactを支持した場合もFactを上書きせず、source occurrenceごとに新しいBindingをappendする。同一Bindingの同一payloadはidempotent、異なるpayloadは`CONFLICTED`とする。
+
+Factに対する支持・競合評価はFactまたはBindingを更新せず、別のappend-only evaluation recordで保持する。
+
+```text
+FACT_EVALUATION
+= evaluation_id
++ fact_id
++ evaluation_revision
++ previous_evaluation_id
++ binding_refs
++ evaluation_status
++ conflict_fact_refs
++ evidence_refs
+```
+
+`evaluation_revision`はFact単位で0から単調増加し、`evaluation_id`は`fact_id + evaluation_revision`から決定する。新しいBindingまたは競合Factが発見された場合、既存recordを変更せず次revisionをappendする。同一revision・同一payloadはidempotent、異なるpayloadまたはrevision gapはFail Closedする。
 
 # 2. Fact Identity
 
@@ -72,7 +87,7 @@ FACT_IDENTITY_INPUT
 + canonical value
 ```
 
-`observation_id`、`source_ref`、`source_locator`、`quality_status`、`conflict_refs`はFact本体ではなく`FACT_OBSERVATION_BINDING`のprovenance／evaluationとして保持し、Factのsemantic identityへ含めない。同じsemantic factを別State revisionまたは別sourceから再観測しても、正規化結果が同じなら同じ`fact_id`と、各source occurrenceに対応する異なるBindingを生成しなければならない。
+`observation_id`、`source_ref`、`source_locator`、`observed_quality_status`はFact本体ではなく`FACT_OBSERVATION_BINDING`へ保持する。現在の支持・競合位置は`FACT_EVALUATION`へ保持する。いずれもFactのsemantic identityへ含めない。同じsemantic factを別State revisionまたは別sourceから再観測しても、正規化結果が同じなら同じ`fact_id`と、各source occurrenceに対応する異なるBindingを生成しなければならない。
 
 Observation identity、serialization order、取得順序、Agent、session、process、hostnameはFact identityへ含めない。
 
@@ -146,7 +161,7 @@ Locale、timezone default、filesystem order、dictionary order、platform newli
 
 # 8. Quality Status
 
-Fact Observation Bindingのqualityは次のclosed enumとする。
+Fact Observation Bindingの観測時quality、およびFact Evaluationの評価statusは次のclosed vocabularyを使用する。
 
 ```text
 SUPPORTED
@@ -157,7 +172,7 @@ INVALID
 CONFLICTED
 ```
 
-QualityはObservation/source occurrenceごとの評価であり、Factのsemantic payloadではない。また、Completion LevelまたはEvidence Levelでもない。`SUPPORTED`でも、そのFactだけでDifference ClosureやObjective Completionを宣言できない。
+`observed_quality_status`はBinding生成時点のObservation/source occurrence評価であり、後から書き換えない。現在の支持・競合位置は最新の連続した`FACT_EVALUATION`から導出する。QualityはFactのsemantic payload、Completion Level、Evidence Levelではない。`SUPPORTED`でも、そのFactだけでDifference ClosureやObjective Completionを宣言できない。
 
 # 9. Null, Empty and Absence
 
@@ -189,6 +204,9 @@ FACT_OBSERVATION_BINDING_APPEND_ONLY=true
 SOURCE_PROVENANCE_EXCLUDED_FROM_FACT_BODY=true
 SOURCE_OCCURRENCE_IDENTITY_DEFINED=true
 OBSERVATION_QUALITY_EXCLUDED_FROM_FACT_BODY=true
+FACT_EVALUATION_APPEND_ONLY=true
+CONFLICT_EVALUATION_REVISIONED=true
+IMMUTABLE_BINDING_NOT_REEVALUATED_IN_PLACE=true
 ALL_OBSERVATION_PROVENANCE_PRESERVED=true
 SUBJECT_AND_PREDICATE_VERSIONED=true
 VALUE_TYPES_CLOSED=true
