@@ -61,7 +61,9 @@ NEGATIVE_OBSERVATION_EVALUATION
 + evidence_refs
 ```
 
-`evaluation_revision`はNegative Observation単位で0から単調増加し、`evaluation_id`は`negative_observation_id + evaluation_revision`から決定する。revision 0はNegative Observation生成時に作成し、`previous_evaluation_id`を明示的な`null`とする。revision n（n > 0）は、同じNegative Observationに属するrevision n - 1の`evaluation_id`を必ず参照する。
+`evaluation_revision`はNegative Observation単位で0から単調増加し、`evaluation_id`は`negative_observation_id + evaluation_revision`から決定する。revision 0はNegative Observation生成時に作成し、`previous_evaluation_id`を明示的な`null`とする。revision 0の`evaluation_status`は本体の`negative_status`と等しく、`conflict_fact_refs`は本体の`positive_fact_refs`と集合として完全一致しなければならない。不一致はFail Closedする。
+
+revision n（n > 0）は、同じNegative Observationに属するrevision n - 1の`evaluation_id`を必ず参照する。
 
 同一revision・同一payloadはidempotentである。異なるpayload、revision gap、異なるNegative Observationへのpredecessor、または直前以外のpredecessorはFail Closedする。現在のnegative statusと競合位置は、最新の連続したEvaluationから導出する。
 
@@ -220,6 +222,7 @@ NEGATIVE_OBSERVATION_BOUNDED=true
 NEGATIVE_OBSERVATION_IMMUTABLE=true
 NEGATIVE_OBSERVATION_EVALUATION_APPEND_ONLY=true
 NEGATIVE_EVALUATION_PREDECESSOR_EXACT=true
+NEGATIVE_EVALUATION_REVISION_ZERO_ANCHORED=true
 LATE_POSITIVE_CONFLICT_REVISIONED=true
 POSITIVE_NEGATIVE_CONFLICT_BIDIRECTIONAL=true
 ATTEMPTS_AND_TIME_RECORDED=true
