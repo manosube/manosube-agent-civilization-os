@@ -53,7 +53,7 @@ def main() -> int:
     paths = sorted(SCHEMA_ROOT.rglob("*.schema.json"))
     schemas = [load_json(path) for path in paths]
     ids = [schema.get("$id") for schema in schemas]
-    if len(paths) != 32 or len(set(ids)) != len(paths) or None in ids:
+    if len(paths) != 33 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

@@ -412,6 +412,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     errors.append(f"non-reopen event carries reopen payload: {event['difference_event_id']}")
             else:
                 trigger = event["reopen_trigger"]
+                closure = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
                 if (
                     trigger is None
                     or event["closure_evaluation_ref"] is None
@@ -457,17 +458,48 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     expected_condition_ref = None if condition is None else {
                         "kind": "target_predicate", "id": condition["id"],
                     }
+                    matching_evaluations = [
+                        item for item in reopen_evaluations.values()
+                        if condition is not None
+                        and item["condition_ref"] == condition
+                        and _ref_id(item["difference_ref"]) == difference_id
+                        and policy is not None
+                        and _policy_ref_matches(item["policy_ref"], policy)
+                    ]
+                    latest_evaluation = max(
+                        matching_evaluations,
+                        key=lambda item: (item["evaluated_at"], item["evaluation_id"]),
+                        default=None,
+                    )
                     if (
                         condition_ref is None
                         or condition_ref != expected_condition_ref
+                        or event["reopen_condition_evaluation_ref"] is None
+                        or event["reopen_condition_evaluation_ref"].get("kind")
+                        != "reopen_condition_evaluation"
                         or condition_evaluation is None
                         or condition is None
+                        or condition_evaluation is not latest_evaluation
+                        or condition_evaluation["evaluation_id"]
+                        != _content_address(
+                            "REOPEN-EVAL-", condition_evaluation, "evaluation_id"
+                        )
                         or condition_evaluation["condition_ref"] != condition
                         or _ref_id(condition_evaluation["difference_ref"]) != difference_id
                         or not (policy and _policy_ref_matches(
                             condition_evaluation["policy_ref"], policy
                         ))
+                        or condition_evaluation["state_revision"]
+                        != event["state_revision_evaluated"]
+                        or condition_evaluation["state_fingerprint"]
+                        != event["state_fingerprint_evaluated"]
                         or condition_evaluation["status"] != "SATISFIED"
+                        or closure is None
+                        or datetime.fromisoformat(
+                            condition_evaluation["evaluated_at"].replace("Z", "+00:00")
+                        ) < datetime.fromisoformat(
+                            closure["evaluated_at"].replace("Z", "+00:00")
+                        )
                         or _canonical_semantic(condition_evaluation["evidence_refs"])
                         != _canonical_semantic(event["evidence_refs"])
                     ):
@@ -475,7 +507,6 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                             f"reopen condition evaluation mismatch: {event['difference_event_id']}"
                         )
                 previous = chain[expected_revision - 1] if expected_revision > 0 else None
-                closure = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
                 if (
                     previous is None
                     or _ref_id(previous["closure_evaluation_ref"])

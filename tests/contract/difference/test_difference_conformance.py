@@ -63,6 +63,9 @@ def test_valid_bundle_is_schema_valid_and_reconstructable() -> None:
         "candidate_claim_evaluation_event.schema.json": bundle["candidate_claim_evaluation_events"],
         "invariant_evaluation.schema.json": bundle["invariant_evaluations"],
         "evidence_sufficiency_result.schema.json": bundle["evidence_sufficiency_results"],
+        "reopen_condition_evaluation.schema.json": bundle.get(
+            "reopen_condition_evaluations", []
+        ),
     }
     for schema_name, records in record_groups.items():
         for record in records:

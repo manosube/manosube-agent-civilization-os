@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/reopen_condition_evaluation.schema.json",
+  "title": "Difference Reopen Condition Evaluation",
+  "type": "object",
+  "required": ["schema_version", "evaluation_id", "condition_ref", "difference_ref", "policy_ref", "state_revision", "state_fingerprint", "status", "evidence_refs", "evaluated_at"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "evaluation_id": {"type": "string", "pattern": "^REOPEN-EVAL-[0-9A-F]{64}$"},
+    "condition_ref": {"$ref": "closure_policy.schema.json#/$defs/reopen_condition"},
+    "difference_ref": {"$ref": "../common/reference.schema.json"},
+    "policy_ref": {"$ref": "difference.schema.json#/$defs/versioned_reference"},
+    "state_revision": {"type": "integer", "minimum": 0},
+    "state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "status": {"enum": ["SATISFIED", "NOT_SATISFIED", "UNKNOWN", "STALE", "REVOKED"]},
+    "evidence_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"},
+    "evaluated_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "additionalProperties": false
+}
