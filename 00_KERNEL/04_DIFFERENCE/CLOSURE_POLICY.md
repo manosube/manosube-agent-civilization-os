@@ -372,7 +372,43 @@ required_observation_scope ≠ null
 
 method、normalization profileおよびschema versionの追加制約が必要な場合は`required_claims`としてversioned identityを指定し、scope fieldへ暗黙に混在させない。単に独立したObservationが存在するだけでは満たさない。
 
-`G21`はClosure Policyの`required_claims`を空集合として無視する規則ではない。各required claimについて、exact claim identity、evaluated State、Evidence references、Completion Evaluation statusを解決し、全件が`SATISFIED`であることを要求する。
+`G21`のexpected claim setは次の和集合であり、Closure Policyの`required_claims`が空でもv0.1 mandatory claimを免除しない。
+
+```text
+EXPECTED_COMPLETION_CLAIMS
+=
+MANDATORY_V0_1_COMPLETION_CLAIMS
+UNION
+CLOSURE_POLICY.required_claims
+```
+
+v0.1の`MANDATORY_V0_1_COMPLETION_CLAIMS`は、`KERNEL_INVARIANTS.md`のv0.1 Mandatory GateでX-003に代えて要求される次の一件だけである。
+
+```yaml
+kind: completion_claim
+id: CMP-<64 lowercase hex>
+subject_type: KERNEL_INVARIANT_LIMITED_CLAIM
+subject_ref: {kind: kernel_invariant, id: X-003}
+claim_semantic_fingerprint: sha256:<64 lowercase hex>
+```
+
+このdescriptorが参照するCompletion Recordのclosed claim projectionを次へ固定する。
+
+```json
+{
+  "subject_type": "KERNEL_INVARIANT_LIMITED_CLAIM",
+  "subject_ref": {"kind":"kernel_invariant","id":"X-003"},
+  "claim": {
+    "AGENT_REQUIRED_FOR_KERNEL": false,
+    "SESSION_INDEPENDENT": true
+  },
+  "target_state_ref": null
+}
+```
+
+`claim_digest`はdomain `MANOSUBE:V0_1_X003_LIMITED_CLAIM:0.1:`のexact UTF-8 bytesと上記closed projectionのcanonical JSON UTF-8 bytesをseparatorなしで連結したSHA-256である。`claim_semantic_fingerprint = "sha256:" || lowercase_hex(claim_digest)`、`id = "CMP-" || lowercase_hex(claim_digest)`とし、producerが別ID、別claim、別targetを選ぶことを禁止する。
+
+G21 binding集合はEXPECTED COMPLETION CLAIMSのexact identity集合と完全一致し、mandatory X-003 bindingの欠落、余分、duplicateをrejectする。Policy claimと同じIDが重なる場合はsubject type、subject ref、claim fingerprintが完全一致するときだけ一件へ統合し、不一致は`BLOCKED`とする。各expected claimについて、exact claim identity、evaluated candidate State、Evidence references、Completion Evaluation statusを解決し、全件が`SATISFIED`であることを要求する。
 
 ```text
 REQUIRED CLAIM NOT_EVALUATED → CLOSURE NOT SATISFIED
@@ -433,7 +469,24 @@ registry_semantic_fingerprint: sha256:<64 lowercase hex>
 
 `source_section_sha256`はheading開始から次の同levelまたは上位heading直前までを第1章と同じUTF-8／NFC／LF／末尾改行規則で正規化したbytesのSHA-256である。各entryのdefinition digestは第1章のInvariant block抽出規則で同一source blobから再計算する。entriesは抽出された全IDをsource orderでexactly once含み、追加・欠落・並べ替え・selector fieldを拒否する。
 
-`registry_semantic_fingerprint`は`registry_id`、commit SHA、whole-file blob SHAを除き、`profile + schema_version + repository + path + source_section_sha256 + entries`のclosed projectionをcanonical JSON UTF-8化し、domain `MANOSUBE:V0_1_MANDATORY_INVARIANT_REGISTRY:0.1:`を前置したSHA-256（`sha256:`＋64 lowercase hex）とする。registry instance、source blob ref、section digest、registry fingerprintをEvaluation Evidenceへ保存し、Atomic Reflow直前に再導出してexact一致を確認する。producer-supplied registry、未承認fingerprint allowlist、手動applicability overrideは受理しない。欠落、解決不能、digest不一致、再導出不一致は`BLOCKED`であり、mandatory setを空集合へ縮小してはならない。
+registry digestは`registry_id`、commit SHA、whole-file blob SHAを除き、`profile + schema_version + repository + path + source_section_sha256 + entries`のclosed projectionをcanonical JSON UTF-8化し、domain `MANOSUBE:V0_1_MANDATORY_INVARIANT_REGISTRY:0.1:`のexact UTF-8 bytesをseparatorなしで前置してSHA-256する。
+
+```text
+registry_digest =
+SHA-256(
+  UTF8("MANOSUBE:V0_1_MANDATORY_INVARIANT_REGISTRY:0.1:")
+  ||
+  CANONICAL_JSON_UTF8(closed_projection)
+)
+
+registry_semantic_fingerprint =
+"sha256:" || lowercase_hex(registry_digest)
+
+registry_id =
+"V01-MANDATORY-INV-REG-" || lowercase_hex(registry_digest)
+```
+
+したがって同じauthoritative source semanticsから別IDを選べず、任意IDを受理しない。registry instance、source blob ref、section digest、registry fingerprintをEvaluation Evidenceへ保存し、Atomic Reflow直前に再導出してIDとfingerprintをexact一致確認する。producer-supplied registry、未承認fingerprint allowlist、手動applicability overrideは受理しない。欠落、解決不能、digest不一致、再導出不一致は`BLOCKED`であり、mandatory setを空集合へ縮小してはならない。
 
 Canonical Invariant Evaluation Recordを変更せず、expected setを作る前に同一Invariant IDの定義を照合する。Applicability Registry entryと`CLOSURE_POLICY.required_invariants`が同じIDを要求する場合、両者の`repository + path + invariant_definition_sha256`が完全一致するときだけ一件へ統合する。一つでも異なる場合はdefinition conflictとして`BLOCKED`にし、先勝ち、後勝ち、IDだけのdeduplicationを禁止する。
 
