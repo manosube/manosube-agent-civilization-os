@@ -714,3 +714,24 @@ def test_positive_negative_conflict_retry_is_idempotent() -> None:
     first = observe(request)
     request["prior_bundle"] = first
     assert observe(request) == first
+
+
+def test_predicate_must_belong_to_profile_vocabulary() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"][0]["predicate"] = "invented@v1"
+    with pytest.raises(ObservationError, match="unknown predicate"):
+        observe(request)
+
+
+def test_timestamp_fact_is_normalized_to_utc_and_naive_time_rejected() -> None:
+    first = _request()
+    first["source_occurrences"][0]["facts"] = [
+        _fact("fixture.name", "equals@v1", "2026-08-29T10:00:00+01:00", "TIMESTAMP")
+    ]
+    second = deepcopy(first)
+    second["source_occurrences"][0]["facts"][0]["value"] = "2026-08-29T09:00:00Z"
+    assert observe(first)["facts"] == observe(second)["facts"]
+
+    second["source_occurrences"][0]["facts"][0]["value"] = "2026-08-29T09:00:00"
+    with pytest.raises(ObservationError, match="explicit UTC offset"):
+        observe(second)
