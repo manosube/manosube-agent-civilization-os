@@ -68,7 +68,20 @@
     },
     "value_candidate": {
       "type": "object", "required": ["value", "value_type", "unit", "fact_predicate", "effective_boundary"],
-      "properties": {"value": {}, "value_type": {"enum": ["NULL", "BOOLEAN", "INTEGER", "STRING", "STRUCTURED", "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE", "ORDERED_COLLECTION", "UNORDERED_COLLECTION"]}, "unit": {"type": ["string", "null"]}, "fact_predicate": {"type": "string", "minLength": 1}, "effective_boundary": {"$ref": "#/$defs/effective_boundary"}}, "additionalProperties": false
+      "properties": {"value": {}, "value_type": {"enum": ["NULL", "BOOLEAN", "INTEGER", "STRING", "STRUCTURED", "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE", "ORDERED_COLLECTION", "UNORDERED_COLLECTION"]}, "unit": {"type": ["string", "null"]}, "fact_predicate": {"type": "string", "minLength": 1}, "effective_boundary": {"$ref": "#/$defs/effective_boundary"}},
+      "allOf": [
+        {"if": {"properties": {"value_type": {"const": "NULL"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"value_type": {"const": "BOOLEAN"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "boolean"}}}},
+        {"if": {"properties": {"value_type": {"const": "INTEGER"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "integer"}}}},
+        {"if": {"properties": {"value_type": {"const": "STRING"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string"}}}},
+        {"if": {"properties": {"value_type": {"const": "STRUCTURED"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "object"}}}},
+        {"if": {"properties": {"value_type": {"const": "DECIMAL"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"}}}},
+        {"if": {"properties": {"value_type": {"const": "TIMESTAMP"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "../common/timestamp.schema.json"}}}},
+        {"if": {"properties": {"value_type": {"const": "DURATION"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^P"}}}},
+        {"if": {"properties": {"value_type": {"const": "IDENTITY_REFERENCE"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "../common/reference.schema.json"}}}},
+        {"if": {"properties": {"value_type": {"const": "ORDERED_COLLECTION"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "#/$defs/ordered_values"}}}},
+        {"if": {"properties": {"value_type": {"const": "UNORDERED_COLLECTION"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "#/$defs/unordered_values"}}}}
+      ], "additionalProperties": false
     },
     "objective_scope_binding": {
       "type": "object", "required": ["objective_scope_name", "scope_ref", "scope_schema_version", "resolved_scope_record_sha256"],

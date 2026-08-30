@@ -107,6 +107,35 @@ def _has_recursive_set_duplicate(value: Any) -> bool:
     return False
 
 
+def _subject_value(document: dict[str, Any], subject: str) -> Any:
+    value: Any = document
+    for segment in subject.split("."):
+        if not isinstance(value, dict) or segment not in value:
+            return None
+        value = value[segment]
+    return value
+
+
+def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
+    expected = target["expected_value"]
+    operator = target["operator"]
+    if operator == "equals":
+        return bool(values) and all(value == expected for value in values)
+    if operator == "not_equals":
+        return bool(values) and all(value != expected for value in values)
+    if operator == "contains":
+        return bool(values) and all(
+            isinstance(value, (str, list, dict)) and expected in value for value in values
+        )
+    if operator == "exists":
+        return bool(values)
+    if operator == "all":
+        return bool(values) and all(value == expected for value in values)
+    if operator == "none":
+        return all(value != expected for value in values)
+    return False
+
+
 def _policy_fingerprint(policy: dict[str, Any]) -> str:
     projection = {key: policy[key] for key in (
         "target_predicate_ref", "required_observation_scope", "minimum_evidence_level",
@@ -321,6 +350,23 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     observations = _index(
         bundle.get("observations", []), "observation_id", errors
     )
+    observation_scopes = _index(
+        bundle.get("observation_scopes", []), "scope_id", errors
+    )
+    normalized_facts = _index(
+        bundle.get("normalized_facts", []), "fact_id", errors
+    )
+    evidence_observed_at: dict[bytes, datetime] = {}
+    for observation in observations.values():
+        observed_at = datetime.fromisoformat(
+            observation["time_boundary"]["source_snapshot_time"].replace("Z", "+00:00")
+        )
+        for reference in observation["observation_evidence_refs"]:
+            key = canonical_json_bytes(reference)
+            previous_time = evidence_observed_at.get(key)
+            evidence_observed_at[key] = (
+                observed_at if previous_time is None else min(previous_time, observed_at)
+            )
 
     for policy in policies.values():
         claims_by_id: dict[str, dict[str, Any]] = {}
@@ -777,7 +823,29 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         else:
             evaluated_at = datetime.fromisoformat(evaluation["evaluated_at"].replace("Z", "+00:00"))
             expires_at = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-            if expires_at < evaluated_at or expires_at > evaluated_at + timedelta(seconds=maximum_age):
+            required_evidence_refs = (
+                evaluation["terminal_reason_evidence_refs"]
+                + evaluation["change_result_evidence_refs"]
+                + evaluation["change_free_verification_evidence_refs"]
+            )
+            evidence_times = [
+                evidence_observed_at.get(canonical_json_bytes(reference))
+                for reference in required_evidence_refs
+            ]
+            oldest_evidence = (
+                None if not evidence_times or any(item is None for item in evidence_times)
+                else min(item for item in evidence_times if item is not None)
+            )
+            expected_expiry = (
+                None if oldest_evidence is None
+                else oldest_evidence + timedelta(seconds=maximum_age)
+            )
+            if (
+                expected_expiry is None
+                or expires_at != expected_expiry
+                or evaluated_at < oldest_evidence
+                or evaluated_at > expected_expiry
+            ):
                 errors.append(f"invalid evaluation expiry: {evaluation['closure_evaluation_id']}")
         if evaluation["gate_results"]["G22"] != "PASS":
             errors.append(f"terminal state not allowed: {evaluation['closure_evaluation_id']}")
@@ -833,6 +901,22 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 (policy or {}).get("required_observation_scope")
                 or (difference or {}).get("objective_scope_binding", {}).get("scope_ref")
             )
+            scope_reference = None if required_scope_ref is None else {
+                "kind": required_scope_ref["kind"], "id": required_scope_ref["id"],
+            }
+            required_scope = observation_scopes.get(
+                "" if required_scope_ref is None else required_scope_ref["id"]
+            )
+            scope_binding_valid = required_scope_ref is not None and (
+                "schema_version" not in required_scope_ref
+                or (
+                    required_scope is not None
+                    and required_scope["schema_version"] == required_scope_ref["schema_version"]
+                    and "sha256:" + hashlib.sha256(
+                        canonical_json_bytes(_canonical_semantic(required_scope))
+                    ).hexdigest() == required_scope_ref["resolved_record_sha256"]
+                )
+            )
             resolution_evidence_refs = (
                 evaluation["change_result_evidence_refs"]
                 + evaluation["change_free_verification_evidence_refs"]
@@ -843,7 +927,34 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             candidate_snapshot_set = (
                 None if candidate is None else candidate["source_snapshot_refs"]
             )
-            after_observations_valid = bool(after_observations) and all(
+            resolved_fact_sets = [
+                [normalized_facts.get(_ref_id(reference) or "") for reference in observation["normalized_fact_refs"]]
+                if observation is not None else []
+                for observation in after_observations
+            ]
+            facts_valid = all(
+                facts
+                and all(
+                    fact is not None
+                    and difference is not None
+                    and fact["project_id"] == difference["project_id"]
+                    and fact["subject"] == difference["subject"]
+                    for fact in facts
+                )
+                and difference is not None
+                and _target_satisfied(
+                    [fact["value"] for fact in facts if fact is not None],
+                    difference["normalized_target_state"],
+                )
+                for facts in resolved_fact_sets
+            )
+            candidate_target_valid = (
+                candidate is not None
+                and difference is not None
+                and _subject_value(candidate["semantic_state"], difference["subject"])
+                == difference["normalized_target_state"]["expected_value"]
+            )
+            after_observations_valid = bool(after_observations) and scope_binding_valid and facts_valid and candidate_target_valid and all(
                 observation is not None
                 and difference is not None
                 and candidate is not None
@@ -854,7 +965,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 == evaluation["before_state_ref"]["fingerprint"]
                 and observation["target"]["target_identity"]
                 == difference["target_predicate_ref"]["id"]
-                and observation["scope_ref"] == required_scope_ref
+                and observation["scope_ref"] == scope_reference
                 and observation["status"] == "COMPLETE"
                 and observation["blind_spots"]["status"] == "NONE_KNOWN"
                 and bool(observation["normalized_fact_refs"])
