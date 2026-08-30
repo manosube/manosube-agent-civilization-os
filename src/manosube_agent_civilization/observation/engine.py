@@ -140,6 +140,8 @@ def _completion(
     observation: dict[str, Any],
     scope: dict[str, Any],
     collection_complete: bool,
+    claim: dict[str, Any] | None = None,
+    facts: list[dict[str, Any]] | None = None,
 ) -> dict[str, bool]:
     attempts = observation["attempts"]
     observation_start = _instant(observation["time_boundary"]["observation_started_at"])
@@ -169,9 +171,19 @@ def _completion(
         "no_conflicting_positive_fact": True,
     }
     if status == "EMPTY":
+        matching_fact_exists = bool(
+            claim
+            and facts
+            and any(
+                fact["subject"] == claim["subject"]
+                and fact["predicate"] == claim["predicate"]
+                and fact["effective_boundary"] == claim["effective_boundary"]
+                for fact in facts
+            )
+        )
         base["collection_defined"] = collection_complete
         base["enumeration_complete"] = collection_complete
-        base["zero_valid_members"] = collection_complete and not observation["normalized_fact_refs"]
+        base["zero_valid_members"] = collection_complete and not matching_fact_exists
     return base
 
 
@@ -196,7 +208,9 @@ def _negative_records(
     ]
     if conflicts:
         status = "CONFLICTED"
-    completion = _completion(status, observation, scope, collection_complete)
+    completion = _completion(
+        status, observation, scope, collection_complete, claim=claim, facts=facts
+    )
     if status == "ABSENT" and not all(completion.values()):
         raise ObservationError("ABSENT requires a complete bounded absence gate")
     if status == "EMPTY" and not all(
@@ -336,6 +350,15 @@ def _validate_records(bundle: dict[str, Any]) -> None:
                 if reference["kind"] != "fact_observation_binding" or not binding or binding["fact_id"] != fact_id:
                     errors.append(f"cross-Fact or missing binding: {fact_id}")
     negative_ids = {item["negative_observation_id"] for item in bundle["negative_observations"]}
+    for evaluation in bundle["fact_evaluations"]:
+        if evaluation["fact_id"] not in fact_ids:
+            errors.append(f"evaluation references missing Fact: {evaluation['fact_id']}")
+    for evaluation in bundle["negative_evaluations"]:
+        if evaluation["negative_observation_id"] not in negative_ids:
+            errors.append(
+                "evaluation references missing Negative Observation: "
+                f"{evaluation['negative_observation_id']}"
+            )
     for negative_id in negative_ids:
         evaluations = sorted(
             (item for item in bundle["negative_evaluations"] if item["negative_observation_id"] == negative_id),
@@ -556,7 +579,18 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             separators=(",", ":"),
         )
         coordinates[coordinate] = coordinates.get(coordinate, 0) + 1
-    has_retry_conflict = any(count > 1 for count in coordinates.values()) or any(
+    observed_coordinates = {
+        json.dumps(
+            [fact["subject"], fact["predicate"], fact["effective_boundary"]],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        for fact in observed_facts
+    }
+    has_retry_conflict = any(
+        count > 1 and coordinate in observed_coordinates
+        for coordinate, count in coordinates.items()
+    ) or any(
         fact["subject"] == negative["subject"]
         and fact["predicate"] == negative["predicate"]
         and fact["effective_boundary"] == negative["effective_boundary"]
@@ -621,7 +655,14 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 existing_negative is None
                 or existing_negative["negative_status"] != expected_status
                 or existing_negative["completion_evaluation"]
-                != _completion(expected_status, observation, scope, collection_complete)
+                != _completion(
+                    expected_status,
+                    observation,
+                    scope,
+                    collection_complete,
+                    claim=claim,
+                    facts=facts,
+                )
             ):
                 retry_negative_equivalent = False
         if (
@@ -644,7 +685,9 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         coordinate_groups.setdefault(coordinate, []).append(fact)
     positive_conflicts = {
         fact["fact_id"]: {other["fact_id"] for other in group if other["fact_id"] != fact["fact_id"]}
-        for group in coordinate_groups.values() if len(group) > 1
+        for group in coordinate_groups.values()
+        if len(group) > 1
+        and any(item["fact_id"] in observed_fact_ids for item in group)
         for fact in group
     }
     appended_fact_evaluations: dict[str, dict[str, Any]] = {}
