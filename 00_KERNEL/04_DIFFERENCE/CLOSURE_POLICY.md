@@ -193,8 +193,12 @@ after_state_candidate:
   base_state_ref: {kind: state, revision: 0, fingerprint: {}}
   semantic_state: {}
   semantic_fingerprint: {}
-  source_snapshot_refs: []
-  producing_change_refs: []
+  source_snapshot_refs:
+    collection_kind: UNORDERED_SET
+    members: []
+  producing_change_refs:
+    collection_kind: UNORDERED_SET
+    members: []
 after_observation_refs: []
 change_result_evidence_refs: []
 change_free_verification_evidence_refs: []
@@ -285,7 +289,23 @@ G22 PROPOSED_TERMINAL_STATE_ALLOWED
 
 一つでもfalseまたはunknownなら`SATISFIED`にしない。
 
-`after_state_candidate`はCanonical Stateではなく、Atomic Reflowへ提案されるclosed staged recordである。`candidate_id`は`base_state_ref + semantic_state + semantic_fingerprint + source_snapshot_refs + producing_change_refs`のcanonical payloadから決定的に生成する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。
+`after_state_candidate`はCanonical Stateではなく、Atomic Reflowへ提案されるclosed staged recordである。`candidate_id`は次のprofileで決定的に生成する。
+
+```text
+PROFILE=MANOSUBE-AFTER-STATE-CANDIDATE-SHA256-0.1
+DIGEST=SHA-256
+DOMAIN_SEPARATOR=MANOSUBE:AFTER_STATE_CANDIDATE:0.1:
+SERIALIZATION=CANONICAL_JSON_UTF8
+TEXT_NORMALIZATION=UNICODE_NFC
+OBJECT_KEY_ORDER=LEXICOGRAPHIC
+UNORDERED_SETS=source_snapshot_refs,producing_change_refs
+SET_ORDER=CANONICAL_MEMBER_BYTES
+DUPLICATE_SET_MEMBER=REJECT
+UNKNOWN_FIELDS=REJECT
+OUTPUT=STATE-CANDIDATE-<64 lowercase hexadecimal characters>
+```
+
+ID inputは`schema/profile domain + base_state_ref + semantic_state + semantic_fingerprint + source_snapshot_refs + producing_change_refs`である。collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。
 
 After-state Observationは存在しない未来revisionへ結合しない。Observation Contract上のState bindingは`base_state_ref`へ結合し、観測対象と結果provenanceはcandidateのimmutable `source_snapshot_refs`へexactに結合する。Observationから導出されたsemantic factsが`semantic_state`および`semantic_fingerprint`と一致することをG7〜G10で検証する。
 
@@ -334,7 +354,7 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 → CLOSURE NOT SATISFIED
 ```
 
-`G19`はClosure Policyの`required_invariants`それぞれに対し、同一evaluated State revision／fingerprintへ結合されたexact `invariant_evaluation_refs`を要求する。未評価、欠落、stale、unknownまたはfailを一件でも含む場合は`SATISFIED`にしない。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
+`G19`はClosure Policyの`required_invariants`それぞれに対し、`after_state_candidate.candidate_id`とその`semantic_fingerprint`へexactに結合された`invariant_evaluation_refs`を要求する。Evaluation recordはbase State revision／fingerprintもprovenanceとして保持するが、判定対象はcandidate semantic stateでなければならない。未評価、欠落、stale、unknownまたはfailを一件でも含む場合は`SATISFIED`にしない。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
 
 `G22`は`proposed_terminal_status`が`CLOSED | BLOCKED | RETAINED`のclosed enumに属し、かつPolicyの`allowed_terminal_states`に明示されていることを要求する。未許可statusへのEvaluationを`SATISFIED`にせず、Lifecycle transitionも拒否する。各statusについて別Evaluationを生成し、あるstatusの許可を別statusへ流用しない。
 
@@ -360,7 +380,7 @@ v0.1 Difference Contractは、暗号鍵、署名、trust root、issuer identity�
 
 この制約は再観測を免除しない。`independent_verification_required=false`でも、G7からG18、Observation scope completeness、blind spot、Evidence Sufficiency、conflictおよびfreshness gateをすべて通常どおり評価する。
 
-`G21`で使用した各Completion Evaluationは`required_claim_evaluation_refs`へexactに保存する。各refはclaim identity、evaluated State revision／fingerprint、Evidence refs、evaluation statusおよびevaluation revisionへ解決可能でなければならない。Atomic Reflow直前に全refがcurrentかつ`SATISFIED`であることを再検査し、`REVOKED`、`STALE`またはhead変更を一件でも検出した場合はClosure Evaluationを`STALE`または`REVOKED`として拒否する。
+`G21`で使用した各Completion Evaluationは`required_claim_evaluation_refs`へexactに保存し、各Evaluationを`after_state_candidate.candidate_id`とcandidate `semantic_fingerprint`へ結合する。base Stateだけを評価したCompletion Evaluationをcandidateへ流用してはならない。各refはclaim identity、evaluated State revision／fingerprint、Evidence refs、evaluation statusおよびevaluation revisionへ解決可能でなければならない。Atomic Reflow直前に全refのcandidate ID／semantic fingerprintがpromotion対象とexact一致し、currentかつ`SATISFIED`であることを再検査し、`REVOKED`、`STALE`またはhead変更を一件でも検出した場合はClosure Evaluationを`STALE`または`REVOKED`として拒否する。
 
 # 4. Independent Re-observation
 
