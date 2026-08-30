@@ -40,7 +40,7 @@ required_observation_scope: null
 minimum_evidence_level: E1
 required_claims:
   - kind: completion_claim
-    id: CMP-...
+    id: CLAIM-...
     subject_type: OBJECTIVE_PREDICATE_COMPLETION
     subject_ref: {kind: target_predicate, id: OBJ-PRED-...}
     claim_semantic_fingerprint: sha256:...
@@ -145,6 +145,18 @@ Conformance vectorsはobject key順序の不変性、各included field変更に�
 Policy fingerprintへ投入する各`reopen_conditions` memberは、`kind + id + predicate_semantic_fingerprint`だけのclosed semantic projectionとする。`objective_revision_ref`はexact provenance検証には必須だがPolicy semantic fingerprintから除外する。同じpredicate ID／semanticsを保持するEDITORIAL Objective revision更新ではPolicy fingerprintを変えず、predicate semantic fingerprint変更時だけ変える。
 
 `required_claims` memberは上記例のclosed five-field objectだけを許可する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`だけから同じcanonical JSON／SHA-256出力規則で算出する。
+
+全Policy-required Claimのstable IDはmandatory X-003と同じnamespace規則へ統一する。ID inputは次のclosed projectionだけである。
+
+```json
+{
+  "subject_type": "OBJECTIVE_PREDICATE_COMPLETION",
+  "subject_ref": {},
+  "claim_semantic_fingerprint": "sha256:..."
+}
+```
+
+`claim_identity_digest = SHA-256(UTF8("MANOSUBE:COMPLETION_CLAIM_IDENTITY:0.1:") || CANONICAL_JSON_UTF8(closed_projection))`、`id = "CLAIM-" || uppercase_hex(claim_identity_digest)`とする。`kind`と`id`自身はinputへ含めない。同じsemantic Claimへ別IDを割り当てること、同じIDへ別projectionを割り当てることを拒否する。mandatory X-003もこのgeneral algorithmを使用し、専用domainで別ID空間を作らない。
 
 Fingerprint循環を避けるため、Completion Recordの`closure_policy_ref`、completion ID、evaluation status、Evidence refsをclaim semantic fingerprintへ含めない。Claim側Policy bindingは`candidate_claim_evaluation_bindings`を解決するG21で別途exact検証し、現在のClosure Policyを自己参照させない。
 
@@ -406,7 +418,7 @@ claim_semantic_fingerprint: sha256:<64 lowercase hex>
 }
 ```
 
-`claim_digest`はdomain `MANOSUBE:V0_1_X003_LIMITED_CLAIM:0.1:`のexact UTF-8 bytesと上記closed projectionのcanonical JSON UTF-8 bytesをseparatorなしで連結したSHA-256である。`claim_semantic_fingerprint = "sha256:" || lowercase_hex(claim_digest)`、stable claim descriptorの`id = "CLAIM-" || uppercase_hex(claim_digest)`とし、producerが別ID、別claim、別targetを選ぶことを禁止する。この`CLAIM-` IDはsemantic Claim identityであり、candidate固有のCanonical Completion Record IDではない。ID digestをuppercase hexとするのは`01_SCHEMA/common/identity.schema.json`へ適合させるためであり、SHA-256値自体は同一である。
+上記closed claim projectionから通常のclaim semantic fingerprintを算出し、その`subject_type + subject_ref + claim_semantic_fingerprint`を第1章のgeneral `MANOSUBE:COMPLETION_CLAIM_IDENTITY:0.1:` algorithmへ入力してstable `CLAIM-` IDを生成する。producerが別ID、別claim、別targetを選ぶことを禁止する。この`CLAIM-` IDはsemantic Claim identityであり、candidate固有のCanonical Completion Record IDではない。
 
 G21 binding集合はEXPECTED COMPLETION CLAIMSのexact identity集合と完全一致し、mandatory X-003 bindingの欠落、余分、duplicateをrejectする。Policy claimと同じIDが重なる場合はsubject type、subject ref、claim fingerprintが完全一致するときだけ一件へ統合し、不一致は`BLOCKED`とする。各expected claimについて、exact claim identity、evaluated candidate State、Evidence references、Completion Evaluation statusを解決し、全件が`SATISFIED`であることを要求する。
 
@@ -575,6 +587,8 @@ candidate_id: STATE-CANDIDATE-...
 candidate_semantic_fingerprint: {}
 base_state_ref: {kind: state, revision: 0, fingerprint: {}}
 required_claim_ref: {kind: completion_claim, id: CLAIM-...}
+evaluation_series_id: CAND-CLAIM-SERIES-...
+evaluation_head_event_ref: {kind: candidate_claim_evaluation_event, id: CAND-CLAIM-EVT-..., revision: 0}
 completion_record_ref: {kind: completion_record, id: CMP-...}
 evaluation_record_fingerprint: sha256:...
 evaluation_status: SATISFIED
@@ -584,9 +598,29 @@ evaluated_at: "2026-01-01T00:00:00Z"
 
 Candidate固有の`completion_record_ref.id`は、Completion Recordから`completion_id`とpost-commit `reflow_transition_ref`だけを除いた第3章のclosed Completion Record projectionへ、domain `MANOSUBE:CANDIDATE_COMPLETION_RECORD:0.1:`を前置してSHA-256し、`"CMP-" || uppercase_hex(digest)`として生成する。このprojectionは`observed_state_ref`、`closure_policy_ref`、evaluated State revision／fingerprint、Evidence refs、evaluation status、evaluated_atを含むため、同じstable Claimを別candidate、別Policy、別時点で評価したrecordは別IDになる。同一record IDの異なるpayloadはconflictとして拒否する。
 
+Completion Recordの更新履歴は、次のDifference-owned append-only series eventで連結する。
+
+```yaml
+kind: candidate_claim_evaluation_event
+event_id: CAND-CLAIM-EVT-...
+evaluation_series_id: CAND-CLAIM-SERIES-...
+event_revision: 0
+predecessor_event_ref: null
+candidate_id: STATE-CANDIDATE-...
+required_claim_ref: {kind: completion_claim, id: CLAIM-...}
+completion_record_ref: {kind: completion_record, id: CMP-...}
+completion_record_fingerprint: sha256:...
+evaluation_status: SATISFIED
+recorded_at: "2026-01-01T00:00:00Z"
+```
+
+`evaluation_series_id`は`candidate_id + required_claim_ref`のclosed projectionへdomain `MANOSUBE:CANDIDATE_CLAIM_EVALUATION_SERIES:0.1:`を前置したSHA-256をuppercase hex化し、`CAND-CLAIM-SERIES-`へ連結する。event revisionは0から連続し、predecessorは直前eventへexactに結合する。event IDはID自身を除く全closed fieldへdomain `MANOSUBE:CANDIDATE_CLAIM_EVALUATION_EVENT:0.1:`を前置したSHA-256のuppercase hexを`CAND-CLAIM-EVT-`へ連結する。同一event ID／同一payloadはidempotent、異なるpayloadはconflictである。
+
+新しいSATISFIED、STALE、REVOKEDその他のCompletion Recordが生じるたび同じseriesへeventをappendする。Candidate bindingの`evaluation_head_event_ref`はEvaluation時点の連続series headを指す。
+
 Binding IDと検証規則はG19 bindingと同じcanonical profileを使用し、prefixだけを`CAND-CLAIM-EVAL-`とする。 両binding IDはSHA-256 digestをuppercase hexadecimalでprefixへ連結し、semantic fingerprintだけをlowercase `sha256:`形式で表す。 `evaluation_evidence_refs`も同じexplicit duplicate-free `UNORDERED_SET` wrapperを使用する。Underlying Completion Recordのclaim、status、Evidence、time、record fingerprintとexact一致し、candidate semantic stateを評価対象としたことを証明する。base State評価の流用を禁止する。
 
-Atomic Reflow直前に全binding／underlying recordを再解決し、candidate binding、record fingerprint、status、Evidenceがcurrentかつ`SATISFIED`であることを再検査する。`REVOKED`、`STALE`、fingerprint／Evidence変更、candidate mismatch、非SATISFIEDを一件でも検出した場合はpromotionをrejectする。
+Atomic Reflow直前に各`evaluation_series_id`のappend-only event chainをrevision 0から再構築し、最新head eventを解決する。bindingの`evaluation_head_event_ref`がその最新headとexact一致し、headが参照するCompletion Record／fingerprint／status／Evidenceもbindingとexact一致する場合だけcurrentとする。後続event、gap、fork、predecessor不一致、`REVOKED`、`STALE`、fingerprint／Evidence変更、candidate mismatch、非SATISFIEDを一件でも検出した場合はpromotionをrejectする。古いSATISFIED recordを直接参照して最新head解決を省略してはならない。
 
 # 4. Independent Re-observation
 
