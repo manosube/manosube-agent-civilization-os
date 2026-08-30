@@ -418,3 +418,24 @@ def test_reflow_claim_and_terminal_invariant_references_are_resolved() -> None:
         "candidate invariant binding mismatch" in error
         for error in validate_bundle(terminal)
     )
+
+
+def test_policy_claim_rejects_bare_nested_collections() -> None:
+    policy = deepcopy(load_json(FIXTURE_ROOT / "valid" / "bundle.json")["policies"][0])
+    descriptor = {
+        "kind": "completion_claim",
+        "id": "CLAIM-" + "A" * 64,
+        "subject_type": "DIFFERENCE",
+        "subject_ref": {"kind": "difference", "id": "D-EXAMPLE"},
+        "claim": {"values": [1, 2]},
+        "target_state_ref": None,
+        "claim_semantic_fingerprint": "sha256:" + "a" * 64,
+    }
+    policy["required_claims"] = [descriptor]
+    validator = _validators()["closure_policy.schema.json"]
+    assert list(validator.iter_errors(policy))
+
+    descriptor["claim"]["values"] = {
+        "collection_kind": "UNORDERED_SET", "members": [1, 2],
+    }
+    assert not list(validator.iter_errors(policy))

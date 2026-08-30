@@ -695,7 +695,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or record["state_revision"] != evaluation["before_state_ref"]["revision"]
                     or record["state_fingerprint"] != candidate["semantic_fingerprint"]
                     or record["status"] != binding["evaluation_result"]
-                    or record["evidence_refs"] != binding["evaluation_evidence_refs"]
+                    or _canonical_semantic(record["evidence_refs"])
+                    != _canonical_semantic(binding["evaluation_evidence_refs"])
                     or record["evaluated_at"] != binding["evaluated_at"]
                     or binding["evaluation_record_fingerprint"]
                     != (None if record is None else _resolved_record_fingerprint(record, "invariant"))
@@ -807,7 +808,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or record["state_revision"] != evaluation["before_state_ref"]["revision"]
                     or record["state_fingerprint"] != candidate["semantic_fingerprint"]
                     or record["status"] != binding["evaluation_result"]
-                    or record["evidence_refs"] != binding["evaluation_evidence_refs"]
+                    or _canonical_semantic(record["evidence_refs"])
+                    != _canonical_semantic(binding["evaluation_evidence_refs"])
                     or record["evaluated_at"] != binding["evaluated_at"]
                     or binding["evaluation_record_fingerprint"]
                     != (None if record is None else _resolved_record_fingerprint(record, "invariant"))
@@ -888,9 +890,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or _canonical_semantic(completion["required_evidence_refs"])
                     != _canonical_semantic(binding["evaluation_evidence_refs"])
                     or descriptor is None
+                    or binding["required_claim_ref"]
+                    != {"kind": "completion_claim", "id": descriptor["id"]}
                     or completion["subject_type"] != descriptor["subject_type"]
                     or completion["subject_ref"] != descriptor["subject_ref"]
-                    or completion["claim"] != descriptor["claim"]
+                    or _canonical_semantic(completion["claim"])
+                    != _canonical_semantic(descriptor["claim"])
                     or completion["target_state_ref"] != descriptor["target_state_ref"]
                     or completion["observed_state_ref"]
                     != {"kind": "after_state_candidate", "id": candidate["candidate_id"]}
@@ -980,6 +985,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     != candidate["semantic_fingerprint"]
                     or binding["base_state_ref"] != evaluation["before_state_ref"]
                     or descriptor is None
+                    or binding["required_claim_ref"]
+                    != {"kind": "completion_claim", "id": descriptor["id"]}
                     or binding["evaluation_series_id"] != expected_series
                     or not chain_valid
                     or completion is None
@@ -987,7 +994,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or descriptor is None
                     or completion["subject_type"] != descriptor["subject_type"]
                     or completion["subject_ref"] != descriptor["subject_ref"]
-                    or completion["claim"] != descriptor["claim"]
+                    or _canonical_semantic(completion["claim"])
+                    != _canonical_semantic(descriptor["claim"])
                     or completion["target_state_ref"] != descriptor["target_state_ref"]
                     or completion["observed_state_ref"]
                     != {"kind": "after_state_candidate", "id": candidate["candidate_id"]}

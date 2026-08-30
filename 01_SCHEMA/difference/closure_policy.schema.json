@@ -32,7 +32,29 @@
     },
     "completion_claim": {
       "type": "object", "required": ["kind", "id", "subject_type", "subject_ref", "claim", "target_state_ref", "claim_semantic_fingerprint"],
-      "properties": {"kind": {"const": "completion_claim"}, "id": {"type": "string", "pattern": "^CLAIM-[0-9A-F]{64}$"}, "subject_type": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}, "subject_ref": {"$ref": "../common/reference.schema.json"}, "claim": {"type": "object"}, "target_state_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]}, "claim_semantic_fingerprint": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"}}, "additionalProperties": false
+      "properties": {"kind": {"const": "completion_claim"}, "id": {"type": "string", "pattern": "^CLAIM-[0-9A-F]{64}$"}, "subject_type": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}, "subject_ref": {"$ref": "../common/reference.schema.json"}, "claim": {"$ref": "#/$defs/claim_object"}, "target_state_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]}, "claim_semantic_fingerprint": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"}}, "additionalProperties": false
+    },
+    "claim_object": {
+      "type": "object", "not": {"required": ["collection_kind"]},
+      "additionalProperties": {"$ref": "#/$defs/claim_value"}
+    },
+    "claim_value": {
+      "oneOf": [
+        {"type": ["null", "boolean", "integer", "number", "string"]},
+        {"$ref": "#/$defs/claim_object"},
+        {"$ref": "#/$defs/claim_collection"}
+      ]
+    },
+    "claim_collection": {
+      "type": "object", "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"enum": ["ORDERED_LIST", "UNORDERED_SET"]},
+        "members": {"type": "array", "items": {"$ref": "#/$defs/claim_value"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"collection_kind": {"const": "UNORDERED_SET"}}, "required": ["collection_kind"]}, "then": {"properties": {"members": {"uniqueItems": true}}}}
+      ],
+      "additionalProperties": false
     },
     "invariant_requirement": {
       "type": "object", "required": ["kind", "id", "contract_source_ref"],
