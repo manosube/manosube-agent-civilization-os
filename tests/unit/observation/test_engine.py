@@ -131,13 +131,22 @@ def test_reobservation_preserves_facts_and_appends_state_bound_provenance() -> N
         "profile": "MANOSUBE-STATE-SHA256-0.1",
         "digest": "b" * 64,
     }
+    after_request["prior_bundle"] = before
     after = observe(after_request)
+    assert validate_bundle(after) == []
     assert {item["fact_id"] for item in before["facts"]} == {
         item["fact_id"] for item in after["facts"]
     }
     assert {item["binding_id"] for item in before["bindings"]}.isdisjoint(
-        item["binding_id"] for item in after["bindings"]
+        item["binding_id"] for item in after["bindings"] if item["state_revision_observed"] == 3
     )
+    assert {item["evaluation_revision"] for item in after["fact_evaluations"]} == {0, 1}
+    for fact_id in {item["fact_id"] for item in before["facts"]}:
+        evaluations = sorted(
+            (item for item in after["fact_evaluations"] if item["fact_id"] == fact_id),
+            key=lambda item: item["evaluation_revision"],
+        )
+        assert evaluations[1]["previous_evaluation_id"] == evaluations[0]["evaluation_id"]
 
 
 @pytest.mark.parametrize(
@@ -185,7 +194,7 @@ def test_no_result_is_unknown_not_absent() -> None:
 def test_empty_requires_complete_enumeration() -> None:
     request = _request()
     request["source_occurrences"][0]["facts"] = []
-    request["collection_complete"] = True
+    request["collection_complete"] = False
     request["negative_claims"] = [
         {
             "negative_status": "EMPTY",
@@ -197,15 +206,7 @@ def test_empty_requires_complete_enumeration() -> None:
     with pytest.raises(ObservationError, match="zero-member"):
         observe(request)
 
-    request["negative_claims"][0]["completion_evaluation"] = {
-        "scope_complete": True,
-        "method_complete": True,
-        "required_attempts_completed": True,
-        "no_blocking_blind_spot": True,
-        "collection_defined": True,
-        "enumeration_complete": True,
-        "zero_valid_members": True,
-    }
+    request["collection_complete"] = True
     negative = observe(request)["negative_observations"][0]
     assert negative["negative_status"] == "EMPTY"
 
@@ -213,6 +214,8 @@ def test_empty_requires_complete_enumeration() -> None:
 def test_absent_requires_complete_bounded_gate() -> None:
     request = _request()
     request["source_occurrences"][0]["facts"] = []
+    request["collection_complete"] = True
+    request["scope"]["scope_status"] = "INCOMPLETE"
     request["negative_claims"] = [
         {
             "negative_status": "ABSENT",
@@ -224,12 +227,7 @@ def test_absent_requires_complete_bounded_gate() -> None:
     with pytest.raises(ObservationError, match="absence gate"):
         observe(request)
 
-    request["negative_claims"][0]["completion_evaluation"] = {
-        "scope_complete": True,
-        "method_complete": True,
-        "required_attempts_completed": True,
-        "no_blocking_blind_spot": True,
-    }
+    request["scope"]["scope_status"] = "COMPLETE"
     negative = observe(request)["negative_observations"][0]
     assert negative["negative_status"] == "ABSENT"
 
@@ -280,3 +278,69 @@ def test_wrong_reference_kind_and_undeclared_source_fail_closed() -> None:
     request["source_occurrences"][0]["source_ref"]["id"] = "SNAP-UNDECLARED"
     with pytest.raises(ObservationError, match="not declared"):
         observe(request)
+
+
+def test_negative_claim_outside_scope_fails_closed() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.secret",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    with pytest.raises(ObservationError, match="Negative claim subject is outside scope"):
+        observe(request)
+
+
+def test_incomplete_scope_and_blocking_blind_spot_prevent_complete_status() -> None:
+    request = _request()
+    request["scope"]["scope_status"] = "INCOMPLETE"
+    assert observe(request)["observations"][0]["status"] == "INCOMPLETE"
+
+    request = _request()
+    blind_spot = {
+        "blind_spot_id": "BLIND-0001",
+        "affected_subjects": ["fixture.enabled"],
+        "reason": "bounded source unreadable",
+        "impact": "BLOCKS_COMPLETION",
+        "discovered_at": "2026-08-29T09:00:30Z",
+        "resolvable": True,
+        "required_follow_up": "repair source",
+    }
+    request["blind_spots"] = [blind_spot]
+    assert observe(request)["observations"][0]["status"] == "INCOMPLETE"
+
+    request["source_occurrences"][0]["facts"] = []
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+            "completion_evaluation": {
+                "scope_complete": True,
+                "method_complete": True,
+                "required_attempts_completed": True,
+                "no_blocking_blind_spot": True,
+            },
+        }
+    ]
+    with pytest.raises(ObservationError, match="absence gate"):
+        observe(request)
+
+
+def test_unordered_collection_has_stable_identity_and_rejects_duplicates() -> None:
+    first = _request()
+    first["source_occurrences"][0]["facts"] = [
+        _fact("fixture.name", "members@v1", ["alpha", "beta"], "UNORDERED_COLLECTION")
+    ]
+    second = deepcopy(first)
+    second["source_occurrences"][0]["facts"][0]["value"] = ["beta", "alpha"]
+    assert observe(first)["facts"] == observe(second)["facts"]
+
+    second["source_occurrences"][0]["facts"][0]["value"] = ["alpha", "alpha"]
+    with pytest.raises(ObservationError, match="duplicate canonical members"):
+        observe(second)
