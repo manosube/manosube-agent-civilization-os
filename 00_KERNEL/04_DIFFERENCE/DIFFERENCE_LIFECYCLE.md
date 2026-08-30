@@ -156,7 +156,51 @@ contradiction_evidence_refs: []
 
 上記はclosed event shapeである。Reopen以外のeventでは全reopen-specific fieldをnullまたはemptyにする。
 
-`to_status=BLOCKED`では`blocker_kind`、`blocker_scope`、`blocker_resolution_condition`をnon-nullで必須とする。`blocker_kind`は`AUTHORITY_PATH | EXECUTION_PATH | OBSERVATION_PATH | EVIDENCE_INSUFFICIENT | STALE_BINDING | MATERIAL_CONFLICT | INVARIANT_FAILURE | CLAIM_FAILURE | OTHER_STRUCTURAL`のclosed enumであり、Authority Decisionそのものを保持しない。`blocker_scope`はDifference effective boundary内の対象を表すclosed canonical object、`blocker_resolution_condition`はblocker解消を再観測可能にするclosed predicate referenceまたはcanonical condition descriptorである。いずれもinline command、credential、自由形式Authority instructionを禁止する。`to_status`が`BLOCKED`以外なら三fieldをすべてnullにし、unknown fieldを拒否する。`CLOSED → REOPENED`では`reopen_trigger`を第8節のclosed enumから必須指定し、同節のtrigger-specific表に従って各ref fieldの必須／任意／禁止を検証する。unknown fieldを拒否する。
+`to_status=BLOCKED`では`blocker_kind`、`blocker_scope`、`blocker_resolution_condition`をnon-nullで必須とする。`blocker_kind`は`AUTHORITY_PATH | EXECUTION_PATH | OBSERVATION_PATH | EVIDENCE_INSUFFICIENT | STALE_BINDING | MATERIAL_CONFLICT | INVARIANT_FAILURE | CLAIM_FAILURE | OTHER_STRUCTURAL`のclosed enumであり、Authority Decisionそのものを保持しない。
+
+`blocker_scope`は次のexact closed projectionだけを許可する。
+
+```yaml
+kind: difference_blocker_scope
+effective_boundary_ref:
+  kind: effective_boundary
+  id: BOUNDARY-...
+  semantic_fingerprint: sha256:...
+affected_subject_refs:
+  collection_kind: UNORDERED_SET
+  members: []
+blocked_stage: DIFFERENCE_EVALUATION
+```
+
+`blocked_stage`は`OBSERVATION | DIFFERENCE_EVALUATION | LIFECYCLE_TRANSITION | EXTERNAL_AUTHORITY_PATH | EXTERNAL_EXECUTION_PATH | EXTERNAL_EVIDENCE_PATH`のclosed enumである。`effective_boundary_ref`はDifferenceに固定されたexact boundary ID／semantic fingerprintへ解決し、`affected_subject_refs`はduplicate-free `UNORDERED_SET` wrapperとしてcanonical member bytes順に整列する。各memberは`{kind, id}`のclosed typed referenceで、Difference effective boundary内へ解決しなければならない。bare array、empty `affected_subject_refs`、unknown kind、unknown field、boundary外subjectを拒否する。
+
+`blocker_resolution_condition`は次のexact closed projectionだけを許可する。
+
+```yaml
+kind: blocker_resolution_condition
+condition_code: REQUIRED_EVIDENCE_AVAILABLE
+subject_ref: {kind: difference, id: D-...}
+expected_state: AVAILABLE
+verification_request_ref: {kind: next_observation_request, id: OBS-REQ-...}
+```
+
+`condition_code`と`expected_state`の合法な組を次へ固定する。
+
+| condition_code | expected_state |
+|---|---|
+| `AUTHORITY_PATH_AVAILABLE` | `AVAILABLE` |
+| `EXECUTION_PATH_AVAILABLE` | `AVAILABLE` |
+| `OBSERVATION_PATH_AVAILABLE` | `AVAILABLE` |
+| `REQUIRED_EVIDENCE_AVAILABLE` | `AVAILABLE` |
+| `BINDINGS_CURRENT` | `CURRENT` |
+| `MATERIAL_CONFLICT_RESOLVED` | `RESOLVED` |
+| `INVARIANTS_PASS` | `PASS` |
+| `CLAIMS_PASS` | `PASS` |
+| `STRUCTURAL_BLOCKER_REMOVED` | `REMOVED` |
+
+`subject_ref`はblocker scope内へexactに解決するclosed `{kind, id}` typed referenceである。`verification_request_ref`は同じDifference、current event head、State、Target、Scopeへ結合された第5節の`NEXT_OBSERVATION_REQUEST`へexactに解決し、Lifecycle Eventの`next_observation_ref`と同一でなければならない。これは解消条件の観測契約であり、Authority Decision、Change commandまたはEvidence resultを内包しない。
+
+いずれもinline command、credential、自由形式condition、自由形式Authority instructionを禁止する。`to_status`が`BLOCKED`以外なら三fieldをすべてnullにし、unknown fieldを拒否する。`CLOSED → REOPENED`では`reopen_trigger`を第8節のclosed enumから必須指定し、同節のtrigger-specific表に従って各ref fieldの必須／任意／禁止を検証する。unknown fieldを拒否する。
 
 `next_observation_ref`は、このContractが定義する次のclosed `NEXT_OBSERVATION_REQUEST` recordへのtyped referenceまたはnullである。
 
