@@ -47,7 +47,7 @@ required_claims:
 required_invariants:
   - kind: kernel_invariant
     id: D-001
-    contract_ref: {kind: kernel_contract, id: KERNEL-INVARIANTS-0001, version: "0.1", semantic_fingerprint: sha256:...}
+    contract_ref: {kind: kernel_contract, id: KERNEL-INVARIANTS-0001, version: "0.1"}
     invariant_semantic_fingerprint: sha256:...
 allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
 independent_verification_required: false
@@ -139,9 +139,9 @@ Conformance vectorsはobject key順序の不変性、各included field変更に�
 
 `required_claims` memberは上記例のclosed five-field objectだけを許可する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`、`closure_policy_ref`から同じcanonical JSON／SHA-256出力規則で算出する。
 
-`required_invariants` memberは上記例のclosed four-field objectだけを許可する。`contract_ref`はInvariantを定義するimmutable Kernel Contractのexact ID／version／semantic fingerprintへ解決する。
+`required_invariants` memberは上記例のclosed four-field objectだけを許可する。`contract_ref`はInvariantを定義するKernel Contractのexact ID／versionへ解決する。定義元が公開していないcontract digestを要求しない。
 
-`invariant_semantic_fingerprint`はCanonical Invariant recordの全semantic fieldsを対象とする。
+`invariant_semantic_fingerprint`は、定義元Contractが当該Invariant blockへ記録する全semantic key-valueを対象とする。共通fieldに加え、`REQUIRED_FIELDS`などInvariant固有のsemantic extensionも一つも除外しない。
 
 ```text
 INVARIANT_ID
@@ -155,9 +155,12 @@ VERIFICATION_STAGE
 FAILURE_ACTION
 RECOVERY_CONDITION
 CONSTITUTION_REF
+INVARIANT_SPECIFIC_SEMANTIC_FIELDS
 ```
 
-除外できるのはrecorded_at、serialization metadata、temporary pathなど明示されたnon-semantic metadataだけである。出力は`sha256:`＋64 lowercase hex、serializationはcanonical JSON、未知fieldはrejectする。canonical fieldの一つでも変わればfingerprintが変わる。unknown kind、解決不能ref、contract version／fingerprint不一致、member追加を拒否する。
+`INVARIANT_SPECIFIC_SEMANTIC_FIELDS`は定義block内で共通field以外に宣言された全fieldをlexicographic key orderで格納するclosed objectであり、定義元にないfieldを拒否する。collectionはexplicit ordered／unordered wrapperを必須とする。
+
+除外できるのはrecorded_at、serialization metadata、temporary pathなど明示されたnon-semantic metadataだけである。出力は`sha256:`＋64 lowercase hex、serializationはcanonical JSON、未知fieldはrejectする。canonical fieldの一つでも変わればfingerprintが変わる。unknown kind、解決不能ref、contract version不一致、member追加を拒否する。
 
 PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
 
@@ -299,9 +302,10 @@ schema_version: "0.1"
 record_kind: VERIFICATION_INDEPENDENCE
 verification_independence_id: VI-...
 independence_semantic_fingerprint: sha256:...
+fingerprint_profile: MANOSUBE-VERIFICATION-INDEPENDENCE-SHA256-0.1
 closure_evaluation_id: D-CLOSE-EVAL-...
 verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
-change_executor_identity_refs: []
+change_executor_bindings: []
 process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
 observation_refs: []
 input_snapshot_refs: []
@@ -312,9 +316,33 @@ result: PASS
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
 
-`CHANGE_BOUND`では`change_executor_identity_refs`をClosure Evaluationの全`change_refs`が指すimmutable Change recordsから完全導出し、集合一致を要求する。欠落、余分、重複、解決不能executor refをrejectする。`CHANGE_FREE`ではChange refsとexecutor refsをともにemptyにする。
+`CHANGE_BOUND`では、まだ未定義のChange fieldを仮定せず、次のclosed append-only bindingを`change_executor_bindings`へ全Change分保存する。
 
-`independence_semantic_fingerprint`は、record kind、Closure Evaluation ID、verifier identity、全Change executor identities、process boundary、Observation refs、input snapshot refs、verification method、conflict-of-interest evaluation ref、Evidence refs、resultのcanonical payloadから算出する。`verification_independence_id`はこのfingerprintから決定的に生成する。`evaluated_at`だけをnon-semantic provenanceとしてfingerprintから除外する。
+```yaml
+kind: change_executor_binding
+change_ref: {kind: change, id: C-...}
+executor_identity_ref: {kind: executor_identity, id: EXECUTOR-...}
+execution_result_evidence_ref: {kind: change_result_evidence, id: EVID-...}
+binding_semantic_fingerprint: sha256:...
+```
+
+Binding fingerprintはchange、executor、execution-result Evidenceのcanonical tupleから生成する。Closure Evaluationの`change_refs`とbindingの`change_ref`集合は完全一致し、各Changeにつきexactly one bindingを要求する。欠落、余分、重複、解決不能refをrejectする。`CHANGE_FREE`ではChange refsとbindingsをともにemptyにする。後段のChange Contractはこのbindingを生成・参照できるが、Closure Contractは未定義fieldへ依存しない。
+
+Independence fingerprint profileを次へ固定する。
+
+```text
+PROFILE=MANOSUBE-VERIFICATION-INDEPENDENCE-SHA256-0.1
+DIGEST=SHA-256
+OUTPUT=sha256:<64 lowercase hexadecimal characters>
+SERIALIZATION=CANONICAL_JSON_UTF8
+TEXT_NORMALIZATION=UNICODE_NFC
+UNORDERED_SETS=change_executor_bindings,observation_refs,input_snapshot_refs,evidence_refs
+SET_ORDER=CANONICAL_MEMBER_BYTES
+DUPLICATE_SET_MEMBER=REJECT
+UNKNOWN_FIELDS=REJECT
+```
+
+`independence_semantic_fingerprint`は、record kind、Closure Evaluation ID、verifier identity、全Change executor bindings、process boundary、Observation refs、input snapshot refs、verification method、conflict-of-interest evaluation ref、Evidence refs、resultのcanonical payloadから算出する。`verification_independence_id`はこのfingerprintから決定的に生成する。`evaluated_at`だけをnon-semantic provenanceとしてfingerprintから除外する。Conformance vectorsは各unordered setの順序不変性、member変更によるdigest変更、duplicate／unknown field rejectを含む。
 
 `result`は`PASS | FAIL | UNKNOWN`のclosed enumであり、`PASS`だけがG8を満たす。verifierとChange executorのidentity overlap、同一mutable input、unresolved boundary、missing Evidence、UNKNOWN conflict evaluationはPASSを禁止する。同一ID・異なるpayloadをcollisionとして拒否し、未知field／version／kindをrejectする。
 
