@@ -69,6 +69,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     relations = _index(
         bundle["supersession_relations"], "supersession_relation_id", errors
     )
+    requests = _index(
+        bundle.get("next_observation_requests", []), "observation_request_id", errors
+    )
+    methods = _index(
+        bundle.get("observation_methods", []), "observation_method_id", errors
+    )
 
     events_by_difference: dict[str, list[dict[str, Any]]] = {}
     for event in events.values():
@@ -163,6 +169,25 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         errors.append(f"blocker condition state mismatch: {event['difference_event_id']}")
             if event["to_status"] in {"RETAINED", "REOPENED"} and event["next_observation_ref"] is None:
                 errors.append(f"next observation missing: {event['difference_event_id']}")
+            if event["next_observation_ref"] is not None:
+                request_ref = event["next_observation_ref"]
+                request = requests.get(_ref_id(request_ref) or "")
+                difference = differences.get(difference_id)
+                method = None if request is None else methods.get(_ref_id(request["method_ref"]) or "")
+                if (
+                    request_ref.get("kind") != "next_observation_request"
+                    or request is None
+                    or difference is None
+                    or _ref_id(request["difference_ref"]) != difference_id
+                    or _ref_id(request["derived_from_event_ref"]) != event["difference_event_id"]
+                    or request["state_revision_requested"] != event["state_revision_evaluated"]
+                    or request["state_fingerprint_requested"] != event["state_fingerprint_evaluated"]
+                    or request["target_ref"] != difference["target_predicate_ref"]
+                    or request["scope_ref"] != difference["objective_scope_binding"]["scope_ref"]
+                    or request["method_ref"].get("kind") != "observation_method"
+                    or method is None
+                ):
+                    errors.append(f"next observation binding mismatch: {event['difference_event_id']}")
             if event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}:
                 evaluation = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
                 difference = differences.get(difference_id)
@@ -181,6 +206,28 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             reconstructed[difference_id] = event["to_status"]
 
     for difference_id, difference in differences.items():
+        target = difference["normalized_target_state"]
+        observed = difference["normalized_observed_state"]
+        structural = difference["structural_difference"]
+        observed_values = [item["value"] for item in observed["value_candidates"]["members"]]
+        observed_types = [item["value_type"] for item in observed["value_candidates"]["members"]]
+        if (
+            difference["subject"] != target["subject"]
+            or difference["subject"] != observed["subject"]
+            or difference["observation_scope"] != target["observation_scope"]
+            or difference["observation_scope"]
+            != difference["objective_scope_binding"]["objective_scope_name"]
+            or observed["objective_scope_binding"] != difference["objective_scope_binding"]
+            or observed["effective_boundary"] != difference["effective_boundary"]
+            or structural["observed_knowledge_status"] != observed["knowledge_status"]
+            or structural["target_value"] != target["expected_value"]
+            or structural["target_value_type"] != target["expected_value_type"]
+            or sorted(structural["observed_values"]["members"], key=repr)
+            != sorted(observed_values, key=repr)
+            or sorted(structural["observed_value_types"]["members"])
+            != sorted(observed_types)
+        ):
+            errors.append(f"Difference projection mismatch: {difference_id}")
         genesis_id = _ref_id(difference["genesis_event_ref"])
         genesis = events.get(genesis_id or "")
         if genesis is None or genesis["difference_id"] != difference_id or genesis["event_revision"] != 0:
@@ -217,14 +264,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"evaluation event-head mismatch: {evaluation['closure_evaluation_id']}")
         if (
             evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
-            or evaluation["objective_revision_ref_evaluated"]
-            != difference["objective_revision_ref"]
             or evaluation["objective_semantic_fingerprint_evaluated"]
             != difference["objective_semantic_fingerprint"]
             or evaluation["evaluated_state_revision"]
             != difference["observed_state_revision"]
             or evaluation["evaluated_state_fingerprint"]
             != difference["observed_state_fingerprint"]
+            or evaluation["before_state_ref"]["revision"]
+            != evaluation["evaluated_state_revision"]
+            or evaluation["before_state_ref"]["fingerprint"]
+            != evaluation["evaluated_state_fingerprint"]
             or (
                 head is not None
                 and (

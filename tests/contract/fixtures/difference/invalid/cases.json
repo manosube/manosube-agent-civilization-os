@@ -18,5 +18,9 @@
   {"name": "ordinary_event_reopen_payload", "path": ["events", 1, "reopen_trigger"], "value": "MATERIAL_CONTRADICTION"},
   {"name": "policy_only_mandatory_gate_failure", "path": ["evaluations", 0, "gate_results", "G18"], "value": "FAIL"},
   {"name": "terminal_evaluation_stale_head", "path": ["evaluations", 0, "difference_event_head_ref", "id"], "value": "D-EVT-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
-  {"name": "blocker_condition_state_mismatch", "path": ["events", 2, "blocker_resolution_condition", "expected_state"], "value": "PASS"}
+  {"name": "blocker_condition_state_mismatch", "path": ["events", 2, "blocker_resolution_condition", "expected_state"], "value": "PASS"},
+  {"name": "difference_projection_subject_mismatch", "path": ["differences", 0, "subject"], "value": "other.subject"},
+  {"name": "evaluation_before_state_mismatch", "path": ["evaluations", 0, "before_state_ref", "revision"], "value": 1},
+  {"name": "next_observation_request_missing", "path": ["events", 2, "next_observation_ref", "id"], "value": "OBS-REQ-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"},
+  {"name": "next_observation_target_mismatch", "path": ["next_observation_requests", 0, "target_ref", "id"], "value": "TP-9999"}
 ]

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/next_observation_request.schema.json",
+  "title": "Difference Next Observation Request",
+  "type": "object",
+  "required": ["schema_version", "observation_request_id", "record_kind", "difference_ref", "derived_from_event_ref", "state_revision_requested", "state_fingerprint_requested", "target_ref", "scope_ref", "method_ref", "reason_code"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "observation_request_id": {"type": "string", "pattern": "^OBS-REQ-[0-9A-F]{64}$"},
+    "record_kind": {"const": "NEXT_OBSERVATION_REQUEST"},
+    "difference_ref": {"$ref": "#/$defs/difference_ref"},
+    "derived_from_event_ref": {"$ref": "#/$defs/event_ref"},
+    "state_revision_requested": {"type": "integer", "minimum": 0},
+    "state_fingerprint_requested": {"$ref": "../common/fingerprint.schema.json"},
+    "target_ref": {"$ref": "#/$defs/target_ref"},
+    "scope_ref": {"$ref": "#/$defs/scope_ref"},
+    "method_ref": {"$ref": "#/$defs/method_ref"},
+    "reason_code": {"enum": ["BLOCKER_REOBSERVATION", "RETAINED_REOBSERVATION", "REOPEN_REOBSERVATION"]}
+  },
+  "$defs": {
+    "difference_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "difference"}, "id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"}}, "additionalProperties": false},
+    "event_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "difference_event"}, "id": {"type": "string", "pattern": "^D-EVT-[0-9A-F]{64}$"}}, "additionalProperties": false},
+    "target_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "target_predicate"}, "id": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "scope_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "observation_scope"}, "id": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "method_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "observation_method"}, "id": {"type": "string", "pattern": "^OBS-METHOD-[0-9A-F]{64}$"}}, "additionalProperties": false}
+  },
+  "additionalProperties": false
+}

@@ -39,6 +39,8 @@ def test_valid_bundle_is_schema_valid_and_reconstructable() -> None:
         "closure_policy.schema.json": bundle["policies"],
         "closure_evaluation.schema.json": bundle["evaluations"],
         "difference_supersession_relation.schema.json": bundle["supersession_relations"],
+        "next_observation_request.schema.json": bundle["next_observation_requests"],
+        "observation_method.schema.json": bundle["observation_methods"],
     }
     for schema_name, records in record_groups.items():
         for record in records:
@@ -120,7 +122,7 @@ def test_difference_fixture_suite_has_no_escape() -> None:
         FIXTURE_ROOT
     )
     assert valid_count == 1
-    assert invalid_count == 20
+    assert invalid_count == 24
     assert valid_errors == []
     assert invalid_escapes == []
 

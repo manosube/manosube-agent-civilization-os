@@ -15,7 +15,7 @@
     "target_predicate_ref": {"$ref": "../common/reference.schema.json"},
     "objective_revision_ref_evaluated": {"$ref": "../common/reference.schema.json"},
     "objective_semantic_fingerprint_evaluated": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"},
-    "before_state_ref": {"$ref": "../common/reference.schema.json"},
+    "before_state_ref": {"$ref": "#/$defs/state_ref"},
     "resolution_mode": {"oneOf": [{"type": "null"}, {"enum": ["CHANGE_BOUND", "CHANGE_FREE"]}]},
     "change_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
     "policy_ref": {"$ref": "difference.schema.json#/$defs/versioned_reference"},
@@ -28,8 +28,8 @@
     "verification_independence_ref": {"type": "null"},
     "evidence_sufficiency_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
     "terminal_reason_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
-    "candidate_invariant_evaluation_bindings": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/candidate_binding"}},
-    "candidate_claim_evaluation_bindings": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/candidate_binding"}},
+    "candidate_invariant_evaluation_bindings": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/candidate_invariant_binding"}},
+    "candidate_claim_evaluation_bindings": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/candidate_claim_binding"}},
     "contradiction_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
     "proposed_terminal_status": {"enum": ["CLOSED", "BLOCKED", "RETAINED"]},
     "gate_results": {"$ref": "#/$defs/gates"},
@@ -46,13 +46,21 @@
       "type": "object", "required": ["kind", "repository", "commit_sha", "tree_sha"],
       "properties": {"kind": {"const": "git_tree"}, "repository": {"const": "manosube/manosube-agent-civilization-os"}, "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}, "additionalProperties": false
     },
+    "state_ref": {
+      "type": "object", "required": ["kind", "revision", "fingerprint"],
+      "properties": {"kind": {"const": "state"}, "revision": {"type": "integer", "minimum": 0}, "fingerprint": {"$ref": "../common/fingerprint.schema.json"}}, "additionalProperties": false
+    },
     "after_state_candidate": {
       "type": "object", "required": ["kind", "candidate_id", "kernel_source_ref", "base_state_ref", "semantic_state", "semantic_fingerprint", "source_snapshot_refs", "producing_change_refs"],
       "properties": {"kind": {"const": "after_state_candidate"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "kernel_source_ref": {"$ref": "#/$defs/git_tree_ref"}, "base_state_ref": {"$ref": "../common/reference.schema.json"}, "semantic_state": {"type": "object"}, "semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}, "source_snapshot_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "producing_change_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}}, "additionalProperties": false
     },
-    "candidate_binding": {
-      "type": "object", "required": ["kind", "binding_id", "candidate_id", "evaluation_ref", "evaluation_result", "evaluation_evidence_refs"],
-      "properties": {"kind": {"enum": ["candidate_invariant_evaluation_binding", "candidate_claim_evaluation_binding"]}, "binding_id": {"$ref": "../common/identity.schema.json"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "evaluation_ref": {"$ref": "../common/reference.schema.json"}, "evaluation_result": {"enum": ["SATISFIED", "PASS"]}, "evaluation_evidence_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}}, "additionalProperties": false
+    "candidate_invariant_binding": {
+      "type": "object", "required": ["kind", "binding_id", "candidate_id", "candidate_semantic_fingerprint", "base_state_ref", "invariant_ref", "invariant_definition_ref", "invariant_evaluation_ref", "evaluation_record_fingerprint", "evaluation_result", "evaluation_evidence_refs", "evaluated_at"],
+      "properties": {"kind": {"const": "candidate_invariant_evaluation_binding"}, "binding_id": {"type": "string", "pattern": "^CAND-INV-EVAL-[0-9A-F]{64}$"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "candidate_semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}, "base_state_ref": {"$ref": "#/$defs/state_ref"}, "invariant_ref": {"$ref": "../common/reference.schema.json"}, "invariant_definition_ref": {"type": "object", "required": ["repository", "path", "invariant_definition_sha256"], "properties": {"repository": {"const": "manosube/manosube-agent-civilization-os"}, "path": {"const": "00_KERNEL/KERNEL_INVARIANTS.md"}, "invariant_definition_sha256": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"}}, "additionalProperties": false}, "invariant_evaluation_ref": {"$ref": "../common/reference.schema.json"}, "evaluation_record_fingerprint": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"}, "evaluation_result": {"const": "PASS"}, "evaluation_evidence_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "evaluated_at": {"$ref": "../common/timestamp.schema.json"}}, "additionalProperties": false
+    },
+    "candidate_claim_binding": {
+      "type": "object", "required": ["kind", "binding_id", "difference_id", "policy_ref", "candidate_id", "candidate_semantic_fingerprint", "base_state_ref", "required_claim_ref", "evaluation_series_id", "evaluation_head_event_ref", "completion_record_ref", "evaluation_record_fingerprint", "evaluation_status", "evaluation_evidence_refs", "evaluated_at"],
+      "properties": {"kind": {"const": "candidate_claim_evaluation_binding"}, "binding_id": {"type": "string", "pattern": "^CAND-CLAIM-EVAL-[0-9A-F]{64}$"}, "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"}, "policy_ref": {"$ref": "difference.schema.json#/$defs/versioned_reference"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "candidate_semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}, "base_state_ref": {"$ref": "#/$defs/state_ref"}, "required_claim_ref": {"$ref": "../common/reference.schema.json"}, "evaluation_series_id": {"type": "string", "pattern": "^CAND-CLAIM-SERIES-[0-9A-F]{64}$"}, "evaluation_head_event_ref": {"$ref": "../common/reference.schema.json"}, "completion_record_ref": {"$ref": "../common/reference.schema.json"}, "evaluation_record_fingerprint": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"}, "evaluation_status": {"const": "SATISFIED"}, "evaluation_evidence_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "evaluated_at": {"$ref": "../common/timestamp.schema.json"}}, "additionalProperties": false
     },
     "gate_value": {"enum": ["PASS", "FAIL", "UNKNOWN", "NOT_APPLICABLE"]},
     "gates": {

@@ -313,7 +313,7 @@
         "expected_state": "AVAILABLE",
         "verification_request_ref": {
           "kind": "next_observation_request",
-          "id": "OBS-REQ-0001"
+          "id": "OBS-REQ-EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
         }
       },
       "observation_refs": [],
@@ -332,7 +332,7 @@
       "reflow_transition_ref": null,
       "next_observation_ref": {
         "kind": "next_observation_request",
-        "id": "OBS-REQ-0001"
+        "id": "OBS-REQ-EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
       },
       "reopen_trigger": null,
       "reopen_condition_ref": null,
@@ -340,6 +340,55 @@
       "revoked_evidence_refs": [],
       "invalid_evidence_refs": [],
       "contradiction_evidence_refs": []
+    }
+  ],
+  "next_observation_requests": [
+    {
+      "schema_version": "0.1",
+      "observation_request_id": "OBS-REQ-EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+      "record_kind": "NEXT_OBSERVATION_REQUEST",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "derived_from_event_ref": {
+        "kind": "difference_event",
+        "id": "D-EVT-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+      },
+      "state_revision_requested": 2,
+      "state_fingerprint_requested": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "target_ref": {"kind": "target_predicate", "id": "TP-0001"},
+      "scope_ref": {"kind": "observation_scope", "id": "OBS-SCOPE-0001"},
+      "method_ref": {
+        "kind": "observation_method",
+        "id": "OBS-METHOD-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+      },
+      "reason_code": "BLOCKER_REOBSERVATION"
+    }
+  ],
+  "observation_methods": [
+    {
+      "schema_version": "0.1",
+      "record_kind": "OBSERVATION_METHOD",
+      "observation_method_id": "OBS-METHOD-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+      "method_profile": "MANOSUBE-OBSERVATION-METHOD-SHA256-0.1",
+      "procedure_kind": "CANONICAL_OBSERVER",
+      "procedure_ref": {
+        "kind": "observer_procedure",
+        "id": "OBS-PROCEDURE-0001",
+        "version": "0.1",
+        "semantic_fingerprint": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "normalization_profile": "FIXTURE-0.1",
+      "input_contract_ref": {"kind": "schema", "id": "OBS-INPUT-01"},
+      "output_contract_refs": {
+        "collection_kind": "UNORDERED_SET",
+        "members": [{"kind": "schema", "id": "NORMALIZED-FACT-01"}]
+      },
+      "execution_boundary_ref": {"kind": "execution_boundary", "id": "KERNEL-LOCAL"}
     }
   ],
   "policies": [
@@ -410,7 +459,11 @@
       "objective_semantic_fingerprint_evaluated": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "before_state_ref": {
         "kind": "state",
-        "id": "STATE-0002"
+        "revision": 2,
+        "fingerprint": {
+          "profile": "MANOSUBE-STATE-SHA256-0.1",
+          "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
       },
       "resolution_mode": null,
       "change_refs": [],
