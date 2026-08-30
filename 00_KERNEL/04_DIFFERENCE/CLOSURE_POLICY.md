@@ -39,6 +39,7 @@ target_predicate_ref: {kind: target_predicate, id: TP-...}
 required_observation_scope: null
 minimum_evidence_level: E1
 required_claims: []
+required_invariants: []
 prohibited_statuses: []
 independence_requirement: INDEPENDENT_REOBSERVATION
 maximum_evidence_age: null
@@ -66,9 +67,12 @@ after_observation_refs: []
 change_result_evidence_refs: []
 change_free_verification_evidence_refs: []
 evidence_sufficiency_ref: {}
+invariant_evaluation_refs: []
 contradiction_refs: []
 evaluated_state_revision: 0
 evaluated_state_fingerprint: {}
+evaluated_at: "2026-01-01T00:00:00Z"
+evaluation_expires_at: null
 policy_ref: {kind: closure_policy, id: CP-...}
 result: NOT_EVALUATED
 failure_reasons: []
@@ -161,6 +165,8 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 → CLOSURE NOT SATISFIED
 ```
 
+`G19`はClosure Policyの`required_invariants`それぞれに対し、同一evaluated State revision／fingerprintへ結合されたexact `invariant_evaluation_refs`を要求する。未評価、欠落、stale、unknownまたはfailを一件でも含む場合は`SATISFIED`にしない。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
+
 # 4. Independent Re-observation
 
 Change result、command return code、test output、Agent reportはafter-state Observationの代替ではない。
@@ -222,19 +228,29 @@ Compare-And-Swap失敗、partial write、lineage append失敗、current state不
 
 # 8. Staleness
 
-Closure Evaluationは`maximum_evidence_age`を評価時点で強制する。
+Closure Evaluationは`evaluated_at`をtimezone-aware UTC timestampとして保存し、`maximum_evidence_age`を評価時点とAtomic Reflow commit直前の双方で強制する。
 
 ```text
 maximum_evidence_age = null
 → Policyによる追加のage上限なし
+→ evaluation_expires_at = null
 
 maximum_evidence_age ≠ null
-→ evaluated_at - evidence_observed_at <= maximum_evidence_age
+→ 0 <= evaluated_at - evidence_observed_at <= maximum_evidence_age
 → timezone-aware timestamp必須
-→ age不明、timestamp不正、上限超過はG18=false
+→ evaluation_expires_at = oldest_required_evidence_observed_at + maximum_evidence_age
+→ age不明、future-dated Evidence、timestamp不正、上限超過はG18=false
 ```
 
 複数Evidenceを使う場合は、Closure Claimに必要な全Evidenceがage predicateを満たさなければならない。古いEvidenceを新しいEvidenceの件数で補ってはならない。上限超過は`STALE`とし、`SATISFIED`を返さない。
+
+Atomic Reflowはcommit clockをtimezone-aware UTCとして取得し、`evaluation_expires_at`がnon-nullなら次を再検証する。
+
+```text
+commit_at <= evaluation_expires_at
+```
+
+commit前にexpiryへ到達したEvaluationは、他のbindingが変化していなくても`STALE`である。再観測・再評価なしにcommitしてはならない。
 
 次のいずれかがEvaluation後に変わった場合、未commitのClosure Evaluationは`STALE`である。
 
@@ -298,6 +314,10 @@ CHANGE_FREE_VERIFICATION_EVIDENCE_REQUIRED=true
 RESOLUTION_MODE_EVIDENCE_EXCLUSIVE=true
 EVIDENCE_SUFFICIENCY_REQUIRED=true
 MAXIMUM_EVIDENCE_AGE_ENFORCED=true
+EVALUATION_TIMESTAMP_RECORDED=true
+EVIDENCE_AGE_RECHECKED_AT_REFLOW=true
+FUTURE_DATED_EVIDENCE_REJECTED=true
+REQUIRED_INVARIANTS_BOUND=true
 UNKNOWN_IS_PASS=false
 NO_RESULT_NE_PROVEN_ABSENCE=true
 CHANGE_CANNOT_SELF_CLOSE=true
