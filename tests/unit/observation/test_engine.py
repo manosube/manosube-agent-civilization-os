@@ -108,6 +108,7 @@ def _request() -> dict[str, object]:
         ],
         "blind_spots": [],
         "observation_evidence_refs": [{"kind": "observation_evidence", "id": "EVID-0001"}],
+        "negative_evidence_refs": [{"kind": "negative_evidence", "id": "NEG-EVID-0001"}],
         "negative_claims": [],
     }
 
@@ -506,7 +507,7 @@ def test_changed_negative_retry_is_rejected() -> None:
             "effective_boundary": deepcopy(BOUNDARY),
         }
     ]
-    with pytest.raises(ObservationError, match="non-identical retry"):
+    with pytest.raises(ObservationError, match=r"absence gate|non-identical retry"):
         observe(request)
 
 
@@ -587,4 +588,48 @@ def test_evaluation_without_owner_fails_closed() -> None:
     request["state_fingerprint_observed"]["digest"] = "b" * 64
     request["prior_bundle"] = prior
     with pytest.raises(ObservationValidationError, match="missing Fact"):
+        observe(request)
+
+
+def test_negative_boundary_and_evidence_are_enforced() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["collection_complete"] = True
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": {
+                **deepcopy(BOUNDARY),
+                "identity": "SNAP-OTHER",
+            },
+        }
+    ]
+    with pytest.raises(ObservationError, match="boundary was not observed"):
+        observe(request)
+
+    request["negative_claims"][0]["effective_boundary"] = deepcopy(BOUNDARY)
+    request["negative_evidence_refs"] = []
+    with pytest.raises(ObservationError, match="negative Evidence"):
+        observe(request)
+
+
+def test_negative_reason_change_is_not_an_idempotent_retry() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["collection_complete"] = True
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+            "reason": "first bounded conclusion",
+        }
+    ]
+    first = observe(request)
+    request["prior_bundle"] = first
+    request["negative_claims"][0]["reason"] = "changed conclusion"
+    with pytest.raises(ObservationError, match="non-identical retry"):
         observe(request)
