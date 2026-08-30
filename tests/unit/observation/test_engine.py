@@ -447,3 +447,91 @@ def test_corrupt_prior_bundle_fails_closed() -> None:
     request["prior_bundle"] = prior
     with pytest.raises(ObservationValidationError, match="revision gap"):
         observe(request)
+
+
+def test_new_fact_conflicts_with_prior_negative_on_both_sides() -> None:
+    initial = _request()
+    initial["source_occurrences"][0]["facts"] = []
+    initial["collection_complete"] = True
+    initial["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "equals@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    before = observe(initial)
+    request = _request()
+    request["state_revision_observed"] = 3
+    request["state_fingerprint_observed"]["digest"] = "b" * 64
+    request["prior_bundle"] = before
+    after = observe(request)
+    assert after["observations"][-1]["status"] == "CONFLICTED"
+    assert after["fact_evaluations"][-2]["evaluation_status"] == "CONFLICTED"
+    assert after["negative_evaluations"][-1]["evaluation_status"] == "CONFLICTED"
+
+
+def test_cross_revision_positive_conflict_is_bidirectional() -> None:
+    before = observe(_request())
+    request = _request()
+    request["state_revision_observed"] = 3
+    request["state_fingerprint_observed"]["digest"] = "b" * 64
+    request["source_occurrences"][0]["facts"][0]["value"] = False
+    request["prior_bundle"] = before
+    after = observe(request)
+    enabled = [item for item in after["facts"] if item["subject"] == "fixture.enabled"]
+    latest = []
+    for fact in enabled:
+        latest.append(
+            max(
+                (e for e in after["fact_evaluations"] if e["fact_id"] == fact["fact_id"]),
+                key=lambda e: e["evaluation_revision"],
+            )
+        )
+    assert all(item["evaluation_status"] == "CONFLICTED" for item in latest)
+    assert all(item["conflict_fact_refs"] for item in latest)
+
+
+def test_changed_negative_retry_is_rejected() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    first = observe(request)
+    request["prior_bundle"] = first
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    with pytest.raises(ObservationError, match="non-identical retry"):
+        observe(request)
+
+
+def test_cutoff_and_freshness_block_absence() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["time_boundary"]["source_snapshot_time"] = "2026-08-29T08:50:00Z"
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    with pytest.raises(ObservationError, match="absence gate"):
+        observe(request)
+
+
+def test_binding_must_match_referenced_observation_state() -> None:
+    prior = observe(_request())
+    prior["bindings"][0]["state_revision_observed"] = 99
+    request = _request()
+    request["state_revision_observed"] = 3
+    request["state_fingerprint_observed"]["digest"] = "b" * 64
+    request["prior_bundle"] = prior
+    with pytest.raises(ObservationValidationError, match="binding State mismatch"):
+        observe(request)
