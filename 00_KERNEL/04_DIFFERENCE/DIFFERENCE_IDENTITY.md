@@ -135,27 +135,39 @@ Mismatch kind or semantic content
 identity profile
 ```
 
-旧Differenceとの意味上の連続性がある場合、双方向のtyped referenceでsupersessionを記録する。
+旧Differenceとの意味上の連続性がある場合、append-onlyなSupersession Relationで双方向関係を記録する。
 
-```text
-OLD.superseded_by_difference_ref = NEW
-NEW.supersedes_difference_ref = OLD
+```yaml
+schema_version: "0.1"
+supersession_relation_id: D-SUP-...
+old_difference_ref: {kind: difference, id: D-OLD...}
+new_difference_ref: {kind: difference, id: D-NEW...}
+old_terminal_event_ref: {kind: difference_event, id: D-EVT-...}
+new_genesis_event_ref: {kind: difference_event, id: D-EVT-...}
+reason_code: TARGET_OR_MISMATCH_CHANGED
+evidence_refs: []
 ```
 
-片方向、循環、自己参照、存在しないDifferenceへのsupersessionは拒否する。
+Relationは両Differenceと双方のLifecycle Eventから解決可能でなければならない。Canonical Difference Recordを上書きせず、materialized viewの`superseded_by`と`supersedes`をRelationから導出する。
+
+片方向、循環、自己参照、存在しないDifferenceへのsupersessionは拒否する。同一Relation ID・同一payloadはidempotent、異なるpayloadはcollisionとして拒否する。
 
 # 7. Idempotency and Collision
 
 ```text
-SAME DIFFERENCE ID + SAME CANONICAL PAYLOAD
+SAME DIFFERENCE ID + SAME IMMUTABLE SEMANTIC IDENTITY PAYLOAD
 → IDEMPOTENT ACCEPT
 
-SAME DIFFERENCE ID + DIFFERENT CANONICAL PAYLOAD
+SAME DIFFERENCE ID + DIFFERENT IMMUTABLE SEMANTIC IDENTITY PAYLOAD
 → IDENTITY COLLISION
 → REJECT OR QUARANTINE
 ```
 
-Collision時に後着payloadで上書きしない。新しいIDを任意生成して衝突を隠さない。
+Collision比較の対象は第2節のimmutable semantic identity inputだけである。Observation bindings、State revision、Evidence references、status、Lifecycle Event、Supersession Relationなどのappend-only provenanceは比較対象から除外する。
+
+したがって、同じidentityに新しいre-observation provenanceをappendすることはcollisionではない。ただし、同じprovenance event IDに異なるpayloadを与えた場合はprovenance collisionとして拒否する。
+
+Identity Collision時に後着payloadで上書きしない。新しいIDを任意生成して衝突を隠さない。
 
 # 8. Identity versus Instance State
 
@@ -184,7 +196,8 @@ ISSUE_NUMBER_CHANGED → SAME ID
 TARGET_CHANGED → DIFFERENT ID
 BOUNDARY_CHANGED → DIFFERENT ID
 MISMATCH_CHANGED → DIFFERENT ID
-SAME_ID_DIFFERENT_PAYLOAD → REJECT
+SAME_ID_DIFFERENT_SEMANTIC_IDENTITY_PAYLOAD → REJECT
+SAME_ID_NEW_REOBSERVATION_PROVENANCE → APPEND
 ```
 
 # 10. Acceptance
