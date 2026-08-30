@@ -773,3 +773,55 @@ def test_negative_predicate_must_belong_to_profile_vocabulary() -> None:
     ]
     with pytest.raises(ObservationError, match="unknown predicate"):
         observe(request)
+
+
+def test_prior_fact_identity_is_recomputed() -> None:
+    prior = observe(_request())
+    prior["facts"][0]["value"] = not prior["facts"][0]["value"]
+    request = _request()
+    request["state_revision_observed"] = 3
+    request["state_fingerprint_observed"]["digest"] = "b" * 64
+    request["prior_bundle"] = prior
+    with pytest.raises(ObservationValidationError, match="Fact identity mismatch"):
+        observe(request)
+
+
+def test_negative_revision_zero_must_match_record() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["negative_claims"] = [
+        {
+            "negative_status": "NO_RESULT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    prior = observe(request)
+    prior["negative_evaluations"][0]["evaluation_status"] = "ABSENT"
+    retry = _request()
+    retry["state_revision_observed"] = 3
+    retry["state_fingerprint_observed"]["digest"] = "b" * 64
+    retry["prior_bundle"] = prior
+    with pytest.raises(ObservationValidationError, match="revision zero status"):
+        observe(retry)
+
+
+def test_all_fact_identity_fields_are_canonicalized() -> None:
+    first = _request()
+    first["source_occurrences"][0]["facts"] = [
+        {**_fact("fixture.name", "equals@v1", "value", "STRING"), "unit": "é"}
+    ]
+    second = deepcopy(first)
+    second["source_occurrences"][0]["facts"][0]["unit"] = "e\u0301"
+    assert observe(first)["facts"] == observe(second)["facts"]
+
+
+def test_source_reference_order_is_not_semantic() -> None:
+    first = _request()
+    second_ref = {"kind": "source_snapshot", "id": "SNAP-0002"}
+    first["scope"]["source_snapshot_refs"].append(deepcopy(second_ref))
+    first["source_snapshot_refs"].append(deepcopy(second_ref))
+    second = deepcopy(first)
+    second["source_snapshot_refs"].reverse()
+    assert observe(first) == observe(second)
