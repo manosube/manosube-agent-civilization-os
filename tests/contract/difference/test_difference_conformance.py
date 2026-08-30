@@ -62,6 +62,12 @@ def test_three_evaluation_modes_are_distinct() -> None:
     candidate = {
         "kind": "after_state_candidate",
         "candidate_id": "STATE-CANDIDATE-" + "A" * 64,
+        "kernel_source_ref": {
+            "kind": "git_tree",
+            "repository": "manosube/manosube-agent-civilization-os",
+            "commit_sha": "1" * 40,
+            "tree_sha": "2" * 40,
+        },
         "base_state_ref": {"kind": "state", "id": "STATE-0002"},
         "semantic_state": {},
         "semantic_fingerprint": {
@@ -105,6 +111,6 @@ def test_difference_fixture_suite_has_no_escape() -> None:
         FIXTURE_ROOT
     )
     assert valid_count == 1
-    assert invalid_count == 10
+    assert invalid_count == 14
     assert valid_errors == []
     assert invalid_escapes == []

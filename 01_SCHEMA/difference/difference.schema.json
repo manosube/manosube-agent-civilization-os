@@ -11,19 +11,19 @@
     "objective_revision_ref": {"$ref": "../common/reference.schema.json"},
     "objective_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"},
     "target_predicate_ref": {"$ref": "../common/reference.schema.json"},
-    "normalized_target_state": {"$ref": "#/$defs/normalized_value"},
+    "normalized_target_state": {"$ref": "#/$defs/normalized_target_state"},
     "objective_scope_binding": {"$ref": "#/$defs/objective_scope_binding"},
     "observed_state_revision": {"type": "integer", "minimum": 0},
     "observed_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
     "observation_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
     "observation_evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
-    "normalized_observed_state": {"$ref": "#/$defs/normalized_value"},
+    "normalized_observed_state": {"$ref": "#/$defs/normalized_observed_state"},
     "structural_difference": {"$ref": "#/$defs/structural_difference"},
     "subject": {"type": "string", "minLength": 1},
     "observation_scope": {"type": "string", "minLength": 1},
     "effective_boundary": {"$ref": "#/$defs/effective_boundary"},
     "impact": {"type": "object"},
-    "risk_class": {"enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]},
+    "risk_class": {"enum": ["LOW", "MODERATE", "HIGH", "CRITICAL"]},
     "authority_required": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
     "closure_policy": {"$ref": "#/$defs/versioned_reference"},
     "genesis_event_ref": {"$ref": "../common/reference.schema.json"}
@@ -39,9 +39,21 @@
       "type": "object", "required": ["collection_kind", "members"],
       "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}}, "additionalProperties": false
     },
-    "normalized_value": {
-      "type": "object", "required": ["value_type", "value"],
-      "properties": {"value_type": {"enum": ["NULL", "BOOLEAN", "INTEGER", "STRING", "ORDERED_COLLECTION", "UNORDERED_COLLECTION"]}, "value": {}}, "additionalProperties": false
+    "normalized_target_state": {
+      "type": "object", "required": ["subject", "operator", "expected_value", "expected_value_type", "observation_scope", "evidence_requirement", "unknown_policy", "criticality"],
+      "properties": {"subject": {"type": "string", "minLength": 1}, "operator": {"enum": ["equals", "not_equals", "contains", "exists", "all", "none"]}, "expected_value": {}, "expected_value_type": {"enum": ["NULL", "BOOLEAN", "INTEGER", "STRING", "STRUCTURED", "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE", "ORDERED_COLLECTION", "UNORDERED_COLLECTION"]}, "observation_scope": {"type": "string", "minLength": 1}, "evidence_requirement": {"enum": ["E0", "E1", "E2", "E3", "E4", "E5", "E6"]}, "unknown_policy": {"const": "INCOMPLETE"}, "criticality": {"enum": ["mandatory", "advisory"]}}, "additionalProperties": false
+    },
+    "normalized_observed_state": {
+      "type": "object", "required": ["subject", "objective_scope_binding", "effective_boundary", "knowledge_status", "value_candidates"],
+      "properties": {"subject": {"type": "string", "minLength": 1}, "objective_scope_binding": {"$ref": "#/$defs/objective_scope_binding"}, "effective_boundary": {"$ref": "#/$defs/effective_boundary"}, "knowledge_status": {"enum": ["KNOWN", "ABSENT", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE", "CONFLICTED"]}, "value_candidates": {"$ref": "#/$defs/unordered_value_candidates"}}, "additionalProperties": false
+    },
+    "unordered_value_candidates": {
+      "type": "object", "required": ["collection_kind", "members"],
+      "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/value_candidate"}}}, "additionalProperties": false
+    },
+    "value_candidate": {
+      "type": "object", "required": ["value", "value_type", "unit", "fact_predicate", "effective_boundary"],
+      "properties": {"value": {}, "value_type": {"enum": ["NULL", "BOOLEAN", "INTEGER", "STRING", "STRUCTURED", "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE", "ORDERED_COLLECTION", "UNORDERED_COLLECTION"]}, "unit": {"type": ["string", "null"]}, "fact_predicate": {"type": "string", "minLength": 1}, "effective_boundary": {"$ref": "#/$defs/effective_boundary"}}, "additionalProperties": false
     },
     "objective_scope_binding": {
       "type": "object", "required": ["objective_scope_name", "scope_ref", "scope_schema_version", "resolved_scope_record_sha256"],
@@ -56,8 +68,8 @@
       }, "additionalProperties": false
     },
     "structural_difference": {
-      "type": "object", "required": ["mismatch_kind", "comparison_operator", "comparison_result"],
-      "properties": {"mismatch_kind": {"enum": ["MISSING", "UNEXPECTED", "VALUE_MISMATCH", "TYPE_MISMATCH", "RELATION_MISMATCH", "UNKNOWN", "CONFLICTED"]}, "comparison_operator": {"enum": ["equals", "not_equals", "contains", "exists"]}, "comparison_result": {"enum": ["SATISFIED", "NOT_SATISFIED", "UNKNOWN", "CONFLICTED"]}}, "additionalProperties": false
+      "type": "object", "required": ["mismatch_kind", "observed_knowledge_status", "target_value", "observed_values", "target_value_type", "observed_value_types", "target_cardinality", "observed_cardinality", "comparison_result", "comparison_profile"],
+      "properties": {"mismatch_kind": {"enum": ["MISSING", "UNEXPECTED", "VALUE_MISMATCH", "TYPE_MISMATCH", "CARDINALITY_MISMATCH", "RELATION_MISMATCH", "BOUNDARY_MISMATCH", "CONFLICT", "UNKNOWN"]}, "observed_knowledge_status": {"enum": ["KNOWN", "ABSENT", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE", "CONFLICTED"]}, "target_value": {}, "observed_values": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true}}, "additionalProperties": false}, "target_value_type": {"type": "string", "minLength": 1}, "observed_value_types": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}, "additionalProperties": false}, "target_cardinality": {"type": ["integer", "null"], "minimum": 0}, "observed_cardinality": {"type": ["integer", "null"], "minimum": 0}, "comparison_result": {"enum": ["SATISFIED", "NOT_SATISFIED", "UNKNOWN"]}, "comparison_profile": {"const": "MANOSUBE-DIFFERENCE-COMPARISON-0.1"}}, "additionalProperties": false
     }
   },
   "additionalProperties": false

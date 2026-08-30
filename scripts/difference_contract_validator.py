@@ -51,6 +51,14 @@ def _ref_id(reference: dict[str, Any] | None) -> str | None:
     return None if reference is None else str(reference["id"])
 
 
+def _policy_ref_matches(reference: dict[str, Any], policy: dict[str, Any]) -> bool:
+    return (
+        reference["id"] == policy["closure_policy_id"]
+        and reference["version"] == policy["policy_version"]
+        and reference["semantic_fingerprint"] == policy["policy_semantic_fingerprint"]
+    )
+
+
 def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     """Return deterministic Difference cross-record violations."""
     errors: list[str] = []
@@ -76,6 +84,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             expected_previous = None if expected_revision == 0 else chain[expected_revision - 1]["difference_event_id"]
             if event["previous_event_id"] != expected_previous:
                 errors.append(f"event predecessor mismatch: {event['difference_event_id']}")
+            if expected_revision > 0 and event["from_status"] != chain[expected_revision - 1]["to_status"]:
+                errors.append(f"event status continuity mismatch: {event['difference_event_id']}")
             if event["event_kind"] == "OBSERVATION_BOUND":
                 if event["from_status"] != event["to_status"]:
                     errors.append(f"observation-bound status mutation: {event['difference_event_id']}")
@@ -94,6 +104,19 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         errors.append(f"blocker boundary mismatch: {event['difference_event_id']}")
                     if _ref_id(condition["verification_request_ref"]) != _ref_id(event["next_observation_ref"]):
                         errors.append(f"blocker verification request mismatch: {event['difference_event_id']}")
+            if event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}:
+                evaluation = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
+                difference = differences.get(difference_id)
+                policy = None if difference is None else policies.get(difference["closure_policy"]["id"])
+                if (
+                    evaluation is None
+                    or evaluation["difference_id"] != difference_id
+                    or evaluation["proposed_terminal_status"] != event["to_status"]
+                    or evaluation["gate_results"]["G22"] != "PASS"
+                    or policy is None
+                    or not _policy_ref_matches(evaluation["policy_ref"], policy)
+                ):
+                    errors.append(f"terminal evaluation binding mismatch: {event['difference_event_id']}")
             reconstructed[difference_id] = event["to_status"]
 
     for difference_id, difference in differences.items():
@@ -103,7 +126,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"Difference genesis binding mismatch: {difference_id}")
         policy_ref = difference["closure_policy"]
         policy = policies.get(policy_ref["id"])
-        if policy is None or _ref_id(policy["subject_difference_ref"]) != difference_id:
+        if (
+            policy is None
+            or _ref_id(policy["subject_difference_ref"]) != difference_id
+            or not _policy_ref_matches(policy_ref, policy)
+        ):
             errors.append(f"Difference closure Policy binding mismatch: {difference_id}")
         expected_status = bundle["materialized_status"].get(difference_id)
         if expected_status != reconstructed.get(difference_id):
@@ -115,7 +142,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"evaluation references missing Difference: {evaluation['closure_evaluation_id']}")
             continue
         policy = policies.get(evaluation["policy_ref"]["id"])
-        if policy is None or _ref_id(policy["subject_difference_ref"]) != evaluation["difference_id"]:
+        if (
+            policy is None
+            or _ref_id(policy["subject_difference_ref"]) != evaluation["difference_id"]
+            or not _policy_ref_matches(evaluation["policy_ref"], policy)
+            or evaluation["policy_version_evaluated"] != policy["policy_version"]
+            or evaluation["policy_semantic_fingerprint_evaluated"]
+            != policy["policy_semantic_fingerprint"]
+        ):
             errors.append(f"evaluation Policy binding mismatch: {evaluation['closure_evaluation_id']}")
         head = events.get(_ref_id(evaluation["difference_event_head_ref"]) or "")
         if head is None or head["difference_id"] != evaluation["difference_id"]:
@@ -156,6 +190,17 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"invalid old supersession event: {relation['relation_id']}")
         if new_event is None or new_event["event_revision"] != 0 or new_event["difference_id"] != new_id:
             errors.append(f"invalid new supersession genesis: {relation['relation_id']}")
+    for event in events.values():
+        if event["to_status"] != "SUPERSEDED":
+            continue
+        matching_relations = [
+            relation
+            for relation in relations.values()
+            if _ref_id(relation["old_difference_ref"]) == event["difference_id"]
+            and _ref_id(relation["old_terminal_event_ref"]) == event["difference_event_id"]
+        ]
+        if len(matching_relations) != 1:
+            errors.append(f"superseded event relation mismatch: {event['difference_event_id']}")
     return sorted(set(errors))
 
 

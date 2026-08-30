@@ -3,30 +3,52 @@
   "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/closure_evaluation.schema.json",
   "title": "Difference Closure Evaluation",
   "type": "object",
-  "required": ["schema_version", "closure_evaluation_id", "difference_id", "evaluation_mode", "difference_event_head_ref", "policy_ref", "evaluated_state_revision", "evaluated_state_fingerprint", "after_state_candidate", "terminal_reason_evidence_refs", "candidate_invariant_evaluation_bindings", "candidate_claim_evaluation_bindings", "proposed_terminal_status", "gate_results", "result", "evaluated_at", "reflow_transition_ref"],
+  "required": ["schema_version", "closure_evaluation_id", "difference_id", "evaluation_mode", "terminal_reason_evidence_refs", "base_kernel_source_ref_evaluated", "kernel_source_ref_evaluated", "difference_event_head_ref", "target_predicate_ref", "objective_revision_ref_evaluated", "objective_semantic_fingerprint_evaluated", "before_state_ref", "resolution_mode", "change_refs", "after_state_candidate", "after_observation_refs", "change_result_evidence_refs", "change_free_verification_evidence_refs", "verification_independence_ref", "evidence_sufficiency_ref", "candidate_invariant_evaluation_bindings", "candidate_claim_evaluation_bindings", "contradiction_refs", "evaluated_state_revision", "evaluated_state_fingerprint", "evaluated_at", "evaluation_expires_at", "policy_ref", "policy_version_evaluated", "policy_semantic_fingerprint_evaluated", "proposed_terminal_status", "gate_results", "result", "failure_reasons", "reflow_transition_ref"],
   "properties": {
     "schema_version": {"const": "0.1"},
     "closure_evaluation_id": {"type": "string", "pattern": "^D-CLOSE-EVAL-[0-9A-F]{64}$"},
     "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"},
     "evaluation_mode": {"enum": ["CANDIDATE_CLOSURE", "CANDIDATE_TERMINAL", "TERMINAL_POLICY_ONLY"]},
+    "base_kernel_source_ref_evaluated": {"$ref": "#/$defs/git_tree_ref"},
+    "kernel_source_ref_evaluated": {"$ref": "#/$defs/git_tree_ref"},
     "difference_event_head_ref": {"$ref": "../common/reference.schema.json"},
+    "target_predicate_ref": {"$ref": "../common/reference.schema.json"},
+    "objective_revision_ref_evaluated": {"$ref": "../common/reference.schema.json"},
+    "objective_semantic_fingerprint_evaluated": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"},
+    "before_state_ref": {"$ref": "../common/reference.schema.json"},
+    "resolution_mode": {"oneOf": [{"type": "null"}, {"enum": ["CHANGE_BOUND", "CHANGE_FREE"]}]},
+    "change_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
     "policy_ref": {"$ref": "difference.schema.json#/$defs/versioned_reference"},
     "evaluated_state_revision": {"type": "integer", "minimum": 0},
     "evaluated_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
     "after_state_candidate": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/after_state_candidate"}]},
+    "after_observation_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "change_result_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "change_free_verification_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "verification_independence_ref": {"type": "null"},
+    "evidence_sufficiency_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
     "terminal_reason_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
     "candidate_invariant_evaluation_bindings": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/candidate_binding"}},
     "candidate_claim_evaluation_bindings": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/candidate_binding"}},
+    "contradiction_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
     "proposed_terminal_status": {"enum": ["CLOSED", "BLOCKED", "RETAINED"]},
     "gate_results": {"$ref": "#/$defs/gates"},
     "result": {"enum": ["NOT_EVALUATED", "EVALUATING", "SATISFIED", "NOT_SATISFIED", "BLOCKED", "STALE", "CONTRADICTED", "REVOKED"]},
     "evaluated_at": {"$ref": "../common/timestamp.schema.json"},
+    "evaluation_expires_at": {"oneOf": [{"type": "null"}, {"$ref": "../common/timestamp.schema.json"}]},
+    "policy_version_evaluated": {"const": "0.1"},
+    "policy_semantic_fingerprint_evaluated": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"},
+    "failure_reasons": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "reflow_transition_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]}
   },
   "$defs": {
+    "git_tree_ref": {
+      "type": "object", "required": ["kind", "repository", "commit_sha", "tree_sha"],
+      "properties": {"kind": {"const": "git_tree"}, "repository": {"const": "manosube/manosube-agent-civilization-os"}, "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}, "additionalProperties": false
+    },
     "after_state_candidate": {
-      "type": "object", "required": ["kind", "candidate_id", "base_state_ref", "semantic_state", "semantic_fingerprint", "source_snapshot_refs", "producing_change_refs"],
-      "properties": {"kind": {"const": "after_state_candidate"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "base_state_ref": {"$ref": "../common/reference.schema.json"}, "semantic_state": {"type": "object"}, "semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}, "source_snapshot_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "producing_change_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}}, "additionalProperties": false
+      "type": "object", "required": ["kind", "candidate_id", "kernel_source_ref", "base_state_ref", "semantic_state", "semantic_fingerprint", "source_snapshot_refs", "producing_change_refs"],
+      "properties": {"kind": {"const": "after_state_candidate"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "kernel_source_ref": {"$ref": "#/$defs/git_tree_ref"}, "base_state_ref": {"$ref": "../common/reference.schema.json"}, "semantic_state": {"type": "object"}, "semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}, "source_snapshot_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "producing_change_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}}, "additionalProperties": false
     },
     "candidate_binding": {
       "type": "object", "required": ["kind", "binding_id", "candidate_id", "evaluation_ref", "evaluation_result", "evaluation_evidence_refs"],
@@ -42,7 +64,7 @@
   "allOf": [
     {"if": {"properties": {"evaluation_mode": {"const": "CANDIDATE_CLOSURE"}}, "required": ["evaluation_mode"]}, "then": {"properties": {"after_state_candidate": {"not": {"type": "null"}}, "proposed_terminal_status": {"const": "CLOSED"}, "result": {"const": "SATISFIED"}, "gate_results": {"properties": {"G22": {"const": "PASS"}}}}}},
     {"if": {"properties": {"evaluation_mode": {"const": "CANDIDATE_TERMINAL"}}, "required": ["evaluation_mode"]}, "then": {"properties": {"after_state_candidate": {"not": {"type": "null"}}, "terminal_reason_evidence_refs": {"minItems": 1}, "proposed_terminal_status": {"enum": ["BLOCKED", "RETAINED"]}, "result": {"enum": ["BLOCKED", "STALE", "CONTRADICTED", "NOT_SATISFIED"]}}}},
-    {"if": {"properties": {"evaluation_mode": {"const": "TERMINAL_POLICY_ONLY"}}, "required": ["evaluation_mode"]}, "then": {"properties": {"after_state_candidate": {"type": "null"}, "terminal_reason_evidence_refs": {"minItems": 1}, "candidate_invariant_evaluation_bindings": {"maxItems": 0}, "candidate_claim_evaluation_bindings": {"maxItems": 0}, "proposed_terminal_status": {"enum": ["BLOCKED", "RETAINED"]}, "result": {"const": "BLOCKED"}, "gate_results": {"properties": {"G22": {"const": "PASS"}}}}}}
+    {"if": {"properties": {"evaluation_mode": {"const": "TERMINAL_POLICY_ONLY"}}, "required": ["evaluation_mode"]}, "then": {"properties": {"after_state_candidate": {"type": "null"}, "resolution_mode": {"type": "null"}, "change_refs": {"maxItems": 0}, "after_observation_refs": {"maxItems": 0}, "change_result_evidence_refs": {"maxItems": 0}, "change_free_verification_evidence_refs": {"maxItems": 0}, "terminal_reason_evidence_refs": {"minItems": 1}, "candidate_invariant_evaluation_bindings": {"maxItems": 0}, "candidate_claim_evaluation_bindings": {"maxItems": 0}, "proposed_terminal_status": {"enum": ["BLOCKED", "RETAINED"]}, "result": {"const": "BLOCKED"}, "gate_results": {"properties": {"G22": {"const": "PASS"}}}}}}
   ],
   "additionalProperties": false
 }
