@@ -54,7 +54,7 @@ DIFFERENCE_IDENTITY_INPUT
 + effective_boundary
 + normalized_target_state
 + normalized_structural_difference
-+ closure_policy_fingerprint
++ closure_policy_semantic_fingerprint
 + identity_profile
 ```
 
@@ -62,7 +62,9 @@ DIFFERENCE_IDENTITY_INPUT
 
 Target value、Objective semantics、Mismatchの意味またはClosure Policy payloadが変わればidentityは変わる。Observed valueはMismatchへ正規化された範囲だけidentityへ反映する。
 
-Closure Policyのlogical IDやversion文字列だけではなく、immutable canonical payloadのfingerprintをidentity inputへ含める。同じMismatchへPolicy-only改定を適用する場合も新しいDifference IDを導出し、旧DifferenceとのSupersession Relationをappendする。self-supersessionを許可しない。
+Closure Policyのlogical IDやversion文字列ではなく、closure requirementsだけから算出した`policy_semantic_fingerprint`をidentity inputへ含める。fingerprint inputから`subject_difference_ref`、`closure_policy_id`、`policy_version`、schema metadataを除外するため、Difference IDとの循環依存は生じない。
+
+同じMismatchでもPolicy semanticsがmaterialに変われば新しいDifference IDを導出し、旧DifferenceとのSupersession Relationをappendする。versionだけが変わりPolicy semanticsが同一ならDifference IDは維持し、旧Policy bindingによる評価可能性を保持する。self-supersessionを許可しない。
 
 # 3. Excluded Inputs
 
