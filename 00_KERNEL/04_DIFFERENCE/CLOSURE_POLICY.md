@@ -274,9 +274,11 @@ failure_reasons: []
 reflow_transition_ref: null
 ```
 
-`evaluation_mode`は`CANDIDATE_CLOSURE | TERMINAL_POLICY_ONLY`のclosed enumである。
+`evaluation_mode`は`CANDIDATE_CLOSURE | CANDIDATE_TERMINAL | TERMINAL_POLICY_ONLY`のclosed enumである。
 
 `CANDIDATE_CLOSURE`は`proposed_terminal_status=CLOSED`専用で、上記recordのcandidate、resolution、Observation、Evidence、G1–G22 fieldをすべて要求する。
+
+`CANDIDATE_TERMINAL`はcandidate生成後の`proposed_terminal_status=BLOCKED | RETAINED`専用である。candidate、resolution、Observation、Evidence、Invariant／Claim bindingを存在する範囲で実値として保持し、失敗・UNKNOWN・STALE・CONTRADICTED gateを消してはならない。G1、G3、G5–G9、G18、G20、G22および評価可能な全gateを実行し、未評価gateは`UNKNOWN`、非該当だけを`NOT_APPLICABLE`にする。`terminal_reason_evidence_refs`を必須とし、aggregate resultは原因に応じて`BLOCKED | STALE | CONTRADICTED | NOT_SATISFIED`のいずれかで、`SATISFIED`を禁止する。G22 PASSとPolicy allowed terminal state一致は通常どおり必須である。このmodeはcandidate-dependentなEvidence不足、失効、conflict、Invariant／Claim failureを保持してBLOCKED／RETAINEDへ還流するが、CLOSEDへ使用できない。
 
 `TERMINAL_POLICY_ONLY`はpre-workまたはcandidate生成前の`BLOCKED | RETAINED`専用である。このmodeでは次を要求する。
 
