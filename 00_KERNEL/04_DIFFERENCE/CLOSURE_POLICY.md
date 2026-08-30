@@ -112,7 +112,7 @@ serialization metadata
 
 Conformance vectorsでは少なくとも、object key順序と上記unordered set順序を変えた同値Policyが同じfingerprintを生成すること、member変更・重複・未知fieldが同一扱いされないことを証明する。
 
-`reopen_conditions`は新しい自由形式Condition recordではない。`01_OBJECTIVE/OBJECTIVE_CONTRACT.md`で定義されるTarget Predicateへの次のexact typed referenceだけを許可する。
+`reopen_conditions`は新しい自由形式Condition recordではない。`00_KERNEL/01_OBJECTIVE/OBJECTIVE_CONTRACT.md`で定義されるTarget Predicateへの次のexact typed referenceだけを許可する。
 
 ```yaml
 kind: target_predicate
