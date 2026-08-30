@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/difference_lifecycle_event.schema.json",
+  "title": "Difference Lifecycle Event",
+  "type": "object",
+  "required": ["schema_version", "difference_event_id", "difference_id", "event_kind", "event_revision", "previous_event_id", "from_status", "to_status", "state_revision_evaluated", "state_fingerprint_evaluated", "reason_code", "reason", "blocker_kind", "blocker_scope", "blocker_resolution_condition", "observation_refs", "evidence_refs", "authority_ref", "change_refs", "closure_evaluation_ref", "reflow_transition_ref", "next_observation_ref", "reopen_trigger", "reopen_condition_ref", "reopen_condition_evaluation_ref", "revoked_evidence_refs", "invalid_evidence_refs", "contradiction_evidence_refs"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "difference_event_id": {"type": "string", "pattern": "^D-EVT-[0-9A-F]{64}$"},
+    "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"},
+    "event_kind": {"enum": ["TRANSITION", "OBSERVATION_BOUND"]},
+    "event_revision": {"type": "integer", "minimum": 0},
+    "previous_event_id": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^D-EVT-[0-9A-F]{64}$"}]},
+    "from_status": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/status"}]},
+    "to_status": {"$ref": "#/$defs/status"},
+    "state_revision_evaluated": {"type": "integer", "minimum": 0},
+    "state_fingerprint_evaluated": {"$ref": "../common/fingerprint.schema.json"},
+    "reason_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+    "reason": {"type": "string"},
+    "blocker_kind": {"oneOf": [{"type": "null"}, {"enum": ["AUTHORITY_PATH", "EXECUTION_PATH", "OBSERVATION_PATH", "EVIDENCE_INSUFFICIENT", "STALE_BINDING", "MATERIAL_CONFLICT", "INVARIANT_FAILURE", "CLAIM_FAILURE", "OTHER_STRUCTURAL"]}]},
+    "blocker_scope": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/blocker_scope"}]},
+    "blocker_resolution_condition": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/blocker_resolution_condition"}]},
+    "observation_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "authority_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
+    "change_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "closure_evaluation_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
+    "reflow_transition_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
+    "next_observation_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
+    "reopen_trigger": {"oneOf": [{"type": "null"}, {"enum": ["OBSERVATION_CONTRADICTION", "CLOSURE_EVIDENCE_REVOKED", "CLOSURE_EVIDENCE_INVALID", "MATERIAL_CONTRADICTION", "POLICY_REOPEN_CONDITION_SATISFIED"]}]},
+    "reopen_condition_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
+    "reopen_condition_evaluation_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
+    "revoked_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "invalid_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "contradiction_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}
+  },
+  "$defs": {
+    "status": {"enum": ["DETECTED", "OPEN", "ACTIVE", "VERIFYING", "BLOCKED", "RETAINED", "CLOSED", "REOPENED", "SUPERSEDED", "INVALIDATED"]},
+    "blocker_scope": {
+      "type": "object", "required": ["kind", "effective_boundary", "affected_subject_refs", "blocked_stage"],
+      "properties": {"kind": {"const": "difference_blocker_scope"}, "effective_boundary": {"$ref": "difference.schema.json#/$defs/effective_boundary"}, "affected_subject_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "blocked_stage": {"enum": ["OBSERVATION", "DIFFERENCE_EVALUATION", "LIFECYCLE_TRANSITION", "EXTERNAL_AUTHORITY_PATH", "EXTERNAL_EXECUTION_PATH", "EXTERNAL_EVIDENCE_PATH"]}}, "additionalProperties": false
+    },
+    "blocker_resolution_condition": {
+      "type": "object", "required": ["kind", "condition_code", "subject_ref", "expected_state", "verification_request_ref"],
+      "properties": {"kind": {"const": "blocker_resolution_condition"}, "condition_code": {"enum": ["AUTHORITY_PATH_AVAILABLE", "EXECUTION_PATH_AVAILABLE", "OBSERVATION_PATH_AVAILABLE", "REQUIRED_EVIDENCE_AVAILABLE", "BINDINGS_CURRENT", "MATERIAL_CONFLICT_RESOLVED", "INVARIANTS_PASS", "CLAIMS_PASS", "STRUCTURAL_BLOCKER_REMOVED"]}, "subject_ref": {"$ref": "../common/reference.schema.json"}, "expected_state": {"enum": ["AVAILABLE", "CURRENT", "RESOLVED", "PASS", "REMOVED"]}, "verification_request_ref": {"$ref": "../common/reference.schema.json"}}, "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"to_status": {"const": "BLOCKED"}}, "required": ["to_status"]}, "then": {"properties": {"blocker_kind": {"not": {"type": "null"}}, "blocker_scope": {"not": {"type": "null"}}, "blocker_resolution_condition": {"not": {"type": "null"}}, "next_observation_ref": {"not": {"type": "null"}}}}, "else": {"properties": {"blocker_kind": {"type": "null"}, "blocker_scope": {"type": "null"}, "blocker_resolution_condition": {"type": "null"}}}},
+    {"if": {"properties": {"event_revision": {"const": 0}}, "required": ["event_revision"]}, "then": {"properties": {"previous_event_id": {"type": "null"}, "from_status": {"type": "null"}, "to_status": {"const": "DETECTED"}}}},
+    {"if": {"properties": {"event_kind": {"const": "OBSERVATION_BOUND"}}, "required": ["event_kind"]}, "then": {"properties": {"observation_refs": {"minItems": 1}, "evidence_refs": {"minItems": 1}}}}
+  ],
+  "additionalProperties": false
+}

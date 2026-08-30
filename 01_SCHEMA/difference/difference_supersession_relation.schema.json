@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/difference_supersession_relation.schema.json",
+  "title": "Difference Supersession Relation",
+  "type": "object",
+  "required": ["schema_version", "relation_id", "old_difference_ref", "new_difference_ref", "old_terminal_event_ref", "new_genesis_event_ref", "changed_identity_fields", "reason_evidence_refs"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "relation_id": {"type": "string", "pattern": "^D-SUPER-[0-9A-F]{64}$"},
+    "old_difference_ref": {"$ref": "../common/reference.schema.json"},
+    "new_difference_ref": {"$ref": "../common/reference.schema.json"},
+    "old_terminal_event_ref": {"$ref": "../common/reference.schema.json"},
+    "new_genesis_event_ref": {"$ref": "../common/reference.schema.json"},
+    "changed_identity_fields": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["project_id", "target_predicate", "normalized_target_state", "objective_scope", "subject", "effective_boundary", "structural_difference", "closure_policy"]}},
+    "reason_evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}
+  },
+  "additionalProperties": false
+}

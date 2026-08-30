@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/difference.schema.json",
+  "title": "Canonical Difference Record",
+  "type": "object",
+  "required": ["schema_version", "difference_id", "project_id", "objective_revision_ref", "objective_semantic_fingerprint", "target_predicate_ref", "normalized_target_state", "objective_scope_binding", "observed_state_revision", "observed_state_fingerprint", "observation_refs", "observation_evidence_refs", "normalized_observed_state", "structural_difference", "subject", "observation_scope", "effective_boundary", "impact", "risk_class", "authority_required", "closure_policy", "genesis_event_ref"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "objective_revision_ref": {"$ref": "../common/reference.schema.json"},
+    "objective_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"},
+    "target_predicate_ref": {"$ref": "../common/reference.schema.json"},
+    "normalized_target_state": {"$ref": "#/$defs/normalized_value"},
+    "objective_scope_binding": {"$ref": "#/$defs/objective_scope_binding"},
+    "observed_state_revision": {"type": "integer", "minimum": 0},
+    "observed_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "observation_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "observation_evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "normalized_observed_state": {"$ref": "#/$defs/normalized_value"},
+    "structural_difference": {"$ref": "#/$defs/structural_difference"},
+    "subject": {"type": "string", "minLength": 1},
+    "observation_scope": {"type": "string", "minLength": 1},
+    "effective_boundary": {"$ref": "#/$defs/effective_boundary"},
+    "impact": {"type": "object"},
+    "risk_class": {"enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]},
+    "authority_required": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "closure_policy": {"$ref": "#/$defs/versioned_reference"},
+    "genesis_event_ref": {"$ref": "../common/reference.schema.json"}
+  },
+  "$defs": {
+    "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "nullable_timestamp": {"oneOf": [{"type": "null"}, {"$ref": "../common/timestamp.schema.json"}]},
+    "versioned_reference": {
+      "type": "object", "required": ["kind", "id", "version", "semantic_fingerprint"],
+      "properties": {"kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}, "id": {"$ref": "../common/identity.schema.json"}, "version": {"const": "0.1"}, "semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}}, "additionalProperties": false
+    },
+    "unordered_references": {
+      "type": "object", "required": ["collection_kind", "members"],
+      "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}}, "additionalProperties": false
+    },
+    "normalized_value": {
+      "type": "object", "required": ["value_type", "value"],
+      "properties": {"value_type": {"enum": ["NULL", "BOOLEAN", "INTEGER", "STRING", "ORDERED_COLLECTION", "UNORDERED_COLLECTION"]}, "value": {}}, "additionalProperties": false
+    },
+    "objective_scope_binding": {
+      "type": "object", "required": ["objective_scope_name", "scope_ref", "scope_schema_version", "resolved_scope_record_sha256"],
+      "properties": {"objective_scope_name": {"type": "string", "minLength": 1}, "scope_ref": {"$ref": "../common/reference.schema.json"}, "scope_schema_version": {"const": "0.1"}, "resolved_scope_record_sha256": {"$ref": "#/$defs/semantic_fingerprint"}}, "additionalProperties": false
+    },
+    "effective_boundary": {
+      "type": "object", "required": ["kind", "scope_ref", "resolved_scope_record_sha256", "target_effective_window", "source_snapshot_refs"],
+      "properties": {
+        "kind": {"const": "OBSERVATION_SCOPE_BOUNDARY"}, "scope_ref": {"$ref": "../common/reference.schema.json"}, "resolved_scope_record_sha256": {"$ref": "#/$defs/semantic_fingerprint"},
+        "target_effective_window": {"type": "object", "required": ["start", "end"], "properties": {"start": {"$ref": "#/$defs/nullable_timestamp"}, "end": {"$ref": "#/$defs/nullable_timestamp"}}, "additionalProperties": false},
+        "source_snapshot_refs": {"$ref": "#/$defs/unordered_references"}
+      }, "additionalProperties": false
+    },
+    "structural_difference": {
+      "type": "object", "required": ["mismatch_kind", "comparison_operator", "comparison_result"],
+      "properties": {"mismatch_kind": {"enum": ["MISSING", "UNEXPECTED", "VALUE_MISMATCH", "TYPE_MISMATCH", "RELATION_MISMATCH", "UNKNOWN", "CONFLICTED"]}, "comparison_operator": {"enum": ["equals", "not_equals", "contains", "exists"]}, "comparison_result": {"enum": ["SATISFIED", "NOT_SATISFIED", "UNKNOWN", "CONFLICTED"]}}, "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,183 @@
+"""Validate cross-record Difference contract invariants for conformance fixtures."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+import json
+from pathlib import Path
+from typing import Any
+
+STATUSES = {
+    "DETECTED", "OPEN", "ACTIVE", "VERIFYING", "BLOCKED", "RETAINED", "CLOSED",
+    "REOPENED", "SUPERSEDED", "INVALIDATED",
+}
+LEGAL_TRANSITIONS = {
+    (None, "DETECTED"), ("DETECTED", "OPEN"), ("DETECTED", "INVALIDATED"),
+    ("OPEN", "ACTIVE"), ("OPEN", "BLOCKED"), ("OPEN", "RETAINED"),
+    ("OPEN", "SUPERSEDED"), ("OPEN", "INVALIDATED"),
+    ("ACTIVE", "VERIFYING"), ("ACTIVE", "BLOCKED"), ("ACTIVE", "RETAINED"),
+    ("ACTIVE", "SUPERSEDED"), ("ACTIVE", "INVALIDATED"),
+    ("VERIFYING", "CLOSED"), ("VERIFYING", "ACTIVE"), ("VERIFYING", "BLOCKED"),
+    ("VERIFYING", "RETAINED"), ("VERIFYING", "SUPERSEDED"),
+    ("VERIFYING", "INVALIDATED"), ("BLOCKED", "OPEN"), ("BLOCKED", "ACTIVE"),
+    ("BLOCKED", "VERIFYING"), ("BLOCKED", "RETAINED"), ("BLOCKED", "SUPERSEDED"),
+    ("BLOCKED", "INVALIDATED"), ("RETAINED", "OPEN"), ("RETAINED", "ACTIVE"),
+    ("RETAINED", "VERIFYING"), ("RETAINED", "BLOCKED"),
+    ("RETAINED", "SUPERSEDED"), ("RETAINED", "INVALIDATED"),
+    ("CLOSED", "REOPENED"), ("CLOSED", "SUPERSEDED"), ("CLOSED", "INVALIDATED"),
+    ("REOPENED", "ACTIVE"), ("REOPENED", "VERIFYING"), ("REOPENED", "BLOCKED"),
+    ("REOPENED", "RETAINED"), ("REOPENED", "SUPERSEDED"),
+    ("REOPENED", "INVALIDATED"),
+}
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _index(records: list[dict[str, Any]], key: str, errors: list[str]) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    for record in records:
+        identity = record[key]
+        if identity in indexed and indexed[identity] != record:
+            errors.append(f"same-ID different-payload conflict: {identity}")
+        elif identity in indexed:
+            errors.append(f"duplicate canonical record: {identity}")
+        indexed[identity] = record
+    return indexed
+
+
+def _ref_id(reference: dict[str, Any] | None) -> str | None:
+    return None if reference is None else str(reference["id"])
+
+
+def validate_bundle(bundle: dict[str, Any]) -> list[str]:
+    """Return deterministic Difference cross-record violations."""
+    errors: list[str] = []
+    differences = _index(bundle["differences"], "difference_id", errors)
+    events = _index(bundle["events"], "difference_event_id", errors)
+    policies = _index(bundle["policies"], "closure_policy_id", errors)
+    evaluations = _index(bundle["evaluations"], "closure_evaluation_id", errors)
+    relations = _index(bundle["supersession_relations"], "relation_id", errors)
+
+    events_by_difference: dict[str, list[dict[str, Any]]] = {}
+    for event in events.values():
+        difference_id = event["difference_id"]
+        if difference_id not in differences:
+            errors.append(f"event references missing Difference: {event['difference_event_id']}")
+        events_by_difference.setdefault(difference_id, []).append(event)
+
+    reconstructed: dict[str, str] = {}
+    for difference_id, chain in events_by_difference.items():
+        chain.sort(key=lambda item: item["event_revision"])
+        for expected_revision, event in enumerate(chain):
+            if event["event_revision"] != expected_revision:
+                errors.append(f"event revision gap: {difference_id}")
+            expected_previous = None if expected_revision == 0 else chain[expected_revision - 1]["difference_event_id"]
+            if event["previous_event_id"] != expected_previous:
+                errors.append(f"event predecessor mismatch: {event['difference_event_id']}")
+            if event["event_kind"] == "OBSERVATION_BOUND":
+                if event["from_status"] != event["to_status"]:
+                    errors.append(f"observation-bound status mutation: {event['difference_event_id']}")
+                if event["to_status"] in {"CLOSED", "SUPERSEDED", "INVALIDATED"}:
+                    errors.append(f"observation-bound terminal event: {event['difference_event_id']}")
+            elif (event["from_status"], event["to_status"]) not in LEGAL_TRANSITIONS:
+                errors.append(f"illegal lifecycle transition: {event['difference_event_id']}")
+            if event["to_status"] == "BLOCKED":
+                scope = event["blocker_scope"]
+                condition = event["blocker_resolution_condition"]
+                if scope is None or condition is None or event["blocker_kind"] is None:
+                    errors.append(f"incomplete blocker payload: {event['difference_event_id']}")
+                else:
+                    difference = differences.get(difference_id)
+                    if difference and scope["effective_boundary"] != difference["effective_boundary"]:
+                        errors.append(f"blocker boundary mismatch: {event['difference_event_id']}")
+                    if _ref_id(condition["verification_request_ref"]) != _ref_id(event["next_observation_ref"]):
+                        errors.append(f"blocker verification request mismatch: {event['difference_event_id']}")
+            reconstructed[difference_id] = event["to_status"]
+
+    for difference_id, difference in differences.items():
+        genesis_id = _ref_id(difference["genesis_event_ref"])
+        genesis = events.get(genesis_id or "")
+        if genesis is None or genesis["difference_id"] != difference_id or genesis["event_revision"] != 0:
+            errors.append(f"Difference genesis binding mismatch: {difference_id}")
+        policy_ref = difference["closure_policy"]
+        policy = policies.get(policy_ref["id"])
+        if policy is None or _ref_id(policy["subject_difference_ref"]) != difference_id:
+            errors.append(f"Difference closure Policy binding mismatch: {difference_id}")
+        expected_status = bundle["materialized_status"].get(difference_id)
+        if expected_status != reconstructed.get(difference_id):
+            errors.append(f"materialized Difference reconstruction mismatch: {difference_id}")
+
+    for evaluation in evaluations.values():
+        difference = differences.get(evaluation["difference_id"])
+        if difference is None:
+            errors.append(f"evaluation references missing Difference: {evaluation['closure_evaluation_id']}")
+            continue
+        policy = policies.get(evaluation["policy_ref"]["id"])
+        if policy is None or _ref_id(policy["subject_difference_ref"]) != evaluation["difference_id"]:
+            errors.append(f"evaluation Policy binding mismatch: {evaluation['closure_evaluation_id']}")
+        head = events.get(_ref_id(evaluation["difference_event_head_ref"]) or "")
+        if head is None or head["difference_id"] != evaluation["difference_id"]:
+            errors.append(f"evaluation event-head mismatch: {evaluation['closure_evaluation_id']}")
+        mode = evaluation["evaluation_mode"]
+        candidate = evaluation["after_state_candidate"]
+        proposed = evaluation["proposed_terminal_status"]
+        if evaluation["gate_results"]["G22"] != "PASS":
+            errors.append(f"terminal state not allowed: {evaluation['closure_evaluation_id']}")
+        if policy and proposed not in policy["allowed_terminal_states"]:
+            errors.append(f"Policy disallows terminal state: {evaluation['closure_evaluation_id']}")
+        if mode == "CANDIDATE_CLOSURE":
+            if candidate is None or proposed != "CLOSED" or evaluation["result"] != "SATISFIED":
+                errors.append(f"invalid candidate closure mode: {evaluation['closure_evaluation_id']}")
+            if any(value != "PASS" for value in evaluation["gate_results"].values()):
+                errors.append(f"closure has non-PASS mandatory gate: {evaluation['closure_evaluation_id']}")
+        elif mode == "CANDIDATE_TERMINAL":
+            if candidate is None or proposed not in {"BLOCKED", "RETAINED"}:
+                errors.append(f"invalid candidate terminal mode: {evaluation['closure_evaluation_id']}")
+            if not evaluation["terminal_reason_evidence_refs"] or evaluation["result"] == "SATISFIED":
+                errors.append(f"candidate terminal loses failure Evidence: {evaluation['closure_evaluation_id']}")
+        elif mode == "TERMINAL_POLICY_ONLY":
+            if candidate is not None or proposed not in {"BLOCKED", "RETAINED"}:
+                errors.append(f"Policy-only mode contains candidate truth: {evaluation['closure_evaluation_id']}")
+            if evaluation["candidate_invariant_evaluation_bindings"] or evaluation["candidate_claim_evaluation_bindings"]:
+                errors.append(f"Policy-only mode contains candidate bindings: {evaluation['closure_evaluation_id']}")
+            if not evaluation["terminal_reason_evidence_refs"] or evaluation["result"] != "BLOCKED":
+                errors.append(f"invalid Policy-only terminal Evidence: {evaluation['closure_evaluation_id']}")
+
+    for relation in relations.values():
+        old_id = _ref_id(relation["old_difference_ref"])
+        new_id = _ref_id(relation["new_difference_ref"])
+        if old_id == new_id or old_id not in differences or new_id not in differences:
+            errors.append(f"invalid supersession endpoints: {relation['relation_id']}")
+        old_event = events.get(_ref_id(relation["old_terminal_event_ref"]) or "")
+        new_event = events.get(_ref_id(relation["new_genesis_event_ref"]) or "")
+        if old_event is None or old_event["to_status"] != "SUPERSEDED" or old_event["difference_id"] != old_id:
+            errors.append(f"invalid old supersession event: {relation['relation_id']}")
+        if new_event is None or new_event["event_revision"] != 0 or new_event["difference_id"] != new_id:
+            errors.append(f"invalid new supersession genesis: {relation['relation_id']}")
+    return sorted(set(errors))
+
+
+def apply_mutation(bundle: dict[str, Any], path: list[str | int], value: Any) -> dict[str, Any]:
+    mutated = deepcopy(bundle)
+    target: Any = mutated
+    for segment in path[:-1]:
+        target = target[segment]
+    if value == {"$delete": True}:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = value
+    return mutated
+
+
+def validate_fixture_suite(root: Path) -> tuple[int, int, list[str], list[str]]:
+    valid_bundle = load_json(root / "valid" / "bundle.json")
+    invalid_cases = load_json(root / "invalid" / "cases.json")
+    valid_errors = validate_bundle(valid_bundle)
+    invalid_escapes = [
+        case["name"]
+        for case in invalid_cases
+        if not validate_bundle(apply_mutation(valid_bundle, case["path"], case["value"]))
+    ]
+    return 1, len(invalid_cases), valid_errors, invalid_escapes

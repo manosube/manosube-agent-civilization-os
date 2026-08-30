@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from difference_contract_validator import validate_fixture_suite as validate_difference_fixtures
 from jsonschema import Draft202012Validator, FormatChecker
 from observation_contract_validator import validate_fixture_suite
 from referencing import Registry, Resource
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = ROOT / "01_SCHEMA"
 FIXTURE_ROOT = ROOT / "tests" / "contract" / "fixtures" / "schema"
 OBSERVATION_FIXTURE_ROOT = ROOT / "tests" / "contract" / "fixtures" / "observation"
+DIFFERENCE_FIXTURE_ROOT = ROOT / "tests" / "contract" / "fixtures" / "difference"
 
 
 def load_json(path: Path) -> Any:
@@ -51,7 +53,7 @@ def main() -> int:
     paths = sorted(SCHEMA_ROOT.rglob("*.schema.json"))
     schemas = [load_json(path) for path in paths]
     ids = [schema.get("$id") for schema in schemas]
-    if len(paths) != 21 or len(set(ids)) != 21 or None in ids:
+    if len(paths) < 21 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
@@ -108,18 +110,34 @@ def main() -> int:
     print(f"OBSERVATION_CONFORMANCE_INVALID_FIXTURE_COUNT={observation_invalid_count}")
     print(f"OBSERVATION_CONFORMANCE_VALID_FAILURE_COUNT={len(observation_valid_errors)}")
     print(f"OBSERVATION_CONFORMANCE_INVALID_ESCAPE_COUNT={len(observation_invalid_escapes)}")
+    (
+        difference_valid_count,
+        difference_invalid_count,
+        difference_valid_errors,
+        difference_invalid_escapes,
+    ) = validate_difference_fixtures(DIFFERENCE_FIXTURE_ROOT)
+    difference_schema_count = len(list((SCHEMA_ROOT / "difference").glob("*.schema.json")))
+    print(f"DIFFERENCE_SCHEMA_COUNT={difference_schema_count}")
+    print(f"DIFFERENCE_CONFORMANCE_VALID_FIXTURE_COUNT={difference_valid_count}")
+    print(f"DIFFERENCE_CONFORMANCE_INVALID_FIXTURE_COUNT={difference_invalid_count}")
+    print(f"DIFFERENCE_CONFORMANCE_VALID_FAILURE_COUNT={len(difference_valid_errors)}")
+    print(f"DIFFERENCE_CONFORMANCE_INVALID_ESCAPE_COUNT={len(difference_invalid_escapes)}")
     if (
         unresolved_refs
         or valid_failures
         or invalid_escapes
         or observation_valid_errors
         or observation_invalid_escapes
+        or difference_valid_errors
+        or difference_invalid_escapes
     ):
         print(f"UNRESOLVED_REFS={unresolved_refs}")
         print(f"VALID_FAILURES={valid_failures}")
         print(f"INVALID_ESCAPES={invalid_escapes}")
         print(f"OBSERVATION_VALID_ERRORS={observation_valid_errors}")
         print(f"OBSERVATION_INVALID_ESCAPES={observation_invalid_escapes}")
+        print(f"DIFFERENCE_VALID_ERRORS={difference_valid_errors}")
+        print(f"DIFFERENCE_INVALID_ESCAPES={difference_invalid_escapes}")
         return 1
     print("SCHEMA_VALIDATION=PASS")
     return 0

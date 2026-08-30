@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/closure_evaluation.schema.json",
+  "title": "Difference Closure Evaluation",
+  "type": "object",
+  "required": ["schema_version", "closure_evaluation_id", "difference_id", "evaluation_mode", "difference_event_head_ref", "policy_ref", "evaluated_state_revision", "evaluated_state_fingerprint", "after_state_candidate", "terminal_reason_evidence_refs", "candidate_invariant_evaluation_bindings", "candidate_claim_evaluation_bindings", "proposed_terminal_status", "gate_results", "result", "evaluated_at", "reflow_transition_ref"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "closure_evaluation_id": {"type": "string", "pattern": "^D-CLOSE-EVAL-[0-9A-F]{64}$"},
+    "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"},
+    "evaluation_mode": {"enum": ["CANDIDATE_CLOSURE", "CANDIDATE_TERMINAL", "TERMINAL_POLICY_ONLY"]},
+    "difference_event_head_ref": {"$ref": "../common/reference.schema.json"},
+    "policy_ref": {"$ref": "difference.schema.json#/$defs/versioned_reference"},
+    "evaluated_state_revision": {"type": "integer", "minimum": 0},
+    "evaluated_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "after_state_candidate": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/after_state_candidate"}]},
+    "terminal_reason_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "candidate_invariant_evaluation_bindings": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/candidate_binding"}},
+    "candidate_claim_evaluation_bindings": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/candidate_binding"}},
+    "proposed_terminal_status": {"enum": ["CLOSED", "BLOCKED", "RETAINED"]},
+    "gate_results": {"$ref": "#/$defs/gates"},
+    "result": {"enum": ["NOT_EVALUATED", "EVALUATING", "SATISFIED", "NOT_SATISFIED", "BLOCKED", "STALE", "CONTRADICTED", "REVOKED"]},
+    "evaluated_at": {"$ref": "../common/timestamp.schema.json"},
+    "reflow_transition_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]}
+  },
+  "$defs": {
+    "after_state_candidate": {
+      "type": "object", "required": ["kind", "candidate_id", "base_state_ref", "semantic_state", "semantic_fingerprint", "source_snapshot_refs", "producing_change_refs"],
+      "properties": {"kind": {"const": "after_state_candidate"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "base_state_ref": {"$ref": "../common/reference.schema.json"}, "semantic_state": {"type": "object"}, "semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}, "source_snapshot_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "producing_change_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}}, "additionalProperties": false
+    },
+    "candidate_binding": {
+      "type": "object", "required": ["kind", "binding_id", "candidate_id", "evaluation_ref", "evaluation_result", "evaluation_evidence_refs"],
+      "properties": {"kind": {"enum": ["candidate_invariant_evaluation_binding", "candidate_claim_evaluation_binding"]}, "binding_id": {"$ref": "../common/identity.schema.json"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "evaluation_ref": {"$ref": "../common/reference.schema.json"}, "evaluation_result": {"enum": ["SATISFIED", "PASS"]}, "evaluation_evidence_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}}, "additionalProperties": false
+    },
+    "gate_value": {"enum": ["PASS", "FAIL", "UNKNOWN", "NOT_APPLICABLE"]},
+    "gates": {
+      "type": "object",
+      "required": ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9", "G10", "G11", "G12", "G13", "G14", "G15", "G16", "G17", "G18", "G19", "G20", "G21", "G22"],
+      "properties": {"G1": {"$ref": "#/$defs/gate_value"}, "G2": {"$ref": "#/$defs/gate_value"}, "G3": {"$ref": "#/$defs/gate_value"}, "G4": {"$ref": "#/$defs/gate_value"}, "G5": {"$ref": "#/$defs/gate_value"}, "G6": {"$ref": "#/$defs/gate_value"}, "G7": {"$ref": "#/$defs/gate_value"}, "G8": {"$ref": "#/$defs/gate_value"}, "G9": {"$ref": "#/$defs/gate_value"}, "G10": {"$ref": "#/$defs/gate_value"}, "G11": {"$ref": "#/$defs/gate_value"}, "G12": {"$ref": "#/$defs/gate_value"}, "G13": {"$ref": "#/$defs/gate_value"}, "G14": {"$ref": "#/$defs/gate_value"}, "G15": {"$ref": "#/$defs/gate_value"}, "G16": {"$ref": "#/$defs/gate_value"}, "G17": {"$ref": "#/$defs/gate_value"}, "G18": {"$ref": "#/$defs/gate_value"}, "G19": {"$ref": "#/$defs/gate_value"}, "G20": {"$ref": "#/$defs/gate_value"}, "G21": {"$ref": "#/$defs/gate_value"}, "G22": {"$ref": "#/$defs/gate_value"}}, "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"evaluation_mode": {"const": "CANDIDATE_CLOSURE"}}, "required": ["evaluation_mode"]}, "then": {"properties": {"after_state_candidate": {"not": {"type": "null"}}, "proposed_terminal_status": {"const": "CLOSED"}, "result": {"const": "SATISFIED"}, "gate_results": {"properties": {"G22": {"const": "PASS"}}}}}},
+    {"if": {"properties": {"evaluation_mode": {"const": "CANDIDATE_TERMINAL"}}, "required": ["evaluation_mode"]}, "then": {"properties": {"after_state_candidate": {"not": {"type": "null"}}, "terminal_reason_evidence_refs": {"minItems": 1}, "proposed_terminal_status": {"enum": ["BLOCKED", "RETAINED"]}, "result": {"enum": ["BLOCKED", "STALE", "CONTRADICTED", "NOT_SATISFIED"]}}}},
+    {"if": {"properties": {"evaluation_mode": {"const": "TERMINAL_POLICY_ONLY"}}, "required": ["evaluation_mode"]}, "then": {"properties": {"after_state_candidate": {"type": "null"}, "terminal_reason_evidence_refs": {"minItems": 1}, "candidate_invariant_evaluation_bindings": {"maxItems": 0}, "candidate_claim_evaluation_bindings": {"maxItems": 0}, "proposed_terminal_status": {"enum": ["BLOCKED", "RETAINED"]}, "result": {"const": "BLOCKED"}, "gate_results": {"properties": {"G22": {"const": "PASS"}}}}}}
+  ],
+  "additionalProperties": false
+}
