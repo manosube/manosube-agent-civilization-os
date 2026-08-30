@@ -651,9 +651,7 @@ def test_fact_value_must_conform_to_declared_type(value_type: str, value: object
 
 def test_fact_payload_is_unicode_canonicalized() -> None:
     first = _request()
-    first["source_occurrences"][0]["facts"] = [
-        _fact("fixture.name", "equals@v1", "é", "STRING")
-    ]
+    first["source_occurrences"][0]["facts"] = [_fact("fixture.name", "equals@v1", "é", "STRING")]
     second = deepcopy(first)
     second["source_occurrences"][0]["facts"][0]["value"] = "e\u0301"
     assert observe(first)["facts"] == observe(second)["facts"]
@@ -675,10 +673,8 @@ def test_historical_retry_is_independent_of_later_conflicts() -> None:
 
 def test_fact_boundary_must_be_observed() -> None:
     request = _request()
-    request["source_occurrences"][0]["facts"][0]["effective_boundary"]["identity"] = (
-        "SNAP-OTHER"
-    )
-    with pytest.raises(ObservationError, match="Fact effective boundary was not observed"):
+    request["source_occurrences"][0]["facts"][0]["effective_boundary"]["identity"] = "SNAP-OTHER"
+    with pytest.raises(ObservationError, match="Fact source boundary"):
         observe(request)
 
 
@@ -735,3 +731,45 @@ def test_timestamp_fact_is_normalized_to_utc_and_naive_time_rejected() -> None:
     second["source_occurrences"][0]["facts"][0]["value"] = "2026-08-29T09:00:00"
     with pytest.raises(ObservationError, match="explicit UTC offset"):
         observe(second)
+
+
+def test_fact_source_boundary_matches_occurrence() -> None:
+    request = _request()
+    request["scope"]["source_snapshot_refs"].append({"kind": "source_snapshot", "id": "SNAP-0002"})
+    request["source_snapshot_refs"].append({"kind": "source_snapshot", "id": "SNAP-0002"})
+    request["source_occurrences"][0]["facts"][0]["effective_boundary"]["identity"] = "SNAP-0002"
+    with pytest.raises(ObservationError, match="does not match its source occurrence"):
+        observe(request)
+
+
+def test_absence_attempt_policy_is_enforced() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["collection_complete"] = True
+    request["attempts"].append({**deepcopy(request["attempts"][0]), "attempt_id": "ATTEMPT-2"})
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    with pytest.raises(ObservationError, match="absence gate"):
+        observe(request)
+
+
+def test_negative_predicate_must_belong_to_profile_vocabulary() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["collection_complete"] = True
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "invented@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    with pytest.raises(ObservationError, match="unknown predicate"):
+        observe(request)
