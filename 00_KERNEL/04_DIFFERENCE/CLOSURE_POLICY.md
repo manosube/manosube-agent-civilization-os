@@ -302,7 +302,7 @@ UNORDERED_SETS=source_snapshot_refs,producing_change_refs
 SET_ORDER=CANONICAL_MEMBER_BYTES
 DUPLICATE_SET_MEMBER=REJECT
 UNKNOWN_FIELDS=REJECT
-OUTPUT=STATE-CANDIDATE-<64 lowercase hexadecimal characters>
+OUTPUT=STATE-CANDIDATE-<64 uppercase hexadecimal characters>
 ```
 
 ID canonical payloadは次のclosed objectである。
@@ -328,7 +328,7 @@ SHA-256(
 )
 
 candidate_id =
-"STATE-CANDIDATE-" || lowercase_hex(candidate_digest)
+"STATE-CANDIDATE-" || uppercase_hex(candidate_digest)
 ```
 
 collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。
@@ -514,7 +514,7 @@ evaluation_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
 
-Binding IDはID自身を除く全closed fieldのcanonical JSON UTF-8／SHA-256から`CAND-INV-EVAL-`＋64 lowercase hexとして生成する。 Binding profileは`MANOSUBE-CANDIDATE-EVALUATION-BINDING-SHA256-0.1`とし、`evaluation_evidence_refs`をduplicate-free `UNORDERED_SET`としてcanonical member bytes順に整列する。bare array、duplicate、unknown fieldをrejectする。`evaluation_record_fingerprint`は`MANOSUBE-RESOLVED-EVALUATION-RECORD-SHA256-0.1`が定義する次のrecord-kind別closed projectionから算出する。
+Binding IDはID自身を除く全closed fieldのcanonical JSON UTF-8／SHA-256から`CAND-INV-EVAL-`＋64 uppercase hexとして生成する。 Binding profileは`MANOSUBE-CANDIDATE-EVALUATION-BINDING-SHA256-0.1`とし、`evaluation_evidence_refs`をduplicate-free `UNORDERED_SET`としてcanonical member bytes順に整列する。bare array、duplicate、unknown fieldをrejectする。`evaluation_record_fingerprint`は`MANOSUBE-RESOLVED-EVALUATION-RECORD-SHA256-0.1`が定義する次のrecord-kind別closed projectionから算出する。
 
 ```text
 COMPLETION_RECORD_SCALARS=
@@ -582,7 +582,7 @@ evaluation_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
 
-Binding IDと検証規則はG19 bindingと同じcanonical profileを使用し、prefixだけを`CAND-CLAIM-EVAL-`とする。 `evaluation_evidence_refs`も同じexplicit duplicate-free `UNORDERED_SET` wrapperを使用する。Underlying Completion Recordのclaim、status、Evidence、time、record fingerprintとexact一致し、candidate semantic stateを評価対象としたことを証明する。base State評価の流用を禁止する。
+Binding IDと検証規則はG19 bindingと同じcanonical profileを使用し、prefixだけを`CAND-CLAIM-EVAL-`とする。 両binding IDはSHA-256 digestをuppercase hexadecimalでprefixへ連結し、semantic fingerprintだけをlowercase `sha256:`形式で表す。 `evaluation_evidence_refs`も同じexplicit duplicate-free `UNORDERED_SET` wrapperを使用する。Underlying Completion Recordのclaim、status、Evidence、time、record fingerprintとexact一致し、candidate semantic stateを評価対象としたことを証明する。base State評価の流用を禁止する。
 
 Atomic Reflow直前に全binding／underlying recordを再解決し、candidate binding、record fingerprint、status、Evidenceがcurrentかつ`SATISFIED`であることを再検査する。`REVOKED`、`STALE`、fingerprint／Evidence変更、candidate mismatch、非SATISFIEDを一件でも検出した場合はpromotionをrejectする。
 
