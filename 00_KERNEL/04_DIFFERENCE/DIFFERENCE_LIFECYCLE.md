@@ -153,7 +153,25 @@ contradiction_evidence_refs: []
 
 上記はclosed event shapeである。Reopen以外のeventでは全reopen-specific fieldをnullまたはemptyにする。`CLOSED → REOPENED`では`reopen_trigger`を第8節のclosed enumから必須指定し、同節のtrigger-specific表に従って各ref fieldの必須／任意／禁止を検証する。unknown fieldを拒否する。
 
-`next_observation_ref`は`{kind: observation_request, id: OBS-REQ-...}`のtyped referenceまたはnullである。to-statusが`BLOCKED`、`RETAINED`または`REOPENED`ならnon-nullを必須とし、scope、method、target、State revision／fingerprintを解決可能にする。その他transitionではPolicyが次観測を要求する場合だけnon-nullを許可する。unknown kind、解決不能ref、対象Difference／State不一致を拒否する。
+`next_observation_ref`は、このContractが定義する次のclosed `NEXT_OBSERVATION_REQUEST` recordへのtyped referenceまたはnullである。
+
+```yaml
+schema_version: "0.1"
+observation_request_id: OBS-REQ-...
+record_kind: NEXT_OBSERVATION_REQUEST
+difference_ref: {kind: difference, id: D-...}
+derived_from_event_ref: {kind: difference_event, id: D-EVT-...}
+state_revision_requested: 0
+state_fingerprint_requested: {}
+target_ref: {kind: target_predicate, id: TP-...}
+scope_ref: {kind: observation_scope, id: OBS-SCOPE-...}
+method_ref: {kind: observation_method, id: OBS-METHOD-...}
+reason_code: BLOCKER_REOBSERVATION
+```
+
+Record shapeはclosedであり、unknown fieldを拒否する。`observation_request_id`は、`difference_ref + derived_from_event_ref + state_revision_requested + state_fingerprint_requested + target_ref + scope_ref + method_ref + reason_code`のcanonical payloadから決定的に生成する。各typed refはexactに解決でき、Difference、event head、State revision／fingerprint、Target、Scopeが相互に一致しなければならない。`method_ref`はObservation Contractが許可するversioned immutable method recordへ解決し、inline commandやambient instructionを許可しない。同一ID・同一payloadはidempotent、異なるpayloadはconflictとして拒否する。
+
+`next_observation_ref`は`{kind: next_observation_request, id: OBS-REQ-...}`とする。to-statusが`BLOCKED`、`RETAINED`または`REOPENED`ならnon-nullを必須とする。その他transitionではPolicyが次観測を要求する場合だけnon-nullを許可する。unknown kind、解決不能ref、対象Difference／State不一致を拒否する。
 
 Event revisionは0から連続し、predecessorはexactでなければならない。同一event ID・同一payloadはidempotent、異なるpayloadはconflictとして拒否する。
 
