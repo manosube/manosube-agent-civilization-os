@@ -136,6 +136,9 @@ state_revision_evaluated: 0
 state_fingerprint_evaluated: {}
 reason_code: DIFFERENCE_DERIVED
 reason: ""
+blocker_kind: null
+blocker_scope: null
+blocker_resolution_condition: null
 observation_refs: []
 evidence_refs: []
 authority_ref: null
@@ -151,7 +154,9 @@ invalid_evidence_refs: []
 contradiction_evidence_refs: []
 ```
 
-上記はclosed event shapeである。Reopen以外のeventでは全reopen-specific fieldをnullまたはemptyにする。`CLOSED → REOPENED`では`reopen_trigger`を第8節のclosed enumから必須指定し、同節のtrigger-specific表に従って各ref fieldの必須／任意／禁止を検証する。unknown fieldを拒否する。
+上記はclosed event shapeである。Reopen以外のeventでは全reopen-specific fieldをnullまたはemptyにする。
+
+`to_status=BLOCKED`では`blocker_kind`、`blocker_scope`、`blocker_resolution_condition`をnon-nullで必須とする。`blocker_kind`は`AUTHORITY_PATH | EXECUTION_PATH | OBSERVATION_PATH | EVIDENCE_INSUFFICIENT | STALE_BINDING | MATERIAL_CONFLICT | INVARIANT_FAILURE | CLAIM_FAILURE | OTHER_STRUCTURAL`のclosed enumであり、Authority Decisionそのものを保持しない。`blocker_scope`はDifference effective boundary内の対象を表すclosed canonical object、`blocker_resolution_condition`はblocker解消を再観測可能にするclosed predicate referenceまたはcanonical condition descriptorである。いずれもinline command、credential、自由形式Authority instructionを禁止する。`to_status`が`BLOCKED`以外なら三fieldをすべてnullにし、unknown fieldを拒否する。`CLOSED → REOPENED`では`reopen_trigger`を第8節のclosed enumから必須指定し、同節のtrigger-specific表に従って各ref fieldの必須／任意／禁止を検証する。unknown fieldを拒否する。
 
 `next_observation_ref`は、このContractが定義する次のclosed `NEXT_OBSERVATION_REQUEST` recordへのtyped referenceまたはnullである。
 
