@@ -822,6 +822,19 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         structural = difference["structural_difference"]
         observed_values = [item["value"] for item in observed["value_candidates"]["members"]]
         observed_types = [item["value_type"] for item in observed["value_candidates"]["members"]]
+        derived_comparison = (
+            "UNKNOWN" if observed["knowledge_status"] != "KNOWN" else
+            "SATISFIED" if _target_satisfied(observed_values, target) else
+            "NOT_SATISFIED"
+        )
+        derived_mismatch = (
+            "UNKNOWN" if derived_comparison == "UNKNOWN" else
+            None if derived_comparison == "SATISFIED" else
+            "TYPE_MISMATCH" if any(
+                not _fact_type_matches_target(item, target)
+                for item in observed["value_candidates"]["members"]
+            ) else "VALUE_MISMATCH"
+        )
         if (
             _has_recursive_set_duplicate(difference["normalized_target_state"])
             or _has_recursive_set_duplicate(difference["normalized_observed_state"])
@@ -841,6 +854,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             != sorted(observed_values, key=repr)
             or sorted(structural["observed_value_types"]["members"])
             != sorted(observed_types)
+            or structural["comparison_result"] != derived_comparison
+            or derived_comparison == "SATISFIED"
+            or structural["mismatch_kind"] != derived_mismatch
         ):
             errors.append(f"Difference projection mismatch: {difference_id}")
         genesis_id = _ref_id(difference["genesis_event_ref"])
@@ -995,6 +1011,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 errors.append(f"invalid candidate closure mode: {evaluation['closure_evaluation_id']}")
             if any(value != "PASS" for value in evaluation["gate_results"].values()):
                 errors.append(f"closure has non-PASS mandatory gate: {evaluation['closure_evaluation_id']}")
+            if evaluation["contradiction_refs"]:
+                errors.append(
+                    f"closure has unresolved contradiction: "
+                    f"{evaluation['closure_evaluation_id']}"
+                )
             resolution_mode = evaluation["resolution_mode"]
             after_observations = [
                 observations.get(_ref_id(reference) or "")
@@ -1064,6 +1085,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and (latest_evaluation := latest_fact_evaluations.get(fact["fact_id"]))
                     is not None
                     and latest_evaluation["evaluation_status"] == "SUPPORTED"
+                    and not latest_evaluation["conflict_fact_refs"]
+                    and not latest_evaluation["conflict_negative_observation_refs"]
                     and observation is not None
                     and _evaluation_supports_observation(
                         latest_evaluation, fact, observation, fact_bindings
