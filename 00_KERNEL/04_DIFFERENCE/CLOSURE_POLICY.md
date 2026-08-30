@@ -342,17 +342,16 @@ Stale Evaluationを再利用せず、最新Stateから再観測・再評価す�
 
 加えて、Closure Policyの`reopen_conditions`が参照するTarget Predicate集合を評価する。いずれかがexact current State／Evidence上で`SATISFIED`になった場合は同じ`CLOSED → REOPENED`経路を使用し、`POLICY_REOPEN_CONDITION_SATISFIED`、triggered Target Predicate ref、Completion Evaluation refおよび評価EvidenceをReopen Eventへ保存する。未知condition、評価不能、stale inputをtrueまたはfalseへ推測せず、fail closedで再観測へ送る。
 
-Reopenは旧Closureを削除しない。次をappendする。
+Reopenは旧Closureを削除しない。すべてのtriggerで次をappendする。
 
 ```text
 reopen event
-contradicting observation refs
-contradicting evidence refs
-invalidated closure evidence refs
 affected closure evaluation ref
 new State revision and fingerprint
 next required observation
 ```
+
+Observation refs、contradiction／invalidated／revoked Evidence refs、reopen condition refsとそのEvaluation refsは、`DIFFERENCE_LIFECYCLE.md`第8節のtrigger-specific表に従って必須または禁止を決定する。全triggerへ同じref集合を無条件要求してはならない。
 
 Objective、Target、effective boundaryまたはnormalized mismatch semanticsがmaterialに変更された場合は、旧Differenceを`SUPERSEDED`とし、新しいDifference identityとappend-only Supersession Relationを導出する。Boundary変更を旧Differenceの`REOPENED`として扱わない。
 
