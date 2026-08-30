@@ -22,5 +22,7 @@
   {"name": "difference_projection_subject_mismatch", "path": ["differences", 0, "subject"], "value": "other.subject"},
   {"name": "evaluation_before_state_mismatch", "path": ["evaluations", 0, "before_state_ref", "revision"], "value": 1},
   {"name": "next_observation_request_missing", "path": ["events", 2, "next_observation_ref", "id"], "value": "OBS-REQ-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"},
-  {"name": "next_observation_target_mismatch", "path": ["next_observation_requests", 0, "target_ref", "id"], "value": "TP-9999"}
+  {"name": "next_observation_target_mismatch", "path": ["next_observation_requests", 0, "target_ref", "id"], "value": "TP-9999"},
+  {"name": "policy_target_mismatch", "path": ["policies", 0, "target_predicate_ref", "id"], "value": "TP-9999"},
+  {"name": "policy_age_requires_expiry", "path": ["policies", 0, "maximum_evidence_age"], "value": 3600}
 ]

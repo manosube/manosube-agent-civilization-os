@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 STATUSES = {
@@ -57,6 +59,13 @@ def _policy_ref_matches(reference: dict[str, Any], policy: dict[str, Any]) -> bo
         and reference["version"] == policy["policy_version"]
         and reference["semantic_fingerprint"] == policy["policy_semantic_fingerprint"]
     )
+
+
+def _mandatory_invariant_ids() -> set[str]:
+    source = (Path(__file__).resolve().parents[1] / "00_KERNEL" / "KERNEL_INVARIANTS.md").read_text(encoding="utf-8")
+    ids = set(re.findall(r"^([KASODCERBXP]-[0-9]{3}) PASS$", source, re.MULTILINE))
+    ids.discard("P-003")
+    return ids
 
 
 def validate_bundle(bundle: dict[str, Any]) -> list[str]:
@@ -237,6 +246,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         if (
             policy is None
             or _ref_id(policy["subject_difference_ref"]) != difference_id
+            or policy["target_predicate_ref"] != difference["target_predicate_ref"]
             or not _policy_ref_matches(policy_ref, policy)
         ):
             errors.append(f"Difference closure Policy binding mismatch: {difference_id}")
@@ -253,6 +263,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         if (
             policy is None
             or _ref_id(policy["subject_difference_ref"]) != evaluation["difference_id"]
+            or policy["target_predicate_ref"] != difference["target_predicate_ref"]
             or not _policy_ref_matches(evaluation["policy_ref"], policy)
             or evaluation["policy_version_evaluated"] != policy["policy_version"]
             or evaluation["policy_semantic_fingerprint_evaluated"]
@@ -288,6 +299,18 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         mode = evaluation["evaluation_mode"]
         candidate = evaluation["after_state_candidate"]
         proposed = evaluation["proposed_terminal_status"]
+        maximum_age = None if policy is None else policy["maximum_evidence_age"]
+        expiry = evaluation["evaluation_expires_at"]
+        if maximum_age is None:
+            if expiry is not None:
+                errors.append(f"unexpected evaluation expiry: {evaluation['closure_evaluation_id']}")
+        elif expiry is None:
+            errors.append(f"missing evaluation expiry: {evaluation['closure_evaluation_id']}")
+        else:
+            evaluated_at = datetime.fromisoformat(evaluation["evaluated_at"].replace("Z", "+00:00"))
+            expires_at = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+            if expires_at < evaluated_at or expires_at > evaluated_at + timedelta(seconds=maximum_age):
+                errors.append(f"invalid evaluation expiry: {evaluation['closure_evaluation_id']}")
         if evaluation["gate_results"]["G22"] != "PASS":
             errors.append(f"terminal state not allowed: {evaluation['closure_evaluation_id']}")
         if policy and proposed not in policy["allowed_terminal_states"]:
@@ -315,6 +338,40 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             )
             if not common_evidence_present or not mode_evidence_present:
                 errors.append(f"closure Evidence binding incomplete: {evaluation['closure_evaluation_id']}")
+            invariant_bindings = evaluation["candidate_invariant_evaluation_bindings"]
+            claim_bindings = evaluation["candidate_claim_evaluation_bindings"]
+            required_invariants = _mandatory_invariant_ids() | {
+                item["id"] for item in (policy or {}).get("required_invariants", [])
+            }
+            bound_invariants = [item["invariant_ref"]["id"] for item in invariant_bindings]
+            if set(bound_invariants) != required_invariants or len(bound_invariants) != len(set(bound_invariants)):
+                errors.append(f"candidate invariant binding set mismatch: {evaluation['closure_evaluation_id']}")
+            required_claims = {item["id"] for item in (policy or {}).get("required_claims", [])}
+            bound_claims = [item["required_claim_ref"]["id"] for item in claim_bindings]
+            if (
+                not required_claims.issubset(bound_claims)
+                or len(bound_claims) != len(set(bound_claims))
+                or len(set(bound_claims) - required_claims) != 1
+            ):
+                errors.append(f"candidate claim binding set mismatch: {evaluation['closure_evaluation_id']}")
+            for binding in invariant_bindings:
+                if (
+                    binding["candidate_id"] != candidate["candidate_id"]
+                    or binding["candidate_semantic_fingerprint"] != candidate["semantic_fingerprint"]
+                    or binding["base_state_ref"] != evaluation["before_state_ref"]
+                    or binding["evaluation_result"] != "PASS"
+                ):
+                    errors.append(f"candidate invariant binding mismatch: {binding['binding_id']}")
+            for binding in claim_bindings:
+                if (
+                    binding["difference_id"] != evaluation["difference_id"]
+                    or not (policy and _policy_ref_matches(binding["policy_ref"], policy))
+                    or binding["candidate_id"] != candidate["candidate_id"]
+                    or binding["candidate_semantic_fingerprint"] != candidate["semantic_fingerprint"]
+                    or binding["base_state_ref"] != evaluation["before_state_ref"]
+                    or binding["evaluation_status"] != "SATISFIED"
+                ):
+                    errors.append(f"candidate claim binding mismatch: {binding['binding_id']}")
         elif mode == "CANDIDATE_TERMINAL":
             if candidate is None or proposed not in {"BLOCKED", "RETAINED"}:
                 errors.append(f"invalid candidate terminal mode: {evaluation['closure_evaluation_id']}")
@@ -370,6 +427,19 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         ]
         if len(matching_relations) != 1:
             errors.append(f"superseded event relation mismatch: {event['difference_event_id']}")
+    supersession_edges = {
+        _ref_id(relation["old_difference_ref"]): _ref_id(relation["new_difference_ref"])
+        for relation in relations.values()
+    }
+    for start in supersession_edges:
+        seen: set[str | None] = set()
+        current: str | None = start
+        while current in supersession_edges:
+            if current in seen:
+                errors.append(f"supersession cycle: {start}")
+                break
+            seen.add(current)
+            current = supersession_edges[current]
     return sorted(set(errors))
 
 

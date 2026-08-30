@@ -122,7 +122,7 @@ def test_difference_fixture_suite_has_no_escape() -> None:
         FIXTURE_ROOT
     )
     assert valid_count == 1
-    assert invalid_count == 24
+    assert invalid_count == 26
     assert valid_errors == []
     assert invalid_escapes == []
 
@@ -196,3 +196,29 @@ def test_candidate_terminal_gates_and_retained_handoff_are_enforced() -> None:
     retained["evaluations"][0]["proposed_terminal_status"] = "RETAINED"
     retained["materialized_status"][retained["differences"][0]["difference_id"]] = "RETAINED"
     assert any("next observation missing" in error for error in validate_bundle(retained))
+
+
+def test_supersession_cycle_is_rejected() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    second = deepcopy(bundle["differences"][0])
+    second_id = "D-" + "B" * 64
+    second["difference_id"] = second_id
+    bundle["differences"].append(second)
+    first_id = bundle["differences"][0]["difference_id"]
+    bundle["supersession_relations"] = [
+        {
+            "supersession_relation_id": "D-SUP-" + "A" * 64,
+            "old_difference_ref": {"kind": "difference", "id": first_id},
+            "new_difference_ref": {"kind": "difference", "id": second_id},
+            "old_terminal_event_ref": {"kind": "difference_event", "id": "D-EVT-X"},
+            "new_genesis_event_ref": {"kind": "difference_event", "id": "D-EVT-Y"},
+        },
+        {
+            "supersession_relation_id": "D-SUP-" + "B" * 64,
+            "old_difference_ref": {"kind": "difference", "id": second_id},
+            "new_difference_ref": {"kind": "difference", "id": first_id},
+            "old_terminal_event_ref": {"kind": "difference_event", "id": "D-EVT-Y"},
+            "new_genesis_event_ref": {"kind": "difference_event", "id": "D-EVT-X"},
+        },
+    ]
+    assert any("supersession cycle" in error for error in validate_bundle(bundle))
