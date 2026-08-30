@@ -7,6 +7,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 from scripts.difference_contract_validator import (
     _candidate_id,
+    _candidate_matches_evaluation,
     _difference_id,
     apply_mutation,
     load_json,
@@ -17,6 +18,21 @@ from scripts.difference_contract_validator import (
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = ROOT / "tests" / "contract" / "fixtures" / "difference"
 SCHEMA_ROOT = ROOT / "01_SCHEMA"
+
+
+def _semantic_state() -> dict:
+    domain = {
+        "status": "UNKNOWN", "claims": {}, "identity_refs": [],
+        "evidence_refs": [], "blind_spots": ["not evaluated"],
+    }
+    return {
+        "schema_version": "0.1",
+        **{key: deepcopy(domain) for key in (
+            "project", "objective", "repository", "requirements", "code", "tests",
+            "runtime", "infrastructure", "deployment", "authority", "lineage",
+        )},
+        "open_differences": [], "active_changes": [], "evidence": [],
+    }
 
 
 def _validators() -> dict[str, Draft202012Validator]:
@@ -45,6 +61,8 @@ def test_valid_bundle_is_schema_valid_and_reconstructable() -> None:
         "observation_method.schema.json": bundle["observation_methods"],
         "candidate_completion_record.schema.json": bundle["candidate_completion_records"],
         "candidate_claim_evaluation_event.schema.json": bundle["candidate_claim_evaluation_events"],
+        "invariant_evaluation.schema.json": bundle["invariant_evaluations"],
+        "evidence_sufficiency_result.schema.json": bundle["evidence_sufficiency_results"],
     }
     for schema_name, records in record_groups.items():
         for record in records:
@@ -78,7 +96,7 @@ def test_three_evaluation_modes_are_distinct() -> None:
             "kind": "state", "revision": 2,
             "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "a" * 64},
         },
-        "semantic_state": {},
+        "semantic_state": _semantic_state(),
         "semantic_fingerprint": {
             "profile": "MANOSUBE-STATE-SHA256-0.1",
             "digest": "a" * 64,
@@ -254,6 +272,11 @@ def test_reopen_condition_and_blocked_evidence_are_closed() -> None:
     mutated = deepcopy(bundle)
     mutated["events"][2]["evidence_refs"] = []
     assert any("blocked lifecycle Evidence missing" in error for error in validate_bundle(mutated))
+    wrong_subject = deepcopy(bundle)
+    wrong_subject["events"][2]["blocker_resolution_condition"]["subject_ref"] = {
+        "kind": "difference", "id": "D-WRONG",
+    }
+    assert any("blocker condition subject mismatch" in error for error in validate_bundle(wrong_subject))
 
 
 def test_after_state_candidate_identity_binds_semantic_bytes() -> None:
@@ -272,6 +295,11 @@ def test_after_state_candidate_identity_binds_semantic_bytes() -> None:
     original = candidate["candidate_id"]
     candidate["semantic_state"]["value"] = 2
     assert _candidate_id(candidate) != original
+    candidate["semantic_fingerprint"] = {
+        "profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64,
+    }
+    candidate["candidate_id"] = _candidate_id(candidate)
+    assert not _candidate_matches_evaluation(candidate, base)
 
 
 def test_difference_identity_canonicalizes_nested_unordered_sets() -> None:

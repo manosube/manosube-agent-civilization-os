@@ -526,6 +526,8 @@
   "supersession_relations": [],
   "candidate_completion_records": [],
   "candidate_claim_evaluation_events": [],
+  "invariant_evaluations": [],
+  "evidence_sufficiency_results": [],
   "materialized_status": {
     "D-2FA822926989D8E62E49A97BCCED0A481C37B7E96E9F36C80FE3B9C0DDC2FA46": "BLOCKED"
   }

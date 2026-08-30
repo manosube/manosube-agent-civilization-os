@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/invariant_evaluation.schema.json",
+  "title": "Resolved Invariant Evaluation", "type": "object",
+  "required": ["schema_version", "evaluation_id", "invariant_id", "subject_ref", "state_revision", "state_fingerprint", "verification_stage", "method", "expected", "observed", "status", "evaluated_at", "evaluator_capability", "authority_ref", "evidence_refs", "remaining_differences"],
+  "properties": {
+    "schema_version": {"const": "0.1"}, "evaluation_id": {"type": "string", "pattern": "^INV-EVAL-[0-9A-F]{64}$"}, "invariant_id": {"type": "string", "pattern": "^[KASODCERBXP]-[0-9]{3}$"},
+    "subject_ref": {"$ref": "../common/reference.schema.json"}, "state_revision": {"type": "integer", "minimum": 0}, "state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "verification_stage": {"type": "string", "minLength": 1}, "method": {"type": "string", "minLength": 1}, "expected": {}, "observed": {}, "status": {"enum": ["PASS", "FAIL", "UNKNOWN", "STALE", "REVOKED"]},
+    "evaluated_at": {"$ref": "../common/timestamp.schema.json"}, "evaluator_capability": {"type": "string", "minLength": 1}, "authority_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
+    "evidence_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "remaining_differences": {"$ref": "difference.schema.json#/$defs/unordered_references"}
+  }, "additionalProperties": false
+}

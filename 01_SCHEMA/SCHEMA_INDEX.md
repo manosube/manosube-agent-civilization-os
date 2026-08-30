@@ -15,17 +15,17 @@ common=5
 objective=4
 state=5
 observation=7
-difference=9
+difference=11
 ```
 
 Observation schemas cover the immutable Observation／Fact／Negative Observation records, source-occurrence provenance Bindings, and append-only Fact／Negative evaluation records. Schema existence does not prove Observation Engine execution, Evidence persistence, Difference derivation, Reflow, or completion.
 
-Difference schemas cover the immutable Difference Record, append-only Lifecycle Event, append-only Supersession Relation, Closure Policy, Closure Evaluation, Next Observation Request, Observation Method, Candidate Completion Record and Candidate Claim Evaluation Event. Contract-derived inline projections such as normalized values, Effective Boundary, blocker scope／resolution condition, After-State Candidate and candidate evaluation Bindings remain owned through closed `$defs`.
+Difference schemas cover the immutable Difference Record, append-only Lifecycle Event, append-only Supersession Relation, Closure Policy, Closure Evaluation, Next Observation Request, Observation Method, Candidate Completion Record, Candidate Claim Evaluation Event, resolved Invariant Evaluation and Evidence Sufficiency Result. Contract-derived inline projections such as normalized values, Effective Boundary, blocker scope／resolution condition, After-State Candidate and candidate evaluation Bindings remain owned through closed `$defs`.
 
 ```text
-SCHEMA_COUNT=30
+SCHEMA_COUNT=32
 OBSERVATION_SCHEMA_COUNT=7
-DIFFERENCE_SCHEMA_COUNT=9
+DIFFERENCE_SCHEMA_COUNT=11
 OBSERVATION_SCHEMA_VALIDATION_DEFINED=true
 DIFFERENCE_SCHEMA_VALIDATION_DEFINED=true
 OBSERVATION_ENGINE_IMPLEMENTED=false

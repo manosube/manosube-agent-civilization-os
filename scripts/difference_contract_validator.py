@@ -13,6 +13,8 @@ import subprocess
 from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
+from manosube_agent_civilization.state.errors import SchemaValidationError
+from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
 
 STATUSES = {
     "DETECTED", "OPEN", "ACTIVE", "VERIFYING", "BLOCKED", "RETAINED", "CLOSED",
@@ -150,8 +152,15 @@ def _candidate_matches_evaluation(candidate: dict[str, Any], evaluation: dict[st
         "candidate_id", "base_state_ref", "kernel_source_ref", "producing_change_refs",
         "semantic_fingerprint", "semantic_state", "source_snapshot_refs",
     }
-    return required.issubset(candidate) and (
+    if not required.issubset(candidate):
+        return False
+    try:
+        fingerprint = fingerprint_semantic_state(candidate["semantic_state"]).as_dict()
+    except SchemaValidationError:
+        return False
+    return (
         candidate["candidate_id"] == _candidate_id(candidate)
+        and candidate["semantic_fingerprint"] == fingerprint
         and candidate["base_state_ref"] == evaluation["before_state_ref"]
         and candidate["kernel_source_ref"] == evaluation["kernel_source_ref_evaluated"]
     )
@@ -174,6 +183,51 @@ def _supersession_reason_codes(old: dict[str, Any], new: dict[str, Any]) -> set[
     if old["closure_policy"]["semantic_fingerprint"] != new["closure_policy"]["semantic_fingerprint"]:
         reasons.add("CLOSURE_POLICY_SEMANTICS_CHANGED")
     return reasons
+
+
+def _mandatory_completion_claim() -> dict[str, Any]:
+    projection = {
+        "subject_type": "CONTRACT_COMPLETION",
+        "subject_ref": {"kind": "kernel_invariant", "id": "X-003"},
+        "claim": {"AGENT_REQUIRED_FOR_KERNEL": False, "SESSION_INDEPENDENT": True},
+        "target_state_ref": None,
+    }
+    semantic_fingerprint = "sha256:" + hashlib.sha256(
+        canonical_json_bytes(projection)
+    ).hexdigest()
+    identity = {
+        "subject_type": projection["subject_type"],
+        "subject_ref": projection["subject_ref"],
+        "claim_semantic_fingerprint": semantic_fingerprint,
+    }
+    claim_id = "CLAIM-" + hashlib.sha256(
+        b"MANOSUBE:COMPLETION_CLAIM_IDENTITY:0.1:" + canonical_json_bytes(identity)
+    ).hexdigest().upper()
+    return {"kind": "completion_claim", "id": claim_id, **projection,
+            "claim_semantic_fingerprint": semantic_fingerprint}
+
+
+def _resolved_record_fingerprint(record: dict[str, Any], kind: str) -> str:
+    fields = {
+        "completion": (
+            "completion_id", "subject_type", "subject_ref", "claim", "target_state_ref",
+            "observed_state_ref", "closure_policy_ref", "evaluation_status",
+            "evaluated_state_revision", "evaluated_state_fingerprint", "evaluated_at",
+            "required_evidence_refs", "invariant_evaluation_refs", "material_contradiction_refs",
+        ),
+        "invariant": (
+            "evaluation_id", "invariant_id", "subject_ref", "state_revision",
+            "state_fingerprint", "verification_stage", "method", "expected", "observed",
+            "status", "evaluated_at", "evaluator_capability", "authority_ref",
+            "evidence_refs", "remaining_differences",
+        ),
+    }[kind]
+    domain = {
+        "completion": b"MANOSUBE:COMPLETION_RECORD:0.1:",
+        "invariant": b"MANOSUBE:INVARIANT_EVALUATION:0.1:",
+    }[kind]
+    projection = _canonical_semantic({key: record[key] for key in fields})
+    return "sha256:" + hashlib.sha256(domain + canonical_json_bytes(projection)).hexdigest()
 
 
 def _kernel_invariant_definitions(kernel_source: dict[str, Any]) -> dict[str, str]:
@@ -228,6 +282,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     )
     claim_events = _index(
         bundle.get("candidate_claim_evaluation_events", []), "event_id", errors
+    )
+    invariant_evaluations = _index(
+        bundle.get("invariant_evaluations", []), "evaluation_id", errors
+    )
+    evidence_sufficiency = _index(
+        bundle.get("evidence_sufficiency_results", []), "evidence_sufficiency_id", errors
     )
 
     events_by_difference: dict[str, list[dict[str, Any]]] = {}
@@ -325,6 +385,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         errors.append(f"blocker boundary mismatch: {event['difference_event_id']}")
                     if _ref_id(condition["verification_request_ref"]) != _ref_id(event["next_observation_ref"]):
                         errors.append(f"blocker verification request mismatch: {event['difference_event_id']}")
+                    if condition["subject_ref"] not in scope["affected_subject_refs"]["members"]:
+                        errors.append(f"blocker condition subject mismatch: {event['difference_event_id']}")
                     expected_states = {
                         "AUTHORITY_PATH_AVAILABLE": "AVAILABLE",
                         "EXECUTION_PATH_AVAILABLE": "AVAILABLE",
@@ -499,6 +561,28 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 evaluation["after_observation_refs"]
                 and evaluation["evidence_sufficiency_ref"]
             )
+            sufficiency = evidence_sufficiency.get(
+                _ref_id(evaluation["evidence_sufficiency_ref"]) or ""
+            )
+            levels = {f"E{index}": index for index in range(7)}
+            if (
+                sufficiency is None
+                or sufficiency["result"] != "SUFFICIENT"
+                or _ref_id(sufficiency["difference_ref"]) != evaluation["difference_id"]
+                or not (policy and _policy_ref_matches(sufficiency["policy_ref"], policy))
+                or sufficiency["evaluated_at"] != evaluation["evaluated_at"]
+                or levels[sufficiency["evidence_level"]]
+                < levels[(policy or {})["minimum_evidence_level"]]
+                or sufficiency["evidence_refs"] != {
+                    "collection_kind": "UNORDERED_SET",
+                    "members": sorted(
+                        evaluation["change_result_evidence_refs"]
+                        + evaluation["change_free_verification_evidence_refs"],
+                        key=canonical_json_bytes,
+                    ),
+                }
+            ):
+                errors.append(f"Evidence Sufficiency binding mismatch: {evaluation['closure_evaluation_id']}")
             mode_evidence_present = (
                 resolution_mode == "CHANGE_BOUND"
                 and bool(evaluation["change_refs"])
@@ -537,15 +621,24 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             ]
             if set(bound_invariants) != required_invariants or len(bound_invariants) != len(set(bound_invariants)):
                 errors.append(f"candidate invariant binding set mismatch: {evaluation['closure_evaluation_id']}")
-            required_claims = {item["id"] for item in (policy or {}).get("required_claims", [])}
+            mandatory_claim = _mandatory_completion_claim()
+            policy_claims = {
+                item["id"]: item for item in (policy or {}).get("required_claims", [])
+            }
+            if (
+                mandatory_claim["id"] in policy_claims
+                and policy_claims[mandatory_claim["id"]] != mandatory_claim
+            ):
+                errors.append(f"mandatory claim definition conflict: {evaluation['closure_evaluation_id']}")
+            required_claims = set(policy_claims) | {mandatory_claim["id"]}
             bound_claims = [item["required_claim_ref"]["id"] for item in claim_bindings]
             if (
-                not required_claims.issubset(bound_claims)
+                set(bound_claims) != required_claims
                 or len(bound_claims) != len(set(bound_claims))
-                or len(set(bound_claims) - required_claims) != 1
             ):
                 errors.append(f"candidate claim binding set mismatch: {evaluation['closure_evaluation_id']}")
             for binding in invariant_bindings:
+                record = invariant_evaluations.get(_ref_id(binding["invariant_evaluation_ref"]) or "")
                 if (
                     binding["candidate_id"] != candidate["candidate_id"]
                     or binding["candidate_semantic_fingerprint"] != candidate["semantic_fingerprint"]
@@ -553,6 +646,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or binding["evaluation_result"] != "PASS"
                     or binding["invariant_definition_ref"]["invariant_definition_sha256"]
                     != definitions.get(binding["invariant_ref"]["id"])
+                    or record is None
+                    or record["invariant_id"] != binding["invariant_ref"]["id"]
+                    or record["subject_ref"] != {"kind": "after_state_candidate", "id": candidate["candidate_id"]}
+                    or record["state_revision"] != evaluation["before_state_ref"]["revision"]
+                    or record["state_fingerprint"] != candidate["semantic_fingerprint"]
+                    or record["status"] != binding["evaluation_result"]
+                    or record["evidence_refs"] != binding["evaluation_evidence_refs"]
+                    or record["evaluated_at"] != binding["evaluated_at"]
+                    or binding["evaluation_record_fingerprint"]
+                    != (None if record is None else _resolved_record_fingerprint(record, "invariant"))
                 ):
                     errors.append(f"candidate invariant binding mismatch: {binding['binding_id']}")
             for binding in claim_bindings:
@@ -587,9 +690,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 completion_fingerprint = None
                 completion_id = None
                 if completion is not None:
-                    completion_fingerprint = "sha256:" + hashlib.sha256(
-                        canonical_json_bytes(completion)
-                    ).hexdigest()
+                    completion_fingerprint = _resolved_record_fingerprint(completion, "completion")
                     completion_payload = {
                         key: value for key, value in completion.items()
                         if key not in {"completion_id", "reflow_transition_ref"}

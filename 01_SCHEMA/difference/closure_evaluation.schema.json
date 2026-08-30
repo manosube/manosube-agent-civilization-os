@@ -52,7 +52,7 @@
     },
     "after_state_candidate": {
       "type": "object", "required": ["kind", "candidate_id", "kernel_source_ref", "base_state_ref", "semantic_state", "semantic_fingerprint", "source_snapshot_refs", "producing_change_refs"],
-      "properties": {"kind": {"const": "after_state_candidate"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "kernel_source_ref": {"$ref": "#/$defs/git_tree_ref"}, "base_state_ref": {"$ref": "#/$defs/state_ref"}, "semantic_state": {"type": "object"}, "semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}, "source_snapshot_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "producing_change_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}}, "additionalProperties": false
+      "properties": {"kind": {"const": "after_state_candidate"}, "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "kernel_source_ref": {"$ref": "#/$defs/git_tree_ref"}, "base_state_ref": {"$ref": "#/$defs/state_ref"}, "semantic_state": {"$ref": "../state/semantic_state.schema.json"}, "semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}, "source_snapshot_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "producing_change_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}}, "additionalProperties": false
     },
     "candidate_invariant_binding": {
       "type": "object", "required": ["kind", "binding_id", "candidate_id", "candidate_semantic_fingerprint", "base_state_ref", "invariant_ref", "invariant_definition_ref", "invariant_evaluation_ref", "evaluation_record_fingerprint", "evaluation_result", "evaluation_evidence_refs", "evaluated_at"],
