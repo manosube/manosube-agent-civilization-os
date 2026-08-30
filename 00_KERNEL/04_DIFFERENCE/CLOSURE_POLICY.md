@@ -386,8 +386,8 @@ v0.1の`MANDATORY_V0_1_COMPLETION_CLAIMS`は、`KERNEL_INVARIANTS.md`のv0.1 Man
 
 ```yaml
 kind: completion_claim
-id: CMP-<64 lowercase hex>
-subject_type: KERNEL_INVARIANT_LIMITED_CLAIM
+id: CMP-<64 uppercase hex>
+subject_type: CONTRACT_COMPLETION
 subject_ref: {kind: kernel_invariant, id: X-003}
 claim_semantic_fingerprint: sha256:<64 lowercase hex>
 ```
@@ -396,7 +396,7 @@ claim_semantic_fingerprint: sha256:<64 lowercase hex>
 
 ```json
 {
-  "subject_type": "KERNEL_INVARIANT_LIMITED_CLAIM",
+  "subject_type": "CONTRACT_COMPLETION",
   "subject_ref": {"kind":"kernel_invariant","id":"X-003"},
   "claim": {
     "AGENT_REQUIRED_FOR_KERNEL": false,
@@ -406,7 +406,7 @@ claim_semantic_fingerprint: sha256:<64 lowercase hex>
 }
 ```
 
-`claim_digest`はdomain `MANOSUBE:V0_1_X003_LIMITED_CLAIM:0.1:`のexact UTF-8 bytesと上記closed projectionのcanonical JSON UTF-8 bytesをseparatorなしで連結したSHA-256である。`claim_semantic_fingerprint = "sha256:" || lowercase_hex(claim_digest)`、`id = "CMP-" || lowercase_hex(claim_digest)`とし、producerが別ID、別claim、別targetを選ぶことを禁止する。
+`claim_digest`はdomain `MANOSUBE:V0_1_X003_LIMITED_CLAIM:0.1:`のexact UTF-8 bytesと上記closed projectionのcanonical JSON UTF-8 bytesをseparatorなしで連結したSHA-256である。`claim_semantic_fingerprint = "sha256:" || lowercase_hex(claim_digest)`、`id = "CMP-" || uppercase_hex(claim_digest)`とし、producerが別ID、別claim、別targetを選ぶことを禁止する。 Completion IDだけをuppercase hexとするのは`01_SCHEMA/common/identity.schema.json`のcanonical identity alphabetへ適合させるためであり、SHA-256値自体は同一である。
 
 G21 binding集合はEXPECTED COMPLETION CLAIMSのexact identity集合と完全一致し、mandatory X-003 bindingの欠落、余分、duplicateをrejectする。Policy claimと同じIDが重なる場合はsubject type、subject ref、claim fingerprintが完全一致するときだけ一件へ統合し、不一致は`BLOCKED`とする。各expected claimについて、exact claim identity、evaluated candidate State、Evidence references、Completion Evaluation statusを解決し、全件が`SATISFIED`であることを要求する。
 
