@@ -7,6 +7,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 from scripts.difference_contract_validator import (
     _candidate_id,
+    _difference_id,
     apply_mutation,
     load_json,
     validate_bundle,
@@ -42,6 +43,8 @@ def test_valid_bundle_is_schema_valid_and_reconstructable() -> None:
         "difference_supersession_relation.schema.json": bundle["supersession_relations"],
         "next_observation_request.schema.json": bundle["next_observation_requests"],
         "observation_method.schema.json": bundle["observation_methods"],
+        "candidate_completion_record.schema.json": bundle["candidate_completion_records"],
+        "candidate_claim_evaluation_event.schema.json": bundle["candidate_claim_evaluation_events"],
     }
     for schema_name, records in record_groups.items():
         for record in records:
@@ -269,3 +272,15 @@ def test_after_state_candidate_identity_binds_semantic_bytes() -> None:
     original = candidate["candidate_id"]
     candidate["semantic_state"]["value"] = 2
     assert _candidate_id(candidate) != original
+
+
+def test_difference_identity_canonicalizes_nested_unordered_sets() -> None:
+    difference = load_json(FIXTURE_ROOT / "valid" / "bundle.json")["differences"][0]
+    left = deepcopy(difference)
+    left["effective_boundary"]["source_snapshot_refs"]["members"] = [
+        {"kind": "snapshot", "id": "SNAP-A"},
+        {"kind": "snapshot", "id": "SNAP-B"},
+    ]
+    right = deepcopy(left)
+    right["effective_boundary"]["source_snapshot_refs"]["members"].reverse()
+    assert _difference_id(left) == _difference_id(right)

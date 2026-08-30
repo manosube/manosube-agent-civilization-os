@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/candidate_claim_evaluation_event.schema.json",
+  "title": "Candidate Claim Evaluation Event", "type": "object",
+  "required": ["schema_version", "kind", "event_id", "evaluation_series_id", "event_revision", "predecessor_event_ref", "difference_id", "policy_ref", "candidate_id", "required_claim_ref", "completion_record_ref", "completion_record_fingerprint", "evaluation_status", "recorded_at"],
+  "properties": {
+    "schema_version": {"const": "0.1"}, "kind": {"const": "candidate_claim_evaluation_event"},
+    "event_id": {"type": "string", "pattern": "^CAND-CLAIM-EVT-[0-9A-F]{64}$"}, "evaluation_series_id": {"type": "string", "pattern": "^CAND-CLAIM-SERIES-[0-9A-F]{64}$"},
+    "event_revision": {"type": "integer", "minimum": 0}, "predecessor_event_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
+    "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"}, "policy_ref": {"$ref": "difference.schema.json#/$defs/versioned_reference"},
+    "candidate_id": {"type": "string", "pattern": "^STATE-CANDIDATE-[0-9A-F]{64}$"}, "required_claim_ref": {"$ref": "../common/reference.schema.json"},
+    "completion_record_ref": {"$ref": "../common/reference.schema.json"}, "completion_record_fingerprint": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"},
+    "evaluation_status": {"enum": ["SATISFIED", "NOT_SATISFIED", "UNKNOWN", "STALE", "REVOKED"]}, "recorded_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "allOf": [{"if": {"properties": {"event_revision": {"const": 0}}, "required": ["event_revision"]}, "then": {"properties": {"predecessor_event_ref": {"type": "null"}}}, "else": {"properties": {"predecessor_event_ref": {"not": {"type": "null"}}}}}], "additionalProperties": false
+}

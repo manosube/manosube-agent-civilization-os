@@ -79,6 +79,17 @@ def _content_address(prefix: str, record: dict[str, Any], identity_field: str) -
     return prefix + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
 
 
+def _canonical_semantic(value: Any) -> Any:
+    if isinstance(value, dict):
+        normalized = {key: _canonical_semantic(item) for key, item in value.items()}
+        if normalized.get("collection_kind") == "UNORDERED_SET" and "members" in normalized:
+            normalized["members"] = sorted(normalized["members"], key=canonical_json_bytes)
+        return normalized
+    if isinstance(value, list):
+        return [_canonical_semantic(item) for item in value]
+    return value
+
+
 def _policy_fingerprint(policy: dict[str, Any]) -> str:
     projection = {key: policy[key] for key in (
         "target_predicate_ref", "required_observation_scope", "minimum_evidence_level",
@@ -117,7 +128,7 @@ def _difference_id(difference: dict[str, Any]) -> str:
         "closure_policy_semantic_fingerprint": difference["closure_policy"]["semantic_fingerprint"],
         "identity_profile": "MANOSUBE-DIFFERENCE-SHA256-0.1",
     }
-    return "D-" + hashlib.sha256(canonical_json_bytes(identity)).hexdigest().upper()
+    return "D-" + hashlib.sha256(canonical_json_bytes(_canonical_semantic(identity))).hexdigest().upper()
 
 
 def _candidate_id(candidate: dict[str, Any]) -> str:
@@ -212,6 +223,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     methods = _index(
         bundle.get("observation_methods", []), "observation_method_id", errors
     )
+    completion_records = _index(
+        bundle.get("candidate_completion_records", []), "completion_id", errors
+    )
+    claim_events = _index(
+        bundle.get("candidate_claim_evaluation_events", []), "event_id", errors
+    )
 
     events_by_difference: dict[str, list[dict[str, Any]]] = {}
     for event in events.values():
@@ -280,6 +297,19 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and condition_refs_present
                 ):
                     errors.append(f"reopen trigger payload mismatch: {event['difference_event_id']}")
+                previous = chain[expected_revision - 1] if expected_revision > 0 else None
+                closure = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
+                if (
+                    previous is None
+                    or _ref_id(previous["closure_evaluation_ref"])
+                    != _ref_id(event["closure_evaluation_ref"])
+                    or closure is None
+                    or closure["difference_id"] != difference_id
+                    or closure["proposed_terminal_status"] != "CLOSED"
+                    or closure["result"] != "SATISFIED"
+                    or closure["gate_results"]["G22"] != "PASS"
+                ):
+                    errors.append(f"reopen closure binding mismatch: {event['difference_event_id']}")
             if event["to_status"] == "BLOCKED":
                 if not event["evidence_refs"]:
                     errors.append(f"blocked lifecycle Evidence missing: {event['difference_event_id']}")
@@ -526,6 +556,48 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 ):
                     errors.append(f"candidate invariant binding mismatch: {binding['binding_id']}")
             for binding in claim_bindings:
+                series = [
+                    item for item in claim_events.values()
+                    if item["evaluation_series_id"] == binding["evaluation_series_id"]
+                ]
+                series.sort(key=lambda item: item["event_revision"])
+                head = series[-1] if series else None
+                completion = completion_records.get(_ref_id(binding["completion_record_ref"]) or "")
+                series_payload = {
+                    "difference_id": binding["difference_id"],
+                    "policy_ref": binding["policy_ref"],
+                    "candidate_id": binding["candidate_id"],
+                    "required_claim_ref": binding["required_claim_ref"],
+                }
+                expected_series = "CAND-CLAIM-SERIES-" + hashlib.sha256(
+                    b"MANOSUBE:CANDIDATE_CLAIM_EVALUATION_SERIES:0.1:"
+                    + canonical_json_bytes(series_payload)
+                ).hexdigest().upper()
+                chain_valid = all(
+                    item["event_revision"] == revision
+                    and _ref_id(item["predecessor_event_ref"])
+                    == (None if revision == 0 else series[revision - 1]["event_id"])
+                    and item["event_id"]
+                    == "CAND-CLAIM-EVT-" + hashlib.sha256(
+                        b"MANOSUBE:CANDIDATE_CLAIM_EVALUATION_EVENT:0.1:"
+                        + canonical_json_bytes({key: value for key, value in item.items() if key != "event_id"})
+                    ).hexdigest().upper()
+                    for revision, item in enumerate(series)
+                )
+                completion_fingerprint = None
+                completion_id = None
+                if completion is not None:
+                    completion_fingerprint = "sha256:" + hashlib.sha256(
+                        canonical_json_bytes(completion)
+                    ).hexdigest()
+                    completion_payload = {
+                        key: value for key, value in completion.items()
+                        if key not in {"completion_id", "reflow_transition_ref"}
+                    }
+                    completion_id = "CMP-" + hashlib.sha256(
+                        b"MANOSUBE:CANDIDATE_COMPLETION_RECORD:0.1:"
+                        + canonical_json_bytes(completion_payload)
+                    ).hexdigest().upper()
                 if (
                     binding["difference_id"] != evaluation["difference_id"]
                     or not (policy and _policy_ref_matches(binding["policy_ref"], policy))
@@ -533,6 +605,24 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or binding["candidate_semantic_fingerprint"] != candidate["semantic_fingerprint"]
                     or binding["base_state_ref"] != evaluation["before_state_ref"]
                     or binding["evaluation_status"] != "SATISFIED"
+                    or binding["evaluation_series_id"] != expected_series
+                    or not chain_valid
+                    or head is None
+                    or _ref_id(binding["evaluation_head_event_ref"])
+                    != (None if head is None else head["event_id"])
+                    or completion is None
+                    or completion_id != _ref_id(binding["completion_record_ref"])
+                    or binding["evaluation_record_fingerprint"] != completion_fingerprint
+                    or head is None
+                    or head["completion_record_ref"] != binding["completion_record_ref"]
+                    or head["completion_record_fingerprint"] != binding["evaluation_record_fingerprint"]
+                    or head["evaluation_status"] != binding["evaluation_status"]
+                    or head["required_claim_ref"] != binding["required_claim_ref"]
+                    or head["candidate_id"] != binding["candidate_id"]
+                    or completion is None
+                    or completion["evaluation_status"] != binding["evaluation_status"]
+                    or completion["evaluated_at"] != binding["evaluated_at"]
+                    or completion["required_evidence_refs"] != binding["evaluation_evidence_refs"]
                 ):
                     errors.append(f"candidate claim binding mismatch: {binding['binding_id']}")
         elif mode == "CANDIDATE_TERMINAL":
