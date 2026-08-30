@@ -44,7 +44,7 @@ allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
 independent_verification_required: false
 maximum_evidence_age: null
 contradiction_policy: FAIL_CLOSED
-reopen_conditions: []
+reopen_conditions: [{kind: target_predicate, id: TP-REOPEN-...}]
 ```
 
 `policy_semantic_fingerprint`は次のversioned profileで決定的に算出する。
@@ -89,6 +89,8 @@ serialization metadata
 除外fieldは別のexact provenance bindingとして検証する。特に`subject_difference_ref`は、Policyを使用するDifference IDと一致しなければならない。
 
 Conformance vectorsでは少なくとも、object key順序と上記unordered set順序を変えた同値Policyが同じfingerprintを生成すること、member変更・重複・未知fieldが同一扱いされないことを証明する。
+
+`reopen_conditions`は新しい自由形式Condition recordではない。`01_OBJECTIVE/OBJECTIVE_CONTRACT.md`で定義されるversioned Target Predicateへのtyped referenceだけを許可する。各refのkindは`target_predicate`、IDは解決可能、predicate schema/versionは既知でなければならず、inline predicate、自由記述condition、unknown kindを拒否する。
 
 PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
 
@@ -336,7 +338,7 @@ Stale Evaluationを再利用せず、最新Stateから再観測・再評価す�
 
 同じsemantic identity boundary内で、`CLOSED`後のObservationがTarget不一致を示した場合、またはClosureに使用したEvidenceの失効・provenance不正・material contradictionがObservationの有無にかかわらず判明した場合、Differenceを`REOPENED`へ遷移させる。
 
-加えて、Closure Policyの`reopen_conditions`をclosed、versioned predicate集合として評価する。いずれかのconditionがexact current State／Evidence上でtrueになった場合は同じ`CLOSED → REOPENED`経路を使用し、triggered condition identityと評価EvidenceをReopen Eventへ保存する。未知condition、評価不能、stale inputをtrueまたはfalseへ推測せず、fail closedで再観測へ送る。
+加えて、Closure Policyの`reopen_conditions`が参照するTarget Predicate集合を評価する。いずれかがexact current State／Evidence上で`SATISFIED`になった場合は同じ`CLOSED → REOPENED`経路を使用し、`POLICY_REOPEN_CONDITION_SATISFIED`、triggered Target Predicate ref、Completion Evaluation refおよび評価EvidenceをReopen Eventへ保存する。未知condition、評価不能、stale inputをtrueまたはfalseへ推測せず、fail closedで再観測へ送る。
 
 Reopenは旧Closureを削除しない。次をappendする。
 
