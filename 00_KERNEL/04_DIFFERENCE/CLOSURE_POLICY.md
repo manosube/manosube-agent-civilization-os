@@ -210,11 +210,16 @@ Negative Evidenceはscope、期間、method、attempt count、completion、blind
 | Target satisfied and all gates pass | `SATISFIED` candidate |
 | Targetを観測したが満たさない | `NOT_SATISFIED` |
 | Targetは満たすがEvidenceが欠落または要求level未満 | `NOT_SATISFIED` |
+| required invariantまたはKernel Mandatory Invariantがfail | `NOT_SATISFIED` |
+| required claimが`NOT_SATISFIED` | `NOT_SATISFIED` |
+| `CLOSED`がallowed terminal stateに含まれない | `NOT_SATISFIED` |
 | 評価がまだ実行されていない | `NOT_EVALUATED` |
 | 必要Evidenceを評価中 | `EVALUATING` |
 | Truthを決定するInputまたはObservationが不足 | `BLOCKED` |
+| required invariantまたはclaimが未評価／評価中 | `BLOCKED`または`EVALUATING` |
 | Observation or Authority path blocked | `BLOCKED` |
 | State、Change、Approval、Evidence binding is stale | `STALE` |
+| Policy、required claim evaluation、invariant evaluationのhead不一致 | `STALE` |
 | Positive／NegativeまたはMaterial Evidence conflict | `CONTRADICTED` |
 | 以前受理した評価またはClosureの前提が無効化 | `REVOKED` |
 | 初回評価時にschema、identity、boundary、lineageがinvalid | `NOT_SATISFIED` |
