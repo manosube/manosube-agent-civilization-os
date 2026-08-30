@@ -169,7 +169,43 @@ method_ref: {kind: observation_method, id: OBS-METHOD-...}
 reason_code: BLOCKER_REOBSERVATION
 ```
 
-Record shapeはclosedであり、unknown fieldを拒否する。`observation_request_id`は、`difference_ref + derived_from_event_ref + state_revision_requested + state_fingerprint_requested + target_ref + scope_ref + method_ref + reason_code`のcanonical payloadから決定的に生成する。各typed refはexactに解決でき、Difference、event head、State revision／fingerprint、Target、Scopeが相互に一致しなければならない。`method_ref`はObservation Contractが許可するversioned immutable method recordへ解決し、inline commandやambient instructionを許可しない。同一ID・同一payloadはidempotent、異なるpayloadはconflictとして拒否する。
+`method_ref`は次のclosed、versioned immutable `OBSERVATION_METHOD` recordへ解決する。
+
+```yaml
+schema_version: "0.1"
+record_kind: OBSERVATION_METHOD
+observation_method_id: OBS-METHOD-...
+method_profile: MANOSUBE-OBSERVATION-METHOD-SHA256-0.1
+procedure_kind: CANONICAL_OBSERVER
+procedure_ref: {kind: observer_procedure, id: PROC-..., version: "0.1", semantic_fingerprint: sha256:...}
+normalization_profile: MANOSUBE-NORMALIZED-FACT-SHA256-0.1
+input_contract_ref: {kind: schema, id: SCHEMA-...}
+output_contract_refs: []
+execution_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
+```
+
+Method ID inputは`schema_version`を含む上記recordから`observation_method_id`だけを除いたclosed payloadである。全refはimmutable version／semantic fingerprintまたはcontent addressへexactに解決する。inline command、shell text、ambient instruction、moving ref、unknown fieldを拒否する。
+
+RequestとMethodのID algorithmを次で固定する。
+
+```text
+REQUEST_PROFILE=MANOSUBE-NEXT-OBSERVATION-REQUEST-SHA256-0.1
+METHOD_PROFILE=MANOSUBE-OBSERVATION-METHOD-SHA256-0.1
+DIGEST=SHA-256
+SERIALIZATION=CANONICAL_JSON_UTF8
+TEXT_NORMALIZATION=UNICODE_NFC
+OBJECT_KEY_ORDER=LEXICOGRAPHIC
+NUMBER_PROFILE=JSON_INTEGER_ONLY
+UNKNOWN_FIELDS=REJECT
+REQUEST_OUTPUT=OBS-REQ-<64 lowercase hexadecimal characters>
+METHOD_OUTPUT=OBS-METHOD-<64 lowercase hexadecimal characters>
+```
+
+Request ID inputは`schema_version + record_kind + difference_ref + derived_from_event_ref + state_revision_requested + state_fingerprint_requested + target_ref + scope_ref + method_ref + reason_code`である。Method ID inputは直前に定義したclosed payloadである。同一ID・同一payloadはidempotent、異なるpayloadはconflictとして拒否する。
+
+Conformance vectorsは、object key順序変更によるID不変性、Unicode NFC同値性、各included field変更によるID変更、schema version変更によるID変更、unknown field／float／unresolved refのreject、既知request／method payloadに対する固定digestを含む。
+
+各typed refはexactに解決でき、Difference、event head、State revision／fingerprint、Target、Scopeが相互に一致しなければならない。
 
 `next_observation_ref`は`{kind: next_observation_request, id: OBS-REQ-...}`とする。to-statusが`BLOCKED`、`RETAINED`または`REOPENED`ならnon-nullを必須とする。その他transitionではPolicyが次観測を要求する場合だけnon-nullを許可する。unknown kind、解決不能ref、対象Difference／State不一致を拒否する。
 
