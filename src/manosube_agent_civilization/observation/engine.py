@@ -13,7 +13,7 @@ from referencing import Registry, Resource
 
 from .errors import ObservationError, ObservationValidationError
 from .identity import deterministic_id
-from .normalization import SUPPORTED_PROFILE, normalize_fact
+from .normalization import PREDICATE_VOCABULARY, SUPPORTED_PROFILE, normalize_fact
 from .scope import subject_in_scope, validate_scope, validate_source_locator
 
 OBSERVATION_SCHEMA_BASE = "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/"
@@ -73,23 +73,25 @@ def _require_ref_kind(reference: dict[str, str], expected: str, context: str) ->
         )
 
 
-def _boundary_observed(
-    boundary: dict[str, Any], observation: dict[str, Any]
-) -> bool:
+def _boundary_observed(boundary: dict[str, Any], observation: dict[str, Any]) -> bool:
     declared_source_ids = {item["id"] for item in observation["source_snapshot_refs"]}
     return (
-        boundary["kind"] == "SOURCE_SNAPSHOT"
-        and boundary["identity"] in declared_source_ids
-        and boundary["start"] is None
-        and boundary["end"] is None
-    ) or (
-        boundary["kind"] == "TIME_INTERVAL"
-        and boundary["start"] == observation["time_boundary"]["target_effective_start"]
-        and boundary["end"] == observation["time_boundary"]["target_effective_end"]
-    ) or (
-        boundary["kind"] == "STATE_REVISION"
-        and boundary["start"] == observation["state_revision_observed"]
-        and boundary["end"] == observation["state_revision_observed"]
+        (
+            boundary["kind"] == "SOURCE_SNAPSHOT"
+            and boundary["identity"] in declared_source_ids
+            and boundary["start"] is None
+            and boundary["end"] is None
+        )
+        or (
+            boundary["kind"] == "TIME_INTERVAL"
+            and boundary["start"] == observation["time_boundary"]["target_effective_start"]
+            and boundary["end"] == observation["time_boundary"]["target_effective_end"]
+        )
+        or (
+            boundary["kind"] == "STATE_REVISION"
+            and boundary["start"] == observation["state_revision_observed"]
+            and boundary["end"] == observation["state_revision_observed"]
+        )
     )
 
 
@@ -166,14 +168,23 @@ def _completion(
     attempts = observation["attempts"]
     observation_start = _instant(observation["time_boundary"]["observation_started_at"])
     observation_end = _instant(observation["time_boundary"]["observation_ended_at"])
-    attempts_complete = bool(attempts) and all(
-        attempt["result"] in {"COMPLETE", "EMPTY"}
-        and attempt["method_ref"] == observation["method_ref"]
-        and observation_start
-        <= _instant(attempt["started_at"])
-        <= _instant(attempt["ended_at"])
-        <= observation_end
-        for attempt in attempts
+    attempts_complete = (
+        bool(attempts)
+        and all(
+            attempt["result"] in {"COMPLETE", "EMPTY"}
+            and attempt["method_ref"] == observation["method_ref"]
+            and observation_start
+            <= _instant(attempt["started_at"])
+            <= _instant(attempt["ended_at"])
+            <= observation_end
+            for attempt in attempts
+        )
+        and len(attempts) <= scope["attempt_policy"]["max_attempts"]
+        and all(
+            (_instant(attempt["ended_at"]) - _instant(attempt["started_at"])).total_seconds()
+            <= scope["attempt_policy"]["timeout_seconds"]
+            for attempt in attempts
+        )
     )
     method_complete = attempts_complete and observation["status"] in {"COMPLETE", "EMPTY"}
     no_blocking_blind_spot = all(
@@ -181,10 +192,7 @@ def _completion(
         and not (
             item["impact"] == "BLOCKS_ABSENCE"
             and claim is not None
-            and (
-                claim["subject"] in item["affected_subjects"]
-                or "*" in item["affected_subjects"]
-            )
+            and (claim["subject"] in item["affected_subjects"] or "*" in item["affected_subjects"])
         )
         for item in observation["blind_spots"]["items"]
     )
@@ -227,6 +235,8 @@ def _negative_records(
     status = claim["negative_status"]
     if status not in _STATUS_CANDIDATE:
         raise ObservationError(f"unknown negative status: {status!r}")
+    if claim.get("predicate") not in PREDICATE_VOCABULARY:
+        raise ObservationError(f"unknown predicate: {claim.get('predicate')!r}")
     boundary = claim["effective_boundary"]
     if not _boundary_observed(boundary, observation):
         raise ObservationError("Negative claim effective boundary was not observed")
@@ -355,17 +365,14 @@ def _validate_records(bundle: dict[str, Any]) -> None:
         if len(identities) != len(set(identities)):
             errors.append(f"duplicate {field}")
     bindings_by_id = {record["binding_id"]: record for record in bundle["bindings"]}
-    observations_by_id = {
-        record["observation_id"]: record for record in bundle["observations"]
-    }
+    observations_by_id = {record["observation_id"]: record for record in bundle["observations"]}
     for binding in bundle["bindings"]:
         observation = observations_by_id.get(binding["observation_id"])
         if observation is None:
             errors.append(f"binding references missing Observation: {binding['binding_id']}")
         elif (
             binding["state_revision_observed"] != observation["state_revision_observed"]
-            or binding["state_fingerprint_observed"]
-            != observation["state_fingerprint_observed"]
+            or binding["state_fingerprint_observed"] != observation["state_fingerprint_observed"]
         ):
             errors.append(f"binding State mismatch: {binding['binding_id']}")
     for fact_id in fact_ids:
@@ -381,7 +388,11 @@ def _validate_records(bundle: dict[str, Any]) -> None:
                 errors.append(f"Fact evaluation predecessor mismatch: {fact_id}")
             for reference in evaluation["binding_refs"]:
                 binding = bindings_by_id.get(reference["id"])
-                if reference["kind"] != "fact_observation_binding" or not binding or binding["fact_id"] != fact_id:
+                if (
+                    reference["kind"] != "fact_observation_binding"
+                    or not binding
+                    or binding["fact_id"] != fact_id
+                ):
                     errors.append(f"cross-Fact or missing binding: {fact_id}")
     negative_ids = {item["negative_observation_id"] for item in bundle["negative_observations"]}
     for evaluation in bundle["fact_evaluations"]:
@@ -395,14 +406,21 @@ def _validate_records(bundle: dict[str, Any]) -> None:
             )
     for negative_id in negative_ids:
         evaluations = sorted(
-            (item for item in bundle["negative_evaluations"] if item["negative_observation_id"] == negative_id),
+            (
+                item
+                for item in bundle["negative_evaluations"]
+                if item["negative_observation_id"] == negative_id
+            ),
             key=lambda item: item["evaluation_revision"],
         )
         if not evaluations or evaluations[0]["evaluation_revision"] != 0:
             errors.append(f"Negative Observation has no revision zero evaluation: {negative_id}")
         for revision, evaluation in enumerate(evaluations):
             expected = None if revision == 0 else evaluations[revision - 1]["evaluation_id"]
-            if evaluation["evaluation_revision"] != revision or evaluation["previous_evaluation_id"] != expected:
+            if (
+                evaluation["evaluation_revision"] != revision
+                or evaluation["previous_evaluation_id"] != expected
+            ):
                 errors.append(f"Negative evaluation lineage invalid: {negative_id}")
     if errors:
         raise ObservationValidationError(sorted(errors)[0])
@@ -486,7 +504,9 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         _require_ref_kind(reference, "observation_evidence", "observation_evidence_refs")
     for reference in request.get("negative_evidence_refs", []):
         _require_ref_kind(reference, "negative_evidence", "negative_evidence_refs")
-    scope_sources = {(reference["kind"], reference["id"]) for reference in scope["source_snapshot_refs"]}
+    scope_sources = {
+        (reference["kind"], reference["id"]) for reference in scope["source_snapshot_refs"]
+    }
     declared_sources = {
         (reference["kind"], reference["id"]) for reference in request["source_snapshot_refs"]
     }
@@ -540,6 +560,12 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         for raw in occurrence.get("facts", []):
             if not subject_in_scope(raw["subject"], scope):
                 raise ObservationError(f"Fact subject is outside scope: {raw['subject']}")
+            raw_boundary = raw["effective_boundary"]
+            if (
+                raw_boundary["kind"] == "SOURCE_SNAPSHOT"
+                and raw_boundary["identity"] != occurrence["source_ref"]["id"]
+            ):
+                raise ObservationError("Fact source boundary does not match its source occurrence")
             fact = normalize_fact(raw, request["project_id"], profile)
             existing = facts_by_id.get(fact["fact_id"])
             if existing is not None and existing != fact:
@@ -645,9 +671,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     prior_binding_ids = {item["binding_id"] for item in prior["bindings"]}
     if existing_observation is not None:
         retry_fact_ids = {
-            item["fact_id"]
-            for item in bindings
-            if item["observation_id"] == observation_id
+            item["fact_id"] for item in bindings if item["observation_id"] == observation_id
         }
         retry_facts = [fact for fact in facts if fact["fact_id"] in retry_fact_ids]
         retry_coordinates: dict[str, int] = {}
@@ -732,10 +756,11 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         )
         coordinate_groups.setdefault(coordinate, []).append(fact)
     positive_conflicts = {
-        fact["fact_id"]: {other["fact_id"] for other in group if other["fact_id"] != fact["fact_id"]}
+        fact["fact_id"]: {
+            other["fact_id"] for other in group if other["fact_id"] != fact["fact_id"]
+        }
         for group in coordinate_groups.values()
-        if len(group) > 1
-        and any(item["fact_id"] in observed_fact_ids for item in group)
+        if len(group) > 1 and any(item["fact_id"] in observed_fact_ids for item in group)
         for fact in group
     }
     appended_fact_evaluations: dict[str, dict[str, Any]] = {}
@@ -760,26 +785,29 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         ]
         conflict_fact_ids = positive_conflicts.get(fact["fact_id"], set())
         new_evaluation = {
-                "schema_version": "0.1",
-                "evaluation_id": deterministic_id(
-                    "FACT-EVAL",
-                    {
-                        "fact_id": fact["fact_id"],
-                        "evaluation_revision": evaluation_revision,
-                    },
-                ),
-                "fact_id": fact["fact_id"],
-                "evaluation_revision": evaluation_revision,
-                "previous_evaluation_id": previous_evaluation_id,
-                "binding_refs": [
-                    _ref("fact_observation_binding", binding["binding_id"])
-                    for binding in fact_bindings
-                ],
-                "evaluation_status": "CONFLICTED" if prior_negative_conflicts or conflict_fact_ids else "SUPPORTED",
-                "conflict_fact_refs": [_ref("normalized_fact", item) for item in sorted(conflict_fact_ids)],
-                "conflict_negative_observation_refs": prior_negative_conflicts,
-                "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
-            }
+            "schema_version": "0.1",
+            "evaluation_id": deterministic_id(
+                "FACT-EVAL",
+                {
+                    "fact_id": fact["fact_id"],
+                    "evaluation_revision": evaluation_revision,
+                },
+            ),
+            "fact_id": fact["fact_id"],
+            "evaluation_revision": evaluation_revision,
+            "previous_evaluation_id": previous_evaluation_id,
+            "binding_refs": [
+                _ref("fact_observation_binding", binding["binding_id"]) for binding in fact_bindings
+            ],
+            "evaluation_status": "CONFLICTED"
+            if prior_negative_conflicts or conflict_fact_ids
+            else "SUPPORTED",
+            "conflict_fact_refs": [
+                _ref("normalized_fact", item) for item in sorted(conflict_fact_ids)
+            ],
+            "conflict_negative_observation_refs": prior_negative_conflicts,
+            "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
+        }
         fact_evaluations.append(new_evaluation)
         appended_fact_evaluations[fact["fact_id"]] = new_evaluation
     for fact_id, conflict_ids in positive_conflicts.items():
@@ -800,13 +828,9 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             "previous_evaluation_id": previous[-1]["evaluation_id"] if previous else None,
             "binding_refs": [],
             "evaluation_status": "CONFLICTED",
-            "conflict_fact_refs": [
-                _ref("normalized_fact", item) for item in sorted(conflict_ids)
-            ],
+            "conflict_fact_refs": [_ref("normalized_fact", item) for item in sorted(conflict_ids)],
             "conflict_negative_observation_refs": (
-                deepcopy(previous[-1]["conflict_negative_observation_refs"])
-                if previous
-                else []
+                deepcopy(previous[-1]["conflict_negative_observation_refs"]) if previous else []
             ),
             "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
         }
@@ -830,8 +854,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             (
                 item
                 for item in negative_evaluations
-                if item["negative_observation_id"]
-                == negative["negative_observation_id"]
+                if item["negative_observation_id"] == negative["negative_observation_id"]
             ),
             key=lambda item: item["evaluation_revision"],
         )
@@ -855,10 +878,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                         reference["id"]: reference
                         for reference in [
                             *prior_negative_evaluations[-1]["conflict_fact_refs"],
-                            *[
-                                _ref("normalized_fact", fact["fact_id"])
-                                for fact in matching
-                            ],
+                            *[_ref("normalized_fact", fact["fact_id"]) for fact in matching],
                         ]
                     }.values(),
                     key=lambda reference: reference["id"],
@@ -868,9 +888,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         )
         for fact in matching:
             fact_evaluation = appended_fact_evaluations[fact["fact_id"]]
-            reference = _ref(
-                "negative_observation", negative["negative_observation_id"]
-            )
+            reference = _ref("negative_observation", negative["negative_observation_id"])
             fact_evaluation["evaluation_status"] = "CONFLICTED"
             if reference not in fact_evaluation["conflict_negative_observation_refs"]:
                 fact_evaluation["conflict_negative_observation_refs"].append(reference)
@@ -902,14 +920,24 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     revision = len(previous)
                     fact_evaluation = {
                         "schema_version": "0.1",
-                        "evaluation_id": deterministic_id("FACT-EVAL", {"fact_id": fact_id, "evaluation_revision": revision}),
+                        "evaluation_id": deterministic_id(
+                            "FACT-EVAL", {"fact_id": fact_id, "evaluation_revision": revision}
+                        ),
                         "fact_id": fact_id,
                         "evaluation_revision": revision,
-                        "previous_evaluation_id": previous[-1]["evaluation_id"] if previous else None,
+                        "previous_evaluation_id": previous[-1]["evaluation_id"]
+                        if previous
+                        else None,
                         "binding_refs": [],
                         "evaluation_status": "CONFLICTED",
-                        "conflict_fact_refs": deepcopy(previous[-1]["conflict_fact_refs"]) if previous else [],
-                        "conflict_negative_observation_refs": deepcopy(previous[-1]["conflict_negative_observation_refs"]) if previous else [],
+                        "conflict_fact_refs": deepcopy(previous[-1]["conflict_fact_refs"])
+                        if previous
+                        else [],
+                        "conflict_negative_observation_refs": deepcopy(
+                            previous[-1]["conflict_negative_observation_refs"]
+                        )
+                        if previous
+                        else [],
                         "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
                     }
                     fact_evaluations.append(fact_evaluation)
@@ -920,7 +948,9 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     fact_evaluation["conflict_negative_observation_refs"].append(
                         _ref("negative_observation", conflict["negative_id"])
                     )
-                fact_evaluation["conflict_negative_observation_refs"].sort(key=lambda reference: reference["id"])
+                fact_evaluation["conflict_negative_observation_refs"].sort(
+                    key=lambda reference: reference["id"]
+                )
     if positive_conflicts:
         conflict_found = True
     if conflict_found:
