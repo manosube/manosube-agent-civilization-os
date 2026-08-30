@@ -165,11 +165,25 @@ old_difference_ref: {kind: difference, id: D-OLD...}
 new_difference_ref: {kind: difference, id: D-NEW...}
 old_terminal_event_ref: {kind: difference_event, id: D-EVT-...}
 new_genesis_event_ref: {kind: difference_event, id: D-EVT-...}
-reason_code: TARGET_MISMATCH_OR_POLICY_CHANGED
+reason_codes: [TARGET_CHANGED, MISMATCH_SEMANTICS_CHANGED]
 evidence_refs: []
 ```
 
-`reason_code`は少なくとも`OBJECTIVE_SEMANTICS_CHANGED`、`TARGET_CHANGED`、`BOUNDARY_CHANGED`、`MISMATCH_SEMANTICS_CHANGED`、`CLOSURE_POLICY_SEMANTICS_CHANGED`をclosed enumとして区別する。複数変更時は該当reason code集合をcanonical orderで保存する。
+`reason_codes`はnon-empty unordered setであり、canonical member bytes順に保存する。closed enumを次へ固定する。
+
+```text
+PROJECT_CHANGED
+OBJECTIVE_SEMANTICS_CHANGED
+TARGET_PREDICATE_CHANGED
+SUBJECT_OR_PREDICATE_CHANGED
+BOUNDARY_CHANGED
+TARGET_STATE_SEMANTICS_CHANGED
+MISMATCH_SEMANTICS_CHANGED
+CLOSURE_POLICY_SEMANTICS_CHANGED
+IDENTITY_PROFILE_CHANGED
+```
+
+materialに変わった全identity inputに対応するcodeを過不足なく含める。singular `reason_code`、複合曖昧code、unknown code、空集合、duplicateを拒否する。
 
 Relationは両Differenceと双方のLifecycle Eventから解決可能でなければならない。Canonical Difference Recordを上書きせず、materialized viewの`superseded_by`と`supersedes`をRelationから導出する。
 
