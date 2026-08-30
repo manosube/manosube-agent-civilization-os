@@ -123,6 +123,7 @@ SUPERSEDED → ANY
 schema_version: "0.1"
 difference_event_id: D-EVT-...
 difference_id: D-...
+event_kind: TRANSITION
 event_revision: 0
 previous_event_id: null
 from_status: null
@@ -140,6 +141,19 @@ reflow_transition_ref: null
 ```
 
 Event revisionは0から連続し、predecessorはexactでなければならない。同一event ID・同一payloadはidempotent、異なるpayloadはconflictとして拒否する。
+
+同じsemantic Differenceを再観測しstatusが変わらない場合、`TRANSITION`を偽造せず、次のstatus-preserving eventをappendする。
+
+```yaml
+event_kind: OBSERVATION_BOUND
+from_status: OPEN
+to_status: OPEN
+observation_refs: [{kind: observation, id: OBS-...}]
+evidence_refs: [{kind: observation_evidence, id: EVID-...}]
+reason_code: EQUIVALENT_DIFFERENCE_REOBSERVED
+```
+
+`OBSERVATION_BOUND`では`from_status`と`to_status`がcurrent statusと同一でなければならない。これはLifecycle transitionではなくprovenance appendであり、第3節のlegal transition表によるstatus変更を発生させない。`DETECTED`、`OPEN`、`ACTIVE`、`VERIFYING`、`BLOCKED`、`RETAINED`、`CLOSED`、`REOPENED`で使用でき、`SUPERSEDED`または`INVALIDATED`にはappendしない。
 
 # 6. Transition Authority
 
