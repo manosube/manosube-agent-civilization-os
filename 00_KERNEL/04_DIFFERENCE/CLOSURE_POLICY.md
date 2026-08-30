@@ -178,6 +178,7 @@ evaluation_expires_at: null
 policy_ref: {kind: closure_policy, id: CP-..., version: "0.1", semantic_fingerprint: sha256:...}
 policy_version_evaluated: "0.1"
 policy_semantic_fingerprint_evaluated: sha256:...
+proposed_terminal_status: CLOSED
 result: NOT_EVALUATED
 failure_reasons: []
 reflow_transition_ref: null
@@ -222,7 +223,7 @@ G18 EVIDENCE_FRESHNESS_AND_BINDINGS_CURRENT
 G19 INVARIANTS_PASS
 G20 ATOMIC_REFLOW_PRECONDITIONS_PASS
 G21 ALL_REQUIRED_CLAIMS_SATISFIED
-G22 CLOSED_IS_ALLOWED_TERMINAL_STATE
+G22 PROPOSED_TERMINAL_STATE_ALLOWED
 ```
 
 一つでもfalseまたはunknownなら`SATISFIED`にしない。
@@ -272,7 +273,7 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 
 `G19`はClosure Policyの`required_invariants`それぞれに対し、同一evaluated State revision／fingerprintへ結合されたexact `invariant_evaluation_refs`を要求する。未評価、欠落、stale、unknownまたはfailを一件でも含む場合は`SATISFIED`にしない。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
 
-`G22`は`allowed_terminal_states`に`CLOSED`が明示されていることを要求する。`CLOSED`が許可されていないPolicyから`SATISFIED` closure candidateを生成してはならない。`BLOCKED`または`RETAINED`だけが許可される場合、対象statusへ遷移する評価を別途生成する。
+`G22`は`proposed_terminal_status`が`CLOSED | BLOCKED | RETAINED`のclosed enumに属し、かつPolicyの`allowed_terminal_states`に明示されていることを要求する。未許可statusへのEvaluationを`SATISFIED`にせず、Lifecycle transitionも拒否する。各statusについて別Evaluationを生成し、あるstatusの許可を別statusへ流用しない。
 
 `policy_ref`、`policy_version_evaluated`および`policy_semantic_fingerprint_evaluated`は、Difference Recordに固定されたPolicy ID／version／semantic fingerprintと同一Policyへexactに解決されなければならない。さらにPolicyの`subject_difference_ref`をDifference IDとexactに照合する。
 
