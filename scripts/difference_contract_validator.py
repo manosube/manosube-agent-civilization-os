@@ -920,6 +920,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     key=lambda item: item["event_revision"],
                 )
                 head_event = series[-1] if series else None
+                completion_id = None
+                if completion is not None:
+                    completion_payload = {
+                        key: value for key, value in completion.items()
+                        if key not in {"completion_id", "reflow_transition_ref"}
+                    }
+                    completion_id = "CMP-" + hashlib.sha256(
+                        b"MANOSUBE:CANDIDATE_COMPLETION_RECORD:0.1:"
+                        + canonical_json_bytes(completion_payload)
+                    ).hexdigest().upper()
                 series_payload = {
                     "difference_id": binding["difference_id"],
                     "policy_ref": binding["policy_ref"],
@@ -957,6 +967,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or binding["evaluation_series_id"] != expected_series
                     or not chain_valid
                     or completion is None
+                    or completion_id != _ref_id(binding["completion_record_ref"])
                     or descriptor is None
                     or completion["subject_type"] != descriptor["subject_type"]
                     or completion["subject_ref"] != descriptor["subject_ref"]
@@ -985,6 +996,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or head_event is None
                     or head_event["completion_record_ref"]
                     != binding["completion_record_ref"]
+                    or head_event["completion_record_fingerprint"]
+                    != binding["evaluation_record_fingerprint"]
                     or head_event["required_claim_ref"] != binding["required_claim_ref"]
                     or head_event["candidate_id"] != binding["candidate_id"]
                     or head_event["evaluation_status"] != binding["evaluation_status"]
