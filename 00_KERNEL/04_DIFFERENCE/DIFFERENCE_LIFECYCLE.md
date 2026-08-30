@@ -81,6 +81,7 @@ v0.1のlegal transitionを次で固定する。
 | `RETAINED` | `BLOCKED` | blockerが確認された |
 | `RETAINED` | `SUPERSEDED` | validな双方向supersession |
 | `CLOSED` | `REOPENED` | 後続ObservationがClosure Claimを反証 |
+| `CLOSED` | `SUPERSEDED` | materialなObjective、TargetまたはMismatch semantics変更とvalidなSupersession Relation |
 | `REOPENED` | `ACTIVE` | authorized resolutionを再開 |
 | `REOPENED` | `VERIFYING` | Change不要で新Evidenceを再評価 |
 | `REOPENED` | `BLOCKED` | 再解決が阻害された |
