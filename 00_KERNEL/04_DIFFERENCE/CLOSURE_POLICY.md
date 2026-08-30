@@ -68,6 +68,7 @@ change_result_evidence_refs: []
 change_free_verification_evidence_refs: []
 evidence_sufficiency_ref: {}
 invariant_evaluation_refs: []
+required_claim_evaluation_refs: []
 contradiction_refs: []
 evaluated_state_revision: 0
 evaluated_state_fingerprint: {}
@@ -172,7 +173,9 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 
 `G22`は`allowed_terminal_states`に`CLOSED`が明示されていることを要求する。`CLOSED`が許可されていないPolicyから`SATISFIED` closure candidateを生成してはならない。`BLOCKED`または`RETAINED`だけが許可される場合、対象statusへ遷移する評価を別途生成する。
 
-`policy_ref`、`policy_version_evaluated`および`policy_fingerprint_evaluated`は同一immutable Policy payloadへexactに解決されなければならない。current Policy versionまたはfingerprintと不一致ならEvaluationは`STALE`であり、Atomic Reflowは拒否する。
+`policy_ref`、`policy_version_evaluated`および`policy_fingerprint_evaluated`は、Difference Recordに固定されたPolicy ID／version／fingerprintと同一immutable payloadへexactに解決されなければならない。current PolicyまたはDifference-bound Policyと不一致ならEvaluationは`STALE`であり、Atomic Reflowは拒否する。
+
+`G21`で使用した各Completion Evaluationは`required_claim_evaluation_refs`へexactに保存する。各refはclaim identity、evaluated State revision／fingerprint、Evidence refs、evaluation statusおよびevaluation revisionへ解決可能でなければならない。Atomic Reflow直前に全refがcurrentかつ`SATISFIED`であることを再検査し、`REVOKED`、`STALE`またはhead変更を一件でも検出した場合はClosure Evaluationを`STALE`または`REVOKED`として拒否する。
 
 # 4. Independent Re-observation
 
@@ -277,7 +280,7 @@ Stale Evaluationを再利用せず、最新Stateから再観測・再評価す�
 
 # 9. Reopen Policy
 
-`CLOSED`後のObservationが同じsemantic identity boundary内でTarget不一致、Evidence invalidationまたはmaterial contradictionを示した場合、Differenceを`REOPENED`へ遷移させる。
+同じsemantic identity boundary内で、`CLOSED`後のObservationがTarget不一致を示した場合、またはClosureに使用したEvidenceの失効・provenance不正・material contradictionがObservationの有無にかかわらず判明した場合、Differenceを`REOPENED`へ遷移させる。
 
 Reopenは旧Closureを削除しない。次をappendする。
 
@@ -285,6 +288,7 @@ Reopenは旧Closureを削除しない。次をappendする。
 reopen event
 contradicting observation refs
 contradicting evidence refs
+invalidated closure evidence refs
 affected closure evaluation ref
 new State revision and fingerprint
 next required observation
@@ -327,6 +331,7 @@ FUTURE_DATED_EVIDENCE_REJECTED=true
 REQUIRED_INVARIANTS_BOUND=true
 ALLOWED_TERMINAL_STATES_ENFORCED=true
 POLICY_VERSION_EXACT=true
+REQUIRED_CLAIM_EVALUATIONS_BOUND=true
 UNKNOWN_IS_PASS=false
 NO_RESULT_NE_PROVEN_ABSENCE=true
 CHANGE_CANNOT_SELF_CLOSE=true
