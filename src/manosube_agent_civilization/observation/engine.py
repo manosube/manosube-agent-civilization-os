@@ -11,6 +11,8 @@ from typing import Any
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
+
 from .errors import ObservationError, ObservationValidationError
 from .identity import deterministic_id
 from .normalization import PREDICATE_VOCABULARY, SUPPORTED_PROFILE, normalize_fact
@@ -349,6 +351,8 @@ def _validate_records(bundle: dict[str, Any]) -> None:
         }
         if fact["fact_id"] != deterministic_id("FACT", semantic):
             errors.append(f"Fact identity mismatch: {fact['fact_id']}")
+        if semantic != json.loads(canonical_json_bytes(semantic)):
+            errors.append(f"Fact payload is not canonical: {fact['fact_id']}")
     bound_fact_ids = {binding["fact_id"] for binding in bundle["bindings"]}
     if fact_ids != bound_fact_ids:
         errors.append("every Fact must have one or more provenance Bindings")
@@ -373,6 +377,16 @@ def _validate_records(bundle: dict[str, Any]) -> None:
     bindings_by_id = {record["binding_id"]: record for record in bundle["bindings"]}
     observations_by_id = {record["observation_id"]: record for record in bundle["observations"]}
     for binding in bundle["bindings"]:
+        expected_binding_id = deterministic_id(
+            "BIND",
+            {
+                "fact_id": binding["fact_id"],
+                "observation_id": binding["observation_id"],
+                "source_occurrence_id": binding["source_occurrence_id"],
+            },
+        )
+        if binding["binding_id"] != expected_binding_id:
+            errors.append(f"Binding identity mismatch: {binding['binding_id']}")
         observation = observations_by_id.get(binding["observation_id"])
         if observation is None:
             errors.append(f"binding references missing Observation: {binding['binding_id']}")
@@ -441,6 +455,44 @@ def _validate_records(bundle: dict[str, Any]) -> None:
                 or evaluation["previous_evaluation_id"] != expected
             ):
                 errors.append(f"Negative evaluation lineage invalid: {negative_id}")
+    latest_fact_evaluations = {
+        fact_id: max(
+            (item for item in bundle["fact_evaluations"] if item["fact_id"] == fact_id),
+            key=lambda item: item["evaluation_revision"],
+            default=None,
+        )
+        for fact_id in fact_ids
+    }
+    latest_negative_evaluations = {
+        negative_id: max(
+            (
+                item
+                for item in bundle["negative_evaluations"]
+                if item["negative_observation_id"] == negative_id
+            ),
+            key=lambda item: item["evaluation_revision"],
+            default=None,
+        )
+        for negative_id in negative_ids
+    }
+    for fact_id, fact_evaluation in latest_fact_evaluations.items():
+        if fact_evaluation is None:
+            continue
+        for reference in fact_evaluation["conflict_negative_observation_refs"]:
+            negative_evaluation = latest_negative_evaluations.get(reference["id"])
+            if negative_evaluation is None or fact_id not in {
+                item["id"] for item in negative_evaluation["conflict_fact_refs"]
+            }:
+                errors.append(f"one-sided Fact/Negative conflict: {fact_id} -> {reference['id']}")
+    for negative_id, negative_evaluation in latest_negative_evaluations.items():
+        if negative_evaluation is None:
+            continue
+        for reference in negative_evaluation["conflict_fact_refs"]:
+            fact_evaluation = latest_fact_evaluations.get(reference["id"])
+            if fact_evaluation is None or negative_id not in {
+                item["id"] for item in fact_evaluation["conflict_negative_observation_refs"]
+            }:
+                errors.append(f"one-sided Negative/Fact conflict: {negative_id} -> {reference['id']}")
     if errors:
         raise ObservationValidationError(sorted(errors)[0])
 
@@ -523,7 +575,11 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     )
     for reference in canonical_source_refs:
         _require_ref_kind(reference, "source_snapshot", "source_snapshot_refs")
-    for reference in request.get("observation_evidence_refs", []):
+    canonical_observation_evidence_refs = sorted(
+        deepcopy(request.get("observation_evidence_refs", [])),
+        key=lambda reference: (reference["kind"], reference["id"]),
+    )
+    for reference in canonical_observation_evidence_refs:
         _require_ref_kind(reference, "observation_evidence", "observation_evidence_refs")
     for reference in request.get("negative_evidence_refs", []):
         _require_ref_kind(reference, "negative_evidence", "negative_evidence_refs")
@@ -652,7 +708,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             "items": blind_spots,
         },
         "attempts": attempts,
-        "observation_evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
+        "observation_evidence_refs": canonical_observation_evidence_refs,
     }
     base_observation_status = observation["status"]
     for fact in observed_facts:
@@ -827,7 +883,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 _ref("normalized_fact", item) for item in sorted(conflict_fact_ids)
             ],
             "conflict_negative_observation_refs": prior_negative_conflicts,
-            "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
+            "evidence_refs": deepcopy(canonical_observation_evidence_refs),
         }
         fact_evaluations.append(new_evaluation)
         appended_fact_evaluations[fact["fact_id"]] = new_evaluation
@@ -853,7 +909,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             "conflict_negative_observation_refs": (
                 deepcopy(previous[-1]["conflict_negative_observation_refs"]) if previous else []
             ),
-            "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
+            "evidence_refs": deepcopy(canonical_observation_evidence_refs),
         }
         fact_evaluations.append(new_evaluation)
         appended_fact_evaluations[fact_id] = new_evaluation
@@ -904,7 +960,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     }.values(),
                     key=lambda reference: reference["id"],
                 ),
-                "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
+                "evidence_refs": deepcopy(canonical_observation_evidence_refs),
             }
         )
         for fact in matching:
@@ -961,7 +1017,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                         )
                         if previous
                         else [],
-                        "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
+                        "evidence_refs": deepcopy(canonical_observation_evidence_refs),
                     }
                     fact_evaluations.append(fact_evaluation)
                     appended_fact_evaluations[fact_id] = fact_evaluation
