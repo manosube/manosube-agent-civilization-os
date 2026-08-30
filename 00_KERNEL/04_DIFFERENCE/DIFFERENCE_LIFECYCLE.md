@@ -201,9 +201,12 @@ TEXT_NORMALIZATION=UNICODE_NFC
 OBJECT_KEY_ORDER=LEXICOGRAPHIC
 NUMBER_PROFILE=JSON_INTEGER_ONLY
 UNKNOWN_FIELDS=REJECT
-REQUEST_OUTPUT=OBS-REQ-<64 lowercase hexadecimal characters>
-METHOD_OUTPUT=OBS-METHOD-<64 lowercase hexadecimal characters>
+REQUEST_OUTPUT=OBS-REQ-<64 uppercase hexadecimal characters>
+METHOD_OUTPUT=OBS-METHOD-<64 uppercase hexadecimal characters>
+FINGERPRINT_OUTPUT=sha256:<64 lowercase hexadecimal characters>
 ```
+
+Request／Method IDのSHA-256 digest bytesは、それぞれ`OBS-REQ-`／`OBS-METHOD-`にuppercase hexadecimalで連結してcommon identity schemaへ適合させる。semantic fingerprintを別途表す場合だけ`sha256:`＋lowercase hexadecimalを使用する。
 
 Request ID inputは`schema_version + record_kind + difference_ref + derived_from_event_ref + state_revision_requested + state_fingerprint_requested + target_ref + scope_ref + method_ref + reason_code`である。Method ID inputは直前に定義したclosed payloadである。同一ID・同一payloadはidempotent、異なるpayloadはconflictとして拒否する。
 
