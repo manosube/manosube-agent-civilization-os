@@ -81,7 +81,7 @@ v0.1のlegal transitionを次で固定する。
 | `RETAINED` | `BLOCKED` | blockerが確認された |
 | `RETAINED` | `SUPERSEDED` | validな双方向supersession |
 | `CLOSED` | `REOPENED` | 後続Observationによる反証、Closure Evidenceの失効／provenance不正、material contradiction、またはPolicy reopen condition成立 |
-| `CLOSED` | `SUPERSEDED` | materialなObjective、Target、MismatchまたはClosure Policy semantics変更とvalidなSupersession Relation |
+| `CLOSED` | `SUPERSEDED` | `DIFFERENCE_IDENTITY.md`のmaterial identity inputが一つ以上変更され、validなSupersession Relationが存在 |
 | `REOPENED` | `ACTIVE` | authorized resolutionを再開 |
 | `REOPENED` | `VERIFYING` | Change不要で新Evidenceを再評価 |
 | `REOPENED` | `BLOCKED` | 再解決が阻害された |
@@ -96,6 +96,8 @@ v0.1のlegal transitionを次で固定する。
 | `REOPENED` | `INVALIDATED` | schema、identity、boundary、State bindingまたはlineage defectを後発見 |
 
 `SUPERSEDED`と`INVALIDATED`はterminalである。`CLOSED`は反証により`REOPENED`できるため、歴史の終端ではない。
+
+`CLOSED`、`BLOCKED`または`RETAINED`へ遷移する場合は、bound Closure Policyの`allowed_terminal_states`にto-statusが含まれ、exact Policy-bound Evaluationの`PROPOSED_TERMINAL_STATE_ALLOWED` gateがPASSでなければならない。Lifecycle表の個別minimum gateはこのPolicy gateを免除しない。
 
 初回ClosureでもChangeを必須化しない。外部状態変化またはObservation WorkによりTargetが満たされた場合は、`OPEN → ACTIVE → VERIFYING`を通り、`ACTIVE → VERIFYING`の`CHANGE_FREE` gateを使用する。架空のChangeを生成してはならない。
 
@@ -140,7 +142,15 @@ authority_ref: null
 change_refs: []
 closure_evaluation_ref: null
 reflow_transition_ref: null
+reopen_trigger: null
+reopen_condition_ref: null
+reopen_condition_evaluation_ref: null
+revoked_evidence_refs: []
+invalid_evidence_refs: []
+contradiction_evidence_refs: []
 ```
+
+上記はclosed event shapeである。Reopen以外のeventでは全reopen-specific fieldをnullまたはemptyにする。`CLOSED → REOPENED`では`reopen_trigger`を第8節のclosed enumから必須指定し、同節のtrigger-specific表に従って各ref fieldの必須／任意／禁止を検証する。unknown fieldを拒否する。
 
 Event revisionは0から連続し、predecessorはexactでなければならない。同一event ID・同一payloadはidempotent、異なるpayloadはconflictとして拒否する。
 
