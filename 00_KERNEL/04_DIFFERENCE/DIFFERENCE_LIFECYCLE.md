@@ -180,11 +180,15 @@ procedure_kind: CANONICAL_OBSERVER
 procedure_ref: {kind: observer_procedure, id: PROC-..., version: "0.1", semantic_fingerprint: sha256:...}
 normalization_profile: MANOSUBE-NORMALIZED-FACT-SHA256-0.1
 input_contract_ref: {kind: schema, id: SCHEMA-...}
-output_contract_refs: []
+output_contract_refs:
+  collection_kind: UNORDERED_SET
+  members: []
 execution_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
 ```
 
 Method ID inputは`schema_version`を含む上記recordから`observation_method_id`だけを除いたclosed payloadである。全refはimmutable version／semantic fingerprintまたはcontent addressへexactに解決する。inline command、shell text、ambient instruction、moving ref、unknown fieldを拒否する。
+
+`output_contract_refs`はexplicit `UNORDERED_SET` wrapperであり、member canonical bytesで整列してduplicateを拒否する。bare array、`ORDERED_LIST`、unknown collection kindを拒否する。したがって同じ出力Contract集合の列挙順はMethod IDへ影響しない。
 
 RequestとMethodのID algorithmを次で固定する。
 
