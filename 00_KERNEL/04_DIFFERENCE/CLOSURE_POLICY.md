@@ -440,6 +440,44 @@ authorization_ref: {kind: root_key_authorization_decision, id: ROOT-KEY-AUTH-...
 
 `execution_identity`はimmutable identity recordへ、`root_key_authorization_decision`はHuman／Binding Authorityが発行したimmutable decision recordへexactに解決する。Decisionのclosed subjectは`trust_root_ref + public_key_ref + owner_identity_ref + algorithm + trusted_execution_root_set_ref`であり、bindingの全fieldおよび親root-setとexact一致しなければならない。Decision statusは`AUTHORIZED`、期限内、non-revokedであることを要求し、producer自己承認、subject mismatch、version／fingerprint mismatchをrejectする。
 
+```yaml
+schema_version: "0.1"
+record_kind: EXECUTION_IDENTITY
+execution_identity_id: IDENTITY-...
+identity_version: "0.1"
+identity_fingerprint: sha256:...
+principal_kind: HUMAN_OR_SERVICE
+principal_ref: {kind: authority_principal, id: PRINCIPAL-..., version: "0.1", fingerprint: sha256:...}
+public_key_refs: {collection_kind: UNORDERED_SET, members: []}
+valid_from: "2026-01-01T00:00:00Z"
+valid_until: null
+revocation_refs: {collection_kind: UNORDERED_SET, members: []}
+```
+
+Identity fingerprint profileは`MANOSUBE-EXECUTION-IDENTITY-SHA256-0.1`で、IDとfingerprint自身を除く全fieldをcanonical JSON UTF-8／Unicode NFC／SHA-256で算出する。setはduplicate-free、unknown fieldを拒否し、IDは`IDENTITY-`＋64 lowercase hexとする。
+
+```yaml
+schema_version: "0.1"
+record_kind: ROOT_KEY_AUTHORIZATION_DECISION
+authorization_decision_id: ROOT-KEY-AUTH-...
+decision_version: "0.1"
+decision_fingerprint: sha256:...
+issuer_authority_ref: {kind: human_or_binding_authority, id: AUTHORITY-..., version: "0.1", fingerprint: sha256:...}
+subject:
+  trust_root_ref: {kind: trust_root, id: TRUST-ROOT-..., version: "0.1", fingerprint: sha256:...}
+  public_key_ref: {kind: public_key, id: KEY-..., version: "0.1", fingerprint: sha256:...}
+  owner_identity_ref: {kind: execution_identity, id: IDENTITY-..., version: "0.1", fingerprint: sha256:...}
+  algorithm: ED25519
+  trusted_execution_root_set_ref: {kind: trusted_execution_root_set, id: TRUST-SET-..., version: "0.1", fingerprint: sha256:...}
+status: AUTHORIZED
+valid_from: "2026-01-01T00:00:00Z"
+valid_until: null
+revocation_refs: {collection_kind: UNORDERED_SET, members: []}
+issued_at: "2026-01-01T00:00:00Z"
+```
+
+Decision fingerprint profileは`MANOSUBE-ROOT-KEY-AUTHORIZATION-DECISION-SHA256-0.1`で、IDとfingerprint自身を除く全fieldを同じcanonicalizationで算出し、IDは`ROOT-KEY-AUTH-`＋64 lowercase hexとする。`status`は`AUTHORIZED | REVOKED | EXPIRED`のclosed enumである。`issuer_authority_ref`はPolicy producer／Observation producer／Change executorとは異なるconfigured Authorityへ解決し、issuer scopeがroot-key authorizationを含むことを要求する。評価時刻と発行時刻の双方がDecisionおよびIdentityのvalidity window内で、全revocation setがemptyまたは非該当でなければならない。両recordの固定digest、version変更、set順序、self-authorization、expired／revoked、subject mismatch conformance vectorsを公開する。
+
 同じkeyを複数rootへ結合する場合もrootごとに別memberを要求し、attestationが選択したroot／key／owner pairとexact一致するmemberがなければrejectする。Fingerprint profileは`MANOSUBE-TRUSTED-EXECUTION-ROOT-SET-SHA256-0.1`、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic keys、duplicate-free unordered sets、unknown field rejectとする。Fingerprint inputはIDとfingerprint自身を除く全fieldである。IDは`TRUST-SET-`＋fingerprint digestの64 lowercase hexとする。固定payload／digest、set順序不変、duplicate、unknown algorithm、revoked member、root-key-owner mismatch、approval mismatchのconformance vectorsを公開する。
 
 `signer_key_ref`と`trust_root_ref`はPolicy-bound root setの同一`root_key_authorization` memberへexactに解決し、non-revoked Ed25519 key、signer identity、key ownershipを結合する。検証時刻`now`について、`issued_at <= now < expires_at`に加え、`valid_from <= issued_at`、`valid_from <= now`、および`valid_until=null OR (issued_at < valid_until AND now < valid_until)`をすべて要求する。key／trust-root／root-set version、fingerprint、revocation statusがcurrentでなければならない。root-key pair不一致、root-set window外、自己署名、unknown algorithm、padding付きまたは非canonical base64url、expiry超過、subject不一致、payload digest不一致、signature failureをrejectする。
