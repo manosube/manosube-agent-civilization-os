@@ -57,20 +57,20 @@ project_id: PRJ-...
 objective_revision_ref: {kind: objective_revision, id: OBJ-REV-...}
 objective_semantic_fingerprint: {}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
-target_state: {}
+target_state_ref: {kind: target_state, id: TARGET-STATE-...}
 observed_state_revision: 0
 observed_state_fingerprint: {}
 observation_refs: []
 observation_evidence_refs: []
-observed_state: {}
-structural_mismatch: {}
+observed_state_ref: {kind: observed_state, id: OBSERVED-STATE-...}
+structural_difference: {}
 subject: ""
 predicate: ""
 effective_boundary: {}
 impact: {}
 risk_class: LOW
 authority_required: []
-closure_policy_ref: {kind: closure_policy, id: CP-...}
+closure_policy: {kind: closure_policy, id: CP-...}
 status: DETECTED
 supersedes_difference_ref: null
 superseded_by_difference_ref: null
@@ -120,7 +120,7 @@ TargetまたはObserved Stateを一意に解決できない場合、推測した
 
 # 5. Structural Mismatch
 
-`structural_mismatch`は、TargetとObservedの差をversioned normalization profileで表す。最低限、次を区別する。
+`structural_difference`は、TargetとObservedの差をversioned normalization profileで表す。最低限、次を区別する。
 
 ```text
 MISSING
