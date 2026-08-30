@@ -134,6 +134,18 @@ def _candidate_id(candidate: dict[str, Any]) -> str:
     return "STATE-CANDIDATE-" + hashlib.sha256(preimage).hexdigest().upper()
 
 
+def _candidate_matches_evaluation(candidate: dict[str, Any], evaluation: dict[str, Any]) -> bool:
+    required = {
+        "candidate_id", "base_state_ref", "kernel_source_ref", "producing_change_refs",
+        "semantic_fingerprint", "semantic_state", "source_snapshot_refs",
+    }
+    return required.issubset(candidate) and (
+        candidate["candidate_id"] == _candidate_id(candidate)
+        and candidate["base_state_ref"] == evaluation["before_state_ref"]
+        and candidate["kernel_source_ref"] == evaluation["kernel_source_ref_evaluated"]
+    )
+
+
 def _supersession_reason_codes(old: dict[str, Any], new: dict[str, Any]) -> set[str]:
     comparisons = {
         "PROJECT_CHANGED": ("project_id",),
@@ -176,9 +188,10 @@ def _kernel_invariant_definitions(kernel_source: dict[str, Any]) -> dict[str, st
         return {}
     headings = list(re.finditer(r"^## ([KASODCERBXP]-[0-9]{3}) — .+$", source, re.MULTILINE))
     definitions: dict[str, str] = {}
-    for index, heading in enumerate(headings):
-        end = headings[index + 1].start() if index + 1 < len(headings) else len(source)
-        section = source[heading.start():end].rstrip() + "\n"
+    for heading in headings:
+        boundary = re.search(r"^(?:# |## |---\s*$)", source[heading.end():], re.MULTILINE)
+        end = len(source) if boundary is None else heading.end() + boundary.start()
+        section = re.sub(r"\n---\s*$", "", source[heading.start():end].rstrip()) + "\n"
         definitions[heading.group(1)] = "sha256:" + hashlib.sha256(section.encode()).hexdigest()
     return definitions
 
@@ -402,6 +415,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"evaluation event-head mismatch: {evaluation['closure_evaluation_id']}")
         if (
             evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
+            or evaluation["objective_revision_ref_evaluated"]
+            != difference["objective_revision_ref"]
             or evaluation["objective_semantic_fingerprint_evaluated"]
             != difference["objective_semantic_fingerprint"]
             or evaluation["evaluated_state_revision"]
@@ -442,15 +457,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"terminal state not allowed: {evaluation['closure_evaluation_id']}")
         if policy and proposed not in policy["allowed_terminal_states"]:
             errors.append(f"Policy disallows terminal state: {evaluation['closure_evaluation_id']}")
+        if candidate is not None and not _candidate_matches_evaluation(candidate, evaluation):
+            errors.append(f"candidate input binding mismatch: {evaluation['closure_evaluation_id']}")
         if mode == "CANDIDATE_CLOSURE":
             if candidate is None or proposed != "CLOSED" or evaluation["result"] != "SATISFIED":
                 errors.append(f"invalid candidate closure mode: {evaluation['closure_evaluation_id']}")
-            if candidate is not None and (
-                candidate["candidate_id"] != _candidate_id(candidate)
-                or candidate["base_state_ref"] != evaluation["before_state_ref"]
-                or candidate["kernel_source_ref"] != evaluation["kernel_source_ref_evaluated"]
-            ):
-                errors.append(f"candidate input binding mismatch: {evaluation['closure_evaluation_id']}")
             if any(value != "PASS" for value in evaluation["gate_results"].values()):
                 errors.append(f"closure has non-PASS mandatory gate: {evaluation['closure_evaluation_id']}")
             resolution_mode = evaluation["resolution_mode"]
@@ -474,13 +485,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             invariant_bindings = evaluation["candidate_invariant_evaluation_bindings"]
             claim_bindings = evaluation["candidate_claim_evaluation_bindings"]
             definitions = _kernel_invariant_definitions(evaluation["kernel_source_ref_evaluated"])
-            if set(definitions) != _mandatory_invariant_ids() | {"P-003"}:
+            if set(definitions) - {"X-003"} != _mandatory_invariant_ids() | {"P-003"}:
                 errors.append(f"kernel invariant source mismatch: {evaluation['closure_evaluation_id']}")
             repository = evaluation["kernel_source_ref_evaluated"]["repository"]
             path = "00_KERNEL/KERNEL_INVARIANTS.md"
             required_invariants = {
                 (identity, repository, path, digest)
-                for identity, digest in definitions.items() if identity != "P-003"
+                for identity, digest in definitions.items()
+                if identity not in {"P-003", "X-003"}
             } | {
                 (item["id"], item["contract_source_ref"]["repository"],
                  item["contract_source_ref"]["path"],
