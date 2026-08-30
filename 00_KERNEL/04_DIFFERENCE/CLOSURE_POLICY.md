@@ -194,6 +194,11 @@ PolicyはDifference導出時に固定する。実装失敗またはEvidence不�
 schema_version: "0.1"
 closure_evaluation_id: D-CLOSE-EVAL-...
 difference_id: D-...
+kernel_source_ref_evaluated:
+  kind: git_tree
+  repository: manosube/manosube-agent-civilization-os
+  commit_sha: <40 lowercase hex>
+  tree_sha: <40 lowercase git tree hex>
 difference_event_head_ref: {kind: difference_event, id: D-EVT-...}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
 objective_revision_ref_evaluated: {kind: objective_revision, id: OBJ-REV-...}
@@ -204,6 +209,11 @@ change_refs: []
 after_state_candidate:
   kind: after_state_candidate
   candidate_id: STATE-CANDIDATE-...
+  kernel_source_ref:
+    kind: git_tree
+    repository: manosube/manosube-agent-civilization-os
+    commit_sha: <40 lowercase hex>
+    tree_sha: <40 lowercase git tree hex>
   base_state_ref: {kind: state, revision: 0, fingerprint: {}}
   semantic_state: {}
   semantic_fingerprint: {}
@@ -324,6 +334,7 @@ ID canonical payloadは次のclosed objectである。
 ```json
 {
   "base_state_ref": {},
+  "kernel_source_ref": {},
   "producing_change_refs": {"collection_kind":"UNORDERED_SET","members":[]},
   "semantic_fingerprint": {},
   "semantic_state": {},
@@ -345,7 +356,7 @@ candidate_id =
 "STATE-CANDIDATE-" || uppercase_hex(candidate_digest)
 ```
 
-collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。
+collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。 current base Stateのmetadata source snapshot setは`kernel_source_ref_evaluated`と同じrepository／commit／treeを含まなければならず、candidateの`kernel_source_ref`もexact一致する。candidateがKernel sourceを変更対象とする場合は、producing Changeが生成したafter-tree commit／treeをcandidateに固定し、そのtree内のInvariant registry blobを使う。base/candidateのどちらにも結合されないKernel revisionでG19を評価してはならない。
 
 After-state Observationは存在しない未来revisionへ結合しない。Observation Contract上のState bindingは`base_state_ref`へ結合し、観測対象と結果provenanceはcandidateのimmutable `source_snapshot_refs`へexactに結合する。
 
@@ -471,7 +482,7 @@ UNION
 CLOSURE_POLICY.required_invariants
 ```
 
-`APPLICABLE_V0_1_MANDATORY_INVARIANTS`のauthority sourceは、Closure Evaluation時点でexact Git blobへ固定した`00_KERNEL/KERNEL_INVARIANTS.md`の`# 16. v0.1 Mandatory Gate`だけである。producerが`mandatory_in_v0_1`、`applies_to`または除外flagを供給することを禁止する。v0.1では同Gateの`ID PASS`行をauthoritative source setとする。G19はpre-Reflow Difference Closure gateであるため、source setからversion-level post-Reflow invariant `P-003`だけを除いた集合をmandatory setとする。この除外はproducer入力ではなく本profileの固定phase ruleであり、追加除外を認めない。`P-003`はAtomic Reflow後の`VERSION_COMPLETION`で必ず評価し、Difference Closure PASSをv0.1 natural-cycle PASSへ昇格させてはならない。
+`APPLICABLE_V0_1_MANDATORY_INVARIANTS`のauthority sourceは、Closure Evaluation時点でexact Git blobへ固定した`00_KERNEL/KERNEL_INVARIANTS.md`の`# 16. v0.1 Mandatory Gate`だけである。 そのblobの`commit_sha`は`kernel_source_ref_evaluated.commit_sha`とexact一致し、同commitのtreeが`tree_sha`へ解決されなければならない。任意のhistorical commit、branch head、別treeのself-consistent blobを受理しない。producerが`mandatory_in_v0_1`、`applies_to`または除外flagを供給することを禁止する。v0.1では同Gateの`ID PASS`行をauthoritative source setとする。G19はpre-Reflow Difference Closure gateであるため、source setからversion-level post-Reflow invariant `P-003`だけを除いた集合をmandatory setとする。この除外はproducer入力ではなく本profileの固定phase ruleであり、追加除外を認めない。`P-003`はAtomic Reflow後の`VERSION_COMPLETION`で必ず評価し、Difference Closure PASSをv0.1 natural-cycle PASSへ昇格させてはならない。
 
 versioned authoritative derivation profileを次へ固定する。
 
