@@ -107,7 +107,7 @@ ordinary JSON object → STRUCTURED
 bare JSON array → REJECT
 ```
 
-Reserved typed wrapperは上記exact fieldsだけを許可する。plain string `"1"`は常にSTRINGでありDECIMALへ推測変換しない。TargetにDECIMAL等を要求する場合はtyped wrapper必須である。 Normalization後はwrapperの`value_type`を`expected_value_type`へ、inner `value`を`expected_value`へ射影し、wrapper object自体を比較値にしない。primitiveとcollection wrapperも同様にtypeとcanonical inner valueへ分離する。比較対象type checkはoperator別に行う。`equals | not_equals | all | none`はTarget inner typeと各Observed value typeをexact照合する。`contains`はObserved candidateがcollection型であることを先に確認し、Target inner typeをcollection各memberのcanonical derived typeと照合する。`exists`はvalue typeを比較しない。型条件を満たした後だけinner canonical value bytesを比較する。
+Reserved typed wrapperは上記exact fieldsだけを許可する。plain string `"1"`は常にSTRINGでありDECIMALへ推測変換しない。TargetにDECIMAL等を要求する場合はtyped wrapper必須である。 Normalization後はwrapperの`value_type`を`expected_value_type`へ、inner `value`を`expected_value`へ射影し、wrapper object自体を比較値にしない。primitiveとcollection wrapperも同様にtypeとcanonical inner valueへ分離する。比較対象type checkはoperator別に行う。`equals | not_equals | all | none`はTarget inner typeと各Observed value typeをexact照合する。`contains`はObserved candidateがcollection型であることを先に確認し、各memberのcanonical derived typeを求める。Target inner typeと一致するmemberだけをequality候補にし、その中にTarget inner canonical value bytesと一致するmemberが一つでもあればSATISFIEDとする。異なる型のmemberは無視せずcollection provenanceには保持するが、TYPE_MISMATCH理由にはしない。`exists`はvalue typeを比較しない。型条件を満たした後だけinner canonical value bytesを比較する。
 
 Objectiveの`observation_scope`文字列は推論せず、Difference導出入力に次のexact bindingを必須とする。
 
@@ -217,8 +217,11 @@ Mismatch kindは次の上から最初に一致するruleだけで決定する。
 5 operator in equals|not_equals|all|none and Target inner typeとObserved value type不一致
   → TYPE_MISMATCH
 
-5a operator=contains and candidateがcollectionでない、またはTarget inner typeとcollection member typeが不一致
+5a operator=contains and candidateがcollectionでない
   → TYPE_MISMATCH
+
+5a.1 operator=contains and Target inner typeと一致するmemberが0件
+  → rule 8のNOT_SATISFIED／RELATION_MISMATCHへ進む
 
 5b operator=exists
   → type checkを適用せずrule 6以降へ進む
