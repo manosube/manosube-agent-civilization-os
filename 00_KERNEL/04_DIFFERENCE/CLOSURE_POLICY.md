@@ -147,7 +147,21 @@ Fingerprint循環を避けるため、Completion Recordの`closure_policy_ref`�
 
 `required_invariants` memberは上記例のclosed three-field objectだけを許可する。Markdown blockを別のcanonical objectへ変換せず、Gitが権威的に計算するexact source blobへ固定する。`repository + commit_sha + path + blob_sha`が同一blobへ解決され、そのblob内にexact Invariant IDが一意に存在することを要求する。
 
-これによりheading由来のID／NAME、multiline `REQUIRED_FIELDS`、Invariant固有fieldを含む定義block全体がexact source bindingへ入る。定義が一文字でも変わればGit blob SHAが変わりPolicy semantic fingerprintも変わる。moving branch、default branch、working tree、line rangeだけの参照を禁止する。unknown kind、SHA形式不正、commit／blob不一致、ID欠落・重複を拒否する。
+Policy semantic fingerprintへ投入する`required_invariants` memberは、provenance record全体ではなく次のclosed semantic projectionである。
+
+```yaml
+kind: kernel_invariant
+id: D-001
+contract_source_blob:
+  kind: git_blob
+  repository: manosube/manosube-agent-civilization-os
+  path: 00_KERNEL/KERNEL_INVARIANTS.md
+  blob_sha: <40 lowercase git blob hex>
+```
+
+`commit_sha`はexact provenance検証には必須だがsemantic projectionから除外する。同一repository／path／blob SHA／Invariant IDを別commitから再固定してもPolicy fingerprintを変えない。repository、path、blob SHAまたはInvariant IDの変更はfingerprintを変える。
+
+これによりheading由来のID／NAME、multiline `REQUIRED_FIELDS`、Invariant固有fieldを含む定義block全体がcontent-addressed source bindingへ入る。定義が一文字でも変わればGit blob SHAが変わりPolicy semantic fingerprintも変わる。moving branch、default branch、working tree、line rangeだけの参照を禁止する。unknown kind、SHA形式不正、commit／blob不一致、ID欠落・重複を拒否する。
 
 PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
 
@@ -181,6 +195,29 @@ policy_ref: {kind: closure_policy, id: CP-..., version: "0.1", semantic_fingerpr
 policy_version_evaluated: "0.1"
 policy_semantic_fingerprint_evaluated: sha256:...
 proposed_terminal_status: CLOSED
+gate_results:
+  G1: PASS
+  G2: PASS
+  G3: PASS
+  G4: PASS
+  G5: PASS
+  G6: PASS
+  G7: PASS
+  G8: PASS
+  G9: PASS
+  G10: PASS
+  G11: PASS
+  G12: PASS
+  G13: PASS
+  G14: PASS
+  G15: PASS
+  G16: PASS
+  G17: PASS
+  G18: PASS
+  G19: PASS
+  G20: PASS
+  G21: PASS
+  G22: PASS
 result: NOT_EVALUATED
 failure_reasons: []
 reflow_transition_ref: null
@@ -198,6 +235,8 @@ STALE
 CONTRADICTED
 REVOKED
 ```
+
+`gate_results`はG1からG22までをexactly once保持するclosed mapで、各値は`PASS | FAIL | UNKNOWN | NOT_APPLICABLE`のclosed enumである。G22はClosure全体のaggregate `result`とは独立に永続化し、`CLOSED`、`BLOCKED`、`RETAINED`へのLifecycle transitionはexact Evaluationの`proposed_terminal_status`がto-statusと一致し、かつ`gate_results.G22=PASS`であることを要求する。`BLOCKED`または`RETAINED`用Evaluationは他gateがFAIL／UNKNOWNでもG22を独立評価でき、aggregate `result=SATISFIED`を要求しない。`CLOSED`だけは全mandatory gateがPASSでaggregate `result=SATISFIED`でなければならない。
 
 # 3. Mandatory Closure Gates
 
