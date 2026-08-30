@@ -153,7 +153,9 @@ evidence_refs: [{kind: observation_evidence, id: EVID-...}]
 reason_code: EQUIVALENT_DIFFERENCE_REOBSERVED
 ```
 
-`OBSERVATION_BOUND`では`from_status`と`to_status`がcurrent statusと同一でなければならない。これはLifecycle transitionではなくprovenance appendであり、第3節のlegal transition表によるstatus変更を発生させない。`DETECTED`、`OPEN`、`ACTIVE`、`VERIFYING`、`BLOCKED`、`RETAINED`、`CLOSED`、`REOPENED`で使用でき、`SUPERSEDED`または`INVALIDATED`にはappendしない。
+`OBSERVATION_BOUND`では`from_status`と`to_status`がcurrent statusと同一でなければならない。これはLifecycle transitionではなくprovenance appendであり、第3節のlegal transition表によるstatus変更を発生させない。`DETECTED`、`OPEN`、`ACTIVE`、`VERIFYING`、`BLOCKED`、`RETAINED`、`REOPENED`で使用できる。
+
+`CLOSED`、`SUPERSEDED`、`INVALIDATED`には`OBSERVATION_BOUND`をappendしない。`CLOSED`後に同じsemantic mismatchが再観測された場合は、必ず`CLOSED → REOPENED` transitionをappendする。これにより反証されたClosureをstatus-preserving eventで隠すことを禁止する。
 
 # 6. Transition Authority
 
