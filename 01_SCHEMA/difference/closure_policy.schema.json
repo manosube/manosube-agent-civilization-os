@@ -40,7 +40,7 @@
     },
     "claim_value": {
       "oneOf": [
-        {"type": ["null", "boolean", "integer", "number", "string"]},
+        {"type": ["null", "boolean", "integer", "string"]},
         {"$ref": "#/$defs/claim_object"},
         {"$ref": "#/$defs/claim_collection"}
       ]

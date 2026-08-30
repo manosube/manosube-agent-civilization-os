@@ -439,3 +439,20 @@ def test_policy_claim_rejects_bare_nested_collections() -> None:
         "collection_kind": "UNORDERED_SET", "members": [1, 2],
     }
     assert not list(validator.iter_errors(policy))
+
+    descriptor["claim"]["values"] = 1.5
+    assert list(validator.iter_errors(policy))
+
+    descriptor["claim"]["values"] = {
+        "collection_kind": "UNORDERED_SET",
+        "members": [
+            {"collection_kind": "UNORDERED_SET", "members": [1, 2]},
+            {"collection_kind": "UNORDERED_SET", "members": [2, 1]},
+        ],
+    }
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    bundle["policies"][0] = policy
+    assert any(
+        "Policy required Claim identity mismatch" in error
+        for error in validate_bundle(bundle)
+    )

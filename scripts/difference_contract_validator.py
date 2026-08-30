@@ -92,6 +92,21 @@ def _canonical_semantic(value: Any) -> Any:
     return value
 
 
+def _has_recursive_set_duplicate(value: Any) -> bool:
+    if isinstance(value, dict):
+        if any(_has_recursive_set_duplicate(item) for item in value.values()):
+            return True
+        if value.get("collection_kind") == "UNORDERED_SET":
+            canonical_members = [
+                canonical_json_bytes(_canonical_semantic(item))
+                for item in value.get("members", [])
+            ]
+            return len(canonical_members) != len(set(canonical_members))
+    elif isinstance(value, list):
+        return any(_has_recursive_set_duplicate(item) for item in value)
+    return False
+
+
 def _policy_fingerprint(policy: dict[str, Any]) -> str:
     projection = {key: policy[key] for key in (
         "target_predicate_ref", "required_observation_scope", "minimum_evidence_level",
@@ -300,6 +315,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         bundle.get("reflow_transitions", []), "transaction_id", errors
     )
     changes = _index(bundle.get("changes", []), "change_id", errors)
+    reopen_evaluations = _index(
+        bundle.get("reopen_condition_evaluations", []), "evaluation_id", errors
+    )
 
     for policy in policies.values():
         claims_by_id: dict[str, dict[str, Any]] = {}
@@ -324,6 +342,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             if (
                 descriptor["claim_semantic_fingerprint"] != semantic_fingerprint
                 or descriptor["id"] != expected_id
+                or _has_recursive_set_duplicate(semantic_projection)
                 or (previous is not None and previous != descriptor)
             ):
                 errors.append(
@@ -419,6 +438,42 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and condition_refs_present
                 ):
                     errors.append(f"reopen trigger payload mismatch: {event['difference_event_id']}")
+                if trigger == "POLICY_REOPEN_CONDITION_SATISFIED":
+                    difference = differences.get(difference_id)
+                    policy = None if difference is None else policies.get(
+                        difference["closure_policy"]["id"]
+                    )
+                    condition_ref = event["reopen_condition_ref"]
+                    condition = next(
+                        (
+                            item for item in (policy or {}).get("reopen_conditions", [])
+                            if item["id"] == _ref_id(condition_ref)
+                        ),
+                        None,
+                    )
+                    condition_evaluation = reopen_evaluations.get(
+                        _ref_id(event["reopen_condition_evaluation_ref"]) or ""
+                    )
+                    expected_condition_ref = None if condition is None else {
+                        "kind": "target_predicate", "id": condition["id"],
+                    }
+                    if (
+                        condition_ref is None
+                        or condition_ref != expected_condition_ref
+                        or condition_evaluation is None
+                        or condition is None
+                        or condition_evaluation["condition_ref"] != condition
+                        or _ref_id(condition_evaluation["difference_ref"]) != difference_id
+                        or not (policy and _policy_ref_matches(
+                            condition_evaluation["policy_ref"], policy
+                        ))
+                        or condition_evaluation["status"] != "SATISFIED"
+                        or _canonical_semantic(condition_evaluation["evidence_refs"])
+                        != _canonical_semantic(event["evidence_refs"])
+                    ):
+                        errors.append(
+                            f"reopen condition evaluation mismatch: {event['difference_event_id']}"
+                        )
                 previous = chain[expected_revision - 1] if expected_revision > 0 else None
                 closure = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
                 if (
@@ -462,6 +517,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     }
                     if expected_states.get(condition["condition_code"]) != condition["expected_state"]:
                         errors.append(f"blocker condition state mismatch: {event['difference_event_id']}")
+            elif any(
+                event[key] is not None
+                for key in ("blocker_kind", "blocker_scope", "blocker_resolution_condition")
+            ):
+                errors.append(f"non-BLOCKED event carries blocker payload: {event['difference_event_id']}")
             if event["to_status"] in {"RETAINED", "REOPENED"} and event["next_observation_ref"] is None:
                 errors.append(f"next observation missing: {event['difference_event_id']}")
             if event["next_observation_ref"] is not None:
