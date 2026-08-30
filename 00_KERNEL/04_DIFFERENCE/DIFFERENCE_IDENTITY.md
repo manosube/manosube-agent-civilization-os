@@ -54,12 +54,15 @@ DIFFERENCE_IDENTITY_INPUT
 + effective_boundary
 + normalized_target_state
 + normalized_structural_difference
++ closure_policy_fingerprint
 + identity_profile
 ```
 
 `objective_revision_ref`はexact provenance bindingとしてDifference Recordへ保持するが、identity inputには含めない。Objectiveの`EDITORIAL` revisionはsemantic fingerprintが不変であるため、同じTargetとMismatchのDifference IDを維持する。
 
-Target value、Objective semanticsまたはMismatchの意味が変わればidentityは変わる。Observed valueはMismatchへ正規化された範囲だけidentityへ反映する。
+Target value、Objective semantics、Mismatchの意味またはClosure Policy payloadが変わればidentityは変わる。Observed valueはMismatchへ正規化された範囲だけidentityへ反映する。
+
+Closure Policyのlogical IDやversion文字列だけではなく、immutable canonical payloadのfingerprintをidentity inputへ含める。同じMismatchへPolicy-only改定を適用する場合も新しいDifference IDを導出し、旧DifferenceとのSupersession Relationをappendする。self-supersessionを許可しない。
 
 # 3. Excluded Inputs
 
