@@ -298,7 +298,7 @@ After-state Observationは存在しない未来revisionへ結合しない。Obse
 ```text
 CHANGE_BOUND
 → change_refs NON-EMPTY
-→ exact before／after State binding
+→ exact before Canonical State／after-state candidate binding
 → change_result_evidence_refs NON-EMPTY
 → change_free_verification_evidence_refs EMPTY
 
@@ -342,7 +342,7 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 
 Current Policyのversionだけが進みsemantic fingerprintが同一の場合、Difference-bound versionによるEvaluationを`STALE`にしない。Current Policyのsemantic fingerprintが異なる場合は旧Differenceを新identityへsupersedeし、旧bindingを新Policyへ読み替えない。
 
-`G8`はChange result、Change executor report、command return、test outputとは別に生成されたafter-state Observationを常に要求する。独立性の最小意味は、Change自身がClosureを自己確定せず、Observation Contractに準拠した新しいObservation recordがexact after State revision／fingerprintへ結合されることである。
+`G8`はChange result、Change executor report、command return、test outputとは別に生成されたafter-state Observationを常に要求する。独立性の最小意味は、Change自身がClosureを自己確定せず、Observation Contractに準拠した新しいObservation recordがcurrent base Stateとimmutable candidate source snapshotsへexactに結合されることである。
 
 ```text
 CHANGE RESULT
@@ -459,7 +459,7 @@ commit前にexpiryへ到達したEvaluationは、他のbindingが変化してい
 Objective revision
 Target Predicate
 Difference lifecycle head
-before or after State revision
+before State revision or after-state candidate
 State fingerprint
 Change identity or result
 Authority or Approval binding
