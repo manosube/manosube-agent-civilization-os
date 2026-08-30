@@ -343,7 +343,7 @@ change_executor_bindings: []
 process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
 observation_refs: []
 input_snapshot_refs: []
-verification_method_ref: {kind: observation_method, id: METHOD-...}
+verification_method_ref: {kind: observation_method, id: OBS-METHOD-...}
 conflict_of_interest_evaluation_ref: {kind: independence_evaluation, id: IND-EVAL-...}
 evidence_refs: []
 result: PASS
