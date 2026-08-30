@@ -53,6 +53,7 @@ required_invariants:
       commit_sha: <40 lowercase hex>
       path: 00_KERNEL/KERNEL_INVARIANTS.md
       blob_sha: <40 lowercase git blob hex>
+      invariant_definition_sha256: sha256:<64 lowercase hex>
 allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
 independent_verification_required: false
 maximum_evidence_age: null
@@ -156,12 +157,14 @@ contract_source_blob:
   kind: git_blob
   repository: manosube/manosube-agent-civilization-os
   path: 00_KERNEL/KERNEL_INVARIANTS.md
-  blob_sha: <40 lowercase git blob hex>
+  invariant_definition_sha256: sha256:<64 lowercase hex>
 ```
 
-`commit_sha`はexact provenance検証には必須だがsemantic projectionから除外する。同一repository／path／blob SHA／Invariant IDを別commitから再固定してもPolicy fingerprintを変えない。repository、path、blob SHAまたはInvariant IDの変更はfingerprintを変える。
+`invariant_definition_sha256`は、指定Invariant IDに属する完全な定義blockをContract parserで抽出し、UTF-8、Unicode NFC、LF改行、末尾改行1個へ正規化したbytesのSHA-256である。抽出境界はInvariant見出し開始から、同levelの次Invariant見出し直前またはEOFまでとし、ID行、NAME、本文、全code blockを含む。抽出不能、ID欠落・重複、正規化後digest不一致を拒否する。
 
-これによりheading由来のID／NAME、multiline `REQUIRED_FIELDS`、Invariant固有fieldを含む定義block全体がcontent-addressed source bindingへ入る。定義が一文字でも変わればGit blob SHAが変わりPolicy semantic fingerprintも変わる。moving branch、default branch、working tree、line rangeだけの参照を禁止する。unknown kind、SHA形式不正、commit／blob不一致、ID欠落・重複を拒否する。
+`commit_sha`とwhole-file `blob_sha`はexact provenance検証には必須だがsemantic projectionから除外する。同じInvariant定義が別commit、別whole-file blobに存在してもPolicy fingerprintを変えない。repository、path、Invariant IDまたは`invariant_definition_sha256`の変更はfingerprintを変える。
+
+これによりheading由来のID／NAME、multiline `REQUIRED_FIELDS`、Invariant固有fieldを含む選択定義blockだけがcontent-addressed semantic bindingへ入る。選択Invariantの定義が一文字でも変わればdefinition digestとPolicy fingerprintが変わるが、同一file内の無関係なInvariantまたはprose変更では変わらない。moving branch、default branch、working tree、line rangeだけの参照を禁止する。unknown kind、SHA形式不正、commit／blob不一致、definition digest不一致、ID欠落・重複を拒否する。
 
 PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
 
