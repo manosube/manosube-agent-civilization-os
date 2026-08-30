@@ -342,6 +342,7 @@ verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
 change_executor_bindings: []
 process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
 observation_refs: []
+observation_execution_bindings: []
 input_snapshot_refs: []
 verification_method_ref: {kind: observation_method, id: OBS-METHOD-...}
 conflict_of_interest_evaluation_ref: {kind: independence_evaluation, id: IND-EVAL-...}
@@ -349,6 +350,25 @@ evidence_refs: []
 result: PASS
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
+
+`observation_execution_bindings`は`observation_refs`の各Observationにつきexactly one、次のclosed immutable bindingを持つ。
+
+```yaml
+kind: observation_execution_binding
+observation_ref: {kind: observation, id: OBS-...}
+verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
+process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
+observation_method_ref: {kind: observation_method, id: OBS-METHOD-...}
+input_snapshot_refs:
+  collection_kind: UNORDERED_SET
+  members: []
+authenticated_execution_provenance_ref: {kind: observation_execution_provenance, id: OBS-EXEC-PROV-...}
+binding_semantic_fingerprint: sha256:...
+```
+
+`observation_execution_provenance`は、exact Observation、実行主体identity、process boundary、Method、全input snapshots、実行attempt、result Evidence、trust-boundary attestationおよびrecord fingerprintを持つclosed immutable recordである。Attestationは宣言されたverifierと実際のObservation実行主体が同一であることを第三者が検証可能にし、自己申告だけをauthenticated provenanceとして扱わない。
+
+BindingのObservation集合は`observation_refs`と完全一致し、各bindingのverifier、boundary、Method、snapshot集合は親`VERIFICATION_INDEPENDENCE` recordの対応fieldとexact一致しなければならない。欠落、余分、重複、解決不能ref、attestation failure、Change executor identityとの禁止された重複をrejectする。これらのbindingを検証できない場合、independence `result`を`PASS`にしてはならない。
 
 `CHANGE_BOUND`では、まだ未定義のChange fieldを仮定せず、次のclosed append-only bindingを`change_executor_bindings`へ全Change分保存する。
 
