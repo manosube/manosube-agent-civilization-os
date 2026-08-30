@@ -152,6 +152,7 @@ subject or predicate
 effective boundary
 Target State semantics
 Mismatch kind or semantic content
+Closure Policy semantic fingerprint
 identity profile
 ```
 
@@ -164,9 +165,11 @@ old_difference_ref: {kind: difference, id: D-OLD...}
 new_difference_ref: {kind: difference, id: D-NEW...}
 old_terminal_event_ref: {kind: difference_event, id: D-EVT-...}
 new_genesis_event_ref: {kind: difference_event, id: D-EVT-...}
-reason_code: TARGET_OR_MISMATCH_CHANGED
+reason_code: TARGET_MISMATCH_OR_POLICY_CHANGED
 evidence_refs: []
 ```
+
+`reason_code`は少なくとも`OBJECTIVE_SEMANTICS_CHANGED`、`TARGET_CHANGED`、`BOUNDARY_CHANGED`、`MISMATCH_SEMANTICS_CHANGED`、`CLOSURE_POLICY_SEMANTICS_CHANGED`をclosed enumとして区別する。複数変更時は該当reason code集合をcanonical orderで保存する。
 
 Relationは両Differenceと双方のLifecycle Eventから解決可能でなければならない。Canonical Difference Recordを上書きせず、materialized viewの`superseded_by`と`supersedes`をRelationから導出する。
 
