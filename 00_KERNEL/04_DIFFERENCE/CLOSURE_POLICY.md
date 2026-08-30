@@ -58,7 +58,6 @@ allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
 independent_verification_required: false
 maximum_evidence_age: null
 contradiction_policy: FAIL_CLOSED
-trusted_execution_root_set_ref: {kind: trusted_execution_root_set, id: TRUST-SET-..., version: "0.1", fingerprint: sha256:...}
 reopen_conditions:
   - kind: target_predicate
     id: TP-REOPEN-...
@@ -96,7 +95,6 @@ allowed_terminal_states
 independent_verification_required
 maximum_evidence_age
 contradiction_policy
-trusted_execution_root_set_ref
 reopen_conditions
 ```
 
@@ -329,257 +327,23 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 
 Current Policyのversionだけが進みsemantic fingerprintが同一の場合、Difference-bound versionによるEvaluationを`STALE`にしない。Current Policyのsemantic fingerprintが異なる場合は旧Differenceを新identityへsupersedeし、旧bindingを新Policyへ読み替えない。
 
-`G8`は常にChange resultから分離されたafter-state re-observationを要求する。加えて`independent_verification_required=true`の場合、`verification_independence_ref`を必須とし、verifier identity、process boundary、input snapshot、method、conflict-of-interest評価を解決してPolicyが定める独立性を証明する。`false`の場合もre-observation自体は免除しないが、別verifier identityまでは要求しない。
-
-`verification_independence_ref`は次のclosed、versioned recordだけを参照する。
-
-```yaml
-schema_version: "0.1"
-record_kind: VERIFICATION_INDEPENDENCE
-verification_independence_id: VI-...
-independence_semantic_fingerprint: sha256:...
-fingerprint_profile: MANOSUBE-VERIFICATION-INDEPENDENCE-SHA256-0.1
-closure_evaluation_id: D-CLOSE-EVAL-...
-verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
-change_executor_bindings: []
-process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
-observation_refs: []
-observation_execution_bindings: []
-input_snapshot_refs: []
-verification_method_ref: {kind: observation_method, id: OBS-METHOD-...}
-conflict_of_interest_evaluation_ref: {kind: independence_evaluation, id: IND-EVAL-...}
-evidence_refs: []
-result: PASS
-evaluated_at: "2026-01-01T00:00:00Z"
-```
-
-`observation_execution_bindings`は`observation_refs`の各Observationにつきexactly one、次のclosed immutable bindingを持つ。
-
-```yaml
-kind: observation_execution_binding
-observation_execution_binding_id: OBS-EXEC-BIND-...
-observation_ref: {kind: observation, id: OBS-...}
-verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
-process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
-observation_method_ref: {kind: observation_method, id: OBS-METHOD-...}
-input_snapshot_refs:
-  collection_kind: UNORDERED_SET
-  members: []
-authenticated_execution_provenance_ref: {kind: observation_execution_provenance, id: OBS-EXEC-PROV-...}
-binding_semantic_fingerprint: sha256:...
-```
-
-`authenticated_execution_provenance_ref`は次のclosed immutable recordへ解決する。
-
-```yaml
-schema_version: "0.1"
-record_kind: OBSERVATION_EXECUTION_PROVENANCE
-observation_execution_provenance_id: OBS-EXEC-PROV-...
-observation_ref: {kind: observation, id: OBS-...}
-verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
-process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
-observation_method_ref: {kind: observation_method, id: OBS-METHOD-...}
-input_snapshot_refs: {collection_kind: UNORDERED_SET, members: []}
-execution_attempt_ref: {kind: observation_attempt, id: OBS-ATTEMPT-...}
-result_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
-trust_boundary_attestation_ref: {kind: signed_attestation, id: ATTEST-...}
-provenance_semantic_fingerprint: sha256:...
-```
-
-`trust_boundary_attestation_ref`は次のclosed immutable wire recordへ解決する。
-
-```yaml
-schema_version: "0.1"
-record_kind: SIGNED_OBSERVATION_EXECUTION_ATTESTATION
-attestation_id: ATTEST-...
-attestation_profile: MANOSUBE-OBSERVATION-EXECUTION-ATTESTATION-ED25519-0.1
-signer_identity_ref: {kind: attestation_signer, id: SIGNER-...}
-signer_key_ref: {kind: public_key, id: KEY-..., version: "0.1", fingerprint: sha256:...}
-trust_root_ref: {kind: trust_root, id: TRUST-ROOT-..., version: "0.1", fingerprint: sha256:...}
-subject_verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
-observation_ref: {kind: observation, id: OBS-...}
-execution_attempt_ref: {kind: observation_attempt, id: OBS-ATTEMPT-...}
-process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
-observation_method_ref: {kind: observation_method, id: OBS-METHOD-...}
-input_snapshot_refs: {collection_kind: UNORDERED_SET, members: []}
-result_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
-issued_at: "2026-01-01T00:00:00Z"
-expires_at: "2026-01-01T01:00:00Z"
-signed_payload_sha256: sha256:...
-signature_algorithm: ED25519
-signature_base64url: "..."
-```
-
-Signed payloadは`attestation_id`、`signed_payload_sha256`、`signature_base64url`を除く全fieldのcanonical JSON UTF-8 bytesである。Unicode NFC、lexicographic keys、duplicate-free unordered sets、timezone-aware UTC timestamps、unknown field rejectを強制する。`signed_payload_sha256`はそのbytesのSHA-256であり、signatureは同じbytesへEd25519で生成する。`attestation_id`は`ATTEST-`＋payload digestの64 lowercase hexとする。
-
-`trusted_execution_root_set_ref`はHuman／Binding AuthorityがPolicy作成前に外部設定したclosed immutable trust-anchor setであり、root ID、version、fingerprint、許可public-key fingerprints、validity window、revocation refs、authority approval refを持つ。Policy producer、Observation producer、Change executorはこのsetを生成・変更できない。Policy fingerprintはこのexact refを含む。
-
-```yaml
-schema_version: "0.1"
-record_kind: TRUSTED_EXECUTION_ROOT_SET
-trusted_execution_root_set_id: TRUST-SET-...
-root_set_version: "0.1"
-root_set_fingerprint: sha256:...
-authorized_root_key_bindings: {collection_kind: UNORDERED_SET, members: []}
-valid_from: "2026-01-01T00:00:00Z"
-valid_until: null
-revocation_refs: {collection_kind: UNORDERED_SET, members: []}
-authority_approval_ref: {kind: human_authority_approval, id: APPROVAL-...}
-```
-
-各binding memberは次のclosed objectである。
-
-```yaml
-kind: root_key_authorization
-trust_root_ref: {kind: trust_root, id: TRUST-ROOT-..., version: "0.1", fingerprint: sha256:...}
-public_key_ref: {kind: public_key, id: KEY-..., version: "0.1", fingerprint: sha256:...}
-owner_identity_ref: {kind: execution_identity, id: IDENTITY-..., version: "0.1", fingerprint: sha256:...}
-algorithm: ED25519
-authorization_ref: {kind: root_key_authorization_decision, id: ROOT-KEY-AUTH-..., version: "0.1", fingerprint: sha256:...}
-```
-
-`execution_identity`はimmutable identity recordへ、`root_key_authorization_decision`はHuman／Binding Authorityが発行したimmutable decision recordへexactに解決する。Decisionのclosed subjectは`trust_root_ref + public_key_ref + owner_identity_ref + algorithm + trusted_execution_root_set_ref`であり、bindingの全fieldおよび親root-setとexact一致しなければならない。Decision statusは`AUTHORIZED`、期限内、non-revokedであることを要求し、producer自己承認、subject mismatch、version／fingerprint mismatchをrejectする。
-
-```yaml
-schema_version: "0.1"
-record_kind: EXECUTION_IDENTITY
-execution_identity_id: IDENTITY-...
-identity_version: "0.1"
-identity_fingerprint: sha256:...
-principal_kind: HUMAN_OR_SERVICE
-principal_ref: {kind: authority_principal, id: PRINCIPAL-..., version: "0.1", fingerprint: sha256:...}
-public_key_refs: {collection_kind: UNORDERED_SET, members: []}
-valid_from: "2026-01-01T00:00:00Z"
-valid_until: null
-revocation_refs: {collection_kind: UNORDERED_SET, members: []}
-```
-
-Identity fingerprint profileは`MANOSUBE-EXECUTION-IDENTITY-SHA256-0.1`で、IDとfingerprint自身を除く全fieldをcanonical JSON UTF-8／Unicode NFC／SHA-256で算出する。setはduplicate-free、unknown fieldを拒否し、IDは`IDENTITY-`＋64 lowercase hexとする。
-
-```yaml
-schema_version: "0.1"
-record_kind: ROOT_KEY_AUTHORIZATION_DECISION
-authorization_decision_id: ROOT-KEY-AUTH-...
-decision_version: "0.1"
-decision_fingerprint: sha256:...
-issuer_authority_ref: {kind: human_or_binding_authority, id: AUTHORITY-..., version: "0.1", fingerprint: sha256:...}
-subject:
-  trust_root_ref: {kind: trust_root, id: TRUST-ROOT-..., version: "0.1", fingerprint: sha256:...}
-  public_key_ref: {kind: public_key, id: KEY-..., version: "0.1", fingerprint: sha256:...}
-  owner_identity_ref: {kind: execution_identity, id: IDENTITY-..., version: "0.1", fingerprint: sha256:...}
-  algorithm: ED25519
-  trusted_execution_root_set_ref: {kind: trusted_execution_root_set, id: TRUST-SET-..., version: "0.1", fingerprint: sha256:...}
-status: AUTHORIZED
-valid_from: "2026-01-01T00:00:00Z"
-valid_until: null
-revocation_refs: {collection_kind: UNORDERED_SET, members: []}
-issued_at: "2026-01-01T00:00:00Z"
-```
-
-Decision fingerprint profileは`MANOSUBE-ROOT-KEY-AUTHORIZATION-DECISION-SHA256-0.1`で、IDとfingerprint自身を除く全fieldを同じcanonicalizationで算出し、IDは`ROOT-KEY-AUTH-`＋64 lowercase hexとする。`status`は`AUTHORIZED | REVOKED | EXPIRED`のclosed enumである。`issuer_authority_ref`はPolicy producer／Observation producer／Change executorとは異なるconfigured Authorityへ解決し、issuer scopeがroot-key authorizationを含むことを要求する。評価時刻と発行時刻の双方がDecisionおよびIdentityのvalidity window内で、全revocation setがemptyまたは非該当でなければならない。両recordの固定digest、version変更、set順序、self-authorization、expired／revoked、subject mismatch conformance vectorsを公開する。
-
-同じkeyを複数rootへ結合する場合もrootごとに別memberを要求し、attestationが選択したroot／key／owner pairとexact一致するmemberがなければrejectする。Fingerprint profileは`MANOSUBE-TRUSTED-EXECUTION-ROOT-SET-SHA256-0.1`、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic keys、duplicate-free unordered sets、unknown field rejectとする。Fingerprint inputはIDとfingerprint自身を除く全fieldである。IDは`TRUST-SET-`＋fingerprint digestの64 lowercase hexとする。固定payload／digest、set順序不変、duplicate、unknown algorithm、revoked member、root-key-owner mismatch、approval mismatchのconformance vectorsを公開する。
-
-`signer_key_ref`と`trust_root_ref`はPolicy-bound root setの同一`root_key_authorization` memberへexactに解決し、non-revoked Ed25519 key、signer identity、key ownershipを結合する。検証時刻`now`について、`issued_at <= now < expires_at`に加え、`valid_from <= issued_at`、`valid_from <= now`、および`valid_until=null OR (issued_at < valid_until AND now < valid_until)`をすべて要求する。key／trust-root／root-set version、fingerprint、revocation statusがcurrentでなければならない。root-key pair不一致、root-set window外、自己署名、unknown algorithm、padding付きまたは非canonical base64url、expiry超過、subject不一致、payload digest不一致、signature failureをrejectする。
-
-Binding／Provenance fingerprint profileは`MANOSUBE-OBSERVATION-EXECUTION-BINDING-SHA256-0.1`／`MANOSUBE-OBSERVATION-EXECUTION-PROVENANCE-SHA256-0.1`とし、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic object keys、unknown field rejectを共通規則とする。Binding fingerprintは`kind + observation_ref + verifier_identity_ref + process_boundary_ref + observation_method_ref + input_snapshot_refs + authenticated_execution_provenance_ref`を含む。Provenance fingerprintはIDとfingerprint自身を除く全fieldを含む。両collectionはduplicate-free `UNORDERED_SET`でcanonical member bytes順にする。各IDはそれぞれ`OBS-EXEC-BIND-`／`OBS-EXEC-PROV-`＋64 lowercase hexである。Conformance vectorsは固定payload／digest、set順序不変、member変更、unknown field、bad attestation rejectを含む。
-
-BindingのObservation集合は親`VERIFICATION_INDEPENDENCE.observation_refs`および参照元Closure Evaluationの`after_observation_refs`の双方と完全一致し、各bindingのverifier、boundary、Method、snapshot集合は親recordの対応fieldとexact一致しなければならない。さらに、bindingの`observation_ref`、`verifier_identity_ref`、`process_boundary_ref`、`observation_method_ref`、`input_snapshot_refs`は、解決した`OBSERVATION_EXECUTION_PROVENANCE`の同名fieldとexact一致し、そのProvenanceのattempt／Evidence／attestation refsも相互にexact一致しなければならない。欠落、余分、重複、解決不能ref、attestation failure、Change executor identityとの禁止された重複をrejectする。これらのbindingを検証できない場合、independence `result`を`PASS`にしてはならない。
-
-`CHANGE_BOUND`では、まだ未定義のChange fieldを仮定せず、次のclosed append-only bindingを`change_executor_bindings`へ全Change分保存する。
-
-```yaml
-kind: change_executor_binding
-change_ref: {kind: change, id: C-...}
-executor_identity_ref: {kind: executor_identity, id: EXECUTOR-...}
-authenticated_execution_provenance_ref: {kind: change_execution_provenance, id: CHANGE-EXEC-PROV-...}
-execution_result_evidence_ref: {kind: change_result_evidence, id: EVID-...}
-binding_semantic_fingerprint: sha256:...
-```
-
-`authenticated_execution_provenance_ref`は次のclosed immutable recordへ解決する。
-
-```yaml
-schema_version: "0.1"
-record_kind: CHANGE_EXECUTION_PROVENANCE
-change_execution_provenance_id: CHANGE-EXEC-PROV-...
-change_ref: {kind: change, id: C-...}
-executor_identity_ref: {kind: executor_identity, id: EXECUTOR-...}
-execution_attempt_ref: {kind: change_attempt, id: CHANGE-ATTEMPT-...}
-authority_ref: {kind: authority_decision, id: AUTH-...}
-before_state_ref: {kind: state, revision: 0, fingerprint: {}}
-execution_result_evidence_ref: {kind: change_result_evidence, id: EVID-...}
-trust_boundary_attestation_ref: {kind: signed_change_execution_attestation, id: CHANGE-ATTEST-...}
-provenance_semantic_fingerprint: sha256:...
-```
-
-Provenance fingerprintはIDとfingerprint自身を除く全fieldを、`MANOSUBE-CHANGE-EXECUTION-PROVENANCE-SHA256-0.1`、canonical JSON UTF-8、Unicode NFC、SHA-256で算出する。IDは`CHANGE-EXEC-PROV-`＋64 lowercase hexである。
-
-`signed_change_execution_attestation`のclosed wire recordを次で固定する。
-
-```yaml
-schema_version: "0.1"
-record_kind: SIGNED_CHANGE_EXECUTION_ATTESTATION
-attestation_id: CHANGE-ATTEST-...
-attestation_profile: MANOSUBE-CHANGE-EXECUTION-ATTESTATION-ED25519-0.1
-signer_identity_ref: {kind: attestation_signer, id: SIGNER-...}
-signer_key_ref: {kind: public_key, id: KEY-..., version: "0.1", fingerprint: sha256:...}
-trust_root_ref: {kind: trust_root, id: TRUST-ROOT-..., version: "0.1", fingerprint: sha256:...}
-subject_executor_identity_ref: {kind: executor_identity, id: EXECUTOR-...}
-change_ref: {kind: change, id: C-...}
-execution_attempt_ref: {kind: change_attempt, id: CHANGE-ATTEMPT-...}
-authority_ref: {kind: authority_decision, id: AUTH-...}
-before_state_ref: {kind: state, revision: 0, fingerprint: {}}
-execution_result_evidence_ref: {kind: change_result_evidence, id: EVID-...}
-issued_at: "2026-01-01T00:00:00Z"
-expires_at: "2026-01-01T01:00:00Z"
-signed_payload_sha256: sha256:...
-signature_algorithm: ED25519
-signature_base64url: "..."
-```
-
-Observation attestationと同じcanonicalization、Ed25519、key ownership、expiry、revocation、canonical base64urlおよびPolicy-bound trusted-root-set規則を使用する。署名対象bytesは`attestation_id`、`signed_payload_sha256`、`signature_base64url`を除く全fieldである。IDは`CHANGE-ATTEST-`＋signed payload SHA-256の64 lowercase hexとする。固定digest／signature conformance vectorを公開する。
-
-Bindingの全fieldは解決したChange Provenanceの同名fieldとexact一致し、Provenanceのattestation subjectともexact一致しなければならない。root-set外、自己申告、field mismatch、authority mismatch、before-State mismatch、Evidence mismatchをrejectする。
-
-Binding fingerprintはchange、executor、authenticated provenance、execution-result Evidenceのcanonical tupleから生成する。Closure Evaluationの`change_refs`とbindingの`change_ref`集合は完全一致し、各Changeにつきexactly one bindingを要求する。各`execution_result_evidence_ref`はEvaluationの`change_result_evidence_refs`に含まれ、provenance record内のChange／executor／Evidenceとexact一致しなければならない。欠落、余分、重複、解決不能ref、attestation failureをrejectする。`CHANGE_FREE`ではChange refsとbindingsをともにemptyにする。後段のChange Contractはこのbindingを生成・参照できるが、Closure Contractは未定義fieldへ依存しない。
-
-Independence fingerprint profileを次へ固定する。
+`G8`はChange result、Change executor report、command return、test outputとは別に生成されたafter-state Observationを常に要求する。独立性の最小意味は、Change自身がClosureを自己確定せず、Observation Contractに準拠した新しいObservation recordがexact after State revision／fingerprintへ結合されることである。
 
 ```text
-PROFILE=MANOSUBE-VERIFICATION-INDEPENDENCE-SHA256-0.1
-DIGEST=SHA-256
-OUTPUT=sha256:<64 lowercase hexadecimal characters>
-SERIALIZATION=CANONICAL_JSON_UTF8
-TEXT_NORMALIZATION=UNICODE_NFC
-UNORDERED_SETS=change_executor_bindings,observation_execution_bindings,observation_refs,input_snapshot_refs,evidence_refs
-SET_ORDER=CANONICAL_MEMBER_BYTES
-DUPLICATE_SET_MEMBER=REJECT
-UNKNOWN_FIELDS=REJECT
+CHANGE RESULT
+≠
+AFTER-STATE OBSERVATION
+
+CHANGE EXECUTOR CLAIM
+≠
+DIFFERENCE CLOSURE
 ```
 
-`independence_semantic_fingerprint`は、record kind、Closure Evaluation ID、verifier identity、全Change executor bindings、全Observation execution bindings、process boundary、Observation refs、input snapshot refs、verification method、conflict-of-interest evaluation ref、Evidence refs、resultのcanonical payloadから算出する。`verification_independence_id`はこのfingerprintから決定的に生成する。`evaluated_at`だけをnon-semantic provenanceとしてfingerprintから除外する。Conformance vectorsは各unordered setの順序不変性、member変更によるdigest変更、duplicate／unknown field rejectを含む。
+v0.1 Difference Contractは、暗号鍵、署名、trust root、issuer identity、executor identityまたはAuthority Decisionのwire contractを所有しない。これらは後続の`05_AUTHORITY/`、`06_CHANGE/`、`07_EVIDENCE/`が定義する。
 
-Exact fingerprint field setを次で固定する。
+`independent_verification_required`は将来のPolicy互換fieldとして保持するが、Difference v0.1では`false`だけを許可する。`true`のPolicyは`UNSUPPORTED_AUTHORITY_CONTRACT`としてFail-Closedでrejectし、`verification_independence_ref`は常にnullでなければならない。後続Contractが独立実行主体と認証済みprovenanceを定義した後、schema version更新とPolicy semantic fingerprint変更を伴ってのみ`true`を有効化できる。
 
-```text
-INCLUDED=schema_version,record_kind,fingerprint_profile,closure_evaluation_id,verifier_identity_ref,change_executor_bindings,observation_execution_bindings,process_boundary_ref,observation_refs,input_snapshot_refs,verification_method_ref,conflict_of_interest_evaluation_ref,evidence_refs,result
-EXCLUDED=verification_independence_id,independence_semantic_fingerprint,evaluated_at
-```
-
-ID／fingerprint自身は循環回避のため除外し、`evaluated_at`だけをnon-semantic provenanceとして除外する。schema versionまたはfingerprint profile変更は必ずfingerprintを変える。上記以外のfieldはunknownとして拒否する。
-
-ID encodingは次で固定する。
-
-```text
-verification_independence_id
-= "VI-"
-+ uppercase(hex(SHA-256 canonical payload))
-```
-
-したがって長さは67文字である。Conformance vectorsはcanonical input bytes、lowercase fingerprint、期待されるexact uppercase `VI-...` IDを一組以上公開する。
-
-`result`は`PASS | FAIL | UNKNOWN`のclosed enumであり、`PASS`だけがG8を満たす。verifierとChange executorのidentity overlap、同一mutable input、unresolved boundary、missing Evidence、UNKNOWN conflict evaluationはPASSを禁止する。同一ID・異なるpayloadをcollisionとして拒否し、未知field／version／kindをrejectする。
+この制約は再観測を免除しない。`independent_verification_required=false`でも、G7からG18、Observation scope completeness、blind spot、Evidence Sufficiency、conflictおよびfreshness gateをすべて通常どおり評価する。
 
 `G21`で使用した各Completion Evaluationは`required_claim_evaluation_refs`へexactに保存する。各refはclaim identity、evaluated State revision／fingerprint、Evidence refs、evaluation statusおよびevaluation revisionへ解決可能でなければならない。Atomic Reflow直前に全refがcurrentかつ`SATISFIED`であることを再検査し、`REVOKED`、`STALE`またはhead変更を一件でも検出した場合はClosure Evaluationを`STALE`または`REVOKED`として拒否する。
 
