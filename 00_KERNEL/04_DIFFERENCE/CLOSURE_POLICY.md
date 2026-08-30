@@ -420,17 +420,16 @@ record_kind: TRUSTED_EXECUTION_ROOT_SET
 trusted_execution_root_set_id: TRUST-SET-...
 root_set_version: "0.1"
 root_set_fingerprint: sha256:...
-authorized_roots: {collection_kind: UNORDERED_SET, members: []}
-authorized_public_keys: {collection_kind: UNORDERED_SET, members: []}
+authorized_root_key_bindings: {collection_kind: UNORDERED_SET, members: []}
 valid_from: "2026-01-01T00:00:00Z"
 valid_until: null
 revocation_refs: {collection_kind: UNORDERED_SET, members: []}
 authority_approval_ref: {kind: human_authority_approval, id: APPROVAL-...}
 ```
 
-各root memberは`{kind: trust_root, id, version, fingerprint}`、各key memberは`{kind: public_key, id, version, fingerprint, owner_identity_ref, algorithm: ED25519}`のclosed objectである。Fingerprint profileは`MANOSUBE-TRUSTED-EXECUTION-ROOT-SET-SHA256-0.1`、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic keys、duplicate-free unordered sets、unknown field rejectとする。Fingerprint inputはIDとfingerprint自身を除く全fieldである。IDは`TRUST-SET-`＋fingerprint digestの64 lowercase hexとする。固定payload／digest、set順序不変、duplicate、unknown algorithm、revoked member、approval mismatchのconformance vectorsを公開する。
+各binding memberは`{kind: root_key_authorization, trust_root_ref: {kind, id, version, fingerprint}, public_key_ref: {kind, id, version, fingerprint}, owner_identity_ref, algorithm: ED25519, authorization_ref}`のclosed objectである。同じkeyを複数rootへ結合する場合もrootごとに別memberを要求し、attestationが選択したroot／key pairとexact一致するmemberがなければrejectする。Fingerprint profileは`MANOSUBE-TRUSTED-EXECUTION-ROOT-SET-SHA256-0.1`、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic keys、duplicate-free unordered sets、unknown field rejectとする。Fingerprint inputはIDとfingerprint自身を除く全fieldである。IDは`TRUST-SET-`＋fingerprint digestの64 lowercase hexとする。固定payload／digest、set順序不変、duplicate、unknown algorithm、revoked member、root-key mismatch、approval mismatchのconformance vectorsを公開する。
 
-`signer_key_ref`は`trust_root_ref`が認可したnon-revoked Ed25519 public keyへexactに解決し、さらに`trust_root_ref`がPolicyの`trusted_execution_root_set_ref`に含まれることを要求する。検証時刻が`issued_at <= now < expires_at`を満たし、key／trust-root／root-set version、fingerprint、revocation statusがcurrentでなければならない。root-set外のroot、自己署名、unknown algorithm、padding付きまたは非canonical base64url、expiry超過、subject不一致、payload digest不一致、signature failureをrejectする。
+`signer_key_ref`と`trust_root_ref`はPolicy-bound root setの同一`root_key_authorization` memberへexactに解決し、non-revoked Ed25519 key、signer identity、key ownershipを結合する。検証時刻`now`について、`issued_at <= now < expires_at`に加え、`valid_from <= issued_at`、`valid_from <= now`、および`valid_until=null OR (issued_at < valid_until AND now < valid_until)`をすべて要求する。key／trust-root／root-set version、fingerprint、revocation statusがcurrentでなければならない。root-key pair不一致、root-set window外、自己署名、unknown algorithm、padding付きまたは非canonical base64url、expiry超過、subject不一致、payload digest不一致、signature failureをrejectする。
 
 Binding／Provenance fingerprint profileは`MANOSUBE-OBSERVATION-EXECUTION-BINDING-SHA256-0.1`／`MANOSUBE-OBSERVATION-EXECUTION-PROVENANCE-SHA256-0.1`とし、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic object keys、unknown field rejectを共通規則とする。Binding fingerprintは`kind + observation_ref + verifier_identity_ref + process_boundary_ref + observation_method_ref + input_snapshot_refs + authenticated_execution_provenance_ref`を含む。Provenance fingerprintはIDとfingerprint自身を除く全fieldを含む。両collectionはduplicate-free `UNORDERED_SET`でcanonical member bytes順にする。各IDはそれぞれ`OBS-EXEC-BIND-`／`OBS-EXEC-PROV-`＋64 lowercase hexである。Conformance vectorsは固定payload／digest、set順序不変、member変更、unknown field、bad attestation rejectを含む。
 
