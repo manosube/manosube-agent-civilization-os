@@ -562,3 +562,29 @@ def test_attempt_must_fall_inside_observation_window_for_absence() -> None:
     ]
     with pytest.raises(ObservationError, match="absence gate"):
         observe(request)
+
+
+def test_empty_is_evaluated_at_claim_coordinate() -> None:
+    request = _request()
+    request["collection_complete"] = True
+    request["negative_claims"] = [
+        {
+            "negative_status": "EMPTY",
+            "subject": "fixture.name",
+            "predicate": "members@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    negative = observe(request)["negative_observations"][0]
+    assert negative["completion_evaluation"]["zero_valid_members"] is True
+
+
+def test_evaluation_without_owner_fails_closed() -> None:
+    prior = observe(_request())
+    prior["fact_evaluations"][0]["fact_id"] = "FACT-MISSING"
+    request = _request()
+    request["state_revision_observed"] = 3
+    request["state_fingerprint_observed"]["digest"] = "b" * 64
+    request["prior_bundle"] = prior
+    with pytest.raises(ObservationValidationError, match="missing Fact"):
+        observe(request)
