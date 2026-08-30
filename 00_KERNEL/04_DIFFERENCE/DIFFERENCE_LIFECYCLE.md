@@ -44,7 +44,7 @@ INVALIDATED
 | `BLOCKED` | 明示された阻害要因により次の合法transitionへ進めない |
 | `RETAINED` | 現時点では閉じず、Evidence付きで次周期へ保持する |
 | `CLOSED` | Closure Policyを満たし、Atomic ReflowでCanonical closureが確定した |
-| `REOPENED` | Closed後のObservation反証、Closure Evidence失効／provenance不正、またはmaterial contradictionによりClosure Claimの再評価が必要 |
+| `REOPENED` | Closed後のObservation反証、Closure Evidence失効／provenance不正、material contradiction、またはPolicy reopen condition成立によりClosure Claimの再評価が必要 |
 | `SUPERSEDED` | materialに異なる後継Differenceへidentityが置換された |
 | `INVALIDATED` | input、identity、boundary、schemaまたはlineage不正によりCanonical claimを失った |
 
