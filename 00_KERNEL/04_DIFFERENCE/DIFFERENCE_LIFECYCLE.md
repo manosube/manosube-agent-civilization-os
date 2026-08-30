@@ -142,6 +142,7 @@ authority_ref: null
 change_refs: []
 closure_evaluation_ref: null
 reflow_transition_ref: null
+next_observation_ref: null
 reopen_trigger: null
 reopen_condition_ref: null
 reopen_condition_evaluation_ref: null
@@ -151,6 +152,8 @@ contradiction_evidence_refs: []
 ```
 
 上記はclosed event shapeである。Reopen以外のeventでは全reopen-specific fieldをnullまたはemptyにする。`CLOSED → REOPENED`では`reopen_trigger`を第8節のclosed enumから必須指定し、同節のtrigger-specific表に従って各ref fieldの必須／任意／禁止を検証する。unknown fieldを拒否する。
+
+`next_observation_ref`は`{kind: observation_request, id: OBS-REQ-...}`のtyped referenceまたはnullである。to-statusが`BLOCKED`、`RETAINED`または`REOPENED`ならnon-nullを必須とし、scope、method、target、State revision／fingerprintを解決可能にする。その他transitionではPolicyが次観測を要求する場合だけnon-nullを許可する。unknown kind、解決不能ref、対象Difference／State不一致を拒否する。
 
 Event revisionは0から連続し、predecessorはexactでなければならない。同一event ID・同一payloadはidempotent、異なるpayloadはconflictとして拒否する。
 
