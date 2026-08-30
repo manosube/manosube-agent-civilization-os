@@ -392,35 +392,48 @@ UNION
 CLOSURE_POLICY.required_invariants
 ```
 
-`APPLICABLE_V0_1_MANDATORY_INVARIANTS`は、Closure Evaluationへ添付する次のversioned closed registry recordだけから決定する。自然言語、validator固有heuristic、ID prefix、実行結果またはPolicyによる選別を禁止する。
+`APPLICABLE_V0_1_MANDATORY_INVARIANTS`のauthority sourceは、Closure Evaluation時点でexact Git blobへ固定した`00_KERNEL/KERNEL_INVARIANTS.md`の`# 16. v0.1 Mandatory Gate`だけである。producerが`mandatory_in_v0_1`、`applies_to`または除外flagを供給することを禁止する。v0.1では同Gateの`ID PASS`行に列挙された全InvariantをG19のmandatory setとし、Difference Closureに対する個別の適用除外を認めない。
+
+versioned authoritative derivation profileを次へ固定する。
+
+```text
+PROFILE=MANOSUBE-V0_1-MANDATORY-INVARIANT-REGISTRY-0.1
+AUTHORITY_SOURCE=00_KERNEL/KERNEL_INVARIANTS.md
+SOURCE_SECTION=# 16. v0.1 Mandatory Gate
+ENTRY_GRAMMAR=^(K|A|S|O|D|C|E|R|B|X|P)-[0-9]{3} PASS$
+ENTRY_ORDER=SOURCE_ORDER
+DUPLICATE_ID=REJECT
+UNKNOWN_LINE_IN_TEXT_FENCE=REJECT
+APPLICABILITY=ALL_DERIVED_ENTRIES_REQUIRED_FOR_G19
+PRODUCER_SELECTOR_FIELDS=FORBIDDEN
+```
+
+parserはexact heading直後の説明文に続く最初の`text` fenced blockだけを読み、上記grammarへ一致する各lineをsource orderで抽出する。blank lineだけを無視し、未知line、重複ID、二つ目のcandidate block、heading欠落を拒否する。`X-003`の限定Claimは同blockに`X-003 PASS`として存在しないためInvariant binding集合へ捏造せず、直後の限定ClaimをG21のCompletion claimとして別途評価する。
+
+この導出結果から、次のauthoritative registry instanceを機械生成する。
 
 ```yaml
 schema_version: "0.1"
-profile: MANOSUBE-DIFFERENCE-CLOSURE-INVARIANT-APPLICABILITY-0.1
-registry_id: DIFF-CLOSE-INV-REG-...
-mandatory_gate_source_ref:
+profile: MANOSUBE-V0_1-MANDATORY-INVARIANT-REGISTRY-0.1
+registry_id: V01-MANDATORY-INV-REG-...
+authority_source_ref:
   kind: git_blob
   repository: manosube/manosube-agent-civilization-os
   commit_sha: <40 lowercase hex>
   path: 00_KERNEL/KERNEL_INVARIANTS.md
   blob_sha: <40 lowercase git blob hex>
+source_section_sha256: sha256:<64 lowercase hex>
 entries:
-  collection_kind: UNORDERED_SET
+  collection_kind: ORDERED_LIST
   members:
-    - invariant_id: D-001
+    - invariant_id: K-001
       invariant_definition_sha256: sha256:<64 lowercase hex>
-      mandatory_in_v0_1: true
-      applies_to:
-        collection_kind: UNORDERED_SET
-        members: [DIFFERENCE_CLOSURE]
 registry_semantic_fingerprint: sha256:<64 lowercase hex>
 ```
 
-Registryはv0.1 Mandatory Gateに列挙された全Invariant IDをexactly once含まなければならない。余分、欠落、duplicate、unknown field、unknown applicability tokenを拒否する。`applies_to.members`のclosed enumは`DIFFERENCE_CLOSURE | AFTER_STATE_CANDIDATE | ATOMIC_REFLOW_PRECONDITION | LINEAGE_PRESERVATION | NOT_APPLICABLE_TO_DIFFERENCE_CLOSURE`である。各entryは少なくとも一つ、かつ`NOT_APPLICABLE_TO_DIFFERENCE_CLOSURE`と他tokenを同時に持ってはならない。各definition digestは本Policy第1章のInvariant block抽出規則でsource blobから再計算してexact一致させる。
+`source_section_sha256`はheading開始から次の同levelまたは上位heading直前までを第1章と同じUTF-8／NFC／LF／末尾改行規則で正規化したbytesのSHA-256である。各entryのdefinition digestは第1章のInvariant block抽出規則で同一source blobから再計算する。entriesは抽出された全IDをsource orderでexactly once含み、追加・欠落・並べ替え・selector fieldを拒否する。
 
-`registry_semantic_fingerprint`は`registry_id`、commit SHA、whole-file blob SHAを除き、`profile + schema_version + repository + path + entries`のclosed projectionをcanonical JSON UTF-8化し、domain `MANOSUBE:DIFFERENCE_CLOSURE_INVARIANT_APPLICABILITY:0.1:`を前置したSHA-256（`sha256:`＋64 lowercase hex）とする。`entries`と`applies_to`はduplicate-free unordered setとしてcanonical member bytes順へ正規化する。
-
-決定アルゴリズムは、registry完全性と全definition digestを検証した後、`mandatory_in_v0_1=true`かつ`applies_to`が`DIFFERENCE_CLOSURE | AFTER_STATE_CANDIDATE | ATOMIC_REFLOW_PRECONDITION | LINEAGE_PRESERVATION`のいずれかと交差するentryを全件選択する、の一つだけである。missing registry、unknown token、未解決source、digest不一致または完全性不明は`BLOCKED`であり、該当Invariantを黙って除外しない。exact registry recordとfingerprintをEvaluation Evidenceへ保存する。
+`registry_semantic_fingerprint`は`registry_id`、commit SHA、whole-file blob SHAを除き、`profile + schema_version + repository + path + source_section_sha256 + entries`のclosed projectionをcanonical JSON UTF-8化し、domain `MANOSUBE:V0_1_MANDATORY_INVARIANT_REGISTRY:0.1:`を前置したSHA-256（`sha256:`＋64 lowercase hex）とする。registry instance、source blob ref、section digest、registry fingerprintをEvaluation Evidenceへ保存し、Atomic Reflow直前に再導出してexact一致を確認する。producer-supplied registry、未承認fingerprint allowlist、手動applicability overrideは受理しない。欠落、解決不能、digest不一致、再導出不一致は`BLOCKED`であり、mandatory setを空集合へ縮小してはならない。
 
 Canonical Invariant Evaluation Recordを変更せず、expected setを作る前に同一Invariant IDの定義を照合する。Applicability Registry entryと`CLOSURE_POLICY.required_invariants`が同じIDを要求する場合、両者の`repository + path + invariant_definition_sha256`が完全一致するときだけ一件へ統合する。一つでも異なる場合はdefinition conflictとして`BLOCKED`にし、先勝ち、後勝ち、IDだけのdeduplicationを禁止する。
 
