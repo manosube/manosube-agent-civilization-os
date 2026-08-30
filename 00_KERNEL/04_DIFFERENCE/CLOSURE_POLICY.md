@@ -142,6 +142,8 @@ Predicate semantic fields内のcollectionは`{"collection_kind":"ORDERED_LIST","
 
 Conformance vectorsはobject key順序の不変性、各included field変更によるdigest変更、excluded provenance変更によるdigest不変性、unordered collection順序の不変性、ordered collection順序変更によるdigest変更、unknown field／bare array rejectを含む。
 
+Policy fingerprintへ投入する各`reopen_conditions` memberは、`kind + id + predicate_semantic_fingerprint`だけのclosed semantic projectionとする。`objective_revision_ref`はexact provenance検証には必須だがPolicy semantic fingerprintから除外する。同じpredicate ID／semanticsを保持するEDITORIAL Objective revision更新ではPolicy fingerprintを変えず、predicate semantic fingerprint変更時だけ変える。
+
 `required_claims` memberは上記例のclosed five-field objectだけを許可する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`だけから同じcanonical JSON／SHA-256出力規則で算出する。
 
 Fingerprint循環を避けるため、Completion Recordの`closure_policy_ref`、completion ID、evaluation status、Evidence refsをclaim semantic fingerprintへ含めない。Claim側Policy bindingは`required_claim_evaluation_refs`を解決するG21で別途exact検証し、現在のClosure Policyを自己参照させない。
@@ -185,7 +187,14 @@ objective_semantic_fingerprint_evaluated: {}
 before_state_ref: {}
 resolution_mode: CHANGE_BOUND
 change_refs: []
-after_state_ref: {}
+after_state_candidate:
+  kind: after_state_candidate
+  candidate_id: STATE-CANDIDATE-...
+  base_state_ref: {kind: state, revision: 0, fingerprint: {}}
+  semantic_state: {}
+  semantic_fingerprint: {}
+  source_snapshot_refs: []
+  producing_change_refs: []
 after_observation_refs: []
 change_result_evidence_refs: []
 change_free_verification_evidence_refs: []
@@ -275,6 +284,12 @@ G22 PROPOSED_TERMINAL_STATE_ALLOWED
 ```
 
 一つでもfalseまたはunknownなら`SATISFIED`にしない。
+
+`after_state_candidate`はCanonical Stateではなく、Atomic Reflowへ提案されるclosed staged recordである。`candidate_id`は`base_state_ref + semantic_state + semantic_fingerprint + source_snapshot_refs + producing_change_refs`のcanonical payloadから決定的に生成する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。
+
+After-state Observationは存在しない未来revisionへ結合しない。Observation Contract上のState bindingは`base_state_ref`へ結合し、観測対象と結果provenanceはcandidateのimmutable `source_snapshot_refs`へexactに結合する。Observationから導出されたsemantic factsが`semantic_state`および`semantic_fingerprint`と一致することをG7〜G10で検証する。
+
+`after_state_candidate`はClosure EvaluationだけではCanonicalにならない。G20 PASS後のAtomic Reflowがcurrent base revisionをCAS確認し、candidate semantic stateをrevision N+1としてcommitする。base revision／fingerprintまたはsource snapshotが変化した場合はEvaluationを`STALE`としてrejectする。
 
 `G3`はClosure Evaluation時点のactive `objective_revision_ref_evaluated`をexact provenanceとして保存し、その`objective_semantic_fingerprint_evaluated`がDifference identityに結合されたfingerprintと一致することを要求する。EDITORIAL revisionではrevision refの変更を許すがsemantic fingerprintの変更を許さない。semantic fingerprintが変わった場合はClosureせず、新しいDifference identityへsupersedeする。
 
