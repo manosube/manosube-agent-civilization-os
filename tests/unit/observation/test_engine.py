@@ -535,3 +535,30 @@ def test_binding_must_match_referenced_observation_state() -> None:
     request["prior_bundle"] = prior
     with pytest.raises(ObservationValidationError, match="binding State mismatch"):
         observe(request)
+
+
+def test_conflicted_retry_is_idempotent() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"].append(
+        _fact("fixture.enabled", "equals@v1", False, "BOOLEAN")
+    )
+    first = observe(request)
+    request["prior_bundle"] = first
+    assert observe(request) == first
+
+
+def test_attempt_must_fall_inside_observation_window_for_absence() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["attempts"][0]["started_at"] = "2026-08-29T08:00:00Z"
+    request["attempts"][0]["ended_at"] = "2026-08-29T08:01:00Z"
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    with pytest.raises(ObservationError, match="absence gate"):
+        observe(request)
