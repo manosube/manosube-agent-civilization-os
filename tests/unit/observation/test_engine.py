@@ -5,7 +5,12 @@ from copy import deepcopy
 import pytest
 from scripts.observation_contract_validator import validate_bundle
 
-from manosube_agent_civilization.observation import ObservationError, ScopeViolationError, observe
+from manosube_agent_civilization.observation import (
+    ObservationError,
+    ObservationValidationError,
+    ScopeViolationError,
+    observe,
+)
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 FINGERPRINT = {
@@ -344,3 +349,101 @@ def test_unordered_collection_has_stable_identity_and_rejects_duplicates() -> No
     second["source_occurrences"][0]["facts"][0]["value"] = ["alpha", "alpha"]
     with pytest.raises(ObservationError, match="duplicate canonical members"):
         observe(second)
+
+
+def test_positive_positive_conflict_is_not_supported() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"].append(
+        _fact("fixture.enabled", "equals@v1", False, "BOOLEAN")
+    )
+    bundle = observe(request)
+    enabled = [
+        item
+        for item in bundle["fact_evaluations"]
+        if next(f for f in bundle["facts"] if f["fact_id"] == item["fact_id"])["subject"]
+        == "fixture.enabled"
+    ]
+    assert len(enabled) == 2
+    assert all(item["evaluation_status"] == "CONFLICTED" for item in enabled)
+    assert all(item["conflict_fact_refs"] for item in enabled)
+    assert bundle["observations"][0]["status"] == "CONFLICTED"
+
+
+def test_prior_fact_negative_conflict_appends_history() -> None:
+    before = observe(_request())
+    request = _request()
+    request["state_revision_observed"] = 3
+    request["state_fingerprint_observed"]["digest"] = "b" * 64
+    request["source_occurrences"][0]["facts"] = []
+    request["prior_bundle"] = before
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "equals@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    after = observe(request)
+    enabled_id = next(
+        item["fact_id"] for item in before["facts"] if item["subject"] == "fixture.enabled"
+    )
+    evaluations = sorted(
+        (item for item in after["fact_evaluations"] if item["fact_id"] == enabled_id),
+        key=lambda item: item["evaluation_revision"],
+    )
+    assert evaluations[0] == next(
+        item for item in before["fact_evaluations"] if item["fact_id"] == enabled_id
+    )
+    assert evaluations[-1]["evaluation_status"] == "CONFLICTED"
+    assert len(evaluations) == 2
+
+
+def test_scope_source_method_attempt_and_time_must_match() -> None:
+    request = _request()
+    request["scope"]["source_snapshot_refs"][0]["id"] = "SNAP-OTHER"
+    with pytest.raises(ObservationError, match="sources must exactly match"):
+        observe(request)
+
+    request = _request()
+    request["attempts"][0]["method_ref"]["id"] = "METHOD-OTHER"
+    with pytest.raises(ObservationError, match="undeclared method"):
+        observe(request)
+
+    request = _request()
+    request["time_boundary"]["observation_started_at"] = "2026-08-29T09:02:00Z"
+    request["source_occurrences"][0]["facts"] = []
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "exists@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    with pytest.raises(ObservationError, match="absence gate"):
+        observe(request)
+
+
+def test_exact_retry_is_idempotent_and_partial_quality_is_incomplete() -> None:
+    first = observe(_request())
+    retry = _request()
+    retry["prior_bundle"] = first
+    assert observe(retry) == first
+
+    request = _request()
+    request["source_occurrences"][0]["outcome"] = "PARTIAL"
+    bundle = observe(request)
+    assert bundle["observations"][0]["status"] == "INCOMPLETE"
+    assert all(item["observed_quality_status"] == "INCOMPLETE" for item in bundle["bindings"])
+
+
+def test_corrupt_prior_bundle_fails_closed() -> None:
+    prior = observe(_request())
+    prior["fact_evaluations"][0]["evaluation_revision"] = 2
+    request = _request()
+    request["state_revision_observed"] = 3
+    request["state_fingerprint_observed"]["digest"] = "b" * 64
+    request["prior_bundle"] = prior
+    with pytest.raises(ObservationValidationError, match="revision gap"):
+        observe(request)
