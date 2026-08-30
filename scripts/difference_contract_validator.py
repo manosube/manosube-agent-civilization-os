@@ -412,7 +412,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     errors.append(f"non-reopen event carries reopen payload: {event['difference_event_id']}")
             else:
                 trigger = event["reopen_trigger"]
+                previous = chain[expected_revision - 1] if expected_revision > 0 else None
                 closure = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
+                committed_transition = None if previous is None else reflow_transitions.get(
+                    _ref_id(previous["reflow_transition_ref"]) or ""
+                )
                 if (
                     trigger is None
                     or event["closure_evaluation_ref"] is None
@@ -468,7 +472,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     ]
                     latest_evaluation = max(
                         matching_evaluations,
-                        key=lambda item: (item["evaluated_at"], item["evaluation_id"]),
+                        key=lambda item: (
+                            datetime.fromisoformat(
+                                item["evaluated_at"].replace("Z", "+00:00")
+                            ),
+                            item["evaluation_id"],
+                        ),
                         default=None,
                     )
                     if (
@@ -493,6 +502,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         != event["state_revision_evaluated"]
                         or condition_evaluation["state_fingerprint"]
                         != event["state_fingerprint_evaluated"]
+                        or committed_transition is None
+                        or condition_evaluation["state_revision"]
+                        != committed_transition["after_state"]["state_revision"]
+                        or condition_evaluation["state_fingerprint"]
+                        != committed_transition["after_state"]["semantic_fingerprint"]
                         or condition_evaluation["status"] != "SATISFIED"
                         or closure is None
                         or datetime.fromisoformat(
@@ -500,13 +514,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         ) < datetime.fromisoformat(
                             closure["evaluated_at"].replace("Z", "+00:00")
                         )
-                        or _canonical_semantic(condition_evaluation["evidence_refs"])
+                        or _canonical_semantic(
+                            condition_evaluation["evidence_refs"]["members"]
+                        )
                         != _canonical_semantic(event["evidence_refs"])
                     ):
                         errors.append(
                             f"reopen condition evaluation mismatch: {event['difference_event_id']}"
                         )
-                previous = chain[expected_revision - 1] if expected_revision > 0 else None
                 if (
                     previous is None
                     or _ref_id(previous["closure_evaluation_ref"])
