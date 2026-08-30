@@ -4,7 +4,7 @@
   "title": "Candidate Completion Record", "type": "object",
   "required": ["schema_version", "completion_id", "subject_type", "subject_ref", "claim", "target_state_ref", "observed_state_ref", "closure_policy_ref", "required_evidence_refs", "invariant_evaluation_refs", "material_contradiction_refs", "evaluation_status", "evaluated_state_revision", "evaluated_state_fingerprint", "evaluated_at", "reflow_transition_ref"],
   "properties": {
-    "schema_version": {"const": "0.1"}, "completion_id": {"type": "string", "pattern": "^CMP-[0-9A-F]{64}$"}, "subject_type": {"const": "DIFFERENCE"},
+    "schema_version": {"const": "0.1"}, "completion_id": {"type": "string", "pattern": "^CMP-[0-9A-F]{64}$"}, "subject_type": {"enum": ["DIFFERENCE", "CONTRACT_COMPLETION"]},
     "subject_ref": {"$ref": "../common/reference.schema.json"}, "claim": {}, "target_state_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
     "observed_state_ref": {"$ref": "../common/reference.schema.json"}, "closure_policy_ref": {"$ref": "difference.schema.json#/$defs/versioned_reference"},
     "required_evidence_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "invariant_evaluation_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"},

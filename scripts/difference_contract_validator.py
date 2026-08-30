@@ -78,7 +78,7 @@ def _mandatory_invariant_ids() -> set[str]:
 
 def _content_address(prefix: str, record: dict[str, Any], identity_field: str) -> str:
     payload = {key: value for key, value in record.items() if key != identity_field}
-    return prefix + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
+    return prefix + hashlib.sha256(canonical_json_bytes(_canonical_semantic(payload))).hexdigest().upper()
 
 
 def _canonical_semantic(value: Any) -> Any:
@@ -315,6 +315,15 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     errors.append(f"observation-bound terminal event: {event['difference_event_id']}")
             elif (event["from_status"], event["to_status"]) not in LEGAL_TRANSITIONS:
                 errors.append(f"illegal lifecycle transition: {event['difference_event_id']}")
+            if (
+                event["from_status"] == "ACTIVE"
+                and event["to_status"] == "VERIFYING"
+                and not (
+                    (event["change_refs"] and event["next_observation_ref"] is not None)
+                    or (event["observation_refs"] and event["evidence_refs"])
+                )
+            ):
+                errors.append(f"verifying minimum gate missing: {event['difference_event_id']}")
             is_reopen = event["from_status"] == "CLOSED" and event["to_status"] == "REOPENED"
             reopen_lists = (
                 event["revoked_evidence_refs"],
@@ -441,6 +450,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or not _policy_ref_matches(evaluation["policy_ref"], policy)
                     or _ref_id(evaluation["difference_event_head_ref"])
                     != event["previous_event_id"]
+                    or (
+                        event["to_status"] == "CLOSED"
+                        and (
+                            event["reflow_transition_ref"] is None
+                            or event["reflow_transition_ref"]
+                            != evaluation["reflow_transition_ref"]
+                        )
+                    )
                 ):
                     errors.append(f"terminal evaluation binding mismatch: {event['difference_event_id']}")
             reconstructed[difference_id] = event["to_status"]
@@ -631,6 +648,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             ):
                 errors.append(f"mandatory claim definition conflict: {evaluation['closure_evaluation_id']}")
             required_claims = set(policy_claims) | {mandatory_claim["id"]}
+            claim_descriptors = {**policy_claims, mandatory_claim["id"]: mandatory_claim}
             bound_claims = [item["required_claim_ref"]["id"] for item in claim_bindings]
             if (
                 set(bound_claims) != required_claims
@@ -640,7 +658,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             for binding in invariant_bindings:
                 record = invariant_evaluations.get(_ref_id(binding["invariant_evaluation_ref"]) or "")
                 if (
-                    binding["candidate_id"] != candidate["candidate_id"]
+                    binding["binding_id"]
+                    != _content_address("CAND-INV-EVAL-", binding, "binding_id")
+                    or binding["candidate_id"] != candidate["candidate_id"]
                     or binding["candidate_semantic_fingerprint"] != candidate["semantic_fingerprint"]
                     or binding["base_state_ref"] != evaluation["before_state_ref"]
                     or binding["evaluation_result"] != "PASS"
@@ -659,6 +679,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 ):
                     errors.append(f"candidate invariant binding mismatch: {binding['binding_id']}")
             for binding in claim_bindings:
+                descriptor = claim_descriptors.get(binding["required_claim_ref"]["id"])
                 series = [
                     item for item in claim_events.values()
                     if item["evaluation_series_id"] == binding["evaluation_series_id"]
@@ -724,6 +745,18 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or completion["evaluation_status"] != binding["evaluation_status"]
                     or completion["evaluated_at"] != binding["evaluated_at"]
                     or completion["required_evidence_refs"] != binding["evaluation_evidence_refs"]
+                    or descriptor is None
+                    or completion["subject_type"] != descriptor["subject_type"]
+                    or completion["subject_ref"] != descriptor["subject_ref"]
+                    or completion["claim"] != descriptor["claim"]
+                    or completion["target_state_ref"] != descriptor["target_state_ref"]
+                    or completion["observed_state_ref"]
+                    != {"kind": "after_state_candidate", "id": candidate["candidate_id"]}
+                    or not (policy and _policy_ref_matches(completion["closure_policy_ref"], policy))
+                    or completion["evaluated_state_revision"]
+                    != evaluation["before_state_ref"]["revision"]
+                    or completion["evaluated_state_fingerprint"]
+                    != candidate["semantic_fingerprint"]
                 ):
                     errors.append(f"candidate claim binding mismatch: {binding['binding_id']}")
         elif mode == "CANDIDATE_TERMINAL":

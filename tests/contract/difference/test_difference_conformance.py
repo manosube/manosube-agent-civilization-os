@@ -312,3 +312,24 @@ def test_difference_identity_canonicalizes_nested_unordered_sets() -> None:
     right = deepcopy(left)
     right["effective_boundary"]["source_snapshot_refs"]["members"].reverse()
     assert _difference_id(left) == _difference_id(right)
+
+
+def test_verifying_and_closed_transitions_enforce_minimum_gates() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    verifying = deepcopy(bundle)
+    event = verifying["events"][2]
+    event["from_status"] = "ACTIVE"
+    event["to_status"] = "VERIFYING"
+    event["blocker_kind"] = None
+    event["blocker_scope"] = None
+    event["blocker_resolution_condition"] = None
+    event["next_observation_ref"] = None
+    event["evidence_refs"] = []
+    assert any("verifying minimum gate missing" in error for error in validate_bundle(verifying))
+
+    closed = deepcopy(event)
+    closed["from_status"] = "VERIFYING"
+    closed["to_status"] = "CLOSED"
+    closed["reflow_transition_ref"] = None
+    validator = _validators()["difference_lifecycle_event.schema.json"]
+    assert list(validator.iter_errors(closed))
