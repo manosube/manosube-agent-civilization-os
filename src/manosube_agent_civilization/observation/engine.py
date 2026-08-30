@@ -104,23 +104,34 @@ def _binding(
     }
 
 
-def _completion(status: str, supplied: dict[str, Any] | None) -> dict[str, bool]:
-    base = {
+def _completion(
+    status: str,
+    observation: dict[str, Any],
+    scope: dict[str, Any],
+    collection_complete: bool,
+) -> dict[str, bool]:
+    attempts = observation["attempts"]
+    attempts_complete = bool(attempts) and all(
+        attempt["result"] in {"COMPLETE", "EMPTY"} for attempt in attempts
+    )
+    method_complete = attempts_complete and observation["status"] in {"COMPLETE", "EMPTY"}
+    no_blocking_blind_spot = all(
+        item["impact"] != "BLOCKS_COMPLETION" for item in observation["blind_spots"]["items"]
+    )
+    base: dict[str, bool] = {
         "target_defined": True,
-        "scope_complete": False,
-        "method_complete": False,
+        "scope_complete": scope["scope_status"] == "COMPLETE",
+        "method_complete": method_complete,
         "time_boundary_complete": True,
-        "source_snapshots_identified": True,
-        "required_attempts_completed": False,
-        "no_blocking_blind_spot": False,
+        "source_snapshots_identified": bool(observation["source_snapshot_refs"]),
+        "required_attempts_completed": method_complete,
+        "no_blocking_blind_spot": no_blocking_blind_spot,
         "no_conflicting_positive_fact": True,
     }
-    if supplied:
-        base.update(supplied)
     if status == "EMPTY":
-        base.setdefault("collection_defined", False)
-        base.setdefault("enumeration_complete", False)
-        base.setdefault("zero_valid_members", False)
+        base["collection_defined"] = collection_complete
+        base["enumeration_complete"] = collection_complete
+        base["zero_valid_members"] = collection_complete and not observation["normalized_fact_refs"]
     return base
 
 
@@ -128,8 +139,10 @@ def _negative_records(
     *,
     claim: dict[str, Any],
     observation: dict[str, Any],
+    scope: dict[str, Any],
     facts: list[dict[str, Any]],
     evidence_refs: list[dict[str, str]],
+    collection_complete: bool,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     status = claim["negative_status"]
     if status not in _STATUS_CANDIDATE:
@@ -143,7 +156,7 @@ def _negative_records(
     ]
     if conflicts:
         status = "CONFLICTED"
-    completion = _completion(status, claim.get("completion_evaluation"))
+    completion = _completion(status, observation, scope, collection_complete)
     if status == "ABSENT" and not all(completion.values()):
         raise ObservationError("ABSENT requires a complete bounded absence gate")
     if status == "EMPTY" and not all(
@@ -258,6 +271,43 @@ def _validate_scope_record(scope: dict[str, Any]) -> None:
         )
 
 
+def _observation_status(
+    scope: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    blind_spots: list[dict[str, Any]],
+    occurrence_outcomes: list[str],
+    has_facts: bool,
+    collection_complete: bool,
+) -> str:
+    scope_status = scope["scope_status"]
+    if scope_status in {"INVALID", "CONFLICTED", "BLOCKED", "UNOBSERVED"}:
+        return scope_status
+    results = [attempt["result"] for attempt in attempts]
+    combined = [*occurrence_outcomes, *results]
+    if "FAILED" in combined:
+        return "FAILED"
+    if "BLOCKED" in combined:
+        return "BLOCKED"
+    if (
+        scope_status == "INCOMPLETE"
+        or "INCOMPLETE" in combined
+        or "PARTIAL" in combined
+        or any(item["impact"] == "BLOCKS_COMPLETION" for item in blind_spots)
+    ):
+        return "INCOMPLETE"
+    if "UNKNOWN" in combined:
+        return "UNKNOWN"
+    if has_facts:
+        return "COMPLETE"
+    if (
+        collection_complete
+        and attempts
+        and all(attempt["result"] in {"COMPLETE", "EMPTY"} for attempt in attempts)
+    ):
+        return "EMPTY"
+    return "UNKNOWN"
+
+
 def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Execute one deterministic Observation over explicit immutable fixture inputs."""
 
@@ -285,6 +335,20 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     declared_sources = {
         (reference["kind"], reference["id"]) for reference in request["source_snapshot_refs"]
     }
+    prior = deepcopy(
+        request.get(
+            "prior_bundle",
+            {
+                "facts": [],
+                "observations": [],
+                "bindings": [],
+                "fact_evaluations": [],
+                "negative_observations": [],
+                "negative_evaluations": [],
+            },
+        )
+    )
+    _validate_records(prior)
 
     observation_identity = {
         "project_id": request["project_id"],
@@ -298,9 +362,11 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         "normalization_profile": profile,
     }
     observation_id = deterministic_id("OBS", observation_identity)
-    facts_by_id: dict[str, dict[str, Any]] = {}
-    bindings_by_id: dict[str, dict[str, Any]] = {}
-    failure_status: str | None = None
+    facts_by_id = {fact["fact_id"]: fact for fact in prior["facts"]}
+    bindings_by_id = {binding["binding_id"]: binding for binding in prior["bindings"]}
+    observed_fact_ids: set[str] = set()
+    new_binding_ids: set[str] = set()
+    occurrence_outcomes: list[str] = []
     for occurrence in sorted(
         request.get("source_occurrences", []),
         key=lambda item: (item["source_ref"]["id"], item["source_locator"]),
@@ -313,8 +379,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         ) not in declared_sources:
             raise ObservationError("source occurrence is not declared by the Observation")
         outcome = occurrence.get("outcome", "COMPLETE")
-        if outcome in {"FAILED", "BLOCKED", "INCOMPLETE", "UNKNOWN"}:
-            failure_status = outcome
+        occurrence_outcomes.append(outcome)
         for raw in occurrence.get("facts", []):
             if not subject_in_scope(raw["subject"], scope):
                 raise ObservationError(f"Fact subject is outside scope: {raw['subject']}")
@@ -323,6 +388,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             if existing is not None and existing != fact:
                 raise ObservationError(f"Fact identity collision: {fact['fact_id']}")
             facts_by_id[fact["fact_id"]] = fact
+            observed_fact_ids.add(fact["fact_id"])
             binding = _binding(
                 fact,
                 observation_id,
@@ -335,19 +401,28 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             if existing_binding is not None and existing_binding != binding:
                 raise ObservationError(f"Binding identity collision: {binding['binding_id']}")
             bindings_by_id[binding["binding_id"]] = binding
+            new_binding_ids.add(binding["binding_id"])
 
     facts = sorted(facts_by_id.values(), key=lambda item: item["fact_id"])
     bindings = sorted(bindings_by_id.values(), key=lambda item: item["binding_id"])
+    observed_facts = [fact for fact in facts if fact["fact_id"] in observed_fact_ids]
     attempts = deepcopy(request.get("attempts", []))
-    blind_spots = deepcopy(request.get("blind_spots", []))
-    if failure_status:
-        status = failure_status
-    elif facts:
-        status = "COMPLETE"
-    elif request.get("collection_complete") is True:
-        status = "EMPTY"
-    else:
-        status = "UNKNOWN"
+    blind_spots_by_id: dict[str, dict[str, Any]] = {}
+    for blind_spot in [*scope["blind_spots"], *request.get("blind_spots", [])]:
+        existing = blind_spots_by_id.get(blind_spot["blind_spot_id"])
+        if existing is not None and existing != blind_spot:
+            raise ObservationError(f"Blind spot identity collision: {blind_spot['blind_spot_id']}")
+        blind_spots_by_id[blind_spot["blind_spot_id"]] = deepcopy(blind_spot)
+    blind_spots = sorted(blind_spots_by_id.values(), key=lambda item: item["blind_spot_id"])
+    collection_complete = request.get("collection_complete") is True
+    status = _observation_status(
+        scope,
+        attempts,
+        blind_spots,
+        occurrence_outcomes,
+        bool(observed_facts),
+        collection_complete,
+    )
     observation = {
         "schema_version": "0.1",
         "observation_id": observation_id,
@@ -360,7 +435,9 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         "time_boundary": deepcopy(request["time_boundary"]),
         "source_snapshot_refs": deepcopy(request["source_snapshot_refs"]),
         "normalization_profile": profile,
-        "normalized_fact_refs": [_ref("normalized_fact", fact["fact_id"]) for fact in facts],
+        "normalized_fact_refs": [
+            _ref("normalized_fact", fact["fact_id"]) for fact in observed_facts
+        ],
         "status": status,
         "blind_spots": {
             "status": "KNOWN_BLIND_SPOTS_PRESENT" if blind_spots else "NONE_KNOWN",
@@ -369,37 +446,62 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         "attempts": attempts,
         "observation_evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
     }
-    fact_evaluations = []
-    for fact in facts:
-        fact_bindings = [binding for binding in bindings if binding["fact_id"] == fact["fact_id"]]
+    fact_evaluations = deepcopy(prior["fact_evaluations"])
+    for fact in observed_facts:
+        previous = sorted(
+            (
+                evaluation
+                for evaluation in fact_evaluations
+                if evaluation["fact_id"] == fact["fact_id"]
+            ),
+            key=lambda evaluation: evaluation["evaluation_revision"],
+        )
+        evaluation_revision = len(previous)
+        previous_evaluation_id = previous[-1]["evaluation_id"] if previous else None
+        prior_negative_conflicts = (
+            deepcopy(previous[-1]["conflict_negative_observation_refs"]) if previous else []
+        )
+        fact_bindings = [
+            binding
+            for binding in bindings
+            if binding["fact_id"] == fact["fact_id"] and binding["binding_id"] in new_binding_ids
+        ]
         fact_evaluations.append(
             {
                 "schema_version": "0.1",
                 "evaluation_id": deterministic_id(
-                    "FACT-EVAL", {"fact_id": fact["fact_id"], "evaluation_revision": 0}
+                    "FACT-EVAL",
+                    {
+                        "fact_id": fact["fact_id"],
+                        "evaluation_revision": evaluation_revision,
+                    },
                 ),
                 "fact_id": fact["fact_id"],
-                "evaluation_revision": 0,
-                "previous_evaluation_id": None,
+                "evaluation_revision": evaluation_revision,
+                "previous_evaluation_id": previous_evaluation_id,
                 "binding_refs": [
                     _ref("fact_observation_binding", binding["binding_id"])
                     for binding in fact_bindings
                 ],
-                "evaluation_status": "SUPPORTED",
+                "evaluation_status": "CONFLICTED" if prior_negative_conflicts else "SUPPORTED",
                 "conflict_fact_refs": [],
-                "conflict_negative_observation_refs": [],
+                "conflict_negative_observation_refs": prior_negative_conflicts,
                 "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
             }
         )
-    negatives: list[dict[str, Any]] = []
-    negative_evaluations: list[dict[str, Any]] = []
+    negatives = deepcopy(prior["negative_observations"])
+    negative_evaluations = deepcopy(prior["negative_evaluations"])
     conflict_found = False
     for claim in request.get("negative_claims", []):
+        if not subject_in_scope(claim["subject"], scope):
+            raise ObservationError(f"Negative claim subject is outside scope: {claim['subject']}")
         negative, evaluation, conflict = _negative_records(
             claim=claim,
             observation=observation,
-            facts=facts,
+            scope=scope,
+            facts=observed_facts,
             evidence_refs=request.get("observation_evidence_refs", []),
+            collection_complete=collection_complete,
         )
         negatives.append(negative)
         negative_evaluations.append(evaluation)
@@ -418,7 +520,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         observation["status"] = "CONFLICTED"
     bundle = {
         "facts": facts,
-        "observations": [observation],
+        "observations": [*deepcopy(prior["observations"]), observation],
         "bindings": bindings,
         "fact_evaluations": fact_evaluations,
         "negative_observations": sorted(
