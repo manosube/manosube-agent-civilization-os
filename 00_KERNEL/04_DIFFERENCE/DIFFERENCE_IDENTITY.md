@@ -60,6 +60,58 @@ DIFFERENCE_IDENTITY_INPUT
 + identity_profile
 ```
 
+`normalized_target_state`と`normalized_structural_difference`は自由形式objectではなく、次のprofileで導出するclosed projectionである。
+
+```text
+PROFILE=MANOSUBE-DIFFERENCE-NORMALIZATION-0.1
+TARGET_SOURCE=resolved Target Predicate
+OBSERVED_SOURCE=State-bound Normalized Facts and bounded Negative Observations
+UNKNOWN_FIELDS=REJECT
+NESTED_COLLECTIONS=EXPLICIT_KIND_WRAPPER_ONLY
+BARE_ARRAY=REJECT
+TEXT_NORMALIZATION=UNICODE_NFC
+NUMBER_PROFILE=JSON_INTEGER_OR_CANONICAL_DECIMAL_STRING
+```
+
+Target Predicateから次をexactに射影する。
+
+```yaml
+normalized_target_state:
+  subject: <canonical subject>
+  predicate: <canonical predicate>
+  operator: EQUALS
+  expected_value: <recursive canonical value>
+  expected_value_type: STRING
+  effective_boundary: <recursive canonical value or null>
+  unknown_policy: FAIL_CLOSED
+```
+
+`operator`は`EQUALS | NOT_EQUALS | PRESENT | ABSENT | EMPTY | CONTAINS | EXCLUDES | CARDINALITY_EQUALS | RELATION_HOLDS`、`expected_value_type`は`NULL | BOOLEAN | INTEGER | DECIMAL_STRING | STRING | OBJECT | COLLECTION | REFERENCE`のclosed enumである。Operatorが値を取らない場合も`expected_value=null`をexactに保持する。Target Predicateに必要fieldが欠落、operator不明、型不一致または未定義collection semanticsがあればDifferenceを導出しない。
+
+Observed sourceを同じsubject／predicate／effective boundaryへ絞り、競合解決後に次をexactに射影する。
+
+```yaml
+normalized_structural_difference:
+  mismatch_kind: VALUE_MISMATCH
+  observed_knowledge_status: KNOWN
+  target_value: <normalized_target_state.expected_value>
+  target_value_type: STRING
+  observed_value: <recursive canonical value or null>
+  observed_value_type: STRING
+  target_cardinality: null
+  observed_cardinality: null
+  expected_relation: null
+  observed_relation: null
+  boundary_match: true
+  comparison_profile: MANOSUBE-DIFFERENCE-COMPARISON-0.1
+```
+
+`mismatch_kind`は`MISSING | UNEXPECTED | VALUE_MISMATCH | TYPE_MISMATCH | CARDINALITY_MISMATCH | RELATION_MISMATCH | BOUNDARY_MISMATCH | CONFLICT | UNKNOWN`、`observed_knowledge_status`は`KNOWN | ABSENT | EMPTY | UNKNOWN | UNOBSERVED | BLOCKED | FAILED | INVALID | CONFLICTED`のclosed enumである。全fieldを必須とし、非該当fieldは省略せず`null`へ固定する。
+
+導出順は、(1) exact Target Predicate解決、(2) subject／predicate／boundary一致するObservation入力選択、(3) positive／negative conflict評価、(4)型比較、(5)cardinality比較、(6)relation比較、(7)value比較、(8)上記closed projection生成、の一つだけである。先に成立したfailure／mismatch categoryを採用し、後段へ進まない。複数Factが一意値へ収束しない場合は`CONFLICT + CONFLICTED`、観測不能は対応するknowledge statusと`UNKNOWN`を生成し、推測値を入れない。
+
+Conformance vectorsは少なくとも、同一Target／Observed入力のkey順序不変性、unordered set順序不変性、ordered list順序変更、各operator、全mismatch kind、unknown／conflicted入力、type／cardinality precedence、bare array、duplicate set member、unknown fieldを含む。異なる実装が同じsource recordsから同じ二projection bytesとDifference IDを生成する固定digest vectorを公開する。
+
 `objective_revision_ref`はexact provenance bindingとしてDifference Recordへ保持するが、identity inputには含めない。Objectiveの`EDITORIAL` revisionはsemantic fingerprintが不変であるため、同じTargetとMismatchのDifference IDを維持する。
 
 Target value、Objective semantics、Mismatchの意味またはClosure Policy payloadが変わればidentityは変わる。Observed valueはMismatchへ正規化された範囲だけidentityへ反映する。
