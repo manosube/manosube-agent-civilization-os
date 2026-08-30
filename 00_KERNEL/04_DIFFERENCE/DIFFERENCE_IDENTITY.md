@@ -52,19 +52,18 @@ DIFFERENCE_IDENTITY_INPUT
 + objective_semantic_fingerprint
 + target_predicate_ref
 + subject
-+ predicate
-+ effective_boundary
++ observation_scope
 + normalized_target_state
 + normalized_structural_difference
 + closure_policy_semantic_fingerprint
 + identity_profile
 ```
 
-`normalized_target_state`と`normalized_structural_difference`は自由形式objectではなく、次のprofileで導出するclosed projectionである。
+`normalized_target_state`、`normalized_observed_state`および`normalized_structural_difference`は自由形式objectではなく、実在するv0.1 Objective／Observation Schemaから次のprofileで導出するclosed projectionである。
 
 ```text
 PROFILE=MANOSUBE-DIFFERENCE-NORMALIZATION-0.1
-TARGET_SOURCE=resolved Target Predicate
+TARGET_SOURCE=01_SCHEMA/objective/target_predicate.schema.json
 OBSERVED_SOURCE=State-bound Normalized Facts and bounded Negative Observations
 UNKNOWN_FIELDS=REJECT
 NESTED_COLLECTIONS=EXPLICIT_KIND_WRAPPER_ONLY
@@ -73,44 +72,73 @@ TEXT_NORMALIZATION=UNICODE_NFC
 NUMBER_PROFILE=JSON_INTEGER_OR_CANONICAL_DECIMAL_STRING
 ```
 
-Target Predicateから次をexactに射影する。
+Target Predicateの既存fieldを改名せず次へexactに射影する。
 
 ```yaml
 normalized_target_state:
-  subject: <canonical subject>
-  predicate: <canonical predicate>
-  operator: EQUALS
-  expected_value: <recursive canonical value>
-  expected_value_type: STRING
-  effective_boundary: <recursive canonical value or null>
-  unknown_policy: FAIL_CLOSED
+  subject: natural_cycle.result
+  operator: equals
+  expected_value: PASS
+  observation_scope: minimal_fixture_binding
+  evidence_requirement: E4
+  unknown_policy: INCOMPLETE
+  criticality: mandatory
 ```
 
-`operator`は`EQUALS | NOT_EQUALS | PRESENT | ABSENT | EMPTY | CONTAINS | EXCLUDES | CARDINALITY_EQUALS | RELATION_HOLDS`、`expected_value_type`は`NULL | BOOLEAN | INTEGER | DECIMAL_STRING | STRING | OBJECT | COLLECTION | REFERENCE`のclosed enumである。Operatorが値を取らない場合も`expected_value=null`をexactに保持する。Target Predicateに必要fieldが欠落、operator不明、型不一致または未定義collection semanticsがあればDifferenceを導出しない。
+`operator`はsource schemaと同じ`equals | not_equals | contains | exists | all | none`だけ、`unknown_policy`は`INCOMPLETE`だけ、`evidence_requirement`は`E0..E6`、`criticality`は`mandatory | advisory`だけを許可する。変換表や大文字別名を作らない。`expected_value`のcollectionはexplicit wrapper必須である。
 
-Observed sourceを同じsubject／predicate／effective boundaryへ絞り、競合解決後に次をexactに射影する。
+Objectiveの`observation_scope`文字列は推論せず、Difference導出入力に次のexact bindingを必須とする。
+
+```yaml
+objective_scope_binding:
+  objective_scope_name: minimal_fixture_binding
+  scope_ref: {kind: observation_scope, id: OBS-SCOPE-...}
+  scope_schema_version: "0.1"
+  resolved_scope_record_sha256: sha256:<64 lowercase hex>
+```
+
+`objective_scope_name`はTarget Predicateの`observation_scope`とexact一致し、scope ref／version／record digestはClosure Policy G9と同じresolved Scope projectionで検証する。binding欠落または不一致ならDifferenceを導出しない。
+
+Observed sourceは、(1) same project／State binding、(2) FactまたはNegative Observationの`subject`がTarget `subject`とexact一致、(3) Observation `scope_ref`がobjective scope bindingとexact一致、の全条件で選択し、Factの`predicate`をTarget operatorの代用にしない。次のclosed projectionへ射影する。
+
+```yaml
+normalized_observed_state:
+  subject: natural_cycle.result
+  objective_scope_binding: {}
+  knowledge_status: KNOWN
+  value_candidates:
+    collection_kind: UNORDERED_SET
+    members:
+      - value: PASS
+        value_type: STRING
+        unit: null
+        fact_predicate: natural_cycle.result@v1
+        effective_boundary: {}
+```
+
+`knowledge_status`は`KNOWN | ABSENT | EMPTY | UNKNOWN | UNOBSERVED | BLOCKED | FAILED | INVALID | CONFLICTED`のclosed enumである。`value_candidates`はduplicate-free unordered setで、各memberをNormalized Factの既存fieldからexactに射影する。Negative Observationはvalueを捏造せずknowledge statusへ射影する。
+
+最後にTarget operatorをObserved projectionへ適用し、次の全field必須projectionを生成する。
 
 ```yaml
 normalized_structural_difference:
   mismatch_kind: VALUE_MISMATCH
   observed_knowledge_status: KNOWN
-  target_value: <normalized_target_state.expected_value>
+  target_value: PASS
+  observed_values: {collection_kind: UNORDERED_SET, members: []}
   target_value_type: STRING
-  observed_value: <recursive canonical value or null>
-  observed_value_type: STRING
+  observed_value_types: {collection_kind: UNORDERED_SET, members: []}
   target_cardinality: null
   observed_cardinality: null
-  expected_relation: null
-  observed_relation: null
-  boundary_match: true
+  comparison_result: NOT_EQUAL
   comparison_profile: MANOSUBE-DIFFERENCE-COMPARISON-0.1
 ```
 
-`mismatch_kind`は`MISSING | UNEXPECTED | VALUE_MISMATCH | TYPE_MISMATCH | CARDINALITY_MISMATCH | RELATION_MISMATCH | BOUNDARY_MISMATCH | CONFLICT | UNKNOWN`、`observed_knowledge_status`は`KNOWN | ABSENT | EMPTY | UNKNOWN | UNOBSERVED | BLOCKED | FAILED | INVALID | CONFLICTED`のclosed enumである。全fieldを必須とし、非該当fieldは省略せず`null`へ固定する。
+`mismatch_kind`は`MISSING | UNEXPECTED | VALUE_MISMATCH | TYPE_MISMATCH | CARDINALITY_MISMATCH | RELATION_MISMATCH | BOUNDARY_MISMATCH | CONFLICT | UNKNOWN`、`comparison_result`は`EQUAL | NOT_EQUAL | SATISFIED | NOT_SATISFIED | UNKNOWN`のclosed enumである。非該当fieldも省略せず`null`またはempty explicit setへ固定する。
 
-導出順は、(1) exact Target Predicate解決、(2) subject／predicate／boundary一致するObservation入力選択、(3) positive／negative conflict評価、(4)型比較、(5)cardinality比較、(6)relation比較、(7)value比較、(8)上記closed projection生成、の一つだけである。先に成立したfailure／mismatch categoryを採用し、後段へ進まない。複数Factが一意値へ収束しない場合は`CONFLICT + CONFLICTED`、観測不能は対応するknowledge statusと`UNKNOWN`を生成し、推測値を入れない。
+導出順は、exact Target解決 → objective scope binding検証 → State-bound observed input選択 → conflict／knowledge評価 → source operatorのtotal evaluation → type → cardinality → relation → value → closed mismatch projection、の一つだけである。`exists`はKNOWN value candidateが1件以上、`all`は非空candidate全件、`none`はcandidate 0件をbounded complete Scopeでのみ評価する。`contains`はcollection member canonical bytes比較を行う。UNKNOWN／不完全ScopeではいずれもSATISFIEDにしない。
 
-Conformance vectorsは少なくとも、同一Target／Observed入力のkey順序不変性、unordered set順序不変性、ordered list順序変更、各operator、全mismatch kind、unknown／conflicted入力、type／cardinality precedence、bare array、duplicate set member、unknown fieldを含む。異なる実装が同じsource recordsから同じ二projection bytesとDifference IDを生成する固定digest vectorを公開する。
+Conformance vectorsは全6 source operator、全mismatch kind、unknown／conflicted入力、scope binding mismatch、type／cardinality precedence、ordered／unordered collection、bare array、duplicate set、unknown fieldおよび固定digestを含む。
 
 `objective_revision_ref`はexact provenance bindingとしてDifference Recordへ保持するが、identity inputには含めない。Objectiveの`EDITORIAL` revisionはsemantic fingerprintが不変であるため、同じTargetとMismatchのDifference IDを維持する。
 
