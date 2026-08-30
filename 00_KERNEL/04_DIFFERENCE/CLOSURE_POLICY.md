@@ -355,6 +355,7 @@ evaluated_at: "2026-01-01T00:00:00Z"
 
 ```yaml
 kind: observation_execution_binding
+observation_execution_binding_id: OBS-EXEC-BIND-...
 observation_ref: {kind: observation, id: OBS-...}
 verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
 process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
@@ -366,9 +367,28 @@ authenticated_execution_provenance_ref: {kind: observation_execution_provenance,
 binding_semantic_fingerprint: sha256:...
 ```
 
-`observation_execution_provenance`は、exact Observation、実行主体identity、process boundary、Method、全input snapshots、実行attempt、result Evidence、trust-boundary attestationおよびrecord fingerprintを持つclosed immutable recordである。Attestationは宣言されたverifierと実際のObservation実行主体が同一であることを第三者が検証可能にし、自己申告だけをauthenticated provenanceとして扱わない。
+`authenticated_execution_provenance_ref`は次のclosed immutable recordへ解決する。
 
-BindingのObservation集合は`observation_refs`と完全一致し、各bindingのverifier、boundary、Method、snapshot集合は親`VERIFICATION_INDEPENDENCE` recordの対応fieldとexact一致しなければならない。欠落、余分、重複、解決不能ref、attestation failure、Change executor identityとの禁止された重複をrejectする。これらのbindingを検証できない場合、independence `result`を`PASS`にしてはならない。
+```yaml
+schema_version: "0.1"
+record_kind: OBSERVATION_EXECUTION_PROVENANCE
+observation_execution_provenance_id: OBS-EXEC-PROV-...
+observation_ref: {kind: observation, id: OBS-...}
+verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
+process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
+observation_method_ref: {kind: observation_method, id: OBS-METHOD-...}
+input_snapshot_refs: {collection_kind: UNORDERED_SET, members: []}
+execution_attempt_ref: {kind: observation_attempt, id: OBS-ATTEMPT-...}
+result_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
+trust_boundary_attestation_ref: {kind: signed_attestation, id: ATTEST-...}
+provenance_semantic_fingerprint: sha256:...
+```
+
+Attestationは署名者identity、subject verifier、Observation、attempt、boundary、Method、snapshot集合、result Evidence集合、発行時刻、expiry、signature algorithm、signatureを持ち、設定済みtrust rootへ検証できなければならない。自己署名、expiry超過、subject不一致、payload digest不一致をrejectする。
+
+Binding／Provenance fingerprint profileは`MANOSUBE-OBSERVATION-EXECUTION-BINDING-SHA256-0.1`／`MANOSUBE-OBSERVATION-EXECUTION-PROVENANCE-SHA256-0.1`とし、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic object keys、unknown field rejectを共通規則とする。Binding fingerprintは`kind + observation_ref + verifier_identity_ref + process_boundary_ref + observation_method_ref + input_snapshot_refs + authenticated_execution_provenance_ref`を含む。Provenance fingerprintはIDとfingerprint自身を除く全fieldを含む。両collectionはduplicate-free `UNORDERED_SET`でcanonical member bytes順にする。各IDはそれぞれ`OBS-EXEC-BIND-`／`OBS-EXEC-PROV-`＋64 lowercase hexである。Conformance vectorsは固定payload／digest、set順序不変、member変更、unknown field、bad attestation rejectを含む。
+
+BindingのObservation集合は親`VERIFICATION_INDEPENDENCE.observation_refs`および参照元Closure Evaluationの`after_observation_refs`の双方と完全一致し、各bindingのverifier、boundary、Method、snapshot集合は親recordの対応fieldとexact一致しなければならない。欠落、余分、重複、解決不能ref、attestation failure、Change executor identityとの禁止された重複をrejectする。これらのbindingを検証できない場合、independence `result`を`PASS`にしてはならない。
 
 `CHANGE_BOUND`では、まだ未定義のChange fieldを仮定せず、次のclosed append-only bindingを`change_executor_bindings`へ全Change分保存する。
 
@@ -393,13 +413,13 @@ DIGEST=SHA-256
 OUTPUT=sha256:<64 lowercase hexadecimal characters>
 SERIALIZATION=CANONICAL_JSON_UTF8
 TEXT_NORMALIZATION=UNICODE_NFC
-UNORDERED_SETS=change_executor_bindings,observation_refs,input_snapshot_refs,evidence_refs
+UNORDERED_SETS=change_executor_bindings,observation_execution_bindings,observation_refs,input_snapshot_refs,evidence_refs
 SET_ORDER=CANONICAL_MEMBER_BYTES
 DUPLICATE_SET_MEMBER=REJECT
 UNKNOWN_FIELDS=REJECT
 ```
 
-`independence_semantic_fingerprint`は、record kind、Closure Evaluation ID、verifier identity、全Change executor bindings、process boundary、Observation refs、input snapshot refs、verification method、conflict-of-interest evaluation ref、Evidence refs、resultのcanonical payloadから算出する。`verification_independence_id`はこのfingerprintから決定的に生成する。`evaluated_at`だけをnon-semantic provenanceとしてfingerprintから除外する。Conformance vectorsは各unordered setの順序不変性、member変更によるdigest変更、duplicate／unknown field rejectを含む。
+`independence_semantic_fingerprint`は、record kind、Closure Evaluation ID、verifier identity、全Change executor bindings、全Observation execution bindings、process boundary、Observation refs、input snapshot refs、verification method、conflict-of-interest evaluation ref、Evidence refs、resultのcanonical payloadから算出する。`verification_independence_id`はこのfingerprintから決定的に生成する。`evaluated_at`だけをnon-semantic provenanceとしてfingerprintから除外する。Conformance vectorsは各unordered setの順序不変性、member変更によるdigest変更、duplicate／unknown field rejectを含む。
 
 ID encodingは次で固定する。
 
