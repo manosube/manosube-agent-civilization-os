@@ -141,7 +141,9 @@ Predicate semantic fields内のcollectionは`{"collection_kind":"ORDERED_LIST","
 
 Conformance vectorsはobject key順序の不変性、各included field変更によるdigest変更、excluded provenance変更によるdigest不変性、unordered collection順序の不変性、ordered collection順序変更によるdigest変更、unknown field／bare array rejectを含む。
 
-`required_claims` memberは上記例のclosed five-field objectだけを許可する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`、`closure_policy_ref`から同じcanonical JSON／SHA-256出力規則で算出する。
+`required_claims` memberは上記例のclosed five-field objectだけを許可する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`だけから同じcanonical JSON／SHA-256出力規則で算出する。
+
+Fingerprint循環を避けるため、Completion Recordの`closure_policy_ref`、completion ID、evaluation status、Evidence refsをclaim semantic fingerprintへ含めない。Claim側Policy bindingは`required_claim_evaluation_refs`を解決するG21で別途exact検証し、現在のClosure Policyを自己参照させない。
 
 `required_invariants` memberは上記例のclosed three-field objectだけを許可する。Markdown blockを別のcanonical objectへ変換せず、Gitが権威的に計算するexact source blobへ固定する。`repository + commit_sha + path + blob_sha`が同一blobへ解決され、そのblob内にexact Invariant IDが一意に存在することを要求する。
 
@@ -383,7 +385,7 @@ Negative Evidenceはscope、期間、method、attempt count、completion、blind
 | Policy `required_invariants`がfail | `NOT_SATISFIED` |
 | Kernel Mandatory InvariantがPASS以外 | `BLOCKED` |
 | required claimが`NOT_SATISFIED` | `NOT_SATISFIED` |
-| `CLOSED`がallowed terminal stateに含まれない | `NOT_SATISFIED` |
+| `proposed_terminal_status`がallowed terminal statesに含まれない | `NOT_SATISFIED` |
 | 評価がまだ実行されていない | `NOT_EVALUATED` |
 | 必要Evidenceを評価中 | `EVALUATING` |
 | Truthを決定するInputまたはObservationが不足 | `BLOCKED` |
