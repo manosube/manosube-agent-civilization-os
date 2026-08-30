@@ -398,7 +398,30 @@ evaluation_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
 
-Binding IDはID自身を除く全closed fieldのcanonical JSON UTF-8／SHA-256から`CAND-INV-EVAL-`＋64 lowercase hexとして生成する。 Binding profileは`MANOSUBE-CANDIDATE-EVALUATION-BINDING-SHA256-0.1`とし、`evaluation_evidence_refs`をduplicate-free `UNORDERED_SET`としてcanonical member bytes順に整列する。bare array、duplicate、unknown fieldをrejectする。`evaluation_record_fingerprint`は参照先Canonical recordの保存済みwire object全体を、そのrecord自身が定めるcollection semanticsでcanonical JSON UTF-8へ変換したbytesのSHA-256である。profileは`MANOSUBE-RESOLVED-EVALUATION-RECORD-SHA256-0.1`、出力は`sha256:`＋64 lowercase hexとする。fieldを除外せず、timestamp、Evidence refs、status／resultを含む。参照先に未定義collection semantics、unknown fieldまたは非canonical valueがあればbindingをrejectする。recordが一byteでも変わればfingerprintが変わり、pre-promotion recheckでSTALEとして拒否する。
+Binding IDはID自身を除く全closed fieldのcanonical JSON UTF-8／SHA-256から`CAND-INV-EVAL-`＋64 lowercase hexとして生成する。 Binding profileは`MANOSUBE-CANDIDATE-EVALUATION-BINDING-SHA256-0.1`とし、`evaluation_evidence_refs`をduplicate-free `UNORDERED_SET`としてcanonical member bytes順に整列する。bare array、duplicate、unknown fieldをrejectする。`evaluation_record_fingerprint`は`MANOSUBE-RESOLVED-EVALUATION-RECORD-SHA256-0.1`が定義する次のrecord-kind別closed projectionから算出する。
+
+```text
+COMPLETION_RECORD_SCALARS=
+completion_id,subject_type,subject_ref,claim,target_state_ref,
+observed_state_ref,closure_policy_ref,evaluation_status,
+evaluated_state_revision,evaluated_state_fingerprint,evaluated_at,
+reflow_transition_ref
+
+COMPLETION_RECORD_UNORDERED_SETS=
+required_evidence_refs,invariant_evaluation_refs,material_contradiction_refs
+
+INVARIANT_EVALUATION_SCALARS=
+evaluation_id,invariant_id,subject_ref,state_revision,state_fingerprint,
+verification_stage,method,expected,observed,status,evaluated_at,
+evaluator_capability,authority_ref
+
+INVARIANT_EVALUATION_UNORDERED_SETS=
+evidence_refs,remaining_differences
+```
+
+Bare array fields listed as unordered sets areduplicate拒否後にcanonical member bytes順へ整列し、explicit `UNORDERED_SET` wrapperへ投影する。scalar `observed`内にcollectionがある場合はexplicit collection wrapperを必須とし、未定義bare arrayをrejectする。unknown field、欠落required field、非canonical valueをrejectする。
+
+Fingerprint bytesはrecord kind domain `MANOSUBE:COMPLETION_RECORD:0.1:`または`MANOSUBE:INVARIANT_EVALUATION:0.1:`のexact UTF-8 bytesと、closed projectionのcanonical JSON UTF-8 bytesを追加separatorなしで連結したものとする。SHA-256出力は`sha256:`＋64 lowercase hexである。timestamp、Evidence refs、status／resultを含み、recordが一byteでも変わればpre-promotion recheckでSTALEとして拒否する。
 
 Bindingはunderlying Invariant EvaluationのInvariant、result、Evidence、evaluated_at、record fingerprintとexact一致し、そのEvaluationがcandidate semantic state bytesを入力として評価したことをEvidenceで証明する。base Stateだけを評価したrecordをcandidateへ流用しない。
 
@@ -440,7 +463,7 @@ required_claim_ref: {kind: completion_claim, id: CMP-...}
 completion_record_ref: {kind: completion_record, id: CMP-...}
 evaluation_record_fingerprint: sha256:...
 evaluation_status: SATISFIED
-evaluation_evidence_refs: []
+evaluation_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
 
