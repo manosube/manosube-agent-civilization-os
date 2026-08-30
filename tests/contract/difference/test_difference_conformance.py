@@ -92,6 +92,15 @@ def test_three_evaluation_modes_are_distinct() -> None:
         {
             "evaluation_mode": "CANDIDATE_CLOSURE",
             "after_state_candidate": candidate,
+            "resolution_mode": "CHANGE_FREE",
+            "after_observation_refs": [{"kind": "observation", "id": "OBS-AFTER"}],
+            "change_free_verification_evidence_refs": [
+                {"kind": "observation_evidence", "id": "EVID-AFTER"}
+            ],
+            "evidence_sufficiency_ref": {
+                "kind": "evidence_sufficiency",
+                "id": "EVID-SUFF-0001",
+            },
             "terminal_reason_evidence_refs": [],
             "proposed_terminal_status": "CLOSED",
             "result": "SATISFIED",
@@ -111,7 +120,7 @@ def test_difference_fixture_suite_has_no_escape() -> None:
         FIXTURE_ROOT
     )
     assert valid_count == 1
-    assert invalid_count == 18
+    assert invalid_count == 20
     assert valid_errors == []
     assert invalid_escapes == []
 
@@ -132,3 +141,56 @@ def test_supersession_relation_uses_canonical_contract_shape() -> None:
     invented = deepcopy(relation)
     invented["relation_id"] = invented.pop("supersession_relation_id")
     assert list(validator.iter_errors(invented))
+
+
+def test_target_value_type_and_closure_evidence_fail_closed() -> None:
+    validators = _validators()
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    difference = deepcopy(bundle["differences"][0])
+    difference["normalized_target_state"]["expected_value_type"] = "INTEGER"
+    assert list(validators["difference.schema.json"].iter_errors(difference))
+
+    base = deepcopy(bundle["evaluations"][0])
+    candidate = {
+        "kind": "after_state_candidate",
+        "candidate_id": "STATE-CANDIDATE-" + "A" * 64,
+        "kernel_source_ref": base["kernel_source_ref_evaluated"],
+        "base_state_ref": {"kind": "state", "id": "STATE-0002"},
+        "semantic_state": {},
+        "semantic_fingerprint": base["evaluated_state_fingerprint"],
+        "source_snapshot_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        "producing_change_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+    }
+    base.update(
+        {
+            "evaluation_mode": "CANDIDATE_CLOSURE",
+            "after_state_candidate": candidate,
+            "proposed_terminal_status": "CLOSED",
+            "result": "SATISFIED",
+            "terminal_reason_evidence_refs": [],
+            "gate_results": {f"G{index}": "PASS" for index in range(1, 23)},
+        }
+    )
+    assert list(validators["closure_evaluation.schema.json"].iter_errors(base))
+
+
+def test_candidate_terminal_gates_and_retained_handoff_are_enforced() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    candidate_terminal = deepcopy(bundle)
+    evaluation = candidate_terminal["evaluations"][0]
+    evaluation["evaluation_mode"] = "CANDIDATE_TERMINAL"
+    evaluation["after_state_candidate"] = {
+        "kind": "after_state_candidate",
+        "candidate_id": "STATE-CANDIDATE-" + "A" * 64,
+    }
+    assert any("candidate terminal gate omitted" in error for error in validate_bundle(candidate_terminal))
+
+    retained = deepcopy(bundle)
+    retained["events"][2]["to_status"] = "RETAINED"
+    retained["events"][2]["blocker_kind"] = None
+    retained["events"][2]["blocker_scope"] = None
+    retained["events"][2]["blocker_resolution_condition"] = None
+    retained["events"][2]["next_observation_ref"] = None
+    retained["evaluations"][0]["proposed_terminal_status"] = "RETAINED"
+    retained["materialized_status"][retained["differences"][0]["difference_id"]] = "RETAINED"
+    assert any("next observation missing" in error for error in validate_bundle(retained))

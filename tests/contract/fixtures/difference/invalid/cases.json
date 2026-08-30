@@ -16,5 +16,7 @@
   {"name": "evaluation_target_mismatch", "path": ["evaluations", 0, "target_predicate_ref", "id"], "value": "TP-9999"},
   {"name": "policy_only_candidate_gate_leakage", "path": ["evaluations", 0, "gate_results", "G6"], "value": "PASS"},
   {"name": "ordinary_event_reopen_payload", "path": ["events", 1, "reopen_trigger"], "value": "MATERIAL_CONTRADICTION"},
-  {"name": "policy_only_mandatory_gate_failure", "path": ["evaluations", 0, "gate_results", "G18"], "value": "FAIL"}
+  {"name": "policy_only_mandatory_gate_failure", "path": ["evaluations", 0, "gate_results", "G18"], "value": "FAIL"},
+  {"name": "terminal_evaluation_stale_head", "path": ["evaluations", 0, "difference_event_head_ref", "id"], "value": "D-EVT-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+  {"name": "blocker_condition_state_mismatch", "path": ["events", 2, "blocker_resolution_condition", "expected_state"], "value": "PASS"}
 ]

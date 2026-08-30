@@ -397,7 +397,7 @@
       },
       "difference_event_head_ref": {
         "kind": "difference_event",
-        "id": "D-EVT-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        "id": "D-EVT-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
       },
       "target_predicate_ref": {
         "kind": "target_predicate",

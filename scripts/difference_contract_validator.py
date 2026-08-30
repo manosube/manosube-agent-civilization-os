@@ -148,6 +148,21 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         errors.append(f"blocker boundary mismatch: {event['difference_event_id']}")
                     if _ref_id(condition["verification_request_ref"]) != _ref_id(event["next_observation_ref"]):
                         errors.append(f"blocker verification request mismatch: {event['difference_event_id']}")
+                    expected_states = {
+                        "AUTHORITY_PATH_AVAILABLE": "AVAILABLE",
+                        "EXECUTION_PATH_AVAILABLE": "AVAILABLE",
+                        "OBSERVATION_PATH_AVAILABLE": "AVAILABLE",
+                        "REQUIRED_EVIDENCE_AVAILABLE": "AVAILABLE",
+                        "BINDINGS_CURRENT": "CURRENT",
+                        "MATERIAL_CONFLICT_RESOLVED": "RESOLVED",
+                        "INVARIANTS_PASS": "PASS",
+                        "CLAIMS_PASS": "PASS",
+                        "STRUCTURAL_BLOCKER_REMOVED": "REMOVED",
+                    }
+                    if expected_states.get(condition["condition_code"]) != condition["expected_state"]:
+                        errors.append(f"blocker condition state mismatch: {event['difference_event_id']}")
+            if event["to_status"] in {"RETAINED", "REOPENED"} and event["next_observation_ref"] is None:
+                errors.append(f"next observation missing: {event['difference_event_id']}")
             if event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}:
                 evaluation = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
                 difference = differences.get(difference_id)
@@ -159,6 +174,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or evaluation["gate_results"]["G22"] != "PASS"
                     or policy is None
                     or not _policy_ref_matches(evaluation["policy_ref"], policy)
+                    or _ref_id(evaluation["difference_event_head_ref"])
+                    != event["previous_event_id"]
                 ):
                     errors.append(f"terminal evaluation binding mismatch: {event['difference_event_id']}")
             reconstructed[difference_id] = event["to_status"]
@@ -231,11 +248,37 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 errors.append(f"invalid candidate closure mode: {evaluation['closure_evaluation_id']}")
             if any(value != "PASS" for value in evaluation["gate_results"].values()):
                 errors.append(f"closure has non-PASS mandatory gate: {evaluation['closure_evaluation_id']}")
+            resolution_mode = evaluation["resolution_mode"]
+            common_evidence_present = bool(
+                evaluation["after_observation_refs"]
+                and evaluation["evidence_sufficiency_ref"]
+            )
+            mode_evidence_present = (
+                resolution_mode == "CHANGE_BOUND"
+                and bool(evaluation["change_refs"])
+                and bool(evaluation["change_result_evidence_refs"])
+                and not evaluation["change_free_verification_evidence_refs"]
+            ) or (
+                resolution_mode == "CHANGE_FREE"
+                and not evaluation["change_refs"]
+                and not evaluation["change_result_evidence_refs"]
+                and bool(evaluation["change_free_verification_evidence_refs"])
+            )
+            if not common_evidence_present or not mode_evidence_present:
+                errors.append(f"closure Evidence binding incomplete: {evaluation['closure_evaluation_id']}")
         elif mode == "CANDIDATE_TERMINAL":
             if candidate is None or proposed not in {"BLOCKED", "RETAINED"}:
                 errors.append(f"invalid candidate terminal mode: {evaluation['closure_evaluation_id']}")
             if not evaluation["terminal_reason_evidence_refs"] or evaluation["result"] == "SATISFIED":
                 errors.append(f"candidate terminal loses failure Evidence: {evaluation['closure_evaluation_id']}")
+            evaluated_gates = {
+                "G1", "G3", "G5", "G6", "G7", "G8", "G9", "G18", "G20", "G22",
+            }
+            if any(
+                evaluation["gate_results"][gate] == "NOT_APPLICABLE"
+                for gate in evaluated_gates
+            ):
+                errors.append(f"candidate terminal gate omitted: {evaluation['closure_evaluation_id']}")
         elif mode == "TERMINAL_POLICY_ONLY":
             if candidate is not None or proposed not in {"BLOCKED", "RETAINED"}:
                 errors.append(f"Policy-only mode contains candidate truth: {evaluation['closure_evaluation_id']}")
