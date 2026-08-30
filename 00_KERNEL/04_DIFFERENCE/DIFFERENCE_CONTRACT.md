@@ -57,16 +57,20 @@ project_id: PRJ-...
 objective_revision_ref: {kind: objective_revision, id: OBJ-REV-...}
 objective_semantic_fingerprint: {}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
-target_state_ref: {kind: target_state, id: TARGET-STATE-...}
+normalized_target_state: {}
+objective_scope_binding:
+  objective_scope_name: ""
+  scope_ref: {kind: observation_scope, id: OBS-SCOPE-...}
+  scope_schema_version: "0.1"
+  resolved_scope_record_sha256: sha256:...
 observed_state_revision: 0
 observed_state_fingerprint: {}
 observation_refs: []
 observation_evidence_refs: []
-observed_state_ref: {kind: observed_state, id: OBSERVED-STATE-...}
+normalized_observed_state: {}
 structural_difference: {}
 subject: ""
-predicate: ""
-effective_boundary: {}
+observation_scope: ""
 impact: {}
 risk_class: LOW
 authority_required: []
@@ -74,7 +78,7 @@ closure_policy: {kind: closure_policy, id: CP-..., version: "0.1", semantic_fing
 genesis_event_ref: {kind: difference_event, id: D-EVT-...}
 ```
 
-未知field、未知version、解決不能なtyped referenceを持つRecordはCanonical Differenceへ昇格させず、rejectまたはquarantineする。
+`normalized_target_state`、`normalized_observed_state`、`structural_difference`は`DIFFERENCE_IDENTITY.md`のclosed projectionsをinline保持し、実在しないTarget State／Observed State record IDを参照しない。未知field、未知version、解決不能なtyped referenceを持つRecordはCanonical Differenceへ昇格させず、rejectまたはquarantineする。
 
 # 3. Exact Input Binding
 
@@ -85,8 +89,12 @@ project_id
 objective_revision_ref
 objective_semantic_fingerprint
 target_predicate_ref
+normalized_target_state
+objective_scope_binding
 observed_state_revision
 observed_state_fingerprint
+normalized_observed_state
+structural_difference
 observation_refs
 observation_evidence_refs
 effective_boundary
