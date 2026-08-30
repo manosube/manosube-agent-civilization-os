@@ -70,7 +70,7 @@ effective_boundary: {}
 impact: {}
 risk_class: LOW
 authority_required: []
-closure_policy: {kind: closure_policy, id: CP-...}
+closure_policy: {kind: closure_policy, id: CP-..., version: "0.1", fingerprint: sha256:...}
 genesis_event_ref: {kind: difference_event, id: D-EVT-...}
 ```
 
@@ -90,7 +90,12 @@ observed_state_fingerprint
 observation_refs
 observation_evidence_refs
 effective_boundary
+closure_policy.id
+closure_policy.version
+closure_policy.fingerprint
 ```
+
+Closure Policyのlogical IDだけではexact bindingにならない。Difference導出時にPolicy versionとimmutable payload fingerprintを固定し、後続Evaluationはこのtupleと一致しなければならない。Policy改定は旧Differenceのbindingを上書きせず、適用可能性を再評価して必要ならSupersessionへ送る。
 
 Observationは同じProject、State revision、State fingerprintを参照しなければならない。異なるStateへObservationまたはDifferenceを再利用してはならない。
 
