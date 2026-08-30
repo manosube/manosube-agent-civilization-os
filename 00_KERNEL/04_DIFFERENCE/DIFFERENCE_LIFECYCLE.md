@@ -80,7 +80,7 @@ v0.1のlegal transitionを次で固定する。
 | `RETAINED` | `VERIFYING` | 新Evidenceで検証を再開 |
 | `RETAINED` | `BLOCKED` | blockerが確認された |
 | `RETAINED` | `SUPERSEDED` | validな双方向supersession |
-| `CLOSED` | `REOPENED` | 後続ObservationがClosure Claimを反証 |
+| `CLOSED` | `REOPENED` | 後続Observationによる反証、Closure Evidenceの失効／provenance不正、またはmaterial contradiction |
 | `CLOSED` | `SUPERSEDED` | materialなObjective、TargetまたはMismatch semantics変更とvalidなSupersession Relation |
 | `REOPENED` | `ACTIVE` | authorized resolutionを再開 |
 | `REOPENED` | `VERIFYING` | Change不要で新Evidenceを再評価 |
@@ -175,7 +175,15 @@ Lifecycle Engineはtransitionの構造的妥当性を評価するが、Human Aut
 
 # 8. Reopen
 
-Reopenは旧Closure Eventを削除または書換えない。後続Observation、反証Evidence、対象Closure refを持つ新Eventをappendする。
+Reopenは旧Closure Eventを削除または書換えない。新Eventはtrigger kind、対象Closure Evaluation ref、反証または失効したEvidence refsを必須とし、Observationによる反証の場合は後続Observation refsも持つ。Evidence失効またはprovenance不正によるReopenではObservation refsを必須にしない。
+
+```text
+REOPEN_TRIGGER
+= OBSERVATION_CONTRADICTION
+| CLOSURE_EVIDENCE_REVOKED
+| CLOSURE_EVIDENCE_INVALID
+| MATERIAL_CONTRADICTION
+```
 
 ```text
 CLOSED HISTORY PRESERVED=true
