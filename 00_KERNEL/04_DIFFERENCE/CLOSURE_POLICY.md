@@ -146,7 +146,7 @@ Policy fingerprintへ投入する各`reopen_conditions` memberは、`kind + id +
 
 `required_claims` memberは上記例のclosed five-field objectだけを許可する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`だけから同じcanonical JSON／SHA-256出力規則で算出する。
 
-Fingerprint循環を避けるため、Completion Recordの`closure_policy_ref`、completion ID、evaluation status、Evidence refsをclaim semantic fingerprintへ含めない。Claim側Policy bindingは`required_claim_evaluation_refs`を解決するG21で別途exact検証し、現在のClosure Policyを自己参照させない。
+Fingerprint循環を避けるため、Completion Recordの`closure_policy_ref`、completion ID、evaluation status、Evidence refsをclaim semantic fingerprintへ含めない。Claim側Policy bindingは`candidate_claim_evaluation_bindings`を解決するG21で別途exact検証し、現在のClosure Policyを自己参照させない。
 
 `required_invariants` memberは上記例のclosed three-field objectだけを許可する。Markdown blockを別のcanonical objectへ変換せず、Gitが権威的に計算するexact source blobへ固定する。`repository + commit_sha + path + blob_sha`が同一blobへ解決され、そのblob内にexact Invariant IDが一意に存在することを要求する。
 
