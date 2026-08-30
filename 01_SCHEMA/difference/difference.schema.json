@@ -31,6 +31,13 @@
   "$defs": {
     "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "nullable_timestamp": {"oneOf": [{"type": "null"}, {"$ref": "../common/timestamp.schema.json"}]},
+    "canonical_value": {
+      "oneOf": [
+        {"type": "null"}, {"type": "boolean"}, {"type": "integer"}, {"type": "string"},
+        {"type": "array", "items": {"$ref": "#/$defs/canonical_value"}},
+        {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonical_value"}}
+      ]
+    },
     "versioned_reference": {
       "type": "object", "required": ["kind", "id", "version", "semantic_fingerprint"],
       "properties": {"kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}, "id": {"$ref": "../common/identity.schema.json"}, "version": {"const": "0.1"}, "semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}}, "additionalProperties": false
@@ -56,8 +63,8 @@
         {"if": {"properties": {"expected_value_type": {"const": "UNORDERED_COLLECTION"}}}, "then": {"properties": {"expected_value": {"$ref": "#/$defs/unordered_values"}}}}
       ], "additionalProperties": false
     },
-    "ordered_values": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "ORDERED_LIST"}, "members": {"type": "array"}}, "additionalProperties": false},
-    "unordered_values": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true}}, "additionalProperties": false},
+    "ordered_values": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "ORDERED_LIST"}, "members": {"type": "array", "items": {"$ref": "#/$defs/canonical_value"}}}, "additionalProperties": false},
+    "unordered_values": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/canonical_value"}}}, "additionalProperties": false},
     "normalized_observed_state": {
       "type": "object", "required": ["subject", "objective_scope_binding", "effective_boundary", "knowledge_status", "value_candidates"],
       "properties": {"subject": {"type": "string", "minLength": 1}, "objective_scope_binding": {"$ref": "#/$defs/objective_scope_binding"}, "effective_boundary": {"$ref": "#/$defs/effective_boundary"}, "knowledge_status": {"enum": ["KNOWN", "ABSENT", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE", "CONFLICTED"]}, "value_candidates": {"$ref": "#/$defs/unordered_value_candidates"}}, "additionalProperties": false
@@ -74,7 +81,7 @@
         {"if": {"properties": {"value_type": {"const": "BOOLEAN"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "boolean"}}}},
         {"if": {"properties": {"value_type": {"const": "INTEGER"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "integer"}}}},
         {"if": {"properties": {"value_type": {"const": "STRING"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string"}}}},
-        {"if": {"properties": {"value_type": {"const": "STRUCTURED"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "object"}}}},
+        {"if": {"properties": {"value_type": {"const": "STRUCTURED"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonical_value"}}}}},
         {"if": {"properties": {"value_type": {"const": "DECIMAL"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"}}}},
         {"if": {"properties": {"value_type": {"const": "TIMESTAMP"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "../common/timestamp.schema.json"}}}},
         {"if": {"properties": {"value_type": {"const": "DURATION"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^P"}}}},

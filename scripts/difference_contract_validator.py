@@ -136,6 +136,33 @@ def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
     return False
 
 
+def _resolved_scope_fingerprint(scope: dict[str, Any]) -> str:
+    projection = deepcopy(scope)
+    for key in ("included_subjects", "excluded_subjects", "source_snapshot_refs", "blind_spots"):
+        projection[key] = {
+            "collection_kind": "UNORDERED_SET",
+            "members": sorted(
+                (_canonical_semantic(item) for item in projection[key]),
+                key=canonical_json_bytes,
+            ),
+        }
+    projection["attempt_policy"]["retry_on"] = {
+        "collection_kind": "UNORDERED_SET",
+        "members": sorted(
+            projection["attempt_policy"]["retry_on"], key=canonical_json_bytes
+        ),
+    }
+    for item in projection["blind_spots"]["members"]:
+        item["affected_subjects"] = {
+            "collection_kind": "UNORDERED_SET",
+            "members": sorted(item["affected_subjects"], key=canonical_json_bytes),
+        }
+    domain = b"MANOSUBE:RESOLVED_OBSERVATION_SCOPE_RECORD:0.1:"
+    return "sha256:" + hashlib.sha256(
+        domain + canonical_json_bytes(_canonical_semantic(projection))
+    ).hexdigest()
+
+
 def _policy_fingerprint(policy: dict[str, Any]) -> str:
     projection = {key: policy[key] for key in (
         "target_predicate_ref", "required_observation_scope", "minimum_evidence_level",
@@ -827,6 +854,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 evaluation["terminal_reason_evidence_refs"]
                 + evaluation["change_result_evidence_refs"]
                 + evaluation["change_free_verification_evidence_refs"]
+                + [
+                    reference
+                    for binding in evaluation["candidate_invariant_evaluation_bindings"]
+                    for reference in binding["evaluation_evidence_refs"]
+                ]
+                + [
+                    reference
+                    for binding in evaluation["candidate_claim_evaluation_bindings"]
+                    for reference in binding["evaluation_evidence_refs"]
+                ]
             )
             evidence_times = [
                 evidence_observed_at.get(canonical_json_bytes(reference))
@@ -912,9 +949,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 or (
                     required_scope is not None
                     and required_scope["schema_version"] == required_scope_ref["schema_version"]
-                    and "sha256:" + hashlib.sha256(
-                        canonical_json_bytes(_canonical_semantic(required_scope))
-                    ).hexdigest() == required_scope_ref["resolved_record_sha256"]
+                    and _resolved_scope_fingerprint(required_scope)
+                    == required_scope_ref["resolved_record_sha256"]
                 )
             )
             resolution_evidence_refs = (
@@ -948,11 +984,20 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 )
                 for facts in resolved_fact_sets
             )
+            candidate_value = (
+                None if candidate is None or difference is None else
+                _subject_value(candidate["semantic_state"], difference["subject"])
+            )
             candidate_target_valid = (
                 candidate is not None
                 and difference is not None
-                and _subject_value(candidate["semantic_state"], difference["subject"])
-                == difference["normalized_target_state"]["expected_value"]
+                and _target_satisfied(
+                    [candidate_value], difference["normalized_target_state"]
+                )
+                and all(
+                    fact is not None and fact["value"] == candidate_value
+                    for facts in resolved_fact_sets for fact in facts
+                )
             )
             after_observations_valid = bool(after_observations) and scope_binding_valid and facts_valid and candidate_target_valid and all(
                 observation is not None
