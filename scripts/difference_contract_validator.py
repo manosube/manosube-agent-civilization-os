@@ -289,6 +289,40 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     evidence_sufficiency = _index(
         bundle.get("evidence_sufficiency_results", []), "evidence_sufficiency_id", errors
     )
+    reflow_transitions = _index(
+        bundle.get("reflow_transitions", []), "transaction_id", errors
+    )
+    changes = _index(bundle.get("changes", []), "change_id", errors)
+
+    for policy in policies.values():
+        claims_by_id: dict[str, dict[str, Any]] = {}
+        for descriptor in policy["required_claims"]:
+            semantic_projection = {
+                key: descriptor[key]
+                for key in ("subject_type", "subject_ref", "claim", "target_state_ref")
+            }
+            semantic_fingerprint = "sha256:" + hashlib.sha256(
+                canonical_json_bytes(_canonical_semantic(semantic_projection))
+            ).hexdigest()
+            identity_projection = {
+                "subject_type": descriptor["subject_type"],
+                "subject_ref": descriptor["subject_ref"],
+                "claim_semantic_fingerprint": semantic_fingerprint,
+            }
+            expected_id = "CLAIM-" + hashlib.sha256(
+                b"MANOSUBE:COMPLETION_CLAIM_IDENTITY:0.1:"
+                + canonical_json_bytes(_canonical_semantic(identity_projection))
+            ).hexdigest().upper()
+            previous = claims_by_id.get(descriptor["id"])
+            if (
+                descriptor["claim_semantic_fingerprint"] != semantic_fingerprint
+                or descriptor["id"] != expected_id
+                or (previous is not None and previous != descriptor)
+            ):
+                errors.append(
+                    f"Policy required Claim identity mismatch: {policy['closure_policy_id']}"
+                )
+            claims_by_id[descriptor["id"]] = descriptor
 
     events_by_difference: dict[str, list[dict[str, Any]]] = {}
     for event in events.values():
@@ -318,12 +352,24 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             if (
                 event["from_status"] == "ACTIVE"
                 and event["to_status"] == "VERIFYING"
-                and not (
-                    (event["change_refs"] and event["next_observation_ref"] is not None)
-                    or (event["observation_refs"] and event["evidence_refs"])
-                )
             ):
-                errors.append(f"verifying minimum gate missing: {event['difference_event_id']}")
+                resolved_changes = [
+                    changes.get(_ref_id(reference) or "")
+                    for reference in event["change_refs"]
+                ]
+                change_bound = bool(resolved_changes) and all(
+                    change is not None
+                    and change["status"] == "EXECUTED"
+                    and _ref_id(change["difference_ref"]) == difference_id
+                    and change["after_state_observation_request_ref"]
+                    == event["next_observation_ref"]
+                    for change in resolved_changes
+                )
+                change_free = bool(event["observation_refs"] and event["evidence_refs"])
+                if not (change_bound or change_free):
+                    errors.append(
+                        f"verifying minimum gate missing: {event['difference_event_id']}"
+                    )
             is_reopen = event["from_status"] == "CLOSED" and event["to_status"] == "REOPENED"
             reopen_lists = (
                 event["revoked_evidence_refs"],
@@ -441,6 +487,32 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 evaluation = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
                 difference = differences.get(difference_id)
                 policy = None if difference is None else policies.get(difference["closure_policy"]["id"])
+                transition_ref = event["reflow_transition_ref"]
+                transition = reflow_transitions.get(_ref_id(transition_ref) or "")
+                candidate = None if evaluation is None else evaluation["after_state_candidate"]
+                reflow_valid = event["to_status"] != "CLOSED" or (
+                    transition_ref is not None
+                    and transition_ref.get("kind") == "state_transition"
+                    and transition is not None
+                    and evaluation is not None
+                    and candidate is not None
+                    and transition["event_type"] == "TRANSITION"
+                    and transition["from_revision"] == evaluation["before_state_ref"]["revision"]
+                    and transition["to_revision"] == transition["from_revision"] + 1
+                    and transition["before_fingerprint"]
+                    == evaluation["before_state_ref"]["fingerprint"]
+                    and transition["after_fingerprint"] == candidate["semantic_fingerprint"]
+                    and transition["after_state"]["state_revision"] == transition["to_revision"]
+                    and transition["after_state"]["previous_state_fingerprint"]
+                    == transition["before_fingerprint"]
+                    and transition["after_state"]["semantic_fingerprint"]
+                    == transition["after_fingerprint"]
+                    and transition["after_state"]["semantic_state"] == candidate["semantic_state"]
+                    and {("closure_evaluation", evaluation["closure_evaluation_id"]),
+                         ("difference", difference_id)}
+                    <= {(reference["kind"], reference["id"])
+                        for reference in transition["evidence_refs"]}
+                )
                 if (
                     evaluation is None
                     or evaluation["difference_id"] != difference_id
@@ -453,9 +525,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or (
                         event["to_status"] == "CLOSED"
                         and (
-                            event["reflow_transition_ref"] is None
-                            or event["reflow_transition_ref"]
+                            event["reflow_transition_ref"]
                             != evaluation["reflow_transition_ref"]
+                            or not reflow_valid
                         )
                     )
                 ):
@@ -568,6 +640,38 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"Policy disallows terminal state: {evaluation['closure_evaluation_id']}")
         if candidate is not None and not _candidate_matches_evaluation(candidate, evaluation):
             errors.append(f"candidate input binding mismatch: {evaluation['closure_evaluation_id']}")
+        invariant_definitions = _kernel_invariant_definitions(
+            evaluation["kernel_source_ref_evaluated"]
+        )
+        if candidate is not None:
+            for binding in evaluation["candidate_invariant_evaluation_bindings"]:
+                record = invariant_evaluations.get(
+                    _ref_id(binding["invariant_evaluation_ref"]) or ""
+                )
+                if (
+                    binding["binding_id"]
+                    != _content_address("CAND-INV-EVAL-", binding, "binding_id")
+                    or binding["candidate_id"] != candidate["candidate_id"]
+                    or binding["candidate_semantic_fingerprint"]
+                    != candidate["semantic_fingerprint"]
+                    or binding["base_state_ref"] != evaluation["before_state_ref"]
+                    or binding["invariant_definition_ref"]["invariant_definition_sha256"]
+                    != invariant_definitions.get(binding["invariant_ref"]["id"])
+                    or record is None
+                    or record["invariant_id"] != binding["invariant_ref"]["id"]
+                    or record["subject_ref"]
+                    != {"kind": "after_state_candidate", "id": candidate["candidate_id"]}
+                    or record["state_revision"] != evaluation["before_state_ref"]["revision"]
+                    or record["state_fingerprint"] != candidate["semantic_fingerprint"]
+                    or record["status"] != binding["evaluation_result"]
+                    or record["evidence_refs"] != binding["evaluation_evidence_refs"]
+                    or record["evaluated_at"] != binding["evaluated_at"]
+                    or binding["evaluation_record_fingerprint"]
+                    != (None if record is None else _resolved_record_fingerprint(record, "invariant"))
+                ):
+                    errors.append(
+                        f"candidate invariant binding mismatch: {binding['binding_id']}"
+                    )
         if mode == "CANDIDATE_CLOSURE":
             if candidate is None or proposed != "CLOSED" or evaluation["result"] != "SATISFIED":
                 errors.append(f"invalid candidate closure mode: {evaluation['closure_evaluation_id']}")
@@ -615,7 +719,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 errors.append(f"closure Evidence binding incomplete: {evaluation['closure_evaluation_id']}")
             invariant_bindings = evaluation["candidate_invariant_evaluation_bindings"]
             claim_bindings = evaluation["candidate_claim_evaluation_bindings"]
-            definitions = _kernel_invariant_definitions(evaluation["kernel_source_ref_evaluated"])
+            definitions = invariant_definitions
             if set(definitions) - {"X-003"} != _mandatory_invariant_ids() | {"P-003"}:
                 errors.append(f"kernel invariant source mismatch: {evaluation['closure_evaluation_id']}")
             repository = evaluation["kernel_source_ref_evaluated"]["repository"]

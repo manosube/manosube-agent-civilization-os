@@ -209,10 +209,20 @@ def test_candidate_terminal_gates_and_retained_handoff_are_enforced() -> None:
     candidate_terminal = deepcopy(bundle)
     evaluation = candidate_terminal["evaluations"][0]
     evaluation["evaluation_mode"] = "CANDIDATE_TERMINAL"
-    evaluation["after_state_candidate"] = {
+    candidate = {
         "kind": "after_state_candidate",
         "candidate_id": "STATE-CANDIDATE-" + "A" * 64,
+        "kernel_source_ref": evaluation["kernel_source_ref_evaluated"],
+        "base_state_ref": evaluation["before_state_ref"],
+        "semantic_state": _semantic_state(),
+        "semantic_fingerprint": {
+            "profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "a" * 64,
+        },
+        "source_snapshot_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        "producing_change_refs": {"collection_kind": "UNORDERED_SET", "members": []},
     }
+    candidate["candidate_id"] = _candidate_id(candidate)
+    evaluation["after_state_candidate"] = candidate
     assert any("candidate terminal gate omitted" in error for error in validate_bundle(candidate_terminal))
 
     retained = deepcopy(bundle)
@@ -327,9 +337,84 @@ def test_verifying_and_closed_transitions_enforce_minimum_gates() -> None:
     event["evidence_refs"] = []
     assert any("verifying minimum gate missing" in error for error in validate_bundle(verifying))
 
+    event["change_refs"] = [{"kind": "change", "id": "CHANGE-NOT-RESOLVED"}]
+    event["next_observation_ref"] = {
+        "kind": "next_observation_request", "id": "OBS-REQ-NOT-RESOLVED",
+    }
+    assert any("verifying minimum gate missing" in error for error in validate_bundle(verifying))
+
     closed = deepcopy(event)
     closed["from_status"] = "VERIFYING"
     closed["to_status"] = "CLOSED"
     closed["reflow_transition_ref"] = None
     validator = _validators()["difference_lifecycle_event.schema.json"]
     assert list(validator.iter_errors(closed))
+
+
+def test_reflow_claim_and_terminal_invariant_references_are_resolved() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+
+    closed = deepcopy(bundle)
+    event = closed["events"][2]
+    evaluation = closed["evaluations"][0]
+    transition_ref = {"kind": "state_transition", "id": "TX-NOT-RESOLVED"}
+    event["to_status"] = "CLOSED"
+    event["reflow_transition_ref"] = transition_ref
+    evaluation["proposed_terminal_status"] = "CLOSED"
+    evaluation["reflow_transition_ref"] = transition_ref
+    closed["materialized_status"][event["difference_id"]] = "CLOSED"
+    assert any(
+        "terminal evaluation binding mismatch" in error
+        for error in validate_bundle(closed)
+    )
+
+    invalid_claim = deepcopy(bundle)
+    invalid_claim["policies"][0]["required_claims"] = [{
+        "kind": "completion_claim",
+        "id": "CLAIM-" + "A" * 64,
+        "subject_type": "DIFFERENCE",
+        "subject_ref": {"kind": "difference", "id": event["difference_id"]},
+        "claim": {"status": "CLOSED"},
+        "target_state_ref": None,
+        "claim_semantic_fingerprint": "sha256:" + "a" * 64,
+    }]
+    assert any(
+        "Policy required Claim identity mismatch" in error
+        for error in validate_bundle(invalid_claim)
+    )
+
+    terminal = deepcopy(bundle)
+    evaluation = terminal["evaluations"][0]
+    evaluation["candidate_invariant_evaluation_bindings"] = [{
+        "kind": "candidate_invariant_evaluation_binding",
+        "binding_id": "CAND-INV-EVAL-" + "A" * 64,
+        "candidate_id": "STATE-CANDIDATE-" + "A" * 64,
+        "candidate_semantic_fingerprint": {
+            "profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "a" * 64,
+        },
+        "base_state_ref": evaluation["before_state_ref"],
+        "invariant_ref": {"kind": "kernel_invariant", "id": "K-001"},
+        "invariant_definition_ref": {
+            "repository": "manosube/manosube-agent-civilization-os",
+            "path": "00_KERNEL/KERNEL_INVARIANTS.md",
+            "invariant_definition_sha256": "sha256:" + "a" * 64,
+        },
+        "invariant_evaluation_ref": {
+            "kind": "invariant_evaluation", "id": "INV-EVAL-NOT-RESOLVED",
+        },
+        "evaluation_record_fingerprint": "sha256:" + "a" * 64,
+        "evaluation_result": "FAIL",
+        "evaluation_evidence_refs": {
+            "collection_kind": "UNORDERED_SET", "members": [],
+        },
+        "evaluated_at": evaluation["evaluated_at"],
+    }]
+    evaluation["evaluation_mode"] = "CANDIDATE_TERMINAL"
+    evaluation["after_state_candidate"] = {
+        "kind": "after_state_candidate",
+        "candidate_id": "STATE-CANDIDATE-" + "A" * 64,
+    }
+    assert any(
+        "candidate invariant binding mismatch" in error
+        for error in validate_bundle(terminal)
+    )
