@@ -53,6 +53,7 @@ DIFFERENCE_IDENTITY_INPUT
 + target_predicate_ref
 + subject
 + observation_scope
++ effective_boundary
 + normalized_target_state
 + normalized_structural_difference
 + closure_policy_semantic_fingerprint
@@ -105,6 +106,12 @@ Observed sourceは、(1) same project／State binding、(2) FactまたはNegativ
 normalized_observed_state:
   subject: natural_cycle.result
   objective_scope_binding: {}
+  effective_boundary:
+    kind: OBSERVATION_SCOPE_BOUNDARY
+    scope_ref: {kind: observation_scope, id: OBS-SCOPE-...}
+    resolved_scope_record_sha256: sha256:...
+    target_effective_window: {start: null, end: null}
+    source_snapshot_refs: {collection_kind: UNORDERED_SET, members: []}
   knowledge_status: KNOWN
   value_candidates:
     collection_kind: UNORDERED_SET
@@ -116,7 +123,7 @@ normalized_observed_state:
         effective_boundary: {}
 ```
 
-`knowledge_status`は`KNOWN | ABSENT | EMPTY | UNKNOWN | UNOBSERVED | BLOCKED | FAILED | INVALID | CONFLICTED`のclosed enumである。`value_candidates`はduplicate-free unordered setで、各memberをNormalized Factの既存fieldからexactに射影する。Negative Observationはvalueを捏造せずknowledge statusへ射影する。
+`knowledge_status`は`KNOWN | ABSENT | EMPTY | UNKNOWN | UNOBSERVED | BLOCKED | INCOMPLETE | CONFLICTED`のclosed enumである。Negative Observationはcanonical State Mappingをexact適用し、`NO_RESULT→UNKNOWN`、`FAILED→UNKNOWN`（failure Evidenceは保持）、`INVALID→REJECT_OR_QUARANTINE`、その他は同名statusへ写像する。`INVALID`からnormalized observed stateまたはDifferenceを生成しない。`value_candidates`はduplicate-free unordered setで、各memberをNormalized Factの既存fieldからexactに射影する。Negative Observationはvalueを捏造しない。
 
 最後にTarget operatorをObserved projectionへ適用し、次の全field必須projectionを生成する。
 
@@ -136,7 +143,38 @@ normalized_structural_difference:
 
 `mismatch_kind`は`MISSING | UNEXPECTED | VALUE_MISMATCH | TYPE_MISMATCH | CARDINALITY_MISMATCH | RELATION_MISMATCH | BOUNDARY_MISMATCH | CONFLICT | UNKNOWN`、`comparison_result`は`EQUAL | NOT_EQUAL | SATISFIED | NOT_SATISFIED | UNKNOWN`のclosed enumである。非該当fieldも省略せず`null`またはempty explicit setへ固定する。
 
-導出順は、exact Target解決 → objective scope binding検証 → State-bound observed input選択 → conflict／knowledge評価 → source operatorのtotal evaluation → type → cardinality → relation → value → closed mismatch projection、の一つだけである。`exists`はKNOWN value candidateが1件以上、`all`は非空candidate全件、`none`はcandidate 0件をbounded complete Scopeでのみ評価する。`contains`はcollection member canonical bytes比較を行う。UNKNOWN／不完全ScopeではいずれもSATISFIEDにしない。
+導出順は、exact Target解決 → objective scope binding検証 → closed effective boundary生成 → State-bound observed input選択 → canonical Negative status mapping → conflict／knowledge評価 → source operatorのtotal evaluation → type → cardinality → relation → value → closed mismatch projection、の一つだけである。
+
+`effective_boundary`はpositive Factのboundaryを直接流用せず、resolved Scope、Target effective window、Observation source snapshot setから生成する上記closed projectionである。positive／negativeの双方で必須とし、scope／window／snapshot集合のいずれかが異なれば別boundaryである。source snapshotsはcanonical member bytes順のduplicate-free unordered setとする。
+
+Operator評価を次へ固定する。
+
+```text
+equals
+→ distinct canonical candidate value exactly 1
+→ that value == expected_value
+
+not_equals
+→ distinct canonical candidate value exactly 1
+→ that value != expected_value
+
+contains
+→ distinct candidate exactly 1 and candidate is collection
+→ expected_value canonical bytes is a member
+
+exists
+→ bounded scope complete and candidate count >= 1
+
+all
+→ bounded scope complete and candidate count >= 1
+→ every distinct candidate value == expected_value
+
+none
+→ bounded scope complete
+→ no distinct candidate value == expected_value
+```
+
+`equals`、`not_equals`、`contains`でdistinct candidateが0件ならNOT_SATISFIED、2件以上なら`CONFLICT + CONFLICTED`とする。`all`のempty setはNOT_SATISFIEDでありvacuous truthを禁止する。`none`だけはempty setでSATISFIEDになり得るが、Scope completeとbounded Negative Evidenceが必須である。UNKNOWN、UNOBSERVED、BLOCKED、INCOMPLETE、CONFLICTEDまたは不完全Scopeでは全operatorをSATISFIEDにしない。
 
 Conformance vectorsは全6 source operator、全mismatch kind、unknown／conflicted入力、scope binding mismatch、type／cardinality precedence、ordered／unordered collection、bare array、duplicate set、unknown fieldおよび固定digestを含む。
 
