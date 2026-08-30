@@ -34,8 +34,9 @@
     "canonical_value": {
       "oneOf": [
         {"type": "null"}, {"type": "boolean"}, {"type": "integer"}, {"type": "string"},
-        {"type": "array", "items": {"$ref": "#/$defs/canonical_value"}},
-        {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonical_value"}}
+        {"type": "object", "not": {"required": ["collection_kind"]}, "additionalProperties": {"$ref": "#/$defs/canonical_value"}},
+        {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "ORDERED_LIST"}, "members": {"type": "array", "items": {"$ref": "#/$defs/canonical_value"}}}, "additionalProperties": false},
+        {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/canonical_value"}}}, "additionalProperties": false}
       ]
     },
     "versioned_reference": {
@@ -54,7 +55,7 @@
         {"if": {"properties": {"expected_value_type": {"const": "BOOLEAN"}}}, "then": {"properties": {"expected_value": {"type": "boolean"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "INTEGER"}}}, "then": {"properties": {"expected_value": {"type": "integer"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "STRING"}}}, "then": {"properties": {"expected_value": {"type": "string"}}}},
-        {"if": {"properties": {"expected_value_type": {"const": "STRUCTURED"}}}, "then": {"properties": {"expected_value": {"type": "object"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "STRUCTURED"}}}, "then": {"properties": {"expected_value": {"type": "object", "not": {"required": ["collection_kind"]}, "additionalProperties": {"$ref": "#/$defs/canonical_value"}}}}},
         {"if": {"properties": {"expected_value_type": {"const": "DECIMAL"}}}, "then": {"properties": {"expected_value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "TIMESTAMP"}}}, "then": {"properties": {"expected_value": {"$ref": "../common/timestamp.schema.json"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "DURATION"}}}, "then": {"properties": {"expected_value": {"type": "string", "pattern": "^P"}}}},

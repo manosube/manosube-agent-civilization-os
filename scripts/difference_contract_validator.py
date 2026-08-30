@@ -383,6 +383,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     normalized_facts = _index(
         bundle.get("normalized_facts", []), "fact_id", errors
     )
+    fact_bindings = _index(
+        bundle.get("fact_observation_bindings", []), "binding_id", errors
+    )
+    fact_evaluations = _index(
+        bundle.get("fact_evaluations", []), "evaluation_id", errors
+    )
     evidence_observed_at: dict[bytes, datetime] = {}
     for observation in observations.values():
         observed_at = datetime.fromisoformat(
@@ -968,6 +974,15 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 if observation is not None else []
                 for observation in after_observations
             ]
+            latest_fact_evaluations: dict[str, dict[str, Any]] = {}
+            for fact_evaluation in fact_evaluations.values():
+                previous_evaluation = latest_fact_evaluations.get(fact_evaluation["fact_id"])
+                if (
+                    previous_evaluation is None
+                    or fact_evaluation["evaluation_revision"]
+                    > previous_evaluation["evaluation_revision"]
+                ):
+                    latest_fact_evaluations[fact_evaluation["fact_id"]] = fact_evaluation
             facts_valid = all(
                 facts
                 and all(
@@ -975,6 +990,27 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and difference is not None
                     and fact["project_id"] == difference["project_id"]
                     and fact["subject"] == difference["subject"]
+                    and fact["value_type"]
+                    == difference["normalized_target_state"]["expected_value_type"]
+                    and (latest_evaluation := latest_fact_evaluations.get(fact["fact_id"]))
+                    is not None
+                    and latest_evaluation["evaluation_status"] == "SUPPORTED"
+                    and bool(latest_evaluation["binding_refs"])
+                    and all(
+                        (binding := fact_bindings.get(_ref_id(binding_ref) or ""))
+                        is not None
+                        and binding_ref.get("kind") == "fact_observation_binding"
+                        and binding["fact_id"] == fact["fact_id"]
+                        and observation is not None
+                        and binding["observation_id"] == observation["observation_id"]
+                        and binding["state_revision_observed"]
+                        == observation["state_revision_observed"]
+                        and binding["state_fingerprint_observed"]
+                        == observation["state_fingerprint_observed"]
+                        and binding["source_ref"] in observation["source_snapshot_refs"]
+                        and binding["observed_quality_status"] == "SUPPORTED"
+                        for binding_ref in latest_evaluation["binding_refs"]
+                    )
                     for fact in facts
                 )
                 and difference is not None
@@ -982,7 +1018,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     [fact["value"] for fact in facts if fact is not None],
                     difference["normalized_target_state"],
                 )
-                for facts in resolved_fact_sets
+                for observation, facts in zip(after_observations, resolved_fact_sets, strict=True)
             )
             candidate_value = (
                 None if candidate is None or difference is None else
