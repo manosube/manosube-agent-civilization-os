@@ -108,9 +108,20 @@ G16 NO_UNRESOLVED_CONFLICT
 G17 NO_STALENESS
 G18 INVARIANTS_PASS
 G19 ATOMIC_REFLOW_PRECONDITIONS_PASS
+G20 ALL_REQUIRED_CLAIMS_SATISFIED
 ```
 
 一つでもfalseまたはunknownなら`SATISFIED`にしない。
+
+`G20`はClosure Policyの`required_claims`を空集合として無視する規則ではない。各required claimについて、exact claim identity、evaluated State、Evidence references、Completion Evaluation statusを解決し、全件が`SATISFIED`であることを要求する。
+
+```text
+REQUIRED CLAIM NOT_EVALUATED → CLOSURE NOT SATISFIED
+REQUIRED CLAIM EVALUATING → CLOSURE NOT SATISFIED
+REQUIRED CLAIM NOT_SATISFIED → CLOSURE NOT SATISFIED
+REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
+→ CLOSURE NOT SATISFIED
+```
 
 # 4. Independent Re-observation
 
