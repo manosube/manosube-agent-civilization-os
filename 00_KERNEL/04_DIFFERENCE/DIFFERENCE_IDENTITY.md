@@ -32,6 +32,8 @@ TEXT_NORMALIZATION=UNICODE_NFC
 SERIALIZATION=CANONICAL_JSON_UTF8
 KEY_ORDER=LEXICOGRAPHIC
 UNKNOWN_FIELDS=REJECT
+COLLECTION_REPRESENTATION=EXPLICIT_KIND_WRAPPER
+BARE_ARRAY=REJECT
 ```
 
 `difference_id`の形式は次とする。
@@ -111,6 +113,17 @@ Identity生成前に、tuple全体をCanonical Stateと同じ原則で正規化�
 8. SHA-256 digestを生成
 9. D- prefixを付与
 ```
+
+`normalized_target_state`と`normalized_structural_difference`内のcollectionは、入れ子を含め次のclosed wrapperのいずれかで表現する。bare JSON arrayはidentity inputとして拒否する。
+
+```json
+{"collection_kind":"ORDERED_LIST","members":[]}
+{"collection_kind":"UNORDERED_SET","members":[]}
+```
+
+`ORDERED_LIST`はmember順をsemanticとして保持する。`UNORDERED_SET`は各memberを再帰的にcanonicalizeしたbytesで整列し、duplicate canonical memberを拒否する。未知kind、kind欠落、同一wrapper内の追加fieldを拒否する。
+
+Conformance vectorsは、ordered member交換でIDが変わること、unordered member交換でIDが不変であること、nested collectionでも同じ規則が再帰適用されること、bare arrayとduplicate set memberがrejectされることを含む。
 
 NaN、Infinity、曖昧なlocal time、credential-bearing locator、schema外valueはFail Closedする。
 
