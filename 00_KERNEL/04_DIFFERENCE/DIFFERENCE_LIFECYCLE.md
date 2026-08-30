@@ -65,7 +65,7 @@ v0.1のlegal transitionを次で固定する。
 | `ACTIVE` | `BLOCKED` | executionまたはauthority blockerが存在 |
 | `ACTIVE` | `RETAINED` | unresolved mismatchを次周期へ保持 |
 | `ACTIVE` | `SUPERSEDED` | validな双方向supersession |
-| `VERIFYING` | `CLOSED` | Closure Policy PASSかつAtomic Reflow |
+| `VERIFYING` | `CLOSED` | Closure Evaluationが`SATISFIED`かつAtomic Reflow |
 | `VERIFYING` | `ACTIVE` | mismatchが残り、追加のauthorized Changeが必要 |
 | `VERIFYING` | `BLOCKED` | Evidence不足、観測不能、stale、conflict |
 | `VERIFYING` | `RETAINED` |未解決状態をEvidence付きで次周期へ保持 |
