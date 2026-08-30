@@ -376,6 +376,7 @@ def test_prior_fact_negative_conflict_appends_history() -> None:
     request["state_revision_observed"] = 3
     request["state_fingerprint_observed"]["digest"] = "b" * 64
     request["source_occurrences"][0]["facts"] = []
+    request["collection_complete"] = True
     request["prior_bundle"] = before
     request["negative_claims"] = [
         {
@@ -633,3 +634,40 @@ def test_negative_reason_change_is_not_an_idempotent_retry() -> None:
     request["negative_claims"][0]["reason"] = "changed conclusion"
     with pytest.raises(ObservationError, match="non-identical retry"):
         observe(request)
+
+
+@pytest.mark.parametrize(
+    ("value_type", "value"),
+    [("BOOLEAN", "false"), ("NULL", 0), ("INTEGER", True), ("TIMESTAMP", "not-time")],
+)
+def test_fact_value_must_conform_to_declared_type(value_type: str, value: object) -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = [
+        _fact("fixture.enabled", "equals@v1", value, value_type)
+    ]
+    with pytest.raises(ObservationError, match="declared type"):
+        observe(request)
+
+
+def test_fact_payload_is_unicode_canonicalized() -> None:
+    first = _request()
+    first["source_occurrences"][0]["facts"] = [
+        _fact("fixture.name", "equals@v1", "é", "STRING")
+    ]
+    second = deepcopy(first)
+    second["source_occurrences"][0]["facts"][0]["value"] = "e\u0301"
+    assert observe(first)["facts"] == observe(second)["facts"]
+
+
+def test_historical_retry_is_independent_of_later_conflicts() -> None:
+    original_request = _request()
+    revision_two = observe(original_request)
+    later = _request()
+    later["state_revision_observed"] = 3
+    later["state_fingerprint_observed"]["digest"] = "b" * 64
+    later["source_occurrences"][0]["facts"][0]["value"] = False
+    later["prior_bundle"] = revision_two
+    history = observe(later)
+    retry = deepcopy(original_request)
+    retry["prior_bundle"] = history
+    assert observe(retry) == history
