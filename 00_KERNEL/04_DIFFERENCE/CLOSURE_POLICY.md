@@ -305,7 +305,33 @@ UNKNOWN_FIELDS=REJECT
 OUTPUT=STATE-CANDIDATE-<64 lowercase hexadecimal characters>
 ```
 
-ID inputは`schema/profile domain + base_state_ref + semantic_state + semantic_fingerprint + source_snapshot_refs + producing_change_refs`である。collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。
+ID canonical payloadは次のclosed objectである。
+
+```json
+{
+  "base_state_ref": {},
+  "producing_change_refs": {"collection_kind":"UNORDERED_SET","members":[]},
+  "semantic_fingerprint": {},
+  "semantic_state": {},
+  "source_snapshot_refs": {"collection_kind":"UNORDERED_SET","members":[]}
+}
+```
+
+`kind`、`candidate_id`、profile nameをpayload fieldとして含めない。digest input bytesは、ASCII／UTF-8でexactなdomain separator `MANOSUBE:AFTER_STATE_CANDIDATE:0.1:`の末尾colonを含むbytesへ、直後にseparatorや改行を追加せずcanonical payload UTF-8 bytesを連結したものである。
+
+```text
+candidate_digest =
+SHA-256(
+  UTF8("MANOSUBE:AFTER_STATE_CANDIDATE:0.1:")
+  ||
+  CANONICAL_JSON_UTF8(closed_payload)
+)
+
+candidate_id =
+"STATE-CANDIDATE-" || lowercase_hex(candidate_digest)
+```
+
+collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。
 
 After-state Observationは存在しない未来revisionへ結合しない。Observation Contract上のState bindingは`base_state_ref`へ結合し、観測対象と結果provenanceはcandidateのimmutable `source_snapshot_refs`へexactに結合する。Observationから導出されたsemantic factsが`semantic_state`および`semantic_fingerprint`と一致することをG7〜G10で検証する。
 
@@ -355,6 +381,8 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 ```
 
 `G19`はClosure Policyの`required_invariants`それぞれに対し、`after_state_candidate.candidate_id`とその`semantic_fingerprint`へexactに結合された`invariant_evaluation_refs`を要求する。Evaluation recordはbase State revision／fingerprintもprovenanceとして保持するが、判定対象はcandidate semantic stateでなければならない。未評価、欠落、stale、unknownまたはfailを一件でも含む場合は`SATISFIED`にしない。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
+
+Atomic Reflow commit直前に全`invariant_evaluation_refs`を再解決し、candidate ID／semantic fingerprint、evaluation revision、evaluation head、statusおよびrevocation stateがClosure Evaluation時点からcurrentであることを再検査する。`STALE`、`REVOKED`、head変更、candidate mismatch、非PASSを一件でも検出した場合はpromotionをrejectし、Closure Evaluationを`STALE`または`REVOKED`へ遷移する。
 
 `G22`は`proposed_terminal_status`が`CLOSED | BLOCKED | RETAINED`のclosed enumに属し、かつPolicyの`allowed_terminal_states`に明示されていることを要求する。未許可statusへのEvaluationを`SATISFIED`にせず、Lifecycle transitionも拒否する。各statusについて別Evaluationを生成し、あるstatusの許可を別statusへ流用しない。
 
