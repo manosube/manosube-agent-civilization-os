@@ -36,12 +36,12 @@ closure_policy_id: CP-...
 policy_version: "0.1"
 subject_difference_ref: {kind: difference, id: D-...}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
-required_observation_scope: {}
+required_observation_scope: null
 minimum_evidence_level: E1
 required_claims: []
 prohibited_statuses: []
 independence_requirement: INDEPENDENT_REOBSERVATION
-staleness_policy: {}
+maximum_evidence_age: null
 contradiction_policy: FAIL_CLOSED
 reopen_policy_ref: {}
 ```
@@ -110,7 +110,7 @@ G14 NO_BLOCKING_BLIND_SPOT
 G15 NO_UNKNOWN_OR_UNOBSERVED_INPUT
 G16 NO_FAILED_OR_INVALID_INPUT
 G17 NO_UNRESOLVED_CONFLICT
-G18 NO_STALENESS
+G18 EVIDENCE_FRESHNESS_AND_BINDINGS_CURRENT
 G19 INVARIANTS_PASS
 G20 ATOMIC_REFLOW_PRECONDITIONS_PASS
 G21 ALL_REQUIRED_CLAIMS_SATISFIED
@@ -138,7 +138,18 @@ CHANGE_FREE
 
 `CHANGE_FREE`はEvidence要件の免除ではない。`REOPENED → VERIFYING`など、変更を必要とせず新しい観測でTarget Satisfactionを再検証する経路でのみ使用し、Observation Evidence、scope completeness、Evidence Sufficiencyおよび全required claimsを通常どおり評価する。Changeが存在しないことを理由に`G11`を自動PASSさせてはならない。
 
-`G9`はafter-state Observationのeffective scopeをCanonical field `required_observation_scope`とexactに照合する。method、normalization profileおよびschema versionの追加制約が必要な場合は`required_claims`としてversioned identityを指定し、scope fieldへ暗黙に混在させない。単に独立したObservationが存在するだけでは満たさない。
+`G9`はafter-state Observationのeffective scopeをCanonical field `required_observation_scope`と照合する。
+
+```text
+required_observation_scope = null
+→ additional scope constraintなし
+→ ただしObservation自身のdefined scope、completion、blind spot gateは必須
+
+required_observation_scope ≠ null
+→ after-state Observation effective scopeとexact match必須
+```
+
+method、normalization profileおよびschema versionの追加制約が必要な場合は`required_claims`としてversioned identityを指定し、scope fieldへ暗黙に混在させない。単に独立したObservationが存在するだけでは満たさない。
 
 `G21`はClosure Policyの`required_claims`を空集合として無視する規則ではない。各required claimについて、exact claim identity、evaluated State、Evidence references、Completion Evaluation statusを解決し、全件が`SATISFIED`であることを要求する。
 
@@ -211,6 +222,20 @@ Compare-And-Swap失敗、partial write、lineage append失敗、current state不
 
 # 8. Staleness
 
+Closure Evaluationは`maximum_evidence_age`を評価時点で強制する。
+
+```text
+maximum_evidence_age = null
+→ Policyによる追加のage上限なし
+
+maximum_evidence_age ≠ null
+→ evaluated_at - evidence_observed_at <= maximum_evidence_age
+→ timezone-aware timestamp必須
+→ age不明、timestamp不正、上限超過はG18=false
+```
+
+複数Evidenceを使う場合は、Closure Claimに必要な全Evidenceがage predicateを満たさなければならない。古いEvidenceを新しいEvidenceの件数で補ってはならない。上限超過は`STALE`とし、`SATISFIED`を返さない。
+
 次のいずれかがEvaluation後に変わった場合、未commitのClosure Evaluationは`STALE`である。
 
 ```text
@@ -268,8 +293,11 @@ HumanはObjectiveとconstitutional authorityを持つが、Evidenceなしの手�
 ```text
 CLOSURE_GATES_CLOSED=true
 REOBSERVATION_REQUIRED=true
-CHANGE_RESULT_EVIDENCE_REQUIRED=true
+CHANGE_BOUND_RESULT_EVIDENCE_REQUIRED=true
+CHANGE_FREE_VERIFICATION_EVIDENCE_REQUIRED=true
+RESOLUTION_MODE_EVIDENCE_EXCLUSIVE=true
 EVIDENCE_SUFFICIENCY_REQUIRED=true
+MAXIMUM_EVIDENCE_AGE_ENFORCED=true
 UNKNOWN_IS_PASS=false
 NO_RESULT_NE_PROVEN_ABSENCE=true
 CHANGE_CANNOT_SELF_CLOSE=true
