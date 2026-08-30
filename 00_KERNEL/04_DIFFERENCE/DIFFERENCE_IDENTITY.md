@@ -53,7 +53,7 @@ DIFFERENCE_IDENTITY_INPUT
 + predicate
 + effective_boundary
 + normalized_target_state
-+ normalized_structural_mismatch
++ normalized_structural_difference
 + identity_profile
 ```
 
@@ -117,7 +117,7 @@ NaN、Infinity、曖昧なlocal time、credential-bearing locator、schema外val
 REOBSERVATION
 → SAME DIFFERENCE ID
 → APPEND OBSERVATION BINDING
-→ APPEND LIFECYCLE EVENT
+→ APPEND OBSERVATION_BOUND EVENT
 ```
 
 新しいObservationを得るたびにDifference Recordを複製してはならない。
