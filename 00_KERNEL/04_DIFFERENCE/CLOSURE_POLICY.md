@@ -392,9 +392,39 @@ UNION
 CLOSURE_POLICY.required_invariants
 ```
 
-`APPLICABLE_V0_1_MANDATORY_INVARIANTS`は、Closure Evaluation時点で固定された`KERNEL_INVARIANTS.md`のv0.1 Mandatory Gateから、対象scopeがDifference closure、candidate semantic state、Atomic Reflow preconditionまたはlineage preservationに適用される全Invariant IDを決定論的に抽出した集合である。適用判定profile／registry blob refをEvaluation Evidenceへ保存し、unknown applicabilityは除外せずBLOCKEDにする。Policy required setとのduplicateは一件へ正規化する。
+`APPLICABLE_V0_1_MANDATORY_INVARIANTS`は、Closure Evaluationへ添付する次のversioned closed registry recordだけから決定する。自然言語、validator固有heuristic、ID prefix、実行結果またはPolicyによる選別を禁止する。
 
-Canonical Invariant Evaluation Recordを変更せず、expected setの各Invariantについて次のclosed Difference-owned bindingを`candidate_invariant_evaluation_bindings`へexactly one保存する。BindingのInvariant ID集合はexpected setと完全一致し、missing、extra、duplicateをrejectする。
+```yaml
+schema_version: "0.1"
+profile: MANOSUBE-DIFFERENCE-CLOSURE-INVARIANT-APPLICABILITY-0.1
+registry_id: DIFF-CLOSE-INV-REG-...
+mandatory_gate_source_ref:
+  kind: git_blob
+  repository: manosube/manosube-agent-civilization-os
+  commit_sha: <40 lowercase hex>
+  path: 00_KERNEL/KERNEL_INVARIANTS.md
+  blob_sha: <40 lowercase git blob hex>
+entries:
+  collection_kind: UNORDERED_SET
+  members:
+    - invariant_id: D-001
+      invariant_definition_sha256: sha256:<64 lowercase hex>
+      mandatory_in_v0_1: true
+      applies_to:
+        collection_kind: UNORDERED_SET
+        members: [DIFFERENCE_CLOSURE]
+registry_semantic_fingerprint: sha256:<64 lowercase hex>
+```
+
+Registryはv0.1 Mandatory Gateに列挙された全Invariant IDをexactly once含まなければならない。余分、欠落、duplicate、unknown field、unknown applicability tokenを拒否する。`applies_to.members`のclosed enumは`DIFFERENCE_CLOSURE | AFTER_STATE_CANDIDATE | ATOMIC_REFLOW_PRECONDITION | LINEAGE_PRESERVATION | NOT_APPLICABLE_TO_DIFFERENCE_CLOSURE`である。各entryは少なくとも一つ、かつ`NOT_APPLICABLE_TO_DIFFERENCE_CLOSURE`と他tokenを同時に持ってはならない。各definition digestは本Policy第1章のInvariant block抽出規則でsource blobから再計算してexact一致させる。
+
+`registry_semantic_fingerprint`は`registry_id`、commit SHA、whole-file blob SHAを除き、`profile + schema_version + repository + path + entries`のclosed projectionをcanonical JSON UTF-8化し、domain `MANOSUBE:DIFFERENCE_CLOSURE_INVARIANT_APPLICABILITY:0.1:`を前置したSHA-256（`sha256:`＋64 lowercase hex）とする。`entries`と`applies_to`はduplicate-free unordered setとしてcanonical member bytes順へ正規化する。
+
+決定アルゴリズムは、registry完全性と全definition digestを検証した後、`mandatory_in_v0_1=true`かつ`applies_to`が`DIFFERENCE_CLOSURE | AFTER_STATE_CANDIDATE | ATOMIC_REFLOW_PRECONDITION | LINEAGE_PRESERVATION`のいずれかと交差するentryを全件選択する、の一つだけである。missing registry、unknown token、未解決source、digest不一致または完全性不明は`BLOCKED`であり、該当Invariantを黙って除外しない。exact registry recordとfingerprintをEvaluation Evidenceへ保存する。
+
+Canonical Invariant Evaluation Recordを変更せず、expected setを作る前に同一Invariant IDの定義を照合する。Applicability Registry entryと`CLOSURE_POLICY.required_invariants`が同じIDを要求する場合、両者の`repository + path + invariant_definition_sha256`が完全一致するときだけ一件へ統合する。一つでも異なる場合はdefinition conflictとして`BLOCKED`にし、先勝ち、後勝ち、IDだけのdeduplicationを禁止する。
+
+expected setの各memberは`invariant_id + repository + path + invariant_definition_sha256`でqualifyされたrequirementである。各requirementについて次のclosed Difference-owned bindingを`candidate_invariant_evaluation_bindings`へexactly one保存する。Bindingのqualified requirement集合はexpected setと完全一致し、missing、extra、duplicateをrejectする。
 
 ```yaml
 kind: candidate_invariant_evaluation_binding
@@ -403,6 +433,10 @@ candidate_id: STATE-CANDIDATE-...
 candidate_semantic_fingerprint: {}
 base_state_ref: {kind: state, revision: 0, fingerprint: {}}
 invariant_ref: {kind: kernel_invariant, id: D-001}
+invariant_definition_ref:
+  repository: manosube/manosube-agent-civilization-os
+  path: 00_KERNEL/KERNEL_INVARIANTS.md
+  invariant_definition_sha256: sha256:<64 lowercase hex>
 invariant_evaluation_ref: {kind: invariant_evaluation, id: INV-EVAL-...}
 evaluation_record_fingerprint: sha256:...
 evaluation_result: PASS
@@ -434,7 +468,7 @@ Bare array fields listed as unordered sets areduplicate拒否後にcanonical mem
 
 Fingerprint bytesはrecord kind domain `MANOSUBE:COMPLETION_RECORD:0.1:`または`MANOSUBE:INVARIANT_EVALUATION:0.1:`のexact UTF-8 bytesと、closed projectionのcanonical JSON UTF-8 bytesを追加separatorなしで連結したものとする。SHA-256出力は`sha256:`＋64 lowercase hexである。timestamp、Evidence refs、status／resultを含む。ただしCompletion Recordの`reflow_transition_ref`はAtomic Reflow後にのみ設定されるpost-commit lineage fieldとしてprojectionから除外する。この除外によりpre-promotion bindingを循環させず、transition ref設定だけではstaleにしない。他のincluded fieldが一byteでも変わればpre-promotion recheckでSTALEとして拒否する。
 
-Bindingはunderlying Invariant EvaluationのInvariant、result、Evidence、evaluated_at、record fingerprintとexact一致し、そのEvaluationがcandidate semantic state bytesを入力として評価したことをEvidenceで証明する。base Stateだけを評価したrecordをcandidateへ流用しない。
+Bindingはqualified expected requirementのInvariant ID、repository、path、definition digestとexact一致し、underlying Invariant EvaluationのInvariant、result、Evidence、evaluated_at、record fingerprintともexact一致する。Evaluation Evidenceは同じdefinition digestのInvariantをcandidate semantic state bytesへ適用したことを証明する。IDだけが一致する別definition、base Stateだけを評価したrecord、definition provenanceを解決できないrecordを流用しない。
 
 Atomic Reflow直前にbindingとunderlying recordを再解決し、candidate ID／semantic fingerprint、record fingerprint、resultおよびEvidence refsが不変かつPASSであることを再検査する。欠落、余分、duplicate、STALE相当のfingerprint変更、Evidence失効、非PASSを一件でも検出した場合はpromotionをrejectする。Policy required setが空でもapplicable mandatory setは免除しない。両集合の和が空である場合だけbinding setを空にでき、その適用判定Evidenceを必須とする。
 
