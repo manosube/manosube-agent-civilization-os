@@ -40,7 +40,7 @@ required_observation_scope: null
 minimum_evidence_level: E1
 required_claims: []
 required_invariants: []
-prohibited_statuses: []
+allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
 independence_requirement: INDEPENDENT_REOBSERVATION
 maximum_evidence_age: null
 contradiction_policy: FAIL_CLOSED
@@ -73,7 +73,9 @@ evaluated_state_revision: 0
 evaluated_state_fingerprint: {}
 evaluated_at: "2026-01-01T00:00:00Z"
 evaluation_expires_at: null
-policy_ref: {kind: closure_policy, id: CP-...}
+policy_ref: {kind: closure_policy, id: CP-..., version: "0.1", fingerprint: sha256:...}
+policy_version_evaluated: "0.1"
+policy_fingerprint_evaluated: sha256:...
 result: NOT_EVALUATED
 failure_reasons: []
 reflow_transition_ref: null
@@ -118,6 +120,7 @@ G18 EVIDENCE_FRESHNESS_AND_BINDINGS_CURRENT
 G19 INVARIANTS_PASS
 G20 ATOMIC_REFLOW_PRECONDITIONS_PASS
 G21 ALL_REQUIRED_CLAIMS_SATISFIED
+G22 CLOSED_IS_ALLOWED_TERMINAL_STATE
 ```
 
 一つでもfalseまたはunknownなら`SATISFIED`にしない。
@@ -166,6 +169,10 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 ```
 
 `G19`はClosure Policyの`required_invariants`それぞれに対し、同一evaluated State revision／fingerprintへ結合されたexact `invariant_evaluation_refs`を要求する。未評価、欠落、stale、unknownまたはfailを一件でも含む場合は`SATISFIED`にしない。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
+
+`G22`は`allowed_terminal_states`に`CLOSED`が明示されていることを要求する。`CLOSED`が許可されていないPolicyから`SATISFIED` closure candidateを生成してはならない。`BLOCKED`または`RETAINED`だけが許可される場合、対象statusへ遷移する評価を別途生成する。
+
+`policy_ref`、`policy_version_evaluated`および`policy_fingerprint_evaluated`は同一immutable Policy payloadへexactに解決されなければならない。current Policy versionまたはfingerprintと不一致ならEvaluationは`STALE`であり、Atomic Reflowは拒否する。
 
 # 4. Independent Re-observation
 
@@ -318,6 +325,8 @@ EVALUATION_TIMESTAMP_RECORDED=true
 EVIDENCE_AGE_RECHECKED_AT_REFLOW=true
 FUTURE_DATED_EVIDENCE_REJECTED=true
 REQUIRED_INVARIANTS_BOUND=true
+ALLOWED_TERMINAL_STATES_ENFORCED=true
+POLICY_VERSION_EXACT=true
 UNKNOWN_IS_PASS=false
 NO_RESULT_NE_PROVEN_ABSENCE=true
 CHANGE_CANNOT_SELF_CLOSE=true
