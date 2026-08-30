@@ -40,7 +40,7 @@ INVALIDATED
 | `DETECTED` | exact ObservationからMismatch candidateを導出したが、identityとcontract validationが未確定 |
 | `OPEN` | valid Difference identityとして受理され、未解決である |
 | `ACTIVE` | authorizedまたはauthorization待ちのWork Unitが結合され、解決処理が進行中 |
-| `VERIFYING` | Change後の独立した再観測とEvidence Sufficiency評価を待つ |
+| `VERIFYING` | Change後、Observation Work後、または外部状態変化後の独立したafter-state検証とEvidence Sufficiency評価を待つ |
 | `BLOCKED` | 明示された阻害要因により次の合法transitionへ進めない |
 | `RETAINED` | 現時点では閉じず、Evidence付きで次周期へ保持する |
 | `CLOSED` | Closure Policyを満たし、Atomic ReflowでCanonical closureが確定した |
@@ -80,7 +80,7 @@ v0.1のlegal transitionを次で固定する。
 | `RETAINED` | `VERIFYING` | 新Evidenceで検証を再開 |
 | `RETAINED` | `BLOCKED` | blockerが確認された |
 | `RETAINED` | `SUPERSEDED` | validな双方向supersession |
-| `CLOSED` | `REOPENED` | 後続Observationによる反証、Closure Evidenceの失効／provenance不正、またはmaterial contradiction |
+| `CLOSED` | `REOPENED` | 後続Observationによる反証、Closure Evidenceの失効／provenance不正、material contradiction、またはPolicy reopen condition成立 |
 | `CLOSED` | `SUPERSEDED` | materialなObjective、Target、MismatchまたはClosure Policy semantics変更とvalidなSupersession Relation |
 | `REOPENED` | `ACTIVE` | authorized resolutionを再開 |
 | `REOPENED` | `VERIFYING` | Change不要で新Evidenceを再評価 |
@@ -183,7 +183,10 @@ REOPEN_TRIGGER
 | CLOSURE_EVIDENCE_REVOKED
 | CLOSURE_EVIDENCE_INVALID
 | MATERIAL_CONTRADICTION
+| POLICY_REOPEN_CONDITION_SATISFIED
 ```
+
+`POLICY_REOPEN_CONDITION_SATISFIED`では`reopen_condition_ref`をexact Target Predicate refとして、`reopen_condition_evaluation_ref`をそのcurrent Completion Evaluationとして必須にする。他のtriggerでは両fieldをnullにし、triggerとpayloadの不一致を拒否する。
 
 ```text
 CLOSED HISTORY PRESERVED=true
