@@ -194,6 +194,11 @@ PolicyはDifference導出時に固定する。実装失敗またはEvidence不�
 schema_version: "0.1"
 closure_evaluation_id: D-CLOSE-EVAL-...
 difference_id: D-...
+base_kernel_source_ref_evaluated:
+  kind: git_tree
+  repository: manosube/manosube-agent-civilization-os
+  commit_sha: <40 lowercase hex>
+  tree_sha: <40 lowercase git tree hex>
 kernel_source_ref_evaluated:
   kind: git_tree
   repository: manosube/manosube-agent-civilization-os
@@ -356,7 +361,7 @@ candidate_id =
 "STATE-CANDIDATE-" || uppercase_hex(candidate_digest)
 ```
 
-collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。 current base Stateのmetadata source snapshot setは`kernel_source_ref_evaluated`と同じrepository／commit／treeを含まなければならず、candidateの`kernel_source_ref`もexact一致する。candidateがKernel sourceを変更対象とする場合は、producing Changeが生成したafter-tree commit／treeをcandidateに固定し、そのtree内のInvariant registry blobを使う。base/candidateのどちらにも結合されないKernel revisionでG19を評価してはならない。
+collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。 current base Stateのmetadata source snapshot setは`base_kernel_source_ref_evaluated`と同じrepository／commit／treeを含まなければならない。candidateの`kernel_source_ref`は`kernel_source_ref_evaluated`とexact一致する。Kernelを変更しないcandidateではbase／candidate source refを同一にする。Kernelを変更するcandidateでは、base refをpre-change tree、candidate／evaluated refをproducing Changeが生成したafter-treeへ分離し、Changeのbefore／after source bindingで連続性を証明する。G19 registry blobはcandidate after-treeから解決する。base/candidateのどちらにも結合されないKernel revisionでG19を評価してはならない。
 
 After-state Observationは存在しない未来revisionへ結合しない。Observation Contract上のState bindingは`base_state_ref`へ結合し、観測対象と結果provenanceはcandidateのimmutable `source_snapshot_refs`へexactに結合する。
 
