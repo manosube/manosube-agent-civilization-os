@@ -107,7 +107,7 @@ ordinary JSON object → STRUCTURED
 bare JSON array → REJECT
 ```
 
-Reserved typed wrapperは上記exact fieldsだけを許可する。plain string `"1"`は常にSTRINGでありDECIMALへ推測変換しない。TargetにDECIMAL等を要求する場合はtyped wrapper必須である。 Normalization後はwrapperの`value_type`を`expected_value_type`へ、inner `value`を`expected_value`へ射影し、wrapper object自体を比較値にしない。primitiveとcollection wrapperも同様にtypeとcanonical inner valueへ分離する。比較はまずTarget／Observed typeをexact照合し、type一致後にinner canonical value bytesだけを比較する。
+Reserved typed wrapperは上記exact fieldsだけを許可する。plain string `"1"`は常にSTRINGでありDECIMALへ推測変換しない。TargetにDECIMAL等を要求する場合はtyped wrapper必須である。 Normalization後はwrapperの`value_type`を`expected_value_type`へ、inner `value`を`expected_value`へ射影し、wrapper object自体を比較値にしない。primitiveとcollection wrapperも同様にtypeとcanonical inner valueへ分離する。比較対象type checkはoperator別に行う。`equals | not_equals | all | none`はTarget inner typeと各Observed value typeをexact照合する。`contains`はObserved candidateがcollection型であることを先に確認し、Target inner typeをcollection各memberのcanonical derived typeと照合する。`exists`はvalue typeを比較しない。型条件を満たした後だけinner canonical value bytesを比較する。
 
 Objectiveの`observation_scope`文字列は推論せず、Difference導出入力に次のexact bindingを必須とする。
 
@@ -158,11 +158,11 @@ normalized_structural_difference:
   observed_value_types: {collection_kind: UNORDERED_SET, members: []}
   target_cardinality: null
   observed_cardinality: null
-  comparison_result: NOT_EQUAL
+  comparison_result: NOT_SATISFIED
   comparison_profile: MANOSUBE-DIFFERENCE-COMPARISON-0.1
 ```
 
-`mismatch_kind`は`MISSING | UNEXPECTED | VALUE_MISMATCH | TYPE_MISMATCH | CARDINALITY_MISMATCH | RELATION_MISMATCH | BOUNDARY_MISMATCH | CONFLICT | UNKNOWN`、`comparison_result`は`EQUAL | NOT_EQUAL | SATISFIED | NOT_SATISFIED | UNKNOWN`のclosed enumである。非該当fieldも省略せず`null`またはempty explicit setへ固定する。
+`mismatch_kind`は`MISSING | UNEXPECTED | VALUE_MISMATCH | TYPE_MISMATCH | CARDINALITY_MISMATCH | RELATION_MISMATCH | BOUNDARY_MISMATCH | CONFLICT | UNKNOWN`、`comparison_result`は`SATISFIED | NOT_SATISFIED | UNKNOWN`のclosed enumである。非該当fieldも省略せず`null`またはempty explicit setへ固定する。
 
 導出順は、exact Target解決 → objective scope binding検証 → closed effective boundary生成 → State-bound observed input選択 → canonical Negative status mapping → conflict／knowledge評価 → source operatorのtotal evaluation → type → cardinality → relation → value → closed mismatch projection、の一つだけである。
 
@@ -197,6 +197,8 @@ none
 
 `equals`、`not_equals`、`contains`でdistinct candidateが0件ならNOT_SATISFIED、2件以上なら`CONFLICT + CONFLICTED`とする。`all`のempty setはNOT_SATISFIEDでありvacuous truthを禁止する。`none`だけはempty setでSATISFIEDになり得るが、Scope completeとbounded Negative Evidenceが必須である。UNKNOWN、UNOBSERVED、BLOCKED、INCOMPLETE、CONFLICTEDまたは不完全Scopeでは全operatorをSATISFIEDにしない。
 
+全operator evaluatorは内部のequality結果を外部projectionへ出す前に`EQUAL→SATISFIED`、`NOT_EQUAL→NOT_SATISFIED`へ必ず写像し、`comparison_result`には三値だけを保存する。
+
 Mismatch kindは次の上から最初に一致するruleだけで決定する。
 
 ```text
@@ -212,8 +214,14 @@ Mismatch kindは次の上から最初に一致するruleだけで決定する。
 4 UNKNOWN／UNOBSERVED／BLOCKED／INCOMPLETE knowledge
   → UNKNOWN
 
-5 Target typeとObserved type不一致
+5 operator in equals|not_equals|all|none and Target inner typeとObserved value type不一致
   → TYPE_MISMATCH
+
+5a operator=contains and candidateがcollectionでない、またはTarget inner typeとcollection member typeが不一致
+  → TYPE_MISMATCH
+
+5b operator=exists
+  → type checkを適用せずrule 6以降へ進む
 
 6 candidates = 0 and operator in equals|not_equals|contains|exists|all
   → MISSING
