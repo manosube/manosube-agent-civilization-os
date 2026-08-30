@@ -73,6 +73,26 @@ def _require_ref_kind(reference: dict[str, str], expected: str, context: str) ->
         )
 
 
+def _boundary_observed(
+    boundary: dict[str, Any], observation: dict[str, Any]
+) -> bool:
+    declared_source_ids = {item["id"] for item in observation["source_snapshot_refs"]}
+    return (
+        boundary["kind"] == "SOURCE_SNAPSHOT"
+        and boundary["identity"] in declared_source_ids
+        and boundary["start"] is None
+        and boundary["end"] is None
+    ) or (
+        boundary["kind"] == "TIME_INTERVAL"
+        and boundary["start"] == observation["time_boundary"]["target_effective_start"]
+        and boundary["end"] == observation["time_boundary"]["target_effective_end"]
+    ) or (
+        boundary["kind"] == "STATE_REVISION"
+        and boundary["start"] == observation["state_revision_observed"]
+        and boundary["end"] == observation["state_revision_observed"]
+    )
+
+
 def _binding(
     fact: dict[str, Any],
     observation_id: str,
@@ -208,22 +228,7 @@ def _negative_records(
     if status not in _STATUS_CANDIDATE:
         raise ObservationError(f"unknown negative status: {status!r}")
     boundary = claim["effective_boundary"]
-    declared_source_ids = {item["id"] for item in observation["source_snapshot_refs"]}
-    boundary_valid = (
-        boundary["kind"] == "SOURCE_SNAPSHOT"
-        and boundary["identity"] in declared_source_ids
-        and boundary["start"] is None
-        and boundary["end"] is None
-    ) or (
-        boundary["kind"] == "TIME_INTERVAL"
-        and boundary["start"] == observation["time_boundary"]["target_effective_start"]
-        and boundary["end"] == observation["time_boundary"]["target_effective_end"]
-    ) or (
-        boundary["kind"] == "STATE_REVISION"
-        and boundary["start"] == observation["state_revision_observed"]
-        and boundary["end"] == observation["state_revision_observed"]
-    )
-    if not boundary_valid:
+    if not _boundary_observed(boundary, observation):
         raise ObservationError("Negative claim effective boundary was not observed")
     requested_status = status
     requested_completion = _completion(
@@ -236,15 +241,7 @@ def _negative_records(
     )
     if requested_status == "ABSENT" and not all(requested_completion.values()):
         raise ObservationError("ABSENT requires a complete bounded absence gate")
-    if requested_status == "EMPTY" and not all(
-        requested_completion.get(key) is True
-        for key in (
-            "collection_defined",
-            "enumeration_complete",
-            "zero_valid_members",
-            "no_blocking_blind_spot",
-        )
-    ):
+    if requested_status == "EMPTY" and not all(requested_completion.values()):
         raise ObservationError("EMPTY requires complete zero-member enumeration")
     if requested_status in {"ABSENT", "EMPTY"} and not evidence_refs:
         raise ObservationError(f"{requested_status} requires bounded negative Evidence")
@@ -610,6 +607,10 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         "attempts": attempts,
         "observation_evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
     }
+    base_observation_status = observation["status"]
+    for fact in observed_facts:
+        if not _boundary_observed(fact["effective_boundary"], observation):
+            raise ObservationError("Fact effective boundary was not observed")
     coordinates: dict[str, int] = {}
     for fact in facts:
         coordinate = json.dumps(
@@ -700,9 +701,11 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 },
             )
             existing_negative = prior_negative_index.get(negative_id)
+            retry_observation = deepcopy(observation)
+            retry_observation["status"] = base_observation_status
             expected_negative, _, _ = _negative_records(
                 claim=claim,
-                observation=observation,
+                observation=retry_observation,
                 scope=scope,
                 facts=retry_facts,
                 evidence_refs=request.get("negative_evidence_refs", []),
