@@ -64,7 +64,7 @@ Target value、Objective semantics、Mismatchの意味またはClosure Policy pa
 
 Closure Policyのlogical IDやversion文字列ではなく、closure requirementsだけから算出した`policy_semantic_fingerprint`をidentity inputへ含める。fingerprint inputから`subject_difference_ref`、`closure_policy_id`、`policy_version`、schema metadataを除外するため、Difference IDとの循環依存は生じない。
 
-同じMismatchでもPolicy semanticsがmaterialに変われば新しいDifference IDを導出し、旧DifferenceとのSupersession Relationをappendする。versionだけが変わりPolicy semanticsが同一ならDifference IDは維持し、旧Policy bindingによる評価可能性を保持する。self-supersessionを許可しない。
+同じMismatchでもPolicy semanticsがmaterialに変われば新しいDifference IDを導出し、旧DifferenceとのSupersession Relationをappendする。versionだけが変わりPolicy semanticsが同一ならDifference IDは維持し、Difference-bound旧versionによる評価をcurrent semantic fingerprintとの一致確認後も許可する。version-only更新を理由に旧bindingをstale化せず、self-supersessionも生成しない。
 
 # 3. Excluded Inputs
 
