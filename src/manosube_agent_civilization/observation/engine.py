@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any
@@ -100,8 +101,35 @@ def _binding(
         "state_fingerprint_observed": deepcopy(state_fingerprint),
         "source_ref": deepcopy(occurrence["source_ref"]),
         "source_locator": occurrence["source_locator"],
-        "observed_quality_status": quality,
+        "observed_quality_status": "INCOMPLETE" if quality == "PARTIAL" else quality,
     }
+
+
+def _instant(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _time_boundary_complete(observation: dict[str, Any], scope: dict[str, Any]) -> bool:
+    boundary = observation["time_boundary"]
+    try:
+        observed_start = _instant(boundary["observation_started_at"])
+        observed_end = _instant(boundary["observation_ended_at"])
+        effective_start = _instant(boundary["target_effective_start"])
+        effective_end = _instant(boundary["target_effective_end"])
+        snapshot = _instant(boundary["source_snapshot_time"])
+        scope_observed_start = _instant(scope["observation_window"]["start"])
+        scope_observed_end = _instant(scope["observation_window"]["end"])
+        scope_effective_start = _instant(scope["target_effective_window"]["start"])
+        scope_effective_end = _instant(scope["target_effective_window"]["end"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (
+        observed_start <= observed_end
+        and effective_start <= effective_end
+        and scope_observed_start <= observed_start <= observed_end <= scope_observed_end
+        and scope_effective_start <= effective_start <= effective_end <= scope_effective_end
+        and effective_start <= snapshot <= observed_end
+    )
 
 
 def _completion(
@@ -112,17 +140,21 @@ def _completion(
 ) -> dict[str, bool]:
     attempts = observation["attempts"]
     attempts_complete = bool(attempts) and all(
-        attempt["result"] in {"COMPLETE", "EMPTY"} for attempt in attempts
+        attempt["result"] in {"COMPLETE", "EMPTY"}
+        and attempt["method_ref"] == observation["method_ref"]
+        and _instant(attempt["started_at"]) <= _instant(attempt["ended_at"])
+        for attempt in attempts
     )
     method_complete = attempts_complete and observation["status"] in {"COMPLETE", "EMPTY"}
     no_blocking_blind_spot = all(
-        item["impact"] != "BLOCKS_COMPLETION" for item in observation["blind_spots"]["items"]
+        item["impact"] not in {"BLOCKS_COMPLETION", "BLOCKS_ABSENCE"}
+        for item in observation["blind_spots"]["items"]
     )
     base: dict[str, bool] = {
         "target_defined": True,
         "scope_complete": scope["scope_status"] == "COMPLETE",
         "method_complete": method_complete,
-        "time_boundary_complete": True,
+        "time_boundary_complete": _time_boundary_complete(observation, scope),
         "source_snapshots_identified": bool(observation["source_snapshot_refs"]),
         "required_attempts_completed": method_complete,
         "no_blocking_blind_spot": no_blocking_blind_spot,
@@ -254,6 +286,46 @@ def _validate_records(bundle: dict[str, Any]) -> None:
     }
     if len(binding_keys) != len(bundle["bindings"]):
         errors.append("duplicate Fact/Observation/source occurrence Binding")
+    identity_fields = {
+        "facts": "fact_id",
+        "observations": "observation_id",
+        "bindings": "binding_id",
+        "fact_evaluations": "evaluation_id",
+        "negative_observations": "negative_observation_id",
+        "negative_evaluations": "evaluation_id",
+    }
+    for group, field in identity_fields.items():
+        identities = [record[field] for record in bundle[group]]
+        if len(identities) != len(set(identities)):
+            errors.append(f"duplicate {field}")
+    bindings_by_id = {record["binding_id"]: record for record in bundle["bindings"]}
+    for fact_id in fact_ids:
+        evaluations = sorted(
+            (item for item in bundle["fact_evaluations"] if item["fact_id"] == fact_id),
+            key=lambda item: item["evaluation_revision"],
+        )
+        for revision, evaluation in enumerate(evaluations):
+            if evaluation["evaluation_revision"] != revision:
+                errors.append(f"Fact evaluation revision gap: {fact_id}")
+            expected = None if revision == 0 else evaluations[revision - 1]["evaluation_id"]
+            if evaluation["previous_evaluation_id"] != expected:
+                errors.append(f"Fact evaluation predecessor mismatch: {fact_id}")
+            for reference in evaluation["binding_refs"]:
+                binding = bindings_by_id.get(reference["id"])
+                if reference["kind"] != "fact_observation_binding" or not binding or binding["fact_id"] != fact_id:
+                    errors.append(f"cross-Fact or missing binding: {fact_id}")
+    negative_ids = {item["negative_observation_id"] for item in bundle["negative_observations"]}
+    for negative_id in negative_ids:
+        evaluations = sorted(
+            (item for item in bundle["negative_evaluations"] if item["negative_observation_id"] == negative_id),
+            key=lambda item: item["evaluation_revision"],
+        )
+        if not evaluations or evaluations[0]["evaluation_revision"] != 0:
+            errors.append(f"Negative Observation has no revision zero evaluation: {negative_id}")
+        for revision, evaluation in enumerate(evaluations):
+            expected = None if revision == 0 else evaluations[revision - 1]["evaluation_id"]
+            if evaluation["evaluation_revision"] != revision or evaluation["previous_evaluation_id"] != expected:
+                errors.append(f"Negative evaluation lineage invalid: {negative_id}")
     if errors:
         raise ObservationValidationError(sorted(errors)[0])
 
@@ -328,13 +400,18 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     if state_fingerprint.get("profile") != "MANOSUBE-STATE-SHA256-0.1":
         raise ObservationError("unsupported State fingerprint profile")
     _require_ref_kind(request["method_ref"], "observation_method", "method_ref")
+    if request["method_ref"] != scope["method_ref"]:
+        raise ObservationError("Observation method is outside the declared Scope")
     for reference in request["source_snapshot_refs"]:
         _require_ref_kind(reference, "source_snapshot", "source_snapshot_refs")
     for reference in request.get("observation_evidence_refs", []):
         _require_ref_kind(reference, "observation_evidence", "observation_evidence_refs")
+    scope_sources = {(reference["kind"], reference["id"]) for reference in scope["source_snapshot_refs"]}
     declared_sources = {
         (reference["kind"], reference["id"]) for reference in request["source_snapshot_refs"]
     }
+    if declared_sources != scope_sources:
+        raise ObservationError("Observation sources must exactly match the declared Scope")
     prior = deepcopy(
         request.get(
             "prior_bundle",
@@ -407,6 +484,10 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     bindings = sorted(bindings_by_id.values(), key=lambda item: item["binding_id"])
     observed_facts = [fact for fact in facts if fact["fact_id"] in observed_fact_ids]
     attempts = deepcopy(request.get("attempts", []))
+    for attempt in attempts:
+        _require_ref_kind(attempt["method_ref"], "observation_method", "attempt.method_ref")
+        if attempt["method_ref"] != request["method_ref"]:
+            raise ObservationError("Observation attempt uses an undeclared method")
     blind_spots_by_id: dict[str, dict[str, Any]] = {}
     for blind_spot in [*scope["blind_spots"], *request.get("blind_spots", [])]:
         existing = blind_spots_by_id.get(blind_spot["blind_spot_id"])
@@ -446,7 +527,30 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         "attempts": attempts,
         "observation_evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
     }
+    existing_observation = next(
+        (item for item in prior["observations"] if item["observation_id"] == observation_id), None
+    )
+    prior_binding_ids = {item["binding_id"] for item in prior["bindings"]}
+    if existing_observation is not None:
+        if existing_observation != observation or not new_binding_ids <= prior_binding_ids:
+            raise ObservationError("Observation identity collision on non-identical retry")
+        return prior
+
     fact_evaluations = deepcopy(prior["fact_evaluations"])
+    coordinate_groups: dict[str, list[dict[str, Any]]] = {}
+    for fact in facts:
+        coordinate = json.dumps(
+            [fact["subject"], fact["predicate"], fact["effective_boundary"]],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        coordinate_groups.setdefault(coordinate, []).append(fact)
+    positive_conflicts = {
+        fact["fact_id"]: {other["fact_id"] for other in group if other["fact_id"] != fact["fact_id"]}
+        for group in coordinate_groups.values() if len(group) > 1
+        for fact in group
+    }
+    appended_fact_evaluations: dict[str, dict[str, Any]] = {}
     for fact in observed_facts:
         previous = sorted(
             (
@@ -466,8 +570,8 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             for binding in bindings
             if binding["fact_id"] == fact["fact_id"] and binding["binding_id"] in new_binding_ids
         ]
-        fact_evaluations.append(
-            {
+        conflict_fact_ids = positive_conflicts.get(fact["fact_id"], set())
+        new_evaluation = {
                 "schema_version": "0.1",
                 "evaluation_id": deterministic_id(
                     "FACT-EVAL",
@@ -483,12 +587,13 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     _ref("fact_observation_binding", binding["binding_id"])
                     for binding in fact_bindings
                 ],
-                "evaluation_status": "CONFLICTED" if prior_negative_conflicts else "SUPPORTED",
-                "conflict_fact_refs": [],
+                "evaluation_status": "CONFLICTED" if prior_negative_conflicts or conflict_fact_ids else "SUPPORTED",
+                "conflict_fact_refs": [_ref("normalized_fact", item) for item in sorted(conflict_fact_ids)],
                 "conflict_negative_observation_refs": prior_negative_conflicts,
                 "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
             }
-        )
+        fact_evaluations.append(new_evaluation)
+        appended_fact_evaluations[fact["fact_id"]] = new_evaluation
     negatives = deepcopy(prior["negative_observations"])
     negative_evaluations = deepcopy(prior["negative_evaluations"])
     conflict_found = False
@@ -499,7 +604,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             claim=claim,
             observation=observation,
             scope=scope,
-            facts=observed_facts,
+            facts=facts,
             evidence_refs=request.get("observation_evidence_refs", []),
             collection_complete=collection_complete,
         )
@@ -507,15 +612,37 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         negative_evaluations.append(evaluation)
         if conflict:
             conflict_found = True
-            for fact_evaluation in fact_evaluations:
-                if fact_evaluation["fact_id"] in conflict["fact_ids"]:
-                    fact_evaluation["evaluation_status"] = "CONFLICTED"
+            for fact_id in conflict["fact_ids"]:
+                fact_evaluation = appended_fact_evaluations.get(fact_id)
+                if fact_evaluation is None:
+                    previous = sorted(
+                        (item for item in fact_evaluations if item["fact_id"] == fact_id),
+                        key=lambda item: item["evaluation_revision"],
+                    )
+                    revision = len(previous)
+                    fact_evaluation = {
+                        "schema_version": "0.1",
+                        "evaluation_id": deterministic_id("FACT-EVAL", {"fact_id": fact_id, "evaluation_revision": revision}),
+                        "fact_id": fact_id,
+                        "evaluation_revision": revision,
+                        "previous_evaluation_id": previous[-1]["evaluation_id"] if previous else None,
+                        "binding_refs": [],
+                        "evaluation_status": "CONFLICTED",
+                        "conflict_fact_refs": deepcopy(previous[-1]["conflict_fact_refs"]) if previous else [],
+                        "conflict_negative_observation_refs": deepcopy(previous[-1]["conflict_negative_observation_refs"]) if previous else [],
+                        "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
+                    }
+                    fact_evaluations.append(fact_evaluation)
+                    appended_fact_evaluations[fact_id] = fact_evaluation
+                fact_evaluation["evaluation_status"] = "CONFLICTED"
+                reference = _ref("negative_observation", conflict["negative_id"])
+                if reference not in fact_evaluation["conflict_negative_observation_refs"]:
                     fact_evaluation["conflict_negative_observation_refs"].append(
                         _ref("negative_observation", conflict["negative_id"])
                     )
-                    fact_evaluation["conflict_negative_observation_refs"].sort(
-                        key=lambda reference: reference["id"]
-                    )
+                fact_evaluation["conflict_negative_observation_refs"].sort(key=lambda reference: reference["id"])
+    if positive_conflicts:
+        conflict_found = True
     if conflict_found:
         observation["status"] = "CONFLICTED"
     bundle = {
