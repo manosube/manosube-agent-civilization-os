@@ -44,8 +44,14 @@ allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
 independent_verification_required: false
 maximum_evidence_age: null
 contradiction_policy: FAIL_CLOSED
-reopen_conditions: [{kind: target_predicate, id: TP-REOPEN-...}]
+reopen_conditions:
+  - kind: target_predicate
+    id: TP-REOPEN-...
+    objective_revision_ref: {kind: objective_revision, id: OBJ-REV-...}
+    predicate_semantic_fingerprint: sha256:...
 ```
+
+`maximum_evidence_age`は`null`または非負のJSON integerで表し、単位をSI secondへ固定する。fraction、negative value、float、文字列、ISO-8601 duration、millisecond表現を拒否する。Policy fingerprintにはこのintegerをそのままcanonical numberとして含める。
 
 `policy_semantic_fingerprint`は次のversioned profileで決定的に算出する。
 
@@ -92,7 +98,16 @@ serialization metadata
 
 Conformance vectorsでは少なくとも、object key順序と上記unordered set順序を変えた同値Policyが同じfingerprintを生成すること、member変更・重複・未知fieldが同一扱いされないことを証明する。
 
-`reopen_conditions`は新しい自由形式Condition recordではない。`01_OBJECTIVE/OBJECTIVE_CONTRACT.md`で定義されるversioned Target Predicateへのtyped referenceだけを許可する。各refのkindは`target_predicate`、IDは解決可能、predicate schema/versionは既知でなければならず、inline predicate、自由記述condition、unknown kindを拒否する。
+`reopen_conditions`は新しい自由形式Condition recordではない。`01_OBJECTIVE/OBJECTIVE_CONTRACT.md`で定義されるTarget Predicateへの次のexact typed referenceだけを許可する。
+
+```yaml
+kind: target_predicate
+id: TP-REOPEN-...
+objective_revision_ref: {kind: objective_revision, id: OBJ-REV-...}
+predicate_semantic_fingerprint: sha256:...
+```
+
+Predicate fingerprintはObjective semantic canonicalizationに従うpredicate payloadだけから決定し、出力は`sha256:`＋64 lowercase hexとする。`PREDICATE_MODIFY`でsemanticsが変わればfingerprintも変わり、Policy semantic fingerprintとDifference identityも変わる。各refのID／Objective revision／fingerprintはexactに解決可能でなければならず、inline predicate、自由記述condition、unknown kindを拒否する。
 
 PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
 
