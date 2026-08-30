@@ -44,7 +44,7 @@ allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
 independent_verification_required: false
 maximum_evidence_age: null
 contradiction_policy: FAIL_CLOSED
-reopen_policy_ref: {}
+reopen_conditions: []
 ```
 
 `policy_semantic_fingerprint`は次のversioned profileで決定的に算出する。
@@ -56,7 +56,7 @@ TEXT_NORMALIZATION=UNICODE_NFC
 SERIALIZATION=CANONICAL_JSON_UTF8
 OBJECT_KEY_ORDER=LEXICOGRAPHIC
 UNKNOWN_FIELDS=REJECT
-UNORDERED_SETS=required_claims,required_invariants,allowed_terminal_states
+UNORDERED_SETS=required_claims,required_invariants,allowed_terminal_states,reopen_conditions
 SET_ORDER=CANONICAL_MEMBER_BYTES
 DUPLICATE_SET_MEMBER=REJECT
 ```
@@ -73,7 +73,7 @@ allowed_terminal_states
 independent_verification_required
 maximum_evidence_age
 contradiction_policy
-reopen_policy_ref
+reopen_conditions
 ```
 
 循環を避けるため、次をfingerprint inputへ含めない。
@@ -327,7 +327,7 @@ State fingerprint
 Change identity or result
 Authority or Approval binding
 Evidence set
-Closure Policy version
+Closure Policy semantic fingerprint（version-only変更かつsemantic fingerprint同一の場合を除く）
 ```
 
 Stale Evaluationを再利用せず、最新Stateから再観測・再評価する。
@@ -335,6 +335,8 @@ Stale Evaluationを再利用せず、最新Stateから再観測・再評価す�
 # 9. Reopen Policy
 
 同じsemantic identity boundary内で、`CLOSED`後のObservationがTarget不一致を示した場合、またはClosureに使用したEvidenceの失効・provenance不正・material contradictionがObservationの有無にかかわらず判明した場合、Differenceを`REOPENED`へ遷移させる。
+
+加えて、Closure Policyの`reopen_conditions`をclosed、versioned predicate集合として評価する。いずれかのconditionがexact current State／Evidence上でtrueになった場合は同じ`CLOSED → REOPENED`経路を使用し、triggered condition identityと評価EvidenceをReopen Eventへ保存する。未知condition、評価不能、stale inputをtrueまたはfalseへ推測せず、fail closedで再観測へ送る。
 
 Reopenは旧Closureを削除しない。次をappendする。
 
@@ -389,6 +391,7 @@ REQUIRED_CLAIM_EVALUATIONS_BOUND=true
 POLICY_SEMANTIC_FINGERPRINT_DETERMINISTIC=true
 VERSION_ONLY_POLICY_UPDATE_CLOSABLE=true
 INDEPENDENT_VERIFICATION_SETTING_ENFORCED=true
+REOPEN_CONDITIONS_ENFORCED=true
 UNKNOWN_IS_PASS=false
 NO_RESULT_NE_PROVEN_ABSENCE=true
 CHANGE_CANNOT_SELF_CLOSE=true
