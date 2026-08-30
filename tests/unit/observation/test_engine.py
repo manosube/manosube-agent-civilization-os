@@ -825,3 +825,64 @@ def test_source_reference_order_is_not_semantic() -> None:
     second = deepcopy(first)
     second["source_snapshot_refs"].reverse()
     assert observe(first) == observe(second)
+
+
+def test_prior_conflict_must_remain_bidirectional() -> None:
+    request = _request()
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "equals@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    prior = observe(request)
+    prior["negative_evaluations"][-1]["conflict_fact_refs"] = []
+    extension = _request()
+    extension["state_revision_observed"] = 3
+    extension["state_fingerprint_observed"]["digest"] = "b" * 64
+    extension["prior_bundle"] = prior
+    with pytest.raises(ObservationValidationError, match=r"conflict mismatch|one-sided"):
+        observe(extension)
+
+
+def test_prior_binding_identity_is_recomputed() -> None:
+    prior = observe(_request())
+    original_id = prior["bindings"][0]["binding_id"]
+    prior["bindings"][0]["binding_id"] = "BIND-FORGED"
+    for evaluation in prior["fact_evaluations"]:
+        for reference in evaluation["binding_refs"]:
+            if reference["id"] == original_id:
+                reference["id"] = "BIND-FORGED"
+    extension = _request()
+    extension["state_revision_observed"] = 3
+    extension["state_fingerprint_observed"]["digest"] = "b" * 64
+    extension["prior_bundle"] = prior
+    with pytest.raises(ObservationValidationError, match="Binding identity mismatch"):
+        observe(extension)
+
+
+def test_prior_fact_payload_must_itself_be_canonical() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = [
+        {**_fact("fixture.name", "equals@v1", "value", "STRING"), "unit": "é"}
+    ]
+    prior = observe(request)
+    prior["facts"][0]["unit"] = "e\u0301"
+    extension = deepcopy(request)
+    extension["state_revision_observed"] = 3
+    extension["state_fingerprint_observed"]["digest"] = "b" * 64
+    extension["prior_bundle"] = prior
+    with pytest.raises(ObservationValidationError, match="Fact payload is not canonical"):
+        observe(extension)
+
+
+def test_observation_evidence_reference_order_is_not_semantic() -> None:
+    first = _request()
+    first["observation_evidence_refs"].append(
+        {"kind": "observation_evidence", "id": "EVID-0002"}
+    )
+    second = deepcopy(first)
+    second["observation_evidence_refs"].reverse()
+    assert observe(first) == observe(second)
