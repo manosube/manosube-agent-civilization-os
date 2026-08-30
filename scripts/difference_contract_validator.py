@@ -494,6 +494,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     transition is not None
                     and evaluation is not None
                     and (
+                        datetime.fromisoformat(transition["committed_at"].replace("Z", "+00:00"))
+                        >= datetime.fromisoformat(
+                            evaluation["evaluated_at"].replace("Z", "+00:00")
+                        )
+                    )
+                    and (
                         evaluation["evaluation_expires_at"] is None
                         or datetime.fromisoformat(transition["committed_at"].replace("Z", "+00:00"))
                         <= datetime.fromisoformat(
@@ -525,6 +531,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and transition["after_state"]["semantic_fingerprint"]
                     == transition["after_fingerprint"]
                     and transition["after_state"]["semantic_state"] == candidate["semantic_state"]
+                    and transition["after_state"]["lineage_head_ref"] == transition_ref
                     and {("closure_evaluation", evaluation["closure_evaluation_id"]),
                          ("difference", difference_id)}
                     <= {(reference["kind"], reference["id"])
@@ -895,10 +902,13 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 for gate in evaluated_gates
             ):
                 errors.append(f"candidate terminal gate omitted: {evaluation['closure_evaluation_id']}")
-            allowed_claim_ids = {
-                item["id"] for item in (policy or {}).get("required_claims", [])
-            } | {_mandatory_completion_claim()["id"]}
+            mandatory_claim = _mandatory_completion_claim()
+            claim_descriptors = {
+                item["id"]: item for item in (policy or {}).get("required_claims", [])
+            }
+            claim_descriptors[mandatory_claim["id"]] = mandatory_claim
             for binding in evaluation["candidate_claim_evaluation_bindings"]:
+                descriptor = claim_descriptors.get(binding["required_claim_ref"]["id"])
                 completion = completion_records.get(
                     _ref_id(binding["completion_record_ref"]) or ""
                 )
@@ -910,6 +920,30 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     key=lambda item: item["event_revision"],
                 )
                 head_event = series[-1] if series else None
+                series_payload = {
+                    "difference_id": binding["difference_id"],
+                    "policy_ref": binding["policy_ref"],
+                    "candidate_id": binding["candidate_id"],
+                    "required_claim_ref": binding["required_claim_ref"],
+                }
+                expected_series = "CAND-CLAIM-SERIES-" + hashlib.sha256(
+                    b"MANOSUBE:CANDIDATE_CLAIM_EVALUATION_SERIES:0.1:"
+                    + canonical_json_bytes(series_payload)
+                ).hexdigest().upper()
+                chain_valid = all(
+                    item["event_revision"] == revision
+                    and _ref_id(item["predecessor_event_ref"])
+                    == (None if revision == 0 else series[revision - 1]["event_id"])
+                    and item["event_id"]
+                    == "CAND-CLAIM-EVT-" + hashlib.sha256(
+                        b"MANOSUBE:CANDIDATE_CLAIM_EVALUATION_EVENT:0.1:"
+                        + canonical_json_bytes({
+                            key: value for key, value in item.items()
+                            if key != "event_id"
+                        })
+                    ).hexdigest().upper()
+                    for revision, item in enumerate(series)
+                )
                 if (
                     binding["binding_id"]
                     != _content_address("CAND-CLAIM-EVAL-", binding, "binding_id")
@@ -919,8 +953,24 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or binding["candidate_semantic_fingerprint"]
                     != candidate["semantic_fingerprint"]
                     or binding["base_state_ref"] != evaluation["before_state_ref"]
-                    or binding["required_claim_ref"]["id"] not in allowed_claim_ids
+                    or descriptor is None
+                    or binding["evaluation_series_id"] != expected_series
+                    or not chain_valid
                     or completion is None
+                    or descriptor is None
+                    or completion["subject_type"] != descriptor["subject_type"]
+                    or completion["subject_ref"] != descriptor["subject_ref"]
+                    or completion["claim"] != descriptor["claim"]
+                    or completion["target_state_ref"] != descriptor["target_state_ref"]
+                    or completion["observed_state_ref"]
+                    != {"kind": "after_state_candidate", "id": candidate["candidate_id"]}
+                    or not (policy and _policy_ref_matches(
+                        completion["closure_policy_ref"], policy
+                    ))
+                    or completion["evaluated_state_revision"]
+                    != evaluation["before_state_ref"]["revision"]
+                    or completion["evaluated_state_fingerprint"]
+                    != candidate["semantic_fingerprint"]
                     or completion["evaluation_status"] != binding["evaluation_status"]
                     or completion["required_evidence_refs"]
                     != binding["evaluation_evidence_refs"]
@@ -935,6 +985,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or head_event is None
                     or head_event["completion_record_ref"]
                     != binding["completion_record_ref"]
+                    or head_event["required_claim_ref"] != binding["required_claim_ref"]
+                    or head_event["candidate_id"] != binding["candidate_id"]
                     or head_event["evaluation_status"] != binding["evaluation_status"]
                 ):
                     errors.append(
