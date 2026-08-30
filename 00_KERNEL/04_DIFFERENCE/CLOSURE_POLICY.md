@@ -160,7 +160,7 @@ contract_source_blob:
   invariant_definition_sha256: sha256:<64 lowercase hex>
 ```
 
-`invariant_definition_sha256`は、指定Invariant IDに属する完全な定義blockをContract parserで抽出し、UTF-8、Unicode NFC、LF改行、末尾改行1個へ正規化したbytesのSHA-256である。抽出境界はInvariant見出し開始から、同levelの次Invariant見出し直前またはEOFまでとし、ID行、NAME、本文、全code blockを含む。抽出不能、ID欠落・重複、正規化後digest不一致を拒否する。
+`invariant_definition_sha256`は、指定Invariant IDに属する完全な定義blockをContract parserで抽出し、UTF-8、Unicode NFC、LF改行、末尾改行1個へ正規化したbytesのSHA-256である。抽出はInvariant見出し開始から始め、次に現れる同levelまたは上位levelのMarkdown ATX heading直前で必ず停止し、見出しがなければEOFで停止する。停止headingがInvariant見出しかsection見出しかは問わず、停止heading自体を含めない。開始見出し、ID行、NAME、本文、全code blockを含む。fenced code block内の`#`はheadingとして扱わない。抽出不能、ID欠落・重複、正規化後digest不一致を拒否する。
 
 `commit_sha`とwhole-file `blob_sha`はexact provenance検証には必須だがsemantic projectionから除外する。同じInvariant定義が別commit、別whole-file blobに存在してもPolicy fingerprintを変えない。repository、path、Invariant IDまたは`invariant_definition_sha256`の変更はfingerprintを変える。
 
