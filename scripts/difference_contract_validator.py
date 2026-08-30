@@ -99,8 +99,13 @@ def _policy_fingerprint(policy: dict[str, Any]) -> str:
         "independent_verification_required", "maximum_evidence_age",
         "contradiction_policy", "reopen_conditions",
     )}
-    for key in ("required_claims", "allowed_terminal_states"):
-        projection[key] = sorted(projection[key], key=canonical_json_bytes)
+    projection["required_claims"] = sorted(
+        (_canonical_semantic(item) for item in projection["required_claims"]),
+        key=canonical_json_bytes,
+    )
+    projection["allowed_terminal_states"] = sorted(
+        projection["allowed_terminal_states"], key=canonical_json_bytes
+    )
     projection["reopen_conditions"] = sorted(
         ({key: item[key] for key in ("kind", "id", "predicate_semantic_fingerprint")}
          for item in projection["reopen_conditions"]), key=canonical_json_bytes,
@@ -114,7 +119,9 @@ def _policy_fingerprint(policy: dict[str, Any]) -> str:
             "invariant_definition_sha256": item["contract_source_ref"]["invariant_definition_sha256"],
         },
     } for item in projection["required_invariants"]), key=canonical_json_bytes)
-    return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
+    return "sha256:" + hashlib.sha256(
+        canonical_json_bytes(_canonical_semantic(projection))
+    ).hexdigest()
 
 
 def _difference_id(difference: dict[str, Any]) -> str:
@@ -827,6 +834,10 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 ).hexdigest().upper()
                 chain_valid = all(
                     item["event_revision"] == revision
+                    and item["difference_id"] == binding["difference_id"]
+                    and item["policy_ref"] == binding["policy_ref"]
+                    and item["candidate_id"] == binding["candidate_id"]
+                    and item["required_claim_ref"] == binding["required_claim_ref"]
                     and _ref_id(item["predecessor_event_ref"])
                     == (None if revision == 0 else series[revision - 1]["event_id"])
                     and item["event_id"]
@@ -874,7 +885,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or completion is None
                     or completion["evaluation_status"] != binding["evaluation_status"]
                     or completion["evaluated_at"] != binding["evaluated_at"]
-                    or completion["required_evidence_refs"] != binding["evaluation_evidence_refs"]
+                    or _canonical_semantic(completion["required_evidence_refs"])
+                    != _canonical_semantic(binding["evaluation_evidence_refs"])
                     or descriptor is None
                     or completion["subject_type"] != descriptor["subject_type"]
                     or completion["subject_ref"] != descriptor["subject_ref"]
@@ -942,6 +954,10 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 ).hexdigest().upper()
                 chain_valid = all(
                     item["event_revision"] == revision
+                    and item["difference_id"] == binding["difference_id"]
+                    and item["policy_ref"] == binding["policy_ref"]
+                    and item["candidate_id"] == binding["candidate_id"]
+                    and item["required_claim_ref"] == binding["required_claim_ref"]
                     and _ref_id(item["predecessor_event_ref"])
                     == (None if revision == 0 else series[revision - 1]["event_id"])
                     and item["event_id"]
@@ -983,8 +999,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or completion["evaluated_state_fingerprint"]
                     != candidate["semantic_fingerprint"]
                     or completion["evaluation_status"] != binding["evaluation_status"]
-                    or completion["required_evidence_refs"]
-                    != binding["evaluation_evidence_refs"]
+                    or _canonical_semantic(completion["required_evidence_refs"])
+                    != _canonical_semantic(binding["evaluation_evidence_refs"])
                     or completion["evaluated_at"] != binding["evaluated_at"]
                     or binding["evaluation_record_fingerprint"]
                     != (None if completion is None else _resolved_record_fingerprint(
