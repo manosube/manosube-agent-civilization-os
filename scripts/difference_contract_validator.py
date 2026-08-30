@@ -490,13 +490,30 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 transition_ref = event["reflow_transition_ref"]
                 transition = reflow_transitions.get(_ref_id(transition_ref) or "")
                 candidate = None if evaluation is None else evaluation["after_state_candidate"]
+                commit_before_expiry = (
+                    transition is not None
+                    and evaluation is not None
+                    and (
+                        evaluation["evaluation_expires_at"] is None
+                        or datetime.fromisoformat(transition["committed_at"].replace("Z", "+00:00"))
+                        <= datetime.fromisoformat(
+                            evaluation["evaluation_expires_at"].replace("Z", "+00:00")
+                        )
+                    )
+                )
                 reflow_valid = event["to_status"] != "CLOSED" or (
                     transition_ref is not None
                     and transition_ref.get("kind") == "state_transition"
                     and transition is not None
                     and evaluation is not None
                     and candidate is not None
+                    and difference is not None
+                    and commit_before_expiry
                     and transition["event_type"] == "TRANSITION"
+                    and transition["project_id"] == difference["project_id"]
+                    and transition["after_state"]["project_id"] == difference["project_id"]
+                    and transition["after_state"]["objective_revision_id"]
+                    == evaluation["objective_revision_ref_evaluated"]["id"]
                     and transition["from_revision"] == evaluation["before_state_ref"]["revision"]
                     and transition["to_revision"] == transition["from_revision"] + 1
                     and transition["before_fingerprint"]
@@ -825,7 +842,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         + canonical_json_bytes(completion_payload)
                     ).hexdigest().upper()
                 if (
-                    binding["difference_id"] != evaluation["difference_id"]
+                    binding["binding_id"]
+                    != _content_address("CAND-CLAIM-EVAL-", binding, "binding_id")
+                    or binding["difference_id"] != evaluation["difference_id"]
                     or not (policy and _policy_ref_matches(binding["policy_ref"], policy))
                     or binding["candidate_id"] != candidate["candidate_id"]
                     or binding["candidate_semantic_fingerprint"] != candidate["semantic_fingerprint"]
@@ -876,6 +895,51 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 for gate in evaluated_gates
             ):
                 errors.append(f"candidate terminal gate omitted: {evaluation['closure_evaluation_id']}")
+            allowed_claim_ids = {
+                item["id"] for item in (policy or {}).get("required_claims", [])
+            } | {_mandatory_completion_claim()["id"]}
+            for binding in evaluation["candidate_claim_evaluation_bindings"]:
+                completion = completion_records.get(
+                    _ref_id(binding["completion_record_ref"]) or ""
+                )
+                series = sorted(
+                    (
+                        item for item in claim_events.values()
+                        if item["evaluation_series_id"] == binding["evaluation_series_id"]
+                    ),
+                    key=lambda item: item["event_revision"],
+                )
+                head_event = series[-1] if series else None
+                if (
+                    binding["binding_id"]
+                    != _content_address("CAND-CLAIM-EVAL-", binding, "binding_id")
+                    or binding["difference_id"] != evaluation["difference_id"]
+                    or not (policy and _policy_ref_matches(binding["policy_ref"], policy))
+                    or binding["candidate_id"] != candidate["candidate_id"]
+                    or binding["candidate_semantic_fingerprint"]
+                    != candidate["semantic_fingerprint"]
+                    or binding["base_state_ref"] != evaluation["before_state_ref"]
+                    or binding["required_claim_ref"]["id"] not in allowed_claim_ids
+                    or completion is None
+                    or completion["evaluation_status"] != binding["evaluation_status"]
+                    or completion["required_evidence_refs"]
+                    != binding["evaluation_evidence_refs"]
+                    or completion["evaluated_at"] != binding["evaluated_at"]
+                    or binding["evaluation_record_fingerprint"]
+                    != (None if completion is None else _resolved_record_fingerprint(
+                        completion, "completion"
+                    ))
+                    or head_event is None
+                    or _ref_id(binding["evaluation_head_event_ref"])
+                    != (None if head_event is None else head_event["event_id"])
+                    or head_event is None
+                    or head_event["completion_record_ref"]
+                    != binding["completion_record_ref"]
+                    or head_event["evaluation_status"] != binding["evaluation_status"]
+                ):
+                    errors.append(
+                        f"candidate claim binding mismatch: {binding['binding_id']}"
+                    )
         elif mode == "TERMINAL_POLICY_ONLY":
             if candidate is not None or proposed not in {"BLOCKED", "RETAINED"}:
                 errors.append(f"Policy-only mode contains candidate truth: {evaluation['closure_evaluation_id']}")
