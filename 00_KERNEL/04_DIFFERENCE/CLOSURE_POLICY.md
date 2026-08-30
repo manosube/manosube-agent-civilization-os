@@ -20,7 +20,7 @@ STATUS=CANONICAL_DESIGN
 DIFFERENCE CLOSED
 = TARGET SATISFIED
 + AFTER STATE RE-OBSERVED
-+ SUFFICIENT CHANGE RESULT EVIDENCE
++ SUFFICIENT RESOLUTION EVIDENCE
 + NO MATERIAL CONTRADICTION
 + POLICY PASS
 + ATOMIC REFLOW
@@ -36,7 +36,7 @@ closure_policy_id: CP-...
 policy_version: "0.1"
 subject_difference_ref: {kind: difference, id: D-...}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
-required_observation_profile_ref: {}
+required_observation_scope: {}
 minimum_evidence_level: E1
 required_claims: []
 prohibited_statuses: []
@@ -59,10 +59,12 @@ target_predicate_ref: {kind: target_predicate, id: TP-...}
 objective_revision_ref_evaluated: {kind: objective_revision, id: OBJ-REV-...}
 objective_semantic_fingerprint_evaluated: {}
 before_state_ref: {}
+resolution_mode: CHANGE_BOUND
 change_refs: []
 after_state_ref: {}
 after_observation_refs: []
 change_result_evidence_refs: []
+change_free_verification_evidence_refs: []
 evidence_sufficiency_ref: {}
 contradiction_refs: []
 evaluated_state_revision: 0
@@ -96,12 +98,12 @@ G2  DIFFERENCE_STATUS_VERIFYING
 G3  OBJECTIVE_SEMANTIC_FINGERPRINT_EXACT
 G4  TARGET_PREDICATE_EXACT
 G5  BEFORE_STATE_EXACT
-G6  CHANGE_BINDING_EXACT
+G6  RESOLUTION_MODE_BINDING_EXACT
 G7  AFTER_STATE_NEWER_AND_EXACT
 G8  INDEPENDENT_REOBSERVATION_PRESENT
-G9  REQUIRED_OBSERVATION_PROFILE_EXACT
+G9  REQUIRED_OBSERVATION_SCOPE_EXACT
 G10 OBSERVED_TARGET_SATISFIED
-G11 CHANGE_RESULT_EVIDENCE_PRESENT
+G11 RESOLUTION_EVIDENCE_PRESENT
 G12 EVIDENCE_LEVEL_SUFFICIENT
 G13 OBSERVATION_SCOPE_COMPLETE
 G14 NO_BLOCKING_BLIND_SPOT
@@ -118,7 +120,25 @@ G21 ALL_REQUIRED_CLAIMS_SATISFIED
 
 `G3`はClosure Evaluation時点のactive `objective_revision_ref_evaluated`をexact provenanceとして保存し、その`objective_semantic_fingerprint_evaluated`がDifference identityに結合されたfingerprintと一致することを要求する。EDITORIAL revisionではrevision refの変更を許すがsemantic fingerprintの変更を許さない。semantic fingerprintが変わった場合はClosureせず、新しいDifference identityへsupersedeする。
 
-`G9`はafter-state Observationのmethod、normalization profile、scope profileおよびschema versionを`required_observation_profile_ref`から解決し、exactに一致することを要求する。単に独立したObservationが存在するだけでは満たさない。
+`G6`と`G11`は`resolution_mode`により分岐する。
+
+```text
+CHANGE_BOUND
+→ change_refs NON-EMPTY
+→ exact before／after State binding
+→ change_result_evidence_refs NON-EMPTY
+→ change_free_verification_evidence_refs EMPTY
+
+CHANGE_FREE
+→ change_refs EMPTY
+→ change_result_evidence_refs EMPTY
+→ change_free_verification_evidence_refs NON-EMPTY
+→ independent after-state Observation Evidence proves the Target directly
+```
+
+`CHANGE_FREE`はEvidence要件の免除ではない。`REOPENED → VERIFYING`など、変更を必要とせず新しい観測でTarget Satisfactionを再検証する経路でのみ使用し、Observation Evidence、scope completeness、Evidence Sufficiencyおよび全required claimsを通常どおり評価する。Changeが存在しないことを理由に`G11`を自動PASSさせてはならない。
+
+`G9`はafter-state Observationのeffective scopeをCanonical field `required_observation_scope`とexactに照合する。method、normalization profileおよびschema versionの追加制約が必要な場合は`required_claims`としてversioned identityを指定し、scope fieldへ暗黙に混在させない。単に独立したObservationが存在するだけでは満たさない。
 
 `G21`はClosure Policyの`required_claims`を空集合として無視する規則ではない。各required claimについて、exact claim identity、evaluated State、Evidence references、Completion Evaluation statusを解決し、全件が`SATISFIED`であることを要求する。
 
