@@ -157,7 +157,15 @@ def _completion(
     )
     method_complete = attempts_complete and observation["status"] in {"COMPLETE", "EMPTY"}
     no_blocking_blind_spot = all(
-        item["impact"] not in {"BLOCKS_COMPLETION", "BLOCKS_ABSENCE"}
+        item["impact"] != "BLOCKS_COMPLETION"
+        and not (
+            item["impact"] == "BLOCKS_ABSENCE"
+            and claim is not None
+            and (
+                claim["subject"] in item["affected_subjects"]
+                or "*" in item["affected_subjects"]
+            )
+        )
         for item in observation["blind_spots"]["items"]
     )
     base: dict[str, bool] = {
@@ -199,6 +207,24 @@ def _negative_records(
     status = claim["negative_status"]
     if status not in _STATUS_CANDIDATE:
         raise ObservationError(f"unknown negative status: {status!r}")
+    boundary = claim["effective_boundary"]
+    declared_source_ids = {item["id"] for item in observation["source_snapshot_refs"]}
+    boundary_valid = (
+        boundary["kind"] == "SOURCE_SNAPSHOT"
+        and boundary["identity"] in declared_source_ids
+        and boundary["start"] is None
+        and boundary["end"] is None
+    ) or (
+        boundary["kind"] == "TIME_INTERVAL"
+        and boundary["start"] == observation["time_boundary"]["target_effective_start"]
+        and boundary["end"] == observation["time_boundary"]["target_effective_end"]
+    ) or (
+        boundary["kind"] == "STATE_REVISION"
+        and boundary["start"] == observation["state_revision_observed"]
+        and boundary["end"] == observation["state_revision_observed"]
+    )
+    if not boundary_valid:
+        raise ObservationError("Negative claim effective boundary was not observed")
     conflicts = [
         fact
         for fact in facts
@@ -223,6 +249,8 @@ def _negative_records(
         )
     ):
         raise ObservationError("EMPTY requires complete zero-member enumeration")
+    if status in {"ABSENT", "EMPTY"} and not evidence_refs:
+        raise ObservationError(f"{status} requires bounded negative Evidence")
     identity_input = {
         "observation_id": observation["observation_id"],
         "subject": claim["subject"],
@@ -450,6 +478,8 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         _require_ref_kind(reference, "source_snapshot", "source_snapshot_refs")
     for reference in request.get("observation_evidence_refs", []):
         _require_ref_kind(reference, "observation_evidence", "observation_evidence_refs")
+    for reference in request.get("negative_evidence_refs", []):
+        _require_ref_kind(reference, "negative_evidence", "negative_evidence_refs")
     scope_sources = {(reference["kind"], reference["id"]) for reference in scope["source_snapshot_refs"]}
     declared_sources = {
         (reference["kind"], reference["id"]) for reference in request["source_snapshot_refs"]
@@ -643,27 +673,16 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                     "effective_boundary": claim["effective_boundary"],
                 },
             )
-            conflicts = any(
-                fact["subject"] == claim["subject"]
-                and fact["predicate"] == claim["predicate"]
-                and fact["effective_boundary"] == claim["effective_boundary"]
-                for fact in facts
-            )
-            expected_status = "CONFLICTED" if conflicts else claim["negative_status"]
             existing_negative = prior_negative_index.get(negative_id)
-            if (
-                existing_negative is None
-                or existing_negative["negative_status"] != expected_status
-                or existing_negative["completion_evaluation"]
-                != _completion(
-                    expected_status,
-                    observation,
-                    scope,
-                    collection_complete,
-                    claim=claim,
-                    facts=facts,
-                )
-            ):
+            expected_negative, _, _ = _negative_records(
+                claim=claim,
+                observation=observation,
+                scope=scope,
+                facts=facts,
+                evidence_refs=request.get("negative_evidence_refs", []),
+                collection_complete=collection_complete,
+            )
+            if existing_negative != expected_negative:
                 retry_negative_equivalent = False
         if (
             existing_observation != observation
@@ -837,7 +856,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             observation=observation,
             scope=scope,
             facts=facts,
-            evidence_refs=request.get("observation_evidence_refs", []),
+            evidence_refs=request.get("negative_evidence_refs", []),
             collection_complete=collection_complete,
         )
         negatives.append(negative)
