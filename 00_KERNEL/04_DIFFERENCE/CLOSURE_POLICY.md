@@ -427,7 +427,20 @@ revocation_refs: {collection_kind: UNORDERED_SET, members: []}
 authority_approval_ref: {kind: human_authority_approval, id: APPROVAL-...}
 ```
 
-各binding memberは`{kind: root_key_authorization, trust_root_ref: {kind, id, version, fingerprint}, public_key_ref: {kind, id, version, fingerprint}, owner_identity_ref, algorithm: ED25519, authorization_ref}`のclosed objectである。同じkeyを複数rootへ結合する場合もrootごとに別memberを要求し、attestationが選択したroot／key pairとexact一致するmemberがなければrejectする。Fingerprint profileは`MANOSUBE-TRUSTED-EXECUTION-ROOT-SET-SHA256-0.1`、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic keys、duplicate-free unordered sets、unknown field rejectとする。Fingerprint inputはIDとfingerprint自身を除く全fieldである。IDは`TRUST-SET-`＋fingerprint digestの64 lowercase hexとする。固定payload／digest、set順序不変、duplicate、unknown algorithm、revoked member、root-key mismatch、approval mismatchのconformance vectorsを公開する。
+各binding memberは次のclosed objectである。
+
+```yaml
+kind: root_key_authorization
+trust_root_ref: {kind: trust_root, id: TRUST-ROOT-..., version: "0.1", fingerprint: sha256:...}
+public_key_ref: {kind: public_key, id: KEY-..., version: "0.1", fingerprint: sha256:...}
+owner_identity_ref: {kind: execution_identity, id: IDENTITY-..., version: "0.1", fingerprint: sha256:...}
+algorithm: ED25519
+authorization_ref: {kind: root_key_authorization_decision, id: ROOT-KEY-AUTH-..., version: "0.1", fingerprint: sha256:...}
+```
+
+`execution_identity`はimmutable identity recordへ、`root_key_authorization_decision`はHuman／Binding Authorityが発行したimmutable decision recordへexactに解決する。Decisionのclosed subjectは`trust_root_ref + public_key_ref + owner_identity_ref + algorithm + trusted_execution_root_set_ref`であり、bindingの全fieldおよび親root-setとexact一致しなければならない。Decision statusは`AUTHORIZED`、期限内、non-revokedであることを要求し、producer自己承認、subject mismatch、version／fingerprint mismatchをrejectする。
+
+同じkeyを複数rootへ結合する場合もrootごとに別memberを要求し、attestationが選択したroot／key／owner pairとexact一致するmemberがなければrejectする。Fingerprint profileは`MANOSUBE-TRUSTED-EXECUTION-ROOT-SET-SHA256-0.1`、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic keys、duplicate-free unordered sets、unknown field rejectとする。Fingerprint inputはIDとfingerprint自身を除く全fieldである。IDは`TRUST-SET-`＋fingerprint digestの64 lowercase hexとする。固定payload／digest、set順序不変、duplicate、unknown algorithm、revoked member、root-key-owner mismatch、approval mismatchのconformance vectorsを公開する。
 
 `signer_key_ref`と`trust_root_ref`はPolicy-bound root setの同一`root_key_authorization` memberへexactに解決し、non-revoked Ed25519 key、signer identity、key ownershipを結合する。検証時刻`now`について、`issued_at <= now < expires_at`に加え、`valid_from <= issued_at`、`valid_from <= now`、および`valid_until=null OR (issued_at < valid_until AND now < valid_until)`をすべて要求する。key／trust-root／root-set version、fingerprint、revocation statusがcurrentでなければならない。root-key pair不一致、root-set window外、自己署名、unknown algorithm、padding付きまたは非canonical base64url、expiry超過、subject不一致、payload digest不一致、signature failureをrejectする。
 
