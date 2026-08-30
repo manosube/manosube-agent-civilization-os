@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
@@ -31,11 +32,19 @@ def normalize_fact(raw: dict[str, Any], project_id: str, profile: str) -> dict[s
     value_type = raw.get("value_type")
     if value_type not in VALUE_TYPES:
         raise ObservationError(f"unknown value_type: {value_type!r}")
+    value = deepcopy(raw["value"])
+    if value_type == "UNORDERED_COLLECTION":
+        if not isinstance(value, list):
+            raise ObservationError("UNORDERED_COLLECTION value must be an array")
+        encoded = [canonical_json_bytes(item) for item in value]
+        if len(encoded) != len(set(encoded)):
+            raise ObservationError("UNORDERED_COLLECTION contains duplicate canonical members")
+        value = [item for _, item in sorted(zip(encoded, value, strict=True))]
     semantic = {
         "project_id": project_id,
         "subject": raw["subject"],
         "predicate": raw["predicate"],
-        "value": raw["value"],
+        "value": value,
         "value_type": value_type,
         "unit": raw.get("unit"),
         "effective_boundary": raw["effective_boundary"],
