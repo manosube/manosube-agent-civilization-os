@@ -125,7 +125,15 @@ def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
         return bool(values) and all(value != expected for value in values)
     if operator == "contains":
         return bool(values) and all(
-            isinstance(value, (str, list, dict)) and expected in value for value in values
+            isinstance(value, (list, dict))
+            and any(
+                member == expected
+                and _value_matches_declared_type(
+                    member, target["expected_value_type"]
+                )
+                for member in (value if isinstance(value, list) else value.values())
+            )
+            for value in values
         )
     if operator == "exists":
         return bool(values)
@@ -134,6 +142,47 @@ def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
     if operator == "none":
         return all(value != expected for value in values)
     return False
+
+
+def _value_matches_declared_type(value: Any, value_type: str) -> bool:
+    return {
+        "NULL": value is None,
+        "BOOLEAN": isinstance(value, bool),
+        "INTEGER": isinstance(value, int) and not isinstance(value, bool),
+        "STRING": isinstance(value, str),
+        "STRUCTURED": isinstance(value, dict),
+        "DECIMAL": isinstance(value, str) and bool(re.fullmatch(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?", value)),
+        "TIMESTAMP": isinstance(value, str),
+        "DURATION": isinstance(value, str) and value.startswith("P"),
+        "IDENTITY_REFERENCE": isinstance(value, dict) and {"kind", "id"} <= value.keys(),
+        "ORDERED_COLLECTION": isinstance(value, list),
+        "UNORDERED_COLLECTION": isinstance(value, list),
+    }.get(value_type, False)
+
+
+def _evaluation_supports_observation(
+    evaluation: dict[str, Any], fact: dict[str, Any], observation: dict[str, Any],
+    bindings: dict[str, dict[str, Any]],
+) -> bool:
+    resolved = [bindings.get(_ref_id(reference) or "") for reference in evaluation["binding_refs"]]
+    if not resolved or any(binding is None for binding in resolved):
+        return False
+    if not all(
+        reference.get("kind") == "fact_observation_binding"
+        and binding is not None
+        and binding["fact_id"] == fact["fact_id"]
+        and binding["observed_quality_status"] == "SUPPORTED"
+        for reference, binding in zip(evaluation["binding_refs"], resolved, strict=True)
+    ):
+        return False
+    return any(
+        binding is not None
+        and binding["observation_id"] == observation["observation_id"]
+        and binding["state_revision_observed"] == observation["state_revision_observed"]
+        and binding["state_fingerprint_observed"] == observation["state_fingerprint_observed"]
+        and binding["source_ref"] in observation["source_snapshot_refs"]
+        for binding in resolved
+    )
 
 
 def _fact_type_matches_target(fact: dict[str, Any], target: dict[str, Any]) -> bool:
@@ -1015,21 +1064,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and (latest_evaluation := latest_fact_evaluations.get(fact["fact_id"]))
                     is not None
                     and latest_evaluation["evaluation_status"] == "SUPPORTED"
-                    and bool(latest_evaluation["binding_refs"])
-                    and all(
-                        (binding := fact_bindings.get(_ref_id(binding_ref) or ""))
-                        is not None
-                        and binding_ref.get("kind") == "fact_observation_binding"
-                        and binding["fact_id"] == fact["fact_id"]
-                        and observation is not None
-                        and binding["observation_id"] == observation["observation_id"]
-                        and binding["state_revision_observed"]
-                        == observation["state_revision_observed"]
-                        and binding["state_fingerprint_observed"]
-                        == observation["state_fingerprint_observed"]
-                        and binding["source_ref"] in observation["source_snapshot_refs"]
-                        and binding["observed_quality_status"] == "SUPPORTED"
-                        for binding_ref in latest_evaluation["binding_refs"]
+                    and observation is not None
+                    and _evaluation_supports_observation(
+                        latest_evaluation, fact, observation, fact_bindings
                     )
                     for fact in facts
                 )
