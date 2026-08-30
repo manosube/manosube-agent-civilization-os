@@ -180,8 +180,8 @@ Reopenは旧Closure Eventを削除または書換えない。すべての新Even
 | Trigger | Required refs | Forbidden refs |
 |---|---|---|
 | `OBSERVATION_CONTRADICTION` | observation refs、contradicting Evidence refs | reopen condition refs |
-| `CLOSURE_EVIDENCE_REVOKED` | revoked closure Evidence refs | observation refs、reopen condition refs |
-| `CLOSURE_EVIDENCE_INVALID` | invalid closure Evidence refs | observation refs、reopen condition refs |
+| `CLOSURE_EVIDENCE_REVOKED` | revoked closure Evidence refs | reopen condition refs。observation refsは発見provenanceとしてoptional |
+| `CLOSURE_EVIDENCE_INVALID` | invalid closure Evidence refs | reopen condition refs。observation refsは発見provenanceとしてoptional |
 | `MATERIAL_CONTRADICTION` | contradiction Evidence refs | reopen condition refs |
 | `POLICY_REOPEN_CONDITION_SATISFIED` | reopen condition ref、current Completion Evaluation ref、そのevaluation Evidence refs | invalidated／revoked closure Evidence refs |
 
