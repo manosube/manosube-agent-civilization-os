@@ -38,7 +38,7 @@
     "status": {"enum": ["DETECTED", "OPEN", "ACTIVE", "VERIFYING", "BLOCKED", "RETAINED", "CLOSED", "REOPENED", "SUPERSEDED", "INVALIDATED"]},
     "blocker_scope": {
       "type": "object", "required": ["kind", "effective_boundary", "affected_subject_refs", "blocked_stage"],
-      "properties": {"kind": {"const": "difference_blocker_scope"}, "effective_boundary": {"$ref": "difference.schema.json#/$defs/effective_boundary"}, "affected_subject_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "blocked_stage": {"enum": ["OBSERVATION", "DIFFERENCE_EVALUATION", "LIFECYCLE_TRANSITION", "EXTERNAL_AUTHORITY_PATH", "EXTERNAL_EXECUTION_PATH", "EXTERNAL_EVIDENCE_PATH"]}}, "additionalProperties": false
+      "properties": {"kind": {"const": "difference_blocker_scope"}, "effective_boundary": {"$ref": "difference.schema.json#/$defs/effective_boundary"}, "affected_subject_refs": {"allOf": [{"$ref": "difference.schema.json#/$defs/unordered_references"}, {"properties": {"members": {"minItems": 1}}}]}, "blocked_stage": {"enum": ["OBSERVATION", "DIFFERENCE_EVALUATION", "LIFECYCLE_TRANSITION", "EXTERNAL_AUTHORITY_PATH", "EXTERNAL_EXECUTION_PATH", "EXTERNAL_EVIDENCE_PATH"]}}, "additionalProperties": false
     },
     "blocker_resolution_condition": {
       "type": "object", "required": ["kind", "condition_code", "subject_ref", "expected_state", "verification_request_ref"],

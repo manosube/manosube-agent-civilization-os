@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta
+import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
 from typing import Any
+
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 STATUSES = {
     "DETECTED", "OPEN", "ACTIVE", "VERIFYING", "BLOCKED", "RETAINED", "CLOSED",
@@ -66,6 +71,41 @@ def _mandatory_invariant_ids() -> set[str]:
     ids = set(re.findall(r"^([KASODCERBXP]-[0-9]{3}) PASS$", source, re.MULTILINE))
     ids.discard("P-003")
     return ids
+
+
+def _content_address(prefix: str, record: dict[str, Any], identity_field: str) -> str:
+    payload = {key: value for key, value in record.items() if key != identity_field}
+    return prefix + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
+
+
+def _kernel_invariant_definitions(kernel_source: dict[str, Any]) -> dict[str, str]:
+    root = Path(__file__).resolve().parents[1]
+    commit = kernel_source["commit_sha"]
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return {}
+    git = shutil.which("git")
+    if git is None:
+        return {}
+    try:
+        tree = subprocess.run(  # noqa: S603 -- fixed Git executable; SHA is closed above
+            [git, "rev-parse", f"{commit}^{{tree}}"], cwd=root, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        source = subprocess.run(  # noqa: S603 -- fixed Git executable; SHA is closed above
+            [git, "show", f"{commit}:00_KERNEL/KERNEL_INVARIANTS.md"], cwd=root,
+            check=True, capture_output=True, text=True,
+        ).stdout
+    except (subprocess.CalledProcessError, OSError):
+        return {}
+    if tree != kernel_source["tree_sha"]:
+        return {}
+    headings = list(re.finditer(r"^## ([KASODCERBXP]-[0-9]{3}) — .+$", source, re.MULTILINE))
+    definitions: dict[str, str] = {}
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(source)
+        section = source[heading.start():end].rstrip() + "\n"
+        definitions[heading.group(1)] = "sha256:" + hashlib.sha256(section.encode()).hexdigest()
+    return definitions
 
 
 def validate_bundle(bundle: dict[str, Any]) -> list[str]:
@@ -159,6 +199,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     errors.append(f"incomplete blocker payload: {event['difference_event_id']}")
                 else:
                     difference = differences.get(difference_id)
+                    if not scope["affected_subject_refs"]["members"]:
+                        errors.append(f"empty blocker subject set: {event['difference_event_id']}")
                     if difference and scope["effective_boundary"] != difference["effective_boundary"]:
                         errors.append(f"blocker boundary mismatch: {event['difference_event_id']}")
                     if _ref_id(condition["verification_request_ref"]) != _ref_id(event["next_observation_ref"]):
@@ -195,6 +237,13 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or request["scope_ref"] != difference["objective_scope_binding"]["scope_ref"]
                     or request["method_ref"].get("kind") != "observation_method"
                     or method is None
+                    or request["observation_request_id"]
+                    != _content_address("OBS-REQ-", request, "observation_request_id")
+                    or (
+                        method is not None
+                        and method["observation_method_id"]
+                        != _content_address("OBS-METHOD-", method, "observation_method_id")
+                    )
                 ):
                     errors.append(f"next observation binding mismatch: {event['difference_event_id']}")
             if event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}:
@@ -346,6 +395,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             bound_invariants = [item["invariant_ref"]["id"] for item in invariant_bindings]
             if set(bound_invariants) != required_invariants or len(bound_invariants) != len(set(bound_invariants)):
                 errors.append(f"candidate invariant binding set mismatch: {evaluation['closure_evaluation_id']}")
+            definitions = _kernel_invariant_definitions(evaluation["kernel_source_ref_evaluated"])
+            if set(definitions) != _mandatory_invariant_ids() | {"P-003"}:
+                errors.append(f"kernel invariant source mismatch: {evaluation['closure_evaluation_id']}")
             required_claims = {item["id"] for item in (policy or {}).get("required_claims", [])}
             bound_claims = [item["required_claim_ref"]["id"] for item in claim_bindings]
             if (
@@ -360,6 +412,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or binding["candidate_semantic_fingerprint"] != candidate["semantic_fingerprint"]
                     or binding["base_state_ref"] != evaluation["before_state_ref"]
                     or binding["evaluation_result"] != "PASS"
+                    or binding["invariant_definition_ref"]["invariant_definition_sha256"]
+                    != definitions.get(binding["invariant_ref"]["id"])
                 ):
                     errors.append(f"candidate invariant binding mismatch: {binding['binding_id']}")
             for binding in claim_bindings:
