@@ -142,10 +142,15 @@ def _completion(
     collection_complete: bool,
 ) -> dict[str, bool]:
     attempts = observation["attempts"]
+    observation_start = _instant(observation["time_boundary"]["observation_started_at"])
+    observation_end = _instant(observation["time_boundary"]["observation_ended_at"])
     attempts_complete = bool(attempts) and all(
         attempt["result"] in {"COMPLETE", "EMPTY"}
         and attempt["method_ref"] == observation["method_ref"]
-        and _instant(attempt["started_at"]) <= _instant(attempt["ended_at"])
+        and observation_start
+        <= _instant(attempt["started_at"])
+        <= _instant(attempt["ended_at"])
+        <= observation_end
         for attempt in attempts
     )
     method_complete = attempts_complete and observation["status"] in {"COMPLETE", "EMPTY"}
@@ -543,6 +548,29 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         "attempts": attempts,
         "observation_evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
     }
+    coordinates: dict[str, int] = {}
+    for fact in facts:
+        coordinate = json.dumps(
+            [fact["subject"], fact["predicate"], fact["effective_boundary"]],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        coordinates[coordinate] = coordinates.get(coordinate, 0) + 1
+    has_retry_conflict = any(count > 1 for count in coordinates.values()) or any(
+        fact["subject"] == negative["subject"]
+        and fact["predicate"] == negative["predicate"]
+        and fact["effective_boundary"] == negative["effective_boundary"]
+        for fact in observed_facts
+        for negative in prior["negative_observations"]
+    ) or any(
+        fact["subject"] == claim["subject"]
+        and fact["predicate"] == claim["predicate"]
+        and fact["effective_boundary"] == claim["effective_boundary"]
+        for fact in facts
+        for claim in request.get("negative_claims", [])
+    )
+    if has_retry_conflict:
+        observation["status"] = "CONFLICTED"
     existing_observation = next(
         (item for item in prior["observations"] if item["observation_id"] == observation_id), None
     )
@@ -731,9 +759,19 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 "evaluation_revision": revision,
                 "previous_evaluation_id": prior_negative_evaluations[-1]["evaluation_id"],
                 "evaluation_status": "CONFLICTED",
-                "conflict_fact_refs": [
-                    _ref("normalized_fact", fact["fact_id"]) for fact in matching
-                ],
+                "conflict_fact_refs": sorted(
+                    {
+                        reference["id"]: reference
+                        for reference in [
+                            *prior_negative_evaluations[-1]["conflict_fact_refs"],
+                            *[
+                                _ref("normalized_fact", fact["fact_id"])
+                                for fact in matching
+                            ],
+                        ]
+                    }.values(),
+                    key=lambda reference: reference["id"],
+                ),
                 "evidence_refs": deepcopy(request.get("observation_evidence_refs", [])),
             }
         )
