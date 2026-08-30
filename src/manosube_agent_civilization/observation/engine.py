@@ -343,6 +343,12 @@ def _validate_records(bundle: dict[str, Any]) -> None:
         for record in bundle[group]:
             errors.extend(error.message for error in validator.iter_errors(record))
     fact_ids = {fact["fact_id"] for fact in bundle["facts"]}
+    for fact in bundle["facts"]:
+        semantic = {
+            key: value for key, value in fact.items() if key not in {"schema_version", "fact_id"}
+        }
+        if fact["fact_id"] != deterministic_id("FACT", semantic):
+            errors.append(f"Fact identity mismatch: {fact['fact_id']}")
     bound_fact_ids = {binding["fact_id"] for binding in bundle["bindings"]}
     if fact_ids != bound_fact_ids:
         errors.append("every Fact must have one or more provenance Bindings")
@@ -415,6 +421,19 @@ def _validate_records(bundle: dict[str, Any]) -> None:
         )
         if not evaluations or evaluations[0]["evaluation_revision"] != 0:
             errors.append(f"Negative Observation has no revision zero evaluation: {negative_id}")
+        else:
+            negative = next(
+                item
+                for item in bundle["negative_observations"]
+                if item["negative_observation_id"] == negative_id
+            )
+            initial = evaluations[0]
+            if initial["evaluation_status"] != negative["negative_status"]:
+                errors.append(f"Negative revision zero status mismatch: {negative_id}")
+            if {item["id"] for item in initial["conflict_fact_refs"]} != {
+                item["id"] for item in negative["positive_fact_refs"]
+            }:
+                errors.append(f"Negative revision zero conflict mismatch: {negative_id}")
         for revision, evaluation in enumerate(evaluations):
             expected = None if revision == 0 else evaluations[revision - 1]["evaluation_id"]
             if (
@@ -498,7 +517,11 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     _require_ref_kind(request["method_ref"], "observation_method", "method_ref")
     if request["method_ref"] != scope["method_ref"]:
         raise ObservationError("Observation method is outside the declared Scope")
-    for reference in request["source_snapshot_refs"]:
+    canonical_source_refs = sorted(
+        deepcopy(request["source_snapshot_refs"]),
+        key=lambda reference: (reference["kind"], reference["id"]),
+    )
+    for reference in canonical_source_refs:
         _require_ref_kind(reference, "source_snapshot", "source_snapshot_refs")
     for reference in request.get("observation_evidence_refs", []):
         _require_ref_kind(reference, "observation_evidence", "observation_evidence_refs")
@@ -507,9 +530,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     scope_sources = {
         (reference["kind"], reference["id"]) for reference in scope["source_snapshot_refs"]
     }
-    declared_sources = {
-        (reference["kind"], reference["id"]) for reference in request["source_snapshot_refs"]
-    }
+    declared_sources = {(reference["kind"], reference["id"]) for reference in canonical_source_refs}
     if declared_sources != scope_sources:
         raise ObservationError("Observation sources must exactly match the declared Scope")
     prior = deepcopy(
@@ -535,7 +556,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         "scope_id": scope["scope_id"],
         "method_ref": request["method_ref"],
         "time_boundary": request["time_boundary"],
-        "source_snapshot_refs": request["source_snapshot_refs"],
+        "source_snapshot_refs": canonical_source_refs,
         "normalization_profile": profile,
     }
     observation_id = deterministic_id("OBS", observation_identity)
@@ -620,7 +641,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         "scope_ref": _ref("observation_scope", scope["scope_id"]),
         "method_ref": deepcopy(request["method_ref"]),
         "time_boundary": deepcopy(request["time_boundary"]),
-        "source_snapshot_refs": deepcopy(request["source_snapshot_refs"]),
+        "source_snapshot_refs": canonical_source_refs,
         "normalization_profile": profile,
         "normalized_fact_refs": [
             _ref("normalized_fact", fact["fact_id"]) for fact in observed_facts
@@ -898,9 +919,11 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     for claim in request.get("negative_claims", []):
         if not subject_in_scope(claim["subject"], scope):
             raise ObservationError(f"Negative claim subject is outside scope: {claim['subject']}")
+        claim_observation = deepcopy(observation)
+        claim_observation["status"] = base_observation_status
         negative, evaluation, conflict = _negative_records(
             claim=claim,
-            observation=observation,
+            observation=claim_observation,
             scope=scope,
             facts=facts,
             evidence_refs=request.get("negative_evidence_refs", []),
