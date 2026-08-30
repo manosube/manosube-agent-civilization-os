@@ -194,6 +194,8 @@ PolicyはDifference導出時に固定する。実装失敗またはEvidence不�
 schema_version: "0.1"
 closure_evaluation_id: D-CLOSE-EVAL-...
 difference_id: D-...
+evaluation_mode: CANDIDATE_CLOSURE
+terminal_reason_evidence_refs: []
 base_kernel_source_ref_evaluated:
   kind: git_tree
   repository: manosube/manosube-agent-civilization-os
@@ -271,6 +273,26 @@ result: NOT_EVALUATED
 failure_reasons: []
 reflow_transition_ref: null
 ```
+
+`evaluation_mode`は`CANDIDATE_CLOSURE | TERMINAL_POLICY_ONLY`のclosed enumである。
+
+`CANDIDATE_CLOSURE`は`proposed_terminal_status=CLOSED`専用で、上記recordのcandidate、resolution、Observation、Evidence、G1–G22 fieldをすべて要求する。
+
+`TERMINAL_POLICY_ONLY`はpre-workまたはcandidate生成前の`BLOCKED | RETAINED`専用である。このmodeでは次を要求する。
+
+```text
+after_state_candidate = null
+resolution_mode = null
+change_refs = []
+after_observation_refs = []
+candidate_invariant_evaluation_bindings = []
+candidate_claim_evaluation_bindings = []
+terminal_reason_evidence_refs NON-EMPTY
+proposed_terminal_status in BLOCKED|RETAINED
+G22 = PASS
+```
+
+さらにG1 Difference identity、G3 Objective semantic binding、Policy ID／version／fingerprint、current State revision／fingerprint、Difference event head、terminal reason Evidenceをexact検証する。candidate-dependent G6–G21は`NOT_APPLICABLE`でなければならず、PASSを偽造しない。aggregate `result=BLOCKED`を保存する。`CLOSED`、candidate存在後のTarget satisfaction、Evidence SufficiencyまたはInvariant PASSへこのmodeを流用してはならない。BLOCKED／RETAINED理由が解消された場合は通常Lifecycleで再開し、古いPolicy-only EvaluationをClosure Evidenceへ流用しない。
 
 Evaluation resultは`COMPLETION_SEMANTICS.md`のCanonical Completion Evaluation Statusと完全に同じclosed enumとする。
 
