@@ -155,6 +155,7 @@ Negative Evidenceはscope、期間、method、attempt count、completion、blind
 |---|---|
 | Target satisfied and all gates pass | `SATISFIED` candidate |
 | Targetを観測したが満たさない | `NOT_SATISFIED` |
+| Targetは満たすがEvidenceが欠落または要求level未満 | `NOT_SATISFIED` |
 | 評価がまだ実行されていない | `NOT_EVALUATED` |
 | 必要Evidenceを評価中 | `EVALUATING` |
 | Truthを決定するInputまたはObservationが不足 | `BLOCKED` |
@@ -201,7 +202,7 @@ Stale Evaluationを再利用せず、最新Stateから再観測・再評価す�
 
 # 9. Reopen Policy
 
-`CLOSED`後のObservationがTarget不一致、Evidence invalidation、boundary change、material contradictionを示した場合、Differenceを`REOPENED`へ遷移させる。
+`CLOSED`後のObservationが同じsemantic identity boundary内でTarget不一致、Evidence invalidationまたはmaterial contradictionを示した場合、Differenceを`REOPENED`へ遷移させる。
 
 Reopenは旧Closureを削除しない。次をappendする。
 
@@ -214,7 +215,7 @@ new State revision and fingerprint
 next required observation
 ```
 
-Objective自体がmaterialに変更された場合は、旧Differenceを必要に応じて`SUPERSEDED`とし、新しいDifference identityを導出する。
+Objective、Target、effective boundaryまたはnormalized mismatch semanticsがmaterialに変更された場合は、旧Differenceを`SUPERSEDED`とし、新しいDifference identityとappend-only Supersession Relationを導出する。Boundary変更を旧Differenceの`REOPENED`として扱わない。
 
 # 10. Non-Authorities
 
