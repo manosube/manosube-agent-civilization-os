@@ -280,7 +280,7 @@ reflow_transition_ref: null
 
 `CANDIDATE_TERMINAL`はcandidate生成後の`proposed_terminal_status=BLOCKED | RETAINED`専用である。candidate、resolution、Observation、Evidence、Invariant／Claim bindingを存在する範囲で実値として保持し、失敗・UNKNOWN・STALE・CONTRADICTED gateを消してはならない。G1、G3、G5–G9、G18、G20、G22および評価可能な全gateを実行し、未評価gateは`UNKNOWN`、非該当だけを`NOT_APPLICABLE`にする。`terminal_reason_evidence_refs`を必須とし、aggregate resultは原因に応じて`BLOCKED | STALE | CONTRADICTED | NOT_SATISFIED`のいずれかで、`SATISFIED`を禁止する。G22 PASSとPolicy allowed terminal state一致は通常どおり必須である。このmodeはcandidate-dependentなEvidence不足、失効、conflict、Invariant／Claim failureを保持してBLOCKED／RETAINEDへ還流するが、CLOSEDへ使用できない。
 
-`TERMINAL_POLICY_ONLY`はpre-workまたはcandidate生成前の`BLOCKED | RETAINED`専用である。このmodeでは次を要求する。
+`TERMINAL_POLICY_ONLY`はcandidate-independentな理由による`BLOCKED | RETAINED`専用である。通常はpre-workまたはcandidate生成前に使用する。candidate生成後に使用できるのは、阻害理由がcandidateのTarget satisfaction、Evidence Sufficiency、freshness、conflict、InvariantまたはClaim evaluationの結果と独立し、かつ既存candidateを評価・再解釈しない場合だけである。このmodeでは次を要求する。
 
 ```text
 after_state_candidate = null
@@ -294,7 +294,7 @@ proposed_terminal_status in BLOCKED|RETAINED
 G22 = PASS
 ```
 
-さらにG1 Difference identity、G3 Objective semantic binding、Policy ID／version／fingerprint、current State revision／fingerprint、Difference event head、terminal reason Evidenceをexact検証する。candidate-dependent G6–G21は`NOT_APPLICABLE`でなければならず、PASSを偽造しない。aggregate `result=BLOCKED`を保存する。`CLOSED`、candidate存在後のTarget satisfaction、Evidence SufficiencyまたはInvariant PASSへこのmodeを流用してはならない。BLOCKED／RETAINED理由が解消された場合は通常Lifecycleで再開し、古いPolicy-only EvaluationをClosure Evidenceへ流用しない。
+さらにG1 Difference identity、G3 Objective semantic binding、Policy ID／version／fingerprint、current State revision／fingerprint、Difference event head、terminal reason Evidenceをexact検証する。candidate-dependent G6–G21は`NOT_APPLICABLE`でなければならず、PASSを偽造しない。aggregate `result=BLOCKED`を保存する。`CLOSED`、candidate-dependentなTarget satisfaction、Evidence Sufficiency、freshness、conflict、InvariantまたはClaim evaluationへこのmodeを流用してはならない。candidateが既に存在しても、その存在だけを理由にPolicy-onlyを禁止しないが、candidate由来の事実をterminal reasonへ使用した時点で`CANDIDATE_TERMINAL`を必須とする。BLOCKED／RETAINED理由が解消された場合は通常Lifecycleで再開し、古いPolicy-only EvaluationをClosure Evidenceへ流用しない。
 
 Evaluation resultは`COMPLETION_SEMANTICS.md`のCanonical Completion Evaluation Statusと完全に同じclosed enumとする。
 
