@@ -71,10 +71,7 @@ impact: {}
 risk_class: LOW
 authority_required: []
 closure_policy: {kind: closure_policy, id: CP-...}
-status: DETECTED
-supersedes_difference_ref: null
-superseded_by_difference_ref: null
-lifecycle_head_ref: null
+genesis_event_ref: {kind: difference_event, id: D-EVT-...}
 ```
 
 未知field、未知version、解決不能なtyped referenceを持つRecordはCanonical Differenceへ昇格させず、rejectまたはquarantineする。
@@ -156,13 +153,25 @@ CAPABILITY ≠ AUTHORITY
 
 # 7. Status Boundary
 
-Difference Recordのstatusは`DIFFERENCE_LIFECYCLE.md`のclosed enumだけを使用する。
+Differenceのcurrent statusはimmutable Difference Recordのfieldではない。append-only Difference Lifecycle Eventsをgenesisからfoldして得るmaterialized viewであり、`DIFFERENCE_LIFECYCLE.md`のclosed enumだけを使用する。
+
+```yaml
+schema_version: "0.1"
+difference_id: D-...
+status: DETECTED
+lifecycle_head_ref: {kind: difference_event, id: D-EVT-...}
+supersedes_difference_refs: []
+superseded_by_difference_refs: []
+derived_from_event_count: 1
+```
+
+このviewはCanonical authorityではなく、Lifecycle EventsとSupersession Relationsから決定的に再構築できるcacheである。status遷移時はDifference Recordを更新せず、event append後にviewを置換する。viewとlineageが不一致ならlineageをauthorityとしてviewを再構築する。
 
 Difference自身、Change実行者、Agent、test、Issue、PRは`CLOSED`を確定できない。`CLOSED`はClosure Policyを満たしたEvidence EvaluationをAtomic Reflowが受理した結果としてのみCanonicalになる。
 
 # 8. Immutability and Re-observation
 
-Canonical Difference Recordは上書きしない。評価の変化はappend-only Difference Lifecycle Eventとして保存する。
+Canonical Difference Recordは上書きしない。評価の変化はappend-only Difference Lifecycle Eventとして保存し、`status`と`lifecycle_head_ref`はそのevent列から導出する。
 
 同じMismatchが再観測された場合、Difference identityを維持し、新しいObservation bindingとLifecycle Eventをappendする。Mismatchの意味が変わった場合は、新しいDifferenceを作成し、supersession lineageを明示する。
 
