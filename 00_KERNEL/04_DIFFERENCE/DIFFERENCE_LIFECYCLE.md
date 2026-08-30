@@ -54,6 +54,7 @@ v0.1のlegal transitionを次で固定する。
 
 | From | To | Minimum gate |
 |---|---|---|
+| `null` | `DETECTED` | genesis event、candidate input、derivation profileが存在 |
 | `DETECTED` | `OPEN` | identity、schema、exact input bindingがvalid |
 | `DETECTED` | `INVALIDATED` | invalid inputまたはidentity conflict |
 | `OPEN` | `ACTIVE` | Work Unit bindingとAuthority requirementが明示済み |
@@ -85,12 +86,19 @@ v0.1のlegal transitionを次で固定する。
 | `REOPENED` | `BLOCKED` | 再解決が阻害された |
 | `REOPENED` | `RETAINED` | 未解決で次周期へ保持 |
 | `REOPENED` | `SUPERSEDED` | validな双方向supersession |
+| `OPEN` | `INVALIDATED` | schema、identity、boundary、State bindingまたはlineage defectを後発見 |
+| `ACTIVE` | `INVALIDATED` | schema、identity、boundary、State bindingまたはlineage defectを後発見 |
+| `VERIFYING` | `INVALIDATED` | schema、identity、boundary、State bindingまたはlineage defectを後発見 |
+| `BLOCKED` | `INVALIDATED` | schema、identity、boundary、State bindingまたはlineage defectを後発見 |
+| `RETAINED` | `INVALIDATED` | schema、identity、boundary、State bindingまたはlineage defectを後発見 |
+| `CLOSED` | `INVALIDATED` | accepted DifferenceまたはClosure lineageのintegrity defectを後発見 |
+| `REOPENED` | `INVALIDATED` | schema、identity、boundary、State bindingまたはlineage defectを後発見 |
 
 `SUPERSEDED`と`INVALIDATED`はterminalである。`CLOSED`は反証により`REOPENED`できるため、歴史の終端ではない。
 
 # 4. Prohibited Transitions
 
-上表にないtransitionはすべて禁止する。特に次を禁止する。
+上表にないtransitionはすべて禁止する。genesis eventは上表の`null → DETECTED`として扱い、通常transitionから暗黙に生成しない。特に次を禁止する。
 
 ```text
 DETECTED → CLOSED
