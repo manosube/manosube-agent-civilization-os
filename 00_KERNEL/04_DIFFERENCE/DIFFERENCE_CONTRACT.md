@@ -71,6 +71,12 @@ normalized_observed_state: {}
 structural_difference: {}
 subject: ""
 observation_scope: ""
+effective_boundary:
+  kind: OBSERVATION_SCOPE_BOUNDARY
+  scope_ref: {kind: observation_scope, id: OBS-SCOPE-...}
+  resolved_scope_record_sha256: sha256:...
+  target_effective_window: {start: null, end: null}
+  source_snapshot_refs: {collection_kind: UNORDERED_SET, members: []}
 impact: {}
 risk_class: LOW
 authority_required: []
