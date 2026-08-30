@@ -382,7 +382,19 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 → CLOSURE NOT SATISFIED
 ```
 
-`G19`はClosure Policyの各required invariantについて、Canonical Invariant Evaluation Recordを変更せず、次のclosed Difference-owned bindingを`candidate_invariant_evaluation_bindings`へexactly one保存する。
+`G19`のexpected invariant setは次の和集合である。
+
+```text
+EXPECTED_INVARIANTS
+=
+APPLICABLE_V0_1_MANDATORY_INVARIANTS
+UNION
+CLOSURE_POLICY.required_invariants
+```
+
+`APPLICABLE_V0_1_MANDATORY_INVARIANTS`は、Closure Evaluation時点で固定された`KERNEL_INVARIANTS.md`のv0.1 Mandatory Gateから、対象scopeがDifference closure、candidate semantic state、Atomic Reflow preconditionまたはlineage preservationに適用される全Invariant IDを決定論的に抽出した集合である。適用判定profile／registry blob refをEvaluation Evidenceへ保存し、unknown applicabilityは除外せずBLOCKEDにする。Policy required setとのduplicateは一件へ正規化する。
+
+Canonical Invariant Evaluation Recordを変更せず、expected setの各Invariantについて次のclosed Difference-owned bindingを`candidate_invariant_evaluation_bindings`へexactly one保存する。BindingのInvariant ID集合はexpected setと完全一致し、missing、extra、duplicateをrejectする。
 
 ```yaml
 kind: candidate_invariant_evaluation_binding
@@ -404,8 +416,7 @@ Binding IDはID自身を除く全closed fieldのcanonical JSON UTF-8／SHA-256�
 COMPLETION_RECORD_SCALARS=
 completion_id,subject_type,subject_ref,claim,target_state_ref,
 observed_state_ref,closure_policy_ref,evaluation_status,
-evaluated_state_revision,evaluated_state_fingerprint,evaluated_at,
-reflow_transition_ref
+evaluated_state_revision,evaluated_state_fingerprint,evaluated_at
 
 COMPLETION_RECORD_UNORDERED_SETS=
 required_evidence_refs,invariant_evaluation_refs,material_contradiction_refs
@@ -421,11 +432,11 @@ evidence_refs,remaining_differences
 
 Bare array fields listed as unordered sets areduplicate拒否後にcanonical member bytes順へ整列し、explicit `UNORDERED_SET` wrapperへ投影する。scalar `observed`内にcollectionがある場合はexplicit collection wrapperを必須とし、未定義bare arrayをrejectする。unknown field、欠落required field、非canonical valueをrejectする。
 
-Fingerprint bytesはrecord kind domain `MANOSUBE:COMPLETION_RECORD:0.1:`または`MANOSUBE:INVARIANT_EVALUATION:0.1:`のexact UTF-8 bytesと、closed projectionのcanonical JSON UTF-8 bytesを追加separatorなしで連結したものとする。SHA-256出力は`sha256:`＋64 lowercase hexである。timestamp、Evidence refs、status／resultを含み、recordが一byteでも変わればpre-promotion recheckでSTALEとして拒否する。
+Fingerprint bytesはrecord kind domain `MANOSUBE:COMPLETION_RECORD:0.1:`または`MANOSUBE:INVARIANT_EVALUATION:0.1:`のexact UTF-8 bytesと、closed projectionのcanonical JSON UTF-8 bytesを追加separatorなしで連結したものとする。SHA-256出力は`sha256:`＋64 lowercase hexである。timestamp、Evidence refs、status／resultを含む。ただしCompletion Recordの`reflow_transition_ref`はAtomic Reflow後にのみ設定されるpost-commit lineage fieldとしてprojectionから除外する。この除外によりpre-promotion bindingを循環させず、transition ref設定だけではstaleにしない。他のincluded fieldが一byteでも変わればpre-promotion recheckでSTALEとして拒否する。
 
 Bindingはunderlying Invariant EvaluationのInvariant、result、Evidence、evaluated_at、record fingerprintとexact一致し、そのEvaluationがcandidate semantic state bytesを入力として評価したことをEvidenceで証明する。base Stateだけを評価したrecordをcandidateへ流用しない。
 
-Atomic Reflow直前にbindingとunderlying recordを再解決し、candidate ID／semantic fingerprint、record fingerprint、resultおよびEvidence refsが不変かつPASSであることを再検査する。欠落、余分、duplicate、STALE相当のfingerprint変更、Evidence失効、非PASSを一件でも検出した場合はpromotionをrejectする。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
+Atomic Reflow直前にbindingとunderlying recordを再解決し、candidate ID／semantic fingerprint、record fingerprint、resultおよびEvidence refsが不変かつPASSであることを再検査する。欠落、余分、duplicate、STALE相当のfingerprint変更、Evidence失効、非PASSを一件でも検出した場合はpromotionをrejectする。Policy required setが空でもapplicable mandatory setは免除しない。両集合の和が空である場合だけbinding setを空にでき、その適用判定Evidenceを必須とする。
 
 `G22`は`proposed_terminal_status`が`CLOSED | BLOCKED | RETAINED`のclosed enumに属し、かつPolicyの`allowed_terminal_states`に明示されていることを要求する。未許可statusへのEvaluationを`SATISFIED`にせず、Lifecycle transitionも拒否する。各statusについて別Evaluationを生成し、あるstatusの許可を別statusへ流用しない。
 
