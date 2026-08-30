@@ -386,7 +386,7 @@ v0.1の`MANDATORY_V0_1_COMPLETION_CLAIMS`は、`KERNEL_INVARIANTS.md`のv0.1 Man
 
 ```yaml
 kind: completion_claim
-id: CMP-<64 uppercase hex>
+id: CLAIM-<64 uppercase hex>
 subject_type: CONTRACT_COMPLETION
 subject_ref: {kind: kernel_invariant, id: X-003}
 claim_semantic_fingerprint: sha256:<64 lowercase hex>
@@ -406,7 +406,7 @@ claim_semantic_fingerprint: sha256:<64 lowercase hex>
 }
 ```
 
-`claim_digest`はdomain `MANOSUBE:V0_1_X003_LIMITED_CLAIM:0.1:`のexact UTF-8 bytesと上記closed projectionのcanonical JSON UTF-8 bytesをseparatorなしで連結したSHA-256である。`claim_semantic_fingerprint = "sha256:" || lowercase_hex(claim_digest)`、`id = "CMP-" || uppercase_hex(claim_digest)`とし、producerが別ID、別claim、別targetを選ぶことを禁止する。 Completion IDだけをuppercase hexとするのは`01_SCHEMA/common/identity.schema.json`のcanonical identity alphabetへ適合させるためであり、SHA-256値自体は同一である。
+`claim_digest`はdomain `MANOSUBE:V0_1_X003_LIMITED_CLAIM:0.1:`のexact UTF-8 bytesと上記closed projectionのcanonical JSON UTF-8 bytesをseparatorなしで連結したSHA-256である。`claim_semantic_fingerprint = "sha256:" || lowercase_hex(claim_digest)`、stable claim descriptorの`id = "CLAIM-" || uppercase_hex(claim_digest)`とし、producerが別ID、別claim、別targetを選ぶことを禁止する。この`CLAIM-` IDはsemantic Claim identityであり、candidate固有のCanonical Completion Record IDではない。ID digestをuppercase hexとするのは`01_SCHEMA/common/identity.schema.json`へ適合させるためであり、SHA-256値自体は同一である。
 
 G21 binding集合はEXPECTED COMPLETION CLAIMSのexact identity集合と完全一致し、mandatory X-003 bindingの欠落、余分、duplicateをrejectする。Policy claimと同じIDが重なる場合はsubject type、subject ref、claim fingerprintが完全一致するときだけ一件へ統合し、不一致は`BLOCKED`とする。各expected claimについて、exact claim identity、evaluated candidate State、Evidence references、Completion Evaluation statusを解決し、全件が`SATISFIED`であることを要求する。
 
@@ -574,13 +574,15 @@ binding_id: CAND-CLAIM-EVAL-...
 candidate_id: STATE-CANDIDATE-...
 candidate_semantic_fingerprint: {}
 base_state_ref: {kind: state, revision: 0, fingerprint: {}}
-required_claim_ref: {kind: completion_claim, id: CMP-...}
+required_claim_ref: {kind: completion_claim, id: CLAIM-...}
 completion_record_ref: {kind: completion_record, id: CMP-...}
 evaluation_record_fingerprint: sha256:...
 evaluation_status: SATISFIED
 evaluation_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
+
+Candidate固有の`completion_record_ref.id`は、Completion Recordから`completion_id`とpost-commit `reflow_transition_ref`だけを除いた第3章のclosed Completion Record projectionへ、domain `MANOSUBE:CANDIDATE_COMPLETION_RECORD:0.1:`を前置してSHA-256し、`"CMP-" || uppercase_hex(digest)`として生成する。このprojectionは`observed_state_ref`、`closure_policy_ref`、evaluated State revision／fingerprint、Evidence refs、evaluation status、evaluated_atを含むため、同じstable Claimを別candidate、別Policy、別時点で評価したrecordは別IDになる。同一record IDの異なるpayloadはconflictとして拒否する。
 
 Binding IDと検証規則はG19 bindingと同じcanonical profileを使用し、prefixだけを`CAND-CLAIM-EVAL-`とする。 両binding IDはSHA-256 digestをuppercase hexadecimalでprefixへ連結し、semantic fingerprintだけをlowercase `sha256:`形式で表す。 `evaluation_evidence_refs`も同じexplicit duplicate-free `UNORDERED_SET` wrapperを使用する。Underlying Completion Recordのclaim、status、Evidence、time、record fingerprintとexact一致し、candidate semantic stateを評価対象としたことを証明する。base State評価の流用を禁止する。
 
@@ -602,7 +604,7 @@ CHANGE EXECUTION RESULT
 
 # 5. Evidence Sufficiency
 
-Evidence levelは`07_EVIDENCE/EVIDENCE_LEVELS.md`が定めるE0–E6に従う。要求level未満のEvidenceを件数で補ってはならない。
+Evidence levelは現存するCanonical定義`00_KERNEL/COMPLETION_SEMANTICS.md`第3章「Evidence Levelとの対応」のclosed ordered scale `E0 < E1 < E2 < E3 < E4 < E5 < E6`に従う。G12はこのexact sourceをcontent-addressed blob refで解決し、unknown level、順序不明またはsource不一致を`BLOCKED`とする。要求level未満のEvidenceを件数で補ってはならない。
 
 ```text
 EVIDENCE COUNT ≠ EVIDENCE STRENGTH
