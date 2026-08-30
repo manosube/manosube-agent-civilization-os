@@ -583,6 +583,8 @@ v0.1 Difference Contractは、暗号鍵、署名、trust root、issuer identity�
 ```yaml
 kind: candidate_claim_evaluation_binding
 binding_id: CAND-CLAIM-EVAL-...
+difference_id: D-...
+policy_ref: {kind: closure_policy, id: CP-..., version: "0.1", semantic_fingerprint: sha256:...}
 candidate_id: STATE-CANDIDATE-...
 candidate_semantic_fingerprint: {}
 base_state_ref: {kind: state, revision: 0, fingerprint: {}}
@@ -606,6 +608,8 @@ event_id: CAND-CLAIM-EVT-...
 evaluation_series_id: CAND-CLAIM-SERIES-...
 event_revision: 0
 predecessor_event_ref: null
+difference_id: D-...
+policy_ref: {kind: closure_policy, id: CP-..., version: "0.1", semantic_fingerprint: sha256:...}
 candidate_id: STATE-CANDIDATE-...
 required_claim_ref: {kind: completion_claim, id: CLAIM-...}
 completion_record_ref: {kind: completion_record, id: CMP-...}
@@ -614,7 +618,7 @@ evaluation_status: SATISFIED
 recorded_at: "2026-01-01T00:00:00Z"
 ```
 
-`evaluation_series_id`は`candidate_id + required_claim_ref`のclosed projectionへdomain `MANOSUBE:CANDIDATE_CLAIM_EVALUATION_SERIES:0.1:`を前置したSHA-256をuppercase hex化し、`CAND-CLAIM-SERIES-`へ連結する。event revisionは0から連続し、predecessorは直前eventへexactに結合する。event IDはID自身を除く全closed fieldへdomain `MANOSUBE:CANDIDATE_CLAIM_EVALUATION_EVENT:0.1:`を前置したSHA-256のuppercase hexを`CAND-CLAIM-EVT-`へ連結する。同一event ID／同一payloadはidempotent、異なるpayloadはconflictである。
+`evaluation_series_id`は`difference_id + policy_ref + candidate_id + required_claim_ref`のclosed projectionへdomain `MANOSUBE:CANDIDATE_CLAIM_EVALUATION_SERIES:0.1:`を前置したSHA-256をuppercase hex化し、`CAND-CLAIM-SERIES-`へ連結する。`policy_ref`はEvaluation対象Differenceに固定されたexact Policy ID／version／semantic fingerprintでなければならない。同じcandidate／ClaimでもDifferenceまたはPolicyが異なれば別seriesとなり、一方のhead更新が他方をstale化してはならない。event revisionは0から連続し、predecessorは直前eventへexactに結合する。event IDはID自身を除く全closed fieldへdomain `MANOSUBE:CANDIDATE_CLAIM_EVALUATION_EVENT:0.1:`を前置したSHA-256のuppercase hexを`CAND-CLAIM-EVT-`へ連結する。同一event ID／同一payloadはidempotent、異なるpayloadはconflictである。
 
 新しいSATISFIED、STALE、REVOKEDその他のCompletion Recordが生じるたび同じseriesへeventをappendする。Candidate bindingの`evaluation_head_event_ref`はEvaluation時点の連続series headを指す。
 
