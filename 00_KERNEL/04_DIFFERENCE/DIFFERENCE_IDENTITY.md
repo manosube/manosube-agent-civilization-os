@@ -68,7 +68,8 @@ TARGET_SOURCE=01_SCHEMA/objective/target_predicate.schema.json
 OBSERVED_SOURCE=State-bound Normalized Facts and bounded Negative Observations
 UNKNOWN_FIELDS=REJECT
 NESTED_COLLECTIONS=EXPLICIT_KIND_WRAPPER_ONLY
-BARE_ARRAY=REJECT
+SOURCE_FACT_COLLECTION_ARRAYS=PROJECT_BY_VALUE_TYPE
+OTHER_BARE_ARRAY=REJECT
 TEXT_NORMALIZATION=UNICODE_NFC
 NUMBER_PROFILE=JSON_INTEGER_OR_CANONICAL_DECIMAL_STRING
 ```
@@ -87,6 +88,25 @@ normalized_target_state:
 ```
 
 `operator`はsource schemaと同じ`equals | not_equals | contains | exists | all | none`だけ、`unknown_policy`は`INCOMPLETE`だけ、`evidence_requirement`は`E0..E6`、`criticality`は`mandatory | advisory`だけを許可する。変換表や大文字別名を作らない。`expected_value`のcollectionはexplicit wrapper必須である。
+
+Targetの`expected_value_type`は次のtotal ruleで導出して`normalized_target_state`へ必須fieldとして追加する。
+
+```text
+JSON null    → NULL
+JSON boolean → BOOLEAN
+JSON integer → INTEGER
+JSON string  → STRING
+ordinary JSON object → STRUCTURED
+{"value_type":"DECIMAL","value":"<canonical decimal>"} → DECIMAL
+{"value_type":"TIMESTAMP","value":"<canonical UTC timestamp>"} → TIMESTAMP
+{"value_type":"DURATION","value":"<canonical duration>"} → DURATION
+{"value_type":"IDENTITY_REFERENCE","value":{...}} → IDENTITY_REFERENCE
+{"collection_kind":"ORDERED_LIST","members":[...]} → ORDERED_COLLECTION
+{"collection_kind":"UNORDERED_SET","members":[...]} → UNORDERED_COLLECTION
+bare JSON array → REJECT
+```
+
+Reserved typed wrapperは上記exact fieldsだけを許可する。plain string `"1"`は常にSTRINGでありDECIMALへ推測変換しない。TargetにDECIMAL等を要求する場合はtyped wrapper必須である。
 
 Objectiveの`observation_scope`文字列は推論せず、Difference導出入力に次のexact bindingを必須とする。
 
@@ -123,7 +143,7 @@ normalized_observed_state:
         effective_boundary: {}
 ```
 
-`knowledge_status`は`KNOWN | ABSENT | EMPTY | UNKNOWN | UNOBSERVED | BLOCKED | INCOMPLETE | CONFLICTED`のclosed enumである。Negative Observationはcanonical State Mappingをexact適用し、`NO_RESULT→UNKNOWN`、`FAILED→UNKNOWN`（failure Evidenceは保持）、`INVALID→REJECT_OR_QUARANTINE`、その他は同名statusへ写像する。`INVALID`からnormalized observed stateまたはDifferenceを生成しない。`value_candidates`はduplicate-free unordered setで、各memberをNormalized Factの既存fieldからexactに射影する。Negative Observationはvalueを捏造しない。
+`knowledge_status`は`KNOWN | ABSENT | EMPTY | UNKNOWN | UNOBSERVED | BLOCKED | INCOMPLETE | CONFLICTED`のclosed enumである。Negative Observationはcanonical State Mappingをexact適用し、`NO_RESULT→UNKNOWN`、`FAILED→UNKNOWN`（failure Evidenceは保持）、`INVALID→REJECT_OR_QUARANTINE`、その他は同名statusへ写像する。`INVALID`からnormalized observed stateまたはDifferenceを生成しない。`value_candidates`はduplicate-free unordered setで、各memberをNormalized Factの既存fieldから射影する。Fact `value_type=ORDERED_COLLECTION`のschema-valid bare arrayは`ORDERED_LIST` wrapperへ順序を保持して変換し、`UNORDERED_COLLECTION`は各memberを再帰canonicalizeして整列・duplicate reject後に`UNORDERED_SET` wrapperへ変換する。この二つだけがsource wire arrayからidentity wrapperへの許可されたprojectionである。STRUCTURED value内の未宣言bare array、value_type不一致、unknown nested collectionはrejectする。Negative Observationはvalueを捏造しない。
 
 最後にTarget operatorをObserved projectionへ適用し、次の全field必須projectionを生成する。
 
