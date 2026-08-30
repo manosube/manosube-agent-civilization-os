@@ -225,6 +225,29 @@ def _negative_records(
     )
     if not boundary_valid:
         raise ObservationError("Negative claim effective boundary was not observed")
+    requested_status = status
+    requested_completion = _completion(
+        requested_status,
+        observation,
+        scope,
+        collection_complete,
+        claim=claim,
+        facts=facts,
+    )
+    if requested_status == "ABSENT" and not all(requested_completion.values()):
+        raise ObservationError("ABSENT requires a complete bounded absence gate")
+    if requested_status == "EMPTY" and not all(
+        requested_completion.get(key) is True
+        for key in (
+            "collection_defined",
+            "enumeration_complete",
+            "zero_valid_members",
+            "no_blocking_blind_spot",
+        )
+    ):
+        raise ObservationError("EMPTY requires complete zero-member enumeration")
+    if requested_status in {"ABSENT", "EMPTY"} and not evidence_refs:
+        raise ObservationError(f"{requested_status} requires bounded negative Evidence")
     conflicts = [
         fact
         for fact in facts
@@ -237,20 +260,6 @@ def _negative_records(
     completion = _completion(
         status, observation, scope, collection_complete, claim=claim, facts=facts
     )
-    if status == "ABSENT" and not all(completion.values()):
-        raise ObservationError("ABSENT requires a complete bounded absence gate")
-    if status == "EMPTY" and not all(
-        completion.get(key) is True
-        for key in (
-            "collection_defined",
-            "enumeration_complete",
-            "zero_valid_members",
-            "no_blocking_blind_spot",
-        )
-    ):
-        raise ObservationError("EMPTY requires complete zero-member enumeration")
-    if status in {"ABSENT", "EMPTY"} and not evidence_refs:
-        raise ObservationError(f"{status} requires bounded negative Evidence")
     identity_input = {
         "observation_id": observation["observation_id"],
         "subject": claim["subject"],
@@ -626,12 +635,6 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         and fact["effective_boundary"] == negative["effective_boundary"]
         for fact in observed_facts
         for negative in prior["negative_observations"]
-    ) or any(
-        fact["subject"] == claim["subject"]
-        and fact["predicate"] == claim["predicate"]
-        and fact["effective_boundary"] == claim["effective_boundary"]
-        for fact in facts
-        for claim in request.get("negative_claims", [])
     )
     if has_retry_conflict:
         observation["status"] = "CONFLICTED"
@@ -640,6 +643,29 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     )
     prior_binding_ids = {item["binding_id"] for item in prior["bindings"]}
     if existing_observation is not None:
+        retry_fact_ids = {
+            item["fact_id"]
+            for item in bindings
+            if item["observation_id"] == observation_id
+        }
+        retry_facts = [fact for fact in facts if fact["fact_id"] in retry_fact_ids]
+        retry_coordinates: dict[str, int] = {}
+        for fact in retry_facts:
+            coordinate = json.dumps(
+                [fact["subject"], fact["predicate"], fact["effective_boundary"]],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            retry_coordinates[coordinate] = retry_coordinates.get(coordinate, 0) + 1
+        retry_has_conflict = any(count > 1 for count in retry_coordinates.values()) or any(
+            fact["subject"] == negative["subject"]
+            and fact["predicate"] == negative["predicate"]
+            and fact["effective_boundary"] == negative["effective_boundary"]
+            for fact in retry_facts
+            for negative in prior["negative_observations"]
+            if negative["observation_id"] == observation_id
+        )
+        observation["status"] = "CONFLICTED" if retry_has_conflict else status
         requested_negative_ids = {
             deterministic_id(
                 "NEG",
@@ -678,7 +704,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 claim=claim,
                 observation=observation,
                 scope=scope,
-                facts=facts,
+                facts=retry_facts,
                 evidence_refs=request.get("negative_evidence_refs", []),
                 collection_complete=collection_complete,
             )
