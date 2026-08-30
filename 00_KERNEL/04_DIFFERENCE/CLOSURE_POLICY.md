@@ -428,7 +428,7 @@ UNION
 CLOSURE_POLICY.required_invariants
 ```
 
-`APPLICABLE_V0_1_MANDATORY_INVARIANTS`のauthority sourceは、Closure Evaluation時点でexact Git blobへ固定した`00_KERNEL/KERNEL_INVARIANTS.md`の`# 16. v0.1 Mandatory Gate`だけである。producerが`mandatory_in_v0_1`、`applies_to`または除外flagを供給することを禁止する。v0.1では同Gateの`ID PASS`行に列挙された全InvariantをG19のmandatory setとし、Difference Closureに対する個別の適用除外を認めない。
+`APPLICABLE_V0_1_MANDATORY_INVARIANTS`のauthority sourceは、Closure Evaluation時点でexact Git blobへ固定した`00_KERNEL/KERNEL_INVARIANTS.md`の`# 16. v0.1 Mandatory Gate`だけである。producerが`mandatory_in_v0_1`、`applies_to`または除外flagを供給することを禁止する。v0.1では同Gateの`ID PASS`行をauthoritative source setとする。G19はpre-Reflow Difference Closure gateであるため、source setからversion-level post-Reflow invariant `P-003`だけを除いた集合をmandatory setとする。この除外はproducer入力ではなく本profileの固定phase ruleであり、追加除外を認めない。`P-003`はAtomic Reflow後の`VERSION_COMPLETION`で必ず評価し、Difference Closure PASSをv0.1 natural-cycle PASSへ昇格させてはならない。
 
 versioned authoritative derivation profileを次へ固定する。
 
@@ -440,7 +440,11 @@ ENTRY_GRAMMAR=^(K|A|S|O|D|C|E|R|B|X|P)-[0-9]{3} PASS$
 ENTRY_ORDER=SOURCE_ORDER
 DUPLICATE_ID=REJECT
 UNKNOWN_LINE_IN_TEXT_FENCE=REJECT
-APPLICABILITY=ALL_DERIVED_ENTRIES_REQUIRED_FOR_G19
+SOURCE_SET=ALL_DERIVED_ENTRIES
+G19_PHASE=PRE_REFLOW_DIFFERENCE_CLOSURE
+G19_EXCLUDED_POST_REFLOW_IDS=P-003
+G19_REQUIRED_SET=SOURCE_SET_MINUS_EXACTLY_P-003
+P-003_EVALUATION_PHASE=POST_REFLOW_VERSION_COMPLETION
 PRODUCER_SELECTOR_FIELDS=FORBIDDEN
 ```
 
@@ -467,7 +471,7 @@ entries:
 registry_semantic_fingerprint: sha256:<64 lowercase hex>
 ```
 
-`source_section_sha256`はheading開始から次の同levelまたは上位heading直前までを第1章と同じUTF-8／NFC／LF／末尾改行規則で正規化したbytesのSHA-256である。各entryのdefinition digestは第1章のInvariant block抽出規則で同一source blobから再計算する。entriesは抽出された全IDをsource orderでexactly once含み、追加・欠落・並べ替え・selector fieldを拒否する。
+`source_section_sha256`はheading開始から次の同levelまたは上位heading直前までを第1章と同じUTF-8／NFC／LF／末尾改行規則で正規化したbytesのSHA-256である。各entryのdefinition digestは第1章のInvariant block抽出規則で同一source blobから再計算する。entriesは抽出された全IDをsource orderでexactly once含み、追加・欠落・並べ替え・selector fieldを拒否する。 Registryはsource set全体を保持する。G19 expected invariant setを作る際だけ`P-003`をexactly one除外し、`P-003`不在、重複または他ID除外をrejectする。
 
 registry digestは`registry_id`、commit SHA、whole-file blob SHAを除き、`profile + schema_version + repository + path + source_section_sha256 + entries`のclosed projectionをcanonical JSON UTF-8化し、domain `MANOSUBE:V0_1_MANDATORY_INVARIANT_REGISTRY:0.1:`のexact UTF-8 bytesをseparatorなしで前置してSHA-256する。
 
@@ -483,7 +487,7 @@ registry_semantic_fingerprint =
 "sha256:" || lowercase_hex(registry_digest)
 
 registry_id =
-"V01-MANDATORY-INV-REG-" || lowercase_hex(registry_digest)
+"V01-MANDATORY-INV-REG-" || uppercase_hex(registry_digest)
 ```
 
 したがって同じauthoritative source semanticsから別IDを選べず、任意IDを受理しない。registry instance、source blob ref、section digest、registry fingerprintをEvaluation Evidenceへ保存し、Atomic Reflow直前に再導出してIDとfingerprintをexact一致確認する。producer-supplied registry、未承認fingerprint allowlist、手動applicability overrideは受理しない。欠落、解決不能、digest不一致、再導出不一致は`BLOCKED`であり、mandatory setを空集合へ縮小してはならない。
