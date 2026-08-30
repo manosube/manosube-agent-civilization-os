@@ -90,7 +90,7 @@ def normalize_fact(raw: dict[str, Any], project_id: str, profile: str) -> dict[s
         "effective_boundary": raw["effective_boundary"],
         "normalization_profile": profile,
     }
-    canonical_json_bytes(semantic)
+    semantic = json.loads(canonical_json_bytes(semantic))
     return {
         "schema_version": "0.1",
         "fact_id": deterministic_id("FACT", semantic),
