@@ -43,6 +43,8 @@ required_claims:
     id: CLAIM-...
     subject_type: OBJECTIVE_PREDICATE_COMPLETION
     subject_ref: {kind: target_predicate, id: OBJ-PRED-...}
+    claim: {}
+    target_state_ref: null
     claim_semantic_fingerprint: sha256:...
 required_invariants:
   - kind: kernel_invariant
@@ -144,13 +146,13 @@ Conformance vectorsはobject key順序の不変性、各included field変更に�
 
 Policy fingerprintへ投入する各`reopen_conditions` memberは、`kind + id + predicate_semantic_fingerprint`だけのclosed semantic projectionとする。`objective_revision_ref`はexact provenance検証には必須だがPolicy semantic fingerprintから除外する。同じpredicate ID／semanticsを保持するEDITORIAL Objective revision更新ではPolicy fingerprintを変えず、predicate semantic fingerprint変更時だけ変える。
 
-`required_claims` memberは上記例のclosed five-field objectだけを許可する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`だけから同じcanonical JSON／SHA-256出力規則で算出する。
+`required_claims` memberは上記例のclosed seven-field immutable Claim descriptorだけを許可する。`claim`と`target_state_ref`は評価対象を復元できるcanonical payloadであり、digest preimageとして必須である。digestだけのdescriptor、外部に解決不能なClaim、unknown fieldを拒否する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`だけから同じcanonical JSON／SHA-256出力規則で算出する。
 
 全Policy-required Claimのstable IDはmandatory X-003と同じnamespace規則へ統一する。ID inputは次のclosed projectionだけである。
 
 ```json
 {
-  "subject_type": "OBJECTIVE_PREDICATE_COMPLETION",
+  "subject_type": "<descriptor subject_type>",
   "subject_ref": {},
   "claim_semantic_fingerprint": "sha256:..."
 }
@@ -371,7 +373,16 @@ CHANGE_FREE
 
 `CHANGE_FREE`はEvidence要件の免除ではない。`REOPENED → VERIFYING`など、変更を必要とせず新しい観測でTarget Satisfactionを再検証する経路でのみ使用し、Observation Evidence、scope completeness、Evidence Sufficiencyおよび全required claimsを通常どおり評価する。Changeが存在しないことを理由に`G11`を自動PASSさせてはならない。
 
-`G9`はafter-state Observationのeffective scopeをCanonical field `required_observation_scope`と照合する。
+`G9`の`required_observation_scope`は`null`または次のclosed exact typed referenceだけを許可する。
+
+```yaml
+kind: observation_scope
+id: OBS-SCOPE-...
+schema_version: "0.1"
+resolved_record_sha256: sha256:<64 lowercase hex>
+```
+
+`resolved_record_sha256`はrefが解決するcanonical Observation Scope record全体をunknown field reject後にcanonical JSON UTF-8化し、domain `MANOSUBE:RESOLVED_OBSERVATION_SCOPE_RECORD:0.1:`を前置したSHA-256である。これはObservation Scopeの新しいsemantic ownerではなく、exact resolved recordをcontent-addressするDifference Policy bindingである。
 
 ```text
 required_observation_scope = null
@@ -379,10 +390,13 @@ required_observation_scope = null
 → ただしObservation自身のdefined scope、completion、blind spot gateは必須
 
 required_observation_scope ≠ null
-→ after-state Observation effective scopeとexact match必須
+→ after-state Observation.scope_ref.kind/idがexact一致
+→ resolved Scope schema_versionがexact一致
+→ resolved Scope canonical record digestがexact一致
+→ Observationのeffective scopeはそのresolved recordからのみ取得
 ```
 
-method、normalization profileおよびschema versionの追加制約が必要な場合は`required_claims`としてversioned identityを指定し、scope fieldへ暗黙に混在させない。単に独立したObservationが存在するだけでは満たさない。
+refだけ、resolved recordだけ、推論scope、subset／superset比較、ID一致だがrecord digest不一致をPASSにしない。method、normalization profileの追加制約が必要な場合は`required_claims`としてversioned identityを指定し、scope fieldへ暗黙に混在させない。単に独立したObservationが存在するだけでは満たさない。
 
 `G21`のexpected claim setは次の和集合であり、Closure Policyの`required_claims`が空でもv0.1 mandatory claimを免除しない。
 
@@ -401,6 +415,10 @@ kind: completion_claim
 id: CLAIM-<64 uppercase hex>
 subject_type: CONTRACT_COMPLETION
 subject_ref: {kind: kernel_invariant, id: X-003}
+claim:
+  AGENT_REQUIRED_FOR_KERNEL: false
+  SESSION_INDEPENDENT: true
+target_state_ref: null
 claim_semantic_fingerprint: sha256:<64 lowercase hex>
 ```
 
