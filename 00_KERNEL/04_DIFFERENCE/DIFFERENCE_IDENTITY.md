@@ -47,7 +47,7 @@ Identity inputは次のsemantic tupleだけで構成する。
 ```text
 DIFFERENCE_IDENTITY_INPUT
 = project_id
-+ objective_revision_ref
++ objective_semantic_fingerprint
 + target_predicate_ref
 + subject
 + predicate
@@ -57,7 +57,9 @@ DIFFERENCE_IDENTITY_INPUT
 + identity_profile
 ```
 
-Target valueまたはMismatchの意味が変わればidentityは変わる。Observed valueはMismatchへ正規化された範囲だけidentityへ反映する。
+`objective_revision_ref`はexact provenance bindingとしてDifference Recordへ保持するが、identity inputには含めない。Objectiveの`EDITORIAL` revisionはsemantic fingerprintが不変であるため、同じTargetとMismatchのDifference IDを維持する。
+
+Target value、Objective semanticsまたはMismatchの意味が変わればidentityは変わる。Observed valueはMismatchへ正規化された範囲だけidentityへ反映する。
 
 # 3. Excluded Inputs
 
@@ -109,7 +111,7 @@ NaN、Infinity、曖昧なlocal time、credential-bearing locator、schema外val
 
 # 5. Stability Across Re-observation
 
-同一Objective revision、Target Predicate、boundary、normalized mismatchを再観測した場合、Observation ID、State revision、Evidenceが変わっても同じ`difference_id`を生成する。
+同一Objective semantic fingerprint、Target Predicate、boundary、normalized mismatchを再観測した場合、ObjectiveのEDITORIAL revision、Observation ID、State revision、Evidenceが変わっても同じ`difference_id`を生成する。
 
 ```text
 REOBSERVATION
@@ -126,7 +128,7 @@ REOBSERVATION
 
 ```text
 project
-Objective revision
+Objective semantic fingerprint
 Target Predicate
 subject or predicate
 effective boundary
@@ -194,6 +196,8 @@ OBSERVATION_CHANGED_SEMANTICS_SAME → SAME ID
 STATE_REVISION_CHANGED_SEMANTICS_SAME → SAME ID
 ISSUE_NUMBER_CHANGED → SAME ID
 TARGET_CHANGED → DIFFERENT ID
+OBJECTIVE_EDITORIAL_REVISION_CHANGED → SAME ID
+OBJECTIVE_SEMANTIC_FINGERPRINT_CHANGED → DIFFERENT ID
 BOUNDARY_CHANGED → DIFFERENT ID
 MISMATCH_CHANGED → DIFFERENT ID
 SAME_ID_DIFFERENT_SEMANTIC_IDENTITY_PAYLOAD → REJECT
