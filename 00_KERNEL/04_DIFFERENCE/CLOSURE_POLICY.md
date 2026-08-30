@@ -146,7 +146,7 @@ Conformance vectorsはobject key順序の不変性、各included field変更に�
 
 Policy fingerprintへ投入する各`reopen_conditions` memberは、`kind + id + predicate_semantic_fingerprint`だけのclosed semantic projectionとする。`objective_revision_ref`はexact provenance検証には必須だがPolicy semantic fingerprintから除外する。同じpredicate ID／semanticsを保持するEDITORIAL Objective revision更新ではPolicy fingerprintを変えず、predicate semantic fingerprint変更時だけ変える。
 
-`required_claims` memberは上記例のclosed seven-field immutable Claim descriptorだけを許可する。`claim`と`target_state_ref`は評価対象を復元できるcanonical payloadであり、digest preimageとして必須である。digestだけのdescriptor、外部に解決不能なClaim、unknown fieldを拒否する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`だけから同じcanonical JSON／SHA-256出力規則で算出する。
+`required_claims` memberは上記例のclosed seven-field immutable Claim descriptorだけを許可する。`claim`と`target_state_ref`は評価対象を復元できるcanonical payloadであり、digest preimageとして必須である。digestだけのdescriptor、外部に解決不能なClaim、unknown fieldを拒否する。 `claim`と`target_state_ref`のnested collectionは再帰的に`{"collection_kind":"ORDERED_LIST","members":[]}`または`{"collection_kind":"UNORDERED_SET","members":[]}`のclosed wrapperだけを許可する。前者は順序を保持し、後者はcanonical member bytes順に整列してduplicateを拒否する。入れ子を含むbare JSON array、unknown collection kind、wrapper追加fieldを拒否する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`だけから同じcanonical JSON／SHA-256出力規則で算出する。
 
 全Policy-required Claimのstable IDはmandatory X-003と同じnamespace規則へ統一する。ID inputは次のclosed projectionだけである。
 
@@ -382,7 +382,20 @@ schema_version: "0.1"
 resolved_record_sha256: sha256:<64 lowercase hex>
 ```
 
-`resolved_record_sha256`はrefが解決するcanonical Observation Scope record全体をunknown field reject後にcanonical JSON UTF-8化し、domain `MANOSUBE:RESOLVED_OBSERVATION_SCOPE_RECORD:0.1:`を前置したSHA-256である。これはObservation Scopeの新しいsemantic ownerではなく、exact resolved recordをcontent-addressするDifference Policy bindingである。
+`resolved_record_sha256`はrefが解決するcanonical Observation Scope recordを次のversioned projectionで正規化し、domain `MANOSUBE:RESOLVED_OBSERVATION_SCOPE_RECORD:0.1:`を前置したcanonical JSON UTF-8 bytesのSHA-256である。これはObservation Scopeの新しいsemantic ownerではなく、既存v0.1 Scope wire recordをexact content-addressするDifference Policy bindingである。
+
+```text
+PROFILE=MANOSUBE-RESOLVED-OBSERVATION-SCOPE-RECORD-0.1
+INCLUDED_FIELDS=all schema-required Observation Scope fields
+UNORDERED_SETS=included_subjects,excluded_subjects,source_snapshot_refs,attempt_policy.retry_on,blind_spots,blind_spots[*].affected_subjects
+ORDERED_LISTS=none
+SET_ORDER=CANONICAL_MEMBER_BYTES
+DUPLICATE_SET_MEMBER=REJECT
+UNKNOWN_FIELDS=REJECT
+NESTED_UNDECLARED_BARE_ARRAY=REJECT
+```
+
+上記6 fieldだけはSchema上のbare arrayをduplicate-free `UNORDERED_SET` wrapperへ射影してからhashする。`blind_spots` member自体は全fieldのcanonical bytesで整列する。その他fieldはSchemaのscalar／object構造を保持し、将来arrayが追加された場合はprofile version更新なしにhashせずFail Closedする。
 
 ```text
 required_observation_scope = null
