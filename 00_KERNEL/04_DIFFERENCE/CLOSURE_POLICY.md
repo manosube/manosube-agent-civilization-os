@@ -204,8 +204,8 @@ change_result_evidence_refs: []
 change_free_verification_evidence_refs: []
 verification_independence_ref: null
 evidence_sufficiency_ref: {}
-invariant_evaluation_refs: []
-required_claim_evaluation_refs: []
+candidate_invariant_evaluation_bindings: []
+candidate_claim_evaluation_bindings: []
 contradiction_refs: []
 evaluated_state_revision: 0
 evaluated_state_fingerprint: {}
@@ -333,7 +333,9 @@ candidate_id =
 
 collectionはexplicit duplicate-free `UNORDERED_SET` wrapperだけを許可し、bare arrayを拒否する。固定payload／digest、key順序、set順序、duplicate、included field変更のconformance vectorsを公開する。base StateはEvaluation時点のcurrent Canonical revision／fingerprintへexactに結合し、source snapshotsはimmutable content-addressed refsでなければならない。
 
-After-state Observationは存在しない未来revisionへ結合しない。Observation Contract上のState bindingは`base_state_ref`へ結合し、観測対象と結果provenanceはcandidateのimmutable `source_snapshot_refs`へexactに結合する。Observationから導出されたsemantic factsが`semantic_state`および`semantic_fingerprint`と一致することをG7〜G10で検証する。
+After-state Observationは存在しない未来revisionへ結合しない。Observation Contract上のState bindingは`base_state_ref`へ結合し、観測対象と結果provenanceはcandidateのimmutable `source_snapshot_refs`へexactに結合する。
+
+Observation wireの`source_snapshot_refs` bare arrayは既存Schema互換のまま保持する。Candidateとのexact比較では、Observation arrayをduplicate拒否後に各memberのcanonical bytesで昇順整列し、`{"collection_kind":"UNORDERED_SET","members":[...]}`へ投影する`MANOSUBE-OBSERVATION-SNAPSHOT-SET-PROJECTION-0.1`を使用する。Candidate側wrapperとのmember canonical bytes集合が完全一致しなければならない。順序だけの差は同値、duplicate、unknown member field、解決不能refはrejectする。Observationから導出されたsemantic factsが`semantic_state`および`semantic_fingerprint`と一致することをG7〜G10で検証する。
 
 `after_state_candidate`はClosure EvaluationだけではCanonicalにならない。G20 PASS後のAtomic Reflowがcurrent base revisionをCAS確認し、candidate semantic stateをrevision N+1としてcommitする。base revision／fingerprintまたはsource snapshotが変化した場合はEvaluationを`STALE`としてrejectする。
 
@@ -380,9 +382,25 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 → CLOSURE NOT SATISFIED
 ```
 
-`G19`はClosure Policyの`required_invariants`それぞれに対し、`after_state_candidate.candidate_id`とその`semantic_fingerprint`へexactに結合された`invariant_evaluation_refs`を要求する。Evaluation recordはbase State revision／fingerprintもprovenanceとして保持するが、判定対象はcandidate semantic stateでなければならない。未評価、欠落、stale、unknownまたはfailを一件でも含む場合は`SATISFIED`にしない。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
+`G19`はClosure Policyの各required invariantについて、Canonical Invariant Evaluation Recordを変更せず、次のclosed Difference-owned bindingを`candidate_invariant_evaluation_bindings`へexactly one保存する。
 
-Atomic Reflow commit直前に全`invariant_evaluation_refs`を再解決し、candidate ID／semantic fingerprint、evaluation revision、evaluation head、statusおよびrevocation stateがClosure Evaluation時点からcurrentであることを再検査する。`STALE`、`REVOKED`、head変更、candidate mismatch、非PASSを一件でも検出した場合はpromotionをrejectし、Closure Evaluationを`STALE`または`REVOKED`へ遷移する。
+```yaml
+kind: candidate_invariant_evaluation_binding
+binding_id: CAND-INV-EVAL-...
+candidate_id: STATE-CANDIDATE-...
+candidate_semantic_fingerprint: {}
+base_state_ref: {kind: state, revision: 0, fingerprint: {}}
+invariant_ref: {kind: kernel_invariant, id: D-001}
+invariant_evaluation_ref: {kind: invariant_evaluation, id: INV-EVAL-...}
+evaluation_record_fingerprint: sha256:...
+evaluation_result: PASS
+evaluation_evidence_refs: []
+evaluated_at: "2026-01-01T00:00:00Z"
+```
+
+Binding IDはID自身を除く全closed fieldのcanonical JSON UTF-8／SHA-256から`CAND-INV-EVAL-`＋64 lowercase hexとして生成する。Bindingはunderlying Invariant EvaluationのInvariant、result、Evidence、evaluated_at、record fingerprintとexact一致し、そのEvaluationがcandidate semantic state bytesを入力として評価したことをEvidenceで証明する。base Stateだけを評価したrecordをcandidateへ流用しない。
+
+Atomic Reflow直前にbindingとunderlying Evaluationを再解決し、candidate ID／semantic fingerprint、record fingerprint、resultおよびEvidence refsが不変かつPASSであることを再検査する。欠落、余分、duplicate、STALE相当のfingerprint変更、Evidence失効、非PASSを一件でも検出した場合はpromotionをrejectする。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
 
 `G22`は`proposed_terminal_status`が`CLOSED | BLOCKED | RETAINED`のclosed enumに属し、かつPolicyの`allowed_terminal_states`に明示されていることを要求する。未許可statusへのEvaluationを`SATISFIED`にせず、Lifecycle transitionも拒否する。各statusについて別Evaluationを生成し、あるstatusの許可を別statusへ流用しない。
 
@@ -408,7 +426,25 @@ v0.1 Difference Contractは、暗号鍵、署名、trust root、issuer identity�
 
 この制約は再観測を免除しない。`independent_verification_required=false`でも、G7からG18、Observation scope completeness、blind spot、Evidence Sufficiency、conflictおよびfreshness gateをすべて通常どおり評価する。
 
-`G21`で使用した各Completion Evaluationは`required_claim_evaluation_refs`へexactに保存し、各Evaluationを`after_state_candidate.candidate_id`とcandidate `semantic_fingerprint`へ結合する。base Stateだけを評価したCompletion Evaluationをcandidateへ流用してはならない。各refはclaim identity、evaluated State revision／fingerprint、Evidence refs、evaluation statusおよびevaluation revisionへ解決可能でなければならない。Atomic Reflow直前に全refのcandidate ID／semantic fingerprintがpromotion対象とexact一致し、currentかつ`SATISFIED`であることを再検査し、`REVOKED`、`STALE`またはhead変更を一件でも検出した場合はClosure Evaluationを`STALE`または`REVOKED`として拒否する。
+`G21`は各required claimについて、Canonical Completion Evaluation Recordを変更せず、次のclosed Difference-owned bindingを`candidate_claim_evaluation_bindings`へexactly one保存する。
+
+```yaml
+kind: candidate_claim_evaluation_binding
+binding_id: CAND-CLAIM-EVAL-...
+candidate_id: STATE-CANDIDATE-...
+candidate_semantic_fingerprint: {}
+base_state_ref: {kind: state, revision: 0, fingerprint: {}}
+required_claim_ref: {kind: completion_claim, id: CMP-...}
+completion_evaluation_ref: {kind: completion_evaluation, id: CMP-EVAL-...}
+evaluation_record_fingerprint: sha256:...
+evaluation_status: SATISFIED
+evaluation_evidence_refs: []
+evaluated_at: "2026-01-01T00:00:00Z"
+```
+
+Binding IDと検証規則はG19 bindingと同じcanonical profileを使用し、prefixだけを`CAND-CLAIM-EVAL-`とする。Underlying Completion Evaluationのclaim、status、Evidence、time、record fingerprintとexact一致し、candidate semantic stateを評価対象としたことを証明する。base State評価の流用を禁止する。
+
+Atomic Reflow直前に全binding／underlying Evaluationを再解決し、candidate binding、record fingerprint、status、Evidenceがcurrentかつ`SATISFIED`であることを再検査する。`REVOKED`、`STALE`、fingerprint／Evidence変更、candidate mismatch、非SATISFIEDを一件でも検出した場合はpromotionをrejectする。
 
 # 4. Independent Re-observation
 
