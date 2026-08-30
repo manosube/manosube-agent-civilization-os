@@ -120,6 +120,39 @@ def _difference_id(difference: dict[str, Any]) -> str:
     return "D-" + hashlib.sha256(canonical_json_bytes(identity)).hexdigest().upper()
 
 
+def _candidate_id(candidate: dict[str, Any]) -> str:
+    payload = {key: candidate[key] for key in (
+        "base_state_ref", "kernel_source_ref", "producing_change_refs",
+        "semantic_fingerprint", "semantic_state", "source_snapshot_refs",
+    )}
+    for key in ("producing_change_refs", "source_snapshot_refs"):
+        payload[key] = {
+            "collection_kind": "UNORDERED_SET",
+            "members": sorted(payload[key]["members"], key=canonical_json_bytes),
+        }
+    preimage = b"MANOSUBE:AFTER_STATE_CANDIDATE:0.1:" + canonical_json_bytes(payload)
+    return "STATE-CANDIDATE-" + hashlib.sha256(preimage).hexdigest().upper()
+
+
+def _supersession_reason_codes(old: dict[str, Any], new: dict[str, Any]) -> set[str]:
+    comparisons = {
+        "PROJECT_CHANGED": ("project_id",),
+        "OBJECTIVE_SEMANTICS_CHANGED": ("objective_semantic_fingerprint",),
+        "TARGET_PREDICATE_CHANGED": ("target_predicate_ref",),
+        "SUBJECT_OR_PREDICATE_CHANGED": ("subject",),
+        "BOUNDARY_CHANGED": ("observation_scope", "effective_boundary"),
+        "TARGET_STATE_SEMANTICS_CHANGED": ("normalized_target_state",),
+        "MISMATCH_SEMANTICS_CHANGED": ("structural_difference",),
+    }
+    reasons = {
+        reason for reason, fields in comparisons.items()
+        if any(old[field] != new[field] for field in fields)
+    }
+    if old["closure_policy"]["semantic_fingerprint"] != new["closure_policy"]["semantic_fingerprint"]:
+        reasons.add("CLOSURE_POLICY_SEMANTICS_CHANGED")
+    return reasons
+
+
 def _kernel_invariant_definitions(kernel_source: dict[str, Any]) -> dict[str, str]:
     root = Path(__file__).resolve().parents[1]
     commit = kernel_source["commit_sha"]
@@ -235,6 +268,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 ):
                     errors.append(f"reopen trigger payload mismatch: {event['difference_event_id']}")
             if event["to_status"] == "BLOCKED":
+                if not event["evidence_refs"]:
+                    errors.append(f"blocked lifecycle Evidence missing: {event['difference_event_id']}")
                 scope = event["blocker_scope"]
                 condition = event["blocker_resolution_condition"]
                 if scope is None or condition is None or event["blocker_kind"] is None:
@@ -411,7 +446,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             if candidate is None or proposed != "CLOSED" or evaluation["result"] != "SATISFIED":
                 errors.append(f"invalid candidate closure mode: {evaluation['closure_evaluation_id']}")
             if candidate is not None and (
-                candidate["base_state_ref"] != evaluation["before_state_ref"]
+                candidate["candidate_id"] != _candidate_id(candidate)
+                or candidate["base_state_ref"] != evaluation["before_state_ref"]
                 or candidate["kernel_source_ref"] != evaluation["kernel_source_ref_evaluated"]
             ):
                 errors.append(f"candidate input binding mismatch: {evaluation['closure_evaluation_id']}")
@@ -437,15 +473,28 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 errors.append(f"closure Evidence binding incomplete: {evaluation['closure_evaluation_id']}")
             invariant_bindings = evaluation["candidate_invariant_evaluation_bindings"]
             claim_bindings = evaluation["candidate_claim_evaluation_bindings"]
-            required_invariants = _mandatory_invariant_ids() | {
-                item["id"] for item in (policy or {}).get("required_invariants", [])
-            }
-            bound_invariants = [item["invariant_ref"]["id"] for item in invariant_bindings]
-            if set(bound_invariants) != required_invariants or len(bound_invariants) != len(set(bound_invariants)):
-                errors.append(f"candidate invariant binding set mismatch: {evaluation['closure_evaluation_id']}")
             definitions = _kernel_invariant_definitions(evaluation["kernel_source_ref_evaluated"])
             if set(definitions) != _mandatory_invariant_ids() | {"P-003"}:
                 errors.append(f"kernel invariant source mismatch: {evaluation['closure_evaluation_id']}")
+            repository = evaluation["kernel_source_ref_evaluated"]["repository"]
+            path = "00_KERNEL/KERNEL_INVARIANTS.md"
+            required_invariants = {
+                (identity, repository, path, digest)
+                for identity, digest in definitions.items() if identity != "P-003"
+            } | {
+                (item["id"], item["contract_source_ref"]["repository"],
+                 item["contract_source_ref"]["path"],
+                 item["contract_source_ref"]["invariant_definition_sha256"])
+                for item in (policy or {}).get("required_invariants", [])
+            }
+            bound_invariants = [
+                (item["invariant_ref"]["id"], item["invariant_definition_ref"]["repository"],
+                 item["invariant_definition_ref"]["path"],
+                 item["invariant_definition_ref"]["invariant_definition_sha256"])
+                for item in invariant_bindings
+            ]
+            if set(bound_invariants) != required_invariants or len(bound_invariants) != len(set(bound_invariants)):
+                errors.append(f"candidate invariant binding set mismatch: {evaluation['closure_evaluation_id']}")
             required_claims = {item["id"] for item in (policy or {}).get("required_claims", [])}
             bound_claims = [item["required_claim_ref"]["id"] for item in claim_bindings]
             if (
@@ -512,6 +561,10 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         new_id = _ref_id(relation["new_difference_ref"])
         if old_id == new_id or old_id not in differences or new_id not in differences:
             errors.append(f"invalid supersession endpoints: {relation['supersession_relation_id']}")
+        elif set(relation.get("reason_codes", [])) != _supersession_reason_codes(
+            differences[old_id], differences[new_id]
+        ):
+            errors.append(f"supersession reason mismatch: {relation['supersession_relation_id']}")
         old_event = events.get(_ref_id(relation["old_terminal_event_ref"]) or "")
         new_event = events.get(_ref_id(relation["new_genesis_event_ref"]) or "")
         if old_event is None or old_event["to_status"] != "SUPERSEDED" or old_event["difference_id"] != old_id:

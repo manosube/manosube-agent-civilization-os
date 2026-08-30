@@ -19,12 +19,16 @@
     "independent_verification_required": {"const": false},
     "maximum_evidence_age": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]},
     "contradiction_policy": {"const": "FAIL_CLOSED"},
-    "reopen_conditions": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}
+    "reopen_conditions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/reopen_condition"}}
   },
   "$defs": {
     "resolved_scope_ref": {
       "type": "object", "required": ["kind", "id", "schema_version", "resolved_record_sha256"],
       "properties": {"kind": {"const": "observation_scope"}, "id": {"$ref": "../common/identity.schema.json"}, "schema_version": {"const": "0.1"}, "resolved_record_sha256": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"}}, "additionalProperties": false
+    },
+    "reopen_condition": {
+      "type": "object", "required": ["kind", "id", "objective_revision_ref", "predicate_semantic_fingerprint"],
+      "properties": {"kind": {"const": "target_predicate"}, "id": {"$ref": "../common/identity.schema.json"}, "objective_revision_ref": {"$ref": "../common/reference.schema.json"}, "predicate_semantic_fingerprint": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"}}, "additionalProperties": false
     },
     "completion_claim": {
       "type": "object", "required": ["kind", "id", "subject_type", "subject_ref", "claim", "target_state_ref", "claim_semantic_fingerprint"],

@@ -6,6 +6,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 from scripts.difference_contract_validator import (
+    _candidate_id,
     apply_mutation,
     load_json,
     validate_bundle,
@@ -228,3 +229,43 @@ def test_supersession_cycle_is_rejected() -> None:
         },
     ]
     assert any("supersession cycle" in error for error in validate_bundle(bundle))
+
+
+def test_reopen_condition_and_blocked_evidence_are_closed() -> None:
+    validators = _validators()
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    policy = deepcopy(bundle["policies"][0])
+    policy["reopen_conditions"] = [{
+        "kind": "target_predicate",
+        "id": "TP-REOPEN-1",
+        "objective_revision_ref": {"kind": "objective_revision", "id": "OBJ-REV-2"},
+        "predicate_semantic_fingerprint": "sha256:" + "a" * 64,
+    }]
+    assert not list(validators["closure_policy.schema.json"].iter_errors(policy))
+    del policy["reopen_conditions"][0]["objective_revision_ref"]
+    assert list(validators["closure_policy.schema.json"].iter_errors(policy))
+
+    blocked = deepcopy(bundle["events"][2])
+    blocked["evidence_refs"] = []
+    assert list(validators["difference_lifecycle_event.schema.json"].iter_errors(blocked))
+    mutated = deepcopy(bundle)
+    mutated["events"][2]["evidence_refs"] = []
+    assert any("blocked lifecycle Evidence missing" in error for error in validate_bundle(mutated))
+
+
+def test_after_state_candidate_identity_binds_semantic_bytes() -> None:
+    base = load_json(FIXTURE_ROOT / "valid" / "bundle.json")["evaluations"][0]
+    candidate = {
+        "kind": "after_state_candidate",
+        "candidate_id": "",
+        "kernel_source_ref": base["kernel_source_ref_evaluated"],
+        "base_state_ref": base["before_state_ref"],
+        "semantic_state": {"value": 1},
+        "semantic_fingerprint": base["evaluated_state_fingerprint"],
+        "source_snapshot_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        "producing_change_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+    }
+    candidate["candidate_id"] = _candidate_id(candidate)
+    original = candidate["candidate_id"]
+    candidate["semantic_state"]["value"] = 2
+    assert _candidate_id(candidate) != original

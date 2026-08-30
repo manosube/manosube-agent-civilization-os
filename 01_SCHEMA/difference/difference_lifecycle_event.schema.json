@@ -53,7 +53,7 @@
     }
   },
   "allOf": [
-    {"if": {"properties": {"to_status": {"const": "BLOCKED"}}, "required": ["to_status"]}, "then": {"properties": {"blocker_kind": {"not": {"type": "null"}}, "blocker_scope": {"not": {"type": "null"}}, "blocker_resolution_condition": {"not": {"type": "null"}}, "next_observation_ref": {"not": {"type": "null"}}}}, "else": {"properties": {"blocker_kind": {"type": "null"}, "blocker_scope": {"type": "null"}, "blocker_resolution_condition": {"type": "null"}}}},
+    {"if": {"properties": {"to_status": {"const": "BLOCKED"}}, "required": ["to_status"]}, "then": {"properties": {"blocker_kind": {"not": {"type": "null"}}, "blocker_scope": {"not": {"type": "null"}}, "blocker_resolution_condition": {"not": {"type": "null"}}, "next_observation_ref": {"not": {"type": "null"}}, "evidence_refs": {"minItems": 1}}}, "else": {"properties": {"blocker_kind": {"type": "null"}, "blocker_scope": {"type": "null"}, "blocker_resolution_condition": {"type": "null"}}}},
     {"if": {"properties": {"event_revision": {"const": 0}}, "required": ["event_revision"]}, "then": {"properties": {"previous_event_id": {"type": "null"}, "from_status": {"type": "null"}, "to_status": {"const": "DETECTED"}}}},
     {"if": {"properties": {"to_status": {"enum": ["RETAINED", "REOPENED"]}}, "required": ["to_status"]}, "then": {"properties": {"next_observation_ref": {"not": {"type": "null"}}}}},
     {"if": {"properties": {"event_kind": {"const": "OBSERVATION_BOUND"}}, "required": ["event_kind"]}, "then": {"properties": {"observation_refs": {"minItems": 1}, "evidence_refs": {"minItems": 1}}}},
