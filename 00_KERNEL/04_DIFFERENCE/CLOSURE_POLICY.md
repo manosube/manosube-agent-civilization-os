@@ -394,13 +394,15 @@ invariant_ref: {kind: kernel_invariant, id: D-001}
 invariant_evaluation_ref: {kind: invariant_evaluation, id: INV-EVAL-...}
 evaluation_record_fingerprint: sha256:...
 evaluation_result: PASS
-evaluation_evidence_refs: []
+evaluation_evidence_refs: {collection_kind: UNORDERED_SET, members: []}
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
 
-Binding IDはID自身を除く全closed fieldのcanonical JSON UTF-8／SHA-256から`CAND-INV-EVAL-`＋64 lowercase hexとして生成する。Bindingはunderlying Invariant EvaluationのInvariant、result、Evidence、evaluated_at、record fingerprintとexact一致し、そのEvaluationがcandidate semantic state bytesを入力として評価したことをEvidenceで証明する。base Stateだけを評価したrecordをcandidateへ流用しない。
+Binding IDはID自身を除く全closed fieldのcanonical JSON UTF-8／SHA-256から`CAND-INV-EVAL-`＋64 lowercase hexとして生成する。 Binding profileは`MANOSUBE-CANDIDATE-EVALUATION-BINDING-SHA256-0.1`とし、`evaluation_evidence_refs`をduplicate-free `UNORDERED_SET`としてcanonical member bytes順に整列する。bare array、duplicate、unknown fieldをrejectする。`evaluation_record_fingerprint`は参照先Canonical recordの保存済みwire object全体を、そのrecord自身が定めるcollection semanticsでcanonical JSON UTF-8へ変換したbytesのSHA-256である。profileは`MANOSUBE-RESOLVED-EVALUATION-RECORD-SHA256-0.1`、出力は`sha256:`＋64 lowercase hexとする。fieldを除外せず、timestamp、Evidence refs、status／resultを含む。参照先に未定義collection semantics、unknown fieldまたは非canonical valueがあればbindingをrejectする。recordが一byteでも変わればfingerprintが変わり、pre-promotion recheckでSTALEとして拒否する。
 
-Atomic Reflow直前にbindingとunderlying Evaluationを再解決し、candidate ID／semantic fingerprint、record fingerprint、resultおよびEvidence refsが不変かつPASSであることを再検査する。欠落、余分、duplicate、STALE相当のfingerprint変更、Evidence失効、非PASSを一件でも検出した場合はpromotionをrejectする。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
+Bindingはunderlying Invariant EvaluationのInvariant、result、Evidence、evaluated_at、record fingerprintとexact一致し、そのEvaluationがcandidate semantic state bytesを入力として評価したことをEvidenceで証明する。base Stateだけを評価したrecordをcandidateへ流用しない。
+
+Atomic Reflow直前にbindingとunderlying recordを再解決し、candidate ID／semantic fingerprint、record fingerprint、resultおよびEvidence refsが不変かつPASSであることを再検査する。欠落、余分、duplicate、STALE相当のfingerprint変更、Evidence失効、非PASSを一件でも検出した場合はpromotionをrejectする。空集合の場合もKernel Mandatory Invariantsの評価を免除しない。
 
 `G22`は`proposed_terminal_status`が`CLOSED | BLOCKED | RETAINED`のclosed enumに属し、かつPolicyの`allowed_terminal_states`に明示されていることを要求する。未許可statusへのEvaluationを`SATISFIED`にせず、Lifecycle transitionも拒否する。各statusについて別Evaluationを生成し、あるstatusの許可を別statusへ流用しない。
 
@@ -435,16 +437,16 @@ candidate_id: STATE-CANDIDATE-...
 candidate_semantic_fingerprint: {}
 base_state_ref: {kind: state, revision: 0, fingerprint: {}}
 required_claim_ref: {kind: completion_claim, id: CMP-...}
-completion_evaluation_ref: {kind: completion_evaluation, id: CMP-EVAL-...}
+completion_record_ref: {kind: completion_record, id: CMP-...}
 evaluation_record_fingerprint: sha256:...
 evaluation_status: SATISFIED
 evaluation_evidence_refs: []
 evaluated_at: "2026-01-01T00:00:00Z"
 ```
 
-Binding IDと検証規則はG19 bindingと同じcanonical profileを使用し、prefixだけを`CAND-CLAIM-EVAL-`とする。Underlying Completion Evaluationのclaim、status、Evidence、time、record fingerprintとexact一致し、candidate semantic stateを評価対象としたことを証明する。base State評価の流用を禁止する。
+Binding IDと検証規則はG19 bindingと同じcanonical profileを使用し、prefixだけを`CAND-CLAIM-EVAL-`とする。 `evaluation_evidence_refs`も同じexplicit duplicate-free `UNORDERED_SET` wrapperを使用する。Underlying Completion Recordのclaim、status、Evidence、time、record fingerprintとexact一致し、candidate semantic stateを評価対象としたことを証明する。base State評価の流用を禁止する。
 
-Atomic Reflow直前に全binding／underlying Evaluationを再解決し、candidate binding、record fingerprint、status、Evidenceがcurrentかつ`SATISFIED`であることを再検査する。`REVOKED`、`STALE`、fingerprint／Evidence変更、candidate mismatch、非SATISFIEDを一件でも検出した場合はpromotionをrejectする。
+Atomic Reflow直前に全binding／underlying recordを再解決し、candidate binding、record fingerprint、status、Evidenceがcurrentかつ`SATISFIED`であることを再検査する。`REVOKED`、`STALE`、fingerprint／Evidence変更、candidate mismatch、非SATISFIEDを一件でも検出した場合はpromotionをrejectする。
 
 # 4. Independent Re-observation
 
