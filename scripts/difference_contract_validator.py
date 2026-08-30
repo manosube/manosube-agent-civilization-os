@@ -136,6 +136,15 @@ def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
     return False
 
 
+def _fact_type_matches_target(fact: dict[str, Any], target: dict[str, Any]) -> bool:
+    operator = target["operator"]
+    if operator == "exists":
+        return True
+    if operator == "contains":
+        return fact["value_type"] in {"ORDERED_COLLECTION", "UNORDERED_COLLECTION"}
+    return fact["value_type"] == target["expected_value_type"]
+
+
 def _resolved_scope_fingerprint(scope: dict[str, Any]) -> str:
     projection = deepcopy(scope)
     for key in ("included_subjects", "excluded_subjects", "source_snapshot_refs", "blind_spots"):
@@ -765,7 +774,10 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         observed_values = [item["value"] for item in observed["value_candidates"]["members"]]
         observed_types = [item["value_type"] for item in observed["value_candidates"]["members"]]
         if (
-            difference_id != _difference_id(difference)
+            _has_recursive_set_duplicate(difference["normalized_target_state"])
+            or _has_recursive_set_duplicate(difference["normalized_observed_state"])
+            or _has_recursive_set_duplicate(difference["structural_difference"])
+            or difference_id != _difference_id(difference)
             or difference["subject"] != target["subject"]
             or difference["subject"] != observed["subject"]
             or difference["observation_scope"] != target["observation_scope"]
@@ -974,15 +986,22 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 if observation is not None else []
                 for observation in after_observations
             ]
-            latest_fact_evaluations: dict[str, dict[str, Any]] = {}
+            fact_evaluation_chains: dict[str, list[dict[str, Any]]] = {}
             for fact_evaluation in fact_evaluations.values():
-                previous_evaluation = latest_fact_evaluations.get(fact_evaluation["fact_id"])
-                if (
-                    previous_evaluation is None
-                    or fact_evaluation["evaluation_revision"]
-                    > previous_evaluation["evaluation_revision"]
-                ):
-                    latest_fact_evaluations[fact_evaluation["fact_id"]] = fact_evaluation
+                fact_evaluation_chains.setdefault(
+                    fact_evaluation["fact_id"], []
+                ).append(fact_evaluation)
+            latest_fact_evaluations: dict[str, dict[str, Any]] = {}
+            for fact_id, chain in fact_evaluation_chains.items():
+                chain.sort(key=lambda item: item["evaluation_revision"])
+                valid_chain = all(
+                    item["evaluation_revision"] == revision
+                    and item["previous_evaluation_id"]
+                    == (None if revision == 0 else chain[revision - 1]["evaluation_id"])
+                    for revision, item in enumerate(chain)
+                )
+                if valid_chain:
+                    latest_fact_evaluations[fact_id] = chain[-1]
             facts_valid = all(
                 facts
                 and all(
@@ -990,8 +1009,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and difference is not None
                     and fact["project_id"] == difference["project_id"]
                     and fact["subject"] == difference["subject"]
-                    and fact["value_type"]
-                    == difference["normalized_target_state"]["expected_value_type"]
+                    and _fact_type_matches_target(
+                        fact, difference["normalized_target_state"]
+                    )
                     and (latest_evaluation := latest_fact_evaluations.get(fact["fact_id"]))
                     is not None
                     and latest_evaluation["evaluation_status"] == "SUPPORTED"
