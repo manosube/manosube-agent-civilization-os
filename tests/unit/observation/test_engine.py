@@ -671,3 +671,46 @@ def test_historical_retry_is_independent_of_later_conflicts() -> None:
     retry = deepcopy(original_request)
     retry["prior_bundle"] = history
     assert observe(retry) == history
+
+
+def test_fact_boundary_must_be_observed() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"][0]["effective_boundary"]["identity"] = (
+        "SNAP-OTHER"
+    )
+    with pytest.raises(ObservationError, match="Fact effective boundary was not observed"):
+        observe(request)
+
+
+def test_empty_requires_successful_observation() -> None:
+    request = _request()
+    request["source_occurrences"][0]["facts"] = []
+    request["source_occurrences"][0]["outcome"] = "FAILED"
+    request["attempts"][0]["result"] = "FAILED"
+    request["attempts"][0]["failure_class"] = "PARSER_FAILURE"
+    request["collection_complete"] = True
+    request["negative_claims"] = [
+        {
+            "negative_status": "EMPTY",
+            "subject": "fixture.name",
+            "predicate": "members@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    with pytest.raises(ObservationError, match="zero-member"):
+        observe(request)
+
+
+def test_positive_negative_conflict_retry_is_idempotent() -> None:
+    request = _request()
+    request["negative_claims"] = [
+        {
+            "negative_status": "ABSENT",
+            "subject": "fixture.enabled",
+            "predicate": "equals@v1",
+            "effective_boundary": deepcopy(BOUNDARY),
+        }
+    ]
+    first = observe(request)
+    request["prior_bundle"] = first
+    assert observe(request) == first
