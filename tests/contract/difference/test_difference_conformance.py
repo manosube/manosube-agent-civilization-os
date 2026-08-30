@@ -70,7 +70,10 @@ def test_three_evaluation_modes_are_distinct() -> None:
             "commit_sha": "1" * 40,
             "tree_sha": "2" * 40,
         },
-        "base_state_ref": {"kind": "state", "id": "STATE-0002"},
+        "base_state_ref": {
+            "kind": "state", "revision": 2,
+            "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "a" * 64},
+        },
         "semantic_state": {},
         "semantic_fingerprint": {
             "profile": "MANOSUBE-STATE-SHA256-0.1",
@@ -157,7 +160,10 @@ def test_target_value_type_and_closure_evidence_fail_closed() -> None:
         "kind": "after_state_candidate",
         "candidate_id": "STATE-CANDIDATE-" + "A" * 64,
         "kernel_source_ref": base["kernel_source_ref_evaluated"],
-        "base_state_ref": {"kind": "state", "id": "STATE-0002"},
+        "base_state_ref": {
+            "kind": "state", "revision": 2,
+            "fingerprint": base["evaluated_state_fingerprint"],
+        },
         "semantic_state": {},
         "semantic_fingerprint": base["evaluated_state_fingerprint"],
         "source_snapshot_refs": {"collection_kind": "UNORDERED_SET", "members": []},

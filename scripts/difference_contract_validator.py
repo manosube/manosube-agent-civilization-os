@@ -63,6 +63,7 @@ def _policy_ref_matches(reference: dict[str, Any], policy: dict[str, Any]) -> bo
         reference["id"] == policy["closure_policy_id"]
         and reference["version"] == policy["policy_version"]
         and reference["semantic_fingerprint"] == policy["policy_semantic_fingerprint"]
+        and policy["policy_semantic_fingerprint"] == _policy_fingerprint(policy)
     )
 
 
@@ -76,6 +77,47 @@ def _mandatory_invariant_ids() -> set[str]:
 def _content_address(prefix: str, record: dict[str, Any], identity_field: str) -> str:
     payload = {key: value for key, value in record.items() if key != identity_field}
     return prefix + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
+
+
+def _policy_fingerprint(policy: dict[str, Any]) -> str:
+    projection = {key: policy[key] for key in (
+        "target_predicate_ref", "required_observation_scope", "minimum_evidence_level",
+        "required_claims", "required_invariants", "allowed_terminal_states",
+        "independent_verification_required", "maximum_evidence_age",
+        "contradiction_policy", "reopen_conditions",
+    )}
+    for key in ("required_claims", "allowed_terminal_states"):
+        projection[key] = sorted(projection[key], key=canonical_json_bytes)
+    projection["reopen_conditions"] = sorted(
+        ({key: item[key] for key in ("kind", "id", "predicate_semantic_fingerprint")}
+         for item in projection["reopen_conditions"]), key=canonical_json_bytes,
+    )
+    projection["required_invariants"] = sorted(({
+        "kind": item["kind"], "id": item["id"],
+        "contract_source_blob": {
+            "kind": item["contract_source_ref"]["kind"],
+            "repository": item["contract_source_ref"]["repository"],
+            "path": item["contract_source_ref"]["path"],
+            "invariant_definition_sha256": item["contract_source_ref"]["invariant_definition_sha256"],
+        },
+    } for item in projection["required_invariants"]), key=canonical_json_bytes)
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
+
+
+def _difference_id(difference: dict[str, Any]) -> str:
+    identity = {
+        "project_id": difference["project_id"],
+        "objective_semantic_fingerprint": difference["objective_semantic_fingerprint"],
+        "target_predicate_ref": difference["target_predicate_ref"],
+        "subject": difference["subject"],
+        "observation_scope": difference["observation_scope"],
+        "effective_boundary": difference["effective_boundary"],
+        "normalized_target_state": difference["normalized_target_state"],
+        "normalized_structural_difference": difference["structural_difference"],
+        "closure_policy_semantic_fingerprint": difference["closure_policy"]["semantic_fingerprint"],
+        "identity_profile": "MANOSUBE-DIFFERENCE-SHA256-0.1",
+    }
+    return "D-" + hashlib.sha256(canonical_json_bytes(identity)).hexdigest().upper()
 
 
 def _kernel_invariant_definitions(kernel_source: dict[str, Any]) -> dict[str, str]:
@@ -270,7 +312,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         observed_values = [item["value"] for item in observed["value_candidates"]["members"]]
         observed_types = [item["value_type"] for item in observed["value_candidates"]["members"]]
         if (
-            difference["subject"] != target["subject"]
+            difference_id != _difference_id(difference)
+            or difference["subject"] != target["subject"]
             or difference["subject"] != observed["subject"]
             or difference["observation_scope"] != target["observation_scope"]
             or difference["observation_scope"]
@@ -367,6 +410,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         if mode == "CANDIDATE_CLOSURE":
             if candidate is None or proposed != "CLOSED" or evaluation["result"] != "SATISFIED":
                 errors.append(f"invalid candidate closure mode: {evaluation['closure_evaluation_id']}")
+            if candidate is not None and (
+                candidate["base_state_ref"] != evaluation["before_state_ref"]
+                or candidate["kernel_source_ref"] != evaluation["kernel_source_ref_evaluated"]
+            ):
+                errors.append(f"candidate input binding mismatch: {evaluation['closure_evaluation_id']}")
             if any(value != "PASS" for value in evaluation["gate_results"].values()):
                 errors.append(f"closure has non-PASS mandatory gate: {evaluation['closure_evaluation_id']}")
             resolution_mode = evaluation["resolution_mode"]
