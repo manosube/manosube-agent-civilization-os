@@ -95,7 +95,7 @@ closure_policy.version
 closure_policy.fingerprint
 ```
 
-Closure Policyのlogical IDだけではexact bindingにならない。Difference導出時にPolicy versionとimmutable payload fingerprintを固定し、後続Evaluationはこのtupleと一致しなければならない。Policy改定は旧Differenceのbindingを上書きせず、適用可能性を再評価して必要ならSupersessionへ送る。
+Closure Policyのlogical IDだけではexact bindingにならない。Difference導出時にPolicy versionとimmutable payload fingerprintを固定し、後続Evaluationはこのtupleと一致しなければならない。Policy fingerprintは`DIFFERENCE_IDENTITY.md`のsemantic identity inputでもある。Policy-only改定でも新しいDifference IDを導出し、旧Differenceを上書きせずSupersession Relationへ送る。
 
 Observationは同じProject、State revision、State fingerprintを参照しなければならない。異なるStateへObservationまたはDifferenceを再利用してはならない。
 
