@@ -175,7 +175,15 @@ Lifecycle Engineはtransitionの構造的妥当性を評価するが、Human Aut
 
 # 8. Reopen
 
-Reopenは旧Closure Eventを削除または書換えない。新Eventはtrigger kind、対象Closure Evaluation ref、反証または失効したEvidence refsを必須とし、Observationによる反証の場合は後続Observation refsも持つ。Evidence失効またはprovenance不正によるReopenではObservation refsを必須にしない。
+Reopenは旧Closure Eventを削除または書換えない。すべての新Eventはtrigger kindと対象Closure Evaluation refを持ち、trigger固有fieldを次のとおり要求する。
+
+| Trigger | Required refs | Forbidden refs |
+|---|---|---|
+| `OBSERVATION_CONTRADICTION` | observation refs、contradicting Evidence refs | reopen condition refs |
+| `CLOSURE_EVIDENCE_REVOKED` | revoked closure Evidence refs | observation refs、reopen condition refs |
+| `CLOSURE_EVIDENCE_INVALID` | invalid closure Evidence refs | observation refs、reopen condition refs |
+| `MATERIAL_CONTRADICTION` | contradiction Evidence refs | reopen condition refs |
+| `POLICY_REOPEN_CONDITION_SATISFIED` | reopen condition ref、current Completion Evaluation ref、そのevaluation Evidence refs | invalidated／revoked closure Evidence refs |
 
 ```text
 REOPEN_TRIGGER
