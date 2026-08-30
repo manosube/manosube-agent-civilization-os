@@ -162,17 +162,21 @@ contradiction_evidence_refs: []
 
 ```yaml
 kind: difference_blocker_scope
-effective_boundary_ref:
-  kind: effective_boundary
-  id: BOUNDARY-...
-  semantic_fingerprint: sha256:...
+effective_boundary:
+  kind: OBSERVATION_SCOPE_BOUNDARY
+  scope_ref: {kind: observation_scope, id: OBS-SCOPE-...}
+  resolved_scope_record_sha256: sha256:...
+  target_effective_window: {start: null, end: null}
+  source_snapshot_refs:
+    collection_kind: UNORDERED_SET
+    members: []
 affected_subject_refs:
   collection_kind: UNORDERED_SET
   members: []
 blocked_stage: DIFFERENCE_EVALUATION
 ```
 
-`blocked_stage`は`OBSERVATION | DIFFERENCE_EVALUATION | LIFECYCLE_TRANSITION | EXTERNAL_AUTHORITY_PATH | EXTERNAL_EXECUTION_PATH | EXTERNAL_EVIDENCE_PATH`のclosed enumである。`effective_boundary_ref`はDifferenceに固定されたexact boundary ID／semantic fingerprintへ解決し、`affected_subject_refs`はduplicate-free `UNORDERED_SET` wrapperとしてcanonical member bytes順に整列する。各memberは`{kind, id}`のclosed typed referenceで、Difference effective boundary内へ解決しなければならない。bare array、empty `affected_subject_refs`、unknown kind、unknown field、boundary外subjectを拒否する。
+`blocked_stage`は`OBSERVATION | DIFFERENCE_EVALUATION | LIFECYCLE_TRANSITION | EXTERNAL_AUTHORITY_PATH | EXTERNAL_EXECUTION_PATH | EXTERNAL_EVIDENCE_PATH`のclosed enumである。`effective_boundary`は`DIFFERENCE_CONTRACT.md`第2章のDifference Recordにinline固定された同名closed projectionを完全に複製し、canonical bytesがexact一致しなければならない。独立したBoundary ID、moving refまたは別fingerprintを捏造しない。`source_snapshot_refs`はduplicate-free `UNORDERED_SET` wrapperとしてcanonical member bytes順に整列する。`affected_subject_refs`もduplicate-free `UNORDERED_SET` wrapperとしてcanonical member bytes順に整列し、各memberは`{kind, id}`のclosed typed referenceでDifference effective boundary内へ解決しなければならない。bare array、empty `affected_subject_refs`、unknown kind、unknown field、Difference Recordとのboundary bytes不一致、boundary外subjectを拒否する。
 
 `blocker_resolution_condition`は次のexact closed projectionだけを許可する。
 
