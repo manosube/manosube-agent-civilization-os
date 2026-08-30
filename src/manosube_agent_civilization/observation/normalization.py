@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime
 import json
 import re
 from typing import Any
@@ -27,6 +27,7 @@ VALUE_TYPES = {
     "UNORDERED_COLLECTION",
     "STRUCTURED",
 }
+PREDICATE_VOCABULARY = frozenset({"equals@v1", "exists@v1", "members@v1"})
 _DECIMAL = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
 _DURATION = re.compile(r"^P(?=\d|T\d)(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?$")
 
@@ -62,8 +63,15 @@ def normalize_fact(raw: dict[str, Any], project_id: str, profile: str) -> dict[s
     value_type = raw.get("value_type")
     if value_type not in VALUE_TYPES:
         raise ObservationError(f"unknown value_type: {value_type!r}")
+    if raw.get("predicate") not in PREDICATE_VOCABULARY:
+        raise ObservationError(f"unknown predicate: {raw.get('predicate')!r}")
     value = deepcopy(raw["value"])
     _validate_value_type(value, value_type)
+    if value_type == "TIMESTAMP":
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            raise ObservationError("TIMESTAMP requires an explicit UTC offset")
+        value = instant.astimezone(UTC).isoformat().replace("+00:00", "Z")
     if value_type == "UNORDERED_COLLECTION":
         if not isinstance(value, list):
             raise ObservationError("UNORDERED_COLLECTION value must be an array")
