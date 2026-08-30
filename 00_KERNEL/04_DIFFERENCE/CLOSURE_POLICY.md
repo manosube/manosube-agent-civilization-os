@@ -66,26 +66,27 @@ contradiction_refs: []
 evaluated_state_revision: 0
 evaluated_state_fingerprint: {}
 policy_ref: {kind: closure_policy, id: CP-...}
-result: UNKNOWN
+result: NOT_EVALUATED
 failure_reasons: []
 reflow_transition_ref: null
 ```
 
-Evaluation resultはclosed enumとする。
+Evaluation resultは`COMPLETION_SEMANTICS.md`のCanonical Completion Evaluation Statusと完全に同じclosed enumとする。
 
 ```text
-PASS
-FAIL
-UNKNOWN
+NOT_EVALUATED
+EVALUATING
+SATISFIED
+NOT_SATISFIED
 BLOCKED
 STALE
-CONFLICTED
-INVALID
+CONTRADICTED
+REVOKED
 ```
 
 # 3. Mandatory Closure Gates
 
-`PASS`には次の全条件を要求する。
+`SATISFIED`には次の全条件を要求する。
 
 ```text
 G1  DIFFERENCE_ID_VALID
@@ -109,7 +110,7 @@ G18 INVARIANTS_PASS
 G19 ATOMIC_REFLOW_PRECONDITIONS_PASS
 ```
 
-一つでもfalseまたはunknownなら`PASS`にしない。
+一つでもfalseまたはunknownなら`SATISFIED`にしない。
 
 # 4. Independent Re-observation
 
@@ -141,22 +142,25 @@ Negative Evidenceはscope、期間、method、attempt count、completion、blind
 
 | Observed condition | Closure result |
 |---|---|
-| Target satisfied and all gates pass | `PASS` candidate |
-| Target not satisfied | `FAIL` |
-| Truth cannot be determined | `UNKNOWN` |
+| Target satisfied and all gates pass | `SATISFIED` candidate |
+| Targetを観測したが満たさない | `NOT_SATISFIED` |
+| 評価がまだ実行されていない | `NOT_EVALUATED` |
+| 必要Evidenceを評価中 | `EVALUATING` |
+| Truthを決定するInputまたはObservationが不足 | `BLOCKED` |
 | Observation or Authority path blocked | `BLOCKED` |
 | State、Change、Approval、Evidence binding is stale | `STALE` |
-| Positive／NegativeまたはEvidence conflict | `CONFLICTED` |
-| Schema、identity、boundary、lineage invalid | `INVALID` |
+| Positive／NegativeまたはMaterial Evidence conflict | `CONTRADICTED` |
+| 以前受理した評価またはClosureの前提が無効化 | `REVOKED` |
+| 初回評価時にschema、identity、boundary、lineageがinvalid | `NOT_SATISFIED` |
 
 `EMPTY`は対象collectionのcomplete enumerationが証明された場合だけTarget Satisfactionへ使用できる。`NO_RESULT`、`FAILED`、`INCOMPLETE`をabsenceまたはmatchへ昇格させない。
 
 # 7. Atomic Closure
 
-Closure Evaluationの`PASS`だけではDifferenceはまだ`CLOSED`ではない。
+Closure Evaluationの`SATISFIED`だけではDifferenceはまだ`CLOSED`ではない。
 
 ```text
-CLOSURE EVALUATION PASS
+CLOSURE EVALUATION SATISFIED
 + CURRENT REVISION = EXPECTED REVISION
 + ATOMIC STATE TRANSITION
 + LINEAGE APPEND
