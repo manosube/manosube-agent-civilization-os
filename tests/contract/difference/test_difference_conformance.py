@@ -111,6 +111,24 @@ def test_difference_fixture_suite_has_no_escape() -> None:
         FIXTURE_ROOT
     )
     assert valid_count == 1
-    assert invalid_count == 14
+    assert invalid_count == 18
     assert valid_errors == []
     assert invalid_escapes == []
+
+
+def test_supersession_relation_uses_canonical_contract_shape() -> None:
+    validator = _validators()["difference_supersession_relation.schema.json"]
+    relation = {
+        "schema_version": "0.1",
+        "supersession_relation_id": "D-SUP-" + "A" * 64,
+        "old_difference_ref": {"kind": "difference", "id": "D-OLD"},
+        "new_difference_ref": {"kind": "difference", "id": "D-NEW"},
+        "old_terminal_event_ref": {"kind": "difference_event", "id": "D-EVT-OLD"},
+        "new_genesis_event_ref": {"kind": "difference_event", "id": "D-EVT-NEW"},
+        "reason_codes": ["TARGET_PREDICATE_CHANGED"],
+        "evidence_refs": [],
+    }
+    assert not list(validator.iter_errors(relation))
+    invented = deepcopy(relation)
+    invented["relation_id"] = invented.pop("supersession_relation_id")
+    assert list(validator.iter_errors(invented))

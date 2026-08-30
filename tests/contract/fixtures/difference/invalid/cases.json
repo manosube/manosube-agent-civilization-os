@@ -12,5 +12,9 @@
   {"name": "event_status_continuity_mismatch", "path": ["events", 2, "from_status"], "value": "ACTIVE"},
   {"name": "terminal_event_missing_evaluation", "path": ["events", 2, "closure_evaluation_ref"], "value": null},
   {"name": "difference_policy_fingerprint_mismatch", "path": ["differences", 0, "closure_policy", "semantic_fingerprint"], "value": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
-  {"name": "superseded_event_missing_relation", "path": ["events", 2, "to_status"], "value": "SUPERSEDED"}
+  {"name": "superseded_event_missing_relation", "path": ["events", 2, "to_status"], "value": "SUPERSEDED"},
+  {"name": "evaluation_target_mismatch", "path": ["evaluations", 0, "target_predicate_ref", "id"], "value": "TP-9999"},
+  {"name": "policy_only_candidate_gate_leakage", "path": ["evaluations", 0, "gate_results", "G6"], "value": "PASS"},
+  {"name": "ordinary_event_reopen_payload", "path": ["events", 1, "reopen_trigger"], "value": "MATERIAL_CONTRADICTION"},
+  {"name": "policy_only_mandatory_gate_failure", "path": ["evaluations", 0, "gate_results", "G18"], "value": "FAIL"}
 ]

@@ -66,7 +66,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     events = _index(bundle["events"], "difference_event_id", errors)
     policies = _index(bundle["policies"], "closure_policy_id", errors)
     evaluations = _index(bundle["evaluations"], "closure_evaluation_id", errors)
-    relations = _index(bundle["supersession_relations"], "relation_id", errors)
+    relations = _index(
+        bundle["supersession_relations"], "supersession_relation_id", errors
+    )
 
     events_by_difference: dict[str, list[dict[str, Any]]] = {}
     for event in events.values():
@@ -93,6 +95,48 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     errors.append(f"observation-bound terminal event: {event['difference_event_id']}")
             elif (event["from_status"], event["to_status"]) not in LEGAL_TRANSITIONS:
                 errors.append(f"illegal lifecycle transition: {event['difference_event_id']}")
+            is_reopen = event["from_status"] == "CLOSED" and event["to_status"] == "REOPENED"
+            reopen_lists = (
+                event["revoked_evidence_refs"],
+                event["invalid_evidence_refs"],
+                event["contradiction_evidence_refs"],
+            )
+            if not is_reopen:
+                if (
+                    event["reopen_trigger"] is not None
+                    or event["reopen_condition_ref"] is not None
+                    or event["reopen_condition_evaluation_ref"] is not None
+                    or any(reopen_lists)
+                ):
+                    errors.append(f"non-reopen event carries reopen payload: {event['difference_event_id']}")
+            else:
+                trigger = event["reopen_trigger"]
+                if (
+                    trigger is None
+                    or event["closure_evaluation_ref"] is None
+                    or event["next_observation_ref"] is None
+                ):
+                    errors.append(f"incomplete reopen payload: {event['difference_event_id']}")
+                trigger_valid = {
+                    "OBSERVATION_CONTRADICTION": bool(event["observation_refs"] and event["evidence_refs"]),
+                    "CLOSURE_EVIDENCE_REVOKED": bool(event["revoked_evidence_refs"]),
+                    "CLOSURE_EVIDENCE_INVALID": bool(event["invalid_evidence_refs"]),
+                    "MATERIAL_CONTRADICTION": bool(event["contradiction_evidence_refs"]),
+                    "POLICY_REOPEN_CONDITION_SATISFIED": bool(
+                        event["reopen_condition_ref"]
+                        and event["reopen_condition_evaluation_ref"]
+                        and event["evidence_refs"]
+                    ),
+                }.get(trigger, False)
+                condition_refs_present = bool(
+                    event["reopen_condition_ref"]
+                    or event["reopen_condition_evaluation_ref"]
+                )
+                if not trigger_valid or (
+                    trigger != "POLICY_REOPEN_CONDITION_SATISFIED"
+                    and condition_refs_present
+                ):
+                    errors.append(f"reopen trigger payload mismatch: {event['difference_event_id']}")
             if event["to_status"] == "BLOCKED":
                 scope = event["blocker_scope"]
                 condition = event["blocker_resolution_condition"]
@@ -154,6 +198,27 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         head = events.get(_ref_id(evaluation["difference_event_head_ref"]) or "")
         if head is None or head["difference_id"] != evaluation["difference_id"]:
             errors.append(f"evaluation event-head mismatch: {evaluation['closure_evaluation_id']}")
+        if (
+            evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
+            or evaluation["objective_revision_ref_evaluated"]
+            != difference["objective_revision_ref"]
+            or evaluation["objective_semantic_fingerprint_evaluated"]
+            != difference["objective_semantic_fingerprint"]
+            or evaluation["evaluated_state_revision"]
+            != difference["observed_state_revision"]
+            or evaluation["evaluated_state_fingerprint"]
+            != difference["observed_state_fingerprint"]
+            or (
+                head is not None
+                and (
+                    evaluation["evaluated_state_revision"]
+                    != head["state_revision_evaluated"]
+                    or evaluation["evaluated_state_fingerprint"]
+                    != head["state_fingerprint_evaluated"]
+                )
+            )
+        ):
+            errors.append(f"evaluation Difference input mismatch: {evaluation['closure_evaluation_id']}")
         mode = evaluation["evaluation_mode"]
         candidate = evaluation["after_state_candidate"]
         proposed = evaluation["proposed_terminal_status"]
@@ -178,18 +243,30 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 errors.append(f"Policy-only mode contains candidate bindings: {evaluation['closure_evaluation_id']}")
             if not evaluation["terminal_reason_evidence_refs"] or evaluation["result"] != "BLOCKED":
                 errors.append(f"invalid Policy-only terminal Evidence: {evaluation['closure_evaluation_id']}")
+            mandatory = {"G1", "G3", "G5", "G18", "G22"}
+            candidate_dependent = {
+                *(f"G{index}" for index in range(6, 18)),
+                "G19", "G20", "G21",
+            }
+            if any(evaluation["gate_results"][gate] != "PASS" for gate in mandatory):
+                errors.append(f"Policy-only mandatory gate mismatch: {evaluation['closure_evaluation_id']}")
+            if any(
+                evaluation["gate_results"][gate] != "NOT_APPLICABLE"
+                for gate in candidate_dependent
+            ):
+                errors.append(f"Policy-only candidate gate leakage: {evaluation['closure_evaluation_id']}")
 
     for relation in relations.values():
         old_id = _ref_id(relation["old_difference_ref"])
         new_id = _ref_id(relation["new_difference_ref"])
         if old_id == new_id or old_id not in differences or new_id not in differences:
-            errors.append(f"invalid supersession endpoints: {relation['relation_id']}")
+            errors.append(f"invalid supersession endpoints: {relation['supersession_relation_id']}")
         old_event = events.get(_ref_id(relation["old_terminal_event_ref"]) or "")
         new_event = events.get(_ref_id(relation["new_genesis_event_ref"]) or "")
         if old_event is None or old_event["to_status"] != "SUPERSEDED" or old_event["difference_id"] != old_id:
-            errors.append(f"invalid old supersession event: {relation['relation_id']}")
+            errors.append(f"invalid old supersession event: {relation['supersession_relation_id']}")
         if new_event is None or new_event["event_revision"] != 0 or new_event["difference_id"] != new_id:
-            errors.append(f"invalid new supersession genesis: {relation['relation_id']}")
+            errors.append(f"invalid new supersession genesis: {relation['supersession_relation_id']}")
     for event in events.values():
         if event["to_status"] != "SUPERSEDED":
             continue
