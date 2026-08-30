@@ -38,8 +38,17 @@ subject_difference_ref: {kind: difference, id: D-...}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
 required_observation_scope: null
 minimum_evidence_level: E1
-required_claims: []
-required_invariants: []
+required_claims:
+  - kind: completion_claim
+    id: CMP-...
+    subject_type: OBJECTIVE_PREDICATE_COMPLETION
+    subject_ref: {kind: target_predicate, id: OBJ-PRED-...}
+    claim_semantic_fingerprint: sha256:...
+required_invariants:
+  - kind: kernel_invariant
+    id: D-001
+    contract_ref: {kind: kernel_contract, id: KERNEL-INVARIANTS-0001}
+    invariant_semantic_fingerprint: sha256:...
 allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
 independent_verification_required: false
 maximum_evidence_age: null
@@ -108,6 +117,29 @@ predicate_semantic_fingerprint: sha256:...
 ```
 
 Predicate fingerprintはObjective semantic canonicalizationに従うpredicate payloadだけから決定し、出力は`sha256:`＋64 lowercase hexとする。`PREDICATE_MODIFY`でsemanticsが変わればfingerprintも変わり、Policy semantic fingerprintとDifference identityも変わる。各refのID／Objective revision／fingerprintはexactに解決可能でなければならず、inline predicate、自由記述condition、unknown kindを拒否する。
+
+Predicate fingerprint profileを次へ固定する。
+
+```text
+PROFILE=MANOSUBE-TARGET-PREDICATE-SHA256-0.1
+DIGEST=SHA-256
+OUTPUT=sha256:<64 lowercase hexadecimal characters>
+SERIALIZATION=CANONICAL_JSON_UTF8
+TEXT_NORMALIZATION=UNICODE_NFC
+INCLUDED_FIELDS=subject,operator,expected_value,observation_scope,evidence_requirement,unknown_policy,criticality
+EXCLUDED_FIELDS=predicate_id,objective_revision_ref,recorded_at,metadata
+UNKNOWN_FIELDS=REJECT
+COLLECTION_SEMANTICS=EXPLICIT_KIND_WRAPPER
+BARE_ARRAY=REJECT
+```
+
+Predicate semantic fields内のcollectionは`{"collection_kind":"ORDERED_LIST","members":[]}`または`{"collection_kind":"UNORDERED_SET","members":[]}`だけを許可する。前者は順序を保持し、後者はcanonical member bytesで整列してduplicateを拒否する。
+
+Conformance vectorsはobject key順序の不変性、各included field変更によるdigest変更、excluded provenance変更によるdigest不変性、unordered collection順序の不変性、ordered collection順序変更によるdigest変更、unknown field／bare array rejectを含む。
+
+`required_claims` memberは上記例のclosed five-field objectだけを許可する。`claim_semantic_fingerprint`はCompletion Recordの`subject_type`、`subject_ref`、`claim`、`target_state_ref`、`closure_policy_ref`から同じcanonical JSON／SHA-256出力規則で算出する。
+
+`required_invariants` memberは上記例のclosed four-field objectだけを許可する。`contract_ref`はInvariantを定義するimmutable Kernel Contractへ、`invariant_semantic_fingerprint`はInvariant ID、claim、violation condition、required Evidence、enforcement resultのcanonical payloadへ解決する。unknown kind、解決不能ref、fingerprint不一致、member追加を拒否する。
 
 PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
 
@@ -241,6 +273,27 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 Current Policyのversionだけが進みsemantic fingerprintが同一の場合、Difference-bound versionによるEvaluationを`STALE`にしない。Current Policyのsemantic fingerprintが異なる場合は旧Differenceを新identityへsupersedeし、旧bindingを新Policyへ読み替えない。
 
 `G8`は常にChange resultから分離されたafter-state re-observationを要求する。加えて`independent_verification_required=true`の場合、`verification_independence_ref`を必須とし、verifier identity、process boundary、input snapshot、method、conflict-of-interest評価を解決してPolicyが定める独立性を証明する。`false`の場合もre-observation自体は免除しないが、別verifier identityまでは要求しない。
+
+`verification_independence_ref`は次のclosed、versioned recordだけを参照する。
+
+```yaml
+schema_version: "0.1"
+record_kind: VERIFICATION_INDEPENDENCE
+verification_independence_id: VI-...
+closure_evaluation_id: D-CLOSE-EVAL-...
+verifier_identity_ref: {kind: verifier_identity, id: VERIFIER-...}
+change_executor_identity_refs: []
+process_boundary_ref: {kind: execution_boundary, id: BOUNDARY-...}
+observation_refs: []
+input_snapshot_refs: []
+verification_method_ref: {kind: observation_method, id: METHOD-...}
+conflict_of_interest_evaluation_ref: {kind: independence_evaluation, id: IND-EVAL-...}
+evidence_refs: []
+result: PASS
+evaluated_at: "2026-01-01T00:00:00Z"
+```
+
+IDはrecord kind、Closure Evaluation ID、verifier、process boundary、Observation refs、input snapshot refs、methodから決定的に生成する。`result`は`PASS | FAIL | UNKNOWN`のclosed enumであり、`PASS`だけがG8を満たす。verifierとChange executorのidentity overlap、同一mutable input、unresolved boundary、missing Evidence、UNKNOWN conflict evaluationはPASSを禁止する。未知field／version／kindをrejectする。
 
 `G21`で使用した各Completion Evaluationは`required_claim_evaluation_refs`へexactに保存する。各refはclaim identity、evaluated State revision／fingerprint、Evidence refs、evaluation statusおよびevaluation revisionへ解決可能でなければならない。Atomic Reflow直前に全refがcurrentかつ`SATISFIED`であることを再検査し、`REVOKED`、`STALE`またはhead変更を一件でも検出した場合はClosure Evaluationを`STALE`または`REVOKED`として拒否する。
 
