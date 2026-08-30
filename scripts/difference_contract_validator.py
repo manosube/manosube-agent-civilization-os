@@ -507,6 +507,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         != committed_transition["after_state"]["state_revision"]
                         or condition_evaluation["state_fingerprint"]
                         != committed_transition["after_state"]["semantic_fingerprint"]
+                        or datetime.fromisoformat(
+                            condition_evaluation["evaluated_at"].replace("Z", "+00:00")
+                        ) < datetime.fromisoformat(
+                            committed_transition["committed_at"].replace("Z", "+00:00")
+                        )
                         or condition_evaluation["status"] != "SATISFIED"
                         or closure is None
                         or datetime.fromisoformat(
