@@ -61,7 +61,7 @@ v0.1のlegal transitionを次で固定する。
 | `OPEN` | `BLOCKED` | blocker Evidenceが存在 |
 | `OPEN` | `RETAINED` | retain reasonとnext observationが存在 |
 | `OPEN` | `SUPERSEDED` | validな双方向supersession |
-| `ACTIVE` | `VERIFYING` | Changeは`EXECUTED`、after-state observationが要求済み |
+| `ACTIVE` | `VERIFYING` | `CHANGE_BOUND`: Changeは`EXECUTED`かつafter-state Observation要求済み、または`CHANGE_FREE`: Observation Workにより新しいafter-state verification Evidenceが存在 |
 | `ACTIVE` | `BLOCKED` | executionまたはauthority blockerが存在 |
 | `ACTIVE` | `RETAINED` | unresolved mismatchを次周期へ保持 |
 | `ACTIVE` | `SUPERSEDED` | validな双方向supersession |
@@ -96,6 +96,8 @@ v0.1のlegal transitionを次で固定する。
 | `REOPENED` | `INVALIDATED` | schema、identity、boundary、State bindingまたはlineage defectを後発見 |
 
 `SUPERSEDED`と`INVALIDATED`はterminalである。`CLOSED`は反証により`REOPENED`できるため、歴史の終端ではない。
+
+初回ClosureでもChangeを必須化しない。外部状態変化またはObservation WorkによりTargetが満たされた場合は、`OPEN → ACTIVE → VERIFYING`を通り、`ACTIVE → VERIFYING`の`CHANGE_FREE` gateを使用する。架空のChangeを生成してはならない。
 
 # 4. Prohibited Transitions
 
