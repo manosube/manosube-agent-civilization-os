@@ -1,0 +1,243 @@
+# MANOSUBE Agent Civilization OS
+
+## Difference Closure Policy v0.1
+
+```text
+DOC_TYPE=KERNEL_CONTRACT
+KERNEL_ELEMENT=DIFFERENCE
+DOCUMENT_ID=DIFFERENCE-CLOSURE-POLICY-0001
+SCHEMA_VERSION=0.1
+STATUS=CANONICAL_DESIGN
+```
+
+---
+
+# 0. Purpose
+
+本Policyは、Difference ClosureをChange実行者の自己申告、test pass、PR merge、artifact存在から分離し、after-stateの独立再観測と十分なEvidenceを必須にする。
+
+```text
+DIFFERENCE CLOSED
+= TARGET SATISFIED
++ AFTER STATE RE-OBSERVED
++ SUFFICIENT CHANGE RESULT EVIDENCE
++ NO MATERIAL CONTRADICTION
++ POLICY PASS
++ ATOMIC REFLOW
+```
+
+# 1. Closure Policy Record
+
+Closure Policyはversioned immutable recordである。
+
+```yaml
+schema_version: "0.1"
+closure_policy_id: CP-...
+policy_version: "0.1"
+subject_difference_ref: {kind: difference, id: D-...}
+target_predicate_ref: {kind: target_predicate, id: TP-...}
+required_observation_profile_ref: {}
+required_evidence_level: E1
+required_claims: []
+prohibited_statuses: []
+independence_requirement: INDEPENDENT_REOBSERVATION
+staleness_policy: {}
+contradiction_policy: FAIL_CLOSED
+reopen_policy_ref: {}
+```
+
+PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
+
+# 2. Closure Evaluation Record
+
+```yaml
+schema_version: "0.1"
+closure_evaluation_id: D-CLOSE-EVAL-...
+difference_id: D-...
+difference_event_head_ref: {kind: difference_event, id: D-EVT-...}
+target_predicate_ref: {kind: target_predicate, id: TP-...}
+before_state_ref: {}
+change_refs: []
+after_state_ref: {}
+after_observation_refs: []
+change_result_evidence_refs: []
+evidence_sufficiency_ref: {}
+contradiction_refs: []
+evaluated_state_revision: 0
+evaluated_state_fingerprint: {}
+policy_ref: {kind: closure_policy, id: CP-...}
+result: UNKNOWN
+failure_reasons: []
+reflow_transition_ref: null
+```
+
+Evaluation resultはclosed enumとする。
+
+```text
+PASS
+FAIL
+UNKNOWN
+BLOCKED
+STALE
+CONFLICTED
+INVALID
+```
+
+# 3. Mandatory Closure Gates
+
+`PASS`には次の全条件を要求する。
+
+```text
+G1  DIFFERENCE_ID_VALID
+G2  DIFFERENCE_STATUS_VERIFYING
+G3  OBJECTIVE_REVISION_EXACT
+G4  TARGET_PREDICATE_EXACT
+G5  BEFORE_STATE_EXACT
+G6  CHANGE_BINDING_EXACT
+G7  AFTER_STATE_NEWER_AND_EXACT
+G8  INDEPENDENT_REOBSERVATION_PRESENT
+G9  OBSERVED_TARGET_SATISFIED
+G10 CHANGE_RESULT_EVIDENCE_PRESENT
+G11 EVIDENCE_LEVEL_SUFFICIENT
+G12 OBSERVATION_SCOPE_COMPLETE
+G13 NO_BLOCKING_BLIND_SPOT
+G14 NO_UNKNOWN_OR_UNOBSERVED_INPUT
+G15 NO_FAILED_OR_INVALID_INPUT
+G16 NO_UNRESOLVED_CONFLICT
+G17 NO_STALENESS
+G18 INVARIANTS_PASS
+G19 ATOMIC_REFLOW_PRECONDITIONS_PASS
+```
+
+一つでもfalseまたはunknownなら`PASS`にしない。
+
+# 4. Independent Re-observation
+
+Change result、command return code、test output、Agent reportはafter-state Observationの代替ではない。
+
+```text
+CHANGE EXECUTION RESULT
+→ RE-OBSERVATION REQUEST
+→ NORMALIZED AFTER FACTS
+→ CHANGE RESULT EVIDENCE
+→ CLOSURE EVALUATION
+```
+
+独立性とは、Change自身が自身の成功flagをClosure Predicateとして供給しないことを意味する。同じprocessが技術的に観測する場合でも、Observation method、input snapshot、result schema、Evidence identityをChange resultから分離する。
+
+# 5. Evidence Sufficiency
+
+Evidence levelは`07_EVIDENCE/EVIDENCE_LEVELS.md`が定めるE0–E6に従う。要求level未満のEvidenceを件数で補ってはならない。
+
+```text
+EVIDENCE COUNT ≠ EVIDENCE STRENGTH
+TEST PASS ≠ RUNTIME PROVEN
+DECLARATION ≠ OBSERVATION EVIDENCE
+```
+
+Negative Evidenceはscope、期間、method、attempt count、completion、blind spotを持たなければならない。
+
+# 6. Fail-Closed Mapping
+
+| Observed condition | Closure result |
+|---|---|
+| Target satisfied and all gates pass | `PASS` candidate |
+| Target not satisfied | `FAIL` |
+| Truth cannot be determined | `UNKNOWN` |
+| Observation or Authority path blocked | `BLOCKED` |
+| State、Change、Approval、Evidence binding is stale | `STALE` |
+| Positive／NegativeまたはEvidence conflict | `CONFLICTED` |
+| Schema、identity、boundary、lineage invalid | `INVALID` |
+
+`EMPTY`は対象collectionのcomplete enumerationが証明された場合だけTarget Satisfactionへ使用できる。`NO_RESULT`、`FAILED`、`INCOMPLETE`をabsenceまたはmatchへ昇格させない。
+
+# 7. Atomic Closure
+
+Closure Evaluationの`PASS`だけではDifferenceはまだ`CLOSED`ではない。
+
+```text
+CLOSURE EVALUATION PASS
++ CURRENT REVISION = EXPECTED REVISION
++ ATOMIC STATE TRANSITION
++ LINEAGE APPEND
++ MATERIALIZED STATE UPDATE
+→ DIFFERENCE CLOSED
+```
+
+Compare-And-Swap失敗、partial write、lineage append失敗、current state不整合の場合、ClosureをCanonicalとして受理しない。
+
+# 8. Staleness
+
+次のいずれかがEvaluation後に変わった場合、未commitのClosure Evaluationは`STALE`である。
+
+```text
+Objective revision
+Target Predicate
+Difference lifecycle head
+before or after State revision
+State fingerprint
+Change identity or result
+Authority or Approval binding
+Evidence set
+Closure Policy version
+```
+
+Stale Evaluationを再利用せず、最新Stateから再観測・再評価する。
+
+# 9. Reopen Policy
+
+`CLOSED`後のObservationがTarget不一致、Evidence invalidation、boundary change、material contradictionを示した場合、Differenceを`REOPENED`へ遷移させる。
+
+Reopenは旧Closureを削除しない。次をappendする。
+
+```text
+reopen event
+contradicting observation refs
+contradicting evidence refs
+affected closure evaluation ref
+new State revision and fingerprint
+next required observation
+```
+
+Objective自体がmaterialに変更された場合は、旧Differenceを必要に応じて`SUPERSEDED`とし、新しいDifference identityを導出する。
+
+# 10. Non-Authorities
+
+次はClosure authorityではない。
+
+```text
+Agent report
+Issue close
+PR merge
+commit exists
+CI success
+test pass
+artifact exists
+deployment succeeded
+Change status EXECUTED
+human informal statement
+```
+
+HumanはObjectiveとconstitutional authorityを持つが、Evidenceなしの手動flagでKernel invariantを迂回しない。Risk acceptanceはTarget Satisfactionの代替ではない。
+
+# 11. Acceptance
+
+```text
+CLOSURE_GATES_CLOSED=true
+REOBSERVATION_REQUIRED=true
+CHANGE_RESULT_EVIDENCE_REQUIRED=true
+EVIDENCE_SUFFICIENCY_REQUIRED=true
+UNKNOWN_IS_PASS=false
+NO_RESULT_NE_PROVEN_ABSENCE=true
+CHANGE_CANNOT_SELF_CLOSE=true
+PR_MERGE_IS_COMPLETION=false
+STALE_CLOSURE_BLOCKED=true
+ATOMIC_REFLOW_REQUIRED=true
+REOPEN_POLICY_DEFINED=true
+```
+
+```text
+DIFFERENCE_CLOSURE_POLICY_DEFINED=true
+CLOSURE_EVALUATOR_IMPLEMENTED=false
+ATOMIC_DIFFERENCE_CLOSURE_PROVEN=false
+```
