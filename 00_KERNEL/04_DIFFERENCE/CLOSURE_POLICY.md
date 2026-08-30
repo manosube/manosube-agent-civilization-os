@@ -37,7 +37,7 @@ policy_version: "0.1"
 subject_difference_ref: {kind: difference, id: D-...}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
 required_observation_profile_ref: {}
-required_evidence_level: E1
+minimum_evidence_level: E1
 required_claims: []
 prohibited_statuses: []
 independence_requirement: INDEPENDENT_REOBSERVATION
@@ -56,6 +56,8 @@ closure_evaluation_id: D-CLOSE-EVAL-...
 difference_id: D-...
 difference_event_head_ref: {kind: difference_event, id: D-EVT-...}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
+objective_revision_ref_evaluated: {kind: objective_revision, id: OBJ-REV-...}
+objective_semantic_fingerprint_evaluated: {}
 before_state_ref: {}
 change_refs: []
 after_state_ref: {}
@@ -91,7 +93,7 @@ REVOKED
 ```text
 G1  DIFFERENCE_ID_VALID
 G2  DIFFERENCE_STATUS_VERIFYING
-G3  OBJECTIVE_REVISION_EXACT
+G3  OBJECTIVE_SEMANTIC_FINGERPRINT_EXACT
 G4  TARGET_PREDICATE_EXACT
 G5  BEFORE_STATE_EXACT
 G6  CHANGE_BINDING_EXACT
@@ -113,6 +115,8 @@ G21 ALL_REQUIRED_CLAIMS_SATISFIED
 ```
 
 一つでもfalseまたはunknownなら`SATISFIED`にしない。
+
+`G3`はClosure Evaluation時点のactive `objective_revision_ref_evaluated`をexact provenanceとして保存し、その`objective_semantic_fingerprint_evaluated`がDifference identityに結合されたfingerprintと一致することを要求する。EDITORIAL revisionではrevision refの変更を許すがsemantic fingerprintの変更を許さない。semantic fingerprintが変わった場合はClosureせず、新しいDifference identityへsupersedeする。
 
 `G9`はafter-state Observationのmethod、normalization profile、scope profileおよびschema versionを`required_observation_profile_ref`から解決し、exactに一致することを要求する。単に独立したObservationが存在するだけでは満たさない。
 
