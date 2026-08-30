@@ -97,7 +97,7 @@ v0.1のlegal transitionを次で固定する。
 
 `SUPERSEDED`と`INVALIDATED`はterminalである。`CLOSED`は反証により`REOPENED`できるため、歴史の終端ではない。
 
-`CLOSED`、`BLOCKED`または`RETAINED`へ遷移する場合は、bound Closure Policyの`allowed_terminal_states`にto-statusが含まれ、exact Policy-bound Evaluationの`PROPOSED_TERMINAL_STATE_ALLOWED` gateがPASSでなければならない。Lifecycle表の個別minimum gateはこのPolicy gateを免除しない。
+`CLOSED`、`BLOCKED`または`RETAINED`へ遷移する場合は、bound Closure Policyの`allowed_terminal_states`にto-statusが含まれ、exact Policy-bound Evaluationの`PROPOSED_TERMINAL_STATE_ALLOWED` gateがPASSでなければならない。Lifecycle表の個別minimum gateはこのPolicy gateを免除しない。 `CLOSED`には`CANDIDATE_CLOSURE` Evaluationを必須とする。candidate未生成の`BLOCKED`／`RETAINED`には`TERMINAL_POLICY_ONLY`を使用でき、after-state candidate、Changeまたはresolution modeを要求・捏造してはならない。candidateが存在する場合でもBLOCKED／RETAINED理由がcandidate-independentならPolicy-onlyを許すが、candidateの真偽判定を回避するために使ってはならない。
 
 初回ClosureでもChangeを必須化しない。外部状態変化またはObservation WorkによりTargetが満たされた場合は、`OPEN → ACTIVE → VERIFYING`を通り、`ACTIVE → VERIFYING`の`CHANGE_FREE` gateを使用する。架空のChangeを生成してはならない。
 
