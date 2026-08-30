@@ -414,6 +414,22 @@ Signed payloadは`attestation_id`、`signed_payload_sha256`、`signature_base64u
 
 `trusted_execution_root_set_ref`はHuman／Binding AuthorityがPolicy作成前に外部設定したclosed immutable trust-anchor setであり、root ID、version、fingerprint、許可public-key fingerprints、validity window、revocation refs、authority approval refを持つ。Policy producer、Observation producer、Change executorはこのsetを生成・変更できない。Policy fingerprintはこのexact refを含む。
 
+```yaml
+schema_version: "0.1"
+record_kind: TRUSTED_EXECUTION_ROOT_SET
+trusted_execution_root_set_id: TRUST-SET-...
+root_set_version: "0.1"
+root_set_fingerprint: sha256:...
+authorized_roots: {collection_kind: UNORDERED_SET, members: []}
+authorized_public_keys: {collection_kind: UNORDERED_SET, members: []}
+valid_from: "2026-01-01T00:00:00Z"
+valid_until: null
+revocation_refs: {collection_kind: UNORDERED_SET, members: []}
+authority_approval_ref: {kind: human_authority_approval, id: APPROVAL-...}
+```
+
+各root memberは`{kind: trust_root, id, version, fingerprint}`、各key memberは`{kind: public_key, id, version, fingerprint, owner_identity_ref, algorithm: ED25519}`のclosed objectである。Fingerprint profileは`MANOSUBE-TRUSTED-EXECUTION-ROOT-SET-SHA256-0.1`、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic keys、duplicate-free unordered sets、unknown field rejectとする。Fingerprint inputはIDとfingerprint自身を除く全fieldである。IDは`TRUST-SET-`＋fingerprint digestの64 lowercase hexとする。固定payload／digest、set順序不変、duplicate、unknown algorithm、revoked member、approval mismatchのconformance vectorsを公開する。
+
 `signer_key_ref`は`trust_root_ref`が認可したnon-revoked Ed25519 public keyへexactに解決し、さらに`trust_root_ref`がPolicyの`trusted_execution_root_set_ref`に含まれることを要求する。検証時刻が`issued_at <= now < expires_at`を満たし、key／trust-root／root-set version、fingerprint、revocation statusがcurrentでなければならない。root-set外のroot、自己署名、unknown algorithm、padding付きまたは非canonical base64url、expiry超過、subject不一致、payload digest不一致、signature failureをrejectする。
 
 Binding／Provenance fingerprint profileは`MANOSUBE-OBSERVATION-EXECUTION-BINDING-SHA256-0.1`／`MANOSUBE-OBSERVATION-EXECUTION-PROVENANCE-SHA256-0.1`とし、SHA-256、canonical JSON UTF-8、Unicode NFC、lexicographic object keys、unknown field rejectを共通規則とする。Binding fingerprintは`kind + observation_ref + verifier_identity_ref + process_boundary_ref + observation_method_ref + input_snapshot_refs + authenticated_execution_provenance_ref`を含む。Provenance fingerprintはIDとfingerprint自身を除く全fieldを含む。両collectionはduplicate-free `UNORDERED_SET`でcanonical member bytes順にする。各IDはそれぞれ`OBS-EXEC-BIND-`／`OBS-EXEC-PROV-`＋64 lowercase hexである。Conformance vectorsは固定payload／digest、set順序不変、member変更、unknown field、bad attestation rejectを含む。
@@ -426,7 +442,7 @@ BindingのObservation集合は親`VERIFICATION_INDEPENDENCE.observation_refs`お
 kind: change_executor_binding
 change_ref: {kind: change, id: C-...}
 executor_identity_ref: {kind: executor_identity, id: EXECUTOR-...}
-authenticated_execution_provenance_ref: {kind: change_execution_provenance, id: EXEC-PROV-...}
+authenticated_execution_provenance_ref: {kind: change_execution_provenance, id: CHANGE-EXEC-PROV-...}
 execution_result_evidence_ref: {kind: change_result_evidence, id: EVID-...}
 binding_semantic_fingerprint: sha256:...
 ```
@@ -449,7 +465,30 @@ provenance_semantic_fingerprint: sha256:...
 
 Provenance fingerprintはIDとfingerprint自身を除く全fieldを、`MANOSUBE-CHANGE-EXECUTION-PROVENANCE-SHA256-0.1`、canonical JSON UTF-8、Unicode NFC、SHA-256で算出する。IDは`CHANGE-EXEC-PROV-`＋64 lowercase hexである。
 
-`signed_change_execution_attestation`はObservation attestationと同じcanonicalization、Ed25519、key ownership、expiry、revocationおよびPolicy-bound trusted-root-set規則を使用するclosed wire recordである。subject fieldsは`executor_identity_ref + change_ref + execution_attempt_ref + authority_ref + before_state_ref + execution_result_evidence_ref`とし、IDは`CHANGE-ATTEST-`＋signed payload SHA-256の64 lowercase hexとする。署名対象bytesはID、payload digest、signatureを除く全closed fieldsである。固定digest／signature conformance vectorを公開する。
+`signed_change_execution_attestation`のclosed wire recordを次で固定する。
+
+```yaml
+schema_version: "0.1"
+record_kind: SIGNED_CHANGE_EXECUTION_ATTESTATION
+attestation_id: CHANGE-ATTEST-...
+attestation_profile: MANOSUBE-CHANGE-EXECUTION-ATTESTATION-ED25519-0.1
+signer_identity_ref: {kind: attestation_signer, id: SIGNER-...}
+signer_key_ref: {kind: public_key, id: KEY-..., version: "0.1", fingerprint: sha256:...}
+trust_root_ref: {kind: trust_root, id: TRUST-ROOT-..., version: "0.1", fingerprint: sha256:...}
+subject_executor_identity_ref: {kind: executor_identity, id: EXECUTOR-...}
+change_ref: {kind: change, id: C-...}
+execution_attempt_ref: {kind: change_attempt, id: CHANGE-ATTEMPT-...}
+authority_ref: {kind: authority_decision, id: AUTH-...}
+before_state_ref: {kind: state, revision: 0, fingerprint: {}}
+execution_result_evidence_ref: {kind: change_result_evidence, id: EVID-...}
+issued_at: "2026-01-01T00:00:00Z"
+expires_at: "2026-01-01T01:00:00Z"
+signed_payload_sha256: sha256:...
+signature_algorithm: ED25519
+signature_base64url: "..."
+```
+
+Observation attestationと同じcanonicalization、Ed25519、key ownership、expiry、revocation、canonical base64urlおよびPolicy-bound trusted-root-set規則を使用する。署名対象bytesは`attestation_id`、`signed_payload_sha256`、`signature_base64url`を除く全fieldである。IDは`CHANGE-ATTEST-`＋signed payload SHA-256の64 lowercase hexとする。固定digest／signature conformance vectorを公開する。
 
 Bindingの全fieldは解決したChange Provenanceの同名fieldとexact一致し、Provenanceのattestation subjectともexact一致しなければならない。root-set外、自己申告、field mismatch、authority mismatch、before-State mismatch、Evidence mismatchをrejectする。
 
