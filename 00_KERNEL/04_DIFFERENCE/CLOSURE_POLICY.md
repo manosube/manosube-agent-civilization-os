@@ -41,13 +41,42 @@ minimum_evidence_level: E1
 required_claims: []
 required_invariants: []
 allowed_terminal_states: [CLOSED, BLOCKED, RETAINED]
-independence_requirement: INDEPENDENT_REOBSERVATION
+independent_verification_required: false
 maximum_evidence_age: null
 contradiction_policy: FAIL_CLOSED
 reopen_policy_ref: {}
 ```
 
-`policy_semantic_fingerprint`は、Closure要件のcanonical payloadだけから算出する。循環を避けるため、次をfingerprint inputへ含めない。
+`policy_semantic_fingerprint`は次のversioned profileで決定的に算出する。
+
+```text
+PROFILE=MANOSUBE-CLOSURE-POLICY-SHA256-0.1
+DIGEST=SHA-256
+TEXT_NORMALIZATION=UNICODE_NFC
+SERIALIZATION=CANONICAL_JSON_UTF8
+OBJECT_KEY_ORDER=LEXICOGRAPHIC
+UNKNOWN_FIELDS=REJECT
+UNORDERED_SETS=required_claims,required_invariants,allowed_terminal_states
+SET_ORDER=CANONICAL_MEMBER_BYTES
+DUPLICATE_SET_MEMBER=REJECT
+```
+
+Fingerprint inputのincluded fieldsを次へ固定する。
+
+```text
+target_predicate_ref
+required_observation_scope
+minimum_evidence_level
+required_claims
+required_invariants
+allowed_terminal_states
+independent_verification_required
+maximum_evidence_age
+contradiction_policy
+reopen_policy_ref
+```
+
+循環を避けるため、次をfingerprint inputへ含めない。
 
 ```text
 subject_difference_ref
@@ -58,6 +87,8 @@ serialization metadata
 ```
 
 除外fieldは別のexact provenance bindingとして検証する。特に`subject_difference_ref`は、Policyを使用するDifference IDと一致しなければならない。
+
+Conformance vectorsでは少なくとも、object key順序と上記unordered set順序を変えた同値Policyが同じfingerprintを生成すること、member変更・重複・未知fieldが同一扱いされないことを証明する。
 
 PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
 
@@ -78,6 +109,7 @@ after_state_ref: {}
 after_observation_refs: []
 change_result_evidence_refs: []
 change_free_verification_evidence_refs: []
+verification_independence_ref: null
 evidence_sufficiency_ref: {}
 invariant_evaluation_refs: []
 required_claim_evaluation_refs: []
@@ -185,7 +217,11 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 
 `G22`は`allowed_terminal_states`に`CLOSED`が明示されていることを要求する。`CLOSED`が許可されていないPolicyから`SATISFIED` closure candidateを生成してはならない。`BLOCKED`または`RETAINED`だけが許可される場合、対象statusへ遷移する評価を別途生成する。
 
-`policy_ref`、`policy_version_evaluated`および`policy_semantic_fingerprint_evaluated`は、Difference Recordに固定されたPolicy ID／version／semantic fingerprintと同一Policyへexactに解決されなければならない。さらにPolicyの`subject_difference_ref`をDifference IDとexactに照合する。current PolicyまたはDifference-bound Policyと不一致ならEvaluationは`STALE`であり、Atomic Reflowは拒否する。
+`policy_ref`、`policy_version_evaluated`および`policy_semantic_fingerprint_evaluated`は、Difference Recordに固定されたPolicy ID／version／semantic fingerprintと同一Policyへexactに解決されなければならない。さらにPolicyの`subject_difference_ref`をDifference IDとexactに照合する。
+
+Current Policyのversionだけが進みsemantic fingerprintが同一の場合、Difference-bound versionによるEvaluationを`STALE`にしない。Current Policyのsemantic fingerprintが異なる場合は旧Differenceを新identityへsupersedeし、旧bindingを新Policyへ読み替えない。
+
+`G8`は常にChange resultから分離されたafter-state re-observationを要求する。加えて`independent_verification_required=true`の場合、`verification_independence_ref`を必須とし、verifier identity、process boundary、input snapshot、method、conflict-of-interest評価を解決してPolicyが定める独立性を証明する。`false`の場合もre-observation自体は免除しないが、別verifier identityまでは要求しない。
 
 `G21`で使用した各Completion Evaluationは`required_claim_evaluation_refs`へexactに保存する。各refはclaim identity、evaluated State revision／fingerprint、Evidence refs、evaluation statusおよびevaluation revisionへ解決可能でなければならない。Atomic Reflow直前に全refがcurrentかつ`SATISFIED`であることを再検査し、`REVOKED`、`STALE`またはhead変更を一件でも検出した場合はClosure Evaluationを`STALE`または`REVOKED`として拒否する。
 
@@ -350,6 +386,9 @@ REQUIRED_INVARIANTS_BOUND=true
 ALLOWED_TERMINAL_STATES_ENFORCED=true
 POLICY_VERSION_EXACT=true
 REQUIRED_CLAIM_EVALUATIONS_BOUND=true
+POLICY_SEMANTIC_FINGERPRINT_DETERMINISTIC=true
+VERSION_ONLY_POLICY_UPDATE_CLOSABLE=true
+INDEPENDENT_VERIFICATION_SETTING_ENFORCED=true
 UNKNOWN_IS_PASS=false
 NO_RESULT_NE_PROVEN_ABSENCE=true
 CHANGE_CANNOT_SELF_CLOSE=true
