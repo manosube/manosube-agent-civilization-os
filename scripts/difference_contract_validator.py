@@ -846,7 +846,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     }
                     completion_id = "CMP-" + hashlib.sha256(
                         b"MANOSUBE:CANDIDATE_COMPLETION_RECORD:0.1:"
-                        + canonical_json_bytes(completion_payload)
+                        + canonical_json_bytes(_canonical_semantic(completion_payload))
                     ).hexdigest().upper()
                 if (
                     binding["binding_id"]
@@ -928,7 +928,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     }
                     completion_id = "CMP-" + hashlib.sha256(
                         b"MANOSUBE:CANDIDATE_COMPLETION_RECORD:0.1:"
-                        + canonical_json_bytes(completion_payload)
+                        + canonical_json_bytes(_canonical_semantic(completion_payload))
                     ).hexdigest().upper()
                 series_payload = {
                     "difference_id": binding["difference_id"],
