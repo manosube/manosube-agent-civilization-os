@@ -55,6 +55,7 @@ schema_version: "0.1"
 difference_id: D-...
 project_id: PRJ-...
 objective_revision_ref: {kind: objective_revision, id: OBJ-REV-...}
+objective_semantic_fingerprint: {}
 target_predicate_ref: {kind: target_predicate, id: TP-...}
 target_state: {}
 observed_state_revision: 0
@@ -85,6 +86,7 @@ Differenceは、次のexact input tupleへ結合する。
 ```text
 project_id
 objective_revision_ref
+objective_semantic_fingerprint
 target_predicate_ref
 observed_state_revision
 observed_state_fingerprint
