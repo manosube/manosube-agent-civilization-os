@@ -81,6 +81,7 @@ normalized_target_state:
   subject: natural_cycle.result
   operator: equals
   expected_value: PASS
+  expected_value_type: STRING
   observation_scope: minimal_fixture_binding
   evidence_requirement: E4
   unknown_policy: INCOMPLETE
@@ -106,7 +107,7 @@ ordinary JSON object → STRUCTURED
 bare JSON array → REJECT
 ```
 
-Reserved typed wrapperは上記exact fieldsだけを許可する。plain string `"1"`は常にSTRINGでありDECIMALへ推測変換しない。TargetにDECIMAL等を要求する場合はtyped wrapper必須である。
+Reserved typed wrapperは上記exact fieldsだけを許可する。plain string `"1"`は常にSTRINGでありDECIMALへ推測変換しない。TargetにDECIMAL等を要求する場合はtyped wrapper必須である。 Normalization後はwrapperの`value_type`を`expected_value_type`へ、inner `value`を`expected_value`へ射影し、wrapper object自体を比較値にしない。primitiveとcollection wrapperも同様にtypeとcanonical inner valueへ分離する。比較はまずTarget／Observed typeをexact照合し、type一致後にinner canonical value bytesだけを比較する。
 
 Objectiveの`observation_scope`文字列は推論せず、Difference導出入力に次のexact bindingを必須とする。
 
@@ -195,6 +196,45 @@ none
 ```
 
 `equals`、`not_equals`、`contains`でdistinct candidateが0件ならNOT_SATISFIED、2件以上なら`CONFLICT + CONFLICTED`とする。`all`のempty setはNOT_SATISFIEDでありvacuous truthを禁止する。`none`だけはempty setでSATISFIEDになり得るが、Scope completeとbounded Negative Evidenceが必須である。UNKNOWN、UNOBSERVED、BLOCKED、INCOMPLETE、CONFLICTEDまたは不完全Scopeでは全operatorをSATISFIEDにしない。
+
+Mismatch kindは次の上から最初に一致するruleだけで決定する。
+
+```text
+1 INVALID source
+  → REJECT_OR_QUARANTINE; Differenceを生成しない
+
+2 scope／window／snapshot boundary不一致
+  → BOUNDARY_MISMATCH
+
+3 CONFLICTED knowledge、またはsingle-value operatorでdistinct candidates > 1
+  → CONFLICT
+
+4 UNKNOWN／UNOBSERVED／BLOCKED／INCOMPLETE knowledge
+  → UNKNOWN
+
+5 Target typeとObserved type不一致
+  → TYPE_MISMATCH
+
+6 candidates = 0 and operator in equals|not_equals|contains|exists|all
+  → MISSING
+
+7 contains applied to non-collection candidate
+  → TYPE_MISMATCH
+
+8 contains comparison NOT_SATISFIED
+  → RELATION_MISMATCH
+
+9 none comparison NOT_SATISFIED
+  → UNEXPECTED
+
+10 equals|not_equals|all comparison NOT_SATISFIED
+  → VALUE_MISMATCH
+
+11 comparison SATISFIED
+  → Differenceを生成しない
+```
+
+`CARDINALITY_MISMATCH`はv0.1 Target Predicate operator集合にcardinality operatorが存在しないため、このprofileから生成してはならない。将来のTarget schema versionが明示的cardinality operatorを追加した場合だけprofile version更新で有効化する。未到達condition、複数ruleの恣意選択、下位ruleによる上位rule上書きを禁止する。
 
 Conformance vectorsは全6 source operator、全mismatch kind、unknown／conflicted入力、scope binding mismatch、type／cardinality precedence、ordered／unordered collection、bare array、duplicate set、unknown fieldおよび固定digestを含む。
 
