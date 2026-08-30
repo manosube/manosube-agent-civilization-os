@@ -47,6 +47,18 @@ contradiction_policy: FAIL_CLOSED
 reopen_policy_ref: {}
 ```
 
+`policy_semantic_fingerprint`は、Closure要件のcanonical payloadだけから算出する。循環を避けるため、次をfingerprint inputへ含めない。
+
+```text
+subject_difference_ref
+closure_policy_id
+policy_version
+schema_version
+serialization metadata
+```
+
+除外fieldは別のexact provenance bindingとして検証する。特に`subject_difference_ref`は、Policyを使用するDifference IDと一致しなければならない。
+
 PolicyはDifference導出時に固定する。実装失敗またはEvidence不足に合わせて弱化してはならない。
 
 # 2. Closure Evaluation Record
@@ -74,9 +86,9 @@ evaluated_state_revision: 0
 evaluated_state_fingerprint: {}
 evaluated_at: "2026-01-01T00:00:00Z"
 evaluation_expires_at: null
-policy_ref: {kind: closure_policy, id: CP-..., version: "0.1", fingerprint: sha256:...}
+policy_ref: {kind: closure_policy, id: CP-..., version: "0.1", semantic_fingerprint: sha256:...}
 policy_version_evaluated: "0.1"
-policy_fingerprint_evaluated: sha256:...
+policy_semantic_fingerprint_evaluated: sha256:...
 result: NOT_EVALUATED
 failure_reasons: []
 reflow_transition_ref: null
@@ -173,7 +185,7 @@ REQUIRED CLAIM BLOCKED / STALE / CONTRADICTED / REVOKED
 
 `G22`は`allowed_terminal_states`に`CLOSED`が明示されていることを要求する。`CLOSED`が許可されていないPolicyから`SATISFIED` closure candidateを生成してはならない。`BLOCKED`または`RETAINED`だけが許可される場合、対象statusへ遷移する評価を別途生成する。
 
-`policy_ref`、`policy_version_evaluated`および`policy_fingerprint_evaluated`は、Difference Recordに固定されたPolicy ID／version／fingerprintと同一immutable payloadへexactに解決されなければならない。current PolicyまたはDifference-bound Policyと不一致ならEvaluationは`STALE`であり、Atomic Reflowは拒否する。
+`policy_ref`、`policy_version_evaluated`および`policy_semantic_fingerprint_evaluated`は、Difference Recordに固定されたPolicy ID／version／semantic fingerprintと同一Policyへexactに解決されなければならない。さらにPolicyの`subject_difference_ref`をDifference IDとexactに照合する。current PolicyまたはDifference-bound Policyと不一致ならEvaluationは`STALE`であり、Atomic Reflowは拒否する。
 
 `G21`で使用した各Completion Evaluationは`required_claim_evaluation_refs`へexactに保存する。各refはclaim identity、evaluated State revision／fingerprint、Evidence refs、evaluation statusおよびevaluation revisionへ解決可能でなければならない。Atomic Reflow直前に全refがcurrentかつ`SATISFIED`であることを再検査し、`REVOKED`、`STALE`またはhead変更を一件でも検出した場合はClosure Evaluationを`STALE`または`REVOKED`として拒否する。
 
@@ -210,7 +222,8 @@ Negative Evidenceはscope、期間、method、attempt count、completion、blind
 | Target satisfied and all gates pass | `SATISFIED` candidate |
 | Targetを観測したが満たさない | `NOT_SATISFIED` |
 | Targetは満たすがEvidenceが欠落または要求level未満 | `NOT_SATISFIED` |
-| required invariantまたはKernel Mandatory Invariantがfail | `NOT_SATISFIED` |
+| Policy `required_invariants`がfail | `NOT_SATISFIED` |
+| Kernel Mandatory InvariantがPASS以外 | `BLOCKED` |
 | required claimが`NOT_SATISFIED` | `NOT_SATISFIED` |
 | `CLOSED`がallowed terminal stateに含まれない | `NOT_SATISFIED` |
 | 評価がまだ実行されていない | `NOT_EVALUATED` |
