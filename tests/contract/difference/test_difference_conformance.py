@@ -53,6 +53,8 @@ def test_valid_bundle_is_schema_valid_and_reconstructable() -> None:
     bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
     validators = _validators()
     record_groups = {
+        "objective_revision.schema.json": bundle["objective_revisions"],
+        "observation_scope.schema.json": bundle["observation_scopes"],
         "observation.schema.json": bundle["observations"],
         "normalized_fact.schema.json": bundle["normalized_facts"],
         "difference.schema.json": bundle["differences"],
@@ -169,6 +171,14 @@ def test_difference_source_observation_must_resolve_exactly() -> None:
     assert validate_bundle(wrong_state)
 
 
+def test_difference_target_must_resolve_from_authorized_objective() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    bundle["objective_revisions"] = []
+    assert any(
+        "Difference projection mismatch" in error for error in validate_bundle(bundle)
+    )
+
+
 def test_v01_cardinality_fields_must_remain_null() -> None:
     bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
     difference = bundle["differences"][0]
@@ -220,6 +230,17 @@ def test_mismatch_precedence_is_closed_and_deterministic() -> None:
         {"value": "NOT-READY", "value_type": "STRING"},
     ]
     assert _derive_comparison_and_mismatch(observed, target) == ("UNKNOWN", "CONFLICT")
+
+    observed["value_candidates"]["members"] = [
+        {"value": True, "value_type": "BOOLEAN"}
+    ]
+    integer_target = {
+        "operator": "equals", "expected_value": 1,
+        "expected_value_type": "INTEGER",
+    }
+    assert _derive_comparison_and_mismatch(observed, integer_target) == (
+        "NOT_SATISFIED", "TYPE_MISMATCH",
+    )
 
 
 def test_supersession_relation_uses_canonical_contract_shape() -> None:

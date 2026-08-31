@@ -164,10 +164,6 @@ def _derive_comparison_and_mismatch(
     distinct = {canonical_json_bytes(_canonical_semantic(value)) for value in values}
     operator = target["operator"]
     knowledge = observed["knowledge_status"]
-    comparison = (
-        "UNKNOWN" if knowledge != "KNOWN" else
-        "SATISFIED" if _target_satisfied(values, target) else "NOT_SATISFIED"
-    )
     if knowledge == "CONFLICTED" or (
         operator in {"equals", "not_equals", "contains"} and len(distinct) > 1
     ):
@@ -176,7 +172,11 @@ def _derive_comparison_and_mismatch(
         return "UNKNOWN", "UNKNOWN"
     type_mismatch = any(not _fact_type_matches_target(item, target) for item in candidates)
     if type_mismatch:
-        return comparison, "TYPE_MISMATCH"
+        return "NOT_SATISFIED", "TYPE_MISMATCH"
+    comparison = (
+        "UNKNOWN" if knowledge != "KNOWN" else
+        "SATISFIED" if _target_satisfied(values, target) else "NOT_SATISFIED"
+    )
     if not candidates and operator in {"equals", "not_equals", "contains", "exists", "all"}:
         return "NOT_SATISFIED", "MISSING"
     if comparison == "SATISFIED":
@@ -269,6 +269,40 @@ def _resolved_scope_fingerprint(scope: dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(
         domain + canonical_json_bytes(_canonical_semantic(projection))
     ).hexdigest()
+
+
+def _objective_semantic_fingerprint(revision: dict[str, Any]) -> str:
+    projection = {
+        key: revision[key]
+        for key in (
+            "objective_id", "project_id", "statement", "owner_authority_ref",
+            "target_predicates", "completion_policy", "boundary_ref",
+            "constitutional_constraints", "status",
+        )
+    }
+    return "sha256:" + hashlib.sha256(
+        canonical_json_bytes(_canonical_semantic(projection))
+    ).hexdigest()
+
+
+def _derived_value_type(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, int):
+        return "INTEGER"
+    if isinstance(value, str):
+        return "STRING"
+    if isinstance(value, list):
+        return "ORDERED_COLLECTION"
+    if isinstance(value, dict):
+        if value.get("collection_kind") == "ORDERED_LIST":
+            return "ORDERED_COLLECTION"
+        if value.get("collection_kind") == "UNORDERED_SET":
+            return "UNORDERED_COLLECTION"
+        return "STRUCTURED"
+    return "UNKNOWN"
 
 
 def _policy_fingerprint(policy: dict[str, Any]) -> str:
@@ -485,11 +519,17 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     observations = _index(
         bundle.get("observations", []), "observation_id", errors
     )
+    objective_revisions = _index(
+        bundle.get("objective_revisions", []), "objective_revision_id", errors
+    )
     observation_scopes = _index(
         bundle.get("observation_scopes", []), "scope_id", errors
     )
     normalized_facts = _index(
         bundle.get("normalized_facts", []), "fact_id", errors
+    )
+    negative_observations = _index(
+        bundle.get("negative_observations", []), "negative_observation_id", errors
     )
     fact_bindings = _index(
         bundle.get("fact_observation_bindings", []), "binding_id", errors
@@ -870,6 +910,36 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         target = difference["normalized_target_state"]
         observed = difference["normalized_observed_state"]
         structural = difference["structural_difference"]
+        objective = objective_revisions.get(
+            _ref_id(difference["objective_revision_ref"]) or ""
+        )
+        objective_predicate = next(
+            (
+                predicate for predicate in (objective or {}).get("target_predicates", [])
+                if predicate["predicate_id"] == difference["target_predicate_ref"]["id"]
+            ),
+            None,
+        )
+        target_projection_valid = (
+            objective is not None
+            and objective["project_id"] == difference["project_id"]
+            and objective["status"] == "ACTIVE"
+            and _objective_semantic_fingerprint(objective)
+            == difference["objective_semantic_fingerprint"]
+            and objective_predicate is not None
+            and target == {
+                "subject": objective_predicate["subject"],
+                "operator": objective_predicate["operator"],
+                "expected_value": objective_predicate["expected_value"],
+                "expected_value_type": _derived_value_type(
+                    objective_predicate["expected_value"]
+                ),
+                "observation_scope": objective_predicate["observation_scope"],
+                "evidence_requirement": objective_predicate["evidence_requirement"],
+                "unknown_policy": objective_predicate["unknown_policy"],
+                "criticality": objective_predicate["criticality"],
+            }
+        )
         observed_values = [item["value"] for item in observed["value_candidates"]["members"]]
         observed_types = [item["value_type"] for item in observed["value_candidates"]["members"]]
         source_observations = [
@@ -883,6 +953,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             for reference in observation["normalized_fact_refs"]
             if reference.get("kind") == "normalized_fact"
         ]
+        source_negatives = [
+            negative
+            for observation in source_observations if observation is not None
+            for negative in negative_observations.values()
+            if negative["observation_id"] == observation["observation_id"]
+            and negative["target_identity"] == difference["target_predicate_ref"]["id"]
+            and negative["subject"] == difference["subject"]
+        ]
         source_evidence = {
             canonical_json_bytes(reference)
             for observation in source_observations if observation is not None
@@ -895,7 +973,10 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             and observation["state_fingerprint_observed"] == difference["observed_state_fingerprint"]
             and observation["target"]["target_identity"] == difference["target_predicate_ref"]["id"]
             and observation["scope_ref"] == difference["objective_scope_binding"]["scope_ref"]
-            and observation["status"] in {"COMPLETE", "EMPTY", "CONFLICTED"}
+            and observation["status"] in {
+                "COMPLETE", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED",
+                "INCOMPLETE", "CONFLICTED",
+            }
             and {
                 "collection_kind": "UNORDERED_SET",
                 "members": sorted(observation["source_snapshot_refs"], key=canonical_json_bytes),
@@ -904,7 +985,23 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         )
         source_projection_valid = (
             source_observations_valid
-            and bool(source_facts)
+            and (bool(source_facts) or bool(source_negatives))
+            and (
+                bool(source_facts)
+                or (
+                    not observed_values
+                    and all(
+                        negative["conclusion"]["state_candidate"]
+                        == observed["knowledge_status"]
+                        for negative in source_negatives
+                    )
+                    and {
+                        canonical_json_bytes(reference)
+                        for negative in source_negatives
+                        for reference in negative["negative_evidence_refs"]
+                    } == source_evidence
+                )
+            )
             and all(
                 fact is not None
                 and fact["project_id"] == difference["project_id"]
@@ -948,6 +1045,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             or _has_recursive_set_duplicate(difference["normalized_observed_state"])
             or _has_recursive_set_duplicate(difference["structural_difference"])
             or difference_id != _difference_id(difference)
+            or not target_projection_valid
             or not source_projection_valid
             or difference["subject"] != target["subject"]
             or difference["subject"] != observed["subject"]
@@ -1135,7 +1233,20 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             ]
             required_scope_ref = (
                 (policy or {}).get("required_observation_scope")
-                or (difference or {}).get("objective_scope_binding", {}).get("scope_ref")
+                or (
+                    {
+                        **(difference or {}).get("objective_scope_binding", {}).get(
+                            "scope_ref", {}
+                        ),
+                        "schema_version": (difference or {}).get(
+                            "objective_scope_binding", {}
+                        ).get("scope_schema_version"),
+                        "resolved_record_sha256": (difference or {}).get(
+                            "objective_scope_binding", {}
+                        ).get("resolved_scope_record_sha256"),
+                    }
+                    if difference is not None else None
+                )
             )
             scope_reference = None if required_scope_ref is None else {
                 "kind": required_scope_ref["kind"], "id": required_scope_ref["id"],
@@ -1143,14 +1254,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             required_scope = observation_scopes.get(
                 "" if required_scope_ref is None else required_scope_ref["id"]
             )
-            scope_binding_valid = required_scope_ref is not None and (
-                "schema_version" not in required_scope_ref
-                or (
-                    required_scope is not None
-                    and required_scope["schema_version"] == required_scope_ref["schema_version"]
-                    and _resolved_scope_fingerprint(required_scope)
-                    == required_scope_ref["resolved_record_sha256"]
-                )
+            scope_binding_valid = (
+                required_scope_ref is not None
+                and required_scope is not None
+                and required_scope["schema_version"] == required_scope_ref["schema_version"]
+                and _resolved_scope_fingerprint(required_scope)
+                == required_scope_ref["resolved_record_sha256"]
             )
             resolution_evidence_refs = (
                 evaluation["change_result_evidence_refs"]
