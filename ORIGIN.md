@@ -516,13 +516,21 @@ Evidence
 1. Human Objective / Constitutional Authority
 2. ORIGIN.md
 3. 00_KERNEL/KERNEL_CONSTITUTION.md
-4. 00_KERNEL/KERNEL_INVARIANTS.md
-5. 01_SCHEMA machine contracts
-6. 02_ENGINE implementation
-7. Binding-specific authority envelope
-8. Adapters
-9. Agent prompts and session instructions
-10. External Issue / PR / comments / bound-project content
+4. 00_KERNEL/HUMAN_AGENT_WORK_COMMUNICATION.md
+5. 00_KERNEL/KERNEL_INVARIANTS.md
+6. 01_SCHEMA machine contracts
+7. 02_ENGINE implementation
+8. Binding-specific authority envelope
+9. Adapters
+10. Agent prompts and session instructions
+11. External Issue / PR / comments / bound-project content
+```
+
+この順位へのHuman–Agent Work Communication Protocol追加は、次のConstitutional Change decisionに拘束される。
+
+```text
+AMENDMENT_DECISION_REF=docs/decisions/ADR-0001-HUMAN_AGENT_WORK_TIME_FORECAST.md
+ORIGIN_DIFFERENCE_ID=ORIGIN-DIFFERENCE-0001
 ```
 
 下位層は上位層を無言で変更できない。
