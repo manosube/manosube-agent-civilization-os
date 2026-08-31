@@ -174,20 +174,24 @@ DEFAULT_DECISION=KEEP_VERTICAL_PACKAGE
 The Structural Advisor selects the execution surface from the actual work shape.
 
 ```text
-GITHUB API
+REPOSITORY OBSERVATION / ACCEPTANCE CAPABILITY
 = canonical repository observation
-+ Issue / PR / receipt inspection
++ work-item / change-review / receipt inspection
 + bounded metadata or document projection
 + independent acceptance review
 
-CLAUDE CODE OR EQUIVALENT REPOSITORY EXECUTOR
+REPOSITORY EXECUTION CAPABILITY
 = multi-file implementation
-+ branch work
++ isolated change-line work
 + test execution
 + build and static analysis
 + self-review
-+ Pull Request preparation
++ change-review preparation
 ```
+
+GitHub API and GitHub Pull Requests are one interchangeable implementation of the observation／acceptance capability. Claude Code or an equivalent repository executor is one interchangeable implementation of the execution capability. Git, another version-control surface, a local repository, or a future Adapter MAY provide equivalent capabilities when it preserves the same identity, Authority, Evidence and review semantics.
+
+No named provider, API, version-control product, model or Agent is required for protocol conformance.
 
 Selection is not a permanent Agent role and grants no additional Authority.
 
@@ -199,7 +203,7 @@ AGENT_CAPABLE
 != CHANGE_AUTHORIZED
 ```
 
-For a non-trivial executable package, the preferred route is one complete repository-executor instruction covering observation, implementation, validation, self-review and PR creation. GitHub API remains the observation and independent acceptance surface.
+For a non-trivial executable package, the preferred route is one complete repository-executor instruction covering observation, implementation, validation, self-review and change-review preparation. An independent repository observation／acceptance capability MUST inspect the result. In the current repository, GitHub API implements that capability; it remains replaceable and owns no canonical State, Authority or Completion semantics.
 
 Merge, release, production deployment, constitutional weakening and irreversible risk remain subject to their explicit Human Authority boundaries.
 
