@@ -272,6 +272,18 @@ MULTIPLE FUTURE ELEMENTS PER PACKAGE=false
 
 Executor self-review is required but not sufficient.
 
+For this protocol, `Structural Advisor` means the acceptance-review role, not a product name or permission label. Independence is conforming only when the acceptance observation lineage is distinct from the execution lineage and the acceptance reviewer did not author the proposed repository content under review.
+
+```text
+EXECUTION_LINEAGE_ID != ACCEPTANCE_LINEAGE_ID
+ACCEPTANCE_REVIEWER_AUTHORED_PROPOSED_CONTENT=false
+EXECUTOR_SELF_REVIEW_AS_ACCEPTANCE=false
+```
+
+The execution and acceptance capabilities MAY be supplied by the same vendor or application only when their agent/session/action lineages are separately identifiable and the acceptance lineage receives the repository result as an independent observation. A Human who directly performs the acceptance inspection also satisfies the distinct acceptance boundary. A renamed executor self-review does not.
+
+The acceptance evidence MUST record both lineage identities, the reviewed proposed-state identity and the independence result. If distinct lineage cannot be evidenced, acceptance fails closed.
+
 Before Human acceptance, the Structural Advisor MUST independently inspect:
 
 - exact base and proposed-state identity;
@@ -376,6 +388,8 @@ NATURAL_ROUTE_EXTENDED_INCREMENTALLY=true
 TOOL_SELECTION_NE_AUTHORITY=true
 HUMAN_MERGE_BOUNDARY_PRESERVED=true
 SAME_DIFFERENCE_CORRECTED_IN_PLACE=true
+ACCEPTANCE_LINEAGE_DISTINCT=true
+EXECUTOR_SELF_REVIEW_AS_ACCEPTANCE=false
 PREMATURE_ADAPTER_EXPANSION=false
 COMPLETION_INFLATION=false
 ```
