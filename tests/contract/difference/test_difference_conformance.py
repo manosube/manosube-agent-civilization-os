@@ -14,6 +14,7 @@ from scripts.difference_contract_validator import (
     _negative_knowledge_status,
     _normalize_objective_value,
     _project_collection_value,
+    _target_satisfied,
     apply_mutation,
     load_json,
     validate_bundle,
@@ -471,6 +472,30 @@ def test_difference_identity_canonicalizes_nested_unordered_sets() -> None:
     right = deepcopy(left)
     right["effective_boundary"]["source_snapshot_refs"]["members"].reverse()
     assert _difference_id(left) == _difference_id(right)
+
+
+def test_difference_boundary_is_bound_to_resolved_scope() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    mutations = (
+        ("scope_ref", {"kind": "observation_scope", "id": "OBS-SCOPE-FABRICATED"}),
+        ("resolved_scope_record_sha256", "sha256:" + "0" * 64),
+    )
+    for field, value in mutations:
+        mutated = deepcopy(bundle)
+        mutated["differences"][0]["effective_boundary"][field] = value
+        assert any("Difference projection mismatch" in error for error in validate_bundle(mutated))
+
+
+def test_unordered_target_comparison_uses_canonical_semantics() -> None:
+    target = {
+        "operator": "equals",
+        "expected_value_type": "UNORDERED_COLLECTION",
+        "expected_value": {
+            "collection_kind": "UNORDERED_SET", "members": ["a", "b"],
+        },
+    }
+    observed = {"collection_kind": "UNORDERED_SET", "members": ["b", "a"]}
+    assert _target_satisfied([observed], target)
 
 
 def test_verifying_and_closed_transitions_enforce_minimum_gates() -> None:

@@ -120,14 +120,14 @@ def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
     expected = target["expected_value"]
     operator = target["operator"]
     if operator == "equals":
-        return bool(values) and all(value == expected for value in values)
+        return bool(values) and all(_exact_value_equal(value, expected) for value in values)
     if operator == "not_equals":
-        return bool(values) and all(value != expected for value in values)
+        return bool(values) and all(not _exact_value_equal(value, expected) for value in values)
     if operator == "contains":
         return bool(values) and all(
             (members := _collection_members(value)) is not None
             and any(
-                member == expected
+                _exact_value_equal(member, expected)
                 and _value_matches_declared_type(
                     member, target["expected_value_type"]
                 )
@@ -138,9 +138,9 @@ def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
     if operator == "exists":
         return bool(values)
     if operator == "all":
-        return bool(values) and all(value == expected for value in values)
+        return bool(values) and all(_exact_value_equal(value, expected) for value in values)
     if operator == "none":
-        return all(value != expected for value in values)
+        return all(not _exact_value_equal(value, expected) for value in values)
     return False
 
 
@@ -1033,6 +1033,10 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             and resolved_scope["target_identity"] == difference["target_predicate_ref"]["id"]
             and difference["subject"] in resolved_scope["included_subjects"]
             and difference["subject"] not in resolved_scope["excluded_subjects"]
+            and difference["effective_boundary"]["scope_ref"]
+            == scope_binding["scope_ref"]
+            and difference["effective_boundary"]["resolved_scope_record_sha256"]
+            == scope_binding["resolved_scope_record_sha256"]
         )
         target_projection_valid = (
             objective is not None
@@ -1520,7 +1524,10 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 )
                 and difference is not None
                 and _target_satisfied(
-                    [fact["value"] for fact in facts if fact is not None],
+                    [
+                        _project_collection_value(fact["value"], fact["value_type"])
+                        for fact in facts if fact is not None
+                    ],
                     difference["normalized_target_state"],
                 )
                 for observation, facts in zip(after_observations, resolved_fact_sets, strict=True)
