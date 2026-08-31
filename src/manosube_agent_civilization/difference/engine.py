@@ -1,0 +1,1051 @@
+"""Deterministic, adapter-free Difference Engine for the v0.1 canonical route.
+
+The Engine derives canonical Difference genesis records from an exact Objective /
+Project State / Observation binding. It derives *work identity* only: it never decides
+Authority, never plans or executes Change, never judges Evidence sufficiency, never
+evaluates Closure, never reflows State and never declares Objective Completion.
+
+Inputs are explicit and immutable. There is no filesystem discovery, no network lookup,
+no wall-clock read and no session memory anywhere in this module.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+from .canonical import (
+    canonical_bytes,
+    content_address,
+    has_recursive_set_duplicate,
+    reject_bare_arrays,
+    reject_secret_material,
+    walk_references,
+)
+from .errors import (
+    BoundaryViolationError,
+    DifferenceError,
+    DifferenceValidationError,
+    IdentityCollisionError,
+    UnsupportedProfileError,
+)
+from .identity import (
+    COMPARISON_PROFILE,
+    IDENTITY_PROFILE,
+    NORMALIZATION_PROFILE,
+    closure_policy_id,
+    completion_claim_fingerprint,
+    completion_claim_id,
+    difference_id as derive_difference_id,
+    difference_identity_input,
+    lifecycle_event_id,
+    objective_semantic_fingerprint,
+    policy_semantic_fingerprint,
+    resolved_scope_fingerprint,
+    supersession_reason_codes,
+    supersession_relation_id,
+)
+from .projection import (
+    derive_comparison_and_mismatch,
+    effective_boundary,
+    negative_knowledge_status,
+    normalize_observed_state,
+    normalize_target_state,
+    structural_difference,
+    value_candidate,
+)
+from .validation import (
+    SCHEMA_BASE,
+    require_schema_version,
+    validate_record,
+)
+
+OBSERVATION_SCHEMA_BASE = SCHEMA_BASE + "observation/"
+
+SCHEMA_VERSION = "0.1"
+RISK_CLASSES = frozenset({"LOW", "MODERATE", "HIGH", "CRITICAL"})
+_ACCEPTED_OBSERVATION_STATUS = frozenset(
+    {"COMPLETE", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE", "CONFLICTED"}
+)
+_REQUIRES_REOBSERVATION = frozenset({"UNKNOWN", "CONFLICT"})
+_DEFAULT_POLICY: dict[str, Any] = {
+    "required_observation_scope": None,
+    "minimum_evidence_level": "E1",
+    "required_claims": [],
+    "required_invariants": [],
+    "allowed_terminal_states": ["CLOSED", "BLOCKED", "RETAINED"],
+    "independent_verification_required": False,
+    "maximum_evidence_age": None,
+    "contradiction_policy": "FAIL_CLOSED",
+    "reopen_conditions": [],
+}
+
+
+def _ref(kind: str, identity: str) -> dict[str, str]:
+    return {"kind": kind, "id": identity}
+
+
+def _require_profiles(request: dict[str, Any]) -> None:
+    declared = {
+        "identity_profile": (request.get("identity_profile", IDENTITY_PROFILE), IDENTITY_PROFILE),
+        "comparison_profile": (
+            request.get("comparison_profile", COMPARISON_PROFILE),
+            COMPARISON_PROFILE,
+        ),
+        "normalization_profile": (
+            request.get("normalization_profile", NORMALIZATION_PROFILE),
+            NORMALIZATION_PROFILE,
+        ),
+    }
+    for name, (actual, expected) in declared.items():
+        if actual != expected:
+            raise UnsupportedProfileError(f"unsupported {name}: {actual!r}")
+
+
+def _latest_contiguous(records: list[dict[str, Any]], subject_key: str) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        grouped.setdefault(record[subject_key], []).append(record)
+    latest: dict[str, dict[str, Any]] = {}
+    for subject_id, chain in grouped.items():
+        chain.sort(key=lambda item: item["evaluation_revision"])
+        if all(
+            item["evaluation_revision"] == revision
+            and item["previous_evaluation_id"]
+            == (None if revision == 0 else chain[revision - 1]["evaluation_id"])
+            for revision, item in enumerate(chain)
+        ):
+            latest[subject_id] = chain[-1]
+    return latest
+
+
+def _evaluation_supports_observation(
+    evaluation: dict[str, Any],
+    fact: dict[str, Any],
+    observation: dict[str, Any],
+    bindings: dict[str, dict[str, Any]],
+) -> bool:
+    resolved = [bindings.get(str(reference["id"])) for reference in evaluation["binding_refs"]]
+    if not resolved or any(binding is None for binding in resolved):
+        return False
+    if not all(
+        reference.get("kind") == "fact_observation_binding"
+        and binding is not None
+        and binding["fact_id"] == fact["fact_id"]
+        and binding["observed_quality_status"] == "SUPPORTED"
+        for reference, binding in zip(evaluation["binding_refs"], resolved, strict=True)
+    ):
+        return False
+    return any(
+        binding is not None
+        and binding["observation_id"] == observation["observation_id"]
+        and binding["state_revision_observed"] == observation["state_revision_observed"]
+        and binding["state_fingerprint_observed"] == observation["state_fingerprint_observed"]
+        and binding["source_ref"] in observation["source_snapshot_refs"]
+        for binding in resolved
+    )
+
+
+def _closure_policy(
+    requirements: dict[str, Any], target_predicate_ref: dict[str, str]
+) -> tuple[dict[str, Any], str]:
+    policy = {**deepcopy(_DEFAULT_POLICY), **deepcopy(requirements)}
+    unknown = set(policy) - set(_DEFAULT_POLICY)
+    if unknown:
+        raise DifferenceError(f"unknown Closure Policy requirement fields: {sorted(unknown)}")
+    if policy["contradiction_policy"] != "FAIL_CLOSED":
+        raise DifferenceError("Closure Policy contradiction policy must remain FAIL_CLOSED")
+    if policy["independent_verification_required"] is not False:
+        raise DifferenceError("v0.1 Closure Policy cannot require independent verification")
+    claims = []
+    for descriptor in policy["required_claims"]:
+        materialized = {
+            "kind": "completion_claim",
+            "id": completion_claim_id(descriptor),
+            "subject_type": descriptor["subject_type"],
+            "subject_ref": descriptor["subject_ref"],
+            "claim": descriptor["claim"],
+            "target_state_ref": descriptor.get("target_state_ref"),
+            "claim_semantic_fingerprint": completion_claim_fingerprint(descriptor),
+        }
+        claims.append(materialized)
+    policy["required_claims"] = claims
+    policy["target_predicate_ref"] = deepcopy(target_predicate_ref)
+    return policy, policy_semantic_fingerprint(policy)
+
+
+def _observation_method(record: dict[str, Any]) -> dict[str, Any]:
+    method = {
+        "schema_version": SCHEMA_VERSION,
+        "record_kind": "OBSERVATION_METHOD",
+        **{key: deepcopy(value) for key, value in record.items() if key != "observation_method_id"},
+    }
+
+    method["observation_method_id"] = content_address(
+        "OBS-METHOD-", method, "observation_method_id"
+    )
+    validate_record(method, "observation_method.schema.json")
+    return method
+
+
+def _select_observation(
+    binding: dict[str, Any],
+    predicate_id: str,
+    scope_id: str,
+    project_id: str,
+    state_revision: int,
+    state_fingerprint: dict[str, Any],
+) -> dict[str, Any]:
+    bundle = binding["observation_bundle"]
+    matches = [
+        observation
+        for observation in bundle["observations"]
+        if observation["target"]["target_identity"] == predicate_id
+        and observation["scope_ref"]["id"] == scope_id
+    ]
+    if len(matches) != 1:
+        raise DifferenceError(
+            f"exactly one canonical Observation must bind Target {predicate_id}; got {len(matches)}"
+        )
+    observation = matches[0]
+    if observation["project_id"] != project_id:
+        raise BoundaryViolationError("Observation project does not match the derivation request")
+    if (
+        observation["state_revision_observed"] != state_revision
+        or observation["state_fingerprint_observed"] != state_fingerprint
+    ):
+        raise DifferenceError(
+            "stale Observation: the Observation is not bound to the exact requested Project State"
+        )
+    if observation["status"] not in _ACCEPTED_OBSERVATION_STATUS:
+        raise DifferenceError(f"unusable Observation status: {observation['status']}")
+    if not isinstance(observation, dict):
+        raise DifferenceError("Observation record must be a canonical object")
+    return observation
+
+
+def _observed_projection(
+    observation: dict[str, Any],
+    bundle: dict[str, Any],
+    subject: str,
+    scope: dict[str, Any],
+    boundary: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]]]:
+    facts_by_id = {fact["fact_id"]: fact for fact in bundle["facts"]}
+    bindings_by_id = {item["binding_id"]: item for item in bundle["bindings"]}
+    latest_fact_evaluations = _latest_contiguous(bundle["fact_evaluations"], "fact_id")
+    latest_negative_evaluations = _latest_contiguous(
+        bundle["negative_evaluations"], "negative_observation_id"
+    )
+    if any(reference["id"] not in facts_by_id for reference in observation["normalized_fact_refs"]):
+        raise DifferenceError("Observation references a Normalized Fact absent from the bundle")
+    source_facts = [
+        facts_by_id[reference["id"]]
+        for reference in observation["normalized_fact_refs"]
+        if reference.get("kind") == "normalized_fact"
+    ]
+    for fact in source_facts:
+        if fact["subject"] != subject:
+            raise BoundaryViolationError(
+                "the bound Observation carries a Fact outside the Target subject: "
+                f"{fact['subject']}"
+            )
+        if fact["subject"] not in scope["included_subjects"] or fact["subject"] in scope["excluded_subjects"]:
+            raise BoundaryViolationError(f"Fact subject escapes the resolved Scope: {fact['subject']}")
+        if fact["effective_boundary"]["kind"] != "SOURCE_SNAPSHOT":
+            raise BoundaryViolationError("Fact effective boundary is not a declared source snapshot")
+        if fact["effective_boundary"]["identity"] not in {
+            reference["id"] for reference in boundary["source_snapshot_refs"]["members"]
+        }:
+            raise BoundaryViolationError("Fact source snapshot escapes the effective boundary")
+
+    negatives = [
+        negative
+        for negative in bundle["negative_observations"]
+        if negative["observation_id"] == observation["observation_id"]
+        and negative["target_identity"] == observation["target"]["target_identity"]
+        and negative["subject"] == subject
+    ]
+    if not source_facts and not negatives:
+        # UNOBSERVED is not ABSENT and NO_RESULT is not EMPTY: with neither a positive
+        # Fact nor a bounded Negative Observation there is no canonical observed state.
+        raise DifferenceError(
+            "no positive Fact and no bounded Negative Observation exist for the Target subject"
+        )
+
+    if source_facts:
+        if observation["status"] not in {"COMPLETE", "CONFLICTED"}:
+            # An incomplete, unknown, unobserved or blocked Observation still carries
+            # positive Facts, but its knowledge is not KNOWN. Deriving an ordinary value
+            # mismatch here would disguise an unresolved observation as a normal one.
+            raise DifferenceError(
+                "an Observation that is not COMPLETE cannot yield a KNOWN observed state: "
+                f"{observation['status']}"
+            )
+        for fact in source_facts:
+            evaluation = latest_fact_evaluations.get(fact["fact_id"])
+            if evaluation is None or evaluation["evaluation_status"] not in {"SUPPORTED", "CONFLICTED"}:
+                raise DifferenceError(
+                    f"Normalized Fact lacks a supporting current evaluation: {fact['fact_id']}"
+                )
+            if not _evaluation_supports_observation(evaluation, fact, observation, bindings_by_id):
+                raise DifferenceError(
+                    f"Fact evaluation is not bound to this exact Observation: {fact['fact_id']}"
+                )
+        knowledge = (
+            "CONFLICTED"
+            if any(
+                latest_fact_evaluations[fact["fact_id"]]["evaluation_status"] == "CONFLICTED"
+                for fact in source_facts
+            )
+            else "KNOWN"
+        )
+        candidates = [value_candidate(fact, boundary) for fact in source_facts]
+        return knowledge, candidates
+
+    statuses = set()
+    observation_evidence = {
+        canonical_bytes(reference) for reference in observation["observation_evidence_refs"]
+    }
+    negative_evidence = {
+        canonical_bytes(reference)
+        for negative in negatives
+        for reference in negative["negative_evidence_refs"]
+    }
+    if negative_evidence != observation_evidence:
+        # Without a positive Fact the bounded Negative Evidence is the only Observation
+        # Evidence a Difference may cite. A divergent set cannot be canonically bound, so
+        # the unresolved knowledge state fails closed instead of being reported as an
+        # ordinary value mismatch.
+        raise DifferenceError(
+            "bounded Negative Evidence does not exactly match the Observation Evidence"
+        )
+    for negative in negatives:
+        latest = latest_negative_evaluations.get(negative["negative_observation_id"])
+        if latest is None:
+            raise DifferenceError(
+                f"Negative Observation lacks a contiguous evaluation chain: "
+                f"{negative['negative_observation_id']}"
+            )
+        mapped = negative_knowledge_status(latest["evaluation_status"])
+        if mapped == "REJECT_OR_QUARANTINE":
+            raise DifferenceError("INVALID Negative Observation cannot produce a Difference")
+        statuses.add(mapped)
+    if len(statuses) != 1:
+        raise DifferenceError("bounded Negative Observations disagree on knowledge status")
+    return statuses.pop(), []
+
+
+def _genesis_event(
+    difference_id: str,
+    state_revision: int,
+    state_fingerprint: dict[str, Any],
+    observation_refs: list[dict[str, str]],
+    evidence_refs: list[dict[str, str]],
+) -> dict[str, Any]:
+    event = _empty_event(difference_id, state_revision, state_fingerprint)
+    event.update(
+        {
+            "event_kind": "TRANSITION",
+            "event_revision": 0,
+            "previous_event_id": None,
+            "from_status": None,
+            "to_status": "DETECTED",
+            "reason_code": "DIFFERENCE_DERIVED",
+            "reason": "Structural mismatch derived from the exact Target/State/Observation binding.",
+            "observation_refs": deepcopy(observation_refs),
+            "evidence_refs": deepcopy(evidence_refs),
+        }
+    )
+    event["difference_event_id"] = lifecycle_event_id(event)
+    return event
+
+
+def _empty_event(
+    difference_id: str, state_revision: int, state_fingerprint: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "difference_event_id": "",
+        "difference_id": difference_id,
+        "event_kind": "TRANSITION",
+        "event_revision": 0,
+        "previous_event_id": None,
+        "from_status": None,
+        "to_status": "DETECTED",
+        "state_revision_evaluated": state_revision,
+        "state_fingerprint_evaluated": deepcopy(state_fingerprint),
+        "reason_code": "DIFFERENCE_DERIVED",
+        "reason": "",
+        "blocker_kind": None,
+        "blocker_scope": None,
+        "blocker_resolution_condition": None,
+        "observation_refs": [],
+        "evidence_refs": [],
+        "authority_ref": None,
+        "change_refs": [],
+        "closure_evaluation_ref": None,
+        "reflow_transition_ref": None,
+        "next_observation_ref": None,
+        "reopen_trigger": None,
+        "reopen_condition_ref": None,
+        "reopen_condition_evaluation_ref": None,
+        "revoked_evidence_refs": [],
+        "invalid_evidence_refs": [],
+        "contradiction_evidence_refs": [],
+    }
+
+
+def _transition_event(
+    difference_id: str,
+    state_revision: int,
+    state_fingerprint: dict[str, Any],
+    revision: int,
+    previous_event_id: str,
+    from_status: str,
+    to_status: str,
+    reason_code: str,
+    reason: str,
+) -> dict[str, Any]:
+    event = _empty_event(difference_id, state_revision, state_fingerprint)
+    event.update(
+        {
+            "event_revision": revision,
+            "previous_event_id": previous_event_id,
+            "from_status": from_status,
+            "to_status": to_status,
+            "reason_code": reason_code,
+            "reason": reason,
+        }
+    )
+    event["difference_event_id"] = lifecycle_event_id(event)
+    return event
+
+
+def _observation_bound_event(
+    difference_id: str,
+    state_revision: int,
+    state_fingerprint: dict[str, Any],
+    revision: int,
+    previous_event_id: str,
+    status: str,
+    observation_refs: list[dict[str, str]],
+    evidence_refs: list[dict[str, str]],
+) -> dict[str, Any]:
+    event = _empty_event(difference_id, state_revision, state_fingerprint)
+    event.update(
+        {
+            "event_kind": "OBSERVATION_BOUND",
+            "event_revision": revision,
+            "previous_event_id": previous_event_id,
+            "from_status": status,
+            "to_status": status,
+            "reason_code": "EQUIVALENT_REOBSERVATION_BOUND",
+            "reason": "Equivalent re-observation appended to the existing Difference identity.",
+            "observation_refs": deepcopy(observation_refs),
+            "evidence_refs": deepcopy(evidence_refs),
+        }
+    )
+    event["difference_event_id"] = lifecycle_event_id(event)
+    return event
+
+
+def _next_observation_request(
+    difference_id: str,
+    event: dict[str, Any],
+    target_predicate_ref: dict[str, str],
+    scope_ref: dict[str, str],
+    method_id: str,
+) -> dict[str, Any]:
+
+    request = {
+        "schema_version": SCHEMA_VERSION,
+        "observation_request_id": "",
+        "record_kind": "NEXT_OBSERVATION_REQUEST",
+        "difference_ref": {"kind": "difference", "id": difference_id},
+        "derived_from_event_ref": {"kind": "difference_event", "id": event["difference_event_id"]},
+        "state_revision_requested": event["state_revision_evaluated"],
+        "state_fingerprint_requested": deepcopy(event["state_fingerprint_evaluated"]),
+        "target_ref": {"kind": "target_predicate", "id": target_predicate_ref["id"]},
+        "scope_ref": {"kind": "observation_scope", "id": scope_ref["id"]},
+        "method_ref": {"kind": "observation_method", "id": method_id},
+        "reason_code": "BLOCKER_REOBSERVATION",
+    }
+    request["observation_request_id"] = content_address(
+        "OBS-REQ-", request, "observation_request_id"
+    )
+    validate_record(request, "next_observation_request.schema.json")
+    return request
+
+
+def _reject_hostile_input(request: dict[str, Any]) -> None:
+    reject_secret_material(request, "request")
+    walk_references(request, "request")
+
+
+def _validate_predecessor(predecessor: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    difference = predecessor["difference"]
+    events = sorted(predecessor["events"], key=lambda item: item["event_revision"])
+    if difference["difference_id"] != derive_difference_id(difference):
+        raise DifferenceError("predecessor Difference identity does not recompute")
+    if not events or events[0]["event_revision"] != 0 or events[0]["to_status"] != "DETECTED":
+        raise DifferenceError("predecessor lineage does not start at a null to DETECTED genesis")
+    for revision, event in enumerate(events):
+        expected_previous = None if revision == 0 else events[revision - 1]["difference_event_id"]
+        if event["event_revision"] != revision or event["previous_event_id"] != expected_previous:
+            raise DifferenceError("predecessor lineage is not a contiguous append-only chain")
+        if event["difference_id"] != difference["difference_id"]:
+            raise DifferenceError("predecessor event is bound to a different Difference")
+    if events[-1]["to_status"] in {"CLOSED", "SUPERSEDED", "INVALIDATED"}:
+        raise DifferenceError(
+            f"predecessor Difference is already terminal: {events[-1]['to_status']}"
+        )
+    return difference, events
+
+
+def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
+    """Derive canonical Difference genesis records from one exact binding.
+
+    The returned bundle carries every generated record plus the exact input records that
+    a cross-record conformance validator needs to resolve them. The Engine returns only
+    schema-valid output, never mutates *request*, and fails closed on any incomplete,
+    conflicted, stale, out-of-boundary or secret-bearing input.
+    """
+
+    request = deepcopy(request)
+    require_schema_version(request, "derivation request")
+    _require_profiles(request)
+    _reject_hostile_input(request)
+
+    project_id = request["project_id"]
+    objective = request["objective_revision"]
+    require_schema_version(objective, "objective revision")
+    if objective["project_id"] != project_id:
+        raise BoundaryViolationError("Objective revision belongs to a different project")
+    if objective["status"] != "ACTIVE":
+        raise DifferenceError("only an ACTIVE Objective revision can bind a Difference derivation")
+    objective_fingerprint = objective_semantic_fingerprint(objective)
+    objective_revisions: dict[str, dict[str, Any]] = {
+        objective["objective_revision_id"]: deepcopy(objective)
+    }
+    objective_revision_ref = _ref("objective_revision", objective["objective_revision_id"])
+
+    state_revision = request["state_revision"]
+    if not isinstance(state_revision, int) or isinstance(state_revision, bool) or state_revision < 0:
+        raise DifferenceError("State revision must be a non-negative integer")
+    state_fingerprint = request["state_fingerprint"]
+    if state_fingerprint.get("profile") != "MANOSUBE-STATE-SHA256-0.1":
+        raise UnsupportedProfileError("unsupported State fingerprint profile")
+
+    default_requirements = request.get("closure_policy_requirements", {})
+    default_risk_class = request.get("risk_class", "LOW")
+    if default_risk_class not in RISK_CLASSES:
+        raise DifferenceError(f"unknown risk class: {default_risk_class!r}")
+
+    method: dict[str, Any] | None = None
+    if "observation_method" in request:
+        method = _observation_method(request["observation_method"])
+
+    predicates = {item["predicate_id"]: item for item in objective["target_predicates"]}
+    differences: dict[str, dict[str, Any]] = {}
+    identity_payloads: dict[str, bytes] = {}
+    events: list[dict[str, Any]] = []
+    requests: list[dict[str, Any]] = []
+    methods: dict[str, dict[str, Any]] = {}
+    policies: list[dict[str, Any]] = []
+    relations: list[dict[str, Any]] = []
+    scopes: dict[str, dict[str, Any]] = {}
+    observations: dict[str, dict[str, Any]] = {}
+    facts: dict[str, dict[str, Any]] = {}
+    fact_bindings: dict[str, dict[str, Any]] = {}
+    fact_evaluations: dict[str, dict[str, Any]] = {}
+    negative_observations: dict[str, dict[str, Any]] = {}
+    negative_evaluations: dict[str, dict[str, Any]] = {}
+    materialized_status: dict[str, str] = {}
+    satisfied: list[str] = []
+
+    for binding in sorted(request["bindings"], key=lambda item: item["target_predicate_id"]):
+        predicate_id = binding["target_predicate_id"]
+        predicate = predicates.get(predicate_id)
+        if predicate is None:
+            raise DifferenceError(f"Target Predicate is not declared by the Objective: {predicate_id}")
+        target_predicate_ref = _ref("target_predicate", predicate_id)
+        subject = predicate["subject"]
+
+        scope = binding["observation_scope"]
+        require_schema_version(scope, "observation scope")
+        validate_record(scope, "observation_scope.schema.json", base=OBSERVATION_SCHEMA_BASE)
+        if scope["project_id"] != project_id:
+            raise BoundaryViolationError("resolved Scope belongs to a different project")
+        if scope["target_identity"] != predicate_id:
+            raise BoundaryViolationError("resolved Scope is not bound to this Target Predicate")
+        if subject not in scope["included_subjects"] or subject in scope["excluded_subjects"]:
+            raise BoundaryViolationError(f"Target subject is outside the resolved Scope: {subject}")
+        scope_fingerprint = resolved_scope_fingerprint(scope)
+        scope_binding = {
+            "objective_scope_name": predicate["observation_scope"],
+            "scope_ref": _ref("observation_scope", scope["scope_id"]),
+            "scope_schema_version": scope["schema_version"],
+            "resolved_scope_record_sha256": scope_fingerprint,
+        }
+
+        observation = _select_observation(
+            binding, predicate_id, scope["scope_id"], project_id, state_revision, state_fingerprint
+        )
+        boundary = effective_boundary(scope, scope_fingerprint, observation["source_snapshot_refs"])
+        knowledge, candidates = _observed_projection(
+            observation, binding["observation_bundle"], subject, scope, boundary
+        )
+
+        target = normalize_target_state(predicate)
+        reject_bare_arrays(target, "normalized_target_state")
+        observed = normalize_observed_state(subject, scope_binding, boundary, knowledge, candidates)
+        reject_bare_arrays(observed, "normalized_observed_state")
+        comparison, mismatch_kind = derive_comparison_and_mismatch(observed, target)
+        if comparison == "SATISFIED":
+            # A satisfied route yields no open Difference. The empty result is legitimate
+            # only when the evaluation scope is complete: an incomplete scope may never
+            # claim satisfaction. It is still not a Completion claim -- Objective
+            # Completion has a later canonical owner.
+            if scope["scope_status"] != "COMPLETE" or observation["status"] != "COMPLETE":
+                raise DifferenceError(
+                    "an incomplete evaluation scope cannot claim a satisfied Target Predicate"
+                )
+            satisfied.append(predicate_id)
+            continue
+        if mismatch_kind is None:
+            raise DifferenceError("unsatisfied comparison produced no mismatch kind")
+
+        structural = structural_difference(observed, target, comparison, mismatch_kind)
+        reject_bare_arrays(structural, "structural_difference")
+
+        requirements = binding.get("closure_policy_requirements", default_requirements)
+        policy, policy_fingerprint = _closure_policy(requirements, target_predicate_ref)
+        evidence_refs = sorted(
+            deepcopy(observation["observation_evidence_refs"]),
+            key=lambda reference: (reference["kind"], reference["id"]),
+        )
+        if not evidence_refs:
+            raise DifferenceError("a Difference requires at least one Observation Evidence reference")
+
+        difference: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "difference_id": "",
+            "project_id": project_id,
+            "objective_revision_ref": deepcopy(objective_revision_ref),
+            "objective_semantic_fingerprint": objective_fingerprint,
+            "target_predicate_ref": deepcopy(target_predicate_ref),
+            "normalized_target_state": target,
+            "objective_scope_binding": scope_binding,
+            "observed_state_revision": state_revision,
+            "observed_state_fingerprint": deepcopy(state_fingerprint),
+            "observation_refs": [_ref("observation", observation["observation_id"])],
+            "observation_evidence_refs": evidence_refs,
+            "normalized_observed_state": observed,
+            "structural_difference": structural,
+            "subject": subject,
+            "observation_scope": predicate["observation_scope"],
+            "effective_boundary": boundary,
+            "impact": {},
+            "risk_class": binding.get("risk_class", default_risk_class),
+            "authority_required": [],
+            "closure_policy": {
+                "kind": "closure_policy",
+                "id": "",
+                "version": SCHEMA_VERSION,
+                "semantic_fingerprint": policy_fingerprint,
+            },
+            "genesis_event_ref": {"kind": "difference_event", "id": ""},
+        }
+        if difference["risk_class"] not in RISK_CLASSES:
+            raise DifferenceError(f"unknown risk class: {difference['risk_class']!r}")
+        for projection in ("normalized_target_state", "normalized_observed_state", "structural_difference"):
+            if has_recursive_set_duplicate(difference[projection]):
+                raise DifferenceError(f"{projection} carries a duplicate unordered-set member")
+
+        difference_id = derive_difference_id(difference)
+        identity_payload = canonical_bytes(difference_identity_input(difference))
+        existing_payload = identity_payloads.get(difference_id)
+        if existing_payload is not None and existing_payload != identity_payload:
+            raise IdentityCollisionError(f"Difference identity collision: {difference_id}")
+        identity_payloads[difference_id] = identity_payload
+        difference["difference_id"] = difference_id
+        difference["closure_policy"]["id"] = closure_policy_id(policy_fingerprint, difference_id)
+
+        policy_record = {
+            "schema_version": SCHEMA_VERSION,
+            "closure_policy_id": difference["closure_policy"]["id"],
+            "policy_version": SCHEMA_VERSION,
+            "policy_semantic_fingerprint": policy_fingerprint,
+            "subject_difference_ref": {"kind": "difference", "id": difference_id},
+            **policy,
+        }
+        validate_record(policy_record, "closure_policy.schema.json")
+
+        observation_refs = deepcopy(difference["observation_refs"])
+        predecessor = binding.get("predecessor")
+        chain: list[dict[str, Any]] = []
+        if predecessor is None:
+            genesis = _genesis_event(
+                difference_id, state_revision, state_fingerprint, observation_refs, evidence_refs
+            )
+            chain.append(genesis)
+            chain.append(
+                _transition_event(
+                    difference_id,
+                    state_revision,
+                    state_fingerprint,
+                    1,
+                    genesis["difference_event_id"],
+                    "DETECTED",
+                    "OPEN",
+                    "IDENTITY_ACCEPTED",
+                    "Difference identity, schema and exact input bindings validated.",
+                )
+            )
+        else:
+            prior_difference, prior_events = _validate_predecessor(predecessor)
+            if prior_difference["difference_id"] == difference_id:
+                prior_payload = canonical_bytes(difference_identity_input(prior_difference))
+                if prior_payload != identity_payload:
+                    raise IdentityCollisionError(
+                        f"Difference identity collision: {difference_id}"
+                    )
+                chain = deepcopy(prior_events)
+                chain.append(
+                    _observation_bound_event(
+                        difference_id,
+                        state_revision,
+                        state_fingerprint,
+                        len(chain),
+                        chain[-1]["difference_event_id"],
+                        chain[-1]["to_status"],
+                        observation_refs,
+                        evidence_refs,
+                    )
+                )
+                difference["genesis_event_ref"] = {
+                    "kind": "difference_event",
+                    "id": chain[0]["difference_event_id"],
+                }
+            else:
+                chain = _material_change_chain(
+                    difference_id,
+                    state_revision,
+                    state_fingerprint,
+                    observation_refs,
+                    evidence_refs,
+                )
+                relation, old_terminal = _supersede(
+                    prior_difference,
+                    prior_events,
+                    difference,
+                    chain[0],
+                    state_revision,
+                    state_fingerprint,
+                )
+                relations.append(relation)
+                superseded_chain = [*deepcopy(prior_events), old_terminal]
+                for event in superseded_chain:
+                    validate_record(event, "difference_lifecycle_event.schema.json")
+                events.extend(superseded_chain)
+                differences[prior_difference["difference_id"]] = deepcopy(prior_difference)
+                materialized_status[prior_difference["difference_id"]] = "SUPERSEDED"
+                _absorb_predecessor_context(
+                    predecessor, objective_revisions, policies, scopes, observations,
+                    facts, fact_bindings, fact_evaluations, negative_observations,
+                    negative_evaluations,
+                )
+        if difference["genesis_event_ref"]["id"] == "":
+            difference["genesis_event_ref"] = {
+                "kind": "difference_event",
+                "id": chain[0]["difference_event_id"],
+            }
+
+        head = chain[-1]
+        if mismatch_kind in _REQUIRES_REOBSERVATION:
+            # FAIL_CLOSED contradiction policy: an unresolved or conflicted observed state
+            # cannot be evaluated, so the Policy requires a further bounded observation.
+            if method is None:
+                raise DifferenceError(
+                    "an unresolved or conflicted route requires an Observation Method projection"
+                )
+            next_request = _next_observation_request(
+                difference_id, head, target_predicate_ref, scope_binding["scope_ref"],
+                method["observation_method_id"],
+            )
+            head["next_observation_ref"] = {
+                "kind": "next_observation_request",
+                "id": next_request["observation_request_id"],
+            }
+            requests.append(next_request)
+            methods[method["observation_method_id"]] = method
+
+        validate_record(difference, "difference.schema.json")
+        for event in chain:
+            validate_record(event, "difference_lifecycle_event.schema.json")
+
+        existing = differences.get(difference_id)
+        if existing is not None and canonical_bytes(existing) != canonical_bytes(difference):
+            raise IdentityCollisionError(f"Difference identity collision: {difference_id}")
+        differences[difference_id] = difference
+        policies.append(policy_record)
+        events.extend(chain)
+        materialized_status[difference_id] = head["to_status"]
+        scopes[scope["scope_id"]] = deepcopy(scope)
+        _absorb_observation_context(
+            binding["observation_bundle"], observation, observations, facts,
+            fact_bindings, fact_evaluations, negative_observations, negative_evaluations,
+        )
+
+    return _finalize(
+        request, objective_revisions, differences, events, policies, relations, requests, methods,
+        scopes, observations, facts, fact_bindings, fact_evaluations,
+        negative_observations, negative_evaluations, materialized_status, satisfied,
+        state_revision, state_fingerprint,
+    )
+
+
+def _material_change_chain(
+    difference_id: str,
+    state_revision: int,
+    state_fingerprint: dict[str, Any],
+    observation_refs: list[dict[str, str]],
+    evidence_refs: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    genesis = _genesis_event(
+        difference_id, state_revision, state_fingerprint, observation_refs, evidence_refs
+    )
+    return [
+        genesis,
+        _transition_event(
+            difference_id,
+            state_revision,
+            state_fingerprint,
+            1,
+            genesis["difference_event_id"],
+            "DETECTED",
+            "OPEN",
+            "IDENTITY_ACCEPTED",
+            "Difference identity, schema and exact input bindings validated.",
+        ),
+    ]
+
+
+def _supersede(
+    old_difference: dict[str, Any],
+    old_events: list[dict[str, Any]],
+    new_difference: dict[str, Any],
+    new_genesis: dict[str, Any],
+    state_revision: int,
+    state_fingerprint: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Prepare the append-only bidirectional supersession lineage for a material change."""
+
+    reason_codes = supersession_reason_codes(old_difference, new_difference)
+    if not reason_codes:
+        raise DifferenceError("a superseding Difference must record at least one material change")
+    head = old_events[-1]
+    if head["to_status"] != "OPEN":
+        raise DifferenceError(
+            f"only an OPEN Difference can be superseded at derivation time; got {head['to_status']}"
+        )
+    terminal = _transition_event(
+        old_difference["difference_id"],
+        state_revision,
+        state_fingerprint,
+        len(old_events),
+        head["difference_event_id"],
+        "OPEN",
+        "SUPERSEDED",
+        "MATERIAL_IDENTITY_CHANGE",
+        "Superseded by a materially different Difference derived from the same Target.",
+    )
+    relation = {
+        "schema_version": SCHEMA_VERSION,
+        "supersession_relation_id": "",
+        "old_difference_ref": {"kind": "difference", "id": old_difference["difference_id"]},
+        "new_difference_ref": {"kind": "difference", "id": new_difference["difference_id"]},
+        "old_terminal_event_ref": {
+            "kind": "difference_event",
+            "id": terminal["difference_event_id"],
+        },
+        "new_genesis_event_ref": {
+            "kind": "difference_event",
+            "id": new_genesis["difference_event_id"],
+        },
+        "reason_codes": sorted(reason_codes),
+        "evidence_refs": [],
+    }
+    relation["supersession_relation_id"] = supersession_relation_id(relation)
+    validate_record(relation, "difference_supersession_relation.schema.json")
+    return relation, terminal
+
+
+def _merge(target: dict[str, dict[str, Any]], records: list[dict[str, Any]], key: str) -> None:
+    for record in records:
+        identity = record[key]
+        existing = target.get(identity)
+        if existing is not None and canonical_bytes(existing) != canonical_bytes(record):
+            raise IdentityCollisionError(f"same-ID different-payload conflict: {identity}")
+        target[identity] = deepcopy(record)
+
+
+def _absorb_observation_context(
+    bundle: dict[str, Any],
+    observation: dict[str, Any],
+    observations: dict[str, dict[str, Any]],
+    facts: dict[str, dict[str, Any]],
+    fact_bindings: dict[str, dict[str, Any]],
+    fact_evaluations: dict[str, dict[str, Any]],
+    negative_observations: dict[str, dict[str, Any]],
+    negative_evaluations: dict[str, dict[str, Any]],
+) -> None:
+    """Carry the exact Observation records a cross-record validator must resolve."""
+
+    _merge(observations, [observation], "observation_id")
+    referenced = {reference["id"] for reference in observation["normalized_fact_refs"]}
+    _merge(facts, [item for item in bundle["facts"] if item["fact_id"] in referenced], "fact_id")
+    _merge(
+        fact_bindings,
+        [
+            item
+            for item in bundle["bindings"]
+            if item["observation_id"] == observation["observation_id"]
+        ],
+        "binding_id",
+    )
+    _merge(
+        fact_evaluations,
+        [item for item in bundle["fact_evaluations"] if item["fact_id"] in referenced],
+        "evaluation_id",
+    )
+    negatives = [
+        item
+        for item in bundle["negative_observations"]
+        if item["observation_id"] == observation["observation_id"]
+    ]
+    _merge(negative_observations, negatives, "negative_observation_id")
+    negative_ids = {item["negative_observation_id"] for item in negatives}
+    _merge(
+        negative_evaluations,
+        [
+            item
+            for item in bundle["negative_evaluations"]
+            if item["negative_observation_id"] in negative_ids
+        ],
+        "evaluation_id",
+    )
+
+
+def _absorb_predecessor_context(
+    predecessor: dict[str, Any],
+    objective_revisions: dict[str, dict[str, Any]],
+    policies: list[dict[str, Any]],
+    scopes: dict[str, dict[str, Any]],
+    observations: dict[str, dict[str, Any]],
+    facts: dict[str, dict[str, Any]],
+    fact_bindings: dict[str, dict[str, Any]],
+    fact_evaluations: dict[str, dict[str, Any]],
+    negative_observations: dict[str, dict[str, Any]],
+    negative_evaluations: dict[str, dict[str, Any]],
+) -> None:
+    """Carry forward the exact records that keep the superseded Difference resolvable."""
+
+    context = predecessor.get("context", {})
+    _merge(objective_revisions, context.get("objective_revisions", []), "objective_revision_id")
+    policies.extend(deepcopy(context.get("policies", [])))
+    _merge(scopes, context.get("observation_scopes", []), "scope_id")
+    _merge(observations, context.get("observations", []), "observation_id")
+    _merge(facts, context.get("normalized_facts", []), "fact_id")
+    _merge(fact_bindings, context.get("fact_observation_bindings", []), "binding_id")
+    _merge(fact_evaluations, context.get("fact_evaluations", []), "evaluation_id")
+    _merge(
+        negative_observations, context.get("negative_observations", []), "negative_observation_id"
+    )
+    _merge(
+        negative_evaluations,
+        context.get("negative_observation_evaluations", []),
+        "evaluation_id",
+    )
+
+
+def _finalize(
+    request: dict[str, Any],
+    objective_revisions: dict[str, dict[str, Any]],
+    differences: dict[str, dict[str, Any]],
+    events: list[dict[str, Any]],
+    policies: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+    requests: list[dict[str, Any]],
+    methods: dict[str, dict[str, Any]],
+    scopes: dict[str, dict[str, Any]],
+    observations: dict[str, dict[str, Any]],
+    facts: dict[str, dict[str, Any]],
+    fact_bindings: dict[str, dict[str, Any]],
+    fact_evaluations: dict[str, dict[str, Any]],
+    negative_observations: dict[str, dict[str, Any]],
+    negative_evaluations: dict[str, dict[str, Any]],
+    materialized_status: dict[str, str],
+    satisfied: list[str],
+    state_revision: int,
+    state_fingerprint: dict[str, Any],
+) -> dict[str, Any]:
+    unique_events: dict[str, dict[str, Any]] = {}
+    _merge(unique_events, events, "difference_event_id")
+    unique_policies: dict[str, dict[str, Any]] = {}
+    _merge(unique_policies, policies, "closure_policy_id")
+    bundle: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "identity_profile": IDENTITY_PROFILE,
+        "comparison_profile": COMPARISON_PROFILE,
+        "normalization_profile": NORMALIZATION_PROFILE,
+        "current_state_ref": {
+            "kind": "project_state",
+            "revision": state_revision,
+            "semantic_fingerprint": deepcopy(state_fingerprint),
+        },
+        "objective_revisions": sorted(
+            objective_revisions.values(), key=lambda item: item["objective_revision_id"]
+        ),
+        "differences": sorted(differences.values(), key=lambda item: item["difference_id"]),
+        "events": sorted(
+            unique_events.values(),
+            key=lambda item: (item["difference_id"], item["event_revision"]),
+        ),
+        "policies": sorted(unique_policies.values(), key=lambda item: item["closure_policy_id"]),
+        "evaluations": [],
+        "supersession_relations": sorted(
+            relations, key=lambda item: item["supersession_relation_id"]
+        ),
+        "next_observation_requests": sorted(
+            requests, key=lambda item: item["observation_request_id"]
+        ),
+        "observation_methods": sorted(
+            methods.values(), key=lambda item: item["observation_method_id"]
+        ),
+        "observation_scopes": sorted(scopes.values(), key=lambda item: item["scope_id"]),
+        "observations": sorted(observations.values(), key=lambda item: item["observation_id"]),
+        "normalized_facts": sorted(facts.values(), key=lambda item: item["fact_id"]),
+        "fact_observation_bindings": sorted(
+            fact_bindings.values(), key=lambda item: item["binding_id"]
+        ),
+        "fact_evaluations": sorted(
+            fact_evaluations.values(), key=lambda item: item["evaluation_id"]
+        ),
+        "negative_observations": sorted(
+            negative_observations.values(), key=lambda item: item["negative_observation_id"]
+        ),
+        "negative_observation_evaluations": sorted(
+            negative_evaluations.values(), key=lambda item: item["evaluation_id"]
+        ),
+        "candidate_completion_records": [],
+        "candidate_claim_evaluation_events": [],
+        "invariant_evaluations": [],
+        "evidence_sufficiency_results": [],
+        "materialized_status": dict(sorted(materialized_status.items())),
+        "satisfied_target_predicates": sorted(satisfied),
+    }
+    if set(bundle["materialized_status"]) != set(differences):
+        raise DifferenceValidationError("materialized status does not cover every Difference")
+    return bundle
