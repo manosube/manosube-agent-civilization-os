@@ -1633,6 +1633,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             bounded_empty_valid = [
                 difference is not None
                 and required_scope is not None
+                and required_scope["scope_status"] == "COMPLETE"
                 and difference["normalized_target_state"]["operator"] == "none"
                 and not facts
                 and bool(negatives)
@@ -1684,7 +1685,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     <= required_scope["attempt_policy"]["max_attempts"]
                     and all(
                         attempt["method_ref"] == observation["method_ref"]
-                        and attempt["result"] == "EMPTY"
+                        and attempt["result"] in {"COMPLETE", "EMPTY"}
                         and attempt["failure_class"] is None
                         and datetime.fromisoformat(
                             attempt["started_at"].replace("Z", "+00:00")
@@ -1829,7 +1830,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 and observation["target"]["target_identity"]
                 == difference["target_predicate_ref"]["id"]
                 and observation["scope_ref"] == scope_reference
-                and observation["status"] in {"COMPLETE", "EMPTY"}
+                and (
+                    (
+                        positive_facts_valid[index]
+                        and observation["status"] == "COMPLETE"
+                    )
+                    or (
+                        bounded_empty_valid[index]
+                        and observation["status"] == "EMPTY"
+                    )
+                )
                 and observation["blind_spots"]["status"] == "NONE_KNOWN"
                 and (
                     bool(observation["normalized_fact_refs"])
