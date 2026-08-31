@@ -115,10 +115,14 @@ Closure Policyのlogical IDだけではexact bindingにならない。Difference
 
 Observationは同じProject、State revision、State fingerprintを参照しなければならない。異なるStateへObservationまたはDifferenceを再利用してはならない。
 
+`observation_evidence_refs`は、source Observationの`observation_evidence_refs`と、当該subjectへ寄与するNegative Observationの`negative_evidence_refs`とのexact unionである。Observation EvidenceとNegative Evidenceはreference kindが異なる別個のprovenance channelであり、同一視、代入、吸収してはならない。negative-derived Observed Stateは自身のbounded proofを保持したままDifferenceへ結合する。
+
 ```text
 STATE_BINDING_MISMATCH → INVALIDATED
 MISSING_OBSERVATION_EVIDENCE → NOT_DERIVABLE
 UNKNOWN_REFERENCE → REJECT_OR_QUARANTINE
+NEGATIVE_EVIDENCE ≠ OBSERVATION_EVIDENCE
+EVIDENCE_UNION_MISMATCH → NOT_DERIVABLE
 ```
 
 # 4. Target State and Observed State
@@ -131,8 +135,11 @@ Observed StateはNormalized Factsおよびbounded Negative Observationsから決
 UNKNOWN ≠ MATCH
 UNOBSERVED ≠ MATCH
 NO_RESULT ≠ ABSENT
+NO_RESULT ≠ PROVEN_ABSENCE
 CONFLICTED ≠ RESOLVED
 ```
+
+positive Factを伴わないbounded negative routeはcanonicalである。`ABSENT`と`EMPTY`はbounded Negative Evidenceとcompletion gateを必須とし、`NO_RESULT`、`FAILED`、`UNKNOWN`、`UNOBSERVED`はproven absenceへ昇格せず`UNKNOWN` knowledgeのまま保持する。
 
 TargetまたはObserved Stateを一意に解決できない場合、推測したDifferenceを生成しない。入力状態を`UNKNOWN`、`BLOCKED`、`CONFLICTED`または`INVALID`として保持する。
 
@@ -153,6 +160,8 @@ UNKNOWN
 ```
 
 Mismatchは解決方法を含まない。実行手順、Agent選択、command、patchは後段のChange proposalへ属する。
+
+観測されたvalue candidateは`structural_difference`へ欠落なく射影する。`observed_values`と`observed_value_types`は`normalized_observed_state.value_candidates`のcanonical member順に対応する`ORDERED_LIST`であり、valueまたはvalue typeを共有するcandidateをduplicate-free setへcollapseしてはならない。
 
 # 6. Impact, Risk, and Authority Required
 

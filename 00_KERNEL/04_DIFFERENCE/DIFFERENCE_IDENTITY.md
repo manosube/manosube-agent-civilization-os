@@ -153,20 +153,42 @@ normalized_structural_difference:
   mismatch_kind: VALUE_MISMATCH
   observed_knowledge_status: KNOWN
   target_value: PASS
-  observed_values: {collection_kind: UNORDERED_SET, members: []}
+  observed_values: {collection_kind: ORDERED_LIST, members: []}
   target_value_type: STRING
-  observed_value_types: {collection_kind: UNORDERED_SET, members: []}
+  observed_value_types: {collection_kind: ORDERED_LIST, members: []}
   target_cardinality: null
   observed_cardinality: null
   comparison_result: NOT_SATISFIED
   comparison_profile: MANOSUBE-DIFFERENCE-COMPARISON-0.1
 ```
 
-`mismatch_kind`は`MISSING | UNEXPECTED | VALUE_MISMATCH | TYPE_MISMATCH | CARDINALITY_MISMATCH | RELATION_MISMATCH | BOUNDARY_MISMATCH | CONFLICT | UNKNOWN`、`comparison_result`は`SATISFIED | NOT_SATISFIED | UNKNOWN`のclosed enumである。非該当fieldも省略せず`null`またはempty explicit setへ固定する。
+`mismatch_kind`は`MISSING | UNEXPECTED | VALUE_MISMATCH | TYPE_MISMATCH | CARDINALITY_MISMATCH | RELATION_MISMATCH | BOUNDARY_MISMATCH | CONFLICT | UNKNOWN`、`comparison_result`は`SATISFIED | NOT_SATISFIED | UNKNOWN`のclosed enumである。非該当fieldも省略せず`null`またはempty explicit collectionへ固定する。
+
+`observed_values`と`observed_value_types`は`ORDERED_LIST` wrapperであり、その順序は`normalized_observed_state.value_candidates`のcanonical member順から導出する。第i memberは第i candidateの`value`および`value_type`にexact対応し、memberを省略、併合、整列し直してはならない。
+
+この二つをduplicate-free `UNORDERED_SET`として表現してはならない。valueまたはvalue typeを共有する複数のdistinct candidateがcollapseされ、観測されたcandidateがsilentに欠落するためである。value candidate自身は`unit`、`fact_predicate`、`effective_boundary`を含む完全なprojectionのduplicate-free `UNORDERED_SET`であり続けるため、同一value・同一typeの二つのcandidateも別memberとして保持される。
+
+順序はsource入力順ではなくcandidate setのcanonical bytes順から導出されるため、source Factの並び替えでidentityは変化しない。member順が異なる`observed_values`はcandidate setと不一致であり、rejectする。
 
 導出順は、exact Target解決 → objective scope binding検証 → closed effective boundary生成 → State-bound observed input選択 → canonical Negative status mapping → conflict／knowledge評価 → source operatorのtotal evaluation → type → cardinality → relation → value → closed mismatch projection、の一つだけである。
 
 `effective_boundary`はpositive Factのboundaryを直接流用せず、resolved Scope、Target effective window、Observation source snapshot setから生成する上記closed projectionである。positive／negativeの双方で必須とし、scope／window／snapshot集合のいずれかが異なれば別boundaryである。source snapshotsはcanonical member bytes順のduplicate-free unordered setとする。
+
+Observation EvidenceとNegative Evidenceは、reference kindが異なる別個のprovenance channelである。両者を同一視、代入、吸収してはならない。Difference Recordの`observation_evidence_refs`は、source Observationの`observation_evidence_refs`と、当該subjectへ寄与するNegative Observationの`negative_evidence_refs`とのexact unionであり、過不足を許さない。
+
+```text
+observation_evidence_refs
+= observation.observation_evidence_refs
+∪ contributing_negative_observations.negative_evidence_refs
+```
+
+positive Factのみのrouteでは寄与するNegative Observationが存在しないためunionはObservation Evidenceと一致する。positive Factを伴わないbounded negative routeでも、`ABSENT`と`EMPTY`はbounded Negative Evidenceを必須とし、`NO_RESULT`、`FAILED`、`UNKNOWN`、`UNOBSERVED`はproven absenceへ昇格しない。Negative Observation Evaluationの`evidence_refs`は自身のNegative Evidence channelの部分集合でなければならず、Observation Evidence channelとの一致を要求してはならない。
+
+```text
+NO_RESULT ≠ PROVEN_ABSENCE
+UNOBSERVED ≠ PROVEN_ABSENCE
+NEGATIVE_EVIDENCE ≠ OBSERVATION_EVIDENCE
+```
 
 Operator評価を次へ固定する。
 

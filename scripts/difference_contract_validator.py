@@ -1314,7 +1314,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 for reference in latest["evidence_refs"]
             } <= {
                 canonical_json_bytes(reference)
-                for reference in observation["observation_evidence_refs"]
+                for reference in negative["negative_evidence_refs"]
             }
             and {
                 canonical_json_bytes(reference)
@@ -1336,6 +1336,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             for observation in source_observations if observation is not None
             for reference in observation["observation_evidence_refs"]
         }
+        # Observation Evidence and bounded Negative Evidence are distinct provenance
+        # channels with distinct reference kinds. The Difference binds the exact union of
+        # both, so a negative-derived observed state keeps its own bounded proof instead
+        # of being equated with the Evidence that the Observation itself ran.
+        negative_evidence = {
+            canonical_json_bytes(reference)
+            for negative in source_negatives
+            for reference in negative["negative_evidence_refs"]
+        }
+        required_evidence = source_evidence | negative_evidence
         source_observations_valid = bool(source_observations) and all(
             observation is not None
             and observation["project_id"] == difference["project_id"]
@@ -1368,11 +1378,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 or (
                     not observed_values
                     and source_negatives_valid
-                    and {
-                        canonical_json_bytes(reference)
+                    and all(
+                        negative["negative_evidence_refs"]
                         for negative in source_negatives
-                        for reference in negative["negative_evidence_refs"]
-                    } == source_evidence
+                        if negative["negative_status"] in {"ABSENT", "EMPTY"}
+                    )
                 )
             )
             and all(
@@ -1412,7 +1422,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 )
                 for candidate in observed["value_candidates"]["members"]
             )
-            and source_evidence == {
+            and required_evidence == {
                 canonical_json_bytes(reference)
                 for reference in difference["observation_evidence_refs"]
             }
@@ -1438,10 +1448,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             or structural["observed_knowledge_status"] != observed["knowledge_status"]
             or structural["target_value"] != target["expected_value"]
             or structural["target_value_type"] != target["expected_value_type"]
-            or sorted(structural["observed_values"]["members"], key=repr)
-            != sorted(observed_values, key=repr)
-            or sorted(structural["observed_value_types"]["members"])
-            != sorted(observed_types)
+            or structural["observed_values"]["members"] != observed_values
+            or structural["observed_value_types"]["members"] != observed_types
             or structural["comparison_result"] != derived_comparison
             or derived_comparison == "SATISFIED"
             or structural["mismatch_kind"] != derived_mismatch
@@ -2450,12 +2458,32 @@ def apply_mutation(bundle: dict[str, Any], path: list[str | int], value: Any) ->
 
 
 def validate_fixture_suite(root: Path) -> tuple[int, int, list[str], list[str]]:
-    valid_bundle = load_json(root / "valid" / "bundle.json")
-    invalid_cases = load_json(root / "invalid" / "cases.json")
-    valid_errors = validate_bundle(valid_bundle)
-    invalid_escapes = [
-        case["name"]
-        for case in invalid_cases
-        if not validate_bundle(apply_mutation(valid_bundle, case["path"], case["value"]))
-    ]
-    return 1, len(invalid_cases), valid_errors, invalid_escapes
+    """Validate every valid bundle in *root* against its own invalid mutation cases.
+
+    ``valid/<stem>.json`` is paired with ``invalid/<stem with "bundle" replaced by
+    "cases">.json``, so ``valid/bundle.json`` keeps its original ``invalid/cases.json``
+    pairing while each additional canonical route carries its own mutation suite.
+    """
+
+    valid_count = 0
+    invalid_count = 0
+    valid_errors: list[str] = []
+    invalid_escapes: list[str] = []
+    for bundle_path in sorted((root / "valid").glob("*.json")):
+        cases_path = root / "invalid" / f"{bundle_path.stem.replace('bundle', 'cases')}.json"
+        valid_bundle = load_json(bundle_path)
+        valid_count += 1
+        valid_errors.extend(
+            f"{bundle_path.stem}: {error}" for error in validate_bundle(valid_bundle)
+        )
+        if not cases_path.exists():
+            valid_errors.append(f"{bundle_path.stem}: missing invalid mutation cases")
+            continue
+        cases = load_json(cases_path)
+        invalid_count += len(cases)
+        invalid_escapes.extend(
+            f"{bundle_path.stem}: {case['name']}"
+            for case in cases
+            if not validate_bundle(apply_mutation(valid_bundle, case["path"], case["value"]))
+        )
+    return valid_count, invalid_count, valid_errors, invalid_escapes
