@@ -355,7 +355,7 @@ Before creating or splitting work, the Structural Advisor MUST apply:
 6. Select the execution capability appropriate to the package.
 7. Preserve Human merge and irreversible-risk boundaries.
 8. Extend the predecessor natural route by exactly one Kernel boundary.
-9. Independently inspect the resulting Pull Request.
+9. Independently inspect the resulting change through the replaceable repository change-review / acceptance capability; a Pull Request is one interchangeable implementation.
 10. Reflow the observed result; do not infer Completion from work volume.
 ```
 
