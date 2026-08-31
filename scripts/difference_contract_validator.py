@@ -186,8 +186,8 @@ def _observation_attempts_complete(
 def _observation_time_boundary_complete(
     observation: dict[str, Any], scope: dict[str, Any],
 ) -> bool:
-    boundary = observation["time_boundary"]
     try:
+        boundary = observation["time_boundary"]
         observed_start = datetime.fromisoformat(
             boundary["observation_started_at"].replace("Z", "+00:00")
         )
@@ -216,7 +216,21 @@ def _observation_time_boundary_complete(
             scope["target_effective_window"]["end"].replace("Z", "+00:00")
         )
         cutoff = datetime.fromisoformat(scope["cutoff"].replace("Z", "+00:00"))
-    except (KeyError, TypeError, ValueError):
+        freshness_limit = scope["freshness_limit_seconds"]
+        if isinstance(freshness_limit, bool) or not isinstance(freshness_limit, (int, float)):
+            return False
+        # A naive instant would compare against an aware one and raise, or silently
+        # compare against another naive one; both fail closed here instead.
+        if any(
+            moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None
+            for moment in (
+                observed_start, observed_end, effective_start, effective_end,
+                snapshot, scope_observed_start, scope_observed_end,
+                scope_effective_start, scope_effective_end, cutoff,
+            )
+        ):
+            return False
+    except (AttributeError, KeyError, TypeError, ValueError):
         return False
     return (
         observed_start <= observed_end
@@ -225,7 +239,7 @@ def _observation_time_boundary_complete(
         and scope_effective_start <= effective_start <= effective_end <= scope_effective_end
         and effective_start <= snapshot <= observed_end
         and snapshot <= cutoff
-        and (cutoff - snapshot).total_seconds() <= scope["freshness_limit_seconds"]
+        and (cutoff - snapshot).total_seconds() <= freshness_limit
     )
 
 

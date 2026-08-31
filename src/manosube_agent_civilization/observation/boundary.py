@@ -45,21 +45,46 @@ def fact_boundary_observed(boundary: dict[str, Any], observation: dict[str, Any]
 
 
 def instant(value: str) -> datetime:
-    """Parse a canonical UTC instant."""
+    """Parse a canonical UTC instant.
 
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    A value that is not a string, not ISO-8601, or carries no timezone offset raises, so
+    every caller of this module fails closed rather than comparing a naive instant against
+    an aware one.
+    """
+
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
+        raise ValueError(f"instant carries no timezone offset: {value!r}")
+    return parsed
 
 
 def time_boundary_within_scope(observation: dict[str, Any], scope: dict[str, Any]) -> bool:
     """Return whether *observation*'s time boundary falls inside the resolved Scope.
 
-    The observation window, the Target effective window, the source snapshot instant and
-    the Scope cutoff are one containment rule, owned here so the Observation Engine that
-    reports completeness and any consumer that verifies the binding cannot disagree.
+    This is the single executable projection of the canonical Observation Scope time
+    contract, and it carries every obligation that contract states:
+
+    ```text
+    parseable, timezone-aware instants        else fail closed
+    observation window ordering               observed_start <= observed_end
+    Target effective window ordering          effective_start <= effective_end
+    observation window containment            inside scope.observation_window
+    Target effective window containment       inside scope.target_effective_window
+    snapshot inside the observed interval      effective_start <= snapshot <= observed_end
+    snapshot not after cutoff                 snapshot <= cutoff
+    snapshot within the freshness limit       cutoff - snapshot <= freshness_limit_seconds
+    ```
+
+    The freshness limit is not implied by the cutoff: a snapshot may precede the cutoff and
+    still be older than the Scope permits. Dropping it would let a stale source reach a
+    COMPLETE Observation, bounded absence and a Difference.
+
+    The Observation Engine that reports completeness, the Difference Engine that verifies
+    an Observation's binding, and the independent validator all decide this one way.
     """
 
-    boundary = observation["time_boundary"]
     try:
+        boundary = observation["time_boundary"]
         observed_start = instant(boundary["observation_started_at"])
         observed_end = instant(boundary["observation_ended_at"])
         effective_start = instant(boundary["target_effective_start"])
@@ -70,7 +95,10 @@ def time_boundary_within_scope(observation: dict[str, Any], scope: dict[str, Any
         scope_effective_start = instant(scope["target_effective_window"]["start"])
         scope_effective_end = instant(scope["target_effective_window"]["end"])
         cutoff = instant(scope["cutoff"])
-    except (KeyError, TypeError, ValueError):
+        freshness_limit = scope["freshness_limit_seconds"]
+        if isinstance(freshness_limit, bool) or not isinstance(freshness_limit, (int, float)):
+            return False
+    except (AttributeError, KeyError, TypeError, ValueError):
         return False
     return (
         observed_start <= observed_end
@@ -79,4 +107,5 @@ def time_boundary_within_scope(observation: dict[str, Any], scope: dict[str, Any
         and scope_effective_start <= effective_start <= effective_end <= scope_effective_end
         and effective_start <= snapshot <= observed_end
         and snapshot <= cutoff
+        and (cutoff - snapshot).total_seconds() <= freshness_limit
     )

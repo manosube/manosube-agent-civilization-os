@@ -1396,6 +1396,13 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 list(fact_evaluations.values()),
             )
 
+    # Every Observation now in the bundle -- bound, reached by the context closure, or
+    # supplied only as predecessor provenance -- is verified before it is returned.
+    _validate_carried_observations(
+        observations, scopes, facts, fact_bindings, fact_evaluations,
+        negative_observations, negative_evaluations, project_id,
+    )
+
     return _finalize(
         request, objective_revisions, differences, events, policies, relations, requests, methods,
         scopes, observations, facts, fact_bindings, fact_evaluations,
@@ -1617,6 +1624,68 @@ def _absorb_observation_context(
         ],
         "evaluation_id",
     )
+
+
+def _validate_carried_observations(
+    observations: dict[str, dict[str, Any]],
+    scopes: dict[str, dict[str, Any]],
+    facts: dict[str, dict[str, Any]],
+    fact_bindings: dict[str, dict[str, Any]],
+    fact_evaluations: dict[str, dict[str, Any]],
+    negative_observations: dict[str, dict[str, Any]],
+    negative_evaluations: dict[str, dict[str, Any]],
+    project_id: str,
+) -> None:
+    """Verify every Observation the returned bundle carries, against its own Scope.
+
+    An Observation reaching the bundle through ``predecessor.context`` alone is never
+    repeated by the current Observation bundle, so the overlap agreement check has nothing
+    to compare it against. Without this pass such a record could be altered while retaining
+    its ``observation_id`` and merged as immutable provenance, unvalidated.
+
+    This is the single place that decides the property "every Observation in the returned
+    bundle is verified", so it applies uniformly to the bound Observation, to every
+    Observation the context closure reaches, and to predecessor-only provenance. Records
+    are verified, never rewritten or repaired: a carried record that does not pass is a
+    forgery or an incomplete lineage, and either fails closed.
+    """
+
+    for identity, observation in sorted(observations.items()):
+        reference = observation.get("scope_ref")
+        scope_id = None if not isinstance(reference, dict) else reference.get("id")
+        if not isinstance(scope_id, str):
+            raise DifferenceError(
+                f"carried Observation has no resolvable Scope reference: {identity}"
+            )
+        scope = scopes.get(scope_id)
+        if scope is None:
+            # A Scope the caller never supplied cannot be reconstructed, and guessing one
+            # would be repairing the record rather than verifying it.
+            raise DifferenceError(
+                f"carried Observation names a Scope absent from the bundle: "
+                f"{identity} -> {scope_id}"
+            )
+        validate_record(scope, "observation_scope.schema.json", base=OBSERVATION_SCHEMA_BASE)
+        if scope["scope_id"] != scope_id:
+            raise IdentityCollisionError(
+                f"carried Observation Scope record does not name its own id: {scope_id}"
+            )
+        _validate_observation_boundary(observation, scope, project_id)
+
+    errors = observation_record_errors(
+        {
+            "facts": list(facts.values()),
+            "observations": list(observations.values()),
+            "bindings": list(fact_bindings.values()),
+            "fact_evaluations": list(fact_evaluations.values()),
+            "negative_observations": list(negative_observations.values()),
+            "negative_evaluations": list(negative_evaluations.values()),
+        }
+    )
+    if errors:
+        raise DifferenceError(
+            f"carried Observation records are not cross-record valid: {sorted(errors)[0]}"
+        )
 
 
 def _absorb_predecessor_context(

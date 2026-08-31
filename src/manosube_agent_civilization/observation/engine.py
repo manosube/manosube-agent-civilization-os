@@ -276,8 +276,16 @@ def _observation_status(
     occurrence_outcomes: list[str],
     has_facts: bool,
     collection_complete: bool,
+    time_boundary_complete: bool,
 ) -> str:
     scope_status = scope["scope_status"]
+    if not time_boundary_complete:
+        # An Observation whose window, snapshot instant or snapshot freshness falls
+        # outside its own resolved Scope has not completely observed that Scope. Reporting
+        # COMPLETE or EMPTY would present a stale or out-of-window source as a settled
+        # one, so the status degrades to INCOMPLETE and every downstream gate that
+        # requires completeness fails closed.
+        return "INCOMPLETE"
     if scope_status in {"INVALID", "CONFLICTED", "BLOCKED", "UNOBSERVED"}:
         return scope_status
     results = [attempt["result"] for attempt in attempts]
@@ -447,6 +455,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         occurrence_outcomes,
         bool(observed_facts),
         collection_complete,
+        time_boundary_within_scope(observation_identity_payload, scope),
     )
     observation = {
         "schema_version": "0.1",

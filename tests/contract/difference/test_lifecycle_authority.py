@@ -281,3 +281,41 @@ def test_one_next_observation_request_derivation_path() -> None:
     assert body.count("_next_observation_request(") == 1
     # And it refuses to derive a second request for an event that already carries one.
     assert 'if head["next_observation_ref"] is not None:' in body
+
+
+def test_one_carried_observation_verification_pass() -> None:
+    """Every Observation in a returned bundle is verified by one owner, before return."""
+
+    source = (
+        ROOT / "src" / "manosube_agent_civilization" / "difference" / "engine.py"
+    ).read_text(encoding="utf-8")
+    body = source.split("def derive_differences(")[1].split("\ndef ")[0]
+    assert body.count("_validate_carried_observations(") == 1
+    assert source.index("_validate_carried_observations(\n") < source.index(
+        "    return _finalize("
+    )
+    pass_body = source.split("def _validate_carried_observations(")[1].split("\ndef ")[0]
+    for obligation in (
+        "_validate_observation_boundary(observation, scope, project_id)",
+        "observation_record_errors(",
+        "names a Scope absent from the bundle",
+        'validate_record(scope, "observation_scope.schema.json"',
+    ):
+        assert obligation in pass_body, obligation
+
+
+def test_every_returned_observation_recomputes_and_resolves_its_scope() -> None:
+    from tests.difference_helpers import reobservation_pair
+
+    from manosube_agent_civilization.difference import derive_differences
+    from manosube_agent_civilization.observation.boundary import time_boundary_within_scope
+    from manosube_agent_civilization.observation.identity import observation_identity
+
+    _, later_request = reobservation_pair()
+    bundle = derive_differences(later_request)
+    scopes = {item["scope_id"]: item for item in bundle["observation_scopes"]}
+    assert bundle["observations"]
+    for observation in bundle["observations"]:
+        assert observation["observation_id"] == observation_identity(observation)
+        scope = scopes[observation["scope_ref"]["id"]]
+        assert time_boundary_within_scope(observation, scope)
