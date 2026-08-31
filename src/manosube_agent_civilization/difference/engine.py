@@ -64,6 +64,11 @@ from .lifecycle import (
     is_legal_transition,
     legal_supersession_sources,
 )
+from .predecessor import (
+    validate_carried_difference,
+    validate_carried_event,
+    validate_carried_records,
+)
 from .projection import (
     derive_comparison_and_mismatch,
     effective_boundary,
@@ -925,27 +930,34 @@ def _reject_hostile_input(request: dict[str, Any]) -> None:
 
 
 def _validate_predecessor(predecessor: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    # Every caller-supplied record crosses the typed validation boundary before it is
+    # read, copied or merged: schema, identity, type-specific invariants, and the
+    # context's own same-identity/different-payload collisions.
+    unknown = set(predecessor) - {"difference", "events", "context"}
+    if unknown:
+        raise DifferenceError(f"predecessor carries unknown sections: {sorted(unknown)}")
+    validate_carried_records(predecessor.get("context", {}))
+
+    context = predecessor.get("context", {})
+    carried_requests = {
+        record["observation_request_id"]: record
+        for record in context.get("next_observation_requests", [])
+    }
+    carried_methods = {
+        record["observation_method_id"]: record
+        for record in context.get("observation_methods", [])
+    }
     difference = predecessor["difference"]
+    validate_carried_difference(difference)
     events = sorted(predecessor["events"], key=lambda item: item["event_revision"])
-    if difference["difference_id"] != derive_difference_id(difference):
-        raise DifferenceError("predecessor Difference identity does not recompute")
+    for event in events:
+        validate_carried_event(event, difference, carried_requests, carried_methods)
     if not events or events[0]["event_revision"] != 0 or events[0]["to_status"] != "DETECTED":
         raise DifferenceError("predecessor lineage does not start at a null to DETECTED genesis")
     for revision, event in enumerate(events):
         expected_previous = None if revision == 0 else events[revision - 1]["difference_event_id"]
         if event["event_revision"] != revision or event["previous_event_id"] != expected_previous:
             raise DifferenceError("predecessor lineage is not a contiguous append-only chain")
-        if event["difference_id"] != difference["difference_id"]:
-            raise DifferenceError("predecessor event is bound to a different Difference")
-        # Every event in the chain, not only its head, must recompute to the identity it
-        # carries. Without this a caller could alter an identity-bearing field such as
-        # reason_code, observation_refs or evidence_refs while keeping the old event ID,
-        # and the forged event would be copied into the returned append-only lineage.
-        validate_record(event, "difference_lifecycle_event.schema.json")
-        if event["difference_event_id"] != lifecycle_event_id(event):
-            raise DifferenceError(
-                f"predecessor event identity does not recompute: {event['difference_event_id']}"
-            )
         expected_from = None if revision == 0 else events[revision - 1]["to_status"]
         if event["from_status"] != expected_from:
             raise DifferenceError(

@@ -290,26 +290,40 @@ def test_missing_blocker_payload_on_a_blocked_predecessor_fails_closed() -> None
         derive_differences(request)
 
 
-def test_stale_blocker_boundary_is_rederived_not_copied() -> None:
+def test_a_predecessor_blocker_boundary_that_contradicts_its_difference_is_rejected() -> None:
+    """The blocker payload is outside event identity, so the boundary decides it.
+
+    This lineage was previously accepted and only reported by the independent auditor
+    afterwards; the typed predecessor boundary now rejects it before anything is copied.
+    """
+
     _, request = retained_status_predecessor("BLOCKED", "BLOCKER_REOBSERVATION")
     events = _predecessor_events(request)
-    stale = {"kind": "OBSERVATION_SCOPE_BOUNDARY", "scope_ref": {"kind": "observation_scope", "id": "OBS-SCOPE-STALE"},
-             "resolved_scope_record_sha256": "sha256:" + "0" * 64,
-             "target_effective_window": {"start": None, "end": None},
-             "source_snapshot_refs": {"collection_kind": "UNORDERED_SET", "members": []}}
+    stale = {
+        "kind": "OBSERVATION_SCOPE_BOUNDARY",
+        "scope_ref": {"kind": "observation_scope", "id": "OBS-SCOPE-STALE"},
+        "resolved_scope_record_sha256": "sha256:" + "0" * 64,
+        "target_effective_window": {"start": None, "end": None},
+        "source_snapshot_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+    }
     events[-1]["blocker_scope"]["effective_boundary"] = stale
     events[-1]["difference_event_id"] = lifecycle_event_id(events[-1])
+    with pytest.raises(DifferenceError, match="blocker boundary mismatch"):
+        derive_differences(request)
+
+
+def test_the_appended_blocker_boundary_is_rederived_from_the_current_difference() -> None:
+    """On the valid route the append builds its boundary, it never copies one."""
+
+    _, request = retained_status_predecessor("BLOCKED", "BLOCKER_REOBSERVATION")
     bundle = derive_differences(request)
     bound = sorted(bundle["events"], key=lambda item: item["event_revision"])[-1]
-    assert bound["blocker_scope"]["effective_boundary"] != stale
+    assert bound["event_kind"] == "OBSERVATION_BOUND"
     assert (
         bound["blocker_scope"]["effective_boundary"]
         == bundle["differences"][0]["effective_boundary"]
     )
-    # The corrupted predecessor is still reported, but the re-derived event is clean.
-    errors = validate_bundle(bundle)
-    assert errors, "the corrupted predecessor event must still be reported"
-    assert not any(bound["difference_event_id"] in error for error in errors)
+    assert validate_bundle(bundle) == []
 
 
 def test_stale_forward_reference_is_never_copied() -> None:

@@ -337,7 +337,9 @@ def test_a_retained_event_forward_reference_that_resolves_nowhere_is_rejected() 
         "kind": "next_observation_request",
         "id": "OBS-REQ-ABSENT-FROM-EVERY-LINEAGE",
     }
-    with pytest.raises(DifferenceError, match="does not resolve"):
+    # The typed boundary now names this precisely, through the shared lifecycle authority,
+    # rather than leaving it to the later lineage-resolution sweep.
+    with pytest.raises(DifferenceError, match="next observation binding mismatch"):
         derive_differences(_reobservation_with(predecessor))
 
 

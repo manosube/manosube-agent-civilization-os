@@ -466,6 +466,59 @@ def _content_addressed_request(
     return request
 
 
+
+def _candidate_closure_evaluation(
+    difference: dict[str, Any], evaluation: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the CANDIDATE_CLOSURE fields a conformant CLOSED evaluation requires.
+
+    A CLOSED terminal status cannot be reached by a policy-only evaluation: the canonical
+    schema requires an after-state candidate, a resolution mode, at least one
+    after-observation reference, an Evidence sufficiency reference and a passing G22. The
+    Difference Engine creates none of this -- it is later-phase provenance a caller
+    supplies -- so the helper supplies it, exactly as an upstream owner would.
+    """
+
+    from manosube_agent_civilization.state import fingerprint_semantic_state
+
+    state = semantic_state("KNOWN")
+    fingerprint = fingerprint_semantic_state(state).as_dict()
+    candidate_id = "STATE-CANDIDATE-" + fingerprint["digest"].upper()[:64]
+    return {
+        "evaluation_mode": "CANDIDATE_CLOSURE",
+        "resolution_mode": "CHANGE_FREE",
+        "after_state_candidate": {
+            "kind": "after_state_candidate",
+            "candidate_id": candidate_id,
+            "kernel_source_ref": deepcopy(evaluation["kernel_source_ref_evaluated"]),
+            "base_state_ref": {
+                "kind": "state",
+                "revision": difference["observed_state_revision"],
+                "fingerprint": deepcopy(difference["observed_state_fingerprint"]),
+            },
+            "semantic_state": state,
+            "semantic_fingerprint": fingerprint,
+            "source_snapshot_refs": {
+                "collection_kind": "UNORDERED_SET",
+                "members": [deepcopy(SNAPSHOT_REF)],
+            },
+            "producing_change_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        },
+        "change_refs": [],
+        "after_observation_refs": [
+            deepcopy(reference) for reference in difference["observation_refs"]
+        ],
+        "change_result_evidence_refs": [],
+        "change_free_verification_evidence_refs": [deepcopy(EVIDENCE_REF)],
+        "evidence_sufficiency_ref": {
+            "kind": "evidence_sufficiency_result",
+            "id": "EVID-SUFF-0001",
+        },
+        "proposed_terminal_status": "CLOSED",
+        "result": "SATISFIED",
+    }
+
+
 def retained_status_predecessor(
     status: str,
     reason_code: str = "BLOCKER_REOBSERVATION",
@@ -583,10 +636,19 @@ def retained_status_predecessor(
             "evaluated_state_revision": difference["observed_state_revision"],
             "evaluated_state_fingerprint": deepcopy(difference["observed_state_fingerprint"]),
             "policy_ref": deepcopy(difference["closure_policy"]),
-            "proposed_terminal_status": status,
-            "result": status,
         }
     )
+    # The canonical Closure Evaluation schema binds mode, proposed terminal status and
+    # result together. TERMINAL_POLICY_ONLY admits only BLOCKED and RETAINED, with a
+    # BLOCKED result; a CLOSED evaluation needs CANDIDATE_CLOSURE with an after-state
+    # candidate. The helper stands in for the later-phase owner and must supply a
+    # conformant record, because the Difference Engine now validates every carried record
+    # against its canonical schema before accepting it.
+    if status in {"BLOCKED", "RETAINED"}:
+        evaluation["proposed_terminal_status"] = status
+        evaluation["result"] = "BLOCKED"
+    elif status in {"CLOSED", "REOPENED"}:
+        evaluation.update(_candidate_closure_evaluation(difference, evaluation))
     if status in {"BLOCKED", "RETAINED", "CLOSED", "REOPENED"}:
         terminal["closure_evaluation_ref"] = {
             "kind": "closure_evaluation",
@@ -626,7 +688,9 @@ def retained_status_predecessor(
         }
 
     context = deepcopy(baseline)
-    context["evaluations"] = [evaluation]
+    context["evaluations"] = (
+        [evaluation] if status in {"BLOCKED", "RETAINED", "CLOSED", "REOPENED"} else []
+    )
     if any(event["reflow_transition_ref"] is not None for event in upstream):
         # A CLOSED transition references a Reflow record owned by a later phase. The
         # caller supplies it; the Difference Engine only carries it forward.

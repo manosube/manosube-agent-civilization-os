@@ -12,7 +12,11 @@ import shutil
 import subprocess
 from typing import Any
 
-from manosube_agent_civilization.difference.lifecycle import LEGAL_TRANSITIONS
+from manosube_agent_civilization.difference.lifecycle import (
+    LEGAL_TRANSITIONS,
+    blocker_payload_errors,
+    next_observation_binding_errors,
+)
 from manosube_agent_civilization.observation.boundary import fact_boundary_observed
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.errors import SchemaValidationError
@@ -1118,69 +1122,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     or closure["gate_results"]["G22"] != "PASS"
                 ):
                     errors.append(f"reopen closure binding mismatch: {event['difference_event_id']}")
-            if event["to_status"] == "BLOCKED":
-                if not event["evidence_refs"]:
-                    errors.append(f"blocked lifecycle Evidence missing: {event['difference_event_id']}")
-                scope = event["blocker_scope"]
-                condition = event["blocker_resolution_condition"]
-                if scope is None or condition is None or event["blocker_kind"] is None:
-                    errors.append(f"incomplete blocker payload: {event['difference_event_id']}")
-                else:
-                    difference = differences.get(difference_id)
-                    if not scope["affected_subject_refs"]["members"]:
-                        errors.append(f"empty blocker subject set: {event['difference_event_id']}")
-                    if difference and scope["effective_boundary"] != difference["effective_boundary"]:
-                        errors.append(f"blocker boundary mismatch: {event['difference_event_id']}")
-                    if _ref_id(condition["verification_request_ref"]) != _ref_id(event["next_observation_ref"]):
-                        errors.append(f"blocker verification request mismatch: {event['difference_event_id']}")
-                    if condition["subject_ref"] not in scope["affected_subject_refs"]["members"]:
-                        errors.append(f"blocker condition subject mismatch: {event['difference_event_id']}")
-                    expected_states = {
-                        "AUTHORITY_PATH_AVAILABLE": "AVAILABLE",
-                        "EXECUTION_PATH_AVAILABLE": "AVAILABLE",
-                        "OBSERVATION_PATH_AVAILABLE": "AVAILABLE",
-                        "REQUIRED_EVIDENCE_AVAILABLE": "AVAILABLE",
-                        "BINDINGS_CURRENT": "CURRENT",
-                        "MATERIAL_CONFLICT_RESOLVED": "RESOLVED",
-                        "INVARIANTS_PASS": "PASS",
-                        "CLAIMS_PASS": "PASS",
-                        "STRUCTURAL_BLOCKER_REMOVED": "REMOVED",
-                    }
-                    if expected_states.get(condition["condition_code"]) != condition["expected_state"]:
-                        errors.append(f"blocker condition state mismatch: {event['difference_event_id']}")
-            elif any(
-                event[key] is not None
-                for key in ("blocker_kind", "blocker_scope", "blocker_resolution_condition")
-            ):
-                errors.append(f"non-BLOCKED event carries blocker payload: {event['difference_event_id']}")
-            if event["to_status"] in {"RETAINED", "REOPENED"} and event["next_observation_ref"] is None:
-                errors.append(f"next observation missing: {event['difference_event_id']}")
-            if event["next_observation_ref"] is not None:
-                request_ref = event["next_observation_ref"]
-                request = requests.get(_ref_id(request_ref) or "")
-                difference = differences.get(difference_id)
-                method = None if request is None else methods.get(_ref_id(request["method_ref"]) or "")
-                if (
-                    request_ref.get("kind") != "next_observation_request"
-                    or request is None
-                    or difference is None
-                    or _ref_id(request["difference_ref"]) != difference_id
-                    or _ref_id(request["derived_from_event_ref"]) != event["difference_event_id"]
-                    or request["state_revision_requested"] != event["state_revision_evaluated"]
-                    or request["state_fingerprint_requested"] != event["state_fingerprint_evaluated"]
-                    or request["target_ref"] != difference["target_predicate_ref"]
-                    or request["scope_ref"] != difference["objective_scope_binding"]["scope_ref"]
-                    or request["method_ref"].get("kind") != "observation_method"
-                    or method is None
-                    or request["observation_request_id"]
-                    != _content_address("OBS-REQ-", request, "observation_request_id")
-                    or (
-                        method is not None
-                        and method["observation_method_id"]
-                        != _content_address("OBS-METHOD-", method, "observation_method_id")
-                    )
-                ):
-                    errors.append(f"next observation binding mismatch: {event['difference_event_id']}")
+            # Blocker payload and Next Observation Request binding are decided by the
+            # single shared lifecycle authority, so this validator and the Engine cannot
+            # disagree about them.
+            errors.extend(blocker_payload_errors(event, differences.get(difference_id)))
+            errors.extend(
+                next_observation_binding_errors(
+                    event, differences.get(difference_id), requests, methods, _content_address
+                )
+            )
+
             # A status-preserving OBSERVATION_BOUND event is a provenance append, not a
             # lifecycle transition, so it does not re-enter the terminal status and must
             # not demand a fresh Closure Evaluation. The TRANSITION that entered the

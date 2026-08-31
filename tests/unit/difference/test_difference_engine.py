@@ -364,8 +364,13 @@ def test_same_identity_with_a_different_semantic_payload_is_rejected() -> None:
 
 def test_invalid_predecessor_lineage_is_rejected() -> None:
     baseline = derive_differences(single_binding_request())
+    from manosube_agent_civilization.difference.identity import lifecycle_event_id
+
     events = deepcopy(baseline["events"])
     events[1]["previous_event_id"] = "D-EVT-" + "0" * 64
+    # `previous_event_id` is an event identity input, so the identity is recomputed here
+    # to prove that chain continuity is what rejects this lineage, not identity alone.
+    events[1]["difference_event_id"] = lifecycle_event_id(events[1])
     request = single_binding_request()
     request["bindings"][0]["predecessor"] = {
         "difference": baseline["differences"][0],

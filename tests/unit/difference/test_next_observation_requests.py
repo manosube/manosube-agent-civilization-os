@@ -125,27 +125,43 @@ def test_a_blocked_retained_reobservation_stays_cross_record_valid() -> None:
     )
 
 
-@pytest.mark.parametrize("status", ["RETAINED", "REOPENED"])
-def test_retained_and_reopened_carry_their_request_but_are_not_claimed_complete(
-    status: str,
-) -> None:
-    """The emitted event and its single request are proven; full validity is not claimed.
+def test_a_retained_reobservation_is_now_fully_cross_record_valid() -> None:
+    """RETAINED became provable once its Closure Evaluation was made conformant.
 
-    Complete cross-record validity for these two predecessors additionally requires
-    Closure Evaluation modes and Reflow records owned by later phases, which this Engine
-    deliberately does not create. Recording that boundary is preferable to fabricating an
-    upstream owner's records.
+    The predecessor's Closure Evaluation is caller-supplied later-phase provenance. Once
+    the typed boundary began validating it against its canonical schema, the helper had to
+    supply a conformant record -- and with one, the whole RETAINED lineage validates end
+    to end. This property was previously recorded as unproven.
     """
 
     _, request = retained_status_predecessor(
-        status, NEXT_OBSERVATION_REASON[status], **_UNRESOLVED
+        "RETAINED", NEXT_OBSERVATION_REASON["RETAINED"], **_UNRESOLVED
+    )
+    bundle = derive_differences(request)
+    assert validate_bundle(bundle) == []
+    appended = _appended(bundle)
+    assert len(_derived_from(bundle, appended)) == 1
+    assert _derived_from(bundle, appended)[0]["reason_code"] == "RETAINED_REOBSERVATION"
+
+
+def test_reopened_carries_its_request_but_is_not_claimed_complete() -> None:
+    """REOPENED remains unproven, and the test pins exactly what is left.
+
+    A conformant REOPENED lineage additionally requires the Evidence sufficiency, candidate
+    claim and candidate invariant bindings a CANDIDATE_CLOSURE evaluation must satisfy --
+    later-phase machinery this Engine deliberately does not create. Every remaining message
+    must name that Closure Evaluation or an upstream lifecycle event, and none may concern
+    a Next Observation Request.
+    """
+
+    _, request = retained_status_predecessor(
+        "REOPENED", NEXT_OBSERVATION_REASON["REOPENED"], **_UNRESOLVED
     )
     bundle = derive_differences(request)
     appended = _appended(bundle)
     assert len(_derived_from(bundle, appended)) == 1
-    # What remains concerns only the caller-supplied Closure Evaluation and the upstream
-    # lifecycle events that reach these statuses -- records owned by later phases. Nothing
-    # remaining concerns a Next Observation Request, which is what this test governs.
+    assert _derived_from(bundle, appended)[0]["reason_code"] == "REOPEN_REOBSERVATION"
+
     remaining = validate_bundle(bundle)
     assert remaining
     for message in remaining:
