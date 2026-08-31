@@ -29,6 +29,12 @@ KNOWLEDGE_STATUSES = frozenset(
     {"KNOWN", "ABSENT", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE", "CONFLICTED"}
 )
 UNRESOLVED_KNOWLEDGE = frozenset({"UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE"})
+# Bounded proven absence is evaluable knowledge: ABSENT and EMPTY are conclusions backed
+# by bounded Negative Evidence and a complete enumeration, not unresolved observations.
+# An unresolved status never joins this set, so NO_RESULT and UNOBSERVED can never become
+# proven absence or satisfaction.
+PROVEN_ABSENCE = frozenset({"ABSENT", "EMPTY"})
+EVALUABLE_KNOWLEDGE = frozenset({"KNOWN"}) | PROVEN_ABSENCE
 _DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 
 _NEGATIVE_STATUS_MAP = {
@@ -259,11 +265,9 @@ def derive_comparison_and_mismatch(
     if any(not _candidate_type_matches_target(item, target) for item in candidates):
         return "NOT_SATISFIED", "TYPE_MISMATCH"
     comparison = (
-        "UNKNOWN"
-        if knowledge != "KNOWN"
-        else "SATISFIED"
-        if target_satisfied(values, target)
-        else "NOT_SATISFIED"
+        ("SATISFIED" if target_satisfied(values, target) else "NOT_SATISFIED")
+        if knowledge in EVALUABLE_KNOWLEDGE
+        else "UNKNOWN"
     )
     if not candidates and operator in {"equals", "not_equals", "contains", "exists", "all"}:
         return "NOT_SATISFIED", "MISSING"

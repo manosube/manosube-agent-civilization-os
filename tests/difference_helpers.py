@@ -165,8 +165,9 @@ def observation_request(
     state_revision: int = STATE_REVISION,
     negative_claims: list[dict[str, Any]] | None = None,
     collection_complete: bool = True,
+    prior_bundle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    request: dict[str, Any] = {
         "project_id": PROJECT_ID,
         "state_revision_observed": state_revision,
         "state_fingerprint_observed": deepcopy(fingerprint),
@@ -206,6 +207,9 @@ def observation_request(
         "negative_claims": deepcopy(negative_claims) if negative_claims else [],
         "collection_complete": collection_complete,
     }
+    if prior_bundle is not None:
+        request["prior_bundle"] = deepcopy(prior_bundle)
+    return request
 
 
 def raw_fact(
@@ -258,12 +262,23 @@ def observed_bundle(
     state_revision: int = STATE_REVISION,
     negative_claims: list[dict[str, Any]] | None = None,
     collection_complete: bool = True,
+    prior_bundle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run the real Observation Engine and return its canonical bundle."""
+    """Run the real Observation Engine and return its canonical bundle.
+
+    Passing *prior_bundle* continues the real append-only Observation lineage, which is
+    what an equivalent re-observation of the same subject actually does.
+    """
 
     return observe(
         observation_request(
-            scope, facts, fingerprint, state_revision, negative_claims, collection_complete
+            scope,
+            facts,
+            fingerprint,
+            state_revision,
+            negative_claims,
+            collection_complete,
+            prior_bundle,
         )
     )
 
@@ -340,3 +355,55 @@ def single_binding_request(
         ],
         fingerprint,
     )
+
+
+def reobservation_pair(
+    facts: list[dict[str, Any]] | None = None,
+    later_facts: list[dict[str, Any]] | None = None,
+    later_state_revision: int = 7,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return a baseline request and a real append-only re-observation of the same subject.
+
+    The second Observation continues the first through the real Observation Engine, so the
+    returned bundle carries the whole append-only lineage rather than an independent
+    second Observation that would collide with it.
+    """
+
+    observed = facts if facts is not None else [raw_fact()]
+    later = later_facts if later_facts is not None else observed
+    first_fingerprint = state_fingerprint()
+    later_fingerprint = state_fingerprint("KNOWN")
+    scope = observation_scope()
+    first_bundle = observed_bundle(scope, observed, first_fingerprint)
+    later_bundle = observed_bundle(
+        scope,
+        later,
+        later_fingerprint,
+        state_revision=later_state_revision,
+        prior_bundle=first_bundle,
+    )
+    objective = objective_revision()
+    baseline = derivation_request(
+        objective,
+        [
+            {
+                "target_predicate_id": PREDICATE_ID,
+                "observation_scope": scope,
+                "observation_bundle": first_bundle,
+            }
+        ],
+        first_fingerprint,
+    )
+    later_request = derivation_request(
+        objective,
+        [
+            {
+                "target_predicate_id": PREDICATE_ID,
+                "observation_scope": scope,
+                "observation_bundle": later_bundle,
+            }
+        ],
+        later_fingerprint,
+        later_state_revision,
+    )
+    return baseline, later_request

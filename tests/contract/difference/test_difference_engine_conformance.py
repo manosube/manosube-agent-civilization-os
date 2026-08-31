@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 from scripts.difference_contract_validator import (
+    _derive_comparison_and_mismatch,
     _difference_id,
     _supersession_reason_codes,
     apply_mutation,
@@ -29,6 +30,7 @@ from tests.difference_helpers import (
     observation_scope,
     observed_bundle,
     raw_fact,
+    reobservation_pair,
     single_binding_request,
     state_fingerprint,
     target_predicate,
@@ -38,6 +40,8 @@ from manosube_agent_civilization.difference import (
     DifferenceValidationError,
     derive_differences,
 )
+from manosube_agent_civilization.difference.identity import lifecycle_event_id
+from manosube_agent_civilization.difference.projection import derive_comparison_and_mismatch
 from manosube_agent_civilization.difference.validation import validate_record
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
@@ -269,29 +273,14 @@ def test_supersession_reason_codes_match_the_independent_authority() -> None:
 
 
 def test_equivalent_reobservation_appends_only_provenance() -> None:
-    baseline = derive_differences(single_binding_request())
-    fingerprint = state_fingerprint("KNOWN")
-    scope = observation_scope()
-    request = derivation_request(
-        objective_revision(),
-        [
-            {
-                "target_predicate_id": PREDICATE_ID,
-                "observation_scope": scope,
-                "observation_bundle": observed_bundle(
-                    scope, [raw_fact()], fingerprint, state_revision=7
-                ),
-                "predecessor": {
-                    "difference": baseline["differences"][0],
-                    "events": baseline["events"],
-                    "context": baseline,
-                },
-            }
-        ],
-        fingerprint,
-        state_revision=7,
-    )
-    bundle = derive_differences(request)
+    baseline_request, later_request = reobservation_pair()
+    baseline = derive_differences(baseline_request)
+    later_request["bindings"][0]["predecessor"] = {
+        "difference": baseline["differences"][0],
+        "events": baseline["events"],
+        "context": baseline,
+    }
+    bundle = derive_differences(later_request)
     assert validate_bundle(bundle) == []
     assert (
         bundle["differences"][0]["difference_id"]
@@ -479,3 +468,111 @@ def test_negative_evaluation_evidence_stays_in_its_own_channel() -> None:
         assert {canonical_json_bytes(r) for r in evaluation["evidence_refs"]} <= {
             canonical_json_bytes(r) for r in negative["negative_evidence_refs"]
         }
+
+
+# --------------------------------------------------------------------------- #
+# Independent-review findings: lineage identity, self-contained re-observation,
+# bounded absence under `none`, and Negative Observation boundary.
+# --------------------------------------------------------------------------- #
+
+
+def test_engine_and_auditor_agree_on_every_comparison_route() -> None:
+    """The Engine's mismatch derivation stays in lockstep with the independent auditor."""
+
+    requests = [
+        single_binding_request(),
+        _conflicted_request(),
+        _pure_negative_request(),
+        _multi_candidate_request(),
+        binding_request(
+            [], predicate=target_predicate(operator="none", expected_value="READY"),
+            negative_claims=[negative_claim("NO_RESULT")],
+        ),
+        binding_request([raw_fact(value="READY")],
+                        predicate=target_predicate(operator="none", expected_value="READY")),
+    ]
+    for request in requests:
+        bundle = derive_differences(request)
+        assert validate_bundle(bundle) == []
+        for difference in bundle["differences"]:
+            comparison, mismatch = _derive_comparison_and_mismatch(
+                difference["normalized_observed_state"],
+                difference["normalized_target_state"],
+            )
+            assert difference["structural_difference"]["comparison_result"] == comparison
+            assert difference["structural_difference"]["mismatch_kind"] == mismatch
+
+
+@pytest.mark.parametrize("negative_status", ["ABSENT", "EMPTY"])
+def test_bounded_absence_satisfies_none_in_both_authorities(negative_status: str) -> None:
+    observed = {
+        "subject": "kernel.state",
+        "objective_scope_binding": {},
+        "effective_boundary": {},
+        "knowledge_status": negative_status,
+        "value_candidates": {"collection_kind": "UNORDERED_SET", "members": []},
+    }
+    target = {
+        "operator": "none",
+        "expected_value": "READY",
+        "expected_value_type": "STRING",
+    }
+    assert _derive_comparison_and_mismatch(observed, target) == ("SATISFIED", None)
+    assert derive_comparison_and_mismatch(observed, target) == ("SATISFIED", None)
+
+
+@pytest.mark.parametrize("knowledge", ["UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE"])
+def test_unresolved_knowledge_never_satisfies_none_in_either_authority(
+    knowledge: str,
+) -> None:
+    observed = {
+        "subject": "kernel.state",
+        "objective_scope_binding": {},
+        "effective_boundary": {},
+        "knowledge_status": knowledge,
+        "value_candidates": {"collection_kind": "UNORDERED_SET", "members": []},
+    }
+    target = {
+        "operator": "none",
+        "expected_value": "READY",
+        "expected_value_type": "STRING",
+    }
+    assert _derive_comparison_and_mismatch(observed, target) == ("UNKNOWN", "UNKNOWN")
+    assert derive_comparison_and_mismatch(observed, target) == ("UNKNOWN", "UNKNOWN")
+
+
+def test_equivalent_reobservation_bundle_is_cross_record_valid_and_self_contained() -> None:
+    baseline_request, later_request = reobservation_pair()
+    baseline = derive_differences(baseline_request)
+    later_request["bindings"][0]["predecessor"] = {
+        "difference": baseline["differences"][0],
+        "events": baseline["events"],
+        "context": baseline,
+    }
+    bundle = derive_differences(later_request)
+    assert validate_bundle(bundle) == []
+    observations = {item["observation_id"] for item in bundle["observations"]}
+    assert len(observations) == 2
+    for event in bundle["events"]:
+        for reference in event["observation_refs"]:
+            assert reference["id"] in observations
+    genesis_id = bundle["differences"][0]["genesis_event_ref"]["id"]
+    genesis = next(
+        event for event in bundle["events"] if event["difference_event_id"] == genesis_id
+    )
+    assert genesis["event_revision"] == 0
+    for reference in genesis["observation_refs"]:
+        assert reference["id"] in observations
+
+
+def test_every_returned_event_identity_recomputes() -> None:
+    baseline_request, later_request = reobservation_pair()
+    baseline = derive_differences(baseline_request)
+    later_request["bindings"][0]["predecessor"] = {
+        "difference": baseline["differences"][0],
+        "events": baseline["events"],
+        "context": baseline,
+    }
+    for bundle in (baseline, derive_differences(later_request), _supersession_bundle()):
+        for event in bundle["events"]:
+            assert event["difference_event_id"] == lifecycle_event_id(event)

@@ -308,9 +308,12 @@ def _derive_comparison_and_mismatch(
     type_mismatch = any(not _fact_type_matches_target(item, target) for item in candidates)
     if type_mismatch:
         return "NOT_SATISFIED", "TYPE_MISMATCH"
+    # ABSENT and EMPTY are bounded proven absence, not unresolved knowledge: they are
+    # evaluable, so a `none` Target over a proven-empty evaluated set is satisfied. The
+    # unresolved statuses returned above never reach here.
     comparison = (
-        "UNKNOWN" if knowledge != "KNOWN" else
-        "SATISFIED" if _target_satisfied(values, target) else "NOT_SATISFIED"
+        ("SATISFIED" if _target_satisfied(values, target) else "NOT_SATISFIED")
+        if knowledge in {"KNOWN", "ABSENT", "EMPTY"} else "UNKNOWN"
     )
     if not candidates and operator in {"equals", "not_equals", "contains", "exists", "all"}:
         return "NOT_SATISFIED", "MISSING"

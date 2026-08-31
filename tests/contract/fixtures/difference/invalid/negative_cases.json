@@ -119,5 +119,113 @@
       "subject"
     ],
     "value": "kernel.other"
+  },
+  {
+    "name": "negative_observation_cross_project",
+    "path": [
+      "negative_observations",
+      0,
+      "project_id"
+    ],
+    "value": "PRJ-9999"
+  },
+  {
+    "name": "negative_observation_cross_scope",
+    "path": [
+      "negative_observations",
+      0,
+      "scope_ref"
+    ],
+    "value": {
+      "kind": "observation_scope",
+      "id": "OBS-SCOPE-9999"
+    }
+  },
+  {
+    "name": "negative_observation_cross_method",
+    "path": [
+      "negative_observations",
+      0,
+      "method_ref"
+    ],
+    "value": {
+      "kind": "observation_method",
+      "id": "OBS-METHOD-9999"
+    }
+  },
+  {
+    "name": "negative_observation_wrong_time_window",
+    "path": [
+      "negative_observations",
+      0,
+      "time_boundary"
+    ],
+    "value": {
+      "observation_started_at": "2020-01-01T00:00:00Z",
+      "observation_ended_at": "2020-01-01T00:01:00Z",
+      "target_effective_start": "2020-01-01T00:00:00Z",
+      "target_effective_end": "2020-01-01T00:01:00Z",
+      "source_snapshot_time": "2020-01-01T00:00:30Z"
+    }
+  },
+  {
+    "name": "negative_observation_wrong_source_snapshot",
+    "path": [
+      "negative_observations",
+      0,
+      "source_snapshot_refs"
+    ],
+    "value": [
+      {
+        "kind": "source_snapshot",
+        "id": "SNAP-9999"
+      }
+    ]
+  },
+  {
+    "name": "negative_observation_effective_boundary_escape",
+    "path": [
+      "negative_observations",
+      0,
+      "effective_boundary"
+    ],
+    "value": {
+      "kind": "SOURCE_SNAPSHOT",
+      "identity": "SNAP-9999",
+      "start": null,
+      "end": null
+    }
+  },
+  {
+    "name": "negative_observation_unbounded_effective_window",
+    "path": [
+      "negative_observations",
+      0,
+      "effective_boundary"
+    ],
+    "value": {
+      "kind": "SOURCE_SNAPSHOT",
+      "identity": "SNAP-0001",
+      "start": "2026-08-30T08:00:00Z",
+      "end": "2026-08-30T09:00:00Z"
+    }
+  },
+  {
+    "name": "negative_observation_cross_target",
+    "path": [
+      "negative_observations",
+      0,
+      "target_identity"
+    ],
+    "value": "TP-9999"
+  },
+  {
+    "name": "negative_observation_stale_observation_binding",
+    "path": [
+      "negative_observations",
+      0,
+      "observation_id"
+    ],
+    "value": "OBS-STALE-0001"
   }
 ]

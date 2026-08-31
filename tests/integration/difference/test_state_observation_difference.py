@@ -292,3 +292,142 @@ def test_multi_candidate_route_identity_is_stable_across_source_order() -> None:
     first = _multi_candidate_route("FAIL", "BROKEN")[1]
     second = _multi_candidate_route("FAIL", "BROKEN")[1]
     assert canonical_json_bytes(first) == canonical_json_bytes(second)
+
+
+@pytest.mark.parametrize("negative_status", ["ABSENT", "EMPTY"])
+def test_state_to_observation_to_difference_bounded_absence_satisfies_none(
+    negative_status: str,
+) -> None:
+    """Bounded proven absence satisfies `none` over the real owners."""
+
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    request = observation_request(scope, [], fingerprint, revision)
+    request["negative_claims"] = [negative_claim(negative_status)]
+    observation_bundle = observe(request)
+    assert validate_observation_bundle(observation_bundle) == []
+    difference_bundle = derive_differences(
+        derivation_request(
+            objective_revision(
+                [target_predicate(operator="none", expected_value="READY")]
+            ),
+            [
+                {
+                    "target_predicate_id": PREDICATE_ID,
+                    "observation_scope": scope,
+                    "observation_bundle": observation_bundle,
+                }
+            ],
+            fingerprint,
+            revision,
+        )
+    )
+    assert validate_difference_bundle(difference_bundle) == []
+    assert difference_bundle["differences"] == []
+    assert difference_bundle["satisfied_target_predicates"] == [PREDICATE_ID]
+    # A bounded empty Difference set is still not a Completion claim.
+    assert difference_bundle["evaluations"] == []
+    assert difference_bundle["candidate_completion_records"] == []
+
+
+@pytest.mark.parametrize("negative_status", ["NO_RESULT", "UNOBSERVED"])
+def test_state_to_observation_to_difference_unresolved_absence_never_satisfies_none(
+    negative_status: str,
+) -> None:
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    request = observation_request(scope, [], fingerprint, revision)
+    request["negative_claims"] = [negative_claim(negative_status)]
+    observation_bundle = observe(request)
+    assert validate_observation_bundle(observation_bundle) == []
+    difference_bundle = derive_differences(
+        derivation_request(
+            objective_revision(
+                [target_predicate(operator="none", expected_value="READY")]
+            ),
+            [
+                {
+                    "target_predicate_id": PREDICATE_ID,
+                    "observation_scope": scope,
+                    "observation_bundle": observation_bundle,
+                }
+            ],
+            fingerprint,
+            revision,
+        )
+    )
+    assert validate_difference_bundle(difference_bundle) == []
+    assert len(difference_bundle["differences"]) == 1
+    structural = difference_bundle["differences"][0]["structural_difference"]
+    assert structural["comparison_result"] == "UNKNOWN"
+    assert structural["mismatch_kind"] == "UNKNOWN"
+    assert difference_bundle["satisfied_target_predicates"] == []
+
+
+def test_state_to_observation_to_difference_equivalent_reobservation_is_self_contained() -> None:
+    """The real append-only Observation lineage keeps the retained events resolvable."""
+
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    first_bundle = observe(observation_request(scope, [raw_fact()], fingerprint, revision))
+    assert validate_observation_bundle(first_bundle) == []
+    objective = objective_revision([target_predicate()])
+
+    def _derive(
+        observation_bundle: dict[str, Any],
+        state_revision: int,
+        state_fingerprint: dict[str, str],
+        predecessor: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        binding: dict[str, Any] = {
+            "target_predicate_id": PREDICATE_ID,
+            "observation_scope": scope,
+            "observation_bundle": observation_bundle,
+        }
+        if predecessor is not None:
+            binding["predecessor"] = predecessor
+        return derive_differences(
+            derivation_request(objective, [binding], state_fingerprint, state_revision)
+        )
+
+    baseline = _derive(first_bundle, revision, fingerprint)
+    assert validate_difference_bundle(baseline) == []
+
+    later_fingerprint = {"profile": fingerprint["profile"], "digest": "d" * 64}
+    later_bundle = observe(
+        observation_request(
+            scope,
+            [raw_fact()],
+            later_fingerprint,
+            revision + 1,
+            prior_bundle=first_bundle,
+        )
+    )
+    assert validate_observation_bundle(later_bundle) == []
+    derived = _derive(
+        later_bundle,
+        revision + 1,
+        later_fingerprint,
+        {
+            "difference": baseline["differences"][0],
+            "events": baseline["events"],
+            "context": baseline,
+        },
+    )
+
+    assert validate_difference_bundle(derived) == []
+    assert (
+        derived["differences"][0]["difference_id"]
+        == baseline["differences"][0]["difference_id"]
+    )
+    observations = {item["observation_id"] for item in derived["observations"]}
+    assert len(observations) == 2
+    for event in derived["events"]:
+        for reference in event["observation_refs"]:
+            assert reference["id"] in observations
+    chain = sorted(derived["events"], key=lambda item: item["event_revision"])
+    assert [event["event_kind"] for event in chain] == [
+        "TRANSITION",
+        "TRANSITION",
+        "OBSERVATION_BOUND",
+    ]

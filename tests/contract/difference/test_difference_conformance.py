@@ -168,7 +168,7 @@ def test_difference_fixture_suite_has_no_escape() -> None:
     )
     # bundle.json + negative_bundle.json + multi_candidate_bundle.json (ADR-0002)
     assert valid_count == 3
-    assert invalid_count == 46
+    assert invalid_count == 55
     assert valid_errors == []
     assert invalid_escapes == []
 

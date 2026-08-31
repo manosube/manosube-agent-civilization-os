@@ -219,6 +219,23 @@ none
 
 `equals`、`not_equals`、`contains`でdistinct candidateが0件ならNOT_SATISFIED、2件以上なら`CONFLICT + CONFLICTED`とする。`all`のempty setはNOT_SATISFIEDでありvacuous truthを禁止する。`none`だけはempty setでSATISFIEDになり得るが、Scope completeとbounded Negative Evidenceが必須である。UNKNOWN、UNOBSERVED、BLOCKED、INCOMPLETE、CONFLICTEDまたは不完全Scopeでは全operatorをSATISFIEDにしない。
 
+Operator評価に進めるknowledge statusを次のclosed setへ固定する。
+
+```text
+EVALUABLE_KNOWLEDGE = KNOWN | ABSENT | EMPTY
+UNRESOLVED_KNOWLEDGE = UNKNOWN | UNOBSERVED | BLOCKED | INCOMPLETE
+```
+
+`ABSENT`と`EMPTY`はbounded Negative Evidenceとcompletion gateに裏付けられたproven conclusionであり、unresolved observationではない。したがってevaluated setがproven emptyであるとき`none`はSATISFIEDになり、Differenceを生成しない。`comparison_result`を`UNKNOWN`へ落として`UNEXPECTED` Differenceを生成してはならない。
+
+`UNRESOLVED_KNOWLEDGE`はrule 4で先に`UNKNOWN`へ落ちるため、`NO_RESULT`や`UNOBSERVED`がproven absenceまたはsatisfactionへ昇格することはない。`ABSENT`と`EMPTY`であっても`equals`、`not_equals`、`contains`、`exists`、`all`はcandidate 0件のrule 6により`MISSING`であり、vacuous truthにならない。
+
+```text
+PROVEN_EMPTY + none   → SATISFIED → Differenceなし
+PROVEN_EMPTY + all    → NOT_SATISFIED → MISSING
+UNRESOLVED + none     → UNKNOWN → UNKNOWN
+```
+
 全operator evaluatorは内部のequality結果を外部projectionへ出す前に`EQUAL→SATISFIED`、`NOT_EQUAL→NOT_SATISFIED`へ必ず写像し、`comparison_result`には三値だけを保存する。
 
 Mismatch kindは次の上から最初に一致するruleだけで決定する。

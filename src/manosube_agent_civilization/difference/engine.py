@@ -197,12 +197,24 @@ def _select_observation(
     state_fingerprint: dict[str, Any],
 ) -> dict[str, Any]:
     bundle = binding["observation_bundle"]
-    matches = [
+    # An append-only Observation bundle carries the whole lineage, so the Target and Scope
+    # alone do not identify one Observation. The exact requested Project State does.
+    scoped = [
         observation
         for observation in bundle["observations"]
         if observation["target"]["target_identity"] == predicate_id
         and observation["scope_ref"]["id"] == scope_id
     ]
+    matches = [
+        observation
+        for observation in scoped
+        if observation["state_revision_observed"] == state_revision
+        and observation["state_fingerprint_observed"] == state_fingerprint
+    ]
+    if scoped and not matches:
+        raise DifferenceError(
+            "stale Observation: no Observation is bound to the exact requested Project State"
+        )
     if len(matches) != 1:
         raise DifferenceError(
             f"exactly one canonical Observation must bind Target {predicate_id}; got {len(matches)}"
@@ -210,13 +222,6 @@ def _select_observation(
     observation = matches[0]
     if observation["project_id"] != project_id:
         raise BoundaryViolationError("Observation project does not match the derivation request")
-    if (
-        observation["state_revision_observed"] != state_revision
-        or observation["state_fingerprint_observed"] != state_fingerprint
-    ):
-        raise DifferenceError(
-            "stale Observation: the Observation is not bound to the exact requested Project State"
-        )
     if observation["status"] not in _ACCEPTED_OBSERVATION_STATUS:
         raise DifferenceError(f"unusable Observation status: {observation['status']}")
     if not isinstance(observation, dict):
@@ -266,6 +271,8 @@ def _observed_projection(
         and negative["target_identity"] == observation["target"]["target_identity"]
         and negative["subject"] == subject
     ]
+    for negative in negatives:
+        _validate_negative_boundary(negative, observation, scope, boundary)
     if not source_facts and not negatives:
         # UNOBSERVED is not ABSENT and NO_RESULT is not EMPTY: with neither a positive
         # Fact nor a bounded Negative Observation there is no canonical observed state.
@@ -339,6 +346,75 @@ def _evidence_union(
         for reference in negative["negative_evidence_refs"]:
             merged[canonical_bytes(reference)] = deepcopy(reference)
     return [item for _, item in sorted(merged.items())]
+
+
+def _validate_negative_boundary(
+    negative: dict[str, Any],
+    observation: dict[str, Any],
+    scope: dict[str, Any],
+    boundary: dict[str, Any],
+) -> None:
+    """Reject a Negative Observation that does not match the exact Observation boundary.
+
+    A Negative Observation is only bounded proof while every canonical binding it carries
+    is the same one the requested Observation carries. Matching the Observation ID, Target
+    and subject alone would let a record from another project, scope, method, time window
+    or source snapshot be interpreted as an absence conclusion, and its Evidence bound
+    into the Difference.
+    """
+
+    if negative.get("schema_version") != SCHEMA_VERSION:
+        raise DifferenceValidationError(
+            f"unsupported schema_version at negative observation "
+            f"{negative['negative_observation_id']}"
+        )
+    exact = {
+        "project_id": (negative["project_id"], observation["project_id"]),
+        "scope_ref": (negative["scope_ref"], observation["scope_ref"]),
+        "method_ref": (negative["method_ref"], observation["method_ref"]),
+        "time_boundary": (negative["time_boundary"], observation["time_boundary"]),
+        "source_snapshot_refs": (
+            negative["source_snapshot_refs"],
+            observation["source_snapshot_refs"],
+        ),
+    }
+    for field, (actual, expected) in exact.items():
+        if canonical_bytes(actual) != canonical_bytes(expected):
+            raise BoundaryViolationError(
+                f"Negative Observation {field} does not match the bound Observation: "
+                f"{negative['negative_observation_id']}"
+            )
+    if negative["scope_ref"]["id"] != scope["scope_id"]:
+        raise BoundaryViolationError(
+            "Negative Observation is bound to a different resolved Scope: "
+            f"{negative['negative_observation_id']}"
+        )
+    if negative["method_ref"] != scope["method_ref"]:
+        raise BoundaryViolationError(
+            "Negative Observation method is outside the declared Scope: "
+            f"{negative['negative_observation_id']}"
+        )
+    if (
+        negative["subject"] not in scope["included_subjects"]
+        or negative["subject"] in scope["excluded_subjects"]
+    ):
+        raise BoundaryViolationError(
+            f"Negative Observation subject escapes the resolved Scope: {negative['subject']}"
+        )
+    effective = negative["effective_boundary"]
+    declared = {
+        reference["id"] for reference in boundary["source_snapshot_refs"]["members"]
+    }
+    if (
+        effective["kind"] != "SOURCE_SNAPSHOT"
+        or effective["identity"] not in declared
+        or effective["start"] is not None
+        or effective["end"] is not None
+    ):
+        raise BoundaryViolationError(
+            "Negative Observation effective boundary escapes the declared source snapshots: "
+            f"{negative['negative_observation_id']}"
+        )
 
 
 def _genesis_event(
@@ -501,6 +577,14 @@ def _validate_predecessor(predecessor: dict[str, Any]) -> tuple[dict[str, Any], 
             raise DifferenceError("predecessor lineage is not a contiguous append-only chain")
         if event["difference_id"] != difference["difference_id"]:
             raise DifferenceError("predecessor event is bound to a different Difference")
+        # Every event in the chain, not only its head, must recompute to the identity it
+        # carries. Without this a caller could alter an identity-bearing field such as
+        # reason_code, observation_refs or evidence_refs while keeping the old event ID,
+        # and the forged event would be copied into the returned append-only lineage.
+        if event["difference_event_id"] != lifecycle_event_id(event):
+            raise DifferenceError(
+                f"predecessor event identity does not recompute: {event['difference_event_id']}"
+            )
     if events[-1]["to_status"] in {"CLOSED", "SUPERSEDED", "INVALIDATED"}:
         raise DifferenceError(
             f"predecessor Difference is already terminal: {events[-1]['to_status']}"
@@ -612,7 +696,10 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             # only when the evaluation scope is complete: an incomplete scope may never
             # claim satisfaction. It is still not a Completion claim -- Objective
             # Completion has a later canonical owner.
-            if scope["scope_status"] != "COMPLETE" or observation["status"] != "COMPLETE":
+            if scope["scope_status"] != "COMPLETE" or observation["status"] not in {
+                "COMPLETE",
+                "EMPTY",
+            }:
                 raise DifferenceError(
                     "an incomplete evaluation scope cannot claim a satisfied Target Predicate"
                 )
@@ -734,6 +821,14 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                     "kind": "difference_event",
                     "id": chain[0]["difference_event_id"],
                 }
+                # The retained genesis and every earlier event still reference the prior
+                # Observation and Evidence. Those records must travel with the lineage or
+                # the append-only chain returned here cannot be resolved.
+                _absorb_predecessor_context(
+                    predecessor, objective_revisions, policies, scopes, observations,
+                    facts, fact_bindings, fact_evaluations, negative_observations,
+                    negative_evaluations,
+                )
             else:
                 chain = _material_change_chain(
                     difference_id,
