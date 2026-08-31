@@ -319,6 +319,31 @@ def _normalize_objective_value(value: Any) -> tuple[Any, str]:
     return value, _derived_value_type(value)
 
 
+def _project_collection_value(value: Any, value_type: str) -> Any:
+    if value_type == "ORDERED_COLLECTION" and isinstance(value, list):
+        return {"collection_kind": "ORDERED_LIST", "members": value}
+    if value_type == "UNORDERED_COLLECTION" and isinstance(value, list):
+        return {
+            "collection_kind": "UNORDERED_SET",
+            "members": sorted(value, key=canonical_json_bytes),
+        }
+    return value
+
+
+def _exact_value_equal(left: Any, right: Any) -> bool:
+    return canonical_json_bytes(_canonical_semantic(left)) == canonical_json_bytes(
+        _canonical_semantic(right)
+    )
+
+
+def _candidate_type_matches_target(value: Any, target: dict[str, Any]) -> bool:
+    if target["operator"] == "exists":
+        return True
+    if target["operator"] == "contains":
+        return _collection_members(value) is not None
+    return _value_matches_declared_type(value, target["expected_value_type"])
+
+
 def _latest_contiguous_evaluations(
     records: dict[str, dict[str, Any]], subject_key: str,
 ) -> dict[str, dict[str, Any]]:
@@ -1148,15 +1173,22 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 for fact in source_facts
             )
             and sorted(
-                (fact["value"] for fact in source_facts if fact is not None), key=repr
-            ) == sorted(observed_values, key=repr)
+                (
+                    _project_collection_value(fact["value"], fact["value_type"])
+                    for fact in source_facts if fact is not None
+                ),
+                key=canonical_json_bytes,
+            ) == sorted(observed_values, key=canonical_json_bytes)
             and sorted(
                 fact["value_type"] for fact in source_facts if fact is not None
             ) == sorted(observed_types)
             and all(
                 any(
                     fact is not None
-                    and fact["value"] == candidate["value"]
+                    and _exact_value_equal(
+                        _project_collection_value(fact["value"], fact["value_type"]),
+                        candidate["value"],
+                    )
                     and fact["value_type"] == candidate["value_type"]
                     and fact["unit"] == candidate["unit"]
                     and fact["predicate"] == candidate["fact_predicate"]
@@ -1500,11 +1532,18 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             candidate_target_valid = (
                 candidate is not None
                 and difference is not None
+                and _candidate_type_matches_target(
+                    candidate_value, difference["normalized_target_state"]
+                )
                 and _target_satisfied(
                     [candidate_value], difference["normalized_target_state"]
                 )
                 and all(
-                    fact is not None and fact["value"] == candidate_value
+                    fact is not None
+                    and _exact_value_equal(
+                        _project_collection_value(fact["value"], fact["value_type"]),
+                        _project_collection_value(candidate_value, fact["value_type"]),
+                    )
                     for facts in resolved_fact_sets for fact in facts
                 )
             )

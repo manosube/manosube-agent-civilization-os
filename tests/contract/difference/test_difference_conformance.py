@@ -8,10 +8,12 @@ from referencing import Registry, Resource
 from scripts.difference_contract_validator import (
     _candidate_id,
     _candidate_matches_evaluation,
+    _candidate_type_matches_target,
     _derive_comparison_and_mismatch,
     _difference_id,
     _negative_knowledge_status,
     _normalize_objective_value,
+    _project_collection_value,
     apply_mutation,
     load_json,
     validate_bundle,
@@ -192,6 +194,13 @@ def test_reserved_typed_objective_value_is_unwrapped() -> None:
     assert _normalize_objective_value(
         {"value_type": "DECIMAL", "value": "1.5"}
     ) == ("1.5", "DECIMAL")
+    assert _project_collection_value(["a", "b"], "ORDERED_COLLECTION") == {
+        "collection_kind": "ORDERED_LIST", "members": ["a", "b"],
+    }
+    assert not _candidate_type_matches_target(
+        True,
+        {"operator": "equals", "expected_value_type": "INTEGER"},
+    )
 
 
 def test_same_semantic_editorial_objective_can_be_evaluated() -> None:
