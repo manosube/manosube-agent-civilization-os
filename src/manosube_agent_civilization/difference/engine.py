@@ -45,6 +45,13 @@ from .identity import (
     supersession_reason_codes,
     supersession_relation_id,
 )
+from .lifecycle import (
+    NEXT_OBSERVATION_REASON,
+    OBSERVATION_BOUND_FORBIDDEN,
+    TERMINAL_STATUSES,
+    is_legal_transition,
+    legal_supersession_sources,
+)
 from .projection import (
     derive_comparison_and_mismatch,
     effective_boundary,
@@ -503,22 +510,68 @@ def _transition_event(
     return event
 
 
+def _retained_blocker_payload(
+    head: dict[str, Any], difference_id: str, boundary: dict[str, Any]
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Re-derive the blocker payload a retained ``BLOCKED`` status still requires.
+
+    The kind, blocked stage, condition code and affected subjects are carried from the
+    predecessor's own blocker payload; the effective boundary and the verification request
+    are re-derived against the current Difference so that no stale forward reference is
+    copied.
+    """
+
+    kind = head["blocker_kind"]
+    scope = deepcopy(head["blocker_scope"])
+    condition = deepcopy(head["blocker_resolution_condition"])
+    if kind is None or scope is None or condition is None:
+        raise DifferenceError(
+            "a retained BLOCKED status requires the predecessor's blocker payload: "
+            f"{head['difference_event_id']}"
+        )
+    scope["effective_boundary"] = deepcopy(boundary)
+    subjects = scope["affected_subject_refs"]["members"]
+    if not subjects:
+        raise DifferenceError(
+            f"a retained BLOCKED status requires affected subjects: {head['difference_event_id']}"
+        )
+    if condition["subject_ref"] not in subjects:
+        raise DifferenceError(
+            "the blocker resolution condition subject is outside the blocker scope: "
+            f"{head['difference_event_id']}"
+        )
+    if any(reference["id"] == difference_id for reference in subjects) is False:
+        # The subject set is carried verbatim; it must still resolve to this Difference.
+        raise DifferenceError(
+            f"the blocker scope does not resolve to this Difference: {difference_id}"
+        )
+    return str(kind), scope, condition
+
+
 def _observation_bound_event(
     difference_id: str,
     state_revision: int,
     state_fingerprint: dict[str, Any],
     revision: int,
-    previous_event_id: str,
-    status: str,
+    head: dict[str, Any],
     observation_refs: list[dict[str, str]],
     evidence_refs: list[dict[str, str]],
-) -> dict[str, Any]:
+    boundary: dict[str, Any],
+) -> tuple[dict[str, Any], str | None, dict[str, Any] | None]:
+    """Build the status-preserving provenance append for an equivalent re-observation.
+
+    The returned tuple is the event, the Next Observation Request reason code its retained
+    status requires (or ``None``), and the blocker resolution condition that must be bound
+    to that request (or ``None``).
+    """
+
+    status = head["to_status"]
     event = _empty_event(difference_id, state_revision, state_fingerprint)
     event.update(
         {
             "event_kind": "OBSERVATION_BOUND",
             "event_revision": revision,
-            "previous_event_id": previous_event_id,
+            "previous_event_id": head["difference_event_id"],
             "from_status": status,
             "to_status": status,
             "reason_code": "EQUIVALENT_REOBSERVATION_BOUND",
@@ -527,8 +580,16 @@ def _observation_bound_event(
             "evidence_refs": deepcopy(evidence_refs),
         }
     )
+    condition: dict[str, Any] | None = None
+    if status == "BLOCKED":
+        kind, scope, condition = _retained_blocker_payload(head, difference_id, boundary)
+        event["blocker_kind"] = kind
+        event["blocker_scope"] = scope
+        event["blocker_resolution_condition"] = condition
+    # The identity input excludes the forward-looking next_observation_ref and the blocker
+    # payload, so the event identity is stable before the request it points at exists.
     event["difference_event_id"] = lifecycle_event_id(event)
-    return event
+    return event, NEXT_OBSERVATION_REASON.get(status), condition
 
 
 def _next_observation_request(
@@ -537,6 +598,7 @@ def _next_observation_request(
     target_predicate_ref: dict[str, str],
     scope_ref: dict[str, str],
     method_id: str,
+    reason_code: str = "BLOCKER_REOBSERVATION",
 ) -> dict[str, Any]:
 
     request = {
@@ -550,7 +612,7 @@ def _next_observation_request(
         "target_ref": {"kind": "target_predicate", "id": target_predicate_ref["id"]},
         "scope_ref": {"kind": "observation_scope", "id": scope_ref["id"]},
         "method_ref": {"kind": "observation_method", "id": method_id},
-        "reason_code": "BLOCKER_REOBSERVATION",
+        "reason_code": reason_code,
     }
     request["observation_request_id"] = content_address(
         "OBS-REQ-", request, "observation_request_id"
@@ -581,11 +643,36 @@ def _validate_predecessor(predecessor: dict[str, Any]) -> tuple[dict[str, Any], 
         # carries. Without this a caller could alter an identity-bearing field such as
         # reason_code, observation_refs or evidence_refs while keeping the old event ID,
         # and the forged event would be copied into the returned append-only lineage.
+        validate_record(event, "difference_lifecycle_event.schema.json")
         if event["difference_event_id"] != lifecycle_event_id(event):
             raise DifferenceError(
                 f"predecessor event identity does not recompute: {event['difference_event_id']}"
             )
-    if events[-1]["to_status"] in {"CLOSED", "SUPERSEDED", "INVALIDATED"}:
+        expected_from = None if revision == 0 else events[revision - 1]["to_status"]
+        if event["from_status"] != expected_from:
+            raise DifferenceError(
+                f"predecessor lineage breaks status continuity: {event['difference_event_id']}"
+            )
+        if event["event_kind"] == "OBSERVATION_BOUND":
+            # A provenance append never changes status and never lands on a status that
+            # forbids one.
+            if event["from_status"] != event["to_status"]:
+                raise DifferenceError(
+                    "predecessor observation-bound event mutates status: "
+                    f"{event['difference_event_id']}"
+                )
+            if event["to_status"] in OBSERVATION_BOUND_FORBIDDEN:
+                raise DifferenceError(
+                    "predecessor observation-bound event is bound to a forbidden status: "
+                    f"{event['to_status']}"
+                )
+        elif not is_legal_transition(event["from_status"], event["to_status"]):
+            # The single canonical lifecycle transition authority decides legality.
+            raise DifferenceError(
+                f"predecessor lineage contains an illegal lifecycle transition: "
+                f"{event['from_status']} -> {event['to_status']}"
+            )
+    if events[-1]["to_status"] in TERMINAL_STATUSES:
         raise DifferenceError(
             f"predecessor Difference is already terminal: {events[-1]['to_status']}"
         )
@@ -651,6 +738,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     negative_observations: dict[str, dict[str, Any]] = {}
     negative_evaluations: dict[str, dict[str, Any]] = {}
     materialized_status: dict[str, str] = {}
+    carried: dict[str, dict[str, dict[str, Any]]] = {}
     satisfied: list[str] = []
 
     for binding in sorted(request["bindings"], key=lambda item: item["target_predicate_id"]):
@@ -805,18 +893,44 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                         f"Difference identity collision: {difference_id}"
                     )
                 chain = deepcopy(prior_events)
-                chain.append(
-                    _observation_bound_event(
-                        difference_id,
-                        state_revision,
-                        state_fingerprint,
-                        len(chain),
-                        chain[-1]["difference_event_id"],
-                        chain[-1]["to_status"],
-                        observation_refs,
-                        evidence_refs,
-                    )
+                bound_event, retained_reason, retained_condition = _observation_bound_event(
+                    difference_id,
+                    state_revision,
+                    state_fingerprint,
+                    len(chain),
+                    chain[-1],
+                    observation_refs,
+                    evidence_refs,
+                    boundary,
                 )
+                if retained_reason is not None:
+                    # A retained BLOCKED, RETAINED or REOPENED status still requires a
+                    # Next Observation Request. It is re-derived against this event, never
+                    # copied from the predecessor, so the reference resolves inside the
+                    # returned bundle.
+                    if method is None:
+                        raise DifferenceError(
+                            f"a retained {bound_event['to_status']} status requires an "
+                            "Observation Method projection"
+                        )
+                    retained_request = _next_observation_request(
+                        difference_id,
+                        bound_event,
+                        target_predicate_ref,
+                        scope_binding["scope_ref"],
+                        method["observation_method_id"],
+                        retained_reason,
+                    )
+                    reference = {
+                        "kind": "next_observation_request",
+                        "id": retained_request["observation_request_id"],
+                    }
+                    bound_event["next_observation_ref"] = reference
+                    if retained_condition is not None:
+                        retained_condition["verification_request_ref"] = deepcopy(reference)
+                    requests.append(retained_request)
+                    methods[method["observation_method_id"]] = method
+                chain.append(bound_event)
                 difference["genesis_event_ref"] = {
                     "kind": "difference_event",
                     "id": chain[0]["difference_event_id"],
@@ -827,7 +941,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 _absorb_predecessor_context(
                     predecessor, objective_revisions, policies, scopes, observations,
                     facts, fact_bindings, fact_evaluations, negative_observations,
-                    negative_evaluations,
+                    negative_evaluations, requests, methods, carried,
                 )
             else:
                 chain = _material_change_chain(
@@ -855,7 +969,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 _absorb_predecessor_context(
                     predecessor, objective_revisions, policies, scopes, observations,
                     facts, fact_bindings, fact_evaluations, negative_observations,
-                    negative_evaluations,
+                    negative_evaluations, requests, methods, carried,
                 )
         if difference["genesis_event_ref"]["id"] == "":
             difference["genesis_event_ref"] = {
@@ -903,7 +1017,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         request, objective_revisions, differences, events, policies, relations, requests, methods,
         scopes, observations, facts, fact_bindings, fact_evaluations,
         negative_observations, negative_evaluations, materialized_status, satisfied,
-        state_revision, state_fingerprint,
+        state_revision, state_fingerprint, carried,
     )
 
 
@@ -947,9 +1061,11 @@ def _supersede(
     if not reason_codes:
         raise DifferenceError("a superseding Difference must record at least one material change")
     head = old_events[-1]
-    if head["to_status"] != "OPEN":
+    if not is_legal_transition(head["to_status"], "SUPERSEDED"):
         raise DifferenceError(
-            f"only an OPEN Difference can be superseded at derivation time; got {head['to_status']}"
+            "the lifecycle contract does not permit supersession from "
+            f"{head['to_status']}; legal sources are "
+            f"{sorted(legal_supersession_sources())}"
         )
     terminal = _transition_event(
         old_difference["difference_id"],
@@ -957,7 +1073,7 @@ def _supersede(
         state_fingerprint,
         len(old_events),
         head["difference_event_id"],
-        "OPEN",
+        head["to_status"],
         "SUPERSEDED",
         "MATERIAL_IDENTITY_CHANGE",
         "Superseded by a materially different Difference derived from the same Target.",
@@ -981,6 +1097,20 @@ def _supersede(
     relation["supersession_relation_id"] = supersession_relation_id(relation)
     validate_record(relation, "difference_supersession_relation.schema.json")
     return relation, terminal
+
+
+#: Records produced by later canonical owners that a retained predecessor event may
+#: reference. This Engine never creates them; it preserves what the caller supplied.
+_CARRIED_SECTIONS: dict[str, str] = {
+    "evaluations": "closure_evaluation_id",
+    "reflow_transitions": "transaction_id",
+    "changes": "change_id",
+    "reopen_condition_evaluations": "evaluation_id",
+    "candidate_completion_records": "completion_id",
+    "candidate_claim_evaluation_events": "event_id",
+    "invariant_evaluations": "evaluation_id",
+    "evidence_sufficiency_results": "evidence_sufficiency_id",
+}
 
 
 def _merge(target: dict[str, dict[str, Any]], records: list[dict[str, Any]], key: str) -> None:
@@ -1050,8 +1180,15 @@ def _absorb_predecessor_context(
     fact_evaluations: dict[str, dict[str, Any]],
     negative_observations: dict[str, dict[str, Any]],
     negative_evaluations: dict[str, dict[str, Any]],
+    requests: list[dict[str, Any]],
+    methods: dict[str, dict[str, Any]],
+    carried: dict[str, dict[str, dict[str, Any]]],
 ) -> None:
-    """Carry forward the exact records that keep the superseded Difference resolvable."""
+    """Carry forward every record that keeps the retained predecessor lineage resolvable.
+
+    The Engine never creates any of these; it only preserves what the caller supplied, so
+    that a retained event's own references still resolve inside the returned bundle.
+    """
 
     context = predecessor.get("context", {})
     _merge(objective_revisions, context.get("objective_revisions", []), "objective_revision_id")
@@ -1069,6 +1206,22 @@ def _absorb_predecessor_context(
         context.get("negative_observation_evaluations", []),
         "evaluation_id",
     )
+    existing_requests = {item["observation_request_id"] for item in requests}
+    for request in context.get("next_observation_requests", []):
+        if request["observation_request_id"] not in existing_requests:
+            requests.append(deepcopy(request))
+            existing_requests.add(request["observation_request_id"])
+    _merge(methods, context.get("observation_methods", []), "observation_method_id")
+    for section, key in _CARRIED_SECTIONS.items():
+        _merge(carried.setdefault(section, {}), context.get(section, []), key)
+
+
+def _carried(
+    carried: dict[str, dict[str, dict[str, Any]]], section: str, key: str
+) -> list[dict[str, Any]]:
+    """Return one carried-forward dependency section in deterministic identity order."""
+
+    return sorted(carried.get(section, {}).values(), key=lambda item: str(item[key]))
 
 
 def _finalize(
@@ -1091,6 +1244,7 @@ def _finalize(
     satisfied: list[str],
     state_revision: int,
     state_fingerprint: dict[str, Any],
+    carried: dict[str, dict[str, dict[str, Any]]],
 ) -> dict[str, Any]:
     unique_events: dict[str, dict[str, Any]] = {}
     _merge(unique_events, events, "difference_event_id")
@@ -1115,7 +1269,7 @@ def _finalize(
             key=lambda item: (item["difference_id"], item["event_revision"]),
         ),
         "policies": sorted(unique_policies.values(), key=lambda item: item["closure_policy_id"]),
-        "evaluations": [],
+        "evaluations": _carried(carried, "evaluations", "closure_evaluation_id"),
         "supersession_relations": sorted(
             relations, key=lambda item: item["supersession_relation_id"]
         ),
@@ -1140,13 +1294,25 @@ def _finalize(
         "negative_observation_evaluations": sorted(
             negative_evaluations.values(), key=lambda item: item["evaluation_id"]
         ),
-        "candidate_completion_records": [],
-        "candidate_claim_evaluation_events": [],
-        "invariant_evaluations": [],
-        "evidence_sufficiency_results": [],
+        "candidate_completion_records": _carried(
+            carried, "candidate_completion_records", "completion_id"
+        ),
+        "candidate_claim_evaluation_events": _carried(
+            carried, "candidate_claim_evaluation_events", "event_id"
+        ),
+        "invariant_evaluations": _carried(carried, "invariant_evaluations", "evaluation_id"),
+        "evidence_sufficiency_results": _carried(
+            carried, "evidence_sufficiency_results", "evidence_sufficiency_id"
+        ),
         "materialized_status": dict(sorted(materialized_status.items())),
         "satisfied_target_predicates": sorted(satisfied),
     }
+    for section, key in _CARRIED_SECTIONS.items():
+        if section in bundle:
+            continue
+        records = _carried(carried, section, key)
+        if records:
+            bundle[section] = records
     if set(bundle["materialized_status"]) != set(differences):
         raise DifferenceValidationError("materialized status does not cover every Difference")
     return bundle

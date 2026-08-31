@@ -82,10 +82,21 @@ def test_forged_predecessor_event_identity_is_rejected(
     _, request = _baseline_with_predecessor()
     events = request["bindings"][0]["predecessor"]["events"]
     events[revision][field] = value
-    # Either fail-closed reason is correct: the forged event must never be accepted.
-    with pytest.raises(
-        DifferenceError, match=r"identity does not recompute|null to DETECTED genesis"
-    ):
+    # Any fail-closed rejection is correct here: schema, genesis and legality checks may
+    # fire before the identity check. The invariant is that a forged event never enters
+    # the returned lineage.
+    with pytest.raises(DifferenceError):
+        derive_differences(request)
+
+
+@pytest.mark.parametrize("revision", [0, 1], ids=["genesis", "head"])
+def test_identity_check_itself_rejects_a_forged_reason_code(revision: int) -> None:
+    """A field that trips no other rule is still caught by identity recomputation."""
+
+    _, request = _baseline_with_predecessor()
+    events = request["bindings"][0]["predecessor"]["events"]
+    events[revision]["reason_code"] = "TAMPERED_REASON"
+    with pytest.raises(DifferenceError, match="identity does not recompute"):
         derive_differences(request)
 
 

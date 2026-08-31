@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from typing import Any
 
+from manosube_agent_civilization.difference.lifecycle import LEGAL_TRANSITIONS
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.errors import SchemaValidationError
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
@@ -19,24 +20,6 @@ from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_s
 STATUSES = {
     "DETECTED", "OPEN", "ACTIVE", "VERIFYING", "BLOCKED", "RETAINED", "CLOSED",
     "REOPENED", "SUPERSEDED", "INVALIDATED",
-}
-LEGAL_TRANSITIONS = {
-    (None, "DETECTED"), ("DETECTED", "OPEN"), ("DETECTED", "INVALIDATED"),
-    ("OPEN", "ACTIVE"), ("OPEN", "BLOCKED"), ("OPEN", "RETAINED"),
-    ("OPEN", "SUPERSEDED"), ("OPEN", "INVALIDATED"),
-    ("ACTIVE", "VERIFYING"), ("ACTIVE", "BLOCKED"), ("ACTIVE", "RETAINED"),
-    ("ACTIVE", "SUPERSEDED"), ("ACTIVE", "INVALIDATED"),
-    ("VERIFYING", "CLOSED"), ("VERIFYING", "ACTIVE"), ("VERIFYING", "BLOCKED"),
-    ("VERIFYING", "RETAINED"), ("VERIFYING", "SUPERSEDED"),
-    ("VERIFYING", "INVALIDATED"), ("BLOCKED", "OPEN"), ("BLOCKED", "ACTIVE"),
-    ("BLOCKED", "VERIFYING"), ("BLOCKED", "RETAINED"), ("BLOCKED", "SUPERSEDED"),
-    ("BLOCKED", "INVALIDATED"), ("RETAINED", "OPEN"), ("RETAINED", "ACTIVE"),
-    ("RETAINED", "VERIFYING"), ("RETAINED", "BLOCKED"),
-    ("RETAINED", "SUPERSEDED"), ("RETAINED", "INVALIDATED"),
-    ("CLOSED", "REOPENED"), ("CLOSED", "SUPERSEDED"), ("CLOSED", "INVALIDATED"),
-    ("REOPENED", "ACTIVE"), ("REOPENED", "VERIFYING"), ("REOPENED", "BLOCKED"),
-    ("REOPENED", "RETAINED"), ("REOPENED", "SUPERSEDED"),
-    ("REOPENED", "INVALIDATED"),
 }
 
 
@@ -1100,7 +1083,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     )
                 ):
                     errors.append(f"next observation binding mismatch: {event['difference_event_id']}")
-            if event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}:
+            # A status-preserving OBSERVATION_BOUND event is a provenance append, not a
+            # lifecycle transition, so it does not re-enter the terminal status and must
+            # not demand a fresh Closure Evaluation. The TRANSITION that entered the
+            # status owns that Evaluation.
+            if (
+                event["event_kind"] == "TRANSITION"
+                and event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}
+            ):
                 evaluation = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
                 difference = differences.get(difference_id)
                 policy = None if difference is None else policies.get(difference["closure_policy"]["id"])

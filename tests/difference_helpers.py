@@ -8,11 +8,14 @@ in this module.
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
 from typing import Any
 
 from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.state import fingerprint_semantic_state
 
+ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ID = "PRJ-0001"
 PREDICATE_ID = "TP-0001"
 SCOPE_ID = "OBS-SCOPE-0001"
@@ -406,4 +409,226 @@ def reobservation_pair(
         later_fingerprint,
         later_state_revision,
     )
+    return baseline, later_request
+
+
+#: The contract-legal path from OPEN to each status a predecessor may already hold.
+LEGAL_PATH_FROM_OPEN: dict[str, list[str]] = {
+    "OPEN": [],
+    "ACTIVE": ["ACTIVE"],
+    "VERIFYING": ["ACTIVE", "VERIFYING"],
+    "BLOCKED": ["BLOCKED"],
+    "RETAINED": ["RETAINED"],
+    "CLOSED": ["ACTIVE", "VERIFYING", "CLOSED"],
+    "REOPENED": ["ACTIVE", "VERIFYING", "CLOSED", "REOPENED"],
+}
+_TERMINAL_REASON = {
+    "BLOCKED": "OBSERVATION_PATH_BLOCKED",
+    "RETAINED": "UNRESOLVED_CARRIED_FORWARD",
+    "REOPENED": "CLOSURE_CONTRADICTED",
+}
+
+
+def _content_addressed_request(
+    difference: dict[str, Any],
+    event: dict[str, Any],
+    method_id: str,
+    reason_code: str,
+) -> dict[str, Any]:
+    from scripts.difference_contract_validator import _content_address
+
+    request = {
+        "schema_version": "0.1",
+        "observation_request_id": "",
+        "record_kind": "NEXT_OBSERVATION_REQUEST",
+        "difference_ref": {"kind": "difference", "id": difference["difference_id"]},
+        "derived_from_event_ref": {
+            "kind": "difference_event",
+            "id": event["difference_event_id"],
+        },
+        "state_revision_requested": event["state_revision_evaluated"],
+        "state_fingerprint_requested": deepcopy(event["state_fingerprint_evaluated"]),
+        "target_ref": {"kind": "target_predicate", "id": difference["target_predicate_ref"]["id"]},
+        "scope_ref": {
+            "kind": "observation_scope",
+            "id": difference["objective_scope_binding"]["scope_ref"]["id"],
+        },
+        "method_ref": {"kind": "observation_method", "id": method_id},
+        "reason_code": reason_code,
+    }
+    request["observation_request_id"] = _content_address(
+        "OBS-REQ-", request, "observation_request_id"
+    )
+    return request
+
+
+def retained_status_predecessor(
+    status: str, reason_code: str = "BLOCKER_REOBSERVATION"
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return a baseline bundle and a re-observation request whose predecessor is *status*.
+
+    Statuses beyond ``OPEN`` are produced by later canonical owners, so the predecessor's
+    terminal transition and its Closure Evaluation are supplied by the caller here, exactly
+    as the Difference Engine would receive them. The Engine never creates them.
+    """
+
+    from manosube_agent_civilization.difference import derive_differences
+    from manosube_agent_civilization.difference.identity import lifecycle_event_id
+
+    fixture = json.loads(
+        (
+            ROOT / "tests" / "contract" / "fixtures" / "difference" / "valid" / "bundle.json"
+        ).read_text(encoding="utf-8")
+    )
+    method = deepcopy(fixture["observation_methods"][0])
+
+    baseline_request, later_request = reobservation_pair()
+    baseline = derive_differences(baseline_request)
+    difference = baseline["differences"][0]
+    difference_id = difference["difference_id"]
+    head = sorted(baseline["events"], key=lambda item: item["event_revision"])[-1]
+
+    # OPEN cannot reach every status directly; walk the contract's own legal path.
+    path = LEGAL_PATH_FROM_OPEN[status]
+    upstream: list[dict[str, Any]] = []
+    for target in path:
+        previous = upstream[-1] if upstream else head
+        event = deepcopy(previous)
+        event.update(
+            {
+                "event_kind": "TRANSITION",
+                "event_revision": previous["event_revision"] + 1,
+                "previous_event_id": previous["difference_event_id"],
+                "from_status": previous["to_status"],
+                "to_status": target,
+                "reason_code": _TERMINAL_REASON.get(target, "UPSTREAM_OWNER_TRANSITION"),
+                "reason": "",
+                "observation_refs": [],
+                "evidence_refs": [{"kind": "observation_evidence", "id": "EVID-TERMINAL-0001"}],
+                "blocker_kind": None,
+                "blocker_scope": None,
+                "blocker_resolution_condition": None,
+                "next_observation_ref": None,
+                "reflow_transition_ref": None,
+                "closure_evaluation_ref": None,
+                "reopen_trigger": None,
+            }
+        )
+        if target == "CLOSED":
+            event["reflow_transition_ref"] = {
+                "kind": "reflow_transition",
+                "id": "REFLOW-TX-0001",
+            }
+        event["difference_event_id"] = lifecycle_event_id(event)
+        upstream.append(event)
+    terminal = upstream[-1] if upstream else deepcopy(head)
+
+    request = _content_addressed_request(
+        difference, terminal, method["observation_method_id"], reason_code
+    )
+    reference = {"kind": "next_observation_request", "id": request["observation_request_id"]}
+    subject_ref = {"kind": "difference", "id": difference_id}
+    if status in {"BLOCKED", "RETAINED", "REOPENED"}:
+        terminal["next_observation_ref"] = deepcopy(reference)
+    if status == "BLOCKED":
+        terminal.update(
+            {
+                "blocker_kind": "OBSERVATION_PATH",
+                "blocker_scope": {
+                    "kind": "difference_blocker_scope",
+                    "effective_boundary": deepcopy(difference["effective_boundary"]),
+                    "affected_subject_refs": {
+                        "collection_kind": "UNORDERED_SET",
+                        "members": [deepcopy(subject_ref)],
+                    },
+                    "blocked_stage": "OBSERVATION",
+                },
+                "blocker_resolution_condition": {
+                    "kind": "blocker_resolution_condition",
+                    "condition_code": "OBSERVATION_PATH_AVAILABLE",
+                    "subject_ref": deepcopy(subject_ref),
+                    "expected_state": "AVAILABLE",
+                    "verification_request_ref": deepcopy(reference),
+                },
+            }
+        )
+
+    evaluation = deepcopy(fixture["evaluations"][0])
+    evaluation.update(
+        {
+            "difference_id": difference_id,
+            "difference_event_head_ref": {
+                "kind": "difference_event",
+                "id": head["difference_event_id"],
+            },
+            "target_predicate_ref": deepcopy(difference["target_predicate_ref"]),
+            "objective_revision_ref_evaluated": deepcopy(difference["objective_revision_ref"]),
+            "objective_semantic_fingerprint_evaluated": difference[
+                "objective_semantic_fingerprint"
+            ],
+            "before_state_ref": {
+                "kind": "state",
+                "revision": difference["observed_state_revision"],
+                "fingerprint": deepcopy(difference["observed_state_fingerprint"]),
+            },
+            "evaluated_state_revision": difference["observed_state_revision"],
+            "evaluated_state_fingerprint": deepcopy(difference["observed_state_fingerprint"]),
+            "policy_ref": deepcopy(difference["closure_policy"]),
+            "proposed_terminal_status": status,
+            "result": status,
+        }
+    )
+    if status in {"BLOCKED", "RETAINED", "CLOSED", "REOPENED"}:
+        terminal["closure_evaluation_ref"] = {
+            "kind": "closure_evaluation",
+            "id": evaluation["closure_evaluation_id"],
+        }
+    if status == "OPEN":
+        upstream = []
+        terminal = head
+    if status == "REOPENED":
+        terminal["reopen_trigger"] = "OBSERVATION_CONTRADICTION"
+        terminal["observation_refs"] = deepcopy(baseline["differences"][0]["observation_refs"])
+        for event in upstream[:-1]:
+            event["closure_evaluation_ref"] = deepcopy(terminal["closure_evaluation_ref"])
+            event["difference_event_id"] = lifecycle_event_id(event)
+
+
+    previous = head
+    for event in upstream:
+        event["previous_event_id"] = previous["difference_event_id"]
+        event["difference_event_id"] = lifecycle_event_id(event)
+        previous = event
+    if upstream:
+        request = _content_addressed_request(
+            difference, upstream[-1], method["observation_method_id"], reason_code
+        )
+        reference = {"kind": "next_observation_request", "id": request["observation_request_id"]}
+        if upstream[-1]["next_observation_ref"] is not None:
+            upstream[-1]["next_observation_ref"] = deepcopy(reference)
+        if upstream[-1]["blocker_resolution_condition"] is not None:
+            upstream[-1]["blocker_resolution_condition"]["verification_request_ref"] = deepcopy(
+                reference
+            )
+        upstream[-1]["difference_event_id"] = lifecycle_event_id(upstream[-1])
+        evaluation["difference_event_head_ref"] = {
+            "kind": "difference_event",
+            "id": (upstream[-2] if len(upstream) > 1 else head)["difference_event_id"],
+        }
+
+    context = deepcopy(baseline)
+    context["evaluations"] = [evaluation]
+    context["next_observation_requests"] = [request]
+    context["observation_methods"] = [method]
+
+    later_request["bindings"][0]["predecessor"] = {
+        "difference": difference,
+        "events": [*deepcopy(baseline["events"]), *upstream],
+        "context": context,
+    }
+    later_request["observation_method"] = {
+        key: value
+        for key, value in method.items()
+        if key not in {"observation_method_id", "schema_version", "record_kind"}
+    }
     return baseline, later_request

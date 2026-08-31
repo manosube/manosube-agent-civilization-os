@@ -25,6 +25,7 @@ from tests.difference_helpers import (
     observation_request,
     observation_scope,
     raw_fact,
+    retained_status_predecessor,
     target_predicate,
 )
 from tests.state_helpers import initial_state
@@ -431,3 +432,31 @@ def test_state_to_observation_to_difference_equivalent_reobservation_is_self_con
         "TRANSITION",
         "OBSERVATION_BOUND",
     ]
+
+
+def test_state_to_observation_to_difference_retained_blocked_reobservation() -> None:
+    """A retained BLOCKED status keeps its payload across a real re-observation."""
+
+    _, request = retained_status_predecessor("BLOCKED", "BLOCKER_REOBSERVATION")
+    observation_bundle = request["bindings"][0]["observation_bundle"]
+    assert validate_observation_bundle(observation_bundle) == []
+
+    bundle = derive_differences(request)
+    assert validate_difference_bundle(bundle) == []
+
+    chain = sorted(bundle["events"], key=lambda item: item["event_revision"])
+    bound = chain[-1]
+    validate_record(bound, "difference_lifecycle_event.schema.json")
+    assert bound["event_kind"] == "OBSERVATION_BOUND"
+    assert bound["from_status"] == bound["to_status"] == "BLOCKED"
+    assert bound["blocker_kind"] is not None
+    assert (
+        bound["blocker_resolution_condition"]["verification_request_ref"]
+        == bound["next_observation_ref"]
+    )
+    requests = {item["observation_request_id"] for item in bundle["next_observation_requests"]}
+    assert bound["next_observation_ref"]["id"] in requests
+    observations = {item["observation_id"] for item in bundle["observations"]}
+    for event in bundle["events"]:
+        for reference in event["observation_refs"]:
+            assert reference["id"] in observations
