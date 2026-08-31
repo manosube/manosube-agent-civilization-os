@@ -342,7 +342,7 @@ def _negative_knowledge_status(status: str) -> str:
     if status in {"NO_RESULT", "FAILED"}:
         return "UNKNOWN"
     if status == "INVALID":
-        return "UNKNOWN"
+        return "REJECT_OR_QUARANTINE"
     return status
 
 
@@ -567,16 +567,28 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     for revision in objective_revisions.values():
         objective_groups.setdefault(revision["objective_id"], []).append(revision)
     active_objective_heads: dict[str, dict[str, Any]] = {}
+    valid_objective_chains: dict[str, list[dict[str, Any]]] = {}
     for objective_id, chain in objective_groups.items():
         chain.sort(key=lambda item: item["revision"])
         valid_chain = all(
             item["revision"] == revision
             and _ref_id(item["previous_objective_ref"])
             == (None if revision == 0 else chain[revision - 1]["objective_revision_id"])
+            and (
+                revision == 0
+                or (
+                    item["base_semantic_fingerprint"] is not None
+                    and "sha256:" + item["base_semantic_fingerprint"]["digest"]
+                    == _objective_semantic_fingerprint(chain[revision - 1])
+                )
+            )
             for revision, item in enumerate(chain)
         )
-        if valid_chain and chain[-1]["status"] == "ACTIVE":
-            active_objective_heads[objective_id] = chain[-1]
+        active_members = [item for item in chain if item["status"] == "ACTIVE"]
+        if valid_chain:
+            valid_objective_chains[objective_id] = chain
+        if valid_chain and active_members:
+            active_objective_heads[objective_id] = active_members[-1]
     observation_scopes = _index(
         bundle.get("observation_scopes", []), "scope_id", errors
     )
@@ -1070,6 +1082,20 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             and negative["effective_boundary"]["end"] is None
             and _negative_knowledge_status(latest["evaluation_status"])
             == observed["knowledge_status"]
+            and {
+                canonical_json_bytes(reference)
+                for reference in latest["evidence_refs"]
+            } <= {
+                canonical_json_bytes(reference)
+                for reference in observation["observation_evidence_refs"]
+            }
+            and {
+                canonical_json_bytes(reference)
+                for reference in latest["evidence_refs"]
+            } <= {
+                canonical_json_bytes(reference)
+                for reference in difference["observation_evidence_refs"]
+            }
             and (
                 latest["evaluation_status"] == "CONFLICTED"
                 or not latest["conflict_fact_refs"]
@@ -1224,6 +1250,17 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         original_objective = objective_revisions.get(
             _ref_id(difference["objective_revision_ref"]) or ""
         )
+        objective_chain = (
+            [] if original_objective is None else
+            valid_objective_chains.get(original_objective["objective_id"], [])
+        )
+        editorial_path = [
+            revision for revision in objective_chain
+            if original_objective is not None
+            and revision["revision"] >= original_objective["revision"]
+            and evaluated_objective is not None
+            and revision["revision"] <= evaluated_objective["revision"]
+        ]
         objective_evaluation_valid = (
             evaluated_objective is not None
             and original_objective is not None
@@ -1234,6 +1271,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             == difference["objective_semantic_fingerprint"]
             and active_objective_heads.get(evaluated_objective["objective_id"])
             is evaluated_objective
+            and bool(editorial_path)
+            and all(
+                _objective_semantic_fingerprint(revision)
+                == difference["objective_semantic_fingerprint"]
+                for revision in editorial_path
+            )
             and evaluation["objective_semantic_fingerprint_evaluated"]
             == difference["objective_semantic_fingerprint"]
         )

@@ -10,6 +10,7 @@ from scripts.difference_contract_validator import (
     _candidate_matches_evaluation,
     _derive_comparison_and_mismatch,
     _difference_id,
+    _negative_knowledge_status,
     _normalize_objective_value,
     apply_mutation,
     load_json,
@@ -211,6 +212,20 @@ def test_same_semantic_editorial_objective_can_be_evaluated() -> None:
         "kind": "objective_revision", "id": editorial["objective_revision_id"],
     }
     assert validate_bundle(bundle) == []
+
+    inactive_tail = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    proposal = deepcopy(inactive_tail["objective_revisions"][0])
+    proposal["objective_revision_id"] = "OBJ-REV-DRAFT"
+    proposal["revision"] = 1
+    proposal["status"] = "DRAFT"
+    proposal["previous_objective_ref"] = {
+        "kind": "objective_revision", "id": "OBJ-REV-0001",
+    }
+    proposal["base_semantic_fingerprint"] = editorial["base_semantic_fingerprint"]
+    inactive_tail["objective_revisions"].append(proposal)
+    assert validate_bundle(inactive_tail) == []
+
+    assert _negative_knowledge_status("INVALID") == "REJECT_OR_QUARANTINE"
 
 
 def test_v01_cardinality_fields_must_remain_null() -> None:
