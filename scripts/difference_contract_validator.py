@@ -1617,15 +1617,53 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     (latest := latest_negative_evaluations.get(
                         negative["negative_observation_id"]
                     )) is not None
+                    and (revision_zero := next(
+                        (
+                            item
+                            for item in negative_evaluations.values()
+                            if item["negative_observation_id"]
+                            == negative["negative_observation_id"]
+                            and item["evaluation_revision"] == 0
+                        ),
+                        None,
+                    )) is not None
+                    and revision_zero["evaluation_status"]
+                    == negative["negative_status"]
+                    and {
+                        canonical_json_bytes(reference)
+                        for reference in revision_zero["conflict_fact_refs"]
+                    } == {
+                        canonical_json_bytes(reference)
+                        for reference in negative["positive_fact_refs"]
+                    }
                     and latest["evaluation_status"] == "EMPTY"
                     and negative["negative_status"] == "EMPTY"
                     and observation is not None
+                    and negative["project_id"] == difference["project_id"]
                     and negative["scope_ref"] == observation["scope_ref"]
                     and negative["method_ref"] == observation["method_ref"]
                     and negative["time_boundary"] == observation["time_boundary"]
                     and negative["source_snapshot_refs"]
                     == observation["source_snapshot_refs"]
+                    and negative["effective_boundary"]["kind"]
+                    == "SOURCE_SNAPSHOT"
+                    and negative["effective_boundary"]["identity"]
+                    in {
+                        reference["id"]
+                        for reference in observation["source_snapshot_refs"]
+                    }
+                    and negative["effective_boundary"]["start"] is None
+                    and negative["effective_boundary"]["end"] is None
                     and all(negative["completion_evaluation"].values())
+                    and negative["completion_evaluation"].get(
+                        "collection_defined"
+                    ) is True
+                    and negative["completion_evaluation"].get(
+                        "enumeration_complete"
+                    ) is True
+                    and negative["completion_evaluation"].get(
+                        "zero_valid_members"
+                    ) is True
                     and {
                         canonical_json_bytes(reference)
                         for reference in latest["evidence_refs"]
