@@ -245,6 +245,35 @@ def _observation_time_boundary_complete(
     )
 
 
+def _fact_boundary_observed(
+    fact: dict[str, Any], observation: dict[str, Any],
+) -> bool:
+    boundary = fact["effective_boundary"]
+    declared_source_ids = {
+        reference["id"] for reference in observation["source_snapshot_refs"]
+    }
+    return (
+        (
+            boundary["kind"] == "SOURCE_SNAPSHOT"
+            and boundary["identity"] in declared_source_ids
+            and boundary["start"] is None
+            and boundary["end"] is None
+        )
+        or (
+            boundary["kind"] == "TIME_INTERVAL"
+            and boundary["start"]
+            == observation["time_boundary"]["target_effective_start"]
+            and boundary["end"]
+            == observation["time_boundary"]["target_effective_end"]
+        )
+        or (
+            boundary["kind"] == "STATE_REVISION"
+            and boundary["start"] == observation["state_revision_observed"]
+            and boundary["end"] == observation["state_revision_observed"]
+        )
+    )
+
+
 def _fact_id(fact: dict[str, Any]) -> str:
     value = deepcopy(fact["value"])
     if fact["value_type"] == "UNORDERED_COLLECTION" and isinstance(value, list):
@@ -1709,6 +1738,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and difference is not None
                     and fact["project_id"] == difference["project_id"]
                     and fact["subject"] == difference["subject"]
+                    and _fact_boundary_observed(fact, observation)
                     and _fact_type_matches_target(
                         fact, difference["normalized_target_state"]
                     )

@@ -11,6 +11,7 @@ from scripts.difference_contract_validator import (
     _candidate_type_matches_target,
     _derive_comparison_and_mismatch,
     _difference_id,
+    _fact_boundary_observed,
     _fact_id,
     _negative_knowledge_status,
     _normalize_objective_value,
@@ -214,6 +215,26 @@ def test_fact_identity_uses_observation_payload_canonicalization() -> None:
         "FIXTURE-0.1",
     )
     assert _fact_id(fact) == fact["fact_id"]
+
+
+def test_positive_fact_boundary_must_be_observed() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    fact = bundle["normalized_facts"][0]
+    observation = bundle["observations"][0]
+    assert _fact_boundary_observed(fact, observation)
+
+    stale = deepcopy(fact)
+    stale["effective_boundary"]["identity"] = "SNAP-NOT-OBSERVED"
+    assert not _fact_boundary_observed(stale, observation)
+
+    interval = deepcopy(fact)
+    interval["effective_boundary"] = {
+        "kind": "TIME_INTERVAL",
+        "identity": "INTERVAL-OTHER",
+        "start": "2026-08-30T08:00:00Z",
+        "end": "2026-08-30T08:01:00Z",
+    }
+    assert not _fact_boundary_observed(interval, observation)
 
 
 def test_difference_source_observation_must_resolve_exactly() -> None:
