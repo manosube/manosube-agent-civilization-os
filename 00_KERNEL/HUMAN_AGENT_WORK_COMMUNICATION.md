@@ -20,6 +20,8 @@ This protocol makes the human cost of waiting visible before an Agent begins sub
 
 This is a cross-cutting human–Agent communication contract. It does not add a ninth Kernel element, transfer Human Authority, change a Difference, authorize a Change, or prove Completion.
 
+Its authority rank is fixed by `ORIGIN.md`: it is subordinate to Human Objective / Constitutional Authority, `ORIGIN.md`, and `KERNEL_CONSTITUTION.md`; it is superior to the invariant registry, schemas, engine implementation, authority envelopes, adapters, Agent prompts, session instructions, and external work surfaces. A conflict MUST be resolved according to that hierarchy, never by silently weakening the higher-ranked contract.
+
 ---
 
 ## 2. Start-of-work forecast
