@@ -299,7 +299,7 @@
       "normalized_fact_refs": [
         {
           "kind": "normalized_fact",
-          "id": "FACT-0001"
+          "id": "FACT-050BC8EB6C19C40CE104A868CF43D6C5FE7E677EBD33C67D675E5B3C4BBEA9D4"
         }
       ],
       "status": "COMPLETE",
@@ -331,7 +331,7 @@
   "normalized_facts": [
     {
       "schema_version": "0.1",
-      "fact_id": "FACT-0001",
+      "fact_id": "FACT-050BC8EB6C19C40CE104A868CF43D6C5FE7E677EBD33C67D675E5B3C4BBEA9D4",
       "project_id": "PRJ-0001",
       "subject": "kernel.state",
       "predicate": "kernel.state@v1",
@@ -704,7 +704,7 @@
     {
       "schema_version": "0.1",
       "binding_id": "BIND-DIFFERENCE-0001",
-      "fact_id": "FACT-0001",
+      "fact_id": "FACT-050BC8EB6C19C40CE104A868CF43D6C5FE7E677EBD33C67D675E5B3C4BBEA9D4",
       "observation_id": "OBS-0001",
       "state_revision_observed": 2,
       "state_fingerprint_observed": {
@@ -724,7 +724,7 @@
     {
       "schema_version": "0.1",
       "evaluation_id": "FACT-EVAL-DIFFERENCE-0001-0",
-      "fact_id": "FACT-0001",
+      "fact_id": "FACT-050BC8EB6C19C40CE104A868CF43D6C5FE7E677EBD33C67D675E5B3C4BBEA9D4",
       "evaluation_revision": 0,
       "previous_evaluation_id": null,
       "binding_refs": [

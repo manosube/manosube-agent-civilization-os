@@ -161,6 +161,61 @@ def _is_empty_collection(value: Any) -> bool:
     return members == []
 
 
+def _observation_attempts_complete(
+    observation: dict[str, Any], scope: dict[str, Any],
+) -> bool:
+    attempts = observation["attempts"]
+    started = datetime.fromisoformat(
+        observation["time_boundary"]["observation_started_at"].replace(
+            "Z", "+00:00"
+        )
+    )
+    ended = datetime.fromisoformat(
+        observation["time_boundary"]["observation_ended_at"].replace(
+            "Z", "+00:00"
+        )
+    )
+    timeout = scope["attempt_policy"]["timeout_seconds"]
+    return (
+        0 < len(attempts) <= scope["attempt_policy"]["max_attempts"]
+        and all(
+            attempt["method_ref"] == observation["method_ref"]
+            and attempt["result"] in {"COMPLETE", "EMPTY"}
+            and attempt["failure_class"] is None
+            and started
+            <= (attempt_started := datetime.fromisoformat(
+                attempt["started_at"].replace("Z", "+00:00")
+            ))
+            <= (attempt_ended := datetime.fromisoformat(
+                attempt["ended_at"].replace("Z", "+00:00")
+            ))
+            <= ended
+            and (attempt_ended - attempt_started).total_seconds() <= timeout
+            for attempt in attempts
+        )
+    )
+
+
+def _fact_id(fact: dict[str, Any]) -> str:
+    value = deepcopy(fact["value"])
+    if fact["value_type"] == "UNORDERED_COLLECTION" and isinstance(value, list):
+        value = sorted(
+            (_canonical_semantic(item) for item in value),
+            key=canonical_json_bytes,
+        )
+    semantic = {
+        key: (value if key == "value" else fact[key])
+        for key in (
+            "project_id", "subject", "predicate", "value", "value_type",
+            "unit", "effective_boundary", "normalization_profile",
+        )
+    }
+    domain = b"MANOSUBE_AGENT_CIVILIZATION_OS\x00OBSERVATION\x000.1\x00"
+    return "FACT-" + hashlib.sha256(
+        domain + canonical_json_bytes(_canonical_semantic(semantic))
+    ).hexdigest().upper()
+
+
 def _derive_comparison_and_mismatch(
     observed: dict[str, Any], target: dict[str, Any],
 ) -> tuple[str, str | None]:
@@ -629,6 +684,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     normalized_facts = _index(
         bundle.get("normalized_facts", []), "fact_id", errors
     )
+    for fact in normalized_facts.values():
+        if fact["fact_id"] != _fact_id(fact):
+            errors.append(f"Normalized Fact identity mismatch: {fact['fact_id']}")
     negative_observations = _index(
         bundle.get("negative_observations", []), "negative_observation_id", errors
     )
@@ -1442,12 +1500,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 + [
                     reference
                     for binding in evaluation["candidate_invariant_evaluation_bindings"]
-                    for reference in binding["evaluation_evidence_refs"]
+                    for reference in binding["evaluation_evidence_refs"]["members"]
                 ]
                 + [
                     reference
                     for binding in evaluation["candidate_claim_evaluation_bindings"]
-                    for reference in binding["evaluation_evidence_refs"]
+                    for reference in binding["evaluation_evidence_refs"]["members"]
                 ]
             )
             evidence_times = [
@@ -1635,6 +1693,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 difference is not None
                 and required_scope is not None
                 and required_scope["scope_status"] == "COMPLETE"
+                and _observation_attempts_complete(observation, required_scope)
                 and difference["normalized_target_state"]["operator"] == "none"
                 and not facts
                 and bool(negatives)
@@ -1842,6 +1901,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     )
                 )
                 and observation["blind_spots"]["status"] == "NONE_KNOWN"
+                and _observation_attempts_complete(
+                    observation, required_scope
+                )
                 and (
                     bool(observation["normalized_fact_refs"])
                     or bounded_empty_valid[index]
@@ -1921,7 +1983,23 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     == evaluation["difference_id"]
                     and change.get("base_state_ref")
                     == evaluation["before_state_ref"]
+                    and change.get("before_kernel_source_ref")
+                    == evaluation["base_kernel_source_ref_evaluated"]
+                    and change.get("after_kernel_source_ref")
+                    == evaluation["kernel_source_ref_evaluated"]
                     for change in resolved_changes
+                )
+            )
+            kernel_source_binding_valid = (
+                (
+                    resolution_mode == "CHANGE_FREE"
+                    and candidate is not None
+                    and evaluation["base_kernel_source_ref_evaluated"]
+                    == candidate["kernel_source_ref"]
+                )
+                or (
+                    resolution_mode == "CHANGE_BOUND"
+                    and change_binding_valid
                 )
             )
             mode_evidence_present = (
@@ -1935,7 +2013,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 and not evaluation["change_result_evidence_refs"]
                 and bool(evaluation["change_free_verification_evidence_refs"])
             )
-            if not common_evidence_present or not mode_evidence_present:
+            if (
+                not common_evidence_present
+                or not mode_evidence_present
+                or not kernel_source_binding_valid
+            ):
                 errors.append(f"closure Evidence binding incomplete: {evaluation['closure_evaluation_id']}")
             invariant_bindings = evaluation["candidate_invariant_evaluation_bindings"]
             claim_bindings = evaluation["candidate_claim_evaluation_bindings"]
