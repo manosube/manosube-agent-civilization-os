@@ -67,6 +67,9 @@ OBSERVATION_BOUND_FORBIDDEN: frozenset[str] = frozenset(
 #: Statuses whose lifecycle event must carry a Next Observation Request.
 REQUIRES_NEXT_OBSERVATION: frozenset[str] = frozenset({"BLOCKED", "RETAINED", "REOPENED"})
 
+#: A terminal status is settled: it can never request a further observation.
+NEXT_OBSERVATION_FORBIDDEN: frozenset[str] = frozenset({"SUPERSEDED", "INVALIDATED"})
+
 #: The Next Observation Request reason code each such status requires.
 NEXT_OBSERVATION_REASON: dict[str, str] = {
     "BLOCKED": "BLOCKER_REOBSERVATION",
@@ -183,14 +186,36 @@ def next_observation_binding_errors(
 
     identity = event["difference_event_id"]
     errors: list[str] = []
-    if event["to_status"] in {"RETAINED", "REOPENED"} and event["next_observation_ref"] is None:
+    # BLOCKED's own requirement is stated by the blocker payload rule, which pins the
+    # resolution condition's verification request to this same reference.
+    if (
+        event["to_status"] in REQUIRES_NEXT_OBSERVATION - {"BLOCKED"}
+        and event["next_observation_ref"] is None
+    ):
         errors.append(f"next observation missing: {identity}")
+    if (
+        event["to_status"] in NEXT_OBSERVATION_FORBIDDEN
+        and event["next_observation_ref"] is not None
+    ):
+        errors.append(f"terminal status must not request a further observation: {identity}")
     reference = event["next_observation_ref"]
     if reference is None:
         return errors
 
     request = requests.get(_reference_id(reference) or "")
     method = None if request is None else methods.get(_reference_id(request["method_ref"]) or "")
+    # A status that requires a Next Observation Request also fixes the reason that request
+    # must carry: the reason states what the next observation has to resolve. The forward
+    # reference is outside event identity, so without this a RETAINED event could point at
+    # a REOPEN_REOBSERVATION request whose own content address recomputes perfectly, and
+    # both producer and auditor would accept forged status provenance.
+    if request is not None and event["to_status"] in NEXT_OBSERVATION_REASON:
+        required = NEXT_OBSERVATION_REASON[event["to_status"]]
+        if request["reason_code"] != required:
+            errors.append(
+                f"next observation reason does not match status: {identity} "
+                f"({event['to_status']} requires {required}, got {request['reason_code']})"
+            )
     if (
         reference.get("kind") != "next_observation_request"
         or request is None

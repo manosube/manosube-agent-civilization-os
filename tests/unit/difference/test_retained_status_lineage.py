@@ -155,7 +155,9 @@ def test_legal_supersession_sources_come_from_the_single_authority() -> None:
 def test_material_change_supersedes_from_every_legal_source(source: str) -> None:
     """A material identity change is processable from any legally supersedable state."""
 
-    _, seeded = retained_status_predecessor(source, "BLOCKER_REOBSERVATION")
+    # The reason a request carries is fixed by the status that requires it, so the
+    # helper derives it rather than being told a generic one.
+    _, seeded = retained_status_predecessor(source)
     predecessor = seeded["bindings"][0]["predecessor"]
     difference = predecessor["difference"]
     changed = _material_change_request()

@@ -153,7 +153,21 @@ def test_the_coverage_matrix_is_exhaustive() -> None:
         assert isinstance(carried.key, str) and carried.key
         assert (carried.schema is None) == (section in NO_CANONICAL_SCHEMA_SECTIONS)
         assert (carried.identity is None) == (section in CALLER_ASSIGNED_IDENTITY_SECTIONS)
-        assert carried.later_phase == (section in LATER_PHASE_SECTIONS)
+        # `later_phase` is a property of the *section*, not of the canonical record type,
+        # since the same type can be carried and emitted on different routes.
+        assert (section in LATER_PHASE_SECTIONS) == (
+            section
+            in {
+                "evaluations",
+                "reopen_condition_evaluations",
+                "candidate_completion_records",
+                "candidate_claim_evaluation_events",
+                "invariant_evaluations",
+                "evidence_sufficiency_results",
+                "changes",
+                "reflow_transitions",
+            }
+        )
 
 
 # --------------------------------------------------------------------------- #

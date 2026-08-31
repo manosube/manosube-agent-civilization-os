@@ -521,7 +521,7 @@ def _candidate_closure_evaluation(
 
 def retained_status_predecessor(
     status: str,
-    reason_code: str = "BLOCKER_REOBSERVATION",
+    reason_code: str | None = None,
     negative_claims: list[dict[str, Any]] | None = None,
     facts: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -534,6 +534,13 @@ def retained_status_predecessor(
 
     from manosube_agent_civilization.difference import derive_differences
     from manosube_agent_civilization.difference.identity import lifecycle_event_id
+    from manosube_agent_civilization.difference.lifecycle import NEXT_OBSERVATION_REASON
+
+    # The reason a Next Observation Request carries is fixed by the status that requires
+    # it. Defaulting every status to BLOCKER_REOBSERVATION produced exactly the forged
+    # status provenance the lifecycle authority now rejects.
+    if reason_code is None:
+        reason_code = NEXT_OBSERVATION_REASON.get(status, "BLOCKER_REOBSERVATION")
 
     fixture = json.loads(
         (

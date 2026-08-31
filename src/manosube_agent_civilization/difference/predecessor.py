@@ -1,13 +1,14 @@
-"""The single typed validation boundary for caller-supplied predecessor context.
+"""The typed validation boundary for caller-supplied predecessor context.
 
 Three successive reviews found the same shape of defect: a carried record was accepted
 because *some* check happened to cover the field that was forged, and rejected only when a
-later review named the next uncovered field. The cause was structural — predecessor context
-was admitted by a growing set of partial checks rather than by a boundary that every record
-must cross.
+later review named the next uncovered field. The cause was structural -- predecessor
+context was admitted by a growing set of partial checks rather than by a boundary that
+every record must cross.
 
-This module is that boundary. It states, once, which record types the Difference Engine is
-permitted to carry, and it puts each of them through the same ordered gate:
+This module is that boundary. The record types, their canonical schemas and their identity
+authorities live once in :mod:`difference.conformance`; this module states which of them a
+predecessor context may carry, and puts each supplied record through the same ordered gate:
 
 ```text
 1. group every supplied record by its canonical type
@@ -23,31 +24,22 @@ permitted to carry, and it puts each of them through the same ordered gate:
 Steps 1-6 need nothing but the context itself and run **before** any record is merged.
 Step 7 runs on the merged set, because a reference may legitimately resolve to a record the
 current derivation supplies rather than one the caller re-sent -- the nuance ADR-0005
-recorded. Nothing is returned before both gates pass, and nothing is ever repaired: a
-record that fails is a forgery or an incomplete lineage, and either fails closed.
+recorded. Nothing is returned before both gates pass, and nothing is ever repaired.
 
-Where a record belongs to a later phase whose semantic contract this phase does not own,
-the boundary schema-validates it, recomputes any identity a current authority provides, and
-requires its references to resolve. It does **not** invent semantics for it, and
-`LATER_PHASE_SECTIONS` names exactly those types so the non-claim is explicit rather than
-implied.
+The same table also backs the final output conformance gate, so a record type cannot be
+admitted on one route and unvalidated on the other.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
-from manosube_agent_civilization.observation.identity import (
-    binding_identity,
-    deterministic_id,
-    fact_evaluation_identity,
-    fact_identity,
-    observation_identity,
-)
-
 from .canonical import canonical_bytes, content_address
+from .conformance import (
+    CARRIED_SECTIONS,
+    RECORD_TYPES,
+    validate_typed_record,
+)
 from .errors import DifferenceError, IdentityCollisionError
 from .identity import (
     closure_policy_id,
@@ -58,141 +50,28 @@ from .lifecycle import blocker_payload_errors, next_observation_binding_errors
 from .validation import SCHEMA_BASE, require_schema_version, validate_record
 
 DIFFERENCE_SCHEMA_BASE = SCHEMA_BASE + "difference/"
-OBSERVATION_SCHEMA_BASE = SCHEMA_BASE + "observation/"
 
-
-def _negative_observation_identity(record: dict[str, Any]) -> str:
-    return deterministic_id(
-        "NEG",
-        {
-            "observation_id": record["observation_id"],
-            "subject": record["subject"],
-            "predicate": record["predicate"],
-            "effective_boundary": record["effective_boundary"],
-        },
-    )
-
-
-def _negative_evaluation_identity(record: dict[str, Any]) -> str:
-    return deterministic_id(
-        "NEG-EVAL",
-        {
-            "negative_observation_id": record["negative_observation_id"],
-            "evaluation_revision": record["evaluation_revision"],
-        },
-    )
-
-
-def _request_identity(record: dict[str, Any]) -> str:
-    return content_address("OBS-REQ-", record, "observation_request_id")
-
-
-def _method_identity(record: dict[str, Any]) -> str:
-    return content_address("OBS-METHOD-", record, "observation_method_id")
-
-
-def _policy_identity(record: dict[str, Any]) -> str:
-    subject = record["subject_difference_ref"]
-    identity = subject.get("id") if isinstance(subject, dict) else None
-    return closure_policy_id(record["policy_semantic_fingerprint"], str(identity))
-
-
-@dataclass(frozen=True)
-class CarriedType:
-    """One canonical record type the Engine is permitted to carry."""
-
-    key: str
-    #: ``None`` when this repository defines no canonical schema for the type yet.
-    schema: str | None
-    base: str
-    identity: Callable[[dict[str, Any]], str] | None = None
-    #: Reference fields whose targets must resolve, as ``field -> section``.
-    references: tuple[tuple[str, str], ...] = ()
-    later_phase: bool = False
-
-
-#: Every predecessor-context section the Difference Engine accepts. A section absent from
-#: this table is rejected rather than silently ignored, so a new carried type cannot be
-#: introduced without passing the boundary.
-CARRIED_TYPES: dict[str, CarriedType] = {
-    "observations": CarriedType(
-        "observation_id", "observation.schema.json", OBSERVATION_SCHEMA_BASE,
-        observation_identity,
-    ),
-    "normalized_facts": CarriedType(
-        "fact_id", "normalized_fact.schema.json", OBSERVATION_SCHEMA_BASE, fact_identity,
-    ),
-    "fact_observation_bindings": CarriedType(
-        "binding_id", "fact_observation_binding.schema.json", OBSERVATION_SCHEMA_BASE,
-        binding_identity,
-    ),
-    "fact_evaluations": CarriedType(
-        "evaluation_id", "fact_evaluation.schema.json", OBSERVATION_SCHEMA_BASE,
-        fact_evaluation_identity,
-    ),
-    "negative_observations": CarriedType(
-        "negative_observation_id", "negative_observation.schema.json", OBSERVATION_SCHEMA_BASE,
-        _negative_observation_identity,
-    ),
-    "negative_observation_evaluations": CarriedType(
-        "evaluation_id", "negative_observation_evaluation.schema.json", OBSERVATION_SCHEMA_BASE,
-        _negative_evaluation_identity,
-    ),
-    "observation_scopes": CarriedType(
-        "scope_id", "observation_scope.schema.json", OBSERVATION_SCHEMA_BASE,
-    ),
-    "objective_revisions": CarriedType(
-        "objective_revision_id", "objective_revision.schema.json", SCHEMA_BASE + "objective/",
-    ),
-    "policies": CarriedType(
-        "closure_policy_id", "closure_policy.schema.json", DIFFERENCE_SCHEMA_BASE,
-        _policy_identity,
-    ),
-    "next_observation_requests": CarriedType(
-        "observation_request_id", "next_observation_request.schema.json", DIFFERENCE_SCHEMA_BASE,
-        _request_identity,
-    ),
-    "observation_methods": CarriedType(
-        "observation_method_id", "observation_method.schema.json", DIFFERENCE_SCHEMA_BASE,
-        _method_identity,
-    ),
-    "evaluations": CarriedType(
-        "closure_evaluation_id", "closure_evaluation.schema.json", DIFFERENCE_SCHEMA_BASE,
-        later_phase=True,
-    ),
-    "reopen_condition_evaluations": CarriedType(
-        "evaluation_id", "reopen_condition_evaluation.schema.json", DIFFERENCE_SCHEMA_BASE,
-        later_phase=True,
-    ),
-    "candidate_completion_records": CarriedType(
-        "completion_id", "candidate_completion_record.schema.json", DIFFERENCE_SCHEMA_BASE,
-        later_phase=True,
-    ),
-    "candidate_claim_evaluation_events": CarriedType(
-        "event_id", "candidate_claim_evaluation_event.schema.json", DIFFERENCE_SCHEMA_BASE,
-        later_phase=True,
-    ),
-    "invariant_evaluations": CarriedType(
-        "evaluation_id", "invariant_evaluation.schema.json", DIFFERENCE_SCHEMA_BASE,
-        later_phase=True,
-    ),
-    "evidence_sufficiency_results": CarriedType(
-        "evidence_sufficiency_id", "evidence_sufficiency_result.schema.json",
-        DIFFERENCE_SCHEMA_BASE, later_phase=True,
-    ),
-    # 01_SCHEMA/change/ and 01_SCHEMA/reflow/ are empty in v0.1: these two types have no
-    # canonical schema in this repository yet, so there is nothing to validate them
-    # against. They are still admitted only as carried provenance, are still subject to
-    # identity-collision and reference-resolution gates, and the non-claim is explicit.
-    "changes": CarriedType("change_id", None, "", later_phase=True),
-    "reflow_transitions": CarriedType("transaction_id", None, "", later_phase=True),
+#: Every predecessor-context section the Difference Engine accepts, from the single
+#: canonical record-type table. A section absent from it is rejected rather than silently
+#: ignored, so a new carried type cannot be introduced without passing the boundary.
+CARRIED_TYPES: dict[str, Any] = {
+    section: RECORD_TYPES[type_name] for section, type_name in CARRIED_SECTIONS.items()
 }
 
 #: Types whose semantic contract belongs to a later phase. For these the boundary proves
 #: schema conformance, identity where an authority exists, and reference resolution -- and
 #: claims nothing more. Their own rules are their owner's to enforce.
 LATER_PHASE_SECTIONS: frozenset[str] = frozenset(
-    section for section, carried in CARRIED_TYPES.items() if carried.later_phase
+    {
+        "evaluations",
+        "reopen_condition_evaluations",
+        "candidate_completion_records",
+        "candidate_claim_evaluation_events",
+        "invariant_evaluations",
+        "evidence_sufficiency_results",
+        "changes",
+        "reflow_transitions",
+    }
 )
 
 #: Sections this repository defines no canonical schema for. They are carried as opaque
@@ -205,9 +84,7 @@ NO_CANONICAL_SCHEMA_SECTIONS: frozenset[str] = frozenset(
 #: Sections carried without a content-addressed identity authority reachable in this phase.
 #: A caller-assigned identity is proven only to name its own record, not to be derivable.
 CALLER_ASSIGNED_IDENTITY_SECTIONS: frozenset[str] = frozenset(
-    section
-    for section, carried in CARRIED_TYPES.items()
-    if carried.identity is None
+    section for section, carried in CARRIED_TYPES.items() if carried.identity is None
 )
 
 
@@ -258,19 +135,12 @@ def validate_carried_records(context: dict[str, Any]) -> None:
         for record in records:
             if not isinstance(record, dict):
                 raise DifferenceError(f"predecessor context record is not an object: {section}")
-            if carried.schema is not None:
-                validate_record(record, carried.schema, base=carried.base)
-                require_schema_version(record, _describe(section, record.get(carried.key)))
-            identity = record.get(carried.key)
-            if not isinstance(identity, str) or not identity:
-                raise DifferenceError(
-                    f"carried record has no canonical identity: {section}.{carried.key}"
-                )
-            if carried.identity is not None and identity != carried.identity(record):
-                raise IdentityCollisionError(
-                    f"carried record identity does not recompute: "
-                    f"{_describe(section, identity)}"
-                )
+            validate_typed_record(
+                record,
+                CARRIED_SECTIONS[section],
+                _describe(section, record.get(carried.key)),
+            )
+            identity = record[carried.key]
             payload = canonical_bytes(record)
             existing = seen.get(identity)
             if existing is not None and existing != payload:

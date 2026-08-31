@@ -34,6 +34,11 @@ from .canonical import (
     reject_secret_material,
     walk_references,
 )
+from .conformance import (
+    validate_derivation_input,
+    validate_emitted_bundle,
+    validate_state_fingerprint,
+)
 from .errors import (
     BoundaryViolationError,
     DifferenceError,
@@ -1005,7 +1010,10 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
 
     project_id = request["project_id"]
     objective = request["objective_revision"]
-    require_schema_version(objective, "objective revision")
+    # The requested Objective revision arrives on the current-derivation route, which the
+    # predecessor boundary does not cover. It is validated against its canonical schema
+    # before any identity-bearing or semantic field is read.
+    validate_derivation_input(objective, "objective_revision")
     if objective["project_id"] != project_id:
         raise BoundaryViolationError("Objective revision belongs to a different project")
     if objective["status"] != "ACTIVE":
@@ -1020,6 +1028,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(state_revision, int) or isinstance(state_revision, bool) or state_revision < 0:
         raise DifferenceError("State revision must be a non-negative integer")
     state_fingerprint = request["state_fingerprint"]
+    validate_state_fingerprint(state_fingerprint, "requested State fingerprint")
     if state_fingerprint.get("profile") != "MANOSUBE-STATE-SHA256-0.1":
         raise UnsupportedProfileError("unsupported State fingerprint profile")
 
@@ -1061,7 +1070,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
 
         scope = binding["observation_scope"]
         require_schema_version(scope, "observation scope")
-        validate_record(scope, "observation_scope.schema.json", base=OBSERVATION_SCHEMA_BASE)
+        validate_derivation_input(scope, "observation_scope")
         if scope["project_id"] != project_id:
             raise BoundaryViolationError("resolved Scope belongs to a different project")
         if scope["target_identity"] != predicate_id:
@@ -1842,4 +1851,8 @@ def _finalize(
             bundle[section] = records
     if set(bundle["materialized_status"]) != set(differences):
         raise DifferenceValidationError("materialized status does not cover every Difference")
+    # The final output conformance gate. Nothing is returned unless every emitted section
+    # is a declared canonical type, every record satisfies its canonical schema, every
+    # content-addressed identity recomputes, and no identity is duplicated or contradicted.
+    validate_emitted_bundle(bundle)
     return bundle
