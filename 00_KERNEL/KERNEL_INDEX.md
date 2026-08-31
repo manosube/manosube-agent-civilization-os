@@ -2138,3 +2138,24 @@ OBJECTIVE
 
 
 
+
+
+---
+
+# Mandatory Delivery Protocol
+
+Kernel implementation work MUST also read:
+
+```text
+00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md
+```
+
+This protocol does not add a ninth Kernel element or change the Canonical Cycle. It governs the default vertical packaging of one Kernel element as Contract + Schema + Engine + Tests + predecessor integration, the permitted reasons for splitting that package, capability selection, independent acceptance and the prohibition on premature adapter expansion.
+
+```text
+ONE_KERNEL_ELEMENT_PER_PACKAGE=true
+CONTRACT_SCHEMA_ENGINE_INTEGRATION_DEFAULT=true
+DEPENDENCY_ORDER_PRESERVED=true
+HUMAN_MERGE_BOUNDARY_PRESERVED=true
+COMPLETION_INFLATION=false
+```
