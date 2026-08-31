@@ -4,7 +4,7 @@
   {"name": "illegal_open_to_closed", "path": ["events", 2, "to_status"], "value": "CLOSED"},
   {"name": "blocker_boundary_mismatch", "path": ["events", 2, "blocker_scope", "effective_boundary", "resolved_scope_record_sha256"], "value": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
   {"name": "blocker_request_mismatch", "path": ["events", 2, "blocker_resolution_condition", "verification_request_ref", "id"], "value": "OBS-REQ-9999"},
-  {"name": "materialized_reconstruction_mismatch", "path": ["materialized_status", "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B"], "value": "OPEN"},
+  {"name": "materialized_reconstruction_mismatch", "path": ["materialized_status", "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82"], "value": "OPEN"},
   {"name": "missing_policy_subject", "path": ["policies", 0, "subject_difference_ref", "id"], "value": "D-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"},
   {"name": "policy_only_contains_candidate", "path": ["evaluations", 0, "after_state_candidate"], "value": {"kind": "after_state_candidate"}},
   {"name": "policy_only_missing_terminal_evidence", "path": ["evaluations", 0, "terminal_reason_evidence_refs"], "value": []},

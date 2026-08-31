@@ -321,13 +321,17 @@ def _normalize_objective_value(value: Any) -> tuple[Any, str]:
 
 def _project_collection_value(value: Any, value_type: str) -> Any:
     if value_type == "ORDERED_COLLECTION" and isinstance(value, list):
-        return {"collection_kind": "ORDERED_LIST", "members": value}
+        return {
+            "collection_kind": "ORDERED_LIST",
+            "members": [_canonical_semantic(item) for item in value],
+        }
     if value_type == "UNORDERED_COLLECTION" and isinstance(value, list):
+        members = [_canonical_semantic(item) for item in value]
         return {
             "collection_kind": "UNORDERED_SET",
-            "members": sorted(value, key=canonical_json_bytes),
+            "members": sorted(members, key=canonical_json_bytes),
         }
-    return value
+    return _canonical_semantic(value)
 
 
 def _exact_value_equal(left: Any, right: Any) -> bool:
@@ -634,6 +638,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     )
     fact_evaluations = _index(
         bundle.get("fact_evaluations", []), "evaluation_id", errors
+    )
+    latest_fact_evaluations = _latest_contiguous_evaluations(
+        fact_evaluations, "fact_id"
     )
     evidence_observed_at: dict[bytes, datetime] = {}
     for observation in observations.values():
@@ -1037,6 +1044,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             == scope_binding["scope_ref"]
             and difference["effective_boundary"]["resolved_scope_record_sha256"]
             == scope_binding["resolved_scope_record_sha256"]
+            and difference["effective_boundary"]["target_effective_window"]
+            == resolved_scope["target_effective_window"]
         )
         target_projection_valid = (
             objective is not None
@@ -1069,6 +1078,34 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             for reference in observation["normalized_fact_refs"]
             if reference.get("kind") == "normalized_fact"
         ]
+        source_fact_evaluations = [
+            latest_fact_evaluations.get(fact["fact_id"])
+            for fact in source_facts if fact is not None
+        ]
+        source_facts_valid = bool(source_facts) and all(
+            evaluation is not None
+            and evaluation["evaluation_status"] in {"SUPPORTED", "CONFLICTED"}
+            and any(
+                observation is not None
+                and fact is not None
+                and _evaluation_supports_observation(
+                    evaluation, fact, observation, fact_bindings
+                )
+                for observation in source_observations
+            )
+            for fact, evaluation in zip(
+                source_facts, source_fact_evaluations, strict=True
+            )
+        )
+        source_fact_knowledge = (
+            "CONFLICTED"
+            if any(
+                evaluation is not None
+                and evaluation["evaluation_status"] == "CONFLICTED"
+                for evaluation in source_fact_evaluations
+            )
+            else "KNOWN"
+        )
         source_negatives = [
             negative
             for observation in source_observations if observation is not None
@@ -1158,6 +1195,13 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         source_projection_valid = (
             source_observations_valid
             and (bool(source_facts) or bool(source_negatives))
+            and (
+                not source_facts
+                or (
+                    source_facts_valid
+                    and observed["knowledge_status"] == source_fact_knowledge
+                )
+            )
             and (
                 bool(source_facts)
                 or (
@@ -1536,6 +1580,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 None if candidate is None or difference is None else
                 _subject_value(candidate["semantic_state"], difference["subject"])
             )
+            candidate_projected_value = (
+                None if difference is None else _project_collection_value(
+                    candidate_value,
+                    difference["normalized_target_state"]["expected_value_type"],
+                )
+            )
             candidate_target_valid = (
                 candidate is not None
                 and difference is not None
@@ -1543,13 +1593,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     candidate_value, difference["normalized_target_state"]
                 )
                 and _target_satisfied(
-                    [candidate_value], difference["normalized_target_state"]
+                    [candidate_projected_value],
+                    difference["normalized_target_state"],
                 )
                 and all(
                     fact is not None
                     and _exact_value_equal(
                         _project_collection_value(fact["value"], fact["value_type"]),
-                        _project_collection_value(candidate_value, fact["value_type"]),
+                        candidate_projected_value,
                     )
                     for facts in resolved_fact_sets for fact in facts
                 )

@@ -62,6 +62,8 @@ def test_valid_bundle_is_schema_valid_and_reconstructable() -> None:
         "observation_scope.schema.json": bundle["observation_scopes"],
         "observation.schema.json": bundle["observations"],
         "normalized_fact.schema.json": bundle["normalized_facts"],
+        "fact_observation_binding.schema.json": bundle["fact_observation_bindings"],
+        "fact_evaluation.schema.json": bundle["fact_evaluations"],
         "difference.schema.json": bundle["differences"],
         "difference_lifecycle_event.schema.json": bundle["events"],
         "closure_policy.schema.json": bundle["policies"],
@@ -496,6 +498,28 @@ def test_unordered_target_comparison_uses_canonical_semantics() -> None:
     }
     observed = {"collection_kind": "UNORDERED_SET", "members": ["b", "a"]}
     assert _target_satisfied([observed], target)
+
+
+def test_difference_rejects_nonprojectable_latest_fact_evaluation() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    mutated = deepcopy(bundle)
+    mutated["fact_evaluations"][0]["evaluation_status"] = "INVALID"
+    assert any("Difference projection mismatch" in error for error in validate_bundle(mutated))
+
+
+def test_nested_unordered_fact_projection_is_recursive() -> None:
+    value = [
+        {"collection_kind": "UNORDERED_SET", "members": ["b", "a"]},
+        {"collection_kind": "UNORDERED_SET", "members": ["d", "c"]},
+    ]
+    projected = _project_collection_value(value, "UNORDERED_COLLECTION")
+    assert projected == {
+        "collection_kind": "UNORDERED_SET",
+        "members": [
+            {"collection_kind": "UNORDERED_SET", "members": ["a", "b"]},
+            {"collection_kind": "UNORDERED_SET", "members": ["c", "d"]},
+        ],
+    }
 
 
 def test_verifying_and_closed_transitions_enforce_minimum_gates() -> None:

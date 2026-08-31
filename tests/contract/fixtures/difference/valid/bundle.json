@@ -2,7 +2,7 @@
   "differences": [
     {
       "schema_version": "0.1",
-      "difference_id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B",
+      "difference_id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82",
       "project_id": "PRJ-0001",
       "objective_revision_ref": {
         "kind": "objective_revision",
@@ -68,8 +68,8 @@
           },
           "resolved_scope_record_sha256": "sha256:e51b05febb2627d0b5e4b240f5ce7087b4b68450d25be63638ea7e8200d58b5f",
           "target_effective_window": {
-            "start": null,
-            "end": null
+            "start": "2026-08-30T09:00:00Z",
+            "end": "2026-08-30T09:01:00Z"
           },
           "source_snapshot_refs": {
             "collection_kind": "UNORDERED_SET",
@@ -98,8 +98,8 @@
                 },
                 "resolved_scope_record_sha256": "sha256:e51b05febb2627d0b5e4b240f5ce7087b4b68450d25be63638ea7e8200d58b5f",
                 "target_effective_window": {
-                  "start": null,
-                  "end": null
+                  "start": "2026-08-30T09:00:00Z",
+                  "end": "2026-08-30T09:01:00Z"
                 },
                 "source_snapshot_refs": {
                   "collection_kind": "UNORDERED_SET",
@@ -147,8 +147,8 @@
         },
         "resolved_scope_record_sha256": "sha256:e51b05febb2627d0b5e4b240f5ce7087b4b68450d25be63638ea7e8200d58b5f",
         "target_effective_window": {
-          "start": null,
-          "end": null
+          "start": "2026-08-30T09:00:00Z",
+          "end": "2026-08-30T09:01:00Z"
         },
         "source_snapshot_refs": {
           "collection_kind": "UNORDERED_SET",
@@ -343,7 +343,7 @@
     {
       "schema_version": "0.1",
       "difference_event_id": "D-EVT-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-      "difference_id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B",
+      "difference_id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82",
       "event_kind": "TRANSITION",
       "event_revision": 0,
       "previous_event_id": null,
@@ -386,7 +386,7 @@
     {
       "schema_version": "0.1",
       "difference_event_id": "D-EVT-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-      "difference_id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B",
+      "difference_id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82",
       "event_kind": "TRANSITION",
       "event_revision": 1,
       "previous_event_id": "D-EVT-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -419,7 +419,7 @@
     {
       "schema_version": "0.1",
       "difference_event_id": "D-EVT-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
-      "difference_id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B",
+      "difference_id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82",
       "event_kind": "TRANSITION",
       "event_revision": 2,
       "previous_event_id": "D-EVT-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
@@ -443,8 +443,8 @@
           },
           "resolved_scope_record_sha256": "sha256:e51b05febb2627d0b5e4b240f5ce7087b4b68450d25be63638ea7e8200d58b5f",
           "target_effective_window": {
-            "start": null,
-            "end": null
+            "start": "2026-08-30T09:00:00Z",
+            "end": "2026-08-30T09:01:00Z"
           },
           "source_snapshot_refs": {
             "collection_kind": "UNORDERED_SET",
@@ -461,7 +461,7 @@
           "members": [
             {
               "kind": "difference",
-              "id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B"
+              "id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82"
             }
           ]
         },
@@ -472,12 +472,12 @@
         "condition_code": "OBSERVATION_PATH_AVAILABLE",
         "subject_ref": {
           "kind": "difference",
-              "id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B"
+              "id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82"
         },
         "expected_state": "AVAILABLE",
         "verification_request_ref": {
           "kind": "next_observation_request",
-          "id": "OBS-REQ-3C7CB159C45C786BFEC9569D836AA816306076DF3DF0E87E87F22EB3511D7EF4"
+          "id": "OBS-REQ-9AA44949A191D7965941AEC662461EC8C40A5D4C229E2C97C424CD4DB056E5BD"
         }
       },
       "observation_refs": [],
@@ -496,7 +496,7 @@
       "reflow_transition_ref": null,
       "next_observation_ref": {
         "kind": "next_observation_request",
-        "id": "OBS-REQ-3C7CB159C45C786BFEC9569D836AA816306076DF3DF0E87E87F22EB3511D7EF4"
+        "id": "OBS-REQ-9AA44949A191D7965941AEC662461EC8C40A5D4C229E2C97C424CD4DB056E5BD"
       },
       "reopen_trigger": null,
       "reopen_condition_ref": null,
@@ -509,11 +509,11 @@
   "next_observation_requests": [
     {
       "schema_version": "0.1",
-      "observation_request_id": "OBS-REQ-3C7CB159C45C786BFEC9569D836AA816306076DF3DF0E87E87F22EB3511D7EF4",
+      "observation_request_id": "OBS-REQ-9AA44949A191D7965941AEC662461EC8C40A5D4C229E2C97C424CD4DB056E5BD",
       "record_kind": "NEXT_OBSERVATION_REQUEST",
       "difference_ref": {
         "kind": "difference",
-          "id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B"
+          "id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82"
       },
       "derived_from_event_ref": {
         "kind": "difference_event",
@@ -563,7 +563,7 @@
       "policy_semantic_fingerprint": "sha256:f13452822a15874fb479ad481bd2bfe52715baab851f88947e3603e041255d84",
       "subject_difference_ref": {
         "kind": "difference",
-        "id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B"
+        "id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82"
       },
       "target_predicate_ref": {
         "kind": "target_predicate",
@@ -588,7 +588,7 @@
     {
       "schema_version": "0.1",
       "closure_evaluation_id": "D-CLOSE-EVAL-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-      "difference_id": "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B",
+      "difference_id": "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82",
       "evaluation_mode": "TERMINAL_POLICY_ONLY",
       "terminal_reason_evidence_refs": [
         {
@@ -692,7 +692,51 @@
   "candidate_claim_evaluation_events": [],
   "invariant_evaluations": [],
   "evidence_sufficiency_results": [],
+  "fact_observation_bindings": [
+    {
+      "schema_version": "0.1",
+      "binding_id": "BIND-DIFFERENCE-0001",
+      "fact_id": "FACT-0001",
+      "observation_id": "OBS-0001",
+      "state_revision_observed": 2,
+      "state_fingerprint_observed": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "source_occurrence_id": "SOURCE-OCC-DIFFERENCE-0001",
+      "source_ref": {
+        "kind": "source_snapshot",
+        "id": "SNAP-0001"
+      },
+      "source_locator": "kernel/state.json",
+      "observed_quality_status": "SUPPORTED"
+    }
+  ],
+  "fact_evaluations": [
+    {
+      "schema_version": "0.1",
+      "evaluation_id": "FACT-EVAL-DIFFERENCE-0001-0",
+      "fact_id": "FACT-0001",
+      "evaluation_revision": 0,
+      "previous_evaluation_id": null,
+      "binding_refs": [
+        {
+          "kind": "fact_observation_binding",
+          "id": "BIND-DIFFERENCE-0001"
+        }
+      ],
+      "evaluation_status": "SUPPORTED",
+      "conflict_fact_refs": [],
+      "conflict_negative_observation_refs": [],
+      "evidence_refs": [
+        {
+          "kind": "observation_evidence",
+          "id": "EVID-0001"
+        }
+      ]
+    }
+  ],
   "materialized_status": {
-    "D-FB45384EECB12967CFAE7387E895AA9189C512FCBFF9E0462BD4D0914FEEF54B": "BLOCKED"
+    "D-817F5C7C4F0C96B3C608CE835667147B60EC4456434614241627F0238A876F82": "BLOCKED"
   }
 }
