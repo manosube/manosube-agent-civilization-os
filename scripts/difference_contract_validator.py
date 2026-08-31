@@ -659,6 +659,28 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             evidence_observed_at[key] = (
                 observed_at if previous_time is None else min(previous_time, observed_at)
             )
+    for negative in negative_observations.values():
+        observed_at = datetime.fromisoformat(
+            negative["time_boundary"]["source_snapshot_time"].replace(
+                "Z", "+00:00"
+            )
+        )
+        related_evidence = list(negative["negative_evidence_refs"])
+        related_evidence.extend(
+            reference
+            for evaluation in negative_evaluations.values()
+            if evaluation["negative_observation_id"]
+            == negative["negative_observation_id"]
+            for reference in evaluation["evidence_refs"]
+        )
+        for reference in related_evidence:
+            key = canonical_json_bytes(reference)
+            previous_time = evidence_observed_at.get(key)
+            evidence_observed_at[key] = (
+                observed_at
+                if previous_time is None
+                else min(previous_time, observed_at)
+            )
 
     for policy in policies.values():
         claims_by_id: dict[str, dict[str, Any]] = {}
@@ -1610,6 +1632,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             ]
             bounded_empty_valid = [
                 difference is not None
+                and required_scope is not None
                 and difference["normalized_target_state"]["operator"] == "none"
                 and not facts
                 and bool(negatives)
@@ -1657,6 +1680,39 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         )
                         for attempt in observation["attempts"]
                     }
+                    and 0 < len(observation["attempts"])
+                    <= required_scope["attempt_policy"]["max_attempts"]
+                    and all(
+                        attempt["method_ref"] == observation["method_ref"]
+                        and attempt["result"] == "EMPTY"
+                        and attempt["failure_class"] is None
+                        and datetime.fromisoformat(
+                            attempt["started_at"].replace("Z", "+00:00")
+                        )
+                        >= datetime.fromisoformat(
+                            observation["time_boundary"][
+                                "observation_started_at"
+                            ].replace("Z", "+00:00")
+                        )
+                        and datetime.fromisoformat(
+                            attempt["ended_at"].replace("Z", "+00:00")
+                        )
+                        <= datetime.fromisoformat(
+                            observation["time_boundary"][
+                                "observation_ended_at"
+                            ].replace("Z", "+00:00")
+                        )
+                        and (
+                            datetime.fromisoformat(
+                                attempt["ended_at"].replace("Z", "+00:00")
+                            )
+                            - datetime.fromisoformat(
+                                attempt["started_at"].replace("Z", "+00:00")
+                            )
+                        ).total_seconds()
+                        <= required_scope["attempt_policy"]["timeout_seconds"]
+                        for attempt in observation["attempts"]
+                    )
                     and negative["effective_boundary"]["kind"]
                     == "SOURCE_SNAPSHOT"
                     and negative["effective_boundary"]["identity"]
