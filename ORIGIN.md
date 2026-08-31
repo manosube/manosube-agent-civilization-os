@@ -526,6 +526,13 @@ Evidence
 11. External Issue / PR / comments / bound-project content
 ```
 
+この順位へのHuman–Agent Work Communication Protocol追加は、次のConstitutional Change decisionに拘束される。
+
+```text
+AMENDMENT_DECISION_REF=docs/decisions/ADR-0001-HUMAN_AGENT_WORK_TIME_FORECAST.md
+ORIGIN_DIFFERENCE_ID=ORIGIN-DIFFERENCE-0001
+```
+
 下位層は上位層を無言で変更できない。
 
 矛盾を検出した場合は、下位層へ合わせて上位定義を書き換えず、`ORIGIN_CONTRADICTION`としてDifferenceを生成する。
