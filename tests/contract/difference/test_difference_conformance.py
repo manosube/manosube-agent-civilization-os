@@ -10,6 +10,7 @@ from scripts.difference_contract_validator import (
     _candidate_matches_evaluation,
     _derive_comparison_and_mismatch,
     _difference_id,
+    _normalize_objective_value,
     apply_mutation,
     load_json,
     validate_bundle,
@@ -177,6 +178,39 @@ def test_difference_target_must_resolve_from_authorized_objective() -> None:
     assert any(
         "Difference projection mismatch" in error for error in validate_bundle(bundle)
     )
+
+    missing_scope = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    missing_scope["observation_scopes"] = []
+    assert any(
+        "Difference projection mismatch" in error
+        for error in validate_bundle(missing_scope)
+    )
+
+
+def test_reserved_typed_objective_value_is_unwrapped() -> None:
+    assert _normalize_objective_value(
+        {"value_type": "DECIMAL", "value": "1.5"}
+    ) == ("1.5", "DECIMAL")
+
+
+def test_same_semantic_editorial_objective_can_be_evaluated() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    original = bundle["objective_revisions"][0]
+    editorial = deepcopy(original)
+    editorial["objective_revision_id"] = "OBJ-REV-0002"
+    editorial["revision"] = 1
+    editorial["previous_objective_ref"] = {
+        "kind": "objective_revision", "id": original["objective_revision_id"],
+    }
+    editorial["base_semantic_fingerprint"] = {
+        "profile": "MANOSUBE-OBJECTIVE-SHA256-0.1",
+        "digest": bundle["differences"][0]["objective_semantic_fingerprint"].split(":")[1],
+    }
+    bundle["objective_revisions"].append(editorial)
+    bundle["evaluations"][0]["objective_revision_ref_evaluated"] = {
+        "kind": "objective_revision", "id": editorial["objective_revision_id"],
+    }
+    assert validate_bundle(bundle) == []
 
 
 def test_v01_cardinality_fields_must_remain_null() -> None:

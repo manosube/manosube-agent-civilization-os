@@ -305,6 +305,39 @@ def _derived_value_type(value: Any) -> str:
     return "UNKNOWN"
 
 
+def _normalize_objective_value(value: Any) -> tuple[Any, str]:
+    reserved_types = {
+        "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE",
+        "ORDERED_COLLECTION", "UNORDERED_COLLECTION", "STRUCTURED",
+    }
+    if (
+        isinstance(value, dict)
+        and set(value) == {"value_type", "value"}
+        and value["value_type"] in reserved_types
+    ):
+        return value["value"], value["value_type"]
+    return value, _derived_value_type(value)
+
+
+def _latest_contiguous_evaluations(
+    records: dict[str, dict[str, Any]], subject_key: str,
+) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records.values():
+        grouped.setdefault(record[subject_key], []).append(record)
+    latest: dict[str, dict[str, Any]] = {}
+    for subject_id, chain in grouped.items():
+        chain.sort(key=lambda item: item["evaluation_revision"])
+        if all(
+            item["evaluation_revision"] == revision
+            and item["previous_evaluation_id"]
+            == (None if revision == 0 else chain[revision - 1]["evaluation_id"])
+            for revision, item in enumerate(chain)
+        ):
+            latest[subject_id] = chain[-1]
+    return latest
+
+
 def _policy_fingerprint(policy: dict[str, Any]) -> str:
     projection = {key: policy[key] for key in (
         "target_predicate_ref", "required_observation_scope", "minimum_evidence_level",
@@ -530,6 +563,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     )
     negative_observations = _index(
         bundle.get("negative_observations", []), "negative_observation_id", errors
+    )
+    negative_evaluations = _index(
+        bundle.get("negative_observation_evaluations", []), "evaluation_id", errors
+    )
+    latest_negative_evaluations = _latest_contiguous_evaluations(
+        negative_evaluations, "negative_observation_id"
     )
     fact_bindings = _index(
         bundle.get("fact_observation_bindings", []), "binding_id", errors
@@ -920,6 +959,22 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             ),
             None,
         )
+        normalized_expected_value, normalized_expected_type = (
+            _normalize_objective_value(objective_predicate["expected_value"])
+            if objective_predicate is not None else (None, "UNKNOWN")
+        )
+        scope_binding = difference["objective_scope_binding"]
+        resolved_scope = observation_scopes.get(_ref_id(scope_binding["scope_ref"]) or "")
+        difference_scope_valid = (
+            resolved_scope is not None
+            and resolved_scope["schema_version"] == scope_binding["scope_schema_version"]
+            and _resolved_scope_fingerprint(resolved_scope)
+            == scope_binding["resolved_scope_record_sha256"]
+            and resolved_scope["project_id"] == difference["project_id"]
+            and resolved_scope["target_identity"] == difference["target_predicate_ref"]["id"]
+            and difference["subject"] in resolved_scope["included_subjects"]
+            and difference["subject"] not in resolved_scope["excluded_subjects"]
+        )
         target_projection_valid = (
             objective is not None
             and objective["project_id"] == difference["project_id"]
@@ -930,10 +985,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             and target == {
                 "subject": objective_predicate["subject"],
                 "operator": objective_predicate["operator"],
-                "expected_value": objective_predicate["expected_value"],
-                "expected_value_type": _derived_value_type(
-                    objective_predicate["expected_value"]
-                ),
+                "expected_value": normalized_expected_value,
+                "expected_value_type": normalized_expected_type,
                 "observation_scope": objective_predicate["observation_scope"],
                 "evidence_requirement": objective_predicate["evidence_requirement"],
                 "unknown_policy": objective_predicate["unknown_policy"],
@@ -961,6 +1014,28 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             and negative["target_identity"] == difference["target_predicate_ref"]["id"]
             and negative["subject"] == difference["subject"]
         ]
+        source_negatives_valid = bool(source_negatives) and all(
+            (latest := latest_negative_evaluations.get(
+                negative["negative_observation_id"]
+            )) is not None
+            and observation is not None
+            and negative["project_id"] == difference["project_id"]
+            and negative["scope_ref"] == observation["scope_ref"]
+            and negative["method_ref"] == observation["method_ref"]
+            and negative["time_boundary"] == observation["time_boundary"]
+            and negative["source_snapshot_refs"] == observation["source_snapshot_refs"]
+            and negative["effective_boundary"]["kind"] == "SOURCE_SNAPSHOT"
+            and negative["effective_boundary"]["identity"]
+            in {reference["id"] for reference in observation["source_snapshot_refs"]}
+            and latest["evaluation_status"] == observed["knowledge_status"]
+            and (
+                latest["evaluation_status"] == "CONFLICTED"
+                or not latest["conflict_fact_refs"]
+            )
+            for observation in source_observations if observation is not None
+            for negative in source_negatives
+            if negative["observation_id"] == observation["observation_id"]
+        )
         source_evidence = {
             canonical_json_bytes(reference)
             for observation in source_observations if observation is not None
@@ -990,11 +1065,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 bool(source_facts)
                 or (
                     not observed_values
-                    and all(
-                        negative["conclusion"]["state_candidate"]
-                        == observed["knowledge_status"]
-                        for negative in source_negatives
-                    )
+                    and source_negatives_valid
                     and {
                         canonical_json_bytes(reference)
                         for negative in source_negatives
@@ -1046,6 +1117,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             or _has_recursive_set_duplicate(difference["structural_difference"])
             or difference_id != _difference_id(difference)
             or not target_projection_valid
+            or not difference_scope_valid
             or not source_projection_valid
             or difference["subject"] != target["subject"]
             or difference["subject"] != observed["subject"]
@@ -1104,12 +1176,31 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         head = events.get(_ref_id(evaluation["difference_event_head_ref"]) or "")
         if head is None or head["difference_id"] != evaluation["difference_id"]:
             errors.append(f"evaluation event-head mismatch: {evaluation['closure_evaluation_id']}")
+        evaluated_objective = objective_revisions.get(
+            _ref_id(evaluation["objective_revision_ref_evaluated"]) or ""
+        )
+        original_objective = objective_revisions.get(
+            _ref_id(difference["objective_revision_ref"]) or ""
+        )
+        objective_evaluation_valid = (
+            evaluated_objective is not None
+            and original_objective is not None
+            and evaluated_objective["objective_id"] == original_objective["objective_id"]
+            and evaluated_objective["project_id"] == difference["project_id"]
+            and evaluated_objective["status"] == "ACTIVE"
+            and _objective_semantic_fingerprint(evaluated_objective)
+            == difference["objective_semantic_fingerprint"]
+            and evaluation["objective_semantic_fingerprint_evaluated"]
+            == difference["objective_semantic_fingerprint"]
+            and (
+                evaluation["objective_revision_ref_evaluated"]
+                == difference["objective_revision_ref"]
+                or evaluated_objective["revision"] > original_objective["revision"]
+            )
+        )
         if (
             evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
-            or evaluation["objective_revision_ref_evaluated"]
-            != difference["objective_revision_ref"]
-            or evaluation["objective_semantic_fingerprint_evaluated"]
-            != difference["objective_semantic_fingerprint"]
+            or not objective_evaluation_valid
             or evaluation["evaluated_state_revision"]
             != difference["observed_state_revision"]
             or evaluation["evaluated_state_fingerprint"]
