@@ -1645,6 +1645,18 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and negative["time_boundary"] == observation["time_boundary"]
                     and negative["source_snapshot_refs"]
                     == observation["source_snapshot_refs"]
+                    and {
+                        canonical_json_bytes(reference)
+                        for reference in negative["attempt_refs"]
+                    } == {
+                        canonical_json_bytes(
+                            {
+                                "kind": "observation_attempt",
+                                "id": attempt["attempt_id"],
+                            }
+                        )
+                        for attempt in observation["attempts"]
+                    }
                     and negative["effective_boundary"]["kind"]
                     == "SOURCE_SNAPSHOT"
                     and negative["effective_boundary"]["identity"]
@@ -1667,6 +1679,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and {
                         canonical_json_bytes(reference)
                         for reference in latest["evidence_refs"]
+                    } <= resolution_evidence
+                    and bool(latest["evidence_refs"])
+                    and bool(negative["negative_evidence_refs"])
+                    and {
+                        canonical_json_bytes(reference)
+                        for reference in negative["negative_evidence_refs"]
                     } <= resolution_evidence
                     for negative in negatives
                 )
