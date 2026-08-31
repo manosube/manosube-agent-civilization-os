@@ -468,6 +468,25 @@ def _latest_contiguous_evaluations(
     return latest
 
 
+def _observation_id(observation: dict[str, Any]) -> str:
+    """Recompute an Observation identity independently of the Observation package."""
+
+    projection = {
+        "project_id": observation["project_id"],
+        "state_revision_observed": observation["state_revision_observed"],
+        "state_fingerprint_observed": observation["state_fingerprint_observed"],
+        "target_identity": observation["target"]["target_identity"],
+        "scope_id": observation["scope_ref"]["id"],
+        "method_ref": observation["method_ref"],
+        "time_boundary": observation["time_boundary"],
+        "source_snapshot_refs": observation["source_snapshot_refs"],
+        "normalization_profile": observation["normalization_profile"],
+    }
+    domain = b"MANOSUBE_AGENT_CIVILIZATION_OS\x00OBSERVATION\x000.1\x00"
+    digest = hashlib.sha256(domain + canonical_json_bytes(projection)).hexdigest().upper()
+    return f"OBS-{digest}"
+
+
 def _contiguous_evaluation_chains(
     records: dict[str, dict[str, Any]], subject_key: str,
 ) -> dict[str, list[dict[str, Any]]]:
@@ -791,6 +810,42 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     fact_evaluations = _index(
         bundle.get("fact_evaluations", []), "evaluation_id", errors
     )
+    # A carried record's own references must resolve inside the bundle. Reading an
+    # evaluation chain whose bindings are absent is not possible, so a partial lineage is
+    # a defect regardless of which Difference cites it.
+    for carried_evaluation in fact_evaluations.values():
+        if carried_evaluation["fact_id"] not in normalized_facts:
+            errors.append(
+                "Fact evaluation references a missing Fact: "
+                f"{carried_evaluation['evaluation_id']}"
+            )
+        for reference in carried_evaluation["binding_refs"]:
+            carried_binding = fact_bindings.get(_ref_id(reference) or "")
+            if reference.get("kind") != "fact_observation_binding" or carried_binding is None:
+                errors.append(
+                    "Fact evaluation references a missing binding: "
+                    f"{carried_evaluation['evaluation_id']}"
+                )
+            elif carried_binding["fact_id"] != carried_evaluation["fact_id"]:
+                errors.append(
+                    f"cross-Fact evaluation binding: {carried_evaluation['evaluation_id']}"
+                )
+    for carried_binding in fact_bindings.values():
+        if carried_binding["observation_id"] not in observations:
+            errors.append(
+                f"binding references a missing Observation: {carried_binding['binding_id']}"
+            )
+        if carried_binding["fact_id"] not in normalized_facts:
+            errors.append(
+                f"binding references a missing Fact: {carried_binding['binding_id']}"
+            )
+    for carried_observation in observations.values():
+        for reference in carried_observation["normalized_fact_refs"]:
+            if _ref_id(reference) not in normalized_facts:
+                errors.append(
+                    "Observation references a missing Normalized Fact: "
+                    f"{carried_observation['observation_id']}"
+                )
     fact_evaluation_chains = _contiguous_evaluation_chains(fact_evaluations, "fact_id")
     latest_fact_evaluations = _latest_contiguous_evaluations(
         fact_evaluations, "fact_id"

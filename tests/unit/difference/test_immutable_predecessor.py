@@ -224,10 +224,19 @@ def test_a_predecessor_whose_genesis_reference_was_redirected_is_rejected() -> N
 
 
 def test_a_predecessor_naming_an_observation_it_never_carries_is_rejected() -> None:
-    """The retained record's own Observation binding must resolve in the returned bundle."""
+    """The retained record's own Observation binding must resolve in the returned bundle.
+
+    Emptying the carried context is no longer sufficient to make it dangle: the append-only
+    Observation bundle supplies that Observation through the Engine's transitive closure.
+    The reference is therefore redirected somewhere no lineage can reach.
+    """
 
     baseline, later_request = _pair()
     request = _with_predecessor(baseline, later_request)
-    request["bindings"][0]["predecessor"]["context"]["observations"] = []
+    predecessor = request["bindings"][0]["predecessor"]
+    predecessor["context"]["observations"] = []
+    predecessor["difference"]["observation_refs"] = [
+        {"kind": "observation", "id": "OBS-ABSENT-FROM-EVERY-LINEAGE"}
+    ]
     with pytest.raises(DifferenceError, match="does not resolve"):
         derive_differences(request)

@@ -14,11 +14,15 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from manosube_agent_civilization.observation.boundary import fact_boundary_observed
+from manosube_agent_civilization.observation.boundary import (
+    fact_boundary_observed,
+    time_boundary_within_scope,
+)
 from manosube_agent_civilization.observation.identity import (
     binding_identity,
     fact_evaluation_identity,
     fact_identity,
+    observation_identity,
 )
 from manosube_agent_civilization.observation.verification import observation_record_errors
 
@@ -295,7 +299,11 @@ def _observed_projection(
     subject: str,
     scope: dict[str, Any],
     boundary: dict[str, Any],
+    project_id: str,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    # The bound Observation's own identity and boundary are settled before any Fact,
+    # binding, evaluation or Evidence reference it carries is read.
+    _validate_observation_boundary(observation, scope, project_id)
     facts_by_id = {fact["fact_id"]: fact for fact in bundle["facts"]}
     bindings_by_id = {item["binding_id"]: item for item in bundle["bindings"]}
     fact_evaluation_chains = _contiguous_chains(bundle["fact_evaluations"], "fact_id")
@@ -602,6 +610,47 @@ def _evidence_union(
         for reference in negative["negative_evidence_refs"]:
             merged[canonical_bytes(reference)] = deepcopy(reference)
     return [item for _, item in sorted(merged.items())]
+
+
+def _validate_observation_boundary(
+    observation: dict[str, Any], scope: dict[str, Any], project_id: str
+) -> None:
+    """Reject an Observation whose own binding escapes the resolved canonical Scope.
+
+    Identity recomputation proves the payload is the one the identity names; it does not
+    prove that payload is admissible *here*. A schema-valid Observation carrying its own
+    consistent identity may still declare another project, another Scope, an undeclared
+    method, a source snapshot the Scope never declared, or a window outside the Scope's
+    own. The Difference boundary is generated from the resolved Scope, so an Observation
+    bound to anything else would be misrepresented by it.
+    """
+
+    identity = observation["observation_id"]
+    if observation["observation_id"] != observation_identity(observation):
+        raise IdentityCollisionError(f"Observation identity does not recompute: {identity}")
+    require_schema_version(observation, f"observation {identity}")
+    if observation["project_id"] != project_id:
+        raise BoundaryViolationError(
+            f"Observation project does not match the derivation request: {identity}"
+        )
+    if observation["scope_ref"]["id"] != scope["scope_id"]:
+        raise BoundaryViolationError(
+            f"Observation is bound to a different resolved Scope: {identity}"
+        )
+    if observation["method_ref"] != scope["method_ref"]:
+        raise BoundaryViolationError(
+            f"Observation method is outside the declared Scope: {identity}"
+        )
+    declared = {canonical_bytes(reference) for reference in scope["source_snapshot_refs"]}
+    observed = {canonical_bytes(reference) for reference in observation["source_snapshot_refs"]}
+    if observed != declared:
+        raise BoundaryViolationError(
+            f"Observation source snapshots escape the resolved Scope: {identity}"
+        )
+    if not time_boundary_within_scope(observation, scope):
+        raise BoundaryViolationError(
+            f"Observation time boundary escapes the resolved Scope: {identity}"
+        )
 
 
 def _validate_negative_boundary(
@@ -975,7 +1024,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     differences: dict[str, dict[str, Any]] = {}
     identity_payloads: dict[str, bytes] = {}
     events: list[dict[str, Any]] = []
-    requests: list[dict[str, Any]] = []
+    requests: dict[str, dict[str, Any]] = {}
     methods: dict[str, dict[str, Any]] = {}
     policies: list[dict[str, Any]] = []
     relations: list[dict[str, Any]] = []
@@ -1020,7 +1069,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         )
         boundary = effective_boundary(scope, scope_fingerprint, observation["source_snapshot_refs"])
         knowledge, candidates, source_negatives = _observed_projection(
-            observation, binding["observation_bundle"], subject, scope, boundary
+            observation, binding["observation_bundle"], subject, scope, boundary, project_id
         )
 
         target = normalize_target_state(predicate)
@@ -1105,6 +1154,8 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         observation_refs = deepcopy(difference["observation_refs"])
         predecessor = binding.get("predecessor")
         chain: list[dict[str, Any]] = []
+        retained_reason: str | None = None
+        retained_condition: dict[str, Any] | None = None
         pending_lineage: list[tuple[dict[str, Any], list[dict[str, Any]], set[str]]] = []
         if predecessor is None:
             genesis = _genesis_event(
@@ -1163,33 +1214,11 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                     evidence_refs,
                     boundary,
                 )
-                if retained_reason is not None:
-                    # A retained BLOCKED, RETAINED or REOPENED status still requires a
-                    # Next Observation Request. It is re-derived against this event, never
-                    # copied from the predecessor, so the reference resolves inside the
-                    # returned bundle.
-                    if method is None:
-                        raise DifferenceError(
-                            f"a retained {bound_event['to_status']} status requires an "
-                            "Observation Method projection"
-                        )
-                    retained_request = _next_observation_request(
-                        difference_id,
-                        bound_event,
-                        target_predicate_ref,
-                        scope_binding["scope_ref"],
-                        method["observation_method_id"],
-                        retained_reason,
-                    )
-                    reference = {
-                        "kind": "next_observation_request",
-                        "id": retained_request["observation_request_id"],
-                    }
-                    bound_event["next_observation_ref"] = reference
-                    if retained_condition is not None:
-                        retained_condition["verification_request_ref"] = deepcopy(reference)
-                    requests.append(retained_request)
-                    methods[method["observation_method_id"]] = method
+                # A retained BLOCKED, RETAINED or REOPENED status still requires a Next
+                # Observation Request, but it is derived once, below, by the single
+                # request-derivation path that also serves the unresolved route -- so an
+                # unresolved retained status cannot receive two requests, and its
+                # status-specific reason code cannot be overwritten by a generic one.
                 chain.append(bound_event)
                 # The genesis reference is part of the immutable predecessor payload: it
                 # is verified against the retained chain, never rewritten to point
@@ -1285,22 +1314,43 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         validate_record(policy_record, "closure_policy.schema.json")
 
         head = chain[-1]
-        if mismatch_kind in _REQUIRES_REOBSERVATION:
-            # FAIL_CLOSED contradiction policy: an unresolved or conflicted observed state
-            # cannot be evaluated, so the Policy requires a further bounded observation.
+        # Exactly one Next Observation Request may be derived per appended event, and this
+        # is its only derivation path. A retained BLOCKED, RETAINED or REOPENED status owns
+        # the reason code, because the status is what the next observation must resolve; an
+        # unresolved or conflicted observed state on any other status uses the blocker
+        # reason, under the FAIL_CLOSED contradiction policy. When both apply, the retained
+        # status wins and still yields one request -- never a second, generic one appended
+        # over it.
+        request_reason = retained_reason
+        if request_reason is None and mismatch_kind in _REQUIRES_REOBSERVATION:
+            request_reason = "BLOCKER_REOBSERVATION"
+        if request_reason is not None:
             if method is None:
                 raise DifferenceError(
-                    "an unresolved or conflicted route requires an Observation Method projection"
+                    f"a retained {head['to_status']} status requires an "
+                    "Observation Method projection"
+                    if retained_reason is not None
+                    else "an unresolved or conflicted route requires an "
+                    "Observation Method projection"
+                )
+            if head["next_observation_ref"] is not None:
+                raise DifferenceError(
+                    "an appended event already carries a Next Observation Request: "
+                    f"{head['difference_event_id']}"
                 )
             next_request = _next_observation_request(
                 difference_id, head, target_predicate_ref, scope_binding["scope_ref"],
-                method["observation_method_id"],
+                method["observation_method_id"], request_reason,
             )
-            head["next_observation_ref"] = {
+            reference = {
                 "kind": "next_observation_request",
                 "id": next_request["observation_request_id"],
             }
-            requests.append(next_request)
+            head["next_observation_ref"] = reference
+            if retained_condition is not None:
+                retained_condition["verification_request_ref"] = deepcopy(reference)
+            # A same-ID/different-payload request is a forgery, not a retry.
+            _merge(requests, [next_request], "observation_request_id")
             methods[method["observation_method_id"]] = method
 
         validate_record(difference, "difference.schema.json")
@@ -1316,8 +1366,9 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         materialized_status[difference_id] = head["to_status"]
         scopes[scope["scope_id"]] = deepcopy(scope)
         _absorb_observation_context(
-            binding["observation_bundle"], observation, observations, facts,
-            fact_bindings, fact_evaluations, negative_observations, negative_evaluations,
+            binding["observation_bundle"], observation, scope, project_id, observations,
+            facts, fact_bindings, fact_evaluations, negative_observations,
+            negative_evaluations,
         )
         for retained_difference, retained_events, chain_ids in pending_lineage:
             _require_resolvable_lineage(
@@ -1330,7 +1381,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                     "policies": {item["closure_policy_id"] for item in policies},
                     "events": chain_ids,
                     "next_observation_requests": {
-                        item["observation_request_id"] for item in requests
+                        item["observation_request_id"] for item in requests.values()
                     },
                     "evaluations": set(carried.get("evaluations", {})),
                     "reflow_transitions": set(carried.get("reflow_transitions", {})),
@@ -1457,6 +1508,8 @@ def _merge(target: dict[str, dict[str, Any]], records: list[dict[str, Any]], key
 def _absorb_observation_context(
     bundle: dict[str, Any],
     observation: dict[str, Any],
+    scope: dict[str, Any],
+    project_id: str,
     observations: dict[str, dict[str, Any]],
     facts: dict[str, dict[str, Any]],
     fact_bindings: dict[str, dict[str, Any]],
@@ -1464,29 +1517,94 @@ def _absorb_observation_context(
     negative_observations: dict[str, dict[str, Any]],
     negative_evaluations: dict[str, dict[str, Any]],
 ) -> None:
-    """Carry the exact Observation records a cross-record validator must resolve."""
+    """Carry the transitive closure of the records the returned bundle must resolve.
 
-    _merge(observations, [observation], "observation_id")
-    referenced = {reference["id"] for reference in observation["normalized_fact_refs"]}
-    _merge(facts, [item for item in bundle["facts"] if item["fact_id"] in referenced], "fact_id")
-    _merge(
-        fact_bindings,
-        [
-            item
-            for item in bundle["bindings"]
-            if item["observation_id"] == observation["observation_id"]
-        ],
-        "binding_id",
-    )
-    _merge(
-        fact_evaluations,
-        [item for item in bundle["fact_evaluations"] if item["fact_id"] in referenced],
-        "evaluation_id",
-    )
+    Carrying the bound Observation, its Facts and its own bindings is not enough. A
+    recurring Fact observed across an append-only Observation lineage owns an evaluation
+    chain, and append-only semantics forbid dropping its earlier revisions -- the chain
+    must stay contiguous for the contract validator to read it at all. Those earlier
+    evaluations reference the *earlier* Observation's bindings, and those bindings
+    reference that Observation and its Facts. Carrying only the current Observation's
+    bindings would emit a lineage whose own references dangle.
+
+    The closure therefore runs to a fixpoint over
+    ``Observation -> Fact -> evaluation -> binding -> Observation``. Nothing required by
+    append-only semantics is discarded, and every Observation it reaches is verified
+    against the resolved Scope before it is carried, so the closure can never widen the
+    Difference's boundary.
+    """
+
+    facts_by_id = {item["fact_id"]: item for item in bundle["facts"]}
+    bindings_by_id = {item["binding_id"]: item for item in bundle["bindings"]}
+    observations_by_id = {item["observation_id"]: item for item in bundle["observations"]}
+    evaluations_by_fact: dict[str, list[dict[str, Any]]] = {}
+    for evaluation in bundle["fact_evaluations"]:
+        evaluations_by_fact.setdefault(evaluation["fact_id"], []).append(evaluation)
+
+    carried_observations: dict[str, dict[str, Any]] = {}
+    carried_facts: dict[str, dict[str, Any]] = {}
+    carried_bindings: dict[str, dict[str, Any]] = {}
+    carried_evaluations: dict[str, dict[str, Any]] = {}
+
+    pending_observations = [observation]
+    while pending_observations:
+        current = pending_observations.pop()
+        identity = current["observation_id"]
+        if identity in carried_observations:
+            continue
+        _validate_observation_boundary(current, scope, project_id)
+        carried_observations[identity] = current
+        pending_facts = [
+            facts_by_id[reference["id"]]
+            for reference in current["normalized_fact_refs"]
+            if reference.get("kind") == "normalized_fact" and reference["id"] in facts_by_id
+        ]
+        if len(pending_facts) != len(current["normalized_fact_refs"]):
+            raise DifferenceError(
+                f"Observation references a Normalized Fact absent from the bundle: {identity}"
+            )
+        # Every binding of a carried Observation travels with it, so a carried evaluation
+        # never names a binding the bundle does not hold.
+        for binding in bundle["bindings"]:
+            if binding["observation_id"] != identity:
+                continue
+            carried_bindings[binding["binding_id"]] = binding
+            if binding["fact_id"] not in facts_by_id:
+                raise DifferenceError(
+                    f"Fact Observation Binding references an absent Fact: {binding['binding_id']}"
+                )
+            pending_facts.append(facts_by_id[binding["fact_id"]])
+        for fact in pending_facts:
+            if fact["fact_id"] in carried_facts:
+                continue
+            carried_facts[fact["fact_id"]] = fact
+            for evaluation in evaluations_by_fact.get(fact["fact_id"], []):
+                carried_evaluations[evaluation["evaluation_id"]] = evaluation
+                for reference in evaluation["binding_refs"]:
+                    binding = bindings_by_id.get(str(reference["id"]))
+                    if binding is None:
+                        raise DifferenceError(
+                            "Fact evaluation references a binding absent from the bundle: "
+                            f"{evaluation['evaluation_id']}"
+                        )
+                    carried_bindings[binding["binding_id"]] = binding
+                    reached = observations_by_id.get(binding["observation_id"])
+                    if reached is None:
+                        raise DifferenceError(
+                            "Fact Observation Binding references an Observation absent from "
+                            f"the bundle: {binding['binding_id']}"
+                        )
+                    if reached["observation_id"] not in carried_observations:
+                        pending_observations.append(reached)
+
+    _merge(observations, list(carried_observations.values()), "observation_id")
+    _merge(facts, list(carried_facts.values()), "fact_id")
+    _merge(fact_bindings, list(carried_bindings.values()), "binding_id")
+    _merge(fact_evaluations, list(carried_evaluations.values()), "evaluation_id")
     negatives = [
         item
         for item in bundle["negative_observations"]
-        if item["observation_id"] == observation["observation_id"]
+        if item["observation_id"] in carried_observations
     ]
     _merge(negative_observations, negatives, "negative_observation_id")
     negative_ids = {item["negative_observation_id"] for item in negatives}
@@ -1512,7 +1630,7 @@ def _absorb_predecessor_context(
     fact_evaluations: dict[str, dict[str, Any]],
     negative_observations: dict[str, dict[str, Any]],
     negative_evaluations: dict[str, dict[str, Any]],
-    requests: list[dict[str, Any]],
+    requests: dict[str, dict[str, Any]],
     methods: dict[str, dict[str, Any]],
     carried: dict[str, dict[str, dict[str, Any]]],
 ) -> None:
@@ -1538,11 +1656,7 @@ def _absorb_predecessor_context(
         context.get("negative_observation_evaluations", []),
         "evaluation_id",
     )
-    existing_requests = {item["observation_request_id"] for item in requests}
-    for request in context.get("next_observation_requests", []):
-        if request["observation_request_id"] not in existing_requests:
-            requests.append(deepcopy(request))
-            existing_requests.add(request["observation_request_id"])
+    _merge(requests, context.get("next_observation_requests", []), "observation_request_id")
     _merge(methods, context.get("observation_methods", []), "observation_method_id")
     for section, key in _CARRIED_SECTIONS.items():
         _merge(carried.setdefault(section, {}), context.get(section, []), key)
@@ -1563,7 +1677,7 @@ def _finalize(
     events: list[dict[str, Any]],
     policies: list[dict[str, Any]],
     relations: list[dict[str, Any]],
-    requests: list[dict[str, Any]],
+    requests: dict[str, dict[str, Any]],
     methods: dict[str, dict[str, Any]],
     scopes: dict[str, dict[str, Any]],
     observations: dict[str, dict[str, Any]],
@@ -1606,7 +1720,7 @@ def _finalize(
             relations, key=lambda item: item["supersession_relation_id"]
         ),
         "next_observation_requests": sorted(
-            requests, key=lambda item: item["observation_request_id"]
+            requests.values(), key=lambda item: item["observation_request_id"]
         ),
         "observation_methods": sorted(
             methods.values(), key=lambda item: item["observation_method_id"]

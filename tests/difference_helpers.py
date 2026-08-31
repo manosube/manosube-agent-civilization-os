@@ -364,6 +364,7 @@ def reobservation_pair(
     facts: list[dict[str, Any]] | None = None,
     later_facts: list[dict[str, Any]] | None = None,
     later_state_revision: int = 7,
+    negative_claims: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return a baseline request and a real append-only re-observation of the same subject.
 
@@ -377,12 +378,15 @@ def reobservation_pair(
     first_fingerprint = state_fingerprint()
     later_fingerprint = state_fingerprint("KNOWN")
     scope = observation_scope()
-    first_bundle = observed_bundle(scope, observed, first_fingerprint)
+    first_bundle = observed_bundle(
+        scope, observed, first_fingerprint, negative_claims=negative_claims
+    )
     later_bundle = observed_bundle(
         scope,
         later,
         later_fingerprint,
         state_revision=later_state_revision,
+        negative_claims=negative_claims,
         prior_bundle=first_bundle,
     )
     objective = objective_revision()
@@ -463,7 +467,10 @@ def _content_addressed_request(
 
 
 def retained_status_predecessor(
-    status: str, reason_code: str = "BLOCKER_REOBSERVATION"
+    status: str,
+    reason_code: str = "BLOCKER_REOBSERVATION",
+    negative_claims: list[dict[str, Any]] | None = None,
+    facts: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return a baseline bundle and a re-observation request whose predecessor is *status*.
 
@@ -482,7 +489,9 @@ def retained_status_predecessor(
     )
     method = deepcopy(fixture["observation_methods"][0])
 
-    baseline_request, later_request = reobservation_pair()
+    baseline_request, later_request = reobservation_pair(
+        facts=facts, negative_claims=negative_claims
+    )
     baseline = derive_differences(baseline_request)
     difference = baseline["differences"][0]
     difference_id = difference["difference_id"]
@@ -631,8 +640,31 @@ def retained_status_predecessor(
                 "committed_at": "2026-08-30T09:02:00Z",
             }
         ]
-    context["next_observation_requests"] = [request]
-    context["observation_methods"] = [method]
+    # An unresolved baseline derives its own Next Observation Request; the caller-supplied
+    # terminal request is appended to it rather than replacing it, so the retained lineage
+    # stays resolvable.
+    context["next_observation_requests"] = [
+        *deepcopy(baseline.get("next_observation_requests", [])),
+        *(
+            [request]
+            if all(
+                item["observation_request_id"] != request["observation_request_id"]
+                for item in baseline.get("next_observation_requests", [])
+            )
+            else []
+        ),
+    ]
+    context["observation_methods"] = [
+        *deepcopy(baseline.get("observation_methods", [])),
+        *(
+            [method]
+            if all(
+                item["observation_method_id"] != method["observation_method_id"]
+                for item in baseline.get("observation_methods", [])
+            )
+            else []
+        ),
+    ]
 
     later_request["bindings"][0]["predecessor"] = {
         "difference": difference,

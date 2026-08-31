@@ -200,3 +200,84 @@ def test_the_difference_engine_validates_the_upstream_payload_before_projection(
     assert source.index("_verify_upstream_records(observation, bundle") < source.index(
         "value_candidate(fact, boundary)"
     )
+
+
+def test_one_observation_identity_authority() -> None:
+    """The Observation Engine mints and every consumer re-derives one closed projection."""
+
+    from manosube_agent_civilization.observation import engine as observation_engine, verification
+    from manosube_agent_civilization.observation.identity import (
+        OBSERVATION_SEMANTIC_FIELDS,
+        observation_identity,
+    )
+
+    assert vars(observation_engine)["observation_identity"] is observation_identity
+    assert vars(verification)["observation_identity"] is observation_identity
+
+    from manosube_agent_civilization.difference import engine as difference_engine
+
+    assert vars(difference_engine)["observation_identity"] is observation_identity
+
+    # The Observation Engine mints through the shared projection rather than assembling a
+    # second identity input of its own.
+    source = (
+        ROOT / "src" / "manosube_agent_civilization" / "observation" / "engine.py"
+    ).read_text(encoding="utf-8")
+    assert 'deterministic_id("OBS"' not in source
+    assert "observation_identity(observation_identity_payload)" in source
+
+    assert set(OBSERVATION_SEMANTIC_FIELDS) == {
+        "project_id",
+        "state_revision_observed",
+        "state_fingerprint_observed",
+        "target_identity",
+        "scope_id",
+        "method_ref",
+        "time_boundary",
+        "source_snapshot_refs",
+        "normalization_profile",
+    }
+
+
+def test_one_time_boundary_containment_authority() -> None:
+    """The Scope containment rule lives once, in the Observation element."""
+
+    from manosube_agent_civilization.observation import engine as observation_engine
+    from manosube_agent_civilization.observation.boundary import time_boundary_within_scope
+
+    assert vars(observation_engine)["time_boundary_within_scope"] is time_boundary_within_scope
+
+    from manosube_agent_civilization.difference import engine as difference_engine
+
+    assert vars(difference_engine)["time_boundary_within_scope"] is time_boundary_within_scope
+
+
+def test_the_engine_and_the_observation_owner_agree_on_observation_identity() -> None:
+    """Every Observation the Engine returns recomputes under the Observation authority."""
+
+    from tests.difference_helpers import reobservation_pair
+
+    from manosube_agent_civilization.difference import derive_differences
+    from manosube_agent_civilization.observation.identity import observation_identity
+    from manosube_agent_civilization.observation.verification import observation_record_errors
+
+    _, later_request = reobservation_pair()
+    source = later_request["bindings"][0]["observation_bundle"]
+    assert observation_record_errors(source) == []
+
+    bundle = derive_differences(later_request)
+    assert len(bundle["observations"]) == 2
+    for observation in bundle["observations"]:
+        assert observation["observation_id"] == observation_identity(observation)
+
+
+def test_one_next_observation_request_derivation_path() -> None:
+    """A single call site mints Next Observation Requests for appended events."""
+
+    source = (
+        ROOT / "src" / "manosube_agent_civilization" / "difference" / "engine.py"
+    ).read_text(encoding="utf-8")
+    body = source.split("def derive_differences(")[1]
+    assert body.count("_next_observation_request(") == 1
+    # And it refuses to derive a second request for an event that already carries one.
+    assert 'if head["next_observation_ref"] is not None:' in body

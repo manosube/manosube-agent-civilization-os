@@ -275,27 +275,70 @@ def _predecessor(baseline: dict[str, Any], context: dict[str, Any] | None) -> di
     return predecessor
 
 
-def test_predecessor_without_any_context_is_rejected() -> None:
+@pytest.mark.parametrize(
+    ("context_name", "context_factory"),
+    [
+        ("absent", lambda baseline: None),
+        ("empty", lambda baseline: {}),
+        ("no observations", lambda baseline: {**deepcopy(baseline), "observations": []}),
+        (
+            "no bindings",
+            lambda baseline: {**deepcopy(baseline), "fact_observation_bindings": []},
+        ),
+    ],
+)
+def test_a_thin_predecessor_context_is_completed_from_the_canonical_lineage(
+    context_name: str, context_factory: Any
+) -> None:
+    """The requirement is that every retained reference resolves, not that it be duplicated.
+
+    An append-only Observation bundle already carries the earlier Observation, its Facts,
+    its bindings and its evaluations, so the Engine's transitive closure supplies them
+    from the canonical lineage. A caller need not re-send records the derivation already
+    holds -- and the returned bundle is self-contained either way, which is the property
+    the contract actually requires.
+    """
+
     baseline, _ = _PAIR
+    bundle = derive_differences(
+        _reobservation_with(_predecessor(baseline, context_factory(baseline)))
+    )
+    assert validate_bundle(bundle) == []
+    observations = {item["observation_id"] for item in bundle["observations"]}
+    assert len(observations) == 2
+    for record in baseline["observations"]:
+        assert record["observation_id"] in observations
+    for event in bundle["events"]:
+        for reference in event["observation_refs"]:
+            assert reference["id"] in observations
+    bindings = {item["binding_id"] for item in bundle["fact_observation_bindings"]}
+    for record in baseline["fact_observation_bindings"]:
+        assert record["binding_id"] in bindings
+
+
+def test_a_retained_reference_outside_every_lineage_still_fails_closed() -> None:
+    """A reference neither the context nor the canonical bundle can supply is rejected."""
+
+    baseline, _ = _PAIR
+    predecessor = _predecessor(baseline, baseline)
+    predecessor["difference"]["observation_refs"] = [
+        {"kind": "observation", "id": "OBS-ABSENT-FROM-EVERY-LINEAGE"}
+    ]
     with pytest.raises(DifferenceError, match="does not resolve"):
-        derive_differences(_reobservation_with(_predecessor(baseline, None)))
+        derive_differences(_reobservation_with(predecessor))
 
 
-def test_predecessor_with_an_empty_context_is_rejected() -> None:
+def test_a_retained_event_forward_reference_that_resolves_nowhere_is_rejected() -> None:
+    """`next_observation_ref` is not an event identity input, so it is checked directly."""
+
     baseline, _ = _PAIR
+    predecessor = _predecessor(baseline, baseline)
+    predecessor["events"][-1]["next_observation_ref"] = {
+        "kind": "next_observation_request",
+        "id": "OBS-REQ-ABSENT-FROM-EVERY-LINEAGE",
+    }
     with pytest.raises(DifferenceError, match="does not resolve"):
-        derive_differences(_reobservation_with(_predecessor(baseline, {})))
-
-
-@pytest.mark.parametrize("section", ["observations", "fact_observation_bindings"])
-def test_predecessor_missing_a_referenced_section_is_rejected(section: str) -> None:
-    """A section the retained lineage references must be carried, not silently dropped."""
-
-    baseline, _ = _PAIR
-    context = deepcopy(baseline)
-    context[section] = []
-    with pytest.raises(DifferenceError):
-        derive_differences(_reobservation_with(_predecessor(baseline, context)))
+        derive_differences(_reobservation_with(predecessor))
 
 
 def test_predecessor_with_a_forged_context_payload_is_rejected() -> None:

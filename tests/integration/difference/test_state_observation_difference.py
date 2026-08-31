@@ -555,3 +555,87 @@ def test_state_to_observation_to_difference_rejects_a_forged_upstream_fact() -> 
                 revision,
             )
         )
+
+
+def test_state_to_observation_to_difference_carries_the_whole_lineage_closure() -> None:
+    """A fresh Difference over a real append-only lineage emits no dangling reference."""
+
+    from manosube_agent_civilization.observation.identity import observation_identity
+
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    first_bundle = observe(observation_request(scope, [raw_fact()], fingerprint, revision))
+    later_fingerprint = {"profile": fingerprint["profile"], "digest": "e" * 64}
+    later_bundle = observe(
+        observation_request(
+            scope,
+            [raw_fact()],
+            later_fingerprint,
+            revision + 1,
+            prior_bundle=first_bundle,
+        )
+    )
+    assert validate_observation_bundle(later_bundle) == []
+    assert len(later_bundle["observations"]) == 2
+    assert len(later_bundle["fact_evaluations"]) == 2
+
+    derived = derive_differences(
+        derivation_request(
+            objective_revision([target_predicate()]),
+            [
+                {
+                    "target_predicate_id": PREDICATE_ID,
+                    "observation_scope": scope,
+                    "observation_bundle": later_bundle,
+                    # No Difference predecessor: this is a first derivation over a lineage
+                    # that already carries an earlier Observation of the same Fact.
+                }
+            ],
+            later_fingerprint,
+            revision + 1,
+        )
+    )
+    assert validate_difference_bundle(derived) == []
+
+    bindings = {item["binding_id"] for item in derived["fact_observation_bindings"]}
+    observations = {item["observation_id"] for item in derived["observations"]}
+    facts = {item["fact_id"] for item in derived["normalized_facts"]}
+    assert len(observations) == 2
+    for evaluation in derived["fact_evaluations"]:
+        for reference in evaluation["binding_refs"]:
+            assert reference["id"] in bindings
+    for binding in derived["fact_observation_bindings"]:
+        assert binding["observation_id"] in observations
+        assert binding["fact_id"] in facts
+    for observation in derived["observations"]:
+        assert observation["observation_id"] == observation_identity(observation)
+
+
+def test_state_to_observation_to_difference_rejects_a_forged_observation_payload() -> None:
+    """A real Observation altered after the fact fails closed on its own identity."""
+
+    from manosube_agent_civilization.difference import IdentityCollisionError
+
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    observation_bundle = observe(
+        observation_request(scope, [raw_fact()], fingerprint, revision)
+    )
+    assert validate_observation_bundle(observation_bundle) == []
+    for observation in observation_bundle["observations"]:
+        observation["method_ref"] = {"kind": "observation_method", "id": "OBS-METHOD-9999"}
+    with pytest.raises(IdentityCollisionError, match="Observation identity does not recompute"):
+        derive_differences(
+            derivation_request(
+                objective_revision([target_predicate()]),
+                [
+                    {
+                        "target_predicate_id": PREDICATE_ID,
+                        "observation_scope": scope,
+                        "observation_bundle": observation_bundle,
+                    }
+                ],
+                fingerprint,
+                revision,
+            )
+        )

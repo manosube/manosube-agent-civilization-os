@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
 import json
 from typing import Any
 
-from .boundary import fact_boundary_observed
+from .boundary import fact_boundary_observed, instant, time_boundary_within_scope
 from .errors import ObservationError, ObservationValidationError
-from .identity import deterministic_id
+from .identity import deterministic_id, observation_identity
 from .normalization import PREDICATE_VOCABULARY, SUPPORTED_PROFILE, normalize_fact
 from .schemas import OBSERVATION_SCHEMA_BASE, validators
 from .scope import subject_in_scope, validate_scope, validate_source_locator
@@ -79,36 +78,6 @@ def _binding(
     }
 
 
-def _instant(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-
-def _time_boundary_complete(observation: dict[str, Any], scope: dict[str, Any]) -> bool:
-    boundary = observation["time_boundary"]
-    try:
-        observed_start = _instant(boundary["observation_started_at"])
-        observed_end = _instant(boundary["observation_ended_at"])
-        effective_start = _instant(boundary["target_effective_start"])
-        effective_end = _instant(boundary["target_effective_end"])
-        snapshot = _instant(boundary["source_snapshot_time"])
-        scope_observed_start = _instant(scope["observation_window"]["start"])
-        scope_observed_end = _instant(scope["observation_window"]["end"])
-        scope_effective_start = _instant(scope["target_effective_window"]["start"])
-        scope_effective_end = _instant(scope["target_effective_window"]["end"])
-        cutoff = _instant(scope["cutoff"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    return (
-        observed_start <= observed_end
-        and effective_start <= effective_end
-        and scope_observed_start <= observed_start <= observed_end <= scope_observed_end
-        and scope_effective_start <= effective_start <= effective_end <= scope_effective_end
-        and effective_start <= snapshot <= observed_end
-        and snapshot <= cutoff
-        and (cutoff - snapshot).total_seconds() <= scope["freshness_limit_seconds"]
-    )
-
-
 def _completion(
     status: str,
     observation: dict[str, Any],
@@ -118,22 +87,22 @@ def _completion(
     facts: list[dict[str, Any]] | None = None,
 ) -> dict[str, bool]:
     attempts = observation["attempts"]
-    observation_start = _instant(observation["time_boundary"]["observation_started_at"])
-    observation_end = _instant(observation["time_boundary"]["observation_ended_at"])
+    observation_start = instant(observation["time_boundary"]["observation_started_at"])
+    observation_end = instant(observation["time_boundary"]["observation_ended_at"])
     attempts_complete = (
         bool(attempts)
         and all(
             attempt["result"] in {"COMPLETE", "EMPTY"}
             and attempt["method_ref"] == observation["method_ref"]
             and observation_start
-            <= _instant(attempt["started_at"])
-            <= _instant(attempt["ended_at"])
+            <= instant(attempt["started_at"])
+            <= instant(attempt["ended_at"])
             <= observation_end
             for attempt in attempts
         )
         and len(attempts) <= scope["attempt_policy"]["max_attempts"]
         and all(
-            (_instant(attempt["ended_at"]) - _instant(attempt["started_at"])).total_seconds()
+            (instant(attempt["ended_at"]) - instant(attempt["started_at"])).total_seconds()
             <= scope["attempt_policy"]["timeout_seconds"]
             for attempt in attempts
         )
@@ -152,7 +121,7 @@ def _completion(
         "target_defined": True,
         "scope_complete": scope["scope_status"] == "COMPLETE",
         "method_complete": method_complete,
-        "time_boundary_complete": _time_boundary_complete(observation, scope),
+        "time_boundary_complete": time_boundary_within_scope(observation, scope),
         "source_snapshots_identified": bool(observation["source_snapshot_refs"]),
         "required_attempts_completed": method_complete,
         "no_blocking_blind_spot": no_blocking_blind_spot,
@@ -394,18 +363,20 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     )
     _validate_records(prior)
 
-    observation_identity = {
+    # The identity-bearing half of the Observation record is built first, so the identity
+    # is minted through the same single projection any consumer re-derives it with.
+    observation_identity_payload = {
         "project_id": request["project_id"],
         "state_revision_observed": state_revision,
         "state_fingerprint_observed": state_fingerprint,
-        "target_identity": request["target_identity"],
-        "scope_id": scope["scope_id"],
-        "method_ref": request["method_ref"],
-        "time_boundary": request["time_boundary"],
+        "target": {"target_identity": request["target_identity"], "kind": request["target_kind"]},
+        "scope_ref": _ref("observation_scope", scope["scope_id"]),
+        "method_ref": deepcopy(request["method_ref"]),
+        "time_boundary": deepcopy(request["time_boundary"]),
         "source_snapshot_refs": canonical_source_refs,
         "normalization_profile": profile,
     }
-    observation_id = deterministic_id("OBS", observation_identity)
+    observation_id = observation_identity(observation_identity_payload)
     facts_by_id = {fact["fact_id"]: fact for fact in prior["facts"]}
     bindings_by_id = {binding["binding_id"]: binding for binding in prior["bindings"]}
     observed_fact_ids: set[str] = set()
@@ -480,15 +451,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     observation = {
         "schema_version": "0.1",
         "observation_id": observation_id,
-        "project_id": request["project_id"],
-        "state_revision_observed": state_revision,
-        "state_fingerprint_observed": state_fingerprint,
-        "target": {"target_identity": request["target_identity"], "kind": request["target_kind"]},
-        "scope_ref": _ref("observation_scope", scope["scope_id"]),
-        "method_ref": deepcopy(request["method_ref"]),
-        "time_boundary": deepcopy(request["time_boundary"]),
-        "source_snapshot_refs": canonical_source_refs,
-        "normalization_profile": profile,
+        **deepcopy(observation_identity_payload),
         "normalized_fact_refs": [
             _ref("normalized_fact", fact["fact_id"]) for fact in observed_facts
         ],

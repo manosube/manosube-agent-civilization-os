@@ -63,3 +63,44 @@ def fact_evaluation_identity(evaluation: dict[str, Any]) -> str:
             "evaluation_revision": evaluation["evaluation_revision"],
         },
     )
+
+
+OBSERVATION_SEMANTIC_FIELDS = (
+    "project_id",
+    "state_revision_observed",
+    "state_fingerprint_observed",
+    "target_identity",
+    "scope_id",
+    "method_ref",
+    "time_boundary",
+    "source_snapshot_refs",
+    "normalization_profile",
+)
+
+
+def observation_semantic_projection(observation: dict[str, Any]) -> dict[str, Any]:
+    """Return the closed semantic identity input of an Observation record.
+
+    The projection is read from the record itself, so the Observation Engine that mints an
+    identity and any consumer that re-derives one use a single closed algorithm. ``status``,
+    ``normalized_fact_refs``, ``blind_spots``, ``attempts`` and the Evidence channel are
+    deliberately outside it: they are the Observation's findings, not its identity.
+    """
+
+    return {
+        "project_id": observation["project_id"],
+        "state_revision_observed": observation["state_revision_observed"],
+        "state_fingerprint_observed": observation["state_fingerprint_observed"],
+        "target_identity": observation["target"]["target_identity"],
+        "scope_id": observation["scope_ref"]["id"],
+        "method_ref": observation["method_ref"],
+        "time_boundary": observation["time_boundary"],
+        "source_snapshot_refs": observation["source_snapshot_refs"],
+        "normalization_profile": observation["normalization_profile"],
+    }
+
+
+def observation_identity(observation: dict[str, Any]) -> str:
+    """Return the canonical identity an Observation record's own payload implies."""
+
+    return deterministic_id("OBS", observation_semantic_projection(observation))

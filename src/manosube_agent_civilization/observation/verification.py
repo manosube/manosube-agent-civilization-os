@@ -17,7 +17,7 @@ from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
-from .identity import deterministic_id
+from .identity import deterministic_id, observation_identity
 from .schemas import OBSERVATION_SCHEMA_BASE, validators
 
 RECORD_SCHEMAS: dict[str, str] = {
@@ -36,12 +36,21 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
     schema_validators = validators()
     record_groups = RECORD_SCHEMAS
     errors: list[str] = []
+    # A record that fails its canonical schema is already reported inadmissible; its
+    # identity is not recomputed, because a projection over a malformed payload would
+    # raise instead of returning a verdict.
+    schema_valid: dict[str, list[dict[str, Any]]] = {}
     for group, schema_name in record_groups.items():
         validator = schema_validators[OBSERVATION_SCHEMA_BASE + schema_name]
+        valid: list[dict[str, Any]] = []
         for record in bundle[group]:
-            errors.extend(error.message for error in validator.iter_errors(record))
+            record_errors = [error.message for error in validator.iter_errors(record)]
+            errors.extend(record_errors)
+            if not record_errors:
+                valid.append(record)
+        schema_valid[group] = valid
     fact_ids = {fact["fact_id"] for fact in bundle["facts"]}
-    for fact in bundle["facts"]:
+    for fact in schema_valid["facts"]:
         semantic = {
             key: value for key, value in fact.items() if key not in {"schema_version", "fact_id"}
         }
@@ -49,6 +58,13 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"Fact identity mismatch: {fact['fact_id']}")
         if semantic != json.loads(canonical_json_bytes(semantic)):
             errors.append(f"Fact payload is not canonical: {fact['fact_id']}")
+    for observation in schema_valid["observations"]:
+        # An Observation identity is derived from its project, State binding, Target,
+        # Scope, method, time boundary, source snapshots and normalization profile. A
+        # caller may retain the id while altering any of them, and every reference still
+        # resolves, so the identity is recomputed rather than trusted.
+        if observation["observation_id"] != observation_identity(observation):
+            errors.append(f"Observation identity mismatch: {observation['observation_id']}")
     bound_fact_ids = {binding["fact_id"] for binding in bundle["bindings"]}
     if fact_ids != bound_fact_ids:
         errors.append("every Fact must have one or more provenance Bindings")
@@ -83,12 +99,12 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
         )
         if binding["binding_id"] != expected_binding_id:
             errors.append(f"Binding identity mismatch: {binding['binding_id']}")
-        observation = observations_by_id.get(binding["observation_id"])
-        if observation is None:
+        bound: dict[str, Any] | None = observations_by_id.get(binding["observation_id"])
+        if bound is None:
             errors.append(f"binding references missing Observation: {binding['binding_id']}")
         elif (
-            binding["state_revision_observed"] != observation["state_revision_observed"]
-            or binding["state_fingerprint_observed"] != observation["state_fingerprint_observed"]
+            binding["state_revision_observed"] != bound["state_revision_observed"]
+            or binding["state_fingerprint_observed"] != bound["state_fingerprint_observed"]
         ):
             errors.append(f"binding State mismatch: {binding['binding_id']}")
     for fact_id in fact_ids:
