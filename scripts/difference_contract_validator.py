@@ -156,6 +156,11 @@ def _collection_members(value: Any) -> list[Any] | None:
     return None
 
 
+def _is_empty_collection(value: Any) -> bool:
+    members = _collection_members(value)
+    return members == []
+
+
 def _derive_comparison_and_mismatch(
     observed: dict[str, Any], target: dict[str, Any],
 ) -> tuple[str, str | None]:
@@ -1323,6 +1328,13 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         ):
             errors.append(f"evaluation Policy binding mismatch: {evaluation['closure_evaluation_id']}")
         head = events.get(_ref_id(evaluation["difference_event_head_ref"]) or "")
+        promotion_events = [
+            event
+            for event in events.values()
+            if _ref_id(event["closure_evaluation_ref"])
+            == evaluation["closure_evaluation_id"]
+            and event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}
+        ]
         if head is None or head["difference_id"] != evaluation["difference_id"]:
             errors.append(f"evaluation event-head mismatch: {evaluation['closure_evaluation_id']}")
         evaluated_objective = objective_revisions.get(
@@ -1364,10 +1376,15 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         if (
             evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
             or not objective_evaluation_valid
-            or evaluation["evaluated_state_revision"]
-            != (current_state_ref or {}).get("revision")
-            or evaluation["evaluated_state_fingerprint"]
-            != (current_state_ref or {}).get("fingerprint")
+            or (
+                not promotion_events
+                and (
+                    evaluation["evaluated_state_revision"]
+                    != (current_state_ref or {}).get("revision")
+                    or evaluation["evaluated_state_fingerprint"]
+                    != (current_state_ref or {}).get("fingerprint")
+                )
+            )
             or evaluation["before_state_ref"]["revision"]
             != evaluation["evaluated_state_revision"]
             or evaluation["before_state_ref"]["fingerprint"]
@@ -1654,7 +1671,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 candidate is not None
                 and difference is not None
                 and (
-                    bounded_empty_closure
+                    (
+                        bounded_empty_closure
+                        and _is_empty_collection(candidate_value)
+                        and _target_satisfied(
+                            [candidate_value],
+                            difference["normalized_target_state"],
+                        )
+                    )
                     or (
                         _candidate_type_matches_target(
                             candidate_value,
