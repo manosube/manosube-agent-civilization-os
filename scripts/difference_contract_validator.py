@@ -1697,6 +1697,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         and datetime.fromisoformat(
                             attempt["ended_at"].replace("Z", "+00:00")
                         )
+                        >= datetime.fromisoformat(
+                            attempt["started_at"].replace("Z", "+00:00")
+                        )
+                        and datetime.fromisoformat(
+                            attempt["ended_at"].replace("Z", "+00:00")
+                        )
                         <= datetime.fromisoformat(
                             observation["time_boundary"][
                                 "observation_ended_at"
