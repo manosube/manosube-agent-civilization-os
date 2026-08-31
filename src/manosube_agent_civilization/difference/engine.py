@@ -14,6 +14,13 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from manosube_agent_civilization.observation.boundary import fact_boundary_observed
+from manosube_agent_civilization.observation.identity import (
+    binding_identity,
+    fact_evaluation_identity,
+    fact_identity,
+)
+
 from .canonical import (
     canonical_bytes,
     content_address,
@@ -251,6 +258,7 @@ def _observed_projection(
     )
     if any(reference["id"] not in facts_by_id for reference in observation["normalized_fact_refs"]):
         raise DifferenceError("Observation references a Normalized Fact absent from the bundle")
+    _verify_upstream_identities(observation, bundle, facts_by_id, bindings_by_id)
     source_facts = [
         facts_by_id[reference["id"]]
         for reference in observation["normalized_fact_refs"]
@@ -264,12 +272,13 @@ def _observed_projection(
             )
         if fact["subject"] not in scope["included_subjects"] or fact["subject"] in scope["excluded_subjects"]:
             raise BoundaryViolationError(f"Fact subject escapes the resolved Scope: {fact['subject']}")
-        if fact["effective_boundary"]["kind"] != "SOURCE_SNAPSHOT":
-            raise BoundaryViolationError("Fact effective boundary is not a declared source snapshot")
-        if fact["effective_boundary"]["identity"] not in {
-            reference["id"] for reference in boundary["source_snapshot_refs"]["members"]
-        }:
-            raise BoundaryViolationError("Fact source snapshot escapes the effective boundary")
+        # Every contract-legal Fact boundary form is accepted, matched by the single
+        # canonical authority the Observation owner and the independent validator use.
+        if not fact_boundary_observed(fact["effective_boundary"], observation):
+            raise BoundaryViolationError(
+                "Fact effective boundary was not observed by the bound Observation: "
+                f"{fact['fact_id']}"
+            )
 
     negatives = [
         negative
@@ -339,6 +348,171 @@ def _observed_projection(
     if len(statuses) != 1:
         raise DifferenceError("bounded Negative Observations disagree on knowledge status")
     return statuses.pop(), [], negatives
+
+
+def _verify_upstream_identities(
+    observation: dict[str, Any],
+    bundle: dict[str, Any],
+    facts_by_id: dict[str, dict[str, Any]],
+    bindings_by_id: dict[str, dict[str, Any]],
+) -> None:
+    """Recompute every upstream identity this derivation is about to trust.
+
+    Reference lookup and schema validity are not enough: a caller can alter an
+    identity-bearing field of a Normalized Fact, binding or evaluation while retaining its
+    original id, and every lookup still resolves. The Observation element owns these
+    identity algorithms, so they are recomputed here rather than re-implemented.
+    """
+
+    referenced = {
+        reference["id"] for reference in observation["normalized_fact_refs"]
+    }
+    for fact in bundle["facts"]:
+        if fact["fact_id"] not in referenced:
+            continue
+        require_schema_version(fact, f"normalized fact {fact['fact_id']}")
+        if fact["fact_id"] != fact_identity(fact):
+            raise IdentityCollisionError(
+                f"Normalized Fact identity does not recompute: {fact['fact_id']}"
+            )
+    for binding in bindings_by_id.values():
+        if binding["observation_id"] != observation["observation_id"]:
+            continue
+        if binding["binding_id"] != binding_identity(binding):
+            raise IdentityCollisionError(
+                f"Fact Observation Binding identity does not recompute: {binding['binding_id']}"
+            )
+        if binding["fact_id"] not in facts_by_id:
+            raise DifferenceError(
+                f"Fact Observation Binding references an absent Fact: {binding['binding_id']}"
+            )
+    for evaluation in bundle["fact_evaluations"]:
+        if evaluation["fact_id"] not in referenced:
+            continue
+        if evaluation["evaluation_id"] != fact_evaluation_identity(evaluation):
+            raise IdentityCollisionError(
+                "Fact evaluation identity does not recompute: "
+                f"{evaluation['evaluation_id']}"
+            )
+
+
+_LINEAGE_SECTIONS: dict[str, str] = {
+    "observations": "observation_id",
+    "normalized_facts": "fact_id",
+    "fact_observation_bindings": "binding_id",
+    "fact_evaluations": "evaluation_id",
+    "negative_observations": "negative_observation_id",
+    "negative_observation_evaluations": "evaluation_id",
+}
+_BUNDLE_SECTIONS: dict[str, str] = {
+    "observations": "observations",
+    "normalized_facts": "facts",
+    "fact_observation_bindings": "bindings",
+    "fact_evaluations": "fact_evaluations",
+    "negative_observations": "negative_observations",
+    "negative_observation_evaluations": "negative_evaluations",
+}
+
+
+def _require_context_agrees_with_observation_lineage(
+    predecessor: dict[str, Any], observation_bundle: dict[str, Any]
+) -> None:
+    """Reject a predecessor context that contradicts the Observation lineage supplied.
+
+    Where the carried context and the canonical Observation bundle name the same record,
+    the payloads must be identical. A same-ID/different-payload context is a forgery, not
+    provenance.
+    """
+
+    context = predecessor.get("context", {})
+    for section, key in _LINEAGE_SECTIONS.items():
+        authentic = {
+            record[key]: record
+            for record in observation_bundle.get(_BUNDLE_SECTIONS[section], [])
+        }
+        for record in context.get(section, []):
+            existing = authentic.get(record[key])
+            if existing is not None and canonical_bytes(existing) != canonical_bytes(record):
+                raise IdentityCollisionError(
+                    f"same-ID different-payload conflict in predecessor context: {record[key]}"
+                )
+
+
+def _require_resolvable_lineage(
+    difference: dict[str, Any],
+    retained: list[dict[str, Any]],
+    resolved: dict[str, set[str]],
+    retained_observations: list[dict[str, Any]],
+    retained_evaluations: list[dict[str, Any]],
+) -> None:
+    """Reject a predecessor whose retained lineage is not self-contained.
+
+    Every reference a retained event or the retained Difference carries must resolve
+    inside the returned bundle. Defaulting a missing context to an empty mapping would
+    leave an append-only chain whose own genesis cannot be read back.
+    """
+
+    def _require(reference: dict[str, Any] | None, section: str, context: str) -> None:
+        if reference is None:
+            return
+        identity = str(reference.get("id"))
+        if identity not in resolved.get(section, set()):
+            raise DifferenceError(
+                f"retained predecessor reference does not resolve: {context} -> "
+                f"{section}:{identity}"
+            )
+
+    difference_id = difference["difference_id"]
+    for reference in difference["observation_refs"]:
+        _require(reference, "observations", "difference.observation_refs")
+    _require(difference["objective_revision_ref"], "objective_revisions", "difference.objective")
+    _require(
+        difference["objective_scope_binding"]["scope_ref"],
+        "observation_scopes",
+        "difference.scope",
+    )
+    _require(difference["closure_policy"], "policies", "difference.closure_policy")
+    _require(difference["genesis_event_ref"], "events", "difference.genesis_event_ref")
+
+    for observation in retained_observations:
+        for reference in observation["normalized_fact_refs"]:
+            _require(reference, "normalized_facts", f"observation[{observation['observation_id']}]")
+    for evaluation in retained_evaluations:
+        for reference in evaluation["binding_refs"]:
+            _require(
+                reference,
+                "fact_observation_bindings",
+                f"fact_evaluation[{evaluation['evaluation_id']}]",
+            )
+
+    for event in retained:
+        where = f"event[{event['event_revision']}]"
+        for reference in event["observation_refs"]:
+            _require(reference, "observations", f"{where}.observation_refs")
+        _require(event["next_observation_ref"], "next_observation_requests", f"{where}.next")
+        _require(event["closure_evaluation_ref"], "evaluations", f"{where}.closure_evaluation")
+        _require(event["reflow_transition_ref"], "reflow_transitions", f"{where}.reflow")
+        _require(
+            event["reopen_condition_evaluation_ref"],
+            "reopen_condition_evaluations",
+            f"{where}.reopen_condition_evaluation",
+        )
+        for reference in event["change_refs"]:
+            _require(reference, "changes", f"{where}.change_refs")
+        scope = event["blocker_scope"]
+        if scope is not None:
+            for reference in scope["affected_subject_refs"]["members"]:
+                if reference.get("kind") == "difference" and reference["id"] != difference_id:
+                    raise DifferenceError(
+                        f"retained blocker scope names another Difference: {reference['id']}"
+                    )
+        condition = event["blocker_resolution_condition"]
+        if condition is not None:
+            _require(
+                condition["verification_request_ref"],
+                "next_observation_requests",
+                f"{where}.verification_request",
+            )
 
 
 def _evidence_union(
@@ -866,6 +1040,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         observation_refs = deepcopy(difference["observation_refs"])
         predecessor = binding.get("predecessor")
         chain: list[dict[str, Any]] = []
+        pending_lineage: list[tuple[dict[str, Any], list[dict[str, Any]], set[str]]] = []
         if predecessor is None:
             genesis = _genesis_event(
                 difference_id, state_revision, state_fingerprint, observation_refs, evidence_refs
@@ -885,6 +1060,9 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 )
             )
         else:
+            _require_context_agrees_with_observation_lineage(
+                predecessor, binding["observation_bundle"]
+            )
             prior_difference, prior_events = _validate_predecessor(predecessor)
             if prior_difference["difference_id"] == difference_id:
                 prior_payload = canonical_bytes(difference_identity_input(prior_difference))
@@ -943,6 +1121,13 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                     facts, fact_bindings, fact_evaluations, negative_observations,
                     negative_evaluations, requests, methods, carried,
                 )
+                pending_lineage.append(
+                    (
+                        difference,
+                        deepcopy(prior_events),
+                        {event["difference_event_id"] for event in chain},
+                    )
+                )
             else:
                 chain = _material_change_chain(
                     difference_id,
@@ -966,6 +1151,13 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 events.extend(superseded_chain)
                 differences[prior_difference["difference_id"]] = deepcopy(prior_difference)
                 materialized_status[prior_difference["difference_id"]] = "SUPERSEDED"
+                pending_lineage.append(
+                    (
+                        prior_difference,
+                        superseded_chain,
+                        {event["difference_event_id"] for event in superseded_chain},
+                    )
+                )
                 _absorb_predecessor_context(
                     predecessor, objective_revisions, policies, scopes, observations,
                     facts, fact_bindings, fact_evaluations, negative_observations,
@@ -1012,6 +1204,31 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             binding["observation_bundle"], observation, observations, facts,
             fact_bindings, fact_evaluations, negative_observations, negative_evaluations,
         )
+        for retained_difference, retained_events, chain_ids in pending_lineage:
+            _require_resolvable_lineage(
+                retained_difference,
+                retained_events,
+                {
+                    "observations": set(observations),
+                    "objective_revisions": set(objective_revisions),
+                    "observation_scopes": set(scopes),
+                    "policies": {item["closure_policy_id"] for item in policies},
+                    "events": chain_ids,
+                    "next_observation_requests": {
+                        item["observation_request_id"] for item in requests
+                    },
+                    "evaluations": set(carried.get("evaluations", {})),
+                    "reflow_transitions": set(carried.get("reflow_transitions", {})),
+                    "changes": set(carried.get("changes", {})),
+                    "reopen_condition_evaluations": set(
+                        carried.get("reopen_condition_evaluations", {})
+                    ),
+                    "normalized_facts": set(facts),
+                    "fact_observation_bindings": set(fact_bindings),
+                },
+                list(observations.values()),
+                list(fact_evaluations.values()),
+            )
 
     return _finalize(
         request, objective_revisions, differences, events, policies, relations, requests, methods,

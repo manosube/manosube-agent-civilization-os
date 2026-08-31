@@ -13,6 +13,7 @@ import subprocess
 from typing import Any
 
 from manosube_agent_civilization.difference.lifecycle import LEGAL_TRANSITIONS
+from manosube_agent_civilization.observation.boundary import fact_boundary_observed
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.errors import SchemaValidationError
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
@@ -231,30 +232,9 @@ def _observation_time_boundary_complete(
 def _fact_boundary_observed(
     fact: dict[str, Any], observation: dict[str, Any],
 ) -> bool:
-    boundary = fact["effective_boundary"]
-    declared_source_ids = {
-        reference["id"] for reference in observation["source_snapshot_refs"]
-    }
-    return (
-        (
-            boundary["kind"] == "SOURCE_SNAPSHOT"
-            and boundary["identity"] in declared_source_ids
-            and boundary["start"] is None
-            and boundary["end"] is None
-        )
-        or (
-            boundary["kind"] == "TIME_INTERVAL"
-            and boundary["start"]
-            == observation["time_boundary"]["target_effective_start"]
-            and boundary["end"]
-            == observation["time_boundary"]["target_effective_end"]
-        )
-        or (
-            boundary["kind"] == "STATE_REVISION"
-            and boundary["start"] == observation["state_revision_observed"]
-            and boundary["end"] == observation["state_revision_observed"]
-        )
-    )
+    """Delegate to the single canonical Fact boundary authority."""
+
+    return fact_boundary_observed(fact["effective_boundary"], observation)
 
 
 def _fact_id(fact: dict[str, Any]) -> str:
@@ -1404,13 +1384,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and fact["value_type"] == candidate["value_type"]
                     and fact["unit"] == candidate["unit"]
                     and fact["predicate"] == candidate["fact_predicate"]
-                    and fact["effective_boundary"]["kind"] == "SOURCE_SNAPSHOT"
-                    and fact["effective_boundary"]["identity"]
-                    in {
-                        reference["id"]
-                        for reference in difference["effective_boundary"]
-                        ["source_snapshot_refs"]["members"]
-                    }
+                    # Every contract-legal Fact boundary form is accepted, matched
+                    # against a Observation this Difference actually binds.
+                    and any(
+                        bound is not None and _fact_boundary_observed(fact, bound)
+                        for bound in source_observations
+                    )
                     for fact in source_facts
                 )
                 for candidate in observed["value_candidates"]["members"]

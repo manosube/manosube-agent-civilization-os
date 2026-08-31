@@ -83,3 +83,54 @@ def test_supersession_sources_are_derived_from_the_table() -> None:
     assert legal_supersession_sources() == {
         source for source, target in LEGAL_TRANSITIONS if target == "SUPERSEDED" and source
     }
+
+
+# --------------------------------------------------------------------------- #
+# The Fact effective-boundary matching rule is also a single authority.
+# --------------------------------------------------------------------------- #
+
+
+def test_exactly_one_fact_boundary_authority_exists() -> None:
+    """The Observation owner defines it; the Engine and the auditor delegate to it."""
+
+    from manosube_agent_civilization.observation import engine as observation_engine
+    from manosube_agent_civilization.observation.boundary import fact_boundary_observed
+
+    assert vars(observation_engine)["fact_boundary_observed"] is fact_boundary_observed
+    assert vars(validator)["fact_boundary_observed"] is fact_boundary_observed
+    source = (ROOT / "src" / "manosube_agent_civilization" / "difference" / "engine.py").read_text(
+        encoding="utf-8"
+    )
+    assert "fact_boundary_observed(" in source
+
+
+def test_fact_boundary_authority_covers_every_schema_kind() -> None:
+    """The matcher handles exactly the kinds the Normalized Fact schema declares."""
+
+    import json
+
+    from manosube_agent_civilization.observation.boundary import FACT_BOUNDARY_KINDS
+
+    schema = json.loads(
+        (
+            ROOT / "01_SCHEMA" / "observation" / "normalized_fact.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    declared = set(
+        schema["properties"]["effective_boundary"]["properties"]["kind"]["enum"]
+    )
+    assert declared == FACT_BOUNDARY_KINDS
+    assert declared == {"SOURCE_SNAPSHOT", "TIME_INTERVAL", "STATE_REVISION"}
+
+
+def test_one_fact_identity_authority_is_shared_with_normalization() -> None:
+    """`normalize_fact` and the verifier use the same semantic projection."""
+
+    from manosube_agent_civilization.observation import normalization
+    from manosube_agent_civilization.observation.identity import (
+        fact_identity,
+        fact_semantic_projection,
+    )
+
+    assert vars(normalization)["fact_semantic_projection"] is fact_semantic_projection
+    assert vars(normalization)["fact_identity"] is fact_identity

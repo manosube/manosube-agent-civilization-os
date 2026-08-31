@@ -13,6 +13,7 @@ from referencing import Registry, Resource
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
+from .boundary import fact_boundary_observed
 from .errors import ObservationError, ObservationValidationError
 from .identity import deterministic_id
 from .normalization import PREDICATE_VOCABULARY, SUPPORTED_PROFILE, normalize_fact
@@ -76,25 +77,9 @@ def _require_ref_kind(reference: dict[str, str], expected: str, context: str) ->
 
 
 def _boundary_observed(boundary: dict[str, Any], observation: dict[str, Any]) -> bool:
-    declared_source_ids = {item["id"] for item in observation["source_snapshot_refs"]}
-    return (
-        (
-            boundary["kind"] == "SOURCE_SNAPSHOT"
-            and boundary["identity"] in declared_source_ids
-            and boundary["start"] is None
-            and boundary["end"] is None
-        )
-        or (
-            boundary["kind"] == "TIME_INTERVAL"
-            and boundary["start"] == observation["time_boundary"]["target_effective_start"]
-            and boundary["end"] == observation["time_boundary"]["target_effective_end"]
-        )
-        or (
-            boundary["kind"] == "STATE_REVISION"
-            and boundary["start"] == observation["state_revision_observed"]
-            and boundary["end"] == observation["state_revision_observed"]
-        )
-    )
+    """Delegate to the single canonical Fact boundary authority."""
+
+    return fact_boundary_observed(boundary, observation)
 
 
 def _binding(

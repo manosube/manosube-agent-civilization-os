@@ -618,6 +618,19 @@ def retained_status_predecessor(
 
     context = deepcopy(baseline)
     context["evaluations"] = [evaluation]
+    if any(event["reflow_transition_ref"] is not None for event in upstream):
+        # A CLOSED transition references a Reflow record owned by a later phase. The
+        # caller supplies it; the Difference Engine only carries it forward.
+        context["reflow_transitions"] = [
+            {
+                "transaction_id": "REFLOW-TX-0001",
+                "after_state": {
+                    "state_revision": difference["observed_state_revision"],
+                    "semantic_fingerprint": deepcopy(difference["observed_state_fingerprint"]),
+                },
+                "committed_at": "2026-08-30T09:02:00Z",
+            }
+        ]
     context["next_observation_requests"] = [request]
     context["observation_methods"] = [method]
 

@@ -460,3 +460,84 @@ def test_state_to_observation_to_difference_retained_blocked_reobservation() -> 
     for event in bundle["events"]:
         for reference in event["observation_refs"]:
             assert reference["id"] in observations
+
+
+_BOUNDARY_KINDS = {
+    "SOURCE_SNAPSHOT": {
+        "kind": "SOURCE_SNAPSHOT",
+        "identity": "SNAP-0001",
+        "start": None,
+        "end": None,
+    },
+    "TIME_INTERVAL": {
+        "kind": "TIME_INTERVAL",
+        "identity": "kernel",
+        "start": "2026-08-30T08:00:00Z",
+        "end": "2026-08-30T09:00:00Z",
+    },
+    "STATE_REVISION": {"kind": "STATE_REVISION", "identity": "kernel", "start": 2, "end": 2},
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_BOUNDARY_KINDS))
+def test_state_to_observation_to_difference_every_fact_boundary_kind(kind: str) -> None:
+    """Each contract-legal Fact boundary derives a conformant Difference over real owners."""
+
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    fact = raw_fact()
+    fact["effective_boundary"] = deepcopy(_BOUNDARY_KINDS[kind])
+    if kind == "STATE_REVISION":
+        fact["effective_boundary"]["start"] = revision
+        fact["effective_boundary"]["end"] = revision
+    observation_bundle = observe(observation_request(scope, [fact], fingerprint, revision))
+    assert validate_observation_bundle(observation_bundle) == []
+
+    difference_bundle = derive_differences(
+        derivation_request(
+            objective_revision([target_predicate()]),
+            [
+                {
+                    "target_predicate_id": PREDICATE_ID,
+                    "observation_scope": scope,
+                    "observation_bundle": observation_bundle,
+                }
+            ],
+            fingerprint,
+            revision,
+        )
+    )
+    assert validate_difference_bundle(difference_bundle) == []
+    difference = difference_bundle["differences"][0]
+    validate_record(difference, "difference.schema.json")
+    assert difference_bundle["normalized_facts"][0]["effective_boundary"]["kind"] == kind
+
+
+def test_state_to_observation_to_difference_rejects_a_forged_upstream_fact() -> None:
+    """A real Observation whose Fact payload was altered afterwards fails closed."""
+
+    from manosube_agent_civilization.difference import IdentityCollisionError
+
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    observation_bundle = observe(
+        observation_request(scope, [raw_fact()], fingerprint, revision)
+    )
+    assert validate_observation_bundle(observation_bundle) == []
+    for fact in observation_bundle["facts"]:
+        fact["value"] = "FORGED-AFTER-OBSERVATION"
+    with pytest.raises(IdentityCollisionError, match="does not recompute"):
+        derive_differences(
+            derivation_request(
+                objective_revision([target_predicate()]),
+                [
+                    {
+                        "target_predicate_id": PREDICATE_ID,
+                        "observation_scope": scope,
+                        "observation_bundle": observation_bundle,
+                    }
+                ],
+                fingerprint,
+                revision,
+            )
+        )

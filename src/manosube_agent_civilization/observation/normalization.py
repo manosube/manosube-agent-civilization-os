@@ -11,7 +11,7 @@ from typing import Any
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 from .errors import ObservationError, UnsupportedProfileError
-from .identity import deterministic_id
+from .identity import fact_identity, fact_semantic_projection
 
 SUPPORTED_PROFILE = "FIXTURE-0.1"
 VALUE_TYPES = {
@@ -80,19 +80,21 @@ def normalize_fact(raw: dict[str, Any], project_id: str, profile: str) -> dict[s
             raise ObservationError("UNORDERED_COLLECTION contains duplicate canonical members")
         value = [item for _, item in sorted(zip(encoded, value, strict=True))]
     value = json.loads(canonical_json_bytes(value))
-    semantic = {
-        "project_id": project_id,
-        "subject": raw["subject"],
-        "predicate": raw["predicate"],
-        "value": value,
-        "value_type": value_type,
-        "unit": raw.get("unit"),
-        "effective_boundary": raw["effective_boundary"],
-        "normalization_profile": profile,
-    }
+    semantic = fact_semantic_projection(
+        {
+            "project_id": project_id,
+            "subject": raw["subject"],
+            "predicate": raw["predicate"],
+            "value": value,
+            "value_type": value_type,
+            "unit": raw.get("unit"),
+            "effective_boundary": raw["effective_boundary"],
+            "normalization_profile": profile,
+        }
+    )
     semantic = json.loads(canonical_json_bytes(semantic))
     return {
         "schema_version": "0.1",
-        "fact_id": deterministic_id("FACT", semantic),
+        "fact_id": fact_identity(semantic),
         **semantic,
     }
