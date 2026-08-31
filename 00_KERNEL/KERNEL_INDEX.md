@@ -1194,9 +1194,11 @@ Kernelの意味を把握する場合は、次の順序で読む。
 
 3\. HUMAN\_AGENT\_WORK\_COMMUNICATION.md
 
-4\. KERNEL\_INVARIANTS.md
+4\. KERNEL\_VERTICAL\_WORK\_UNIT\_DELIVERY.md
 
-5\. COMPLETION\_SEMANTICS.md
+5\. KERNEL\_INVARIANTS.md
+
+6\. COMPLETION\_SEMANTICS.md
 
 ```
 
@@ -1218,27 +1220,29 @@ Kernelの意味を把握する場合は、次の順序で読む。
 
 3\. HUMAN\_AGENT\_WORK\_COMMUNICATION.md
 
-4\. KERNEL\_INVARIANTS.md
+4\. KERNEL\_VERTICAL\_WORK\_UNIT\_DELIVERY.md
 
-5\. COMPLETION\_SEMANTICS.md
+5\. KERNEL\_INVARIANTS.md
+
+6\. COMPLETION\_SEMANTICS.md
 
 
 
-6\. 01\_OBJECTIVE/
+7\. 01\_OBJECTIVE/
 
-7\. 02\_STATE/
+8\. 02\_STATE/
 
-8\. 03\_OBSERVATION/
+9\. 03\_OBSERVATION/
 
-9\. 04\_DIFFERENCE/
+10\. 04\_DIFFERENCE/
 
-10\. 05\_AUTHORITY/
+11\. 05\_AUTHORITY/
 
-11\. 06\_CHANGE/
+12\. 06\_CHANGE/
 
-12\. 07\_EVIDENCE/
+13\. 07\_EVIDENCE/
 
-13\. 08\_REFLOW/
+14\. 08\_REFLOW/
 
 ```
 
@@ -2138,3 +2142,24 @@ OBJECTIVE
 
 
 
+
+
+---
+
+# Mandatory Delivery Protocol
+
+Kernel implementation work MUST also read:
+
+```text
+00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md
+```
+
+This protocol does not add a ninth Kernel element or change the Canonical Cycle. It governs the default vertical packaging of one Kernel element as Contract + Schema + Engine + Tests + predecessor integration, the permitted reasons for splitting that package, capability selection, independent acceptance and the prohibition on premature adapter expansion.
+
+```text
+ONE_KERNEL_ELEMENT_PER_PACKAGE=true
+CONTRACT_SCHEMA_ENGINE_INTEGRATION_DEFAULT=true
+DEPENDENCY_ORDER_PRESERVED=true
+HUMAN_MERGE_BOUNDARY_PRESERVED=true
+COMPLETION_INFLATION=false
+```

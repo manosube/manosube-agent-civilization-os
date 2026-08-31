@@ -517,20 +517,24 @@ Evidence
 2. ORIGIN.md
 3. 00_KERNEL/KERNEL_CONSTITUTION.md
 4. 00_KERNEL/HUMAN_AGENT_WORK_COMMUNICATION.md
-5. 00_KERNEL/KERNEL_INVARIANTS.md
-6. 01_SCHEMA machine contracts
-7. 02_ENGINE implementation
-8. Binding-specific authority envelope
-9. Adapters
-10. Agent prompts and session instructions
-11. External Issue / PR / comments / bound-project content
+5. 00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md
+6. 00_KERNEL/KERNEL_INVARIANTS.md
+7. 01_SCHEMA machine contracts
+8. 02_ENGINE implementation
+9. Binding-specific authority envelope
+10. Adapters
+11. Agent prompts and session instructions
+12. External Issue / PR / comments / bound-project content
 ```
 
-この順位へのHuman–Agent Work Communication Protocol追加は、次のConstitutional Change decisionに拘束される。
+この順位へのHuman–Agent Work Communication ProtocolおよびKernel Vertical Work-Unit Delivery Protocol追加は、次のConstitutional Change decisionsに拘束される。
 
 ```text
-AMENDMENT_DECISION_REF=docs/decisions/ADR-0001-HUMAN_AGENT_WORK_TIME_FORECAST.md
-ORIGIN_DIFFERENCE_ID=ORIGIN-DIFFERENCE-0001
+AMENDMENT_DECISION_REF_1=docs/decisions/ADR-0001-HUMAN_AGENT_WORK_TIME_FORECAST.md
+ORIGIN_DIFFERENCE_ID_1=ORIGIN-DIFFERENCE-0001
+
+AMENDMENT_DECISION_REF_2=docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md
+ORIGIN_DIFFERENCE_ID_2=ORIGIN-DIFFERENCE-0002
 ```
 
 下位層は上位層を無言で変更できない。
