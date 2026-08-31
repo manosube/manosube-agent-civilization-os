@@ -1,0 +1,123 @@
+[
+  {
+    "name": "difference_drops_bounded_negative_evidence",
+    "path": [
+      "differences",
+      0,
+      "observation_evidence_refs"
+    ],
+    "value": [
+      {
+        "kind": "observation_evidence",
+        "id": "EVID-0001"
+      }
+    ]
+  },
+  {
+    "name": "difference_drops_observation_evidence",
+    "path": [
+      "differences",
+      0,
+      "observation_evidence_refs"
+    ],
+    "value": [
+      {
+        "kind": "negative_evidence",
+        "id": "NEG-EVID-0001"
+      }
+    ]
+  },
+  {
+    "name": "difference_evidence_carries_unbound_reference",
+    "path": [
+      "differences",
+      0,
+      "observation_evidence_refs"
+    ],
+    "value": [
+      {
+        "kind": "observation_evidence",
+        "id": "EVID-0001"
+      },
+      {
+        "kind": "negative_evidence",
+        "id": "NEG-EVID-0001"
+      },
+      {
+        "kind": "negative_evidence",
+        "id": "NEG-EVID-9999"
+      }
+    ]
+  },
+  {
+    "name": "absent_without_bounded_negative_evidence",
+    "path": [
+      "negative_observations",
+      0,
+      "negative_evidence_refs"
+    ],
+    "value": []
+  },
+  {
+    "name": "no_result_claimed_as_proven_absence",
+    "path": [
+      "negative_observation_evaluations",
+      0,
+      "evaluation_status"
+    ],
+    "value": "NO_RESULT"
+  },
+  {
+    "name": "negative_evaluation_evidence_outside_its_channel",
+    "path": [
+      "negative_observation_evaluations",
+      0,
+      "evidence_refs"
+    ],
+    "value": [
+      {
+        "kind": "negative_evidence",
+        "id": "NEG-EVID-OUTSIDE"
+      }
+    ]
+  },
+  {
+    "name": "negative_knowledge_status_upgraded_to_known",
+    "path": [
+      "differences",
+      0,
+      "normalized_observed_state",
+      "knowledge_status"
+    ],
+    "value": "KNOWN"
+  },
+  {
+    "name": "negative_route_claims_satisfied",
+    "path": [
+      "differences",
+      0,
+      "structural_difference",
+      "comparison_result"
+    ],
+    "value": "SATISFIED"
+  },
+  {
+    "name": "negative_route_fabricates_a_value_candidate",
+    "path": [
+      "differences",
+      0,
+      "structural_difference",
+      "mismatch_kind"
+    ],
+    "value": "VALUE_MISMATCH"
+  },
+  {
+    "name": "negative_observation_bound_to_another_subject",
+    "path": [
+      "negative_observations",
+      0,
+      "subject"
+    ],
+    "value": "kernel.other"
+  }
+]

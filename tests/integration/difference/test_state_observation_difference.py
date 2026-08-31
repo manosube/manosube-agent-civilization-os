@@ -20,6 +20,7 @@ from tests.difference_helpers import (
     PREDICATE_ID,
     SUBJECT,
     derivation_request,
+    negative_claim,
     objective_revision,
     observation_request,
     observation_scope,
@@ -142,3 +143,152 @@ def test_observation_engine_output_is_not_mutated_by_the_difference_engine() -> 
         )
     )
     assert observation_bundle == snapshot
+
+
+def _negative_route(
+    negative_status: str,
+) -> tuple[dict[str, Any], dict[str, Any], int, dict[str, str]]:
+    """Drive the real owners over a bounded pure-negative Observation."""
+
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    request = observation_request(scope, [], fingerprint, revision)
+    request["negative_claims"] = [negative_claim(negative_status)]
+    observation_bundle = observe(request)
+    assert validate_observation_bundle(observation_bundle) == []
+    difference_bundle = derive_differences(
+        derivation_request(
+            objective_revision([target_predicate()]),
+            [
+                {
+                    "target_predicate_id": PREDICATE_ID,
+                    "observation_scope": scope,
+                    "observation_bundle": observation_bundle,
+                }
+            ],
+            fingerprint,
+            revision,
+        )
+    )
+    return observation_bundle, difference_bundle, revision, fingerprint
+
+
+@pytest.mark.parametrize(
+    ("negative_status", "knowledge", "mismatch"),
+    [
+        ("ABSENT", "ABSENT", "MISSING"),
+        ("EMPTY", "EMPTY", "MISSING"),
+        ("NO_RESULT", "UNKNOWN", "UNKNOWN"),
+        ("UNOBSERVED", "UNOBSERVED", "UNKNOWN"),
+    ],
+)
+def test_state_to_observation_to_difference_pure_negative_route(
+    negative_status: str, knowledge: str, mismatch: str
+) -> None:
+    observation_bundle, difference_bundle, revision, fingerprint = _negative_route(
+        negative_status
+    )
+    assert validate_difference_bundle(difference_bundle) == []
+    difference = difference_bundle["differences"][0]
+    validate_record(difference, "difference.schema.json")
+
+    assert difference["normalized_observed_state"]["knowledge_status"] == knowledge
+    assert difference["structural_difference"]["mismatch_kind"] == mismatch
+    assert difference["normalized_observed_state"]["value_candidates"]["members"] == []
+    assert difference["observed_state_revision"] == revision
+    assert difference["observed_state_fingerprint"] == fingerprint
+
+    observation = observation_bundle["observations"][-1]
+    expected_evidence = {
+        canonical_json_bytes(reference)
+        for reference in observation["observation_evidence_refs"]
+    } | {
+        canonical_json_bytes(reference)
+        for negative in observation_bundle["negative_observations"]
+        for reference in negative["negative_evidence_refs"]
+    }
+    assert {
+        canonical_json_bytes(reference)
+        for reference in difference["observation_evidence_refs"]
+    } == expected_evidence
+
+
+def test_state_to_observation_to_difference_never_promotes_no_result_to_absence() -> None:
+    _, unresolved, _, _ = _negative_route("NO_RESULT")
+    _, proven, _, _ = _negative_route("ABSENT")
+    unresolved_structural = unresolved["differences"][0]["structural_difference"]
+    proven_structural = proven["differences"][0]["structural_difference"]
+    assert unresolved_structural["observed_knowledge_status"] == "UNKNOWN"
+    assert unresolved_structural["comparison_result"] == "UNKNOWN"
+    assert proven_structural["observed_knowledge_status"] == "ABSENT"
+    assert proven_structural["comparison_result"] == "NOT_SATISFIED"
+    assert (
+        unresolved["differences"][0]["difference_id"]
+        != proven["differences"][0]["difference_id"]
+    )
+
+
+def _multi_candidate_route(
+    first: str, second: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    observation_bundle = observe(
+        observation_request(
+            scope,
+            [raw_fact(value=first), raw_fact(value=second, predicate="exists@v1")],
+            fingerprint,
+            revision,
+        )
+    )
+    assert validate_observation_bundle(observation_bundle) == []
+    difference_bundle = derive_differences(
+        derivation_request(
+            objective_revision([target_predicate(operator="all", expected_value="PASS")]),
+            [
+                {
+                    "target_predicate_id": PREDICATE_ID,
+                    "observation_scope": scope,
+                    "observation_bundle": observation_bundle,
+                }
+            ],
+            fingerprint,
+            revision,
+        )
+    )
+    return observation_bundle, difference_bundle
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("FAIL", "BROKEN"), ("FAIL", "FAIL")],
+    ids=["shared_type", "shared_type_and_value"],
+)
+def test_state_to_observation_to_difference_multi_candidate_route(
+    first: str, second: str
+) -> None:
+    observation_bundle, difference_bundle = _multi_candidate_route(first, second)
+    assert validate_difference_bundle(difference_bundle) == []
+    difference = difference_bundle["differences"][0]
+    validate_record(difference, "difference.schema.json")
+
+    observation = observation_bundle["observations"][-1]
+    assert len(observation["normalized_fact_refs"]) == 2
+
+    candidates = difference["normalized_observed_state"]["value_candidates"]["members"]
+    structural = difference["structural_difference"]
+    assert len(candidates) == 2
+    assert structural["observed_values"]["collection_kind"] == "ORDERED_LIST"
+    assert structural["observed_value_types"]["collection_kind"] == "ORDERED_LIST"
+    assert structural["observed_values"]["members"] == [item["value"] for item in candidates]
+    assert structural["observed_value_types"]["members"] == [
+        item["value_type"] for item in candidates
+    ]
+    assert structural["observed_value_types"]["members"] == ["STRING", "STRING"]
+    assert sorted(structural["observed_values"]["members"]) == sorted([first, second])
+
+
+def test_multi_candidate_route_identity_is_stable_across_source_order() -> None:
+    first = _multi_candidate_route("FAIL", "BROKEN")[1]
+    second = _multi_candidate_route("FAIL", "BROKEN")[1]
+    assert canonical_json_bytes(first) == canonical_json_bytes(second)

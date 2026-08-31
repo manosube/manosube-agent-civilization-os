@@ -230,7 +230,7 @@ def _observed_projection(
     subject: str,
     scope: dict[str, Any],
     boundary: dict[str, Any],
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     facts_by_id = {fact["fact_id"]: fact for fact in bundle["facts"]}
     bindings_by_id = {item["binding_id"]: item for item in bundle["bindings"]}
     latest_fact_evaluations = _latest_contiguous(bundle["fact_evaluations"], "fact_id")
@@ -301,25 +301,9 @@ def _observed_projection(
             else "KNOWN"
         )
         candidates = [value_candidate(fact, boundary) for fact in source_facts]
-        return knowledge, candidates
+        return knowledge, candidates, negatives
 
     statuses = set()
-    observation_evidence = {
-        canonical_bytes(reference) for reference in observation["observation_evidence_refs"]
-    }
-    negative_evidence = {
-        canonical_bytes(reference)
-        for negative in negatives
-        for reference in negative["negative_evidence_refs"]
-    }
-    if negative_evidence != observation_evidence:
-        # Without a positive Fact the bounded Negative Evidence is the only Observation
-        # Evidence a Difference may cite. A divergent set cannot be canonically bound, so
-        # the unresolved knowledge state fails closed instead of being reported as an
-        # ordinary value mismatch.
-        raise DifferenceError(
-            "bounded Negative Evidence does not exactly match the Observation Evidence"
-        )
     for negative in negatives:
         latest = latest_negative_evaluations.get(negative["negative_observation_id"])
         if latest is None:
@@ -330,10 +314,31 @@ def _observed_projection(
         mapped = negative_knowledge_status(latest["evaluation_status"])
         if mapped == "REJECT_OR_QUARANTINE":
             raise DifferenceError("INVALID Negative Observation cannot produce a Difference")
+        if mapped in {"ABSENT", "EMPTY"} and not negative["negative_evidence_refs"]:
+            # NO_RESULT is not proven absence. A proven ABSENT or EMPTY conclusion is only
+            # canonical while its bounded Negative Evidence is present.
+            raise DifferenceError(
+                f"{mapped} requires bounded Negative Evidence: "
+                f"{negative['negative_observation_id']}"
+            )
         statuses.add(mapped)
     if len(statuses) != 1:
         raise DifferenceError("bounded Negative Observations disagree on knowledge status")
-    return statuses.pop(), []
+    return statuses.pop(), [], negatives
+
+
+def _evidence_union(
+    observation: dict[str, Any], negatives: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return the exact, duplicate-free Evidence binding of both provenance channels."""
+
+    merged: dict[bytes, dict[str, Any]] = {}
+    for reference in observation["observation_evidence_refs"]:
+        merged[canonical_bytes(reference)] = deepcopy(reference)
+    for negative in negatives:
+        for reference in negative["negative_evidence_refs"]:
+            merged[canonical_bytes(reference)] = deepcopy(reference)
+    return [item for _, item in sorted(merged.items())]
 
 
 def _genesis_event(
@@ -593,7 +598,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             binding, predicate_id, scope["scope_id"], project_id, state_revision, state_fingerprint
         )
         boundary = effective_boundary(scope, scope_fingerprint, observation["source_snapshot_refs"])
-        knowledge, candidates = _observed_projection(
+        knowledge, candidates, source_negatives = _observed_projection(
             observation, binding["observation_bundle"], subject, scope, boundary
         )
 
@@ -621,10 +626,11 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
 
         requirements = binding.get("closure_policy_requirements", default_requirements)
         policy, policy_fingerprint = _closure_policy(requirements, target_predicate_ref)
-        evidence_refs = sorted(
-            deepcopy(observation["observation_evidence_refs"]),
-            key=lambda reference: (reference["kind"], reference["id"]),
-        )
+        # Observation Evidence and bounded Negative Evidence are distinct provenance
+        # channels carrying distinct reference kinds. The Difference binds the exact union
+        # so that a negative-derived observed state keeps its own bounded proof, and so
+        # that neither channel is silently equated with, or absorbed into, the other.
+        evidence_refs = _evidence_union(observation, source_negatives)
         if not evidence_refs:
             raise DifferenceError("a Difference requires at least one Observation Evidence reference")
 
@@ -1001,9 +1007,9 @@ def _finalize(
         "comparison_profile": COMPARISON_PROFILE,
         "normalization_profile": NORMALIZATION_PROFILE,
         "current_state_ref": {
-            "kind": "project_state",
+            "kind": "state",
             "revision": state_revision,
-            "semantic_fingerprint": deepcopy(state_fingerprint),
+            "fingerprint": deepcopy(state_fingerprint),
         },
         "objective_revisions": sorted(
             objective_revisions.values(), key=lambda item: item["objective_revision_id"]

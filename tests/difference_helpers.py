@@ -230,6 +230,27 @@ def raw_fact(
     }
 
 
+def negative_claim(
+    negative_status: str = "ABSENT",
+    subject: str = SUBJECT,
+    predicate: str = "equals@v1",
+    snapshot_id: str = "SNAP-0001",
+) -> dict[str, Any]:
+    """Return a bounded Negative Observation claim for the pure-negative route."""
+
+    return {
+        "subject": subject,
+        "predicate": predicate,
+        "negative_status": negative_status,
+        "effective_boundary": {
+            "kind": "SOURCE_SNAPSHOT",
+            "identity": snapshot_id,
+            "start": None,
+            "end": None,
+        },
+    }
+
+
 def observed_bundle(
     scope: dict[str, Any],
     facts: list[dict[str, Any]],
@@ -266,6 +287,31 @@ def derivation_request(
         "observation_method": deepcopy(OBSERVATION_METHOD),
         "bindings": deepcopy(bindings),
     }
+
+
+def binding_request(
+    facts: list[dict[str, Any]],
+    predicate: dict[str, Any] | None = None,
+    negative_claims: list[dict[str, Any]] | None = None,
+    status: str = "UNKNOWN",
+) -> dict[str, Any]:
+    """Build a one-predicate derivation request over the real upstream owners."""
+
+    fingerprint = state_fingerprint(status)
+    scope = observation_scope()
+    bundle = observed_bundle(scope, facts, fingerprint, negative_claims=negative_claims)
+    objective = objective_revision([predicate or target_predicate()])
+    return derivation_request(
+        objective,
+        [
+            {
+                "target_predicate_id": PREDICATE_ID,
+                "observation_scope": scope,
+                "observation_bundle": bundle,
+            }
+        ],
+        fingerprint,
+    )
 
 
 def single_binding_request(

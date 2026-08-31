@@ -281,24 +281,24 @@ def structural_difference(
 ) -> dict[str, Any]:
     """Return the closed ``structural_difference`` projection with no omitted field."""
 
+    # The observed candidates are projected as ORDERED_LIST wrappers whose order is the
+    # canonical member order of ``normalized_observed_state.value_candidates``. The order
+    # is therefore derived, not incidental: it is stable under any reordering of the
+    # source input, while distinct candidates that happen to share a value or a value
+    # type are preserved instead of being collapsed by a duplicate-free set.
     candidates = observed["value_candidates"]["members"]
-    value_types = [str(item["value_type"]) for item in candidates]
-    if len(set(value_types)) != len(value_types):
-        # The v0.1 structural projection carries observed types as a duplicate-free
-        # UNORDERED_SET. Collapsing repeated types would silently drop a candidate, so
-        # the derivation fails closed instead of emitting an under-reported mismatch.
-        raise DifferenceError(
-            "observed value candidates repeat a value type and cannot be canonically projected"
-        )
     return {
         "mismatch_kind": mismatch_kind,
         "observed_knowledge_status": observed["knowledge_status"],
         "target_value": target["expected_value"],
-        "observed_values": unordered_set([item["value"] for item in candidates]),
+        "observed_values": {
+            "collection_kind": "ORDERED_LIST",
+            "members": [canonical_semantic(item["value"]) for item in candidates],
+        },
         "target_value_type": target["expected_value_type"],
         "observed_value_types": {
-            "collection_kind": "UNORDERED_SET",
-            "members": sorted(value_types),
+            "collection_kind": "ORDERED_LIST",
+            "members": [str(item["value_type"]) for item in candidates],
         },
         "target_cardinality": None,
         "observed_cardinality": None,

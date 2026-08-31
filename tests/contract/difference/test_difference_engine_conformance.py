@@ -9,6 +9,7 @@ identity authority exists.
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,11 +17,14 @@ from scripts.difference_contract_validator import (
     _difference_id,
     _supersession_reason_codes,
     apply_mutation,
+    load_json,
     validate_bundle,
 )
 from tests.difference_helpers import (
     PREDICATE_ID,
+    binding_request,
     derivation_request,
+    negative_claim,
     objective_revision,
     observation_scope,
     observed_bundle,
@@ -30,10 +34,17 @@ from tests.difference_helpers import (
     target_predicate,
 )
 
-from manosube_agent_civilization.difference import derive_differences
+from manosube_agent_civilization.difference import (
+    DifferenceValidationError,
+    derive_differences,
+)
 from manosube_agent_civilization.difference.validation import validate_record
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 pytestmark = pytest.mark.contract
+
+ROOT = Path(__file__).resolve().parents[3]
+FIXTURE_ROOT = ROOT / "tests" / "contract" / "fixtures" / "difference"
 
 _RECORD_SCHEMAS = {
     "differences": "difference.schema.json",
@@ -74,6 +85,17 @@ def _conflicted_request() -> dict[str, Any]:
     )
 
 
+def _pure_negative_request() -> dict[str, Any]:
+    return binding_request([], negative_claims=[negative_claim("ABSENT")])
+
+
+def _multi_candidate_request() -> dict[str, Any]:
+    return binding_request(
+        [raw_fact(value="FAIL"), raw_fact(value="BROKEN", predicate="exists@v1")],
+        predicate=target_predicate(operator="all", expected_value="PASS"),
+    )
+
+
 def _supersession_bundle() -> dict[str, Any]:
     baseline = derive_differences(single_binding_request())
     fingerprint = state_fingerprint("KNOWN")
@@ -102,8 +124,8 @@ def _supersession_bundle() -> dict[str, Any]:
 
 @pytest.mark.parametrize(
     "request_factory",
-    [single_binding_request, _conflicted_request],
-    ids=["value_mismatch", "conflict"],
+    [single_binding_request, _conflicted_request, _pure_negative_request, _multi_candidate_request],
+    ids=["value_mismatch", "conflict", "pure_negative", "multi_candidate"],
 )
 def test_every_generated_record_is_schema_valid(request_factory: Any) -> None:
     bundle = derive_differences(request_factory())
@@ -117,8 +139,8 @@ def test_every_generated_record_is_schema_valid(request_factory: Any) -> None:
 
 @pytest.mark.parametrize(
     "request_factory",
-    [single_binding_request, _conflicted_request],
-    ids=["value_mismatch", "conflict"],
+    [single_binding_request, _conflicted_request, _pure_negative_request, _multi_candidate_request],
+    ids=["value_mismatch", "conflict", "pure_negative", "multi_candidate"],
 )
 def test_generated_bundle_passes_cross_record_conformance(request_factory: Any) -> None:
     assert validate_bundle(derive_differences(request_factory())) == []
@@ -372,3 +394,88 @@ def test_target_predicate_change_produces_a_new_identity() -> None:
         derived["differences"][0]["difference_id"]
         != baseline["differences"][0]["difference_id"]
     )
+
+
+# --------------------------------------------------------------------------- #
+# ADR-0002 corrections: canonical fixtures and their invalid mutation suites.
+# --------------------------------------------------------------------------- #
+
+_CANONICAL_FIXTURES = ["bundle", "negative_bundle", "multi_candidate_bundle"]
+
+
+@pytest.mark.parametrize("stem", _CANONICAL_FIXTURES)
+def test_canonical_fixture_passes_cross_record_conformance(stem: str) -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / f"{stem}.json")
+    assert validate_bundle(bundle) == []
+
+
+@pytest.mark.parametrize("stem", _CANONICAL_FIXTURES)
+def test_canonical_fixture_records_are_schema_valid(stem: str) -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / f"{stem}.json")
+    for key, schema_name in _RECORD_SCHEMAS.items():
+        for record in bundle.get(key, []):
+            validate_record(record, schema_name)
+
+
+@pytest.mark.parametrize("stem", _CANONICAL_FIXTURES)
+def test_no_invalid_fixture_case_escapes(stem: str) -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / f"{stem}.json")
+    cases_path = FIXTURE_ROOT / "invalid" / f"{stem.replace('bundle', 'cases')}.json"
+    cases = load_json(cases_path)
+    assert cases, f"{stem} carries no invalid mutation cases"
+    escapes = [
+        case["name"]
+        for case in cases
+        if not validate_bundle(apply_mutation(bundle, case["path"], case["value"]))
+    ]
+    assert escapes == []
+
+
+def test_observed_projection_rejects_the_superseded_unordered_set_shape() -> None:
+    """A record still carrying the pre-ADR-0002 shape fails closed, never coerced."""
+
+    bundle = derive_differences(_multi_candidate_request())
+    difference = deepcopy(bundle["differences"][0])
+    structural = difference["structural_difference"]
+    structural["observed_values"]["collection_kind"] = "UNORDERED_SET"
+    with pytest.raises(DifferenceValidationError):
+        validate_record(difference, "difference.schema.json")
+
+    difference = deepcopy(bundle["differences"][0])
+    difference["structural_difference"]["observed_value_types"]["collection_kind"] = (
+        "UNORDERED_SET"
+    )
+    with pytest.raises(DifferenceValidationError):
+        validate_record(difference, "difference.schema.json")
+
+
+def test_pure_negative_route_evidence_union_is_exact() -> None:
+    bundle = derive_differences(_pure_negative_request())
+    difference = bundle["differences"][0]
+    observation = bundle["observations"][0]
+    expected = {
+        canonical_json_bytes(reference)
+        for reference in observation["observation_evidence_refs"]
+    } | {
+        canonical_json_bytes(reference)
+        for negative in bundle["negative_observations"]
+        for reference in negative["negative_evidence_refs"]
+    }
+    assert {
+        canonical_json_bytes(reference)
+        for reference in difference["observation_evidence_refs"]
+    } == expected
+    assert validate_bundle(bundle) == []
+
+
+def test_negative_evaluation_evidence_stays_in_its_own_channel() -> None:
+    bundle = derive_differences(_pure_negative_request())
+    negatives = {
+        item["negative_observation_id"]: item for item in bundle["negative_observations"]
+    }
+    assert negatives
+    for evaluation in bundle["negative_observation_evaluations"]:
+        negative = negatives[evaluation["negative_observation_id"]]
+        assert {canonical_json_bytes(r) for r in evaluation["evidence_refs"]} <= {
+            canonical_json_bytes(r) for r in negative["negative_evidence_refs"]
+        }

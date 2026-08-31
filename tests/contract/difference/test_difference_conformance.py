@@ -166,8 +166,9 @@ def test_difference_fixture_suite_has_no_escape() -> None:
     valid_count, invalid_count, valid_errors, invalid_escapes = validate_fixture_suite(
         FIXTURE_ROOT
     )
-    assert valid_count == 1
-    assert invalid_count == 29
+    # bundle.json + negative_bundle.json + multi_candidate_bundle.json (ADR-0002)
+    assert valid_count == 3
+    assert invalid_count == 46
     assert valid_errors == []
     assert invalid_escapes == []
 
