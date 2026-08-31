@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
+from scripts.observation_contract_validator import validate_bundle as validate_observation_bundle
 from tests.difference_helpers import (
     PREDICATE_ID,
     SUBJECT,
@@ -126,10 +127,19 @@ def test_conflict_route_binds_both_evidence_channels() -> None:
 
 
 def test_proven_absence_without_bounded_negative_evidence_fails_closed() -> None:
+    """An ABSENT conclusion with no bounded proof never reaches candidate projection.
+
+    The canonical Negative Observation schema already requires non-empty
+    ``negative_evidence_refs`` for ABSENT, so the shared upstream Observation authority
+    rejects this bundle first. The Difference Engine keeps its own
+    ``requires bounded Negative Evidence`` rule as defence in depth; this input can no
+    longer reach it, which is the stronger outcome.
+    """
+
     request = binding_request([], negative_claims=[negative_claim("ABSENT")])
     for negative in request["bindings"][0]["observation_bundle"]["negative_observations"]:
         negative["negative_evidence_refs"] = []
-    with pytest.raises(DifferenceError, match="requires bounded Negative Evidence"):
+    with pytest.raises(DifferenceError, match="not cross-record valid"):
         derive_differences(request)
 
 
@@ -141,11 +151,35 @@ def test_pure_negative_route_is_deterministic() -> None:
 
 
 def test_invalid_negative_observation_cannot_produce_a_difference() -> None:
+    """A wholly Observation-valid INVALID negative record still yields no Difference.
+
+    ``INVALID`` is a legal ``negative_status``, so the record and its revision-zero
+    evaluation are mutated together and the bundle stays cross-record valid upstream. The
+    rejection therefore comes from the Difference Engine's own mapping, not from the
+    shared upstream authority.
+    """
+
+    request = binding_request([], negative_claims=[negative_claim("ABSENT")])
+    bundle = request["bindings"][0]["observation_bundle"]
+    for negative in bundle["negative_observations"]:
+        negative["negative_status"] = "INVALID"
+        negative["conclusion"]["state_candidate"] = "REJECT_OR_QUARANTINE"
+    for evaluation in bundle["negative_evaluations"]:
+        evaluation["evaluation_status"] = "INVALID"
+    assert validate_observation_bundle(bundle) == []
+    with pytest.raises(DifferenceError, match="INVALID Negative Observation"):
+        derive_differences(request)
+
+
+def test_a_cross_record_invalid_negative_evaluation_is_rejected() -> None:
+    """A revision-zero evaluation contradicting its own record is rejected upstream."""
+
     request = binding_request([], negative_claims=[negative_claim("ABSENT")])
     bundle = request["bindings"][0]["observation_bundle"]
     for evaluation in bundle["negative_evaluations"]:
         evaluation["evaluation_status"] = "INVALID"
-    with pytest.raises(DifferenceError, match="INVALID Negative Observation"):
+    assert validate_observation_bundle(bundle) != []
+    with pytest.raises(DifferenceError, match="not cross-record valid"):
         derive_differences(request)
 
 

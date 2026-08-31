@@ -172,6 +172,8 @@ normalized_structural_difference:
 
 導出順は、exact Target解決 → objective scope binding検証 → closed effective boundary生成 → State-bound observed input選択 → canonical Negative status mapping → conflict／knowledge評価 → source operatorのtotal evaluation → type → cardinality → relation → value → closed mismatch projection、の一つだけである。
 
+State-bound observed input選択は、bindするObservationのexact State binding単位で解決する。あるNormalized Factへ適用するFact Evaluationは、そのObservationにboundされたevaluationのうちrevisionが最大のものであり、lineage全体のglobal latest revisionではない。append-only Observation lineageでは後続の再観測が次のObservationにboundされたevaluationをappendするため、global latestを参照すると、immutableな既存Difference Recordが再観測のたびに検証不能となる。同一Observationに対する後続のre-evaluationは依然として支配的であり、statusを読む前にrevision最大のものを選択することでFail Closedを維持する。
+
 `effective_boundary`はpositive Factのboundaryを直接流用せず、resolved Scope、Target effective window、Observation source snapshot setから生成する上記closed projectionである。positive／negativeの双方で必須とし、scope／window／snapshot集合のいずれかが異なれば別boundaryである。source snapshotsはcanonical member bytes順のduplicate-free unordered setとする。
 
 Observation EvidenceとNegative Evidenceは、reference kindが異なる別個のprovenance channelである。両者を同一視、代入、吸収してはならない。Difference Recordの`observation_evidence_refs`は、source Observationの`observation_evidence_refs`と、当該subjectへ寄与するNegative Observationの`negative_evidence_refs`とのexact unionであり、過不足を許さない。
@@ -367,6 +369,8 @@ REOBSERVATION
 ```
 
 新しいObservationを得るたびにDifference Recordを複製してはならない。
+
+複製しないことと同様に、既存Difference Recordを同一ID上で書き換えてもならない。Difference Recordはidentityの下でimmutableであり、新しいState revision、State fingerprint、Observation binding、Evidence bindingは、appendされたOBSERVATION_BOUND eventおよびそのeventがreferenceするrecordだけが表現する。既存recordの`observed_state_revision`、`observed_state_fingerprint`、`observation_refs`、`observation_evidence_refs`、`genesis_event_ref`を再観測時に置換してはならない。
 
 # 6. New Identity and Supersession
 

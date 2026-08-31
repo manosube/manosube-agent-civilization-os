@@ -43,6 +43,7 @@ from manosube_agent_civilization.difference import (
 from manosube_agent_civilization.difference.identity import lifecycle_event_id
 from manosube_agent_civilization.difference.projection import derive_comparison_and_mismatch
 from manosube_agent_civilization.difference.validation import validate_record
+from manosube_agent_civilization.observation.identity import fact_evaluation_identity
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 pytestmark = pytest.mark.contract
@@ -576,3 +577,75 @@ def test_every_returned_event_identity_recomputes() -> None:
     for bundle in (baseline, derive_differences(later_request), _supersession_bundle()):
         for event in bundle["events"]:
             assert event["difference_event_id"] == lifecycle_event_id(event)
+
+
+def test_engine_and_auditor_agree_on_observation_scoped_evaluation() -> None:
+    """Both authorities pick the evaluation contemporaneous with the bound Observation."""
+
+    import scripts.difference_contract_validator as validator
+    from tests.difference_helpers import reobservation_pair
+
+    from manosube_agent_civilization.difference.engine import (
+        _contiguous_chains,
+        _observation_scoped_evaluation,
+    )
+
+    _, later_request = reobservation_pair()
+    observation_bundle = later_request["bindings"][0]["observation_bundle"]
+    bindings = {item["binding_id"]: item for item in observation_bundle["bindings"]}
+    chains = _contiguous_chains(observation_bundle["fact_evaluations"], "fact_id")
+
+    # The lineage really does carry more than one evaluation for the same Fact, bound to
+    # different Observations, so the two selections below are not trivially equal.
+    assert any(len(chain) > 1 for chain in chains.values())
+    assert len(observation_bundle["observations"]) == 2
+
+    for observation in observation_bundle["observations"]:
+        for fact_id, chain in chains.items():
+            engine_choice = _observation_scoped_evaluation(chain, observation, bindings)
+            auditor_choice = validator._observation_scoped_evaluation(
+                chain, observation, bindings
+            )
+            assert engine_choice == auditor_choice, fact_id
+            if engine_choice is not None:
+                bound = {
+                    bindings[reference["id"]]["observation_id"]
+                    for reference in engine_choice["binding_refs"]
+                }
+                assert bound == {observation["observation_id"]}
+
+
+def test_a_later_reevaluation_of_the_same_observation_still_governs() -> None:
+    """Scoping selection to one Observation does not let a stale revision win."""
+
+    from copy import deepcopy
+
+    import pytest
+    from tests.difference_helpers import single_binding_request
+
+    from manosube_agent_civilization.difference import DifferenceError, derive_differences
+    from manosube_agent_civilization.difference.engine import (
+        _contiguous_chains,
+        _observation_scoped_evaluation,
+    )
+
+    request = single_binding_request()
+    observation_bundle = request["bindings"][0]["observation_bundle"]
+    bindings = {item["binding_id"]: item for item in observation_bundle["bindings"]}
+    observation = observation_bundle["observations"][0]
+    base = observation_bundle["fact_evaluations"][0]
+
+    superseding = deepcopy(base)
+    superseding["evaluation_revision"] = 1
+    superseding["previous_evaluation_id"] = base["evaluation_id"]
+    superseding["evaluation_status"] = "INVALID"
+    superseding["evaluation_id"] = fact_evaluation_identity(superseding)
+    observation_bundle["fact_evaluations"].append(superseding)
+
+    chain = _contiguous_chains(observation_bundle["fact_evaluations"], "fact_id")[
+        base["fact_id"]
+    ]
+    assert _observation_scoped_evaluation(chain, observation, bindings) == superseding
+
+    with pytest.raises(DifferenceError, match="lacks a supporting current evaluation"):
+        derive_differences(request)

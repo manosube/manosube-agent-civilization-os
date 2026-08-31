@@ -433,6 +433,20 @@ def test_state_to_observation_to_difference_equivalent_reobservation_is_self_con
         "OBSERVATION_BOUND",
     ]
 
+    # The record itself is immutable: the real second Observation, its new State
+    # revision and its Evidence reach the bundle only through the appended event.
+    predecessor = baseline["differences"][0]
+    assert canonical_json_bytes(derived["differences"][0]) == canonical_json_bytes(predecessor)
+    assert chain[-1]["state_revision_evaluated"] == revision + 1
+    assert predecessor["observed_state_revision"] == revision
+    assert {reference["id"] for reference in chain[-1]["observation_refs"]} == {
+        observation["observation_id"] for observation in later_bundle["observations"]
+    } - {observation["observation_id"] for observation in first_bundle["observations"]}
+
+    # The predecessor still reads back against its own Observation, whose Fact was
+    # re-evaluated by the later Observation in the same append-only lineage.
+    assert len(later_bundle["fact_evaluations"]) > len(first_bundle["fact_evaluations"])
+
 
 def test_state_to_observation_to_difference_retained_blocked_reobservation() -> None:
     """A retained BLOCKED status keeps its payload across a real re-observation."""

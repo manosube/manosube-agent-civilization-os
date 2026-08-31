@@ -468,6 +468,54 @@ def _latest_contiguous_evaluations(
     return latest
 
 
+def _contiguous_evaluation_chains(
+    records: dict[str, dict[str, Any]], subject_key: str,
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records.values():
+        grouped.setdefault(record[subject_key], []).append(record)
+    chains: dict[str, list[dict[str, Any]]] = {}
+    for subject_id, chain in grouped.items():
+        chain.sort(key=lambda item: item["evaluation_revision"])
+        if all(
+            item["evaluation_revision"] == revision
+            and item["previous_evaluation_id"]
+            == (None if revision == 0 else chain[revision - 1]["evaluation_id"])
+            for revision, item in enumerate(chain)
+        ):
+            chains[subject_id] = chain
+    return chains
+
+
+def _observation_scoped_evaluation(
+    chain: list[dict[str, Any]],
+    observation: dict[str, Any],
+    bindings: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return the Fact evaluation contemporaneous with *observation*.
+
+    A Difference Record is immutable and binds one exact Observation. Under an append-only
+    Observation lineage a re-observation appends a further evaluation bound to the next
+    Observation; reading the globally latest evaluation would invalidate every earlier
+    record the moment its subject is re-observed. Selection is by highest revision bound to
+    this Observation, taken before any status is read, so a later re-evaluation of this
+    same Observation still governs.
+    """
+
+    bound = [
+        evaluation
+        for evaluation in chain
+        if any(
+            (binding := bindings.get(str(reference.get("id")))) is not None
+            and binding["observation_id"] == observation["observation_id"]
+            for reference in evaluation["binding_refs"]
+        )
+    ]
+    if not bound:
+        return None
+    return max(bound, key=lambda item: item["evaluation_revision"])
+
+
 def _negative_knowledge_status(status: str) -> str:
     if status in {"NO_RESULT", "FAILED"}:
         return "UNKNOWN"
@@ -743,6 +791,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     fact_evaluations = _index(
         bundle.get("fact_evaluations", []), "evaluation_id", errors
     )
+    fact_evaluation_chains = _contiguous_evaluation_chains(fact_evaluations, "fact_id")
     latest_fact_evaluations = _latest_contiguous_evaluations(
         fact_evaluations, "fact_id"
     )
@@ -1212,24 +1261,38 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             for reference in observation["normalized_fact_refs"]
             if reference.get("kind") == "normalized_fact"
         ]
+        # The evaluation that justifies this Difference is the one contemporaneous with
+        # the Observation it binds, not the globally latest revision: a later
+        # re-observation appends an evaluation bound to the *next* Observation, and an
+        # immutable record must remain revalidatable across its own lineage.
         source_fact_evaluations = [
-            None if fact is None else latest_fact_evaluations.get(fact["fact_id"])
+            None
+            if fact is None
+            else next(
+                (
+                    evaluation
+                    for observation in source_observations
+                    if observation is not None
+                    and (
+                        evaluation := _observation_scoped_evaluation(
+                            fact_evaluation_chains.get(fact["fact_id"], []),
+                            observation,
+                            fact_bindings,
+                        )
+                    )
+                    is not None
+                    and _evaluation_supports_observation(
+                        evaluation, fact, observation, fact_bindings
+                    )
+                ),
+                None,
+            )
             for fact in source_facts
         ]
         source_facts_valid = bool(source_facts) and all(
             evaluation is not None
             and evaluation["evaluation_status"] in {"SUPPORTED", "CONFLICTED"}
-            and any(
-                observation is not None
-                and fact is not None
-                and _evaluation_supports_observation(
-                    evaluation, fact, observation, fact_bindings
-                )
-                for observation in source_observations
-            )
-            for fact, evaluation in zip(
-                source_facts, source_fact_evaluations, strict=True
-            )
+            for evaluation in source_fact_evaluations
         )
         source_fact_knowledge = (
             "CONFLICTED"
@@ -1695,22 +1758,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 ]
                 for observation in after_observations
             ]
-            fact_evaluation_chains: dict[str, list[dict[str, Any]]] = {}
-            for fact_evaluation in fact_evaluations.values():
-                fact_evaluation_chains.setdefault(
-                    fact_evaluation["fact_id"], []
-                ).append(fact_evaluation)
-            latest_fact_evaluations: dict[str, dict[str, Any]] = {}
-            for fact_id, chain in fact_evaluation_chains.items():
-                chain.sort(key=lambda item: item["evaluation_revision"])
-                valid_chain = all(
-                    item["evaluation_revision"] == revision
-                    and item["previous_evaluation_id"]
-                    == (None if revision == 0 else chain[revision - 1]["evaluation_id"])
-                    for revision, item in enumerate(chain)
-                )
-                if valid_chain:
-                    latest_fact_evaluations[fact_id] = chain[-1]
+            # The contiguous-chain and latest-evaluation projections are already built
+            # once above, from the same records; this section reuses them instead of
+            # shadowing them with a second, identical derivation.
             positive_facts_valid = [
                 bool(facts)
                 and all(

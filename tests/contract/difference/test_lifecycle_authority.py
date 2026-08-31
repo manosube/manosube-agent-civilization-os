@@ -134,3 +134,69 @@ def test_one_fact_identity_authority_is_shared_with_normalization() -> None:
 
     assert vars(normalization)["fact_semantic_projection"] is fact_semantic_projection
     assert vars(normalization)["fact_identity"] is fact_identity
+
+
+def test_one_observation_record_verification_authority() -> None:
+    """Schema and cross-record evaluation rules exist once, owned by Observation."""
+
+
+    from manosube_agent_civilization.observation import engine as observation_engine
+    from manosube_agent_civilization.observation.verification import (
+        RECORD_SCHEMAS,
+        observation_record_errors,
+    )
+
+    assert vars(observation_engine)["observation_record_errors"] is observation_record_errors
+
+    from manosube_agent_civilization.difference import engine as difference_engine
+
+    assert vars(difference_engine)["observation_record_errors"] is observation_record_errors
+
+    # The Observation Engine keeps no ruleset of its own: its record validation is one
+    # delegating call, and the Difference Engine states no evaluation rule at all.
+    observation_source = (
+        ROOT / "src" / "manosube_agent_civilization" / "observation" / "engine.py"
+    ).read_text(encoding="utf-8")
+    body = observation_source.split("def _validate_records(")[1].split("\ndef ")[0]
+    assert "errors.append" not in body
+    assert body.count("observation_record_errors(") == 1
+
+    difference_source = (
+        ROOT / "src" / "manosube_agent_civilization" / "difference" / "engine.py"
+    ).read_text(encoding="utf-8")
+    assert "observation_record_errors(bundle)" in difference_source
+    # The Difference Engine reads an evaluation status; it never names the conflict
+    # payload, and never validates an upstream evaluation against a schema of its own.
+    for owned_by_observation in (
+        "conflict_fact_refs",
+        "conflict_negative_observation_refs",
+        "fact_evaluation.schema.json",
+        "negative_observation_evaluation.schema.json",
+    ):
+        assert owned_by_observation not in difference_source
+
+    # The authority validates exactly the six canonical Observation record schemas.
+    declared = set(RECORD_SCHEMAS.values())
+    on_disk = {
+        path.name
+        for path in (ROOT / "01_SCHEMA" / "observation").glob("*.schema.json")
+        if path.name not in {"observation_scope.schema.json", "observation_method.schema.json"}
+    }
+    assert declared == on_disk
+
+
+def test_the_difference_engine_validates_the_upstream_payload_before_projection() -> None:
+    """Payload validation and identity recomputation are distinct, ordered obligations."""
+
+    source = (
+        ROOT / "src" / "manosube_agent_civilization" / "difference" / "engine.py"
+    ).read_text(encoding="utf-8")
+    verify = source.split("def _verify_upstream_records(")[1].split("\ndef ")[0]
+    assert "fact_identity(fact)" in verify
+    assert "binding_identity(binding)" in verify
+    assert "fact_evaluation_identity(evaluation)" in verify
+    assert "observation_record_errors(bundle)" in verify
+    # It runs before any observed candidate is projected.
+    assert source.index("_verify_upstream_records(observation, bundle") < source.index(
+        "value_candidate(fact, boundary)"
+    )

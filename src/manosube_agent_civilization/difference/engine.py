@@ -20,6 +20,7 @@ from manosube_agent_civilization.observation.identity import (
     fact_evaluation_identity,
     fact_identity,
 )
+from manosube_agent_civilization.observation.verification import observation_record_errors
 
 from .canonical import (
     canonical_bytes,
@@ -116,11 +117,15 @@ def _require_profiles(request: dict[str, Any]) -> None:
             raise UnsupportedProfileError(f"unsupported {name}: {actual!r}")
 
 
-def _latest_contiguous(records: list[dict[str, Any]], subject_key: str) -> dict[str, dict[str, Any]]:
+def _contiguous_chains(
+    records: list[dict[str, Any]], subject_key: str
+) -> dict[str, list[dict[str, Any]]]:
+    """Group evaluations by subject, keeping only contiguous, correctly linked chains."""
+
     grouped: dict[str, list[dict[str, Any]]] = {}
     for record in records:
         grouped.setdefault(record[subject_key], []).append(record)
-    latest: dict[str, dict[str, Any]] = {}
+    chains: dict[str, list[dict[str, Any]]] = {}
     for subject_id, chain in grouped.items():
         chain.sort(key=lambda item: item["evaluation_revision"])
         if all(
@@ -129,8 +134,49 @@ def _latest_contiguous(records: list[dict[str, Any]], subject_key: str) -> dict[
             == (None if revision == 0 else chain[revision - 1]["evaluation_id"])
             for revision, item in enumerate(chain)
         ):
-            latest[subject_id] = chain[-1]
-    return latest
+            chains[subject_id] = chain
+    return chains
+
+
+def _latest_contiguous(records: list[dict[str, Any]], subject_key: str) -> dict[str, dict[str, Any]]:
+    return {
+        subject_id: chain[-1]
+        for subject_id, chain in _contiguous_chains(records, subject_key).items()
+    }
+
+
+def _observation_scoped_evaluation(
+    chain: list[dict[str, Any]],
+    observation: dict[str, Any],
+    bindings: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return the Fact evaluation contemporaneous with *observation*.
+
+    A canonical Difference Record binds one exact Observation, and its observed
+    projection is justified by that Observation's own evaluation of the Fact. Under an
+    append-only Observation lineage a re-observation appends a further evaluation bound to
+    the *next* Observation; that record is evidence about the next Observation and belongs
+    to the Difference derived from it. Reading the globally latest evaluation instead
+    would make an immutable Difference un-revalidatable the moment its subject is
+    re-observed -- a canonical route with no conformant representation.
+
+    Selection is by highest revision *bound to this Observation*, taken before any status
+    is read, so a later re-evaluation of this same Observation still governs and can still
+    fail closed.
+    """
+
+    bound = [
+        evaluation
+        for evaluation in chain
+        if any(
+            (binding := bindings.get(str(reference["id"]))) is not None
+            and binding["observation_id"] == observation["observation_id"]
+            for reference in evaluation["binding_refs"]
+        )
+    ]
+    if not bound:
+        return None
+    return max(bound, key=lambda item: item["evaluation_revision"])
 
 
 def _evaluation_supports_observation(
@@ -252,13 +298,13 @@ def _observed_projection(
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     facts_by_id = {fact["fact_id"]: fact for fact in bundle["facts"]}
     bindings_by_id = {item["binding_id"]: item for item in bundle["bindings"]}
-    latest_fact_evaluations = _latest_contiguous(bundle["fact_evaluations"], "fact_id")
+    fact_evaluation_chains = _contiguous_chains(bundle["fact_evaluations"], "fact_id")
     latest_negative_evaluations = _latest_contiguous(
         bundle["negative_evaluations"], "negative_observation_id"
     )
     if any(reference["id"] not in facts_by_id for reference in observation["normalized_fact_refs"]):
         raise DifferenceError("Observation references a Normalized Fact absent from the bundle")
-    _verify_upstream_identities(observation, bundle, facts_by_id, bindings_by_id)
+    _verify_upstream_records(observation, bundle, facts_by_id, bindings_by_id)
     source_facts = [
         facts_by_id[reference["id"]]
         for reference in observation["normalized_fact_refs"]
@@ -305,20 +351,26 @@ def _observed_projection(
                 "an Observation that is not COMPLETE cannot yield a KNOWN observed state: "
                 f"{observation['status']}"
             )
+        selected: dict[str, dict[str, Any]] = {}
         for fact in source_facts:
-            evaluation = latest_fact_evaluations.get(fact["fact_id"])
-            if evaluation is None or evaluation["evaluation_status"] not in {"SUPPORTED", "CONFLICTED"}:
-                raise DifferenceError(
-                    f"Normalized Fact lacks a supporting current evaluation: {fact['fact_id']}"
-                )
-            if not _evaluation_supports_observation(evaluation, fact, observation, bindings_by_id):
+            evaluation = _observation_scoped_evaluation(
+                fact_evaluation_chains.get(fact["fact_id"], []), observation, bindings_by_id
+            )
+            if evaluation is None or not _evaluation_supports_observation(
+                evaluation, fact, observation, bindings_by_id
+            ):
                 raise DifferenceError(
                     f"Fact evaluation is not bound to this exact Observation: {fact['fact_id']}"
                 )
+            if evaluation["evaluation_status"] not in {"SUPPORTED", "CONFLICTED"}:
+                raise DifferenceError(
+                    f"Normalized Fact lacks a supporting current evaluation: {fact['fact_id']}"
+                )
+            selected[fact["fact_id"]] = evaluation
         knowledge = (
             "CONFLICTED"
             if any(
-                latest_fact_evaluations[fact["fact_id"]]["evaluation_status"] == "CONFLICTED"
+                selected[fact["fact_id"]]["evaluation_status"] == "CONFLICTED"
                 for fact in source_facts
             )
             else "KNOWN"
@@ -350,18 +402,33 @@ def _observed_projection(
     return statuses.pop(), [], negatives
 
 
-def _verify_upstream_identities(
+def _verify_upstream_records(
     observation: dict[str, Any],
     bundle: dict[str, Any],
     facts_by_id: dict[str, dict[str, Any]],
     bindings_by_id: dict[str, dict[str, Any]],
 ) -> None:
-    """Recompute every upstream identity this derivation is about to trust.
+    """Validate the whole upstream payload, then recompute every identity it carries.
 
-    Reference lookup and schema validity are not enough: a caller can alter an
-    identity-bearing field of a Normalized Fact, binding or evaluation while retaining its
-    original id, and every lookup still resolves. The Observation element owns these
-    identity algorithms, so they are recomputed here rather than re-implemented.
+    These are two distinct obligations and neither substitutes for the other.
+
+    *Payload validation* asks whether the record is admissible at all: whether it
+    conforms to its canonical schema, whether its evaluation lineage is contiguous,
+    whether its binding references belong to its own Fact, and whether every declared
+    conflict is mutual. A Fact Evaluation identity, for example, is derived from
+    ``fact_id`` and ``evaluation_revision`` alone, so a caller can retain the identity
+    while flipping ``evaluation_status`` to ``CONFLICTED`` with empty conflict reference
+    lists. Recomputing that identity proves nothing about the mutated payload. The rules
+    that do decide it are owned once by the Observation element and applied here through
+    that single authority -- this Engine states no evaluation rule of its own.
+
+    *Identity recomputation* asks a narrower question: whether the identity-bearing
+    projection still hashes to the identity claimed. Schema conformance does not answer
+    it, because a caller can alter ``value``, ``subject``, ``predicate``, ``value_type``,
+    ``unit``, ``project_id``, ``effective_boundary`` or ``normalization_profile`` and
+    retain the original ``fact_id``: every reference still resolves and every schema still
+    passes. The Observation element owns these algorithms too, so they are recomputed here
+    rather than re-implemented.
     """
 
     referenced = {
@@ -394,6 +461,14 @@ def _verify_upstream_identities(
                 "Fact evaluation identity does not recompute: "
                 f"{evaluation['evaluation_id']}"
             )
+
+    # Identity recomputation is complete; payload admissibility is a separate question and
+    # is decided here, before any status, value or Evidence reference is trusted.
+    errors = observation_record_errors(bundle)
+    if errors:
+        raise DifferenceError(
+            f"upstream Observation bundle is not cross-record valid: {sorted(errors)[0]}"
+        )
 
 
 _LINEAGE_SECTIONS: dict[str, str] = {
@@ -1027,16 +1102,6 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         difference["difference_id"] = difference_id
         difference["closure_policy"]["id"] = closure_policy_id(policy_fingerprint, difference_id)
 
-        policy_record = {
-            "schema_version": SCHEMA_VERSION,
-            "closure_policy_id": difference["closure_policy"]["id"],
-            "policy_version": SCHEMA_VERSION,
-            "policy_semantic_fingerprint": policy_fingerprint,
-            "subject_difference_ref": {"kind": "difference", "id": difference_id},
-            **policy,
-        }
-        validate_record(policy_record, "closure_policy.schema.json")
-
         observation_refs = deepcopy(difference["observation_refs"])
         predecessor = binding.get("predecessor")
         chain: list[dict[str, Any]] = []
@@ -1069,6 +1134,23 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 if prior_payload != identity_payload:
                     raise IdentityCollisionError(
                         f"Difference identity collision: {difference_id}"
+                    )
+                # A canonical Difference Record is immutable under its identity. An
+                # equivalent re-observation therefore *appends* provenance; it never
+                # rewrites the record that carries the preserved identity. The record
+                # returned here is the predecessor byte for byte -- keeping its original
+                # observed State revision, State fingerprint, Observation binding and
+                # Evidence binding -- and the new State, Observation and Evidence binding
+                # is represented only by the appended OBSERVATION_BOUND event and the
+                # records that event references.
+                difference = deepcopy(prior_difference)
+                expected_policy_id = closure_policy_id(
+                    difference["closure_policy"]["semantic_fingerprint"], difference_id
+                )
+                if difference["closure_policy"]["id"] != expected_policy_id:
+                    raise IdentityCollisionError(
+                        "predecessor Closure Policy identity does not recompute: "
+                        f"{difference['closure_policy']['id']}"
                     )
                 chain = deepcopy(prior_events)
                 bound_event, retained_reason, retained_condition = _observation_bound_event(
@@ -1109,10 +1191,17 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                     requests.append(retained_request)
                     methods[method["observation_method_id"]] = method
                 chain.append(bound_event)
-                difference["genesis_event_ref"] = {
+                # The genesis reference is part of the immutable predecessor payload: it
+                # is verified against the retained chain, never rewritten to point
+                # somewhere new.
+                if difference["genesis_event_ref"] != {
                     "kind": "difference_event",
                     "id": chain[0]["difference_event_id"],
-                }
+                }:
+                    raise DifferenceError(
+                        "predecessor genesis reference does not name its own genesis "
+                        f"event: {difference['genesis_event_ref']['id']}"
+                    )
                 # The retained genesis and every earlier event still reference the prior
                 # Observation and Evidence. Those records must travel with the lineage or
                 # the append-only chain returned here cannot be resolved.
@@ -1123,7 +1212,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 )
                 pending_lineage.append(
                     (
-                        difference,
+                        prior_difference,
                         deepcopy(prior_events),
                         {event["difference_event_id"] for event in chain},
                     )
@@ -1168,6 +1257,32 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 "kind": "difference_event",
                 "id": chain[0]["difference_event_id"],
             }
+
+        # The Closure Policy record is derived from the Difference actually returned. The
+        # policy semantic fingerprint is a Difference identity input, so an equivalent
+        # re-observation necessarily re-derives the same policy; asserting it keeps a
+        # forged predecessor from binding a policy this derivation did not authorise.
+        if difference["closure_policy"]["semantic_fingerprint"] != policy_fingerprint:
+            raise IdentityCollisionError(
+                "predecessor Closure Policy fingerprint does not match this derivation: "
+                f"{difference_id}"
+            )
+        for projection in (
+            "normalized_target_state",
+            "normalized_observed_state",
+            "structural_difference",
+        ):
+            if has_recursive_set_duplicate(difference[projection]):
+                raise DifferenceError(f"{projection} carries a duplicate unordered-set member")
+        policy_record = {
+            "schema_version": SCHEMA_VERSION,
+            "closure_policy_id": difference["closure_policy"]["id"],
+            "policy_version": SCHEMA_VERSION,
+            "policy_semantic_fingerprint": policy_fingerprint,
+            "subject_difference_ref": {"kind": "difference", "id": difference_id},
+            **policy,
+        }
+        validate_record(policy_record, "closure_policy.schema.json")
 
         head = chain[-1]
         if mismatch_kind in _REQUIRES_REOBSERVATION:

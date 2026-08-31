@@ -27,10 +27,10 @@ from tests.difference_helpers import (
 from manosube_agent_civilization.difference import (
     BoundaryViolationError,
     DifferenceError,
-    DifferenceValidationError,
     derive_differences,
 )
 from manosube_agent_civilization.difference.identity import lifecycle_event_id
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 
 def _baseline_with_predecessor() -> tuple[dict[str, Any], dict[str, Any]]:
@@ -177,13 +177,23 @@ def test_equivalent_reobservation_returns_a_self_contained_lineage() -> None:
 
 
 def test_equivalent_reobservation_across_a_new_state_revision_keeps_identity() -> None:
+    """The identity is preserved and the record itself is not rewritten.
+
+    The new State revision is carried by the appended provenance event, never by
+    replacing the predecessor's own immutable observed-State binding.
+    """
+
     baseline, request = _baseline_with_predecessor()
     bundle = derive_differences(request)
     difference = bundle["differences"][0]
-    assert difference["difference_id"] == baseline["differences"][0]["difference_id"]
-    assert difference["observed_state_revision"] != (
-        baseline["differences"][0]["observed_state_revision"]
-    )
+    predecessor = baseline["differences"][0]
+    assert difference["difference_id"] == predecessor["difference_id"]
+    assert canonical_json_bytes(difference) == canonical_json_bytes(predecessor)
+    assert difference["observed_state_revision"] == predecessor["observed_state_revision"]
+
+    appended = bundle["events"][-1]
+    assert appended["event_kind"] == "OBSERVATION_BOUND"
+    assert appended["state_revision_evaluated"] != predecessor["observed_state_revision"]
     assert bundle["supersession_relations"] == []
     assert bundle["materialized_status"] == baseline["materialized_status"]
 
@@ -309,10 +319,17 @@ def test_negative_observation_outside_the_boundary_is_rejected(
 
 
 def test_negative_observation_with_an_unknown_schema_version_is_rejected() -> None:
+    """An unknown schema version fails closed at the shared upstream authority.
+
+    ``schema_version`` is a ``const`` in the canonical Negative Observation schema, so the
+    record is inadmissible upstream and never reaches the Difference Engine's own
+    ``require_schema_version`` check, which is retained as defence in depth.
+    """
+
     request = binding_request([], negative_claims=[negative_claim("ABSENT")])
     for negative in request["bindings"][0]["observation_bundle"]["negative_observations"]:
         negative["schema_version"] = "0.2"
-    with pytest.raises(DifferenceValidationError, match="unsupported schema_version"):
+    with pytest.raises(DifferenceError, match="not cross-record valid"):
         derive_differences(request)
 
 
