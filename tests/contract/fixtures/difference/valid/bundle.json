@@ -175,6 +175,93 @@
       }
     }
   ],
+  "observations": [
+    {
+      "schema_version": "0.1",
+      "observation_id": "OBS-0001",
+      "project_id": "PRJ-0001",
+      "state_revision_observed": 2,
+      "state_fingerprint_observed": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "target": {
+        "target_identity": "TP-0001",
+        "kind": "TARGET_PREDICATE"
+      },
+      "scope_ref": {
+        "kind": "observation_scope",
+        "id": "OBS-SCOPE-0001"
+      },
+      "method_ref": {
+        "kind": "observation_method",
+        "id": "OBS-METHOD-35915CFF8FE59EEEF098C7A3214C311202E46F4E705E2D93BDAA0C543EA2E03D"
+      },
+      "time_boundary": {
+        "observation_started_at": "2026-08-30T09:00:00Z",
+        "observation_ended_at": "2026-08-30T09:01:00Z",
+        "target_effective_start": "2026-08-30T09:00:00Z",
+        "target_effective_end": "2026-08-30T09:01:00Z",
+        "source_snapshot_time": "2026-08-30T09:00:00Z"
+      },
+      "source_snapshot_refs": [
+        {
+          "kind": "source_snapshot",
+          "id": "SNAP-0001"
+        }
+      ],
+      "normalization_profile": "MANOSUBE-NORMALIZATION-0.1",
+      "normalized_fact_refs": [
+        {
+          "kind": "normalized_fact",
+          "id": "FACT-0001"
+        }
+      ],
+      "status": "COMPLETE",
+      "blind_spots": {
+        "status": "NONE_KNOWN",
+        "items": []
+      },
+      "attempts": [
+        {
+          "attempt_id": "ATTEMPT-0001",
+          "method_ref": {
+            "kind": "observation_method",
+            "id": "OBS-METHOD-35915CFF8FE59EEEF098C7A3214C311202E46F4E705E2D93BDAA0C543EA2E03D"
+          },
+          "started_at": "2026-08-30T09:00:00Z",
+          "ended_at": "2026-08-30T09:01:00Z",
+          "result": "COMPLETE",
+          "failure_class": null
+        }
+      ],
+      "observation_evidence_refs": [
+        {
+          "kind": "observation_evidence",
+          "id": "EVID-0001"
+        }
+      ]
+    }
+  ],
+  "normalized_facts": [
+    {
+      "schema_version": "0.1",
+      "fact_id": "FACT-0001",
+      "project_id": "PRJ-0001",
+      "subject": "kernel.state",
+      "predicate": "kernel.state@v1",
+      "value": "NOT-READY",
+      "value_type": "STRING",
+      "unit": null,
+      "effective_boundary": {
+        "kind": "SOURCE_SNAPSHOT",
+        "identity": "SNAP-0001",
+        "start": null,
+        "end": null
+      },
+      "normalization_profile": "MANOSUBE-NORMALIZATION-0.1"
+    }
+  ],
   "events": [
     {
       "schema_version": "0.1",

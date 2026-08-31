@@ -125,13 +125,13 @@ def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
         return bool(values) and all(value != expected for value in values)
     if operator == "contains":
         return bool(values) and all(
-            isinstance(value, (list, dict))
+            (members := _collection_members(value)) is not None
             and any(
                 member == expected
                 and _value_matches_declared_type(
                     member, target["expected_value_type"]
                 )
-                for member in (value if isinstance(value, list) else value.values())
+                for member in members
             )
             for value in values
         )
@@ -142,6 +142,50 @@ def _target_satisfied(values: list[Any], target: dict[str, Any]) -> bool:
     if operator == "none":
         return all(value != expected for value in values)
     return False
+
+
+def _collection_members(value: Any) -> list[Any] | None:
+    if isinstance(value, list):
+        return value
+    if (
+        isinstance(value, dict)
+        and value.get("collection_kind") in {"ORDERED_LIST", "UNORDERED_SET"}
+        and isinstance(value.get("members"), list)
+    ):
+        return value["members"]
+    return None
+
+
+def _derive_comparison_and_mismatch(
+    observed: dict[str, Any], target: dict[str, Any],
+) -> tuple[str, str | None]:
+    candidates = observed["value_candidates"]["members"]
+    values = [item["value"] for item in candidates]
+    distinct = {canonical_json_bytes(_canonical_semantic(value)) for value in values}
+    operator = target["operator"]
+    knowledge = observed["knowledge_status"]
+    comparison = (
+        "UNKNOWN" if knowledge != "KNOWN" else
+        "SATISFIED" if _target_satisfied(values, target) else "NOT_SATISFIED"
+    )
+    if knowledge == "CONFLICTED" or (
+        operator in {"equals", "not_equals", "contains"} and len(distinct) > 1
+    ):
+        return "UNKNOWN", "CONFLICT"
+    if knowledge in {"UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE"}:
+        return "UNKNOWN", "UNKNOWN"
+    type_mismatch = any(not _fact_type_matches_target(item, target) for item in candidates)
+    if type_mismatch:
+        return comparison, "TYPE_MISMATCH"
+    if not candidates and operator in {"equals", "not_equals", "contains", "exists", "all"}:
+        return "NOT_SATISFIED", "MISSING"
+    if comparison == "SATISFIED":
+        return comparison, None
+    if operator == "contains":
+        return comparison, "RELATION_MISMATCH"
+    if operator == "none":
+        return comparison, "UNEXPECTED"
+    return comparison, "VALUE_MISMATCH"
 
 
 def _value_matches_declared_type(value: Any, value_type: str) -> bool:
@@ -155,8 +199,14 @@ def _value_matches_declared_type(value: Any, value_type: str) -> bool:
         "TIMESTAMP": isinstance(value, str),
         "DURATION": isinstance(value, str) and value.startswith("P"),
         "IDENTITY_REFERENCE": isinstance(value, dict) and {"kind", "id"} <= value.keys(),
-        "ORDERED_COLLECTION": isinstance(value, list),
-        "UNORDERED_COLLECTION": isinstance(value, list),
+        "ORDERED_COLLECTION": isinstance(value, list) or (
+            isinstance(value, dict) and value.get("collection_kind") == "ORDERED_LIST"
+            and isinstance(value.get("members"), list)
+        ),
+        "UNORDERED_COLLECTION": isinstance(value, list) or (
+            isinstance(value, dict) and value.get("collection_kind") == "UNORDERED_SET"
+            and isinstance(value.get("members"), list)
+        ),
     }.get(value_type, False)
 
 
@@ -822,24 +872,83 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
         structural = difference["structural_difference"]
         observed_values = [item["value"] for item in observed["value_candidates"]["members"]]
         observed_types = [item["value_type"] for item in observed["value_candidates"]["members"]]
-        derived_comparison = (
-            "UNKNOWN" if observed["knowledge_status"] != "KNOWN" else
-            "SATISFIED" if _target_satisfied(observed_values, target) else
-            "NOT_SATISFIED"
+        source_observations = [
+            observations.get(_ref_id(reference) or "")
+            if reference.get("kind") == "observation" else None
+            for reference in difference["observation_refs"]
+        ]
+        source_facts = [
+            normalized_facts.get(_ref_id(reference) or "")
+            for observation in source_observations if observation is not None
+            for reference in observation["normalized_fact_refs"]
+            if reference.get("kind") == "normalized_fact"
+        ]
+        source_evidence = {
+            canonical_json_bytes(reference)
+            for observation in source_observations if observation is not None
+            for reference in observation["observation_evidence_refs"]
+        }
+        source_observations_valid = bool(source_observations) and all(
+            observation is not None
+            and observation["project_id"] == difference["project_id"]
+            and observation["state_revision_observed"] == difference["observed_state_revision"]
+            and observation["state_fingerprint_observed"] == difference["observed_state_fingerprint"]
+            and observation["target"]["target_identity"] == difference["target_predicate_ref"]["id"]
+            and observation["scope_ref"] == difference["objective_scope_binding"]["scope_ref"]
+            and observation["status"] in {"COMPLETE", "EMPTY", "CONFLICTED"}
+            and {
+                "collection_kind": "UNORDERED_SET",
+                "members": sorted(observation["source_snapshot_refs"], key=canonical_json_bytes),
+            } == difference["effective_boundary"]["source_snapshot_refs"]
+            for observation in source_observations
         )
-        derived_mismatch = (
-            "UNKNOWN" if derived_comparison == "UNKNOWN" else
-            None if derived_comparison == "SATISFIED" else
-            "TYPE_MISMATCH" if any(
-                not _fact_type_matches_target(item, target)
-                for item in observed["value_candidates"]["members"]
-            ) else "VALUE_MISMATCH"
+        source_projection_valid = (
+            source_observations_valid
+            and bool(source_facts)
+            and all(
+                fact is not None
+                and fact["project_id"] == difference["project_id"]
+                and fact["subject"] == difference["subject"]
+                for fact in source_facts
+            )
+            and sorted(
+                (fact["value"] for fact in source_facts if fact is not None), key=repr
+            ) == sorted(observed_values, key=repr)
+            and sorted(
+                fact["value_type"] for fact in source_facts if fact is not None
+            ) == sorted(observed_types)
+            and all(
+                any(
+                    fact is not None
+                    and fact["value"] == candidate["value"]
+                    and fact["value_type"] == candidate["value_type"]
+                    and fact["unit"] == candidate["unit"]
+                    and fact["predicate"] == candidate["fact_predicate"]
+                    and fact["effective_boundary"]["kind"] == "SOURCE_SNAPSHOT"
+                    and fact["effective_boundary"]["identity"]
+                    in {
+                        reference["id"]
+                        for reference in difference["effective_boundary"]
+                        ["source_snapshot_refs"]["members"]
+                    }
+                    for fact in source_facts
+                )
+                for candidate in observed["value_candidates"]["members"]
+            )
+            and source_evidence == {
+                canonical_json_bytes(reference)
+                for reference in difference["observation_evidence_refs"]
+            }
+        )
+        derived_comparison, derived_mismatch = _derive_comparison_and_mismatch(
+            observed, target
         )
         if (
             _has_recursive_set_duplicate(difference["normalized_target_state"])
             or _has_recursive_set_duplicate(difference["normalized_observed_state"])
             or _has_recursive_set_duplicate(difference["structural_difference"])
             or difference_id != _difference_id(difference)
+            or not source_projection_valid
             or difference["subject"] != target["subject"]
             or difference["subject"] != observed["subject"]
             or difference["observation_scope"] != target["observation_scope"]
@@ -857,6 +966,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             or structural["comparison_result"] != derived_comparison
             or derived_comparison == "SATISFIED"
             or structural["mismatch_kind"] != derived_mismatch
+            or structural["target_cardinality"] is not None
+            or structural["observed_cardinality"] is not None
         ):
             errors.append(f"Difference projection mismatch: {difference_id}")
         genesis_id = _ref_id(difference["genesis_event_ref"])

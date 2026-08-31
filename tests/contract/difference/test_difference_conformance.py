@@ -8,6 +8,7 @@ from referencing import Registry, Resource
 from scripts.difference_contract_validator import (
     _candidate_id,
     _candidate_matches_evaluation,
+    _derive_comparison_and_mismatch,
     _difference_id,
     apply_mutation,
     load_json,
@@ -52,6 +53,8 @@ def test_valid_bundle_is_schema_valid_and_reconstructable() -> None:
     bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
     validators = _validators()
     record_groups = {
+        "observation.schema.json": bundle["observations"],
+        "normalized_fact.schema.json": bundle["normalized_facts"],
         "difference.schema.json": bundle["differences"],
         "difference_lifecycle_event.schema.json": bundle["events"],
         "closure_policy.schema.json": bundle["policies"],
@@ -153,6 +156,70 @@ def test_difference_fixture_suite_has_no_escape() -> None:
     assert invalid_count == 29
     assert valid_errors == []
     assert invalid_escapes == []
+
+
+def test_difference_source_observation_must_resolve_exactly() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    missing = deepcopy(bundle)
+    missing["observations"] = []
+    assert validate_bundle(missing)
+
+    wrong_state = deepcopy(bundle)
+    wrong_state["observations"][0]["state_revision_observed"] = 3
+    assert validate_bundle(wrong_state)
+
+
+def test_v01_cardinality_fields_must_remain_null() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    difference = bundle["differences"][0]
+    difference["structural_difference"]["target_cardinality"] = 1
+    difference["difference_id"] = _difference_id(difference)
+    bundle["events"][0]["difference_id"] = difference["difference_id"]
+    bundle["policies"][0]["subject_difference_ref"]["id"] = difference["difference_id"]
+    assert validate_bundle(bundle)
+
+
+def test_canonical_collection_wrapper_is_unwrapped_for_contains() -> None:
+    target = {
+        "operator": "contains", "expected_value": "READY",
+        "expected_value_type": "STRING",
+    }
+    observed = {
+        "knowledge_status": "KNOWN",
+        "value_candidates": {
+            "collection_kind": "UNORDERED_SET",
+            "members": [{
+                "value": {
+                    "collection_kind": "UNORDERED_SET",
+                    "members": ["READY", "STABLE"],
+                },
+                "value_type": "UNORDERED_COLLECTION",
+            }],
+        },
+    }
+    assert _derive_comparison_and_mismatch(observed, target) == ("SATISFIED", None)
+
+
+def test_mismatch_precedence_is_closed_and_deterministic() -> None:
+    target = {
+        "operator": "equals", "expected_value": "READY",
+        "expected_value_type": "STRING",
+    }
+    observed = {
+        "knowledge_status": "KNOWN",
+        "value_candidates": {"collection_kind": "UNORDERED_SET", "members": []},
+    }
+    assert _derive_comparison_and_mismatch(observed, target) == (
+        "NOT_SATISFIED", "MISSING",
+    )
+    observed["knowledge_status"] = "UNKNOWN"
+    assert _derive_comparison_and_mismatch(observed, target) == ("UNKNOWN", "UNKNOWN")
+    observed["knowledge_status"] = "KNOWN"
+    observed["value_candidates"]["members"] = [
+        {"value": "READY", "value_type": "STRING"},
+        {"value": "NOT-READY", "value_type": "STRING"},
+    ]
+    assert _derive_comparison_and_mismatch(observed, target) == ("UNKNOWN", "CONFLICT")
 
 
 def test_supersession_relation_uses_canonical_contract_shape() -> None:
