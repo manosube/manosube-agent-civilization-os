@@ -1553,6 +1553,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 and required_scope["schema_version"] == required_scope_ref["schema_version"]
                 and _resolved_scope_fingerprint(required_scope)
                 == required_scope_ref["resolved_record_sha256"]
+                and required_scope["scope_status"] == "COMPLETE"
             )
             resolution_evidence_refs = (
                 evaluation["change_result_evidence_refs"]
@@ -1851,6 +1852,14 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         observation["source_snapshot_refs"], key=canonical_json_bytes
                     ),
                 } == candidate_snapshot_set
+                and candidate_snapshot_set
+                == {
+                    "collection_kind": "UNORDERED_SET",
+                    "members": sorted(
+                        required_scope["source_snapshot_refs"],
+                        key=canonical_json_bytes,
+                    ),
+                }
                 and bool(observation["observation_evidence_refs"])
                 and all(
                     canonical_json_bytes(reference) in resolution_evidence
