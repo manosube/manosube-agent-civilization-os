@@ -11,8 +11,10 @@ from scripts.difference_contract_validator import (
     _candidate_type_matches_target,
     _derive_comparison_and_mismatch,
     _difference_id,
+    _fact_id,
     _negative_knowledge_status,
     _normalize_objective_value,
+    _observation_attempts_complete,
     _project_collection_value,
     _target_satisfied,
     apply_mutation,
@@ -20,6 +22,8 @@ from scripts.difference_contract_validator import (
     validate_bundle,
     validate_fixture_suite,
 )
+
+from manosube_agent_civilization.observation.normalization import normalize_fact
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = ROOT / "tests" / "contract" / "fixtures" / "difference"
@@ -165,6 +169,51 @@ def test_difference_fixture_suite_has_no_escape() -> None:
     assert invalid_count == 29
     assert valid_errors == []
     assert invalid_escapes == []
+
+
+def test_after_observation_is_bounded_by_resolved_scope() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    wrong_method = deepcopy(bundle)
+    observation = wrong_method["observations"][0]
+    observation["method_ref"]["id"] = "OBS-METHOD-OTHER"
+    observation["attempts"][0]["method_ref"]["id"] = "OBS-METHOD-OTHER"
+    assert not _observation_attempts_complete(
+        observation, wrong_method["observation_scopes"][0]
+    )
+
+    outside_window = deepcopy(bundle)
+    observation = outside_window["observations"][0]
+    observation["time_boundary"]["observation_started_at"] = "2026-08-30T09:02:00Z"
+    observation["time_boundary"]["observation_ended_at"] = "2026-08-30T09:03:00Z"
+    observation["attempts"][0]["started_at"] = "2026-08-30T09:02:00Z"
+    observation["attempts"][0]["ended_at"] = "2026-08-30T09:03:00Z"
+    assert not _observation_attempts_complete(
+        observation, outside_window["observation_scopes"][0]
+    )
+
+
+def test_fact_identity_uses_observation_payload_canonicalization() -> None:
+    fact = normalize_fact(
+        {
+            "subject": "repository.metadata",
+            "predicate": "equals@v1",
+            "value": {
+                "collection_kind": "UNORDERED_SET",
+                "members": ["b", "a"],
+            },
+            "value_type": "STRUCTURED",
+            "unit": None,
+            "effective_boundary": {
+                "kind": "SOURCE_SNAPSHOT",
+                "identity": "SNAPSHOT-0001",
+                "start": None,
+                "end": None,
+            },
+        },
+        "PROJECT-0001",
+        "FIXTURE-0.1",
+    )
+    assert _fact_id(fact) == fact["fact_id"]
 
 
 def test_difference_source_observation_must_resolve_exactly() -> None:

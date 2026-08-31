@@ -177,6 +177,9 @@ def _observation_attempts_complete(
     )
     timeout = scope["attempt_policy"]["timeout_seconds"]
     return (
+        observation["method_ref"] == scope["method_ref"]
+        and _observation_time_boundary_complete(observation, scope)
+        and
         0 < len(attempts) <= scope["attempt_policy"]["max_attempts"]
         and all(
             attempt["method_ref"] == observation["method_ref"]
@@ -196,13 +199,56 @@ def _observation_attempts_complete(
     )
 
 
+def _observation_time_boundary_complete(
+    observation: dict[str, Any], scope: dict[str, Any],
+) -> bool:
+    boundary = observation["time_boundary"]
+    try:
+        observed_start = datetime.fromisoformat(
+            boundary["observation_started_at"].replace("Z", "+00:00")
+        )
+        observed_end = datetime.fromisoformat(
+            boundary["observation_ended_at"].replace("Z", "+00:00")
+        )
+        effective_start = datetime.fromisoformat(
+            boundary["target_effective_start"].replace("Z", "+00:00")
+        )
+        effective_end = datetime.fromisoformat(
+            boundary["target_effective_end"].replace("Z", "+00:00")
+        )
+        snapshot = datetime.fromisoformat(
+            boundary["source_snapshot_time"].replace("Z", "+00:00")
+        )
+        scope_observed_start = datetime.fromisoformat(
+            scope["observation_window"]["start"].replace("Z", "+00:00")
+        )
+        scope_observed_end = datetime.fromisoformat(
+            scope["observation_window"]["end"].replace("Z", "+00:00")
+        )
+        scope_effective_start = datetime.fromisoformat(
+            scope["target_effective_window"]["start"].replace("Z", "+00:00")
+        )
+        scope_effective_end = datetime.fromisoformat(
+            scope["target_effective_window"]["end"].replace("Z", "+00:00")
+        )
+        cutoff = datetime.fromisoformat(scope["cutoff"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (
+        observed_start <= observed_end
+        and effective_start <= effective_end
+        and scope_observed_start <= observed_start <= observed_end <= scope_observed_end
+        and scope_effective_start <= effective_start <= effective_end <= scope_effective_end
+        and effective_start <= snapshot <= observed_end
+        and snapshot <= cutoff
+        and (cutoff - snapshot).total_seconds() <= scope["freshness_limit_seconds"]
+    )
+
+
 def _fact_id(fact: dict[str, Any]) -> str:
     value = deepcopy(fact["value"])
     if fact["value_type"] == "UNORDERED_COLLECTION" and isinstance(value, list):
-        value = sorted(
-            (_canonical_semantic(item) for item in value),
-            key=canonical_json_bytes,
-        )
+        value = sorted(value, key=canonical_json_bytes)
     semantic = {
         key: (value if key == "value" else fact[key])
         for key in (
@@ -212,7 +258,7 @@ def _fact_id(fact: dict[str, Any]) -> str:
     }
     domain = b"MANOSUBE_AGENT_CIVILIZATION_OS\x00OBSERVATION\x000.1\x00"
     return "FACT-" + hashlib.sha256(
-        domain + canonical_json_bytes(_canonical_semantic(semantic))
+        domain + canonical_json_bytes(semantic)
     ).hexdigest().upper()
 
 
