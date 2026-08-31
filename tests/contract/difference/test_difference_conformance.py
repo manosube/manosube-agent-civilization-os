@@ -507,6 +507,13 @@ def test_difference_rejects_nonprojectable_latest_fact_evaluation() -> None:
     assert any("Difference projection mismatch" in error for error in validate_bundle(mutated))
 
 
+def test_difference_rejects_missing_fact_without_raising() -> None:
+    bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
+    mutated = deepcopy(bundle)
+    mutated["observations"][0]["normalized_fact_refs"][0]["id"] = "FACT-MISSING"
+    assert any("Difference projection mismatch" in error for error in validate_bundle(mutated))
+
+
 def test_nested_unordered_fact_projection_is_recursive() -> None:
     value = [
         {"collection_kind": "UNORDERED_SET", "members": ["b", "a"]},

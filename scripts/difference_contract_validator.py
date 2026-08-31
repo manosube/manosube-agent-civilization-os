@@ -1079,8 +1079,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             if reference.get("kind") == "normalized_fact"
         ]
         source_fact_evaluations = [
-            latest_fact_evaluations.get(fact["fact_id"])
-            for fact in source_facts if fact is not None
+            None if fact is None else latest_fact_evaluations.get(fact["fact_id"])
+            for fact in source_facts
         ]
         source_facts_valid = bool(source_facts) and all(
             evaluation is not None
@@ -1581,9 +1581,15 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 _subject_value(candidate["semantic_state"], difference["subject"])
             )
             candidate_projected_value = (
-                None if difference is None else _project_collection_value(
-                    candidate_value,
-                    difference["normalized_target_state"]["expected_value_type"],
+                None
+                if difference is None
+                else (
+                    candidate_value
+                    if difference["normalized_target_state"]["operator"] == "contains"
+                    else _project_collection_value(
+                        candidate_value,
+                        difference["normalized_target_state"]["expected_value_type"],
+                    )
                 )
             )
             candidate_target_valid = (
@@ -1600,7 +1606,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     fact is not None
                     and _exact_value_equal(
                         _project_collection_value(fact["value"], fact["value_type"]),
-                        candidate_projected_value,
+                        _project_collection_value(candidate_value, fact["value_type"]),
                     )
                     for facts in resolved_fact_sets for fact in facts
                 )
