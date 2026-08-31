@@ -642,6 +642,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     latest_fact_evaluations = _latest_contiguous_evaluations(
         fact_evaluations, "fact_id"
     )
+    current_state_ref = bundle.get("current_state_ref")
     evidence_observed_at: dict[bytes, datetime] = {}
     for observation in observations.values():
         observed_at = datetime.fromisoformat(
@@ -1364,9 +1365,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
             or not objective_evaluation_valid
             or evaluation["evaluated_state_revision"]
-            != difference["observed_state_revision"]
+            != (current_state_ref or {}).get("revision")
             or evaluation["evaluated_state_fingerprint"]
-            != difference["observed_state_fingerprint"]
+            != (current_state_ref or {}).get("fingerprint")
             or evaluation["before_state_ref"]["revision"]
             != evaluation["evaluated_state_revision"]
             or evaluation["before_state_ref"]["fingerprint"]
@@ -1529,6 +1530,18 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 if observation is not None else []
                 for observation in after_observations
             ]
+            resolved_negative_sets = [
+                [
+                    negative
+                    for negative in negative_observations.values()
+                    if observation is not None
+                    and negative["observation_id"] == observation["observation_id"]
+                    and negative["target_identity"]
+                    == difference["target_predicate_ref"]["id"]
+                    and negative["subject"] == difference["subject"]
+                ]
+                for observation in after_observations
+            ]
             fact_evaluation_chains: dict[str, list[dict[str, Any]]] = {}
             for fact_evaluation in fact_evaluations.values():
                 fact_evaluation_chains.setdefault(
@@ -1545,8 +1558,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 )
                 if valid_chain:
                     latest_fact_evaluations[fact_id] = chain[-1]
-            facts_valid = all(
-                facts
+            positive_facts_valid = [
+                bool(facts)
                 and all(
                     fact is not None
                     and difference is not None
@@ -1574,7 +1587,52 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     ],
                     difference["normalized_target_state"],
                 )
-                for observation, facts in zip(after_observations, resolved_fact_sets, strict=True)
+                for observation, facts in zip(
+                    after_observations, resolved_fact_sets, strict=True
+                )
+            ]
+            bounded_empty_valid = [
+                difference is not None
+                and difference["normalized_target_state"]["operator"] == "none"
+                and not facts
+                and bool(negatives)
+                and all(
+                    (latest := latest_negative_evaluations.get(
+                        negative["negative_observation_id"]
+                    )) is not None
+                    and latest["evaluation_status"] == "EMPTY"
+                    and negative["negative_status"] == "EMPTY"
+                    and observation is not None
+                    and negative["scope_ref"] == observation["scope_ref"]
+                    and negative["method_ref"] == observation["method_ref"]
+                    and negative["time_boundary"] == observation["time_boundary"]
+                    and negative["source_snapshot_refs"]
+                    == observation["source_snapshot_refs"]
+                    and all(negative["completion_evaluation"].values())
+                    and {
+                        canonical_json_bytes(reference)
+                        for reference in latest["evidence_refs"]
+                    } <= resolution_evidence
+                    for negative in negatives
+                )
+                and _target_satisfied(
+                    [], difference["normalized_target_state"]
+                )
+                for observation, facts, negatives in zip(
+                    after_observations,
+                    resolved_fact_sets,
+                    resolved_negative_sets,
+                    strict=True,
+                )
+            ]
+            facts_valid = all(
+                positive or empty
+                for positive, empty in zip(
+                    positive_facts_valid, bounded_empty_valid, strict=True
+                )
+            )
+            bounded_empty_closure = bool(bounded_empty_valid) and all(
+                bounded_empty_valid
             )
             candidate_value = (
                 None if candidate is None or difference is None else
@@ -1595,12 +1653,18 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             candidate_target_valid = (
                 candidate is not None
                 and difference is not None
-                and _candidate_type_matches_target(
-                    candidate_value, difference["normalized_target_state"]
-                )
-                and _target_satisfied(
-                    [candidate_projected_value],
-                    difference["normalized_target_state"],
+                and (
+                    bounded_empty_closure
+                    or (
+                        _candidate_type_matches_target(
+                            candidate_value,
+                            difference["normalized_target_state"],
+                        )
+                        and _target_satisfied(
+                            [candidate_projected_value],
+                            difference["normalized_target_state"],
+                        )
+                    )
                 )
                 and all(
                     fact is not None
@@ -1623,9 +1687,12 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 and observation["target"]["target_identity"]
                 == difference["target_predicate_ref"]["id"]
                 and observation["scope_ref"] == scope_reference
-                and observation["status"] == "COMPLETE"
+                and observation["status"] in {"COMPLETE", "EMPTY"}
                 and observation["blind_spots"]["status"] == "NONE_KNOWN"
-                and bool(observation["normalized_fact_refs"])
+                and (
+                    bool(observation["normalized_fact_refs"])
+                    or bounded_empty_valid[index]
+                )
                 and {
                     "collection_kind": "UNORDERED_SET",
                     "members": sorted(
@@ -1637,7 +1704,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     canonical_json_bytes(reference) in resolution_evidence
                     for reference in observation["observation_evidence_refs"]
                 )
-                for observation in after_observations
+                for index, observation in enumerate(after_observations)
             )
             common_evidence_present = bool(
                 after_observations_valid
@@ -1670,9 +1737,35 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 }
             ):
                 errors.append(f"Evidence Sufficiency binding mismatch: {evaluation['closure_evaluation_id']}")
+            resolved_changes = [
+                changes.get(_ref_id(reference) or "")
+                for reference in evaluation["change_refs"]
+            ]
+            candidate_change_refs = (
+                None if candidate is None else candidate["producing_change_refs"]
+            )
+            change_binding_valid = (
+                bool(resolved_changes)
+                and candidate_change_refs
+                == {
+                    "collection_kind": "UNORDERED_SET",
+                    "members": sorted(
+                        evaluation["change_refs"], key=canonical_json_bytes
+                    ),
+                }
+                and all(
+                    change is not None
+                    and change.get("status") == "EXECUTED"
+                    and _ref_id(change.get("difference_ref"))
+                    == evaluation["difference_id"]
+                    and change.get("base_state_ref")
+                    == evaluation["before_state_ref"]
+                    for change in resolved_changes
+                )
+            )
             mode_evidence_present = (
                 resolution_mode == "CHANGE_BOUND"
-                and bool(evaluation["change_refs"])
+                and change_binding_valid
                 and bool(evaluation["change_result_evidence_refs"])
                 and not evaluation["change_free_verification_evidence_refs"]
             ) or (

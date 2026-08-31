@@ -1,4 +1,12 @@
 {
+  "current_state_ref": {
+    "kind": "state",
+    "revision": 2,
+    "fingerprint": {
+      "profile": "MANOSUBE-STATE-SHA256-0.1",
+      "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
   "differences": [
     {
       "schema_version": "0.1",
