@@ -50,15 +50,17 @@ CONTRACT
 ONE VERTICAL COMPLETION PACKAGE
 ```
 
-The default external projection is:
+The default external projection is capability-neutral:
 
 ```text
 ONE STRUCTURAL DIFFERENCE
-→ ONE ISSUE
-→ ONE IMPLEMENTATION BRANCH
-→ ONE PULL REQUEST
-→ ONE HUMAN MERGE DECISION
+→ ONE WORK-ITEM / DIFFERENCE PROJECTION
+→ ONE IMPLEMENTATION LINEAGE
+→ ONE CHANGE-REVIEW / ACCEPTANCE SURFACE
+→ ONE HUMAN ACCEPTANCE DECISION
 ```
+
+An Issue, branch and Pull Request are interchangeable implementations of those capabilities, not mandatory Kernel organs.
 
 A Contract-only, Schema-only or Engine-only work unit is exceptional. It MUST NOT be chosen merely because smaller Pull Requests are easier to produce.
 
@@ -209,9 +211,9 @@ Merge, release, production deployment, constitutional weakening and irreversible
 
 ---
 
-## 7. Issue Design Requirements
+## 7. Work-Item / Difference-Projection Requirements
 
-Before implementation, the Issue MUST define:
+Before implementation, the replaceable work-item / Difference-projection capability MUST define:
 
 ```text
 CURRENT STATE
@@ -230,21 +232,21 @@ EXPLICIT NON-CLAIMS
 CLOSURE MEANING
 ```
 
-The Issue MUST be sufficient for one executor to proceed from current `main` through a focused Pull Request without requiring repeated design handoffs.
+The projection MUST be sufficient for one executor to proceed from the bound repository state through a focused change-review / acceptance surface without repeated design handoffs.
 
-An Issue is a projection of the Difference. Its number is never the canonical Difference identity.
+A GitHub Issue is one interchangeable projection of the Difference. Its number is never the canonical Difference identity, and the absence of an Issue object does not make an equivalent work-item projection nonconforming.
 
 ---
 
-## 8. Pull Request Boundary
+## 8. Change-Review / Acceptance Boundary
 
-One vertical package SHOULD produce one focused Pull Request.
+One vertical package SHOULD produce one focused change-review / acceptance surface. A Pull Request is one interchangeable implementation.
 
-The PR MUST report exact:
+That surface MUST report exact:
 
 ```text
-BASE SHA
-HEAD SHA
+BASE STATE IDENTITY
+PROPOSED STATE IDENTITY
 CHANGED FILES
 OWNER COUNT
 SCHEMA / TEST COUNTS
@@ -256,7 +258,7 @@ EXPLICIT NON-CLAIMS
 REMAINING DIFFERENCES
 ```
 
-A Pull Request MUST NOT be enlarged with later Kernel elements or adapters merely to reduce future PR count.
+A change-review surface MUST NOT be enlarged with later Kernel elements or adapters merely to reduce future review-object count.
 
 ```text
 ONE KERNEL ELEMENT PER PACKAGE=true
@@ -270,9 +272,9 @@ MULTIPLE FUTURE ELEMENTS PER PACKAGE=false
 
 Executor self-review is required but not sufficient.
 
-Before Human merge, the Structural Advisor MUST independently inspect:
+Before Human acceptance, the Structural Advisor MUST independently inspect:
 
-- exact base and head identity;
+- exact base and proposed-state identity;
 - changed-file boundary;
 - single-owner preservation;
 - contract／schema／engine consistency;
@@ -282,16 +284,16 @@ Before Human merge, the Structural Advisor MUST independently inspect:
 - absence of Completion inflation;
 - remaining Differences.
 
-The Structural Advisor MAY request a correction on the same branch and PR. A correctable finding SHOULD NOT automatically create a new Issue or replacement PR.
+The Structural Advisor MAY request a correction on the same implementation lineage and change-review surface. A correctable finding SHOULD NOT automatically create a new work item or replacement review surface.
 
 ```text
 SAME_DIFFERENCE
 + SAME_CHANGE_BOUNDARY
 + CORRECTABLE_FINDING
-→ SAME_ISSUE_AND_PR_CORRECTION
+→ SAME_WORK_ITEM_AND_REVIEW_SURFACE_CORRECTION
 ```
 
-A new Issue is required only when a distinct Structural Difference, authority boundary or constitutional decision is discovered.
+A new work item is required only when a distinct Structural Difference, authority boundary or constitutional decision is discovered. GitHub Issues and Pull Requests remain permitted current-repository implementations.
 
 ---
 
