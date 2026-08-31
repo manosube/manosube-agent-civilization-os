@@ -1,0 +1,144 @@
+"""State to Observation to Difference integration over the real canonical owners.
+
+No substitute artifact stands in for the State, Store or Observation owners: the Project
+State record is the canonical fixture, its fingerprint is produced by the real State
+owner, the Observation records are produced by the real Observation Engine, and the
+Difference records are produced by the real Difference Engine.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from scripts.difference_contract_validator import validate_bundle as validate_difference_bundle
+from scripts.observation_contract_validator import validate_bundle as validate_observation_bundle
+from tests.difference_helpers import (
+    PREDICATE_ID,
+    SUBJECT,
+    derivation_request,
+    objective_revision,
+    observation_request,
+    observation_scope,
+    raw_fact,
+    target_predicate,
+)
+from tests.state_helpers import initial_state
+
+from manosube_agent_civilization.difference import derive_differences
+from manosube_agent_civilization.difference.validation import validate_record
+from manosube_agent_civilization.observation import observe
+from manosube_agent_civilization.state import canonical_json_bytes, fingerprint_semantic_state
+
+pytestmark = [pytest.mark.integration, pytest.mark.natural_cycle]
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def _exact_project_state() -> tuple[dict[str, Any], int, dict[str, str]]:
+    """Return the canonical Project State with the real State owner's fingerprint."""
+
+    state = initial_state()
+    fingerprint = fingerprint_semantic_state(state["semantic_state"]).as_dict()
+    state["semantic_fingerprint"] = fingerprint
+    return state, state["state_revision"], fingerprint
+
+
+def _route(observed_value: str) -> tuple[dict[str, Any], dict[str, Any], int, dict[str, str]]:
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    observation_bundle = observe(
+        observation_request(scope, [raw_fact(value=observed_value)], fingerprint, revision)
+    )
+    assert validate_observation_bundle(observation_bundle) == []
+    difference_bundle = derive_differences(
+        derivation_request(
+            objective_revision([target_predicate()]),
+            [
+                {
+                    "target_predicate_id": PREDICATE_ID,
+                    "observation_scope": scope,
+                    "observation_bundle": observation_bundle,
+                }
+            ],
+            fingerprint,
+            revision,
+        )
+    )
+    return observation_bundle, difference_bundle, revision, fingerprint
+
+
+def test_state_to_observation_to_difference_produces_conformant_records() -> None:
+    observation_bundle, difference_bundle, revision, fingerprint = _route("NOT-READY")
+
+    assert validate_difference_bundle(difference_bundle) == []
+    assert len(difference_bundle["differences"]) == 1
+    difference = difference_bundle["differences"][0]
+    validate_record(difference, "difference.schema.json")
+
+    observation = observation_bundle["observations"][-1]
+    assert difference["observed_state_revision"] == revision
+    assert difference["observed_state_fingerprint"] == fingerprint
+    assert observation["state_revision_observed"] == revision
+    assert observation["state_fingerprint_observed"] == fingerprint
+    assert difference["observation_refs"] == [
+        {"kind": "observation", "id": observation["observation_id"]}
+    ]
+    assert difference["subject"] == SUBJECT
+    assert difference["structural_difference"]["mismatch_kind"] == "VALUE_MISMATCH"
+    assert difference["structural_difference"]["observed_values"]["members"] == ["NOT-READY"]
+    assert difference_bundle["materialized_status"] == {difference["difference_id"]: "OPEN"}
+
+
+def test_state_to_observation_to_difference_satisfied_route_is_empty() -> None:
+    _, difference_bundle, _, _ = _route("READY")
+    assert validate_difference_bundle(difference_bundle) == []
+    assert difference_bundle["differences"] == []
+    assert difference_bundle["satisfied_target_predicates"] == [PREDICATE_ID]
+    # An empty Difference set is not a Completion claim.
+    assert difference_bundle["evaluations"] == []
+    assert difference_bundle["candidate_completion_records"] == []
+
+
+def test_route_is_deterministic_across_repeated_execution() -> None:
+    first = _route("NOT-READY")[1]
+    second = _route("NOT-READY")[1]
+    assert canonical_json_bytes(first) == canonical_json_bytes(second)
+
+
+def test_route_survives_a_canonical_serialization_round_trip(tmp_path: Path) -> None:
+    """The derived records stay conformant across canonical persistence."""
+
+    _, difference_bundle, _, _ = _route("NOT-READY")
+    path = tmp_path / "difference_bundle.json"
+    path.write_bytes(canonical_json_bytes(difference_bundle))
+    restored = json.loads(path.read_text(encoding="utf-8"))
+    assert restored == json.loads(canonical_json_bytes(difference_bundle))
+    assert validate_difference_bundle(restored) == []
+
+
+def test_observation_engine_output_is_not_mutated_by_the_difference_engine() -> None:
+    _, revision, fingerprint = _exact_project_state()
+    scope = observation_scope()
+    observation_bundle = observe(
+        observation_request(scope, [raw_fact()], fingerprint, revision)
+    )
+    snapshot = deepcopy(observation_bundle)
+    derive_differences(
+        derivation_request(
+            objective_revision([target_predicate()]),
+            [
+                {
+                    "target_predicate_id": PREDICATE_ID,
+                    "observation_scope": scope,
+                    "observation_bundle": observation_bundle,
+                }
+            ],
+            fingerprint,
+            revision,
+        )
+    )
+    assert observation_bundle == snapshot
