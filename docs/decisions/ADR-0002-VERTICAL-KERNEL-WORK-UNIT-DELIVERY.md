@@ -32,12 +32,12 @@ This ADR records that direction as Human Constitutional Approval. The Agent did 
 approval_id: APPROVAL-KERNEL-VERTICAL-WORK-UNIT-0002
 change_id: KERNEL-CHANGE-0002
 approved_state_fingerprint: sha256:86b6225ea4f7279535b4fb8438a9f72567b11912cea7755c20019b61889a513f
-approved_action_fingerprint: sha256:f3564164dcc115c971b8dad84dfa29e4ced4bb7df8856e095f33b35f6a13f12c
+approved_action_fingerprint: sha256:ed869c9e5c970dd1fe47a53c03e7545102118711f0354fa1d931932e7f1ae3de
 approved_by: github:manosube
 approved_at: 2026-08-31
 expires_at: null
-external_approval_receipt: https://github.com/manosube/manosube-agent-civilization-os/pull/25#issuecomment-5476087681
-external_approval_receipt_sha256: 2e0b3a9b35bc286d1470779f0a06c30efcf1e7e56a89f4548df5b9fe17ec6875
+external_approval_receipt: https://github.com/manosube/manosube-agent-civilization-os/pull/25#issuecomment-5476186507
+external_approval_receipt_sha256: d11b107084e4cb6a58aa4fd73acb01ff99a5af3888a2c06c01e42636c39cd3ed
 base_repository: manosube/manosube-agent-civilization-os
 base_commit: 7db2055330bf21458d05628c09bee7d309083dbf
 scope:
@@ -56,10 +56,10 @@ The fingerprints above are SHA-256 digests over UTF-8 canonical JSON with lexico
 
 ```json
 {"base_commit":"7db2055330bf21458d05628c09bee7d309083dbf","repository":"manosube/manosube-agent-civilization-os"}
-{"action":"ADD_VERTICAL_KERNEL_WORK_UNIT_DELIVERY_PROTOCOL","affected_paths":["00_KERNEL/KERNEL_INDEX.md","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md","ORIGIN.md","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md"],"authority_rank":5,"canonical_cycle_change":false,"change_id":"KERNEL-CHANGE-0002","kernel_element_count_change":0,"proposed_content_sha256":{"00_KERNEL/KERNEL_INDEX.md":"02dc0737f5798fcf165b56af8997b95b7c27d569af419b04634cd84b085c645f","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md":"122bb532d2d6adc7236fa0d2c9c91e6c4076715759dec10a5a4d0fda47520f86","ORIGIN.md":"ad0f3fbeeea9ce496b8cb97041d4aecc08cbf464f9833f65d34b7d9316b5810d","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md#semantic-content":"c43c6fc35fa33960ee719b0e0893acafda55eb5f0286b4d110f98ca59a53fc75"}}
+{"action":"ADD_VERTICAL_KERNEL_WORK_UNIT_DELIVERY_PROTOCOL","affected_paths":["00_KERNEL/KERNEL_INDEX.md","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md","ORIGIN.md","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md"],"authority_rank":5,"canonical_cycle_change":false,"change_id":"KERNEL-CHANGE-0002","kernel_element_count_change":0,"proposed_content_sha256":{"00_KERNEL/KERNEL_INDEX.md":"02dc0737f5798fcf165b56af8997b95b7c27d569af419b04634cd84b085c645f","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md":"8b36fd401bb768fdd5c5fa6b8d9737db2ddb55140e0d2ca6bba694078b39897c","ORIGIN.md":"ad0f3fbeeea9ce496b8cb97041d4aecc08cbf464f9833f65d34b7d9316b5810d","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md#semantic-content":"c43c6fc35fa33960ee719b0e0893acafda55eb5f0286b4d110f98ca59a53fc75"}}
 ```
 
-`proposed_content_sha256` binds the exact proposed content of the three non-ADR scoped files. To avoid a self-referential digest, the ADR digest is computed over the full ADR after replacing the complete `### Exact approval binding` section with the fixed UTF-8 sentinel `### Exact approval binding\n\n[APPROVAL_BINDING_EXCLUDED]\n\n`; every substantive ADR byte outside approval metadata remains bound. The approval envelope is not self-attesting: its exact values are externalized in the identified Human approval receipt, and `external_approval_receipt_sha256` makes any receipt edit detectable. The approval is invalid if the receipt digest, any proposed-content digest, base state, action semantics, path scope or authority rank changes. `expires_at: null` records that this approval has no time expiry; revocation or scope change still invalidates it.
+`proposed_content_sha256` binds the exact proposed content of the three non-ADR scoped files. To avoid a self-referential digest, the ADR digest is computed over the full ADR after replacing the complete `### Exact approval binding` section with the fixed UTF-8 sentinel `### Exact approval binding\n\n[APPROVAL_BINDING_EXCLUDED]\n\n`; every substantive ADR byte outside approval metadata remains bound. The approval envelope is not self-attesting: its exact values are externalized in the identified Human approval receipt. `external_approval_receipt_sha256` is computed over the exact GitHub API `body` Markdown source, CRLF-normalized to LF and UTF-8 encoded, preserving every other byte including trailing whitespace and terminal-newline presence; the referenced v2 body has no terminal newline. This makes any receipt edit deterministically detectable. The approval is invalid if the receipt digest, any proposed-content digest, base state, action semantics, path scope or authority rank changes. `expires_at: null` records that this approval has no time expiry; revocation or scope change still invalidates it.
 
 The immutable implementation receipt is PR #25. The final accepted head and merge commit are GitHub projection references only; they do not replace this Human approval.
 
