@@ -32,7 +32,7 @@ This ADR records that direction as Human Constitutional Approval. The Agent did 
 approval_id: APPROVAL-KERNEL-VERTICAL-WORK-UNIT-0002
 change_id: KERNEL-CHANGE-0002
 approved_state_fingerprint: sha256:86b6225ea4f7279535b4fb8438a9f72567b11912cea7755c20019b61889a513f
-approved_action_fingerprint: sha256:2727bfd0ef7ca7ead28b76366d7322e244cf5684fc2da1d901a12ed7d4a2fb06
+approved_action_fingerprint: sha256:7dde9098006afe46dd0550b37649424039c9c1cbdbf1ada94572bf7cb24dd653
 approved_by: github:manosube
 approved_at: 2026-08-31
 expires_at: null
@@ -54,7 +54,7 @@ The fingerprints above are SHA-256 digests over UTF-8 canonical JSON with lexico
 
 ```json
 {"base_commit":"7db2055330bf21458d05628c09bee7d309083dbf","repository":"manosube/manosube-agent-civilization-os"}
-{"action":"ADD_VERTICAL_KERNEL_WORK_UNIT_DELIVERY_PROTOCOL","affected_paths":["00_KERNEL/KERNEL_INDEX.md","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md","ORIGIN.md","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md"],"authority_rank":5,"canonical_cycle_change":false,"change_id":"KERNEL-CHANGE-0002","kernel_element_count_change":0,"proposed_content_sha256":{"00_KERNEL/KERNEL_INDEX.md":"02dc0737f5798fcf165b56af8997b95b7c27d569af419b04634cd84b085c645f","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md":"e539bfcc42a98c694abb1c534187e03dc383440d807d56d6eeca086a7d366039","ORIGIN.md":"ad0f3fbeeea9ce496b8cb97041d4aecc08cbf464f9833f65d34b7d9316b5810d","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md#semantic-content":"c43c6fc35fa33960ee719b0e0893acafda55eb5f0286b4d110f98ca59a53fc75"}}
+{"action":"ADD_VERTICAL_KERNEL_WORK_UNIT_DELIVERY_PROTOCOL","affected_paths":["00_KERNEL/KERNEL_INDEX.md","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md","ORIGIN.md","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md"],"authority_rank":5,"canonical_cycle_change":false,"change_id":"KERNEL-CHANGE-0002","kernel_element_count_change":0,"proposed_content_sha256":{"00_KERNEL/KERNEL_INDEX.md":"02dc0737f5798fcf165b56af8997b95b7c27d569af419b04634cd84b085c645f","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md":"b2bf627cee345441b456ac025639a634c0e3f3598bba35edca88ef7d84f770ac","ORIGIN.md":"ad0f3fbeeea9ce496b8cb97041d4aecc08cbf464f9833f65d34b7d9316b5810d","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md#semantic-content":"c43c6fc35fa33960ee719b0e0893acafda55eb5f0286b4d110f98ca59a53fc75"}}
 ```
 
 `proposed_content_sha256` binds the exact proposed content of the three non-ADR scoped files. To avoid a self-referential digest, the ADR digest is computed over the full ADR after replacing the complete `### Exact approval binding` section with the fixed UTF-8 sentinel `### Exact approval binding\n\n[APPROVAL_BINDING_EXCLUDED]\n\n`; every substantive ADR byte outside approval metadata remains bound. The approval is invalid if any bound proposed-content digest, base state, action semantics, path scope or authority rank changes. `expires_at: null` records that this approval has no time expiry; revocation or scope change still invalidates it.
