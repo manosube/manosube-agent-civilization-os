@@ -66,13 +66,13 @@ The Agent MUST issue a concise status and revised forecast when any of the follo
 5. scope materially expands or contracts;
 6. an actual blocker or error occurs.
 
-The update MUST state the current work state, what changed, and a new time range. If work continues beyond ten minutes, further updates MUST occur at meaningful state changes and no less often than each additional ten-minute boundary.
+The update MUST state the current work state, what changed, and a new time range. When the state is `EXTERNAL_REVIEW_WAIT` and external latency cannot be estimated honestly, `再予測: 不明` plus the next observation checkpoint satisfies this requirement. If work continues beyond ten minutes, further updates MUST occur at meaningful state changes and no less often than each additional ten-minute boundary.
 
 ---
 
 ## 5. External waits
 
-When waiting for a review, build service, remote API, approval, or other external system, the Agent MUST report:
+When waiting for a review, build service, remote API, delegated machine approval, or other external system that requires no new human action, the Agent MUST report:
 
 ```text
 状態: EXTERNAL_REVIEW_WAIT
@@ -82,6 +82,8 @@ When waiting for a review, build service, remote API, approval, or other externa
 ```
 
 If external latency cannot be estimated honestly, the Agent MUST say `再予測: 不明` and provide the next observation checkpoint. It MUST NOT repeatedly claim that completion is imminent without new evidence.
+
+When progress instead requires a new human decision, authorization, approval, or information, `BLOCKED` takes precedence over `EXTERNAL_REVIEW_WAIT`.
 
 ---
 
