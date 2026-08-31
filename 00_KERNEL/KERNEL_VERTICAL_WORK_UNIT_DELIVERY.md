@@ -282,7 +282,7 @@ EXECUTOR_SELF_REVIEW_AS_ACCEPTANCE=false
 
 The execution and acceptance capabilities MAY be supplied by the same vendor or application only when their agent/session/action lineages are separately identifiable and the acceptance lineage receives the repository result as an independent observation. A Human who directly performs the acceptance inspection also satisfies the distinct acceptance boundary. A renamed executor self-review does not.
 
-The acceptance evidence MUST record both lineage identities, the reviewed proposed-state identity and the independence result. If distinct lineage cannot be evidenced, acceptance fails closed.
+The acceptance evidence MUST record both lineage identities, the reviewed base-state identity, the reviewed proposed-state identity, the exact change-review / acceptance-surface receipt, and the independence result. Evidence is invalid if the base, proposed state, Change boundary or review-surface receipt differs. If distinct lineage or either state identity cannot be evidenced, acceptance fails closed.
 
 Before Human acceptance, the Structural Advisor MUST independently inspect:
 
