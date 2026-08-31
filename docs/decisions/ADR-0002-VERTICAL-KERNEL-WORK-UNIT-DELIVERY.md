@@ -31,8 +31,11 @@ This ADR records that direction as Human Constitutional Approval. The Agent did 
 ```yaml
 approval_id: APPROVAL-KERNEL-VERTICAL-WORK-UNIT-0002
 change_id: KERNEL-CHANGE-0002
+approved_state_fingerprint: sha256:86b6225ea4f7279535b4fb8438a9f72567b11912cea7755c20019b61889a513f
+approved_action_fingerprint: sha256:cea8fa541701908cb6ad17028dc14c2bf24a0f0df05eb501e11bd8ab0679e4c0
 approved_by: github:manosube
 approved_at: 2026-08-31
+expires_at: null
 base_repository: manosube/manosube-agent-civilization-os
 base_commit: 7db2055330bf21458d05628c09bee7d309083dbf
 scope:
@@ -46,6 +49,15 @@ canonical_cycle_change: false
 merge_authority: HUMAN
 status: APPROVED
 ```
+
+The fingerprints above are SHA-256 digests over UTF-8 canonical JSON with lexicographically ordered object keys and no insignificant whitespace:
+
+```json
+{"base_commit":"7db2055330bf21458d05628c09bee7d309083dbf","repository":"manosube/manosube-agent-civilization-os"}
+{"action":"ADD_VERTICAL_KERNEL_WORK_UNIT_DELIVERY_PROTOCOL","affected_paths":["00_KERNEL/KERNEL_INDEX.md","00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md","ORIGIN.md","docs/decisions/ADR-0002-VERTICAL-KERNEL-WORK-UNIT-DELIVERY.md"],"authority_rank":5,"canonical_cycle_change":false,"change_id":"KERNEL-CHANGE-0002","kernel_element_count_change":0}
+```
+
+The approval is invalid if the bound base state, action semantics, path scope or authority rank changes. `expires_at: null` records that this approval has no time expiry; revocation or scope change still invalidates it.
 
 The immutable implementation receipt is PR #25. The final accepted head and merge commit are GitHub projection references only; they do not replace this Human approval.
 
