@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/difference_supersession_relation.schema.json",
+  "title": "Difference Supersession Relation",
+  "type": "object",
+  "required": ["schema_version", "supersession_relation_id", "old_difference_ref", "new_difference_ref", "old_terminal_event_ref", "new_genesis_event_ref", "reason_codes", "evidence_refs"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "supersession_relation_id": {"type": "string", "pattern": "^D-SUP-[0-9A-F]{64}$"},
+    "old_difference_ref": {"$ref": "../common/reference.schema.json"},
+    "new_difference_ref": {"$ref": "../common/reference.schema.json"},
+    "old_terminal_event_ref": {"$ref": "../common/reference.schema.json"},
+    "new_genesis_event_ref": {"$ref": "../common/reference.schema.json"},
+    "reason_codes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["PROJECT_CHANGED", "OBJECTIVE_SEMANTICS_CHANGED", "TARGET_PREDICATE_CHANGED", "SUBJECT_OR_PREDICATE_CHANGED", "BOUNDARY_CHANGED", "TARGET_STATE_SEMANTICS_CHANGED", "MISMATCH_SEMANTICS_CHANGED", "CLOSURE_POLICY_SEMANTICS_CHANGED", "IDENTITY_PROFILE_CHANGED"]}},
+    "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}
+  },
+  "additionalProperties": false
+}

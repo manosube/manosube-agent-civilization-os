@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/evidence_sufficiency_result.schema.json",
+  "title": "Resolved Evidence Sufficiency Result", "type": "object",
+  "required": ["schema_version", "evidence_sufficiency_id", "difference_ref", "policy_ref", "evidence_level", "evidence_refs", "result", "evaluated_at"],
+  "properties": {
+    "schema_version": {"const": "0.1"}, "evidence_sufficiency_id": {"type": "string", "pattern": "^EVID-SUFF-[0-9A-F]{64}$"}, "difference_ref": {"$ref": "../common/reference.schema.json"},
+    "policy_ref": {"$ref": "difference.schema.json#/$defs/versioned_reference"}, "evidence_level": {"enum": ["E0", "E1", "E2", "E3", "E4", "E5", "E6"]},
+    "evidence_refs": {"$ref": "difference.schema.json#/$defs/unordered_references"}, "result": {"enum": ["SUFFICIENT", "INSUFFICIENT", "UNKNOWN", "STALE"]}, "evaluated_at": {"$ref": "../common/timestamp.schema.json"}
+  }, "additionalProperties": false
+}

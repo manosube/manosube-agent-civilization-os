@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/difference.schema.json",
+  "title": "Canonical Difference Record",
+  "type": "object",
+  "required": ["schema_version", "difference_id", "project_id", "objective_revision_ref", "objective_semantic_fingerprint", "target_predicate_ref", "normalized_target_state", "objective_scope_binding", "observed_state_revision", "observed_state_fingerprint", "observation_refs", "observation_evidence_refs", "normalized_observed_state", "structural_difference", "subject", "observation_scope", "effective_boundary", "impact", "risk_class", "authority_required", "closure_policy", "genesis_event_ref"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "objective_revision_ref": {"$ref": "../common/reference.schema.json"},
+    "objective_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"},
+    "target_predicate_ref": {"$ref": "../common/reference.schema.json"},
+    "normalized_target_state": {"$ref": "#/$defs/normalized_target_state"},
+    "objective_scope_binding": {"$ref": "#/$defs/objective_scope_binding"},
+    "observed_state_revision": {"type": "integer", "minimum": 0},
+    "observed_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "observation_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "observation_evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "normalized_observed_state": {"$ref": "#/$defs/normalized_observed_state"},
+    "structural_difference": {"$ref": "#/$defs/structural_difference"},
+    "subject": {"type": "string", "minLength": 1},
+    "observation_scope": {"type": "string", "minLength": 1},
+    "effective_boundary": {"$ref": "#/$defs/effective_boundary"},
+    "impact": {"type": "object"},
+    "risk_class": {"enum": ["LOW", "MODERATE", "HIGH", "CRITICAL"]},
+    "authority_required": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}},
+    "closure_policy": {"$ref": "#/$defs/versioned_reference"},
+    "genesis_event_ref": {"$ref": "../common/reference.schema.json"}
+  },
+  "$defs": {
+    "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "nullable_timestamp": {"oneOf": [{"type": "null"}, {"$ref": "../common/timestamp.schema.json"}]},
+    "canonical_value": {
+      "oneOf": [
+        {"type": "null"}, {"type": "boolean"}, {"type": "integer"}, {"type": "string"},
+        {"type": "object", "not": {"required": ["collection_kind"]}, "additionalProperties": {"$ref": "#/$defs/canonical_value"}},
+        {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "ORDERED_LIST"}, "members": {"type": "array", "items": {"$ref": "#/$defs/canonical_value"}}}, "additionalProperties": false},
+        {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/canonical_value"}}}, "additionalProperties": false}
+      ]
+    },
+    "versioned_reference": {
+      "type": "object", "required": ["kind", "id", "version", "semantic_fingerprint"],
+      "properties": {"kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}, "id": {"$ref": "../common/identity.schema.json"}, "version": {"const": "0.1"}, "semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}}, "additionalProperties": false
+    },
+    "unordered_references": {
+      "type": "object", "required": ["collection_kind", "members"],
+      "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}}, "additionalProperties": false
+    },
+    "normalized_target_state": {
+      "type": "object", "required": ["subject", "operator", "expected_value", "expected_value_type", "observation_scope", "evidence_requirement", "unknown_policy", "criticality"],
+      "properties": {"subject": {"type": "string", "minLength": 1}, "operator": {"enum": ["equals", "not_equals", "contains", "exists", "all", "none"]}, "expected_value": {}, "expected_value_type": {"enum": ["NULL", "BOOLEAN", "INTEGER", "STRING", "STRUCTURED", "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE", "ORDERED_COLLECTION", "UNORDERED_COLLECTION"]}, "observation_scope": {"type": "string", "minLength": 1}, "evidence_requirement": {"enum": ["E0", "E1", "E2", "E3", "E4", "E5", "E6"]}, "unknown_policy": {"const": "INCOMPLETE"}, "criticality": {"enum": ["mandatory", "advisory"]}},
+      "allOf": [
+        {"if": {"properties": {"expected_value_type": {"const": "NULL"}}}, "then": {"properties": {"expected_value": {"type": "null"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "BOOLEAN"}}}, "then": {"properties": {"expected_value": {"type": "boolean"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "INTEGER"}}}, "then": {"properties": {"expected_value": {"type": "integer"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "STRING"}}}, "then": {"properties": {"expected_value": {"type": "string"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "STRUCTURED"}}}, "then": {"properties": {"expected_value": {"type": "object", "not": {"required": ["collection_kind"]}, "additionalProperties": {"$ref": "#/$defs/canonical_value"}}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "DECIMAL"}}}, "then": {"properties": {"expected_value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "TIMESTAMP"}}}, "then": {"properties": {"expected_value": {"$ref": "../common/timestamp.schema.json"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "DURATION"}}}, "then": {"properties": {"expected_value": {"type": "string", "pattern": "^P"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "IDENTITY_REFERENCE"}}}, "then": {"properties": {"expected_value": {"$ref": "../common/reference.schema.json"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "ORDERED_COLLECTION"}}}, "then": {"properties": {"expected_value": {"$ref": "#/$defs/ordered_values"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "UNORDERED_COLLECTION"}}}, "then": {"properties": {"expected_value": {"$ref": "#/$defs/unordered_values"}}}}
+      ], "additionalProperties": false
+    },
+    "ordered_values": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "ORDERED_LIST"}, "members": {"type": "array", "items": {"$ref": "#/$defs/canonical_value"}}}, "additionalProperties": false},
+    "unordered_values": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/canonical_value"}}}, "additionalProperties": false},
+    "normalized_observed_state": {
+      "type": "object", "required": ["subject", "objective_scope_binding", "effective_boundary", "knowledge_status", "value_candidates"],
+      "properties": {"subject": {"type": "string", "minLength": 1}, "objective_scope_binding": {"$ref": "#/$defs/objective_scope_binding"}, "effective_boundary": {"$ref": "#/$defs/effective_boundary"}, "knowledge_status": {"enum": ["KNOWN", "ABSENT", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE", "CONFLICTED"]}, "value_candidates": {"$ref": "#/$defs/unordered_value_candidates"}}, "additionalProperties": false
+    },
+    "unordered_value_candidates": {
+      "type": "object", "required": ["collection_kind", "members"],
+      "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/value_candidate"}}}, "additionalProperties": false
+    },
+    "value_candidate": {
+      "type": "object", "required": ["value", "value_type", "unit", "fact_predicate", "effective_boundary"],
+      "properties": {"value": {}, "value_type": {"enum": ["NULL", "BOOLEAN", "INTEGER", "STRING", "STRUCTURED", "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE", "ORDERED_COLLECTION", "UNORDERED_COLLECTION"]}, "unit": {"type": ["string", "null"]}, "fact_predicate": {"type": "string", "minLength": 1}, "effective_boundary": {"$ref": "#/$defs/effective_boundary"}},
+      "allOf": [
+        {"if": {"properties": {"value_type": {"const": "NULL"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"value_type": {"const": "BOOLEAN"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "boolean"}}}},
+        {"if": {"properties": {"value_type": {"const": "INTEGER"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "integer"}}}},
+        {"if": {"properties": {"value_type": {"const": "STRING"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string"}}}},
+        {"if": {"properties": {"value_type": {"const": "STRUCTURED"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonical_value"}}}}},
+        {"if": {"properties": {"value_type": {"const": "DECIMAL"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"}}}},
+        {"if": {"properties": {"value_type": {"const": "TIMESTAMP"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "../common/timestamp.schema.json"}}}},
+        {"if": {"properties": {"value_type": {"const": "DURATION"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^P"}}}},
+        {"if": {"properties": {"value_type": {"const": "IDENTITY_REFERENCE"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "../common/reference.schema.json"}}}},
+        {"if": {"properties": {"value_type": {"const": "ORDERED_COLLECTION"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "#/$defs/ordered_values"}}}},
+        {"if": {"properties": {"value_type": {"const": "UNORDERED_COLLECTION"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "#/$defs/unordered_values"}}}}
+      ], "additionalProperties": false
+    },
+    "objective_scope_binding": {
+      "type": "object", "required": ["objective_scope_name", "scope_ref", "scope_schema_version", "resolved_scope_record_sha256"],
+      "properties": {"objective_scope_name": {"type": "string", "minLength": 1}, "scope_ref": {"$ref": "../common/reference.schema.json"}, "scope_schema_version": {"const": "0.1"}, "resolved_scope_record_sha256": {"$ref": "#/$defs/semantic_fingerprint"}}, "additionalProperties": false
+    },
+    "effective_boundary": {
+      "type": "object", "required": ["kind", "scope_ref", "resolved_scope_record_sha256", "target_effective_window", "source_snapshot_refs"],
+      "properties": {
+        "kind": {"const": "OBSERVATION_SCOPE_BOUNDARY"}, "scope_ref": {"$ref": "../common/reference.schema.json"}, "resolved_scope_record_sha256": {"$ref": "#/$defs/semantic_fingerprint"},
+        "target_effective_window": {"type": "object", "required": ["start", "end"], "properties": {"start": {"$ref": "#/$defs/nullable_timestamp"}, "end": {"$ref": "#/$defs/nullable_timestamp"}}, "additionalProperties": false},
+        "source_snapshot_refs": {"$ref": "#/$defs/unordered_references"}
+      }, "additionalProperties": false
+    },
+    "structural_difference": {
+      "type": "object", "required": ["mismatch_kind", "observed_knowledge_status", "target_value", "observed_values", "target_value_type", "observed_value_types", "target_cardinality", "observed_cardinality", "comparison_result", "comparison_profile"],
+      "properties": {"mismatch_kind": {"enum": ["MISSING", "UNEXPECTED", "VALUE_MISMATCH", "TYPE_MISMATCH", "CARDINALITY_MISMATCH", "RELATION_MISMATCH", "BOUNDARY_MISMATCH", "CONFLICT", "UNKNOWN"]}, "observed_knowledge_status": {"enum": ["KNOWN", "ABSENT", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE", "CONFLICTED"]}, "target_value": {}, "observed_values": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true}}, "additionalProperties": false}, "target_value_type": {"type": "string", "minLength": 1}, "observed_value_types": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}, "additionalProperties": false}, "target_cardinality": {"type": ["integer", "null"], "minimum": 0}, "observed_cardinality": {"type": ["integer", "null"], "minimum": 0}, "comparison_result": {"enum": ["SATISFIED", "NOT_SATISFIED", "UNKNOWN"]}, "comparison_profile": {"const": "MANOSUBE-DIFFERENCE-COMPARISON-0.1"}}, "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

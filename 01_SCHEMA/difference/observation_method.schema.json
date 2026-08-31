@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/observation_method.schema.json",
+  "title": "Difference Observation Method",
+  "type": "object",
+  "required": ["schema_version", "record_kind", "observation_method_id", "method_profile", "procedure_kind", "procedure_ref", "normalization_profile", "input_contract_ref", "output_contract_refs", "execution_boundary_ref"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "record_kind": {"const": "OBSERVATION_METHOD"},
+    "observation_method_id": {"type": "string", "pattern": "^OBS-METHOD-[0-9A-F]{64}$"},
+    "method_profile": {"const": "MANOSUBE-OBSERVATION-METHOD-SHA256-0.1"},
+    "procedure_kind": {"const": "CANONICAL_OBSERVER"},
+    "procedure_ref": {"$ref": "#/$defs/procedure_ref"},
+    "normalization_profile": {"const": "FIXTURE-0.1"},
+    "input_contract_ref": {"$ref": "#/$defs/schema_ref"},
+    "output_contract_refs": {"$ref": "#/$defs/schema_refs"},
+    "execution_boundary_ref": {"$ref": "#/$defs/boundary_ref"}
+  },
+  "$defs": {
+    "procedure_ref": {"type": "object", "required": ["kind", "id", "version", "semantic_fingerprint"], "properties": {"kind": {"const": "observer_procedure"}, "id": {"type": "string", "minLength": 1}, "version": {"const": "0.1"}, "semantic_fingerprint": {"$ref": "difference.schema.json#/$defs/semantic_fingerprint"}}, "additionalProperties": false},
+    "schema_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "schema"}, "id": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "schema_refs": {"type": "object", "required": ["collection_kind", "members"], "properties": {"collection_kind": {"const": "UNORDERED_SET"}, "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/schema_ref"}}}, "additionalProperties": false},
+    "boundary_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "execution_boundary"}, "id": {"type": "string", "minLength": 1}}, "additionalProperties": false}
+  },
+  "additionalProperties": false
+}
