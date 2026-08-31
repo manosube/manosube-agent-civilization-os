@@ -66,7 +66,7 @@ The Agent MUST issue a concise status and revised forecast when any of the follo
 5. scope materially expands or contracts;
 6. an actual blocker or error occurs.
 
-The update MUST state the current work state, what changed, and a new time range. When the state is `EXTERNAL_REVIEW_WAIT` and external latency cannot be estimated honestly, `再予測: 不明` plus the next observation checkpoint satisfies this requirement. If work continues beyond ten minutes, further updates MUST occur at meaningful state changes and no less often than each additional ten-minute boundary.
+The update MUST state the current work state, what changed, and a new time range. When the state is `EXTERNAL_REVIEW_WAIT`, `BLOCKED`, or `ERROR` and the remaining latency cannot be estimated honestly, `再予測: 不明` plus the next observation or recovery checkpoint satisfies this requirement. If work continues beyond ten minutes, further updates MUST occur at meaningful state changes and no less often than each additional ten-minute boundary.
 
 ---
 
