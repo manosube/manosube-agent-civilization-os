@@ -224,7 +224,61 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
 #: the value is readable and wrong, which is the cross-record pass's question, not this
 #: gate's. That line is what keeps a forged-but-readable payload reporting as the defect it
 #: is rather than as a schema failure.
-_UNREADABLE_VALIDATORS = ("required", "type")
+#: Public because the Difference emitted-bundle gate decides the same question and must not
+#: be able to answer it differently. One declaration of what "unreadable" means, imported by
+#: both, rather than the same two keywords written down twice.
+UNREADABLE_VALIDATORS = ("required", "type")
+
+#: Schema keywords that make what follows them conditional on the record's own content.
+_CONDITIONAL_KEYWORDS: frozenset[str] = frozenset({"if", "then", "else", "not"})
+
+
+def is_unreadable_error(error: Any) -> bool:
+    """Whether one schema error means the value cannot be *read*, as opposed to being wrong.
+
+    ``required`` and ``type`` are the direct cases and are what the Observation schemas use.
+    The Difference schemas constrain the same thing indirectly -- a status through
+    ``{"$ref": "#/$defs/status"}`` and a reference through
+    ``{"oneOf": [{"type": "null"}, {"$ref": ...}]}`` -- so a value of the wrong JSON type
+    surfaces under ``enum`` or ``oneOf`` and the two keywords above never see it. Those are
+    the same mechanical failure reported under a different keyword, and reading them as
+    semantic is what let a ``dict`` reach a membership test and raise ``unhashable type``.
+
+    The two indirect clauses are written so they cannot swallow a semantic defect:
+
+    * an ``enum``/``const`` failure counts only when the instance is a list or a dict, which
+      no enum member ever is. A *string* that is simply not in the enum stays semantic and
+      keeps its own diagnosis -- that is the forged-``CONFLICTED`` case ADR-0013 turns on.
+    * a ``oneOf`` failure counts only when *every* branch rejected the value for a reason
+      that is itself mechanical -- applied recursively, since a branch is often a ``$ref``
+      whose own failure is an ``enum``. If any single branch's objections are purely
+      semantic then that branch could have held this value's shape, so the value is
+      readable and wrong rather than unreadable. A reference naming the wrong ``kind`` is
+      the case that keeps: the null branch rejects it on ``type``, but the reference branch
+      objects only on ``enum`` against a *string*, so it stays semantic.
+    """
+
+    # A failure reached through a conditional is never mechanical, whatever keyword it
+    # surfaces under. `if/then/else` and `not` say what a value must be *given another
+    # field's value*, so a `type` error underneath one means the record is internally
+    # inconsistent -- readable, and wrong. Reading those as unreadable pre-empted exactly
+    # the diagnosis they exist to give: a lifecycle event moved to CLOSED while keeping its
+    # blocker payload reported as three "is not of type 'null'" schema errors instead of as
+    # the closed-reflow commitment mismatch it is.
+    if any(step in _CONDITIONAL_KEYWORDS for step in error.absolute_schema_path):
+        return False
+    if error.validator in UNREADABLE_VALIDATORS:
+        return True
+    if error.validator in ("enum", "const"):
+        return isinstance(error.instance, (list, dict))
+    if error.validator == "oneOf":
+        branches: dict[Any, list[Any]] = {}
+        for sub in error.context or ():
+            branches.setdefault(sub.schema_path[0] if sub.schema_path else 0, []).append(sub)
+        return bool(branches) and all(
+            any(is_unreadable_error(sub) for sub in subs) for subs in branches.values()
+        )
+    return False
 
 
 def observation_completeness_errors(bundle: dict[str, Any]) -> list[str]:
@@ -250,7 +304,7 @@ def observation_completeness_errors(bundle: dict[str, Any]) -> list[str]:
         validator = schema_validators[OBSERVATION_SCHEMA_BASE + schema_name]
         for record in _records(bundle, group):
             for error in validator.iter_errors(record):
-                if error.validator in _UNREADABLE_VALIDATORS:
+                if is_unreadable_error(error):
                     errors.append(f"{group}: {error.message}")
     return errors
 

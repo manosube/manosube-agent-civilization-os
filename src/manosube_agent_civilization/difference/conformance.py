@@ -38,6 +38,7 @@ from manosube_agent_civilization.observation.identity import (
     fact_identity,
     observation_identity,
 )
+from manosube_agent_civilization.observation.verification import is_unreadable_error
 
 from .canonical import canonical_bytes, content_address
 from .errors import DifferenceError, IdentityCollisionError
@@ -50,7 +51,7 @@ from .identity import (
 )
 from .policy import closure_policy_semantic_errors
 from .selection import unique_target_predicates
-from .validation import SCHEMA_BASE, require_schema_version, validate_record
+from .validation import SCHEMA_BASE, require_schema_version, validate_record, validators
 
 DIFFERENCE_BASE = SCHEMA_BASE + "difference/"
 OBSERVATION_BASE = SCHEMA_BASE + "observation/"
@@ -244,6 +245,21 @@ EMITTED_SECTIONS: dict[str, str] = {
     "supersession_relations": "difference_supersession_relation",
 }
 
+#: The returned-bundle keys every consumer indexes unconditionally, so a bundle without one
+#: is unreadable rather than merely incomplete. Declared here, next to the sections and the
+#: envelope, because the Engine's output gate and the independent validator's entry gate are
+#: the same rule and must not be able to disagree about it.
+REQUIRED_EMITTED_KEYS: frozenset[str] = frozenset(
+    {
+        "differences",
+        "events",
+        "policies",
+        "evaluations",
+        "supersession_relations",
+        "materialized_status",
+    }
+)
+
 #: Returned-bundle keys that are the bundle's own envelope, not record collections.
 ENVELOPE_KEYS: frozenset[str] = frozenset(
     {
@@ -372,6 +388,55 @@ def validate_state_fingerprint(fingerprint: Any, context: str) -> None:
     validate_record(fingerprint, STATE_FINGERPRINT_SCHEMA, base=STATE_FINGERPRINT_BASE)
 
 
+def emitted_bundle_readability_errors(bundle: Any) -> list[str]:
+    """Return only what makes an emitted bundle impossible to *read*.
+
+    A consumer of a returned bundle -- the independent validator above all -- indexes every
+    section and every record to find what it needs, so an absent section or a record missing
+    a required property raises an incidental ``KeyError`` or ``TypeError`` out of whichever
+    comprehension reaches it first, in place of the canonical answer it owes.
+
+    Narrow on purpose, and the narrowing is the whole point, exactly as it is for the
+    Observation side's ``observation_completeness_errors``: this gate answers *readability*
+    and nothing else. It shares that owner's declaration of which schema keywords are
+    mechanical read failures rather than restating it, and it deliberately does **not**
+    recompute identities -- doing so was tried, and it pre-empted the cross-record diagnosis
+    for a bundle that was both unreadable and cross-record-invalid, so a supersession cycle
+    reported as a schema failure instead of as a cycle. Completeness and admissibility are
+    distinct obligations (ADR-0013); a bundle that is complete but wrong is silent here and
+    keeps its own diagnosis.
+    """
+
+    if not isinstance(bundle, dict):
+        return ["emitted bundle is not a canonical object"]
+    missing = REQUIRED_EMITTED_KEYS - set(bundle)
+    if missing:
+        return [f"emitted bundle omits required sections: {sorted(missing)}"]
+    errors: list[str] = []
+    if not isinstance(bundle["materialized_status"], dict):
+        errors.append("emitted bundle materialized status is not a canonical object")
+    schema_validators = validators()
+    for section, type_name in EMITTED_SECTIONS.items():
+        if section not in bundle:
+            continue
+        records = bundle[section]
+        if not isinstance(records, list):
+            errors.append(f"emitted section is not a list of records: {section}")
+            continue
+        canonical = RECORD_TYPES[type_name]
+        for record in records:
+            if not isinstance(record, dict):
+                errors.append(f"emitted record is not an object: {section}")
+                continue
+            if canonical.schema is None:
+                continue
+            validator = schema_validators[canonical.base + canonical.schema]
+            for error in validator.iter_errors(record):
+                if is_unreadable_error(error):
+                    errors.append(f"{section}: {error.message}")
+    return errors
+
+
 def validate_emitted_bundle(bundle: dict[str, Any]) -> None:
     """The final output conformance gate: nothing is returned unless the whole bundle passes.
 
@@ -386,6 +451,12 @@ def validate_emitted_bundle(bundle: dict[str, Any]) -> None:
     unknown = set(bundle) - set(EMITTED_SECTIONS) - ENVELOPE_KEYS
     if unknown:
         raise DifferenceError(f"returned bundle carries unknown sections: {sorted(unknown)}")
+    # Requiring the always-present sections is deliberately *not* done here. This gate is
+    # section-wise and is applied to partial bundles by design; "every section a consumer
+    # indexes is present" is a property of a whole returned bundle, so it belongs to
+    # ``emitted_bundle_readability_errors`` above, which the consumer calls. The Engine's
+    # own compliance with it is asserted directly against what ``derive_differences``
+    # returns, rather than by narrowing a gate that has another job.
     for section, type_name in EMITTED_SECTIONS.items():
         if section not in bundle:
             continue

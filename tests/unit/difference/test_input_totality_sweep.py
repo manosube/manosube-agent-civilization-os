@@ -205,7 +205,7 @@ def outcome(request: Any, derive: Any = derive_differences) -> str:
         derive(request)
     except DifferenceError:
         return "REJECTED"
-    except Exception as error:  # noqa: BLE001 - anything but DifferenceError is the finding
+    except Exception as error:
         return f"RAW:{type(error).__name__}: {error}"
     return "DERIVED"
 
@@ -263,7 +263,7 @@ def test_every_mutation_applies_or_the_measurement_fails() -> None:
         request = deepcopy(BUILT[name])
         try:
             _mutate(request, path, action)
-        except Exception as error:  # noqa: BLE001 - the fault is the finding
+        except Exception as error:
             faults.append(f"{name} {path} [{action}]: {type(error).__name__}: {error}")
     assert faults == [], f"{len(faults)} mutations could not be applied: {faults[:5]}"
 
@@ -278,7 +278,7 @@ def test_every_path_round_trips_through_the_parser() -> None:
             try:
                 for _kind, step in _steps(path):
                     node = node[step]
-            except Exception as error:  # noqa: BLE001 - the fault is the finding
+            except Exception as error:
                 unreachable.append(f"{name} {path}: {type(error).__name__}: {error}")
     assert unreachable == [], f"{len(unreachable)} paths do not resolve: {unreachable[:5]}"
 
@@ -291,7 +291,8 @@ def test_the_classifier_detects_a_known_raw_exception() -> None:
     """
 
     def raises_raw(_request: Any) -> None:
-        {}["absent"]  # noqa: B018 - a deliberate KeyError, the shape being detected
+        empty: dict[str, str] = {}
+        empty["absent"]  # a deliberate KeyError: the exact shape being detected
 
     def raises_canonical(_request: Any) -> None:
         raise DifferenceError("a canonical rejection")

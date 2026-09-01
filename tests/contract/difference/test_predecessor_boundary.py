@@ -20,6 +20,8 @@ from manosube_agent_civilization.difference.predecessor import (
     CARRIED_TYPES,
     LATER_PHASE_SECTIONS,
     NO_CANONICAL_SCHEMA_SECTIONS,
+    PREDECESSOR_SECTIONS,
+    REQUIRED_PREDECESSOR_SECTIONS,
     validate_carried_records,
 )
 
@@ -78,8 +80,19 @@ def test_the_bundle_envelope_is_accepted_and_carries_nothing() -> None:
 
 
 def test_the_predecessor_itself_accepts_only_three_keys() -> None:
+    """The key set is closed in *both* directions, from one declaration.
+
+    Rejecting unknown sections was the only half stated, so ``predecessor["difference"]``
+    indexed a section nothing had established was there. Both halves now read the same
+    declaration in the boundary's own module rather than a set literal inlined here.
+    """
+
+    assert {"difference", "events", "context"} == PREDECESSOR_SECTIONS
+    assert {"difference", "events"} == REQUIRED_PREDECESSOR_SECTIONS
+    assert REQUIRED_PREDECESSOR_SECTIONS < PREDECESSOR_SECTIONS
     body = ENGINE_SOURCE.split("def _validate_predecessor(")[1].split("\ndef ")[0]
-    assert 'unknown = set(predecessor) - {"difference", "events", "context"}' in body
+    assert "unknown = set(predecessor) - PREDECESSOR_SECTIONS" in body
+    assert "missing = REQUIRED_PREDECESSOR_SECTIONS - set(predecessor)" in body
     assert "validate_carried_records(predecessor.get(\"context\", {}))" in body
     assert "validate_carried_difference(difference)" in body
     assert "validate_carried_event(event, difference" in body

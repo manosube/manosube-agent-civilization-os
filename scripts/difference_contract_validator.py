@@ -12,6 +12,9 @@ import shutil
 import subprocess
 from typing import Any
 
+from manosube_agent_civilization.difference.conformance import (
+    emitted_bundle_readability_errors,
+)
 from manosube_agent_civilization.difference.envelope import (
     satisfaction_reconciliation_errors,
 )
@@ -57,6 +60,23 @@ def _index(records: list[dict[str, Any]], key: str, errors: list[str]) -> dict[s
             errors.append(f"duplicate canonical record: {identity}")
         indexed[identity] = record
     return indexed
+
+
+def _snapshot_time(record: dict[str, Any], errors: list[str]) -> datetime | None:
+    """Parse one source snapshot time, reporting rather than raising when it will not.
+
+    The readability gate settles that the property is present and is a string; whether that
+    string is a canonical timestamp is a *semantic* question, and this validator answers
+    semantic questions by returning them. Calling ``fromisoformat`` on it directly turned a
+    reportable violation into a ``ValueError`` out of the middle of the pass.
+    """
+
+    raw = record["time_boundary"]["source_snapshot_time"]
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        errors.append(f"source snapshot time is not a canonical timestamp: {raw}")
+        return None
 
 
 def _ref_id(reference: dict[str, Any] | None) -> str | None:
@@ -753,7 +773,25 @@ def _kernel_invariant_definitions(kernel_source: dict[str, Any]) -> dict[str, st
 
 
 def validate_bundle(bundle: dict[str, Any]) -> list[str]:
-    """Return deterministic Difference cross-record violations."""
+    """Return deterministic Difference cross-record violations.
+
+    This validator **returns** violations; it does not raise them. A raw ``KeyError`` or
+    ``TypeError`` out of it is therefore not a rejection -- it is the auditor failing to
+    answer, and an auditor that cannot answer cannot be the independent half of anything.
+    Enumerating mutated emitted bundles measured 1317 such cases across 198 sites, because
+    every rule below reads the bundle before anything establishes it can be read.
+
+    That is one defect, not 198. Readability is decided once, by a shared owner in
+    ``difference.conformance``, so the producer and the auditor cannot disagree about what a
+    readable bundle is and no second structural ruleset exists. It answers *only*
+    readability: recomputing identities here was tried and pre-empted the cross-record
+    diagnosis for a bundle that was both, so a supersession cycle reported as a schema
+    failure. A bundle that is complete but wrong is silent at the gate and keeps its own
+    diagnosis below.
+    """
+    unreadable = emitted_bundle_readability_errors(bundle)
+    if unreadable:
+        return unreadable
     errors: list[str] = []
     differences = _index(bundle["differences"], "difference_id", errors)
     events = _index(bundle["events"], "difference_event_id", errors)
@@ -879,9 +917,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     current_state_ref = bundle.get("current_state_ref")
     evidence_observed_at: dict[bytes, datetime] = {}
     for observation in observations.values():
-        observed_at = datetime.fromisoformat(
-            observation["time_boundary"]["source_snapshot_time"].replace("Z", "+00:00")
-        )
+        observed_at = _snapshot_time(observation, errors)
+        if observed_at is None:
+            continue
         for reference in observation["observation_evidence_refs"]:
             key = canonical_json_bytes(reference)
             previous_time = evidence_observed_at.get(key)
@@ -889,11 +927,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 observed_at if previous_time is None else min(previous_time, observed_at)
             )
     for negative in negative_observations.values():
-        observed_at = datetime.fromisoformat(
-            negative["time_boundary"]["source_snapshot_time"].replace(
-                "Z", "+00:00"
-            )
-        )
+        observed_at = _snapshot_time(negative, errors)
+        if observed_at is None:
+            continue
         related_evidence = list(negative["negative_evidence_refs"])
         related_evidence.extend(
             reference

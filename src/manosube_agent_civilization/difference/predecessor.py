@@ -110,6 +110,15 @@ BUNDLE_ENVELOPE_SECTIONS: frozenset[str] = frozenset(
 )
 
 
+#: The predecessor's own key set, declared once and closed in both directions. A closed key
+#: set is two rules -- no section the boundary does not know, and no section it does know
+#: missing -- and only the first was ever stated, so the required ones were indexed before
+#: anything established they were there. ``context`` is genuinely optional: a predecessor
+#: whose lineage the Observation bundle supplies in full carries none.
+PREDECESSOR_SECTIONS: frozenset[str] = frozenset({"difference", "events", "context"})
+REQUIRED_PREDECESSOR_SECTIONS: frozenset[str] = frozenset({"difference", "events"})
+
+
 def _describe(section: str, identity: Any) -> str:
     return f"{section}[{identity}]"
 
@@ -119,8 +128,14 @@ def validate_carried_records(context: dict[str, Any]) -> None:
 
     Every check here is decided by the record alone, so it runs before any record is
     merged into the returned bundle.
+
+    The first thing the boundary owes is that there is something to apply itself to. It
+    read the context's own key set before establishing the context was a mapping, which is
+    the same defect as the ones below it, one level further out.
     """
 
+    if not isinstance(context, dict):
+        raise DifferenceError("predecessor context is not a canonical object")
     unknown = set(context) - set(CARRIED_TYPES) - BUNDLE_ENVELOPE_SECTIONS
     if unknown:
         raise DifferenceError(

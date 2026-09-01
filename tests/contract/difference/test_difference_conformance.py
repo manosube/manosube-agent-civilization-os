@@ -467,19 +467,29 @@ def test_supersession_cycle_is_rejected() -> None:
     bundle["differences"].append(second)
     first_id = bundle["differences"][0]["difference_id"]
     bundle["supersession_relations"] = [
+        # Schema-complete on purpose. These records omitted `schema_version`,
+        # `reason_codes` and `evidence_refs`, and the auditor read them anyway because
+        # nothing settled readability first. The cycle rule is what this test is for, so
+        # the records it feeds must be readable or it proves the wrong thing.
         {
+            "schema_version": "0.1",
             "supersession_relation_id": "D-SUP-" + "A" * 64,
             "old_difference_ref": {"kind": "difference", "id": first_id},
             "new_difference_ref": {"kind": "difference", "id": second_id},
             "old_terminal_event_ref": {"kind": "difference_event", "id": "D-EVT-X"},
             "new_genesis_event_ref": {"kind": "difference_event", "id": "D-EVT-Y"},
+            "reason_codes": ["TARGET_PREDICATE_CHANGED"],
+            "evidence_refs": [],
         },
         {
+            "schema_version": "0.1",
             "supersession_relation_id": "D-SUP-" + "B" * 64,
             "old_difference_ref": {"kind": "difference", "id": second_id},
             "new_difference_ref": {"kind": "difference", "id": first_id},
             "old_terminal_event_ref": {"kind": "difference_event", "id": "D-EVT-Y"},
             "new_genesis_event_ref": {"kind": "difference_event", "id": "D-EVT-X"},
+            "reason_codes": ["TARGET_PREDICATE_CHANGED"],
+            "evidence_refs": [],
         },
     ]
     assert any("supersession cycle" in error for error in validate_bundle(bundle))
@@ -706,9 +716,25 @@ def test_reflow_claim_and_terminal_invariant_references_are_resolved() -> None:
         "evaluated_at": evaluation["evaluated_at"],
     }]
     evaluation["evaluation_mode"] = "CANDIDATE_TERMINAL"
+    # Schema-complete, for the same reason as the supersession relations above: a two-key
+    # stub is not an After State Candidate any consumer can read, so feeding one proved
+    # nothing about the binding rule this case is written for.
+    difference = bundle["differences"][0]
     evaluation["after_state_candidate"] = {
         "kind": "after_state_candidate",
         "candidate_id": "STATE-CANDIDATE-" + "A" * 64,
+        "kernel_source_ref": deepcopy(evaluation["kernel_source_ref_evaluated"]),
+        "base_state_ref": {
+            "kind": "state",
+            "revision": difference["observed_state_revision"],
+            "fingerprint": deepcopy(difference["observed_state_fingerprint"]),
+        },
+        "semantic_state": _semantic_state(),
+        "semantic_fingerprint": {
+            "profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "a" * 64,
+        },
+        "source_snapshot_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        "producing_change_refs": {"collection_kind": "UNORDERED_SET", "members": []},
     }
     assert any(
         "candidate invariant binding mismatch" in error

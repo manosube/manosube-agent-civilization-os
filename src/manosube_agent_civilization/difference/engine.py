@@ -82,6 +82,8 @@ from .lifecycle import (
 )
 from .policy import CLAIM_SEMANTIC_FIELDS
 from .predecessor import (
+    PREDECESSOR_SECTIONS,
+    REQUIRED_PREDECESSOR_SECTIONS,
     validate_carried_difference,
     validate_carried_event,
     validate_carried_records,
@@ -1394,7 +1396,12 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
         difference = predecessor.get("difference")
         if isinstance(difference, dict):
             found.append((difference, "difference", f"{where}.predecessor.difference"))
-        for index, event in enumerate(predecessor.get("events", []) or []):
+        # ``or []`` absorbs None and the empty list and passes anything else straight to
+        # `enumerate`, so a scalar section reached it as an iterable. The rule this scan
+        # already applies to Observation bundle sections above -- pass over what cannot be
+        # read and let the section's own owner report it -- is the same rule here.
+        carried_events = predecessor.get("events")
+        for index, event in enumerate(carried_events if isinstance(carried_events, list) else []):
             if isinstance(event, dict):
                 found.append(
                     (
@@ -1407,7 +1414,8 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
         if not isinstance(context, dict):
             continue
         for section, type_name in CARRIED_SECTIONS.items():
-            for index, record in enumerate(context.get(section, []) or []):
+            carried = context.get(section)
+            for index, record in enumerate(carried if isinstance(carried, list) else []):
                 if isinstance(record, dict):
                     found.append(
                         (record, type_name, f"{where}.predecessor.context.{section}[{index}]")
@@ -1436,9 +1444,15 @@ def _validate_predecessor(predecessor: dict[str, Any]) -> tuple[dict[str, Any], 
     # Every caller-supplied record crosses the typed validation boundary before it is
     # read, copied or merged: schema, identity, type-specific invariants, and the
     # context's own same-identity/different-payload collisions.
-    unknown = set(predecessor) - {"difference", "events", "context"}
+    # A closed key set is two rules, and only one of them was stated: unknown sections were
+    # rejected and the required ones were never required, so ``predecessor["difference"]``
+    # indexed a section the boundary had not established was there.
+    unknown = set(predecessor) - PREDECESSOR_SECTIONS
     if unknown:
         raise DifferenceError(f"predecessor carries unknown sections: {sorted(unknown)}")
+    missing = REQUIRED_PREDECESSOR_SECTIONS - set(predecessor)
+    if missing:
+        raise DifferenceError(f"predecessor omits required sections: {sorted(missing)}")
     validate_carried_records(predecessor.get("context", {}))
 
     context = predecessor.get("context", {})
@@ -1452,9 +1466,16 @@ def _validate_predecessor(predecessor: dict[str, Any]) -> tuple[dict[str, Any], 
     }
     difference = predecessor["difference"]
     validate_carried_difference(difference)
-    events = sorted(predecessor["events"], key=lambda item: item["event_revision"])
-    for event in events:
+    # Validate before ordering, not after. ``event_revision`` is the sort key, so sorting
+    # first reads it out of records nothing has validated: a missing key raised inside the
+    # comparison function and a retyped one raised comparing against the other events'
+    # integers. The gate already existed and simply ran second.
+    carried_events = predecessor["events"]
+    if not isinstance(carried_events, list):
+        raise DifferenceError("predecessor events are not a canonical list of records")
+    for event in carried_events:
         validate_carried_event(event, difference, carried_requests, carried_methods)
+    events = sorted(carried_events, key=lambda item: item["event_revision"])
     if not events or events[0]["event_revision"] != 0 or events[0]["to_status"] != "DETECTED":
         raise DifferenceError("predecessor lineage does not start at a null to DETECTED genesis")
     for revision, event in enumerate(events):
@@ -1719,10 +1740,16 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 )
             )
         else:
+            # The typed boundary runs first. Agreement with the Observation lineage is a
+            # *cross-record* rule: it reads each carried record's identity key and uses it
+            # as a mapping key, which only means anything once the boundary has established
+            # every carried section is a list of schema-valid records. Running it first
+            # read all of that unvalidated -- 40 of the 78 frozen cases are that one
+            # ordering, not 40 missing guards.
+            prior_difference, prior_events = _validate_predecessor(predecessor)
             _require_context_agrees_with_observation_lineage(
                 predecessor, binding["observation_bundle"]
             )
-            prior_difference, prior_events = _validate_predecessor(predecessor)
             if prior_difference["difference_id"] == difference_id:
                 prior_payload = canonical_bytes(difference_identity_input(prior_difference))
                 if prior_payload != identity_payload:
