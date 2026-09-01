@@ -13,6 +13,8 @@ including one that does not exist yet.
 
 from __future__ import annotations
 
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -118,6 +120,49 @@ def test_distinct_targets_are_unaffected() -> None:
 # --------------------------------------------------------------------------- #
 # The envelope rule: unemittable by any route, not only by the one corrected
 # --------------------------------------------------------------------------- #
+
+
+def test_both_gates_hold_the_same_envelope_rule() -> None:
+    """The rule is one owner's, read by producer and auditor.
+
+    It was first written inside `relational_errors`, which the Engine calls and the
+    independent validator does not — so the producer rejected the contradiction and the
+    auditor accepted it. An Engine-only rule is the same defect as an auditor-only one.
+    """
+
+    import scripts.difference_contract_validator as validator_module
+
+    from manosube_agent_civilization.difference.envelope import (
+        satisfaction_reconciliation_errors,
+    )
+
+    assert (
+        vars(validator_module)["satisfaction_reconciliation_errors"]
+        is satisfaction_reconciliation_errors
+    )
+    graph_source = Path(
+        "src/manosube_agent_civilization/difference/graph.py"
+    ).read_text(encoding="utf-8")
+    assert "satisfaction_reconciliation_errors(bundle)" in graph_source
+
+
+def test_the_auditor_rejects_the_contradiction_too() -> None:
+    """End to end, on a real emitted bundle whose envelope was altered afterwards."""
+
+    fingerprint = state_fingerprint()
+    bundle = derive_differences(
+        derivation_request(
+            objective_revision(),
+            [_binding("OBS-SCOPE-0001", "NOT-READY")],
+            fingerprint,
+        )
+    )
+    assert validate_bundle(bundle) == []
+    forged = deepcopy(bundle)
+    forged["satisfied_target_predicates"] = [PREDICATE_ID]
+    assert validate_bundle(forged) == [
+        f"Target Predicate is reported satisfied and open at once: {PREDICATE_ID}"
+    ]
 
 
 def test_a_target_may_not_be_satisfied_and_open_at_once() -> None:
