@@ -17,9 +17,14 @@ from manosube_agent_civilization.difference.lifecycle import (
     LEGAL_TRANSITIONS,
     blocker_payload_errors,
     closure_evaluation_binding_errors,
+    closure_evaluation_input_errors,
     next_observation_binding_errors,
 )
+from manosube_agent_civilization.difference.selection import contributing_facts
 from manosube_agent_civilization.observation.boundary import fact_boundary_observed
+from manosube_agent_civilization.observation.verification import (
+    negative_evaluation_evidence_errors,
+)
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.errors import SchemaValidationError
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
@@ -1267,11 +1272,19 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             if reference.get("kind") == "observation" else None
             for reference in difference["observation_refs"]
         ]
+        # A canonical Observation over a multi-subject Scope legitimately references
+        # Facts this Target does not bind, and a Fact minted for another project must
+        # never contribute. Selection is decided by the shared authority the Engine also
+        # uses, so producer and auditor cannot disagree about the source set.
         source_facts = [
-            normalized_facts.get(_ref_id(reference) or "")
+            fact
             for observation in source_observations if observation is not None
-            for reference in observation["normalized_fact_refs"]
-            if reference.get("kind") == "normalized_fact"
+            for fact in contributing_facts(
+                observation,
+                normalized_facts,
+                difference["subject"],
+                difference["project_id"],
+            )
         ]
         # The evaluation that justifies this Difference is the one contemporaneous with
         # the Observation it binds, not the globally latest revision: a later
@@ -1439,6 +1452,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 and fact["subject"] == difference["subject"]
                 for fact in source_facts
             )
+            # Selection above already excludes non-contributing Facts; this restates the
+            # binding the Difference claims, so a selector regression cannot pass silently.
             and sorted(
                 (
                     _project_collection_value(fact["value"], fact["value_type"])
@@ -1523,20 +1538,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
 
     for evaluation in evaluations.values():
         difference = differences.get(evaluation["difference_id"])
+        # Subject Difference, Policy binding, event head, Target Predicate, evaluated
+        # Objective semantics and evaluated-State self-consistency are decided by the
+        # shared authority the Engine also applies to every carried Evaluation.
+        input_errors = closure_evaluation_input_errors(
+            evaluation, difference, policies, events, _policy_fingerprint
+        )
+        errors.extend(input_errors)
         if difference is None:
-            errors.append(f"evaluation references missing Difference: {evaluation['closure_evaluation_id']}")
             continue
         policy = policies.get(evaluation["policy_ref"]["id"])
-        if (
-            policy is None
-            or _ref_id(policy["subject_difference_ref"]) != evaluation["difference_id"]
-            or policy["target_predicate_ref"] != difference["target_predicate_ref"]
-            or not _policy_ref_matches(evaluation["policy_ref"], policy)
-            or evaluation["policy_version_evaluated"] != policy["policy_version"]
-            or evaluation["policy_semantic_fingerprint_evaluated"]
-            != policy["policy_semantic_fingerprint"]
-        ):
-            errors.append(f"evaluation Policy binding mismatch: {evaluation['closure_evaluation_id']}")
         head = events.get(_ref_id(evaluation["difference_event_head_ref"]) or "")
         promotion_events = [
             event
@@ -1545,8 +1556,6 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             == evaluation["closure_evaluation_id"]
             and event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}
         ]
-        if head is None or head["difference_id"] != evaluation["difference_id"]:
-            errors.append(f"evaluation event-head mismatch: {evaluation['closure_evaluation_id']}")
         evaluated_objective = objective_revisions.get(
             _ref_id(evaluation["objective_revision_ref_evaluated"]) or ""
         )
@@ -1583,33 +1592,20 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             and evaluation["objective_semantic_fingerprint_evaluated"]
             == difference["objective_semantic_fingerprint"]
         )
-        if (
-            evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
-            or not objective_evaluation_valid
-            or (
-                not promotion_events
-                and (
-                    evaluation["evaluated_state_revision"]
-                    != (current_state_ref or {}).get("revision")
-                    or evaluation["evaluated_state_fingerprint"]
-                    != (current_state_ref or {}).get("fingerprint")
-                )
-            )
-            or evaluation["before_state_ref"]["revision"]
-            != evaluation["evaluated_state_revision"]
-            or evaluation["before_state_ref"]["fingerprint"]
-            != evaluation["evaluated_state_fingerprint"]
-            or (
-                head is not None
-                and (
-                    evaluation["evaluated_state_revision"]
-                    != head["state_revision_evaluated"]
-                    or evaluation["evaluated_state_fingerprint"]
-                    != head["state_fingerprint_evaluated"]
-                )
+        # The multi-revision editorial Objective chain, and the current-State binding of an
+        # Evaluation no transition has promoted, stay with this auditor: they need the
+        # objective-chain analysis and bundle-wide State head the Difference phase does not
+        # carry. Everything else is the shared rule above.
+        if not objective_evaluation_valid or (
+            not promotion_events
+            and (
+                evaluation["evaluated_state_revision"]
+                != (current_state_ref or {}).get("revision")
+                or evaluation["evaluated_state_fingerprint"]
+                != (current_state_ref or {}).get("fingerprint")
             )
         ):
-            errors.append(f"evaluation Difference input mismatch: {evaluation['closure_evaluation_id']}")
+            errors.append(f"evaluation Objective or State head mismatch: {evaluation['closure_evaluation_id']}")
         mode = evaluation["evaluation_mode"]
         candidate = evaluation["after_state_candidate"]
         proposed = evaluation["proposed_terminal_status"]
@@ -2481,6 +2477,18 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     # this auditor cannot hold two drifting maps of what a reference is or where it must
     # resolve. Every record of every section is traversed, not only the Difference lineage.
     errors.extend(reference_closure_errors(bundle))
+    # Bounded Negative Evidence ownership is owned by the Observation element; this
+    # auditor imports that one rule rather than restating it.
+    errors.extend(
+        negative_evaluation_evidence_errors(
+            {
+                "negative_observations": bundle.get("negative_observations", []) or [],
+                "negative_evaluations": bundle.get("negative_observation_evaluations", [])
+                or [],
+                "observations": bundle.get("observations", []) or [],
+            }
+        )
+    )
     return sorted(set(errors))
 
 

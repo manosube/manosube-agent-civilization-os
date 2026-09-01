@@ -256,6 +256,75 @@ def _policy_binding_valid(
     )
 
 
+def closure_evaluation_input_errors(
+    evaluation: dict[str, Any],
+    difference: dict[str, Any] | None,
+    policies: dict[str, dict[str, Any]],
+    events: dict[str, dict[str, Any]],
+    policy_fingerprint: Any,
+) -> list[str]:
+    """Return every input-binding violation *one* Closure Evaluation carries.
+
+    This decides the Evaluation against the records it names -- not against the lifecycle
+    event that cites it, which is a separate rule. It therefore applies to **every**
+    Evaluation the bundle carries, including one no transition references. That gap was
+    real: an extra schema-valid Evaluation naming an existing Difference and resolvable
+    policy and event records, but a different Target Predicate, was emitted unchallenged
+    because the relational pass reached Evaluations only through events.
+
+    An unreferenced Evaluation is *permitted* -- the contract carries Closure Evaluations
+    as provenance and does not require a citing transition -- but it is not exempt: it must
+    be as conformant as one that is cited.
+
+    What is decided here is what the bundle alone can decide: subject Difference, Closure
+    Policy binding, event head, Target Predicate, evaluated Objective semantics, and
+    evaluated-State self-consistency. The Objective *editorial-revision chain* is left to
+    the independent validator, which owns the multi-revision analysis this phase does not
+    carry; ``LATER_PHASE_SEMANTICS_CLAIMED=false`` still applies to Evaluation execution.
+    """
+
+    identity = evaluation["closure_evaluation_id"]
+    errors: list[str] = []
+    if difference is None:
+        errors.append(f"evaluation references missing Difference: {identity}")
+        return errors
+
+    policy = policies.get(_reference_id(evaluation["policy_ref"]) or "")
+    if (
+        policy is None
+        or _reference_id(policy["subject_difference_ref"]) != evaluation["difference_id"]
+        or policy["target_predicate_ref"] != difference["target_predicate_ref"]
+        or not _policy_binding_valid(evaluation["policy_ref"], policy, policy_fingerprint)
+        or evaluation["policy_version_evaluated"] != policy["policy_version"]
+        or evaluation["policy_semantic_fingerprint_evaluated"]
+        != policy["policy_semantic_fingerprint"]
+    ):
+        errors.append(f"evaluation Policy binding mismatch: {identity}")
+
+    head = events.get(_reference_id(evaluation["difference_event_head_ref"]) or "")
+    if head is None or head["difference_id"] != evaluation["difference_id"]:
+        errors.append(f"evaluation event-head mismatch: {identity}")
+
+    if (
+        evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
+        or evaluation["objective_semantic_fingerprint_evaluated"]
+        != difference["objective_semantic_fingerprint"]
+        or evaluation["before_state_ref"]["revision"] != evaluation["evaluated_state_revision"]
+        or evaluation["before_state_ref"]["fingerprint"]
+        != evaluation["evaluated_state_fingerprint"]
+        or (
+            head is not None
+            and (
+                evaluation["evaluated_state_revision"] != head["state_revision_evaluated"]
+                or evaluation["evaluated_state_fingerprint"]
+                != head["state_fingerprint_evaluated"]
+            )
+        )
+    ):
+        errors.append(f"evaluation Difference input mismatch: {identity}")
+    return errors
+
+
 def closure_evaluation_binding_errors(
     event: dict[str, Any],
     previous_event: dict[str, Any] | None,

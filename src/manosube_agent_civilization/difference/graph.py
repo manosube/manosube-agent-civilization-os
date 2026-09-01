@@ -18,15 +18,22 @@ REFERENCE_EDGES    record type -> its named reference fields and their permitted
 
 Two passes run over the same registry:
 
-*Structural closure* walks every record and finds every reference-shaped object, wherever
-it is nested. A reference kind that is neither resolvable nor declared external fails
-closed, so a new reference kind cannot enter the graph unreviewed, and a resolvable kind
-must name exactly one record of that kind in its section. Completeness is by construction:
-no field list can omit a field, because no field list is consulted.
+Traversal follows **declared reference locations only**. An earlier revision of this module
+decided references by shape -- any nested object carrying string ``kind`` and ``id`` -- and
+that was wrong in a way no amount of tuning fixes: ``IDENTITY_REFERENCE`` is a declared
+canonical value type, so a schema-valid Fact value *is* ``{"kind": ..., "id": ...}``. The
+gate rejected legitimate domain payload as an unresolvable graph edge.
 
-*Typed edges* pin the kinds a named field may carry, so a schema-valid reference cannot be
-substituted with a well-formed reference of the wrong kind -- which structural closure
-alone would accept.
+Completeness therefore cannot come from a shape heuristic; it comes from the registry being
+provably equal to what the canonical schemas declare. ``tests/schema_reference_paths.py``
+derives every identity-bearing reference location from ``01_SCHEMA`` and a contract test
+compares it against ``REFERENCE_EDGES`` in both directions, modulo two reviewed lists:
+``EXCLUDED_REFERENCE_SUBTREES`` (value-bearing and foreign-owned subtrees) and
+``NON_IDENTITY_POINTERS`` (typed pointers that carry no identity and so can never resolve).
+
+Each declared edge pins the kinds its field may carry, so a schema-valid reference cannot
+be substituted with a well-formed reference of the wrong kind, and a resolvable kind must
+name exactly one record of that kind in its section.
 
 The independent contract validator imports this module, so the producer and the auditor
 cannot hold two drifting maps.
@@ -38,12 +45,14 @@ from dataclasses import dataclass
 from typing import Any
 
 #: Reference kind -> the returned-bundle section a reference of that kind must resolve in.
+#: ``supersession_relation`` is deliberately absent: no canonical schema declares a
+#: reference to one, so listing it would claim a resolution obligation nothing can carry.
+#: A contract test proves every kind listed here is reachable from a declared edge.
 #: A kind listed here makes the emitted graph closed under it: every reference carrying the
 #: kind must name exactly one record of that kind in that section.
 RESOLVABLE_KINDS: dict[str, str] = {
     "difference": "differences",
     "difference_event": "events",
-    "supersession_relation": "supersession_relations",
     "closure_policy": "policies",
     "closure_evaluation": "evaluations",
     "next_observation_request": "next_observation_requests",
@@ -101,11 +110,49 @@ EXTERNAL_KINDS: frozenset[str] = frozenset(
         "blind_spot",
         "invariant",
         "invariant_definition",
+        "kernel_invariant",
         "verification_independence",
         "completion_claim",
         "material_contradiction",
     }
 )
+
+
+#: Schema locations that *look* like references and are not.
+#:
+#: A canonical value may itself be a typed identity reference -- ``IDENTITY_REFERENCE`` is
+#: one of the declared Fact value types -- so a schema-valid Fact value can be
+#: ``{"kind": "widget", "id": "abc"}``. That is unrestricted domain payload, not an edge in
+#: the emitted graph, and treating it as one rejected a valid derivation. These subtrees
+#: are excluded by name, with the reason stated, rather than by a shape heuristic:
+#:
+#: * the three canonical value locations, whose contents the Difference phase never
+#:   interprets and whose owner is the Objective or the Observation that produced them;
+#: * the embedded Project State projection inside an after-state candidate, whose internal
+#:   Evidence and identity references belong to the State element.
+EXCLUDED_REFERENCE_SUBTREES: dict[str, tuple[str, ...]] = {
+    "normalized_fact": ("value",),
+    "difference": (
+        "normalized_target_state.expected_value",
+        "normalized_observed_state.value_candidates.members[].value",
+    ),
+    "closure_evaluation": ("after_state_candidate.semantic_state",),
+}
+
+#: Declared reference locations that name a *thing* but carry no identity: a State
+#: revision and fingerprint, or a git tree. They can never resolve to a record in this
+#: bundle, so they add no resolution obligation -- a contract test proves every kind they
+#: name is an enumerated non-claim. They are declared anyway so their ``kind`` is pinned.
+NON_IDENTITY_POINTERS: dict[str, tuple[str, ...]] = {
+    "closure_evaluation": (
+        "before_state_ref",
+        "kernel_source_ref_evaluated",
+        "after_state_candidate.base_state_ref",
+        "after_state_candidate.kernel_source_ref",
+    ),
+    "candidate_completion_record": ("observed_state_ref", "target_state_ref"),
+    "closure_policy": (),
+}
 
 
 @dataclass(frozen=True)
@@ -144,9 +191,27 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
         ("observation_evidence_refs[]", ("observation_evidence", "negative_evidence")),
         ("genesis_event_ref", ("difference_event",)),
         ("closure_policy", ("closure_policy",)),
+        ("authority_required[]", ("authority", "human_authority")),
         ("objective_scope_binding.scope_ref", ("observation_scope",)),
         ("effective_boundary.scope_ref", ("observation_scope",)),
         ("effective_boundary.source_snapshot_refs.members[]", ("source_snapshot",)),
+        # The normalized observed-state projection carries its own copies of the same
+        # bindings. They are declared, so a forged copy cannot escape the gate.
+        ("normalized_observed_state.objective_scope_binding.scope_ref", ("observation_scope",)),
+        ("normalized_observed_state.effective_boundary.scope_ref", ("observation_scope",)),
+        (
+            "normalized_observed_state.effective_boundary.source_snapshot_refs.members[]",
+            ("source_snapshot",),
+        ),
+        (
+            "normalized_observed_state.value_candidates.members[].effective_boundary.scope_ref",
+            ("observation_scope",),
+        ),
+        (
+            "normalized_observed_state.value_candidates.members[].effective_boundary"
+            ".source_snapshot_refs.members[]",
+            ("source_snapshot",),
+        ),
     ),
     "difference_lifecycle_event": _edges(
         ("observation_refs[]", ("observation",)),
@@ -183,10 +248,10 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
     "closure_policy": _edges(
         ("subject_difference_ref", ("difference",)),
         ("target_predicate_ref", ("target_predicate",)),
-        ("reopen_conditions[].objective_revision_ref", ("objective_revision",)),
-        ("invariant_requirements[].contract_source_ref", ("git_blob",)),
-        ("required_completion_claims[].subject_ref", ("difference", "completion_claim")),
-        ("required_completion_claims[].target_state_ref", ("state",)),
+        ("required_observation_scope", ("observation_scope",)),
+        ("reopen_conditions[]", ("target_predicate",)),
+        ("required_claims[]", ("completion_claim",)),
+        ("required_invariants[]", ("kernel_invariant",)),
     ),
     "closure_evaluation": _edges(
         ("difference_event_head_ref", ("difference_event",)),
@@ -202,28 +267,33 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
         ("change_result_evidence_refs[]", ("observation_evidence",)),
         ("change_free_verification_evidence_refs[]", ("observation_evidence",)),
         ("evidence_sufficiency_ref", ("evidence_sufficiency_result",)),
-        ("verification_independence_ref", ("verification_independence",)),
         ("reflow_transition_ref", ("reflow_transition", "state_transition")),
         ("after_state_candidate.kernel_source_ref", ("kernel_source", "git_blob", "git_tree")),
         ("after_state_candidate.base_state_ref", ("state",)),
         ("after_state_candidate.source_snapshot_refs.members[]", ("source_snapshot",)),
         ("after_state_candidate.producing_change_refs.members[]", ("change",)),
-        ("candidate_claim_bindings[].completion_record_ref", ("candidate_completion_record",)),
-        ("candidate_claim_bindings[].required_claim_ref", ("completion_claim",)),
-        ("candidate_claim_bindings[].policy_ref", ("closure_policy",)),
-        ("candidate_claim_bindings[].base_state_ref", ("state",)),
         (
-            "candidate_claim_bindings[].evaluation_head_event_ref",
+            "candidate_claim_evaluation_bindings[].completion_record_ref",
+            ("candidate_completion_record",),
+        ),
+        ("candidate_claim_evaluation_bindings[].required_claim_ref", ("completion_claim",)),
+        ("candidate_claim_evaluation_bindings[].policy_ref", ("closure_policy",)),
+        (
+            "candidate_claim_evaluation_bindings[].evaluation_head_event_ref",
             ("candidate_claim_evaluation_event",),
         ),
-        ("candidate_claim_bindings[].evaluation_evidence_refs[]", ("observation_evidence",)),
-        ("candidate_invariant_bindings[].invariant_ref", ("invariant",)),
-        ("candidate_invariant_bindings[].invariant_definition_ref", ("invariant_definition",)),
-        ("candidate_invariant_bindings[].invariant_evaluation_ref", ("invariant_evaluation",)),
-        ("candidate_invariant_bindings[].base_state_ref", ("state",)),
         (
-            "candidate_invariant_bindings[].evaluation_evidence_refs[]",
-            ("observation_evidence",),
+            "candidate_claim_evaluation_bindings[].evaluation_evidence_refs.members[]",
+            ("observation_evidence", "negative_evidence"),
+        ),
+        ("candidate_invariant_evaluation_bindings[].invariant_ref", ("kernel_invariant",)),
+        (
+            "candidate_invariant_evaluation_bindings[].invariant_evaluation_ref",
+            ("invariant_evaluation",),
+        ),
+        (
+            "candidate_invariant_evaluation_bindings[].evaluation_evidence_refs.members[]",
+            ("observation_evidence", "negative_evidence"),
         ),
     ),
     "next_observation_request": _edges(
@@ -293,10 +363,12 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
         ("closure_policy_ref", ("closure_policy",)),
         ("observed_state_ref", ("state",)),
         ("target_state_ref", ("state",)),
-        ("reflow_transition_ref", ("reflow_transition", "state_transition")),
-        ("invariant_evaluation_refs[]", ("invariant_evaluation",)),
-        ("material_contradiction_refs[]", ("material_contradiction",)),
-        ("required_evidence_refs[]", ("observation_evidence",)),
+        ("invariant_evaluation_refs.members[]", ("invariant_evaluation",)),
+        ("material_contradiction_refs.members[]", ("material_contradiction",)),
+        (
+            "required_evidence_refs.members[]",
+            ("observation_evidence", "negative_evidence"),
+        ),
     ),
     "candidate_claim_evaluation_event": _edges(
         ("completion_record_ref", ("candidate_completion_record",)),
@@ -307,12 +379,13 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
     "invariant_evaluation": _edges(
         ("subject_ref", ("difference", "objective_revision", "state")),
         ("authority_ref", ("authority", "human_authority")),
-        ("evidence_refs[]", ("observation_evidence",)),
+        ("evidence_refs.members[]", ("observation_evidence", "negative_evidence")),
+        ("remaining_differences.members[]", ("difference",)),
     ),
     "evidence_sufficiency_result": _edges(
         ("difference_ref", ("difference",)),
         ("policy_ref", ("closure_policy",)),
-        ("evidence_refs[]", ("observation_evidence",)),
+        ("evidence_refs.members[]", ("observation_evidence", "negative_evidence")),
     ),
     # 01_SCHEMA/change/ and 01_SCHEMA/reflow/ are empty in v0.1. No canonical schema names
     # these records' fields, so no typed edge can be declared for them without inventing
@@ -372,14 +445,6 @@ IDENTITY_EDGES: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 
-def _is_reference(value: Any) -> bool:
-    return (
-        isinstance(value, dict)
-        and isinstance(value.get("kind"), str)
-        and isinstance(value.get("id"), str)
-    )
-
-
 def _walk_path(record: Any, segments: list[str]) -> list[Any]:
     """Return every value the dotted locator *segments* selects, skipping absent branches."""
 
@@ -417,29 +482,13 @@ def _index(bundle: dict[str, Any]) -> dict[str, dict[str, int]]:
     return counted
 
 
-def _resolution_error(
-    reference: dict[str, Any], counted: dict[str, dict[str, int]], where: str
-) -> str | None:
-    kind = reference["kind"]
-    section = RESOLVABLE_KINDS.get(kind)
-    if section is None:
-        if kind in EXTERNAL_KINDS:
-            return None
-        return f"unknown reference kind: {where} -> {kind}"
-    found = counted.get(section, {}).get(reference["id"], 0)
-    if found == 0:
-        return f"reference does not resolve: {where} -> {section}:{reference['id']}"
-    if found > 1:
-        return f"reference is ambiguous: {where} -> {section}:{reference['id']}"
-    return None
-
-
 def reference_closure_errors(bundle: dict[str, Any]) -> list[str]:
     """Return every reference violation anywhere in the emitted graph.
 
-    Both passes run over every record of every emitted section, not only over the active
-    Difference lineage: structural closure decides resolution and rejects an undeclared
-    reference kind, and the typed edges decide which kinds a named field may carry.
+    Every declared reference location of every record in every emitted section is
+    traversed -- not only the active Difference lineage -- along with the bare foreign keys
+    that are not reference-shaped. Nothing outside a declared location is read, so
+    unrestricted payload can never be mistaken for an edge.
     """
 
     from .conformance import EMITTED_SECTIONS, RECORD_TYPES
@@ -453,7 +502,6 @@ def reference_closure_errors(bundle: dict[str, Any]) -> list[str]:
                 continue
             identity = record.get(canonical.key)
             where = f"{section}[{identity}]"
-            errors.extend(_structural_errors(record, counted, where))
             for field, target in IDENTITY_EDGES[type_name]:
                 value = record.get(field)
                 if value is None:
@@ -517,24 +565,6 @@ _FORCED_SECTIONS: dict[str, str] = {
 }
 
 
-def _structural_errors(
-    node: Any, counted: dict[str, dict[str, int]], where: str
-) -> list[str]:
-    errors: list[str] = []
-    if _is_reference(node):
-        error = _resolution_error(node, counted, where)
-        if error is not None:
-            errors.append(error)
-        return errors
-    if isinstance(node, dict):
-        for key, value in node.items():
-            errors.extend(_structural_errors(value, counted, f"{where}.{key}"))
-    elif isinstance(node, list):
-        for position, value in enumerate(node):
-            errors.extend(_structural_errors(value, counted, f"{where}[{position}]"))
-    return errors
-
-
 def relational_errors(bundle: dict[str, Any]) -> list[str]:
     """Return every cross-record relational violation the emitted graph carries.
 
@@ -555,6 +585,7 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
     from .lifecycle import (
         blocker_payload_errors,
         closure_evaluation_binding_errors,
+        closure_evaluation_input_errors,
         next_observation_binding_errors,
     )
 
@@ -576,10 +607,26 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
         for record in bundle.get("observation_methods", []) or []
     }
     chains: dict[str, list[dict[str, Any]]] = {}
+    events: dict[str, dict[str, Any]] = {}
     for event in bundle.get("events", []) or []:
         chains.setdefault(event["difference_id"], []).append(event)
+        events[event["difference_event_id"]] = event
 
     errors: list[str] = []
+    # Every carried Closure Evaluation, not only those a transition cites. An Evaluation
+    # no event references is legitimate provenance, and is held to the same input binding
+    # as one that is cited; the event-to-Evaluation binding below is a separate rule that
+    # applies only where an event names one.
+    for _identity, evaluation in sorted(evaluations.items()):
+        errors.extend(
+            closure_evaluation_input_errors(
+                evaluation,
+                differences.get(evaluation["difference_id"]),
+                policies,
+                events,
+                policy_semantic_fingerprint,
+            )
+        )
     for difference_id, chain in sorted(chains.items()):
         chain.sort(key=lambda item: item["event_revision"])
         difference = differences.get(difference_id)

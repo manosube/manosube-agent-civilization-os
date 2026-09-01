@@ -85,6 +85,7 @@ from .projection import (
     structural_difference,
     value_candidate,
 )
+from .selection import contributing_facts, unique_target_predicates
 from .validation import (
     SCHEMA_BASE,
     require_schema_version,
@@ -264,6 +265,65 @@ def _observation_method(record: dict[str, Any]) -> dict[str, Any]:
     return method
 
 
+#: Every key a derivation binding may carry. ``historical_observation_scopes`` is the
+#: explicit, immutable supply route for the Scopes an append-only Observation lineage
+#: names but this derivation did not resolve; see ``_historical_scopes``.
+_BINDING_KEYS: frozenset[str] = frozenset(
+    {
+        "target_predicate_id",
+        "observation_scope",
+        "observation_bundle",
+        "historical_observation_scopes",
+        "predecessor",
+        "closure_policy_requirements",
+        "risk_class",
+    }
+)
+
+
+def _historical_scopes(
+    binding: dict[str, Any], resolved: dict[str, Any], project_id: str
+) -> list[dict[str, Any]]:
+    """Validate the historical Observation Scopes this binding supplies.
+
+    A recurring Fact keeps its append-only evaluation chain across a Scope change, so the
+    context closure reaches Observations bound to the *earlier* Scope. Where a Difference
+    predecessor exists those Scope records travel as carried context. A fresh derivation
+    has no predecessor and the Observation bundle carries no Scope section of its own, so
+    without an explicit route the historical Scope could never be present and a valid
+    no-predecessor Scope-change derivation was unbuildable.
+
+    This is that route, and it supplies records only -- it never relaxes a rule. Each Scope
+    crosses the same canonical input gate as the resolved Scope, must belong to this
+    project, and must not restate the resolved Scope's identity with a different payload
+    (the union decides that). The resolved Scope remains the sole boundary of the
+    Difference derived here; a historical Scope is used only to verify the Observation that
+    names it.
+    """
+
+    supplied = binding.get("historical_observation_scopes", [])
+    if not isinstance(supplied, list):
+        raise DifferenceError("historical Observation Scopes must be a list of records")
+    validated: list[dict[str, Any]] = []
+    for record in supplied:
+        validate_derivation_input(record, "observation_scope")
+        require_schema_version(record, "historical observation scope")
+        if record["project_id"] != project_id:
+            raise BoundaryViolationError(
+                "historical Observation Scope belongs to a different project: "
+                f"{record['scope_id']}"
+            )
+        if record["scope_id"] == resolved["scope_id"] and canonical_bytes(
+            record
+        ) != canonical_bytes(resolved):
+            raise IdentityCollisionError(
+                "historical Observation Scope contradicts the resolved Scope: "
+                f"{record['scope_id']}"
+            )
+        validated.append(record)
+    return validated
+
+
 def _select_observation(
     binding: dict[str, Any],
     predicate_id: str,
@@ -325,17 +385,11 @@ def _observed_projection(
     if any(reference["id"] not in facts_by_id for reference in observation["normalized_fact_refs"]):
         raise DifferenceError("Observation references a Normalized Fact absent from the bundle")
     _verify_upstream_records(observation, bundle, facts_by_id, bindings_by_id)
-    source_facts = [
-        facts_by_id[reference["id"]]
-        for reference in observation["normalized_fact_refs"]
-        if reference.get("kind") == "normalized_fact"
-    ]
+    # A canonical Observation is scoped to a Scope, not to one subject, so it can carry
+    # Facts for other included subjects and Facts minted for another project. Selection
+    # is owned once, by the authority the independent validator also imports.
+    source_facts = contributing_facts(observation, facts_by_id, subject, project_id)
     for fact in source_facts:
-        if fact["subject"] != subject:
-            raise BoundaryViolationError(
-                "the bound Observation carries a Fact outside the Target subject: "
-                f"{fact['subject']}"
-            )
         if fact["subject"] not in scope["included_subjects"] or fact["subject"] in scope["excluded_subjects"]:
             raise BoundaryViolationError(f"Fact subject escapes the resolved Scope: {fact['subject']}")
         # Every contract-legal Fact boundary form is accepted, matched by the single
@@ -1042,7 +1096,9 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     if "observation_method" in request:
         method = _observation_method(request["observation_method"])
 
-    predicates = {item["predicate_id"]: item for item in objective["target_predicates"]}
+    # One Target Predicate identity names one predicate. Two payloads under one identity
+    # fail closed here, before any index the derivation reads is built.
+    predicates = unique_target_predicates(objective)
     differences: dict[str, dict[str, Any]] = {}
     identity_payloads: dict[str, bytes] = {}
     events: dict[str, dict[str, Any]] = {}
@@ -1058,10 +1114,16 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     negative_observations: dict[str, dict[str, Any]] = {}
     negative_evaluations: dict[str, dict[str, Any]] = {}
     materialized_status: dict[str, str] = {}
+    supplied_historical: set[str] = set()
     carried: dict[str, dict[str, dict[str, Any]]] = {}
     satisfied: list[str] = []
 
     for binding in sorted(request["bindings"], key=lambda item: item["target_predicate_id"]):
+        unknown_binding_keys = set(binding) - _BINDING_KEYS
+        if unknown_binding_keys:
+            raise DifferenceError(
+                f"binding carries unknown sections: {sorted(unknown_binding_keys)}"
+            )
         predicate_id = binding["target_predicate_id"]
         predicate = predicates.get(predicate_id)
         if predicate is None:
@@ -1072,6 +1134,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         scope = binding["observation_scope"]
         require_schema_version(scope, "observation scope")
         validate_derivation_input(scope, "observation_scope")
+        historical = _historical_scopes(binding, scope, project_id)
         if scope["project_id"] != project_id:
             raise BoundaryViolationError("resolved Scope belongs to a different project")
         if scope["target_identity"] != predicate_id:
@@ -1394,6 +1457,14 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             )
         materialized_status[difference_id] = head["to_status"]
         _merge(scopes, [scope], "scope_id")
+        # An append-only Observation lineage that spans a Scope change reaches Observations
+        # bound to Scopes this derivation did not resolve. With a Difference predecessor
+        # those arrive as carried context; a *fresh* derivation has no predecessor, so the
+        # caller supplies them here explicitly. They are inputs like any other -- validated
+        # against the canonical Scope schema before use, merged through the one union, and
+        # never allowed to become this Difference's own boundary.
+        _merge(scopes, historical, "scope_id")
+        supplied_historical.update(record["scope_id"] for record in historical)
         _absorb_observation_context(
             binding["observation_bundle"], observation, scopes, project_id, observations,
             facts, fact_bindings, fact_evaluations, negative_observations,
@@ -1424,6 +1495,23 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 list(observations.values()),
                 list(fact_evaluations.values()),
             )
+
+    # A historical Scope is supplied to *verify* an Observation the lineage reaches, so a
+    # Scope no carried Observation names is not provenance -- it is an unrelated record
+    # being injected into the output, and it fails closed.
+    named_scopes = {
+        observation["scope_ref"]["id"]
+        for observation in observations.values()
+        if isinstance(observation.get("scope_ref"), dict)
+    }
+    unused_historical = sorted(supplied_historical - named_scopes - {
+        binding["observation_scope"]["scope_id"] for binding in request["bindings"]
+    })
+    if unused_historical:
+        raise DifferenceError(
+            f"historical Observation Scope is named by no carried Observation: "
+            f"{unused_historical[0]}"
+        )
 
     # Every Observation now in the bundle -- bound, reached by the context closure, or
     # supplied only as predecessor provenance -- is verified before it is returned.

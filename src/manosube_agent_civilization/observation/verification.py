@@ -30,6 +30,81 @@ RECORD_SCHEMAS: dict[str, str] = {
 }
 
 
+#: Negative statuses whose conclusion is only canonical while bounded Negative Evidence
+#: proves it. ``NO_RESULT`` and ``UNOBSERVED`` are the opposite case -- they assert that
+#: nothing was concluded -- so no Evidence is required for them and none is invented here.
+EVIDENCE_BOUND_NEGATIVE_STATUSES: frozenset[str] = frozenset({"ABSENT", "EMPTY"})
+
+#: The one status whose Evidence is *not* the bounded negative channel. A ``CONFLICTED``
+#: evaluation concludes that a positive Fact contradicts the negative claim, and what
+#: proves that is the Observation Evidence which produced the Fact -- the bounded Negative
+#: Evidence proves absence, which is precisely what is being contradicted. Both channels
+#: are admissible there, and only there.
+CONTRADICTION_NEGATIVE_STATUS = "CONFLICTED"
+
+
+def negative_evaluation_evidence_errors(bundle: dict[str, Any]) -> list[str]:
+    """Return every Negative Evaluation Evidence binding violation in *bundle*.
+
+    A Negative Observation Evaluation identity is derived from its owning record and its
+    revision alone, so a caller can retain ``evaluation_id`` while replacing the Evidence
+    list entirely. Nothing downstream questioned it: consumers trusted the evaluation's
+    status and checked only that the owning record carried *some* Evidence.
+
+    Bounded Negative Evidence is a channel, not a bag. An evaluation asserting a negative
+    conclusion may only cite Evidence its own Negative Observation declared -- otherwise a
+    proven ``ABSENT`` rests on proof belonging to a different observation, or on
+    Observation Evidence, collapsing two provenance channels the contract keeps distinct.
+
+    ``CONFLICTED`` is the one exception, and it is not a relaxation: that status concludes
+    the negative claim was contradicted by an observed Fact, so it cites the Observation
+    Evidence of its own Observation. It is still bound -- to that Observation's declared
+    Evidence -- rather than free.
+
+    Owned here, in the Observation element that owns Negative Observation semantics, so
+    both Engines and both independent validators decide it one way.
+    """
+
+    errors: list[str] = []
+    owners = {
+        record["negative_observation_id"]: record
+        for record in bundle["negative_observations"]
+    }
+    observations = {
+        record["observation_id"]: record for record in bundle.get("observations", [])
+    }
+    for evaluation in bundle["negative_evaluations"]:
+        identity = evaluation["evaluation_id"]
+        owner = owners.get(evaluation["negative_observation_id"])
+        if owner is None:
+            # Ownership is unresolvable, so no Evidence claim it makes can be decided.
+            errors.append(f"Negative evaluation has no resolvable owner: {identity}")
+            continue
+        declared = {canonical_json_bytes(item) for item in owner["negative_evidence_refs"]}
+        if evaluation["evaluation_status"] == CONTRADICTION_NEGATIVE_STATUS:
+            observation = observations.get(owner["observation_id"])
+            if observation is not None:
+                declared |= {
+                    canonical_json_bytes(item)
+                    for item in observation["observation_evidence_refs"]
+                }
+        for reference in evaluation["evidence_refs"]:
+            if canonical_json_bytes(reference) not in declared:
+                errors.append(
+                    "Negative evaluation Evidence is not declared by its own channel: "
+                    f"{identity}"
+                )
+        if (
+            evaluation["evaluation_status"] in EVIDENCE_BOUND_NEGATIVE_STATUSES
+            and not evaluation["evidence_refs"]
+        ):
+            errors.append(
+                f"{evaluation['evaluation_status']} Negative evaluation carries no bounded "
+                f"Evidence: {identity}"
+            )
+    return errors
+
+
 def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
     """Return every cross-record Observation violation, without mutating *bundle*."""
 
@@ -207,4 +282,7 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
                 errors.append(
                     f"one-sided Negative/Fact conflict: {negative_id} -> {reference['id']}"
                 )
+    # Bounded Negative Evidence is a channel: an evaluation may only cite Evidence its own
+    # Negative Observation declared. Decided by the one authority both auditors import.
+    errors.extend(negative_evaluation_evidence_errors(bundle))
     return errors

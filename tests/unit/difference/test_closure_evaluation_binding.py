@@ -13,6 +13,7 @@ The rules now live once, in the lifecycle authority both consumers import.
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -27,6 +28,14 @@ from manosube_agent_civilization.difference.lifecycle import (
 )
 
 _BOUND_STATUSES = ("BLOCKED", "RETAINED")
+
+#: An Evaluation *input* mutation is decided by the input authority, which runs over every
+#: carried Evaluation; an event-binding mutation is decided by the binding authority. Both
+#: are correct rejections of the same forgery, so the mutations that are inputs accept
+#: either message rather than pinning the rule that happens to fire first.
+_BINDING_OR_INPUT = (
+    "terminal evaluation binding mismatch|evaluation Difference input mismatch"
+)
 
 
 def _request(status: str) -> dict[str, Any]:
@@ -103,7 +112,7 @@ def test_an_evaluation_naming_another_closure_policy_fails_closed(status: str) -
 def test_an_evaluation_of_another_state_revision_fails_closed(status: str) -> None:
     request = _request(status)
     _evaluation(request)["evaluated_state_revision"] = 99
-    with pytest.raises(DifferenceError, match="terminal evaluation binding mismatch"):
+    with pytest.raises(DifferenceError, match=_BINDING_OR_INPUT):
         derive_differences(request)
 
 
@@ -115,7 +124,7 @@ def test_an_evaluation_of_another_state_fingerprint_fails_closed(status: str) ->
         **deepcopy(evaluation["evaluated_state_fingerprint"]),
         "digest": "0" * 64,
     }
-    with pytest.raises(DifferenceError, match="terminal evaluation binding mismatch"):
+    with pytest.raises(DifferenceError, match=_BINDING_OR_INPUT):
         derive_differences(request)
 
 
@@ -134,7 +143,7 @@ def test_an_evaluation_of_another_target_predicate_fails_closed(status: str) -> 
 def test_an_evaluation_of_another_objective_semantics_fails_closed(status: str) -> None:
     request = _request(status)
     _evaluation(request)["objective_semantic_fingerprint_evaluated"] = "sha256:" + "0" * 64
-    with pytest.raises(DifferenceError, match="terminal evaluation binding mismatch"):
+    with pytest.raises(DifferenceError, match=_BINDING_OR_INPUT):
         derive_differences(request)
 
 
@@ -206,3 +215,148 @@ def test_an_event_naming_an_unresolvable_evaluation_fails_closed() -> None:
     context["evaluations"] = []
     with pytest.raises(DifferenceError):
         derive_differences(request)
+
+
+# --------------------------------------------------------------------------- #
+# Every carried Closure Evaluation, not only those a transition cites.
+# --------------------------------------------------------------------------- #
+
+
+EXTRA_ID = "D-CLOSE-EVAL-" + "C" * 64
+
+
+def _with_extra_evaluation(**changes: Any) -> dict[str, Any]:
+    """A RETAINED predecessor plus one additional carried Evaluation no event cites.
+
+    An unreferenced Evaluation is legitimate provenance, but the contract still binds it to
+    the State it was evaluated at: with no transition promoting it, that must be the
+    bundle's current State head. The extra record is therefore built against the appended
+    event head, which is exactly the head this derivation returns.
+    """
+
+    request = _request("RETAINED")
+    baseline = derive_differences(deepcopy(request))
+    head = max(baseline["events"], key=lambda item: item["event_revision"])
+    context = request["bindings"][0]["predecessor"]["context"]
+    extra = deepcopy(context["evaluations"][0])
+    extra["closure_evaluation_id"] = EXTRA_ID
+    extra["difference_event_head_ref"] = {
+        "kind": "difference_event",
+        "id": head["difference_event_id"],
+    }
+    extra["evaluated_state_revision"] = head["state_revision_evaluated"]
+    extra["evaluated_state_fingerprint"] = deepcopy(head["state_fingerprint_evaluated"])
+    extra["before_state_ref"] = {
+        "kind": "state",
+        "revision": head["state_revision_evaluated"],
+        "fingerprint": deepcopy(head["state_fingerprint_evaluated"]),
+    }
+    extra.update(changes)
+    context["evaluations"].append(extra)
+    return request
+
+
+def test_an_unreferenced_evaluation_is_permitted_as_provenance() -> None:
+    """The contract carries Evaluations as provenance; a citing transition is not required."""
+
+    bundle = derive_differences(_with_extra_evaluation())
+    identities = {item["closure_evaluation_id"] for item in bundle["evaluations"]}
+    assert EXTRA_ID in identities
+    cited = {
+        event["closure_evaluation_ref"]["id"]
+        for event in bundle["events"]
+        if event["closure_evaluation_ref"] is not None
+    }
+    assert EXTRA_ID not in cited
+    assert validator.validate_bundle(bundle) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "target_predicate_ref",
+            {"kind": "target_predicate", "id": "TP-9999"},
+            "evaluation Difference input mismatch",
+        ),
+        (
+            "objective_semantic_fingerprint_evaluated",
+            "sha256:" + "0" * 64,
+            "evaluation Difference input mismatch",
+        ),
+        ("evaluated_state_revision", 99, "evaluation Difference input mismatch"),
+        (
+            "difference_event_head_ref",
+            {"kind": "difference_event", "id": "D-EVT-" + "0" * 64},
+            "does not resolve|event-head mismatch",
+        ),
+        (
+            "policy_semantic_fingerprint_evaluated",
+            "sha256:" + "1" * 64,
+            "evaluation Policy binding mismatch",
+        ),
+        (
+            "evaluated_state_fingerprint",
+            {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64},
+            "evaluation Difference input mismatch",
+        ),
+    ],
+    ids=[
+        "target-predicate",
+        "objective-semantics",
+        "evaluated-state-revision",
+        "event-head",
+        "policy-fingerprint",
+        "evaluated-state-fingerprint",
+    ],
+)
+def test_an_unreferenced_evaluation_is_held_to_the_same_input_binding(
+    field: str, value: Any, message: str
+) -> None:
+    """The reviewed defect: the relational pass reached Evaluations only through events."""
+
+    request = _with_extra_evaluation(**{field: value})
+    before = deepcopy(request)
+    with pytest.raises(DifferenceError, match=message):
+        derive_differences(request)
+    assert request == before
+
+
+def test_an_unreferenced_evaluation_of_an_absent_difference_fails_closed() -> None:
+    request = _with_extra_evaluation(difference_id="D-" + "0" * 64)
+    with pytest.raises(DifferenceError):
+        derive_differences(request)
+
+
+def test_an_unreferenced_evaluation_naming_another_policy_fails_closed() -> None:
+    request = _request("RETAINED")
+    context = request["bindings"][0]["predecessor"]["context"]
+    extra = deepcopy(context["evaluations"][0])
+    extra["closure_evaluation_id"] = "D-CLOSE-EVAL-" + "D" * 64
+    extra["policy_ref"] = {**deepcopy(extra["policy_ref"]), "id": "CP-" + "0" * 64}
+    context["evaluations"].append(extra)
+    with pytest.raises(DifferenceError):
+        derive_differences(request)
+
+
+def test_the_input_authority_is_shared_with_the_auditor() -> None:
+    from manosube_agent_civilization.difference.lifecycle import (
+        closure_evaluation_input_errors,
+    )
+
+    assert (
+        vars(validator)["closure_evaluation_input_errors"] is closure_evaluation_input_errors
+    )
+
+
+def test_every_carried_evaluation_is_visited_exactly_once() -> None:
+    """The relational gate iterates the section, not the events that happen to cite one."""
+
+    from manosube_agent_civilization.difference import graph
+
+    source = (
+        Path(graph.__file__).read_text(encoding="utf-8")
+        .split("def relational_errors(")[1]
+    )
+    assert source.count("closure_evaluation_input_errors(") == 1
+    assert "for _identity, evaluation in sorted(evaluations.items()):" in source

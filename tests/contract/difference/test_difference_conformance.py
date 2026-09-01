@@ -590,7 +590,7 @@ def test_closure_evaluation_uses_current_state_head() -> None:
     mutated = deepcopy(bundle)
     mutated["events"][2]["closure_evaluation_ref"] = None
     mutated["current_state_ref"]["revision"] = 3
-    assert any("evaluation Difference input mismatch" in error for error in validate_bundle(mutated))
+    assert any("evaluation Objective or State head mismatch" in error for error in validate_bundle(mutated))
 
 
 def test_promoted_evaluation_survives_later_state_head() -> None:

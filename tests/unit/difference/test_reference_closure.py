@@ -89,7 +89,7 @@ def test_a_reference_of_the_wrong_kind_fails_closed() -> None:
 
 
 def test_an_undeclared_reference_kind_fails_closed() -> None:
-    """A kind that is neither resolvable nor an enumerated non-claim cannot enter."""
+    """An unpermitted kind at a declared location cannot enter."""
 
     bundle = derive_differences(_request())
     mutated = deepcopy(bundle)
@@ -98,7 +98,7 @@ def test_an_undeclared_reference_kind_fails_closed() -> None:
         "id": "X-0001",
     }
     errors = reference_closure_errors(mutated)
-    assert any("unknown reference kind" in error for error in errors), errors
+    assert any("reference kind is not permitted here" in error for error in errors), errors
 
 
 def test_an_ambiguous_reference_target_fails_closed() -> None:
@@ -113,27 +113,105 @@ def test_an_ambiguous_reference_target_fails_closed() -> None:
     assert any("ambiguous" in error for error in errors), errors
 
 
-@pytest.mark.parametrize("kind", sorted(RESOLVABLE_KINDS))
-def test_every_resolvable_kind_is_rejected_when_its_target_is_absent(kind: str) -> None:
-    """One dangling-edge mutation per resolvable reference kind."""
+def _set_path(record: dict[str, Any], path: str, value: Any) -> None:
+    """Write *value* at a registry locator, creating the intermediate containers."""
 
-    section = RESOLVABLE_KINDS[kind]
-    bundle = {section: [], "differences": [
-        {"difference_id": "D-" + "1" * 64},
-    ]} if section != "differences" else {"differences": []}
-    probe = {
-        "observations": [
-            {
-                "observation_id": "OBS-PROBE",
-                "scope_ref": {"kind": kind, "id": "ABSENT" + _ABSENT},
-            }
-        ]
-    }
-    merged: dict[str, Any] = {**bundle, **probe}
-    errors = reference_closure_errors(merged)
+    segments = path.split(".")
+    node: Any = record
+    for position, segment in enumerate(segments):
+        expand = segment.endswith("[]")
+        key = segment[:-2] if expand else segment
+        last = position == len(segments) - 1
+        if last and not expand:
+            node[key] = value
+            return
+        if last and expand:
+            node[key] = [value]
+            return
+        if expand:
+            node.setdefault(key, [{}])
+            if not node[key]:
+                node[key] = [{}]
+            node = node[key][0]
+        else:
+            node = node.setdefault(key, {})
+
+
+#: Every declared reference edge that can resolve, with the resolvable kind it carries.
+_RESOLVING_EDGES = sorted(
+    (type_name, edge.path, kind)
+    for type_name, edges in REFERENCE_EDGES.items()
+    for edge in edges
+    for kind in edge.kinds
+    if kind in RESOLVABLE_KINDS
+)
+
+
+def test_the_edge_matrix_is_not_vacuous() -> None:
+    assert len(_RESOLVING_EDGES) >= 40
+    assert len({kind for _, _, kind in _RESOLVING_EDGES}) == len(RESOLVABLE_KINDS)
+
+
+@pytest.mark.parametrize(
+    ("type_name", "path", "kind"),
+    _RESOLVING_EDGES,
+    ids=[f"{t}.{p}->{k}" for t, p, k in _RESOLVING_EDGES],
+)
+def test_every_resolving_edge_is_rejected_when_its_target_is_absent(
+    type_name: str, path: str, kind: str
+) -> None:
+    """One dangling-edge mutation per declared edge that can resolve, per kind."""
+
+    from manosube_agent_civilization.difference.conformance import (
+        EMITTED_SECTIONS,
+        RECORD_TYPES,
+    )
+
+    holder = next(name for name, item in EMITTED_SECTIONS.items() if item == type_name)
+    key = RECORD_TYPES[type_name].key
+    probe: dict[str, Any] = {key: "PROBE-IDENTITY"}
+    _set_path(probe, path, {"kind": kind, "id": "ABSENT" + _ABSENT})
+    bundle: dict[str, Any] = {RESOLVABLE_KINDS[kind]: []}
+    bundle[holder] = [probe]
+    errors = reference_closure_errors(bundle)
     assert any(
         "does not resolve" in error and "ABSENT" in error for error in errors
-    ), (kind, errors)
+    ), (type_name, path, kind, errors)
+
+
+@pytest.mark.parametrize(
+    ("type_name", "path", "kind"),
+    _RESOLVING_EDGES,
+    ids=[f"{t}.{p}->{k}" for t, p, k in _RESOLVING_EDGES],
+)
+def test_every_resolving_edge_rejects_a_reference_of_the_wrong_kind(
+    type_name: str, path: str, kind: str
+) -> None:
+    """A well-formed reference of an unpermitted kind fails closed at every edge."""
+
+    from manosube_agent_civilization.difference.conformance import (
+        EMITTED_SECTIONS,
+        RECORD_TYPES,
+    )
+    from manosube_agent_civilization.difference.graph import REFERENCE_EDGES as EDGES
+
+    edge = next(item for item in EDGES[type_name] if item.path == path)
+    wrong = next(
+        candidate
+        for candidate in sorted(RESOLVABLE_KINDS)
+        if candidate not in edge.kinds
+    )
+    holder = next(name for name, item in EMITTED_SECTIONS.items() if item == type_name)
+    key = RECORD_TYPES[type_name].key
+    probe: dict[str, Any] = {key: "PROBE-IDENTITY"}
+    _set_path(probe, path, {"kind": wrong, "id": "WRONG-KIND"})
+    bundle: dict[str, Any] = {holder: [probe]}
+    errors = reference_closure_errors(bundle)
+    assert any("reference kind is not permitted here" in error for error in errors), (
+        type_name,
+        path,
+        errors,
+    )
 
 
 @pytest.mark.parametrize(
