@@ -143,6 +143,31 @@ anything about *whether a revision should have been authored* -- `EDITORIAL` ver
 `PREDICATE_MODIFY` classification, authority, and approval remain Human Authority and the
 Objective element's own concern, and this phase still asserts nothing about them.
 
+## 2b. Ordering, and the deliverables the round instruction added
+
+The round instruction asked for more than the three findings named, and two of its
+requirements were not met by the corrections above. Both are now met.
+
+**One reusable duplicate authority.** The corrections left set multiplicity decided in two
+places: `has_recursive_set_duplicate` for a set declared by an `UNORDERED_SET` wrapper *in
+the record*, and a per-field comparison for a set declared by the Closure Policy
+*fingerprint profile*. `canonical.has_duplicate_members` is now the one place that decides
+it, and the recursive walk and the Policy rule both call it. The two shapes differ only in
+how the members are found: a wrapper is found by walking, a profile set by applying the
+contract's projection first.
+
+**Ordering, not just presence, is the rule.** The Target is normalised and checked for
+canonicality *before* any Observation is selected, any boundary derived, or any knowledge
+status classified. Checking it merely before the satisfied early return would have left a
+non-canonical Target read as an identity input on every other route first. A coverage matrix
+covers the five terminal outcomes a binding can reach — `SATISFIED`, an emitted Difference,
+`UNKNOWN`, proven absence and `EMPTY` — with a control per route proving the route is
+reachable with a canonical Target, and a test that reads the derivation source and asserts
+the check precedes `_select_observation`, `_observed_projection` and `effective_boundary`.
+The operator matrix is read from the canonical Target Predicate schema's own enum rather
+than listed, so all six operators are covered including those that never consult
+`expected_value`.
+
 ## 3. Cost
 
 `RecordType.semantics` changing from errors-returning to raising means a future rule must

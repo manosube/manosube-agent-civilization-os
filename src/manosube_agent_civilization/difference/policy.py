@@ -32,9 +32,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
-
-from .canonical import canonical_bytes, has_recursive_set_duplicate
+from .canonical import canonical_bytes, has_duplicate_members, has_recursive_set_duplicate
 from .errors import DifferenceError
 from .identity import (
     POLICY_UNORDERED_SET_FIELDS,
@@ -102,8 +100,7 @@ def _duplicate_set_errors(policy: dict[str, Any], where: str) -> list[str]:
         return []
     errors: list[str] = []
     for field in POLICY_UNORDERED_SET_FIELDS:
-        members = [canonical_json_bytes(member) for member in projection[field]]
-        if len(set(members)) != len(members):
+        if has_duplicate_members(projection[field]):
             errors.append(f"Closure Policy set carries a duplicate member: {where}.{field}")
     return errors
 

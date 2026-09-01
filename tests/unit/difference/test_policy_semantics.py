@@ -52,6 +52,7 @@ from manosube_agent_civilization.difference.identity import (
     target_predicate_fingerprint,
 )
 from manosube_agent_civilization.difference.policy import (
+    CLAIM_SEMANTIC_FIELDS,
     closure_policy_semantic_errors,
     reopen_condition_provenance_errors,
 )
@@ -510,6 +511,76 @@ def test_two_reopen_conditions_differing_only_in_excluded_provenance_fail_closed
     _seal(policy)
     with pytest.raises(DifferenceError, match=r"duplicate member: .*\.reopen_conditions"):
         derive_differences(request)
+
+
+def test_the_requested_objective_rejects_an_ambiguous_predicate_id() -> None:
+    """Both Objective routes, not only the carried one the finding named."""
+
+    ambiguous = objective_revision()
+    second = deepcopy(ambiguous["target_predicates"][0])
+    second["expected_value"] = "SOMETHING-ELSE"
+    ambiguous["target_predicates"].append(second)
+    request = _reopen_request(
+        _condition(PREDICATE_ID, target_predicate_fingerprint(target_predicate()))
+    )
+    request["objective_revision"] = ambiguous
+    with pytest.raises(
+        IdentityCollisionError, match="two different Target Predicates under one identity"
+    ):
+        derive_differences(request)
+
+
+def test_a_duplicate_nested_below_a_claim_wrapper_fails_closed() -> None:
+    """A required Claim's own payload is checked recursively, below its wrappers."""
+
+    def mutate(policy: dict[str, Any]) -> None:
+        claim = policy["required_claims"][0]
+        # Two members that are equal only *after* their own inner set is canonically
+        # ordered: the duplicate is two wrappers down and invisible to a shallow compare.
+        claim["claim"] = {
+            "values": {
+                "collection_kind": "UNORDERED_SET",
+                "members": [
+                    {"collection_kind": "UNORDERED_SET", "members": [1, 2]},
+                    {"collection_kind": "UNORDERED_SET", "members": [2, 1]},
+                ],
+            }
+        }
+        claim["claim_semantic_fingerprint"] = completion_claim_fingerprint(
+            {key: claim[key] for key in CLAIM_SEMANTIC_FIELDS}
+        )
+        claim["id"] = completion_claim_id({key: claim[key] for key in CLAIM_SEMANTIC_FIELDS})
+        _seal(policy)
+
+    request, _ = _carried(mutate)
+    with pytest.raises(
+        DifferenceError, match="required Claim carries a duplicate set member"
+    ):
+        derive_differences(request)
+
+
+def test_the_duplicate_authority_is_shared_with_the_recursive_walk() -> None:
+    """One place decides set multiplicity, for both shapes of declared set."""
+
+    from manosube_agent_civilization.difference import canonical
+
+    assert canonical.has_duplicate_members([{"a": 1}, {"a": 1}])
+    assert not canonical.has_duplicate_members([{"a": 1}, {"a": 2}])
+    # The wrapper-declared shape reads the same function.
+    assert canonical.has_recursive_set_duplicate(
+        {"collection_kind": "UNORDERED_SET", "members": [{"a": 1}, {"a": 1}]}
+    )
+    source = Path(
+        "src/manosube_agent_civilization/difference/canonical.py"
+    ).read_text(encoding="utf-8")
+    walk = source.split("def has_recursive_set_duplicate(")[1].split("\ndef ")[0]
+    assert "has_duplicate_members(" in walk
+    policy_source = Path(
+        "src/manosube_agent_civilization/difference/policy.py"
+    ).read_text(encoding="utf-8")
+    rule = policy_source.split("def _duplicate_set_errors(")[1].split("\ndef ")[0]
+    assert "has_duplicate_members(" in rule
+    assert "len(set(" not in rule
 
 
 def test_the_duplicate_rule_reads_the_digest_projection() -> None:

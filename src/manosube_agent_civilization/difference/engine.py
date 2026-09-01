@@ -1363,6 +1363,15 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         target_predicate_ref = _ref("target_predicate", predicate_id)
         subject = predicate["subject"]
 
+        # The Target is normalised and checked for canonicality *first*, before any
+        # Observation is selected, any boundary derived, or any knowledge status
+        # classified. Ordering is the rule here, not the check: a non-canonical Target
+        # that reaches classification has already been read as if it were an identity
+        # input, and the satisfied route then returns before emitting anything a later
+        # gate could inspect.
+        target = normalize_target_state(predicate)
+        _reject_noncanonical(target, "normalized_target_state")
+
         scope = binding["observation_scope"]
         require_schema_version(scope, "observation scope")
         validate_derivation_input(scope, "observation_scope")
@@ -1389,8 +1398,6 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             observation, binding["observation_bundle"], subject, scope, boundary, project_id
         )
 
-        target = normalize_target_state(predicate)
-        _reject_noncanonical(target, "normalized_target_state")
         observed = normalize_observed_state(subject, scope_binding, boundary, knowledge, candidates)
         _reject_noncanonical(observed, "normalized_observed_state")
         comparison, mismatch_kind = derive_comparison_and_mismatch(observed, target)

@@ -60,6 +60,27 @@ def canonical_bytes(value: Any) -> bytes:
     return canonical_json_bytes(canonical_semantic(value))
 
 
+def has_duplicate_members(members: Any) -> bool:
+    """Return whether *members* holds two canonically equal members.
+
+    The one place set multiplicity is decided. A canonical unordered set is a set: two
+    members that serialise to the same canonical bytes are one member, and carrying both
+    makes an identity depend on multiplicity a set does not have.
+
+    Two shapes of declared set exist and both read this. An ``UNORDERED_SET`` wrapper is
+    declared *in the record*, and is found by the recursive walk below. A Closure Policy
+    semantic set is declared by its *fingerprint profile* rather than by a wrapper, and its
+    duplicate only exists after the contract's projection has dropped the excluded fields --
+    so the projection is applied first and the projected members are passed here. Comparing
+    them by anything other than this function is how the two would come to disagree.
+    """
+
+    if not isinstance(members, list):
+        return False
+    canonical = [canonical_bytes(item) for item in members]
+    return len(canonical) != len(set(canonical))
+
+
 def has_recursive_set_duplicate(value: Any) -> bool:
     """Return whether any nested ``UNORDERED_SET`` holds duplicate canonical members."""
 
@@ -67,8 +88,7 @@ def has_recursive_set_duplicate(value: Any) -> bool:
         if any(has_recursive_set_duplicate(item) for item in value.values()):
             return True
         if value.get("collection_kind") == UNORDERED_SET:
-            members = [canonical_bytes(item) for item in value.get("members", [])]
-            return len(members) != len(set(members))
+            return has_duplicate_members(value.get("members", []))
         return False
     if isinstance(value, list):
         return any(has_recursive_set_duplicate(item) for item in value)
