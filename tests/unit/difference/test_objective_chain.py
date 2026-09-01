@@ -16,9 +16,18 @@ from typing import Any
 import pytest
 import scripts.difference_contract_validator as validator_module
 from scripts.difference_contract_validator import validate_bundle
-from tests.difference_helpers import negative_claim, retained_status_predecessor
+from tests.difference_helpers import (
+    negative_claim,
+    objective_revision,
+    retained_status_predecessor,
+)
 
 from manosube_agent_civilization.difference import DifferenceError, derive_differences
+from manosube_agent_civilization.difference.graph import (
+    EXTERNAL_KINDS,
+    REFERENCE_EDGES,
+    RESOLVABLE_KINDS,
+)
 from manosube_agent_civilization.difference.identity import objective_semantic_fingerprint
 from manosube_agent_civilization.difference.objective import objective_chain_errors
 
@@ -115,6 +124,102 @@ def test_a_predecessor_binding_that_skips_a_revision_fails_closed() -> None:
         DifferenceError, match="does not bind its immediate predecessor"
     ):
         derive_differences(_request(mutate))
+
+
+# --------------------------------------------------------------------------- #
+# A reference is typed: the id alone is not the binding
+# --------------------------------------------------------------------------- #
+
+
+def test_a_predecessor_of_the_wrong_kind_fails_closed() -> None:
+    """A schema-valid reference at the wrong kind, carrying the right id.
+
+    Reading the ``id`` and discarding the ``kind`` accepted a well-formed pointer at
+    something else that happens to share an identifier. ``objective`` was permitted on this
+    edge *and* is an external kind, so reference closure passed too without ever
+    establishing a revision edge.
+    """
+
+    def mutate(head: dict[str, Any], base: dict[str, Any]) -> None:
+        head["previous_objective_ref"] = {
+            "kind": "objective", "id": base["objective_revision_id"]
+        }
+
+    with pytest.raises(DifferenceError, match="previous_objective_ref"):
+        derive_differences(_request(mutate))
+
+
+def test_the_edge_permits_only_the_revision_kind() -> None:
+    """The structural half: closure now requires an actual objective_revision edge."""
+
+    edges = {edge.path: edge for edge in REFERENCE_EDGES["objective_revision"]}
+    assert edges["previous_objective_ref"].kinds == {"objective_revision"}
+    assert "objective_revision" in RESOLVABLE_KINDS
+
+
+def test_objective_stays_an_external_kind() -> None:
+    """Removing the edge does not remove the kind: it has a second consumer.
+
+    ``EXTERNAL_KINDS`` also governs the structural traversal of unschematized Change and
+    Reflow records, where a reference to an Objective is legitimate provenance this phase
+    does not own. Narrowing the set would reject that.
+    """
+
+    assert "objective" in EXTERNAL_KINDS
+    assert "objective" not in RESOLVABLE_KINDS
+
+
+def _chain(head_mutation: Any = None) -> dict[str, dict[str, Any]]:
+    base = objective_revision()
+    head = _successor(base)
+    if head_mutation is not None:
+        head_mutation(head, base)
+    return {
+        base["objective_revision_id"]: base,
+        head["objective_revision_id"]: head,
+    }
+
+
+def test_the_owner_accepts_the_sound_chain() -> None:
+    """So the rejections below are the kind check, not the fixture."""
+
+    errors, intact = objective_chain_errors(_chain())
+    assert errors == []
+    assert intact == {"OBJ-0001"}
+
+
+@pytest.mark.parametrize("kind", ["objective", "difference", "state", "human_authority"])
+def test_the_owner_rejects_every_wrong_kind_on_its_own(kind: str) -> None:
+    """The rule does not lean on the edge registry to hold: it checks the kind itself."""
+
+    def mutate(head: dict[str, Any], base: dict[str, Any]) -> None:
+        head["previous_objective_ref"] = {
+            "kind": kind, "id": base["objective_revision_id"]
+        }
+
+    errors, intact = objective_chain_errors(_chain(mutate))
+    assert any("does not bind its immediate predecessor" in error for error in errors)
+    assert intact == set()
+
+
+def test_revision_zero_may_not_declare_a_predecessor() -> None:
+    chain = _chain()
+    chain["OBJ-REV-0001"]["previous_objective_ref"] = {
+        "kind": "objective_revision", "id": "OBJ-REV-0002"
+    }
+    errors, intact = objective_chain_errors(chain)
+    assert any("revision zero declares a predecessor" in error for error in errors)
+    assert intact == set()
+
+
+def test_an_incomplete_predecessor_is_reported_not_raised() -> None:
+    """Total: the auditor runs this over records it has not yet proven schema-valid."""
+
+    chain = _chain()
+    del chain["OBJ-REV-0001"]["target_predicates"]
+    errors, intact = objective_chain_errors(chain)
+    assert any("not complete enough to recompute" in error for error in errors)
+    assert intact == set()
 
 
 # --------------------------------------------------------------------------- #

@@ -26,9 +26,19 @@ from typing import Any
 
 from .identity import objective_semantic_fingerprint
 
+#: The only kind an Objective revision's predecessor may carry. A reference is a *typed*
+#: reference: reading its ``id`` and discarding its ``kind`` accepts a well-formed pointer
+#: at the wrong thing that happens to share an identifier.
+PREDECESSOR_KIND = "objective_revision"
 
-def _reference_id(reference: Any) -> str | None:
-    return reference.get("id") if isinstance(reference, dict) else None
+
+def _predecessor_id(reference: Any) -> str | None:
+    """Return the predecessor identity, and only where the reference is of the right kind."""
+
+    if not isinstance(reference, dict) or reference.get("kind") != PREDECESSOR_KIND:
+        return None
+    identity = reference.get("id")
+    return identity if isinstance(identity, str) else None
 
 
 def _base_digest(revision: dict[str, Any]) -> str | None:
@@ -68,17 +78,31 @@ def objective_chain_errors(revisions: dict[str, dict[str, Any]]) -> tuple[list[s
                 )
                 sound = False
                 continue
-            expected = (
-                None if position == 0 else chain[position - 1].get("objective_revision_id")
-            )
-            if _reference_id(revision.get("previous_objective_ref")) != expected:
+            reference = revision.get("previous_objective_ref")
+            if position == 0:
+                if reference is not None:
+                    errors.append(
+                        f"Objective revision zero declares a predecessor: {where}"
+                    )
+                    sound = False
+                continue
+            if _predecessor_id(reference) != chain[position - 1].get("objective_revision_id"):
                 errors.append(
                     f"Objective revision does not bind its immediate predecessor: {where}"
                 )
                 sound = False
-            if position == 0:
+            # Total: this rule also runs over records the auditor indexed before deciding
+            # they were schema-valid, so an incomplete predecessor is reported rather than
+            # raised out of the digest.
+            try:
+                expected_digest = objective_semantic_fingerprint(chain[position - 1])
+            except (KeyError, TypeError):
+                errors.append(
+                    f"Objective predecessor is not complete enough to recompute: {where}"
+                )
+                sound = False
                 continue
-            if _base_digest(revision) != objective_semantic_fingerprint(chain[position - 1]):
+            if _base_digest(revision) != expected_digest:
                 errors.append(
                     f"Objective base fingerprint does not match its predecessor: {where}"
                 )

@@ -168,6 +168,38 @@ The operator matrix is read from the canonical Target Predicate schema's own enu
 than listed, so all six operators are covered including those that never consult
 `expected_value`.
 
+## 2c. A reference is typed, and reading only its id is not the binding
+
+A fifth finding arrived against `0da827d`, in the chain rule §2b had just introduced, and is
+corrected here.
+
+```text
+5  a nonzero revision whose predecessor is {"kind": "objective", "id": "OBJ-REV-0001"}
+     the id equals the preceding revision id
+     _reference_id() discarded kind        -> chain accepted as intact
+     graph.py permitted "objective" here, and it is an EXTERNAL kind
+                                           -> reference closure passed too
+     Engine ACCEPTED and EMITTED           independent validator  []
+```
+
+Both halves had to be closed, because each alone leaves a hole. The rule reads the ``kind``
+now — a reference is a *typed* reference, and taking its ``id`` while discarding its ``kind``
+accepts a well-formed pointer at something else that happens to share an identifier. And the
+edge registry no longer permits ``objective`` on ``previous_objective_ref``: an Objective
+revision's predecessor is a revision, nothing else resolves, and permitting an external kind
+there meant closure could be satisfied without a revision edge ever existing.
+
+``objective`` stays in ``EXTERNAL_KINDS``. That set has a second consumer — the structural
+traversal of unschematized Change and Reflow records — where a reference to an Objective is
+legitimate provenance this phase does not own. Narrowing the set rather than the edge would
+have rejected it.
+
+Writing the owner-level test for this found a totality defect in the same rule: after a
+binding error it continued into ``objective_semantic_fingerprint``, which raises on a record
+missing a semantic field. The auditor runs this rule over records it indexed *before*
+deciding they were schema-valid, so that is reachable. The digest recomputation is guarded
+and reports rather than raises, per ADR-0013.
+
 ## 3. Cost
 
 `RecordType.semantics` changing from errors-returning to raising means a future rule must

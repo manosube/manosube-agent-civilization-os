@@ -323,7 +323,10 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
         ("owner_authority_ref", ("human_authority",)),
         ("human_authority_ref", ("human_authority",)),
         ("boundary_ref", ("boundary", "objective_boundary")),
-        ("previous_objective_ref", ("objective", "objective_revision")),
+        # ``objective`` was permitted here and is an *external* kind, so a predecessor
+        # declared as one satisfied closure without ever establishing a revision edge.
+        # An Objective revision's predecessor is a revision; nothing else resolves.
+        ("previous_objective_ref", ("objective_revision",)),
     ),
     "observation": _edges(
         ("scope_ref", ("observation_scope",)),
