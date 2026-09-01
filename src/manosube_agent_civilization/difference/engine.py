@@ -27,7 +27,10 @@ from manosube_agent_civilization.observation.identity import (
     observation_identity,
 )
 from manosube_agent_civilization.observation.scope import validate_scope
-from manosube_agent_civilization.observation.verification import observation_record_errors
+from manosube_agent_civilization.observation.verification import (
+    observation_completeness_errors,
+    observation_record_errors,
+)
 
 from .canonical import (
     canonical_bytes,
@@ -383,6 +386,56 @@ _REQUIRED_BUNDLE_SECTIONS: tuple[str, ...] = (
 )
 
 
+#: Every top-level derivation-request key the derivation reads before it can validate
+#: anything. Absent, they raised an incidental ``KeyError`` in place of the canonical
+#: rejection; a contract test compares this tuple against what the derivation reads.
+_REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
+    "project_id",
+    "objective_revision",
+    "state_revision",
+    "state_fingerprint",
+    "bindings",
+)
+
+#: Every per-binding key the derivation reads for the same reason.
+_REQUIRED_BINDING_KEYS: tuple[str, ...] = (
+    "target_predicate_id",
+    "observation_scope",
+    "observation_bundle",
+)
+
+
+def _require_request_shape(request: Any) -> None:
+    """Reject a derivation request that omits a key the derivation reads.
+
+    Read before anything else, so no absent key is discovered by the code that needed it.
+    """
+
+    if not isinstance(request, dict):
+        raise DifferenceError("derivation request is not a canonical object")
+    for key in _REQUIRED_REQUEST_KEYS:
+        if key not in request:
+            raise DifferenceError(f"derivation request omits a required key: {key}")
+    bindings = request["bindings"]
+    if not isinstance(bindings, list) or not bindings:
+        raise DifferenceError("derivation request carries no canonical bindings")
+    for position, binding in enumerate(bindings):
+        if not isinstance(binding, dict):
+            raise DifferenceError(
+                f"derivation binding is not a canonical object: bindings[{position}]"
+            )
+        for key in _REQUIRED_BINDING_KEYS:
+            if key not in binding:
+                raise DifferenceError(
+                    f"derivation binding omits a required key: bindings[{position}].{key}"
+                )
+        scope = binding["observation_scope"]
+        if not isinstance(scope, dict):
+            raise DifferenceError(
+                f"derivation binding Scope is not a canonical object: bindings[{position}]"
+            )
+
+
 def _require_bundle_shape(bundle: Any) -> None:
     """Reject an Observation bundle that is not a list of records per declared section.
 
@@ -405,6 +458,16 @@ def _require_bundle_shape(bundle: Any) -> None:
                 raise DifferenceError(
                     f"observation bundle carries a non-object record: {section}[{position}]"
                 )
+    # Readability, decided by the Observation element's own authority, before any consumer
+    # indexes a field. Deliberately *only* the violations that make a record impossible to
+    # read: anything wider pre-empts the cross-record pass for a record that is both
+    # incomplete and wrong, which ADR-0013 forbids and ADR-0017 records as a tried
+    # regression that five existing tests caught.
+    errors = observation_completeness_errors(bundle)
+    if errors:
+        raise DifferenceError(
+            f"upstream Observation record is not readable: {sorted(errors)[0]}"
+        )
 
 
 #: The fields Observation selection reads. A record missing any of them cannot be selected
@@ -1254,8 +1317,12 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
         scope = binding.get("observation_scope")
         if isinstance(scope, dict):
             found.append((scope, "observation_scope", f"{where}.observation_scope"))
+        # Total: this scan runs before `_historical_scopes` decides the supply route, which
+        # owns the "must be a list" rule and its message. A non-list is passed over here so
+        # that owner reports it, rather than `enumerate` raising a TypeError first.
+        historical_scopes = binding.get("historical_observation_scopes")
         for index, historical in enumerate(
-            binding.get("historical_observation_scopes", []) or []
+            historical_scopes if isinstance(historical_scopes, list) else []
         ):
             if isinstance(historical, dict):
                 found.append(
@@ -1394,6 +1461,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
 
     request = deepcopy(request)
     require_schema_version(request, "derivation request")
+    _require_request_shape(request)
     _require_profiles(request)
     _reject_hostile_input(request)
 
@@ -1433,17 +1501,6 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             _require_fragment_object(request["observation_method"], "observation_method")
         )
 
-    # Every derivation binding is a canonical object before any of them is sorted, indexed
-    # or scanned. The hostile-input scan already passed over a non-object binding, which
-    # left the derivation itself to subscript it and raise a raw TypeError.
-    bindings = request.get("bindings")
-    if not isinstance(bindings, list) or not bindings:
-        raise DifferenceError("derivation request carries no canonical bindings")
-    for position, binding in enumerate(bindings):
-        if not isinstance(binding, dict):
-            raise DifferenceError(
-                f"derivation binding is not a canonical object: bindings[{position}]"
-            )
     # One Target Predicate identity names one predicate. Two payloads under one identity
     # fail closed here, before any index the derivation reads is built.
     predicates = unique_target_predicates(objective)

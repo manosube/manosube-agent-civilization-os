@@ -214,6 +214,50 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
     return errors
 
 
+#: The two schema violations that make a record *unreadable* rather than merely invalid: a
+#: required property is absent, so any consumer indexing it raises ``KeyError``; or a
+#: container carries the wrong JSON type, so any consumer iterating it raises ``TypeError``.
+_UNREADABLE_VALIDATORS = ("required", "type")
+_CONTAINER_TYPES = frozenset({"array", "object"})
+
+
+def observation_completeness_errors(bundle: dict[str, Any]) -> list[str]:
+    """Return only the schema violations that make a record impossible to read.
+
+    Exposed so a consumer can settle *readability* before indexing a record it has not
+    validated. Every consumer reads the whole bundle to find what it needs, so a record
+    missing a required property raises an incidental exception out of whichever
+    comprehension reaches it first, in place of the canonical rejection its boundary
+    documents.
+
+    Narrow on purpose, and the narrowing is the whole point. Returning every schema error
+    here -- which was tried -- pre-empts the cross-record pass for a record that is *both*
+    schema-invalid and cross-record-invalid, so a forged ``CONFLICTED`` payload was reported
+    as a schema failure instead of by the rule written to catch it. Completeness and
+    admissibility are distinct obligations, per ADR-0013, and this answers only the first.
+    A record that is complete but wrong is silent here and keeps its own diagnosis.
+    """
+
+    schema_validators = validators()
+    errors: list[str] = []
+    for group, schema_name in RECORD_SCHEMAS.items():
+        validator = schema_validators[OBSERVATION_SCHEMA_BASE + schema_name]
+        for record in _records(bundle, group):
+            for error in validator.iter_errors(record):
+                if error.validator not in _UNREADABLE_VALIDATORS:
+                    continue
+                if error.validator == "type" and not (
+                    _CONTAINER_TYPES & set(
+                        error.validator_value
+                        if isinstance(error.validator_value, list)
+                        else [error.validator_value]
+                    )
+                ):
+                    continue
+                errors.append(f"{group}: {error.message}")
+    return errors
+
+
 def _schema_pass(bundle: dict[str, Any]) -> tuple[list[str], dict[str, list[dict[str, Any]]]]:
     """Validate every record against its canonical schema and partition the valid ones."""
 
