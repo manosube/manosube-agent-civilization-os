@@ -38,6 +38,8 @@ from .canonical import (
 )
 from .conformance import (
     CARRIED_SECTIONS,
+    EMITTED_SECTIONS,
+    RECORD_TYPES,
     merge_records as _merge,
     validate_derivation_input,
     validate_emitted_bundle,
@@ -1025,6 +1027,40 @@ def _next_observation_request(
     return request
 
 
+#: Raw request fragments the Engine completes into canonical records, and the type each
+#: becomes. A fragment carries no ``schema_version``, ``record_kind`` or content address --
+#: those are what completion adds -- but its *declared reference locations* are the target
+#: type's, unchanged, so it is scanned through that type's paths.
+#:
+#: Only the Observation Method is here. The Closure Policy requirements fragment is
+#: deliberately absent: completion materialises its ``required_claims`` descriptors into
+#: Completion Claim records, so the fragment's shape at those declared paths is *not* the
+#: record's, and scanning it as ``closure_policy`` would reject valid input. It is covered
+#: instead by the emitted-bundle sweep in ``_finalize``, which reads the derived record.
+#: A contract test proves this split covers every fragment the Engine completes.
+_REQUEST_FRAGMENT_TYPES: dict[str, str] = {
+    "observation_method": "observation_method",
+}
+
+#: The fragments covered by the emitted-bundle sweep instead, with the type each becomes.
+#: Together with ``_REQUEST_FRAGMENT_TYPES`` this is the complete inventory of fragments the
+#: Engine completes into canonical records; a contract test compares it against the
+#: fragments the derivation actually reads, in both directions.
+_EMITTED_SWEEP_FRAGMENT_TYPES: dict[str, str] = {
+    "closure_policy_requirements": "closure_policy",
+}
+
+#: Every binding key that carries canonical records, and is therefore scanned. The
+#: remaining binding keys carry an identifier, a fragment or a risk class, not records.
+_SCANNED_BINDING_KEYS: frozenset[str] = frozenset(
+    {
+        "observation_scope",
+        "historical_observation_scopes",
+        "observation_bundle",
+        "predecessor",
+    }
+)
+
 #: Every canonical record the derivation request carries, and the type each is scanned as.
 #: The Observation bundle's own section names differ from the carried-context names, so both
 #: maps are stated; a contract test proves this covers every record-bearing request location.
@@ -1051,6 +1087,10 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
     objective = request.get("objective_revision")
     if isinstance(objective, dict):
         found.append((objective, "objective_revision", "request.objective_revision"))
+    for key, type_name in _REQUEST_FRAGMENT_TYPES.items():
+        fragment = request.get(key)
+        if isinstance(fragment, dict):
+            found.append((fragment, type_name, f"request.{key}"))
     for position, binding in enumerate(request.get("bindings", []) or []):
         if not isinstance(binding, dict):
             continue
@@ -2009,6 +2049,22 @@ def _carried(
     return sorted(carried.get(section, {}).values(), key=lambda item: str(item[key]))
 
 
+def _emitted_moving_reference_errors(bundle: dict[str, Any]) -> list[str]:
+    """Return every moving reference at a declared location of any emitted record."""
+
+    errors: list[str] = []
+    for section, type_name in sorted(EMITTED_SECTIONS.items()):
+        canonical = RECORD_TYPES[type_name]
+        for record in bundle.get(section, []) or []:
+            if isinstance(record, dict):
+                errors.extend(
+                    moving_reference_errors(
+                        record, type_name, f"{section}[{record.get(canonical.key)}]"
+                    )
+                )
+    return errors
+
+
 def _finalize(
     request: dict[str, Any],
     objective_revisions: dict[str, dict[str, Any]],
@@ -2106,6 +2162,13 @@ def _finalize(
     errors = reference_closure_errors(bundle)
     if errors:
         raise DifferenceError(f"returned bundle has an unresolved reference: {errors[0]}")
+    # ...no emitted record names a mutable identity. The hostile-input gate scans what the
+    # caller supplied; this scans what the Engine *derived* from it, so a moving reference
+    # copied out of a fragment into a content-addressed record cannot hide behind the
+    # stable identity that addressing produces.
+    moving = _emitted_moving_reference_errors(bundle)
+    if moving:
+        raise SecurityRejectionError(sorted(moving)[0])
     # ...and every cross-record relation the lifecycle authority owns holds over the whole
     # graph. Only then is the bundle returned.
     errors = relational_errors(bundle)

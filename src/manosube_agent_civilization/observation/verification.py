@@ -43,6 +43,66 @@ EVIDENCE_BOUND_NEGATIVE_STATUSES: frozenset[str] = frozenset({"ABSENT", "EMPTY"}
 CONTRADICTION_NEGATIVE_STATUS = "CONFLICTED"
 
 
+#: The one evaluation status that asserts a conflict, on both the Fact and the Negative
+#: side. Every other status asserts there is none.
+CONFLICT_STATUS = "CONFLICTED"
+
+#: The conflict-reference fields each evaluation kind carries. A Fact Evaluation records
+#: the Negative Observations and the Facts it conflicts with; a Negative Observation
+#: Evaluation records the Facts.
+CONFLICT_REFERENCE_FIELDS: dict[str, tuple[str, ...]] = {
+    "fact_evaluations": ("conflict_fact_refs", "conflict_negative_observation_refs"),
+    "negative_evaluations": ("conflict_fact_refs",),
+}
+
+
+def conflict_position_errors(bundle: dict[str, Any]) -> list[str]:
+    """Return every evaluation whose status and conflict references contradict each other.
+
+    ``NORMALIZED_FACT.md`` makes the latest contiguous evaluation the record of the
+    *current* support and conflict position, and ``NEGATIVE_OBSERVATION.md`` requires the
+    two sides to reference the same conflict pair. Both were enforced. What was not is the
+    converse: a status that asserts *no* conflict while the record still names one.
+
+    An evaluation identity is derived from its subject and revision alone, so an evaluation
+    appended to move a Fact off ``CONFLICTED`` could keep the conflict references of the
+    revision it replaced. Schema conformance passed (the canonical schema constrains only
+    the ``CONFLICTED`` direction), identity recomputed, and the symmetry rule had nothing
+    to compare against because both sides were left mutually consistent -- so a Difference
+    was derived from an observed state that simultaneously claimed support and conflict.
+
+    The rule is stated once, here, for both evaluation kinds. There is no second status
+    table and no auditor-only rule: every consumer reaches it through
+    :func:`observation_record_errors`.
+    """
+
+    errors: list[str] = []
+    for group, fields in CONFLICT_REFERENCE_FIELDS.items():
+        for evaluation in _records(bundle, group):
+            if not _complete(evaluation, "evaluation_id", "evaluation_status"):
+                continue
+            identity = evaluation["evaluation_id"]
+            declared = {
+                field: evaluation.get(field) or []
+                for field in fields
+                if isinstance(evaluation.get(field), list)
+            }
+            if len(declared) != len(fields):
+                continue
+            carried = sorted(field for field, value in declared.items() if value)
+            if evaluation["evaluation_status"] == CONFLICT_STATUS:
+                if not carried:
+                    errors.append(
+                        f"{CONFLICT_STATUS} evaluation names no conflict: {identity}"
+                    )
+            elif carried:
+                errors.append(
+                    f"non-{CONFLICT_STATUS} evaluation retains conflict references: "
+                    f"{identity} ({', '.join(carried)})"
+                )
+    return errors
+
+
 def negative_evaluation_evidence_errors(bundle: dict[str, Any]) -> list[str]:
     """Return every Negative Evaluation Evidence binding violation in *bundle*.
 
@@ -379,4 +439,7 @@ def _cross_record_errors(
     # Negative Observation declared. Decided by the one authority both auditors import, and
     # applied only to records that already satisfy their canonical schema.
     errors.extend(negative_evaluation_evidence_errors(schema_valid))
+    # A status that asserts no conflict may not name one. Decided by the same authority,
+    # for both evaluation kinds, so no second status table exists.
+    errors.extend(conflict_position_errors(schema_valid))
     return errors
