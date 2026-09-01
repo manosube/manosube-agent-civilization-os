@@ -384,15 +384,27 @@ _REQUIRED_BUNDLE_SECTIONS: tuple[str, ...] = (
 
 
 def _require_bundle_shape(bundle: Any) -> None:
-    """Reject an Observation bundle whose declared sections are absent or not lists."""
+    """Reject an Observation bundle that is not a list of records per declared section.
+
+    A section being a list is not enough: every consumer downstream indexes its members by
+    key. Guarding the section and not its members left a non-object record to raise a raw
+    ``TypeError`` out of the first comprehension that subscripted it -- the same defect one
+    level in, which is where the previous two rounds also found it.
+    """
 
     if not isinstance(bundle, dict):
         raise DifferenceError("observation bundle is not a canonical object")
     for section in _REQUIRED_BUNDLE_SECTIONS:
-        if not isinstance(bundle.get(section), list):
+        records = bundle.get(section)
+        if not isinstance(records, list):
             raise DifferenceError(
                 f"observation bundle omits a canonical section: {section}"
             )
+        for position, record in enumerate(records):
+            if not isinstance(record, dict):
+                raise DifferenceError(
+                    f"observation bundle carries a non-object record: {section}[{position}]"
+                )
 
 
 #: The fields Observation selection reads. A record missing any of them cannot be selected
@@ -1226,7 +1238,12 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
         fragment = request.get(key)
         if isinstance(fragment, dict):
             found.append((fragment, type_name, f"request.{key}"))
-    for position, binding in enumerate(request.get("bindings", []) or []):
+    # Total, like the bundle sections below: this scan precedes the shape guard, so a
+    # ``bindings`` that is not a list is passed over here and rejected there by name.
+    request_bindings = request.get("bindings")
+    for position, binding in enumerate(
+        request_bindings if isinstance(request_bindings, list) else []
+    ):
         if not isinstance(binding, dict):
             continue
         where = f"request.bindings[{position}]"
@@ -1416,6 +1433,17 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             _require_fragment_object(request["observation_method"], "observation_method")
         )
 
+    # Every derivation binding is a canonical object before any of them is sorted, indexed
+    # or scanned. The hostile-input scan already passed over a non-object binding, which
+    # left the derivation itself to subscript it and raise a raw TypeError.
+    bindings = request.get("bindings")
+    if not isinstance(bindings, list) or not bindings:
+        raise DifferenceError("derivation request carries no canonical bindings")
+    for position, binding in enumerate(bindings):
+        if not isinstance(binding, dict):
+            raise DifferenceError(
+                f"derivation binding is not a canonical object: bindings[{position}]"
+            )
     # One Target Predicate identity names one predicate. Two payloads under one identity
     # fail closed here, before any index the derivation reads is built.
     predicates = unique_target_predicates(objective)

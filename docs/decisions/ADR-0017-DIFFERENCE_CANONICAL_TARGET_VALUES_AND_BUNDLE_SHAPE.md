@@ -78,6 +78,34 @@ the bundle's sections during the hostile-input pass, which precedes the shape gu
 section that is not a list is passed over there and rejected by the guard with its own
 message. This one was not reported: the parametrised test for finding 2 found it.
 
+## 1b. A section is a list of *records*
+
+```text
+4  a required section that is a list but carries a non-object member
+     facts / bindings          -> raw TypeError from the first comprehension
+     observations              -> already reported, via _selectable and the verifier
+     the other three sections  -> already reported, by the shared verifier
+
+5  (found by auditing the same class one input out) request.bindings carrying
+   a non-object member
+     raised  TypeError: 'int' object is not subscriptable
+```
+
+Guarding the section and not its members is the same defect one level in, which is where
+the previous two rounds also found it. `_require_bundle_shape` now requires every member of
+every declared section to be an object, and the derivation's own `bindings` are held to the
+same rule before any of them is sorted, indexed or scanned.
+
+Finding 5 was not reported. The review named `observations` and `facts`; auditing every list
+input the derivation reads showed `observations` was in fact already handled — `_selectable`
+routes a non-object to the verifier — and that `request.bindings` was not. Reporting that
+accurately matters: the reviewer's `observations` example does not reproduce, and the fix
+still belongs where the reviewer said it does.
+
+Every other list input tested is already reported by its own schema: the Objective's
+`target_predicates` and `constitutional_constraints`, a Scope's `included_subjects` and
+`source_snapshot_refs`, and a binding's `historical_observation_scopes`.
+
 ## 2. What this does not claim
 
 Unchanged: Authority, Change, Evidence sufficiency, Reflow, Closure Evaluation *execution*,

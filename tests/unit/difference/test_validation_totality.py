@@ -401,3 +401,60 @@ def test_a_bundle_that_is_not_an_object_is_reported_not_raised() -> None:
     request["bindings"][0]["observation_bundle"] = ["not", "an", "object"]
     with pytest.raises(DifferenceError, match="observation bundle is not a canonical object"):
         derive_differences(request)
+
+
+# --------------------------------------------------------------------------- #
+# A section is a list of *records*, and a binding is a record too
+# --------------------------------------------------------------------------- #
+
+_NON_OBJECTS: list[Any] = [7, "x", None, ["a"]]
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        "observations",
+        "facts",
+        "bindings",
+        "fact_evaluations",
+        "negative_observations",
+        "negative_evaluations",
+    ],
+)
+@pytest.mark.parametrize("member", _NON_OBJECTS)
+def test_a_non_object_record_in_a_section_is_reported_not_raised(
+    section: str, member: Any
+) -> None:
+    """A section being a list is not enough: every consumer indexes its members by key."""
+
+    def mutate(bundle: dict[str, Any]) -> None:
+        bundle[section] = [*bundle.get(section, []), member]
+
+    with pytest.raises(
+        DifferenceError, match=f"non-object record: {re.escape(section)}"
+    ):
+        derive_differences(_bundle_request(mutate))
+
+
+@pytest.mark.parametrize("member", _NON_OBJECTS)
+def test_a_non_object_derivation_binding_is_reported_not_raised(member: Any) -> None:
+    """Unreported, found by auditing the same class one input out.
+
+    The hostile-input scan already passed over a non-object binding, which left the
+    derivation itself to subscript it.
+    """
+
+    request = _bundle_request()
+    request["bindings"].append(member)
+    with pytest.raises(
+        DifferenceError, match="derivation binding is not a canonical object"
+    ):
+        derive_differences(request)
+
+
+@pytest.mark.parametrize("value", [None, {}, "bindings", 7, []])
+def test_a_request_without_canonical_bindings_is_reported_not_raised(value: Any) -> None:
+    request = _bundle_request()
+    request["bindings"] = value
+    with pytest.raises(DifferenceError, match="carries no canonical bindings"):
+        derive_differences(request)
