@@ -49,6 +49,7 @@ from .identity import (
     supersession_relation_id,
 )
 from .policy import closure_policy_semantic_errors
+from .selection import unique_target_predicates
 from .validation import SCHEMA_BASE, require_schema_version, validate_record
 
 DIFFERENCE_BASE = SCHEMA_BASE + "difference/"
@@ -100,6 +101,26 @@ def _policy_identity(record: dict[str, Any]) -> str:
     return closure_policy_id(policy_semantic_fingerprint(record), str(identity))
 
 
+def _policy_semantics(record: dict[str, Any], context: str) -> None:
+    """Run the Closure Policy owner's rules; the auditor reads the same function."""
+
+    errors = closure_policy_semantic_errors(record, context)
+    if errors:
+        raise DifferenceError(sorted(errors)[0])
+
+
+def _objective_revision_semantics(record: dict[str, Any], context: str) -> None:
+    """Reject an Objective revision declaring two Target Predicates under one identity.
+
+    ``unique_target_predicates`` guarded only the *requested* revision, so a carried or
+    emitted revision could be ambiguous and every consumer that indexed it by comprehension
+    silently resolved a different payload. Running it here covers the carried, input and
+    emitted routes at once, through the one Target Predicate identity owner.
+    """
+
+    unique_target_predicates(record)
+
+
 @dataclass(frozen=True)
 class RecordType:
     """One canonical record type: its identity field, schema and identity authority."""
@@ -109,10 +130,11 @@ class RecordType:
     schema: str | None
     base: str
     identity: Callable[[dict[str, Any]], str] | None = None
-    #: Rules a record must satisfy from its own content, beyond schema and identity. Only
-    #: a type that stores a digest of itself needs one; ``None`` states that this type
-    #: carries no self-derived semantics to recompute.
-    semantics: Callable[[dict[str, Any], str], list[str]] | None = None
+    #: Rules a record must satisfy from its own content, beyond schema and identity. It
+    #: *raises*, so each rule keeps the exception type its own owner defines rather than
+    #: having every semantic defect flattened into one class. ``None`` states that this
+    #: type carries no self-derived semantics to check.
+    semantics: Callable[[dict[str, Any], str], None] | None = None
 
 
 #: One canonical schema, identity field and identity authority per logical record type.
@@ -130,7 +152,7 @@ RECORD_TYPES: dict[str, RecordType] = {
     ),
     "closure_policy": RecordType(
         "closure_policy_id", "closure_policy.schema.json", DIFFERENCE_BASE, _policy_identity,
-        closure_policy_semantic_errors,
+        _policy_semantics,
     ),
     "next_observation_request": RecordType(
         "observation_request_id", "next_observation_request.schema.json", DIFFERENCE_BASE,
@@ -141,7 +163,8 @@ RECORD_TYPES: dict[str, RecordType] = {
         _method_identity,
     ),
     "objective_revision": RecordType(
-        "objective_revision_id", "objective_revision.schema.json", OBJECTIVE_BASE
+        "objective_revision_id", "objective_revision.schema.json", OBJECTIVE_BASE,
+        semantics=_objective_revision_semantics,
     ),
     "observation": RecordType(
         "observation_id", "observation.schema.json", OBSERVATION_BASE, observation_identity
@@ -302,9 +325,7 @@ def validate_typed_record(record: dict[str, Any], type_name: str, context: str) 
     # derived from that digest, so "does not recompute" would report the consequence and
     # hide the cause.
     if canonical.semantics is not None:
-        errors = canonical.semantics(record, context)
-        if errors:
-            raise DifferenceError(sorted(errors)[0])
+        canonical.semantics(record, context)
     if canonical.identity is not None and identity != canonical.identity(record):
         raise IdentityCollisionError(f"{context} identity does not recompute: {identity}")
 

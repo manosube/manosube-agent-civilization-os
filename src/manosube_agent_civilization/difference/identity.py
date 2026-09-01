@@ -48,6 +48,16 @@ _OBJECTIVE_SEMANTIC_FIELDS = (
     "constitutional_constraints",
     "status",
 )
+#: ``UNORDERED_SETS`` of ``MANOSUBE-CLOSURE-POLICY-SHA256-0.1``. The profile also fixes
+#: ``DUPLICATE_SET_MEMBER=REJECT``, and a contract test holds this tuple to the profile
+#: block in ``CLOSURE_POLICY.md`` in both directions.
+POLICY_UNORDERED_SET_FIELDS = (
+    "required_claims",
+    "required_invariants",
+    "allowed_terminal_states",
+    "reopen_conditions",
+)
+
 _POLICY_SEMANTIC_FIELDS = (
     "target_predicate_ref",
     "required_observation_scope",
@@ -133,12 +143,16 @@ def completion_claim_id(descriptor: dict[str, Any]) -> str:
     return "CLAIM-" + digest.upper()
 
 
-def policy_semantic_fingerprint(policy: dict[str, Any]) -> str:
-    """Return the Closure Policy requirement digest bound into Difference identity.
+def policy_semantic_projection(policy: dict[str, Any]) -> dict[str, Any]:
+    """Return the exact payload the Closure Policy digest is computed over.
 
-    ``subject_difference_ref``, ``closure_policy_id`` and ``policy_version`` are excluded,
-    so no circular dependency with ``difference_id`` exists and a version-only Policy
-    update keeps the Difference identity.
+    Extracted from :func:`policy_semantic_fingerprint` so the duplicate-set rule can read
+    the *same* projection the digest reads. ``MANOSUBE-CLOSURE-POLICY-SHA256-0.1`` declares
+    four unordered sets and ``DUPLICATE_SET_MEMBER=REJECT``, and a duplicate is only
+    visible after projection: two ``required_invariants`` differing solely in an excluded
+    ``commit_sha``, or two reopen conditions differing solely in an excluded
+    ``objective_revision_ref``, are distinct whole objects and identical members. Deriving
+    the check from a second, hand-copied projection is how the two would drift.
     """
 
     projection: dict[str, Any] = {key: policy[key] for key in _POLICY_SEMANTIC_FIELDS}
@@ -174,7 +188,18 @@ def policy_semantic_fingerprint(policy: dict[str, Any]) -> str:
         ),
         key=canonical_json_bytes,
     )
-    return _sha256_fingerprint(projection)
+    return projection
+
+
+def policy_semantic_fingerprint(policy: dict[str, Any]) -> str:
+    """Return the Closure Policy requirement digest bound into Difference identity.
+
+    ``subject_difference_ref``, ``closure_policy_id`` and ``policy_version`` are excluded,
+    so no circular dependency with ``difference_id`` exists and a version-only Policy
+    update keeps the Difference identity.
+    """
+
+    return _sha256_fingerprint(policy_semantic_projection(policy))
 
 
 def difference_identity_input(difference: dict[str, Any]) -> dict[str, Any]:

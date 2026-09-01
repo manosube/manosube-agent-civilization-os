@@ -229,6 +229,31 @@ def _evaluation_supports_observation(
     )
 
 
+#: The three canonical projections a Difference carries, each of which must be canonical
+#: before it is compared, emitted, or accepted from a predecessor.
+_CANONICAL_PROJECTIONS: tuple[str, ...] = (
+    "normalized_target_state",
+    "normalized_observed_state",
+    "structural_difference",
+)
+
+
+def _reject_noncanonical(value: Any, name: str) -> None:
+    """Reject a projection that is not canonical: a bare array, or a duplicate set member.
+
+    Both rules were already enforced, but at different moments: bare arrays where each
+    projection is produced, duplicate set members only while *building an unsatisfied
+    Difference*. A satisfied comparison returns before that, so a Target whose
+    ``expected_value`` carried a duplicate ``UNORDERED_SET`` member was reported satisfied
+    rather than rejected -- the same Target the unsatisfied route refused. They are stated
+    together here so a projection cannot be read by any route before both hold.
+    """
+
+    reject_bare_arrays(value, name)
+    if has_recursive_set_duplicate(value):
+        raise DifferenceError(f"{name} carries a duplicate unordered-set member")
+
+
 def _closure_policy(
     requirements: dict[str, Any], target_predicate_ref: dict[str, str]
 ) -> tuple[dict[str, Any], str]:
@@ -1365,9 +1390,9 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         )
 
         target = normalize_target_state(predicate)
-        reject_bare_arrays(target, "normalized_target_state")
+        _reject_noncanonical(target, "normalized_target_state")
         observed = normalize_observed_state(subject, scope_binding, boundary, knowledge, candidates)
-        reject_bare_arrays(observed, "normalized_observed_state")
+        _reject_noncanonical(observed, "normalized_observed_state")
         comparison, mismatch_kind = derive_comparison_and_mismatch(observed, target)
         if comparison == "SATISFIED":
             # A satisfied route yields no open Difference. The empty result is legitimate
@@ -1387,7 +1412,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             raise DifferenceError("unsatisfied comparison produced no mismatch kind")
 
         structural = structural_difference(observed, target, comparison, mismatch_kind)
-        reject_bare_arrays(structural, "structural_difference")
+        _reject_noncanonical(structural, "structural_difference")
 
         requirements = _require_fragment_object(
             binding.get("closure_policy_requirements", default_requirements),
@@ -1433,9 +1458,6 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         }
         if difference["risk_class"] not in RISK_CLASSES:
             raise DifferenceError(f"unknown risk class: {difference['risk_class']!r}")
-        for projection in ("normalized_target_state", "normalized_observed_state", "structural_difference"):
-            if has_recursive_set_duplicate(difference[projection]):
-                raise DifferenceError(f"{projection} carries a duplicate unordered-set member")
 
         difference_id = derive_difference_id(difference)
         identity_payload = canonical_bytes(difference_identity_input(difference))
@@ -1591,13 +1613,8 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
                 "predecessor Closure Policy fingerprint does not match this derivation: "
                 f"{difference_id}"
             )
-        for projection in (
-            "normalized_target_state",
-            "normalized_observed_state",
-            "structural_difference",
-        ):
-            if has_recursive_set_duplicate(difference[projection]):
-                raise DifferenceError(f"{projection} carries a duplicate unordered-set member")
+        for projection in _CANONICAL_PROJECTIONS:
+            _reject_noncanonical(difference[projection], projection)
         policy_record = {
             "schema_version": SCHEMA_VERSION,
             "closure_policy_id": difference["closure_policy"]["id"],

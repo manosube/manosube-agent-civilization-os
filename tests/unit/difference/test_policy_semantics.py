@@ -37,13 +37,18 @@ from tests.difference_helpers import (
 )
 
 from manosube_agent_civilization.difference import DifferenceError, derive_differences
-from manosube_agent_civilization.difference.errors import SecurityRejectionError
+from manosube_agent_civilization.difference.errors import (
+    IdentityCollisionError,
+    SecurityRejectionError,
+)
 from manosube_agent_civilization.difference.identity import (
+    POLICY_UNORDERED_SET_FIELDS,
     TARGET_PREDICATE_PROFILE,
     closure_policy_id,
     completion_claim_fingerprint,
     completion_claim_id,
     policy_semantic_fingerprint,
+    policy_semantic_projection,
     target_predicate_fingerprint,
 )
 from manosube_agent_civilization.difference.policy import (
@@ -328,9 +333,206 @@ def test_the_auditor_holds_no_policy_rule_of_its_own() -> None:
 
 
 def test_the_conformance_gate_reads_the_same_owner() -> None:
+    """The gate's rejection is the owner's own first error, verbatim.
+
+    The hook raises rather than returning errors, so each rule keeps its own exception
+    type; what is asserted here is that the message the gate raises is the message the
+    owner produced, which a second copy of the rule could not satisfy by accident.
+    """
+
     from manosube_agent_civilization.difference.conformance import RECORD_TYPES
 
-    assert RECORD_TYPES["closure_policy"].semantics is closure_policy_semantic_errors
+    hook = RECORD_TYPES["closure_policy"].semantics
+    assert hook is not None
+    _, forged = _carried(_forge_claim_id)
+    expected = sorted(closure_policy_semantic_errors(forged, "policies[X]"))
+    assert expected
+    with pytest.raises(DifferenceError) as raised:
+        hook(forged, "policies[X]")
+    assert str(raised.value) == expected[0]
+
+
+def test_every_objective_revision_route_rejects_an_ambiguous_predicate_id() -> None:
+    """Not only the requested revision: the gate covers carried and emitted ones too."""
+
+    from manosube_agent_civilization.difference.conformance import RECORD_TYPES
+
+    hook = RECORD_TYPES["objective_revision"].semantics
+    assert hook is not None
+    revision = objective_revision()
+    hook(revision, "objective_revisions[OBJ-REV-0001]")
+    ambiguous = deepcopy(revision)
+    second = deepcopy(ambiguous["target_predicates"][0])
+    second["expected_value"] = "SOMETHING-ELSE"
+    ambiguous["target_predicates"].append(second)
+    with pytest.raises(
+        IdentityCollisionError, match="two different Target Predicates under one identity"
+    ):
+        hook(ambiguous, "objective_revisions[OBJ-REV-0001]")
+
+
+def _ambiguous_carried_revision(request: dict[str, Any]) -> dict[str, Any]:
+    context: dict[str, Any] = request["bindings"][0]["predecessor"]["context"]
+    base = deepcopy(context["objective_revisions"][0])
+    ambiguous = deepcopy(base)
+    ambiguous["objective_revision_id"] = "OBJ-REV-0002"
+    ambiguous["revision"] = base["revision"] + 1
+    ambiguous["previous_objective_ref"] = {
+        "kind": "objective_revision", "id": base["objective_revision_id"]
+    }
+    ambiguous["change_reason"] = "ambiguous"
+    second = deepcopy(base["target_predicates"][0])
+    second["expected_value"] = "SOMETHING-ELSE"
+    ambiguous["target_predicates"] = [deepcopy(base["target_predicates"][0]), second]
+    context["objective_revisions"].append(ambiguous)
+    revision: dict[str, Any] = ambiguous
+    return revision
+
+
+def test_an_ambiguous_carried_revision_nothing_points_at_fails_closed() -> None:
+    """The route the reopen-condition rule alone would not have reached."""
+
+    request, _ = _carried()
+    ambiguous = _ambiguous_carried_revision(request)
+    assert [p["predicate_id"] for p in ambiguous["target_predicates"]] == ["TP-0001", "TP-0001"]
+    with pytest.raises(
+        IdentityCollisionError, match="two different Target Predicates under one identity"
+    ):
+        derive_differences(request)
+
+
+def test_reopen_provenance_indexes_through_the_identity_owner() -> None:
+    """And the rule that reads a revision does not index it by comprehension.
+
+    A comprehension keeps the *last* payload, so this rule would have resolved one
+    interpretation of an ambiguous identity while another consumer resolved the other.
+    """
+
+    ambiguous = objective_revision()
+    second = deepcopy(ambiguous["target_predicates"][0])
+    second["expected_value"] = "SOMETHING-ELSE"
+    ambiguous["target_predicates"].append(second)
+    condition = _condition(PREDICATE_ID, target_predicate_fingerprint(second))
+    errors = reopen_condition_provenance_errors(
+        {"closure_policy_id": "CP-X", "reopen_conditions": [condition]},
+        {"OBJ-REV-0001": ambiguous},
+    )
+    assert errors == [
+        "reopen condition Objective revision is ambiguous: OBJ-REV-0001: "
+        "Objective declares two different Target Predicates under one identity: TP-0001"
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# DUPLICATE_SET_MEMBER=REJECT, decided after the semantic projection
+# --------------------------------------------------------------------------- #
+
+
+def _invariant(commit: str, blob: str) -> dict[str, Any]:
+    return {
+        "kind": "kernel_invariant",
+        "id": "X-003",
+        "contract_source_ref": {
+            "kind": "git_blob",
+            "repository": "manosube/manosube-agent-civilization-os",
+            "commit_sha": commit * 40,
+            "path": "00_KERNEL/KERNEL_INVARIANTS.md",
+            "blob_sha": blob * 40,
+            "invariant_definition_sha256": "sha256:" + "c" * 64,
+        },
+    }
+
+
+def test_the_unordered_set_fields_are_exactly_the_contract_profile() -> None:
+    declared = _profile_fields("UNORDERED_SETS")
+    assert set(declared) == set(POLICY_UNORDERED_SET_FIELDS)
+    assert _profile_fields("DUPLICATE_SET_MEMBER") == ["REJECT"]
+
+
+def test_two_invariants_differing_only_in_excluded_provenance_fail_closed() -> None:
+    """`uniqueItems` cannot see this: the duplicate is created by the projection."""
+
+    first, second = _invariant("a", "b"), _invariant("d", "e")
+    assert first != second
+    request = _reopen_request(
+        _condition(PREDICATE_ID, target_predicate_fingerprint(target_predicate()))
+    )
+    request["closure_policy_requirements"]["required_invariants"] = [first, second]
+    with pytest.raises(
+        DifferenceError, match=r"duplicate member: .*\.required_invariants"
+    ):
+        derive_differences(request)
+
+
+def test_two_invariants_differing_in_included_semantics_are_accepted() -> None:
+    first = _invariant("a", "b")
+    second = _invariant("a", "b")
+    second["id"] = "X-004"
+    request = _reopen_request(
+        _condition(PREDICATE_ID, target_predicate_fingerprint(target_predicate()))
+    )
+    request["closure_policy_requirements"]["required_invariants"] = [first, second]
+    bundle = derive_differences(request)
+    assert len(bundle["policies"][0]["required_invariants"]) == 2
+    assert validate_bundle(bundle) == []
+
+
+def test_two_reopen_conditions_differing_only_in_excluded_provenance_fail_closed() -> None:
+    """The Policy identity must not depend on set multiplicity."""
+
+    request, policy = _carried()
+    context = request["bindings"][0]["predecessor"]["context"]
+    base = context["objective_revisions"][0]
+    sibling = deepcopy(base)
+    sibling["objective_revision_id"] = "OBJ-REV-0002"
+    sibling["revision"] = base["revision"] + 1
+    sibling["previous_objective_ref"] = {
+        "kind": "objective_revision", "id": base["objective_revision_id"]
+    }
+    sibling["change_reason"] = "editorial"
+    context["objective_revisions"].append(sibling)
+    fingerprint = target_predicate_fingerprint(base["target_predicates"][0])
+    identity = base["target_predicates"][0]["predicate_id"]
+    policy["reopen_conditions"] = [
+        {
+            "kind": "target_predicate", "id": identity,
+            "predicate_semantic_fingerprint": fingerprint,
+            "objective_revision_ref": {
+                "kind": "objective_revision", "id": base["objective_revision_id"]
+            },
+        },
+        {
+            "kind": "target_predicate", "id": identity,
+            "predicate_semantic_fingerprint": fingerprint,
+            "objective_revision_ref": {"kind": "objective_revision", "id": "OBJ-REV-0002"},
+        },
+    ]
+    _seal(policy)
+    with pytest.raises(DifferenceError, match=r"duplicate member: .*\.reopen_conditions"):
+        derive_differences(request)
+
+
+def test_the_duplicate_rule_reads_the_digest_projection() -> None:
+    """Not a hand-copied second projection: the same one the digest is computed over."""
+
+    policy = {
+        "target_predicate_ref": {"kind": "target_predicate", "id": PREDICATE_ID},
+        "required_observation_scope": None,
+        "minimum_evidence_level": "E1",
+        "required_claims": [],
+        "required_invariants": [_invariant("a", "b"), _invariant("d", "e")],
+        "allowed_terminal_states": ["CLOSED"],
+        "independent_verification_required": False,
+        "maximum_evidence_age": None,
+        "contradiction_policy": "FAIL_CLOSED",
+        "reopen_conditions": [],
+    }
+    projection = policy_semantic_projection(policy)
+    assert projection["required_invariants"][0] == projection["required_invariants"][1]
+    assert any(
+        "required_invariants" in error
+        for error in closure_policy_semantic_errors(policy, "policies[X]")
+    )
 
 
 # --------------------------------------------------------------------------- #

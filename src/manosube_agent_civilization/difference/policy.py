@@ -32,13 +32,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
+
 from .canonical import canonical_bytes, has_recursive_set_duplicate
+from .errors import DifferenceError
 from .identity import (
+    POLICY_UNORDERED_SET_FIELDS,
     completion_claim_fingerprint,
     completion_claim_id,
     policy_semantic_fingerprint,
+    policy_semantic_projection,
     target_predicate_fingerprint,
 )
+from .selection import unique_target_predicates
 
 #: The closed Claim descriptor the digest is computed over, per ``CLOSURE_POLICY.md``.
 CLAIM_SEMANTIC_FIELDS: tuple[str, ...] = (
@@ -79,6 +85,29 @@ def _claim_errors(policy: dict[str, Any], where: str) -> list[str]:
     return errors
 
 
+def _duplicate_set_errors(policy: dict[str, Any], where: str) -> list[str]:
+    """Return every declared unordered set carrying two identical *projected* members.
+
+    The schema's ``uniqueItems`` compares whole objects, so it cannot see this: a duplicate
+    is created by the projection, not present before it. Two ``required_invariants``
+    differing only in an excluded ``commit_sha``, or two reopen conditions differing only
+    in an excluded ``objective_revision_ref``, project to one member each and violate
+    ``DUPLICATE_SET_MEMBER=REJECT`` -- and made the Policy identity depend on set
+    multiplicity, which a set has none of.
+    """
+
+    try:
+        projection = policy_semantic_projection(policy)
+    except (KeyError, TypeError):
+        return []
+    errors: list[str] = []
+    for field in POLICY_UNORDERED_SET_FIELDS:
+        members = [canonical_json_bytes(member) for member in projection[field]]
+        if len(set(members)) != len(members):
+            errors.append(f"Closure Policy set carries a duplicate member: {where}.{field}")
+    return errors
+
+
 def closure_policy_semantic_errors(policy: dict[str, Any], where: str) -> list[str]:
     """Return every way *policy* fails to recompute from its own content.
 
@@ -90,7 +119,7 @@ def closure_policy_semantic_errors(policy: dict[str, Any], where: str) -> list[s
     is read totally, because a record can be an object and still be incomplete.
     """
 
-    errors = _claim_errors(policy, where)
+    errors = _claim_errors(policy, where) + _duplicate_set_errors(policy, where)
     try:
         recomputed = policy_semantic_fingerprint(policy)
     except (KeyError, TypeError):
@@ -121,12 +150,19 @@ def reopen_condition_provenance_errors(
         revision = objective_revisions.get(identity) if isinstance(identity, str) else None
         if revision is None:
             continue
-        predicates = {
-            predicate["predicate_id"]: predicate
-            for predicate in revision.get("target_predicates", []) or []
-            if isinstance(predicate, dict) and isinstance(predicate.get("predicate_id"), str)
-        }
-        predicate = predicates.get(condition.get("id"))
+        # Indexed through the one Target Predicate identity owner, not by comprehension.
+        # A dict comprehension silently keeps the *last* payload, so an Objective revision
+        # declaring two predicates under one identity would have this rule resolve against
+        # one interpretation while another consumer resolved the other.
+        try:
+            predicates = unique_target_predicates(revision)
+        except DifferenceError as error:
+            errors.append(
+                f"reopen condition Objective revision is ambiguous: {identity}: {error}"
+            )
+            continue
+        condition_id = condition.get("id")
+        predicate = predicates.get(condition_id) if isinstance(condition_id, str) else None
         if predicate is None:
             errors.append(
                 "reopen condition names no predicate of its Objective revision: "
