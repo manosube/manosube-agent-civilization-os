@@ -27,6 +27,7 @@ over: the type is carried under the identity and reference gates only, and
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -241,6 +242,33 @@ UNSCHEMATIZED_SECTIONS: frozenset[str] = frozenset(
     for section, type_name in EMITTED_SECTIONS.items()
     if RECORD_TYPES[type_name].schema is None
 )
+
+
+def merge_records(
+    target: dict[str, dict[str, Any]], records: Any, key: str
+) -> None:
+    """Merge records into *target* under *key*, failing closed on a contradicted identity.
+
+    This is the one union used by every canonical section, on every route: the current
+    derivation, the Observation context closure, predecessor context and final bundle
+    assembly. A new identity is inserted, an identical duplicate is idempotent, and a
+    same-identity/different-payload pair is rejected *before* the target is mutated -- so
+    no plain ``target[identity] = record`` can overwrite a record that is already held.
+    Inputs are never mutated: what is stored is a deep copy.
+    """
+
+    if not isinstance(records, list):
+        raise DifferenceError(f"canonical section is not a list of records: {key}")
+    for record in records:
+        if not isinstance(record, dict):
+            raise DifferenceError(f"canonical record is not an object: {key}")
+        identity = record.get(key)
+        if not isinstance(identity, str) or not identity:
+            raise DifferenceError(f"canonical record has no identity: {key}")
+        existing = target.get(identity)
+        if existing is not None and canonical_bytes(existing) != canonical_bytes(record):
+            raise IdentityCollisionError(f"same-ID different-payload conflict: {identity}")
+        target[identity] = deepcopy(record)
 
 
 def validate_typed_record(record: dict[str, Any], type_name: str, context: str) -> None:

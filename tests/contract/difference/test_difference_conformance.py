@@ -660,7 +660,7 @@ def test_reflow_claim_and_terminal_invariant_references_are_resolved() -> None:
     evaluation["reflow_transition_ref"] = transition_ref
     closed["materialized_status"][event["difference_id"]] = "CLOSED"
     assert any(
-        "terminal evaluation binding mismatch" in error
+        "closed reflow commitment mismatch" in error
         for error in validate_bundle(closed)
     )
 

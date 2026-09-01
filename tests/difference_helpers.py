@@ -467,6 +467,28 @@ def _content_addressed_request(
 
 
 
+#: A CANDIDATE_CLOSURE evaluation names an Evidence Sufficiency Result. That record is
+#: later-phase provenance the caller supplies; the reference has to resolve inside the
+#: returned bundle, so the helper supplies the record alongside the reference.
+EVIDENCE_SUFFICIENCY_ID = "EVID-SUFF-" + "A" * 64
+
+
+def _evidence_sufficiency_result(difference: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "0.1",
+        "evidence_sufficiency_id": EVIDENCE_SUFFICIENCY_ID,
+        "difference_ref": {"kind": "difference", "id": difference["difference_id"]},
+        "policy_ref": deepcopy(difference["closure_policy"]),
+        "evidence_level": "E1",
+        "evidence_refs": {
+            "collection_kind": "UNORDERED_SET",
+            "members": [deepcopy(EVIDENCE_REF)],
+        },
+        "result": "SUFFICIENT",
+        "evaluated_at": "2026-08-30T09:01:30Z",
+    }
+
+
 def _candidate_closure_evaluation(
     difference: dict[str, Any], evaluation: dict[str, Any]
 ) -> dict[str, Any]:
@@ -512,7 +534,7 @@ def _candidate_closure_evaluation(
         "change_free_verification_evidence_refs": [deepcopy(EVIDENCE_REF)],
         "evidence_sufficiency_ref": {
             "kind": "evidence_sufficiency_result",
-            "id": "EVID-SUFF-0001",
+            "id": EVIDENCE_SUFFICIENCY_ID,
         },
         "proposed_terminal_status": "CLOSED",
         "result": "SATISFIED",
@@ -667,7 +689,11 @@ def retained_status_predecessor(
     if status == "REOPENED":
         terminal["reopen_trigger"] = "OBSERVATION_CONTRADICTION"
         terminal["observation_refs"] = deepcopy(baseline["differences"][0]["observation_refs"])
+        # A reopen contradicts the closure its CLOSED head named, so that event -- and
+        # only that event -- carries the same Closure Evaluation reference.
         for event in upstream[:-1]:
+            if event["to_status"] != "CLOSED":
+                continue
             event["closure_evaluation_ref"] = deepcopy(terminal["closure_evaluation_ref"])
             event["difference_event_id"] = lifecycle_event_id(event)
 
@@ -689,15 +715,25 @@ def retained_status_predecessor(
                 reference
             )
         upstream[-1]["difference_event_id"] = lifecycle_event_id(upstream[-1])
+        # A Closure Evaluation is bound to the event head its own transition departed
+        # from -- the transition it authorises, which for a REOPENED lineage is the CLOSED
+        # event, not the last event in the chain.
+        authorising = next(
+            (event for event in upstream if event["to_status"] in {"CLOSED", "BLOCKED",
+                                                                   "RETAINED"}),
+            upstream[-1],
+        )
         evaluation["difference_event_head_ref"] = {
             "kind": "difference_event",
-            "id": (upstream[-2] if len(upstream) > 1 else head)["difference_event_id"],
+            "id": authorising["previous_event_id"],
         }
 
     context = deepcopy(baseline)
     context["evaluations"] = (
         [evaluation] if status in {"BLOCKED", "RETAINED", "CLOSED", "REOPENED"} else []
     )
+    if status in {"CLOSED", "REOPENED"}:
+        context["evidence_sufficiency_results"] = [_evidence_sufficiency_result(difference)]
     if any(event["reflow_transition_ref"] is not None for event in upstream):
         # A CLOSED transition references a Reflow record owned by a later phase. The
         # caller supplies it; the Difference Engine only carries it forward.

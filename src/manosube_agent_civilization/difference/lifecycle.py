@@ -235,3 +235,110 @@ def next_observation_binding_errors(
     ):
         errors.append(f"next observation binding mismatch: {identity}")
     return errors
+
+
+#: Statuses whose ``TRANSITION`` event must carry the Closure Evaluation that authorised
+#: it. ``REOPENED`` is not one of them: it re-references the *closure* it contradicts,
+#: which is a different rule, stated below.
+REQUIRES_CLOSURE_EVALUATION: frozenset[str] = frozenset({"CLOSED", "BLOCKED", "RETAINED"})
+
+
+def _policy_binding_valid(
+    reference: Any, policy: dict[str, Any] | None, policy_fingerprint: Any
+) -> bool:
+    if not isinstance(reference, dict) or policy is None:
+        return False
+    return bool(
+        reference.get("id") == policy["closure_policy_id"]
+        and reference.get("version") == policy["policy_version"]
+        and reference.get("semantic_fingerprint") == policy["policy_semantic_fingerprint"]
+        and policy["policy_semantic_fingerprint"] == policy_fingerprint(policy)
+    )
+
+
+def closure_evaluation_binding_errors(
+    event: dict[str, Any],
+    previous_event: dict[str, Any] | None,
+    difference: dict[str, Any] | None,
+    evaluations: dict[str, dict[str, Any]],
+    policies: dict[str, dict[str, Any]],
+    policy_fingerprint: Any,
+) -> list[str]:
+    """Return every Closure Evaluation binding violation this lifecycle event carries.
+
+    A Closure Evaluation is provenance a later canonical owner produces; this phase does
+    not execute one and claims nothing about how it was decided. What it does decide is
+    whether the *binding* between an event and the Evaluation it names is authentic --
+    which is entirely outside lifecycle event identity, so a schema-valid event can retain
+    its ``difference_event_id`` while naming an Evaluation belonging to another Difference,
+    another event head, another Closure Policy, another evaluated State, or proposing a
+    different terminal status than the one the event actually entered.
+
+    The rules are the executable projection of ``DIFFERENCE_LIFECYCLE.md`` sections 5 and
+    7. They are owned here so the Engine and the independent cross-record validator decide
+    them one way; *policy_fingerprint* is passed in for the same reason ``content_address``
+    is, so neither consumer has to import the other.
+
+    The ``CLOSED`` Reflow commitment window is *not* decided here: Reflow is a later
+    element with no schema in v0.1, and its own owner enforces it. The independent
+    validator keeps that check, and this phase claims nothing about it.
+    """
+
+    identity = event["difference_event_id"]
+    errors: list[str] = []
+    reference = event.get("closure_evaluation_ref")
+    evaluation = evaluations.get(_reference_id(reference) or "")
+    difference_id = event["difference_id"]
+
+    # Whatever the status, an event that names a Closure Evaluation must name one that
+    # resolves and that belongs to this same Difference.
+    if reference is not None:
+        if evaluation is None:
+            errors.append(f"closure evaluation does not resolve: {identity}")
+            return errors
+        if evaluation["difference_id"] != difference_id:
+            errors.append(f"closure evaluation names another Difference: {identity}")
+
+    if event["event_kind"] == "TRANSITION" and event["to_status"] in REQUIRES_CLOSURE_EVALUATION:
+        policy = (
+            None
+            if difference is None
+            else policies.get(difference["closure_policy"]["id"])
+        )
+        if (
+            evaluation is None
+            or evaluation["proposed_terminal_status"] != event["to_status"]
+            or evaluation["gate_results"]["G22"] != "PASS"
+            or not _policy_binding_valid(evaluation["policy_ref"], policy, policy_fingerprint)
+            or _reference_id(evaluation["difference_event_head_ref"])
+            != event["previous_event_id"]
+            or evaluation["evaluated_state_revision"] != event["state_revision_evaluated"]
+            or evaluation["evaluated_state_fingerprint"] != event["state_fingerprint_evaluated"]
+            or (
+                difference is not None
+                and (
+                    evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
+                    # The *semantic* fingerprint is the binding, not the revision
+                    # reference: an editorial Objective revision carrying the same
+                    # semantics is a legitimate evaluation subject, and equating the
+                    # revision ids would reject it.
+                    or evaluation["objective_semantic_fingerprint_evaluated"]
+                    != difference["objective_semantic_fingerprint"]
+                )
+            )
+        ):
+            errors.append(f"terminal evaluation binding mismatch: {identity}")
+
+    # A reopen contradicts one specific closure: the Evaluation the CLOSED head named.
+    is_reopen = event["from_status"] == "CLOSED" and event["to_status"] == "REOPENED"
+    if is_reopen and (
+            previous_event is None
+            or _reference_id(previous_event.get("closure_evaluation_ref"))
+            != _reference_id(reference)
+            or evaluation is None
+            or evaluation["proposed_terminal_status"] != "CLOSED"
+            or evaluation["result"] != "SATISFIED"
+            or evaluation["gate_results"]["G22"] != "PASS"
+    ):
+        errors.append(f"reopen closure binding mismatch: {identity}")
+    return errors

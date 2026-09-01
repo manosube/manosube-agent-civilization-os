@@ -296,12 +296,26 @@ def test_one_carried_observation_verification_pass() -> None:
     )
     pass_body = source.split("def _validate_carried_observations(")[1].split("\ndef ")[0]
     for obligation in (
-        "_validate_observation_boundary(observation, scope, project_id)",
+        "_validate_observation_boundary(observation, _own_scope(observation, scopes)",
         "observation_record_errors(",
-        "names a Scope absent from the bundle",
-        'validate_record(scope, "observation_scope.schema.json"',
     ):
         assert obligation in pass_body, obligation
+
+    # One resolver decides which Scope an Observation is verified against, and both the
+    # append-only context closure and the final pass call it -- so no route can substitute
+    # the current derivation Scope for a historical Observation's own Scope.
+    resolver = source.split("def _own_scope(")[1].split("\ndef ")[0]
+    for obligation in (
+        'observation.get("scope_ref")',
+        "names a Scope absent from the bundle",
+        'validate_record(scope, "observation_scope.schema.json"',
+        "does not name its own id",
+    ):
+        assert obligation in resolver, obligation
+    assert source.count("def _own_scope(") == 1
+    assert source.count("_own_scope(") == 3
+    closure = source.split("def _absorb_observation_context(")[1].split("\ndef ")[0]
+    assert "_validate_observation_boundary(current, _own_scope(current, scopes)" in closure
 
 
 def test_every_returned_observation_recomputes_and_resolves_its_scope() -> None:

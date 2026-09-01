@@ -12,9 +12,11 @@ import shutil
 import subprocess
 from typing import Any
 
+from manosube_agent_civilization.difference.graph import reference_closure_errors
 from manosube_agent_civilization.difference.lifecycle import (
     LEGAL_TRANSITIONS,
     blocker_payload_errors,
+    closure_evaluation_binding_errors,
     next_observation_binding_errors,
 )
 from manosube_agent_civilization.observation.boundary import fact_boundary_observed
@@ -1111,17 +1113,6 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         errors.append(
                             f"reopen condition evaluation mismatch: {event['difference_event_id']}"
                         )
-                if (
-                    previous is None
-                    or _ref_id(previous["closure_evaluation_ref"])
-                    != _ref_id(event["closure_evaluation_ref"])
-                    or closure is None
-                    or closure["difference_id"] != difference_id
-                    or closure["proposed_terminal_status"] != "CLOSED"
-                    or closure["result"] != "SATISFIED"
-                    or closure["gate_results"]["G22"] != "PASS"
-                ):
-                    errors.append(f"reopen closure binding mismatch: {event['difference_event_id']}")
             # Blocker payload and Next Observation Request binding are decided by the
             # single shared lifecycle authority, so this validator and the Engine cannot
             # disagree about them.
@@ -1129,6 +1120,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             errors.extend(
                 next_observation_binding_errors(
                     event, differences.get(difference_id), requests, methods, _content_address
+                )
+            )
+            errors.extend(
+                closure_evaluation_binding_errors(
+                    event,
+                    chain[expected_revision - 1] if expected_revision > 0 else None,
+                    differences.get(difference_id),
+                    evaluations,
+                    policies,
+                    _policy_fingerprint,
                 )
             )
 
@@ -1193,25 +1194,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     <= {(reference["kind"], reference["id"])
                         for reference in transition["evidence_refs"]}
                 )
-                if (
+                # Every rule that binds this event to its Closure Evaluation now lives in
+                # the shared lifecycle authority. What remains here is the Reflow
+                # commitment window, which belongs to a later element the Difference phase
+                # does not implement and therefore never claims.
+                if event["to_status"] == "CLOSED" and (
                     evaluation is None
-                    or evaluation["difference_id"] != difference_id
-                    or evaluation["proposed_terminal_status"] != event["to_status"]
-                    or evaluation["gate_results"]["G22"] != "PASS"
-                    or policy is None
-                    or not _policy_ref_matches(evaluation["policy_ref"], policy)
-                    or _ref_id(evaluation["difference_event_head_ref"])
-                    != event["previous_event_id"]
-                    or (
-                        event["to_status"] == "CLOSED"
-                        and (
-                            event["reflow_transition_ref"]
-                            != evaluation["reflow_transition_ref"]
-                            or not reflow_valid
-                        )
-                    )
+                    or event["reflow_transition_ref"] != evaluation["reflow_transition_ref"]
+                    or not reflow_valid
                 ):
-                    errors.append(f"terminal evaluation binding mismatch: {event['difference_event_id']}")
+                    errors.append(f"closed reflow commitment mismatch: {event['difference_event_id']}")
             reconstructed[difference_id] = event["to_status"]
 
     for difference_id, difference in differences.items():
@@ -2484,6 +2476,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 break
             seen.add(current)
             current = supersession_edges[current]
+
+    # The typed reference-edge authority is shared with the Engine, so the producer and
+    # this auditor cannot hold two drifting maps of what a reference is or where it must
+    # resolve. Every record of every section is traversed, not only the Difference lineage.
+    errors.extend(reference_closure_errors(bundle))
     return sorted(set(errors))
 
 
