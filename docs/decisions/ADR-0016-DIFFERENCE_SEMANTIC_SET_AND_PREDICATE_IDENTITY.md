@@ -41,7 +41,16 @@ Three findings against `6043123`, each reproduced before anything was changed:
 3  a Target whose expected_value carries an UNORDERED_SET with a duplicate member
      operator exists   -> SATISFIED, no Difference, no record emitted
      operator equals   -> REJECTED  "normalized_target_state carries a duplicate ..."
+
+4  an Objective revision chain whose base_semantic_fingerprint does not match
+     Engine                          ACCEPTED and EMITTED both revisions
+     independent validator           evaluation Objective or State head mismatch
+     the same bundle with a valid chain
+     independent validator           []
 ```
+
+Finding 4 arrived after the other three and was taken into the same round rather than
+deferred.
 
 Finding 1 is a rule that cannot be enforced before the projection it is about. `uniqueItems`
 compares whole objects, and the duplicate does not exist in the whole objects — it is
@@ -64,6 +73,16 @@ where each projection is produced; duplicate set members only while building an 
 Difference. A satisfied comparison returns before that — and satisfaction is the one outcome
 that emits no record, so no later gate could catch it. The same Target was refused on one
 route and reported satisfied on the other.
+
+Finding 4 is a rule that was computed and then not reported. Revision numbering, the
+immediate-predecessor binding and the base fingerprint are relations, so every revision of a
+discontinuous history passes its own schema. The independent validator did compute exactly
+that condition -- and spent it only on deciding whether to *trust* an Objective head. The
+consequence is worse than silence: the third line of the reproduction above is an unrelated
+evaluation head mismatch, produced because the invalid chain emptied the trusted-head map.
+The bundle went red for the wrong reason, which is the failure mode a reviewer reading the
+output would have misdiagnosed. The Engine, for its part, merged and emitted the revisions
+and derived a Difference from an invalid Human Objective history.
 
 ## 1. Decision
 
@@ -88,6 +107,19 @@ Closure Policy hook is a thin wrapper over `closure_policy_semantic_errors`, whi
 independent validator still imports unchanged; a test asserts the message the gate raises is
 the owner's own first error, verbatim.
 
+**The Objective revision history is decided once, and reported.**
+`difference/objective.objective_chain_errors` owns revision numbering, immediate-predecessor
+binding and the base fingerprint. The Engine's whole-bundle relational gate and the
+independent validator both read it, and the validator no longer computes its own copy. It
+returns the errors *and* the set of Objective ids whose chain is intact, so the trust
+decision the validator still needs comes from the same reading that reported -- not from a
+second traversal that could disagree with it.
+
+Chain completeness is not assumed. `previous_objective_ref` is a declared reference edge
+over a resolvable kind, so a carried revision N drags in N-1 transitively down to revision 0,
+whose predecessor is `null`. A group is therefore the whole history of that Objective, and
+requiring position to equal declared revision is sound rather than a partial-carry hazard.
+
 **Both canonicality rules are stated together, at every projection.**
 `engine._reject_noncanonical` rejects a bare array and a duplicate set member in one call,
 and every projection site calls it — before the comparison, so satisfaction cannot be
@@ -105,6 +137,11 @@ that is now named rather than inlined.
 The duplicate rule decides *set* members. It does not claim anything about ordering: the
 profile fixes `SET_ORDER=CANONICAL_MEMBER_BYTES`, which the projection already applied and
 which a contract test already covers.
+
+The Objective chain rule decides the three relations the reviewer named. It does not claim
+anything about *whether a revision should have been authored* -- `EDITORIAL` versus
+`PREDICATE_MODIFY` classification, authority, and approval remain Human Authority and the
+Objective element's own concern, and this phase still asserts nothing about them.
 
 ## 3. Cost
 

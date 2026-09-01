@@ -20,6 +20,7 @@ from manosube_agent_civilization.difference.lifecycle import (
     closure_evaluation_input_errors,
     next_observation_binding_errors,
 )
+from manosube_agent_civilization.difference.objective import objective_chain_errors
 from manosube_agent_civilization.difference.policy import (
     closure_policy_semantic_errors,
     reopen_condition_provenance_errors,
@@ -789,31 +790,24 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     objective_revisions = _index(
         bundle.get("objective_revisions", []), "objective_revision_id", errors
     )
+    # The chain rule is read from its owner, which the Engine's relational gate reads too.
+    # This validator used to compute the same condition and spend it only on deciding
+    # whether to *trust* an Objective head -- so a discontinuous history was never reported,
+    # and what surfaced instead was an unrelated head mismatch further down.
     objective_groups: dict[str, list[dict[str, Any]]] = {}
     for revision in objective_revisions.values():
         objective_groups.setdefault(revision["objective_id"], []).append(revision)
+    chain_errors, intact_objectives = objective_chain_errors(objective_revisions)
+    errors.extend(chain_errors)
     active_objective_heads: dict[str, dict[str, Any]] = {}
     valid_objective_chains: dict[str, list[dict[str, Any]]] = {}
     for objective_id, chain in objective_groups.items():
         chain.sort(key=lambda item: item["revision"])
-        valid_chain = all(
-            item["revision"] == revision
-            and _ref_id(item["previous_objective_ref"])
-            == (None if revision == 0 else chain[revision - 1]["objective_revision_id"])
-            and (
-                revision == 0
-                or (
-                    item["base_semantic_fingerprint"] is not None
-                    and "sha256:" + item["base_semantic_fingerprint"]["digest"]
-                    == _objective_semantic_fingerprint(chain[revision - 1])
-                )
-            )
-            for revision, item in enumerate(chain)
-        )
+        if objective_id not in intact_objectives:
+            continue
+        valid_objective_chains[objective_id] = chain
         active_members = [item for item in chain if item["status"] == "ACTIVE"]
-        if valid_chain:
-            valid_objective_chains[objective_id] = chain
-        if valid_chain and active_members:
+        if active_members:
             active_objective_heads[objective_id] = active_members[-1]
     observation_scopes = _index(
         bundle.get("observation_scopes", []), "scope_id", errors

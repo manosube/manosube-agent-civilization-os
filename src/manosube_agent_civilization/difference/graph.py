@@ -710,6 +710,7 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
         closure_evaluation_input_errors,
         next_observation_binding_errors,
     )
+    from .objective import objective_chain_errors
     from .policy import reopen_condition_provenance_errors
 
     differences = {
@@ -749,6 +750,11 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
         events[str(event.get("difference_event_id"))] = event
 
     errors: list[str] = []
+    # The Objective revision history is relational in the same way: each revision is
+    # individually schema-valid, and only the group can say whether the numbering, the
+    # immediate-predecessor binding and the base fingerprint are continuous.
+    chain_errors, _intact = objective_chain_errors(objective_revisions)
+    errors.extend(chain_errors)
     # Reopen-condition provenance is relational in a way no single record can decide: the
     # condition declares a predicate ID and a semantic fingerprint, and only the Objective
     # revision it names can say whether that predicate exists and carries those semantics.
