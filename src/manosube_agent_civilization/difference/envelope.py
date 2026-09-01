@@ -39,7 +39,12 @@ def satisfaction_reconciliation_errors(bundle: dict[str, Any]) -> list[str]:
         and isinstance(record.get("target_predicate_ref"), dict)
         and isinstance(record["target_predicate_ref"].get("id"), str)
     }
+    # Each member is filtered to a hashable identity *before* the set operation. Both gates
+    # call this on an untrusted envelope, so an array or object member would otherwise raise
+    # `unhashable type` from `intersection` -- a membership test needs the guard a subscript
+    # needs, which is the rule this module's own predecessor round missed twice.
+    declared = {member for member in satisfied if isinstance(member, str)}
     return [
         f"Target Predicate is reported satisfied and open at once: {identity}"
-        for identity in sorted(open_targets.intersection(satisfied))
+        for identity in sorted(open_targets.intersection(declared))
     ]

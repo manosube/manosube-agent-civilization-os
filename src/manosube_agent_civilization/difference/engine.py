@@ -80,6 +80,7 @@ from .lifecycle import (
     is_legal_transition,
     legal_supersession_sources,
 )
+from .policy import CLAIM_SEMANTIC_FIELDS
 from .predecessor import (
     validate_carried_difference,
     validate_carried_event,
@@ -268,15 +269,28 @@ def _closure_policy(
         raise DifferenceError("Closure Policy contradiction policy must remain FAIL_CLOSED")
     if policy["independent_verification_required"] is not False:
         raise DifferenceError("v0.1 Closure Policy cannot require independent verification")
+    declared = policy["required_claims"]
+    if not isinstance(declared, list):
+        raise DifferenceError("Closure Policy required Claims are not a list")
     claims = []
-    for descriptor in policy["required_claims"]:
+    for position, descriptor in enumerate(declared):
+        if not isinstance(descriptor, dict):
+            raise DifferenceError(
+                f"required Claim descriptor is not a canonical object: required_claims[{position}]"
+            )
+        missing = [key for key in CLAIM_SEMANTIC_FIELDS if key not in descriptor]
+        if missing:
+            raise DifferenceError(
+                "required Claim descriptor omits a required key: "
+                f"required_claims[{position}].{missing[0]}"
+            )
         materialized = {
             "kind": "completion_claim",
             "id": completion_claim_id(descriptor),
             "subject_type": descriptor["subject_type"],
             "subject_ref": descriptor["subject_ref"],
             "claim": descriptor["claim"],
-            "target_state_ref": descriptor.get("target_state_ref"),
+            "target_state_ref": descriptor["target_state_ref"],
             "claim_semantic_fingerprint": completion_claim_fingerprint(descriptor),
         }
         claims.append(materialized)
@@ -1373,6 +1387,8 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
                             (record, type_name, f"{where}.observation_bundle.{section}[{index}]")
                         )
         predecessor = binding.get("predecessor")
+        if predecessor is not None and not isinstance(predecessor, dict):
+            raise DifferenceError("derivation binding predecessor is not a canonical object")
         if not isinstance(predecessor, dict):
             continue
         difference = predecessor.get("difference")
@@ -1486,8 +1502,12 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     """
 
     request = deepcopy(request)
-    require_schema_version(request, "derivation request")
+    # First, before anything reads the request. `require_schema_version` and
+    # `_require_profiles` both call `.get()`, so a non-object root leaked `AttributeError`
+    # past the very gate written to reject it: the guard existed and its *ordering* made it
+    # unreachable. A gate that runs second is not a gate.
     _require_request_shape(request)
+    require_schema_version(request, "derivation request")
     _require_profiles(request)
     _reject_hostile_input(request)
 
