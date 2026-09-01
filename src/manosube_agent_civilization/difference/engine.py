@@ -419,6 +419,7 @@ def _require_request_shape(request: Any) -> None:
     bindings = request["bindings"]
     if not isinstance(bindings, list) or not bindings:
         raise DifferenceError("derivation request carries no canonical bindings")
+    bound_targets: set[Any] = set()
     for position, binding in enumerate(bindings):
         if not isinstance(binding, dict):
             raise DifferenceError(
@@ -429,6 +430,17 @@ def _require_request_shape(request: Any) -> None:
                 raise DifferenceError(
                     f"derivation binding omits a required key: bindings[{position}].{key}"
                 )
+        # One Target Predicate is bound once. Two bindings for one Target are evaluated
+        # independently, so one may satisfy it while the other derives a Difference -- and
+        # the returned bundle then lists that Target as satisfied *and* open at once. A
+        # Target's additional Scopes travel as `historical_observation_scopes`, not as a
+        # second binding, so there is no legitimate case this rejects.
+        identity = binding["target_predicate_id"]
+        if identity in bound_targets:
+            raise DifferenceError(
+                f"derivation binds one Target Predicate twice: {identity}"
+            )
+        bound_targets.add(identity)
         scope = binding["observation_scope"]
         if not isinstance(scope, dict):
             raise DifferenceError(
