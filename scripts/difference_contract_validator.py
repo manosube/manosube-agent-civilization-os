@@ -432,10 +432,10 @@ def _derived_value_type(value: Any) -> str:
 
 
 def _normalize_objective_value(value: Any) -> tuple[Any, str]:
-    reserved_types = {
-        "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE",
-        "ORDERED_COLLECTION", "UNORDERED_COLLECTION", "STRUCTURED",
-    }
+    # The contract declares a typed *scalar* wrapper for exactly the four types JSON's own
+    # shape cannot express. An ordinary structured object is never unwrapped, so a Fact
+    # carrying only an inner object cannot satisfy a full structured Target.
+    reserved_types = {"DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE"}
     if (
         isinstance(value, dict)
         and set(value) == {"value_type", "value"}

@@ -31,7 +31,7 @@ _SECRET_VALUE = re.compile(
 # Canonical v0.1 schema fields whose names match the secret pattern but which are
 # closed policy declarations, never secret carriers.
 _SECRET_KEY_ALLOWLIST = frozenset({"credential_paths"})
-_MOVING_REFERENCE = re.compile(
+MOVING_REFERENCE = re.compile(
     r"^(?:HEAD|LATEST|CURRENT|MAIN|MASTER|TRUNK|DEFAULT)$|"
     r"^REFS-(?:HEADS|TAGS|REMOTES)-|@(?:LATEST|HEAD|CURRENT)$",
     re.IGNORECASE,
@@ -141,7 +141,7 @@ def reject_moving_reference(reference: dict[str, Any], context: str) -> None:
     identity = reference.get("id")
     if not isinstance(identity, str) or not identity:
         raise DifferenceError(f"reference identity must be a non-empty string at {context}")
-    if _MOVING_REFERENCE.search(identity):
+    if MOVING_REFERENCE.search(identity):
         raise SecurityRejectionError(f"moving reference {identity!r} at {context}")
 
 

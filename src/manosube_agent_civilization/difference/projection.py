@@ -13,15 +13,25 @@ from .canonical import canonical_bytes, canonical_semantic, unordered_set
 from .errors import DifferenceError
 from .identity import COMPARISON_PROFILE
 
-RESERVED_VALUE_TYPES = frozenset(
+#: The typed scalar wrappers the Difference Identity Contract declares, and only those.
+#:
+#: ``DIFFERENCE_IDENTITY.md`` section "expected_value_type" states the total rule as a closed
+#: table. A ``{"value_type": ..., "value": ...}`` wrapper appears in it exactly four times --
+#: for the types JSON's own shape cannot express. Everything else derives from the value:
+#: an *ordinary JSON object* is ``STRUCTURED``, and the two collection types are written
+#: with a ``collection_kind`` wrapper, not a ``value_type`` one.
+#:
+#: Including ``STRUCTURED`` here was a category error with a real consequence: a Target whose
+#: literal business value happened to be shaped like ``{"value_type": "STRUCTURED", "value":
+#: {...}}`` had its outer object discarded, so a Fact carrying only the inner object
+#: satisfied the Target and the required Difference was never derived. A contract test reads
+#: the rule out of the Kernel document and asserts this set equals it, in both directions.
+TYPED_SCALAR_WRAPPER_TYPES = frozenset(
     {
         "DECIMAL",
         "TIMESTAMP",
         "DURATION",
         "IDENTITY_REFERENCE",
-        "ORDERED_COLLECTION",
-        "UNORDERED_COLLECTION",
-        "STRUCTURED",
     }
 )
 SINGLE_VALUE_OPERATORS = frozenset({"equals", "not_equals", "contains"})
@@ -73,12 +83,16 @@ def derived_value_type(value: Any) -> str:
 
 
 def normalize_objective_value(value: Any) -> tuple[Any, str]:
-    """Split a Target ``expected_value`` into its canonical inner value and declared type."""
+    """Split a Target ``expected_value`` into its canonical inner value and declared type.
+
+    Only a contract-declared typed scalar wrapper is unwrapped. Any other object -- however
+    much it resembles a wrapper -- is an ordinary structured value and is compared whole.
+    """
 
     if (
         isinstance(value, dict)
         and set(value) == {"value_type", "value"}
-        and value["value_type"] in RESERVED_VALUE_TYPES
+        and value["value_type"] in TYPED_SCALAR_WRAPPER_TYPES
     ):
         return value["value"], str(value["value_type"])
     return value, derived_value_type(value)

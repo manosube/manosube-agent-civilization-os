@@ -13,6 +13,7 @@ equal it, modulo two reviewed and documented lists.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -146,17 +147,59 @@ def test_the_gate_reads_no_field_it_did_not_declare() -> None:
     assert reference_closure_errors({"normalized_facts": [nested]}) == []
 
 
-def test_shape_based_reference_detection_is_gone() -> None:
-    """The heuristic that misread canonical values as edges must not come back."""
+def test_shape_based_detection_never_reaches_a_schema_backed_record() -> None:
+    """The heuristic exists only where there is no schema, and cannot escape that set."""
 
-    from pathlib import Path
+    from manosube_agent_civilization.difference.graph import (
+        UNSCHEMATIZED_TYPES,
+        iter_declared_references,
+        iter_structural_references,
+    )
 
-    from manosube_agent_civilization.difference import graph
+    assert {"change", "reflow_transaction"} == UNSCHEMATIZED_TYPES
+    # A schema-backed record's value payload is never traversed, whatever shape it has.
+    fact = {"fact_id": "FACT-PROBE", "value": {"kind": "widget", "id": "HEAD"}}
+    assert list(iter_declared_references(fact, "normalized_fact")) == []
+    # The same payload inside an unschematized record *is* traversed, deliberately.
+    change = {"change_id": "CHG-1", "anything": {"kind": "difference", "id": "D-ABSENT"}}
+    assert [value for _path, _edge, value in iter_declared_references(change, "change")] == [
+        {"kind": "difference", "id": "D-ABSENT"}
+    ]
+    # And the structural traversal reports no declared edge, so nothing pins its kinds.
+    assert all(edge is None for _path, edge, _value in iter_structural_references(change))
+
+
+def test_one_traversal_serves_the_graph_gate_and_the_security_scan() -> None:
+    """No second reference registry: both consumers read the same iterator object."""
+
+    from manosube_agent_civilization.difference import engine, graph
 
     source = Path(graph.__file__).read_text(encoding="utf-8")
-    assert "_is_reference" not in source
-    assert "_structural_errors" not in source
-    # Traversal reads declared locators only.
-    body = source.split("def reference_closure_errors(")[1].split("\ndef ")[0]
-    assert "REFERENCE_EDGES[type_name]" in body
-    assert "IDENTITY_EDGES[type_name]" in body
+    closure = source.split("def reference_closure_errors(")[1].split("\ndef ")[0]
+    scan = source.split("def moving_reference_errors(")[1].split("\ndef ")[0]
+    assert "iter_declared_references(record, type_name)" in closure
+    assert "iter_declared_references(record, type_name)" in scan
+    assert "IDENTITY_EDGES[type_name]" in closure
+    # The Engine's hostile-input gate reads that scan, not a traversal of its own.
+    assert vars(engine)["moving_reference_errors"] is graph.moving_reference_errors
+    engine_source = Path(engine.__file__).read_text(encoding="utf-8")
+    assert "walk_references" not in engine_source
+    hostile = engine_source.split("def _reject_hostile_input(")[1].split("\ndef ")[0]
+    assert "moving_reference_errors(record, type_name, where)" in hostile
+
+
+def test_the_unschematized_policy_is_measured_from_schema_absence() -> None:
+    """A type that gains a schema leaves the structural set automatically."""
+
+    from manosube_agent_civilization.difference.conformance import RECORD_TYPES
+    from manosube_agent_civilization.difference.graph import (
+        UNSCHEMATIZED_REFERENCE_POLICY,
+        UNSCHEMATIZED_TYPES,
+    )
+
+    assert {
+        name for name, canonical in RECORD_TYPES.items() if canonical.schema is None
+    } == UNSCHEMATIZED_TYPES
+    for name in UNSCHEMATIZED_TYPES:
+        assert REFERENCE_EDGES[name] == (), name
+    assert UNSCHEMATIZED_REFERENCE_POLICY == "STRUCTURAL_CLOSURE_REQUIRED"

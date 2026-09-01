@@ -18,12 +18,15 @@ from manosube_agent_civilization.observation.boundary import (
     fact_boundary_observed,
     time_boundary_within_scope,
 )
+from manosube_agent_civilization.observation.errors import ScopeViolationError
 from manosube_agent_civilization.observation.identity import (
+    FACT_SEMANTIC_FIELDS,
     binding_identity,
     fact_evaluation_identity,
     fact_identity,
     observation_identity,
 )
+from manosube_agent_civilization.observation.scope import validate_scope
 from manosube_agent_civilization.observation.verification import observation_record_errors
 
 from .canonical import (
@@ -32,9 +35,9 @@ from .canonical import (
     has_recursive_set_duplicate,
     reject_bare_arrays,
     reject_secret_material,
-    walk_references,
 )
 from .conformance import (
+    CARRIED_SECTIONS,
     merge_records as _merge,
     validate_derivation_input,
     validate_emitted_bundle,
@@ -45,9 +48,10 @@ from .errors import (
     DifferenceError,
     DifferenceValidationError,
     IdentityCollisionError,
+    SecurityRejectionError,
     UnsupportedProfileError,
 )
-from .graph import reference_closure_errors, relational_errors
+from .graph import moving_reference_errors, reference_closure_errors, relational_errors
 from .identity import (
     COMPARISON_PROFILE,
     IDENTITY_PROFILE,
@@ -378,13 +382,15 @@ def _observed_projection(
     _validate_observation_boundary(observation, scope, project_id)
     facts_by_id = {fact["fact_id"]: fact for fact in bundle["facts"]}
     bindings_by_id = {item["binding_id"]: item for item in bundle["bindings"]}
+    if any(reference["id"] not in facts_by_id for reference in observation["normalized_fact_refs"]):
+        raise DifferenceError("Observation references a Normalized Fact absent from the bundle")
+    # Nothing below reads a status, value or Evidence reference until the whole upstream
+    # bundle has been proven schema-valid and cross-record valid.
+    _verify_upstream_records(observation, bundle, facts_by_id, bindings_by_id)
     fact_evaluation_chains = _contiguous_chains(bundle["fact_evaluations"], "fact_id")
     latest_negative_evaluations = _latest_contiguous(
         bundle["negative_evaluations"], "negative_observation_id"
     )
-    if any(reference["id"] not in facts_by_id for reference in observation["normalized_fact_refs"]):
-        raise DifferenceError("Observation references a Normalized Fact absent from the bundle")
-    _verify_upstream_records(observation, bundle, facts_by_id, bindings_by_id)
     # A canonical Observation is scoped to a Scope, not to one subject, so it can carry
     # Facts for other included subjects and Facts minted for another project. Selection
     # is owned once, by the authority the independent validator also imports.
@@ -476,6 +482,16 @@ def _observed_projection(
     return statuses.pop(), [], negatives
 
 
+def _projectable(record: Any, fields: tuple[str, ...], identity_field: str) -> bool:
+    """Return whether an identity projection can be computed over this record at all."""
+
+    return (
+        isinstance(record, dict)
+        and isinstance(record.get(identity_field), str)
+        and all(field in record for field in fields)
+    )
+
+
 def _verify_upstream_records(
     observation: dict[str, Any],
     bundle: dict[str, Any],
@@ -508,7 +524,12 @@ def _verify_upstream_records(
     referenced = {
         reference["id"] for reference in observation["normalized_fact_refs"]
     }
+    # A record that cannot satisfy its own identity projection is malformed, and the
+    # shared verifier below reports exactly why. Recomputing over it would raise a
+    # KeyError in place of that canonical validation error, so it is left to that pass.
     for fact in bundle["facts"]:
+        if not _projectable(fact, FACT_SEMANTIC_FIELDS, "fact_id"):
+            continue
         if fact["fact_id"] not in referenced:
             continue
         require_schema_version(fact, f"normalized fact {fact['fact_id']}")
@@ -517,6 +538,10 @@ def _verify_upstream_records(
                 f"Normalized Fact identity does not recompute: {fact['fact_id']}"
             )
     for binding in bindings_by_id.values():
+        if not _projectable(
+            binding, ("fact_id", "observation_id", "source_occurrence_id"), "binding_id"
+        ):
+            continue
         if binding["observation_id"] != observation["observation_id"]:
             continue
         if binding["binding_id"] != binding_identity(binding):
@@ -528,6 +553,8 @@ def _verify_upstream_records(
                 f"Fact Observation Binding references an absent Fact: {binding['binding_id']}"
             )
     for evaluation in bundle["fact_evaluations"]:
+        if not _projectable(evaluation, ("fact_id", "evaluation_revision"), "evaluation_id"):
+            continue
         if evaluation["fact_id"] not in referenced:
             continue
         if evaluation["evaluation_id"] != fact_evaluation_identity(evaluation):
@@ -537,7 +564,9 @@ def _verify_upstream_records(
             )
 
     # Identity recomputation is complete; payload admissibility is a separate question and
-    # is decided here, before any status, value or Evidence reference is trusted.
+    # is decided here, before any status, value or Evidence reference is trusted. A record
+    # the projections above had to skip is reported by this pass, with the canonical
+    # validation message rather than an incidental exception.
     errors = observation_record_errors(bundle)
     if errors:
         raise DifferenceError(
@@ -699,6 +728,17 @@ def _validate_observation_boundary(
         raise BoundaryViolationError(
             f"Observation project does not match the derivation request: {identity}"
         )
+    # Whether an Observation is admissible *under the Scope it names* is the Observation
+    # element's own relationship, so it is decided by that element's authority rather than
+    # restated here. Without its Target check a supplied historical Scope could claim a
+    # different Target than the Observation bound to it, and the whole lineage would be
+    # impossible provenance that every downstream gate accepted.
+    try:
+        validate_scope(scope, observation["project_id"], observation["target"]["target_identity"])
+    except ScopeViolationError as error:
+        raise BoundaryViolationError(
+            f"Observation is not admissible under the Scope it names: {identity} ({error})"
+        ) from error
     if observation["scope_ref"]["id"] != scope["scope_id"]:
         raise BoundaryViolationError(
             f"Observation is bound to a different resolved Scope: {identity}"
@@ -985,9 +1025,100 @@ def _next_observation_request(
     return request
 
 
+#: Every canonical record the derivation request carries, and the type each is scanned as.
+#: The Observation bundle's own section names differ from the carried-context names, so both
+#: maps are stated; a contract test proves this covers every record-bearing request location.
+_REQUEST_BUNDLE_TYPES: dict[str, str] = {
+    "observations": "observation",
+    "facts": "normalized_fact",
+    "bindings": "fact_observation_binding",
+    "fact_evaluations": "fact_evaluation",
+    "negative_observations": "negative_observation",
+    "negative_evaluations": "negative_observation_evaluation",
+}
+
+
+def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any], str, str]]:
+    """Return every canonical record in *request*, with the type each is scanned as.
+
+    Only records whose type is known are scanned, and each is read through its own declared
+    reference locations. Nothing is traversed by shape: an ``IDENTITY_REFERENCE`` is a
+    declared canonical value type, so a schema-valid ``STRUCTURED`` Fact value may itself be
+    ``{"kind": ..., "id": ...}`` -- payload, not a reference.
+    """
+
+    found: list[tuple[dict[str, Any], str, str]] = []
+    objective = request.get("objective_revision")
+    if isinstance(objective, dict):
+        found.append((objective, "objective_revision", "request.objective_revision"))
+    for position, binding in enumerate(request.get("bindings", []) or []):
+        if not isinstance(binding, dict):
+            continue
+        where = f"request.bindings[{position}]"
+        scope = binding.get("observation_scope")
+        if isinstance(scope, dict):
+            found.append((scope, "observation_scope", f"{where}.observation_scope"))
+        for index, historical in enumerate(
+            binding.get("historical_observation_scopes", []) or []
+        ):
+            if isinstance(historical, dict):
+                found.append(
+                    (
+                        historical,
+                        "observation_scope",
+                        f"{where}.historical_observation_scopes[{index}]",
+                    )
+                )
+        bundle = binding.get("observation_bundle")
+        if isinstance(bundle, dict):
+            for section, type_name in _REQUEST_BUNDLE_TYPES.items():
+                for index, record in enumerate(bundle.get(section, []) or []):
+                    if isinstance(record, dict):
+                        found.append(
+                            (record, type_name, f"{where}.observation_bundle.{section}[{index}]")
+                        )
+        predecessor = binding.get("predecessor")
+        if not isinstance(predecessor, dict):
+            continue
+        difference = predecessor.get("difference")
+        if isinstance(difference, dict):
+            found.append((difference, "difference", f"{where}.predecessor.difference"))
+        for index, event in enumerate(predecessor.get("events", []) or []):
+            if isinstance(event, dict):
+                found.append(
+                    (
+                        event,
+                        "difference_lifecycle_event",
+                        f"{where}.predecessor.events[{index}]",
+                    )
+                )
+        context = predecessor.get("context")
+        if not isinstance(context, dict):
+            continue
+        for section, type_name in CARRIED_SECTIONS.items():
+            for index, record in enumerate(context.get(section, []) or []):
+                if isinstance(record, dict):
+                    found.append(
+                        (record, type_name, f"{where}.predecessor.context.{section}[{index}]")
+                    )
+    return found
+
+
 def _reject_hostile_input(request: dict[str, Any]) -> None:
+    """Reject secret material anywhere, and a moving reference at any declared location.
+
+    Secret material is a property of *values*, so it is scanned everywhere. A moving
+    reference is a property of a *reference*, so it is scanned only where the contract
+    declares one -- through the same authority the relational graph gate uses, so the two
+    can never disagree about what a reference is.
+    """
+
     reject_secret_material(request, "request")
-    walk_references(request, "request")
+    errors: list[str] = []
+    for record, type_name, where in _iter_request_records(request):
+        errors.extend(moving_reference_errors(record, type_name, where))
+    if errors:
+        raise SecurityRejectionError(sorted(errors)[0])
 
 
 def _validate_predecessor(predecessor: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:

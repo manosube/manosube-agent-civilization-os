@@ -66,66 +66,122 @@ def negative_evaluation_evidence_errors(bundle: dict[str, Any]) -> list[str]:
     """
 
     errors: list[str] = []
+    # Total over untrusted input: a caller that reaches this helper directly, with a record
+    # that never crossed a schema gate, still gets an error list rather than a KeyError.
     owners = {
-        record["negative_observation_id"]: record
-        for record in bundle["negative_observations"]
+        record.get("negative_observation_id"): record
+        for record in bundle.get("negative_observations", []) or []
+        if isinstance(record, dict)
     }
     observations = {
-        record["observation_id"]: record for record in bundle.get("observations", [])
+        record.get("observation_id"): record
+        for record in bundle.get("observations", []) or []
+        if isinstance(record, dict)
     }
-    for evaluation in bundle["negative_evaluations"]:
-        identity = evaluation["evaluation_id"]
-        owner = owners.get(evaluation["negative_observation_id"])
+    for evaluation in bundle.get("negative_evaluations", []) or []:
+        if not isinstance(evaluation, dict):
+            errors.append("Negative evaluation is not a canonical record object")
+            continue
+        identity = evaluation.get("evaluation_id")
+        owner = owners.get(evaluation.get("negative_observation_id"))
         if owner is None:
             # Ownership is unresolvable, so no Evidence claim it makes can be decided.
             errors.append(f"Negative evaluation has no resolvable owner: {identity}")
             continue
-        declared = {canonical_json_bytes(item) for item in owner["negative_evidence_refs"]}
-        if evaluation["evaluation_status"] == CONTRADICTION_NEGATIVE_STATUS:
-            observation = observations.get(owner["observation_id"])
+        declared = {
+            canonical_json_bytes(item)
+            for item in owner.get("negative_evidence_refs", []) or []
+        }
+        status = evaluation.get("evaluation_status")
+        if status == CONTRADICTION_NEGATIVE_STATUS:
+            observation = observations.get(owner.get("observation_id"))
             if observation is not None:
                 declared |= {
                     canonical_json_bytes(item)
-                    for item in observation["observation_evidence_refs"]
+                    for item in observation.get("observation_evidence_refs", []) or []
                 }
-        for reference in evaluation["evidence_refs"]:
+        for reference in evaluation.get("evidence_refs", []) or []:
             if canonical_json_bytes(reference) not in declared:
                 errors.append(
                     "Negative evaluation Evidence is not declared by its own channel: "
                     f"{identity}"
                 )
-        if (
-            evaluation["evaluation_status"] in EVIDENCE_BOUND_NEGATIVE_STATUSES
-            and not evaluation["evidence_refs"]
-        ):
+        if status in EVIDENCE_BOUND_NEGATIVE_STATUSES and not evaluation.get("evidence_refs"):
             errors.append(
-                f"{evaluation['evaluation_status']} Negative evaluation carries no bounded "
-                f"Evidence: {identity}"
+                f"{status} Negative evaluation carries no bounded Evidence: {identity}"
             )
     return errors
 
 
+def _complete(record: Any, *fields: str) -> bool:
+    """Return whether *record* carries every field the rule about to read it needs.
+
+    A record that fails its canonical schema already has an error recorded, so a rule that
+    cannot read it simply does not run over it. That keeps every rule total over untrusted
+    input without weakening any rule for a well-formed record, and without replacing the
+    canonical validation failure with an incidental ``KeyError``.
+    """
+
+    return isinstance(record, dict) and all(record.get(field) is not None for field in fields)
+
+
+def _records(bundle: dict[str, Any], group: str) -> list[Any]:
+    holder = bundle.get(group)
+    return holder if isinstance(holder, list) else []
+
+
 def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
-    """Return every cross-record Observation violation, without mutating *bundle*."""
+    """Return every cross-record Observation violation, without mutating *bundle*.
+
+    Schema failures are reported first, and every cross-record rule below still *examines*
+    a record that failed its schema, so its specific diagnosis is never lost. Reads that a
+    malformed record cannot satisfy are guarded, and the whole pass is wrapped so that a
+    record which trips a read it should never have reached cannot replace the canonical
+    validation failure with an incidental ``KeyError``.
+
+    That wrapper engages only when a schema error was already recorded. A bundle that is
+    schema-clean is not shielded: a genuine defect there still raises, loudly, rather than
+    being reported as a validation error the caller would treat as the caller's fault.
+    """
+
+    errors, schema_valid = _schema_pass(bundle)
+    try:
+        errors.extend(_cross_record_errors(bundle, schema_valid))
+    except (AttributeError, IndexError, KeyError, TypeError) as error:
+        if not errors:
+            raise
+        errors.append(f"malformed record halted cross-record verification: {error!r}")
+    return errors
+
+
+def _schema_pass(bundle: dict[str, Any]) -> tuple[list[str], dict[str, list[dict[str, Any]]]]:
+    """Validate every record against its canonical schema and partition the valid ones."""
 
     schema_validators = validators()
-    record_groups = RECORD_SCHEMAS
     errors: list[str] = []
-    # A record that fails its canonical schema is already reported inadmissible; its
-    # identity is not recomputed, because a projection over a malformed payload would
-    # raise instead of returning a verdict.
     schema_valid: dict[str, list[dict[str, Any]]] = {}
-    for group, schema_name in record_groups.items():
+    for group, schema_name in RECORD_SCHEMAS.items():
         validator = schema_validators[OBSERVATION_SCHEMA_BASE + schema_name]
         valid: list[dict[str, Any]] = []
-        for record in bundle[group]:
+        for record in _records(bundle, group):
             record_errors = [error.message for error in validator.iter_errors(record)]
             errors.extend(record_errors)
             if not record_errors:
                 valid.append(record)
         schema_valid[group] = valid
-    fact_ids = {fact["fact_id"] for fact in bundle["facts"]}
-    for fact in schema_valid["facts"]:
+    return errors, schema_valid
+
+
+def _cross_record_errors(
+    bundle: dict[str, Any], schema_valid: dict[str, list[dict[str, Any]]]
+) -> list[str]:
+    """Apply every cross-record Observation rule."""
+
+    errors: list[str] = []
+    fact_ids = {fact.get("fact_id") for fact in _records(bundle, "facts")}
+    for fact in _records(bundle, "facts"):
+        if not _complete(fact, "fact_id"):
+            continue
         semantic = {
             key: value for key, value in fact.items() if key not in {"schema_version", "fact_id"}
         }
@@ -133,21 +189,25 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"Fact identity mismatch: {fact['fact_id']}")
         if semantic != json.loads(canonical_json_bytes(semantic)):
             errors.append(f"Fact payload is not canonical: {fact['fact_id']}")
-    for observation in schema_valid["observations"]:
+    for observation in _records(bundle, "observations"):
         # An Observation identity is derived from its project, State binding, Target,
         # Scope, method, time boundary, source snapshots and normalization profile. A
         # caller may retain the id while altering any of them, and every reference still
         # resolves, so the identity is recomputed rather than trusted.
         if observation["observation_id"] != observation_identity(observation):
             errors.append(f"Observation identity mismatch: {observation['observation_id']}")
-    bound_fact_ids = {binding["fact_id"] for binding in bundle["bindings"]}
+    bound_fact_ids = {binding.get("fact_id") for binding in _records(bundle, "bindings")}
     if fact_ids != bound_fact_ids:
         errors.append("every Fact must have one or more provenance Bindings")
     binding_keys = {
-        (binding["fact_id"], binding["observation_id"], binding["source_occurrence_id"])
-        for binding in bundle["bindings"]
+        (
+            binding.get("fact_id"),
+            binding.get("observation_id"),
+            binding.get("source_occurrence_id"),
+        )
+        for binding in _records(bundle, "bindings")
     }
-    if len(binding_keys) != len(bundle["bindings"]):
+    if len(binding_keys) != len(_records(bundle, "bindings")):
         errors.append("duplicate Fact/Observation/source occurrence Binding")
     identity_fields = {
         "facts": "fact_id",
@@ -158,12 +218,18 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
         "negative_evaluations": "evaluation_id",
     }
     for group, field in identity_fields.items():
-        identities = [record[field] for record in bundle[group]]
+        identities = [record[field] for record in schema_valid[group]]
         if len(identities) != len(set(identities)):
             errors.append(f"duplicate {field}")
-    bindings_by_id = {record["binding_id"]: record for record in bundle["bindings"]}
-    observations_by_id = {record["observation_id"]: record for record in bundle["observations"]}
-    for binding in bundle["bindings"]:
+    bindings_by_id = {record.get("binding_id"): record for record in _records(bundle, "bindings")}
+    observations_by_id = {
+        record.get("observation_id"): record for record in _records(bundle, "observations")
+    }
+    for binding in _records(bundle, "bindings"):
+        if not _complete(
+            binding, "fact_id", "observation_id", "source_occurrence_id", "binding_id"
+        ):
+            continue
         expected_binding_id = deterministic_id(
             "BIND",
             {
@@ -184,7 +250,13 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
             errors.append(f"binding State mismatch: {binding['binding_id']}")
     for fact_id in fact_ids:
         evaluations = sorted(
-            (item for item in bundle["fact_evaluations"] if item["fact_id"] == fact_id),
+            (
+                item
+                for item in _records(bundle, "fact_evaluations")
+                if _complete(item, "fact_id")
+                and item.get("evaluation_revision") is not None
+                and item["fact_id"] == fact_id
+            ),
             key=lambda item: item["evaluation_revision"],
         )
         for revision, evaluation in enumerate(evaluations):
@@ -201,22 +273,32 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
                     or binding["fact_id"] != fact_id
                 ):
                     errors.append(f"cross-Fact or missing binding: {fact_id}")
-    negative_ids = {item["negative_observation_id"] for item in bundle["negative_observations"]}
-    for evaluation in bundle["fact_evaluations"]:
+    negative_ids = {
+        item.get("negative_observation_id") for item in _records(bundle, "negative_observations")
+    }
+    for evaluation in _records(bundle, "fact_evaluations"):
+        if not _complete(evaluation, "fact_id"):
+            continue
         if evaluation["fact_id"] not in fact_ids:
             errors.append(f"evaluation references missing Fact: {evaluation['fact_id']}")
-    for evaluation in bundle["negative_evaluations"]:
+    for evaluation in _records(bundle, "negative_evaluations"):
+        if not _complete(evaluation, "negative_observation_id"):
+            continue
         if evaluation["negative_observation_id"] not in negative_ids:
             errors.append(
                 "evaluation references missing Negative Observation: "
                 f"{evaluation['negative_observation_id']}"
             )
     for negative_id in negative_ids:
+        if negative_id is None:
+            continue
         evaluations = sorted(
             (
                 item
-                for item in bundle["negative_evaluations"]
-                if item["negative_observation_id"] == negative_id
+                for item in _records(bundle, "negative_evaluations")
+                if _complete(item, "negative_observation_id", "evaluation_id")
+                and item.get("evaluation_revision") is not None
+                and item["negative_observation_id"] == negative_id
             ),
             key=lambda item: item["evaluation_revision"],
         )
@@ -225,26 +307,37 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
         else:
             negative = next(
                 item
-                for item in bundle["negative_observations"]
-                if item["negative_observation_id"] == negative_id
+                for item in _records(bundle, "negative_observations")
+                if item.get("negative_observation_id") == negative_id
             )
             initial = evaluations[0]
-            if initial["evaluation_status"] != negative["negative_status"]:
+            comparable = _complete(initial, "evaluation_status") and _complete(
+                negative, "negative_status"
+            )
+            if comparable and initial["evaluation_status"] != negative["negative_status"]:
                 errors.append(f"Negative revision zero status mismatch: {negative_id}")
-            if {item["id"] for item in initial["conflict_fact_refs"]} != {
-                item["id"] for item in negative["positive_fact_refs"]
+            if _complete(initial, "conflict_fact_refs") and _complete(
+                negative, "positive_fact_refs"
+            ) and {item.get("id") for item in initial["conflict_fact_refs"]} != {
+                item.get("id") for item in negative["positive_fact_refs"]
             }:
                 errors.append(f"Negative revision zero conflict mismatch: {negative_id}")
         for revision, evaluation in enumerate(evaluations):
             expected = None if revision == 0 else evaluations[revision - 1]["evaluation_id"]
             if (
                 evaluation["evaluation_revision"] != revision
-                or evaluation["previous_evaluation_id"] != expected
+                or evaluation.get("previous_evaluation_id") != expected
             ):
                 errors.append(f"Negative evaluation lineage invalid: {negative_id}")
     latest_fact_evaluations = {
         fact_id: max(
-            (item for item in bundle["fact_evaluations"] if item["fact_id"] == fact_id),
+            (
+                item
+                for item in _records(bundle, "fact_evaluations")
+                if _complete(item, "fact_id")
+                and item.get("evaluation_revision") is not None
+                and item["fact_id"] == fact_id
+            ),
             key=lambda item: item["evaluation_revision"],
             default=None,
         )
@@ -254,7 +347,7 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
         negative_id: max(
             (
                 item
-                for item in bundle["negative_evaluations"]
+                for item in _records(bundle, "negative_evaluations")
                 if item["negative_observation_id"] == negative_id
             ),
             key=lambda item: item["evaluation_revision"],
@@ -283,6 +376,7 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
                     f"one-sided Negative/Fact conflict: {negative_id} -> {reference['id']}"
                 )
     # Bounded Negative Evidence is a channel: an evaluation may only cite Evidence its own
-    # Negative Observation declared. Decided by the one authority both auditors import.
-    errors.extend(negative_evaluation_evidence_errors(bundle))
+    # Negative Observation declared. Decided by the one authority both auditors import, and
+    # applied only to records that already satisfy their canonical schema.
+    errors.extend(negative_evaluation_evidence_errors(schema_valid))
     return errors

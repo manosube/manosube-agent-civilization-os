@@ -41,8 +41,11 @@ cannot hold two drifting maps.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
+
+from .canonical import MOVING_REFERENCE
 
 #: Reference kind -> the returned-bundle section a reference of that kind must resolve in.
 #: ``supersession_relation`` is deliberately absent: no canonical schema declares a
@@ -467,6 +470,55 @@ def _walk_path(record: Any, segments: list[str]) -> list[Any]:
     return current
 
 
+def iter_declared_references(
+    record: Any, type_name: str
+) -> Iterator[tuple[str, ReferenceEdge | None, Any]]:
+    """Yield every reference this record type *declares*, and nothing else.
+
+    This is the single traversal every consumer shares. The relational closure gate uses it
+    to decide resolution; the moving-reference security scan uses it to decide identity
+    immutability. Neither may traverse anything else, and a second registry cannot exist,
+    because both read ``REFERENCE_EDGES`` through this one function.
+
+    For a schema-backed type each yielded item is ``(path, declared edge, value)``. For an
+    unschematized type -- one v0.1 declares no schema for -- there are no declared paths, so
+    :func:`iter_structural_references` supplies its own conservative traversal and yields
+    ``None`` for the edge, meaning "no contract pins this location".
+    """
+
+    if type_name in UNSCHEMATIZED_TYPES:
+        yield from iter_structural_references(record)
+        return
+    for edge in REFERENCE_EDGES[type_name]:
+        for value in _walk_path(record, edge.path.split(".")):
+            yield edge.path, edge, value
+
+
+def iter_structural_references(
+    record: Any, path: str = ""
+) -> Iterator[tuple[str, ReferenceEdge | None, Any]]:
+    """Yield every reference-shaped object inside one *unschematized* record.
+
+    This is the shape heuristic, deliberately confined to the record types v0.1 defines no
+    schema for. It is unsound in general -- ``IDENTITY_REFERENCE`` is a declared canonical
+    value type, so a schema-backed value may itself be ``{"kind": ..., "id": ...}`` -- which
+    is why it is never applied to a schema-backed record. Inside a Change or Reflow record
+    there is no schema to distinguish a reference from a business value, and the safer
+    reading of an ambiguous field is that it is a reference that must resolve. See
+    ``UNSCHEMATIZED_REFERENCE_POLICY``.
+    """
+
+    if isinstance(record, dict):
+        if isinstance(record.get("kind"), str) and isinstance(record.get("id"), str):
+            yield path or "<record>", None, record
+            return
+        for key, value in record.items():
+            yield from iter_structural_references(value, f"{path}.{key}" if path else key)
+    elif isinstance(record, list):
+        for position, value in enumerate(record):
+            yield from iter_structural_references(value, f"{path}[{position}]")
+
+
 def _index(bundle: dict[str, Any]) -> dict[str, dict[str, int]]:
     """Count the records each emitted section holds, by identity, for exactly-one checks."""
 
@@ -518,45 +570,107 @@ def reference_closure_errors(bundle: dict[str, Any]) -> list[str]:
                     errors.append(
                         f"foreign key is ambiguous: {where}.{field} -> {target}:{value}"
                     )
-            for edge in REFERENCE_EDGES[type_name]:
-                for value in _walk_path(record, edge.path.split(".")):
-                    if not isinstance(value, dict) or not isinstance(value.get("kind"), str):
-                        errors.append(
-                            f"reference field is not a canonical reference: "
-                            f"{where}.{edge.path}"
-                        )
-                        continue
-                    if value["kind"] not in edge.kinds:
-                        errors.append(
-                            f"reference kind is not permitted here: {where}.{edge.path} -> "
-                            f"{value['kind']}"
-                        )
-                        continue
-                    resolves_in: str | None = (
-                        RESOLVABLE_KINDS.get(value["kind"]) or _FORCED_SECTIONS[value["kind"]]
-                        if edge.resolve
-                        else RESOLVABLE_KINDS.get(value["kind"])
+            for path, edge, value in iter_declared_references(record, type_name):
+                if not isinstance(value, dict) or not isinstance(value.get("kind"), str):
+                    errors.append(
+                        f"reference field is not a canonical reference: {where}.{path}"
                     )
-                    if resolves_in is None:
-                        continue
-                    if not isinstance(value.get("id"), str):
-                        errors.append(
-                            f"resolvable reference carries no identity: {where}.{edge.path}"
-                        )
-                        continue
-                    found = counted.get(resolves_in, {}).get(value["id"], 0)
-                    if found == 0:
-                        errors.append(
-                            f"reference does not resolve: {where}.{edge.path} -> "
-                            f"{resolves_in}:{value['id']}"
-                        )
-                    elif found > 1:
-                        errors.append(
-                            f"reference is ambiguous: {where}.{edge.path} -> "
-                            f"{resolves_in}:{value['id']}"
-                        )
+                    continue
+                kind = value["kind"]
+                if edge is not None and kind not in edge.kinds:
+                    errors.append(
+                        f"reference kind is not permitted here: {where}.{path} -> {kind}"
+                    )
+                    continue
+                if edge is None and kind not in RESOLVABLE_KINDS and kind not in EXTERNAL_KINDS:
+                    # An unschematized record: no contract pins this location, so an
+                    # unrecognised kind cannot be judged and fails closed.
+                    errors.append(f"unknown reference kind: {where}.{path} -> {kind}")
+                    continue
+                resolves_in = _resolution_target(kind, edge)
+                if resolves_in is None:
+                    continue
+                if not isinstance(value.get("id"), str):
+                    errors.append(f"resolvable reference carries no identity: {where}.{path}")
+                    continue
+                found = counted.get(resolves_in, {}).get(value["id"], 0)
+                if found == 0:
+                    errors.append(
+                        f"reference does not resolve: {where}.{path} -> "
+                        f"{resolves_in}:{value['id']}"
+                    )
+                elif found > 1:
+                    errors.append(
+                        f"reference is ambiguous: {where}.{path} -> "
+                        f"{resolves_in}:{value['id']}"
+                    )
     return sorted(set(errors))
 
+
+def _resolution_target(kind: str, edge: ReferenceEdge | None) -> str | None:
+    """Return the section a reference of *kind* must resolve in, if any.
+
+    A kind that is external by default resolves only where the declaring edge overrides it
+    -- a Next Observation Request's Observation Method is the one such case.
+    """
+
+    if edge is not None and edge.resolve and kind not in RESOLVABLE_KINDS:
+        forced: str | None = _FORCED_SECTIONS.get(kind)
+        return forced
+    return RESOLVABLE_KINDS.get(kind)
+
+
+def moving_reference_errors(record: Any, type_name: str, where: str) -> list[str]:
+    """Return every moving-reference violation at this record's *declared* locations.
+
+    A canonical reference names an immutable identity. ``HEAD``, ``LATEST`` and the rest
+    name whatever a mutable pointer happens to be pointing at, so a Difference bound to one
+    is not reproducible and the security gate rejects it.
+
+    The scan reads the same declared locations the relational gate reads, through the same
+    iterator, so there is exactly one reference-path authority. Scanning the whole request
+    by shape -- which this gate used to do -- rejected schema-valid ``STRUCTURED`` business
+    values such as ``{"kind": "widget", "id": "HEAD"}``, which are payload, not references.
+    """
+
+    errors: list[str] = []
+    for path, _edge, value in iter_declared_references(record, type_name):
+        if not isinstance(value, dict):
+            continue
+        identity = value.get("id")
+        if isinstance(identity, str) and MOVING_REFERENCE.search(identity):
+            errors.append(f"moving reference {identity!r} at {where}.{path}")
+    return errors
+
+
+#: Record types v0.1 defines no canonical schema for. Measured from the record-type table
+#: rather than restated, so a type that gains a schema leaves this set automatically and a
+#: contract test proves the two stay in step.
+def _unschematized_types() -> frozenset[str]:
+    from .conformance import RECORD_TYPES
+
+    return frozenset(
+        name for name, canonical in RECORD_TYPES.items() if canonical.schema is None
+    )
+
+
+UNSCHEMATIZED_TYPES: frozenset[str] = _unschematized_types()
+
+#: The chosen policy for those types, recorded rather than implied.
+#:
+#: Their records are carried as opaque later-phase provenance -- a ``CLOSED`` lineage's
+#: Reflow transaction is one, and the retained chain cannot resolve without it -- so
+#: refusing to carry them would remove a route the contract requires. What is *not*
+#: acceptable is carrying them unchecked: this head allowed a Change naming an absent
+#: Difference through both the Engine and the auditor.
+#:
+#: So a conservative structural traversal applies **to these types only**. Inside a record
+#: with no schema there is nothing that can distinguish a reference from a business value,
+#: and the safer reading of an ambiguous ``{"kind", "id"}`` field is that it is a reference
+#: which must resolve. The cost is stated plainly: a Change or Reflow record whose *payload*
+#: is shaped like a reference is rejected here. That cost is only removable by the Kernel
+#: defining these schemas, which is exactly ``CHANGE_AND_REFLOW_SCHEMA_AVAILABLE=false``.
+UNSCHEMATIZED_REFERENCE_POLICY = "STRUCTURAL_CLOSURE_REQUIRED"
 
 #: Sections an edge-level ``resolve`` override targets for a kind that is external by
 #: default. Declared here so the override cannot silently invent a section name.
@@ -590,13 +704,19 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
     )
 
     differences = {
-        record["difference_id"]: record for record in bundle.get("differences", []) or []
+        record["difference_id"]: record
+        for record in bundle.get("differences", []) or []
+        if isinstance(record, dict) and isinstance(record.get("difference_id"), str)
     }
     evaluations = {
-        record["closure_evaluation_id"]: record for record in bundle.get("evaluations", []) or []
+        record["closure_evaluation_id"]: record
+        for record in bundle.get("evaluations", []) or []
+        if isinstance(record, dict) and isinstance(record.get("closure_evaluation_id"), str)
     }
     policies = {
-        record["closure_policy_id"]: record for record in bundle.get("policies", []) or []
+        record["closure_policy_id"]: record
+        for record in bundle.get("policies", []) or []
+        if isinstance(record, dict) and isinstance(record.get("closure_policy_id"), str)
     }
     requests = {
         record["observation_request_id"]: record
@@ -609,8 +729,10 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
     chains: dict[str, list[dict[str, Any]]] = {}
     events: dict[str, dict[str, Any]] = {}
     for event in bundle.get("events", []) or []:
+        if not isinstance(event, dict) or not isinstance(event.get("difference_id"), str):
+            continue
         chains.setdefault(event["difference_id"], []).append(event)
-        events[event["difference_event_id"]] = event
+        events[str(event.get("difference_event_id"))] = event
 
     errors: list[str] = []
     # Every carried Closure Evaluation, not only those a transition cites. An Evaluation
