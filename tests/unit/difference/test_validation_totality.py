@@ -245,3 +245,102 @@ def test_blocker_payload_rule_is_not_reached_with_a_malformed_event() -> None:
 
     with pytest.raises(KeyError):
         blocker_payload_errors({"difference_event_id": "E"}, None)
+
+
+# --------------------------------------------------------------------------- #
+# Selection reads every record in the bundle, so selection must be total too
+# --------------------------------------------------------------------------- #
+
+_SELECTION_READS: list[str] = [
+    "target",
+    "scope_ref",
+    "state_revision_observed",
+    "state_fingerprint_observed",
+    "project_id",
+    "status",
+]
+
+
+def _bundle_request(mutate: Any = None) -> dict[str, Any]:
+    from tests.difference_helpers import raw_fact
+
+    fingerprint = state_fingerprint()
+    scope = observation_scope()
+    bundle = observed_bundle(scope, [raw_fact(value="NOT-READY")], fingerprint)
+    if mutate is not None:
+        mutate(bundle)
+    return derivation_request(
+        objective_revision(),
+        [
+            {
+                "target_predicate_id": PREDICATE_ID,
+                "observation_scope": scope,
+                "observation_bundle": bundle,
+            }
+        ],
+        fingerprint,
+    )
+
+
+def test_the_control_bundle_derives() -> None:
+    """So the rejections below are the missing field, not the fixture."""
+
+    assert derive_differences(_bundle_request())["differences"]
+
+
+@pytest.mark.parametrize("field", _SELECTION_READS)
+def test_an_observation_missing_a_selection_field_is_reported_not_raised(field: str) -> None:
+    """Selection indexes every record in the bundle before any of them is validated.
+
+    A record missing a schema-required field used to leak a raw ``KeyError`` out of the
+    selection comprehension, in place of the canonical rejection the boundary documents.
+    """
+
+    def mutate(bundle: dict[str, Any]) -> None:
+        del bundle["observations"][0][field]
+
+    with pytest.raises(DifferenceError) as raised:
+        derive_differences(_bundle_request(mutate))
+    assert "is a required property" in str(raised.value)
+
+
+def test_a_nested_selection_field_is_reported_not_raised() -> None:
+    """The scan reads two levels: ``target.target_identity`` and ``scope_ref.id``."""
+
+    def mutate(bundle: dict[str, Any]) -> None:
+        del bundle["observations"][0]["target"]["target_identity"]
+
+    with pytest.raises(DifferenceError) as raised:
+        derive_differences(_bundle_request(mutate))
+    assert "required property" in str(raised.value)
+
+
+def test_the_bundle_is_not_verified_before_selection() -> None:
+    """Ordering matters in both directions here.
+
+    Verifying the whole bundle *before* selection would report a schema failure in place of
+    the identity collision a forged-but-complete record deserves — the substitution
+    ADR-0013 forbids. The verifier is asked only where the scan could not read, so this
+    forged record keeps its own diagnosis.
+    """
+
+    def mutate(bundle: dict[str, Any]) -> None:
+        bundle["observations"][0]["normalization_profile"] = "FORGED-9.9"
+
+    with pytest.raises(DifferenceError) as raised:
+        derive_differences(_bundle_request(mutate))
+    assert "required property" not in str(raised.value)
+
+
+def test_the_declared_selection_fields_match_what_selection_reads() -> None:
+    """Both directions, read from the derivation source rather than remembered."""
+
+    from manosube_agent_civilization.difference.engine import _SELECTION_FIELDS
+
+    source = Path(
+        "src/manosube_agent_civilization/difference/engine.py"
+    ).read_text(encoding="utf-8")
+    body = source.split("def _select_observation(")[1].split("\ndef ")[0]
+    assert set(_SELECTION_FIELDS) == set(_SELECTION_READS)
+    for field in _SELECTION_FIELDS:
+        assert f'"{field}"' in body, field

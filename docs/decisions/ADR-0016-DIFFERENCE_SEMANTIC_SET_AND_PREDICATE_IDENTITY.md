@@ -200,6 +200,29 @@ missing a semantic field. The auditor runs this rule over records it indexed *be
 deciding they were schema-valid, so that is reachable. The digest recomputation is guarded
 and reports rather than raises, per ADR-0013.
 
+## 2d. Selection reads every record, so selection is total
+
+```text
+6  an Observation missing its schema-required `target`
+     _select_observation indexed it before any validation
+     raised  KeyError: 'target'   <- not the documented DifferenceError
+```
+
+Selection reads `target`, `scope_ref` and the observed State of *every* record in the
+bundle, to find the one bound to this Target and this exact Project State. That scan ran
+before the shared Observation verifier, so an incomplete record raised an incidental
+`KeyError` out of a comprehension in place of the canonical rejection the boundary
+documents. Same shape as ADR-0013, one route further out.
+
+The obvious fix — verify the whole bundle before selecting — is the wrong one, and running
+it proved so: five existing tests changed diagnosis, because a *forged but complete* record
+would then be reported as a schema failure instead of the identity collision it is.
+ADR-0013 states that payload admissibility and identity recomputation are distinct
+obligations and neither substitutes for the other. So the scan is made total instead: a
+record it cannot read is skipped rather than raised over, and the verifier is asked for the
+specific diagnosis only on that path. A forged-but-complete record keeps its own, and a
+test pins that the bundle is *not* verified before selection.
+
 ## 3. Cost
 
 `RecordType.semantics` changing from errors-returning to raising means a future rule must

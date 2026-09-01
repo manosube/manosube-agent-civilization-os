@@ -369,6 +369,45 @@ def _historical_scopes(
     return validated
 
 
+#: The fields Observation selection reads. A record missing any of them cannot be selected
+#: and is not a candidate; it is the schema pass, not this scan, that says why.
+_SELECTION_FIELDS: tuple[str, ...] = (
+    "target",
+    "scope_ref",
+    "state_revision_observed",
+    "state_fingerprint_observed",
+    "project_id",
+    "status",
+)
+
+
+def _selectable(observation: Any) -> bool:
+    """Return whether *observation* carries every field selection reads."""
+
+    if not isinstance(observation, dict):
+        return False
+    if not all(field in observation for field in _SELECTION_FIELDS):
+        return False
+    target = observation["target"]
+    reference = observation["scope_ref"]
+    return (
+        isinstance(target, dict)
+        and "target_identity" in target
+        and isinstance(reference, dict)
+        and "id" in reference
+    )
+
+
+def _require_verified_bundle(bundle: dict[str, Any]) -> None:
+    """Raise the shared Observation verifier's own diagnosis for this bundle."""
+
+    errors = observation_record_errors(bundle)
+    if errors:
+        raise DifferenceError(
+            f"upstream Observation bundle is not cross-record valid: {sorted(errors)[0]}"
+        )
+
+
 def _select_observation(
     binding: dict[str, Any],
     predicate_id: str,
@@ -378,6 +417,24 @@ def _select_observation(
     state_fingerprint: dict[str, Any],
 ) -> dict[str, Any]:
     bundle = binding["observation_bundle"]
+    if not isinstance(bundle, dict) or not isinstance(bundle.get("observations"), list):
+        raise DifferenceError("observation bundle is not a canonical object")
+    # The scan is total. It reads `target`, `scope_ref` and the observed State of *every*
+    # record in the bundle, so a record missing a schema-required field raised an
+    # incidental KeyError here instead of the canonical rejection the boundary documents.
+    # A record it cannot read is skipped rather than raised over, and the shared
+    # Observation verifier -- which decides the whole bundle -- is asked for the specific
+    # diagnosis below. Verifying the whole bundle *before* selection would report a schema
+    # failure in place of the identity collision a forged record deserves, which is the
+    # substitution ADR-0013 forbids; it is asked only where this scan could not read.
+    unreadable = [
+        observation
+        for observation in bundle["observations"]
+        if not _selectable(observation)
+    ]
+    if unreadable:
+        _require_verified_bundle(bundle)
+        raise DifferenceError("Observation record is not selectable: incomplete canonical record")
     # An append-only Observation bundle carries the whole lineage, so the Target and Scope
     # alone do not identify one Observation. The exact requested Project State does.
     scoped = [
