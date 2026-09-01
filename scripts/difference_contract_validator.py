@@ -62,21 +62,32 @@ def _index(records: list[dict[str, Any]], key: str, errors: list[str]) -> dict[s
     return indexed
 
 
-def _snapshot_time(record: dict[str, Any], errors: list[str]) -> datetime | None:
-    """Parse one source snapshot time, reporting rather than raising when it will not.
+def _canonical_time(raw: Any) -> datetime | None:
+    """Parse a canonical timestamp, or return ``None`` -- the one place this pass parses one.
 
-    The readability gate settles that the property is present and is a string; whether that
-    string is a canonical timestamp is a *semantic* question, and this validator answers
-    semantic questions by returning them. Calling ``fromisoformat`` on it directly turned a
-    reportable violation into a ``ValueError`` out of the middle of the pass.
+    The readability gate settles that a property is present and is a string. Whether that
+    string is a canonical timestamp is a *semantic* question about a schema-backed field,
+    and this validator answers semantic questions by returning them rather than raising.
+    Every ``fromisoformat`` in this file goes through here, so "parse only after validation"
+    is one rule with one owner rather than a check repeated at each call site.
     """
 
-    raw = record["time_boundary"]["source_snapshot_time"]
+    if not isinstance(raw, str):
+        return None
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
-        errors.append(f"source snapshot time is not a canonical timestamp: {raw}")
         return None
+
+
+def _snapshot_time(record: dict[str, Any], errors: list[str]) -> datetime | None:
+    """Parse one source snapshot time, reporting rather than raising when it will not."""
+
+    raw = record["time_boundary"]["source_snapshot_time"]
+    parsed = _canonical_time(raw)
+    if parsed is None:
+        errors.append(f"source snapshot time is not a canonical timestamp: {raw}")
+    return parsed
 
 
 def _ref_id(reference: dict[str, Any] | None) -> str | None:
@@ -188,16 +199,13 @@ def _observation_attempts_complete(
     observation: dict[str, Any], scope: dict[str, Any],
 ) -> bool:
     attempts = observation["attempts"]
-    started = datetime.fromisoformat(
-        observation["time_boundary"]["observation_started_at"].replace(
-            "Z", "+00:00"
-        )
-    )
-    ended = datetime.fromisoformat(
-        observation["time_boundary"]["observation_ended_at"].replace(
-            "Z", "+00:00"
-        )
-    )
+    started = _canonical_time(observation["time_boundary"]["observation_started_at"])
+    ended = _canonical_time(observation["time_boundary"]["observation_ended_at"])
+    if started is None or ended is None:
+        # A malformed timestamp means the attempt window is not established, so the set is
+        # not complete. The value is schema-backed, so its malformation is reported by the
+        # schema pass that owns it; this predicate's job is to answer, not to raise.
+        return False
     timeout = scope["attempt_policy"]["timeout_seconds"]
     return (
         observation["method_ref"] == scope["method_ref"]
@@ -208,14 +216,9 @@ def _observation_attempts_complete(
             attempt["method_ref"] == observation["method_ref"]
             and attempt["result"] in {"COMPLETE", "EMPTY"}
             and attempt["failure_class"] is None
-            and started
-            <= (attempt_started := datetime.fromisoformat(
-                attempt["started_at"].replace("Z", "+00:00")
-            ))
-            <= (attempt_ended := datetime.fromisoformat(
-                attempt["ended_at"].replace("Z", "+00:00")
-            ))
-            <= ended
+            and (attempt_started := _canonical_time(attempt["started_at"])) is not None
+            and (attempt_ended := _canonical_time(attempt["ended_at"])) is not None
+            and started <= attempt_started <= attempt_ended <= ended
             and (attempt_ended - attempt_started).total_seconds() <= timeout
             for attempt in attempts
         )
@@ -1169,23 +1172,25 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 transition_ref = event["reflow_transition_ref"]
                 transition = reflow_transitions.get(_ref_id(transition_ref) or "")
                 candidate = None if evaluation is None else evaluation["after_state_candidate"]
-                commit_before_expiry = (
-                    transition is not None
-                    and evaluation is not None
-                    and (
-                        datetime.fromisoformat(transition["committed_at"].replace("Z", "+00:00"))
-                        >= datetime.fromisoformat(
-                            evaluation["evaluated_at"].replace("Z", "+00:00")
-                        )
-                    )
-                    and (
-                        evaluation["evaluation_expires_at"] is None
-                        or datetime.fromisoformat(transition["committed_at"].replace("Z", "+00:00"))
-                        <= datetime.fromisoformat(
-                            evaluation["evaluation_expires_at"].replace("Z", "+00:00")
-                        )
-                    )
-                )
+                # A Reflow transaction is **opaque provenance** in this phase. v0.1 defines
+                # no canonical schema for one, so nothing declares that it has a
+                # ``committed_at``, an ``event_type``, an ``after_state`` or an
+                # ``evidence_refs`` -- and this validator used to read all of them, plus
+                # parse two timestamps out of it. That was a Reflow field contract authored
+                # here by assumption: an undeclared rule that could not be satisfied, argued
+                # with, or versioned, because no schema states it.
+                #
+                # Reading it was also unsound in the ordinary way. A populated Reflow section
+                # -- which no fixture carried until one was added -- reached
+                # ``fromisoformat`` on a field nothing had validated, so a caller-supplied
+                # record raised ``KeyError``/``AttributeError``/``ValueError`` out of the
+                # middle of the pass instead of being reported.
+                #
+                # What survives is what this phase genuinely owns: the *reference* on the
+                # Difference-owned lifecycle event and Closure Evaluation, its declared kind,
+                # and whether it resolves inside the bundle. The Reflow phase owns everything
+                # about the record it points at, and must state it as a schema rather than
+                # leaving it implicit here.
                 reflow_valid = event["to_status"] != "CLOSED" or (
                     transition_ref is not None
                     and transition_ref.get("kind") == "state_transition"
@@ -1193,33 +1198,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and evaluation is not None
                     and candidate is not None
                     and difference is not None
-                    and commit_before_expiry
-                    and transition["event_type"] == "TRANSITION"
-                    and transition["project_id"] == difference["project_id"]
-                    and transition["after_state"]["project_id"] == difference["project_id"]
-                    and transition["after_state"]["objective_revision_id"]
-                    == evaluation["objective_revision_ref_evaluated"]["id"]
-                    and transition["from_revision"] == evaluation["before_state_ref"]["revision"]
-                    and transition["to_revision"] == transition["from_revision"] + 1
-                    and transition["before_fingerprint"]
-                    == evaluation["before_state_ref"]["fingerprint"]
-                    and transition["after_fingerprint"] == candidate["semantic_fingerprint"]
-                    and transition["after_state"]["state_revision"] == transition["to_revision"]
-                    and transition["after_state"]["previous_state_fingerprint"]
-                    == transition["before_fingerprint"]
-                    and transition["after_state"]["semantic_fingerprint"]
-                    == transition["after_fingerprint"]
-                    and transition["after_state"]["semantic_state"] == candidate["semantic_state"]
-                    and transition["after_state"]["lineage_head_ref"] == transition_ref
-                    and {("closure_evaluation", evaluation["closure_evaluation_id"]),
-                         ("difference", difference_id)}
-                    <= {(reference["kind"], reference["id"])
-                        for reference in transition["evidence_refs"]}
                 )
-                # Every rule that binds this event to its Closure Evaluation now lives in
-                # the shared lifecycle authority. What remains here is the Reflow
-                # commitment window, which belongs to a later element the Difference phase
-                # does not implement and therefore never claims.
                 if event["to_status"] == "CLOSED" and (
                     evaluation is None
                     or event["reflow_transition_ref"] != evaluation["reflow_transition_ref"]
@@ -1823,6 +1802,10 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             bounded_empty_valid = [
                 difference is not None
                 and required_scope is not None
+                # `after_observations` already records an unresolved or wrong-kind
+                # reference as None. Reading that result before indexing is the whole fix:
+                # no new reference registry, just consulting the resolution that exists.
+                and observation is not None
                 and required_scope["scope_status"] == "COMPLETE"
                 and _observation_attempts_complete(observation, required_scope)
                 and difference["normalized_target_state"]["operator"] == "none"

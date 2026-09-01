@@ -84,12 +84,18 @@ def _predecessor_bundle() -> dict[str, Any]:
     return derive_differences(request)
 
 
-#: An opaque later-phase Change record. v0.1 defines no schema for one, which is the whole
-#: point: it travels under the identity and reference gates alone.
+#: Opaque later-phase records. v0.1 defines no schema for either, which is the whole point:
+#: they travel under the identity and reference gates alone, and nothing in this phase may
+#: interpret a field of them.
 CARRIED_CHANGE: dict[str, Any] = {
     "change_id": "CHG-0001",
     "kind": "change",
     "summary": "an opaque later-phase payload",
+}
+CARRIED_REFLOW: dict[str, Any] = {
+    "transaction_id": "REFLOW-TX-0001",
+    "kind": "reflow_transaction",
+    "note": "an opaque later-phase payload",
 }
 
 
@@ -101,11 +107,34 @@ def _unschematized_bundle() -> dict[str, Any]:
     unschematized record was measured as clean for 7248 cases while the auditor indexed
     those records and raised. That is the exact P2 on `a11d7c7`, and an empty section is
     why no enumeration here could see it.
+
+    Built on the RETAINED route rather than REOPENED deliberately. A REOPENED lineage also
+    populates `reflow_transitions`, but the independent validator reports nine Closure
+    Evaluation *execution* provenance violations against it -- the standing
+    `REOPENED_CROSS_RECORD_PROVEN=false` non-claim, unrelated to this work and present with
+    or without a carried Change. A fixture that is already red cannot serve as the positive
+    control for "a clean bundle stays accepted", so both records are carried onto a lineage
+    that audits clean.
     """
 
-    _baseline, request = retained_status_predecessor("REOPENED")
-    request["bindings"][0]["predecessor"]["context"]["changes"] = [deepcopy(CARRIED_CHANGE)]
+    _baseline, request = retained_status_predecessor("RETAINED")
+    context = request["bindings"][0]["predecessor"]["context"]
+    context["changes"] = [deepcopy(CARRIED_CHANGE)]
+    context["reflow_transitions"] = [deepcopy(CARRIED_REFLOW)]
     return derive_differences(request)
+
+
+def _supersession_bundle() -> dict[str, Any]:
+    """A Scope-change re-observation: the one route that emits a Supersession Relation.
+
+    `supersession_relations` is a Difference-owned section, so leaving it unpopulated would
+    be a coverage gap in this phase's own output rather than a later-phase non-claim.
+    """
+
+    from tests.unit.difference.test_scope_change_reobservation import _scope_change_pair
+
+    _baseline, later_request = _scope_change_pair()
+    return derive_differences(later_request)
 
 
 #: Every emitted bundle the auditor sweep walks.
@@ -113,6 +142,7 @@ BUNDLES: dict[str, Any] = {
     "fresh": _fresh_bundle,
     "predecessor": _predecessor_bundle,
     "unschematized": _unschematized_bundle,
+    "supersession": _supersession_bundle,
 }
 
 BUILT: dict[str, dict[str, Any]] = {name: build() for name, build in BUNDLES.items()}
@@ -128,7 +158,12 @@ CASES: list[tuple[str, str, str]] = sorted(
 
 #: Stated as data so a bundle that silently stops contributing locations fails the
 #: measurement rather than shrinking it.
-EXPECTED_SPAN: dict[str, int] = {"fresh": 513, "predecessor": 695}
+EXPECTED_SPAN: dict[str, int] = {
+    "fresh": 513,
+    "predecessor": 695,
+    "unschematized": 703,
+    "supersession": 763,
+}
 
 #: Roots that are well-formed JSON but not an emitted bundle.
 NON_OBJECT_ROOTS: list[Any] = [None, [], "bundle", 7, True]
@@ -240,10 +275,27 @@ def test_a_non_object_bundle_is_reported_not_raised(root: Any) -> None:
     assert outcome(root) == "REPORTED"
 
 
-#: Sections a fixture may legitimately leave empty, each with the reason. Every other
-#: declared emitted section must appear *populated* somewhere, so an empty section can never
-#: be mistaken for coverage of its record type again.
-UNPOPULATED_NON_CLAIMS: dict[str, str] = {}
+#: Sections no fixture populates, each with its reason. Every other declared emitted section
+#: must appear *populated* somewhere, so an empty section can never again be mistaken for
+#: coverage of its record type.
+#:
+#: These five are stated rather than closed, and the distinction from the `a11d7c7` P2 is
+#: the point: all five are **schema-backed**, so the readability owner validates them
+#: through the same declared schema as every other section and their identity rule is the
+#: one rule every type shares. What is missing is *enumerated* coverage, not any check. The
+#: P2 was the opposite -- an unschematized type, where an empty section meant no check ran
+#: at all -- which is why `changes` and `reflow_transitions` are populated above and these
+#: are recorded here.
+#:
+#: Each is produced by a later canonical owner that this phase does not implement, so a
+#: populated fixture would mean authoring provenance this Issue explicitly does not own.
+UNPOPULATED_NON_CLAIMS: dict[str, str] = {
+    "candidate_claim_evaluation_events": "Closure Evaluation execution provenance",
+    "candidate_completion_records": "Objective Completion, a later canonical owner",
+    "evidence_sufficiency_results": "the Evidence element, not implemented in this phase",
+    "invariant_evaluations": "Kernel invariant evaluation, a later canonical owner",
+    "reopen_condition_evaluations": "Closure Evaluation execution provenance",
+}
 
 
 def test_every_declared_emitted_section_is_populated_somewhere() -> None:
