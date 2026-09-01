@@ -369,6 +369,32 @@ def _historical_scopes(
     return validated
 
 
+#: Every section of an Observation bundle the derivation indexes. Guarding only
+#: ``observations`` left the rest to raise an incidental ``KeyError`` out of the first
+#: comprehension that reached them; a contract test compares this tuple against the
+#: sections the derivation actually reads, in both directions.
+_REQUIRED_BUNDLE_SECTIONS: tuple[str, ...] = (
+    "observations",
+    "facts",
+    "bindings",
+    "fact_evaluations",
+    "negative_observations",
+    "negative_evaluations",
+)
+
+
+def _require_bundle_shape(bundle: Any) -> None:
+    """Reject an Observation bundle whose declared sections are absent or not lists."""
+
+    if not isinstance(bundle, dict):
+        raise DifferenceError("observation bundle is not a canonical object")
+    for section in _REQUIRED_BUNDLE_SECTIONS:
+        if not isinstance(bundle.get(section), list):
+            raise DifferenceError(
+                f"observation bundle omits a canonical section: {section}"
+            )
+
+
 #: The fields Observation selection reads. A record missing any of them cannot be selected
 #: and is not a candidate; it is the schema pass, not this scan, that says why.
 _SELECTION_FIELDS: tuple[str, ...] = (
@@ -417,8 +443,7 @@ def _select_observation(
     state_fingerprint: dict[str, Any],
 ) -> dict[str, Any]:
     bundle = binding["observation_bundle"]
-    if not isinstance(bundle, dict) or not isinstance(bundle.get("observations"), list):
-        raise DifferenceError("observation bundle is not a canonical object")
+    _require_bundle_shape(bundle)
     # The scan is total. It reads `target`, `scope_ref` and the observed State of *every*
     # record in the bundle, so a record missing a schema-required field raised an
     # incidental KeyError here instead of the canonical rejection the boundary documents.
@@ -1226,7 +1251,13 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
         bundle = binding.get("observation_bundle")
         if isinstance(bundle, dict):
             for section, type_name in _REQUEST_BUNDLE_TYPES.items():
-                for index, record in enumerate(bundle.get(section, []) or []):
+                # Total: this scan runs before the bundle's shape is decided, so a section
+                # that is not a list is passed over here and rejected by the shape guard
+                # with its own message, rather than raising a TypeError out of the scan.
+                records = bundle.get(section)
+                if not isinstance(records, list):
+                    continue
+                for index, record in enumerate(records):
                     if isinstance(record, dict):
                         found.append(
                             (record, type_name, f"{where}.observation_bundle.{section}[{index}]")

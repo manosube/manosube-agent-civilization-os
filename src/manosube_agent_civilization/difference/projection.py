@@ -9,6 +9,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from manosube_agent_civilization.observation.errors import ObservationError
+from manosube_agent_civilization.observation.normalization import canonical_value
+
 from .canonical import canonical_bytes, canonical_semantic, unordered_set
 from .errors import DifferenceError
 from .identity import COMPARISON_PROFILE
@@ -136,10 +139,44 @@ def project_collection_value(value: Any, value_type: str) -> Any:
     return canonical_semantic(value)
 
 
+def reject_noncanonical_typed_value(value: Any, value_type: str) -> None:
+    """Reject a declared typed wrapper whose inner value is not already canonical.
+
+    ``DIFFERENCE_IDENTITY.md`` declares the wrapper's inner value as a *canonical* decimal,
+    UTC timestamp, duration or identity reference, and says the inner value is **projected**
+    into ``expected_value``. Only the shape was checked. A Target declaring
+    ``2026-08-30T09:00:00+01:00`` names the same instant as a Fact the Observation element
+    normalised to ``2026-08-30T08:00:00Z`` and does not equal it; a malformed decimal,
+    duration or identity reference was likewise accepted.
+
+    The canonical form is *not* recomputed onto the Target. The Target is a Human
+    Objective's declared value and an identity input: rewriting it would silently change
+    what the Objective says and move every Difference identity derived from it. So the
+    canonicalisation is compared, and a Target that is not already canonical fails closed.
+
+    The comparison reads the Observation element's own authority, which is what defines a
+    canonical value for these types; this module states no second definition.
+    """
+
+    if value_type not in TYPED_SCALAR_WRAPPER_TYPES:
+        return
+    try:
+        canonical = canonical_value(value, value_type)
+    except ObservationError as error:
+        raise DifferenceError(
+            f"Target expected_value does not conform to declared {value_type}: {error}"
+        ) from error
+    if canonical != value:
+        raise DifferenceError(
+            f"Target expected_value is not in canonical {value_type} form"
+        )
+
+
 def normalize_target_state(predicate: dict[str, Any]) -> dict[str, Any]:
     """Project a Target Predicate into the closed ``normalized_target_state``."""
 
     expected_value, expected_value_type = normalize_objective_value(predicate["expected_value"])
+    reject_noncanonical_typed_value(expected_value, expected_value_type)
     return {
         "subject": predicate["subject"],
         "operator": predicate["operator"],

@@ -14,6 +14,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
@@ -344,3 +345,59 @@ def test_the_declared_selection_fields_match_what_selection_reads() -> None:
     assert set(_SELECTION_FIELDS) == set(_SELECTION_READS)
     for field in _SELECTION_FIELDS:
         assert f'"{field}"' in body, field
+
+
+# --------------------------------------------------------------------------- #
+# The envelope, not only the records inside it
+# --------------------------------------------------------------------------- #
+
+
+def test_the_declared_bundle_sections_match_what_the_derivation_reads() -> None:
+    """Both directions, read from the derivation source rather than remembered."""
+
+    from manosube_agent_civilization.difference.engine import _REQUIRED_BUNDLE_SECTIONS
+
+    source = Path(
+        "src/manosube_agent_civilization/difference/engine.py"
+    ).read_text(encoding="utf-8")
+    read = set(re.findall(r'bundle\["([a-z_]+)"\]', source))
+    assert set(_REQUIRED_BUNDLE_SECTIONS) == read - {"materialized_status"}
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        "observations",
+        "facts",
+        "bindings",
+        "fact_evaluations",
+        "negative_observations",
+        "negative_evaluations",
+    ],
+)
+def test_a_bundle_missing_a_section_is_reported_not_raised(section: str) -> None:
+    """Guarding only `observations` left every other section to raise a raw KeyError."""
+
+    def mutate(bundle: dict[str, Any]) -> None:
+        del bundle[section]
+
+    with pytest.raises(
+        DifferenceError, match=f"omits a canonical section: {section}"
+    ):
+        derive_differences(_bundle_request(mutate))
+
+
+@pytest.mark.parametrize("value", [None, {}, "facts", 7])
+def test_a_section_that_is_not_a_list_is_reported_not_raised(value: Any) -> None:
+    def mutate(bundle: dict[str, Any]) -> None:
+        bundle["facts"] = value
+
+    with pytest.raises(DifferenceError, match="omits a canonical section: facts"):
+        derive_differences(_bundle_request(mutate))
+
+
+def test_a_bundle_that_is_not_an_object_is_reported_not_raised() -> None:
+    request = _bundle_request()
+    request["bindings"][0]["observation_bundle"] = ["not", "an", "object"]
+    with pytest.raises(DifferenceError, match="observation bundle is not a canonical object"):
+        derive_differences(request)
