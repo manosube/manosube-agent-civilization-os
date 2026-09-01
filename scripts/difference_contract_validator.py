@@ -20,6 +20,10 @@ from manosube_agent_civilization.difference.lifecycle import (
     closure_evaluation_input_errors,
     next_observation_binding_errors,
 )
+from manosube_agent_civilization.difference.policy import (
+    closure_policy_semantic_errors,
+    reopen_condition_provenance_errors,
+)
 from manosube_agent_civilization.difference.selection import contributing_facts
 from manosube_agent_civilization.observation.boundary import fact_boundary_observed
 from manosube_agent_civilization.observation.verification import (
@@ -910,36 +914,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 else min(previous_time, observed_at)
             )
 
+    # Closure Policy semantic conformance and reopen-condition provenance are read from the
+    # one owner the Engine's own gate reads. This block used to restate the required-Claim
+    # rule here alone, which made it an auditor-only rule: the Engine emitted a forged
+    # Policy and only this validator objected. The rules live in one place now, so the
+    # producer cannot emit what the auditor rejects.
     for policy in policies.values():
-        claims_by_id: dict[str, dict[str, Any]] = {}
-        for descriptor in policy["required_claims"]:
-            semantic_projection = {
-                key: descriptor[key]
-                for key in ("subject_type", "subject_ref", "claim", "target_state_ref")
-            }
-            semantic_fingerprint = "sha256:" + hashlib.sha256(
-                canonical_json_bytes(_canonical_semantic(semantic_projection))
-            ).hexdigest()
-            identity_projection = {
-                "subject_type": descriptor["subject_type"],
-                "subject_ref": descriptor["subject_ref"],
-                "claim_semantic_fingerprint": semantic_fingerprint,
-            }
-            expected_id = "CLAIM-" + hashlib.sha256(
-                b"MANOSUBE:COMPLETION_CLAIM_IDENTITY:0.1:"
-                + canonical_json_bytes(_canonical_semantic(identity_projection))
-            ).hexdigest().upper()
-            previous = claims_by_id.get(descriptor["id"])
-            if (
-                descriptor["claim_semantic_fingerprint"] != semantic_fingerprint
-                or descriptor["id"] != expected_id
-                or _has_recursive_set_duplicate(semantic_projection)
-                or (previous is not None and previous != descriptor)
-            ):
-                errors.append(
-                    f"Policy required Claim identity mismatch: {policy['closure_policy_id']}"
-                )
-            claims_by_id[descriptor["id"]] = descriptor
+        errors.extend(
+            closure_policy_semantic_errors(policy, policy["closure_policy_id"])
+        )
+        errors.extend(reopen_condition_provenance_errors(policy, objective_revisions))
 
     events_by_difference: dict[str, list[dict[str, Any]]] = {}
     for event in events.values():

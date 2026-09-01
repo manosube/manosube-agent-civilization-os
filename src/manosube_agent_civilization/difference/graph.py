@@ -710,6 +710,7 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
         closure_evaluation_input_errors,
         next_observation_binding_errors,
     )
+    from .policy import reopen_condition_provenance_errors
 
     differences = {
         record["difference_id"]: record
@@ -725,6 +726,11 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
         record["closure_policy_id"]: record
         for record in bundle.get("policies", []) or []
         if isinstance(record, dict) and isinstance(record.get("closure_policy_id"), str)
+    }
+    objective_revisions = {
+        record["objective_revision_id"]: record
+        for record in bundle.get("objective_revisions", []) or []
+        if isinstance(record, dict) and isinstance(record.get("objective_revision_id"), str)
     }
     requests = {
         record["observation_request_id"]: record
@@ -743,6 +749,12 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
         events[str(event.get("difference_event_id"))] = event
 
     errors: list[str] = []
+    # Reopen-condition provenance is relational in a way no single record can decide: the
+    # condition declares a predicate ID and a semantic fingerprint, and only the Objective
+    # revision it names can say whether that predicate exists and carries those semantics.
+    # Reference closure proves the revision is present; this proves the predicate is.
+    for _identity, policy in sorted(policies.items()):
+        errors.extend(reopen_condition_provenance_errors(policy, objective_revisions))
     # Every carried Closure Evaluation, not only those a transition cites. An Evaluation
     # no event references is legitimate provenance, and is held to the same input binding
     # as one that is cited; the event-to-Evaluation binding below is a separate rule that

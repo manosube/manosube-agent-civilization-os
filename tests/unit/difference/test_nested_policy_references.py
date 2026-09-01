@@ -24,11 +24,13 @@ from tests.difference_helpers import (
     observed_bundle,
     raw_fact,
     state_fingerprint,
+    target_predicate,
 )
 from tests.schema_reference_paths import reference_paths
 
 from manosube_agent_civilization.difference import DifferenceError, derive_differences
 from manosube_agent_civilization.difference.graph import REFERENCE_EDGES
+from manosube_agent_civilization.difference.identity import target_predicate_fingerprint
 
 NESTED_POLICY_PATHS = [
     "reopen_conditions[].objective_revision_ref",
@@ -97,14 +99,24 @@ def test_an_absent_reopen_condition_objective_revision_fails_closed() -> None:
 
 
 def test_a_resolving_reopen_condition_is_accepted() -> None:
+    """A condition that names a predicate the Objective revision really carries.
+
+    This test previously named ``TP-REOPEN-0001`` with an arbitrary fingerprint and
+    asserted acceptance: resolving the *Objective revision* was all the gate asked for, so
+    a predicate that did not exist passed. ``test_policy_semantics.py`` covers the two
+    forgeries that route now rejects; what is left here is the honest case.
+    """
+
     request = _request(
         {
             "minimum_evidence_level": "E1",
             "reopen_conditions": [
                 {
                     "kind": "target_predicate",
-                    "id": "TP-REOPEN-0001",
-                    "predicate_semantic_fingerprint": "sha256:" + "b" * 64,
+                    "id": PREDICATE_ID,
+                    "predicate_semantic_fingerprint": target_predicate_fingerprint(
+                        target_predicate()
+                    ),
                     "objective_revision_ref": {
                         "kind": "objective_revision",
                         "id": "OBJ-REV-0001",

@@ -18,9 +18,24 @@ from .canonical import canonical_bytes, canonical_semantic
 IDENTITY_PROFILE = "MANOSUBE-DIFFERENCE-SHA256-0.1"
 COMPARISON_PROFILE = "MANOSUBE-DIFFERENCE-COMPARISON-0.1"
 NORMALIZATION_PROFILE = "MANOSUBE-DIFFERENCE-NORMALIZATION-0.1"
+#: ``CLOSURE_POLICY.md`` fixes this profile for the digest a reopen condition declares.
+TARGET_PREDICATE_PROFILE = "MANOSUBE-TARGET-PREDICATE-SHA256-0.1"
 
 _SCOPE_DOMAIN = b"MANOSUBE:RESOLVED_OBSERVATION_SCOPE_RECORD:0.1:"
 _CLAIM_DOMAIN = b"MANOSUBE:COMPLETION_CLAIM_IDENTITY:0.1:"
+
+#: ``INCLUDED_FIELDS`` of ``MANOSUBE-TARGET-PREDICATE-SHA256-0.1``. ``predicate_id`` and
+#: every provenance field are excluded, so the digest states the predicate's *semantics*
+#: and a ``PREDICATE_MODIFY`` is what changes it.
+_TARGET_PREDICATE_SEMANTIC_FIELDS = (
+    "subject",
+    "operator",
+    "expected_value",
+    "observation_scope",
+    "evidence_requirement",
+    "unknown_policy",
+    "criticality",
+)
 
 _OBJECTIVE_SEMANTIC_FIELDS = (
     "objective_id",
@@ -83,6 +98,19 @@ def resolved_scope_fingerprint(scope: dict[str, Any]) -> str:
             "members": sorted(item["affected_subjects"], key=canonical_json_bytes),
         }
     return _sha256_fingerprint(projection, _SCOPE_DOMAIN)
+
+
+def target_predicate_fingerprint(predicate: dict[str, Any]) -> str:
+    """Return the semantic fingerprint of one Objective Target Predicate.
+
+    ``CLOSURE_POLICY.md`` fixes this digest and requires a Closure Policy reopen condition
+    to resolve exactly against it: the condition's predicate ID, Objective revision and
+    fingerprint must all name a predicate that really carries those semantics.
+    """
+
+    return _sha256_fingerprint(
+        {key: predicate[key] for key in _TARGET_PREDICATE_SEMANTIC_FIELDS}
+    )
 
 
 def completion_claim_fingerprint(descriptor: dict[str, Any]) -> str:

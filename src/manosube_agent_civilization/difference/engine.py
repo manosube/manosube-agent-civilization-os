@@ -1046,34 +1046,48 @@ def _next_observation_request(
 #: those are what completion adds -- but its *declared reference locations* are the target
 #: type's, unchanged, so it is scanned through that type's paths.
 #:
-#: Only the Observation Method is here. The Closure Policy requirements fragment is
-#: deliberately absent: completion materialises its ``required_claims`` descriptors into
-#: Completion Claim records, so the fragment's shape at those declared paths is *not* the
-#: record's, and scanning it as ``closure_policy`` would reject valid input. It is covered
-#: instead by the emitted-bundle sweep in ``_finalize``, which reads the derived record.
-#: A contract test proves this split covers every fragment the Engine completes.
+#: The Closure Policy requirements fragment was previously deferred to the emitted-bundle
+#: sweep, on the reasoning that completion materialises its ``required_claims`` descriptors
+#: and so the fragment's shape at those paths is not the record's. That reasoning was
+#: wrong twice over. The scan skips any value that is not a reference carrying a string
+#: ``id``, so an unmaterialised descriptor is passed over rather than rejected; and a
+#: derivation whose bound Target Predicates are all satisfied emits no Policy at all, so
+#: there was no output record for the sweep to read and a moving ``objective_revision_ref``
+#: in the request was accepted. The boundary promises to reject a moving reference supplied
+#: *anywhere in the request*, so the request is where it is scanned.
 _REQUEST_FRAGMENT_TYPES: dict[str, str] = {
     "observation_method": "observation_method",
-}
-
-#: The fragments covered by the emitted-bundle sweep instead, with the type each becomes.
-#: Together with ``_REQUEST_FRAGMENT_TYPES`` this is the complete inventory of fragments the
-#: Engine completes into canonical records; a contract test compares it against the
-#: fragments the derivation actually reads, in both directions.
-_EMITTED_SWEEP_FRAGMENT_TYPES: dict[str, str] = {
     "closure_policy_requirements": "closure_policy",
 }
 
-#: Every binding key that carries canonical records, and is therefore scanned. The
-#: remaining binding keys carry an identifier, a fragment or a risk class, not records.
+#: Fragments deferred to the emitted-bundle sweep instead of being scanned in the request.
+#: Empty, and kept so rather than deleted: together with ``_REQUEST_FRAGMENT_TYPES`` this is
+#: the complete inventory of fragments the Engine completes, and a contract test compares
+#: that inventory against the fragments the derivation actually reads, in both directions.
+#: A fragment added later must be classified into one of these two maps to pass it. The
+#: emitted sweep itself still runs over every emitted record; what is empty is the set of
+#: fragments *relying* on it.
+_EMITTED_SWEEP_FRAGMENT_TYPES: dict[str, str] = {}
+
+#: Every binding key that carries canonical records or a fragment, and is therefore
+#: scanned. A binding may override the derivation's Closure Policy requirements with its
+#: own fragment, which is the same fragment type by another route and is scanned as one:
+#: leaving it out meant a moving reference merely had to be supplied per binding instead
+#: of per request. The remaining binding keys carry an identifier or a risk class.
 _SCANNED_BINDING_KEYS: frozenset[str] = frozenset(
     {
         "observation_scope",
         "historical_observation_scopes",
         "observation_bundle",
         "predecessor",
+        "closure_policy_requirements",
     }
 )
+
+#: Fragments a *binding* may carry, and the type each is scanned as.
+_BINDING_FRAGMENT_TYPES: dict[str, str] = {
+    "closure_policy_requirements": "closure_policy",
+}
 
 #: Every canonical record the derivation request carries, and the type each is scanned as.
 #: The Observation bundle's own section names differ from the carried-context names, so both
@@ -1109,6 +1123,10 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
         if not isinstance(binding, dict):
             continue
         where = f"request.bindings[{position}]"
+        for key, type_name in _BINDING_FRAGMENT_TYPES.items():
+            fragment = binding.get(key)
+            if isinstance(fragment, dict):
+                found.append((fragment, type_name, f"{where}.{key}"))
         scope = binding.get("observation_scope")
         if isinstance(scope, dict):
             found.append((scope, "observation_scope", f"{where}.observation_scope"))

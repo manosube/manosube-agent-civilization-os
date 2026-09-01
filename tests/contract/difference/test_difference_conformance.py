@@ -675,7 +675,7 @@ def test_reflow_claim_and_terminal_invariant_references_are_resolved() -> None:
         "claim_semantic_fingerprint": "sha256:" + "a" * 64,
     }]
     assert any(
-        "Policy required Claim identity mismatch" in error
+        "required Claim identity does not recompute" in error
         for error in validate_bundle(invalid_claim)
     )
 
@@ -748,7 +748,9 @@ def test_policy_claim_rejects_bare_nested_collections() -> None:
     }
     bundle = load_json(FIXTURE_ROOT / "valid" / "bundle.json")
     bundle["policies"][0] = policy
+    # The duplicate now names itself. It used to be folded into a single "identity
+    # mismatch", which said the Claim did not recompute without saying why.
     assert any(
-        "Policy required Claim identity mismatch" in error
+        "required Claim carries a duplicate set member" in error
         for error in validate_bundle(bundle)
     )

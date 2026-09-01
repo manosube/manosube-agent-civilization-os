@@ -45,8 +45,10 @@ from .identity import (
     closure_policy_id,
     difference_id as derive_difference_id,
     lifecycle_event_id,
+    policy_semantic_fingerprint,
     supersession_relation_id,
 )
+from .policy import closure_policy_semantic_errors
 from .validation import SCHEMA_BASE, require_schema_version, validate_record
 
 DIFFERENCE_BASE = SCHEMA_BASE + "difference/"
@@ -85,9 +87,17 @@ def _method_identity(record: dict[str, Any]) -> str:
 
 
 def _policy_identity(record: dict[str, Any]) -> str:
+    """Recompute the Closure Policy ID from the Policy's *content*, not its stored digest.
+
+    Deriving the ID from ``policy_semantic_fingerprint`` as stored made the identity agree
+    with itself and with nothing else: a caller could rewrite a required Claim, keep the
+    stored digest, and keep the ID. The digest is recomputed here so an altered Policy
+    changes its identity, which is what the identity gate is for.
+    """
+
     subject = record["subject_difference_ref"]
     identity = subject.get("id") if isinstance(subject, dict) else None
-    return closure_policy_id(record["policy_semantic_fingerprint"], str(identity))
+    return closure_policy_id(policy_semantic_fingerprint(record), str(identity))
 
 
 @dataclass(frozen=True)
@@ -99,6 +109,10 @@ class RecordType:
     schema: str | None
     base: str
     identity: Callable[[dict[str, Any]], str] | None = None
+    #: Rules a record must satisfy from its own content, beyond schema and identity. Only
+    #: a type that stores a digest of itself needs one; ``None`` states that this type
+    #: carries no self-derived semantics to recompute.
+    semantics: Callable[[dict[str, Any], str], list[str]] | None = None
 
 
 #: One canonical schema, identity field and identity authority per logical record type.
@@ -115,7 +129,8 @@ RECORD_TYPES: dict[str, RecordType] = {
         DIFFERENCE_BASE, supersession_relation_id,
     ),
     "closure_policy": RecordType(
-        "closure_policy_id", "closure_policy.schema.json", DIFFERENCE_BASE, _policy_identity
+        "closure_policy_id", "closure_policy.schema.json", DIFFERENCE_BASE, _policy_identity,
+        closure_policy_semantic_errors,
     ),
     "next_observation_request": RecordType(
         "observation_request_id", "next_observation_request.schema.json", DIFFERENCE_BASE,
@@ -283,6 +298,13 @@ def validate_typed_record(record: dict[str, Any], type_name: str, context: str) 
     identity = record.get(canonical.key)
     if not isinstance(identity, str) or not identity:
         raise DifferenceError(f"{context} has no canonical identity: {canonical.key}")
+    # Semantics before identity: where a type stores a digest of itself, the identity is
+    # derived from that digest, so "does not recompute" would report the consequence and
+    # hide the cause.
+    if canonical.semantics is not None:
+        errors = canonical.semantics(record, context)
+        if errors:
+            raise DifferenceError(sorted(errors)[0])
     if canonical.identity is not None and identity != canonical.identity(record):
         raise IdentityCollisionError(f"{context} identity does not recompute: {identity}")
 

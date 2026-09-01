@@ -99,18 +99,22 @@ def test_every_record_bearing_binding_key_is_scanned_in_both_directions() -> Non
         "observation_bundle": observed_bundle(scope, [raw_fact()], fingerprint),
         "historical_observation_scopes": [observation_scope(scope_id="OBS-SCOPE-0002")],
         "predecessor": seeded["bindings"][0]["predecessor"],
+        "closure_policy_requirements": {"minimum_evidence_level": "E1"},
     }
     request = derivation_request(objective_revision(), [binding], fingerprint)
     request["observation_method"] = deepcopy(OBSERVATION_METHOD)
     scanned = {where for _record, _type, where in _iter_request_records(request)}
+    # Matched against the binding's own paths: the request carries a top-level
+    # ``closure_policy_requirements`` too, so an unanchored match would pass whether or
+    # not the per-binding fragment is scanned at all.
+    binding_paths = {where for where in scanned if where.startswith("request.bindings[0].")}
     for key in _SCANNED_BINDING_KEYS:
-        assert any(key in where for where in scanned), key
-    # And the keys that are *not* scanned carry no canonical record.
-    assert {
-        "target_predicate_id",
-        "closure_policy_requirements",
-        "risk_class",
-    } == _BINDING_KEYS - _SCANNED_BINDING_KEYS
+        assert any(key in where for where in binding_paths), key
+    # And the keys that are *not* scanned carry no canonical record and no fragment.
+    # ``closure_policy_requirements`` was on this list: a binding may override the
+    # derivation's Policy requirements with its own fragment, so a moving reference only
+    # had to be supplied per binding rather than per request to pass the boundary.
+    assert {"target_predicate_id", "risk_class"} == _BINDING_KEYS - _SCANNED_BINDING_KEYS
 
 
 # --------------------------------------------------------------------------- #
