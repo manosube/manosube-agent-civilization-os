@@ -14,6 +14,7 @@ covered without being remembered.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -88,6 +89,21 @@ def _steps(path: str) -> list[tuple[str, Any]]:
     return steps
 
 
+#: The substitutions each location is retyped to. A single scalar sentinel is not enough:
+#: an *unhashable* value slipped past an earlier run of this sweep and reached a set
+#: membership test, raising `unhashable type` where the boundary owed a rejection. Each
+#: sentinel is a well-formed JSON value, so what is tested is the boundary, not the parser.
+_SUBSTITUTIONS: dict[str, Any] = {
+    "int": 7,
+    "str": "seven",
+    "list": ["seven"],
+    "dict": {"seven": 7},
+    "null": None,
+}
+
+_ACTIONS: tuple[str, ...] = ("delete", *(f"retype:{name}" for name in _SUBSTITUTIONS))
+
+
 def _mutate(request: dict[str, Any], path: str, action: str) -> None:
     steps = _steps(path)
     node: Any = request
@@ -97,18 +113,18 @@ def _mutate(request: dict[str, Any], path: str, action: str) -> None:
     if action == "delete":
         del node[last]
     else:
-        node[last] = 7 if not isinstance(node[last], int) else "seven"
+        node[last] = deepcopy(_SUBSTITUTIONS[action.split(":", 1)[1]])
 
 
 CASES: list[tuple[str, str]] = sorted(
-    {(path, action) for path in _locations(_request()) for action in ("delete", "retype")}
+    {(path, action) for path in _locations(_request()) for action in _ACTIONS}
 )
 
 
 def test_the_sweep_covers_the_whole_request() -> None:
     """The surface is real: a few hundred locations, and the control derives."""
 
-    assert len(CASES) > 300
+    assert len(CASES) > 1000
     assert derive_differences(_request())["differences"]
     # And the locations the last four rounds each found are among them.
     paths = {path for path, _action in CASES}

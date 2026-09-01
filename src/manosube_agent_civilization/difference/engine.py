@@ -419,7 +419,7 @@ def _require_request_shape(request: Any) -> None:
     bindings = request["bindings"]
     if not isinstance(bindings, list) or not bindings:
         raise DifferenceError("derivation request carries no canonical bindings")
-    bound_targets: set[Any] = set()
+    bound_targets: set[str] = set()
     for position, binding in enumerate(bindings):
         if not isinstance(binding, dict):
             raise DifferenceError(
@@ -436,6 +436,15 @@ def _require_request_shape(request: Any) -> None:
         # Target's additional Scopes travel as `historical_observation_scopes`, not as a
         # second binding, so there is no legitimate case this rejects.
         identity = binding["target_predicate_id"]
+        # A canonical identity is a non-empty string. Consulting the set first attempted to
+        # hash whatever was supplied, so a JSON array or object raised `unhashable type`
+        # before the boundary could reject it -- the same totality rule this gate exists to
+        # apply, missed in the gate itself.
+        if not isinstance(identity, str) or not identity:
+            raise DifferenceError(
+                "derivation binding Target Predicate identity is not a canonical string: "
+                f"bindings[{position}]"
+            )
         if identity in bound_targets:
             raise DifferenceError(
                 f"derivation binds one Target Predicate twice: {identity}"
@@ -503,11 +512,16 @@ def _selectable(observation: Any) -> bool:
         return False
     target = observation["target"]
     reference = observation["scope_ref"]
+    # ``status`` is compared against a frozenset, so an unhashable value raises
+    # `unhashable type` rather than being rejected. A membership test over untrusted input
+    # needs the same guard a subscript does; the schema's own rule is an ``enum``, which is
+    # semantic and deliberately outside the readability gate.
     return (
         isinstance(target, dict)
         and "target_identity" in target
         and isinstance(reference, dict)
         and "id" in reference
+        and isinstance(observation["status"], str)
     )
 
 

@@ -12,6 +12,9 @@ import shutil
 import subprocess
 from typing import Any
 
+from manosube_agent_civilization.difference.envelope import (
+    satisfaction_reconciliation_errors,
+)
 from manosube_agent_civilization.difference.graph import reference_closure_errors
 from manosube_agent_civilization.difference.lifecycle import (
     LEGAL_TRANSITIONS,
@@ -2455,6 +2458,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     # this auditor cannot hold two drifting maps of what a reference is or where it must
     # resolve. Every record of every section is traversed, not only the Difference lineage.
     errors.extend(reference_closure_errors(bundle))
+    errors.extend(satisfaction_reconciliation_errors(bundle))
     # Bounded Negative Evidence ownership is owned by the Observation element; this
     # auditor imports that one rule rather than restating it.
     errors.extend(

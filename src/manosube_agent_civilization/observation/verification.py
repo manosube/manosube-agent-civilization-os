@@ -215,10 +215,16 @@ def observation_record_errors(bundle: dict[str, Any]) -> list[str]:
 
 
 #: The two schema violations that make a record *unreadable* rather than merely invalid: a
-#: required property is absent, so any consumer indexing it raises ``KeyError``; or a
-#: container carries the wrong JSON type, so any consumer iterating it raises ``TypeError``.
+#: required property is absent, so any consumer indexing it raises ``KeyError``; or a value
+#: carries the wrong JSON type, so a consumer iterating it raises ``TypeError`` and one
+#: using it as an index key raises ``unhashable type``.
+#:
+#: Both are *mechanical* read failures, decidable without knowing what the record means.
+#: Every other schema keyword -- ``oneOf``, ``enum``, ``pattern``, ``const`` -- is semantic:
+#: the value is readable and wrong, which is the cross-record pass's question, not this
+#: gate's. That line is what keeps a forged-but-readable payload reporting as the defect it
+#: is rather than as a schema failure.
 _UNREADABLE_VALIDATORS = ("required", "type")
-_CONTAINER_TYPES = frozenset({"array", "object"})
 
 
 def observation_completeness_errors(bundle: dict[str, Any]) -> list[str]:
@@ -244,17 +250,8 @@ def observation_completeness_errors(bundle: dict[str, Any]) -> list[str]:
         validator = schema_validators[OBSERVATION_SCHEMA_BASE + schema_name]
         for record in _records(bundle, group):
             for error in validator.iter_errors(record):
-                if error.validator not in _UNREADABLE_VALIDATORS:
-                    continue
-                if error.validator == "type" and not (
-                    _CONTAINER_TYPES & set(
-                        error.validator_value
-                        if isinstance(error.validator_value, list)
-                        else [error.validator_value]
-                    )
-                ):
-                    continue
-                errors.append(f"{group}: {error.message}")
+                if error.validator in _UNREADABLE_VALIDATORS:
+                    errors.append(f"{group}: {error.message}")
     return errors
 
 

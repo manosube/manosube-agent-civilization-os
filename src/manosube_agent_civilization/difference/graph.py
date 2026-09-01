@@ -706,6 +706,7 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
     """
 
     from .canonical import content_address
+    from .envelope import satisfaction_reconciliation_errors
     from .identity import policy_semantic_fingerprint
     from .lifecycle import (
         blocker_payload_errors,
@@ -753,23 +754,10 @@ def relational_errors(bundle: dict[str, Any]) -> list[str]:
         events[str(event.get("difference_event_id"))] = event
 
     errors: list[str] = []
-    # A Target is satisfied or it is open; it cannot be both. The two are decided on
-    # different routes -- the satisfied route returns before emitting anything, the open
-    # route emits a Difference -- so nothing compared them, and a bundle could name one
-    # Target in `satisfied_target_predicates` while carrying an open Difference for it.
-    satisfied = bundle.get("satisfied_target_predicates")
-    if isinstance(satisfied, list):
-        open_targets = {
-            record["target_predicate_ref"]["id"]
-            for record in bundle.get("differences", []) or []
-            if isinstance(record, dict)
-            and isinstance(record.get("target_predicate_ref"), dict)
-            and isinstance(record["target_predicate_ref"].get("id"), str)
-        }
-        for identity in sorted(open_targets.intersection(satisfied)):
-            errors.append(
-                f"Target Predicate is reported satisfied and open at once: {identity}"
-            )
+    # The envelope reconciliation, read from its own owner so the independent validator --
+    # which composes its relational pass out of shared owners rather than calling this
+    # function -- decides it identically. Stating it inline here made it Engine-only.
+    errors.extend(satisfaction_reconciliation_errors(bundle))
     # The Objective revision history is relational in the same way: each revision is
     # individually schema-valid, and only the group can say whether the numbering, the
     # immediate-predecessor binding and the base fingerprint are continuous.
