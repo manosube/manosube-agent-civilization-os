@@ -45,6 +45,11 @@ from tests.unit.difference.test_input_totality_sweep import (
 )
 
 from manosube_agent_civilization.difference import derive_differences
+from manosube_agent_civilization.difference.conformance import (
+    EMITTED_SECTIONS,
+    RECORD_TYPES,
+    UNSCHEMATIZED_SECTIONS,
+)
 
 
 def _fresh_bundle() -> dict[str, Any]:
@@ -79,10 +84,35 @@ def _predecessor_bundle() -> dict[str, Any]:
     return derive_differences(request)
 
 
+#: An opaque later-phase Change record. v0.1 defines no schema for one, which is the whole
+#: point: it travels under the identity and reference gates alone.
+CARRIED_CHANGE: dict[str, Any] = {
+    "change_id": "CHG-0001",
+    "kind": "change",
+    "summary": "an opaque later-phase payload",
+}
+
+
+def _unschematized_bundle() -> dict[str, Any]:
+    """An emitted bundle whose Change and Reflow sections are actually populated.
+
+    Both other fixtures leave these sections absent, and an absent section exercises
+    nothing: the sweep generated no case for them, so a gate that skipped every
+    unschematized record was measured as clean for 7248 cases while the auditor indexed
+    those records and raised. That is the exact P2 on `a11d7c7`, and an empty section is
+    why no enumeration here could see it.
+    """
+
+    _baseline, request = retained_status_predecessor("REOPENED")
+    request["bindings"][0]["predecessor"]["context"]["changes"] = [deepcopy(CARRIED_CHANGE)]
+    return derive_differences(request)
+
+
 #: Every emitted bundle the auditor sweep walks.
 BUNDLES: dict[str, Any] = {
     "fresh": _fresh_bundle,
     "predecessor": _predecessor_bundle,
+    "unschematized": _unschematized_bundle,
 }
 
 BUILT: dict[str, dict[str, Any]] = {name: build() for name, build in BUNDLES.items()}
@@ -208,6 +238,87 @@ def test_the_auditor_reports_a_known_bad_mutation(path: str, action: str) -> Non
 @pytest.mark.parametrize("root", NON_OBJECT_ROOTS)
 def test_a_non_object_bundle_is_reported_not_raised(root: Any) -> None:
     assert outcome(root) == "REPORTED"
+
+
+#: Sections a fixture may legitimately leave empty, each with the reason. Every other
+#: declared emitted section must appear *populated* somewhere, so an empty section can never
+#: be mistaken for coverage of its record type again.
+UNPOPULATED_NON_CLAIMS: dict[str, str] = {}
+
+
+def test_every_declared_emitted_section_is_populated_somewhere() -> None:
+    """An empty section exercises nothing, and must not count as covering its type.
+
+    This is the measurement defect the `a11d7c7` P2 turned on. `changes` and
+    `reflow_transitions` were absent from both fixtures, so 7248 enumerated cases reported
+    zero leaks for record types no case had ever constructed. Coverage is now asserted
+    positively: a declared section either appears populated in some fixture, or is named
+    here with a reason.
+    """
+
+    populated = {
+        section
+        for built in BUILT.values()
+        for section in EMITTED_SECTIONS
+        if built.get(section)
+    }
+    missing = set(EMITTED_SECTIONS) - populated - set(UNPOPULATED_NON_CLAIMS)
+    assert missing == set(), (
+        f"{len(missing)} declared emitted sections are never populated by any auditor "
+        f"fixture and carry no stated non-claim: {sorted(missing)}"
+    )
+    for section in UNSCHEMATIZED_SECTIONS:
+        assert section in populated, (
+            f"{section} has no canonical schema, so a populated fixture is the only thing "
+            f"that exercises its readability at all"
+        )
+
+
+@pytest.mark.parametrize("section", sorted(UNSCHEMATIZED_SECTIONS))
+@pytest.mark.parametrize(
+    ("label", "identity"),
+    [
+        ("absent", ...),
+        ("null", None),
+        ("empty string", ""),
+        ("unhashable list", ["CHG-0001"]),
+        ("unhashable object", {"id": "CHG-0001"}),
+        ("integer", 7),
+    ],
+)
+def test_an_unschematized_record_identity_is_reported_not_raised(
+    section: str, label: str, identity: Any
+) -> None:
+    """The exact `a11d7c7` P2, one case per identity shape, for every unschematized type.
+
+    A type with no canonical schema is *unvalidated*, not unreadable: `RecordType.key`
+    declares its identity exactly as for every other type, and every consumer indexes it by
+    that key. The gate skipped these entirely, so `validate_bundle` raised `KeyError` or
+    `unhashable type` instead of returning a violation.
+    """
+
+    bundle = deepcopy(BUILT["unschematized"])
+    assert bundle[section], f"{section} must be populated for this case to mean anything"
+    key = RECORD_TYPES[EMITTED_SECTIONS[section]].key
+    record = deepcopy(bundle[section][0])
+    if identity is ...:
+        record.pop(key)
+    else:
+        record[key] = identity
+    bundle[section] = [record]
+    assert outcome(bundle) == "REPORTED", f"{section} / identity {label} was not reported"
+
+
+def test_a_valid_unschematized_record_is_accepted() -> None:
+    """The positive half: an opaque payload with a usable identity is not rejected.
+
+    Without this the rule above could be satisfied by rejecting every unschematized record,
+    which would be a different defect wearing the same green tick.
+    """
+
+    assert outcome(deepcopy(BUILT["unschematized"])) == "ACCEPTED"
+    for section in UNSCHEMATIZED_SECTIONS:
+        assert BUILT["unschematized"][section], section
 
 
 @pytest.mark.parametrize(("bundle", "path", "action"), CASES, ids=lambda item: str(item))

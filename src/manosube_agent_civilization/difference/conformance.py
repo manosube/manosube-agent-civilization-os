@@ -38,8 +38,8 @@ from manosube_agent_civilization.observation.identity import (
     fact_identity,
     observation_identity,
 )
-from manosube_agent_civilization.observation.verification import is_unreadable_error
 
+from . import readability
 from .canonical import canonical_bytes, content_address
 from .errors import DifferenceError, IdentityCollisionError
 from .identity import (
@@ -51,7 +51,7 @@ from .identity import (
 )
 from .policy import closure_policy_semantic_errors
 from .selection import unique_target_predicates
-from .validation import SCHEMA_BASE, require_schema_version, validate_record, validators
+from .validation import SCHEMA_BASE, require_schema_version, validate_record
 
 DIFFERENCE_BASE = SCHEMA_BASE + "difference/"
 OBSERVATION_BASE = SCHEMA_BASE + "observation/"
@@ -311,14 +311,17 @@ def merge_records(
     Inputs are never mutated: what is stored is a deep copy.
     """
 
-    if not isinstance(records, list):
+    if not readability.is_record_list(records):
         raise DifferenceError(f"canonical section is not a list of records: {key}")
     for record in records:
-        if not isinstance(record, dict):
+        # The union holds a key rather than a type name, so it delegates to the key-addressed
+        # entry. It keeps its own wording; what it no longer keeps is its own rule.
+        verdict = readability.of_record_by_key(record, key)
+        if verdict.reason == readability.NOT_AN_OBJECT:
             raise DifferenceError(f"canonical record is not an object: {key}")
-        identity = record.get(key)
-        if not isinstance(identity, str) or not identity:
+        if not verdict.readable:
             raise DifferenceError(f"canonical record has no identity: {key}")
+        identity = record[key]
         existing = target.get(identity)
         if existing is not None and canonical_bytes(existing) != canonical_bytes(record):
             raise IdentityCollisionError(f"same-ID different-payload conflict: {identity}")
@@ -329,19 +332,25 @@ def validate_typed_record(record: dict[str, Any], type_name: str, context: str) 
     """Schema-validate one record and recompute its identity, where an authority exists."""
 
     canonical = RECORD_TYPES[type_name]
-    if not isinstance(record, dict):
+    # Readability is decided by its owner, and raised in the order a consumer meets it: a
+    # non-object before the schema pass, a missing or unusable identity after it. For a
+    # schema-backed type the schema reports the absent key first and this stays unreachable;
+    # for an unschematized type it is the only check there is, which is precisely the half
+    # the emitted-bundle gate used to skip.
+    verdict = readability.of_record(record, type_name)
+    if verdict.reason == readability.NOT_AN_OBJECT:
         raise DifferenceError(f"{context} is not a canonical record object")
     if canonical.schema is not None:
         validate_record(record, canonical.schema, base=canonical.base)
         require_schema_version(record, context)
-    identity = record.get(canonical.key)
-    if not isinstance(identity, str) or not identity:
-        raise DifferenceError(f"{context} has no canonical identity: {canonical.key}")
+    if not verdict.readable:
+        raise DifferenceError(f"{context} has no canonical identity: {verdict.key}")
     # Semantics before identity: where a type stores a digest of itself, the identity is
     # derived from that digest, so "does not recompute" would report the consequence and
     # hide the cause.
     if canonical.semantics is not None:
         canonical.semantics(record, context)
+    identity = record[canonical.key]
     if canonical.identity is not None and identity != canonical.identity(record):
         raise IdentityCollisionError(f"{context} identity does not recompute: {identity}")
 
@@ -349,13 +358,16 @@ def validate_typed_record(record: dict[str, Any], type_name: str, context: str) 
 def validate_typed_section(section: str, records: Any, type_name: str) -> None:
     """Validate one section: every record typed, and no same-id/different-payload pair."""
 
-    if not isinstance(records, list):
+    if not readability.is_record_list(records):
         raise DifferenceError(f"section is not a list of records: {section}")
     canonical = RECORD_TYPES[type_name]
     seen: dict[str, bytes] = {}
     for record in records:
-        validate_typed_record(record, type_name, f"{section}[{record.get(canonical.key)}]"
-                              if isinstance(record, dict) else section)
+        # An object can be named by its identity in the diagnostic; anything else cannot be
+        # asked for one. The owner decides which, so the naming does not restate the rule.
+        is_object = readability.of_record(record, type_name).reason != readability.NOT_AN_OBJECT
+        context = f"{section}[{record.get(canonical.key)}]" if is_object else section
+        validate_typed_record(record, type_name, context)
         identity = record[canonical.key]
         payload = canonical_bytes(record)
         existing = seen.get(identity)
@@ -407,34 +419,7 @@ def emitted_bundle_readability_errors(bundle: Any) -> list[str]:
     keeps its own diagnosis.
     """
 
-    if not isinstance(bundle, dict):
-        return ["emitted bundle is not a canonical object"]
-    missing = REQUIRED_EMITTED_KEYS - set(bundle)
-    if missing:
-        return [f"emitted bundle omits required sections: {sorted(missing)}"]
-    errors: list[str] = []
-    if not isinstance(bundle["materialized_status"], dict):
-        errors.append("emitted bundle materialized status is not a canonical object")
-    schema_validators = validators()
-    for section, type_name in EMITTED_SECTIONS.items():
-        if section not in bundle:
-            continue
-        records = bundle[section]
-        if not isinstance(records, list):
-            errors.append(f"emitted section is not a list of records: {section}")
-            continue
-        canonical = RECORD_TYPES[type_name]
-        for record in records:
-            if not isinstance(record, dict):
-                errors.append(f"emitted record is not an object: {section}")
-                continue
-            if canonical.schema is None:
-                continue
-            validator = schema_validators[canonical.base + canonical.schema]
-            for error in validator.iter_errors(record):
-                if is_unreadable_error(error):
-                    errors.append(f"{section}: {error.message}")
-    return errors
+    return readability.emitted_bundle_errors(bundle)
 
 
 def validate_emitted_bundle(bundle: dict[str, Any]) -> None:

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import readability
 from .canonical import canonical_bytes, content_address
 from .conformance import (
     CARRIED_SECTIONS,
@@ -144,11 +145,11 @@ def validate_carried_records(context: dict[str, Any]) -> None:
 
     for section, carried in CARRIED_TYPES.items():
         records = context.get(section, [])
-        if not isinstance(records, list):
+        if not readability.is_record_list(records):
             raise DifferenceError(f"predecessor context section is not a list: {section}")
         seen: dict[str, bytes] = {}
         for record in records:
-            if not isinstance(record, dict):
+            if readability.of_record_by_key(record, carried.key).reason == readability.NOT_AN_OBJECT:
                 raise DifferenceError(f"predecessor context record is not an object: {section}")
             validate_typed_record(
                 record,
