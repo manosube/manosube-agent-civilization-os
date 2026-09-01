@@ -147,6 +147,7 @@ EXCLUDED_REFERENCE_SUBTREES: dict[str, tuple[str, ...]] = {
 #: bundle, so they add no resolution obligation -- a contract test proves every kind they
 #: name is an enumerated non-claim. They are declared anyway so their ``kind`` is pinned.
 NON_IDENTITY_POINTERS: dict[str, tuple[str, ...]] = {
+    "closure_policy": ("required_invariants[].contract_source_ref",),
     "closure_evaluation": (
         "before_state_ref",
         "kernel_source_ref_evaluated",
@@ -154,7 +155,6 @@ NON_IDENTITY_POINTERS: dict[str, tuple[str, ...]] = {
         "after_state_candidate.kernel_source_ref",
     ),
     "candidate_completion_record": ("observed_state_ref", "target_state_ref"),
-    "closure_policy": (),
 }
 
 
@@ -252,9 +252,16 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
         ("subject_difference_ref", ("difference",)),
         ("target_predicate_ref", ("target_predicate",)),
         ("required_observation_scope", ("observation_scope",)),
+        # A reopen condition and a required claim are embedded *records*: each carries an
+        # identity of its own **and** further references. Declaring only the outer node
+        # stopped the traversal there, so nested required provenance was never resolved.
         ("reopen_conditions[]", ("target_predicate",)),
+        ("reopen_conditions[].objective_revision_ref", ("objective_revision",)),
         ("required_claims[]", ("completion_claim",)),
+        ("required_claims[].subject_ref", ("difference", "objective_revision", "state")),
+        ("required_claims[].target_state_ref", ("state",)),
         ("required_invariants[]", ("kernel_invariant",)),
+        ("required_invariants[].contract_source_ref", ("git_blob", "git_tree")),
     ),
     "closure_evaluation": _edges(
         ("difference_event_head_ref", ("difference_event",)),
@@ -359,6 +366,7 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
         ("difference_ref", ("difference",)),
         ("policy_ref", ("closure_policy",)),
         ("condition_ref", ("target_predicate",)),
+        ("condition_ref.objective_revision_ref", ("objective_revision",)),
         ("evidence_refs.members[]", ("observation_evidence",)),
     ),
     "candidate_completion_record": _edges(

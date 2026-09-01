@@ -115,7 +115,7 @@ tests/unit/difference/test_conflict_position.py               25 cases
   - the real CONFLICTED lineage the Observation Engine produces is unaffected
   - the rule is total over four hostile payloads, and reached through one verifier
 
-tests/unit/difference/test_request_fragment_scanning.py       21 cases
+tests/unit/difference/test_request_fragment_scanning.py       32 cases
   - fragment inventory == the fragments derive_differences reads, both directions,
     non-overlapping, each becoming a declared emitted type
   - every record-bearing binding key is scanned, and the unscanned remainder is named
@@ -123,11 +123,51 @@ tests/unit/difference/test_request_fragment_scanning.py       21 cases
   - six moving identity forms; a stable reference accepted; the error names the fragment
   - a moving reference in a Closure Policy requirement caught by the emitted sweep
   - a STRUCTURED {kind,id} value stays literal; a malformed fragment leaks no raw exception
+  - 5 non-object shapes x 2 fragments, plus the binding-level policy route
+
+tests/unit/difference/test_nested_policy_references.py         7 cases
+  - the walker descends past an identity-bearing node
+  - every nested policy location is declared; an absent nested reference fails closed;
+    a resolving one is accepted and stays cross-record valid; a wrong kind fails closed
 ```
 
-## 4. Acceptance
+## 4. Two further findings, corrected in the same round
+
+Two reviews arrived after the instruction and are current unresolved threads on this PR, so
+they are corrected here rather than deferred.
+
+**Nested Closure Policy references were never resolved.** A reopen condition and a required
+completion claim each carry a `kind` and an `id` of their own, so the reference-path
+*inventory walker* returned as soon as it met one — and the nested
+`objective_revision_ref`, `subject_ref` and `target_state_ref` inside them were never
+declared, and therefore never resolved, although `CLOSURE_POLICY.md` requires exact
+resolution of that provenance.
+
+The cause was in the walker, not the registry. It now records an identity-bearing node and
+**keeps descending**, which is what lets the both-directions comparison see those locations
+at all. Fixing it surfaced four undeclared locations, one of them beyond the reported case:
 
 ```text
+closure_policy.reopen_conditions[].objective_revision_ref
+closure_policy.required_claims[].subject_ref
+closure_policy.required_claims[].target_state_ref
+reopen_condition_evaluation.condition_ref.objective_revision_ref   <- not reported
+```
+
+`required_invariants[].contract_source_ref` is declared as a non-identity pointer: it names a
+git blob, which carries no identity and can never resolve to a bundle record.
+
+**A non-object fragment leaked an `AttributeError`.** `observation_method` supplied as
+`null`, a list or a scalar reached `_observation_method`, which reads its keys.
+`_require_fragment_object` now decides the object contract before materialisation, for both
+fragments and on the binding-level Closure Policy route as well, so a malformed request gets
+the same public rejection as every other malformed derivation input.
+
+## 5. Acceptance
+
+```text
+NESTED_REFERENCE_LOCATIONS_DECLARED=4
+FRAGMENT_OBJECT_CONTRACT_ENFORCED=true
 CONFLICT_POSITION_AUTHORITY_COUNT=1
 CONFLICT_RULE_STATED_IN_BOTH_DIRECTIONS=true
 CONFLICT_RULE_COVERS_BOTH_EVALUATION_KINDS=true

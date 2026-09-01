@@ -79,10 +79,12 @@ def reference_paths(base: str, name: str) -> set[str]:
         node, base, document = _resolve(node, base, document)
         if not isinstance(node, dict):
             return
-        if _is_identity_reference(node):
-            if path:
-                found.add(path)
-            return
+        # An identity-bearing node is not necessarily a leaf. An embedded record such as a
+        # Closure Policy reopen condition or required claim carries both an identity *and*
+        # further references, so the walk records it and continues; stopping here is what
+        # left those nested locations undeclared.
+        if path and _is_identity_reference(node):
+            found.add(path)
         properties = node.get("properties")
         if isinstance(properties, dict):
             for key, value in properties.items():

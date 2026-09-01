@@ -281,3 +281,36 @@ def test_a_malformed_fragment_does_not_leak_a_raw_exception() -> None:
             assert type(error).__module__.startswith("manosube_agent_civilization"), (
                 f"raw {type(error).__name__} escaped: {error}"
             )
+
+
+# --------------------------------------------------------------------------- #
+# A fragment must be a canonical object before it is materialised
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "fragment", [None, [], "text", 7, True], ids=["null", "list", "str", "int", "bool"]
+)
+@pytest.mark.parametrize(
+    "key", ["observation_method", "closure_policy_requirements"]
+)
+def test_a_non_object_fragment_is_rejected_before_materialisation(
+    key: str, fragment: Any
+) -> None:
+    """A fragment is completed by reading its keys, so its object contract comes first."""
+
+    from manosube_agent_civilization.difference import DifferenceError
+
+    _, request = retained_status_predecessor("RETAINED")
+    request[key] = fragment
+    with pytest.raises(DifferenceError, match=f"requested {key} is not a canonical object"):
+        derive_differences(request)
+
+
+def test_a_non_object_binding_policy_fragment_is_rejected() -> None:
+    from manosube_agent_civilization.difference import DifferenceError
+
+    _, request = retained_status_predecessor("RETAINED")
+    request["bindings"][0]["closure_policy_requirements"] = ["not", "an", "object"]
+    with pytest.raises(DifferenceError, match="not a canonical object"):
+        derive_differences(request)

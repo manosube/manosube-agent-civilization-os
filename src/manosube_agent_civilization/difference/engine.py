@@ -257,6 +257,20 @@ def _closure_policy(
     return policy, policy_semantic_fingerprint(policy)
 
 
+def _require_fragment_object(fragment: Any, name: str) -> dict[str, Any]:
+    """Reject a fragment that is not a canonical object, before it is materialised.
+
+    A fragment is completed into a canonical record by reading its keys, so a ``null``, a
+    list or a scalar would raise out of that completion -- an incidental ``AttributeError``
+    or ``TypeError`` in place of the public rejection every other malformed derivation input
+    receives. The object contract is decided here, first.
+    """
+
+    if not isinstance(fragment, dict):
+        raise DifferenceError(f"requested {name} is not a canonical object")
+    return fragment
+
+
 def _observation_method(record: dict[str, Any]) -> dict[str, Any]:
     method = {
         "schema_version": SCHEMA_VERSION,
@@ -1258,14 +1272,18 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     if state_fingerprint.get("profile") != "MANOSUBE-STATE-SHA256-0.1":
         raise UnsupportedProfileError("unsupported State fingerprint profile")
 
-    default_requirements = request.get("closure_policy_requirements", {})
+    default_requirements = _require_fragment_object(
+        request.get("closure_policy_requirements", {}), "closure_policy_requirements"
+    )
     default_risk_class = request.get("risk_class", "LOW")
     if default_risk_class not in RISK_CLASSES:
         raise DifferenceError(f"unknown risk class: {default_risk_class!r}")
 
     method: dict[str, Any] | None = None
     if "observation_method" in request:
-        method = _observation_method(request["observation_method"])
+        method = _observation_method(
+            _require_fragment_object(request["observation_method"], "observation_method")
+        )
 
     # One Target Predicate identity names one predicate. Two payloads under one identity
     # fail closed here, before any index the derivation reads is built.
@@ -1353,7 +1371,10 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
         structural = structural_difference(observed, target, comparison, mismatch_kind)
         reject_bare_arrays(structural, "structural_difference")
 
-        requirements = binding.get("closure_policy_requirements", default_requirements)
+        requirements = _require_fragment_object(
+            binding.get("closure_policy_requirements", default_requirements),
+            "closure_policy_requirements",
+        )
         policy, policy_fingerprint = _closure_policy(requirements, target_predicate_ref)
         # Observation Evidence and bounded Negative Evidence are distinct provenance
         # channels carrying distinct reference kinds. The Difference binds the exact union
