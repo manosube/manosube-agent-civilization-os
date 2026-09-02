@@ -12,6 +12,30 @@ import shutil
 import subprocess
 from typing import Any
 
+from manosube_agent_civilization.difference.conformance import (
+    emitted_bundle_readability_errors,
+)
+from manosube_agent_civilization.difference.envelope import (
+    satisfaction_reconciliation_errors,
+)
+from manosube_agent_civilization.difference.graph import reference_closure_errors
+from manosube_agent_civilization.difference.lifecycle import (
+    LEGAL_TRANSITIONS,
+    blocker_payload_errors,
+    closure_evaluation_binding_errors,
+    closure_evaluation_input_errors,
+    next_observation_binding_errors,
+)
+from manosube_agent_civilization.difference.objective import objective_chain_errors
+from manosube_agent_civilization.difference.policy import (
+    closure_policy_semantic_errors,
+    reopen_condition_provenance_errors,
+)
+from manosube_agent_civilization.difference.selection import contributing_facts
+from manosube_agent_civilization.observation.boundary import fact_boundary_observed
+from manosube_agent_civilization.observation.verification import (
+    negative_evaluation_evidence_errors,
+)
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.errors import SchemaValidationError
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
@@ -19,24 +43,6 @@ from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_s
 STATUSES = {
     "DETECTED", "OPEN", "ACTIVE", "VERIFYING", "BLOCKED", "RETAINED", "CLOSED",
     "REOPENED", "SUPERSEDED", "INVALIDATED",
-}
-LEGAL_TRANSITIONS = {
-    (None, "DETECTED"), ("DETECTED", "OPEN"), ("DETECTED", "INVALIDATED"),
-    ("OPEN", "ACTIVE"), ("OPEN", "BLOCKED"), ("OPEN", "RETAINED"),
-    ("OPEN", "SUPERSEDED"), ("OPEN", "INVALIDATED"),
-    ("ACTIVE", "VERIFYING"), ("ACTIVE", "BLOCKED"), ("ACTIVE", "RETAINED"),
-    ("ACTIVE", "SUPERSEDED"), ("ACTIVE", "INVALIDATED"),
-    ("VERIFYING", "CLOSED"), ("VERIFYING", "ACTIVE"), ("VERIFYING", "BLOCKED"),
-    ("VERIFYING", "RETAINED"), ("VERIFYING", "SUPERSEDED"),
-    ("VERIFYING", "INVALIDATED"), ("BLOCKED", "OPEN"), ("BLOCKED", "ACTIVE"),
-    ("BLOCKED", "VERIFYING"), ("BLOCKED", "RETAINED"), ("BLOCKED", "SUPERSEDED"),
-    ("BLOCKED", "INVALIDATED"), ("RETAINED", "OPEN"), ("RETAINED", "ACTIVE"),
-    ("RETAINED", "VERIFYING"), ("RETAINED", "BLOCKED"),
-    ("RETAINED", "SUPERSEDED"), ("RETAINED", "INVALIDATED"),
-    ("CLOSED", "REOPENED"), ("CLOSED", "SUPERSEDED"), ("CLOSED", "INVALIDATED"),
-    ("REOPENED", "ACTIVE"), ("REOPENED", "VERIFYING"), ("REOPENED", "BLOCKED"),
-    ("REOPENED", "RETAINED"), ("REOPENED", "SUPERSEDED"),
-    ("REOPENED", "INVALIDATED"),
 }
 
 
@@ -202,8 +208,8 @@ def _observation_attempts_complete(
 def _observation_time_boundary_complete(
     observation: dict[str, Any], scope: dict[str, Any],
 ) -> bool:
-    boundary = observation["time_boundary"]
     try:
+        boundary = observation["time_boundary"]
         observed_start = datetime.fromisoformat(
             boundary["observation_started_at"].replace("Z", "+00:00")
         )
@@ -232,7 +238,21 @@ def _observation_time_boundary_complete(
             scope["target_effective_window"]["end"].replace("Z", "+00:00")
         )
         cutoff = datetime.fromisoformat(scope["cutoff"].replace("Z", "+00:00"))
-    except (KeyError, TypeError, ValueError):
+        freshness_limit = scope["freshness_limit_seconds"]
+        if isinstance(freshness_limit, bool) or not isinstance(freshness_limit, (int, float)):
+            return False
+        # A naive instant would compare against an aware one and raise, or silently
+        # compare against another naive one; both fail closed here instead.
+        if any(
+            moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None
+            for moment in (
+                observed_start, observed_end, effective_start, effective_end,
+                snapshot, scope_observed_start, scope_observed_end,
+                scope_effective_start, scope_effective_end, cutoff,
+            )
+        ):
+            return False
+    except (AttributeError, KeyError, TypeError, ValueError):
         return False
     return (
         observed_start <= observed_end
@@ -241,37 +261,16 @@ def _observation_time_boundary_complete(
         and scope_effective_start <= effective_start <= effective_end <= scope_effective_end
         and effective_start <= snapshot <= observed_end
         and snapshot <= cutoff
-        and (cutoff - snapshot).total_seconds() <= scope["freshness_limit_seconds"]
+        and (cutoff - snapshot).total_seconds() <= freshness_limit
     )
 
 
 def _fact_boundary_observed(
     fact: dict[str, Any], observation: dict[str, Any],
 ) -> bool:
-    boundary = fact["effective_boundary"]
-    declared_source_ids = {
-        reference["id"] for reference in observation["source_snapshot_refs"]
-    }
-    return (
-        (
-            boundary["kind"] == "SOURCE_SNAPSHOT"
-            and boundary["identity"] in declared_source_ids
-            and boundary["start"] is None
-            and boundary["end"] is None
-        )
-        or (
-            boundary["kind"] == "TIME_INTERVAL"
-            and boundary["start"]
-            == observation["time_boundary"]["target_effective_start"]
-            and boundary["end"]
-            == observation["time_boundary"]["target_effective_end"]
-        )
-        or (
-            boundary["kind"] == "STATE_REVISION"
-            and boundary["start"] == observation["state_revision_observed"]
-            and boundary["end"] == observation["state_revision_observed"]
-        )
-    )
+    """Delegate to the single canonical Fact boundary authority."""
+
+    return fact_boundary_observed(fact["effective_boundary"], observation)
 
 
 def _fact_id(fact: dict[str, Any]) -> str:
@@ -308,9 +307,12 @@ def _derive_comparison_and_mismatch(
     type_mismatch = any(not _fact_type_matches_target(item, target) for item in candidates)
     if type_mismatch:
         return "NOT_SATISFIED", "TYPE_MISMATCH"
+    # ABSENT and EMPTY are bounded proven absence, not unresolved knowledge: they are
+    # evaluable, so a `none` Target over a proven-empty evaluated set is satisfied. The
+    # unresolved statuses returned above never reach here.
     comparison = (
-        "UNKNOWN" if knowledge != "KNOWN" else
-        "SATISFIED" if _target_satisfied(values, target) else "NOT_SATISFIED"
+        ("SATISFIED" if _target_satisfied(values, target) else "NOT_SATISFIED")
+        if knowledge in {"KNOWN", "ABSENT", "EMPTY"} else "UNKNOWN"
     )
     if not candidates and operator in {"equals", "not_equals", "contains", "exists", "all"}:
         return "NOT_SATISFIED", "MISSING"
@@ -441,10 +443,10 @@ def _derived_value_type(value: Any) -> str:
 
 
 def _normalize_objective_value(value: Any) -> tuple[Any, str]:
-    reserved_types = {
-        "DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE",
-        "ORDERED_COLLECTION", "UNORDERED_COLLECTION", "STRUCTURED",
-    }
+    # The contract declares a typed *scalar* wrapper for exactly the four types JSON's own
+    # shape cannot express. An ordinary structured object is never unwrapped, so a Fact
+    # carrying only an inner object cannot satisfy a full structured Target.
+    reserved_types = {"DECIMAL", "TIMESTAMP", "DURATION", "IDENTITY_REFERENCE"}
     if (
         isinstance(value, dict)
         and set(value) == {"value_type", "value"}
@@ -500,6 +502,73 @@ def _latest_contiguous_evaluations(
         ):
             latest[subject_id] = chain[-1]
     return latest
+
+
+def _observation_id(observation: dict[str, Any]) -> str:
+    """Recompute an Observation identity independently of the Observation package."""
+
+    projection = {
+        "project_id": observation["project_id"],
+        "state_revision_observed": observation["state_revision_observed"],
+        "state_fingerprint_observed": observation["state_fingerprint_observed"],
+        "target_identity": observation["target"]["target_identity"],
+        "scope_id": observation["scope_ref"]["id"],
+        "method_ref": observation["method_ref"],
+        "time_boundary": observation["time_boundary"],
+        "source_snapshot_refs": observation["source_snapshot_refs"],
+        "normalization_profile": observation["normalization_profile"],
+    }
+    domain = b"MANOSUBE_AGENT_CIVILIZATION_OS\x00OBSERVATION\x000.1\x00"
+    digest = hashlib.sha256(domain + canonical_json_bytes(projection)).hexdigest().upper()
+    return f"OBS-{digest}"
+
+
+def _contiguous_evaluation_chains(
+    records: dict[str, dict[str, Any]], subject_key: str,
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records.values():
+        grouped.setdefault(record[subject_key], []).append(record)
+    chains: dict[str, list[dict[str, Any]]] = {}
+    for subject_id, chain in grouped.items():
+        chain.sort(key=lambda item: item["evaluation_revision"])
+        if all(
+            item["evaluation_revision"] == revision
+            and item["previous_evaluation_id"]
+            == (None if revision == 0 else chain[revision - 1]["evaluation_id"])
+            for revision, item in enumerate(chain)
+        ):
+            chains[subject_id] = chain
+    return chains
+
+
+def _observation_scoped_evaluation(
+    chain: list[dict[str, Any]],
+    observation: dict[str, Any],
+    bindings: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return the Fact evaluation contemporaneous with *observation*.
+
+    A Difference Record is immutable and binds one exact Observation. Under an append-only
+    Observation lineage a re-observation appends a further evaluation bound to the next
+    Observation; reading the globally latest evaluation would invalidate every earlier
+    record the moment its subject is re-observed. Selection is by highest revision bound to
+    this Observation, taken before any status is read, so a later re-evaluation of this
+    same Observation still governs.
+    """
+
+    bound = [
+        evaluation
+        for evaluation in chain
+        if any(
+            (binding := bindings.get(str(reference.get("id")))) is not None
+            and binding["observation_id"] == observation["observation_id"]
+            for reference in evaluation["binding_refs"]
+        )
+    ]
+    if not bound:
+        return None
+    return max(bound, key=lambda item: item["evaluation_revision"])
 
 
 def _negative_knowledge_status(status: str) -> str:
@@ -687,7 +756,25 @@ def _kernel_invariant_definitions(kernel_source: dict[str, Any]) -> dict[str, st
 
 
 def validate_bundle(bundle: dict[str, Any]) -> list[str]:
-    """Return deterministic Difference cross-record violations."""
+    """Return deterministic Difference cross-record violations.
+
+    This validator **returns** violations; it does not raise them. A raw ``KeyError`` or
+    ``TypeError`` out of it is therefore not a rejection -- it is the auditor failing to
+    answer, and an auditor that cannot answer cannot be the independent half of anything.
+    Enumerating mutated emitted bundles measured 1317 such cases across 198 sites, because
+    every rule below reads the bundle before anything establishes it can be read.
+
+    That is one defect, not 198. Readability is decided once, by a shared owner in
+    ``difference.conformance``, so the producer and the auditor cannot disagree about what a
+    readable bundle is and no second structural ruleset exists. It answers *only*
+    readability: recomputing identities here was tried and pre-empted the cross-record
+    diagnosis for a bundle that was both, so a supersession cycle reported as a schema
+    failure. A bundle that is complete but wrong is silent at the gate and keeps its own
+    diagnosis below.
+    """
+    unreadable = emitted_bundle_readability_errors(bundle)
+    if unreadable:
+        return unreadable
     errors: list[str] = []
     differences = _index(bundle["differences"], "difference_id", errors)
     events = _index(bundle["events"], "difference_event_id", errors)
@@ -727,31 +814,24 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     objective_revisions = _index(
         bundle.get("objective_revisions", []), "objective_revision_id", errors
     )
+    # The chain rule is read from its owner, which the Engine's relational gate reads too.
+    # This validator used to compute the same condition and spend it only on deciding
+    # whether to *trust* an Objective head -- so a discontinuous history was never reported,
+    # and what surfaced instead was an unrelated head mismatch further down.
     objective_groups: dict[str, list[dict[str, Any]]] = {}
     for revision in objective_revisions.values():
         objective_groups.setdefault(revision["objective_id"], []).append(revision)
+    chain_errors, intact_objectives = objective_chain_errors(objective_revisions)
+    errors.extend(chain_errors)
     active_objective_heads: dict[str, dict[str, Any]] = {}
     valid_objective_chains: dict[str, list[dict[str, Any]]] = {}
     for objective_id, chain in objective_groups.items():
         chain.sort(key=lambda item: item["revision"])
-        valid_chain = all(
-            item["revision"] == revision
-            and _ref_id(item["previous_objective_ref"])
-            == (None if revision == 0 else chain[revision - 1]["objective_revision_id"])
-            and (
-                revision == 0
-                or (
-                    item["base_semantic_fingerprint"] is not None
-                    and "sha256:" + item["base_semantic_fingerprint"]["digest"]
-                    == _objective_semantic_fingerprint(chain[revision - 1])
-                )
-            )
-            for revision, item in enumerate(chain)
-        )
+        if objective_id not in intact_objectives:
+            continue
+        valid_objective_chains[objective_id] = chain
         active_members = [item for item in chain if item["status"] == "ACTIVE"]
-        if valid_chain:
-            valid_objective_chains[objective_id] = chain
-        if valid_chain and active_members:
+        if active_members:
             active_objective_heads[objective_id] = active_members[-1]
     observation_scopes = _index(
         bundle.get("observation_scopes", []), "scope_id", errors
@@ -777,6 +857,43 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     fact_evaluations = _index(
         bundle.get("fact_evaluations", []), "evaluation_id", errors
     )
+    # A carried record's own references must resolve inside the bundle. Reading an
+    # evaluation chain whose bindings are absent is not possible, so a partial lineage is
+    # a defect regardless of which Difference cites it.
+    for carried_evaluation in fact_evaluations.values():
+        if carried_evaluation["fact_id"] not in normalized_facts:
+            errors.append(
+                "Fact evaluation references a missing Fact: "
+                f"{carried_evaluation['evaluation_id']}"
+            )
+        for reference in carried_evaluation["binding_refs"]:
+            carried_binding = fact_bindings.get(_ref_id(reference) or "")
+            if reference.get("kind") != "fact_observation_binding" or carried_binding is None:
+                errors.append(
+                    "Fact evaluation references a missing binding: "
+                    f"{carried_evaluation['evaluation_id']}"
+                )
+            elif carried_binding["fact_id"] != carried_evaluation["fact_id"]:
+                errors.append(
+                    f"cross-Fact evaluation binding: {carried_evaluation['evaluation_id']}"
+                )
+    for carried_binding in fact_bindings.values():
+        if carried_binding["observation_id"] not in observations:
+            errors.append(
+                f"binding references a missing Observation: {carried_binding['binding_id']}"
+            )
+        if carried_binding["fact_id"] not in normalized_facts:
+            errors.append(
+                f"binding references a missing Fact: {carried_binding['binding_id']}"
+            )
+    for carried_observation in observations.values():
+        for reference in carried_observation["normalized_fact_refs"]:
+            if _ref_id(reference) not in normalized_facts:
+                errors.append(
+                    "Observation references a missing Normalized Fact: "
+                    f"{carried_observation['observation_id']}"
+                )
+    fact_evaluation_chains = _contiguous_evaluation_chains(fact_evaluations, "fact_id")
     latest_fact_evaluations = _latest_contiguous_evaluations(
         fact_evaluations, "fact_id"
     )
@@ -815,36 +932,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 else min(previous_time, observed_at)
             )
 
+    # Closure Policy semantic conformance and reopen-condition provenance are read from the
+    # one owner the Engine's own gate reads. This block used to restate the required-Claim
+    # rule here alone, which made it an auditor-only rule: the Engine emitted a forged
+    # Policy and only this validator objected. The rules live in one place now, so the
+    # producer cannot emit what the auditor rejects.
     for policy in policies.values():
-        claims_by_id: dict[str, dict[str, Any]] = {}
-        for descriptor in policy["required_claims"]:
-            semantic_projection = {
-                key: descriptor[key]
-                for key in ("subject_type", "subject_ref", "claim", "target_state_ref")
-            }
-            semantic_fingerprint = "sha256:" + hashlib.sha256(
-                canonical_json_bytes(_canonical_semantic(semantic_projection))
-            ).hexdigest()
-            identity_projection = {
-                "subject_type": descriptor["subject_type"],
-                "subject_ref": descriptor["subject_ref"],
-                "claim_semantic_fingerprint": semantic_fingerprint,
-            }
-            expected_id = "CLAIM-" + hashlib.sha256(
-                b"MANOSUBE:COMPLETION_CLAIM_IDENTITY:0.1:"
-                + canonical_json_bytes(_canonical_semantic(identity_projection))
-            ).hexdigest().upper()
-            previous = claims_by_id.get(descriptor["id"])
-            if (
-                descriptor["claim_semantic_fingerprint"] != semantic_fingerprint
-                or descriptor["id"] != expected_id
-                or _has_recursive_set_duplicate(semantic_projection)
-                or (previous is not None and previous != descriptor)
-            ):
-                errors.append(
-                    f"Policy required Claim identity mismatch: {policy['closure_policy_id']}"
-                )
-            claims_by_id[descriptor["id"]] = descriptor
+        errors.extend(
+            closure_policy_semantic_errors(policy, policy["closure_policy_id"])
+        )
+        errors.extend(reopen_condition_provenance_errors(policy, objective_revisions))
 
     events_by_difference: dict[str, list[dict[str, Any]]] = {}
     for event in events.values():
@@ -1023,104 +1120,59 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                         errors.append(
                             f"reopen condition evaluation mismatch: {event['difference_event_id']}"
                         )
-                if (
-                    previous is None
-                    or _ref_id(previous["closure_evaluation_ref"])
-                    != _ref_id(event["closure_evaluation_ref"])
-                    or closure is None
-                    or closure["difference_id"] != difference_id
-                    or closure["proposed_terminal_status"] != "CLOSED"
-                    or closure["result"] != "SATISFIED"
-                    or closure["gate_results"]["G22"] != "PASS"
-                ):
-                    errors.append(f"reopen closure binding mismatch: {event['difference_event_id']}")
-            if event["to_status"] == "BLOCKED":
-                if not event["evidence_refs"]:
-                    errors.append(f"blocked lifecycle Evidence missing: {event['difference_event_id']}")
-                scope = event["blocker_scope"]
-                condition = event["blocker_resolution_condition"]
-                if scope is None or condition is None or event["blocker_kind"] is None:
-                    errors.append(f"incomplete blocker payload: {event['difference_event_id']}")
-                else:
-                    difference = differences.get(difference_id)
-                    if not scope["affected_subject_refs"]["members"]:
-                        errors.append(f"empty blocker subject set: {event['difference_event_id']}")
-                    if difference and scope["effective_boundary"] != difference["effective_boundary"]:
-                        errors.append(f"blocker boundary mismatch: {event['difference_event_id']}")
-                    if _ref_id(condition["verification_request_ref"]) != _ref_id(event["next_observation_ref"]):
-                        errors.append(f"blocker verification request mismatch: {event['difference_event_id']}")
-                    if condition["subject_ref"] not in scope["affected_subject_refs"]["members"]:
-                        errors.append(f"blocker condition subject mismatch: {event['difference_event_id']}")
-                    expected_states = {
-                        "AUTHORITY_PATH_AVAILABLE": "AVAILABLE",
-                        "EXECUTION_PATH_AVAILABLE": "AVAILABLE",
-                        "OBSERVATION_PATH_AVAILABLE": "AVAILABLE",
-                        "REQUIRED_EVIDENCE_AVAILABLE": "AVAILABLE",
-                        "BINDINGS_CURRENT": "CURRENT",
-                        "MATERIAL_CONFLICT_RESOLVED": "RESOLVED",
-                        "INVARIANTS_PASS": "PASS",
-                        "CLAIMS_PASS": "PASS",
-                        "STRUCTURAL_BLOCKER_REMOVED": "REMOVED",
-                    }
-                    if expected_states.get(condition["condition_code"]) != condition["expected_state"]:
-                        errors.append(f"blocker condition state mismatch: {event['difference_event_id']}")
-            elif any(
-                event[key] is not None
-                for key in ("blocker_kind", "blocker_scope", "blocker_resolution_condition")
+            # Blocker payload and Next Observation Request binding are decided by the
+            # single shared lifecycle authority, so this validator and the Engine cannot
+            # disagree about them.
+            errors.extend(blocker_payload_errors(event, differences.get(difference_id)))
+            errors.extend(
+                next_observation_binding_errors(
+                    event, differences.get(difference_id), requests, methods, _content_address
+                )
+            )
+            errors.extend(
+                closure_evaluation_binding_errors(
+                    event,
+                    chain[expected_revision - 1] if expected_revision > 0 else None,
+                    differences.get(difference_id),
+                    evaluations,
+                    policies,
+                    _policy_fingerprint,
+                )
+            )
+
+            # A status-preserving OBSERVATION_BOUND event is a provenance append, not a
+            # lifecycle transition, so it does not re-enter the terminal status and must
+            # not demand a fresh Closure Evaluation. The TRANSITION that entered the
+            # status owns that Evaluation.
+            if (
+                event["event_kind"] == "TRANSITION"
+                and event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}
             ):
-                errors.append(f"non-BLOCKED event carries blocker payload: {event['difference_event_id']}")
-            if event["to_status"] in {"RETAINED", "REOPENED"} and event["next_observation_ref"] is None:
-                errors.append(f"next observation missing: {event['difference_event_id']}")
-            if event["next_observation_ref"] is not None:
-                request_ref = event["next_observation_ref"]
-                request = requests.get(_ref_id(request_ref) or "")
-                difference = differences.get(difference_id)
-                method = None if request is None else methods.get(_ref_id(request["method_ref"]) or "")
-                if (
-                    request_ref.get("kind") != "next_observation_request"
-                    or request is None
-                    or difference is None
-                    or _ref_id(request["difference_ref"]) != difference_id
-                    or _ref_id(request["derived_from_event_ref"]) != event["difference_event_id"]
-                    or request["state_revision_requested"] != event["state_revision_evaluated"]
-                    or request["state_fingerprint_requested"] != event["state_fingerprint_evaluated"]
-                    or request["target_ref"] != difference["target_predicate_ref"]
-                    or request["scope_ref"] != difference["objective_scope_binding"]["scope_ref"]
-                    or request["method_ref"].get("kind") != "observation_method"
-                    or method is None
-                    or request["observation_request_id"]
-                    != _content_address("OBS-REQ-", request, "observation_request_id")
-                    or (
-                        method is not None
-                        and method["observation_method_id"]
-                        != _content_address("OBS-METHOD-", method, "observation_method_id")
-                    )
-                ):
-                    errors.append(f"next observation binding mismatch: {event['difference_event_id']}")
-            if event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}:
                 evaluation = evaluations.get(_ref_id(event["closure_evaluation_ref"]) or "")
                 difference = differences.get(difference_id)
                 policy = None if difference is None else policies.get(difference["closure_policy"]["id"])
                 transition_ref = event["reflow_transition_ref"]
                 transition = reflow_transitions.get(_ref_id(transition_ref) or "")
                 candidate = None if evaluation is None else evaluation["after_state_candidate"]
-                commit_before_expiry = (
-                    transition is not None
-                    and evaluation is not None
-                    and (
-                        datetime.fromisoformat(transition["committed_at"].replace("Z", "+00:00"))
-                        >= datetime.fromisoformat(
-                            evaluation["evaluated_at"].replace("Z", "+00:00")
-                        )
-                    )
-                    and (
-                        evaluation["evaluation_expires_at"] is None
-                        or datetime.fromisoformat(transition["committed_at"].replace("Z", "+00:00"))
-                        <= datetime.fromisoformat(
-                            evaluation["evaluation_expires_at"].replace("Z", "+00:00")
-                        )
-                    )
-                )
+                # A Reflow transaction is **opaque provenance** in this phase. v0.1 defines
+                # no canonical schema for one, so nothing declares that it has a
+                # ``committed_at``, an ``event_type``, an ``after_state`` or an
+                # ``evidence_refs`` -- and this validator used to read all of them, plus
+                # parse two timestamps out of it. That was a Reflow field contract authored
+                # here by assumption: an undeclared rule that could not be satisfied, argued
+                # with, or versioned, because no schema states it.
+                #
+                # Reading it was also unsound in the ordinary way. A populated Reflow section
+                # -- which no fixture carried until one was added -- reached
+                # ``fromisoformat`` on a field nothing had validated, so a caller-supplied
+                # record raised ``KeyError``/``AttributeError``/``ValueError`` out of the
+                # middle of the pass instead of being reported.
+                #
+                # What survives is what this phase genuinely owns: the *reference* on the
+                # Difference-owned lifecycle event and Closure Evaluation, its declared kind,
+                # and whether it resolves inside the bundle. The Reflow phase owns everything
+                # about the record it points at, and must state it as a schema rather than
+                # leaving it implicit here.
                 reflow_valid = event["to_status"] != "CLOSED" or (
                     transition_ref is not None
                     and transition_ref.get("kind") == "state_transition"
@@ -1128,48 +1180,13 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and evaluation is not None
                     and candidate is not None
                     and difference is not None
-                    and commit_before_expiry
-                    and transition["event_type"] == "TRANSITION"
-                    and transition["project_id"] == difference["project_id"]
-                    and transition["after_state"]["project_id"] == difference["project_id"]
-                    and transition["after_state"]["objective_revision_id"]
-                    == evaluation["objective_revision_ref_evaluated"]["id"]
-                    and transition["from_revision"] == evaluation["before_state_ref"]["revision"]
-                    and transition["to_revision"] == transition["from_revision"] + 1
-                    and transition["before_fingerprint"]
-                    == evaluation["before_state_ref"]["fingerprint"]
-                    and transition["after_fingerprint"] == candidate["semantic_fingerprint"]
-                    and transition["after_state"]["state_revision"] == transition["to_revision"]
-                    and transition["after_state"]["previous_state_fingerprint"]
-                    == transition["before_fingerprint"]
-                    and transition["after_state"]["semantic_fingerprint"]
-                    == transition["after_fingerprint"]
-                    and transition["after_state"]["semantic_state"] == candidate["semantic_state"]
-                    and transition["after_state"]["lineage_head_ref"] == transition_ref
-                    and {("closure_evaluation", evaluation["closure_evaluation_id"]),
-                         ("difference", difference_id)}
-                    <= {(reference["kind"], reference["id"])
-                        for reference in transition["evidence_refs"]}
                 )
-                if (
+                if event["to_status"] == "CLOSED" and (
                     evaluation is None
-                    or evaluation["difference_id"] != difference_id
-                    or evaluation["proposed_terminal_status"] != event["to_status"]
-                    or evaluation["gate_results"]["G22"] != "PASS"
-                    or policy is None
-                    or not _policy_ref_matches(evaluation["policy_ref"], policy)
-                    or _ref_id(evaluation["difference_event_head_ref"])
-                    != event["previous_event_id"]
-                    or (
-                        event["to_status"] == "CLOSED"
-                        and (
-                            event["reflow_transition_ref"]
-                            != evaluation["reflow_transition_ref"]
-                            or not reflow_valid
-                        )
-                    )
+                    or event["reflow_transition_ref"] != evaluation["reflow_transition_ref"]
+                    or not reflow_valid
                 ):
-                    errors.append(f"terminal evaluation binding mismatch: {event['difference_event_id']}")
+                    errors.append(f"closed reflow commitment mismatch: {event['difference_event_id']}")
             reconstructed[difference_id] = event["to_status"]
 
     for difference_id, difference in differences.items():
@@ -1233,30 +1250,52 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             if reference.get("kind") == "observation" else None
             for reference in difference["observation_refs"]
         ]
+        # A canonical Observation over a multi-subject Scope legitimately references
+        # Facts this Target does not bind, and a Fact minted for another project must
+        # never contribute. Selection is decided by the shared authority the Engine also
+        # uses, so producer and auditor cannot disagree about the source set.
         source_facts = [
-            normalized_facts.get(_ref_id(reference) or "")
+            fact
             for observation in source_observations if observation is not None
-            for reference in observation["normalized_fact_refs"]
-            if reference.get("kind") == "normalized_fact"
+            for fact in contributing_facts(
+                observation,
+                normalized_facts,
+                difference["subject"],
+                difference["project_id"],
+            )
         ]
+        # The evaluation that justifies this Difference is the one contemporaneous with
+        # the Observation it binds, not the globally latest revision: a later
+        # re-observation appends an evaluation bound to the *next* Observation, and an
+        # immutable record must remain revalidatable across its own lineage.
         source_fact_evaluations = [
-            None if fact is None else latest_fact_evaluations.get(fact["fact_id"])
+            None
+            if fact is None
+            else next(
+                (
+                    evaluation
+                    for observation in source_observations
+                    if observation is not None
+                    and (
+                        evaluation := _observation_scoped_evaluation(
+                            fact_evaluation_chains.get(fact["fact_id"], []),
+                            observation,
+                            fact_bindings,
+                        )
+                    )
+                    is not None
+                    and _evaluation_supports_observation(
+                        evaluation, fact, observation, fact_bindings
+                    )
+                ),
+                None,
+            )
             for fact in source_facts
         ]
         source_facts_valid = bool(source_facts) and all(
             evaluation is not None
             and evaluation["evaluation_status"] in {"SUPPORTED", "CONFLICTED"}
-            and any(
-                observation is not None
-                and fact is not None
-                and _evaluation_supports_observation(
-                    evaluation, fact, observation, fact_bindings
-                )
-                for observation in source_observations
-            )
-            for fact, evaluation in zip(
-                source_facts, source_fact_evaluations, strict=True
-            )
+            for evaluation in source_fact_evaluations
         )
         source_fact_knowledge = (
             "CONFLICTED"
@@ -1314,7 +1353,7 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 for reference in latest["evidence_refs"]
             } <= {
                 canonical_json_bytes(reference)
-                for reference in observation["observation_evidence_refs"]
+                for reference in negative["negative_evidence_refs"]
             }
             and {
                 canonical_json_bytes(reference)
@@ -1336,6 +1375,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             for observation in source_observations if observation is not None
             for reference in observation["observation_evidence_refs"]
         }
+        # Observation Evidence and bounded Negative Evidence are distinct provenance
+        # channels with distinct reference kinds. The Difference binds the exact union of
+        # both, so a negative-derived observed state keeps its own bounded proof instead
+        # of being equated with the Evidence that the Observation itself ran.
+        negative_evidence = {
+            canonical_json_bytes(reference)
+            for negative in source_negatives
+            for reference in negative["negative_evidence_refs"]
+        }
+        required_evidence = source_evidence | negative_evidence
         source_observations_valid = bool(source_observations) and all(
             observation is not None
             and observation["project_id"] == difference["project_id"]
@@ -1368,11 +1417,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 or (
                     not observed_values
                     and source_negatives_valid
-                    and {
-                        canonical_json_bytes(reference)
+                    and all(
+                        negative["negative_evidence_refs"]
                         for negative in source_negatives
-                        for reference in negative["negative_evidence_refs"]
-                    } == source_evidence
+                        if negative["negative_status"] in {"ABSENT", "EMPTY"}
+                    )
                 )
             )
             and all(
@@ -1381,6 +1430,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 and fact["subject"] == difference["subject"]
                 for fact in source_facts
             )
+            # Selection above already excludes non-contributing Facts; this restates the
+            # binding the Difference claims, so a selector regression cannot pass silently.
             and sorted(
                 (
                     _project_collection_value(fact["value"], fact["value_type"])
@@ -1401,18 +1452,17 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                     and fact["value_type"] == candidate["value_type"]
                     and fact["unit"] == candidate["unit"]
                     and fact["predicate"] == candidate["fact_predicate"]
-                    and fact["effective_boundary"]["kind"] == "SOURCE_SNAPSHOT"
-                    and fact["effective_boundary"]["identity"]
-                    in {
-                        reference["id"]
-                        for reference in difference["effective_boundary"]
-                        ["source_snapshot_refs"]["members"]
-                    }
+                    # Every contract-legal Fact boundary form is accepted, matched
+                    # against a Observation this Difference actually binds.
+                    and any(
+                        bound is not None and _fact_boundary_observed(fact, bound)
+                        for bound in source_observations
+                    )
                     for fact in source_facts
                 )
                 for candidate in observed["value_candidates"]["members"]
             )
-            and source_evidence == {
+            and required_evidence == {
                 canonical_json_bytes(reference)
                 for reference in difference["observation_evidence_refs"]
             }
@@ -1438,10 +1488,8 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             or structural["observed_knowledge_status"] != observed["knowledge_status"]
             or structural["target_value"] != target["expected_value"]
             or structural["target_value_type"] != target["expected_value_type"]
-            or sorted(structural["observed_values"]["members"], key=repr)
-            != sorted(observed_values, key=repr)
-            or sorted(structural["observed_value_types"]["members"])
-            != sorted(observed_types)
+            or structural["observed_values"]["members"] != observed_values
+            or structural["observed_value_types"]["members"] != observed_types
             or structural["comparison_result"] != derived_comparison
             or derived_comparison == "SATISFIED"
             or structural["mismatch_kind"] != derived_mismatch
@@ -1468,20 +1516,16 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
 
     for evaluation in evaluations.values():
         difference = differences.get(evaluation["difference_id"])
+        # Subject Difference, Policy binding, event head, Target Predicate, evaluated
+        # Objective semantics and evaluated-State self-consistency are decided by the
+        # shared authority the Engine also applies to every carried Evaluation.
+        input_errors = closure_evaluation_input_errors(
+            evaluation, difference, policies, events, _policy_fingerprint
+        )
+        errors.extend(input_errors)
         if difference is None:
-            errors.append(f"evaluation references missing Difference: {evaluation['closure_evaluation_id']}")
             continue
         policy = policies.get(evaluation["policy_ref"]["id"])
-        if (
-            policy is None
-            or _ref_id(policy["subject_difference_ref"]) != evaluation["difference_id"]
-            or policy["target_predicate_ref"] != difference["target_predicate_ref"]
-            or not _policy_ref_matches(evaluation["policy_ref"], policy)
-            or evaluation["policy_version_evaluated"] != policy["policy_version"]
-            or evaluation["policy_semantic_fingerprint_evaluated"]
-            != policy["policy_semantic_fingerprint"]
-        ):
-            errors.append(f"evaluation Policy binding mismatch: {evaluation['closure_evaluation_id']}")
         head = events.get(_ref_id(evaluation["difference_event_head_ref"]) or "")
         promotion_events = [
             event
@@ -1490,8 +1534,6 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             == evaluation["closure_evaluation_id"]
             and event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}
         ]
-        if head is None or head["difference_id"] != evaluation["difference_id"]:
-            errors.append(f"evaluation event-head mismatch: {evaluation['closure_evaluation_id']}")
         evaluated_objective = objective_revisions.get(
             _ref_id(evaluation["objective_revision_ref_evaluated"]) or ""
         )
@@ -1528,33 +1570,20 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             and evaluation["objective_semantic_fingerprint_evaluated"]
             == difference["objective_semantic_fingerprint"]
         )
-        if (
-            evaluation["target_predicate_ref"] != difference["target_predicate_ref"]
-            or not objective_evaluation_valid
-            or (
-                not promotion_events
-                and (
-                    evaluation["evaluated_state_revision"]
-                    != (current_state_ref or {}).get("revision")
-                    or evaluation["evaluated_state_fingerprint"]
-                    != (current_state_ref or {}).get("fingerprint")
-                )
-            )
-            or evaluation["before_state_ref"]["revision"]
-            != evaluation["evaluated_state_revision"]
-            or evaluation["before_state_ref"]["fingerprint"]
-            != evaluation["evaluated_state_fingerprint"]
-            or (
-                head is not None
-                and (
-                    evaluation["evaluated_state_revision"]
-                    != head["state_revision_evaluated"]
-                    or evaluation["evaluated_state_fingerprint"]
-                    != head["state_fingerprint_evaluated"]
-                )
+        # The multi-revision editorial Objective chain, and the current-State binding of an
+        # Evaluation no transition has promoted, stay with this auditor: they need the
+        # objective-chain analysis and bundle-wide State head the Difference phase does not
+        # carry. Everything else is the shared rule above.
+        if not objective_evaluation_valid or (
+            not promotion_events
+            and (
+                evaluation["evaluated_state_revision"]
+                != (current_state_ref or {}).get("revision")
+                or evaluation["evaluated_state_fingerprint"]
+                != (current_state_ref or {}).get("fingerprint")
             )
         ):
-            errors.append(f"evaluation Difference input mismatch: {evaluation['closure_evaluation_id']}")
+            errors.append(f"evaluation Objective or State head mismatch: {evaluation['closure_evaluation_id']}")
         mode = evaluation["evaluation_mode"]
         candidate = evaluation["after_state_candidate"]
         proposed = evaluation["proposed_terminal_status"]
@@ -1715,22 +1744,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 ]
                 for observation in after_observations
             ]
-            fact_evaluation_chains: dict[str, list[dict[str, Any]]] = {}
-            for fact_evaluation in fact_evaluations.values():
-                fact_evaluation_chains.setdefault(
-                    fact_evaluation["fact_id"], []
-                ).append(fact_evaluation)
-            latest_fact_evaluations: dict[str, dict[str, Any]] = {}
-            for fact_id, chain in fact_evaluation_chains.items():
-                chain.sort(key=lambda item: item["evaluation_revision"])
-                valid_chain = all(
-                    item["evaluation_revision"] == revision
-                    and item["previous_evaluation_id"]
-                    == (None if revision == 0 else chain[revision - 1]["evaluation_id"])
-                    for revision, item in enumerate(chain)
-                )
-                if valid_chain:
-                    latest_fact_evaluations[fact_id] = chain[-1]
+            # The contiguous-chain and latest-evaluation projections are already built
+            # once above, from the same records; this section reuses them instead of
+            # shadowing them with a second, identical derivation.
             positive_facts_valid = [
                 bool(facts)
                 and all(
@@ -2434,6 +2450,24 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 break
             seen.add(current)
             current = supersession_edges[current]
+
+    # The typed reference-edge authority is shared with the Engine, so the producer and
+    # this auditor cannot hold two drifting maps of what a reference is or where it must
+    # resolve. Every record of every section is traversed, not only the Difference lineage.
+    errors.extend(reference_closure_errors(bundle))
+    errors.extend(satisfaction_reconciliation_errors(bundle))
+    # Bounded Negative Evidence ownership is owned by the Observation element; this
+    # auditor imports that one rule rather than restating it.
+    errors.extend(
+        negative_evaluation_evidence_errors(
+            {
+                "negative_observations": bundle.get("negative_observations", []) or [],
+                "negative_evaluations": bundle.get("negative_observation_evaluations", [])
+                or [],
+                "observations": bundle.get("observations", []) or [],
+            }
+        )
+    )
     return sorted(set(errors))
 
 
@@ -2450,12 +2484,32 @@ def apply_mutation(bundle: dict[str, Any], path: list[str | int], value: Any) ->
 
 
 def validate_fixture_suite(root: Path) -> tuple[int, int, list[str], list[str]]:
-    valid_bundle = load_json(root / "valid" / "bundle.json")
-    invalid_cases = load_json(root / "invalid" / "cases.json")
-    valid_errors = validate_bundle(valid_bundle)
-    invalid_escapes = [
-        case["name"]
-        for case in invalid_cases
-        if not validate_bundle(apply_mutation(valid_bundle, case["path"], case["value"]))
-    ]
-    return 1, len(invalid_cases), valid_errors, invalid_escapes
+    """Validate every valid bundle in *root* against its own invalid mutation cases.
+
+    ``valid/<stem>.json`` is paired with ``invalid/<stem with "bundle" replaced by
+    "cases">.json``, so ``valid/bundle.json`` keeps its original ``invalid/cases.json``
+    pairing while each additional canonical route carries its own mutation suite.
+    """
+
+    valid_count = 0
+    invalid_count = 0
+    valid_errors: list[str] = []
+    invalid_escapes: list[str] = []
+    for bundle_path in sorted((root / "valid").glob("*.json")):
+        cases_path = root / "invalid" / f"{bundle_path.stem.replace('bundle', 'cases')}.json"
+        valid_bundle = load_json(bundle_path)
+        valid_count += 1
+        valid_errors.extend(
+            f"{bundle_path.stem}: {error}" for error in validate_bundle(valid_bundle)
+        )
+        if not cases_path.exists():
+            valid_errors.append(f"{bundle_path.stem}: missing invalid mutation cases")
+            continue
+        cases = load_json(cases_path)
+        invalid_count += len(cases)
+        invalid_escapes.extend(
+            f"{bundle_path.stem}: {case['name']}"
+            for case in cases
+            if not validate_bundle(apply_mutation(valid_bundle, case["path"], case["value"]))
+        )
+    return valid_count, invalid_count, valid_errors, invalid_escapes

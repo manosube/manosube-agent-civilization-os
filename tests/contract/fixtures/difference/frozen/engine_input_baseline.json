@@ -1,0 +1,712 @@
+{
+ "_": "FROZEN PRE-FIX BASELINE. Written before any production correction exists.",
+ "cases": 7770,
+ "harness_faults": 0,
+ "raw_exception_cases": 78,
+ "distinct_paths": 26,
+ "distinct_sites": 7,
+ "entries": [
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context",
+   "action": "retype:int",
+   "observed_exception": "AttributeError",
+   "observed_message": "'int' object has no attribute 'get'",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context",
+   "action": "retype:list",
+   "observed_exception": "AttributeError",
+   "observed_message": "'list' object has no attribute 'get'",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context",
+   "action": "retype:null",
+   "observed_exception": "AttributeError",
+   "observed_message": "'NoneType' object has no attribute 'get'",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context",
+   "action": "retype:str",
+   "observed_exception": "AttributeError",
+   "observed_message": "'str' object has no attribute 'get'",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.candidate_claim_evaluation_events",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.candidate_completion_records",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.evaluations",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.evidence_sufficiency_results",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_evaluations",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_evaluations",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_evaluations",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_evaluations",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'NoneType' object is not iterable",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_evaluations",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_evaluations[0].evaluation_id",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'evaluation_id'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_evaluations[0].evaluation_id",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "unhashable type: 'dict'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_evaluations[0].evaluation_id",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "unhashable type: 'list'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_observation_bindings",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_observation_bindings",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_observation_bindings",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_observation_bindings",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'NoneType' object is not iterable",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_observation_bindings",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_observation_bindings[0].binding_id",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'binding_id'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_observation_bindings[0].binding_id",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "unhashable type: 'dict'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.fact_observation_bindings[0].binding_id",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "unhashable type: 'list'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.invariant_evaluations",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observation_evaluations",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observation_evaluations",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observation_evaluations",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observation_evaluations",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'NoneType' object is not iterable",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observation_evaluations",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observations",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observations",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observations",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observations",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'NoneType' object is not iterable",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.negative_observations",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.next_observation_requests",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.normalized_facts",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.normalized_facts",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.normalized_facts",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.normalized_facts",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'NoneType' object is not iterable",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.normalized_facts",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.normalized_facts[0].fact_id",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'fact_id'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.normalized_facts[0].fact_id",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "unhashable type: 'dict'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.normalized_facts[0].fact_id",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "unhashable type: 'list'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.objective_revisions",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observation_methods",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observation_scopes",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observations",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observations",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observations",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observations",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'NoneType' object is not iterable",
+   "site": "difference/engine.py:849 _require_context_agrees_with_observation_lineage",
+   "code": "for record in context.get(section, []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observations",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observations[0].observation_id",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'observation_id'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observations[0].observation_id",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "unhashable type: 'dict'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.observations[0].observation_id",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "unhashable type: 'list'",
+   "site": "difference/engine.py:850 _require_context_agrees_with_observation_lineage",
+   "code": "existing = authentic.get(record[key])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.context.policies",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1410 _iter_request_records",
+   "code": "for index, record in enumerate(context.get(section, []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.difference",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'difference'",
+   "site": "difference/engine.py:1453 _validate_predecessor",
+   "code": "difference = predecessor[\"difference\"]"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'events'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:1455 <lambda>",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events",
+   "action": "retype:int",
+   "observed_exception": "TypeError",
+   "observed_message": "'int' object is not iterable",
+   "site": "difference/engine.py:1397 _iter_request_records",
+   "code": "for index, event in enumerate(predecessor.get(\"events\", []) or []):"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:1455 <lambda>",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'NoneType' object is not iterable",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "string indices must be integers, not 'str'",
+   "site": "difference/engine.py:1455 <lambda>",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[0].event_revision",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'event_revision'",
+   "site": "difference/engine.py:1455 <lambda>",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[0].event_revision",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'int' and 'dict'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[0].event_revision",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'int' and 'list'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[0].event_revision",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'int' and 'NoneType'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[0].event_revision",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'int' and 'str'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[1].event_revision",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'event_revision'",
+   "site": "difference/engine.py:1455 <lambda>",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[1].event_revision",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'dict' and 'int'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[1].event_revision",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'list' and 'int'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[1].event_revision",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'NoneType' and 'int'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[1].event_revision",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'str' and 'int'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[2].event_revision",
+   "action": "delete",
+   "observed_exception": "KeyError",
+   "observed_message": "'event_revision'",
+   "site": "difference/engine.py:1455 <lambda>",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[2].event_revision",
+   "action": "retype:dict",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'dict' and 'int'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[2].event_revision",
+   "action": "retype:list",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'list' and 'int'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[2].event_revision",
+   "action": "retype:null",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'NoneType' and 'int'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  },
+  {
+   "fixture": "predecessor",
+   "path": "bindings[0].predecessor.events[2].event_revision",
+   "action": "retype:str",
+   "observed_exception": "TypeError",
+   "observed_message": "'<' not supported between instances of 'str' and 'int'",
+   "site": "difference/engine.py:1455 _validate_predecessor",
+   "code": "events = sorted(predecessor[\"events\"], key=lambda item: item[\"event_revision\"])"
+  }
+ ]
+}

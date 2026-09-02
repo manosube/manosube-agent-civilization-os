@@ -1,0 +1,537 @@
+{
+  "schema_version": "0.1",
+  "identity_profile": "MANOSUBE-DIFFERENCE-SHA256-0.1",
+  "comparison_profile": "MANOSUBE-DIFFERENCE-COMPARISON-0.1",
+  "normalization_profile": "MANOSUBE-DIFFERENCE-NORMALIZATION-0.1",
+  "current_state_ref": {
+    "kind": "state",
+    "revision": 2,
+    "fingerprint": {
+      "profile": "MANOSUBE-STATE-SHA256-0.1",
+      "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+    }
+  },
+  "objective_revisions": [
+    {
+      "schema_version": "0.1",
+      "objective_id": "OBJ-0001",
+      "objective_revision_id": "OBJ-REV-0001",
+      "project_id": "PRJ-0001",
+      "statement": "The kernel reaches the READY state.",
+      "owner_authority_ref": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      },
+      "target_predicates": [
+        {
+          "predicate_id": "TP-0001",
+          "subject": "kernel.state",
+          "operator": "equals",
+          "expected_value": "READY",
+          "observation_scope": "kernel",
+          "evidence_requirement": "E1",
+          "unknown_policy": "INCOMPLETE",
+          "criticality": "mandatory"
+        }
+      ],
+      "completion_policy": {
+        "mode": "ALL",
+        "contradiction_policy": "BLOCK"
+      },
+      "boundary_ref": {
+        "kind": "objective_boundary",
+        "id": "BOUND-0001"
+      },
+      "constitutional_constraints": [],
+      "status": "ACTIVE",
+      "revision": 0,
+      "previous_objective_ref": null,
+      "change_reason": "initial objective",
+      "base_semantic_fingerprint": null,
+      "semantic_change_summary": "initial objective revision",
+      "human_authority_ref": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      },
+      "recorded_at": "2026-08-30T08:00:00Z"
+    }
+  ],
+  "differences": [
+    {
+      "schema_version": "0.1",
+      "difference_id": "D-C9A6E18B61CDFFB9A2CC83039DD68F9B7A2C5ECDD3CBE670343689103C698591",
+      "project_id": "PRJ-0001",
+      "objective_revision_ref": {
+        "kind": "objective_revision",
+        "id": "OBJ-REV-0001"
+      },
+      "objective_semantic_fingerprint": "sha256:c69838a643f6071d1741e3dc534f298a932446ff1f202198509ccd6a9a34c481",
+      "target_predicate_ref": {
+        "kind": "target_predicate",
+        "id": "TP-0001"
+      },
+      "normalized_target_state": {
+        "subject": "kernel.state",
+        "operator": "equals",
+        "expected_value": "READY",
+        "expected_value_type": "STRING",
+        "observation_scope": "kernel",
+        "evidence_requirement": "E1",
+        "unknown_policy": "INCOMPLETE",
+        "criticality": "mandatory"
+      },
+      "objective_scope_binding": {
+        "objective_scope_name": "kernel",
+        "scope_ref": {
+          "kind": "observation_scope",
+          "id": "OBS-SCOPE-0001"
+        },
+        "scope_schema_version": "0.1",
+        "resolved_scope_record_sha256": "sha256:dd30f0ef095e08355873b73345652f22392a88730cc61753bf3691edfa9059cd"
+      },
+      "observed_state_revision": 2,
+      "observed_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "observation_refs": [
+        {
+          "kind": "observation",
+          "id": "OBS-B3DEE309514C8DE0849C442AD96A419541AC089F0A282284F7571C032426C494"
+        }
+      ],
+      "observation_evidence_refs": [
+        {
+          "kind": "observation_evidence",
+          "id": "EVID-0001"
+        },
+        {
+          "kind": "negative_evidence",
+          "id": "NEG-EVID-0001"
+        }
+      ],
+      "normalized_observed_state": {
+        "subject": "kernel.state",
+        "objective_scope_binding": {
+          "objective_scope_name": "kernel",
+          "scope_ref": {
+            "kind": "observation_scope",
+            "id": "OBS-SCOPE-0001"
+          },
+          "scope_schema_version": "0.1",
+          "resolved_scope_record_sha256": "sha256:dd30f0ef095e08355873b73345652f22392a88730cc61753bf3691edfa9059cd"
+        },
+        "effective_boundary": {
+          "kind": "OBSERVATION_SCOPE_BOUNDARY",
+          "scope_ref": {
+            "kind": "observation_scope",
+            "id": "OBS-SCOPE-0001"
+          },
+          "resolved_scope_record_sha256": "sha256:dd30f0ef095e08355873b73345652f22392a88730cc61753bf3691edfa9059cd",
+          "target_effective_window": {
+            "start": "2026-08-30T08:00:00Z",
+            "end": "2026-08-30T09:00:00Z"
+          },
+          "source_snapshot_refs": {
+            "collection_kind": "UNORDERED_SET",
+            "members": [
+              {
+                "kind": "source_snapshot",
+                "id": "SNAP-0001"
+              }
+            ]
+          }
+        },
+        "knowledge_status": "ABSENT",
+        "value_candidates": {
+          "collection_kind": "UNORDERED_SET",
+          "members": []
+        }
+      },
+      "structural_difference": {
+        "mismatch_kind": "MISSING",
+        "observed_knowledge_status": "ABSENT",
+        "target_value": "READY",
+        "observed_values": {
+          "collection_kind": "ORDERED_LIST",
+          "members": []
+        },
+        "target_value_type": "STRING",
+        "observed_value_types": {
+          "collection_kind": "ORDERED_LIST",
+          "members": []
+        },
+        "target_cardinality": null,
+        "observed_cardinality": null,
+        "comparison_result": "NOT_SATISFIED",
+        "comparison_profile": "MANOSUBE-DIFFERENCE-COMPARISON-0.1"
+      },
+      "subject": "kernel.state",
+      "observation_scope": "kernel",
+      "effective_boundary": {
+        "kind": "OBSERVATION_SCOPE_BOUNDARY",
+        "scope_ref": {
+          "kind": "observation_scope",
+          "id": "OBS-SCOPE-0001"
+        },
+        "resolved_scope_record_sha256": "sha256:dd30f0ef095e08355873b73345652f22392a88730cc61753bf3691edfa9059cd",
+        "target_effective_window": {
+          "start": "2026-08-30T08:00:00Z",
+          "end": "2026-08-30T09:00:00Z"
+        },
+        "source_snapshot_refs": {
+          "collection_kind": "UNORDERED_SET",
+          "members": [
+            {
+              "kind": "source_snapshot",
+              "id": "SNAP-0001"
+            }
+          ]
+        }
+      },
+      "impact": {},
+      "risk_class": "LOW",
+      "authority_required": [],
+      "closure_policy": {
+        "kind": "closure_policy",
+        "id": "CP-3720F5B7A0F4F98229592E682C36A59702AEAFCAB61BB54875CC3ED6E95F65B0",
+        "version": "0.1",
+        "semantic_fingerprint": "sha256:f13452822a15874fb479ad481bd2bfe52715baab851f88947e3603e041255d84"
+      },
+      "genesis_event_ref": {
+        "kind": "difference_event",
+        "id": "D-EVT-F741C85EC8E485D2569C16A78D1CB234137887CB25AD169F9FBD053D0214593B"
+      }
+    }
+  ],
+  "events": [
+    {
+      "schema_version": "0.1",
+      "difference_event_id": "D-EVT-F741C85EC8E485D2569C16A78D1CB234137887CB25AD169F9FBD053D0214593B",
+      "difference_id": "D-C9A6E18B61CDFFB9A2CC83039DD68F9B7A2C5ECDD3CBE670343689103C698591",
+      "event_kind": "TRANSITION",
+      "event_revision": 0,
+      "previous_event_id": null,
+      "from_status": null,
+      "to_status": "DETECTED",
+      "state_revision_evaluated": 2,
+      "state_fingerprint_evaluated": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "reason_code": "DIFFERENCE_DERIVED",
+      "reason": "Structural mismatch derived from the exact Target/State/Observation binding.",
+      "blocker_kind": null,
+      "blocker_scope": null,
+      "blocker_resolution_condition": null,
+      "observation_refs": [
+        {
+          "kind": "observation",
+          "id": "OBS-B3DEE309514C8DE0849C442AD96A419541AC089F0A282284F7571C032426C494"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "kind": "observation_evidence",
+          "id": "EVID-0001"
+        },
+        {
+          "kind": "negative_evidence",
+          "id": "NEG-EVID-0001"
+        }
+      ],
+      "authority_ref": null,
+      "change_refs": [],
+      "closure_evaluation_ref": null,
+      "reflow_transition_ref": null,
+      "next_observation_ref": null,
+      "reopen_trigger": null,
+      "reopen_condition_ref": null,
+      "reopen_condition_evaluation_ref": null,
+      "revoked_evidence_refs": [],
+      "invalid_evidence_refs": [],
+      "contradiction_evidence_refs": []
+    },
+    {
+      "schema_version": "0.1",
+      "difference_event_id": "D-EVT-502C321DFDD686CD2B35A82050565E5D80D5F7E44E36742D20EAA0822F956B2C",
+      "difference_id": "D-C9A6E18B61CDFFB9A2CC83039DD68F9B7A2C5ECDD3CBE670343689103C698591",
+      "event_kind": "TRANSITION",
+      "event_revision": 1,
+      "previous_event_id": "D-EVT-F741C85EC8E485D2569C16A78D1CB234137887CB25AD169F9FBD053D0214593B",
+      "from_status": "DETECTED",
+      "to_status": "OPEN",
+      "state_revision_evaluated": 2,
+      "state_fingerprint_evaluated": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "reason_code": "IDENTITY_ACCEPTED",
+      "reason": "Difference identity, schema and exact input bindings validated.",
+      "blocker_kind": null,
+      "blocker_scope": null,
+      "blocker_resolution_condition": null,
+      "observation_refs": [],
+      "evidence_refs": [],
+      "authority_ref": null,
+      "change_refs": [],
+      "closure_evaluation_ref": null,
+      "reflow_transition_ref": null,
+      "next_observation_ref": null,
+      "reopen_trigger": null,
+      "reopen_condition_ref": null,
+      "reopen_condition_evaluation_ref": null,
+      "revoked_evidence_refs": [],
+      "invalid_evidence_refs": [],
+      "contradiction_evidence_refs": []
+    }
+  ],
+  "policies": [
+    {
+      "schema_version": "0.1",
+      "closure_policy_id": "CP-3720F5B7A0F4F98229592E682C36A59702AEAFCAB61BB54875CC3ED6E95F65B0",
+      "policy_version": "0.1",
+      "policy_semantic_fingerprint": "sha256:f13452822a15874fb479ad481bd2bfe52715baab851f88947e3603e041255d84",
+      "subject_difference_ref": {
+        "kind": "difference",
+        "id": "D-C9A6E18B61CDFFB9A2CC83039DD68F9B7A2C5ECDD3CBE670343689103C698591"
+      },
+      "required_observation_scope": null,
+      "minimum_evidence_level": "E1",
+      "required_claims": [],
+      "required_invariants": [],
+      "allowed_terminal_states": [
+        "CLOSED",
+        "BLOCKED",
+        "RETAINED"
+      ],
+      "independent_verification_required": false,
+      "maximum_evidence_age": null,
+      "contradiction_policy": "FAIL_CLOSED",
+      "reopen_conditions": [],
+      "target_predicate_ref": {
+        "kind": "target_predicate",
+        "id": "TP-0001"
+      }
+    }
+  ],
+  "evaluations": [],
+  "supersession_relations": [],
+  "next_observation_requests": [],
+  "observation_methods": [],
+  "observation_scopes": [
+    {
+      "schema_version": "0.1",
+      "scope_id": "OBS-SCOPE-0001",
+      "project_id": "PRJ-0001",
+      "target_identity": "TP-0001",
+      "included_subjects": [
+        "kernel.state"
+      ],
+      "excluded_subjects": [
+        "kernel.secret"
+      ],
+      "boundary_root": "/kernel",
+      "path_policy": {
+        "relative_locators_only": true,
+        "symlink_escape": "BLOCK",
+        "submodule_traversal": "DECLARED_ONLY",
+        "mount_escape": "BLOCK",
+        "credential_paths": "EXCLUDE"
+      },
+      "observation_window": {
+        "start": "2026-08-30T09:00:00Z",
+        "end": "2026-08-30T09:01:00Z"
+      },
+      "target_effective_window": {
+        "start": "2026-08-30T08:00:00Z",
+        "end": "2026-08-30T09:00:00Z"
+      },
+      "freshness_limit_seconds": 300,
+      "cutoff": "2026-08-30T09:00:00Z",
+      "source_snapshot_refs": [
+        {
+          "kind": "source_snapshot",
+          "id": "SNAP-0001"
+        }
+      ],
+      "enumeration_rule": {
+        "kind": "enumeration_rule",
+        "id": "ENUM-0001"
+      },
+      "completion_predicate": {
+        "kind": "completion_predicate",
+        "id": "COMPLETE-0001"
+      },
+      "method_ref": {
+        "kind": "observation_method",
+        "id": "OBS-METHOD-0001"
+      },
+      "attempt_policy": {
+        "max_attempts": 1,
+        "timeout_seconds": 60,
+        "retry_on": []
+      },
+      "blind_spots": [],
+      "scope_status": "COMPLETE"
+    }
+  ],
+  "observations": [
+    {
+      "schema_version": "0.1",
+      "observation_id": "OBS-B3DEE309514C8DE0849C442AD96A419541AC089F0A282284F7571C032426C494",
+      "project_id": "PRJ-0001",
+      "state_revision_observed": 2,
+      "state_fingerprint_observed": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "target": {
+        "target_identity": "TP-0001",
+        "kind": "FIXTURE"
+      },
+      "scope_ref": {
+        "kind": "observation_scope",
+        "id": "OBS-SCOPE-0001"
+      },
+      "method_ref": {
+        "kind": "observation_method",
+        "id": "OBS-METHOD-0001"
+      },
+      "time_boundary": {
+        "observation_started_at": "2026-08-30T09:00:00Z",
+        "observation_ended_at": "2026-08-30T09:01:00Z",
+        "target_effective_start": "2026-08-30T08:00:00Z",
+        "target_effective_end": "2026-08-30T09:00:00Z",
+        "source_snapshot_time": "2026-08-30T08:59:00Z"
+      },
+      "source_snapshot_refs": [
+        {
+          "kind": "source_snapshot",
+          "id": "SNAP-0001"
+        }
+      ],
+      "normalization_profile": "FIXTURE-0.1",
+      "normalized_fact_refs": [],
+      "status": "EMPTY",
+      "blind_spots": {
+        "status": "NONE_KNOWN",
+        "items": []
+      },
+      "attempts": [
+        {
+          "attempt_id": "ATTEMPT-0001",
+          "method_ref": {
+            "kind": "observation_method",
+            "id": "OBS-METHOD-0001"
+          },
+          "started_at": "2026-08-30T09:00:00Z",
+          "ended_at": "2026-08-30T09:01:00Z",
+          "result": "EMPTY",
+          "failure_class": null
+        }
+      ],
+      "observation_evidence_refs": [
+        {
+          "kind": "observation_evidence",
+          "id": "EVID-0001"
+        }
+      ]
+    }
+  ],
+  "normalized_facts": [],
+  "fact_observation_bindings": [],
+  "fact_evaluations": [],
+  "negative_observations": [
+    {
+      "schema_version": "0.1",
+      "negative_observation_id": "NEG-0899D81DA6A0DA503431A12E116C104296E112605557A578C13366F44ADB79F7",
+      "observation_id": "OBS-B3DEE309514C8DE0849C442AD96A419541AC089F0A282284F7571C032426C494",
+      "project_id": "PRJ-0001",
+      "target_identity": "TP-0001",
+      "subject": "kernel.state",
+      "predicate": "equals@v1",
+      "effective_boundary": {
+        "kind": "SOURCE_SNAPSHOT",
+        "identity": "SNAP-0001",
+        "start": null,
+        "end": null
+      },
+      "negative_status": "ABSENT",
+      "scope_ref": {
+        "kind": "observation_scope",
+        "id": "OBS-SCOPE-0001"
+      },
+      "method_ref": {
+        "kind": "observation_method",
+        "id": "OBS-METHOD-0001"
+      },
+      "time_boundary": {
+        "observation_started_at": "2026-08-30T09:00:00Z",
+        "observation_ended_at": "2026-08-30T09:01:00Z",
+        "target_effective_start": "2026-08-30T08:00:00Z",
+        "target_effective_end": "2026-08-30T09:00:00Z",
+        "source_snapshot_time": "2026-08-30T08:59:00Z"
+      },
+      "source_snapshot_refs": [
+        {
+          "kind": "source_snapshot",
+          "id": "SNAP-0001"
+        }
+      ],
+      "attempt_refs": [
+        {
+          "kind": "observation_attempt",
+          "id": "ATTEMPT-0001"
+        }
+      ],
+      "completion_evaluation": {
+        "target_defined": true,
+        "scope_complete": true,
+        "method_complete": true,
+        "time_boundary_complete": true,
+        "source_snapshots_identified": true,
+        "required_attempts_completed": true,
+        "no_blocking_blind_spot": true,
+        "no_conflicting_positive_fact": true
+      },
+      "blind_spot_refs": [],
+      "negative_evidence_refs": [
+        {
+          "kind": "negative_evidence",
+          "id": "NEG-EVID-0001"
+        }
+      ],
+      "positive_fact_refs": [],
+      "conclusion": {
+        "state_candidate": "ABSENT",
+        "reason": "bounded negative observation evaluation"
+      }
+    }
+  ],
+  "negative_observation_evaluations": [
+    {
+      "schema_version": "0.1",
+      "evaluation_id": "NEG-EVAL-5CC04235B4273D928FCD7272CCA3CE1C1DD2EAEBF45B2EFEDCF14A4629C3540F",
+      "negative_observation_id": "NEG-0899D81DA6A0DA503431A12E116C104296E112605557A578C13366F44ADB79F7",
+      "evaluation_revision": 0,
+      "previous_evaluation_id": null,
+      "evaluation_status": "ABSENT",
+      "conflict_fact_refs": [],
+      "evidence_refs": [
+        {
+          "kind": "negative_evidence",
+          "id": "NEG-EVID-0001"
+        }
+      ]
+    }
+  ],
+  "candidate_completion_records": [],
+  "candidate_claim_evaluation_events": [],
+  "invariant_evaluations": [],
+  "evidence_sufficiency_results": [],
+  "materialized_status": {
+    "D-C9A6E18B61CDFFB9A2CC83039DD68F9B7A2C5ECDD3CBE670343689103C698591": "OPEN"
+  },
+  "satisfied_target_predicates": []
+}

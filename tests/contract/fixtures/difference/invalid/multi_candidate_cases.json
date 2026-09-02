@@ -1,0 +1,120 @@
+[
+  {
+    "name": "observed_value_dropped",
+    "path": [
+      "differences",
+      0,
+      "structural_difference",
+      "observed_values",
+      "members"
+    ],
+    "value": [
+      "FAIL"
+    ]
+  },
+  {
+    "name": "observed_value_types_collapsed_to_a_set",
+    "path": [
+      "differences",
+      0,
+      "structural_difference",
+      "observed_value_types",
+      "members"
+    ],
+    "value": [
+      "STRING"
+    ]
+  },
+  {
+    "name": "observed_values_reordered_away_from_candidate_order",
+    "path": [
+      "differences",
+      0,
+      "structural_difference",
+      "observed_values",
+      "members"
+    ],
+    "value": [
+      "BROKEN",
+      "FAIL"
+    ]
+  },
+  {
+    "name": "observed_value_types_extended_beyond_candidates",
+    "path": [
+      "differences",
+      0,
+      "structural_difference",
+      "observed_value_types",
+      "members"
+    ],
+    "value": [
+      "STRING",
+      "STRING",
+      "INTEGER"
+    ]
+  },
+  {
+    "name": "observed_value_substituted",
+    "path": [
+      "differences",
+      0,
+      "structural_difference",
+      "observed_values",
+      "members"
+    ],
+    "value": [
+      "FAIL",
+      "TAMPERED"
+    ]
+  },
+  {
+    "name": "one_value_candidate_dropped",
+    "path": [
+      "differences",
+      0,
+      "normalized_observed_state",
+      "value_candidates",
+      "members"
+    ],
+    "value": [
+      {
+        "value": "FAIL",
+        "value_type": "STRING",
+        "unit": null,
+        "fact_predicate": "equals@v1",
+        "effective_boundary": {
+          "kind": "OBSERVATION_SCOPE_BOUNDARY",
+          "scope_ref": {
+            "kind": "observation_scope",
+            "id": "OBS-SCOPE-0001"
+          },
+          "resolved_scope_record_sha256": "sha256:dd30f0ef095e08355873b73345652f22392a88730cc61753bf3691edfa9059cd",
+          "target_effective_window": {
+            "start": "2026-08-30T08:00:00Z",
+            "end": "2026-08-30T09:00:00Z"
+          },
+          "source_snapshot_refs": {
+            "collection_kind": "UNORDERED_SET",
+            "members": [
+              {
+                "kind": "source_snapshot",
+                "id": "SNAP-0001"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "multi_candidate_claims_satisfied",
+    "path": [
+      "differences",
+      0,
+      "structural_difference",
+      "comparison_result"
+    ],
+    "value": "SATISFIED"
+  }
+]
