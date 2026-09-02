@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .conformance import admit, instant
+from .conformance import admit, stored_instant, transient_instant
 from .scope import is_contained, require_scope
 
 ACTIVE = "ACTIVE"
@@ -69,10 +69,13 @@ def binding_mismatches(
     # The validity window is compared against a supplied time, never a clock read -- two
     # evaluations of the same request must agree, and a clock makes that impossible
     # (``APPROVAL_CONTRACT.md`` §7). The three timestamps are *parsed* before comparison;
-    # see :func:`instant` for why lexicographic ordering is not chronological ordering.
-    now = instant(evaluation_time, "evaluation time")
-    opened = instant(str(approval["approved_at"]), "approval approved_at")
-    closes = instant(str(approval["expires_at"]), "approval expires_at")
+    # see :func:`stored_instant` for why lexicographic ordering is not chronological ordering.
+    # The window's own bounds are stored fields of this record and are admitted as such; the
+    # evaluation time is supplied, so it is admitted by the transient grammar. Comparing them
+    # is exact at every precision -- ``Instant`` never truncates a fraction.
+    now = transient_instant(evaluation_time, "evaluation time")
+    opened = stored_instant(str(approval["approved_at"]), "approval approved_at")
+    closes = stored_instant(str(approval["expires_at"]), "approval expires_at")
     if not (opened <= now <= closes):
         reasons.append("APPROVAL_OUTSIDE_VALIDITY_WINDOW")
     if approval["project_id"] != project_id:

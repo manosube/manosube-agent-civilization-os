@@ -241,6 +241,242 @@ def test_an_autonomous_decision_cites_a_rule_that_granted_it(
 
 
 # --------------------------------------------------------------------------- #
+# 2b. provenance is derived from the answer, and the answer is not final until the end
+# --------------------------------------------------------------------------- #
+#
+# "The cited rule supports the resolved decision" was asserted for the rule-conflict path and
+# implemented there alone. A rule was chosen at *rule resolution*, before the two floors and
+# before any approval narrowing -- so a ``MERGE`` request under an ``AUTONOMOUS`` rule
+# returned ``HUMAN_APPROVAL_REQUIRED`` while citing a rule that declares ``AUTONOMOUS``. The
+# record's provenance argued against its own answer, and that reference is part of the
+# decision's content address.
+#
+# The rule holds where it is enumerated, so it is enumerated here: every combination of the
+# two floors, the rule sets that reach them, and the approvals that narrow or lower.
+
+_PROVENANCE_RULE_SETS = ("none", "autonomous", "requires", "both")
+_PROVENANCE_APPROVALS = ("none", "permitting", "excluding")
+
+
+def _provenance_rules(project_id: str, kind: str, name: str) -> list[dict[str, Any]]:
+    permits = rule(
+        project_id,
+        action_kinds=[kind],
+        decision=AUTONOMOUS,
+        maximum_reversibility="IRREVERSIBLE",
+    )
+    requires = rule(
+        project_id,
+        action_kinds=[kind],
+        decision=HUMAN_APPROVAL_REQUIRED,
+        maximum_reversibility="IRREVERSIBLE",
+    )
+    return {
+        "none": [],
+        "autonomous": [permits],
+        "requires": [requires],
+        "both": [permits, requires],
+    }[name]
+
+
+def _provenance_matrix() -> list[dict[str, Any]]:
+    difference = derived_difference()
+    where = scope()
+    rows: list[dict[str, Any]] = []
+    for kind in ("WRITE_FILE", "MERGE"):          # no floor, then the human-only floor
+        for reversibility in ("REVERSIBLE", "IRREVERSIBLE"):   # then the irreversible floor
+            requested = action(kind, reversibility)
+            for rule_name in _PROVENANCE_RULE_SETS:
+                for approval_name in _PROVENANCE_APPROVALS:
+                    granted = {
+                        "none": [],
+                        "permitting": [approval(difference, requested, where)],
+                        "excluding": [
+                            approval(difference, requested, where, prohibited_actions=[kind])
+                        ],
+                    }[approval_name]
+                    rows.append(
+                        {
+                            "id": f"{kind}-{reversibility}-{rule_name}-{approval_name}",
+                            "difference": difference,
+                            "action": requested,
+                            "scope": where,
+                            "rules": _provenance_rules(difference["project_id"], kind, rule_name),
+                            "approvals": granted,
+                        }
+                    )
+    return rows
+
+
+_PROVENANCE_MATRIX = _provenance_matrix()
+
+
+def test_the_provenance_matrix_is_neither_empty_nor_shrunk() -> None:
+    """The harness before its subject."""
+
+    assert len(_PROVENANCE_MATRIX) == 48, len(_PROVENANCE_MATRIX)
+
+
+def _provenance_decision(row: dict[str, Any]) -> dict[str, Any]:
+    return evaluate_authority(
+        authority_request(
+            row["difference"],
+            row["action"],
+            row["scope"],
+            rules=row["rules"],
+            approvals=row["approvals"],
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "row", _PROVENANCE_MATRIX, ids=lambda row: row["id"]
+)
+def test_a_cited_rule_always_declares_the_decision_it_is_cited_for(
+    row: dict[str, Any]
+) -> None:
+    """Over every floor and every narrowing: the citation never contradicts the answer."""
+
+    decision = _provenance_decision(row)
+    cited = decision["resolved_rule_ref"]
+    if cited is None:
+        return
+    by_id = {supplied["authority_rule_id"]: supplied for supplied in row["rules"]}
+    assert cited["id"] in by_id, cited
+    assert by_id[cited["id"]]["decision"] == decision["decision"], (
+        row["id"], by_id[cited["id"]]["decision"], decision["decision"]
+    )
+
+
+@pytest.mark.parametrize(
+    "row", _PROVENANCE_MATRIX, ids=lambda row: row["id"]
+)
+def test_the_reason_codes_and_the_citation_cannot_disagree(row: dict[str, Any]) -> None:
+    """Exactly one of the three rule codes, and it says what the citation shows.
+
+    Without this the citation could be cleared while ``RULE_RESOLVED`` stayed behind -- a
+    record reporting a resolved rule and naming none.
+    """
+
+    decision = _provenance_decision(row)
+    codes = set(decision["decision_reason_codes"])
+    present = codes & {"RULE_RESOLVED", "RULE_NOT_DECISIVE", "NO_RULE_RESOLVED"}
+    assert len(present) == 1, (row["id"], sorted(present))
+    cited = decision["resolved_rule_ref"]
+    assert (cited is not None) == ("RULE_RESOLVED" in present), (row["id"], present, cited)
+    if "NO_RULE_RESOLVED" in present:
+        assert not row["rules"] or _no_rule_governs(row), row["id"]
+
+
+def _no_rule_governs(row: dict[str, Any]) -> bool:
+    """Whether every supplied rule fails to govern -- reversibility is the only way here."""
+
+    return all(
+        rule_record["maximum_reversibility"] == "REVERSIBLE"
+        and row["action"]["reversibility"] == "IRREVERSIBLE"
+        for rule_record in row["rules"]
+    )
+
+
+def test_the_matrix_exercises_all_three_provenance_outcomes() -> None:
+    """The control. A matrix that only ever reaches one outcome asserts nothing.
+
+    ``RULE_NOT_DECISIVE`` is the outcome the finding was about, so its presence here is what
+    makes the two tests above a regression rather than a restatement.
+    """
+
+    seen: dict[str, int] = {"RULE_RESOLVED": 0, "RULE_NOT_DECISIVE": 0, "NO_RULE_RESOLVED": 0}
+    for row in _PROVENANCE_MATRIX:
+        for code in _provenance_decision(row)["decision_reason_codes"]:
+            if code in seen:
+                seen[code] += 1
+    assert all(count > 0 for count in seen.values()), seen
+
+
+def test_a_floor_alone_does_not_borrow_a_permissive_rule(
+    difference: dict[str, Any]
+) -> None:
+    """The finding itself, named: ``MERGE`` under a rule that grants autonomy.
+
+    The human-only floor created the whole of the restriction. No rule declares it, so the
+    honest citation is none -- not the rule that argued the other way.
+    """
+
+    requested, where = action("MERGE"), scope()
+    permits = rule(difference["project_id"], action_kinds=["MERGE"], decision=AUTONOMOUS)
+    decision = evaluate_authority(
+        authority_request(difference, requested, where, rules=[permits])
+    )
+    assert decision["decision"] == HUMAN_APPROVAL_REQUIRED
+    assert "ACTION_IS_HUMAN_ONLY" in decision["decision_reason_codes"]
+    assert "RULE_NOT_DECISIVE" in decision["decision_reason_codes"]
+    assert decision["resolved_rule_ref"] is None
+
+
+def test_the_irreversible_floor_does_not_borrow_a_permissive_rule(
+    difference: dict[str, Any]
+) -> None:
+    """The other floor, which a fix aimed only at the first one would leave open."""
+
+    requested, where = action("WRITE_FILE", "IRREVERSIBLE"), scope()
+    permits = rule(
+        difference["project_id"],
+        action_kinds=["WRITE_FILE"],
+        decision=AUTONOMOUS,
+        maximum_reversibility="IRREVERSIBLE",
+    )
+    decision = evaluate_authority(
+        authority_request(difference, requested, where, rules=[permits])
+    )
+    assert decision["decision"] == HUMAN_APPROVAL_REQUIRED
+    assert "IRREVERSIBLE_ACTION" in decision["decision_reason_codes"]
+    assert decision["resolved_rule_ref"] is None
+
+
+def test_an_exclusion_alone_does_not_borrow_a_permissive_rule(
+    difference: dict[str, Any]
+) -> None:
+    """Narrowing by approval raises the decision too, and cannot borrow a rule either."""
+
+    requested, where = action("WRITE_FILE"), scope()
+    permits = rule(difference["project_id"], action_kinds=["WRITE_FILE"], decision=AUTONOMOUS)
+    withheld = approval(difference, requested, where, prohibited_actions=["WRITE_FILE"])
+    decision = evaluate_authority(
+        authority_request(
+            difference, requested, where, rules=[permits], approvals=[withheld]
+        )
+    )
+    assert decision["decision"] == HUMAN_APPROVAL_REQUIRED
+    assert "APPROVAL_EXCLUDES_ACTION" in decision["decision_reason_codes"]
+    assert decision["resolved_rule_ref"] is None
+
+
+def test_a_floor_cleared_by_an_approval_still_cites_the_rule_that_permits(
+    difference: dict[str, Any]
+) -> None:
+    """The control in the other direction. Clearing a citation is not the goal.
+
+    Where the approval clears the floor and a governing rule *does* declare the resolved
+    decision, that rule is the provenance of the answer and is cited.
+    """
+
+    requested, where = action("MERGE"), scope()
+    permits = rule(difference["project_id"], action_kinds=["MERGE"], decision=AUTONOMOUS)
+    granted = approval(difference, requested, where)
+    decision = evaluate_authority(
+        authority_request(
+            difference, requested, where, rules=[permits], approvals=[granted]
+        )
+    )
+    assert decision["decision"] == AUTONOMOUS
+    assert decision["resolved_rule_ref"] == {
+        "kind": "authority_rule",
+        "id": permits["authority_rule_id"],
+    }
+    assert decision["approval_ref"] is not None
+
+
+# --------------------------------------------------------------------------- #
 # 3. the opaque payload must still be canonically serialisable
 # --------------------------------------------------------------------------- #
 

@@ -296,6 +296,15 @@ NOT MERELY A RULE THAT WAS PRESENT
 
 Human-only floorとirreversibility floorはruleではない。それらが決定を引き上げた場合はreason codeとして記録し、ruleを騙って引用しない。
 
+そのため引用は、**全floorとapproval narrowingを適用したあとに導出する**。rule解決の時点で選ぶと、決定がまだ確定していない段階のruleを引くことになる。governing ruleのどれも確定した決定を宣言していない場合、引用は`null`であり、reason codeが「ruleは支配したが決定を説明しない」と述べる。
+
+```text
+RESOLVE RULES → APPLY FLOORS → APPLY APPROVAL NARROWING → THEN CITE
+NO GOVERNING RULE            → NO_RULE_RESOLVED,   resolved_rule_ref = null
+GOVERNED, DECLARES THE ANSWER → RULE_RESOLVED,      resolved_rule_ref = that rule
+GOVERNED, DOES NOT           → RULE_NOT_DECISIVE,  resolved_rule_ref = null
+```
+
 同じ結論・同じreason codeでも、支配したruleやprohibition、あるいは除外したapprovalが異なれば別のdecisionである。provenanceを除いたaddressは、同一identityの下に異なるpayloadを許す。
 
 ```text

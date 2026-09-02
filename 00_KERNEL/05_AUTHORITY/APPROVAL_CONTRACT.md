@@ -231,6 +231,22 @@ LEXICOGRAPHIC ORDER ≠ CHRONOLOGICAL ORDER
 NAIVE TIMESTAMP → REJECT
 ```
 
+parseは**切り捨ててはならない**。承認の`approved_at`が`...00.0000002Z`、評価時刻が`...00.0000001Z`のとき、microsecondへ丸めれば両者は同一instantとなり、**まだ発効していない承認**が有効期間内と判定される。小数秒は書かれたまま比較する。
+
+```text
+TRUNCATING AN INPUT = ANSWERING A QUESTION NOBODY ASKED
+FRACTIONAL SECONDS ARE COMPARED EXACTLY, AT ANY PRECISION
+```
+
+保存されるtimestampと、評価時に与えられるtimestampは**別の形式**である。`approved_at`と`expires_at`はcontent-addressed recordのfieldであり、同一instantが二通りに綴られてはならないため、canonical schemaどおりUTC `Z`のみを取る。`evaluation_time`は保存されず、addressされないため、RFC 3339が許すoffset表記を受け入れる。
+
+```text
+STORED    approved_at / expires_at   → RFC 3339, UTC 'Z' only, one spelling per instant
+TRANSIENT evaluation_time            → RFC 3339, any offset it names
+```
+
+両形式は**同一のadmission ownerが持つ**。grammarをcodeとschemaへ二重に書けば、schemaが拒否する綴りをcodeが受け入れる。
+
 # 8. Revocation
 
 撤回は承認の削除ではない。`status: REVOKED`として保持し、lineageを残す。

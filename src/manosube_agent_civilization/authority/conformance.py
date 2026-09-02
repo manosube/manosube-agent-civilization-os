@@ -24,7 +24,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
+from fractions import Fraction
 import re
 from typing import Any
 
@@ -68,41 +69,131 @@ RECORD_TYPES: dict[str, RecordType] = {
 
 HUMAN_AUTHORITY_KIND = "human_authority"
 
-#: RFC 3339 §5.6, and only that. ``datetime.fromisoformat`` is a *superset*: it accepts an
-#: arbitrary date/time separator, a space separator, ISO week dates, the basic unseparated
-#: form, a comma as the fraction separator and a four-digit offset -- none of which is
-#: RFC 3339, and all of which produced decisions on inputs the admission contract says are
-#: malformed. Parsing is not validation, so the grammar is checked first and parsed second.
-_RFC3339 = re.compile(
-    r"^\d{4}-\d{2}-\d{2}"          # full-date
-    r"[Tt]"                         # the only permitted separator
-    r"\d{2}:\d{2}:\d{2}"           # partial-time
-    r"(\.\d+)?"                     # optional fraction, '.' only, at least one digit
-    r"([Zz]|[+-]\d{2}:\d{2})$"      # offset, colon required
-)
+# --------------------------------------------------------------------------- #
+# time: one grammar, two admitted forms, and no truncation
+# --------------------------------------------------------------------------- #
+#
+# RFC 3339 §5.6, and only that. ``datetime.fromisoformat`` is a *superset*: it accepts an
+# arbitrary date/time separator, a space separator, ISO week dates, the basic unseparated
+# form, a comma as the fraction separator and a four-digit offset -- none of which is
+# RFC 3339, and all of which produced decisions on inputs the admission contract says are
+# malformed. Parsing is not validation, so the grammar is checked first and parsed second.
+#
+# Two forms are admitted, and what separates them is whether the value is *stored*:
+#
+# ```text
+# stored     a field of a content-addressed record: approved_at, expires_at. UTC 'Z' and an
+#            uppercase 'T', exactly what common/timestamp.schema.json has always required.
+#            One spelling per instant, because a record whose identity is its own content
+#            may not carry two spellings of the same field.
+# transient  the caller-supplied evaluation_time. Never stored, never addressed, so
+#            RFC 3339's own offset and case latitude costs nothing here and lets a caller
+#            pass the clock reading it actually holds.
+# ```
+#
+# Splitting them is the point. One grammar admitting both let a *stored* bound carry
+# ``+09:00`` in code while the schema refused it -- a boundary described in two places and
+# agreeing in neither.
+
+_D2 = "[0-9]{2}"
+_DATE = f"[0-9]{{4}}-{_D2}-{_D2}"
+_TIME = f"{_D2}:{_D2}:{_D2}"
+_FRACTION = r"(\.[0-9]+)?"
+_NUMERIC_OFFSET = f"[+-]{_D2}:{_D2}"
+
+#: The stored form. ``01_SCHEMA/common/timestamp.schema.json`` carries this string verbatim
+#: and a contract test holds the two to each other, so the grammar has one owner rather than
+#: a copy in code and a looser copy in the schema. Written as an ECMA-262 expression -- no
+#: named groups, and ASCII digit classes because Python's ``\d`` also matches Devanagari and
+#: Arabic-Indic digits, which ``int`` then parses happily and the schema never accepted.
+STORED_TIMESTAMP_PATTERN = f"^{_DATE}T{_TIME}{_FRACTION}Z$"
+#: The transient form: the stored form widened by RFC 3339's own case and offset latitude.
+TRANSIENT_TIMESTAMP_PATTERN = f"^{_DATE}[Tt]{_TIME}{_FRACTION}([Zz]|{_NUMERIC_OFFSET})$"
+
+_STORED = re.compile(STORED_TIMESTAMP_PATTERN)
+_TRANSIENT = re.compile(TRANSIENT_TIMESTAMP_PATTERN)
+_STORED_FORM = "an RFC 3339 UTC timestamp"
+_TRANSIENT_FORM = "an RFC 3339 timestamp"
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-def instant(value: str, context: str) -> datetime:
-    """Parse an RFC 3339 timestamp into a comparable instant. One owner, every caller.
+@dataclass(frozen=True, order=True)
+class Instant:
+    """One point in time, exactly as written: no rounding and no truncation.
 
-    Strings do not order chronologically. ``2026-06-01T00:00:00Z`` sorts *after*
-    ``2026-06-01T00:00:00.5Z`` because ``Z`` exceeds ``.``, so a still-valid approval
-    evaluated half a second before its expiry was reported outside its window. Fractional
-    seconds and equivalent offsets are the same instant written differently, and only
-    parsing sees that.
+    ``datetime`` holds microseconds, so it *silently* truncates anything longer. An approval
+    opening at ``2026-06-01T00:00:00.0000002Z`` therefore compared equal to an evaluation at
+    ``...0000001Z``, and a not-yet-effective approval bound the request and returned
+    ``AUTONOMOUS``. Truncating an input is answering a question nobody asked, so the fraction
+    is kept as an exact rational and the ordering is exact for any number of digits.
     """
 
-    if not is_scalar_tag(value) or not _RFC3339.match(value):
-        raise AuthorityError(f"{context} is not an RFC 3339 timestamp: {value!r}")
+    seconds_since_epoch: Fraction
+
+
+def _instant(value: str, context: str, *, grammar: re.Pattern[str], form: str) -> Instant:
+    """Admit one timestamp against *grammar* and return the exact instant it names."""
+
+    if not is_scalar_tag(value) or not grammar.fullmatch(value):
+        raise AuthorityError(f"{context} is not {form}: {value!r}")
+
+    # Both grammars are fixed-width through the seconds, so the parts are read off the value
+    # directly. A second regular expression here would be a second description of the same
+    # grammar, and two descriptions are what this function exists to stop.
+    tail = value[19:]
+    if tail[-1] in ("Z", "z"):
+        offset_text, fraction_text = tail[-1], tail[:-1]
+    else:
+        offset_text, fraction_text = tail[-6:], tail[:-6]
+
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+        if len(offset_text) == 1:
+            zone = UTC
+        else:
+            sign = -1 if offset_text[0] == "-" else 1
+            zone = timezone(
+                sign * timedelta(hours=int(offset_text[1:3]), minutes=int(offset_text[4:6]))
+            )
+        base = datetime(
+            int(value[0:4]),
+            int(value[5:7]),
+            int(value[8:10]),
+            int(value[11:13]),
+            int(value[14:16]),
+            int(value[17:19]),
+            tzinfo=zone,
+        )
     except ValueError as error:
-        # The grammar matched but the value is not a real instant -- hour 24, month 13, an
-        # offset beyond a day. Refused for the same reason: it names no point in time.
-        raise AuthorityError(f"{context} is not an RFC 3339 timestamp: {value!r}") from error
-    if parsed.tzinfo is None:  # pragma: no cover - the grammar already requires an offset
-        raise AuthorityError(f"{context} carries no timezone: {value!r}")
-    return parsed
+        # The grammar matched but the value names no instant -- hour 24, month 13, an offset
+        # beyond a day. Refused for the same reason: there is no point in time to compare.
+        raise AuthorityError(f"{context} is not {form}: {value!r}") from error
+
+    digits = fraction_text[1:]
+    elapsed = base - _EPOCH
+    return Instant(
+        Fraction(elapsed.days * 86400 + elapsed.seconds)
+        + Fraction(elapsed.microseconds, 1_000_000)
+        + (Fraction(int(digits), 10 ** len(digits)) if digits else Fraction(0))
+    )
+
+
+def stored_instant(value: str, context: str) -> Instant:
+    """Admit a timestamp held *inside a canonical record*. One owner, every caller.
+
+    Strings do not order chronologically: ``2026-06-01T00:00:00Z`` sorts *after*
+    ``2026-06-01T00:00:00.5Z`` because ``Z`` exceeds ``.``, so a still-valid approval
+    evaluated half a second before its expiry was reported outside its window. Only parsing
+    sees that, and only an exact fraction sees it at every precision.
+    """
+
+    return _instant(value, context, grammar=_STORED, form=_STORED_FORM)
+
+
+def transient_instant(value: str, context: str) -> Instant:
+    """Admit a caller-supplied clock reading, which is compared and never stored."""
+
+    return _instant(value, context, grammar=_TRANSIENT, form=_TRANSIENT_FORM)
 
 
 def validate(record: dict[str, Any], schema_name: str, context: str) -> None:

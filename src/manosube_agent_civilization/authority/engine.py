@@ -46,7 +46,7 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.state.errors import CanonicalizationError
 
 from . import approval as approval_owner, prohibition as prohibition_owner
-from .conformance import AUTHORITY_SCHEMA_BASE, admit, admit_all, instant
+from .conformance import AUTHORITY_SCHEMA_BASE, admit, admit_all, transient_instant
 from .errors import (
     AuthorityError,
     AuthorityValidationError,
@@ -192,8 +192,8 @@ def _resolve_rules(
     action_kind: str,
     reversibility: str,
     requested_scope: dict[str, Any],
-) -> tuple[dict[str, Any] | None, str]:
-    """Return the rule that governs this request, and the decision it yields.
+) -> tuple[list[dict[str, Any]], str]:
+    """Return every rule that governs this request, and the decision they yield.
 
     A rule governs only where the request fits **inside** it: same project, the action named,
     reversibility within its ceiling, and scope contained. Where several govern, the most
@@ -210,20 +210,34 @@ def _resolve_rules(
     ]
     if not governing:
         # Silence is not permission. ``AUTHORITY_LEVELS.md`` §2.
-        return None, HUMAN_APPROVAL_REQUIRED
+        return [], HUMAN_APPROVAL_REQUIRED
     decision = AUTONOMOUS
     for rule in governing:
         decision = at_least_as_restrictive_as(decision, rule["decision"])
-    # The cited rule must be one that *supports* the resolved restriction. Citing the
-    # lexicographically smallest governing rule named the permissive one whenever it happened
-    # to sort first -- a decision record pointing at a rule that argued the other way. Since
-    # this reference participates in the decision's content address, it has to identify the
-    # provenance of the answer and not merely a rule that was present.
+    return governing, decision
+
+
+def _cite_rule(governing: list[dict[str, Any]], decision: str) -> dict[str, Any] | None:
+    """Return the rule that accounts for *decision*, or ``None`` when no rule does.
+
+    A citation is a claim about *why* the answer is what it is, and the reference
+    participates in the decision's content address, so it must name a rule that declares the
+    resolved decision -- not merely a rule that was present.
+
+    Which rules can say that is only knowable once every floor and every approval narrowing
+    has been applied, which is why this is asked at the end rather than at rule resolution.
+    Resolving it early cited a rule declaring ``AUTONOMOUS`` on a decision the human-only
+    floor had already raised to ``HUMAN_APPROVAL_REQUIRED``: a record whose provenance argued
+    against its own answer. Where a floor alone created the restriction no rule declares it,
+    and the honest citation is none at all.
+    """
+
     supporting = [rule for rule in governing if rule["decision"] == decision]
+    if not supporting:
+        return None
     # Chosen by identity, not by input position, so the record is the same whichever order
     # the rules arrived in.
-    chosen = sorted(supporting, key=lambda rule: str(rule["authority_rule_id"]))[0]
-    return chosen, decision
+    return sorted(supporting, key=lambda rule: str(rule["authority_rule_id"]))[0]
 
 
 def evaluate_authority(request: dict[str, Any]) -> dict[str, Any]:
@@ -272,7 +286,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
     # read a clock value. Parsed only inside the approval check, ``not-a-time`` produced a
     # decision on every early route -- a rule granting autonomy, a prohibition returning
     # first, an empty approval list -- because none of them reached the parser.
-    instant(evaluation_time, "evaluation time")
+    transient_instant(evaluation_time, "evaluation time")
 
     # The Difference describes a State. If that is not the State being acted on, there is no
     # permission question to answer over it -- re-observe, then ask again.
@@ -334,14 +348,15 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         )
 
     # --- rules --------------------------------------------------------------- #
-    resolved_rule, decision = _resolve_rules(
+    governing, decision = _resolve_rules(
         rules,
         project_id=project_id,
         action_kind=action_kind,
         reversibility=action["reversibility"],
         requested_scope=requested_scope,
     )
-    reason_codes.append("NO_RULE_RESOLVED" if resolved_rule is None else "RULE_RESOLVED")
+    if not governing:
+        reason_codes.append("NO_RULE_RESOLVED")
 
     # Two floors a rule cannot lower. Both raise the decision and neither can lower it.
     if action_kind in HUMAN_ONLY_ACTION_KINDS:
@@ -414,6 +429,14 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
 
     if decision == AUTONOMOUS and used_approval is None:
         reason_codes.append("RULE_PERMITS_AUTONOMOUS")
+
+    # Provenance last, because until here the decision could still be raised by a floor or by
+    # an exclusion, or lowered by an approval. ``RULE_NOT_DECISIVE`` is what a governing rule
+    # that does not account for the answer leaves behind: the rule is recorded as having
+    # governed, and no rule is cited, so the reason codes and the citation cannot disagree.
+    resolved_rule = _cite_rule(governing, decision)
+    if governing:
+        reason_codes.append("RULE_RESOLVED" if resolved_rule is not None else "RULE_NOT_DECISIVE")
 
     return _decision(
         project_id=project_id,
