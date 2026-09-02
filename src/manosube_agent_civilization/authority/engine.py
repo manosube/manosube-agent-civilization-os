@@ -43,6 +43,7 @@ from manosube_agent_civilization.difference.validation import (
     DIFFERENCE_SCHEMA_BASE,
     validate_record as _validate_canonical_record,
 )
+from manosube_agent_civilization.state.errors import CanonicalizationError
 
 from . import approval as approval_owner, prohibition as prohibition_owner
 from .conformance import AUTHORITY_SCHEMA_BASE, admit, admit_all
@@ -144,9 +145,17 @@ def _require_action(value: Any) -> dict[str, Any]:
     declared = require_scalar_tag(
         action["action_semantic_fingerprint"], "requested action fingerprint"
     )
-    # The supplied fingerprint is not trusted as a label. It is recomputed from the action's
-    # own content, so a caller cannot bind an approval to one action and present another.
-    recomputed = action_fingerprint(action)
+    # The opaque payload must at least be *canonically serializable*, or no fingerprint over
+    # it exists and there is nothing to bind an approval to. Opaque means Authority does not
+    # interpret the payload; it does not mean the payload may be unrepresentable. The precise
+    # diagnosis is produced here rather than left to the boundary translation, so a caller is
+    # told which field it was.
+    try:
+        recomputed = action_fingerprint(action)
+    except CanonicalizationError as error:
+        raise AuthorityError(
+            f"requested action operation payload is not canonical: {error}"
+        ) from error
     if declared != recomputed:
         raise AuthorityError(
             "requested action fingerprint does not match the action it names: "
@@ -205,9 +214,15 @@ def _resolve_rules(
     decision = AUTONOMOUS
     for rule in governing:
         decision = at_least_as_restrictive_as(decision, rule["decision"])
-    # The cited rule is chosen by identity, not by input position, so the decision record is
-    # the same whichever order the rules arrived in.
-    chosen = sorted(governing, key=lambda rule: str(rule["authority_rule_id"]))[0]
+    # The cited rule must be one that *supports* the resolved restriction. Citing the
+    # lexicographically smallest governing rule named the permissive one whenever it happened
+    # to sort first -- a decision record pointing at a rule that argued the other way. Since
+    # this reference participates in the decision's content address, it has to identify the
+    # provenance of the answer and not merely a rule that was present.
+    supporting = [rule for rule in governing if rule["decision"] == decision]
+    # Chosen by identity, not by input position, so the record is the same whichever order
+    # the rules arrived in.
+    chosen = sorted(supporting, key=lambda rule: str(rule["authority_rule_id"]))[0]
     return chosen, decision
 
 
@@ -217,16 +232,17 @@ def evaluate_authority(request: dict[str, Any]) -> dict[str, Any]:
     The returned record is schema-valid and content-addressed: the same question always
     produces the same ``authority_decision_id``. *request* is never mutated.
 
-    Every refusal leaves here as an :class:`AuthorityError`. Readability is decided by the
-    owner one layer down (ADR-0025) and that owner speaks in ``DifferenceError``; asking it
-    is right, but leaking its vocabulary through this boundary would make a caller of
-    *Authority* catch a *Difference* error to learn that its own request was malformed. The
-    decision is delegated. The boundary's error vocabulary is not.
+    Every refusal leaves here as an :class:`AuthorityError`. Two owners one layer down speak
+    their own vocabularies -- readability answers in ``DifferenceError`` (ADR-0025) and
+    canonical serialization in ``CanonicalizationError`` -- and asking both is right. Letting
+    either escape would make a caller of *Authority* catch a *Difference* or a *State* error
+    to learn that its own request was malformed. The decisions are delegated. The boundary's
+    error vocabulary is not.
     """
 
     try:
         return _evaluate(request)
-    except DifferenceError as error:
+    except (DifferenceError, CanonicalizationError) as error:
         raise AuthorityError(str(error)) from error
 
 
@@ -252,6 +268,11 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         shaped["current_state_fingerprint"], "current State fingerprint"
     )
     evaluation_time = require_scalar_tag(shaped["evaluation_time"], "evaluation time")
+    # Time conformance belongs to the admission stage, not to the one branch that happens to
+    # read a clock value. Parsed only inside the approval check, ``not-a-time`` produced a
+    # decision on every early route -- a rule granting autonomy, a prohibition returning
+    # first, an empty approval list -- because none of them reached the parser.
+    approval_owner.instant(evaluation_time, "evaluation time")
 
     # The Difference describes a State. If that is not the State being acted on, there is no
     # permission question to answer over it -- re-observe, then ask again.
@@ -307,6 +328,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
             resolved_rule=None,
             matched_prohibitions=matched,
             used_approval=None,
+            excluding_approvals=[],
             decision=PROHIBITED,
             reason_codes=reason_codes,
         )
@@ -329,43 +351,61 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         decision = at_least_as_restrictive_as(decision, HUMAN_APPROVAL_REQUIRED)
         reason_codes.append("IRREVERSIBLE_ACTION")
 
-    # --- approval, only where the decision demands one ------------------------ #
+    # --- approvals: which bind, which withhold -------------------------------- #
+    #
+    # Binding is settled **independently of what the rules decided**. An approval may narrow
+    # authority even where a rule permits (``APPROVAL_CONTRACT.md`` §6), and an exclusion
+    # examined only when a rule already required approval is not a narrowing -- it is a
+    # coincidence of which branch ran.
+    intent = change_intent_fingerprint(action, requested_scope)
+    declared_fingerprint = action["action_semantic_fingerprint"]
+    failures: list[str] = []
+    binding: list[dict[str, Any]] = []
+    for candidate in approvals:
+        mismatches = approval_owner.binding_mismatches(
+            candidate,
+            project_id=project_id,
+            difference_id=difference["difference_id"],
+            change_intent=intent,
+            action_fingerprint=declared_fingerprint,
+            requested_scope=requested_scope,
+            state_revision=state_revision,
+            state_fingerprint=state_fingerprint,
+            evaluation_time=evaluation_time,
+        )
+        if mismatches:
+            failures.extend(mismatches)
+        else:
+            binding.append(candidate)
+
+    excluding = sorted(
+        (record for record in binding if approval_owner.excludes_action(record, action_kind)),
+        key=lambda record: str(record["approval_id"]),
+    )
+    if excluding:
+        # An approval may add a refusal; it may never lift one. This raises the decision and
+        # can never lower it, whatever the rules said.
+        decision = at_least_as_restrictive_as(decision, HUMAN_APPROVAL_REQUIRED)
+        reason_codes.append("APPROVAL_EXCLUDES_ACTION")
+
+    # An approval that withheld the action does not then authorize it.
+    usable = [record for record in binding if record not in excluding]
+
     used_approval: dict[str, Any] | None = None
     if decision == HUMAN_APPROVAL_REQUIRED:
-        intent = change_intent_fingerprint(action, requested_scope)
-        declared_fingerprint = action["action_semantic_fingerprint"]
         if not approvals:
             reason_codes.append("APPROVAL_MISSING")
-        else:
-            failures: list[str] = []
-            usable: list[dict[str, Any]] = []
-            for candidate in approvals:
-                reasons = approval_owner.unusable_reasons(
-                    candidate,
-                    project_id=project_id,
-                    difference_id=difference["difference_id"],
-                    change_intent=intent,
-                    action_fingerprint=declared_fingerprint,
-                    action_kind=action_kind,
-                    requested_scope=requested_scope,
-                    state_revision=state_revision,
-                    state_fingerprint=state_fingerprint,
-                    evaluation_time=evaluation_time,
-                )
-                if reasons:
-                    failures.extend(reasons)
-                else:
-                    usable.append(candidate)
-            # Every usable approval is checked, then one is chosen **by identity**. Taking
+        elif usable:
+            # Every binding approval is examined, then one is chosen **by identity**. Taking
             # the first supplied made the returned record depend on input order, which for an
             # evaluator promising a canonical answer is a second answer to the same question.
-            if usable:
-                used_approval = sorted(usable, key=lambda record: str(record["approval_id"]))[0]
-            if used_approval is not None:
-                decision = AUTONOMOUS
-                reason_codes.append("APPROVAL_EXACT")
-            else:
-                reason_codes.extend(sorted(set(failures)))
+            used_approval = sorted(usable, key=lambda record: str(record["approval_id"]))[0]
+            decision = AUTONOMOUS
+            reason_codes.append("APPROVAL_EXACT")
+        elif not excluding:
+            reason_codes.extend(sorted(set(failures)))
+        if used_approval is None and not excluding and approvals and not failures:
+            reason_codes.append("APPROVAL_MISSING")
 
     if decision == AUTONOMOUS and used_approval is None:
         reason_codes.append("RULE_PERMITS_AUTONOMOUS")
@@ -380,6 +420,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         resolved_rule=resolved_rule,
         matched_prohibitions=[],
         used_approval=used_approval,
+        excluding_approvals=excluding,
         decision=decision,
         reason_codes=reason_codes,
     )
@@ -396,6 +437,7 @@ def _decision(
     resolved_rule: dict[str, Any] | None,
     matched_prohibitions: list[dict[str, Any]],
     used_approval: dict[str, Any] | None,
+    excluding_approvals: list[dict[str, Any]],
     decision: str,
     reason_codes: list[str],
 ) -> dict[str, Any]:
@@ -422,6 +464,12 @@ def _decision(
         "approval_ref": (
             None if used_approval is None else {"kind": "approval", "id": used_approval["approval_id"]}
         ),
+        # An approval that *withheld* the action is provenance too: without it, two different
+        # approvals narrowing the same request to the same level with the same reason code
+        # would share one decision identity.
+        "excluding_approval_refs": [
+            {"kind": "approval", "id": record["approval_id"]} for record in excluding_approvals
+        ],
         "decision": decision,
         "decision_reason_codes": sorted(set(reason_codes)),
         "decision_semantic_fingerprint": "",

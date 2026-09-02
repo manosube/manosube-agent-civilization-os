@@ -171,6 +171,43 @@ filesystem, and a deterministic evaluator does not read one. So Authority refuse
 enumerated members. `AUTHORITY_RESOLVES_SYMLINKS=false`, and refusing expressions is what
 keeps that gap bounded instead of open.
 
+## 5.4 Round two: four findings, one shape again
+
+Making every *input* canonical did not make the *path* that consumes them uniform. The second
+exact-head review returned four findings, and they share one shape: **a check that ran only on
+the branch that happened to need it.**
+
+| # | Ran only when | Missing everywhere else |
+| --- | --- | --- |
+| 1 | a rule already required approval | an approval's exclusion never applied where a rule granted autonomy |
+| 2 | — | the cited rule was the smallest governing ID, which could be the one that argued the other way |
+| 3 | — | a payload digest was computed without asking whether the payload could be serialised |
+| 4 | an approval was examined | a malformed instant produced a decision on every route that never reached the parser |
+
+Each reads as complete from inside its own branch. That is what makes this class hard to catch
+by reading: the code is correct where you are looking.
+
+**Binding and exclusion are different questions.** Folding them into one "usable" verdict is
+what let finding 1 exist: an approval that bound the request and withheld the action was
+classified unusable, so where a rule already said `AUTONOMOUS` the approval was never consulted
+at all. `APPROVAL_CONTRACT.md` §6.1 now states it — *an exclusion that applies only when a rule
+already required approval is not a narrowing; it is a coincidence of which branch ran.*
+
+**The cited rule must support the answer.** A `resolved_rule_ref` that participates in the
+content address has to identify the provenance of the decision, not a rule that happened to be
+present. The Human-only and irreversibility floors are *not* rules, so where they raise the
+decision they are recorded as reason codes rather than impersonating one.
+
+**Opaque is not unrepresentable.** Authority does not interpret the operation payload, but a
+payload with no canonical serialisation has no fingerprint, so there is nothing for an approval
+to bind. `CanonicalizationError` is translated at the public boundary alongside
+`DifferenceError` — the same rule as §5, applied to the second owner one layer down.
+
+One thing was closed here **before** it was reported: which approval withheld the action is
+provenance, so `excluding_approval_refs` participates in the decision address. Without it, two
+different approvals narrowing the same request to the same level with the same reason code
+would have shared one identity — the exact collision finding 6 of round one was about.
+
 ## 6. What is measured
 
 ```text
@@ -188,6 +225,11 @@ PATH_EXPRESSION_REJECTED=true         on the request, the rule and the prohibiti
 CHRONOLOGICAL_VALIDITY_COMPARISON=true
 DECISION_IDENTITY_INCLUDES_PROVENANCE=true
 APPROVAL_SELECTION_CANONICAL=true     permutation invariant
+APPROVAL_EXCLUSION_INDEPENDENT_OF_RULE_LEVEL=true
+CITED_RULE_SUPPORTS_THE_DECISION=true
+EVALUATION_TIME_ADMITTED_BEFORE_RESOLUTION=true    on every early-return route
+NONCANONICAL_PAYLOAD_FAILS_THROUGH_THE_PUBLIC_BOUNDARY=true
+EXCLUDING_APPROVALS_ARE_PROVENANCE=true
 ```
 
 The declaration generator exists because ADR-0025 §1 established that a fixture-path sweep is

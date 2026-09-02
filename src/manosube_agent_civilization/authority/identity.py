@@ -24,6 +24,10 @@ from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 #: only where it does not look. Which rule permitted, which approval was used and which
 #: prohibitions matched are all part of what the decision *is*.
 #:
+#: An approval that *withheld* the action is provenance too. Two different approvals could
+#: otherwise narrow the same request to the same level with the same reason code and produce
+#: one identity, which is the collision this list was extended to close in the first place.
+#:
 #: Still excluded, and deliberately: evaluation timestamps, Agent and session identity, input
 #: ordering. Two evaluations of the same question must land on the same identity.
 DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
@@ -35,6 +39,7 @@ DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "evaluated_state_fingerprint",
     "resolved_rule_ref",
     "approval_ref",
+    "excluding_approval_refs",
     "prohibition_refs",
     "decision",
     "decision_reason_codes",

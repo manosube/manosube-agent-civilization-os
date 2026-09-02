@@ -185,6 +185,20 @@ NO WEAKER LOCAL COPY IN RULE OR APPROVAL SELECTION
 LEXICOGRAPHIC ORDER ≠ CHRONOLOGICAL ORDER
 ```
 
+`evaluation_time`はadmission段階で解釈する。approval検査の内側だけで解釈すると、そこへ到達しない経路—ruleが自律を与えた、prohibitionが先に返った、approvalが空だった—では不正なinstantがそのままdecisionを生む。
+
+```text
+TIME CONFORMANCE BELONGS TO ADMISSION
+NOT TO THE ONE BRANCH THAT READS A CLOCK VALUE
+```
+
+opaque operation payloadは、解釈されないがcanonicalには**直列化可能でなければならない**。直列化できない値にはfingerprintが存在せず、approvalが結合する対象が存在しない。
+
+```text
+OPAQUE ≠ UNREPRESENTABLE
+NON-CANONICAL PAYLOAD → FAIL CLOSED THROUGH THE PUBLIC BOUNDARY
+```
+
 順序は固定である。**Prohibitionはrule resolutionより前に評価する。** 禁止されたactionに対して許可ruleを探すこと自体が誤りであり、探索の成功がPROHIBITIONを弱める経路を作ってはならない。
 
 # 5. Exact Binding
@@ -261,9 +275,19 @@ DECISION IDENTITY INPUT
 + resolved rule identity
 + approval identity
 + sorted prohibition identities
++ sorted excluding approval identities
 ```
 
-同じ結論・同じreason codeでも、支配したruleやprohibitionが異なれば別のdecisionである。provenanceを除いたaddressは、同一identityの下に異なるpayloadを許す。
+引用されるruleは、**その結論を支えたrule**でなければならない。governing ruleのうちidentity最小のものを引くと、決定がruleの制限で`HUMAN_APPROVAL_REQUIRED`になったのに、`AUTONOMOUS`を主張したruleを指す記録が生じる。referenceがcontent addressへ参加する以上、それは答えの出所を指さなければならない。
+
+```text
+CITE A RULE THAT SUPPORTS THE RESOLVED RESTRICTION
+NOT MERELY A RULE THAT WAS PRESENT
+```
+
+Human-only floorとirreversibility floorはruleではない。それらが決定を引き上げた場合はreason codeとして記録し、ruleを騙って引用しない。
+
+同じ結論・同じreason codeでも、支配したruleやprohibition、あるいは除外したapprovalが異なれば別のdecisionである。provenanceを除いたaddressは、同一identityの下に異なるpayloadを許す。
 
 ```text
 SAME ID / DIFFERENT PAYLOAD = NOT CANONICAL
@@ -346,6 +370,10 @@ AUTHORITY_RESOLVES_SYMLINKS=false
 CHRONOLOGICAL_VALIDITY_COMPARISON=true
 DECISION_IDENTITY_INCLUDES_PROVENANCE=true
 APPROVAL_SELECTION_CANONICAL=true
+APPROVAL_EXCLUSION_INDEPENDENT_OF_RULE_LEVEL=true
+CITED_RULE_SUPPORTS_THE_DECISION=true
+EVALUATION_TIME_ADMITTED_BEFORE_RESOLUTION=true
+NONCANONICAL_PAYLOAD_FAILS_THROUGH_THE_PUBLIC_BOUNDARY=true
 ```
 
 ```text

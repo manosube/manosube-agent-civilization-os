@@ -60,20 +60,26 @@ def instant(value: str, context: str) -> datetime:
     return parsed
 
 
-def unusable_reasons(
+def binding_mismatches(
     approval: dict[str, Any],
     *,
     project_id: str,
     difference_id: str,
     change_intent: str,
     action_fingerprint: str,
-    action_kind: str,
     requested_scope: dict[str, Any],
     state_revision: int,
     state_fingerprint: dict[str, Any],
     evaluation_time: str,
 ) -> list[str]:
-    """Return every reason this approval does not cover this request; empty means it does.
+    """Return every way this approval fails to *bind* this request; empty means it binds.
+
+    Binding and exclusion are different questions, and folding them together is what let an
+    exclusion be skipped entirely: an approval that binds this request and excludes this
+    action was classified "unusable", so when a rule already granted ``AUTONOMOUS`` the
+    approval was never consulted and its exclusion never applied. An approval may narrow
+    authority even where another rule permits (``APPROVAL_CONTRACT.md`` §6), so *whether it
+    binds* is answered here and *what it excludes* is answered by :func:`excludes_action`.
 
     Every binding is checked, not the first failing one, so a human re-approving sees the
     whole gap rather than discovering it one round at a time.
@@ -105,7 +111,16 @@ def unusable_reasons(
         reasons.append("APPROVAL_STATE_FINGERPRINT_STALE")
     if not is_contained(requested_scope, approval["approved_scope"]):
         reasons.append("APPROVAL_SCOPE_WIDENED")
-    if action_kind in approval["prohibited_actions"]:
-        # An approval may narrow itself. It may never widen -- ``APPROVAL_CONTRACT.md`` §6.
-        reasons.append("APPROVAL_EXCLUDES_ACTION")
     return sorted(reasons)
+
+
+def excludes_action(approval: dict[str, Any], action_kind: str) -> bool:
+    """Whether this approval explicitly withholds *action_kind*.
+
+    An approval may narrow itself and may never widen (``APPROVAL_CONTRACT.md`` §6), so this
+    is asked of every approval that *binds* the request -- independently of what any rule
+    decided. A narrowing that only applies when a rule already required approval is not a
+    narrowing; it is a coincidence.
+    """
+
+    return action_kind in approval["prohibited_actions"]

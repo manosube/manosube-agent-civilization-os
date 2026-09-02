@@ -165,6 +165,30 @@ APPROVAL MAY NOT WIDEN
 APPROVAL CANNOT OVERRIDE A CONSTITUTIONAL PROHIBITION
 ```
 
+## 6.1 Narrowing Is Independent of the Rule Level
+
+除外の評価は、ruleが最初にどのlevelを出したかと**独立**である。
+
+```text
+BINDING      does this approval cover this request?
+EXCLUSION    does it withhold this action?
+```
+
+二つは別の問いである。まとめて「使用不可」として扱うと、ruleが既に`AUTONOMOUS`を出した場合にapprovalが参照されず、除外が一度も適用されない。
+
+```text
+AN EXCLUSION THAT APPLIES ONLY WHEN A RULE ALREADY REQUIRED APPROVAL
+IS NOT A NARROWING; IT IS A COINCIDENCE OF WHICH BRANCH RAN
+```
+
+要求へ結合するapprovalが一つでもその操作を除外していれば、decisionは`HUMAN_APPROVAL_REQUIRED`以上へ引き上げられる。除外したapprovalが、同じ操作を許可することはない。
+
+除外したapprovalはdecision provenanceに記録する。記録しなければ、異なる二つのapprovalが同じrequestを同じlevel・同じreason codeへ狭めたとき、一つのidentityの下に異なる意味が並ぶ。
+
+```text
+EXCLUDING APPROVAL REFS ARE PROVENANCE
+```
+
 # 7. Validity Window
 
 `approved_at`と`expires_at`は必須である。無期限承認は存在しない。

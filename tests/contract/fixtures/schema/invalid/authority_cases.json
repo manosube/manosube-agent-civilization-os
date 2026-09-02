@@ -4,7 +4,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -38,13 +38,14 @@
         "kind": "approval",
         "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
+      "excluding_approval_refs": [],
       "decision": "AUTONOMOUS",
       "decision_reason_codes": [
         "ACTION_IS_HUMAN_ONLY",
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b",
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80",
       "approved_by_comment": "looks fine to me"
     }
   },
@@ -53,7 +54,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.2",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -87,13 +88,14 @@
         "kind": "approval",
         "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
+      "excluding_approval_refs": [],
       "decision": "AUTONOMOUS",
       "decision_reason_codes": [
         "ACTION_IS_HUMAN_ONLY",
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
     }
   },
   {
@@ -101,7 +103,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -135,13 +137,14 @@
         "kind": "approval",
         "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
+      "excluding_approval_refs": [],
       "decision": "AUTONOMOUS_WITH_WARNING",
       "decision_reason_codes": [
         "ACTION_IS_HUMAN_ONLY",
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
     }
   },
   {
@@ -149,7 +152,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -183,13 +186,14 @@
         "kind": "approval",
         "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
+      "excluding_approval_refs": [],
       "decision": "PROHIBITED",
       "decision_reason_codes": [
         "ACTION_IS_HUMAN_ONLY",
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
     }
   },
   {
@@ -197,7 +201,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -236,13 +240,68 @@
         "kind": "approval",
         "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
+      "excluding_approval_refs": [],
       "decision": "AUTONOMOUS",
       "decision_reason_codes": [
         "ACTION_IS_HUMAN_ONLY",
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_autonomous_with_an_excluding_approval",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [
+        {
+          "kind": "approval",
+          "id": "APPROVAL-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        }
+      ],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
     }
   },
   {
@@ -250,7 +309,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -281,21 +340,22 @@
       "resolved_rule_ref": null,
       "prohibition_refs": [],
       "approval_ref": null,
+      "excluding_approval_refs": [],
       "decision": "AUTONOMOUS",
       "decision_reason_codes": [
         "ACTION_IS_HUMAN_ONLY",
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
     }
   },
   {
-    "name": "authority_decision_no_reason_codes",
+    "name": "authority_decision_without_excluding_refs",
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -330,8 +390,57 @@
         "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
       "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_no_reason_codes",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS",
       "decision_reason_codes": [],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
     }
   },
   {
@@ -339,7 +448,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -373,13 +482,14 @@
         "kind": "approval",
         "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
+      "excluding_approval_refs": [],
       "decision": "AUTONOMOUS",
       "decision_reason_codes": [
         "ACTION_IS_HUMAN_ONLY",
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
     }
   },
   {
@@ -387,7 +497,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -417,13 +527,14 @@
         "kind": "approval",
         "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
+      "excluding_approval_refs": [],
       "decision": "AUTONOMOUS",
       "decision_reason_codes": [
         "ACTION_IS_HUMAN_ONLY",
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
     }
   },
   {
