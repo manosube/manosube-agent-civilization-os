@@ -119,7 +119,40 @@ type. `admissibility` answers whether a **raw request value** can bear an operat
 first is a consumer of the second, not a second answer to it. Neither was merged into the
 other, and no gate calls both for the same question.
 
-## 6. What is still not claimed
+## 6. The inventory's own last comparison was vacuous
+
+Review of `b65ad30` found it, and it belongs here rather than in a quiet patch, because it
+is this ADR's own thesis turned on the instrument that argues it.
+
+Three request keys are read by `_require_profiles` and one, `schema_version`, by
+`validation.require_schema_version`. Neither gate was in the AST scan's scope, so the file
+exempted all four and closed the gap with `assert f'"{key}"' in source`. That assertion
+**could not fail**: each of the four is also written as a dict key into an emitted record in
+the same file. For `schema_version` it was not even hypothetical — `engine.py` contains no
+request read of that key at all, so the check was already passing on emitted-record writes
+alone. A literal search cannot tell a read from a write.
+
+There is no exemption now. `_require_profiles` joined the scanned scopes, which removed three
+of the four outright. The fourth is a **declared delegation** — module, function, and the
+parameter the request arrives as — that the scan *follows*: it proves `engine.py` hands the
+request to `require_schema_version`, then parses that function in `validation.py` for a real
+read off its own parameter. `LITERAL_EXEMPTION_COUNT=0`,
+`DECLARED_KEY_WITHOUT_ACTUAL_READ=0`, `ACTUAL_READ_WITHOUT_DECLARATION=0`.
+
+Five controls drive the real scanners with synthetic and mutated source: the false positive
+itself, a scan that does report a read when one is there, and one per route for a gate that
+stops reading while its write survives. Each mutation is asserted to apply, so a rename makes
+the control fail rather than pass vacuously.
+
+The self-check that no literal search remains is **structural**, and its first version is the
+reason: written as a text search it failed on the paragraph *describing* the defect. A text
+search cannot tell a mention from a use — the same confusion, one more time, in the test
+written to forbid it. It parses now.
+
+No production source changed. The declaration was accurate throughout; what was defective was
+the guard that would have caught it drifting.
+
+## 7. What is still not claimed
 
 `INPUT_TOTALITY_PROVEN` stays **false**, for the reasons ADR-0022 §7 gives and one more of
 its own: this inventory bounds the request *envelope* and the schema-unconstrained *payload*
