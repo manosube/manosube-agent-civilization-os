@@ -1,4 +1,4 @@
-"""The producer's input grammar, taken from the contract and compared in both directions.
+"""Every declared input location becomes a case the public producer has to answer.
 
 Four review rounds found the same class of defect, and the 7770-case mutation sweep found
 none of them. That is not a gap in the sweep's effort; it is what a sweep *is*. A mutation
@@ -13,26 +13,33 @@ closure_policy_requirements.allowed_terminal_states   absent: the fixture suppli
 expected_value.value_type   a domain-shaped object no fixed substitution set contains
 ```
 
-So this file does not extend the sweep. It starts from the *declarations* -- the producer's
-own read sites and the schema files under ``01_SCHEMA/`` -- and generates from them, which
-is the only order in which an absent location can be covered at all.
+So this file does not extend the sweep. It starts from the **declaration** in
+`difference.admissibility` and generates from it, which is the only order in which an absent
+location can be covered at all. Every generated case runs the public `derive_differences`
+route: the producer must *answer* -- derive, or reject with a `DifferenceError` -- and a raw
+`TypeError`, `KeyError` or `AttributeError` fails the case.
 
-Every comparison here runs in **both** directions, because only one of them is the one that
-has been failing. "Every declared key is read" catches a stale declaration; "every key read
-is declared" catches the new optional key that nobody remembered to declare, which is the
-one that produced these findings. The same applies to the schema sweep: a property the
-schemas leave unconstrained and this repository does not list is a location where crossing
-the schema boundary answers nothing and no generated case exists.
+**What this file no longer claims.** An earlier version also parsed `engine.py` and asserted
+that the declaration and the producer's Python read sites matched completely in both
+directions. That static proof produced two consecutive read/write false positives of its own
+and was withdrawn rather than repaired a third time; see ADR-0025 §6.
+`STATIC_READ_SITE_TOTALITY_CLAIMED=false`. Nothing here depended on it: the findings were
+always about whether the public producer answers, which running it settles and reading its
+source does not.
 
-What is **not** claimed: this bounds the *envelope* grammar and the schema-unconstrained
-payload locations. It is not a proof of totality over the embedded records -- those keep
-their own schemas and the sweep -- and it does not close the request key set. See
+The one comparison that remains bidirectional is between two pieces of **data** -- the eight
+properties `01_SCHEMA/**` declares with `{}`, against the list of them kept here. A schema
+that opens or closes such a location fails the comparison instead of silently changing what
+the generated payload cases cover.
+
+**Also not claimed:** totality. This bounds the declared *envelope* and the
+schema-unconstrained *payload* locations, over a variant set that is a set. The embedded
+records keep their own schemas and the sweep; the request key set stays open. See
 ``difference.admissibility``.
 """
 
 from __future__ import annotations
 
-import ast
 from collections import Counter
 from copy import deepcopy
 import json
@@ -59,168 +66,34 @@ from manosube_agent_civilization.difference.identity import POLICY_UNORDERED_SET
 pytestmark = pytest.mark.contract
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = ROOT / "src" / "manosube_agent_civilization" / "difference"
-ENGINE = SOURCE / "engine.py"
 SCHEMA_ROOT = ROOT / "01_SCHEMA"
 
 
 # --------------------------------------------------------------------------- #
-# Direction one and two: the declaration against the producer's own read sites
+# What is declared, and what this file does *not* claim about it
 # --------------------------------------------------------------------------- #
 #
-# Every comparison below is structural. An earlier version of this file closed its last gap
-# with `assert f'"{key}"' in source`, and that assertion was **vacuous**: each of the four
-# keys it covered is also written as a dict key into an emitted record in the same file, so
-# the literal is present whether or not any gate reads it. For ``schema_version`` it was
-# already passing on emitted-record writes alone, because `engine.py` never reads that key
-# off the request at all -- the read is one call away, in `validation.py`.
+# An earlier version of this file compared the declared grammar against the producer's
+# Python read sites by parsing `engine.py`, and called the comparison complete in both
+# directions. That static proof produced two consecutive read/write false positives of its
+# own -- a literal search that could not tell a read from a write, then an AST scan that
+# counted a *store* subscript as a read -- and repairing it a third time would have made the
+# scanner's correctness a second verification problem sitting on top of the first.
 #
-# That is the same fault the file exists to prevent, one level up: a check that cannot fail
-# reports success. `test_a_literal_search_cannot_tell_a_read_from_a_write` pins the exact
-# false-positive mechanism, and every control below drives the real scanners with synthetic
-# source so each is proven able to fail.
-
-#: The functions whose ``request`` parameter is a *derivation request* and whose ``binding``
-#: parameter is a *derivation binding*. Every other ``request`` and ``binding`` in the file
-#: names a different record type that happens to share the word -- an Observation request,
-#: a Fact/Observation binding -- and scanning those reported keys of other grammars as
-#: undeclared keys of this one. The scope list is held to the source below, so renaming a
-#: function empties its scan loudly instead of quietly.
-REQUEST_SCOPES = (
-    "derive_differences",
-    "_require_request_shape",
-    "_iter_request_records",
-    "_reject_hostile_input",
-    "_historical_scopes",
-    "_require_profiles",
-)
-
-
-def _read_sites_in(source: str, *, require_scopes: bool = True) -> dict[str, set[str]]:
-    """Return every constant key read off ``request`` / ``binding`` inside those functions.
-
-    Takes source text rather than a path so the controls can drive this exact scanner with a
-    synthetic module and prove it reports what is really there.
-    """
-
-    tree = ast.parse(source)
-    found: dict[str, set[str]] = {"request": set(), "binding": set()}
-    seen_scopes: set[str] = set()
-    for function in ast.walk(tree):
-        if not isinstance(function, ast.FunctionDef) or function.name not in REQUEST_SCOPES:
-            continue
-        seen_scopes.add(function.name)
-        for node in ast.walk(function):
-            root = key = None
-            if (
-                isinstance(node, ast.Subscript)
-                and isinstance(node.value, ast.Name)
-                and node.value.id in found
-                and isinstance(node.slice, ast.Constant)
-            ):
-                root, key = node.value.id, node.slice.value
-            elif (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "get"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id in found
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-            ):
-                root, key = node.func.value.id, node.args[0].value
-            if root is not None and isinstance(key, str):
-                found[root].add(key)
-    # The scan is measured before its subject is. A renamed or deleted function would empty
-    # its contribution silently, and an empty contribution passes every comparison below.
-    if require_scopes:
-        assert seen_scopes == set(REQUEST_SCOPES), sorted(set(REQUEST_SCOPES) - seen_scopes)
-    return found
-
-
-# --------------------------------------------------------------------------- #
-# The one key no request scope reads, followed to the gate that does
-# --------------------------------------------------------------------------- #
-
-#: ``schema_version`` is required, and `engine.py` never reads it: it hands the whole request
-#: to ``validation.require_schema_version``, which reads it off its own parameter. So the
-#: declaration names the delegation exactly -- module, function, and the parameter the
-#: request arrives as -- and the scan **follows** it rather than accepting the key's presence
-#: anywhere in the producer. There is no other exemption, and no literal search remains.
-DELEGATED_READS: dict[str, tuple[str, str, str]] = {
-    admissibility.SCHEMA_VERSION_KEY: ("validation.py", "require_schema_version", "record"),
-}
-
-
-def _reads_key_off(source: str, function_name: str, parameter: str, key: str) -> bool:
-    """Whether *function_name* reads *key* off its *parameter* -- a read, never a write.
-
-    ``{"schema_version": SCHEMA_VERSION}`` is a dict-key literal in a record the producer
-    *builds*. It is the construct that made the old assertion vacuous, and only
-    ``parameter.get("key")`` or ``parameter["key"]`` counts here.
-    """
-
-    for function in ast.walk(ast.parse(source)):
-        if not isinstance(function, ast.FunctionDef) or function.name != function_name:
-            continue
-        for node in ast.walk(function):
-            if (
-                isinstance(node, ast.Subscript)
-                and isinstance(node.value, ast.Name)
-                and node.value.id == parameter
-                and isinstance(node.slice, ast.Constant)
-                and node.slice.value == key
-            ):
-                return True
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "get"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == parameter
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and node.args[0].value == key
-            ):
-                return True
-    return False
-
-
-def _hands_the_request_to(source: str, callee: str) -> bool:
-    """Whether a scanned request scope calls *callee* with the request itself as first arg."""
-
-    for function in ast.walk(ast.parse(source)):
-        if not isinstance(function, ast.FunctionDef) or function.name not in REQUEST_SCOPES:
-            continue
-        for node in ast.walk(function):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == callee
-                and node.args
-                and isinstance(node.args[0], ast.Name)
-                and node.args[0].id == "request"
-            ):
-                return True
-    return False
-
-
-def _delegated_reads_proven(engine_source: str) -> set[str]:
-    """Return the delegated keys proven read, by following each declared delegation."""
-
-    proven: set[str] = set()
-    for key, (module, function_name, parameter) in DELEGATED_READS.items():
-        if not _hands_the_request_to(engine_source, function_name):
-            continue
-        target = (SOURCE / module).read_text(encoding="utf-8")
-        if _reads_key_off(target, function_name, parameter, key):
-            proven.add(key)
-    return proven
-
-
-ENGINE_SOURCE = ENGINE.read_text(encoding="utf-8")
-READ_SITES = _read_sites_in(ENGINE_SOURCE)
-DELEGATED_PROVEN = _delegated_reads_proven(ENGINE_SOURCE)
+# So the claim is withdrawn rather than repaired. `STATIC_READ_SITE_TOTALITY_CLAIMED=false`.
+# The Canonical Directory Constitution does not require Python-AST read-site totality as a
+# Phase-3 gate, and nothing downstream depended on it: what the findings were ever about is
+# whether the **public producer answers** for a declared input, and that is settled by
+# running `derive_differences`, not by reading its source.
+#
+# What remains, and is real:
+#
+# * the declaration in `difference.admissibility` drives **generation** -- every declared
+#   request and binding key, and the four declared Closure Policy sets, become cases,
+#   including the optional keys no committed fixture instantiates;
+# * every case executes the public route and must be answered, never raised out of;
+# * the eight schema locations declared with ``{}`` are derived from the schema **files**
+#   in both directions -- a comparison between two pieces of data, not a claim about code.
 
 DECLARED_REQUEST_KEYS = (
     set(admissibility.REQUIRED_REQUEST_KEYS)
@@ -228,52 +101,6 @@ DECLARED_REQUEST_KEYS = (
     | {admissibility.SCHEMA_VERSION_KEY}
 )
 DECLARED_BINDING_KEYS = set(admissibility.BINDING_KEYS)
-
-#: Every key proven read, by either route. Nothing is exempt.
-PROVEN_REQUEST_READS = READ_SITES["request"] | DELEGATED_PROVEN
-
-
-def test_every_declared_request_key_is_read_by_the_producer() -> None:
-    """A declared key the producer never reads is a grammar that has drifted from the code."""
-
-    unread = DECLARED_REQUEST_KEYS - PROVEN_REQUEST_READS
-    assert not unread, sorted(unread)
-
-
-def test_every_request_key_the_producer_reads_is_declared() -> None:
-    """The direction that was failing: an optional key nothing declares gets no case."""
-
-    undeclared = PROVEN_REQUEST_READS - DECLARED_REQUEST_KEYS
-    assert not undeclared, sorted(undeclared)
-
-
-def test_every_declared_binding_key_is_read_by_the_producer() -> None:
-    unread = DECLARED_BINDING_KEYS - READ_SITES["binding"]
-    assert not unread, sorted(unread)
-
-
-def test_every_binding_key_the_producer_reads_is_declared() -> None:
-    undeclared = READ_SITES["binding"] - DECLARED_BINDING_KEYS
-    assert not undeclared, sorted(undeclared)
-
-
-def test_every_declared_delegation_is_followed_to_a_real_read() -> None:
-    """The one delegation is proven end to end, not asserted."""
-
-    assert set(DELEGATED_READS) == DELEGATED_PROVEN, sorted(
-        set(DELEGATED_READS) - DELEGATED_PROVEN
-    )
-    assert not set(DELEGATED_READS) & READ_SITES["request"], (
-        "a delegated key the scan can already see should be scanned, not delegated"
-    )
-
-
-def test_the_three_profile_keys_are_scanned_rather_than_delegated() -> None:
-    """``_require_profiles`` is in scope now, so the three keys need no special case."""
-
-    for key in ("identity_profile", "comparison_profile", "normalization_profile"):
-        assert key in READ_SITES["request"], key
-        assert key not in DELEGATED_READS, key
 
 
 # --------------------------------------------------------------------------- #
@@ -591,125 +418,6 @@ def test_every_declared_policy_set_answers_for_a_malformed_member(
 # --------------------------------------------------------------------------- #
 # The harness before the subject
 # --------------------------------------------------------------------------- #
-
-
-# --------------------------------------------------------------------------- #
-# The instrument this file used to trust, and the one that replaced it
-# --------------------------------------------------------------------------- #
-#
-# Each control drives the *real* scanner with a synthetic module, so the thing proven able
-# to fail is the code the comparisons above actually run -- not a restatement of it.
-
-#: A producer that **writes** three keys into an emitted record and **reads** none of them.
-#: Every key the old assertion covered appears in `engine.py` in exactly this shape.
-_WRITES_BUT_DOES_NOT_READ = """
-def derive_differences(request):
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "identity_profile": IDENTITY_PROFILE,
-        "comparison_profile": COMPARISON_PROFILE,
-    }
-"""
-
-#: The same producer, reading one of them off the request as a gate actually would.
-_READS_ONE = """
-def derive_differences(request):
-    declared = request.get("identity_profile", IDENTITY_PROFILE)
-    return {"schema_version": SCHEMA_VERSION, "identity_profile": IDENTITY_PROFILE}
-"""
-
-
-def test_a_literal_search_cannot_tell_a_read_from_a_write() -> None:
-    """The exact false-positive mechanism this file used to depend on, pinned as a case.
-
-    `assert f'"{key}"' in source` was the last comparison here, and it could not fail: each
-    key it covered is also a dict-key literal in a record the producer *builds*. For
-    ``schema_version`` that was not even hypothetical -- `engine.py` has no request read of
-    it at all, so the assertion was passing on emitted-record writes alone.
-    """
-
-    for key in ("schema_version", "identity_profile", "comparison_profile"):
-        assert f'"{key}"' in _WRITES_BUT_DOES_NOT_READ, key   # the old check: green
-        assert key not in _read_sites_in(                      # the new one: correct
-            _WRITES_BUT_DOES_NOT_READ, require_scopes=False
-        )["request"], key
-
-
-def test_the_scan_reports_a_read_when_one_is_there() -> None:
-    """And the other half of the control: it is not simply reporting nothing."""
-
-    found = _read_sites_in(_READS_ONE, require_scopes=False)["request"]
-    assert found == {"identity_profile"}, found
-
-
-def test_the_scan_fails_when_a_named_gate_stops_reading_its_key() -> None:
-    """Negative control on the live source: delete the read, keep the write, expect a miss.
-
-    This is the mutation that would have slipped past the old assertion. The mutation is
-    asserted to apply, so a rename that made it a no-op fails the control instead of
-    quietly passing it.
-    """
-
-    mutated = ENGINE_SOURCE.replace(
-        '"identity_profile": (request.get("identity_profile", IDENTITY_PROFILE),'
-        " IDENTITY_PROFILE),",
-        '"identity_profile": (IDENTITY_PROFILE, IDENTITY_PROFILE),',
-        1,
-    )
-    assert mutated != ENGINE_SOURCE, "the mutation did not apply; the control proves nothing"
-    assert '"identity_profile"' in mutated, "the write must survive for this to be a control"
-    assert "identity_profile" not in _read_sites_in(mutated)["request"]
-
-
-def test_the_delegation_follow_fails_when_the_target_stops_reading() -> None:
-    """The same control for the delegated key, on the gate the declaration names."""
-
-    validation = (SOURCE / "validation.py").read_text(encoding="utf-8")
-    assert _reads_key_off(validation, "require_schema_version", "record", "schema_version")
-
-    mutated = validation.replace('record.get("schema_version")', "None", 1)
-    assert mutated != validation, "the mutation did not apply; the control proves nothing"
-    assert '"schema_version"' in ENGINE_SOURCE, "the producer's writes must still be present"
-    assert not _reads_key_off(mutated, "require_schema_version", "record", "schema_version")
-
-
-def test_the_delegation_follow_fails_when_the_producer_stops_delegating() -> None:
-    """And when the producer no longer hands the request to the gate it names."""
-
-    assert _hands_the_request_to(ENGINE_SOURCE, "require_schema_version")
-    mutated = ENGINE_SOURCE.replace(
-        'require_schema_version(request, "derivation request")', "pass", 1
-    )
-    assert mutated != ENGINE_SOURCE, "the mutation did not apply; the control proves nothing"
-    assert not _hands_the_request_to(mutated, "require_schema_version")
-    assert not _delegated_reads_proven(mutated)
-
-
-def test_no_comparison_in_this_file_rests_on_a_literal_search() -> None:
-    """`LITERAL_EXEMPTION_COUNT=0`, measured from this file rather than asserted in prose.
-
-    Measured **structurally**, and the first attempt at this test is the reason why: written
-    as ``"in source" not in body`` it failed on the paragraph *describing* the defect. A text
-    search cannot tell a claim from its own explanation, which is the same confusion between
-    a mention and a use that made the old assertion vacuous. So this parses instead, and
-    looks for the shape ``f'"{key}"' in <name>`` -- permitted in exactly one place, the
-    control that exists to demonstrate it.
-    """
-
-    guilty: set[str] = set()
-    module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    for function in ast.walk(module):
-        if not isinstance(function, ast.FunctionDef):
-            continue
-        for node in ast.walk(function):
-            if (
-                isinstance(node, ast.Compare)
-                and any(isinstance(op, ast.In) for op in node.ops)
-                and isinstance(node.left, ast.JoinedStr)
-            ):
-                guilty.add(function.name)
-    assert guilty == {"test_a_literal_search_cannot_tell_a_read_from_a_write"}, sorted(guilty)
-    assert "UNSCANNED_DECLARED_REQUEST_KEYS" not in globals()
 
 
 def test_the_generated_cases_reach_both_outcomes() -> None:

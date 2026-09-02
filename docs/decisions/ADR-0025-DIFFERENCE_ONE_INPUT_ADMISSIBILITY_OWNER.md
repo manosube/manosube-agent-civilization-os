@@ -52,10 +52,14 @@ the optional ones, and an input location no declaration mentions is a location n
 can generate a case for.
 
 `difference/admissibility.py` now declares it, and
-`tests/contract/difference/test_request_grammar_inventory.py` holds the declaration to the
-producer's own read sites **in both directions**: a declared key the producer never reads
-fails, and a key the producer reads that nothing declares fails. Only the second direction
-would have caught these findings, and only the second direction is new.
+`tests/contract/difference/test_request_grammar_inventory.py` **generates from that
+declaration**: every declared request and binding key becomes a case that runs the public
+`derive_differences` route and must be answered. An optional key the fixtures omit therefore
+has cases, which is the whole of what the findings turned on.
+
+The first version of that file also compared the declaration against the producer's Python
+read sites and called the comparison complete in both directions. That claim is withdrawn;
+§6 records why, and it is the only claim removed — the generated coverage is unchanged.
 
 The eight unconstrained schema locations are derived from the schema files by the same test,
 also in both directions, and classified `INPUT` or `EMITTED`. The two `INPUT` locations are
@@ -119,38 +123,60 @@ type. `admissibility` answers whether a **raw request value** can bear an operat
 first is a consumer of the second, not a second answer to it. Neither was merged into the
 other, and no gate calls both for the same question.
 
-## 6. The inventory's own last comparison was vacuous
+## 6. The static read-site proof is withdrawn, not repaired
 
-Review of `b65ad30` found it, and it belongs here rather than in a quiet patch, because it
-is this ADR's own thesis turned on the instrument that argues it.
+The inventory originally made two claims. One is behavioural: every declared input location
+becomes a case the public producer must *answer*. The other was static: that the declaration
+and the producer's Python read sites match completely in both directions, established by
+parsing `engine.py`. **Only the first survives.**
 
-Three request keys are read by `_require_profiles` and one, `schema_version`, by
-`validation.require_schema_version`. Neither gate was in the AST scan's scope, so the file
-exempted all four and closed the gap with `assert f'"{key}"' in source`. That assertion
-**could not fail**: each of the four is also written as a dict key into an emitted record in
-the same file. For `schema_version` it was not even hypothetical — `engine.py` contains no
-request read of that key at all, so the check was already passing on emitted-record writes
-alone. A literal search cannot tell a read from a write.
+The static half failed twice, in the same way, in the instrument written to eliminate that
+exact way:
 
-There is no exemption now. `_require_profiles` joined the scanned scopes, which removed three
-of the four outright. The fourth is a **declared delegation** — module, function, and the
-parameter the request arrives as — that the scan *follows*: it proves `engine.py` hands the
-request to `require_schema_version`, then parses that function in `validation.py` for a real
-read off its own parameter. `LITERAL_EXEMPTION_COUNT=0`,
-`DECLARED_KEY_WITHOUT_ACTUAL_READ=0`, `ACTUAL_READ_WITHOUT_DECLARATION=0`.
+```text
+b65ad30   assert f'"{key}"' in source      a literal search cannot tell a read from a write
+5146ef6   accepts any ast.Subscript        a *store* subscript counted as a read
+```
 
-Five controls drive the real scanners with synthetic and mutated source: the false positive
-itself, a scan that does report a read when one is there, and one per route for a gate that
-stops reading while its write survives. Each mutation is asserted to apply, so a rename makes
-the control fail rather than pass vacuously.
+Both were found by review, not by the controls written alongside them — because those
+controls all mutate toward *absence*, proving the scanner notices a **removal** and never
+that it distinguishes a **read from a write**. The second finding also reached further than
+it was reported: the same hole was in `_read_sites_in`, the scan behind every comparison in
+the file, not only in the delegation branch.
 
-The self-check that no literal search remains is **structural**, and its first version is the
-reason: written as a text search it failed on the paragraph *describing* the defect. A text
-search cannot tell a mention from a use — the same confusion, one more time, in the test
-written to forbid it. It parses now.
+A third repair was available and is not being made. `isinstance(node.ctx, ast.Load)` is one
+line in each scanner, and the reason to decline it is not the line — it is that the
+scanner's own correctness had become a second verification problem stacked on the first,
+with each round's fix authored by the same hand that missed the previous channel. That is
+the non-convergent loop this branch has been in, and repairing the proof once more would
+have extended it rather than ended it.
 
-No production source changed. The declaration was accurate throughout; what was defective was
-the guard that would have caught it drifting.
+**Nothing downstream depended on the static half.** The v0.1 contract requires deterministic
+Difference behaviour, schema and version conformance, single semantic owners, evidence, and
+one full natural cycle. It does not require Python-AST read-site totality, and `scripts/` is
+a Verification Utility rather than a hidden contract authority. Every finding this branch
+has fixed was ever about one thing: **whether the public producer answers for a declared
+input.** Running `derive_differences` settles that; reading its source does not.
+
+So the machinery is removed — `DELEGATED_PROVEN`, the read-site scan, the call-following,
+the exemption mechanism and the five controls that existed only to prove them — along with
+every statement calling it a complete bidirectional contract proof.
+
+```text
+STATIC_READ_SITE_TOTALITY_CLAIMED=false
+```
+
+What remains is what was doing the work. The declaration in `difference.admissibility`
+drives **generation**: every declared request and binding key, the four declared Closure
+Policy sets, and the schema-unconstrained payload locations become cases — including the
+optional keys no committed fixture instantiates, which is the class that produced the
+findings — and each one runs the public route and must be answered. One comparison stays
+bidirectional, and it is between two pieces of **data**: the eight properties `01_SCHEMA/**`
+declares with `{}`, against the list kept here.
+
+The declaration was accurate at every point in this sequence. What was defective, twice, was
+the guard that would have caught it drifting — and the honest response to a guard that keeps
+failing in the way it forbids is to stop claiming what it cannot support.
 
 ## 7. What is still not claimed
 
