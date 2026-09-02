@@ -27,8 +27,13 @@ from .errors import AuthorityError
 #: cannot reason about, and a scope it cannot reason about is not one it may approve.
 SCOPE_KEYS: tuple[str, ...] = ("repository", "branch", "paths", "subjects")
 
-#: The two enumerated members. ``repository`` and ``branch`` are single tags.
+#: The two enumerated collections.
 SCOPE_COLLECTIONS: tuple[str, ...] = ("paths", "subjects")
+
+#: The two single-valued location fields. They are enumerated locations too: the evaluator
+#: compares them for equality, and equality is only a location comparison when neither side
+#: is an expression.
+SCOPE_LOCATIONS: tuple[str, ...] = ("repository", "branch")
 
 
 #: Characters that make a path an *expression* rather than a location. A member containing
@@ -80,10 +85,20 @@ def require_scope(value: Any, context: str) -> dict[str, Any]:
     missing = [key for key in SCOPE_KEYS if key not in scope]
     if missing:
         raise AuthorityError(f"{context} omits a required scope key: {missing[0]}")
-    require_scalar_tag(scope["repository"], f"{context} repository")
-    require_scalar_tag(scope["branch"], f"{context} branch")
+    # The location fields cross the same gate as the members. They were exempt, so a scope
+    # naming repository ``org/*`` or branch ``release/*`` was accepted and then compared for
+    # *equality* -- and equality on an expression is a string comparison pretending to be a
+    # comparison of locations. Two scopes both saying ``release/*`` matched each other and
+    # nothing else, which reads as narrow and is not.
+    for key in SCOPE_LOCATIONS:
+        location = require_scalar_tag(scope[key], f"{context} {key}")
+        if not _is_resolved_member(str(location)):
+            raise AuthorityError(
+                f"{context} {key} is not an enumerated resolved location: {location!r}"
+            )
     for key in SCOPE_COLLECTIONS:
         members = require_collection(scope[key], f"{context} {key}")
+        seen: dict[str, int] = {}
         for position, member in enumerate(members):
             require_scalar_tag(member, f"{context} {key}[{position}]")
             if not _is_resolved_member(member):
@@ -91,6 +106,16 @@ def require_scope(value: Any, context: str) -> dict[str, Any]:
                     f"{context} {key}[{position}] is not an enumerated resolved location: "
                     f"{member!r}"
                 )
+            # These collections are sets written as lists -- containment and overlap are
+            # already computed over ``set(...)``, and the canonical schema declares them
+            # ``uniqueItems``. A repeat was carried through to the emitted decision, which
+            # then failed its own schema: an input defect surfacing as an internal
+            # generation failure. It is refused here, where it can name the entry.
+            if member in seen:
+                raise AuthorityError(
+                    f"{context} {key}[{position}] repeats {key}[{seen[member]}]: {member!r}"
+                )
+            seen[member] = position
     return scope
 
 

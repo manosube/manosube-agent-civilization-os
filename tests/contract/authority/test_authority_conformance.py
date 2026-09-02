@@ -485,3 +485,270 @@ def test_the_decision_record_is_unchanged_by_deepcopying_its_inputs(
         )
     )
     assert one == other
+
+
+# --------------------------------------------------------------------------- #
+# 10. the bound Difference is a supplied record too
+# --------------------------------------------------------------------------- #
+#
+# It was the one that never had its address recomputed. Shape, schema and project were all
+# checked -- and those are precisely the checks that pass on a record edited after it was
+# addressed. So a caller could take a real Difference, change what it says, keep its
+# ``difference_id``, and that stale identifier would bind approvals and be written into the
+# decision's own content address as its provenance.
+
+
+def _mutated(difference: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    """A Difference whose payload changed and whose declared identity did not."""
+
+    forged = deepcopy(difference)
+    forged.update(changes)
+    return forged
+
+
+@pytest.mark.parametrize(
+    ("label", "changes"),
+    [
+        ("subject", {"subject": "a-different-subject"}),
+        ("target predicate", {"target_predicate_ref": {"kind": "predicate", "id": "PRED-OTHER"}}),
+        ("forged identity", {"difference_id": "D-" + "0" * 64}),
+    ],
+)
+def test_a_difference_whose_identity_does_not_match_its_content_is_refused(
+    label: str, changes: dict[str, Any]
+) -> None:
+    """Both directions: an edited payload under a real id, and a fabricated id."""
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    with pytest.raises(AuthorityError, match="identity does not match"):
+        evaluate_authority(
+            authority_request(
+                _mutated(difference, **changes),
+                requested,
+                where,
+                rules=[rule(difference["project_id"], action_kinds=["WRITE_FILE"])],
+            )
+        )
+
+
+def test_the_refusal_precedes_any_binding_or_provenance_use() -> None:
+    """Refused before the identifier can bind an approval or reach the decision record.
+
+    A later check would be too late in a way that matters: the stale identifier is what an
+    approval binds against and what the decision cites, so by the time anything could notice
+    it has already been used for both.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    granted = approval(difference, requested, where)
+    forged = _mutated(difference, subject="a-different-subject")
+    with pytest.raises(AuthorityError, match="identity does not match"):
+        evaluate_authority(
+            authority_request(forged, requested, where, rules=[], approvals=[granted])
+        )
+
+
+def test_an_unmodified_difference_still_decides() -> None:
+    """The control. Refusing edited Differences must not refuse real ones."""
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    decision = evaluate_authority(
+        authority_request(
+            difference,
+            requested,
+            where,
+            rules=[rule(difference["project_id"], action_kinds=["WRITE_FILE"])],
+        )
+    )
+    assert decision["decision"] == AUTONOMOUS
+    assert decision["difference_ref"] == {"kind": "difference", "id": difference["difference_id"]}
+
+
+def test_authority_does_not_own_a_second_difference_identity() -> None:
+    """The address is asked of the Difference package, not recomputed here.
+
+    Two implementations of one content address are two answers to what the address is, and
+    the first time they disagree the disagreement is silent.
+    """
+
+    from manosube_agent_civilization.authority import conformance
+    from manosube_agent_civilization.difference import identity as difference_identity
+
+    assert vars(conformance)["_difference_id"] is difference_identity.difference_id
+
+
+# --------------------------------------------------------------------------- #
+# 11. a record supplied twice is one record, not two
+# --------------------------------------------------------------------------- #
+#
+# These collections are sets written as lists, and the decision's reference arrays are
+# ``uniqueItems``. A repeat was carried through to the emitted record, which then failed its
+# *own* schema -- so a malformed input surfaced as an internal generation failure, in a
+# vocabulary describing the evaluator's output rather than the caller's request.
+
+
+def test_a_repeated_prohibition_is_refused_as_an_input() -> None:
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    forbidden = prohibition(difference["project_id"], action_kinds=["WRITE_FILE"])
+    with pytest.raises(AuthorityError, match=r"prohibitions\[1\] repeats prohibitions\[0\]"):
+        evaluate_authority(
+            authority_request(
+                difference, requested, where, rules=[],
+                prohibitions=[forbidden, deepcopy(forbidden)],
+            )
+        )
+
+
+def test_a_repeated_excluding_approval_is_refused_as_an_input() -> None:
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    withheld = approval(difference, requested, where, prohibited_actions=["WRITE_FILE"])
+    with pytest.raises(AuthorityError, match=r"approvals\[1\] repeats approvals\[0\]"):
+        evaluate_authority(
+            authority_request(
+                difference, requested, where, rules=[], approvals=[withheld, deepcopy(withheld)]
+            )
+        )
+
+
+def test_a_repeated_rule_is_refused_as_an_input() -> None:
+    """The third collection, which no reported case named.
+
+    Fixing the two that were reported and leaving the third is how the previous rounds'
+    findings kept recurring one site at a time.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    governing = rule(difference["project_id"], action_kinds=["WRITE_FILE"])
+    with pytest.raises(AuthorityError, match=r"authority rules\[1\] repeats authority rules\[0\]"):
+        evaluate_authority(
+            authority_request(
+                difference, requested, where, rules=[governing, deepcopy(governing)]
+            )
+        )
+
+
+@pytest.mark.parametrize("kind", ["prohibition", "approval", "rule"])
+def test_a_duplicate_never_escapes_as_a_generated_record_failure(kind: str) -> None:
+    """The distinction that makes this a correction and not a relabelling.
+
+    Before, the evaluator answered a malformed *input* with an error about its own *output*
+    being schema-invalid. The refusal must name the caller's request.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    duplicated = {
+        "prohibition": prohibition(difference["project_id"], action_kinds=["WRITE_FILE"]),
+        "approval": approval(difference, requested, where, prohibited_actions=["WRITE_FILE"]),
+        "rule": rule(difference["project_id"], action_kinds=["WRITE_FILE"]),
+    }[kind]
+    pair = [duplicated, deepcopy(duplicated)]
+    request = authority_request(
+        difference,
+        requested,
+        where,
+        rules=pair if kind == "rule" else [],
+        prohibitions=pair if kind == "prohibition" else [],
+        approvals=pair if kind == "approval" else [],
+    )
+    with pytest.raises(AuthorityError) as raised:
+        evaluate_authority(request)
+    assert "generated" not in str(raised.value), str(raised.value)
+    assert "repeats" in str(raised.value), str(raised.value)
+
+
+def test_two_different_records_of_the_same_kind_are_still_accepted() -> None:
+    """The control. Refusing repeats must not refuse distinct records."""
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    decision = evaluate_authority(
+        authority_request(
+            difference,
+            requested,
+            where,
+            rules=[
+                rule(difference["project_id"], action_kinds=["WRITE_FILE"]),
+                rule(difference["project_id"], action_kinds=["WRITE_FILE", "DELETE_FILE"]),
+            ],
+        )
+    )
+    assert decision["decision"] == AUTONOMOUS
+
+
+# --------------------------------------------------------------------------- #
+# 12. every field of a scope is an enumerated location
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("field", ["repository", "branch"])
+@pytest.mark.parametrize("expression", ["org/*", "release/*", "../escape", "feature/", "a//b"])
+def test_a_location_field_may_not_be_an_expression(field: str, expression: str) -> None:
+    """``repository`` and ``branch`` were exempt from the gate their members cross.
+
+    They are compared for *equality*, and equality over an expression is a string comparison
+    pretending to be a comparison of locations: two scopes both saying ``release/*`` matched
+    each other and nothing else, which reads as narrow and is not.
+    """
+
+    difference = derived_difference()
+    where = scope()
+    where[field] = expression
+    with pytest.raises(AuthorityError, match="not an enumerated resolved location"):
+        evaluate_authority(authority_request(difference, action("WRITE_FILE"), where, rules=[]))
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        scope(paths=["src/app.py", "src/app.py"]),
+        scope(paths=["src/app.py"], subjects=["billing", "billing"]),
+    ],
+    ids=["paths", "subjects"],
+)
+def test_a_repeated_scope_member_is_refused_at_the_input(where: dict[str, Any]) -> None:
+    difference = derived_difference()
+    with pytest.raises(AuthorityError, match=r"repeats"):
+        evaluate_authority(
+            authority_request(difference, action("WRITE_FILE"), deepcopy(where), rules=[])
+        )
+
+
+def test_the_scope_gate_covers_every_supplied_scope_not_only_the_request() -> None:
+    """A rule, a prohibition and an approval carry scopes too, and cross the same owner."""
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    wide = scope(repository="manosube/*")
+    for label, request in (
+        (
+            "rule",
+            authority_request(
+                difference, requested, where,
+                rules=[rule(difference["project_id"], rule_scope=wide)],
+            ),
+        ),
+        (
+            "prohibition",
+            authority_request(
+                difference, requested, where, rules=[],
+                prohibitions=[prohibition(difference["project_id"], prohibited_scope=wide)],
+            ),
+        ),
+        (
+            "approval",
+            authority_request(
+                difference, requested, where, rules=[],
+                approvals=[approval(difference, requested, where, approved_scope=wide)],
+            ),
+        ),
+    ):
+        with pytest.raises(AuthorityError, match="not an enumerated resolved location") as bad:
+            evaluate_authority(request)
+        assert label in str(bad.value) or "scope" in str(bad.value), (label, str(bad.value))

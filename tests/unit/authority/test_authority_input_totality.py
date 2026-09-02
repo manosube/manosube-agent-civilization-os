@@ -224,8 +224,69 @@ def test_an_undeclared_request_key_is_refused_rather_than_ignored(injected: str)
         evaluate_authority(request)
 
 
+def _admissible_variants() -> list[tuple[str, Any]]:
+    """For each declared request key, a *different but valid* value, where one exists.
+
+    This half of the generator did not exist, and its absence is why the both-outcomes
+    control could never have failed. ``_SUBSTITUTIONS`` enumerates ill-typed values only, so
+    every case it produces is refused **by construction** -- and a control reading
+    ``decided >= 0`` over that set is not a weak measurement, it is not a measurement.
+
+    Several keys have no admissible alternative and are absent here on purpose:
+    ``schema_version`` is a constant; ``project_id``, ``difference``,
+    ``current_state_revision`` and ``current_state_fingerprint`` are each pinned by exact
+    binding, so any different value is correctly a refusal rather than a decision.
+    """
+
+    difference = BUILT["difference"]
+    elsewhere = scope(paths=["src/untouched.py"])
+    return [
+        ("requested_action", action("DELETE_FILE")),
+        ("requested_scope", elsewhere),
+        ("authority_rules", []),
+        ("authority_rules", [rule(difference["project_id"], action_kinds=["DELETE_FILE"])]),
+        ("prohibitions", []),
+        ("approvals", []),
+        ("approvals", [approval(difference, action("MERGE"), scope(), status="REVOKED")]),
+        ("evaluation_time", "2026-07-01T12:00:00Z"),
+    ]
+
+
+ADMISSIBLE_VARIANTS = _admissible_variants()
+
+
+def test_every_ill_typed_substitution_is_refused() -> None:
+    """One half of the split, asserted case by case rather than counted."""
+
+    unexpected = [
+        (key, name)
+        for key in REQUIRED_REQUEST_KEYS
+        for name, value in _SUBSTITUTIONS
+        for request in [{**deepcopy(BUILT), key: value}]
+        if _answer(request) != "REJECTED"
+    ]
+    assert not unexpected, unexpected
+
+
+def test_every_admissible_variant_is_decided() -> None:
+    """The other half. Refusing more must not have made the evaluator refuse everything."""
+
+    unexpected = [
+        (key, _answer({**deepcopy(BUILT), key: value}))
+        for key, value in ADMISSIBLE_VARIANTS
+        if _answer({**deepcopy(BUILT), key: value}) != "DECIDED"
+    ]
+    assert not unexpected, unexpected
+
+
 def test_the_generated_cases_reach_both_outcomes() -> None:
-    """A generator that refuses everything passes vacuously; the split is measured."""
+    """A generator that refuses everything passes vacuously; the split is measured.
+
+    Both counts are now *reachable*, which is the property the old assertion claimed and the
+    old generator could not supply: it enumerated ill-typed values only, so ``decided`` was
+    structurally zero and ``decided >= 0`` was true of any evaluator at all -- including one
+    that refused every input it was ever given.
+    """
 
     decided = refused = 0
     for key in REQUIRED_REQUEST_KEYS:
@@ -236,5 +297,20 @@ def test_the_generated_cases_reach_both_outcomes() -> None:
                 decided += 1
             else:
                 refused += 1
-    assert refused > 0 and decided >= 0, (decided, refused)
+    for key, value in ADMISSIBLE_VARIANTS:
+        request = deepcopy(BUILT)
+        request[key] = value
+        if _answer(request) == "DECIDED":
+            decided += 1
+        else:
+            refused += 1
+    assert refused > 0, (decided, refused)
+    assert decided > 0, (decided, refused)
     assert _answer(deepcopy(BUILT)) == "DECIDED"
+
+
+def test_the_admissible_half_of_the_generator_is_not_empty() -> None:
+    """The harness before its subject: an empty variant list makes the split unreachable."""
+
+    assert len(ADMISSIBLE_VARIANTS) >= 8, len(ADMISSIBLE_VARIANTS)
+    assert len({key for key, _ in ADMISSIBLE_VARIANTS}) >= 5, ADMISSIBLE_VARIANTS

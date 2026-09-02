@@ -29,7 +29,9 @@ import re
 from typing import Any
 
 from manosube_agent_civilization.difference.admissibility import is_scalar_tag, require_object
+from manosube_agent_civilization.difference.identity import difference_id as _difference_id
 from manosube_agent_civilization.difference.validation import (
+    DIFFERENCE_SCHEMA_BASE,
     SCHEMA_BASE as CANONICAL_SCHEMA_BASE,
     validate_record as _validate_canonical_record,
 )
@@ -221,7 +223,12 @@ def transient_instant(value: str, context: str) -> Instant:
     return _instant(value, context, grammar=_TRANSIENT, form=_TRANSIENT_FORM)
 
 
-def validate(record: dict[str, Any], schema_name: str, context: str) -> None:
+def validate(
+    record: dict[str, Any],
+    schema_name: str,
+    context: str,
+    base: str = AUTHORITY_SCHEMA_BASE,
+) -> None:
     """Validate against the canonical schema, in Authority's error vocabulary.
 
     Schema validation has one owner in this repository. Authority reads that registry rather
@@ -229,9 +236,36 @@ def validate(record: dict[str, Any], schema_name: str, context: str) -> None:
     """
 
     try:
-        _validate_canonical_record(record, schema_name, base=AUTHORITY_SCHEMA_BASE)
+        _validate_canonical_record(record, schema_name, base=base)
     except ValueError as error:
         raise AuthorityValidationError(f"{context}: {error}") from error
+
+
+def admit_difference(value: Any, context: str) -> dict[str, Any]:
+    """Return the bound Difference once it is canonical, including its own address.
+
+    The Difference was the one supplied record that reached a decision without its identity
+    being recomputed. Everything else about it was checked -- shape, schema, project -- and
+    those are exactly the checks that pass on a record whose fields were edited after it was
+    addressed. So a caller could take a real Difference, change what it says, keep its
+    ``difference_id``, and that stale identifier would then bind approvals and be written
+    into the decision's own content address as its provenance.
+
+    Identity is **not** recomputed here. It is asked of the Difference package's own owner,
+    because a second implementation of a content address is a second answer to what the
+    address is, and the first time the two disagree the disagreement is silent.
+    """
+
+    difference = require_object(value, context)
+    validate(difference, "difference.schema.json", context, base=DIFFERENCE_SCHEMA_BASE)
+    declared = difference["difference_id"]
+    recomputed = _difference_id(difference)
+    if declared != recomputed:
+        raise AuthorityError(
+            f"{context} identity does not match the Difference it names: "
+            f"{declared!r} != {recomputed!r}"
+        )
+    return difference
 
 
 def admit(value: Any, type_name: str, context: str) -> dict[str, Any]:
@@ -269,13 +303,45 @@ def admit(value: Any, type_name: str, context: str) -> dict[str, Any]:
     return record
 
 
-def admit_all(values: Any, type_name: str, context: str) -> list[dict[str, Any]]:
-    """Admit every member of a supplied collection, or refuse the request."""
+def admit_all(
+    values: Any,
+    type_name: str,
+    context: str,
+    *,
+    refine: Callable[[dict[str, Any], str], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Admit every member of a supplied collection, or refuse the request.
+
+    *refine* is whatever else that record kind must satisfy -- a rule's decision vocabulary,
+    an enumerated scope. It runs here rather than in a caller's own loop so that every
+    supplied collection crosses the same gate, distinctness included.
+
+    **A repeated record is refused, not folded away.** These collections are sets written as
+    lists: a record appearing twice is one record supplied twice, and the decision's
+    reference arrays are ``uniqueItems``. Silently de-duplicating would make the evaluator
+    quietly correct its input, which is the same move as rewriting a non-canonical timestamp;
+    ignoring it produced a decision record that failed its *own* schema on the way out, so a
+    malformed input surfaced as an internal generation failure. Refusing says which entry
+    repeated which, at the boundary, before anything is decided.
+    """
 
     from manosube_agent_civilization.difference.admissibility import require_collection
 
+    identity_field = RECORD_TYPES[type_name].identity_field
     members = require_collection(values, context)
-    return [
-        admit(member, type_name, f"{context}[{position}]")
-        for position, member in enumerate(members)
-    ]
+    seen: dict[str, str] = {}
+    records: list[dict[str, Any]] = []
+    for position, member in enumerate(members):
+        where = f"{context}[{position}]"
+        record = admit(member, type_name, where)
+        if refine is not None:
+            refine(record, where)
+        identity = str(record[identity_field])
+        if identity in seen:
+            raise AuthorityError(
+                f"{where} repeats {seen[identity]}: {identity}. "
+                "A canonical record supplied twice is one record, not two."
+            )
+        seen[identity] = where
+        records.append(record)
+    return records

@@ -22,19 +22,25 @@ REVOKED = "REVOKED"
 EXPIRED = "EXPIRED"
 APPROVAL_STATUSES: frozenset[str] = frozenset({ACTIVE, REVOKED, EXPIRED})
 
-def require_approval(value: Any, context: str) -> dict[str, Any]:
-    """Return *value* once it is a canonical approval; reject it otherwise.
+def refine_approval(approval: dict[str, Any], context: str) -> None:
+    """What an approval must satisfy beyond admission.
 
     Admission is the shared gate, not a local copy of it. The local copy is what let a
     record whose ``approved_by`` was merely ``{"kind": "human_authority"}`` -- no approver
     identity at all -- lower a decision to ``AUTONOMOUS``.
     """
 
-    approval = admit(value, "approval", context)
     # The schema fixes the scope's *shape*; only this fixes that its members are enumerated
     # locations rather than expressions. An approval covering ``src/*`` would be an approval
     # whose extent depends on a filesystem this evaluator does not read.
     require_scope(approval["approved_scope"], f"{context} scope")
+
+
+def require_approval(value: Any, context: str) -> dict[str, Any]:
+    """Return *value* once it is a canonical approval; reject it otherwise."""
+
+    approval = admit(value, "approval", context)
+    refine_approval(approval, context)
     return approval
 
 

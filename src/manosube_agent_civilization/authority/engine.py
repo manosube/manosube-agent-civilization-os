@@ -34,19 +34,22 @@ from copy import deepcopy
 from typing import Any
 
 from manosube_agent_civilization.difference.admissibility import (
-    require_collection,
     require_object,
     require_scalar_tag,
 )
 from manosube_agent_civilization.difference.errors import DifferenceError
 from manosube_agent_civilization.difference.validation import (
-    DIFFERENCE_SCHEMA_BASE,
     validate_record as _validate_canonical_record,
 )
 from manosube_agent_civilization.state.errors import CanonicalizationError
 
 from . import approval as approval_owner, prohibition as prohibition_owner
-from .conformance import AUTHORITY_SCHEMA_BASE, admit, admit_all, transient_instant
+from .conformance import (
+    AUTHORITY_SCHEMA_BASE,
+    admit_all,
+    admit_difference,
+    transient_instant,
+)
 from .errors import (
     AuthorityError,
     AuthorityValidationError,
@@ -164,10 +167,10 @@ def _require_action(value: Any) -> dict[str, Any]:
     return action
 
 
-def _require_rule(value: Any, position: int) -> dict[str, Any]:
-    """Return one supplied rule once it is canonical; reject it otherwise.
+def _refine_rule(rule: dict[str, Any], context: str) -> None:
+    """What a rule must satisfy beyond admission.
 
-    Admission is the shared gate. The hand-written key check that stood here validated
+    Admission is the shared gate. The hand-written key check that once stood here validated
     neither the schema version, nor the declaring authority, nor unknown properties, nor the
     rule's own content address -- so a rule could keep a well-formed identity, be edited to
     ``AUTONOMOUS``, name an Agent as its author, and still govern the request.
@@ -177,12 +180,15 @@ def _require_rule(value: Any, position: int) -> dict[str, Any]:
     what stops a rule from becoming a soft prohibition that precedence would have to rank.
     """
 
-    context = f"authority_rules[{position}]"
-    rule = admit(value, "authority_rule", context)
     if rule["decision"] not in _RULE_DECISIONS:
         raise AuthorityError(f"{context} may not declare {rule['decision']!r}; use a prohibition")
     require_scope(rule["scope"], f"{context} scope")
-    return rule
+
+
+def _refine_prohibition(record: dict[str, Any], context: str) -> None:
+    """A prohibition's scope is enumerated for the same reason a rule's is."""
+
+    require_scope(record["scope"], f"{context} scope")
 
 
 def _resolve_rules(
@@ -265,8 +271,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
     shaped = _require_request_shape(request)
 
     project_id = require_scalar_tag(shaped["project_id"], "authority request project")
-    difference = require_object(shaped["difference"], "bound Difference")
-    _validate(difference, "difference.schema.json", DIFFERENCE_SCHEMA_BASE)
+    difference = admit_difference(shaped["difference"], "bound Difference")
     if difference["project_id"] != project_id:
         raise BoundaryViolationError(
             "bound Difference belongs to a different project: "
@@ -304,19 +309,15 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
     # schema, supported version, no unknown property, recomputed content address, and Human
     # Authority provenance. A record failing any of those does not govern, is not consulted,
     # and does not quietly become an absence -- it refuses the request.
-    rules = [
-        _require_rule(rule, position)
-        for position, rule in enumerate(
-            require_collection(shaped["authority_rules"], "authority rules")
-        )
-    ]
-    prohibitions = admit_all(shaped["prohibitions"], "prohibition", "prohibitions")
-    for position, record in enumerate(prohibitions):
-        require_scope(record["scope"], f"prohibitions[{position}] scope")
-    approvals = [
-        approval_owner.require_approval(record, f"approvals[{position}]")
-        for position, record in enumerate(require_collection(shaped["approvals"], "approvals"))
-    ]
+    rules = admit_all(
+        shaped["authority_rules"], "authority_rule", "authority rules", refine=_refine_rule
+    )
+    prohibitions = admit_all(
+        shaped["prohibitions"], "prohibition", "prohibitions", refine=_refine_prohibition
+    )
+    approvals = admit_all(
+        shaped["approvals"], "approval", "approvals", refine=approval_owner.refine_approval
+    )
 
     action_kind = action["action_kind"]
     reason_codes: list[str] = []
