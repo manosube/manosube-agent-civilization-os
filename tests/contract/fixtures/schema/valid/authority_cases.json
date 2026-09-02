@@ -4,7 +4,7 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "authority_decision_id": "AUTH-DEC-1148223E6A8B8D696CEA791879AED0ED8FD68EA6DDF72E9A1EADCEC0DCBED652",
+      "authority_decision_id": "AUTH-DEC-C2A100A802D0EEBABB3DD4EE97B6AACAFC64A45F1B94182281906BBBA0A73B9B",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
@@ -13,7 +13,11 @@
       "requested_action": {
         "action_kind": "MERGE",
         "reversibility": "REVERSIBLE",
-        "action_semantic_fingerprint": "sha256:11be85a2f404d5e62034415a7c509ad4e382a5f6533d769f85da6098bc349080"
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
       },
       "requested_scope": {
         "repository": "manosube/example",
@@ -32,7 +36,7 @@
       "prohibition_refs": [],
       "approval_ref": {
         "kind": "approval",
-        "id": "APPROVAL-0DF16D14C089F0F072893F6A817D1FC2EE2D8317805AED2A3A13BF1624A60736"
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
       },
       "decision": "AUTONOMOUS",
       "decision_reason_codes": [
@@ -40,7 +44,100 @@
         "APPROVAL_EXACT",
         "NO_RULE_RESOLVED"
       ],
-      "decision_semantic_fingerprint": "sha256:1148223e6a8b8d696cea791879aed0ed8fd68ea6ddf72e9a1eadcec0dcbed652"
+      "decision_semantic_fingerprint": "sha256:c2a100a802d0eebabb3dd4ee97b6aacafc64a45f1b94182281906bbba0a73b9b"
+    }
+  },
+  {
+    "name": "authority_decision_via_rule",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-DD02245A8973BAEDC81A72FB3CFD323B661D53B2C3C818C0941758E973FFB5CB",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "WRITE_FILE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "body": "default"
+        },
+        "action_semantic_fingerprint": "sha256:9cb486bd32b962aeaf8c67949b8e4c57e3e4eb6b22cee81c1e28f3213dee3525"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": {
+        "kind": "authority_rule",
+        "id": "AUTH-RULE-E9C27621BD175DF973262E11FFE0D36377860A1895A3CAF332B7A1C5E608291B"
+      },
+      "prohibition_refs": [],
+      "approval_ref": null,
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "RULE_PERMITS_AUTONOMOUS",
+        "RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:dd02245a8973baedc81a72fb3cfd323b661d53b2c3c818c0941758e973ffb5cb"
+    }
+  },
+  {
+    "name": "authority_decision_prohibited",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-E9464A8870AC25753592753DE0AA6A82B791F220088153A38F9122C4BC92BB34",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "WRITE_FILE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "body": "default"
+        },
+        "action_semantic_fingerprint": "sha256:9cb486bd32b962aeaf8c67949b8e4c57e3e4eb6b22cee81c1e28f3213dee3525"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [
+        {
+          "kind": "prohibition",
+          "id": "PROHIBIT-D1F422191A3C1BC605E145DF4BC3E609E729CCEA781EB1966BBCDCF9545D78AF"
+        }
+      ],
+      "approval_ref": null,
+      "decision": "PROHIBITED",
+      "decision_reason_codes": [
+        "PROHIBITION_MATCHED"
+      ],
+      "decision_semantic_fingerprint": "sha256:e9464a8870ac25753592753de0aa6a82b791f220088153a38f9122c4bc92bb34"
     }
   },
   {
@@ -71,24 +168,24 @@
     }
   },
   {
-    "name": "approval_bound_to_exact_action",
+    "name": "approval_bound_to_exact_operation",
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/approval.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "approval_id": "APPROVAL-0DF16D14C089F0F072893F6A817D1FC2EE2D8317805AED2A3A13BF1624A60736",
+      "approval_id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8",
       "project_id": "PRJ-0001",
       "difference_ref": {
         "kind": "difference",
         "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
       },
-      "change_intent_fingerprint": "sha256:e7b0556fc985c246d94c110e0900ed4b10b50aa80ecbed1482c6f7d890e128d0",
+      "change_intent_fingerprint": "sha256:08889d36e47a934693f3ebc64809951d0b78e138d44930fe30db5ce768bf4f3e",
       "change_ref": null,
       "approved_state_revision": 2,
       "approved_state_fingerprint": {
         "profile": "MANOSUBE-STATE-SHA256-0.1",
         "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
       },
-      "approved_action_fingerprint": "sha256:11be85a2f404d5e62034415a7c509ad4e382a5f6533d769f85da6098bc349080",
+      "approved_action_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a",
       "approved_scope": {
         "repository": "manosube/example",
         "branch": "main",

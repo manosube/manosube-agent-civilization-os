@@ -60,15 +60,25 @@ def derived_difference() -> dict[str, Any]:
     return derived
 
 
+#: ``None`` is a legitimate opaque payload, so the default cannot be spelled ``None``.
+_UNSET = object()
+
+
 def action(
     action_kind: str = "WRITE_FILE",
     reversibility: str = "REVERSIBLE",
+    operation: Any = _UNSET,
 ) -> dict[str, Any]:
-    """A requested action carrying its own recomputable fingerprint."""
+    """A requested action carrying its complete operation and a recomputable fingerprint.
+
+    ``operation`` is opaque to Authority. It exists so that two operations differing only in
+    what they do -- different bytes to the same file -- cannot share one approval.
+    """
 
     record = {
         "action_kind": action_kind,
         "reversibility": reversibility,
+        "operation": {"body": "default"} if operation is _UNSET else operation,
         "action_semantic_fingerprint": "",
     }
     record["action_semantic_fingerprint"] = action_fingerprint(record)

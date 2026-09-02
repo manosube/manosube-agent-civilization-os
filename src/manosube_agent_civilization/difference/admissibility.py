@@ -122,11 +122,18 @@ BINDING_KEYS: frozenset[str] = frozenset(REQUIRED_BINDING_KEYS) | OPTIONAL_BINDI
 #: removes an unconstrained property fails the measurement instead of silently widening the
 #: grammar.
 #:
-#: ``INPUT`` marks a location a caller supplies; ``EMITTED`` marks one the Engine writes,
-#: where the payload is whatever the input location already admitted.
+#: ``INPUT`` marks a location the *Difference* producer's callers supply; ``EMITTED`` marks
+#: one the Engine writes, where the payload is whatever the input location already admitted;
+#: ``AUTHORITY_INPUT`` marks one supplied to a different owner, which generates against it in
+#: its own suite. The tag says which suite must cover a location, so a new one cannot be
+#: added without some suite claiming it.
 UNCONSTRAINED_CONTRACT_LOCATIONS: dict[str, str] = {
     "objective/target_predicate.schema.json#/properties/expected_value": "INPUT",
     "observation/normalized_fact.schema.json#/properties/value": "INPUT",
+    # Opaque by contract: Authority binds the operation payload into an approval's identity
+    # and never interprets it. Constraining it here would be this schema deciding what a
+    # Change may do, which is a later phase's to say.
+    "authority/authority.schema.json#/$defs/action/properties/operation": "AUTHORITY_INPUT",
     "difference/candidate_completion_record.schema.json#/properties/claim": "EMITTED",
     "difference/difference.schema.json"
     "#/$defs/normalized_target_state/properties/expected_value": "EMITTED",

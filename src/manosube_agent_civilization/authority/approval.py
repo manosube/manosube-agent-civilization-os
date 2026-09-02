@@ -12,14 +12,10 @@ a record or it is absent.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from manosube_agent_civilization.difference.admissibility import (
-    require_collection,
-    require_object,
-    require_scalar_tag,
-)
-
+from .conformance import admit
 from .errors import AuthorityError
 from .scope import is_contained, require_scope
 
@@ -28,51 +24,40 @@ REVOKED = "REVOKED"
 EXPIRED = "EXPIRED"
 APPROVAL_STATUSES: frozenset[str] = frozenset({ACTIVE, REVOKED, EXPIRED})
 
-_REQUIRED_KEYS: tuple[str, ...] = (
-    "schema_version",
-    "approval_id",
-    "project_id",
-    "difference_ref",
-    "change_intent_fingerprint",
-    "approved_state_revision",
-    "approved_state_fingerprint",
-    "approved_action_fingerprint",
-    "approved_scope",
-    "prohibited_actions",
-    "approved_by",
-    "approved_at",
-    "expires_at",
-    "status",
-)
-
-
 def require_approval(value: Any, context: str) -> dict[str, Any]:
-    """Return *value* once it can be read as an approval; reject it otherwise."""
+    """Return *value* once it is a canonical approval; reject it otherwise.
 
-    approval = require_object(value, context)
-    for key in _REQUIRED_KEYS:
-        if key not in approval:
-            raise AuthorityError(f"{context} omits a required key: {key}")
-    require_scalar_tag(approval["project_id"], f"{context} project")
-    require_scalar_tag(approval["change_intent_fingerprint"], f"{context} change intent")
-    require_scalar_tag(approval["approved_action_fingerprint"], f"{context} action fingerprint")
-    require_scalar_tag(approval["approved_at"], f"{context} approved_at")
-    require_scalar_tag(approval["expires_at"], f"{context} expires_at")
-    status = require_scalar_tag(approval["status"], f"{context} status")
-    if status not in APPROVAL_STATUSES:
-        raise AuthorityError(f"{context} declares an unknown approval status: {status!r}")
-    require_object(approval["difference_ref"], f"{context} difference reference")
-    require_object(approval["approved_state_fingerprint"], f"{context} state fingerprint")
+    Admission is the shared gate, not a local copy of it. The local copy is what let a
+    record whose ``approved_by`` was merely ``{"kind": "human_authority"}`` -- no approver
+    identity at all -- lower a decision to ``AUTONOMOUS``.
+    """
+
+    approval = admit(value, "approval", context)
+    # The schema fixes the scope's *shape*; only this fixes that its members are enumerated
+    # locations rather than expressions. An approval covering ``src/*`` would be an approval
+    # whose extent depends on a filesystem this evaluator does not read.
     require_scope(approval["approved_scope"], f"{context} scope")
-    prohibited = require_collection(approval["prohibited_actions"], f"{context} prohibited actions")
-    for position, action_kind in enumerate(prohibited):
-        require_scalar_tag(action_kind, f"{context} prohibited_actions[{position}]")
-    approver = require_object(approval["approved_by"], f"{context} approver")
-    if approver.get("kind") != "human_authority":
-        raise AuthorityError(
-            f"{context} approver is not a Human Authority reference: {approver.get('kind')!r}"
-        )
     return approval
+
+
+def instant(value: str, context: str) -> datetime:
+    """Parse an RFC 3339 timestamp into a comparable instant.
+
+    Strings do not order chronologically. ``2026-06-01T00:00:00Z`` sorts *after*
+    ``2026-06-01T00:00:00.5Z`` because ``Z`` exceeds ``.``, so a still-valid approval
+    evaluated half a second before its expiry was reported outside its window. Fractional
+    seconds and offsets are equivalent forms of the same instant, and only parsing sees that.
+    """
+
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise AuthorityError(f"{context} is not an RFC 3339 timestamp: {value!r}") from error
+    if parsed.tzinfo is None:
+        # A naive timestamp names no instant. Guessing a zone here is how two evaluators
+        # come to disagree about the same approval.
+        raise AuthorityError(f"{context} carries no timezone: {value!r}")
+    return parsed
 
 
 def unusable_reasons(
@@ -97,10 +82,14 @@ def unusable_reasons(
     reasons: list[str] = []
     if approval["status"] != ACTIVE:
         reasons.append(f"APPROVAL_{approval['status']}")
-    # The validity window is compared against a supplied time, never a clock read. Two
-    # evaluations of the same request must agree, and a clock makes that impossible --
-    # ``APPROVAL_CONTRACT.md`` §7.
-    if not (str(approval["approved_at"]) <= evaluation_time <= str(approval["expires_at"])):
+    # The validity window is compared against a supplied time, never a clock read -- two
+    # evaluations of the same request must agree, and a clock makes that impossible
+    # (``APPROVAL_CONTRACT.md`` §7). The three timestamps are *parsed* before comparison;
+    # see :func:`instant` for why lexicographic ordering is not chronological ordering.
+    now = instant(evaluation_time, "evaluation time")
+    opened = instant(str(approval["approved_at"]), "approval approved_at")
+    closes = instant(str(approval["expires_at"]), "approval expires_at")
+    if not (opened <= now <= closes):
         reasons.append("APPROVAL_OUTSIDE_VALIDITY_WINDOW")
     if approval["project_id"] != project_id:
         reasons.append("APPROVAL_PROJECT_MISMATCH")

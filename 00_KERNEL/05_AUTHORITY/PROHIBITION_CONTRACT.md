@@ -104,13 +104,34 @@ PARTIAL OVERLAP → WHOLE REQUEST PROHIBITED
 
 # 6. Scope Resolution
 
-禁止scopeも列挙である。未解決globやsymlinkで禁止範囲を判定しない。判定できない場合は禁止側へ倒す。
+禁止scopeも列挙である。未解決globやsymlinkで禁止範囲を判定しない。
+
+v0.1では、path expressionは**prohibition側でも要求側でも受理しない**（`AUTHORITY_CONTRACT.md` §3.2）。expressionを含む要求・rule・prohibitionは、比較へ進む前に拒否される。
 
 ```text
-UNRESOLVED SCOPE IN PROHIBITION CHECK → TREAT AS MATCH
+PATH EXPRESSION ANYWHERE → REQUEST REFUSED
 ```
 
-これはfail closedの適用であり、Authority Contract §6と同じ方向である。
+「禁止側へ倒す」よりも強い。expressionが一致するかを推測せず、expressionを入力として認めない。推測は許可側でも禁止側でも同じ誤りを生む。
+
+```text
+DO NOT GUESS THE EXTENT OF AN EXPRESSION
+REFUSE THE EXPRESSION
+```
+
+# 6.1 Prohibition Provenance
+
+prohibitionもcanonical recordであり、rule・approvalと同じadmission pathを通る。
+
+```text
+canonical schema / supported version / no unknown property
+Human Authority provenance
+recomputed prohibition_id matches its content
+```
+
+偽造できるprohibitionは、見落とされるprohibitionより危険である。それは**上訴できない側**の語彙だからである。
+
+同じreason codeを持つ異なるprohibitionは、異なるdecisionを生む。どのprohibitionが一致したかはdecision identityの一部である。
 
 # 7. Project Isolation
 
@@ -140,5 +161,9 @@ CONSTITUTIONAL_PROHIBITION_SURVIVES_APPROVAL=true
 PARTIAL_SCOPE_OVERLAP_PROHIBITS=true
 UNRESOLVED_SCOPE_TREATED_AS_MATCH=true
 PROHIBITION_NE_MISSING_RULE=true
+PROHIBITION_PROVENANCE_REQUIRED=true
+PROHIBITION_IDENTITY_RECOMPUTED=true
+PATH_EXPRESSION_REFUSED_BEFORE_COMPARISON=true
+MATCHED_PROHIBITION_IN_DECISION_IDENTITY=true
 CAPABILITY_CANNOT_LIFT_PROHIBITION=true
 ```

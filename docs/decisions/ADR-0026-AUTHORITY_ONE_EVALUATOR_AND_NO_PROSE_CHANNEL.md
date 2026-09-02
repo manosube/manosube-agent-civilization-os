@@ -115,15 +115,79 @@ Both halves matter. Re-implementing readability would have been a second owner; 
 first owner's vocabulary would have been a leaky boundary. Delegating the decision and owning
 the vocabulary is neither.
 
+## 5.1 Seven findings were one boundary
+
+The exact-head review of `b0bc7ce` returned seven findings — five P1. They looked like seven
+bugs across five files. They were one missing stage.
+
+| # | Reported as | Actually |
+| --- | --- | --- |
+| 1 | payload absent from the approval fingerprint | the binding did not name the operation |
+| 2 | forged / Agent-declared rule grants `AUTONOMOUS` | no admission for a supplied rule |
+| 3 | non-canonical Human approval usable | no admission for a supplied approval |
+| 4 | globs pass as resolved scope | no admission for a supplied scope member |
+| 5 | timestamps compared as strings | no admission for a supplied instant |
+| 6 | provenance absent from decision identity | the address ignored part of its record |
+| 7 | equivalent approvals selected by input order | resolution was not deterministic |
+
+1–5 are the same absence: **a record supplied by a caller reached a decision without being
+established as canonical.** Each site had a hand-written key check that covered a little less
+than the schema it stood in for, and each covered a *different* little less — which is why
+one gate looked like five independent oversights.
+
+The fix is one admission path (`authority/conformance.py`) asking four questions of every
+supplied record: readable, schema-valid at a supported version with no unknown property,
+**content address recomputed**, and declared by a Human Authority. The third is the one a
+per-record gate always omits, and the only one that sees forgery: every other check passes on
+a record whose fields were edited after it was addressed.
+
+6 and 7 are the other half of the same sentence. Once inputs are canonical, the *output* must
+be too: the decision address now includes which rule permitted, which approval was used and
+which prohibitions matched, and equivalent approvals are selected by identity rather than by
+arrival. Without both, two different payloads shared one identity — the same-identity /
+different-payload collision the Kernel forbids everywhere else.
+
+Fixing only the reported fingerprint would have left four of the five P1s open behind a
+correction that read as complete.
+
+## 5.2 What the operation payload is, and is not
+
+`action.operation` is an **opaque canonical payload**. Authority binds it into the approval
+identity and never interprets or executes it; its digest is derived from canonical bytes
+rather than taken from the caller, so a declared digest is a label that must match, not a
+binding that is trusted.
+
+This is not a Change semantics change. `KERNEL_CONSTITUTION` 第22条 already binds an approval
+to an `approved_action_fingerprint`; an action fingerprint that cannot distinguish two
+operations is simply not fingerprinting the action. What Phase 4 records, and does not
+implement, is the obligation that follows: **execution must present the identical operation
+fingerprint the decision bound.**
+
+## 5.3 One non-claim, stated rather than approximated
+
+Deciding whether an enumerated path resolves outside a Boundary requires reading a
+filesystem, and a deterministic evaluator does not read one. So Authority refuses every path
+*expression* — glob, traversal, absolute root, trailing separator — and compares only
+enumerated members. `AUTHORITY_RESOLVES_SYMLINKS=false`, and refusing expressions is what
+keeps that gap bounded instead of open.
+
 ## 6. What is measured
 
 ```text
 CANONICAL_AUTHORITY_OWNER_COUNT=1     one evaluator; a source scan forbids the three
                                       decision values anywhere outside the package
 PARALLEL_AUTHORITY_COUNT=0
+ONE_CANONICAL_INPUT_ADMISSION_PATH=1  rules, approvals and prohibitions cross the same gate
 HUMAN_ONLY_ACTION_KINDS               13, held to AUTHORITY_LEVELS.md §4 in both directions
 AUTHORITY_SCHEMA_COUNT=4              22 committed fixtures, 18 of them adversarial, 0 escapes
 RAW_EXCEPTION_COUNT=0                 over a location sweep plus declaration-driven generation
+COMPLETE_OPERATION_BOUND=true         two payloads under one action/scope cannot share an
+                                      approval or an intent identity
+RECORD_IDENTITY_RECOMPUTED=true       a record edited after addressing is refused
+PATH_EXPRESSION_REJECTED=true         on the request, the rule and the prohibition alike
+CHRONOLOGICAL_VALIDITY_COMPARISON=true
+DECISION_IDENTITY_INCLUDES_PROVENANCE=true
+APPROVAL_SELECTION_CANONICAL=true     permutation invariant
 ```
 
 The declaration generator exists because ADR-0025 §1 established that a fixture-path sweep is

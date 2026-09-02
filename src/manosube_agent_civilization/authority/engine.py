@@ -41,11 +41,11 @@ from manosube_agent_civilization.difference.admissibility import (
 from manosube_agent_civilization.difference.errors import DifferenceError
 from manosube_agent_civilization.difference.validation import (
     DIFFERENCE_SCHEMA_BASE,
-    SCHEMA_BASE as CANONICAL_SCHEMA_BASE,
     validate_record as _validate_canonical_record,
 )
 
 from . import approval as approval_owner, prohibition as prohibition_owner
+from .conformance import AUTHORITY_SCHEMA_BASE, admit, admit_all
 from .errors import (
     AuthorityError,
     AuthorityValidationError,
@@ -71,12 +71,6 @@ from .scope import is_contained, require_scope
 
 SCHEMA_VERSION = "0.1"
 
-#: Schema validation has one owner in this repository -- ``difference.validation``, which
-#: registers the whole ``01_SCHEMA`` tree. Authority reads that registry rather than building
-#: a second one; only the error vocabulary is its own, so a caller can tell which boundary
-#: refused without two validators having to agree about what a schema means.
-AUTHORITY_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "authority/"
-
 
 def _validate(record: dict[str, Any], schema_name: str, base: str) -> None:
     try:
@@ -101,18 +95,13 @@ REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
 
 #: Every key a requested action carries. Closed: an action this evaluator cannot fully read
 #: is not one it may permit.
-_ACTION_KEYS: tuple[str, ...] = ("action_kind", "reversibility", "action_semantic_fingerprint")
-
-_RULE_REQUIRED_KEYS: tuple[str, ...] = (
-    "schema_version",
-    "authority_rule_id",
-    "project_id",
-    "action_kinds",
-    "maximum_reversibility",
-    "scope",
-    "decision",
-    "declared_by",
+_ACTION_KEYS: tuple[str, ...] = (
+    "action_kind",
+    "reversibility",
+    "operation",
+    "action_semantic_fingerprint",
 )
+
 _RULE_DECISIONS: frozenset[str] = frozenset({AUTONOMOUS, HUMAN_APPROVAL_REQUIRED})
 
 
@@ -167,24 +156,22 @@ def _require_action(value: Any) -> dict[str, Any]:
 
 
 def _require_rule(value: Any, position: int) -> dict[str, Any]:
+    """Return one supplied rule once it is canonical; reject it otherwise.
+
+    Admission is the shared gate. The hand-written key check that stood here validated
+    neither the schema version, nor the declaring authority, nor unknown properties, nor the
+    rule's own content address -- so a rule could keep a well-formed identity, be edited to
+    ``AUTONOMOUS``, name an Agent as its author, and still govern the request.
+
+    What stays local is the one thing better said as a sentence: a rule states what it
+    *permits*. Refusal is a prohibition record, and keeping the two vocabularies apart is
+    what stops a rule from becoming a soft prohibition that precedence would have to rank.
+    """
+
     context = f"authority_rules[{position}]"
-    rule = require_object(value, context)
-    for key in _RULE_REQUIRED_KEYS:
-        if key not in rule:
-            raise AuthorityError(f"{context} omits a required key: {key}")
-    require_scalar_tag(rule["project_id"], f"{context} project")
-    kinds = require_collection(rule["action_kinds"], f"{context} action kinds")
-    for index, action_kind in enumerate(kinds):
-        require_scalar_tag(action_kind, f"{context} action_kinds[{index}]")
-    ceiling = require_scalar_tag(rule["maximum_reversibility"], f"{context} maximum reversibility")
-    if ceiling not in REVERSIBILITIES:
-        raise AuthorityError(f"{context} declares an unknown reversibility: {ceiling!r}")
-    decision = require_scalar_tag(rule["decision"], f"{context} decision")
-    if decision not in _RULE_DECISIONS:
-        # A rule states what it permits. Refusal is a prohibition record, and keeping the two
-        # vocabularies apart is what stops a rule from being written as a soft prohibition
-        # that the precedence order would then have to rank.
-        raise AuthorityError(f"{context} may not declare {decision!r}; use a prohibition record")
+    rule = admit(value, "authority_rule", context)
+    if rule["decision"] not in _RULE_DECISIONS:
+        raise AuthorityError(f"{context} may not declare {rule['decision']!r}; use a prohibition")
     require_scope(rule["scope"], f"{context} scope")
     return rule
 
@@ -278,18 +265,19 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
             f"vs current {state_revision}"
         )
 
+    # Every supplied record crosses one admission path before it can affect anything:
+    # schema, supported version, no unknown property, recomputed content address, and Human
+    # Authority provenance. A record failing any of those does not govern, is not consulted,
+    # and does not quietly become an absence -- it refuses the request.
     rules = [
         _require_rule(rule, position)
         for position, rule in enumerate(
             require_collection(shaped["authority_rules"], "authority rules")
         )
     ]
-    prohibitions = [
-        prohibition_owner.require_prohibition(record, f"prohibitions[{position}]")
-        for position, record in enumerate(
-            require_collection(shaped["prohibitions"], "prohibitions")
-        )
-    ]
+    prohibitions = admit_all(shaped["prohibitions"], "prohibition", "prohibitions")
+    for position, record in enumerate(prohibitions):
+        require_scope(record["scope"], f"prohibitions[{position}] scope")
     approvals = [
         approval_owner.require_approval(record, f"approvals[{position}]")
         for position, record in enumerate(require_collection(shaped["approvals"], "approvals"))
@@ -350,6 +338,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
             reason_codes.append("APPROVAL_MISSING")
         else:
             failures: list[str] = []
+            usable: list[dict[str, Any]] = []
             for candidate in approvals:
                 reasons = approval_owner.unusable_reasons(
                     candidate,
@@ -363,10 +352,15 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
                     state_fingerprint=state_fingerprint,
                     evaluation_time=evaluation_time,
                 )
-                if not reasons:
-                    used_approval = candidate
-                    break
-                failures.extend(reasons)
+                if reasons:
+                    failures.extend(reasons)
+                else:
+                    usable.append(candidate)
+            # Every usable approval is checked, then one is chosen **by identity**. Taking
+            # the first supplied made the returned record depend on input order, which for an
+            # evaluator promising a canonical answer is a second answer to the same question.
+            if usable:
+                used_approval = sorted(usable, key=lambda record: str(record["approval_id"]))[0]
             if used_approval is not None:
                 decision = AUTONOMOUS
                 reason_codes.append("APPROVAL_EXACT")

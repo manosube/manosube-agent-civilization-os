@@ -15,10 +15,17 @@ from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
-#: The digest that binds a decision to its inputs. Excluded from it: evaluation timestamps,
-#: rule and prohibition *identities* (their content is what matters), and anything derived
-#: from a session, an Agent or a clock. Two evaluations of the same question must land on
-#: the same identity or the record is not canonical.
+#: The digest that binds a decision to its inputs -- **including which inputs governed it**.
+#:
+#: The provenance references were absent from this list once, and the consequence was not
+#: cosmetic: two distinct prohibitions both yielding ``PROHIBITION_MATCHED`` produced one
+#: decision identity over two different payloads. A content address that ignores part of its
+#: own record is not an address; it is a collision waiting for the two records that differ
+#: only where it does not look. Which rule permitted, which approval was used and which
+#: prohibitions matched are all part of what the decision *is*.
+#:
+#: Still excluded, and deliberately: evaluation timestamps, Agent and session identity, input
+#: ordering. Two evaluations of the same question must land on the same identity.
 DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "project_id",
     "difference_ref",
@@ -26,6 +33,9 @@ DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "requested_scope",
     "evaluated_state_revision",
     "evaluated_state_fingerprint",
+    "resolved_rule_ref",
+    "approval_ref",
+    "prohibition_refs",
     "decision",
     "decision_reason_codes",
 )
@@ -45,7 +55,18 @@ def _address(prefix: str, payload: Any) -> str:
 
 
 def action_fingerprint(action: dict[str, Any]) -> str:
-    """The digest of a requested action, excluding the fingerprint field itself."""
+    """The digest of a requested action, over its **complete** operation.
+
+    The action kind, the reversibility and the *operation payload* all participate. Without
+    the payload, two operations differing only in what they write -- different bytes to the
+    same file -- shared one fingerprint, so an approval for one authorized the other. An
+    approval that cannot tell those apart is not binding an operation; it is binding a
+    category.
+
+    The payload is **opaque** here. Authority never interprets or executes it; it only
+    establishes that this exact payload is the one that was approved, by deriving the digest
+    from canonical bytes rather than trusting any digest the caller supplied.
+    """
 
     return _digest({key: value for key, value in action.items() if key != "action_semantic_fingerprint"})
 

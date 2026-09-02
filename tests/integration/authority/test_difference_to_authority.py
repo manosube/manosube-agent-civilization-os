@@ -11,6 +11,7 @@ there is no API here through which that could happen.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -202,14 +203,35 @@ def test_an_approval_for_another_project_is_rejected(difference: dict[str, Any])
 
 
 def test_an_approval_for_another_difference_is_rejected(difference: dict[str, Any]) -> None:
+    """A properly issued approval, for a different Difference. It does not travel.
+
+    The approval is re-addressed after its Difference reference changes, so this is the
+    *legitimate* case -- a real approval someone issued elsewhere -- and not forgery.
+    Forgery has its own test: mutating a record after it is addressed is refused at
+    admission, before any binding is compared.
+    """
+
     requested, where = action("MERGE"), scope()
-    granted = approval(difference, requested, where)
-    granted["difference_ref"] = {"kind": "difference", "id": "D-" + "A" * 64}
+    elsewhere = deepcopy(difference)
+    elsewhere["difference_id"] = "D-" + "A" * 64
+    granted = approval(elsewhere, requested, where, project_id=difference["project_id"])
     decision = evaluate_authority(
         authority_request(difference, requested, where, approvals=[granted])
     )
     assert decision["decision"] == HUMAN_APPROVAL_REQUIRED
     assert "APPROVAL_DIFFERENCE_MISMATCH" in decision["decision_reason_codes"]
+
+
+def test_an_approval_edited_after_it_was_addressed_is_refused(
+    difference: dict[str, Any]
+) -> None:
+    """Forgery is refused at admission, not weighed and then declined."""
+
+    requested, where = action("MERGE"), scope()
+    granted = approval(difference, requested, where)
+    granted["approved_scope"] = scope(paths=["src/app.py", "src/secret.py"])
+    with pytest.raises(AuthorityError, match="identity does not match its content"):
+        evaluate_authority(authority_request(difference, requested, where, approvals=[granted]))
 
 
 @pytest.mark.parametrize(

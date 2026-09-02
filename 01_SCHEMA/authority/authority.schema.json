@@ -32,10 +32,11 @@
     "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "action": {
       "type": "object",
-      "required": ["action_kind", "reversibility", "action_semantic_fingerprint"],
+      "required": ["action_kind", "reversibility", "operation", "action_semantic_fingerprint"],
       "properties": {
         "action_kind": {"$ref": "#/$defs/action_kind"},
         "reversibility": {"$ref": "#/$defs/reversibility"},
+        "operation": {},
         "action_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}
       },
       "additionalProperties": false

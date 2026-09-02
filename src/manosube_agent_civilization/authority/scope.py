@@ -31,12 +31,46 @@ SCOPE_KEYS: tuple[str, ...] = ("repository", "branch", "paths", "subjects")
 SCOPE_COLLECTIONS: tuple[str, ...] = ("paths", "subjects")
 
 
+#: Characters that make a path an *expression* rather than a location. A member containing
+#: any of them names a set whose membership depends on a filesystem this evaluator does not
+#: read, so exact set containment over it is a comparison of strings pretending to be a
+#: comparison of locations.
+_GLOB_CHARACTERS = frozenset("*?[]{}!")
+
+
+def _is_resolved_member(member: str) -> bool:
+    """Whether *member* names one enumerated location and not a set of them.
+
+    Refused: wildcards, traversal, absolute roots, trailing separators, ``.``-relative
+    prefixes, empty or repeated separators, and backslashes. Each is a form in which a scope
+    reads as narrow here and is interpreted more broadly by whatever executes it.
+    """
+
+    if not member or member != member.strip():
+        return False
+    if _GLOB_CHARACTERS & set(member):
+        return False
+    if "\\" in member:
+        return False
+    if member.startswith("/") or member.endswith("/"):
+        return False
+    segments = member.split("/")
+    return not any(segment in ("", ".", "..") for segment in segments)
+
+
 def require_scope(value: Any, context: str) -> dict[str, Any]:
     """Return *value* once it can be read as a canonical scope; reject it otherwise.
 
     A scope that cannot be enumerated is not narrowed to something safe -- it is refused.
     ``AUTHORITY_CONTRACT.md`` §3: an unresolved glob, an unresolved symlink or an implicit
     recursive root is not a scope this evaluator accepts as an input.
+
+    **Symlink resolution is a non-claim.** Deciding whether a resolved path escapes a
+    Boundary requires reading a filesystem, and a deterministic evaluator does not read one.
+    Authority refuses every path *expression* and compares only enumerated members; proving
+    that an enumerated member does not resolve outside its Boundary belongs to the Binding
+    owner, which v0.1 does not yet have. Refusing expressions is what makes that gap
+    bounded rather than open: `AUTHORITY_RESOLVES_SYMLINKS=false`.
     """
 
     scope = require_object(value, context)
@@ -52,6 +86,11 @@ def require_scope(value: Any, context: str) -> dict[str, Any]:
         members = require_collection(scope[key], f"{context} {key}")
         for position, member in enumerate(members):
             require_scalar_tag(member, f"{context} {key}[{position}]")
+            if not _is_resolved_member(member):
+                raise AuthorityError(
+                    f"{context} {key}[{position}] is not an enumerated resolved location: "
+                    f"{member!r}"
+                )
     return scope
 
 

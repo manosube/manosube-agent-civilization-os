@@ -80,9 +80,33 @@ EXACT DIFFERENCE
 EXACT CHANGE INTENT
 EXACT STATE REVISION
 EXACT STATE FINGERPRINT
-EXACT ACTION FINGERPRINT
-EXACT SCOPE
+EXACT ACTION FINGERPRINT (INCLUDING THE COMPLETE OPERATION PAYLOAD)
+EXACT ENUMERATED SCOPE
 EXPLICIT VALIDITY WINDOW
+```
+
+`approved_action_fingerprint`と`change_intent_fingerprint`はいずれもoperation payloadを含む。含まなければ、同一fileへ異なる内容を書く二つの操作が同じ承認を共有する。
+
+```text
+APPROVING A CATEGORY ≠ APPROVING AN OPERATION
+```
+
+## 3.1 Canonical Before Usable
+
+承認は、bindingを比較される前に**canonical recordであること**を確認される。
+
+```text
+canonical schema / supported version / no unknown property
+canonical approver identity (kind AND id)
+recomputed approval_id matches its content
+enumerated resolved approved_scope
+```
+
+`{"kind": "human_authority"}`だけでapprover identityを欠く記録は承認ではない。addressされた後に書き換えられた記録も承認ではない—それは偽造であり、bindingを比較する前に拒否する。
+
+```text
+INCOMPLETE APPROVER = NO APPROVAL
+EDITED AFTER ADDRESSING = FORGERY, NOT A WEAK APPROVAL
 ```
 
 # 4. Invalidation
@@ -156,6 +180,20 @@ EVALUATION TIME IS AN INPUT
 AUTHORITY DOES NOT READ THE CLOCK
 ```
 
+三つのtimestampは比較前に**parseする**。文字列順序は時系列順序ではない。
+
+```text
+"2026-06-01T00:00:00Z" > "2026-06-01T00:00:00.5Z"   as strings
+2026-06-01T00:00:00Z   < 2026-06-01T00:00:00.5Z     as instants
+```
+
+小数秒、等価offsetは同じinstantの別表記である。parseしなければ、期限内の承認が期限切れとして拒否され、あるいはその逆が起きる。timezoneを欠くtimestampはinstantを名指していないため拒否する。
+
+```text
+LEXICOGRAPHIC ORDER ≠ CHRONOLOGICAL ORDER
+NAIVE TIMESTAMP → REJECT
+```
+
 # 8. Revocation
 
 撤回は承認の削除ではない。`status: REVOKED`として保持し、lineageを残す。
@@ -189,6 +227,12 @@ STALE_APPROVAL_REJECTED=true
 SCOPE_WIDENING_REJECTED=true
 FOREIGN_PROJECT_DECISION_REJECTED=true
 UNBOUNDED_APPROVAL_REJECTED=true
+OPERATION_PAYLOAD_IN_BINDING=true
+NONCANONICAL_APPROVAL_REJECTED=true
+APPROVER_IDENTITY_REQUIRED=true
+APPROVAL_IDENTITY_RECOMPUTED=true
+CHRONOLOGICAL_WINDOW_COMPARISON=true
+EQUIVALENT_APPROVALS_SELECTED_CANONICALLY=true
 APPROVAL_CANNOT_OVERRIDE_PROHIBITION=true
 INFERRED_APPROVAL_REJECTED=true
 EVALUATION_TIME_IS_AN_INPUT=true

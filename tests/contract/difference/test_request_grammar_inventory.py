@@ -188,11 +188,20 @@ def test_the_declared_unconstrained_locations_match_the_schemas_in_both_directio
     """A schema that opens a new payload location fails here instead of widening in silence."""
 
     assert _unconstrained_schema_locations() == set(admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS)
-    assert set(admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS.values()) == {"INPUT", "EMITTED"}
+    assert set(admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS.values()) == {
+        "INPUT",
+        "EMITTED",
+        "AUTHORITY_INPUT",
+    }
 
 
 def test_every_input_side_unconstrained_location_has_generated_coverage() -> None:
-    """The classification is not decoration: each ``INPUT`` location is generated against."""
+    """The classification is not decoration: each ``INPUT`` location is generated against.
+
+    ``AUTHORITY_INPUT`` locations belong to a different owner and are generated against in
+    ``tests/unit/authority``. Naming the owner in the tag is what keeps an unconstrained
+    location from being added with no suite responsible for it.
+    """
 
     inputs = {
         location
@@ -200,6 +209,11 @@ def test_every_input_side_unconstrained_location_has_generated_coverage() -> Non
         if side == "INPUT"
     }
     assert inputs == set(_PAYLOAD_BUILDERS)
+    assert {
+        location
+        for location, side in admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS.items()
+        if side == "AUTHORITY_INPUT"
+    } == {"authority/authority.schema.json#/$defs/action/properties/operation"}
 
 
 # --------------------------------------------------------------------------- #

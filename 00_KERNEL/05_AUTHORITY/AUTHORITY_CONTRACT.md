@@ -87,6 +87,7 @@ Authorityはactionを名前で判断しない。actionは正規化された構�
 requested_action:
   action_kind: WRITE_FILE | DELETE_FILE | RUN_COMMAND | ...
   reversibility: REVERSIBLE | RECOVERABLE | IRREVERSIBLE
+  operation: {}                      # opaque canonical payload
   action_semantic_fingerprint: sha256:...
 
 requested_scope:
@@ -96,23 +97,92 @@ requested_scope:
   subjects: []
 ```
 
-scopeは明示列挙である。未解決glob、未解決symlink、暗黙のrecursive rootをscopeとして受理しない。
+## 3.1 Complete Operation Binding
+
+`action_kind`とreversibilityだけでは操作を同定できない。同一fileへ異なる内容を書く二つの操作は、kindもscopeも同じである。
+
+```text
+ACTION KIND + SCOPE
+≠ OPERATION
+```
+
+そこでactionは**opaque canonical operation payload**を伴う。
+
+```text
+AUTHORITY BINDS THE PAYLOAD
+AUTHORITY NEVER INTERPRETS OR EXECUTES IT
+```
+
+fingerprintはcanonical bytesから**Authority自身が導出する**。呼び出し側が申告したdigestを信頼しない。申告値は再計算値と一致しなければならず、一致しない要求は拒否する。
+
+```text
+CALLER-DECLARED DIGEST = A LABEL
+DERIVED DIGEST = THE BINDING
+```
+
+## 3.2 Enumerated Resolved Scope
+
+scopeは明示列挙である。次はscope memberとして受理しない。
+
+```text
+glob / wildcard        **  *  ?  [ ]  { }
+traversal              ..
+relative prefix        ./
+absolute root          /...
+trailing separator     src/
+empty or repeated segment
+```
+
+これらの範囲はAuthorityが読まないfilesystemに依存する。読まない対象について包含を判定することは、locationの比較ではなく文字列の比較である。
 
 ```text
 SCOPE MUST BE ENUMERATED
-UNRESOLVED SCOPE → FAIL CLOSED
+PATH EXPRESSION → FAIL CLOSED
+```
+
+**symlink解決は非主張である。** 列挙されたmemberがBoundary外へ解決しないことの証明はfilesystem読み取りを要し、決定的評価器はそれを行わない。それはBinding ownerの責務であり、v0.1には存在しない。Authorityは*式*を拒否することでこの空白を有界に保つ。
+
+```text
+AUTHORITY_RESOLVES_SYMLINKS=false
+PATH_EXPRESSION_ACCEPTED=false
 ```
 
 # 4. Evaluation Route
 
 ```text
-RAW AUTHORITY REQUEST
+RAW AUTHORITY INPUTS
 → STRUCTURAL ADMISSIBILITY
+→ SCHEMA + IDENTITY + PROVENANCE + SCOPE + TIME CONFORMANCE
+→ VERIFIED CANONICAL RULES / APPROVALS / PROHIBITIONS / REQUEST
 → EXACT BINDING VERIFICATION
 → PROHIBITION EVALUATION
 → RULE RESOLUTION
 → APPROVAL VERIFICATION (required only when the rule demands it)
-→ AUTHORITY DECISION
+→ DECISION BOUND TO COMPLETE OPERATION + SELECTED PROVENANCE
+```
+
+## 4.1 Canonical Input Conformance
+
+rule、approval、prohibitionはすべて**呼び出し側が供給する**。いずれかがdecisionへ影響する前に、一つの共通admission pathを通す。
+
+```text
+1  canonical objectとして読めるか
+2  canonical schemaを、supported versionで、unknown propertyなしに満たすか
+3  content-addressed identityが、実際に存在する内容と一致するか
+4  schemaが要求するauthorityによって宣言されているか
+```
+
+3が要である。identityは*内容についての主張*であり、再計算だけが偽造を可視化する。他のすべての検査は、addressされた後に書き換えられた記録を通してしまう。
+
+```text
+ONE ADMISSION PATH
+NO WEAKER LOCAL COPY IN RULE OR APPROVAL SELECTION
+```
+
+有効期間の比較はparsed instantで行う。文字列順序は時系列順序ではない。
+
+```text
+LEXICOGRAPHIC ORDER ≠ CHRONOLOGICAL ORDER
 ```
 
 順序は固定である。**Prohibitionはrule resolutionより前に評価する。** 禁止されたactionに対して許可ruleを探すこと自体が誤りであり、探索の成功がPROHIBITIONを弱める経路を作ってはならない。
@@ -180,6 +250,48 @@ Authority評価器は一つである。auditor、adapter、test、CLI、Agent、
 
 規則を言い換えた第二の実装は、規則の複製ではなく**規則の分裂**である。
 
+# 7.1 Decision Identity Includes Its Provenance
+
+decision identityは、結論だけでなく**何がその結論を支配したか**を含む。
+
+```text
+DECISION IDENTITY INPUT
+= project + difference + action + scope + state binding
++ decision + reason codes
++ resolved rule identity
++ approval identity
++ sorted prohibition identities
+```
+
+同じ結論・同じreason codeでも、支配したruleやprohibitionが異なれば別のdecisionである。provenanceを除いたaddressは、同一identityの下に異なるpayloadを許す。
+
+```text
+SAME ID / DIFFERENT PAYLOAD = NOT CANONICAL
+```
+
+使用可能なapprovalが複数ある場合、canonical identity順で選択する。入力順が返却記録を変えてはならない。
+
+```text
+INPUT ORDER DOES NOT CHANGE THE ANSWER
+```
+
+# 7.2 Future Change Obligation
+
+Authorityはoperationを実行しない。実行段階へ次の義務を残す。
+
+```text
+CHANGE EXECUTION MUST PRESENT
+THE IDENTICAL OPERATION FINGERPRINT
+THAT THE AUTHORITY DECISION BOUND
+```
+
+異なるfingerprintの操作は、そのdecisionによって許可されていない。この義務はChange phaseが実装する。v0.1 Phase 4はこれを**記録するだけ**である。
+
+```text
+CHANGE_ENGINE_IMPLEMENTED=false
+OPERATION_FINGERPRINT_OBLIGATION_RECORDED=true
+```
+
 # 8. What Authority Never Does
 
 ```text
@@ -224,6 +336,16 @@ UNKNOWN_IS_NOT_PERMITTED=true
 CANONICAL_AUTHORITY_OWNER_COUNT=1
 AUTHORITY_NE_EXECUTION=true
 AUTHORITY_REQUIRED_NE_GRANTED=true
+COMPLETE_OPERATION_BOUND=true
+CALLER_DECLARED_DIGEST_NOT_TRUSTED=true
+ONE_CANONICAL_INPUT_ADMISSION_PATH=true
+RECORD_IDENTITY_RECOMPUTED=true
+HUMAN_AUTHORITY_PROVENANCE_REQUIRED=true
+PATH_EXPRESSION_REJECTED=true
+AUTHORITY_RESOLVES_SYMLINKS=false
+CHRONOLOGICAL_VALIDITY_COMPARISON=true
+DECISION_IDENTITY_INCLUDES_PROVENANCE=true
+APPROVAL_SELECTION_CANONICAL=true
 ```
 
 ```text

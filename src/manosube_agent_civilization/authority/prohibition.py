@@ -10,45 +10,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from manosube_agent_civilization.difference.admissibility import (
-    require_collection,
-    require_object,
-    require_scalar_tag,
-)
-
-from .errors import AuthorityError
+from .conformance import admit
 from .scope import overlaps, require_scope
 
 CONSTITUTIONAL = "CONSTITUTIONAL"
 PROJECT = "PROJECT"
 PROHIBITION_CLASSES: frozenset[str] = frozenset({CONSTITUTIONAL, PROJECT})
 
-_REQUIRED_KEYS: tuple[str, ...] = (
-    "schema_version",
-    "prohibition_id",
-    "project_id",
-    "prohibition_class",
-    "action_kinds",
-    "scope",
-    "reason_code",
-    "declared_by",
-)
-
-
 def require_prohibition(value: Any, context: str) -> dict[str, Any]:
-    """Return *value* once it can be read as a prohibition; reject it otherwise."""
+    """Return *value* once it is a canonical prohibition; reject it otherwise.
 
-    prohibition = require_object(value, context)
-    for key in _REQUIRED_KEYS:
-        if key not in prohibition:
-            raise AuthorityError(f"{context} omits a required key: {key}")
-    require_scalar_tag(prohibition["project_id"], f"{context} project")
-    kind = require_scalar_tag(prohibition["prohibition_class"], f"{context} class")
-    if kind not in PROHIBITION_CLASSES:
-        raise AuthorityError(f"{context} declares an unknown prohibition class: {kind!r}")
-    kinds = require_collection(prohibition["action_kinds"], f"{context} action kinds")
-    for position, action_kind in enumerate(kinds):
-        require_scalar_tag(action_kind, f"{context} action_kinds[{position}]")
+    The same shared admission every supplied record crosses. A prohibition that could be
+    forged would be worse than one that could be missed: it is the half of the vocabulary
+    that cannot be appealed.
+    """
+
+    prohibition = admit(value, "prohibition", context)
     require_scope(prohibition["scope"], f"{context} scope")
     return prohibition
 
