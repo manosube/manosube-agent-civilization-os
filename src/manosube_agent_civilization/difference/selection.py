@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .admissibility import is_scalar_tag
 from .canonical import canonical_bytes
 from .errors import DifferenceError, IdentityCollisionError
 
@@ -76,7 +77,7 @@ def unique_target_predicates(objective: dict[str, Any]) -> dict[str, dict[str, A
     payloads: dict[str, bytes] = {}
     for predicate in objective["target_predicates"]:
         identity = predicate.get("predicate_id")
-        if not isinstance(identity, str) or not identity:
+        if not is_scalar_tag(identity):
             raise DifferenceError("Target Predicate has no identity")
         payload = canonical_bytes(predicate)
         existing = payloads.get(identity)

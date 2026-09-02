@@ -35,9 +35,9 @@ from tests.difference_helpers import (
 )
 
 from manosube_agent_civilization.difference import derive_differences, engine as engine_module
+from manosube_agent_civilization.difference.admissibility import BINDING_KEYS
 from manosube_agent_civilization.difference.conformance import EMITTED_SECTIONS
 from manosube_agent_civilization.difference.engine import (
-    _BINDING_KEYS,
     _EMITTED_SWEEP_FRAGMENT_TYPES,
     _REQUEST_FRAGMENT_TYPES,
     _SCANNED_BINDING_KEYS,
@@ -114,7 +114,7 @@ def test_every_record_bearing_binding_key_is_scanned_in_both_directions() -> Non
     # ``closure_policy_requirements`` was on this list: a binding may override the
     # derivation's Policy requirements with its own fragment, so a moving reference only
     # had to be supplied per binding rather than per request to pass the boundary.
-    assert {"target_predicate_id", "risk_class"} == _BINDING_KEYS - _SCANNED_BINDING_KEYS
+    assert {"target_predicate_id", "risk_class"} == BINDING_KEYS - _SCANNED_BINDING_KEYS
 
 
 # --------------------------------------------------------------------------- #

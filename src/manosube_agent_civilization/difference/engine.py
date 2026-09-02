@@ -32,6 +32,17 @@ from manosube_agent_civilization.observation.verification import (
     observation_record_errors,
 )
 
+from .admissibility import (
+    BINDING_KEYS,
+    REQUIRED_BINDING_KEYS,
+    REQUIRED_REQUEST_KEYS,
+    is_canonical_object,
+    is_collection,
+    is_scalar_tag,
+    require_collection,
+    require_object,
+    require_scalar_tag,
+)
 from .canonical import (
     canonical_bytes,
     content_address,
@@ -61,6 +72,9 @@ from .identity import (
     COMPARISON_PROFILE,
     IDENTITY_PROFILE,
     NORMALIZATION_PROFILE,
+    POLICY_INVARIANT_SOURCE_FIELDS,
+    POLICY_SET_MEMBER_FIELDS,
+    POLICY_UNORDERED_SET_FIELDS,
     closure_policy_id,
     completion_claim_fingerprint,
     completion_claim_id,
@@ -271,15 +285,39 @@ def _closure_policy(
         raise DifferenceError("Closure Policy contradiction policy must remain FAIL_CLOSED")
     if policy["independent_verification_required"] is not False:
         raise DifferenceError("v0.1 Closure Policy cannot require independent verification")
+    # Every declared unordered set is sorted by the digest, and every member of a set with
+    # a declared projection is indexed by it. Supplied malformed, each reached `sorted` or
+    # the projection itself and raised `'NoneType' object is not iterable` or a bare
+    # `KeyError` out of the identity module -- the producer failing to answer, not
+    # rejecting. Read here, before the fingerprint, against the same declarations the
+    # projection reads.
+    for field in POLICY_UNORDERED_SET_FIELDS:
+        members = require_collection(policy[field], f"Closure Policy {field}")
+        declared_member_fields = POLICY_SET_MEMBER_FIELDS.get(field)
+        if declared_member_fields is None:
+            continue
+        for position, member in enumerate(members):
+            where = f"{field}[{position}]"
+            require_object(member, f"Closure Policy {field} member", detail=where)
+            _require_projected_fields(member, declared_member_fields, where)
+            if field == "required_invariants":
+                source = require_object(
+                    member["contract_source_ref"],
+                    "Closure Policy required invariant contract source",
+                    detail=f"{where}.contract_source_ref",
+                )
+                _require_projected_fields(
+                    source, POLICY_INVARIANT_SOURCE_FIELDS, f"{where}.contract_source_ref"
+                )
+
     declared = policy["required_claims"]
-    if not isinstance(declared, list):
-        raise DifferenceError("Closure Policy required Claims are not a list")
     claims = []
     for position, descriptor in enumerate(declared):
-        if not isinstance(descriptor, dict):
-            raise DifferenceError(
-                f"required Claim descriptor is not a canonical object: required_claims[{position}]"
-            )
+        require_object(
+            descriptor,
+            "required Claim descriptor",
+            detail=f"required_claims[{position}]",
+        )
         missing = [key for key in CLAIM_SEMANTIC_FIELDS if key not in descriptor]
         if missing:
             raise DifferenceError(
@@ -301,6 +339,18 @@ def _closure_policy(
     return policy, policy_semantic_fingerprint(policy)
 
 
+def _require_projected_fields(
+    member: dict[str, Any], fields: tuple[str, ...], where: str
+) -> None:
+    """Reject a Closure Policy set member that omits a key its declared projection reads."""
+
+    missing = [key for key in fields if key not in member]
+    if missing:
+        raise DifferenceError(
+            f"Closure Policy set member omits a projected key: {where}.{missing[0]}"
+        )
+
+
 def _require_fragment_object(fragment: Any, name: str) -> dict[str, Any]:
     """Reject a fragment that is not a canonical object, before it is materialised.
 
@@ -310,9 +360,7 @@ def _require_fragment_object(fragment: Any, name: str) -> dict[str, Any]:
     receives. The object contract is decided here, first.
     """
 
-    if not isinstance(fragment, dict):
-        raise DifferenceError(f"requested {name} is not a canonical object")
-    return fragment
+    return require_object(fragment, f"requested {name}")
 
 
 def _observation_method(record: dict[str, Any]) -> dict[str, Any]:
@@ -329,20 +377,6 @@ def _observation_method(record: dict[str, Any]) -> dict[str, Any]:
     return method
 
 
-#: Every key a derivation binding may carry. ``historical_observation_scopes`` is the
-#: explicit, immutable supply route for the Scopes an append-only Observation lineage
-#: names but this derivation did not resolve; see ``_historical_scopes``.
-_BINDING_KEYS: frozenset[str] = frozenset(
-    {
-        "target_predicate_id",
-        "observation_scope",
-        "observation_bundle",
-        "historical_observation_scopes",
-        "predecessor",
-        "closure_policy_requirements",
-        "risk_class",
-    }
-)
 
 
 def _historical_scopes(
@@ -366,7 +400,7 @@ def _historical_scopes(
     """
 
     supplied = binding.get("historical_observation_scopes", [])
-    if not isinstance(supplied, list):
+    if not is_collection(supplied):
         raise DifferenceError("historical Observation Scopes must be a list of records")
     validated: list[dict[str, Any]] = []
     for record in supplied:
@@ -402,46 +436,26 @@ _REQUIRED_BUNDLE_SECTIONS: tuple[str, ...] = (
 )
 
 
-#: Every top-level derivation-request key the derivation reads before it can validate
-#: anything. Absent, they raised an incidental ``KeyError`` in place of the canonical
-#: rejection; a contract test compares this tuple against what the derivation reads.
-_REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
-    "project_id",
-    "objective_revision",
-    "state_revision",
-    "state_fingerprint",
-    "bindings",
-)
-
-#: Every per-binding key the derivation reads for the same reason.
-_REQUIRED_BINDING_KEYS: tuple[str, ...] = (
-    "target_predicate_id",
-    "observation_scope",
-    "observation_bundle",
-)
-
-
 def _require_request_shape(request: Any) -> None:
     """Reject a derivation request that omits a key the derivation reads.
 
     Read before anything else, so no absent key is discovered by the code that needed it.
     """
 
-    if not isinstance(request, dict):
-        raise DifferenceError("derivation request is not a canonical object")
-    for key in _REQUIRED_REQUEST_KEYS:
+    require_object(request, "derivation request")
+    for key in REQUIRED_REQUEST_KEYS:
         if key not in request:
             raise DifferenceError(f"derivation request omits a required key: {key}")
+    # The decision is the owner's; the sentence is this gate's. A ``bindings`` that is not
+    # a list and a ``bindings`` that is empty are one rejection here on purpose -- a caller
+    # supplied no canonical binding either way -- and delegating must not cost that.
     bindings = request["bindings"]
-    if not isinstance(bindings, list) or not bindings:
+    if not is_collection(bindings) or not bindings:
         raise DifferenceError("derivation request carries no canonical bindings")
     bound_targets: set[str] = set()
     for position, binding in enumerate(bindings):
-        if not isinstance(binding, dict):
-            raise DifferenceError(
-                f"derivation binding is not a canonical object: bindings[{position}]"
-            )
-        for key in _REQUIRED_BINDING_KEYS:
+        require_object(binding, "derivation binding", detail=f"bindings[{position}]")
+        for key in REQUIRED_BINDING_KEYS:
             if key not in binding:
                 raise DifferenceError(
                     f"derivation binding omits a required key: bindings[{position}].{key}"
@@ -451,26 +465,25 @@ def _require_request_shape(request: Any) -> None:
         # the returned bundle then lists that Target as satisfied *and* open at once. A
         # Target's additional Scopes travel as `historical_observation_scopes`, not as a
         # second binding, so there is no legitimate case this rejects.
-        identity = binding["target_predicate_id"]
         # A canonical identity is a non-empty string. Consulting the set first attempted to
         # hash whatever was supplied, so a JSON array or object raised `unhashable type`
         # before the boundary could reject it -- the same totality rule this gate exists to
-        # apply, missed in the gate itself.
-        if not isinstance(identity, str) or not identity:
-            raise DifferenceError(
-                "derivation binding Target Predicate identity is not a canonical string: "
-                f"bindings[{position}]"
-            )
+        # apply, missed in the gate itself, and now asked of the one owner that answers it.
+        identity = require_scalar_tag(
+            binding["target_predicate_id"],
+            "derivation binding Target Predicate identity",
+            detail=f"bindings[{position}]",
+        )
         if identity in bound_targets:
             raise DifferenceError(
                 f"derivation binds one Target Predicate twice: {identity}"
             )
         bound_targets.add(identity)
-        scope = binding["observation_scope"]
-        if not isinstance(scope, dict):
-            raise DifferenceError(
-                f"derivation binding Scope is not a canonical object: bindings[{position}]"
-            )
+        require_object(
+            binding["observation_scope"],
+            "derivation binding Scope",
+            detail=f"bindings[{position}]",
+        )
 
 
 def _require_bundle_shape(bundle: Any) -> None:
@@ -482,16 +495,17 @@ def _require_bundle_shape(bundle: Any) -> None:
     level in, which is where the previous two rounds also found it.
     """
 
-    if not isinstance(bundle, dict):
-        raise DifferenceError("observation bundle is not a canonical object")
+    require_object(bundle, "observation bundle")
     for section in _REQUIRED_BUNDLE_SECTIONS:
         records = bundle.get(section)
-        if not isinstance(records, list):
+        # The decision is the owner's; the *diagnosis* stays this gate's, because a section
+        # that is not a list is how a bundle omits it, and that is what a caller needs told.
+        if not is_collection(records):
             raise DifferenceError(
                 f"observation bundle omits a canonical section: {section}"
             )
         for position, record in enumerate(records):
-            if not isinstance(record, dict):
+            if not is_canonical_object(record):
                 raise DifferenceError(
                     f"observation bundle carries a non-object record: {section}[{position}]"
                 )
@@ -604,9 +618,7 @@ def _select_observation(
         raise BoundaryViolationError("Observation project does not match the derivation request")
     if observation["status"] not in _ACCEPTED_OBSERVATION_STATUS:
         raise DifferenceError(f"unusable Observation status: {observation['status']}")
-    if not isinstance(observation, dict):
-        raise DifferenceError("Observation record must be a canonical object")
-    return observation
+    return require_object(observation, "Observation record")
 
 
 def _observed_projection(
@@ -1389,10 +1401,9 @@ def _iter_request_records(request: dict[str, Any]) -> list[tuple[dict[str, Any],
                             (record, type_name, f"{where}.observation_bundle.{section}[{index}]")
                         )
         predecessor = binding.get("predecessor")
-        if predecessor is not None and not isinstance(predecessor, dict):
-            raise DifferenceError("derivation binding predecessor is not a canonical object")
-        if not isinstance(predecessor, dict):
+        if predecessor is None:
             continue
+        predecessor = require_object(predecessor, "derivation binding predecessor")
         difference = predecessor.get("difference")
         if isinstance(difference, dict):
             found.append((difference, "difference", f"{where}.predecessor.difference"))
@@ -1471,8 +1482,7 @@ def _validate_predecessor(predecessor: dict[str, Any]) -> tuple[dict[str, Any], 
     # comparison function and a retyped one raised comparing against the other events'
     # integers. The gate already existed and simply ran second.
     carried_events = predecessor["events"]
-    if not isinstance(carried_events, list):
-        raise DifferenceError("predecessor events are not a canonical list of records")
+    require_collection(carried_events, "predecessor events")
     for event in carried_events:
         validate_carried_event(event, difference, carried_requests, carried_methods)
     events = sorted(carried_events, key=lambda item: item["event_revision"])
@@ -1558,7 +1568,13 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     default_requirements = _require_fragment_object(
         request.get("closure_policy_requirements", {}), "closure_policy_requirements"
     )
-    default_risk_class = request.get("risk_class", "LOW")
+    # `in` hashes its operand, so a JSON array or object under `risk_class` raised
+    # `unhashable type` from inside the membership test -- one line before the rejection
+    # written for it. The tag is established first, by the owner, at both routes: the
+    # request default here and the per-binding override below.
+    default_risk_class = require_scalar_tag(
+        request.get("risk_class", "LOW"), "requested risk class"
+    )
     if default_risk_class not in RISK_CLASSES:
         raise DifferenceError(f"unknown risk class: {default_risk_class!r}")
 
@@ -1591,7 +1607,7 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
     satisfied: list[str] = []
 
     for binding in sorted(request["bindings"], key=lambda item: item["target_predicate_id"]):
-        unknown_binding_keys = set(binding) - _BINDING_KEYS
+        unknown_binding_keys = set(binding) - BINDING_KEYS
         if unknown_binding_keys:
             raise DifferenceError(
                 f"binding carries unknown sections: {sorted(unknown_binding_keys)}"
@@ -1693,7 +1709,9 @@ def derive_differences(request: dict[str, Any]) -> dict[str, Any]:
             "observation_scope": predicate["observation_scope"],
             "effective_boundary": boundary,
             "impact": {},
-            "risk_class": binding.get("risk_class", default_risk_class),
+            "risk_class": require_scalar_tag(
+                binding.get("risk_class", default_risk_class), "binding risk class"
+            ),
             "authority_required": [],
             "closure_policy": {
                 "kind": "closure_policy",
@@ -2113,7 +2131,7 @@ def _own_scope(
     identity = observation["observation_id"]
     reference = observation.get("scope_ref")
     scope_id = None if not isinstance(reference, dict) else reference.get("id")
-    if not isinstance(scope_id, str):
+    if not is_scalar_tag(scope_id):
         raise DifferenceError(
             f"carried Observation has no resolvable Scope reference: {identity}"
         )

@@ -58,6 +58,25 @@ POLICY_UNORDERED_SET_FIELDS = (
     "reopen_conditions",
 )
 
+#: The member projection of each unordered set that has one; a member of any other set is
+#: projected whole. Lifted out of :func:`policy_semantic_projection` so the admissibility
+#: gate that must establish a supplied member is *readable* reads the same declaration the
+#: digest reads. One declaration, two readers: a gate deriving the shape from a second,
+#: hand-copied list is how the two would drift, which is the reason the projection itself
+#: was extracted in the first place.
+POLICY_SET_MEMBER_FIELDS: dict[str, tuple[str, ...]] = {
+    "reopen_conditions": ("kind", "id", "predicate_semantic_fingerprint"),
+    "required_invariants": ("kind", "id", "contract_source_ref"),
+}
+
+#: The nested projection of a required invariant's contract source reference.
+POLICY_INVARIANT_SOURCE_FIELDS: tuple[str, ...] = (
+    "kind",
+    "repository",
+    "path",
+    "invariant_definition_sha256",
+)
+
 _POLICY_SEMANTIC_FIELDS = (
     "target_predicate_ref",
     "required_observation_scope",
@@ -165,7 +184,7 @@ def policy_semantic_projection(policy: dict[str, Any]) -> dict[str, Any]:
     )
     projection["reopen_conditions"] = sorted(
         (
-            {key: item[key] for key in ("kind", "id", "predicate_semantic_fingerprint")}
+            {key: item[key] for key in POLICY_SET_MEMBER_FIELDS["reopen_conditions"]}
             for item in projection["reopen_conditions"]
         ),
         key=canonical_json_bytes,
@@ -176,12 +195,8 @@ def policy_semantic_projection(policy: dict[str, Any]) -> dict[str, Any]:
                 "kind": item["kind"],
                 "id": item["id"],
                 "contract_source_blob": {
-                    "kind": item["contract_source_ref"]["kind"],
-                    "repository": item["contract_source_ref"]["repository"],
-                    "path": item["contract_source_ref"]["path"],
-                    "invariant_definition_sha256": item["contract_source_ref"][
-                        "invariant_definition_sha256"
-                    ],
+                    key: item["contract_source_ref"][key]
+                    for key in POLICY_INVARIANT_SOURCE_FIELDS
                 },
             }
             for item in projection["required_invariants"]

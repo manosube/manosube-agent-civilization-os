@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import readability
+from .admissibility import require_object
 from .canonical import canonical_bytes, content_address
 from .conformance import (
     CARRIED_SECTIONS,
@@ -135,8 +136,7 @@ def validate_carried_records(context: dict[str, Any]) -> None:
     the same defect as the ones below it, one level further out.
     """
 
-    if not isinstance(context, dict):
-        raise DifferenceError("predecessor context is not a canonical object")
+    require_object(context, "predecessor context")
     unknown = set(context) - set(CARRIED_TYPES) - BUNDLE_ENVELOPE_SECTIONS
     if unknown:
         raise DifferenceError(

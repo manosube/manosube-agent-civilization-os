@@ -40,6 +40,7 @@ from manosube_agent_civilization.observation.identity import (
 )
 
 from . import readability
+from .admissibility import require_object
 from .canonical import canonical_bytes, content_address
 from .errors import DifferenceError, IdentityCollisionError
 from .identity import (
@@ -395,8 +396,7 @@ def validate_derivation_input(record: Any, input_name: str) -> None:
 def validate_state_fingerprint(fingerprint: Any, context: str) -> None:
     """Validate a State fingerprint input against the canonical common schema."""
 
-    if not isinstance(fingerprint, dict):
-        raise DifferenceError(f"{context} is not a canonical fingerprint object")
+    require_object(fingerprint, context)
     validate_record(fingerprint, STATE_FINGERPRINT_SCHEMA, base=STATE_FINGERPRINT_BASE)
 
 

@@ -12,6 +12,7 @@ from typing import Any
 from manosube_agent_civilization.observation.errors import ObservationError
 from manosube_agent_civilization.observation.normalization import canonical_value
 
+from .admissibility import is_scalar_tag
 from .canonical import canonical_bytes, canonical_semantic, unordered_set
 from .errors import DifferenceError
 from .identity import COMPARISON_PROFILE
@@ -92,9 +93,15 @@ def normalize_objective_value(value: Any) -> tuple[Any, str]:
     much it resembles a wrapper -- is an ordinary structured value and is compared whole.
     """
 
+    # `in` hashes its operand. A domain-shaped object whose `value_type` is itself a list
+    # or an object raised `unhashable type` here, which is neither of the two answers this
+    # function has: the contract says any object that is not a *declared* wrapper is an
+    # ordinary structured value compared whole, and a tag that cannot be a tag names no
+    # declared wrapper. Asked of the owner, so the tag is established before it is hashed.
     if (
         isinstance(value, dict)
         and set(value) == {"value_type", "value"}
+        and is_scalar_tag(value["value_type"])
         and value["value_type"] in TYPED_SCALAR_WRAPPER_TYPES
     ):
         return value["value"], str(value["value_type"])
@@ -158,7 +165,7 @@ def reject_noncanonical_typed_value(value: Any, value_type: str) -> None:
     canonical value for these types; this module states no second definition.
     """
 
-    if value_type not in TYPED_SCALAR_WRAPPER_TYPES:
+    if not is_scalar_tag(value_type) or value_type not in TYPED_SCALAR_WRAPPER_TYPES:
         return
     try:
         canonical = canonical_value(value, value_type)

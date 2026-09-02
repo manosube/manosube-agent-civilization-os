@@ -30,7 +30,7 @@ from tests.difference_helpers import (
 )
 
 from manosube_agent_civilization.difference import DifferenceError, derive_differences
-from manosube_agent_civilization.difference.engine import _BINDING_KEYS
+from manosube_agent_civilization.difference.admissibility import BINDING_KEYS
 from manosube_agent_civilization.difference.errors import (
     BoundaryViolationError,
     IdentityCollisionError,
@@ -155,7 +155,7 @@ def test_the_supply_route_is_not_a_list_fails_closed() -> None:
 def test_the_binding_key_set_is_closed() -> None:
     """A binding key the Engine does not declare is rejected, not silently ignored."""
 
-    assert "historical_observation_scopes" in _BINDING_KEYS
+    assert "historical_observation_scopes" in BINDING_KEYS
     request = _request(None)
     request["bindings"][0]["unexpected_key"] = []
     with pytest.raises(DifferenceError, match="binding carries unknown sections"):

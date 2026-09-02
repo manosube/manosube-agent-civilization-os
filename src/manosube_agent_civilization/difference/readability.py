@@ -42,6 +42,8 @@ from typing import Any
 
 from manosube_agent_civilization.observation.verification import is_unreadable_error
 
+from .admissibility import is_canonical_object, is_collection
+
 #: A record that is not a JSON object at all. Nothing below it can be read.
 NOT_AN_OBJECT = "NOT_AN_OBJECT"
 
@@ -118,21 +120,13 @@ def mechanical_schema_errors(record: dict[str, Any], type_name: str) -> list[str
     ]
 
 
-def is_record_list(records: Any) -> bool:
-    """Whether a section can be iterated as records at all.
-
-    Trivial, and owned here anyway: every gate that iterates a section asked this question
-    itself, which is how four of them ended up asking three different versions of it.
-    Callers keep their own wording; the decision is one line, in one place.
-    """
-
-    return isinstance(records, list)
-
-
-def is_canonical_object(value: Any) -> bool:
-    """Whether an envelope member can be read as an object."""
-
-    return isinstance(value, dict)
+#: Whether a section can be iterated as records at all. Trivial, and it still had four
+#: gates asking three different versions of it -- which is why it was pulled out of them.
+#: It is not defined here, though: "can this be iterated" is one question whether it is
+#: asked of a raw request value or of a record section, and ADR-0025 gives it one owner.
+#: This is that owner's answer under the name this module's callers ask it by -- an alias,
+#: one object, so the two owners cannot drift into two answers. Callers keep their wording.
+is_record_list = is_collection
 
 
 def emitted_bundle_errors(bundle: Any) -> list[str]:

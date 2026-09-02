@@ -13,6 +13,7 @@ from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
+from .admissibility import is_scalar_tag, require_collection, require_scalar_tag
 from .errors import DifferenceError, SecurityRejectionError
 
 ORDERED_LIST = "ORDERED_LIST"
@@ -45,8 +46,7 @@ def canonical_semantic(value: Any) -> Any:
         normalized = {key: canonical_semantic(item) for key, item in value.items()}
         if normalized.get("collection_kind") == UNORDERED_SET and "members" in normalized:
             members = normalized["members"]
-            if not isinstance(members, list):
-                raise DifferenceError("UNORDERED_SET members must be an array")
+            require_collection(members, "UNORDERED_SET members")
             normalized["members"] = sorted(members, key=canonical_json_bytes)
         return normalized
     if isinstance(value, list):
@@ -123,7 +123,11 @@ def reject_bare_arrays(value: Any, context: str) -> None:
     if isinstance(value, dict):
         kind = value.get("collection_kind")
         if kind is not None:
-            if kind not in COLLECTION_KINDS:
+            # `in` hashes its operand, so a wrapper declaring an array or object as its
+            # collection kind raised `unhashable type` one line before the rejection
+            # written for it. A value that cannot be a tag names no declared kind, so the
+            # tag is established first, by the one owner that answers that question.
+            if not is_scalar_tag(kind) or kind not in COLLECTION_KINDS:
                 raise DifferenceError(f"unknown collection_kind {kind!r} at {context}")
             if set(value) != {"collection_kind", "members"}:
                 raise DifferenceError(f"collection wrapper carries unknown fields at {context}")
@@ -159,8 +163,7 @@ def reject_moving_reference(reference: dict[str, Any], context: str) -> None:
     """Reject a typed reference whose identity is not immutable."""
 
     identity = reference.get("id")
-    if not isinstance(identity, str) or not identity:
-        raise DifferenceError(f"reference identity must be a non-empty string at {context}")
+    identity = require_scalar_tag(identity, f"reference identity at {context}")
     if MOVING_REFERENCE.search(identity):
         raise SecurityRejectionError(f"moving reference {identity!r} at {context}")
 
