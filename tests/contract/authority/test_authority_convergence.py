@@ -39,6 +39,7 @@ from manosube_agent_civilization.authority import (
     AUTONOMOUS,
     HUMAN_APPROVAL_REQUIRED,
     AuthorityError,
+    AuthorityValidationError,
     conformance,
     evaluate_authority,
 )
@@ -353,18 +354,35 @@ def test_one_owner_answers_for_every_timestamp() -> None:
 #: valid evaluation time, and the reverse does not hold.
 _STORED_ACCEPTED = (
     "2026-06-01T00:00:00Z",
-    "2026-06-01T00:00:00.500Z",
+    "2026-06-01T00:00:00.5Z",
+    "2026-06-01T00:00:00.05Z",          # leading zeros are content, not padding
     "2026-06-01T00:00:00.000000000000001Z",
 )
 
-#: Valid RFC 3339, valid as an evaluation time, and refused in a stored field.
-_STORED_REFUSED = (
+#: Valid RFC 3339, valid as an evaluation time, and refused in a stored field because the
+#: spelling names a zone rather than UTC, or names it in a second casing.
+_STORED_REFUSED_OFFSET = (
     "2026-06-01T09:00:00+09:00",
     "2026-06-01T00:00:00-05:00",
     "2026-06-01t00:00:00z",
     "2026-06-01T00:00:00z",
     "2026-06-01t00:00:00Z",
 )
+
+#: Refused for the other reason: each is a *second spelling of an instant already spellable*.
+#: ``00:00:00Z``, ``.0Z``, ``.00Z`` and ``.000Z`` are one moment written four ways, and an
+#: approval is addressed by hashing the text it carries -- so four spellings produced four
+#: ``approval_id`` values and four decision identities for one authorization.
+_STORED_REFUSED_FRACTION = (
+    "2026-06-01T00:00:00.0Z",
+    "2026-06-01T00:00:00.00Z",
+    "2026-06-01T00:00:00.000Z",
+    "2026-06-01T00:00:00.500Z",
+    "2026-06-01T00:00:00.50Z",
+    "2026-06-01T00:00:00.0000000Z",
+)
+
+_STORED_REFUSED = _STORED_REFUSED_OFFSET + _STORED_REFUSED_FRACTION
 
 
 def _timestamp_validator() -> Any:
@@ -445,7 +463,7 @@ def test_the_two_part_company_only_where_a_pattern_cannot_see_a_calendar() -> No
             conformance.stored_instant(value, "residual gap")
 
 
-@pytest.mark.parametrize("value", _STORED_REFUSED)
+@pytest.mark.parametrize("value", _STORED_REFUSED_OFFSET)
 def test_a_stored_approval_bound_may_not_carry_an_explicit_offset(value: str) -> None:
     """An offset in a stored field is refused at admission, before it can bind anything."""
 
@@ -515,18 +533,168 @@ def test_the_transient_form_never_becomes_a_stored_one() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("digits", [1, 3, 6, 7, 9, 15, 30])
+@pytest.mark.parametrize("digits", [1, 3, 6, 7, 9, 15, 30, 4301, 10000])
 def test_a_fraction_orders_exactly_at_every_precision(digits: int) -> None:
     """``datetime`` holds microseconds and silently drops the rest.
 
     At seven digits and beyond the two values below became the *same* instant, so the
     strictly-later one compared as not-later. The ordering has to hold at every precision a
     caller may write, not at the six ``datetime`` happens to store.
+
+    The two largest cases are the second half of that lesson. An exact-rational fix ordered
+    them correctly in principle and raised ``ValueError`` in practice, because ``int(digits)``
+    stops at CPython's 4,300-digit conversion limit -- so the ceiling moved rather than went
+    away. Digits are compared as digits and have no ceiling.
     """
 
     earlier = f"2026-06-01T00:00:00.{'0' * (digits - 1)}1Z"
     later = f"2026-06-01T00:00:00.{'0' * (digits - 1)}2Z"
     assert conformance.stored_instant(earlier, "a") < conformance.stored_instant(later, "b")
+
+
+def test_a_fraction_past_the_integer_limit_does_not_leave_as_a_raw_error() -> None:
+    """The finding: the refusal path was there and the conversion happened outside it.
+
+    ``int(digits)`` above 4,300 digits raises a plain ``ValueError`` that no Authority
+    vocabulary covers, so a long enough evaluation time left ``evaluate_authority`` as a raw
+    Python error -- the same shape as round 2's fourth finding, one level down.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    long_fraction = "2026-06-01T00:00:00." + "0" * 4400 + "1Z"
+    decision = evaluate_authority(
+        authority_request(
+            difference,
+            requested,
+            where,
+            rules=[rule(difference["project_id"])],
+            evaluation_time=long_fraction,
+        )
+    )
+    # Accepted, not refused: an unbounded fraction is well-formed RFC 3339 and the evaluator
+    # has no reason to reject one. What it may not do is crash on it.
+    assert decision["decision"] == AUTONOMOUS
+
+
+def test_an_unbounded_fraction_still_binds_a_validity_window() -> None:
+    """And the comparison it feeds is still exact at that length."""
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    opens = "2026-06-01T00:00:00." + "0" * 4400 + "2Z"
+    granted = approval(difference, requested, where, approved_at=opens)
+    decision = evaluate_authority(
+        authority_request(
+            difference,
+            requested,
+            where,
+            rules=[],
+            approvals=[granted],
+            evaluation_time="2026-06-01T00:00:00." + "0" * 4400 + "1Z",
+        )
+    )
+    assert decision["decision"] == HUMAN_APPROVAL_REQUIRED
+    assert "APPROVAL_OUTSIDE_VALIDITY_WINDOW" in decision["decision_reason_codes"]
+
+
+# --------------------------------------------------------------------------- #
+# one instant, one stored spelling
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("value", _STORED_REFUSED_FRACTION)
+def test_a_stored_bound_may_not_spell_one_instant_a_second_way(value: str) -> None:
+    """Refused at admission, on both bounds, before the identity is recomputed or used."""
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    bounds = (
+        approval(difference, requested, where, approved_at=value),
+        approval(difference, requested, where, expires_at=value),
+    )
+    for granted in bounds:
+        with pytest.raises(AuthorityError):
+            evaluate_authority(
+                authority_request(
+                    difference, requested, where, rules=[], approvals=[granted]
+                )
+            )
+
+
+def test_one_instant_has_exactly_one_stored_spelling() -> None:
+    """The property the two tests above are instances of, over two instants.
+
+    Without this a fix could refuse ``.0Z`` and still admit ``.00Z``, leaving the identity
+    collision open in the case nobody listed.
+    """
+
+    for equivalents in (
+        (
+            "2026-06-01T00:00:00Z",
+            "2026-06-01T00:00:00.0Z",
+            "2026-06-01T00:00:00.00Z",
+            "2026-06-01T00:00:00.000000Z",
+        ),
+        (
+            "2026-06-01T00:00:00.5Z",
+            "2026-06-01T00:00:00.50Z",
+            "2026-06-01T00:00:00.500Z",
+            "2026-06-01T00:00:00.5000000Z",
+        ),
+    ):
+        admitted = [value for value in equivalents if _admits(value)[1]]
+        assert admitted == [equivalents[0]], admitted
+
+
+def test_a_non_canonical_stored_spelling_is_refused_and_never_rewritten() -> None:
+    """The refusal is the point: normalising it would reinterpret a computed address.
+
+    An approval's ``approval_id`` is a hash of the text it carries. Silently reading ``.0Z``
+    as ``Z`` would mean deciding that a record whose identity was computed over one text
+    really means another -- and an address its own owner will reinterpret is not an address.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    granted = approval(difference, requested, where, approved_at="2026-06-01T00:00:00.0Z")
+    with pytest.raises(AuthorityValidationError, match="approved_at"):
+        evaluate_authority(
+            authority_request(difference, requested, where, rules=[], approvals=[granted])
+        )
+    # The record is untouched: refusing it did not quietly repair it on the way out.
+    assert granted["approved_at"] == "2026-06-01T00:00:00.0Z"
+
+
+def test_the_transient_form_still_normalises_equivalent_fractions() -> None:
+    """The other half. A clock reading is compared, not addressed, so padding is inert.
+
+    The control for the rule above: refusing extra spellings *in a record* must not start
+    refusing them from a caller, and three spellings of one evaluation time must produce one
+    decision rather than three.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    governing = [rule(difference["project_id"], action_kinds=["WRITE_FILE"])]
+    records = [
+        evaluate_authority(
+            authority_request(
+                difference,
+                requested,
+                where,
+                rules=governing,
+                evaluation_time=spelling,
+            )
+        )
+        for spelling in (
+            "2026-06-01T00:00:00.5Z",
+            "2026-06-01T00:00:00.50Z",
+            "2026-06-01T00:00:00.500Z",
+        )
+    ]
+    assert records[0] == records[1] == records[2]
+    assert len({record["authority_decision_id"] for record in records}) == 1
 
 
 def test_an_approval_effective_after_the_evaluation_time_does_not_bind() -> None:

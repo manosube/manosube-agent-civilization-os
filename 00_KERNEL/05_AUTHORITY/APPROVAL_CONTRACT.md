@@ -242,10 +242,33 @@ FRACTIONAL SECONDS ARE COMPARED EXACTLY, AT ANY PRECISION
 
 ```text
 STORED    approved_at / expires_at   → RFC 3339, UTC 'Z' only, one spelling per instant
-TRANSIENT evaluation_time            → RFC 3339, any offset it names
+TRANSIENT evaluation_time            → RFC 3339, any offset and any fraction it names
+```
+
+「一instantにつき一綴り」はoffsetとcasingだけでは達成されない。`00:00:00Z`、`.0Z`、`.00Z`、`.000Z`は同じ瞬間の四通りの表記であり、approvalはそれが持つ**文字列をhashして**addressされる。四通りの表記は四つの`approval_id`を生み、同一の承認に四つのdecision identityを与える。したがって保存fractionはcanonical形のみを取る。
+
+```text
+WHOLE SECOND        → NO FRACTION AT ALL
+FRACTION PRESENT    → MUST NOT END IN '0'
+".0" / ".00" / ".500"  → REJECT (not normalize)
+```
+
+**暗黙変換してはならない。** 非canonicalな保存表記は、identityを再計算する前に**拒否する**。`.0Z`を`Z`として読み替えることは、ある文字列の上で計算されたidentityを持つrecordが実は別の文字列を意味すると決めることであり、自らが読み替えるaddressはaddressではない。
+
+transientな`evaluation_time`は比較されるだけでaddressされないため、`.5`／`.50`／`.500`は同じ問いの三通りの書き方であり、比較時に正規化する。
+
+```text
+STORED     → REJECT A SECOND SPELLING
+TRANSIENT  → NORMALIZE A SECOND SPELLING
 ```
 
 両形式は**同一のadmission ownerが持つ**。grammarをcodeとschemaへ二重に書けば、schemaが拒否する綴りをcodeが受け入れる。
+
+小数の比較は**数値へ変換せず桁として行う**。有理数へ変換する実装は、`int()`が4,300桁で停止するため、十分に長いfractionでAuthorityの語彙に属さない生の`ValueError`を境界外へ漏らした。上限を動かしただけであって、外したことにはならない。
+
+```text
+COMPARE DIGITS, NOT NUMBERS — A DIGIT STRING HAS NO CEILING
+```
 
 # 8. Revocation
 

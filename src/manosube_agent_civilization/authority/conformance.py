@@ -25,7 +25,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
-from fractions import Fraction
 import re
 from typing import Any
 
@@ -98,7 +97,17 @@ HUMAN_AUTHORITY_KIND = "human_authority"
 _D2 = "[0-9]{2}"
 _DATE = f"[0-9]{{4}}-{_D2}-{_D2}"
 _TIME = f"{_D2}:{_D2}:{_D2}"
-_FRACTION = r"(\.[0-9]+)?"
+#: The *stored* fraction, and the reason it is not simply ``(\.[0-9]+)?``: a whole second
+#: written ``.0``, ``.00`` and ``.000`` is one instant with four spellings, and an approval
+#: is addressed by hashing the text it carries -- so four spellings meant four
+#: ``approval_id`` values, and four decision identities, for one semantic authorization.
+#: Requiring the fraction to *end* in a non-zero digit leaves exactly one spelling per
+#: instant: whole seconds carry no fraction at all, and no fraction carries a trailing zero.
+_CANONICAL_FRACTION = r"(\.[0-9]*[1-9])?"
+#: The *transient* fraction: anything RFC 3339 allows. A caller's clock reading is compared
+#: and never addressed, so ``.5``, ``.50`` and ``.500`` are the same question asked three
+#: ways, and normalising them at comparison is right where rejecting them would be pedantry.
+_ANY_FRACTION = r"(\.[0-9]+)?"
 _NUMERIC_OFFSET = f"[+-]{_D2}:{_D2}"
 
 #: The stored form. ``01_SCHEMA/common/timestamp.schema.json`` carries this string verbatim
@@ -106,13 +115,14 @@ _NUMERIC_OFFSET = f"[+-]{_D2}:{_D2}"
 #: a copy in code and a looser copy in the schema. Written as an ECMA-262 expression -- no
 #: named groups, and ASCII digit classes because Python's ``\d`` also matches Devanagari and
 #: Arabic-Indic digits, which ``int`` then parses happily and the schema never accepted.
-STORED_TIMESTAMP_PATTERN = f"^{_DATE}T{_TIME}{_FRACTION}Z$"
-#: The transient form: the stored form widened by RFC 3339's own case and offset latitude.
-TRANSIENT_TIMESTAMP_PATTERN = f"^{_DATE}[Tt]{_TIME}{_FRACTION}([Zz]|{_NUMERIC_OFFSET})$"
+STORED_TIMESTAMP_PATTERN = f"^{_DATE}T{_TIME}{_CANONICAL_FRACTION}Z$"
+#: The transient form: the stored form widened by RFC 3339's own case, offset and fraction
+#: latitude, none of which can reach a content-addressed field.
+TRANSIENT_TIMESTAMP_PATTERN = f"^{_DATE}[Tt]{_TIME}{_ANY_FRACTION}([Zz]|{_NUMERIC_OFFSET})$"
 
 _STORED = re.compile(STORED_TIMESTAMP_PATTERN)
 _TRANSIENT = re.compile(TRANSIENT_TIMESTAMP_PATTERN)
-_STORED_FORM = "an RFC 3339 UTC timestamp"
+_STORED_FORM = "an RFC 3339 UTC timestamp in canonical form"
 _TRANSIENT_FORM = "an RFC 3339 timestamp"
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -120,16 +130,29 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 @dataclass(frozen=True, order=True)
 class Instant:
-    """One point in time, exactly as written: no rounding and no truncation.
+    """One point in time, exactly as written: no rounding, and nothing converted to a number.
 
-    ``datetime`` holds microseconds, so it *silently* truncates anything longer. An approval
-    opening at ``2026-06-01T00:00:00.0000002Z`` therefore compared equal to an evaluation at
+    ``datetime`` holds microseconds, so it *silently* truncated anything longer: an approval
+    opening at ``2026-06-01T00:00:00.0000002Z`` compared equal to an evaluation at
     ``...0000001Z``, and a not-yet-effective approval bound the request and returned
-    ``AUTONOMOUS``. Truncating an input is answering a question nobody asked, so the fraction
-    is kept as an exact rational and the ordering is exact for any number of digits.
+    ``AUTONOMOUS``.
+
+    The fraction is therefore kept as **digits**, not as a number. An earlier form of this
+    fix used an exact rational, which reintroduced the same shape of defect one level down:
+    ``int(digits)`` raises above CPython's 4,300-digit integer-conversion limit, and it did
+    so *outside* this module's refusal path, so a long enough fraction left the evaluator as
+    a raw ``ValueError``. Digits have no such ceiling.
+
+    Ordering is the field order below: whole seconds first, then the digit strings compared
+    left to right. With trailing zeros removed that comparison *is* numeric comparison of the
+    decimal expansions -- where one string is a prefix of the other, the longer one has a
+    non-zero digit beyond it and is therefore greater -- and it costs one pass over the
+    characters at any length.
     """
 
-    seconds_since_epoch: Fraction
+    seconds_since_epoch: int
+    #: Fractional digits with trailing zeros removed; ``""`` for a whole second.
+    fraction_digits: str
 
 
 def _instant(value: str, context: str, *, grammar: re.Pattern[str], form: str) -> Instant:
@@ -169,13 +192,10 @@ def _instant(value: str, context: str, *, grammar: re.Pattern[str], form: str) -
         # beyond a day. Refused for the same reason: there is no point in time to compare.
         raise AuthorityError(f"{context} is not {form}: {value!r}") from error
 
-    digits = fraction_text[1:]
+    # ``base`` and ``_EPOCH`` are both built without a microsecond argument, so the whole
+    # seconds below are exact and the fraction is carried entirely by the digits.
     elapsed = base - _EPOCH
-    return Instant(
-        Fraction(elapsed.days * 86400 + elapsed.seconds)
-        + Fraction(elapsed.microseconds, 1_000_000)
-        + (Fraction(int(digits), 10 ** len(digits)) if digits else Fraction(0))
-    )
+    return Instant(elapsed.days * 86400 + elapsed.seconds, fraction_text[1:].rstrip("0"))
 
 
 def stored_instant(value: str, context: str) -> Instant:
@@ -185,6 +205,11 @@ def stored_instant(value: str, context: str) -> Instant:
     ``2026-06-01T00:00:00.5Z`` because ``Z`` exceeds ``.``, so a still-valid approval
     evaluated half a second before its expiry was reported outside its window. Only parsing
     sees that, and only an exact fraction sees it at every precision.
+
+    A non-canonical spelling is **refused, never rewritten**. Normalising it here would mean
+    silently deciding that a record whose identity was computed over one text really means
+    another, and a content address that its own owner is willing to reinterpret is not an
+    address. The refusal happens before the identity is recomputed or used.
     """
 
     return _instant(value, context, grammar=_STORED, form=_STORED_FORM)
