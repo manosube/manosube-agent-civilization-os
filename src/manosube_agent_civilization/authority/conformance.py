@@ -24,9 +24,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+import re
 from typing import Any
 
-from manosube_agent_civilization.difference.admissibility import require_object
+from manosube_agent_civilization.difference.admissibility import is_scalar_tag, require_object
 from manosube_agent_civilization.difference.validation import (
     SCHEMA_BASE as CANONICAL_SCHEMA_BASE,
     validate_record as _validate_canonical_record,
@@ -65,6 +67,42 @@ RECORD_TYPES: dict[str, RecordType] = {
 }
 
 HUMAN_AUTHORITY_KIND = "human_authority"
+
+#: RFC 3339 §5.6, and only that. ``datetime.fromisoformat`` is a *superset*: it accepts an
+#: arbitrary date/time separator, a space separator, ISO week dates, the basic unseparated
+#: form, a comma as the fraction separator and a four-digit offset -- none of which is
+#: RFC 3339, and all of which produced decisions on inputs the admission contract says are
+#: malformed. Parsing is not validation, so the grammar is checked first and parsed second.
+_RFC3339 = re.compile(
+    r"^\d{4}-\d{2}-\d{2}"          # full-date
+    r"[Tt]"                         # the only permitted separator
+    r"\d{2}:\d{2}:\d{2}"           # partial-time
+    r"(\.\d+)?"                     # optional fraction, '.' only, at least one digit
+    r"([Zz]|[+-]\d{2}:\d{2})$"      # offset, colon required
+)
+
+
+def instant(value: str, context: str) -> datetime:
+    """Parse an RFC 3339 timestamp into a comparable instant. One owner, every caller.
+
+    Strings do not order chronologically. ``2026-06-01T00:00:00Z`` sorts *after*
+    ``2026-06-01T00:00:00.5Z`` because ``Z`` exceeds ``.``, so a still-valid approval
+    evaluated half a second before its expiry was reported outside its window. Fractional
+    seconds and equivalent offsets are the same instant written differently, and only
+    parsing sees that.
+    """
+
+    if not is_scalar_tag(value) or not _RFC3339.match(value):
+        raise AuthorityError(f"{context} is not an RFC 3339 timestamp: {value!r}")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError as error:
+        # The grammar matched but the value is not a real instant -- hour 24, month 13, an
+        # offset beyond a day. Refused for the same reason: it names no point in time.
+        raise AuthorityError(f"{context} is not an RFC 3339 timestamp: {value!r}") from error
+    if parsed.tzinfo is None:  # pragma: no cover - the grammar already requires an offset
+        raise AuthorityError(f"{context} carries no timezone: {value!r}")
+    return parsed
 
 
 def validate(record: dict[str, Any], schema_name: str, context: str) -> None:

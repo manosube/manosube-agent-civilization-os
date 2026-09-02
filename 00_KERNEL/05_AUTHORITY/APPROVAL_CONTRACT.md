@@ -183,6 +183,19 @@ IS NOT A NARROWING; IT IS A COINCIDENCE OF WHICH BRANCH RAN
 
 要求へ結合するapprovalが一つでもその操作を除外していれば、decisionは`HUMAN_APPROVAL_REQUIRED`以上へ引き上げられる。除外したapprovalが、同じ操作を許可することはない。
 
+```text
+ANY_APPLICABLE_EXCLUSION → NEVER_AUTONOMOUS
+```
+
+**別のapprovalが許可していても、この結論は変わらない。** 一方が除外し他方が許可する場合、「片方がyesと言った」を採ることは、まさに§6が禁じる*widening*である。
+
+```text
+ONE APPROVAL SAYING YES DOES NOT OVERRULE ANOTHER SAYING NO
+NARROWING IS NOT A VOTE
+```
+
+この規則は組合せで検証する。単一のexcluding approvalだけを試す検査は、思いついた形では成立し、誰も列挙しなかった組合せで破れる。
+
 除外したapprovalはdecision provenanceに記録する。記録しなければ、異なる二つのapprovalが同じrequestを同じlevel・同じreason codeへ狭めたとき、一つのidentityの下に異なる意味が並ぶ。
 
 ```text

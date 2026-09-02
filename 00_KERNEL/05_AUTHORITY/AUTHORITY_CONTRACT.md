@@ -192,6 +192,15 @@ TIME CONFORMANCE BELONGS TO ADMISSION
 NOT TO THE ONE BRANCH THAT READS A CLOCK VALUE
 ```
 
+受理するのはRFC 3339 §5.6であり、言語のISO parserが偶然受け入れる範囲ではない。`datetime.fromisoformat`はRFC 3339の**上位集合**であり、任意の区切り文字、空白区切り、ISO週日付、基本形式、カンマ小数、コロンなしoffsetを通す。いずれもRFC 3339ではない。
+
+```text
+PARSING IS NOT VALIDATION
+CHECK THE GRAMMAR, THEN PARSE
+```
+
+timestampのadmissionは**一つのowner**が行う。evaluation timeもapprovalの両端も同じ関数を通る。
+
 opaque operation payloadは、解釈されないがcanonicalには**直列化可能でなければならない**。直列化できない値にはfingerprintが存在せず、approvalが結合する対象が存在しない。
 
 ```text

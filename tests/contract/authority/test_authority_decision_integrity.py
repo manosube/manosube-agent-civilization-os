@@ -335,9 +335,15 @@ def test_every_early_return_route_admits_the_evaluation_time_first(
 
 
 def test_a_naive_timestamp_names_no_instant(difference: dict[str, Any]) -> None:
-    """Guessing a timezone is how two evaluators disagree about one approval."""
+    """Guessing a timezone is how two evaluators disagree about one approval.
 
-    with pytest.raises(AuthorityError, match="carries no timezone"):
+    Refused by the RFC 3339 grammar now rather than by the post-parse timezone check --
+    earlier and stricter, since RFC 3339 requires an offset. The later check remains as an
+    unreachable backstop rather than being deleted: it costs nothing and it is the assertion
+    that would fire if the grammar were ever loosened.
+    """
+
+    with pytest.raises(AuthorityError, match="RFC 3339"):
         evaluate_authority(
             authority_request(
                 difference,

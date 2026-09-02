@@ -46,7 +46,7 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.state.errors import CanonicalizationError
 
 from . import approval as approval_owner, prohibition as prohibition_owner
-from .conformance import AUTHORITY_SCHEMA_BASE, admit, admit_all
+from .conformance import AUTHORITY_SCHEMA_BASE, admit, admit_all, instant
 from .errors import (
     AuthorityError,
     AuthorityValidationError,
@@ -272,7 +272,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
     # read a clock value. Parsed only inside the approval check, ``not-a-time`` produced a
     # decision on every early route -- a rule granting autonomy, a prohibition returning
     # first, an empty approval list -- because none of them reached the parser.
-    approval_owner.instant(evaluation_time, "evaluation time")
+    instant(evaluation_time, "evaluation time")
 
     # The Difference describes a State. If that is not the State being acted on, there is no
     # permission question to answer over it -- re-observe, then ask again.
@@ -393,7 +393,14 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
 
     used_approval: dict[str, Any] | None = None
     if decision == HUMAN_APPROVAL_REQUIRED:
-        if not approvals:
+        if excluding:
+            # ``ANY_APPLICABLE_EXCLUSION -> NEVER_AUTONOMOUS``. A second approval that binds
+            # and permits does not overrule the first one's refusal: an approval may narrow
+            # and may never widen (``APPROVAL_CONTRACT.md`` §6), and "one of them said yes"
+            # is exactly the widening that rule forbids. The exclusion is already recorded;
+            # nothing below may lower it.
+            pass
+        elif not approvals:
             reason_codes.append("APPROVAL_MISSING")
         elif usable:
             # Every binding approval is examined, then one is chosen **by identity**. Taking
@@ -402,10 +409,8 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
             used_approval = sorted(usable, key=lambda record: str(record["approval_id"]))[0]
             decision = AUTONOMOUS
             reason_codes.append("APPROVAL_EXACT")
-        elif not excluding:
+        else:
             reason_codes.extend(sorted(set(failures)))
-        if used_approval is None and not excluding and approvals and not failures:
-            reason_codes.append("APPROVAL_MISSING")
 
     if decision == AUTONOMOUS and used_approval is None:
         reason_codes.append("RULE_PERMITS_AUTONOMOUS")

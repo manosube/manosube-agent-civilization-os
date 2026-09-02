@@ -208,6 +208,53 @@ provenance, so `excluding_approval_refs` participates in the decision address. W
 different approvals narrowing the same request to the same level with the same reason code
 would have shared one identity — the exact collision finding 6 of round one was about.
 
+## 5.5 Round three: a rule held on the cases someone thought of
+
+Two findings, and both are a rule that was *stated* but not *enumerated*.
+
+**`ANY_APPLICABLE_EXCLUSION -> NEVER_AUTONOMOUS`** was implemented for the shape the tests
+exercised — one excluding approval, alone. Add a second approval that binds and permits, and
+the permitting one was selected and lowered the decision back to `AUTONOMOUS` while
+`excluding_approval_refs` stayed non-empty. "One of them said yes" is exactly the widening
+`APPROVAL_CONTRACT.md` §6 forbids: **narrowing is not a vote.**
+
+The pre-correction truth table was frozen as committed data before the fix (ADR-0022):
+
+```text
+390 rows              every combination and permutation of four approval roles
+                      over three rule sets and two action kinds
+276 violations        all of them ERROR:AuthorityValidationError
+  0 wrong permissions
+```
+
+Every violation was an *output-schema rejection*, not a granted permission — the
+`AUTONOMOUS -> excluding_approval_refs=[]` constraint added in round two caught the logic
+error at runtime. The request crashed instead of authorizing. That is the constraint working
+as a backstop, and it is also why this was a P2 rather than a P1.
+
+After the correction, measured against the same frozen table:
+
+```text
+276 rows changed      ERROR:AuthorityValidationError -> HUMAN_APPROVAL_REQUIRED
+  0 other rows moved
+ 20 AUTONOMOUS remain  every one of them with no applicable exclusion
+ 96 groups             0 order-sensitive
+```
+
+**RFC 3339** was enforced by calling `datetime.fromisoformat`, which is a *superset* of it:
+it accepts an arbitrary date/time separator, a space separator, ISO week dates, the basic
+unseparated form, a comma fraction separator and a colon-less offset. None is RFC 3339, and
+all produced decisions on inputs the admission contract says are malformed.
+
+```text
+PARSING IS NOT VALIDATION
+```
+
+The grammar is checked before the parser is asked, in **one** owner that the evaluation time
+and both approval bounds all cross. Letting a parser's tolerances stand in for a contract is
+the same substitution as letting a literal search stand in for a read (ADR-0025 §6): in both
+cases the check appears to run and is answering a different question.
+
 ## 6. What is measured
 
 ```text
@@ -230,6 +277,8 @@ CITED_RULE_SUPPORTS_THE_DECISION=true
 EVALUATION_TIME_ADMITTED_BEFORE_RESOLUTION=true    on every early-return route
 NONCANONICAL_PAYLOAD_FAILS_THROUGH_THE_PUBLIC_BOUNDARY=true
 EXCLUDING_APPROVALS_ARE_PROVENANCE=true
+ANY_APPLICABLE_EXCLUSION_NEVER_AUTONOMOUS=true    390-row truth table, 0 violations
+RFC3339_GRAMMAR_ENFORCED_BEFORE_PARSING=true      one owner for every timestamp
 ```
 
 The declaration generator exists because ADR-0025 §1 established that a fixture-path sweep is

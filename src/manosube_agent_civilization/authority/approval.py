@@ -12,11 +12,9 @@ a record or it is absent.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
-from .conformance import admit
-from .errors import AuthorityError
+from .conformance import admit, instant
 from .scope import is_contained, require_scope
 
 ACTIVE = "ACTIVE"
@@ -38,26 +36,6 @@ def require_approval(value: Any, context: str) -> dict[str, Any]:
     # whose extent depends on a filesystem this evaluator does not read.
     require_scope(approval["approved_scope"], f"{context} scope")
     return approval
-
-
-def instant(value: str, context: str) -> datetime:
-    """Parse an RFC 3339 timestamp into a comparable instant.
-
-    Strings do not order chronologically. ``2026-06-01T00:00:00Z`` sorts *after*
-    ``2026-06-01T00:00:00.5Z`` because ``Z`` exceeds ``.``, so a still-valid approval
-    evaluated half a second before its expiry was reported outside its window. Fractional
-    seconds and offsets are equivalent forms of the same instant, and only parsing sees that.
-    """
-
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise AuthorityError(f"{context} is not an RFC 3339 timestamp: {value!r}") from error
-    if parsed.tzinfo is None:
-        # A naive timestamp names no instant. Guessing a zone here is how two evaluators
-        # come to disagree about the same approval.
-        raise AuthorityError(f"{context} carries no timezone: {value!r}")
-    return parsed
 
 
 def binding_mismatches(
