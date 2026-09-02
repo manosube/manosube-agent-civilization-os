@@ -28,7 +28,11 @@ from datetime import UTC, datetime, timedelta, timezone
 import re
 from typing import Any
 
-from manosube_agent_civilization.difference.admissibility import is_scalar_tag, require_object
+from manosube_agent_civilization.difference.admissibility import (
+    is_scalar_tag,
+    require_object,
+    require_scalar_tag,
+)
 from manosube_agent_civilization.difference.identity import difference_id as _difference_id
 from manosube_agent_civilization.difference.validation import (
     DIFFERENCE_SCHEMA_BASE,
@@ -69,6 +73,9 @@ RECORD_TYPES: dict[str, RecordType] = {
 }
 
 HUMAN_AUTHORITY_KIND = "human_authority"
+
+#: Built once from the canonical schema, on first use.
+_ACTION_KIND: Any = None
 
 # --------------------------------------------------------------------------- #
 # time: one grammar, two admitted forms, and no truncation
@@ -241,19 +248,89 @@ def validate(
         raise AuthorityValidationError(f"{context}: {error}") from error
 
 
+def _action_kind_validator() -> Any:
+    """The canonical vocabulary for an action kind, read from the schema that owns it.
+
+    Not a hand-copied regular expression. The pattern lives in
+    ``authority/authority.schema.json#/$defs/action_kind``; a copy here would be a second
+    statement of the vocabulary, and the first time the two disagreed the disagreement would
+    be silent -- which is the shape this package has already had to correct for the timestamp
+    grammar and for the evaluation route.
+    """
+
+    global _ACTION_KIND
+    if _ACTION_KIND is None:
+        from manosube_agent_civilization.difference.validation import validators
+
+        # The registry's own validator, and its own validator *class*: this module does not
+        # import the validation library, so there is one place that decides which draft the
+        # repository validates against.
+        registered = validators()[AUTHORITY_SCHEMA_BASE + "authority.schema.json"]
+        _ACTION_KIND = type(registered)(registered.schema["$defs"]["action_kind"])
+    return _ACTION_KIND
+
+
+def require_action_kind(value: Any, context: str) -> str:
+    """Return *value* once it is a well-formed action kind; reject it otherwise.
+
+    ``action_kind`` was the last caller-supplied value with no vocabulary check at the input
+    boundary. It was constrained only by the *output* schema, so a malformed kind produced
+    ``generated authority.schema.json is schema-invalid`` -- the evaluator reporting its own
+    emitted record as the problem when the caller's request was. That is the same escape
+    round 6 closed for duplicate records and scope members, at the one site not reached.
+
+    Being *well-formed* is not being *known*: an unrecognised but well-formed kind is
+    governed by no rule and is therefore fail-closed to ``HUMAN_APPROVAL_REQUIRED``
+    (``ACTION_KIND_VOCABULARY_CLOSED=false``). This gate separates the two, so a caller can
+    tell a typo from a decision.
+    """
+
+    kind = require_scalar_tag(value, context)
+    if not _action_kind_validator().is_valid(kind):
+        raise AuthorityError(
+            f"{context} is not a canonical action kind: {kind!r}. "
+            "An action kind is upper-case ASCII, 2 to 64 characters, digits and underscores "
+            "permitted after the first."
+        )
+    return str(kind)
+
+
 def admit_difference(value: Any, context: str) -> dict[str, Any]:
     """Return the bound Difference once it is canonical, including its own address.
 
     The Difference was the one supplied record that reached a decision without its identity
     being recomputed. Everything else about it was checked -- shape, schema, project -- and
     those are exactly the checks that pass on a record whose fields were edited after it was
-    addressed. So a caller could take a real Difference, change what it says, keep its
-    ``difference_id``, and that stale identifier would then bind approvals and be written
-    into the decision's own content address as its provenance.
+    addressed.
 
     Identity is **not** recomputed here. It is asked of the Difference package's own owner,
     because a second implementation of a content address is a second answer to what the
     address is, and the first time the two disagree the disagreement is silent.
+
+    **What this proves, exactly.** ``difference_id`` is a *semantic* identity over a
+    deliberately closed projection -- ``difference_identity_input`` -- and not a content hash
+    of the whole record. Recomputing it therefore detects edits to the fields **in** that
+    projection, and to the declared identifier itself. It does not detect an edit to a field
+    outside it, and ``observed_state_revision`` and ``observed_state_fingerprint`` are
+    outside it.
+
+    An earlier version of this docstring said a caller could not "change what it says", and
+    the PR evidence claimed every payload edit was refused. Both were too broad: a genuine
+    Difference re-pointed at the current revision keeps its address and is admitted here.
+    The staleness comparison in :func:`~.engine.evaluate_authority` is an **exact consistency
+    check among admitted request inputs** -- it establishes that the Difference and the
+    declared current State agree, not that either was supplied honestly.
+
+    ```text
+    RECOMPUTED difference_id  → the identity projection was not edited
+    STALE STATE CHECK         → the request's own inputs agree with each other
+    NEITHER                   → proof that the observed-State pair is authentic
+    ```
+
+    Authenticating the current State and the complete Difference record against a trusted
+    backend is a **Binding** obligation. Phase 4 has no Binding owner, so this is a stated
+    non-claim (``AUTHORITY_CONTRACT.md`` §4.1) rather than a gap left implicit -- refusing to
+    overstate it is what keeps it bounded.
     """
 
     difference = require_object(value, context)

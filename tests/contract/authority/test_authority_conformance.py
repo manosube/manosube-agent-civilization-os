@@ -752,3 +752,270 @@ def test_the_scope_gate_covers_every_supplied_scope_not_only_the_request() -> No
         with pytest.raises(AuthorityError, match="not an enumerated resolved location") as bad:
             evaluate_authority(request)
         assert label in str(bad.value) or "scope" in str(bad.value), (label, str(bad.value))
+
+
+# --------------------------------------------------------------------------- #
+# 13. what recomputing the Difference address does and does not prove
+# --------------------------------------------------------------------------- #
+#
+# The claim made when `admit_difference` landed was that a caller could not "change what it
+# says". That was too broad, and the tests could not see it: they were parametrized over
+# `subject` and `target_predicate_ref`, both *inside* `difference_identity_input`, so the
+# case the comment described in general was exercised only where the address happened to
+# cover it. `difference_id` is a semantic identity over a closed projection, not a content
+# hash of the record. These tests assert the boundary in both directions.
+
+_IDENTITY_PROJECTION = (
+    "project_id",
+    "objective_semantic_fingerprint",
+    "target_predicate_ref",
+    "subject",
+    "observation_scope",
+    "effective_boundary",
+    "normalized_target_state",
+    "structural_difference",
+    "closure_policy",
+)
+
+
+def test_the_identity_projection_is_what_this_module_thinks_it_is() -> None:
+    """The harness before its subject: if the projection widens, these tests must know."""
+
+    from manosube_agent_civilization.difference.identity import difference_identity_input
+
+    covered = set(difference_identity_input(derived_difference()))
+    assert "observed_state_revision" not in covered, covered
+    assert "observed_state_fingerprint" not in covered, covered
+
+
+def test_the_observed_state_pair_is_outside_the_address_and_is_not_refused_by_it() -> None:
+    """The documented boundary, asserted rather than assumed.
+
+    A genuine Difference re-pointed at the current revision keeps its address and is
+    admitted. This is not a defect being tolerated: it is the limit of what a *semantic*
+    identity can prove, and authenticating the supplied State is a Binding obligation Phase 4
+    does not have. The test exists so the claim and the code cannot drift apart again.
+    """
+
+    from manosube_agent_civilization.difference.identity import difference_id
+
+    difference = derived_difference()
+    moved = deepcopy(difference)
+    moved["observed_state_revision"] = difference["observed_state_revision"] + 1
+
+    # The address still agrees -- that is the point.
+    assert difference_id(moved) == moved["difference_id"]
+
+    decision = evaluate_authority(
+        authority_request(
+            moved,
+            action("WRITE_FILE"),
+            scope(),
+            rules=[rule(difference["project_id"], action_kinds=["WRITE_FILE"])],
+            state_revision=moved["observed_state_revision"],
+        )
+    )
+    assert decision["decision"] == AUTONOMOUS
+    assert decision["evaluated_state_revision"] == moved["observed_state_revision"]
+
+
+def test_the_stale_check_is_a_consistency_check_between_inputs() -> None:
+    """Its complement: the gate still holds where the two inputs disagree."""
+
+    difference = derived_difference()
+    with pytest.raises(AuthorityError, match="not bound to the current State"):
+        evaluate_authority(
+            authority_request(
+                difference,
+                action("WRITE_FILE"),
+                scope(),
+                rules=[rule(difference["project_id"], action_kinds=["WRITE_FILE"])],
+                state_revision=difference["observed_state_revision"] + 1,
+            )
+        )
+
+
+def _inside_projection_edits(difference: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Schema-valid edits to fields the address *does* cover.
+
+    Schema-valid on purpose: a value the Difference schema rejects is refused one gate
+    earlier and would exercise that gate instead of this one.
+    """
+
+    prefix, _, digest = str(difference["objective_semantic_fingerprint"]).partition(":")
+    fingerprint = f"{prefix}:{'1' if digest[0] != '1' else '2'}{digest[1:]}"
+    subject = deepcopy(difference)
+    subject["subject"] = "a-different-subject"
+    objective = deepcopy(difference)
+    objective["objective_semantic_fingerprint"] = fingerprint
+    return [("subject", subject), ("objective_semantic_fingerprint", objective)]
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["subject", "objective_fingerprint"])
+def test_a_field_inside_the_projection_is_still_refused(index: int) -> None:
+    """The security property that is genuinely retained, kept under test."""
+
+    difference = derived_difference()
+    _, edited = _inside_projection_edits(difference)[index]
+    with pytest.raises(AuthorityError, match="identity does not match"):
+        evaluate_authority(
+            authority_request(edited, action("WRITE_FILE"), scope(), rules=[])
+        )
+
+
+def test_the_stale_diagnostic_names_which_binding_failed() -> None:
+    """Two equal numbers and no indication of what was wrong is not a diagnosis."""
+
+    difference = derived_difference()
+    other = deepcopy(difference["observed_state_fingerprint"])
+    other["digest"] = "0" * 64
+    with pytest.raises(AuthorityError, match="fingerprint") as only_fingerprint:
+        evaluate_authority(
+            authority_request(
+                difference, action("WRITE_FILE"), scope(), rules=[],
+                state_fingerprint_override=other,
+            )
+        )
+    assert "revision" not in str(only_fingerprint.value), str(only_fingerprint.value)
+
+    with pytest.raises(AuthorityError, match="revision") as only_revision:
+        evaluate_authority(
+            authority_request(
+                difference, action("WRITE_FILE"), scope(), rules=[],
+                state_revision=difference["observed_state_revision"] + 1,
+            )
+        )
+    assert "fingerprint" not in str(only_revision.value), str(only_revision.value)
+
+    with pytest.raises(AuthorityError) as both:
+        evaluate_authority(
+            authority_request(
+                difference, action("WRITE_FILE"), scope(), rules=[],
+                state_revision=difference["observed_state_revision"] + 1,
+                state_fingerprint_override=other,
+            )
+        )
+    assert "revision" in str(both.value) and "fingerprint" in str(both.value), str(both.value)
+
+
+# --------------------------------------------------------------------------- #
+# 14. an action kind is admitted against the schema that owns the vocabulary
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("label", "kind"),
+    [
+        ("lowercase", "write_file"),
+        ("hyphenated", "WRITE-FILE"),
+        ("too short", "W"),
+        ("leading digit", "1WRITE"),
+        ("whitespace", "WRITE FILE"),
+        ("non-ascii", "書き込み"),
+        ("overlength", "A" * 70),
+        ("trailing space", "WRITE_FILE "),
+    ],
+)
+def test_a_malformed_action_kind_is_refused_at_the_input(label: str, kind: str) -> None:
+    """The last caller-supplied value constrained only by the *output* schema.
+
+    It produced ``generated authority.schema.json is schema-invalid`` -- the evaluator
+    reporting its own emitted record as the problem when the caller's request was.
+    """
+
+    difference = derived_difference()
+    with pytest.raises(AuthorityError, match="not a canonical action kind") as raised:
+        evaluate_authority(
+            authority_request(difference, action(kind), scope(), rules=[])
+        )
+    assert "generated" not in str(raised.value), (label, str(raised.value))
+
+
+def test_a_well_formed_unknown_action_kind_still_fails_closed() -> None:
+    """The control, and the non-claim it protects.
+
+    ``ACTION_KIND_VOCABULARY_CLOSED=false``: the vocabulary is a *grammar*, not an
+    enumeration. An unrecognised kind is governed by no rule and is therefore refused by
+    silence, not by validation -- and refusing malformed kinds must not quietly turn that
+    into a closed enumeration.
+    """
+
+    difference = derived_difference()
+    decision = evaluate_authority(
+        authority_request(difference, action("TELEPORT"), scope(), rules=[])
+    )
+    assert decision["decision"] == HUMAN_APPROVAL_REQUIRED
+    assert "NO_RULE_RESOLVED" in decision["decision_reason_codes"]
+
+
+def test_the_action_kind_vocabulary_has_one_owner() -> None:
+    """The grammar is read from the schema, not copied into the engine."""
+
+    import json
+    from pathlib import Path
+
+    from manosube_agent_civilization.authority import conformance
+
+    root = Path(__file__).resolve().parents[3]
+    schema = json.loads(
+        (root / "01_SCHEMA" / "authority" / "authority.schema.json").read_text(encoding="utf-8")
+    )
+    assert conformance._action_kind_validator().schema == schema["$defs"]["action_kind"]
+
+
+# --------------------------------------------------------------------------- #
+# 15. the route is one value, rendered in three places
+# --------------------------------------------------------------------------- #
+
+
+def test_the_contract_and_the_module_render_the_same_route() -> None:
+    """Three hand-maintained spellings had drifted into three different routes.
+
+    What this guards and what it does not: it holds the *wording* of the route equal across
+    the contract, the module docstring and ``EVALUATION_ROUTE``. It is not a proof that the
+    evaluator executes these stages in this order -- the behavioural tests are what establish
+    that, and claiming otherwise here would be the same over-reach retracted in §13.
+    """
+
+    from pathlib import Path
+
+    from manosube_agent_civilization.authority import engine
+
+    rendered = engine.render_route()
+    root = Path(__file__).resolve().parents[3]
+    contract = (
+        root / "00_KERNEL" / "05_AUTHORITY" / "AUTHORITY_CONTRACT.md"
+    ).read_text(encoding="utf-8")
+
+    begin = contract.index("<!-- EVALUATION_ROUTE:BEGIN -->")
+    end = contract.index("<!-- EVALUATION_ROUTE:END -->")
+    fenced = contract[begin:end].split("```")[1]
+    # Drop the fence's info string ("text"), keeping the block itself.
+    block = fenced.split("\n", 1)[1]
+    assert block.strip() == rendered.strip(), block
+
+    assert rendered.strip() in (engine.__doc__ or ""), engine.__doc__
+
+
+def test_the_route_names_the_stages_the_corrections_added() -> None:
+    """A route that omits a stage cannot drift-check that stage into existence."""
+
+    from manosube_agent_civilization.authority import engine
+
+    joined = " ".join(engine.EVALUATION_ROUTE)
+    assert "DIFFERENCE ADMISSION" in joined, joined
+    assert "DISTINCTNESS" in joined, joined
+    assert "independent of rule level" in joined, joined
+
+
+def test_the_contract_states_the_distinctness_rule() -> None:
+    """It lived in the code, the tests and the PR body, and in no contract."""
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    contract = (
+        root / "00_KERNEL" / "05_AUTHORITY" / "AUTHORITY_CONTRACT.md"
+    ).read_text(encoding="utf-8")
+    assert "DEDUPLICATE SILENTLY" in contract
+    assert "TRUSTED_STATE_PROVENANCE=BINDING_OBLIGATION" in contract

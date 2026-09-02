@@ -149,21 +149,27 @@ PATH_EXPRESSION_ACCEPTED=false
 
 # 4. Evaluation Route
 
+<!-- EVALUATION_ROUTE:BEGIN -->
 ```text
-RAW AUTHORITY INPUTS
-→ STRUCTURAL ADMISSIBILITY
-→ SCHEMA + IDENTITY + PROVENANCE + SCOPE + TIME CONFORMANCE
-→ VERIFIED CANONICAL RULES / APPROVALS / PROHIBITIONS / REQUEST
-→ EXACT BINDING VERIFICATION
-→ PROHIBITION EVALUATION
-→ RULE RESOLUTION
-→ APPROVAL VERIFICATION (required only when the rule demands it)
-→ DECISION BOUND TO COMPLETE OPERATION + SELECTED PROVENANCE
+RAW REQUEST
+→ REQUEST + DIFFERENCE ADMISSION
+→ AUTHORITY RECORD ADMISSION + DISTINCTNESS
+→ EXACT BINDING
+→ PROHIBITIONS
+→ RULES + FLOORS
+→ APPROVAL BINDING + EXCLUSION (independent of rule level)
+→ FINAL PROVENANCE
+→ DECISION
 ```
+<!-- EVALUATION_ROUTE:END -->
+
+この経路は`engine.EVALUATION_ROUTE`の描画であり、module docstringも同一の描画を持つ。三箇所を手で保守した結果、三つの**異なる**経路になっていた。approvalは「ruleが要求したときだけ検証する」と書かれていたが、round 2以降それは実装ではない。contract testが三者を等しく保つ。
+
+ただし、その保証の範囲を明示する。**この検査は三箇所のwordingがdriftしないことだけを示し、codeがこの順序で実行することの証明ではない。** 実行順序は振る舞いのtestが担う。
 
 ## 4.1 Canonical Input Conformance
 
-rule、approval、prohibitionはすべて**呼び出し側が供給する**。いずれかがdecisionへ影響する前に、一つの共通admission pathを通す。
+bound Difference、rule、approval、prohibitionはすべて**呼び出し側が供給する**。いずれかがdecisionへ影響する前に、一つの共通admission pathを通す。bound Differenceは五つのうち最後に加わった。他の四つにadmission pathが与えられた時点で、Differenceは別の入口から入り、古い扱いのまま残っていた。
 
 ```text
 1  canonical objectとして読めるか
@@ -177,6 +183,33 @@ rule、approval、prohibitionはすべて**呼び出し側が供給する**。�
 ```text
 ONE ADMISSION PATH
 NO WEAKER LOCAL COPY IN RULE OR APPROVAL SELECTION
+```
+
+供給されたcollectionは**集合であり、listとして書かれているに過ぎない**。同一identityの記録が二度現れることは、一つの記録が二度供給されたということであり、入力の誤りである。黙って畳み込まず、境界で拒否する。畳み込みは評価器が入力を勝手に訂正することであり、非canonicalなtimestampを書き換えないという判断と同じ理由で採らない。
+
+```text
+rule / approval / prohibition   同一identityの重複 → REJECT
+scope paths / subjects          同一memberの重複   → REJECT
+DEDUPLICATE SILENTLY            → NEVER
+```
+
+### identityの再計算が示す範囲
+
+`difference_id`は**semantic identity**であり、記録全体のcontent hashではない。再計算が検出するのは`difference_identity_input`に含まれる場のみである。`observed_state_revision`と`observed_state_fingerprint`はそこに**含まれない**。
+
+staleness比較は、**admitされた入力どうしの厳密な一致検査**である。DifferenceとcurrentとされるStateが互いに整合することは示すが、そのどちらかが途中で書き換えられていないことは示さない。
+
+```text
+RECOMPUTED difference_id  → identity projectionが改変されていない
+STALE STATE CHECK         → 入力どうしが整合する
+NEITHER                   → observed-State pairの真正性の証明
+```
+
+現在のStateとDifference記録全体を、信頼できるbackendに対して認証することは**Binding**の義務である。Phase 4にBinding ownerは存在しない。したがってこれは実装漏れではなく、明示された非主張である。
+
+```text
+TRUSTED_STATE_PROVENANCE=BINDING_OBLIGATION
+AUTHORITY_AUTHENTICATES_SUPPLIED_STATE=false
 ```
 
 有効期間の比較はparsed instantで行う。文字列順序は時系列順序ではない。

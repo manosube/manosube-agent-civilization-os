@@ -1,14 +1,23 @@
 """The one Authority evaluator: may this action occur, against this exact State?
 
 ```text
-RAW AUTHORITY REQUEST
--> STRUCTURAL ADMISSIBILITY
--> EXACT BINDING VERIFICATION
--> PROHIBITION EVALUATION
--> RULE RESOLUTION
--> APPROVAL VERIFICATION
--> AUTHORITY DECISION
+RAW REQUEST
+→ REQUEST + DIFFERENCE ADMISSION
+→ AUTHORITY RECORD ADMISSION + DISTINCTNESS
+→ EXACT BINDING
+→ PROHIBITIONS
+→ RULES + FLOORS
+→ APPROVAL BINDING + EXCLUSION (independent of rule level)
+→ FINAL PROVENANCE
+→ DECISION
 ```
+
+That block is not prose. It is :data:`EVALUATION_ROUTE` rendered, and
+``AUTHORITY_CONTRACT.md`` §4 carries the identical rendering; a contract test holds all
+three to one another. Three hand-maintained spellings of one route had drifted into three
+*different* routes -- this docstring omitted the conformance stage entirely, and the contract
+still described approvals as verified only where a rule demanded it, which stopped being the
+implemented behaviour in round 2.
 
 The order is the contract (``AUTHORITY_CONTRACT.md`` §4), not a convenience. Prohibitions
 are answered before rules are looked at, so a successful rule lookup can never become the
@@ -48,6 +57,7 @@ from .conformance import (
     AUTHORITY_SCHEMA_BASE,
     admit_all,
     admit_difference,
+    require_action_kind,
     transient_instant,
 )
 from .errors import (
@@ -81,6 +91,32 @@ def _validate(record: dict[str, Any], schema_name: str, base: str) -> None:
         _validate_canonical_record(record, schema_name, base=base)
     except ValueError as error:
         raise AuthorityValidationError(str(error)) from error
+
+#: The evaluation route, in order, as one value. ``AUTHORITY_CONTRACT.md`` §4 and this
+#: module's own docstring are renderings of it, and a contract test holds them equal.
+#:
+#: What that guard establishes and what it does not: it prevents the *wording* of the route
+#: from drifting apart in the three places it is written. It is not a proof that the code
+#: executes these stages in this order -- that is what the behavioural tests are for, and
+#: claiming otherwise would be the same over-reach this PR has already had to retract twice.
+EVALUATION_ROUTE: tuple[str, ...] = (
+    "RAW REQUEST",
+    "REQUEST + DIFFERENCE ADMISSION",
+    "AUTHORITY RECORD ADMISSION + DISTINCTNESS",
+    "EXACT BINDING",
+    "PROHIBITIONS",
+    "RULES + FLOORS",
+    "APPROVAL BINDING + EXCLUSION (independent of rule level)",
+    "FINAL PROVENANCE",
+    "DECISION",
+)
+
+
+def render_route() -> str:
+    """The route as the single block that the contract and the docstring both carry."""
+
+    return "\n→ ".join(EVALUATION_ROUTE)
+
 
 #: Every top-level key the evaluation reads before it can validate anything.
 REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
@@ -141,7 +177,7 @@ def _require_action(value: Any) -> dict[str, Any]:
     for key in _ACTION_KEYS:
         if key not in action:
             raise AuthorityError(f"requested action omits a required key: {key}")
-    require_scalar_tag(action["action_kind"], "requested action kind")
+    require_action_kind(action["action_kind"], "requested action kind")
     reversibility = require_scalar_tag(action["reversibility"], "requested action reversibility")
     if reversibility not in REVERSIBILITIES:
         raise AuthorityError(f"unknown reversibility: {reversibility!r}")
@@ -165,6 +201,17 @@ def _require_action(value: Any) -> dict[str, Any]:
             f"{declared!r} != {recomputed!r}"
         )
     return action
+
+
+def _fingerprint_label(fingerprint: dict[str, Any]) -> str:
+    """A State fingerprint, short enough to read and specific enough to compare.
+
+    The digest is abbreviated rather than dumped: the point is to say *which* binding failed
+    and let a caller see the two differ, not to reproduce the record in an error message.
+    """
+
+    digest = str(fingerprint.get("digest", ""))
+    return f"{fingerprint.get('profile', '?')}:{digest[:12]}…" if digest else str(fingerprint)
 
 
 def _refine_rule(rule: dict[str, Any], context: str) -> None:
@@ -295,14 +342,24 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
 
     # The Difference describes a State. If that is not the State being acted on, there is no
     # permission question to answer over it -- re-observe, then ask again.
-    if (
-        difference["observed_state_revision"] != state_revision
-        or difference["observed_state_fingerprint"] != state_fingerprint
-    ):
+    # Which binding failed, not merely that one did. The message interpolated the revision
+    # pair unconditionally, so a fingerprint mismatch at equal revisions read "revision 2 vs
+    # current 2" -- two equal numbers and no indication of what was actually wrong.
+    # ``approval.binding_mismatches`` exists for this reason on the approval side: a caller
+    # told only "no" cannot tell a human what to re-observe.
+    stale: list[str] = []
+    if difference["observed_state_revision"] != state_revision:
+        stale.append(
+            f"revision {difference['observed_state_revision']} vs current {state_revision}"
+        )
+    if difference["observed_state_fingerprint"] != state_fingerprint:
+        stale.append(
+            f"fingerprint {_fingerprint_label(difference['observed_state_fingerprint'])} "
+            f"vs current {_fingerprint_label(state_fingerprint)}"
+        )
+    if stale:
         raise StaleAuthorityInputError(
-            "bound Difference is not bound to the current State: "
-            f"difference revision {difference['observed_state_revision']} "
-            f"vs current {state_revision}"
+            "bound Difference is not bound to the current State: " + "; ".join(stale)
         )
 
     # Every supplied record crosses one admission path before it can affect anything:
