@@ -6,7 +6,7 @@
   "required": ["schema_version", "approval_id", "project_id", "difference_ref", "change_intent_fingerprint", "change_ref", "approved_state_revision", "approved_state_fingerprint", "approved_action_fingerprint", "approved_scope", "prohibited_actions", "approved_by", "approved_at", "expires_at", "status"],
   "properties": {
     "schema_version": {"const": "0.1"},
-    "approval_id": {"type": "string", "pattern": "^APPROVAL-[0-9A-F]{64}$"},
+    "approval_id": {"type": "string", "pattern": "^APPROVAL-[0-9A-F]{64}(?![\\s\\S])"},
     "project_id": {"$ref": "../common/identity.schema.json"},
     "difference_ref": {"$ref": "authority.schema.json#/$defs/difference_ref"},
     "change_intent_fingerprint": {"$ref": "authority.schema.json#/$defs/semantic_fingerprint"},

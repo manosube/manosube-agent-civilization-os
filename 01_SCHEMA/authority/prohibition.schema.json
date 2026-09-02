@@ -6,7 +6,7 @@
   "required": ["schema_version", "prohibition_id", "project_id", "prohibition_class", "action_kinds", "scope", "reason_code", "declared_by"],
   "properties": {
     "schema_version": {"const": "0.1"},
-    "prohibition_id": {"type": "string", "pattern": "^PROHIBIT-[0-9A-F]{64}$"},
+    "prohibition_id": {"type": "string", "pattern": "^PROHIBIT-[0-9A-F]{64}(?![\\s\\S])"},
     "project_id": {"$ref": "../common/identity.schema.json"},
     "prohibition_class": {"enum": ["CONSTITUTIONAL", "PROJECT"]},
     "action_kinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "authority.schema.json#/$defs/action_kind"}},

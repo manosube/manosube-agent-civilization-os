@@ -765,27 +765,55 @@ def test_the_scope_gate_covers_every_supplied_scope_not_only_the_request() -> No
 # cover it. `difference_id` is a semantic identity over a closed projection, not a content
 # hash of the record. These tests assert the boundary in both directions.
 
-_IDENTITY_PROJECTION = (
-    "project_id",
-    "objective_semantic_fingerprint",
-    "target_predicate_ref",
-    "subject",
-    "observation_scope",
-    "effective_boundary",
-    "normalized_target_state",
-    "structural_difference",
-    "closure_policy",
+#: The exact key set ``difference_identity_input`` emits. Not the Difference's own field
+#: names: the projection *renames* two of them (``structural_difference`` ->
+#: ``normalized_structural_difference``, ``closure_policy`` ->
+#: ``closure_policy_semantic_fingerprint``) and adds ``identity_profile``, which is not a
+#: Difference field at all. An earlier version of this tuple listed the source field names,
+#: was wrong in three of them, and was read by no assertion -- so it could not have failed.
+_IDENTITY_PROJECTION = frozenset(
+    {
+        "project_id",
+        "objective_semantic_fingerprint",
+        "target_predicate_ref",
+        "subject",
+        "observation_scope",
+        "effective_boundary",
+        "normalized_target_state",
+        "normalized_structural_difference",
+        "closure_policy_semantic_fingerprint",
+        "identity_profile",
+    }
 )
 
 
-def test_the_identity_projection_is_what_this_module_thinks_it_is() -> None:
-    """The harness before its subject: if the projection widens, these tests must know."""
+def test_the_identity_projection_is_exactly_what_this_module_declares() -> None:
+    """The harness before its subject, and now actually load-bearing.
+
+    Equality, not containment: a key added to the projection fails this, and so does one
+    removed. The tests below reason about what the address covers, so they are sound only
+    while this declaration matches the owner.
+
+    ```text
+    PROJECTION_KEY_SET_HELD_EXACTLY=true
+    OBSERVED_STATE_PAIR_EXCLUDED=true
+    TEST_PROVES_PAYLOAD_SEMANTICS=false
+    ```
+
+    That last line is the limit, and it is the point of writing it down: this holds the *key
+    set*. It says nothing about whether the values those keys carry are semantically
+    adequate, and nothing about the payload beyond them.
+    """
 
     from manosube_agent_civilization.difference.identity import difference_identity_input
 
-    covered = set(difference_identity_input(derived_difference()))
-    assert "observed_state_revision" not in covered, covered
-    assert "observed_state_fingerprint" not in covered, covered
+    emitted = set(difference_identity_input(derived_difference()))
+    assert emitted == set(_IDENTITY_PROJECTION), {
+        "declared not emitted": sorted(set(_IDENTITY_PROJECTION) - emitted),
+        "emitted not declared": sorted(emitted - set(_IDENTITY_PROJECTION)),
+    }
+    assert "observed_state_revision" not in emitted, emitted
+    assert "observed_state_fingerprint" not in emitted, emitted
 
 
 def test_the_observed_state_pair_is_outside_the_address_and_is_not_refused_by_it() -> None:
@@ -1019,3 +1047,167 @@ def test_the_contract_states_the_distinctness_rule() -> None:
     ).read_text(encoding="utf-8")
     assert "DEDUPLICATE SILENTLY" in contract
     assert "TRUSTED_STATE_PROVENANCE=BINDING_OBLIGATION" in contract
+
+
+# --------------------------------------------------------------------------- #
+# 16. one spelling per action kind, enforced by the schema that owns the word
+# --------------------------------------------------------------------------- #
+#
+# ``$`` in a Python regular expression matches *before a trailing newline*. The canonical
+# pattern ``^[A-Z][A-Z0-9_]{1,63}$`` therefore admitted a line-feed-suffixed kind through the
+# JSON Schema validator -- and that value is not ``in HUMAN_ONLY_ACTION_KINDS``, and is not
+# ``in`` a prohibition's ``action_kinds`` either. So the alias did not merely exist: it
+# walked past the human-only floor and past a CONSTITUTIONAL prohibition.
+#
+# Fixed at the schema, not at the request. ``action_kind`` is shared by the request, rules,
+# prohibitions and approvals through one ``$defs``; a ``re.fullmatch`` bolted onto the
+# request would have left four owners disagreeing about what the same word means.
+
+_TERMINATOR_ALIASES = (
+    ("line feed", "\n"),
+    ("carriage return", "\r"),
+    ("crlf", "\r\n"),
+    ("line separator", "\u2028"),
+    ("paragraph separator", "\u2029"),
+    ("next line", "\u0085"),
+    ("form feed", "\f"),
+    ("vertical tab", "\v"),
+    ("trailing space", " "),
+)
+
+
+@pytest.mark.parametrize(("label", "suffix"), _TERMINATOR_ALIASES)
+@pytest.mark.parametrize("kind", ["MERGE", "DEPLOY_PRODUCTION", "WRITE_FILE"])
+def test_a_trailing_line_terminator_is_not_an_action_kind(
+    label: str, suffix: str, kind: str
+) -> None:
+    difference = derived_difference()
+    with pytest.raises(AuthorityError, match="not a canonical action kind"):
+        evaluate_authority(
+            authority_request(difference, action(kind + suffix), scope(), rules=[])
+        )
+
+
+@pytest.mark.parametrize(("label", "suffix"), _TERMINATOR_ALIASES)
+def test_the_alias_is_refused_inside_every_record_that_names_an_action_kind(
+    label: str, suffix: str
+) -> None:
+    """Four owners share the word, so the vocabulary is fixed once, for all four.
+
+    A request-side guard alone would leave a rule, a prohibition or an approval still able to
+    carry the alias -- a governing record naming an action no request could ever name.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    aliased = "MERGE" + suffix
+    project = difference["project_id"]
+    for built in (
+        authority_request(
+            difference, requested, where, rules=[rule(project, action_kinds=[aliased])]
+        ),
+        authority_request(
+            difference, requested, where, rules=[],
+            prohibitions=[prohibition(project, action_kinds=[aliased])],
+        ),
+        authority_request(
+            difference, requested, where, rules=[],
+            approvals=[approval(difference, requested, where, prohibited_actions=[aliased])],
+        ),
+    ):
+        with pytest.raises(AuthorityError):
+            evaluate_authority(built)
+
+
+def test_the_human_only_floor_cannot_be_evaded_by_an_alias() -> None:
+    """The bypass itself: the aliased kind under an AUTONOMOUS rule returned AUTONOMOUS."""
+
+    difference = derived_difference()
+    where = scope()
+    project = difference["project_id"]
+    permits = rule(project, action_kinds=["MERGE"], decision=AUTONOMOUS)
+
+    exact = evaluate_authority(
+        authority_request(difference, action("MERGE"), where, rules=[permits])
+    )
+    assert exact["decision"] == HUMAN_APPROVAL_REQUIRED
+    assert "ACTION_IS_HUMAN_ONLY" in exact["decision_reason_codes"]
+
+    with pytest.raises(AuthorityError, match="not a canonical action kind"):
+        evaluate_authority(
+            authority_request(difference, action("MERGE\n"), where, rules=[permits])
+        )
+
+
+def test_a_constitutional_prohibition_cannot_be_evaded_by_an_alias() -> None:
+    """The aliased kind walked past a CONSTITUTIONAL prohibition entirely."""
+
+    difference = derived_difference()
+    where = scope()
+    forbidden = prohibition(
+        difference["project_id"],
+        action_kinds=["DEPLOY_PRODUCTION"],
+        prohibition_class="CONSTITUTIONAL",
+    )
+
+    exact = evaluate_authority(
+        authority_request(
+            difference, action("DEPLOY_PRODUCTION"), where, rules=[], prohibitions=[forbidden]
+        )
+    )
+    assert exact["decision"] == PROHIBITED
+    assert exact["prohibition_refs"], exact
+
+    with pytest.raises(AuthorityError, match="not a canonical action kind"):
+        evaluate_authority(
+            authority_request(
+                difference, action("DEPLOY_PRODUCTION\n"), where, rules=[],
+                prohibitions=[forbidden],
+            )
+        )
+
+
+def test_no_authority_owned_pattern_ends_in_a_bare_dollar() -> None:
+    """The class, not the instance.
+
+    ``$`` is the defect, and ``action_kind`` was one of eleven places this package writes it.
+    A guard on the one reported symbol would leave the same construction in the other ten,
+    which is how findings in this PR have repeatedly recurred one site at a time.
+
+    What this checks: patterns in the schemas **this package owns**. A terminal ``$``
+    elsewhere in ``01_SCHEMA`` is a reported dependency, not something this test covers.
+    """
+
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3] / "01_SCHEMA" / "authority"
+    offenders: list[tuple[str, str]] = []
+
+    def walk(node: Any, source: str) -> None:
+        if isinstance(node, dict):
+            found = node.get("pattern")
+            if isinstance(found, str) and found.endswith("$"):
+                offenders.append((source, found))
+            for child in node.values():
+                walk(child, source)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child, source)
+
+    for schema_file in sorted(root.glob("*.schema.json")):
+        walk(json.loads(schema_file.read_text(encoding="utf-8")), schema_file.name)
+    assert not offenders, offenders
+
+
+def test_the_canonical_spellings_are_still_admitted() -> None:
+    """The control. Refusing the aliases must not have refused the words themselves."""
+
+    difference = derived_difference()
+    where = scope()
+    for kind in ("WRITE_FILE", "DEPLOY_PRODUCTION", "MERGE", "TELEPORT", "AB", "A" * 64):
+        decision = evaluate_authority(
+            authority_request(difference, action(kind), where, rules=[])
+        )
+        assert decision["decision"] == HUMAN_APPROVAL_REQUIRED, kind
+        assert decision["requested_action"]["action_kind"] == kind

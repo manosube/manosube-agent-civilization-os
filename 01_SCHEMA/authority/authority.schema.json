@@ -6,7 +6,7 @@
   "required": ["schema_version", "authority_decision_id", "project_id", "difference_ref", "requested_action", "requested_scope", "evaluated_state_revision", "evaluated_state_fingerprint", "resolved_rule_ref", "prohibition_refs", "approval_ref", "excluding_approval_refs", "decision", "decision_reason_codes", "decision_semantic_fingerprint"],
   "properties": {
     "schema_version": {"const": "0.1"},
-    "authority_decision_id": {"type": "string", "pattern": "^AUTH-DEC-[0-9A-F]{64}$"},
+    "authority_decision_id": {"type": "string", "pattern": "^AUTH-DEC-[0-9A-F]{64}(?![\\s\\S])"},
     "project_id": {"$ref": "../common/identity.schema.json"},
     "difference_ref": {"$ref": "#/$defs/difference_ref"},
     "requested_action": {"$ref": "#/$defs/action"},
@@ -28,9 +28,9 @@
   "$defs": {
     "decision": {"enum": ["AUTONOMOUS", "HUMAN_APPROVAL_REQUIRED", "PROHIBITED"]},
     "reversibility": {"enum": ["REVERSIBLE", "RECOVERABLE", "IRREVERSIBLE"]},
-    "action_kind": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$"},
-    "reason_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$"},
-    "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "action_kind": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}(?![\\s\\S])"},
+    "reason_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}(?![\\s\\S])"},
+    "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
     "action": {
       "type": "object",
       "required": ["action_kind", "reversibility", "operation", "action_semantic_fingerprint"],
@@ -53,10 +53,10 @@
       },
       "additionalProperties": false
     },
-    "difference_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "difference"}, "id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"}}, "additionalProperties": false},
-    "rule_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "authority_rule"}, "id": {"type": "string", "pattern": "^AUTH-RULE-[0-9A-F]{64}$"}}, "additionalProperties": false},
-    "prohibition_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "prohibition"}, "id": {"type": "string", "pattern": "^PROHIBIT-[0-9A-F]{64}$"}}, "additionalProperties": false},
-    "approval_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "approval"}, "id": {"type": "string", "pattern": "^APPROVAL-[0-9A-F]{64}$"}}, "additionalProperties": false},
+    "difference_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "difference"}, "id": {"type": "string", "pattern": "^D-[0-9A-F]{64}(?![\\s\\S])"}}, "additionalProperties": false},
+    "rule_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "authority_rule"}, "id": {"type": "string", "pattern": "^AUTH-RULE-[0-9A-F]{64}(?![\\s\\S])"}}, "additionalProperties": false},
+    "prohibition_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "prohibition"}, "id": {"type": "string", "pattern": "^PROHIBIT-[0-9A-F]{64}(?![\\s\\S])"}}, "additionalProperties": false},
+    "approval_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "approval"}, "id": {"type": "string", "pattern": "^APPROVAL-[0-9A-F]{64}(?![\\s\\S])"}}, "additionalProperties": false},
     "human_authority_ref": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "human_authority"}, "id": {"$ref": "../common/identity.schema.json"}}, "additionalProperties": false}
   },
   "additionalProperties": false
