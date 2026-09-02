@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/prohibition.schema.json",
+  "title": "Prohibition",
+  "type": "object",
+  "required": ["schema_version", "prohibition_id", "project_id", "prohibition_class", "action_kinds", "scope", "reason_code", "declared_by"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "prohibition_id": {"type": "string", "pattern": "^PROHIBIT-[0-9A-F]{64}$"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "prohibition_class": {"enum": ["CONSTITUTIONAL", "PROJECT"]},
+    "action_kinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "authority.schema.json#/$defs/action_kind"}},
+    "scope": {"$ref": "authority.schema.json#/$defs/scope"},
+    "reason_code": {"$ref": "authority.schema.json#/$defs/reason_code"},
+    "declared_by": {"$ref": "authority.schema.json#/$defs/human_authority_ref"}
+  },
+  "additionalProperties": false
+}

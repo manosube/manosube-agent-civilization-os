@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/approval.schema.json",
+  "title": "Human Approval",
+  "type": "object",
+  "required": ["schema_version", "approval_id", "project_id", "difference_ref", "change_intent_fingerprint", "change_ref", "approved_state_revision", "approved_state_fingerprint", "approved_action_fingerprint", "approved_scope", "prohibited_actions", "approved_by", "approved_at", "expires_at", "status"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "approval_id": {"type": "string", "pattern": "^APPROVAL-[0-9A-F]{64}$"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "difference_ref": {"$ref": "authority.schema.json#/$defs/difference_ref"},
+    "change_intent_fingerprint": {"$ref": "authority.schema.json#/$defs/semantic_fingerprint"},
+    "change_ref": {"oneOf": [{"type": "null"}, {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"const": "change"}, "id": {"$ref": "../common/identity.schema.json"}}, "additionalProperties": false}]},
+    "approved_state_revision": {"type": "integer", "minimum": 0},
+    "approved_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "approved_action_fingerprint": {"$ref": "authority.schema.json#/$defs/semantic_fingerprint"},
+    "approved_scope": {"$ref": "authority.schema.json#/$defs/scope"},
+    "prohibited_actions": {"type": "array", "uniqueItems": true, "items": {"$ref": "authority.schema.json#/$defs/action_kind"}},
+    "approved_by": {"$ref": "authority.schema.json#/$defs/human_authority_ref"},
+    "approved_at": {"$ref": "../common/timestamp.schema.json"},
+    "expires_at": {"$ref": "../common/timestamp.schema.json"},
+    "status": {"enum": ["ACTIVE", "REVOKED", "EXPIRED"]}
+  },
+  "additionalProperties": false
+}
