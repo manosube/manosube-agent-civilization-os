@@ -62,34 +62,6 @@ def _index(records: list[dict[str, Any]], key: str, errors: list[str]) -> dict[s
     return indexed
 
 
-def _canonical_time(raw: Any) -> datetime | None:
-    """Parse a canonical timestamp, or return ``None`` -- the one place this pass parses one.
-
-    The readability gate settles that a property is present and is a string. Whether that
-    string is a canonical timestamp is a *semantic* question about a schema-backed field,
-    and this validator answers semantic questions by returning them rather than raising.
-    Every ``fromisoformat`` in this file goes through here, so "parse only after validation"
-    is one rule with one owner rather than a check repeated at each call site.
-    """
-
-    if not isinstance(raw, str):
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def _snapshot_time(record: dict[str, Any], errors: list[str]) -> datetime | None:
-    """Parse one source snapshot time, reporting rather than raising when it will not."""
-
-    raw = record["time_boundary"]["source_snapshot_time"]
-    parsed = _canonical_time(raw)
-    if parsed is None:
-        errors.append(f"source snapshot time is not a canonical timestamp: {raw}")
-    return parsed
-
-
 def _ref_id(reference: dict[str, Any] | None) -> str | None:
     return None if reference is None else str(reference["id"])
 
@@ -199,13 +171,16 @@ def _observation_attempts_complete(
     observation: dict[str, Any], scope: dict[str, Any],
 ) -> bool:
     attempts = observation["attempts"]
-    started = _canonical_time(observation["time_boundary"]["observation_started_at"])
-    ended = _canonical_time(observation["time_boundary"]["observation_ended_at"])
-    if started is None or ended is None:
-        # A malformed timestamp means the attempt window is not established, so the set is
-        # not complete. The value is schema-backed, so its malformation is reported by the
-        # schema pass that owns it; this predicate's job is to answer, not to raise.
-        return False
+    started = datetime.fromisoformat(
+        observation["time_boundary"]["observation_started_at"].replace(
+            "Z", "+00:00"
+        )
+    )
+    ended = datetime.fromisoformat(
+        observation["time_boundary"]["observation_ended_at"].replace(
+            "Z", "+00:00"
+        )
+    )
     timeout = scope["attempt_policy"]["timeout_seconds"]
     return (
         observation["method_ref"] == scope["method_ref"]
@@ -216,9 +191,14 @@ def _observation_attempts_complete(
             attempt["method_ref"] == observation["method_ref"]
             and attempt["result"] in {"COMPLETE", "EMPTY"}
             and attempt["failure_class"] is None
-            and (attempt_started := _canonical_time(attempt["started_at"])) is not None
-            and (attempt_ended := _canonical_time(attempt["ended_at"])) is not None
-            and started <= attempt_started <= attempt_ended <= ended
+            and started
+            <= (attempt_started := datetime.fromisoformat(
+                attempt["started_at"].replace("Z", "+00:00")
+            ))
+            <= (attempt_ended := datetime.fromisoformat(
+                attempt["ended_at"].replace("Z", "+00:00")
+            ))
+            <= ended
             and (attempt_ended - attempt_started).total_seconds() <= timeout
             for attempt in attempts
         )
@@ -920,9 +900,9 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
     current_state_ref = bundle.get("current_state_ref")
     evidence_observed_at: dict[bytes, datetime] = {}
     for observation in observations.values():
-        observed_at = _snapshot_time(observation, errors)
-        if observed_at is None:
-            continue
+        observed_at = datetime.fromisoformat(
+            observation["time_boundary"]["source_snapshot_time"].replace("Z", "+00:00")
+        )
         for reference in observation["observation_evidence_refs"]:
             key = canonical_json_bytes(reference)
             previous_time = evidence_observed_at.get(key)
@@ -930,9 +910,11 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
                 observed_at if previous_time is None else min(previous_time, observed_at)
             )
     for negative in negative_observations.values():
-        observed_at = _snapshot_time(negative, errors)
-        if observed_at is None:
-            continue
+        observed_at = datetime.fromisoformat(
+            negative["time_boundary"]["source_snapshot_time"].replace(
+                "Z", "+00:00"
+            )
+        )
         related_evidence = list(negative["negative_evidence_refs"])
         related_evidence.extend(
             reference
@@ -1802,10 +1784,6 @@ def validate_bundle(bundle: dict[str, Any]) -> list[str]:
             bounded_empty_valid = [
                 difference is not None
                 and required_scope is not None
-                # `after_observations` already records an unresolved or wrong-kind
-                # reference as None. Reading that result before indexing is the whole fix:
-                # no new reference registry, just consulting the resolution that exists.
-                and observation is not None
                 and required_scope["scope_status"] == "COMPLETE"
                 and _observation_attempts_complete(observation, required_scope)
                 and difference["normalized_target_state"]["operator"] == "none"

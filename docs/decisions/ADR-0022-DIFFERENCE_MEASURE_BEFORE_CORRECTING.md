@@ -44,11 +44,13 @@ known canonical rejection and a known good call, and assert it tells them apart.
 
 ## 2. The frozen set
 
-Committed at `52592db`, before any correction existed:
+Committed at `52592db`, before any correction existed. **`52592db` is also where Phase 3
+acquired the auditor-totality obligation that ADR-0024 later defers**, so the second
+manifest is a historical record: it is no longer present on the branch.
 
 ```text
-tests/contract/fixtures/difference/frozen/engine_input_baseline.json
-tests/contract/fixtures/difference/frozen/auditor_bundle_baseline.json
+tests/contract/fixtures/difference/frozen/engine_input_baseline.json   (retained)
+tests/contract/fixtures/difference/frozen/auditor_bundle_baseline.json (deferred, ADR-0024)
 
 Engine    7770 cases   0 harness faults    78 raw-exception cases   26 paths    5 sites
 auditor   7248 cases   0 harness faults  1317 raw-exception cases  356 paths  198 sites

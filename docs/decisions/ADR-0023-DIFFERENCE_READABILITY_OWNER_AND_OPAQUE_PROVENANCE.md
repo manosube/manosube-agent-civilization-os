@@ -118,10 +118,14 @@ accepted", so both records ride a RETAINED lineage that audits clean.
 
 ## 7. Result
 
+Measured when this ADR was written. **The auditor sweep was deferred out of Phase 3 by
+ADR-0024**, so the second line is a historical record of what was measured, not a standing
+Phase-3 claim; `AUDITOR_ADVERSARIAL_TOTALITY_CLAIMED=false` now.
+
 ```text
-Engine sweep     7770 cases   0 harness faults   0 raw exceptions
-auditor sweep   16044 cases   0 harness faults   0 raw exceptions   (4 fixtures)
-suite           25242 passed, 10 skipped
+Engine sweep     7770 cases   0 harness faults   0 raw exceptions   (retained)
+auditor sweep   16044 cases   0 harness faults   0 raw exceptions   (deferred, ADR-0024)
+suite           25242 passed, 10 skipped                            (pre-split)
 mypy            138 / 12  -- one FEWER than the 139 baseline: removing the unowned
                              Reflow reads deleted a pre-existing error
 ```
