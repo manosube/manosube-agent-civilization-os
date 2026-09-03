@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/evidence/evidence.schema.json",
+  "title": "Canonical Evidence",
+  "type": "object",
+  "required": ["schema_version", "evidence_id", "evidence_position", "timestamp", "target", "difference_ref", "before_state", "observation_method", "change_identity", "authority_used", "after_state", "expected_result", "observed_result", "status", "artifact_references", "lineage", "remaining_differences", "evidence_level", "evidence_semantic_fingerprint"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "evidence_id": {"type": "string", "pattern": "^EVIDENCE-[0-9A-F]{64}(?![\\s\\S])"},
+    "evidence_position": {"enum": ["OBSERVATION_EVIDENCE", "CHANGE_RESULT_EVIDENCE"]},
+    "timestamp": {"$ref": "../common/timestamp.schema.json"},
+    "target": {"type": "object", "required": ["project_id", "target_identity", "kind"], "properties": {"project_id": {"$ref": "../common/identity.schema.json"}, "target_identity": {"$ref": "../common/identity.schema.json"}, "kind": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"}}, "additionalProperties": false},
+    "difference_ref": {"$ref": "#/$defs/difference_ref"},
+    "before_state": {"$ref": "#/$defs/state_binding"},
+    "observation_method": {"$ref": "#/$defs/method_binding"},
+    "change_identity": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/change_binding"}]},
+    "authority_used": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/authority_binding"}]},
+    "after_state": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/state_binding"}]},
+    "expected_result": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/expected_result"}]},
+    "observed_result": {"$ref": "#/$defs/observed_result"},
+    "status": {"enum": ["COMPLETE", "INCOMPLETE", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "FAILED", "INVALID", "CONFLICTED"]},
+    "artifact_references": {"$ref": "#/$defs/artifact_references"},
+    "lineage": {"$ref": "#/$defs/lineage"},
+    "remaining_differences": {"$ref": "#/$defs/unordered_references"},
+    "evidence_level": {"enum": ["E0", "E1", "E2", "E3", "E4", "E5", "E6"]},
+    "evidence_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"evidence_position": {"const": "OBSERVATION_EVIDENCE"}}, "required": ["evidence_position"]},
+      "then": {"properties": {"change_identity": {"type": "null"}, "authority_used": {"type": "null"}, "after_state": {"type": "null"}, "expected_result": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"evidence_position": {"const": "CHANGE_RESULT_EVIDENCE"}}, "required": ["evidence_position"]},
+      "then": {"properties": {"change_identity": {"type": "object"}, "authority_used": {"type": "object"}, "after_state": {"type": "object"}, "expected_result": {"type": "object"}}}
+    }
+  ],
+  "$defs": {
+    "state_binding": {
+      "type": "object",
+      "required": ["state_revision", "semantic_fingerprint"],
+      "properties": {
+        "state_revision": {"type": "integer", "minimum": 0},
+        "semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}
+      },
+      "additionalProperties": false
+    },
+    "difference_ref": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"const": "difference"},
+        "id": {"type": "string", "pattern": "^D-[0-9A-F]{64}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    },
+    "method_binding": {
+      "type": "object",
+      "required": ["method_ref", "normalization_profile"],
+      "properties": {
+        "method_ref": {"$ref": "../common/reference.schema.json"},
+        "normalization_profile": {"type": "string", "pattern": "^[A-Z][A-Z0-9_.-]*-[0-9]+\\.[0-9]+(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    },
+    "change_binding": {
+      "type": "object",
+      "required": ["kind", "id", "change_semantic_fingerprint", "idempotency_key", "execution_result", "causality_claimed"],
+      "properties": {
+        "kind": {"const": "change"},
+        "id": {"type": "string", "pattern": "^CHANGE-[0-9A-F]{64}(?![\\s\\S])"},
+        "change_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
+        "idempotency_key": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
+        "execution_result": {"type": "null"},
+        "causality_claimed": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "authority_binding": {
+      "type": "object",
+      "required": ["kind", "id", "decision", "decision_semantic_fingerprint"],
+      "properties": {
+        "kind": {"const": "authority_decision"},
+        "id": {"$ref": "../common/identity.schema.json"},
+        "decision": {"const": "AUTONOMOUS"},
+        "decision_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    },
+    "expected_result": {
+      "type": "object",
+      "required": ["declared_action", "declared_scope", "expected_state_revision", "causality_claimed", "execution_receipt_present"],
+      "properties": {
+        "declared_action": {"$ref": "../authority/authority.schema.json#/$defs/action"},
+        "declared_scope": {"$ref": "../authority/authority.schema.json#/$defs/scope"},
+        "expected_state_revision": {"type": "integer", "minimum": 0},
+        "causality_claimed": {"const": false},
+        "execution_receipt_present": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "observed_result": {
+      "type": "object",
+      "required": ["observation_ref", "observation_status", "blind_spot_status", "normalized_fact_refs", "attempt_outcomes"],
+      "properties": {
+        "observation_ref": {"$ref": "../common/reference.schema.json"},
+        "observation_status": {"enum": ["COMPLETE", "INCOMPLETE", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "FAILED", "INVALID", "CONFLICTED"]},
+        "blind_spot_status": {"enum": ["NONE_KNOWN", "KNOWN_BLIND_SPOTS_PRESENT", "NOT_EVALUATED"]},
+        "normalized_fact_refs": {"$ref": "#/$defs/unordered_references"},
+        "attempt_outcomes": {"$ref": "#/$defs/ordered_attempt_outcomes"}
+      },
+      "additionalProperties": false
+    },
+    "artifact_references": {
+      "type": "object",
+      "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"const": "UNORDERED_SET"},
+        "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/artifact_reference"}}
+      },
+      "additionalProperties": false
+    },
+    "artifact_reference": {
+      "type": "object",
+      "required": ["kind", "id", "content_sha256", "byte_length", "media_type"],
+      "properties": {
+        "kind": {"const": "artifact"},
+        "id": {"$ref": "../common/identity.schema.json"},
+        "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}(?![\\s\\S])"},
+        "byte_length": {"type": "integer", "minimum": 0},
+        "media_type": {"type": "string", "pattern": "^[a-z][a-z0-9!#$&^_.+-]*/[a-z0-9!#$&^_.+-]+(?![\\s\\S])"},
+        "source_snapshot_ref": {"$ref": "../common/reference.schema.json"}
+      },
+      "additionalProperties": false
+    },
+    "lineage": {
+      "type": "object",
+      "required": ["derived_from", "predecessor_evidence_refs"],
+      "properties": {
+        "derived_from": {"$ref": "#/$defs/unordered_references"},
+        "predecessor_evidence_refs": {"$ref": "#/$defs/evidence_references"}
+      },
+      "additionalProperties": false
+    },
+    "unordered_references": {
+      "type": "object",
+      "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"const": "UNORDERED_SET"},
+        "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}
+      },
+      "additionalProperties": false
+    },
+    "evidence_references": {
+      "type": "object",
+      "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"const": "UNORDERED_SET"},
+        "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/evidence_reference"}}
+      },
+      "additionalProperties": false
+    },
+    "evidence_reference": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"const": "observation_evidence"},
+        "id": {"type": "string", "pattern": "^EVIDENCE-[0-9A-F]{64}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    },
+    "ordered_attempt_outcomes": {
+      "type": "object",
+      "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"const": "ORDERED_LIST"},
+        "members": {"type": "array", "items": {"enum": ["COMPLETE", "EMPTY", "PARTIAL", "BLOCKED", "FAILED"]}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

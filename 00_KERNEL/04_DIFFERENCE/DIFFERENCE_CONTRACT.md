@@ -143,6 +143,38 @@ positive Factを伴わないbounded negative routeはcanonicalである。`ABSEN
 
 TargetまたはObserved Stateを一意に解決できない場合、推測したDifferenceを生成しない。入力状態を`UNKNOWN`、`BLOCKED`、`CONFLICTED`または`INVALID`として保持する。
 
+## 4.1 受理するObservation status
+
+Differenceを導出できるObservation statusは次の8つである。
+
+```text
+COMPLETE  EMPTY  UNKNOWN  UNOBSERVED  BLOCKED  INCOMPLETE  CONFLICTED  FAILED
+```
+
+`INVALID`だけを除外する。INVALIDなObservationは信頼できるcanonical recordではなく、
+`_NEGATIVE_STATUS_MAP`が`REJECT_OR_QUARANTINE`へ写像して拒否する。除外はgateとprojectionの
+二重であり、いずれも冗長ではない。gateはObservation自身のstatusを、projectionはNegative
+Observationのevaluationを読む。
+
+`FAILED`は批准されたamendment（ADR-0030）により受理する。これは本Contractの意味論変更では
+なく、**engineを本Contractへ整合させる修正**である。上の段落は既に`FAILED`を「proven
+absenceへ昇格せず`UNKNOWN` knowledgeのまま保持する」と規定していた。engineのstatus gateが
+その規定へ到達する前に拒否していた。
+
+```text
+FAILED → UNKNOWN knowledge     ← 本Contract §4 が既に規定
+_NEGATIVE_STATUS_MAP           ← 同じ写像を既に実装
+_ACCEPTED_OBSERVATION_STATUS   ← ここで拒否していた
+```
+
+`UNKNOWN`は`UNRESOLVED_KNOWLEDGE`に属し、`EVALUABLE_KNOWLEDGE`にも`PROVEN_ABSENCE`にも属さ
+ない。したがって失敗がここを通過して満足・不存在・完了へ変わることはない。
+
+failure classとattempt履歴は投影で上書きしない。射影が`UNKNOWN`であることと、recordが
+`FAILED`と述べ、その理由を保持していることは両立する。前者を後者で置き換えれば、
+`NO_RESULT ≠ PROVEN_ABSENCE`が逆向きに崩れる——結果へ昇格した失敗ではなく、消された失敗と
+して。
+
 # 5. Structural Mismatch
 
 `structural_difference`は、TargetとObservedの差をversioned normalization profileで表す。最低限、次を区別する。
