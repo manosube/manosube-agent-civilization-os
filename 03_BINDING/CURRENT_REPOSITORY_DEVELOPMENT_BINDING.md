@@ -1,16 +1,17 @@
 # MANOSUBE Agent Civilization OS
 
-## Current-Repository Development Binding v0.1
+## Current-Repository Development Binding v0.2
 
 ```text
 DOC_TYPE=REPOSITORY_BINDING
 BINDING_SCOPE=CURRENT_REPOSITORY_DEVELOPMENT_OPERATION
 DOCUMENT_ID=DEV-BINDING-0001
-DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001
+DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002
+SUPERSEDES=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001
 DECISION_STATUS=RATIFIED
 DECISION_AUTHORITY=SHUKOU
 KERNEL_ELEMENT=none
-SCHEMA_VERSION=0.1
+SCHEMA_VERSION=0.2
 STATUS=CANONICAL_DESIGN
 ```
 
@@ -21,10 +22,10 @@ STATUS=CANONICAL_DESIGN
 このBindingは、`manosube/manosube-agent-civilization-os`を**構築する**四者を選択する。Kernelが何であるかは述べない。
 
 ```text
-CHATGPT     = STRUCTURAL_ADVISOR
+CHATGPT     = STRUCTURAL_ADVISOR AND STRUCTURAL REVIEWER
 CLAUDE_CODE = IMPLEMENTATION_EXECUTOR
 GITHUB      = HUMAN_INTENT_AND_WORK_STATE_SURFACE
-SHUKOU      = ACCEPTANCE AND MERGE AUTHORITY
+SHUKOU      = FINAL ACCEPTANCE AND MERGE OPERATION AUTHORITY
 ```
 
 `KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md` §6は、observation／acceptance capabilityとexecution capabilityを**provider中立に**定義し、「いかなる名前付きprovider、API、version-control product、model、Agentもprotocol適合には不要である」と述べる。その中立性は正しく、維持される。
@@ -66,9 +67,11 @@ CHATGPT
 + STRUCTURAL DIFFERENCE
 + ROADMAP
 + IMPLEMENTATION HANDOFF
++ STRUCTURAL REVIEW
++ MERGE READINESS RECOMMENDATION
 − CODE AUTHORSHIP
-− ACCEPTANCE DECISION
-− MERGE DECISION
+− FINAL ACCEPTANCE DECISION
+− MERGE OPERATION
 − EXTERNAL FINDING ADOPTION
 
 CLAUDE CODE
@@ -77,8 +80,10 @@ CLAUDE CODE
 + EXECUTOR SELF-REVIEW
 + PR PREPARATION
 − STRUCTURAL AUTHORITY
-− ACCEPTANCE DECISION
-− MERGE
+− STRUCTURAL REVIEW
+− MERGE READINESS RECOMMENDATION
+− FINAL ACCEPTANCE DECISION
+− MERGE OPERATION
 − EXTERNAL FINDING ADOPTION
 − AUTOMATED EXTERNAL REVIEW REQUEST
 
@@ -88,14 +93,29 @@ GITHUB
 + COMMIT / PR / EVIDENCE RECEIPT SURFACE
 − CANONICAL KERNEL STATE
 − AUTHORITY
+− STRUCTURAL REVIEW
+− MERGE READINESS RECOMMENDATION
+− FINAL ACCEPTANCE DECISION
+− MERGE OPERATION
 − COMPLETION
 
 SHUKOU
 = FINDING ADOPTION OR REJECTION
-+ ACCEPTANCE CHECK
-+ APPROVAL
-+ MERGE
++ FINAL ACCEPTANCE DECISION
++ MERGE OPERATION
 ```
+
+## 2.1 三つを一語にしない
+
+Decision 0001は`MERGE_DECISION`という一語で三つを覆っていた。Decision 0002はそれを分ける。
+
+```text
+MERGE_READINESS_RECOMMENDATION   owner=CHATGPT
+FINAL_ACCEPTANCE_DECISION        owner=SHUKOU
+MERGE_OPERATION                  owner=SHUKOU
+```
+
+構造参謀は「マージしてよく**見える**」と言える。「マージしてよい」と決めるのも、実際にマージするのも、Humanである。一語で三つを指す語彙は、推薦と権限を区別**できない**語彙であり、区別できないものは混同されたときに誰にも見えない。
 
 `may`に名前が無い行為は、禁止一覧に無くても許可されない。**沈黙は許可ではない**——Authorityが未規定のactionに対して適用する規律（`AUTHORITY_CONTRACT.md` §1）と同じものである。
 
@@ -173,20 +193,84 @@ IMPLEMENTATION_IN_PROGRESS
 → CLAUDE_CODE_IMPLEMENTATION_COMPLETE
 → EXECUTOR_SELF_REVIEW_COMPLETE
 → GITHUB_PR_READY
-→ READY_FOR_SHUKOU_REVIEW        ← executorはここで停止する
-→ SHUKOU_CHECK
-→ SHUKOU_ACCEPTED | SHUKOU_REJECTED
-→ SHUKOU_MERGED
+→ READY_FOR_STRUCTURAL_REVIEW     ← executorはここで停止する
+→ STRUCTURAL_REVIEW_RUNNING       ← CHATGPT
+→ STRUCTURAL_REVIEW_PASS
+→ MERGE_RECOMMENDED               ← 推薦であって受入ではない
+→ SHUKOU_ACCEPTED                 ← SHUKOU
+→ SHUKOU_MERGED                   ← SHUKOU
 ```
+
+構造レビューは五つの結果のいずれかを返す。
 
 ```text
-EXECUTOR_TERMINAL_STATE=READY_FOR_SHUKOU_REVIEW
-HANDOFF_TERMINATES_AT_READY_FOR_SHUKOU_REVIEW=true
+MERGE_RECOMMENDED
+CORRECTION_REQUIRED
+MORE_EVIDENCE_REQUIRED
+BLOCKED
+NOT_REVIEWED
 ```
 
-`READY_FOR_SHUKOU_REVIEW`以降の状態へは、`SHUKOU`以外の誰も遷移できない。この性質は**policyの読み込み時**に検査される。executorへmerge遷移を与えるよう編集されたpolicy fileは、参照される前に拒まれる。
+`CORRECTION_REQUIRED`と`MORE_EVIDENCE_REQUIRED`は`IMPLEMENTATION_IN_PROGRESS`へ戻る。`SHUKOU_REJECTED`も戻る。拒絶は終端ではない。
+
+```text
+EXECUTOR_TERMINAL_STATE=READY_FOR_STRUCTURAL_REVIEW
+HANDOFF_TERMINATES_AT_READY_FOR_STRUCTURAL_REVIEW=true
+```
+
+二つの順序が明示的に検査される。
+
+```text
+MERGE_RECOMMENDED は STRUCTURAL_REVIEW_PASS からのみ  → STRUCTURAL_REVIEW_SKIPPED
+SHUKOU_MERGED     は SHUKOU_ACCEPTED からのみ         → MERGE_WITHOUT_FINAL_ACCEPTANCE
+```
+
+いずれも宣言済み遷移集合からすでに導かれるが、別個の理由コードを持つ。「宣言されていない」としか言わない拒否は、**どの段が飛ばされたか**を人に伝えない。
 
 自動reviewerはこの経路に存在しない。挿入する状態が無い。
+
+## 5.1 policyは記録であり、批准値はcodeが持つ
+
+`03_BINDING/DEVELOPMENT_BINDING_POLICY.json`はHuman決定の**公開された記録**である。批准された値そのものは`development_binding.policy`が定数として保持し、loaderは記録が定数と完全一致することを要求する。
+
+v0.1のloaderは`may`と`must_not`が「一意な文字列のlist」であることを検査し、**それが批准されたlistであることを検査しなかった**。したがってHuman専用actionを非HumanのHuman`may`へ移したpolicy fileはそのまま読み込まれ、evaluatorは`PERMITTED`と答えた。`human_only_states`を空にすることも同じ結果を生んだ——空listに対するloopは何も送出しない。
+
+```text
+SHAPE VALIDATED != CONTENT PINNED
+```
+
+Phase 5のP1と同じ欠陥である（`ADR-0027` §3.3）。ある場所で主張され、どこでも強制されていない規則と、それに似た検査が隙間に立っている。
+
+いま固定されるもの。
+
+```text
+role capabilities
+exact may / must_not sets
+handoff state sequence
+advisor-only state set
+human-only state set
+declared transition set
+structural review owner
+merge readiness recommendation owner
+final acceptance owner
+merge operation owner
+external finding adoption authority
+```
+
+## 5.2 評価器は例外を投げない
+
+JSONは文字列が来るべき場所へ配列やobjectを置ける。それらはhashableではないので、`frozenset`に対する所属検査は答えるのではなく`TypeError`を送出する。
+
+```text
+["CLAUDE_CODE"] in frozenset(...)  → TypeError
+```
+
+verdictを読む呼び手と例外を捕らえる呼び手は別の呼び手であり、前者が沈黙によって「許可」と告げられてはならない。したがって所属検査の前にscalar型を検査し、ill-typedな値は**verdict**として返る。
+
+```text
+RECORD_FIELD_IS_NOT_A_SCALAR → REFUSED
+NO_EVALUATION_INPUT_RAISES=true
+```
 
 # 6. Precedence
 
@@ -234,13 +318,20 @@ GITHUB_INTENT_SURFACE_FIXED=true
 GITHUB_INTENT_AND_RECEIPT_SURFACE_ONLY=true
 SHUKOU_ACCEPTANCE_OWNER_FIXED=true
 SHUKOU_SOLE_ACCEPTANCE_AND_MERGE_OWNER=true
+STRUCTURAL_REVIEW_OWNER_FIXED=true
+MERGE_READINESS_RECOMMENDATION_OWNER_FIXED=true
+FINAL_ACCEPTANCE_OWNER_FIXED=true
+MERGE_OPERATION_OWNER_FIXED=true
+AMBIGUOUS_MERGE_DECISION_RETAINED=false
+RATIFIED_POLICY_PINNED_NOT_ONLY_SHAPE_VALIDATED=true
+NO_EVALUATION_INPUT_RAISES=true
 EXTERNAL_FINDING_DEFAULT_UNVERIFIED=true
 EXPLICIT_SHUKOU_ADOPTION_REQUIRED=true
 BOT_FINDING_AUTO_ADOPTION=false
 BOT_FINDING_AUTO_IMPLEMENTATION=false
 AUTOMATED_CODEX_REVIEW_TRIGGER_ALLOWED=false
 CODEX_REVIEW_TRIGGER_ALLOWED=false
-HANDOFF_TERMINATES_AT_READY_FOR_SHUKOU_REVIEW=true
+HANDOFF_TERMINATES_AT_READY_FOR_STRUCTURAL_REVIEW=true
 INCIDENT_REGRESSION_PROVEN=true
 HUMAN_MERGE_BOUNDARY_PRESERVED=true
 KERNEL_PROVIDER_NEUTRALITY_PRESERVED=true

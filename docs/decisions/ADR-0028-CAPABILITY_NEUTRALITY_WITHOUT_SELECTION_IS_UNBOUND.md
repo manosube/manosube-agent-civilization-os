@@ -3,7 +3,8 @@
 **Status:** accepted
 **Bounds:** KERNEL_VERTICAL_WORK_UNIT_DELIVERY §6/§9, HUMAN_AGENT_WORK_COMMUNICATION §7A,
 SECURITY.md §5, KERNEL_INVARIANTS B-002.
-**Ratified decision:** `HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001` (Issue #34).
+**Ratified decision:** `HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002` (Issue #34),
+superseding `HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001`.
 
 ## 0. What went wrong
 
@@ -145,6 +146,91 @@ makes a crossing visible in the test suite; it does not make one impossible.
 
 Stating the boundary narrower than the claim is what the P1 taught. A claim broader than its
 implementation is invisible to the person making it.
+
+## 6A. Decision 0002: what the first Binding got wrong
+
+The first ratified Binding was implemented, reviewed, and corrected. Two of its defects are
+worth recording, because they are not the same kind of mistake.
+
+### 6A.1 One word for three things
+
+Decision 0001 gave the Human a single `MERGE_DECISION` and gave the Structural Advisor no
+review role at all. That is a *modelling* error rather than a security hole: it collapsed
+three distinct acts into one word.
+
+```text
+MERGE_READINESS_RECOMMENDATION   owner=CHATGPT
+FINAL_ACCEPTANCE_DECISION        owner=SHUKOU
+MERGE_OPERATION                  owner=SHUKOU
+```
+
+The Advisor may say a change *looks* ready. Only the Human decides that it *is*, and only the
+Human merges. A vocabulary that cannot distinguish a recommendation from an authority is a
+vocabulary in which the two can be confused without anyone seeing it — the same failure mode
+as an unrecorded implementer selection, one level down.
+
+The route follows from the separation:
+
+```text
+CLAUDE_CODE -> READY_FOR_STRUCTURAL_REVIEW
+CHATGPT     -> STRUCTURAL_REVIEW -> MERGE_RECOMMENDED | CORRECTION_REQUIRED
+                                  | MORE_EVIDENCE_REQUIRED | BLOCKED | NOT_REVIEWED
+SHUKOU      -> FINAL_ACCEPTANCE -> MERGE_OPERATION
+```
+
+Two orderings carry their own reason codes even though the declared transition set already
+implies both, because a refusal that says only "not declared" does not tell a person *which*
+step was skipped: `STRUCTURAL_REVIEW_SKIPPED` and `MERGE_WITHOUT_FINAL_ACCEPTANCE`.
+
+### 6A.2 Shape validated, content never pinned
+
+The second defect was a security hole, and it is the third instance of one shape in this
+repository.
+
+The loader checked that each role's `may` and `must_not` were lists of unique strings. It
+never checked that they were *the ratified* lists. So a policy file edited to move
+`FINAL_ACCEPTANCE_DECISION` out of the Advisor's `must_not` and into its `may` loaded
+cleanly, and the evaluator then answered `PERMITTED`. Emptying `human_only_states` did the
+same for merge — a loop over an empty list raises nothing.
+
+```text
+SHAPE VALIDATED != CONTENT PINNED
+```
+
+Reproduced before repair, at `b26de20`: ChatGPT granted acceptance → `PERMITTED`; executor
+granted merge → `PERMITTED`.
+
+Compare:
+
+| | The claim | What stood in its place |
+|---|---|---|
+| Phase 5 P1 | "produced by the evaluator" | a recomputed digest anyone can recompute |
+| This defect | "these are the ratified permissions" | a check that they are *strings* |
+
+Both times, a computation adjacent to the property was mistaken for the property. The repair
+is the same in kind: hold the ratified values in code and require the artifact to match them
+exactly. The JSON is the *published record* of the decision; the constants are the decision.
+
+### 6A.3 A verdict boundary that raised
+
+`evaluate` answered `PERMITTED` or `REFUSED` — except when a JSON array or object arrived
+where a string belonged, in which case a `frozenset` membership test raised `TypeError`
+instead of answering.
+
+A caller that reads verdicts and a caller that catches exceptions are different callers, and
+the first must never be told "allowed" by silence. Every field is now type-checked before any
+hashable membership test, and ill-typed input is a documented verdict.
+
+```text
+RECORD_FIELD_IS_NOT_A_SCALAR -> REFUSED
+NO_EVALUATION_INPUT_RAISES=true
+```
+
+### 6A.4 The route that found them
+
+These came back through the Human, as an adopted work package — which is the gate this
+Binding exists to enforce, working on its own author. That is the only reason they were
+acted on.
 
 ## 7. Consequences
 

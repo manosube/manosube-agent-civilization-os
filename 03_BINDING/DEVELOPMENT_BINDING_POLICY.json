@@ -1,6 +1,7 @@
 {
-  "policy_version": "0.1",
-  "decision_id": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001",
+  "policy_version": "0.2",
+  "decision_id": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002",
+  "supersedes": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001",
   "decision_status": "RATIFIED",
   "decision_authority": "SHUKOU",
   "repository": "manosube/manosube-agent-civilization-os",
@@ -14,12 +15,14 @@
         "CURRENT_AND_TARGET_STATE",
         "STRUCTURAL_DIFFERENCE",
         "ROADMAP",
-        "IMPLEMENTATION_HANDOFF"
+        "IMPLEMENTATION_HANDOFF",
+        "STRUCTURAL_REVIEW",
+        "MERGE_READINESS_RECOMMENDATION"
       ],
       "must_not": [
         "CODE_AUTHORSHIP",
-        "ACCEPTANCE_DECISION",
-        "MERGE_DECISION",
+        "FINAL_ACCEPTANCE_DECISION",
+        "MERGE_OPERATION",
         "ADOPT_EXTERNAL_FINDING",
         "REQUEST_AUTOMATED_EXTERNAL_REVIEW"
       ]
@@ -34,8 +37,10 @@
       ],
       "must_not": [
         "STRUCTURAL_AUTHORITY",
-        "ACCEPTANCE_DECISION",
-        "MERGE_DECISION",
+        "STRUCTURAL_REVIEW",
+        "MERGE_READINESS_RECOMMENDATION",
+        "FINAL_ACCEPTANCE_DECISION",
+        "MERGE_OPERATION",
         "ADOPT_EXTERNAL_FINDING",
         "REQUEST_AUTOMATED_EXTERNAL_REVIEW"
       ]
@@ -51,8 +56,10 @@
       "must_not": [
         "CANONICAL_KERNEL_STATE",
         "STRUCTURAL_AUTHORITY",
-        "ACCEPTANCE_DECISION",
-        "MERGE_DECISION",
+        "STRUCTURAL_REVIEW",
+        "MERGE_READINESS_RECOMMENDATION",
+        "FINAL_ACCEPTANCE_DECISION",
+        "MERGE_OPERATION",
         "COMPLETION_DECLARATION",
         "ADOPT_EXTERNAL_FINDING"
       ]
@@ -62,15 +69,16 @@
       "may": [
         "ADOPT_EXTERNAL_FINDING",
         "REJECT_EXTERNAL_FINDING",
-        "ACCEPTANCE_DECISION",
-        "APPROVAL",
-        "MERGE_DECISION"
+        "FINAL_ACCEPTANCE_DECISION",
+        "MERGE_OPERATION"
       ],
       "must_not": []
     }
   },
-  "acceptance_owner": "SHUKOU",
-  "merge_owner": "SHUKOU",
+  "structural_review_owner": "CHATGPT",
+  "merge_readiness_recommendation_owner": "CHATGPT",
+  "final_acceptance_owner": "SHUKOU",
+  "merge_operation_owner": "SHUKOU",
   "external_finding_adoption_authority": "SHUKOU",
   "external_finding_initial_status": "UNVERIFIED_EXTERNAL_OBSERVATION",
   "external_finding_sources": [
@@ -100,54 +108,55 @@
     "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
     "EXECUTOR_SELF_REVIEW_COMPLETE",
     "GITHUB_PR_READY",
-    "READY_FOR_SHUKOU_REVIEW",
-    "SHUKOU_CHECK",
+    "READY_FOR_STRUCTURAL_REVIEW",
+    "STRUCTURAL_REVIEW_RUNNING",
+    "STRUCTURAL_REVIEW_PASS",
+    "MERGE_RECOMMENDED",
+    "CORRECTION_REQUIRED",
+    "MORE_EVIDENCE_REQUIRED",
+    "BLOCKED",
+    "NOT_REVIEWED",
     "SHUKOU_ACCEPTED",
     "SHUKOU_REJECTED",
     "SHUKOU_MERGED"
   ],
   "handoff_transitions": [
-    {
-      "from": "IMPLEMENTATION_IN_PROGRESS",
-      "to": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
-      "actor": "CLAUDE_CODE"
-    },
-    {
-      "from": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
-      "to": "EXECUTOR_SELF_REVIEW_COMPLETE",
-      "actor": "CLAUDE_CODE"
-    },
-    {
-      "from": "EXECUTOR_SELF_REVIEW_COMPLETE",
-      "to": "GITHUB_PR_READY",
-      "actor": "CLAUDE_CODE"
-    },
-    {
-      "from": "GITHUB_PR_READY",
-      "to": "READY_FOR_SHUKOU_REVIEW",
-      "actor": "CLAUDE_CODE"
-    },
-    {
-      "from": "READY_FOR_SHUKOU_REVIEW",
-      "to": "SHUKOU_CHECK",
-      "actor": "SHUKOU"
-    },
-    {"from": "SHUKOU_CHECK", "to": "SHUKOU_ACCEPTED", "actor": "SHUKOU"},
-    {"from": "SHUKOU_CHECK", "to": "SHUKOU_REJECTED", "actor": "SHUKOU"},
+    {"from": "IMPLEMENTATION_IN_PROGRESS", "to": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE", "actor": "CLAUDE_CODE"},
+    {"from": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE", "to": "EXECUTOR_SELF_REVIEW_COMPLETE", "actor": "CLAUDE_CODE"},
+    {"from": "EXECUTOR_SELF_REVIEW_COMPLETE", "to": "GITHUB_PR_READY", "actor": "CLAUDE_CODE"},
+    {"from": "GITHUB_PR_READY", "to": "READY_FOR_STRUCTURAL_REVIEW", "actor": "CLAUDE_CODE"},
+    {"from": "READY_FOR_STRUCTURAL_REVIEW", "to": "STRUCTURAL_REVIEW_RUNNING", "actor": "CHATGPT"},
+    {"from": "STRUCTURAL_REVIEW_RUNNING", "to": "STRUCTURAL_REVIEW_PASS", "actor": "CHATGPT"},
+    {"from": "STRUCTURAL_REVIEW_RUNNING", "to": "CORRECTION_REQUIRED", "actor": "CHATGPT"},
+    {"from": "STRUCTURAL_REVIEW_RUNNING", "to": "MORE_EVIDENCE_REQUIRED", "actor": "CHATGPT"},
+    {"from": "STRUCTURAL_REVIEW_RUNNING", "to": "BLOCKED", "actor": "CHATGPT"},
+    {"from": "STRUCTURAL_REVIEW_RUNNING", "to": "NOT_REVIEWED", "actor": "CHATGPT"},
+    {"from": "STRUCTURAL_REVIEW_PASS", "to": "MERGE_RECOMMENDED", "actor": "CHATGPT"},
+    {"from": "MERGE_RECOMMENDED", "to": "SHUKOU_ACCEPTED", "actor": "SHUKOU"},
+    {"from": "MERGE_RECOMMENDED", "to": "SHUKOU_REJECTED", "actor": "SHUKOU"},
     {"from": "SHUKOU_ACCEPTED", "to": "SHUKOU_MERGED", "actor": "SHUKOU"},
-    {
-      "from": "SHUKOU_REJECTED",
-      "to": "IMPLEMENTATION_IN_PROGRESS",
-      "actor": "CLAUDE_CODE"
-    }
+    {"from": "CORRECTION_REQUIRED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "CLAUDE_CODE"},
+    {"from": "MORE_EVIDENCE_REQUIRED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "CLAUDE_CODE"},
+    {"from": "SHUKOU_REJECTED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "CLAUDE_CODE"}
   ],
-  "executor_terminal_state": "READY_FOR_SHUKOU_REVIEW",
+  "executor_terminal_state": "READY_FOR_STRUCTURAL_REVIEW",
+  "advisor_only_states": [
+    "STRUCTURAL_REVIEW_RUNNING",
+    "STRUCTURAL_REVIEW_PASS",
+    "MERGE_RECOMMENDED",
+    "CORRECTION_REQUIRED",
+    "MORE_EVIDENCE_REQUIRED",
+    "BLOCKED",
+    "NOT_REVIEWED"
+  ],
   "human_only_states": [
-    "SHUKOU_CHECK",
     "SHUKOU_ACCEPTED",
     "SHUKOU_REJECTED",
     "SHUKOU_MERGED"
   ],
+  "merge_recommendation_state": "MERGE_RECOMMENDED",
+  "merge_operation_state": "SHUKOU_MERGED",
+  "final_acceptance_state": "SHUKOU_ACCEPTED",
   "automated_review_trigger_allowed": false,
   "prohibited_automated_review_triggers": [
     "@codex review",

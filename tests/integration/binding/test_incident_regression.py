@@ -235,7 +235,7 @@ def test_the_incident_is_rejected_before_any_implementation_handoff() -> None:
         {
             "record_type": "HANDOFF_TRANSITION",
             "actor": "CLAUDE_CODE",
-            "from_state": "READY_FOR_SHUKOU_REVIEW",
+            "from_state": "READY_FOR_STRUCTURAL_REVIEW",
             "to_state": "IMPLEMENTATION_IN_PROGRESS",
         }
     )
@@ -255,7 +255,7 @@ def test_a_phase_cannot_be_reopened_by_an_unadopted_finding() -> None:
             {
                 "record_type": "HANDOFF_TRANSITION",
                 "actor": "CHATGPT",
-                "from_state": "READY_FOR_SHUKOU_REVIEW",
+                "from_state": "READY_FOR_STRUCTURAL_REVIEW",
                 "to_state": "IMPLEMENTATION_IN_PROGRESS",
             }
         )["decision"]
@@ -284,7 +284,7 @@ def test_no_executable_template_carries_a_prohibited_trigger(template: str) -> N
     root = Path(__file__).resolve().parents[3]
     text = (root / "03_BINDING" / "templates" / template).read_text(encoding="utf-8")
     assert prohibited_trigger_in(text) == []
-    assert "READY_FOR_SHUKOU_REVIEW" in text
+    assert "READY_FOR_STRUCTURAL_REVIEW" in text
 
 
 @pytest.mark.parametrize("trigger", POLICY["prohibited_automated_review_triggers"])
@@ -298,4 +298,6 @@ def test_the_trigger_detector_actually_detects(trigger: str) -> None:
 def test_the_trigger_detector_does_not_fire_on_clean_text() -> None:
     """A detector that flags everything is as useless as one that flags nothing."""
 
-    assert prohibited_trigger_in("READY_FOR_SHUKOU_REVIEW. Shukou performs the check.") == []
+    assert prohibited_trigger_in(
+        "READY_FOR_STRUCTURAL_REVIEW. The Advisor reviews; Shukou accepts and merges."
+    ) == []

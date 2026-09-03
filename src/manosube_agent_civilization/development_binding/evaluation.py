@@ -2,7 +2,7 @@
 
 The Binding is not a paragraph asking to be respected. It is a predicate over records, and
 this module is the predicate. A document that only *describes* the rule is the shape of the
-failure it exists to prevent: the protocol already described capability neutrality
+failure it exists to prevent: the delivery protocol already described capability neutrality
 correctly, and the description alone did not stop an automated reviewer being placed on the
 critical path.
 
@@ -11,16 +11,24 @@ PERMITTED = the ratified Binding allows this exact record
 REFUSED   = everything else, including everything unreadable
 ```
 
-There is no third answer and no default-permit path. An unreadable record is ``REFUSED``
-with ``RECORD_UNREADABLE`` rather than skipped, because "we could not tell" and "it is
-allowed" are the same outcome to a caller that only checks for a raised exception.
+There is no third answer and no default-permit path. **Nothing raises.** An unreadable record
+answers ``REFUSED`` with a documented reason code rather than leaking a ``TypeError``, because
+a caller that distinguishes verdicts and a caller that catches exceptions are different
+callers, and the one that only reads verdicts must not be told "allowed" by silence.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from .policy import HUMAN_AUTHORITY, load_policy
+from .policy import (
+    EXECUTOR_TERMINAL_STATE,
+    FINAL_ACCEPTANCE_STATE,
+    HUMAN_AUTHORITY,
+    MERGE_OPERATION_STATE,
+    MERGE_RECOMMENDATION_STATE,
+    load_policy,
+)
 
 PERMITTED = "PERMITTED"
 REFUSED = "REFUSED"
@@ -53,10 +61,27 @@ def _closed(record: Any, keys: frozenset[str]) -> str | None:
 
     if not isinstance(record, dict):
         return "RECORD_UNREADABLE"
+    if any(not isinstance(key, str) for key in record):
+        return "RECORD_UNREADABLE"
     if set(record) - keys:
         return "RECORD_CARRIES_UNKNOWN_KEYS"
     if keys - set(record):
         return "RECORD_OMITS_REQUIRED_KEYS"
+    return None
+
+
+def _scalars(record: dict[str, Any], *fields: str) -> str | None:
+    """Return a reason code unless every named field holds a string.
+
+    JSON permits an array or an object anywhere a string belongs, and those are unhashable:
+    ``["CLAUDE_CODE"] in frozenset(...)`` raises ``TypeError`` instead of answering ``False``.
+    Every membership test below runs after this, so an ill-typed value is a **verdict** and
+    not an exception.
+    """
+
+    for field in fields:
+        if not isinstance(record.get(field), str):
+            return "RECORD_FIELD_IS_NOT_A_SCALAR"
     return None
 
 
@@ -66,7 +91,10 @@ def evaluate(record: Any, *, policy: dict[str, Any] | None = None) -> dict[str, 
     active = load_policy() if policy is None else policy
     if not isinstance(record, dict):
         return _verdict(REFUSED, "RECORD_UNREADABLE")
-    record_type = record.get("record_type")
+    ill_typed = _scalars(record, "record_type")
+    if ill_typed:
+        return _verdict(REFUSED, ill_typed)
+    record_type = record["record_type"]
     if record_type not in RECORD_TYPES:
         return _verdict(REFUSED, "UNKNOWN_RECORD_TYPE")
     if record_type == "HANDOFF_TRANSITION":
@@ -82,6 +110,9 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
     unreadable = _closed(record, _HANDOFF_KEYS)
     if unreadable:
         return _verdict(REFUSED, unreadable)
+    ill_typed = _scalars(record, "actor", "from_state", "to_state")
+    if ill_typed:
+        return _verdict(REFUSED, ill_typed)
 
     actor, source, target = record["actor"], record["from_state"], record["to_state"]
     reasons: list[str] = []
@@ -93,27 +124,41 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
     if reasons:
         return _verdict(REFUSED, *reasons)
 
-    # Named separately from "not a declared transition" because these are the three drifts
-    # the Binding exists to stop, and a caller that only sees TRANSITION_NOT_DECLARED cannot
-    # tell a boundary crossing from a typo.
+    # Named separately from "not a declared transition" because these are the drifts the
+    # Binding exists to stop, and a caller that only sees TRANSITION_NOT_DECLARED cannot tell
+    # a boundary crossing from a typo.
     if target in policy["human_only_states"] and actor != HUMAN_AUTHORITY:
-        if target == "SHUKOU_MERGED":
-            reasons.append("MERGE_AUTHORITY_DRIFT")
-        elif target in ("SHUKOU_ACCEPTED", "SHUKOU_REJECTED", "SHUKOU_CHECK"):
-            reasons.append("ACCEPTANCE_OWNER_DRIFT")
+        if target == MERGE_OPERATION_STATE:
+            reasons.append("MERGE_OPERATION_DRIFT")
+        else:
+            reasons.append("FINAL_ACCEPTANCE_DRIFT")
         reasons.append("HUMAN_ONLY_STATE_ENTERED_BY_NON_HUMAN")
+
+    if target in policy["advisor_only_states"] and actor != policy["structural_review_owner"]:
+        if target == MERGE_RECOMMENDATION_STATE:
+            reasons.append("MERGE_READINESS_RECOMMENDATION_DRIFT")
+        else:
+            reasons.append("STRUCTURAL_REVIEW_DRIFT")
+        reasons.append("ADVISOR_ONLY_STATE_ENTERED_BY_NON_ADVISOR")
 
     # The executor's stopping point, stated as a property of the actor rather than of the
     # template it happens to be following. A template can be edited; this cannot.
-    if actor != HUMAN_AUTHORITY and source == policy["executor_terminal_state"]:
+    if actor != HUMAN_AUTHORITY and source == EXECUTOR_TERMINAL_STATE and actor != policy[
+        "structural_review_owner"
+    ]:
         reasons.append("EXECUTOR_CONTINUED_PAST_TERMINAL_STATE")
 
-    declared = any(
-        transition["from"] == source
-        and transition["to"] == target
-        and transition["actor"] == actor
+    # Two orderings Decision 0002 names explicitly. Both are already implied by the declared
+    # transition set, and both are called out so the refusal says *which* step was skipped.
+    if target == MERGE_RECOMMENDATION_STATE and source != "STRUCTURAL_REVIEW_PASS":
+        reasons.append("STRUCTURAL_REVIEW_SKIPPED")
+    if target == MERGE_OPERATION_STATE and source != FINAL_ACCEPTANCE_STATE:
+        reasons.append("MERGE_WITHOUT_FINAL_ACCEPTANCE")
+
+    declared = (actor, source, target) in {
+        (transition["actor"], transition["from"], transition["to"])
         for transition in policy["handoff_transitions"]
-    )
+    }
     if not declared:
         reasons.append("TRANSITION_NOT_DECLARED")
     if reasons:
@@ -127,6 +172,9 @@ def _evaluate_action(record: dict[str, Any], policy: dict[str, Any]) -> dict[str
     unreadable = _closed(record, _ACTION_KEYS)
     if unreadable:
         return _verdict(REFUSED, unreadable)
+    ill_typed = _scalars(record, "actor", "action")
+    if ill_typed:
+        return _verdict(REFUSED, ill_typed)
 
     actor, act = record["actor"], record["action"]
     role = policy["roles"].get(actor)
@@ -140,10 +188,15 @@ def _evaluate_action(record: dict[str, Any], policy: dict[str, Any]) -> dict[str
         reasons.append("AUTOMATED_REVIEW_TRIGGER_PROHIBITED")
     if act in role["must_not"]:
         reasons.append("ROLE_DRIFT")
-        if act == "ACCEPTANCE_DECISION":
-            reasons.append("ACCEPTANCE_OWNER_DRIFT")
-        if act == "MERGE_DECISION":
-            reasons.append("MERGE_AUTHORITY_DRIFT")
+        # Decision 0002 separates the three the previous version collapsed into one word.
+        if act == "FINAL_ACCEPTANCE_DECISION":
+            reasons.append("FINAL_ACCEPTANCE_DRIFT")
+        if act == "MERGE_OPERATION":
+            reasons.append("MERGE_OPERATION_DRIFT")
+        if act == "MERGE_READINESS_RECOMMENDATION":
+            reasons.append("MERGE_READINESS_RECOMMENDATION_DRIFT")
+        if act == "STRUCTURAL_REVIEW":
+            reasons.append("STRUCTURAL_REVIEW_DRIFT")
     if reasons:
         return _verdict(REFUSED, *reasons)
     if act in role["may"]:
@@ -165,14 +218,18 @@ def _evaluate_finding(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
     unreadable = _closed(record, _FINDING_KEYS)
     if unreadable:
         return _verdict(REFUSED, unreadable)
+    ill_typed = _scalars(record, "actor", "requested_disposition")
+    if ill_typed:
+        return _verdict(REFUSED, ill_typed)
 
     finding, disposition, adoption = (
         record["finding"],
         record["requested_disposition"],
         record["adoption"],
     )
-    finding_unreadable = _closed(finding, _FINDING_FIELDS)
-    if finding_unreadable:
+    if _closed(finding, _FINDING_FIELDS):
+        return _verdict(REFUSED, "FINDING_UNREADABLE")
+    if _scalars(finding, "observation_id", "source", "status"):
         return _verdict(REFUSED, "FINDING_UNREADABLE")
 
     if finding["source"] not in policy["external_finding_sources"]:
@@ -190,8 +247,9 @@ def _evaluate_finding(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
 
     if adoption is None:
         return _verdict(REFUSED, "BOT_FINDING_AUTO_ADOPTION", "EXPLICIT_HUMAN_ADOPTION_ABSENT")
-    adoption_unreadable = _closed(adoption, _ADOPTION_FIELDS)
-    if adoption_unreadable:
+    if _closed(adoption, _ADOPTION_FIELDS):
+        return _verdict(REFUSED, "ADOPTION_UNREADABLE")
+    if _scalars(adoption, "authority", "observation_id", "disposition"):
         return _verdict(REFUSED, "ADOPTION_UNREADABLE")
     if adoption["authority"] != policy["external_finding_adoption_authority"]:
         return _verdict(REFUSED, "ADOPTION_BY_NON_HUMAN_AUTHORITY")

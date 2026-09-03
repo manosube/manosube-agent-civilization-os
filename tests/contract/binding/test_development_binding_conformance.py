@@ -21,7 +21,15 @@ from manosube_agent_civilization.development_binding import (
 )
 from manosube_agent_civilization.development_binding.policy import (
     BINDING_DOCUMENT_PATH,
+    DECISION_ID,
+    EXECUTOR,
     POLICY_PATH,
+    RATIFIED_HUMAN_ONLY_STATES,
+    RATIFIED_MAY,
+    RATIFIED_MUST_NOT,
+    RATIFIED_OWNERS,
+    RATIFIED_TRANSITIONS,
+    STRUCTURAL_ADVISOR,
 )
 
 pytestmark = pytest.mark.contract
@@ -43,7 +51,9 @@ COMMUNICATION = (ROOT / "00_KERNEL" / "HUMAN_AGENT_WORK_COMMUNICATION.md").read_
 
 
 def test_the_human_decision_is_recorded_with_its_identity() -> None:
-    assert POLICY["decision_id"] == "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001"
+    assert POLICY["decision_id"] == DECISION_ID
+    assert DECISION_ID.endswith("0002")
+    assert POLICY["supersedes"].endswith("0001")
     assert POLICY["decision_status"] == "RATIFIED"
     assert POLICY["decision_authority"] == HUMAN_AUTHORITY
 
@@ -69,21 +79,90 @@ def test_each_participant_holds_exactly_its_declared_capability(
 
 
 @pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB"])
-@pytest.mark.parametrize("forbidden", ["ACCEPTANCE_DECISION", "MERGE_DECISION"])
+@pytest.mark.parametrize("forbidden", ["FINAL_ACCEPTANCE_DECISION", "MERGE_OPERATION"])
 def test_no_participant_but_the_human_may_accept_or_merge(role: str, forbidden: str) -> None:
     assert forbidden in POLICY["roles"][role]["must_not"]
     assert forbidden not in POLICY["roles"][role]["may"]
 
 
-@pytest.mark.parametrize("owner_field", ["acceptance_owner", "merge_owner"])
-def test_the_acceptance_and_merge_owner_is_the_human_alone(owner_field: str) -> None:
-    assert POLICY[owner_field] == HUMAN_AUTHORITY
+@pytest.mark.parametrize("owner_field,owner", sorted(RATIFIED_OWNERS.items()))
+def test_every_owner_field_names_its_ratified_owner(owner_field: str, owner: str) -> None:
+    assert POLICY[owner_field] == owner
 
 
-def test_the_human_holds_acceptance_and_merge_and_adoption() -> None:
+def test_the_ambiguous_merge_decision_vocabulary_is_gone() -> None:
+    """Decision 0002: one word must not cover a recommendation and an authority."""
+
+    serialized = json.dumps(POLICY)
+    assert "MERGE_DECISION" not in serialized
+    assert "ACCEPTANCE_DECISION" not in serialized.replace("FINAL_ACCEPTANCE_DECISION", "")
+    for separated in (
+        "MERGE_READINESS_RECOMMENDATION",
+        "FINAL_ACCEPTANCE_DECISION",
+        "MERGE_OPERATION",
+    ):
+        assert separated in serialized
+
+
+def test_the_human_holds_final_acceptance_merge_and_adoption() -> None:
     may = POLICY["roles"][HUMAN_AUTHORITY]["may"]
-    for held in ("ACCEPTANCE_DECISION", "MERGE_DECISION", "ADOPT_EXTERNAL_FINDING"):
+    for held in ("FINAL_ACCEPTANCE_DECISION", "MERGE_OPERATION", "ADOPT_EXTERNAL_FINDING"):
         assert held in may
+
+
+def test_the_advisor_holds_review_and_recommendation_only() -> None:
+    role = POLICY["roles"][STRUCTURAL_ADVISOR]
+    assert "STRUCTURAL_REVIEW" in role["may"]
+    assert "MERGE_READINESS_RECOMMENDATION" in role["may"]
+    assert "FINAL_ACCEPTANCE_DECISION" in role["must_not"]
+    assert "MERGE_OPERATION" in role["must_not"]
+
+
+# --------------------------------------------------------------------------- #
+# 1A. the ratified sets are pinned, not merely shaped
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("role", sorted(ROLES))
+def test_each_role_holds_exactly_its_ratified_permission_sets(role: str) -> None:
+    """The repair. The first version checked these were string lists and nothing more."""
+
+    assert frozenset(POLICY["roles"][role]["may"]) == RATIFIED_MAY[role]
+    assert frozenset(POLICY["roles"][role]["must_not"]) == RATIFIED_MUST_NOT[role]
+
+
+def test_no_role_both_permits_and_forbids_an_action() -> None:
+    for role in sorted(ROLES):
+        assert not (RATIFIED_MAY[role] & RATIFIED_MUST_NOT[role]), role
+
+
+def test_the_human_only_state_set_is_pinned_whole() -> None:
+    assert frozenset(POLICY["human_only_states"]) == RATIFIED_HUMAN_ONLY_STATES
+    assert RATIFIED_HUMAN_ONLY_STATES
+
+
+def test_the_declared_transition_set_is_pinned_whole() -> None:
+    declared = {
+        (transition["actor"], transition["from"], transition["to"])
+        for transition in POLICY["handoff_transitions"]
+    }
+    assert declared == RATIFIED_TRANSITIONS
+
+
+def test_only_the_human_appears_as_the_actor_of_a_human_only_transition() -> None:
+    """Read from the ratified set rather than the artifact, so an edit cannot satisfy it."""
+
+    for actor, _, target in RATIFIED_TRANSITIONS:
+        if target in RATIFIED_HUMAN_ONLY_STATES:
+            assert actor == HUMAN_AUTHORITY, (actor, target)
+
+
+def test_the_executor_is_never_the_actor_of_an_advisor_only_transition() -> None:
+    for actor, _, target in RATIFIED_TRANSITIONS:
+        if target in POLICY["advisor_only_states"]:
+            assert actor == STRUCTURAL_ADVISOR, (actor, target)
+        if actor == EXECUTOR:
+            assert target not in RATIFIED_HUMAN_ONLY_STATES
 
 
 # --------------------------------------------------------------------------- #
@@ -111,8 +190,8 @@ def test_an_external_finding_begins_unverified() -> None:
 
 
 def test_the_executor_terminal_state_is_the_handoff_boundary() -> None:
-    assert POLICY["executor_terminal_state"] == "READY_FOR_SHUKOU_REVIEW"
-    for human_only in ("SHUKOU_CHECK", "SHUKOU_ACCEPTED", "SHUKOU_REJECTED", "SHUKOU_MERGED"):
+    assert POLICY["executor_terminal_state"] == "READY_FOR_STRUCTURAL_REVIEW"
+    for human_only in ("SHUKOU_ACCEPTED", "SHUKOU_REJECTED", "SHUKOU_MERGED"):
         assert human_only in POLICY["human_only_states"]
 
 
@@ -132,17 +211,24 @@ def _mutated(tmp_path: Path, **edits: object) -> Path:
 @pytest.mark.parametrize(
     "edits",
     [
-        {"acceptance_owner": "CHATGPT"},
-        {"merge_owner": "CLAUDE_CODE"},
+        {"final_acceptance_owner": "CHATGPT"},
+        {"merge_operation_owner": "CLAUDE_CODE"},
+        {"structural_review_owner": "CLAUDE_CODE"},
+        {"merge_readiness_recommendation_owner": "SHUKOU"},
         {"external_finding_adoption_authority": "CODEX"},
         {"automated_review_trigger_allowed": True},
         {"decision_status": "DRAFT"},
         {"decision_authority": "CLAUDE_CODE"},
         {"executor_terminal_state": "SHUKOU_MERGED"},
+        {"human_only_states": []},
+        {"advisor_only_states": []},
+        {"merge_operation_state": "MERGE_RECOMMENDED"},
+        {"final_acceptance_state": "MERGE_RECOMMENDED"},
+        {"supersedes": "SOMETHING_ELSE"},
         {"external_finding_initial_status": "VERIFIED"},
         {"kernel_element": "CHANGE"},
         {"kernel_provider_neutrality_preserved": False},
-        {"policy_version": "0.2"},
+        {"policy_version": "0.3"},
         {"escape_hatch": True},
     ],
     ids=lambda edits: "-".join(sorted(edits)),
@@ -158,7 +244,11 @@ def test_a_policy_edited_across_a_boundary_is_refused(
 
 def test_a_fifth_role_is_refused(tmp_path: Path) -> None:
     document = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
-    document["roles"]["CODEX"] = {"capability": "REVIEWER", "may": ["ACCEPTANCE_DECISION"], "must_not": []}
+    document["roles"]["CODEX"] = {
+        "capability": "REVIEWER",
+        "may": ["FINAL_ACCEPTANCE_DECISION"],
+        "must_not": [],
+    }
     target = tmp_path / "policy.json"
     target.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(PolicyIntegrityError):
@@ -315,12 +405,19 @@ def test_the_binding_document_records_the_acceptance_flags() -> None:
         "CLAUDE_CODE_IMPLEMENTER_ONLY=true",
         "GITHUB_INTENT_AND_RECEIPT_SURFACE_ONLY=true",
         "SHUKOU_SOLE_ACCEPTANCE_AND_MERGE_OWNER=true",
+        "STRUCTURAL_REVIEW_OWNER_FIXED=true",
+        "MERGE_READINESS_RECOMMENDATION_OWNER_FIXED=true",
+        "FINAL_ACCEPTANCE_OWNER_FIXED=true",
+        "MERGE_OPERATION_OWNER_FIXED=true",
+        "AMBIGUOUS_MERGE_DECISION_RETAINED=false",
+        "RATIFIED_POLICY_PINNED_NOT_ONLY_SHAPE_VALIDATED=true",
+        "NO_EVALUATION_INPUT_RAISES=true",
         "EXTERNAL_FINDING_DEFAULT_UNVERIFIED=true",
         "EXPLICIT_SHUKOU_ADOPTION_REQUIRED=true",
         "BOT_FINDING_AUTO_ADOPTION=false",
         "BOT_FINDING_AUTO_IMPLEMENTATION=false",
         "AUTOMATED_CODEX_REVIEW_TRIGGER_ALLOWED=false",
-        "HANDOFF_TERMINATES_AT_READY_FOR_SHUKOU_REVIEW=true",
+        "HANDOFF_TERMINATES_AT_READY_FOR_STRUCTURAL_REVIEW=true",
         "INCIDENT_REGRESSION_PROVEN=true",
         "HUMAN_MERGE_BOUNDARY_PRESERVED=true",
         "UNIVERSAL_KERNEL_PROVIDER_NEUTRALITY_PRESERVED=true",
@@ -338,9 +435,14 @@ def test_the_adr_records_the_root_cause() -> None:
     ).read_text(encoding="utf-8")
     for recorded in (
         "IMPLEMENTER SELECTED",
+        "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002",
         "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001",
         "RUNTIME_ENFORCEMENT_IMPLEMENTED=false",
         "REPOSITORY_BINDING_REDEFINES_CAPABILITY_SEMANTICS=false",
+        # Decision 0002's two corrections, recorded rather than quietly applied.
+        "SHAPE VALIDATED != CONTENT PINNED",
+        "NO_EVALUATION_INPUT_RAISES=true",
+        "MERGE_READINESS_RECOMMENDATION   owner=CHATGPT",
     ):
         assert recorded in adr, recorded
 

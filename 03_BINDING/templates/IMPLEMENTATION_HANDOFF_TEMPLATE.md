@@ -4,13 +4,16 @@
 TEMPLATE_TYPE=IMPLEMENTATION_HANDOFF
 BINDING=DEV-BINDING-0001
 EXECUTOR=CLAUDE_CODE
-EXECUTOR_TERMINAL_STATE=READY_FOR_SHUKOU_REVIEW
-ACCEPTANCE_OWNER=SHUKOU
-MERGE_OWNER=SHUKOU
+EXECUTOR_TERMINAL_STATE=READY_FOR_STRUCTURAL_REVIEW
+STRUCTURAL_REVIEW_OWNER=CHATGPT
+MERGE_READINESS_RECOMMENDATION_OWNER=CHATGPT
+FINAL_ACCEPTANCE_OWNER=SHUKOU
+MERGE_OPERATION_OWNER=SHUKOU
 ```
 
 The Structural Advisor fills this in and hands it to the executor. It carries a Difference
-and a boundary, and it does not carry an acceptance decision — there is no field for one.
+and a boundary. It does not carry a final acceptance decision — there is no field for one,
+because the Advisor does not hold that decision.
 
 ## Work unit
 
@@ -68,8 +71,22 @@ BOT_FINDING_AUTO_ADOPTION=false
 The executor stops here:
 
 ```text
-READY_FOR_SHUKOU_REVIEW
+READY_FOR_STRUCTURAL_REVIEW
 ```
 
-It does not request an automated external review, and does not proceed to acceptance or
-merge. Those states belong to SHUKOU alone.
+It does not request an automated external review.
+
+What follows is not the executor's:
+
+```text
+CHATGPT  → STRUCTURAL_REVIEW
+         → MERGE_RECOMMENDED | CORRECTION_REQUIRED | MORE_EVIDENCE_REQUIRED
+           | BLOCKED | NOT_REVIEWED
+
+SHUKOU   → FINAL_ACCEPTANCE
+         → MERGE_OPERATION
+```
+
+A merge readiness recommendation is the Advisor's. The acceptance decision and the merge
+operation are the Human's. They are three separate things and no participant holds two of
+them.
