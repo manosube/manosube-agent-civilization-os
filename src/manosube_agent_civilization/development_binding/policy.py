@@ -233,13 +233,27 @@ RATIFIED_STATES: tuple[str, ...] = (
 
 EXECUTOR_TERMINAL_STATE = "READY_FOR_STRUCTURAL_REVIEW"
 
-#: What Decision 0001 called the executor's terminal state, kept for one purpose only: so a
-#: conformance test can prove the superseded token appears in no active document.
+#: Every state name a superseded decision used and this one does not. Kept for one purpose:
+#: so a conformance test can prove none of them survives in an active document.
 #:
-#: It survived a whole merge inside `HUMAN_AGENT_WORK_COMMUNICATION.md` §7A. The Binding, the
-#: policy, both templates and the evaluator were all corrected; the communication protocol
-#: restated the same value in prose and nothing compared the two. A value copied into four
-#: documents and checked in none will drift, and the drift is invisible from every copy.
+#: `READY_FOR_SHUKOU_REVIEW` survived a whole merge inside
+#: `HUMAN_AGENT_WORK_COMMUNICATION.md` §7A. The Binding, the policy, both templates and the
+#: evaluator were all corrected; the communication protocol restated the value in prose and
+#: nothing compared the two.
+#:
+#: This is a **set**, and the first version of it was a single string -- which was its own
+#: instance of the same defect, because Decision 0001 retired two states and the guard knew
+#: about one. A renaming decision MUST add every retired name here; that is the one step this
+#: guard cannot perform for itself, and it is stated rather than assumed.
+SUPERSEDED_STATE_NAMES: frozenset[str] = frozenset(
+    {
+        "READY_FOR_SHUKOU_REVIEW",
+        "SHUKOU_CHECK",
+    }
+)
+
+#: Kept as a name because the executor terminal state is the one that drifted, and a reader
+#: looking for it should find it rather than have to know it is in the set above.
 SUPERSEDED_EXECUTOR_TERMINAL_STATE = "READY_FOR_SHUKOU_REVIEW"
 MERGE_RECOMMENDATION_STATE = "MERGE_RECOMMENDED"
 FINAL_ACCEPTANCE_STATE = "SHUKOU_ACCEPTED"

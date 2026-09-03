@@ -323,6 +323,64 @@ before. The three before it were all *within* a module: a claim and its enforcem
 apart. This one was *between* documents, which is why every review pass that read either
 document alone saw nothing wrong.
 
+### 6A.8 The guard's own scope was narrower than its claim
+
+The repair in §6A.7 shipped as a PR claiming to check "every copy". Structural review read the
+templates against it and returned `CORRECTION_REQUIRED`. It was right.
+
+The guard matched `EXECUTOR_TERMINAL_STATE=<VALUE>` assignments. The route is also stated as a
+flag line, as a bare token inside a fence, and in backticked prose:
+
+```text
+EXECUTOR_TERMINAL_STATE=READY_FOR_STRUCTURAL_REVIEW      an assignment   -- checked
+READY_FOR_STRUCTURAL_REVIEW=true                          a flag line     -- not checked
+READY_FOR_STRUCTURAL_REVIEW                               bare, in a fence -- not checked
+The executor stops at `READY_FOR_STRUCTURAL_REVIEW`.      prose            -- not checked
+```
+
+Two of eight occurrence sites were read. Changing any of the other six to a *different wrong
+value* passed. Reverting one to the superseded token happened to be caught — by the separate
+whole-text scan, not by the check that claimed coverage — which is why the gap was invisible
+from the passing suite.
+
+A second latent instance sat beside it: `SUPERSEDED_EXECUTOR_TERMINAL_STATE` was a single
+string, and Decision 0001 retired **two** states (`READY_FOR_SHUKOU_REVIEW` and
+`SHUKOU_CHECK`). The guard against stale names knew about half of them.
+
+So the family has now appeared inside the guard written to catch the family:
+
+```text
+A CHECK WHOSE SCOPE IS NARROWER THAN ITS CLAIM
+IS A CLAIM WITH NOTHING BEHIND THE REST OF IT
+```
+
+The rebuilt guard does not look for a syntactic form. It extracts every upper-case token from
+every route-bearing document and asks whether it names a state the Binding declares. A token
+is *state-shaped* if it shares two or more underscore segments with a ratified state, so
+`READY_FOR_HUMAN_REVIEW` is flagged and `MERGE_ALLOWED` is not. Legitimate look-alikes —
+roles, actions, policy keys, evaluator reason codes — are **derived from the policy** rather
+than listed, so a new action is covered without anyone remembering the file; the six
+remaining acceptance flags are declared, each asserted to be a real assignment, and the list
+asserted to stay small.
+
+Three checks, with their boundaries stated rather than implied:
+
+| Check | Scope |
+|---|---|
+| superseded name present | every active document, repository-wide |
+| state-shaped unknown token | route-bearing documents |
+| ratified state leaking into a new document | every active document, forcing it into the swept set |
+
+The third is what keeps the second's scope from going stale. Single-segment state names are
+exempt from it, and this is stated rather than hidden: `BLOCKED` is a ratified state *and* an
+ordinary English word appearing in about twenty unrelated Kernel documents, so treating every
+mention as route text would make the check meaningless.
+
+The claim is now proven by demonstration. Six controls take the real text of the route-bearing
+documents, mutate one occurrence of each form, and require rejection — and one further control
+asserts the documents as they stand are not flagged, so the detector cannot be one that fires
+always.
+
 ## 7. Consequences
 
 The four participants building this repository are now named, closed, and evaluable, while the
