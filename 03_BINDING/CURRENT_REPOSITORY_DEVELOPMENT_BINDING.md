@@ -119,6 +119,31 @@ MERGE_OPERATION                  owner=SHUKOU
 
 `may`に名前が無い行為は、禁止一覧に無くても許可されない。**沈黙は許可ではない**——Authorityが未規定のactionに対して適用する規律（`AUTHORITY_CONTRACT.md` §1）と同じものである。
 
+## 2.2 surfaceはsubjectではない
+
+```text
+OBSERVATION SURFACE = repository内容へどう到達するか
+OBSERVATION SUBJECT = 誰がそれを検査し、結論を出すか
+
+SURFACE != SUBJECT
+SURFACE != ACCEPTANCE
+```
+
+GitHub APIは**観測手段**である。検査主体でも受入主体でもない。
+
+```text
+CHATGPT = GitHub APIを用いて構造観測・構造検査を行う主体
+GITHUB  = 意思・作業・Evidence・receiptのsurface
+SHUKOU  = 最終受入とマージ操作の主体
+```
+
+surfaceをsubjectとして読むことが、受入境界が失われる経路である。「そのsurfaceがacceptance capabilityを実装する」と書けば、受入を保持する者が誰もいなくなる。
+
+```text
+OBSERVATION_SUBJECT_DISTINCT_FROM_OBSERVATION_SURFACE=true
+SURFACE_HOLDS_ACCEPTANCE=false
+```
+
 # 3. External Findings
 
 すべての外部reviewer、bot、model、CI annotation、review comment、生成レポートは、次の状態で始まる。
@@ -270,6 +295,10 @@ verdictを読む呼び手と例外を捕らえる呼び手は別の呼び手で�
 ```text
 RECORD_FIELD_IS_NOT_A_SCALAR → REFUSED
 NO_EVALUATION_INPUT_RAISES=true
+INSTALLED_WHEEL_GUARD_WORKS=true
+DUPLICATE_MAINTAINED_COPY=false
+OBSERVATION_SUBJECT_DISTINCT_FROM_OBSERVATION_SURFACE=true
+SURFACE_HOLDS_ACCEPTANCE=false
 ```
 
 # 6. Precedence
@@ -325,6 +354,10 @@ MERGE_OPERATION_OWNER_FIXED=true
 AMBIGUOUS_MERGE_DECISION_RETAINED=false
 RATIFIED_POLICY_PINNED_NOT_ONLY_SHAPE_VALIDATED=true
 NO_EVALUATION_INPUT_RAISES=true
+INSTALLED_WHEEL_GUARD_WORKS=true
+DUPLICATE_MAINTAINED_COPY=false
+OBSERVATION_SUBJECT_DISTINCT_FROM_OBSERVATION_SURFACE=true
+SURFACE_HOLDS_ACCEPTANCE=false
 EXTERNAL_FINDING_DEFAULT_UNVERIFIED=true
 EXPLICIT_SHUKOU_ADOPTION_REQUIRED=true
 BOT_FINDING_AUTO_ADOPTION=false
@@ -337,6 +370,19 @@ HUMAN_MERGE_BOUNDARY_PRESERVED=true
 KERNEL_PROVIDER_NEUTRALITY_PRESERVED=true
 UNIVERSAL_KERNEL_PROVIDER_NEUTRALITY_PRESERVED=true
 ```
+
+## 8.1 guardはinstall後も動く
+
+正本は`03_BINDING/DEVELOPMENT_BINDING_POLICY.json`ただ一つである。`pyproject.toml`の`force-include`が、build時にその同じfileをpackage内へ写す。ディスク上に維持すべき第二のfileは存在しない。
+
+```text
+SOURCE_CHECKOUT  → 03_BINDING の正本を直接読む
+INSTALLED_WHEEL  → package内のresourceを読む
+DUPLICATE_MAINTAINED_COPY=false
+INSTALLED_WHEEL_GUARD_WORKS=true
+```
+
+修正前、`evaluate()`はrepository相対のpathを解決し、installされた環境では存在しなかった。fail closedではあった——許可ではなく拒否として落ちた——が、**答えられなかった**。source checkoutでしか動かないguardは、packageがpackageとして使われた瞬間に存在しなくなるguardである。
 
 # 9. Explicit Non-Claims
 

@@ -232,6 +232,55 @@ These came back through the Human, as an adopted work package — which is the g
 Binding exists to enforce, working on its own author. That is the only reason they were
 acted on.
 
+### 6A.5 A guard that stopped guarding once installed
+
+Structural review of the corrected head found one more, and it is the same family again.
+
+`load_policy()` resolved the policy through a repository-relative path. In a source checkout
+that works. Installed from a wheel it does not exist, so the guard could not run at all.
+
+It failed *closed* — it raised rather than permitting, which is the one thing it got right.
+But a guard that answers only inside a source checkout stops existing the moment the package
+is used the way packages are used, and "cannot answer" is not much better than "answers
+yes" to a caller who only wired up the happy path.
+
+The repair keeps one copy on disk. `03_BINDING/DEVELOPMENT_BINDING_POLICY.json` stays
+canonical; a `force-include` mapping in `pyproject.toml` places that same file into the
+package at build time. Nothing is duplicated for a person to keep in step, and a conformance
+test fails if a second copy ever appears in the source tree. Resolution is packaged-first,
+repository-second, so an edit to the ratified record takes effect immediately in a checkout
+and an installed wheel still answers.
+
+The test that proves it builds a real wheel, installs it, and calls `evaluate` from a
+subprocess outside the repository. Writing that test found its own bug: the first version
+passed `-I` together with `PYTHONPATH`, and `-I` *ignores* `PYTHONPATH`, so the subprocess
+imported the editable install from the checkout and every assertion in it was meaningless.
+The isolation assertion at the end of that file is what caught it, and is why it stays.
+
+### 6A.6 A surface read as a subject
+
+The same review found the delivery protocol saying, of this repository, that "GitHub API
+implements that capability" — the observation/acceptance capability.
+
+A capability is exercised by a **subject** through a **surface**.
+
+```text
+OBSERVATION SURFACE = how repository content is reached
+OBSERVATION SUBJECT = who inspects it and concludes
+
+SURFACE != SUBJECT
+SURFACE != ACCEPTANCE
+```
+
+An API supplies access. It does not inspect, conclude or accept. Saying a surface implements
+the acceptance capability leaves **no one holding the acceptance** — which is how the
+boundary went missing in the first place, one sentence earlier in the same document than the
+missing implementer selection.
+
+§6 now separates the two and defers the selection of both to the repository Binding. In this
+repository the Structural Advisor is the observing and reviewing subject, using the GitHub
+API as its surface; the Human is the accepting and merging subject.
+
 ## 7. Consequences
 
 The four participants building this repository are now named, closed, and evaluable, while the

@@ -321,6 +321,43 @@ def test_the_communication_protocol_registers_the_binding() -> None:
     assert "COMPLETION_NOTICE_USED_AS_ACCEPTANCE=false" in COMMUNICATION
 
 
+def test_the_protocol_separates_the_observation_subject_from_its_surface() -> None:
+    """A surface supplies access; it does not inspect, conclude or accept.
+
+    The protocol previously said "GitHub API implements that capability" of the
+    observation/acceptance capability, which leaves nobody holding the acceptance.
+    """
+
+    assert "OBSERVATION_SUBJECT_DISTINCT_FROM_OBSERVATION_SURFACE=true" in DELIVERY
+    assert "SURFACE_HOLDS_ACCEPTANCE=false" in DELIVERY
+    assert "SURFACE != SUBJECT" in DELIVERY
+    assert "GitHub API implements that capability" not in DELIVERY
+
+
+def test_the_binding_records_the_subject_surface_distinction() -> None:
+    assert "OBSERVATION_SUBJECT_DISTINCT_FROM_OBSERVATION_SURFACE=true" in BINDING
+    assert "SURFACE_HOLDS_ACCEPTANCE=false" in BINDING
+
+
+@pytest.mark.parametrize("held", ["STRUCTURAL_REVIEW", "MERGE_READINESS_RECOMMENDATION"])
+def test_the_surface_holds_neither_review_nor_recommendation(held: str) -> None:
+    """GITHUB is a surface in the policy too, not only in the prose."""
+
+    assert held in POLICY["roles"]["GITHUB"]["must_not"]
+
+
+def test_the_build_ships_the_policy_from_its_canonical_location() -> None:
+    """One copy on disk, mapped into the package at build time -- not a second file."""
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "[tool.hatch.build.targets.wheel.force-include]" in pyproject
+    assert '"03_BINDING/DEVELOPMENT_BINDING_POLICY.json"' in pyproject
+    assert (
+        "manosube_agent_civilization/development_binding/DEVELOPMENT_BINDING_POLICY.json"
+        in pyproject
+    )
+
+
 def test_the_delivery_protocol_still_requires_no_named_provider() -> None:
     """The sentence the Binding must not have weakened."""
 
@@ -412,6 +449,10 @@ def test_the_binding_document_records_the_acceptance_flags() -> None:
         "AMBIGUOUS_MERGE_DECISION_RETAINED=false",
         "RATIFIED_POLICY_PINNED_NOT_ONLY_SHAPE_VALIDATED=true",
         "NO_EVALUATION_INPUT_RAISES=true",
+        "INSTALLED_WHEEL_GUARD_WORKS=true",
+        "DUPLICATE_MAINTAINED_COPY=false",
+        "OBSERVATION_SUBJECT_DISTINCT_FROM_OBSERVATION_SURFACE=true",
+        "SURFACE_HOLDS_ACCEPTANCE=false",
         "EXTERNAL_FINDING_DEFAULT_UNVERIFIED=true",
         "EXPLICIT_SHUKOU_ADOPTION_REQUIRED=true",
         "BOT_FINDING_AUTO_ADOPTION=false",
@@ -443,6 +484,9 @@ def test_the_adr_records_the_root_cause() -> None:
         "SHAPE VALIDATED != CONTENT PINNED",
         "NO_EVALUATION_INPUT_RAISES=true",
         "MERGE_READINESS_RECOMMENDATION   owner=CHATGPT",
+        # The two corrections structural review returned on 2a98af5.
+        "SURFACE != SUBJECT",
+        "force-include",
     ):
         assert recorded in adr, recorded
 

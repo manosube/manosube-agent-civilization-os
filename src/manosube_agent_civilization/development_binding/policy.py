@@ -33,9 +33,44 @@ from typing import Any
 
 from .errors import PolicyIntegrityError
 
-ROOT = Path(__file__).resolve().parents[3]
-POLICY_PATH = ROOT / "03_BINDING" / "DEVELOPMENT_BINDING_POLICY.json"
-BINDING_DOCUMENT_PATH = ROOT / "03_BINDING" / "CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md"
+#: The canonical policy artifact, and the only copy of it kept on disk.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+REPOSITORY_POLICY_PATH = REPOSITORY_ROOT / "03_BINDING" / "DEVELOPMENT_BINDING_POLICY.json"
+
+#: Where that same file lands *inside an installed wheel*, placed there at build time by the
+#: `force-include` mapping in `pyproject.toml`. It is not a second maintained copy: nothing
+#: writes it, nothing edits it, and a conformance test fails if one ever appears in the
+#: source tree.
+PACKAGED_POLICY_PATH = Path(__file__).resolve().parent / "DEVELOPMENT_BINDING_POLICY.json"
+
+#: The Binding *document* is prose for people and is read only by conformance tests, so it
+#: stays repository-relative. The guard does not read it, and an installed wheel does not
+#: need it to answer.
+BINDING_DOCUMENT_PATH = (
+    REPOSITORY_ROOT / "03_BINDING" / "CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md"
+)
+
+
+def resolve_policy_path() -> Path:
+    """Return the policy artifact, wherever this package is running from.
+
+    Packaged copy first, repository second. In a source checkout the packaged path does not
+    exist, so the canonical file is read directly and an edit to it takes effect immediately.
+    In an installed wheel the repository path does not exist, and the packaged copy answers.
+
+    A guard that silently stops guarding once installed is worse than no guard. This one
+    failed closed rather than open -- it raised instead of permitting -- but it could not run
+    at all outside a source checkout, which is its own kind of useless.
+    """
+
+    if PACKAGED_POLICY_PATH.is_file():
+        return PACKAGED_POLICY_PATH
+    return REPOSITORY_POLICY_PATH
+
+
+#: Backwards-compatible alias for the canonical artifact. Conformance tests that mutate a
+#: copy of the ratified record read this; the guard uses :func:`resolve_policy_path`.
+POLICY_PATH = REPOSITORY_POLICY_PATH
 
 POLICY_VERSION = "0.2"
 DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002"
@@ -279,7 +314,7 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
     defaulting: a policy that cannot be read whole is not a policy that permits anything.
     """
 
-    source = POLICY_PATH if path is None else path
+    source = resolve_policy_path() if path is None else path
     try:
         text = source.read_text(encoding="utf-8")
     except OSError as error:
