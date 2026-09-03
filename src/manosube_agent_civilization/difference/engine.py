@@ -122,8 +122,38 @@ OBSERVATION_SCHEMA_BASE = SCHEMA_BASE + "observation/"
 
 SCHEMA_VERSION = "0.1"
 RISK_CLASSES = frozenset({"LOW", "MODERATE", "HIGH", "CRITICAL"})
+#: Observation statuses a Difference may be derived from.
+#:
+#: ``FAILED`` is here by ratified amendment (ADR-0030). 第31条 requires failure to reflow as
+#: Evidence, and Evidence is bound to a Difference, so refusing FAILED here made an initial
+#: failed Observation unrecordable anywhere -- a constitutional contradiction rather than a
+#: missing feature.
+#:
+#: Admitting it invents no semantics; it repairs a disagreement between this engine and its
+#: own contract. ``DIFFERENCE_CONTRACT.md`` §4 already stated that ``FAILED`` is held as
+#: ``UNKNOWN`` knowledge, and ``projection._NEGATIVE_STATUS_MAP`` already implemented
+#: ``FAILED -> UNKNOWN``. This gate refused before either was consulted.
+#:
+#: ``UNKNOWN`` belongs to ``UNRESOLVED_KNOWLEDGE`` and to neither ``EVALUABLE_KNOWLEDGE`` nor
+#: ``PROVEN_ABSENCE``, so a failure cannot become satisfaction, proven absence or completion
+#: by passing through here -- a property of those sets, not a promise of this comment.
+#:
+#: ``INVALID`` stays out, and is refused twice over: by this gate, which reads the
+#: Observation's own status, and by ``_observed_projection``, which reads the Negative
+#: Observation's evaluation and raises on ``REJECT_OR_QUARANTINE``. An INVALID Observation is
+#: not a trustworthy canonical record; a FAILED one is a schema-valid record of an attempt
+#: that did not reach its subject.
 _ACCEPTED_OBSERVATION_STATUS = frozenset(
-    {"COMPLETE", "EMPTY", "UNKNOWN", "UNOBSERVED", "BLOCKED", "INCOMPLETE", "CONFLICTED"}
+    {
+        "COMPLETE",
+        "EMPTY",
+        "UNKNOWN",
+        "UNOBSERVED",
+        "BLOCKED",
+        "INCOMPLETE",
+        "CONFLICTED",
+        "FAILED",
+    }
 )
 _REQUIRES_REOBSERVATION = frozenset({"UNKNOWN", "CONFLICT"})
 _DEFAULT_POLICY: dict[str, Any] = {

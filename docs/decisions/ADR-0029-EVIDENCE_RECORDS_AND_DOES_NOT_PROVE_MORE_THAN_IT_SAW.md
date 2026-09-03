@@ -331,7 +331,11 @@ with a repository test holding the pin to `git hash-object` of the live document
 that remains is checked against something. Fields that carry a claim nothing verifies are
 worse than absent fields, because absence does not assert.
 
-## 5B. An unresolved contradiction, preserved rather than resolved
+## 5B. A contradiction, preserved and then decided
+
+**Superseded by ADR-0030**, which records the Human Authority's decision. The account below
+is kept as written, because what it was like before the decision is the record.
+
 
 第31条 requires failure to reflow as Evidence. Binding Evidence to a Difference (§1A) means
 Evidence inherits the Difference producer's admissibility, and that producer names its own
@@ -358,6 +362,9 @@ Difference reopens §1A; and a third position in 第27条 is a constitutional am
 says a contradiction is held, not deleted, overwritten or averaged — so it is recorded in
 `EVIDENCE_CONTRACT.md` §12, pinned from both sides by test, and returned to the Human
 Authority as a decision rather than taken as an implementation choice.
+
+The Human Authority chose the first, and ADR-0030 records what that turned out to be: not a
+widening of the Difference contract, but a repair of an engine that had drifted from it.
 
 ## 6. Four findings from this work unit, recorded with how each was found
 

@@ -401,19 +401,10 @@ Observationのcontractを書き換えることになる。
 
 ---
 
-# 12. 未解決Difference — FAILED／INVALID Observation
+# 12. FAILED Observation — 批准済みamendment（ADR-0030）
 
-Evidenceは§1AによりDifference producerの受理性を継承する。Difference producerが受理する
-Observation statusは次の7つであり、`FAILED`と`INVALID`を**明示的に除外**する。
-
-```text
-_ACCEPTED_OBSERVATION_STATUS =
-  COMPLETE  EMPTY  UNKNOWN  UNOBSERVED  BLOCKED  INCOMPLETE  CONFLICTED
-
-EXCLUDED = FAILED  INVALID
-```
-
-したがって現状は次である。
+Evidenceは§1AによりDifference producerの受理性を継承する。`2730fab`時点では、そのproducerが
+`FAILED`を拒否していたため、初回観測がFAILEDである場合にEvidenceを生成できなかった。
 
 ```text
 INITIAL FAILED OBSERVATION
@@ -421,21 +412,53 @@ INITIAL FAILED OBSERVATION
 → Observation Evidence を生成できない
 ```
 
-一方、Change Result経路のpost-change Observationはproducerを通らないため、
-**FAILEDな再観測はEvidenceとして記録できる**。
-
-第31条は「失敗、EMPTY、BLOCKED、STALE、未到達も正式なEvidenceとして還流する」と述べる。
-初回観測がFAILEDである場合にのみ、これが成立しない。
+第31条は「失敗、EMPTY、BLOCKED、STALE、未到達も正式なEvidenceとして還流する」と要求する。
+これは機能不足ではなく憲法矛盾であり、Phase 6は自らの権限で解決せず保持してHuman Authority
+へ差し戻した。批准された決定は次である。
 
 ```text
-UNRESOLVED_CONTRADICTION
-  第31条            失敗は Evidence として還流する
-  difference/engine  FAILED からは Difference を導出しない
-  第27条            Observation Evidence は Difference を裏付ける
+ACCEPT_FAILED_OBSERVATION_IN_DIFFERENCE
+FAILED_PROJECTION=UNKNOWN
+FAILED_ATTEMPT_AND_FAILURE_CLASS_PRESERVED=true
+INVALID_OBSERVATION_REMAINS_REFUSED=true
+EVIDENCE_MUST_NOT_BYPASS_DIFFERENCE=true
+THIRD_EVIDENCE_POSITION_CREATED=false
 ```
 
-Phase 6はこれを**解決しない**。前段のadmissibilityを広げることはそのphaseの決定であり、
-Differenceを迂回することは§1Aで閉じた束縛を開き直す。第33条により、矛盾は削除・上書き・
-平均化せずここに保持する。
+## 12.1 意味論を発明していない
 
-`tests/integration/evidence/test_kernel_route_to_evidence.py`が現状の両側を固定する。
+`04_DIFFERENCE/DIFFERENCE_CONTRACT.md` §4 は既に`FAILED`を「proven absenceへ昇格せず
+`UNKNOWN` knowledgeのまま保持する」と規定し、`projection._NEGATIVE_STATUS_MAP`は既に
+`FAILED → UNKNOWN`を実装していた。status gateがその写像へ到達する前に拒否していただけで
+ある。amendmentはengineをContractへ整合させる。
+
+## 12.2 経路
+
+```text
+FAILED Observation
+→ Difference producer が受理
+→ knowledge_status = UNKNOWN
+→ Observation Evidence   status=FAILED  level=E0
+→ Evidence Sufficiency   INSUFFICIENT（全floorで）
+```
+
+`status`は`FAILED`のままである。`UNKNOWN`はDifferenceの**射影**であってEvidenceの`status`
+ではない。attempt結果とfailure classも保持する。射影で上書きすれば、
+`NO_RESULT ≠ PROVEN_ABSENCE`が逆向きに崩れる。
+
+FAILED Evidenceは`SUFFICIENT`へ到達しない。`_DETERMINATE_INSUFFICIENT_STATUSES`が
+`FAILED`を含み、reason code `EVIDENCE_STATUS_FAILED`を伴って`INSUFFICIENT`とする。
+第27条の位置は二つのままであり、失敗は第一の位置に記録される。
+
+## 12.3 INVALIDは拒否のまま
+
+```text
+gate         _ACCEPTED_OBSERVATION_STATUS が INVALID を除外
+projection   _NEGATIVE_STATUS_MAP が REJECT_OR_QUARANTINE へ写像して raise
+```
+
+二重であり冗長ではない。gateはObservation自身のstatusを、projectionはNegative Observation
+のevaluationを読む。INVALIDなrecordはどちらの位置でも信頼しない。
+
+`tests/integration/evidence/test_failed_observation_route.py`が全項目を実行し、誤kindの
+注入で往復gateが実際に落ちることをcontrolで示す。

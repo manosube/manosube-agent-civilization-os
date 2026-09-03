@@ -19,16 +19,11 @@ from typing import Any
 import pytest
 from tests.difference_helpers import (
     PREDICATE_ID,
-    negative_claim,
-    observation_request,
-    observation_scope,
-    state_fingerprint,
 )
 from tests.evidence_helpers import (
     AFTER_REVISION,
     BEFORE_REVISION,
     after_observation_request,
-    after_observation_with_status,
     before_observation_request,
     change_result_evidence_request,
     closure_policy,
@@ -301,52 +296,29 @@ def test_every_status_the_difference_route_admits_reaches_evidence() -> None:
     }
 
 
-def test_a_failed_observation_stops_at_the_difference_producer_not_at_evidence() -> None:
-    """A predecessor-surface consequence, pinned rather than worked around.
+def test_the_only_status_the_difference_route_still_excludes_is_invalid() -> None:
+    """What this test asserted before the amendment, and what it asserts now.
 
-    ``difference/engine.py`` refuses to derive from an Observation it rules ``FAILED``. 第31条
-    wants failure reflowed as Evidence, so there is a real gap between the two -- but widening
-    a predecessor's admissibility is that phase's decision, and routing around it here would
-    reopen exactly the binding P1-A closed.
+    At ``2730fab`` an initial ``FAILED`` Observation could not become Evidence at all, and
+    this test pinned that as an unresolved contradiction with 第31条. The Human Authority
+    ratified the amendment (ADR-0030); ``FAILED`` is admitted and projected as ``UNKNOWN``,
+    and the whole route is exercised in ``test_failed_observation_route.py``.
 
-    The gap is narrower than it looks: a FAILED *re-observation* is recordable, because the
-    post-change Observation never reaches the Difference producer. The test asserts both, so
-    a future change on either side is caught.
+    ``INVALID`` is still excluded, and this assertion is what keeps the amendment from having
+    quietly been wider than the decision.
     """
 
-    failed = observation_request(
-        observation_scope(),
-        [],
-        state_fingerprint(),
-        BEFORE_REVISION,
-        negative_claims=[negative_claim("FAILED")],
-    )
-    failed["attempts"][0]["result"] = "FAILED"
-    failed["attempts"][0]["failure_class"] = "SOURCE_ERROR"
-    assert observe(failed)["observations"][-1]["status"] == "FAILED"
-
-    # Exactly two statuses are excluded, and the Difference producer names them itself.
     from manosube_agent_civilization.difference.engine import _ACCEPTED_OBSERVATION_STATUS
 
-    assert set(_ACCEPTED_OBSERVATION_STATUS) == {
+    every_status = {
         "COMPLETE",
+        "INCOMPLETE",
         "EMPTY",
         "UNKNOWN",
         "UNOBSERVED",
         "BLOCKED",
-        "INCOMPLETE",
+        "FAILED",
+        "INVALID",
         "CONFLICTED",
     }
-    assert {"FAILED", "INVALID"} & set(_ACCEPTED_OBSERVATION_STATUS) == set()
-
-    with pytest.raises(EvidenceError) as raised:
-        derive_evidence(observation_evidence_request(observation=failed))
-    assert "unusable Observation status: FAILED" in str(raised.value)
-
-    on_the_change_route = derive_evidence(
-        change_result_evidence_request(
-            post_change_observation=after_observation_with_status("FAILED")
-        )
-    )
-    assert on_the_change_route["status"] == "FAILED"
-    assert on_the_change_route["evidence_level"] == "E0"
+    assert every_status - set(_ACCEPTED_OBSERVATION_STATUS) == {"INVALID"}
