@@ -40,6 +40,7 @@ from manosube_agent_civilization.authority import (
     HUMAN_APPROVAL_REQUIRED,
     PROHIBITED,
     AuthorityError,
+    conformance,
     evaluate_authority,
 )
 from manosube_agent_civilization.authority.identity import change_intent_fingerprint
@@ -1167,37 +1168,75 @@ def test_a_constitutional_prohibition_cannot_be_evaded_by_an_alias() -> None:
         )
 
 
-def test_no_authority_owned_pattern_ends_in_a_bare_dollar() -> None:
-    """The class, not the instance.
+def test_no_authority_reachable_pattern_ends_in_a_bare_dollar() -> None:
+    """The boundary is derived from the ``$ref`` closure, not from a directory name.
 
-    ``$`` is the defect, and ``action_kind`` was one of eleven places this package writes it.
-    A guard on the one reported symbol would leave the same construction in the other ten,
-    which is how findings in this PR have repeatedly recurred one site at a time.
+    The previous version of this guard walked ``01_SCHEMA/authority/*.schema.json``. That is
+    the set of schemas this package *stores*, not the set an Authority decision *evaluates*:
+    the four seeds reference ``common/identity``, ``common/fingerprint``,
+    ``common/reference`` and ``common/timestamp``, and ``admit_difference`` validates against
+    ``difference/difference.schema.json``. Five schemas, ten terminal patterns, all outside
+    the guard -- and the ``project_id`` alias that walked past a PROJECT-class prohibition
+    lived in one of them.
 
-    What this checks: patterns in the schemas **this package owns**. A terminal ``$``
-    elsewhere in ``01_SCHEMA`` is a reported dependency, not something this test covers.
+    A directory glob cannot express "what Authority evaluates", so it stops being a guard the
+    moment the answer moves. The closure can, and it moves with the ``$ref`` graph.
     """
 
-    import json
-    from pathlib import Path
+    offenders: list[tuple[str, str, str]] = []
 
-    root = Path(__file__).resolve().parents[3] / "01_SCHEMA" / "authority"
-    offenders: list[tuple[str, str]] = []
-
-    def walk(node: Any, source: str) -> None:
+    def walk(node: Any, schema_id: str, path: tuple[Any, ...] = ()) -> None:
         if isinstance(node, dict):
             found = node.get("pattern")
             if isinstance(found, str) and found.endswith("$"):
-                offenders.append((source, found))
-            for child in node.values():
-                walk(child, source)
+                offenders.append((schema_id, ".".join(map(str, path)), found))
+            for key, child in node.items():
+                walk(child, schema_id, (*path, key))
         elif isinstance(node, list):
-            for child in node:
-                walk(child, source)
+            for index, child in enumerate(node):
+                walk(child, schema_id, (*path, index))
 
-    for schema_file in sorted(root.glob("*.schema.json")):
-        walk(json.loads(schema_file.read_text(encoding="utf-8")), schema_file.name)
+    reachable = conformance.authority_reachable_schemas()
+    for schema_id, document in reachable.items():
+        walk(document, schema_id)
     assert not offenders, offenders
+
+
+def test_the_closure_is_derived_and_reaches_past_its_own_directory() -> None:
+    """The harness before its subject.
+
+    A closure that silently collapsed to the four Authority files would make the guard above
+    pass exactly as the directory glob did, and for the same wrong reason.
+    """
+
+    reachable = conformance.authority_reachable_schemas()
+    names = {schema_id.rsplit("/v0.1/", 1)[1] for schema_id in reachable}
+    assert {
+        "authority/authority.schema.json",
+        "authority/authority_rule.schema.json",
+        "authority/prohibition.schema.json",
+        "authority/approval.schema.json",
+        "difference/difference.schema.json",
+        "common/identity.schema.json",
+        "common/fingerprint.schema.json",
+        "common/reference.schema.json",
+        "common/timestamp.schema.json",
+    } <= names, sorted(names)
+    assert sum(not name.startswith("authority/") for name in names) >= 5, sorted(names)
+
+
+def test_the_closure_resolves_every_reference_and_terminates() -> None:
+    """Cycle-safe by construction, and no reference left dangling.
+
+    ``difference.schema.json`` references itself through ``$defs``; a walker that expanded a
+    schema twice would not terminate. Reaching an unregistered ``$id`` raises rather than
+    being skipped, so a missing schema cannot quietly shrink the guarded set.
+    """
+
+    reachable = conformance.authority_reachable_schemas()
+    assert len(reachable) == len(set(reachable)), "closure keys are not unique"
+    for schema_id in reachable:
+        assert schema_id.startswith("https://schemas.manosube.org/"), schema_id
 
 
 def test_the_canonical_spellings_are_still_admitted() -> None:
@@ -1211,3 +1250,211 @@ def test_the_canonical_spellings_are_still_admitted() -> None:
         )
         assert decision["decision"] == HUMAN_APPROVAL_REQUIRED, kind
         assert decision["requested_action"]["action_kind"] == kind
+
+
+# --------------------------------------------------------------------------- #
+# 17. a measured number in a document is held to the artifact it measures
+# --------------------------------------------------------------------------- #
+
+
+def test_the_adr_fixture_counts_are_derived_from_the_fixtures() -> None:
+    """ADR-0026 §6 was correct at `b0bc7ce` and drifted silently for eight rounds.
+
+    It read `22 committed fixtures, 18 of them adversarial` while the directory held 32 and
+    24. Nothing held the sentence to the artifact, so the number could only ever have been
+    right by coincidence after the first change.
+
+    Rewriting it would repeat the mistake at a new value. The counts are derived here and the
+    document is required to agree, which is the same relationship `validate_schemas.py`
+    already has with the schema inventory and the route guard has with `EVALUATION_ROUTE`.
+    """
+
+    import json
+    from pathlib import Path
+    import re
+
+    root = Path(__file__).resolve().parents[3]
+    fixtures = root / "tests" / "contract" / "fixtures" / "schema"
+    valid = json.loads((fixtures / "valid" / "authority_cases.json").read_text(encoding="utf-8"))
+    invalid = json.loads(
+        (fixtures / "invalid" / "authority_cases.json").read_text(encoding="utf-8")
+    )
+    total, adversarial = len(valid) + len(invalid), len(invalid)
+
+    adr = (
+        root / "docs" / "decisions"
+        / "ADR-0026-AUTHORITY_ONE_EVALUATOR_AND_NO_PROSE_CHANNEL.md"
+    ).read_text(encoding="utf-8")
+    stated = re.search(
+        r"(\d+) committed fixtures, (\d+) of them adversarial", adr
+    )
+    assert stated is not None, "ADR-0026 no longer states a fixture count"
+    assert (int(stated.group(1)), int(stated.group(2))) == (total, adversarial), {
+        "adr": stated.group(0),
+        "derived": f"{total} committed fixtures, {adversarial} of them adversarial",
+    }
+
+
+def test_the_fixture_counts_are_not_trivially_zero() -> None:
+    """The harness before its subject: empty fixture files would satisfy any equality."""
+
+    import json
+    from pathlib import Path
+
+    fixtures = (
+        Path(__file__).resolve().parents[3] / "tests" / "contract" / "fixtures" / "schema"
+    )
+    valid = json.loads((fixtures / "valid" / "authority_cases.json").read_text(encoding="utf-8"))
+    invalid = json.loads(
+        (fixtures / "invalid" / "authority_cases.json").read_text(encoding="utf-8")
+    )
+    assert len(valid) >= 8, len(valid)
+    assert len(invalid) >= 24, len(invalid)
+
+
+# --------------------------------------------------------------------------- #
+# 18. project_id is a matching key, not an address
+# --------------------------------------------------------------------------- #
+#
+# Round 8 closed the trailing-terminator alias on ``action_kind`` and asserted the remaining
+# exposed patterns were safe, on the ground that "identity, fingerprint and reference values
+# are recomputed and compared exactly, so an aliased value fails its own address check".
+#
+# That is true where the value *is* an address. ``project_id`` is compared with ``==``
+# against rule and prohibition records -- and re-addressing the Difference over the aliased
+# value makes the record self-consistent rather than refused. So the alias produced a second
+# project that no PROJECT-class prohibition governed:
+#
+#     PRJ-0001            vs a PROJECT prohibition  -> PROHIBITED
+#     PRJ-0001 + LF       vs the same prohibition   -> HUMAN_APPROVAL_REQUIRED
+#     PRJ-0001 + LF       + a bound approval        -> AUTONOMOUS
+#
+# The reasoning was the defect, not the inventory: the field was listed and cleared wrongly.
+
+_PROJECT_TERMINATORS = (
+    ("line feed", "\n"),
+    ("carriage return", "\r"),
+    ("crlf", "\r\n"),
+    ("line separator", "\u2028"),
+    ("paragraph separator", "\u2029"),
+    ("next line", "\u0085"),
+    ("trailing space", " "),
+)
+
+
+def _reidentified(difference: dict[str, Any], project: str) -> dict[str, Any]:
+    """A Difference carrying *project* and re-addressed over it, so it is self-consistent."""
+
+    from manosube_agent_civilization.difference.identity import difference_id
+
+    aliased = deepcopy(difference)
+    aliased["project_id"] = project
+    aliased["difference_id"] = difference_id(aliased)
+    return aliased
+
+
+@pytest.mark.parametrize(("label", "suffix"), _PROJECT_TERMINATORS)
+def test_an_aliased_project_id_cannot_evade_a_project_prohibition(
+    label: str, suffix: str
+) -> None:
+    """The bypass itself, on the path that produced it."""
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    project = difference["project_id"]
+    forbidden = prohibition(project, action_kinds=["WRITE_FILE"], prohibited_scope=scope())
+
+    exact = evaluate_authority(
+        authority_request(
+            difference, requested, where, rules=[], prohibitions=[forbidden]
+        )
+    )
+    assert exact["decision"] == PROHIBITED
+    assert exact["prohibition_refs"], exact
+
+    with pytest.raises(AuthorityError):
+        evaluate_authority(
+            authority_request(
+                _reidentified(difference, project + suffix),
+                requested, where, rules=[], prohibitions=[forbidden],
+            )
+        )
+
+
+@pytest.mark.parametrize(("label", "suffix"), _PROJECT_TERMINATORS)
+def test_an_aliased_project_id_is_refused_on_every_path_that_names_a_project(
+    label: str, suffix: str
+) -> None:
+    """Five owners carry a project; a fix on one leaves the other four disagreeing.
+
+    The Difference, the request envelope, the rule, the prohibition and the approval each
+    name a project, and all five are compared for equality against one another.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    project = difference["project_id"]
+    aliased = project + suffix
+
+    built = [
+        authority_request(_reidentified(difference, aliased), requested, where, rules=[]),
+        {**authority_request(difference, requested, where, rules=[]), "project_id": aliased},
+        authority_request(difference, requested, where, rules=[rule(aliased)]),
+        authority_request(
+            difference, requested, where, rules=[],
+            prohibitions=[prohibition(aliased, action_kinds=["WRITE_FILE"])],
+        ),
+        authority_request(
+            difference, requested, where, rules=[],
+            approvals=[approval(difference, requested, where, project_id=aliased)],
+        ),
+    ]
+    for request in built:
+        with pytest.raises(AuthorityError):
+            evaluate_authority(request)
+
+
+def test_a_canonical_project_id_is_still_admitted() -> None:
+    """The control. Refusing the aliases must not have refused the project itself."""
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    project = difference["project_id"]
+
+    permitted = evaluate_authority(
+        authority_request(
+            difference, requested, where,
+            rules=[rule(project, action_kinds=["WRITE_FILE"])],
+        )
+    )
+    assert permitted["decision"] == AUTONOMOUS
+    assert permitted["project_id"] == project
+
+    forbidden = prohibition(project, action_kinds=["WRITE_FILE"], prohibited_scope=scope())
+    refused = evaluate_authority(
+        authority_request(difference, requested, where, rules=[], prohibitions=[forbidden])
+    )
+    assert refused["decision"] == PROHIBITED
+
+
+def test_a_constitutional_prohibition_was_never_the_evaded_one() -> None:
+    """Recorded so the finding is not read wider than it was.
+
+    ``applies_to_project`` returns True for a CONSTITUTIONAL prohibition regardless of
+    project, so that class was unaffected by the alias -- verified, not assumed.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    constitutional = prohibition(
+        difference["project_id"],
+        action_kinds=["WRITE_FILE"],
+        prohibition_class="CONSTITUTIONAL",
+    )
+    decision = evaluate_authority(
+        authority_request(
+            difference, requested, where, rules=[], prohibitions=[constitutional]
+        )
+    )
+    assert decision["decision"] == PROHIBITED
+    assert "CONSTITUTIONAL_PROHIBITION_MATCHED" in decision["decision_reason_codes"]

@@ -263,7 +263,7 @@ CANONICAL_AUTHORITY_OWNER_COUNT=1     one evaluator; a source scan forbids the t
 PARALLEL_AUTHORITY_COUNT=0
 ONE_CANONICAL_INPUT_ADMISSION_PATH=1  rules, approvals and prohibitions cross the same gate
 HUMAN_ONLY_ACTION_KINDS               13, held to AUTHORITY_LEVELS.md §4 in both directions
-AUTHORITY_SCHEMA_COUNT=4              22 committed fixtures, 18 of them adversarial, 0 escapes
+AUTHORITY_SCHEMA_COUNT=4              32 committed fixtures, 24 of them adversarial, 0 escapes
 RAW_EXCEPTION_COUNT=0                 over a location sweep plus declaration-driven generation
 COMPLETE_OPERATION_BOUND=true         two payloads under one action/scope cannot share an
                                       approval or an intent identity

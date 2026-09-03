@@ -44,6 +44,11 @@ from manosube_agent_civilization.authority.scope import SCOPE_KEYS
 #: measured nesting depth below so the bound never silently decides coverage.
 _MAX_DEPTH = 16
 
+#: Ill-typed values, one per JSON type. Every case they generate is refused *by type*, which
+#: is why the aliases below had to be added separately: a well-formed string with a
+#: terminator appended is the *right* type, so nothing here could ever produce one. That is
+#: the structural reason this sweep could not have found either terminator alias -- the
+#: ``action_kind`` one or the ``project_id`` one -- despite retyping both locations.
 _SUBSTITUTIONS: tuple[tuple[str, Any], ...] = (
     ("integer", 7),
     ("string", "seven"),
@@ -51,6 +56,19 @@ _SUBSTITUTIONS: tuple[tuple[str, Any], ...] = (
     ("object", {"seven": 7}),
     ("null", None),
     ("bool", True),
+)
+
+#: Same-type aliases: the canonical value with a line terminator or trailing space appended.
+#: These are strings where a string belongs, so they pass every type check and are refused --
+#: or were not refused -- purely on the terminal grammar.
+_TERMINATOR_SUFFIXES: tuple[tuple[str, str], ...] = (
+    ("lf", "\n"),
+    ("cr", "\r"),
+    ("crlf", "\r\n"),
+    ("line separator", "\u2028"),
+    ("paragraph separator", "\u2029"),
+    ("next line", "\u0085"),
+    ("trailing space", " "),
 )
 
 
@@ -307,6 +325,47 @@ def test_the_generated_cases_reach_both_outcomes() -> None:
     assert refused > 0, (decided, refused)
     assert decided > 0, (decided, refused)
     assert _answer(deepcopy(BUILT)) == "DECIDED"
+
+
+def _string_locations(request: dict[str, Any]) -> list[tuple[Any, ...]]:
+    """Every location in the built request whose value is a string."""
+
+    found: list[tuple[Any, ...]] = []
+    for path in LOCATIONS:
+        container = _at(request, path)
+        if isinstance(container, dict) and isinstance(container.get(path[-1]), str):
+            found.append(path)
+    return found
+
+
+@pytest.mark.parametrize(("label", "suffix"), _TERMINATOR_SUFFIXES)
+def test_a_same_type_terminator_alias_is_answered_at_every_string_location(
+    label: str, suffix: str
+) -> None:
+    """The case the ill-typed half cannot reach.
+
+    Appending a terminator to a string keeps its type, so this is the shape that slipped past
+    two rounds of this sweep. Every such case must still be *answered* -- refused, or decided
+    canonically -- and never leave as a raw exception or as a decision on a value the schema
+    was supposed to have rejected.
+    """
+
+    answered = 0
+    for path in _string_locations(deepcopy(BUILT)):
+        request = deepcopy(BUILT)
+        target = _at(request, path)
+        if not isinstance(target, dict) or not isinstance(target.get(path[-1]), str):
+            continue
+        target[path[-1]] = target[path[-1]] + suffix
+        assert _answer(request) in ("REJECTED", "DECIDED")
+        answered += 1
+    assert answered > 0, "no string location was exercised"
+
+
+def test_the_alias_half_of_the_generator_reaches_real_locations() -> None:
+    """The harness before its subject: an empty location set answers everything."""
+
+    assert len(_string_locations(deepcopy(BUILT))) >= 10, len(_string_locations(deepcopy(BUILT)))
 
 
 def test_the_admissible_half_of_the_generator_is_not_empty() -> None:

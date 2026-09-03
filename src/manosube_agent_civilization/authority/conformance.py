@@ -103,6 +103,80 @@ _ACTION_KIND: Any = None
 # ``+09:00`` in code while the schema refused it -- a boundary described in two places and
 # agreeing in neither.
 
+#: A true end of input, in ECMA-262 and in Python alike. ``$`` is a true end in only one of
+#: them: Python's ``re`` matches it *before a trailing newline*, and ``jsonschema`` evaluates
+#: ``pattern`` with ``re.search``. So every canonical pattern written with a terminal ``$``
+#: silently admitted a second spelling of every value it matched -- and where that value is a
+#: *matching key* rather than an address, the second spelling was a different key. That is
+#: how a line feed on ``action_kind`` walked past the human-only floor, and how one on
+#: ``project_id`` walked past a PROJECT-class prohibition.
+TRUE_END = r"(?![\s\S])"
+
+#: The schemas an Authority decision actually evaluates: the four this package owns, plus the
+#: Difference schema ``admit_difference`` validates against. The closure of their ``$ref``
+#: graph is what a guard over "Authority's patterns" has to mean -- a directory glob names
+#: the four and misses ``common/identity``, which is where the ``project_id`` alias lived.
+AUTHORITY_SCHEMA_SEEDS: tuple[str, ...] = (
+    AUTHORITY_SCHEMA_BASE + "authority.schema.json",
+    AUTHORITY_SCHEMA_BASE + "authority_rule.schema.json",
+    AUTHORITY_SCHEMA_BASE + "prohibition.schema.json",
+    AUTHORITY_SCHEMA_BASE + "approval.schema.json",
+    CANONICAL_SCHEMA_BASE + "difference/difference.schema.json",
+)
+
+
+def _references(node: Any) -> list[str]:
+    """Every ``$ref`` string in a schema document, in document order."""
+
+    found: list[str] = []
+    if isinstance(node, dict):
+        target = node.get("$ref")
+        if isinstance(target, str):
+            found.append(target)
+        for child in node.values():
+            found.extend(_references(child))
+    elif isinstance(node, list):
+        for child in node:
+            found.extend(_references(child))
+    return found
+
+
+def authority_reachable_schemas() -> dict[str, dict[str, Any]]:
+    """Return every schema an Authority decision can evaluate, keyed by canonical ``$id``.
+
+    The transitive ``$ref`` closure of :data:`AUTHORITY_SCHEMA_SEEDS`, resolved against the
+    one schema registry this repository has. Cycle-safe by construction: a schema is expanded
+    once, when it is first reached.
+
+    ``scripts/validate_schemas.py`` walks ``$ref`` too, for a different question -- whether
+    *any* reference in *any* schema resolves. Unifying the two walkers is not in this
+    correction's scope; what matters here is that the boundary is derived rather than
+    declared, so a schema entering the closure cannot escape the guard by living elsewhere.
+    """
+
+    from urllib.parse import urljoin
+
+    from manosube_agent_civilization.difference.validation import validators
+
+    documents = {schema_id: entry.schema for schema_id, entry in validators().items()}
+    reached: dict[str, dict[str, Any]] = {}
+    pending = list(AUTHORITY_SCHEMA_SEEDS)
+    while pending:
+        schema_id = pending.pop()
+        if schema_id in reached:
+            continue
+        document = documents.get(schema_id)
+        if document is None:
+            raise AuthorityError(f"Authority reaches an unregistered schema: {schema_id}")
+        reached[schema_id] = document
+        for reference in _references(document):
+            path = reference.split("#")[0]
+            target = schema_id if not path else urljoin(schema_id, path)
+            if target not in reached:
+                pending.append(target)
+    return reached
+
+
 _D2 = "[0-9]{2}"
 _DATE = f"[0-9]{{4}}-{_D2}-{_D2}"
 _TIME = f"{_D2}:{_D2}:{_D2}"
@@ -124,10 +198,12 @@ _NUMERIC_OFFSET = f"[+-]{_D2}:{_D2}"
 #: a copy in code and a looser copy in the schema. Written as an ECMA-262 expression -- no
 #: named groups, and ASCII digit classes because Python's ``\d`` also matches Devanagari and
 #: Arabic-Indic digits, which ``int`` then parses happily and the schema never accepted.
-STORED_TIMESTAMP_PATTERN = f"^{_DATE}T{_TIME}{_CANONICAL_FRACTION}Z$"
+STORED_TIMESTAMP_PATTERN = f"^{_DATE}T{_TIME}{_CANONICAL_FRACTION}Z{TRUE_END}"
 #: The transient form: the stored form widened by RFC 3339's own case, offset and fraction
 #: latitude, none of which can reach a content-addressed field.
-TRANSIENT_TIMESTAMP_PATTERN = f"^{_DATE}[Tt]{_TIME}{_ANY_FRACTION}([Zz]|{_NUMERIC_OFFSET})$"
+TRANSIENT_TIMESTAMP_PATTERN = (
+    f"^{_DATE}[Tt]{_TIME}{_ANY_FRACTION}([Zz]|{_NUMERIC_OFFSET}){TRUE_END}"
+)
 
 _STORED = re.compile(STORED_TIMESTAMP_PATTERN)
 _TRANSIENT = re.compile(TRANSIENT_TIMESTAMP_PATTERN)
