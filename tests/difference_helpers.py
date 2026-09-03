@@ -67,6 +67,8 @@ def semantic_state(status: str = "UNKNOWN") -> dict[str, Any]:
         "open_differences": [],
         "active_changes": [],
         "evidence": [],
+        "unresolved_contradictions": [],
+        "reflow_state": {"last_transaction_ref": None},
     }
 
 

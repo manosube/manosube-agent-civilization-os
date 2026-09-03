@@ -1,1 +1,192 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://schemas.manosube.org/agent-civilization-os/v0.1/state/semantic_state.schema.json","$defs":{"domain":{"type":"object","required":["status","claims","identity_refs","evidence_refs","blind_spots"],"properties":{"status":{"$ref":"../common/status.schema.json"},"claims":{"type":"object","additionalProperties":{"type":["string","number","integer","boolean","null"]}},"identity_refs":{"type":"array","uniqueItems":true,"items":{"$ref":"../common/reference.schema.json"}},"evidence_refs":{"type":"array","uniqueItems":true,"items":{"$ref":"../common/reference.schema.json"}},"blind_spots":{"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1}}},"additionalProperties":false}},"type":"object","required":["schema_version","project","objective","repository","requirements","code","tests","runtime","infrastructure","deployment","open_differences","active_changes","evidence","authority","lineage"],"properties":{"schema_version":{"const":"0.1"},"project":{"$ref":"#/$defs/domain"},"objective":{"$ref":"#/$defs/domain"},"repository":{"$ref":"#/$defs/domain"},"requirements":{"$ref":"#/$defs/domain"},"code":{"$ref":"#/$defs/domain"},"tests":{"$ref":"#/$defs/domain"},"runtime":{"$ref":"#/$defs/domain"},"infrastructure":{"$ref":"#/$defs/domain"},"deployment":{"$ref":"#/$defs/domain"},"open_differences":{"type":"array","uniqueItems":true,"items":{"$ref":"../common/reference.schema.json"}},"active_changes":{"type":"array","uniqueItems":true,"items":{"$ref":"../common/reference.schema.json"}},"evidence":{"type":"array","uniqueItems":true,"items":{"$ref":"../common/reference.schema.json"}},"authority":{"$ref":"#/$defs/domain"},"lineage":{"$ref":"#/$defs/domain"}},"additionalProperties":false}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/semantic_state.schema.json",
+  "$defs": {
+    "domain": {
+      "type": "object",
+      "required": [
+        "status",
+        "claims",
+        "identity_refs",
+        "evidence_refs",
+        "blind_spots"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "../common/status.schema.json"
+        },
+        "claims": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "identity_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "../common/reference.schema.json"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "../common/reference.schema.json"
+          }
+        },
+        "blind_spots": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "reflow_state": {
+      "type": "object",
+      "required": [
+        "last_transaction_ref"
+      ],
+      "properties": {
+        "last_transaction_ref": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "state_transition"
+                },
+                "id": {
+                  "$ref": "../common/identity.schema.json"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "objective",
+    "repository",
+    "requirements",
+    "code",
+    "tests",
+    "runtime",
+    "infrastructure",
+    "deployment",
+    "open_differences",
+    "active_changes",
+    "evidence",
+    "authority",
+    "lineage",
+    "unresolved_contradictions",
+    "reflow_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "project": {
+      "$ref": "#/$defs/domain"
+    },
+    "objective": {
+      "$ref": "#/$defs/domain"
+    },
+    "repository": {
+      "$ref": "#/$defs/domain"
+    },
+    "requirements": {
+      "$ref": "#/$defs/domain"
+    },
+    "code": {
+      "$ref": "#/$defs/domain"
+    },
+    "tests": {
+      "$ref": "#/$defs/domain"
+    },
+    "runtime": {
+      "$ref": "#/$defs/domain"
+    },
+    "infrastructure": {
+      "$ref": "#/$defs/domain"
+    },
+    "deployment": {
+      "$ref": "#/$defs/domain"
+    },
+    "open_differences": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "../common/reference.schema.json"
+      }
+    },
+    "active_changes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "../common/reference.schema.json"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "../common/reference.schema.json"
+      }
+    },
+    "authority": {
+      "$ref": "#/$defs/domain"
+    },
+    "lineage": {
+      "$ref": "#/$defs/domain"
+    },
+    "unresolved_contradictions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "kind": {
+            "const": "material_contradiction"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^CONTRA-[0-9A-F]{64}(?![\\s\\S])"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "reflow_state": {
+      "$ref": "#/$defs/reflow_state"
+    }
+  },
+  "additionalProperties": false
+}
