@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority_rule.schema.json",
+  "title": "Authority Rule",
+  "type": "object",
+  "required": ["schema_version", "authority_rule_id", "project_id", "action_kinds", "maximum_reversibility", "scope", "decision", "declared_by"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "authority_rule_id": {"type": "string", "pattern": "^AUTH-RULE-[0-9A-F]{64}(?![\\s\\S])"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "action_kinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "authority.schema.json#/$defs/action_kind"}},
+    "maximum_reversibility": {"$ref": "authority.schema.json#/$defs/reversibility"},
+    "scope": {"$ref": "authority.schema.json#/$defs/scope"},
+    "decision": {"enum": ["AUTONOMOUS", "HUMAN_APPROVAL_REQUIRED"]},
+    "declared_by": {"$ref": "authority.schema.json#/$defs/human_authority_ref"}
+  },
+  "additionalProperties": false
+}

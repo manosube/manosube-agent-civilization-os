@@ -1,0 +1,362 @@
+{
+  "measured_at_head": "f91d049cd98e04d47861f4f9cf0bc0efece284f3",
+  "note": "The approval-combination truth table as measured BEFORE the correction, committed as data so 'the fix closed exactly these and introduced none' is checkable rather than asserted (ADR-0022). Every violation is an AuthorityValidationError: the output schema's AUTONOMOUS -> excluding_approval_refs=[] constraint caught the logic error at runtime, so no wrong permission escaped -- the request crashed instead of returning HUMAN_APPROVAL_REQUIRED.",
+  "row_count": 390,
+  "violation_count": 276,
+  "violations": [
+    {
+      "action_kind": "MERGE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "requires",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "requires",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "requires",
+      "approvals": [
+        "excluding",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "requires",
+      "approvals": [
+        "excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "requires",
+      "approvals": [
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "MERGE",
+      "rule": "requires",
+      "approvals": [
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "autonomous",
+      "approvals": [
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "no_rule",
+      "approvals": [
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "requires",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "requires",
+      "approvals": [
+        "excluding",
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "requires",
+      "approvals": [
+        "excluding",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "requires",
+      "approvals": [
+        "excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "requires",
+      "approvals": [
+        "excluding_other",
+        "nonbinding_excluding",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    },
+    {
+      "action_kind": "WRITE_FILE",
+      "rule": "requires",
+      "approvals": [
+        "excluding_other",
+        "permitting"
+      ],
+      "decision": "ERROR:AuthorityValidationError"
+    }
+  ]
+}

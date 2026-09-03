@@ -1,0 +1,934 @@
+[
+  {
+    "name": "authority_decision_unknown_property",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80",
+      "approved_by_comment": "looks fine to me"
+    }
+  },
+  {
+    "name": "authority_decision_unknown_schema_version",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.2",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_fourth_level",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS_WITH_WARNING",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_prohibited_without_prohibition_ref",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "PROHIBITED",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_autonomous_with_prohibition_ref",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [
+        {
+          "kind": "prohibition",
+          "id": "PROHIBIT-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_autonomous_with_an_excluding_approval",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [
+        {
+          "kind": "approval",
+          "id": "APPROVAL-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        }
+      ],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_autonomous_without_rule_or_approval",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": null,
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_without_excluding_refs",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_no_reason_codes",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_negative_state_revision",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "path": "src/app.py",
+          "bytes": "AAAA"
+        },
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": -1,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_decision_action_without_operation",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_decision_id": "AUTH-DEC-9023C4E8C4B21ACDB67C3D9E09B8B9EB84C2C92F49C1524B830043AA46981E80",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "requested_action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "action_semantic_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a"
+      },
+      "requested_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "evaluated_state_revision": 2,
+      "evaluated_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "resolved_rule_ref": null,
+      "prohibition_refs": [],
+      "approval_ref": {
+        "kind": "approval",
+        "id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8"
+      },
+      "excluding_approval_refs": [],
+      "decision": "AUTONOMOUS",
+      "decision_reason_codes": [
+        "ACTION_IS_HUMAN_ONLY",
+        "APPROVAL_EXACT",
+        "NO_RULE_RESOLVED"
+      ],
+      "decision_semantic_fingerprint": "sha256:9023c4e8c4b21acdb67c3d9e09b8b9eb84c2c92f49c1524b830043aa46981e80"
+    }
+  },
+  {
+    "name": "authority_rule_may_not_prohibit",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority_rule.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_rule_id": "AUTH-RULE-C10EF67DC6BE20024F35D29D6BFA9298DBEFF4A744C4ADD00F8FA739E2069F89",
+      "project_id": "PRJ-0001",
+      "action_kinds": [
+        "WRITE_FILE"
+      ],
+      "maximum_reversibility": "REVERSIBLE",
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py",
+          "src/lib.py"
+        ],
+        "subjects": []
+      },
+      "decision": "PROHIBITED",
+      "declared_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      }
+    }
+  },
+  {
+    "name": "authority_rule_unresolved_scope_key",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority_rule.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_rule_id": "AUTH-RULE-C10EF67DC6BE20024F35D29D6BFA9298DBEFF4A744C4ADD00F8FA739E2069F89",
+      "project_id": "PRJ-0001",
+      "action_kinds": [
+        "WRITE_FILE"
+      ],
+      "maximum_reversibility": "REVERSIBLE",
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py",
+          "src/lib.py"
+        ],
+        "subjects": [],
+        "glob": "src/**"
+      },
+      "decision": "AUTONOMOUS",
+      "declared_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      }
+    }
+  },
+  {
+    "name": "authority_rule_no_action_kinds",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority_rule.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_rule_id": "AUTH-RULE-C10EF67DC6BE20024F35D29D6BFA9298DBEFF4A744C4ADD00F8FA739E2069F89",
+      "project_id": "PRJ-0001",
+      "action_kinds": [],
+      "maximum_reversibility": "REVERSIBLE",
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py",
+          "src/lib.py"
+        ],
+        "subjects": []
+      },
+      "decision": "AUTONOMOUS",
+      "declared_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      }
+    }
+  },
+  {
+    "name": "authority_rule_declared_by_agent",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority_rule.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "authority_rule_id": "AUTH-RULE-C10EF67DC6BE20024F35D29D6BFA9298DBEFF4A744C4ADD00F8FA739E2069F89",
+      "project_id": "PRJ-0001",
+      "action_kinds": [
+        "WRITE_FILE"
+      ],
+      "maximum_reversibility": "REVERSIBLE",
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py",
+          "src/lib.py"
+        ],
+        "subjects": []
+      },
+      "decision": "AUTONOMOUS",
+      "declared_by": {
+        "kind": "agent",
+        "id": "AGENT-0001"
+      }
+    }
+  },
+  {
+    "name": "approval_without_expiry",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/approval.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "approval_id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "change_intent_fingerprint": "sha256:08889d36e47a934693f3ebc64809951d0b78e138d44930fe30db5ce768bf4f3e",
+      "change_ref": null,
+      "approved_state_revision": 2,
+      "approved_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "approved_action_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a",
+      "approved_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "prohibited_actions": [],
+      "approved_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      },
+      "approved_at": "2026-01-01T00:00:00Z",
+      "status": "ACTIVE"
+    }
+  },
+  {
+    "name": "approval_by_non_human",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/approval.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "approval_id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "change_intent_fingerprint": "sha256:08889d36e47a934693f3ebc64809951d0b78e138d44930fe30db5ce768bf4f3e",
+      "change_ref": null,
+      "approved_state_revision": 2,
+      "approved_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "approved_action_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a",
+      "approved_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "prohibited_actions": [],
+      "approved_by": {
+        "kind": "agent",
+        "id": "AGENT-0001"
+      },
+      "approved_at": "2026-01-01T00:00:00Z",
+      "expires_at": "2026-12-31T23:59:59Z",
+      "status": "ACTIVE"
+    }
+  },
+  {
+    "name": "approval_approver_without_identity",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/approval.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "approval_id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "change_intent_fingerprint": "sha256:08889d36e47a934693f3ebc64809951d0b78e138d44930fe30db5ce768bf4f3e",
+      "change_ref": null,
+      "approved_state_revision": 2,
+      "approved_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "approved_action_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a",
+      "approved_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "prohibited_actions": [],
+      "approved_by": {
+        "kind": "human_authority"
+      },
+      "approved_at": "2026-01-01T00:00:00Z",
+      "expires_at": "2026-12-31T23:59:59Z",
+      "status": "ACTIVE"
+    }
+  },
+  {
+    "name": "approval_unknown_status",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/approval.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "approval_id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "change_intent_fingerprint": "sha256:08889d36e47a934693f3ebc64809951d0b78e138d44930fe30db5ce768bf4f3e",
+      "change_ref": null,
+      "approved_state_revision": 2,
+      "approved_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "approved_action_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a",
+      "approved_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "prohibited_actions": [],
+      "approved_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      },
+      "approved_at": "2026-01-01T00:00:00Z",
+      "expires_at": "2026-12-31T23:59:59Z",
+      "status": "PROBABLY_FINE"
+    }
+  },
+  {
+    "name": "approval_unknown_property",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/approval.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "approval_id": "APPROVAL-ED66D9C521C1A53DCBB478CA53B84D7A74A4D81DB50F411177BC920F361BCFF8",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "change_intent_fingerprint": "sha256:08889d36e47a934693f3ebc64809951d0b78e138d44930fe30db5ce768bf4f3e",
+      "change_ref": null,
+      "approved_state_revision": 2,
+      "approved_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "approved_action_fingerprint": "sha256:66cd6011c181ec4815f3491d7d067976417fa22e28cc355d63670be9b08a627a",
+      "approved_scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "prohibited_actions": [],
+      "approved_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      },
+      "approved_at": "2026-01-01T00:00:00Z",
+      "expires_at": "2026-12-31T23:59:59Z",
+      "status": "ACTIVE",
+      "github_review_id": 12345
+    }
+  },
+  {
+    "name": "prohibition_unknown_class",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/prohibition.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "prohibition_id": "PROHIBIT-CD3CFB2E67C924A408BC95F91FEABFBD89F300DA0FFF2D1253890458EDDB6770",
+      "project_id": "PRJ-0001",
+      "prohibition_class": "ADVISORY",
+      "action_kinds": [
+        "WRITE_FILE"
+      ],
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "reason_code": "MERGE_IS_HUMAN_ONLY",
+      "declared_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      }
+    }
+  },
+  {
+    "name": "prohibition_no_action_kinds",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/prohibition.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "prohibition_id": "PROHIBIT-CD3CFB2E67C924A408BC95F91FEABFBD89F300DA0FFF2D1253890458EDDB6770",
+      "project_id": "PRJ-0001",
+      "prohibition_class": "CONSTITUTIONAL",
+      "action_kinds": [],
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "reason_code": "MERGE_IS_HUMAN_ONLY",
+      "declared_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      }
+    }
+  },
+  {
+    "name": "prohibition_unknown_property",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/prohibition.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "prohibition_id": "PROHIBIT-CD3CFB2E67C924A408BC95F91FEABFBD89F300DA0FFF2D1253890458EDDB6770",
+      "project_id": "PRJ-0001",
+      "prohibition_class": "CONSTITUTIONAL",
+      "action_kinds": [
+        "WRITE_FILE"
+      ],
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "reason_code": "MERGE_IS_HUMAN_ONLY",
+      "declared_by": {
+        "kind": "human_authority",
+        "id": "AUTH-0001"
+      },
+      "overridable_by_approval": true
+    }
+  },
+  {
+    "name": "prohibition_declared_by_adapter",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/prohibition.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "prohibition_id": "PROHIBIT-CD3CFB2E67C924A408BC95F91FEABFBD89F300DA0FFF2D1253890458EDDB6770",
+      "project_id": "PRJ-0001",
+      "prohibition_class": "CONSTITUTIONAL",
+      "action_kinds": [
+        "WRITE_FILE"
+      ],
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "reason_code": "MERGE_IS_HUMAN_ONLY",
+      "declared_by": {
+        "kind": "adapter",
+        "id": "ADAPTER-0001"
+      }
+    }
+  }
+]

@@ -6,7 +6,7 @@
   "required": ["schema_version", "difference_id", "project_id", "objective_revision_ref", "objective_semantic_fingerprint", "target_predicate_ref", "normalized_target_state", "objective_scope_binding", "observed_state_revision", "observed_state_fingerprint", "observation_refs", "observation_evidence_refs", "normalized_observed_state", "structural_difference", "subject", "observation_scope", "effective_boundary", "impact", "risk_class", "authority_required", "closure_policy", "genesis_event_ref"],
   "properties": {
     "schema_version": {"const": "0.1"},
-    "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}$"},
+    "difference_id": {"type": "string", "pattern": "^D-[0-9A-F]{64}(?![\\s\\S])"},
     "project_id": {"$ref": "../common/identity.schema.json"},
     "objective_revision_ref": {"$ref": "../common/reference.schema.json"},
     "objective_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"},
@@ -29,7 +29,7 @@
     "genesis_event_ref": {"$ref": "../common/reference.schema.json"}
   },
   "$defs": {
-    "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
     "nullable_timestamp": {"oneOf": [{"type": "null"}, {"$ref": "../common/timestamp.schema.json"}]},
     "canonical_value": {
       "oneOf": [
@@ -41,7 +41,7 @@
     },
     "versioned_reference": {
       "type": "object", "required": ["kind", "id", "version", "semantic_fingerprint"],
-      "properties": {"kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}, "id": {"$ref": "../common/identity.schema.json"}, "version": {"const": "0.1"}, "semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}}, "additionalProperties": false
+      "properties": {"kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?![\\s\\S])"}, "id": {"$ref": "../common/identity.schema.json"}, "version": {"const": "0.1"}, "semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}}, "additionalProperties": false
     },
     "unordered_references": {
       "type": "object", "required": ["collection_kind", "members"],
@@ -56,7 +56,7 @@
         {"if": {"properties": {"expected_value_type": {"const": "INTEGER"}}}, "then": {"properties": {"expected_value": {"type": "integer"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "STRING"}}}, "then": {"properties": {"expected_value": {"type": "string"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "STRUCTURED"}}}, "then": {"properties": {"expected_value": {"type": "object", "not": {"required": ["collection_kind"]}, "additionalProperties": {"$ref": "#/$defs/canonical_value"}}}}},
-        {"if": {"properties": {"expected_value_type": {"const": "DECIMAL"}}}, "then": {"properties": {"expected_value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"}}}},
+        {"if": {"properties": {"expected_value_type": {"const": "DECIMAL"}}}, "then": {"properties": {"expected_value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?(?![\\s\\S])"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "TIMESTAMP"}}}, "then": {"properties": {"expected_value": {"$ref": "../common/timestamp.schema.json"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "DURATION"}}}, "then": {"properties": {"expected_value": {"type": "string", "pattern": "^P"}}}},
         {"if": {"properties": {"expected_value_type": {"const": "IDENTITY_REFERENCE"}}}, "then": {"properties": {"expected_value": {"$ref": "../common/reference.schema.json"}}}},
@@ -91,7 +91,7 @@
         {"if": {"properties": {"value_type": {"const": "INTEGER"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "integer"}}}},
         {"if": {"properties": {"value_type": {"const": "STRING"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string"}}}},
         {"if": {"properties": {"value_type": {"const": "STRUCTURED"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonical_value"}}}}},
-        {"if": {"properties": {"value_type": {"const": "DECIMAL"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"}}}},
+        {"if": {"properties": {"value_type": {"const": "DECIMAL"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?(?![\\s\\S])"}}}},
         {"if": {"properties": {"value_type": {"const": "TIMESTAMP"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "../common/timestamp.schema.json"}}}},
         {"if": {"properties": {"value_type": {"const": "DURATION"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"type": "string", "pattern": "^P"}}}},
         {"if": {"properties": {"value_type": {"const": "IDENTITY_REFERENCE"}}, "required": ["value_type"]}, "then": {"properties": {"value": {"$ref": "../common/reference.schema.json"}}}},
