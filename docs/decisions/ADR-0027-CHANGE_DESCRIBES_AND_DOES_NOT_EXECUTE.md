@@ -278,6 +278,102 @@ it closely enough that I wrote the sentence claiming it and did not notice.
 
 The reviewer's finding is the reason the claim and the code are now the same thing.
 
+## 3.4 A scope is a set, and its identity had to say so
+
+`authority.scope.require_scope` admitted unique `paths` and `subjects` in caller order.
+Containment and overlap read them as sets — `is_contained` and `overlaps` both compute over
+`set(...)`, and the canonical schema declares `uniqueItems` — but Authority Decision identity
+hashed the *ordered* representation, and Change inherited it through the reproduced decision.
+
+```text
+SCOPE_AUTHORIZATION_SEMANTICS=SET
+SCOPE_IDENTITY_SEMANTICS=LIST_ORDER
+```
+
+Permuting members preserved the decision and changed four identities. Issue #31 requires
+`same semantic input and input permutation -> identical Change identity`, so this was a
+straight acceptance failure rather than a nicety.
+
+The quiet part was the approval. `change_intent_fingerprint(action, scope)` is what
+`APPROVAL_CONTRACT.md` §2 binds, and it hashed the ordered scope too — so an approval granted
+over `["b", "a"]` did not bind a request naming `["a", "b"]`. Same members, same permission,
+different digest: a Human-only action falling back to approval-required with the human's
+approval sitting right there, and nothing in the refusal saying why.
+
+### One owner, and what "one" had to mean
+
+`canonical_scope` normalizes; `require_scope` returns it. `authority.identity` calls that
+owner rather than sorting; `change.identity` does not normalize at all, because it consumes
+what Authority already canonicalized.
+
+Supplied records are deliberately **not** rewritten. A rule, a prohibition and an approval are
+content-addressed records a human authored, and normalizing their scope in place would change
+the address of a record nobody re-signed. Those three call sites admit for validation and
+discard the return — which is why the canonical form reaches identity without disturbing
+authorship, and why containment keeps working regardless, since it already compared as sets.
+
+Normalization sorts and does not deduplicate. A repeated member stays refused; silently
+collapsing one would turn an input defect into an accepted record.
+
+## 3.5 The guard that could not fail
+
+The owner-count claim shipped with a guard that read:
+
+```python
+for forbidden in ("sorted(scope[", "sorted(scope.get(", ...):
+    assert f"sorted({forbidden}" not in source
+```
+
+The entries already began `sorted(`, so the composed search string was
+`"sorted(sorted(scope["` — a string no source can contain. The assertion could not fail. It
+would have passed over `sorted(scope["paths"])` sitting in plain view.
+
+```text
+IMPLEMENTED_NORMALIZATION_OWNER_COUNT=1
+OWNER_COUNT_GUARD_PROVES_ONE_OWNER=false
+```
+
+The implementation was correct; the *proof of it* was not. That distinction matters here more
+than usual, because the entire argument for one owner is that a second one would drift
+undetected — and a guard that cannot fail is exactly as useful against that as no guard.
+
+Every other guard in this repository carries a control proving it fires on a real violation.
+This one did not, and that omission is the whole reason it shipped broken. The replacement is
+AST-based, and it comes with eight violation forms it must detect, six legitimate sorts it must
+not, and an end-to-end control that injects a real second normalizer into the package and
+requires the sweep to catch it.
+
+Its boundary is stated rather than implied:
+
+```text
+CONSTANT_KEYED_SCOPE_SORT_DETECTED=true
+SCOPE_COLLECTION_LOOP_SORT_DETECTED=true
+ARBITRARY_COMPUTED_KEY_SORT_DETECTED=false
+```
+
+A re-implementation reaching the members through a runtime-computed key is not detected by
+source analysis. Two layers cover the claim, and they cover different halves of it:
+
+| Layer | Catches |
+|---|---|
+| behavioural — the permutation suite | a second normalizer that **disagrees** |
+| structural — this guard | a second normalizer that **agrees today and drifts later** |
+
+### The family, sixth instance
+
+| | The claim | What stood in its place |
+|---|---|---|
+| Phase 5 P1 | "produced by the evaluator" | a digest anyone can recompute |
+| Decision 0002 | "these are the ratified permissions" | a check that they are *strings* |
+| Binding round 1 | "the guard evaluates records" | a path existing only in a checkout |
+| `307e5ea` | "the protocols state the route in force" | four copies compared to nothing |
+| `922ccd0` | "every copy is checked" | one syntactic form of four |
+| **this** | "normalization has one owner" | **an assertion that could not fail** |
+
+The first five were checks narrower than their claims. This one had no width at all, and it is
+the clearest statement of what the family is: **a claim is only as good as the thing that would
+break if it were false.**
+
 ## 4. Consequences
 
 Change is a pure function from records to a record. It reads no clock, no filesystem, no
