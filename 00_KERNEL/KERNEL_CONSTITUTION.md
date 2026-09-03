@@ -792,6 +792,64 @@ GitHub上のidentityとCanonical Identityは明示的なProjection関係とし�
 
 # ARTICLE XIII — Completion
 
+## 第38A条 Vertical Progression Supremacy
+
+Kernel構築中は、各Phaseの局所的な完全性より、Canonical Cycleの実経路を次の
+canonical boundaryへ接続することを優先する。
+
+```text
+PHASE_LOCAL_TOTALITY
+≠
+PHASE_COMPLETION
+
+VERTICAL_ROUTE_EXTENSION
+>
+UNREQUIRED_LOCAL_HARDENING
+```
+
+Phaseは、そのPhaseが所有するcontract、schema、engine、必要な検証、およびreal
+canonical predecessorとの接続が成立し、次のownerが安全に受け取れる時点で退出できる。
+Objectiveまたはv0.1 Completion Gateが要求していない任意入力空間の完全防御を、Phase退出の
+暗黙条件へ追加してはならない。
+
+局所的な未証明領域、hardening、adversarial totality、将来ownerの検証責務は削除もPASS宣言も
+せず、明示的なnon-claimまたは残存Differenceとして保存し、その正規ownerへ送る。
+
+## 第38B条 Horizontal Exhaustionの禁止
+
+次を理由として同一Phaseを継続してはならない。
+
+```text
+すべての入力形状を防御できるまで進まない
+すべてのvalidatorを完全化できるまで進まない
+review findingが将来Phaseの責務にも見つかる限り進まない
+test件数またはmutation件数を増やせる限り進まない
+```
+
+ただし、現行Phaseのpublic canonical routeに存在するauthority bypass、identity破壊、raw
+exception、silent acceptance、single-owner違反、または次boundaryへの接続不能は未解決のまま
+退出してはならない。
+
+この条項はEvidence、Authority、安全性またはCompletionを弱めるものではない。防御責務を
+Objective、Closure Condition、Phase ownerおよび観測Evidenceへ正確に境界付けるものである。
+
+## 第38C条 Phase Exit Record
+
+各Phaseの退出判断は最低限、次を記録する。
+
+```text
+OWNED_CAPABILITY_PROVEN
+REAL_PREDECESSOR_CONNECTED
+NEXT_OWNER_INPUT_PRODUCED
+CURRENT_PHASE_BLOCKERS
+DEFERRED_NON_CLAIMS
+REMAINING_DIFFERENCES
+ONE_FULL_NATURAL_CYCLE_IMPACT
+```
+
+`CURRENT_PHASE_BLOCKERS=0`であり、次ownerがreal canonical outputを受け取れる場合、未要求の
+局所totalityだけを理由に退出を拒否してはならない。
+
 ## 第39条 Completion Semantics
 
 次を混同しない。
