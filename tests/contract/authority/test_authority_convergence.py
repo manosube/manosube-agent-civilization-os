@@ -767,3 +767,157 @@ def test_an_expiry_beyond_microseconds_is_not_rounded_into_the_window() -> None:
     )
     assert decision["decision"] == HUMAN_APPROVAL_REQUIRED
     assert "APPROVAL_OUTSIDE_VALIDITY_WINDOW" in decision["decision_reason_codes"]
+
+
+# --------------------------------------------------------------------------- #
+# a numeric offset has a range, and the grammar is the only gate that sees it
+# --------------------------------------------------------------------------- #
+#
+# RFC 3339 §5.6 fixes `time-hour = 00-23` and `time-minute = 00-59`. For every other
+# over-range component the "parse second" step catches the value -- `datetime(...)` refuses
+# month 13, hour 24 and second 60. It does not catch this one:
+# `timezone(timedelta(hours=…, minutes=…))` *normalises* an over-range minute into an hour
+# carry, so `+00:60` silently became `+01:00` and named a real instant.
+#
+# `_REFUSED_AS_NO_INSTANT` already carries `+99:00` on the reasoning that a regular
+# expression cannot see range. `+00:99` is the case where the *parser* cannot see it either,
+# which is why the range had to move into the grammar rather than beside it.
+
+_OFFSET_HOURS = range(24)
+_OFFSET_MINUTES = range(60)
+
+
+def _offset_instant(offset: str) -> object:
+    return conformance.transient_instant(f"2026-06-01T00:00:00{offset}", "evaluation time")
+
+
+def test_every_offset_rfc3339_permits_is_accepted() -> None:
+    """The whole legal space, not a handful of examples: 2 x 24 x 60 = 2880 offsets."""
+
+    refused: list[str] = []
+    for sign in ("+", "-"):
+        for hour in _OFFSET_HOURS:
+            for minute in _OFFSET_MINUTES:
+                offset = f"{sign}{hour:02d}:{minute:02d}"
+                try:
+                    _offset_instant(offset)
+                except AuthorityError:
+                    refused.append(offset)
+    assert not refused, refused[:20]
+
+
+def test_no_offset_rfc3339_forbids_is_accepted() -> None:
+    """The whole illegal space in the same two-digit shape: hours 24-99 or minutes 60-99.
+
+    1840 spellings were admitted before this correction -- 920 per sign, both signs -- and
+    each one named an instant the grammar claimed to refuse.
+    """
+
+    admitted: list[str] = []
+    for sign in ("+", "-"):
+        for hour in range(100):
+            for minute in range(100):
+                if hour in _OFFSET_HOURS and minute in _OFFSET_MINUTES:
+                    continue
+                offset = f"{sign}{hour:02d}:{minute:02d}"
+                try:
+                    _offset_instant(offset)
+                    admitted.append(offset)
+                except AuthorityError:
+                    pass
+    assert not admitted, admitted[:20]
+
+
+def test_the_offset_matrices_are_neither_empty_nor_overlapping() -> None:
+    """The harness before its subject: an empty illegal set passes the test above."""
+
+    legal = {
+        f"{sign}{hour:02d}:{minute:02d}"
+        for sign in ("+", "-")
+        for hour in _OFFSET_HOURS
+        for minute in _OFFSET_MINUTES
+    }
+    illegal = {
+        f"{sign}{hour:02d}:{minute:02d}"
+        for sign in ("+", "-")
+        for hour in range(100)
+        for minute in range(100)
+        if hour not in _OFFSET_HOURS or minute not in _OFFSET_MINUTES
+    }
+    assert len(legal) == 2880, len(legal)
+    assert len(illegal) == 17120, len(illegal)
+    assert not (legal & illegal)
+
+
+@pytest.mark.parametrize(
+    "offset", ["+00:60", "-00:60", "+00:99", "+23:60", "+24:00", "-99:00", "+99:99"]
+)
+def test_an_over_range_offset_never_reaches_the_timezone_constructor(offset: str) -> None:
+    """Named cases, and the reason they matter: normalisation is what made them invisible."""
+
+    with pytest.raises(AuthorityError, match="RFC 3339"):
+        _offset_instant(offset)
+
+
+def test_an_over_range_offset_no_longer_decides_a_validity_window() -> None:
+    """The failure the reviewer reproduced: `+00:60` returned AUTONOMOUS through the boundary.
+
+    The approval opens at 00:59:59Z and closes at 01:00:01Z. `+01:00` places the evaluation
+    inside it; `+00:60` is the same instant spelled in a way RFC 3339 forbids, and used to
+    reach the same decision.
+    """
+
+    difference = derived_difference()
+    requested, where = action("WRITE_FILE"), scope()
+    granted = approval(
+        difference, requested, where,
+        approved_at="2026-06-01T00:59:59Z", expires_at="2026-06-01T01:00:01Z",
+    )
+
+    inside = evaluate_authority(
+        authority_request(
+            difference, requested, where, rules=[], approvals=[granted],
+            evaluation_time="2026-06-01T02:00:00+01:00",
+        )
+    )
+    assert inside["decision"] == AUTONOMOUS
+    assert "APPROVAL_EXACT" in inside["decision_reason_codes"]
+
+    with pytest.raises(AuthorityError, match="RFC 3339"):
+        evaluate_authority(
+            authority_request(
+                difference, requested, where, rules=[], approvals=[granted],
+                evaluation_time="2026-06-01T02:00:00+00:60",
+            )
+        )
+
+
+def test_the_offset_correction_did_not_touch_the_stored_surface() -> None:
+    """Stored timestamps take `Z` only, so no offset range applies to them at all.
+
+    Asserted rather than assumed: this correction is confined to the transient grammar, and
+    the stored pattern is still the string the canonical schema carries.
+    """
+
+    import json
+
+    assert "Z" in conformance.STORED_TIMESTAMP_PATTERN
+    assert "[+-]" not in conformance.STORED_TIMESTAMP_PATTERN
+    schema = json.loads(
+        (ROOT / "01_SCHEMA" / "common" / "timestamp.schema.json").read_text(encoding="utf-8")
+    )
+    assert schema["pattern"] == conformance.STORED_TIMESTAMP_PATTERN
+
+
+def test_equivalent_offsets_still_name_one_instant() -> None:
+    """The control. Narrowing the range must not have broken offset arithmetic."""
+
+    assert _offset_instant("+09:00") == conformance.transient_instant(
+        "2026-05-31T15:00:00Z", "control"
+    )
+    assert _offset_instant("-05:00") == conformance.transient_instant(
+        "2026-06-01T05:00:00Z", "control"
+    )
+    assert _offset_instant("+00:00") == conformance.transient_instant(
+        "2026-06-01T00:00:00Z", "control"
+    )

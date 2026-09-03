@@ -191,7 +191,19 @@ _CANONICAL_FRACTION = r"(\.[0-9]*[1-9])?"
 #: and never addressed, so ``.5``, ``.50`` and ``.500`` are the same question asked three
 #: ways, and normalising them at comparison is right where rejecting them would be pedantry.
 _ANY_FRACTION = r"(\.[0-9]+)?"
-_NUMERIC_OFFSET = f"[+-]{_D2}:{_D2}"
+#: RFC 3339 §5.6 fixes ``time-hour = 00-23`` and ``time-minute = 00-59`` for a numeric
+#: offset, and the range is part of the grammar rather than something the parser catches
+#: afterwards. It has to be, here: for every other over-range component -- month 13, hour 24,
+#: second 60 -- the "parse second" step lets ``datetime(...)`` refuse the value, but
+#: ``timezone(timedelta(hours=…, minutes=…))`` **normalises** an over-range minute into an
+#: hour carry instead of rejecting it. So ``+00:60`` became ``+01:00`` silently, and 1840
+#: offset spellings RFC 3339 forbids named instants and reached decisions -- including one
+#: that returned ``AUTONOMOUS`` on a validity window.
+#:
+#: The grammar is the only gate that can see this, which is why the range lives in it.
+_OFFSET_HOUR = "(?:[01][0-9]|2[0-3])"
+_OFFSET_MINUTE = "[0-5][0-9]"
+_NUMERIC_OFFSET = f"[+-]{_OFFSET_HOUR}:{_OFFSET_MINUTE}"
 
 #: The stored form. ``01_SCHEMA/common/timestamp.schema.json`` carries this string verbatim
 #: and a contract test holds the two to each other, so the grammar has one owner rather than
