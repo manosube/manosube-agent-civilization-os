@@ -74,6 +74,16 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/manosube_agent_civilization"]
 
+# The ratified development-binding policy travels with the package.
+#
+# There is exactly one copy on disk, and it is `03_BINDING/DEVELOPMENT_BINDING_POLICY.json`.
+# This maps that file into the package at build time so an installed wheel can still run the
+# guard; it does not create a second file to keep in step. Without it, `evaluate()` resolved
+# a repository-relative path that does not exist once installed, and the guard -- which fails
+# closed, so it refused rather than permitted -- could not run at all.
+[tool.hatch.build.targets.wheel.force-include]
+"03_BINDING/DEVELOPMENT_BINDING_POLICY.json" = "manosube_agent_civilization/development_binding/DEVELOPMENT_BINDING_POLICY.json"
+
 [tool.hatch.build.targets.sdist]
 include = [
   "/README.md",

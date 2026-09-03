@@ -237,7 +237,19 @@ REPOSITORY EXECUTION CAPABILITY
 + change-review preparation
 ```
 
-GitHub API and GitHub Pull Requests are one interchangeable implementation of the observation／acceptance capability. Claude Code or an equivalent repository executor is one interchangeable implementation of the execution capability. Git, another version-control surface, a local repository, or a future Adapter MAY provide equivalent capabilities when it preserves the same identity, Authority, Evidence and review semantics.
+A capability is exercised by a **subject** through a **surface**, and the two are not the same thing.
+
+```text
+OBSERVATION SURFACE = how repository content is reached
+OBSERVATION SUBJECT = who inspects it and reaches a conclusion
+
+SURFACE != SUBJECT
+SURFACE != ACCEPTANCE
+```
+
+GitHub API, GitHub Pull Requests, Git, another version-control surface, a local repository or a future Adapter are interchangeable **surfaces**. A surface supplies access; it does not inspect, does not conclude, does not accept and owns no canonical State, Authority or Completion semantics. Claude Code or an equivalent repository executor is one interchangeable implementation of the execution capability.
+
+Reading a surface as a subject is how an acceptance boundary goes missing: "the surface implements the acceptance capability" leaves no one holding the acceptance.
 
 No named provider, API, version-control product, model or Agent is required for protocol conformance.
 
@@ -251,7 +263,30 @@ AGENT_CAPABLE
 != CHANGE_AUTHORIZED
 ```
 
-For a non-trivial executable package, the preferred route is one complete repository-executor instruction covering observation, implementation, validation, self-review and change-review preparation. An independent repository observation／acceptance capability MUST inspect the result. In the current repository, GitHub API implements that capability; it remains replaceable and owns no canonical State, Authority or Completion semantics.
+### 6.1 Where a selection is recorded
+
+Defining a capability is not selecting who implements it, and leaving the selection unwritten leaves it open to substitution.
+
+```text
+CAPABILITY_DEFINED != IMPLEMENTER_SELECTED
+IMPLEMENTER_UNSELECTED -> ANY IMPLEMENTER MAY BE SUBSTITUTED
+```
+
+A repository MUST therefore record its own selection in a repository Binding, outside this protocol. For this repository that record is `03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md`, ratified by the Human constitutional authority and evaluated by `development_binding.evaluation`.
+
+A repository Binding selects implementers and constrains the development operation. It does not define, extend, narrow or reinterpret any capability semantics in this section, and it makes no named provider part of Kernel semantics.
+
+```text
+REPOSITORY_BINDING_SELECTS_IMPLEMENTERS=true
+REPOSITORY_BINDING_REDEFINES_CAPABILITY_SEMANTICS=false
+NAMED_PROVIDER_REQUIRED_FOR_PROTOCOL_CONFORMANCE=false
+OBSERVATION_SUBJECT_DISTINCT_FROM_OBSERVATION_SURFACE=true
+SURFACE_HOLDS_ACCEPTANCE=false
+```
+
+For a non-trivial executable package, the preferred route is one complete repository-executor instruction covering observation, implementation, validation, self-review and change-review preparation. An independent observation／acceptance **subject** MUST inspect the result, through whatever surface it uses.
+
+Which subject, and which surface, is a repository's own selection and is recorded in its Binding (§6.1) rather than assumed here. In this repository the Structural Advisor is the subject that performs structural observation and structural review — using the GitHub API as its surface — and the Human constitutional authority is the subject that performs final acceptance and the merge operation. The surface remains replaceable and holds neither role.
 
 Merge, release, production deployment, constitutional weakening and irreversible risk remain subject to their explicit Human Authority boundaries.
 
@@ -435,6 +470,8 @@ TOOL_SELECTION_NE_AUTHORITY=true
 HUMAN_MERGE_BOUNDARY_PRESERVED=true
 SAME_DIFFERENCE_CORRECTED_IN_PLACE=true
 ACCEPTANCE_LINEAGE_DISTINCT=true
+REPOSITORY_BINDING_RECORDS_IMPLEMENTER_SELECTION=true
+OBSERVATION_SUBJECT_DISTINCT_FROM_OBSERVATION_SURFACE=true
 EXECUTOR_SELF_REVIEW_AS_ACCEPTANCE=false
 PREMATURE_ADAPTER_EXPANSION=false
 COMPLETION_INFLATION=false
