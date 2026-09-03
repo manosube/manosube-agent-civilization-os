@@ -55,7 +55,13 @@ ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "src" / "manosube_agent_civilization"
 OWNER = PACKAGE / "authority" / "scope.py"
 
-MODULES = sorted(path for path in PACKAGE.rglob("*.py") if "__pycache__" not in path.parts)
+def package_modules(root: Path) -> list[Path]:
+    """Every module in a package tree, in a stable order."""
+
+    return sorted(path for path in root.rglob("*.py") if "__pycache__" not in path.parts)
+
+
+MODULES = package_modules(PACKAGE)
 
 
 def _constant(node: ast.AST) -> str | None:
@@ -118,6 +124,31 @@ def defines_a_normalizer(source: str) -> bool:
         isinstance(node, ast.FunctionDef) and node.name == "canonical_scope"
         for node in ast.walk(ast.parse(source))
     )
+
+
+def sweep_package(root: Path) -> dict[str, list[str]]:
+    """Every second-normalization site in a package tree, keyed by module path.
+
+    This is the sweep the live assertions run and the sweep the injection control runs. One
+    code path, so a control that passes cannot be exercising something the real check does
+    not. The owner is identified by position within *root*, which is what lets a copied tree
+    be swept exactly as the real one is.
+    """
+
+    owner = root / "authority" / "scope.py"
+    findings: dict[str, list[str]] = {}
+    for module in package_modules(root):
+        source = module.read_text(encoding="utf-8")
+        violations: list[str] = []
+        if module != owner:
+            violations.extend(scope_sorting_sites(source))
+            if loops_the_scope_collections_and_sorts(source):
+                violations.append("loops SCOPE_COLLECTIONS and sorts")
+            if defines_a_normalizer(source):
+                violations.append("defines canonical_scope")
+        if violations:
+            findings[str(module.relative_to(root))] = violations
+    return findings
 
 
 # --------------------------------------------------------------------------- #
@@ -248,3 +279,105 @@ def test_the_broken_predecessor_would_now_be_caught() -> None:
     ]
     assert not any(search in violation for search in broken_searches)
     assert scope_sorting_sites(violation) != []
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end: inject a real second normalizer into a real package copy
+# --------------------------------------------------------------------------- #
+#
+# The unit controls above feed standalone strings to the detector. They prove the detector
+# recognises a violation; they do not prove the *sweep* would find one sitting in the
+# package. Those are different claims, and an earlier revision of this file reported the
+# second while only implementing the first.
+#
+# So these copy the real package, write a genuine second normalizer into it, and run
+# `sweep_package` -- the same function the live assertions call -- over the copy.
+
+
+#: The forms a second normalizer could actually take, as source appended to a real module.
+_INJECTIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "constant-key sort in change identity",
+        "change/identity.py",
+        '\n\ndef _second(scope):\n    return {**scope, "paths": sorted(scope["paths"])}\n',
+    ),
+    (
+        "get-with-default sort in authority identity",
+        "authority/identity.py",
+        '\n\ndef _second(scope):\n    return sorted(scope.get("subjects", []))\n',
+    ),
+    (
+        "duplicate canonical_scope definition",
+        "authority/identity.py",
+        "\n\ndef canonical_scope(scope):\n    return scope\n",
+    ),
+    (
+        "collection-loop copy of the owner",
+        "change/engine.py",
+        "\n\nfrom manosube_agent_civilization.authority.scope import SCOPE_COLLECTIONS\n\n\n"
+        "def _second(scope):\n    out = dict(scope)\n"
+        "    for key in SCOPE_COLLECTIONS:\n        out[key] = sorted(scope[key])\n    return out\n",
+    ),
+    (
+        "nested subscript in a module that never touched scope",
+        "state/fingerprint.py",
+        '\n\ndef _second(record):\n    return sorted(record["scope"]["paths"])\n',
+    ),
+)
+
+
+@pytest.fixture
+def package_copy(tmp_path: Path) -> Path:
+    """A byte-for-byte copy of the real package, ready to be tampered with."""
+
+    import shutil
+
+    destination = tmp_path / "manosube_agent_civilization"
+    shutil.copytree(PACKAGE, destination, ignore=shutil.ignore_patterns("__pycache__"))
+    return destination
+
+
+def test_an_untouched_package_copy_is_clean(package_copy: Path) -> None:
+    """The positive control. Without it, every injection below could be failing for any
+    reason at all -- a copy that never passes proves nothing about what tampering did."""
+
+    assert sweep_package(package_copy) == {}
+    assert len(package_modules(package_copy)) == len(MODULES)
+
+
+@pytest.mark.parametrize(
+    "label,relative,source", _INJECTIONS, ids=[form[0] for form in _INJECTIONS]
+)
+def test_a_second_normalizer_injected_into_the_package_is_caught(
+    package_copy: Path, label: str, relative: str, source: str
+) -> None:
+    """A real module in a real package copy, swept by the real sweep."""
+
+    target = package_copy / relative
+    assert target.is_file(), relative
+    target.write_text(target.read_text(encoding="utf-8") + source, encoding="utf-8")
+
+    findings = sweep_package(package_copy)
+    assert relative in findings, (label, findings)
+    assert findings[relative], label
+
+
+def test_tampering_with_the_owner_itself_is_not_reported(package_copy: Path) -> None:
+    """The owner is allowed to normalize -- that is what being the owner means.
+
+    Stated as a test so the exemption is visible rather than buried in the sweep, and so a
+    future change that starts flagging the owner is caught as a change.
+    """
+
+    owner = package_copy / "authority" / "scope.py"
+    owner.write_text(
+        owner.read_text(encoding="utf-8") + '\n\ndef _extra(scope):\n    return sorted(scope["paths"])\n',
+        encoding="utf-8",
+    )
+    assert sweep_package(package_copy) == {}
+
+
+def test_the_live_package_is_swept_by_the_same_function() -> None:
+    """The assertion the whole file exists for, run through the sweep the controls exercise."""
+
+    assert sweep_package(PACKAGE) == {}

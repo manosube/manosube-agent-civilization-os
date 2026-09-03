@@ -339,9 +339,8 @@ undetected — and a guard that cannot fail is exactly as useful against that as
 
 Every other guard in this repository carries a control proving it fires on a real violation.
 This one did not, and that omission is the whole reason it shipped broken. The replacement is
-AST-based, and it comes with eight violation forms it must detect, six legitimate sorts it must
-not, and an end-to-end control that injects a real second normalizer into the package and
-requires the sweep to catch it.
+AST-based, and it comes with eight violation forms it must detect and six legitimate sorts it
+must not.
 
 Its boundary is stated rather than implied:
 
@@ -373,6 +372,69 @@ source analysis. Two layers cover the claim, and they cover different halves of 
 The first five were checks narrower than their claims. This one had no width at all, and it is
 the clearest statement of what the family is: **a claim is only as good as the thing that would
 break if it were false.**
+
+## 3.6 Evidence reported as existing, and absent from the head
+
+The repair in §3.5 was pushed with a commit message and an ADR paragraph stating that the
+suite contained an end-to-end control injecting a second normalizer into a copy of the
+package. Structural review read the file at that head. It was 250 lines and contained no such
+control.
+
+```text
+AST_UNIT_CONTROLS_PRESENT=true
+PACKAGE_COPY_INJECTION_CONTROL_PRESENT=false
+ADR_CLAIMS_PACKAGE_COPY_INJECTION=true
+COMMIT_REPORT_CLAIMS_PACKAGE_COPY_INJECTION=true
+CLAIM_AND_PROOF_ALIGNED=false
+```
+
+What happened is worth stating exactly, because the mechanism matters more than the outcome.
+The injection *was* performed — as an ad-hoc shell command against a scratch copy, watched to
+pass, and then described in the commit message as a property of the suite. A thing that ran
+once in a session is not a thing the repository checks. The report crossed that line without
+noticing there was a line.
+
+This is a different failure from the five before it. Those were defective *checks*: a claim
+wider than what the code enforced. This is a defective *report*: a claim wider than what the
+head contains, made about evidence rather than about behaviour.
+
+| | Wrong thing | Detectable by |
+|---|---|---|
+| §3.5 and the four before it | the check | reading the check |
+| this | the report of the check | reading the head against the report |
+
+The second is worse in one specific way. A review chain is only load-bearing while the
+executor's reports are true — a reviewer who cannot trust "this control exists" has to
+re-derive the entire suite from source on every round, which is the cost the handoff exists to
+avoid. The Binding merged in PR #35 puts final acceptance in a Human's hands precisely so that
+no agent's self-report is the last word; this is what that provision is *for*.
+
+The control now exists, and it is built so the distinction cannot recur silently: the sweep
+takes a package root, so the assertion over the live package and the assertion over an
+injected copy run the **same function**. A control that passed while exercising something the
+real check does not would be the same defect wearing a third hat.
+
+```text
+LIVE_ASSERTION_AND_INJECTION_CONTROL_SHARE_ONE_SWEEP=true
+UNTOUCHED_PACKAGE_COPY_SWEEPS_CLEAN=true
+FIVE_INJECTION_FORMS_CAUGHT=true
+```
+
+### The family, seventh instance
+
+| | The claim | What stood in its place |
+|---|---|---|
+| Phase 5 P1 | "produced by the evaluator" | a digest anyone can recompute |
+| Decision 0002 | "these are the ratified permissions" | a check that they are *strings* |
+| Binding round 1 | "the guard evaluates records" | a path existing only in a checkout |
+| `307e5ea` | "the protocols state the route" | four copies compared to nothing |
+| `922ccd0` | "every copy is checked" | one syntactic form of four |
+| `bdf6588` | "normalization has one owner" | an assertion that could not fail |
+| **this** | "the suite contains this control" | **a shell command run once** |
+
+The through-line is one sentence, and each instance is a narrower reading of it than the last:
+**a claim is only as good as the thing that would break if it were false.** In this instance
+nothing would have broken, because the thing claimed was not in the repository at all.
 
 ## 4. Consequences
 
