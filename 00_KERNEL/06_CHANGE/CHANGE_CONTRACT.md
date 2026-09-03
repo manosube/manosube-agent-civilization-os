@@ -143,10 +143,31 @@ CHANGE_SEMANTIC_FIELDS
 
 `status`と`execution_result`は射影に**含めない**。それらはlifecycleであってidentityではない。同じ許可された変更は、実行前も実行後も同じ変更である。lifecycleをidentityに含めれば、statusが動くたびにidが変わり、`DUPLICATE_CHANGE_IDEMPOTENT`（第26条）が成立しなくなる。
 
+## 5.0 scopeは正準形で入る
+
+`scope`は識別射影に参加する。`paths`と`subjects`はlistとして書かれたsetであり、順序は意味を持たない（`AUTHORITY_CONTRACT.md` §3.3）。
+
+```text
+EQUIVALENT_SCOPE_PERMUTATIONS_SHARE_CHANGE_ID=true
+EQUIVALENT_SCOPE_PERMUTATIONS_SHARE_IDEMPOTENCY_KEY=true
+```
+
+Changeはそのために何もしない。scopeは再現されたAuthority decisionから読まれ、Authorityはそれを`authority.scope.canonical_scope`で正準化済みである。Changeが自前でsortすれば、それは第二の正準化ownerになる。
+
+```text
+CHANGE_NORMALIZES_SCOPE=false
+CHANGE_CONSUMES_CANONICAL_SCOPE=true
+```
+
+これがなければ、同じmemberを別順で並べた二つの要求が同じ操作を許可しながら異なる`change_id`と`idempotency_key`を導き、第26条の`DUPLICATE_CHANGE_IDEMPOTENT`は成立しない。
+
 ## 5.1 Idempotency Key
 
 ```text
 IDEMPOTENCY_KEY_DERIVED=true
+EQUIVALENT_SCOPE_PERMUTATIONS_SHARE_CHANGE_ID=true
+EQUIVALENT_SCOPE_PERMUTATIONS_SHARE_IDEMPOTENCY_KEY=true
+CHANGE_NORMALIZES_SCOPE=false
 idempotency_key == change_semantic_fingerprint
 ```
 

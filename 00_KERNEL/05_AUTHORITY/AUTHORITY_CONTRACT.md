@@ -147,6 +147,39 @@ AUTHORITY_RESOLVES_SYMLINKS=false
 PATH_EXPRESSION_ACCEPTED=false
 ```
 
+## 3.3 Set-valued scopeの正準表現
+
+`paths`と`subjects`は**listとして書かれたset**である。containmentとoverlapはすでに`set(...)`で計算し、canonical schemaは`uniqueItems`を宣言する。順序は意味を持たない。
+
+```text
+SCOPE_AUTHORIZATION_SEMANTICS=SET
+SCOPE_IDENTITY_SEMANTICS=SET
+SCOPE_PATHS_ORDER_SEMANTIC=false
+SCOPE_SUBJECTS_ORDER_SEMANTIC=false
+```
+
+したがって同じ member を別の順序で並べた二つの要求は**同一の要求**であり、同一のdecision identityを導く。正準化は`authority.scope.canonical_scope`ただ一箇所で行う。
+
+```text
+CANONICAL_SCOPE_NORMALIZATION_OWNER_COUNT=1
+```
+
+`authority.identity`と`change.identity`は自前でsortせず、このownerを呼ぶ。第二のsortは「正準形とは何か」への第二の答えであり、二つが食い違った最初の瞬間、食い違いは無音である。
+
+正準化はduplicateを**畳み込まない**。重複memberは`require_scope`が拒否する。黙って重複を除去することは、入力の欠陥を受理された記録へ変えることである。
+
+`repository`と`branch`はscalarであってsetではない。触れない。
+
+## 3.4 供給recordのscopeは書き換えない
+
+rule・prohibition・approvalは、人が著しcontent-addressedされた記録である。それらのscopeをin-placeで正準化すれば、**誰も再署名していない記録のaddressを変える**ことになる。したがってそれらに対する`require_scope`は検証としてのみ呼ばれ、戻り値は意図的に破棄される。
+
+```text
+SUPPLIED_RECORD_SCOPE_REWRITTEN=false
+```
+
+containmentとoverlapはすでにsetとして比較するので、これらの順序差は許可判断に影響しない。
+
 # 4. Evaluation Route
 
 <!-- EVALUATION_ROUTE:BEGIN -->
@@ -418,6 +451,10 @@ ONE_CANONICAL_INPUT_ADMISSION_PATH=true
 RECORD_IDENTITY_RECOMPUTED=true
 HUMAN_AUTHORITY_PROVENANCE_REQUIRED=true
 PATH_EXPRESSION_REJECTED=true
+SCOPE_PATHS_ORDER_SEMANTIC=false
+SCOPE_SUBJECTS_ORDER_SEMANTIC=false
+CANONICAL_SCOPE_NORMALIZATION_OWNER_COUNT=1
+SUPPLIED_RECORD_SCOPE_REWRITTEN=false
 AUTHORITY_RESOLVES_SYMLINKS=false
 CHRONOLOGICAL_VALIDITY_COMPARISON=true
 DECISION_IDENTITY_INCLUDES_PROVENANCE=true

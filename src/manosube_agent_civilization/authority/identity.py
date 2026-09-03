@@ -15,6 +15,8 @@ from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
+from .scope import canonical_scope
+
 #: The digest that binds a decision to its inputs -- **including which inputs governed it**.
 #:
 #: The provenance references were absent from this list once, and the consequence was not
@@ -77,9 +79,18 @@ def action_fingerprint(action: dict[str, Any]) -> str:
 
 
 def change_intent_fingerprint(action: dict[str, Any], scope: dict[str, Any]) -> str:
-    """The digest an approval binds: exactly this action, over exactly this scope."""
+    """The digest an approval binds: exactly this action, over exactly this scope.
 
-    return _digest({"action": action_fingerprint(action), "scope": scope})
+    The scope is put in canonical form first, by :func:`authority.scope.canonical_scope` and
+    not by any sorting of its own -- normalization has one owner and this reuses it.
+
+    Without that, an approval granted over ``["b", "a"]`` did not bind a request naming
+    ``["a", "b"]``: the same members, the same permission, a different digest. An approval
+    that cannot recognise its own scope written in another order is an approval a human
+    granted and the evaluator cannot find.
+    """
+
+    return _digest({"action": action_fingerprint(action), "scope": canonical_scope(scope)})
 
 
 def decision_semantic_fingerprint(decision: dict[str, Any]) -> str:
