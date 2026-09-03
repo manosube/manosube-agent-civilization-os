@@ -281,6 +281,106 @@ missing implementer selection.
 repository the Structural Advisor is the observing and reviewing subject, using the GitHub
 API as its surface; the Human is the accepting and merging subject.
 
+### 6A.7 A value copied into four documents and checked in none
+
+Found by re-observing `main` **after** the merge, which is the wrong time to find it.
+
+Decision 0002 renamed the executor's terminal state from `READY_FOR_SHUKOU_REVIEW` to
+`READY_FOR_STRUCTURAL_REVIEW`. The Binding, the policy artifact, both executable templates
+and the evaluator were all corrected. `HUMAN_AGENT_WORK_COMMUNICATION.md` §7A restated the
+same value in prose — twice — and nothing compared the two.
+
+```text
+BINDING                = DECISION_0002
+POLICY                 = DECISION_0002
+TEMPLATES              = DECISION_0002
+EVALUATOR              = DECISION_0002
+COMMUNICATION_PROTOCOL = STALE_0001
+```
+
+It survived a structural review and a merge.
+
+The shallow reading is "one stale line". The real defect is that the terminal state existed
+as **four independent copies in prose**, and the conformance suite checked none of them
+against the Binding. It checked that §7A *mentioned* the Binding and that a couple of flags
+were present — never that the value it stated was the value in force. A copy nobody compares
+to its source is not documentation of a rule; it is a second rule that happens to agree for
+a while.
+
+The repair is not the text edit. It is a guard that finds **every** `EXECUTOR_TERMINAL_STATE=`
+in every active document and compares it against the policy, so a future rename is covered
+without anyone remembering to look. A second check proves the superseded token appears in no
+active document at all.
+
+Historical records are deliberately outside that sweep. An ADR records what was decided
+*then* and an incident regression reproduces what happened *then*; both may name a superseded
+token, and scrubbing them would destroy the record rather than fix anything. The exclusion
+list is enumerated, each entry is asserted to exist, and its size is asserted to stay small —
+an unchecked exclusion list is the same defect one level up.
+
+This is the fourth instance of the family, and the first one caught after a merge rather than
+before. The three before it were all *within* a module: a claim and its enforcement drifting
+apart. This one was *between* documents, which is why every review pass that read either
+document alone saw nothing wrong.
+
+### 6A.8 The guard's own scope was narrower than its claim
+
+The repair in §6A.7 shipped as a PR claiming to check "every copy". Structural review read the
+templates against it and returned `CORRECTION_REQUIRED`. It was right.
+
+The guard matched `EXECUTOR_TERMINAL_STATE=<VALUE>` assignments. The route is also stated as a
+flag line, as a bare token inside a fence, and in backticked prose:
+
+```text
+EXECUTOR_TERMINAL_STATE=READY_FOR_STRUCTURAL_REVIEW      an assignment   -- checked
+READY_FOR_STRUCTURAL_REVIEW=true                          a flag line     -- not checked
+READY_FOR_STRUCTURAL_REVIEW                               bare, in a fence -- not checked
+The executor stops at `READY_FOR_STRUCTURAL_REVIEW`.      prose            -- not checked
+```
+
+Two of eight occurrence sites were read. Changing any of the other six to a *different wrong
+value* passed. Reverting one to the superseded token happened to be caught — by the separate
+whole-text scan, not by the check that claimed coverage — which is why the gap was invisible
+from the passing suite.
+
+A second latent instance sat beside it: `SUPERSEDED_EXECUTOR_TERMINAL_STATE` was a single
+string, and Decision 0001 retired **two** states (`READY_FOR_SHUKOU_REVIEW` and
+`SHUKOU_CHECK`). The guard against stale names knew about half of them.
+
+So the family has now appeared inside the guard written to catch the family:
+
+```text
+A CHECK WHOSE SCOPE IS NARROWER THAN ITS CLAIM
+IS A CLAIM WITH NOTHING BEHIND THE REST OF IT
+```
+
+The rebuilt guard does not look for a syntactic form. It extracts every upper-case token from
+every route-bearing document and asks whether it names a state the Binding declares. A token
+is *state-shaped* if it shares two or more underscore segments with a ratified state, so
+`READY_FOR_HUMAN_REVIEW` is flagged and `MERGE_ALLOWED` is not. Legitimate look-alikes —
+roles, actions, policy keys, evaluator reason codes — are **derived from the policy** rather
+than listed, so a new action is covered without anyone remembering the file; the six
+remaining acceptance flags are declared, each asserted to be a real assignment, and the list
+asserted to stay small.
+
+Three checks, with their boundaries stated rather than implied:
+
+| Check | Scope |
+|---|---|
+| superseded name present | every active document, repository-wide |
+| state-shaped unknown token | route-bearing documents |
+| ratified state leaking into a new document | every active document, forcing it into the swept set |
+
+The third is what keeps the second's scope from going stale. Single-segment state names are
+exempt from it, and this is stated rather than hidden: `BLOCKED` is a ratified state *and* an
+ordinary English word appearing in about twenty unrelated Kernel documents, so treating every
+mention as route text would make the check meaningless.
+
+The claim is now proven by demonstration. Six controls take the real text of the route-bearing
+documents, mutate one occurrence of each form, and require rejection — and one further control
+asserts the documents as they stand are not flagged, so the detector cannot be one that fires
+always.
+
 ## 7. Consequences
 
 The four participants building this repository are now named, closed, and evaluable, while the

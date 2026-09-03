@@ -319,6 +319,17 @@ def test_the_communication_protocol_registers_the_binding() -> None:
     assert "03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md" in COMMUNICATION
     assert "REPOSITORY_BINDING_REGISTERED=true" in COMMUNICATION
     assert "COMPLETION_NOTICE_USED_AS_ACCEPTANCE=false" in COMMUNICATION
+    assert "EXECUTOR_TERMINAL_STATE_MATCHES_BINDING=true" in COMMUNICATION
+
+
+def test_the_communication_protocol_states_the_terminal_state_in_force() -> None:
+    """This is the line that was stale through a review and a merge.
+
+    Asserted here as well as in the sweep because *this* document is where it drifted, and a
+    named test says so where a reader of the registration checks will see it.
+    """
+
+    assert f"EXECUTOR_TERMINAL_STATE={POLICY['executor_terminal_state']}" in COMMUNICATION
 
 
 def test_the_protocol_separates_the_observation_subject_from_its_surface() -> None:
