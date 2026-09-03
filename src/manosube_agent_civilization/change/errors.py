@@ -33,5 +33,15 @@ class StaleChangeError(ChangeError):
     """
 
 
-class ChangeBoundaryViolationError(ChangeError):
-    """Two supplied inputs disagree about what this Change is bound to."""
+class AuthorityProvenanceError(ChangeError):
+    """The supplied decision is not one the canonical Authority evaluator produced.
+
+    A record can be perfectly self-consistent and still be a forgery: the identity and the
+    semantic fingerprint are computed by **public** pure functions, so a caller who never
+    called ``evaluate_authority`` can synthesise an ``AUTONOMOUS`` decision, cite a rule that
+    exists nowhere, and re-hash it into internal agreement.
+
+    Hash consistency proves a record agrees with itself. It cannot prove who wrote it. The
+    only thing that establishes provenance here is reproduction: the canonical evaluator, run
+    on the real inputs, must return this exact decision.
+    """

@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 from tests.authority_helpers import action, approval, rule, scope
-from tests.change_helpers import change_request, decide, derived_difference
+from tests.change_helpers import derived_difference, route
 
 from manosube_agent_civilization.authority.scope import SCOPE_KEYS
 from manosube_agent_civilization.change import ChangeError, derive_change
@@ -76,11 +76,11 @@ def _built() -> dict[str, Any]:
 
     difference = derived_difference()
     requested, where = action("MERGE"), scope()
-    decision = decide(
+    _, decision, request = route(
         difference, requested, where, approvals=[approval(difference, requested, where)]
     )
     assert decision["decision"] == "AUTONOMOUS"
-    return change_request(difference, decision, requested, where)
+    return request
 
 
 BUILT = _built()
@@ -273,14 +273,14 @@ def test_every_declared_decision_key_answers_when_absent(key: str) -> None:
 @pytest.mark.parametrize("substitution", [name for name, _ in _SUBSTITUTIONS])
 def test_every_declared_scope_key_answers_for_every_shape(key: str, substitution: str) -> None:
     request = deepcopy(BUILT)
-    request["requested_scope"][key] = dict(_SUBSTITUTIONS)[substitution]
+    request["authority_request"]["requested_scope"][key] = dict(_SUBSTITUTIONS)[substitution]
     assert _answer(request) in ("REJECTED", "DERIVED")
 
 
 @pytest.mark.parametrize("key", sorted(SCOPE_KEYS))
 def test_every_declared_scope_key_answers_when_absent(key: str) -> None:
     request = deepcopy(BUILT)
-    del request["requested_scope"][key]
+    del request["authority_request"]["requested_scope"][key]
     assert _answer(request) == "REJECTED"
 
 
@@ -288,14 +288,14 @@ def test_every_declared_scope_key_answers_when_absent(key: str) -> None:
 @pytest.mark.parametrize("substitution", [name for name, _ in _SUBSTITUTIONS])
 def test_every_declared_action_key_answers_for_every_shape(key: str, substitution: str) -> None:
     request = deepcopy(BUILT)
-    request["requested_action"][key] = dict(_SUBSTITUTIONS)[substitution]
+    request["authority_request"]["requested_action"][key] = dict(_SUBSTITUTIONS)[substitution]
     assert _answer(request) in ("REJECTED", "DERIVED")
 
 
 @pytest.mark.parametrize("key", sorted(_ACTION_KEYS))
 def test_every_declared_action_key_answers_when_absent(key: str) -> None:
     request = deepcopy(BUILT)
-    del request["requested_action"][key]
+    del request["authority_request"]["requested_action"][key]
     assert _answer(request) == "REJECTED"
 
 
@@ -346,48 +346,33 @@ def _derivable_variants() -> list[tuple[str, dict[str, Any]]]:
 
     requested, where = action(), scope()
     variants.append(
-        (
-            "rule permitted write",
-            change_request(
-                difference, decide(difference, requested, where, rules=[permitting]), requested, where
-            ),
-        )
+        ("rule permitted write", route(difference, requested, where, rules=[permitting])[2])
     )
 
     requested, where = action("MERGE"), scope()
     variants.append(
         (
             "exactly approved merge",
-            change_request(
+            route(
                 difference,
-                decide(difference, requested, where, approvals=[approval(difference, requested, where)]),
                 requested,
                 where,
-            ),
+                approvals=[approval(difference, requested, where)],
+            )[2],
         )
     )
 
     requested = action("WRITE_FILE", operation={"path": "src/app.py", "bytes": "AAAA"})
     where = scope()
     variants.append(
-        (
-            "a different operation payload",
-            change_request(
-                difference, decide(difference, requested, where, rules=[permitting]), requested, where
-            ),
-        )
+        ("a different operation payload", route(difference, requested, where, rules=[permitting])[2])
     )
 
     requested = action("RUN_COMMAND", operation={"argv": ["pytest", "-q"]})
     where = scope(paths=["src/app.py", "src/lib.py"], subjects=["svc:api"])
     widened = rule(difference["project_id"], action_kinds=["RUN_COMMAND"], rule_scope=where)
     variants.append(
-        (
-            "a wider enumerated scope",
-            change_request(
-                difference, decide(difference, requested, where, rules=[widened]), requested, where
-            ),
-        )
+        ("a wider enumerated scope", route(difference, requested, where, rules=[widened])[2])
     )
     return variants
 
@@ -415,3 +400,90 @@ def test_the_identity_projection_is_closed_and_complete() -> None:
     assert "status" not in CHANGE_SEMANTIC_FIELDS
     assert "execution_result" not in CHANGE_SEMANTIC_FIELDS
     assert "change_id" not in CHANGE_SEMANTIC_FIELDS
+
+
+# --------------------------------------------------------------------------- #
+# Provenance: the claim can only ever agree or be refused
+# --------------------------------------------------------------------------- #
+#
+# The sweeps above accept "REJECTED or DERIVED" at every location, which is the right
+# question for an input that participates in the answer. The claimed decision does not
+# participate: it is compared against what the canonical evaluator returned. So it admits a
+# strictly stronger statement, and this is the one the P1 was about.
+#
+#     ANY change to the claim -> REJECTED, always.
+#
+# A location where that fails is a location where a caller can say something about the
+# decision and be believed.
+
+_CLAIM_LOCATIONS = [path for path in LOCATIONS if path[0] == "authority_decision" and len(path) > 1]
+
+
+def test_the_claim_inventory_is_neither_empty_nor_shrunk() -> None:
+    assert len(_CLAIM_LOCATIONS) >= 15, len(_CLAIM_LOCATIONS)
+
+
+@pytest.mark.parametrize("substitution", [name for name, _ in _SUBSTITUTIONS])
+@pytest.mark.parametrize(
+    "path", _CLAIM_LOCATIONS, ids=lambda path: ".".join(str(step) for step in path)
+)
+def test_no_edit_to_the_claimed_decision_can_ever_derive(
+    path: tuple[Any, ...], substitution: str
+) -> None:
+    request = deepcopy(BUILT)
+    target = _at(request, path)
+    replacement = dict(_SUBSTITUTIONS)[substitution]
+    if target[path[-1]] == replacement:
+        pytest.skip("substitution leaves the claim unchanged")
+    target[path[-1]] = replacement
+    assert _answer(request) == "REJECTED", path
+
+
+@pytest.mark.parametrize(
+    "path", _CLAIM_LOCATIONS, ids=lambda path: ".".join(str(step) for step in path)
+)
+def test_no_deletion_from_the_claimed_decision_can_ever_derive(path: tuple[Any, ...]) -> None:
+    request = deepcopy(BUILT)
+    del _at(request, path)[path[-1]]
+    assert _answer(request) == "REJECTED", path
+
+
+def test_a_self_consistent_forgery_cannot_derive() -> None:
+    """The forger's full capability, applied to every field that carries meaning.
+
+    ``decision_id`` and ``decision_semantic_fingerprint`` are public pure functions, so after
+    editing a decision an attacker re-hashes it into perfect internal agreement. Every case
+    here is a decision that passes its own identity and fingerprint checks and is refused
+    anyway -- which is the difference between self-consistency and provenance.
+    """
+
+    from manosube_agent_civilization.authority.identity import (
+        decision_id,
+        decision_semantic_fingerprint,
+    )
+
+    honest = BUILT["authority_decision"]
+    edits: list[tuple[str, Any]] = [
+        ("decision_reason_codes", ["RULE_PERMITS_AUTONOMOUS"]),
+        ("resolved_rule_ref", {"kind": "authority_rule", "id": "AUTH-RULE-" + "A" * 64}),
+        ("approval_ref", {"kind": "approval", "id": "APPROVAL-" + "B" * 64}),
+        ("evaluated_state_revision", honest["evaluated_state_revision"] + 1),
+    ]
+    for field, value in edits:
+        forged = deepcopy(honest)
+        forged[field] = value
+        forged["decision_semantic_fingerprint"] = decision_semantic_fingerprint(forged)
+        forged["authority_decision_id"] = decision_id(forged)
+        # Internally flawless.
+        assert forged["authority_decision_id"] == decision_id(forged), field
+        assert forged["decision_semantic_fingerprint"] == decision_semantic_fingerprint(forged)
+
+        request = deepcopy(BUILT)
+        request["authority_decision"] = forged
+        assert _answer(request) == "REJECTED", field
+
+
+def test_the_honest_claim_still_derives() -> None:
+    """The control that keeps the four assertions above from passing vacuously."""
+
+    assert _answer(deepcopy(BUILT)) == "DERIVED"

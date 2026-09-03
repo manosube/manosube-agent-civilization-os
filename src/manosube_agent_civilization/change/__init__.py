@@ -12,7 +12,7 @@ Evidence, close a Difference or declare completion (``COMPLETION_SEMANTICS.md`` 
 
 from .engine import AUTHORIZED, derive_change
 from .errors import (
-    ChangeBoundaryViolationError,
+    AuthorityProvenanceError,
     ChangeError,
     ChangeValidationError,
     StaleChangeError,
@@ -21,7 +21,7 @@ from .errors import (
 
 __all__ = [
     "AUTHORIZED",
-    "ChangeBoundaryViolationError",
+    "AuthorityProvenanceError",
     "ChangeError",
     "ChangeValidationError",
     "StaleChangeError",

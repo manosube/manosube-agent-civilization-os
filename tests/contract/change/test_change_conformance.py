@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 from tests.authority_helpers import action, approval, scope
-from tests.change_helpers import change_request, decide, derived_difference
+from tests.change_helpers import derived_difference, route
 
 from manosube_agent_civilization.change import derive_change
 from manosube_agent_civilization.change.engine import (
@@ -51,10 +51,10 @@ AUTHORITY_SCHEMA = _schema("authority/authority.schema.json")
 def change() -> dict[str, Any]:
     difference = derived_difference()
     requested, where = action("MERGE"), scope()
-    decision = decide(
+    _, _, request = route(
         difference, requested, where, approvals=[approval(difference, requested, where)]
     )
-    return derive_change(change_request(difference, decision, requested, where))
+    return derive_change(request)
 
 
 # --------------------------------------------------------------------------- #
@@ -276,6 +276,11 @@ def test_the_invalid_fixtures_cover_each_refusal_the_contract_names() -> None:
         "AUTHORITY_SCOPE_SCHEMA_REJECTS_PATH_EXPRESSIONS=false",
         "DERIVED_CHANGE_IS_SCHEMA_BACKED=true",
         "CARRIED_CHANGE_CONTEXT_IS_SCHEMA_BACKED=false",
+        "CALLER_SELF_ASSERTED_AUTONOMOUS_DECISION_ACCEPTED=false",
+        "AUTHORITY_PROVENANCE_RESOLVED=true",
+        "SINGLE_AUTHORITY_OWNER_PRESERVED=true",
+        "CHANGE_REDECIDES_AUTHORITY=false",
+        "HASH_CONSISTENCY_IS_NOT_PROVENANCE=true",
     ],
 )
 def test_the_contract_records_each_ratified_flag(flag: str) -> None:
@@ -293,3 +298,61 @@ def test_the_authority_contract_records_its_obligation_as_discharged() -> None:
     assert "CHANGE_ENGINE_IMPLEMENTED=true" in text
     assert "CHANGE_ENGINE_IMPLEMENTED=false" not in text
     assert "OPERATION_FINGERPRINT_OBLIGATION_DISCHARGED=true" in text
+
+
+# --------------------------------------------------------------------------- #
+# 7. provenance is structural, not a check that could be forgotten
+# --------------------------------------------------------------------------- #
+
+
+def test_the_request_carries_the_authority_inputs_and_the_claim_and_nothing_else() -> None:
+    """The closed key set is the fix, stated where it is enforced.
+
+    There is no entry for the Difference, the action, the scope or the project. Every one of
+    those is read from the decision the canonical evaluator returned, so a caller-supplied
+    value cannot disagree with it -- the disagreement is not refused, it is inexpressible.
+    """
+
+    assert frozenset(
+        {"schema_version", "authority_request", "authority_decision"}
+    ) == REQUIRED_REQUEST_KEYS
+
+
+@pytest.mark.parametrize(
+    "absent", ["difference", "project_id", "requested_action", "requested_scope"]
+)
+def test_the_request_has_no_second_source_for_any_bound_value(absent: str) -> None:
+    assert absent not in REQUIRED_REQUEST_KEYS
+
+
+def test_change_calls_the_one_evaluator_and_implements_no_second_one() -> None:
+    """``SINGLE_AUTHORITY_OWNER_PRESERVED``: read from the module, not asserted about it.
+
+    Change must reach permission by calling ``evaluate_authority``. A module that reached it
+    any other way -- its own rule matching, its own prohibition check, its own approval
+    resolution -- would be a second Authority, and a second Authority is one that can
+    disagree with the first.
+    """
+
+    source = (
+        ROOT / "src" / "manosube_agent_civilization" / "change" / "engine.py"
+    ).read_text(encoding="utf-8")
+    assert "evaluate_authority(shaped[\"authority_request\"])" in source
+    for second_authority in (
+        "is_contained(",
+        "overlaps(",
+        "most_restrictive(",
+        "at_least_as_restrictive_as(",
+        "exceeds_reversibility(",
+        "HUMAN_ONLY",
+    ):
+        assert second_authority not in source, second_authority
+
+
+def test_the_engine_compares_the_whole_decision_not_only_its_address() -> None:
+    """An address is a digest over a projection, and a projection is not the record."""
+
+    source = (
+        ROOT / "src" / "manosube_agent_civilization" / "change" / "engine.py"
+    ).read_text(encoding="utf-8")
+    assert "claimed != reproduced" in source

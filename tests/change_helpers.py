@@ -2,8 +2,8 @@
 
 Every Authority decision these helpers bind is produced by ``evaluate_authority`` from a
 Difference produced by ``derive_differences``. Hand-writing a decision would let the Change
-tests pass over a decision Authority would never emit, which is exactly the kind of coverage
-that proves nothing.
+tests pass over a decision Authority would never emit -- which, until the provenance repair,
+was not merely weak coverage but the defect itself.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from tests.authority_helpers import authority_request, derived_difference
 
 from manosube_agent_civilization.authority import evaluate_authority
 
-__all__ = ["change_request", "decide", "derived_difference"]
+__all__ = ["authority_request", "change_request", "decide", "derived_difference", "route"]
 
 
 def decide(
@@ -32,18 +32,29 @@ def decide(
 
 
 def change_request(
-    difference: dict[str, Any],
-    decision: dict[str, Any],
-    requested_action: dict[str, Any],
-    requested_scope: dict[str, Any],
-    *,
-    project_id: str | None = None,
+    authority_input: dict[str, Any], decision: dict[str, Any]
 ) -> dict[str, Any]:
+    """A Change request: the real Authority inputs, and the decision claimed for them."""
+
     return {
         "schema_version": "0.1",
-        "project_id": project_id if project_id is not None else difference["project_id"],
-        "difference": difference,
+        "authority_request": authority_input,
         "authority_decision": decision,
-        "requested_action": requested_action,
-        "requested_scope": requested_scope,
     }
+
+
+def route(
+    difference: dict[str, Any],
+    requested_action: dict[str, Any],
+    requested_scope: dict[str, Any],
+    **kwargs: Any,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """The whole natural route in one call.
+
+    Returns the Authority input, the decision the canonical evaluator produced for it, and
+    the Change request pairing them -- so a test never has to assemble a decision itself.
+    """
+
+    authority_input = authority_request(difference, requested_action, requested_scope, **kwargs)
+    decision: dict[str, Any] = evaluate_authority(authority_input)
+    return authority_input, decision, change_request(authority_input, decision)

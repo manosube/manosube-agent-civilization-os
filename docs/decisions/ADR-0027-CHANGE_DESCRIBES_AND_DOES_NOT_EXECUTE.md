@@ -183,16 +183,110 @@ The general lesson is the session's recurring one in a new place: **a claim meas
 proxy is a claim that drifts when the proxy does.** These three tests failed loudly rather
 than silently, which is what made the distinction visible at all.
 
+## 3.3 The P1: self-consistency read as provenance
+
+Independent review found one blocker in the first implementation, and it was the important
+kind — not a missing check, but a **claim in the contract that the code never made true**.
+
+`CHANGE_CONTRACT.md` §8 listed four questions every supplied record crosses, the last being
+"produced by the evaluator rather than asserted". The engine implemented the first three. For
+the fourth it recomputed the decision's content address and treated agreement as evidence.
+
+It is not evidence. `decision_id` and `decision_semantic_fingerprint` are **public pure
+functions**, so the recomputation a caller must satisfy is a recomputation a caller can
+perform. Reproduced at `035bdb7`: a caller that never invoked `evaluate_authority` assembled
+an `AUTONOMOUS` decision for `MERGE` — a Human-only action — citing a rule that exists nowhere
+in the repository, re-hashed it into perfect internal agreement, and obtained an `AUTHORIZED`
+Change.
+
+```text
+INTERNAL CONSISTENCY = the record agrees with itself
+PROVENANCE           = who wrote it
+```
+
+Hashes measure the first. Nothing about them measures the second, and the whole defect is one
+sentence long: **self-consistency was read as provenance.**
+
+### The repair, and why it is a reduction rather than a check
+
+Adding a check would have been the wrong shape — a check is a thing that can be forgotten, and
+this one *was* forgotten while the contract asserted it. The repair removes the possibility
+instead.
+
+The Change request now carries the **real Authority inputs** and the caller's **claim** about
+what they yield. `derive_change` runs `evaluate_authority` on those inputs and requires the
+claim to equal the result, whole-record, not by address alone — an address is a digest over a
+projection, and a projection is by construction not the record.
+
+Three consequences follow, and each is stronger than the check it replaced:
+
+1. **The five exact-binding checks disappear.** Project, Difference, State, action and scope
+   are read from the reproduced decision, and the request has no entry for supplying any of
+   them beside it. Two values cannot disagree when there is only one. The disagreement is not
+   refused; it is inexpressible.
+
+2. **Staleness moves to its owner.** `evaluate_authority` already refuses a Difference
+   observed against a State it did not evaluate, so Change stopped duplicating that. It keeps
+   the *word*: 第26条 requires a stale Change to be blocked, and a caller told only "refused"
+   cannot tell a human what to re-observe, so `StaleAuthorityInputError` is renamed
+   `StaleChangeError` at the boundary and nothing else about it is restated.
+
+3. **Order became load-bearing.** Evaluation runs *before* the claim is admitted. The first
+   attempt admitted the claim first, which meant the shape of a caller-supplied value decided
+   whether the canonical evaluation happened at all — the same defect as trusting the claim,
+   wearing a different hat. Caught by the regression tests, not by review.
+
+`ChangeBoundaryViolationError` had no remaining raiser and was replaced by
+`AuthorityProvenanceError`, whose name states the property it defends.
+
+### Is calling the evaluator a second Authority?
+
+No, and the distinction is worth stating because it is the one thing that could make this
+repair wrong. A second Authority is a module that *decides* — its own rule matching, its own
+prohibition evaluation, its own approval resolution, its own reversibility floor. None of
+those exists in `change/`, and a contract test reads the engine's source to keep it that way.
+Calling the single owner is the opposite of duplicating it.
+
+```text
+SINGLE_AUTHORITY_OWNER_PRESERVED=true
+CHANGE_REDECIDES_AUTHORITY=false
+```
+
+### What reproduction does not close
+
+It does not close a caller forging the **inputs**. A decision citing a nonexistent rule is now
+refused, but a caller who puts a fabricated rule into the supplied rules array gets a decision
+the evaluator legitimately produced from it.
+
+```text
+NONEXISTENT_RULE_REFERENCE_REFUSED=true
+SUPPLIED_RULE_PROVENANCE_RESOLVED=false
+SUPPLIED_APPROVAL_PROVENANCE_RESOLVED=false
+```
+
+Rule and approval provenance belong to Authority and to the Binding owner, and v0.1 has no
+registry to resolve them against. Change does not pretend to resolve what it cannot, and the
+boundary is stated rather than left for the next reviewer to discover — which is the same
+discipline whose absence produced this P1 in the first place.
+
+### The general lesson
+
+The recurring shape of this session, in its sharpest form yet. Rounds 3–10 were *a rule
+asserted in one place and enforced in another*. This was worse: **a rule asserted in one place
+and enforced nowhere**, with a computation standing in the enforcement's place and resembling
+it closely enough that I wrote the sentence claiming it and did not notice.
+
+The reviewer's finding is the reason the claim and the code are now the same thing.
+
 ## 4. Consequences
 
 Change is a pure function from records to a record. It reads no clock, no filesystem, no
 network, no environment, no GitHub and no conversation — and the evidence for that is the
 absence of any API through which it could, not a sentence in a docstring.
 
-`AUTHORITY_CONTRACT.md` §7.2's obligation is discharged, twice over: the action fingerprint is
-recomputed from canonical bytes, and the whole action is compared for equality against the one
-the decision bound. Fingerprint equality alone would let a field that does not participate in
-the fingerprint pass through unchecked.
+`AUTHORITY_CONTRACT.md` §7.2's obligation is discharged structurally rather than by
+comparison: the operation a Change presents **is** the operation the decision bound, the same
+object read from the reproduced decision, because there is no other place it could come from.
 
 ```text
 CAN_DO ≠ MAY_DO

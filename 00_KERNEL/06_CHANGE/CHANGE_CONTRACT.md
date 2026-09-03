@@ -188,17 +188,9 @@ difference.observed_state_fingerprint == decision.evaluated_state_fingerprint
 
 # 7. Exact Binding
 
-Changeが「正確なXに束縛されている」ことは、希望ではなく検査された性質である。次の5つはすべて、**すでに一致しているはずの供給値の対**であり、一つでもcallerが貼り替えれば、そこから何かが導出される前に拒まれる。
+Changeが「正確なXに束縛されている」ことは、検査された性質ですらなく、**構造的な性質**である。§8.3の通り、Difference・action・scope・projectはすべて再現されたdecisionから読まれ、それらを別途供給する入口が存在しない。
 
-```text
-difference.project_id        == request.project_id
-decision.project_id          == request.project_id
-decision.difference_ref.id   == difference.difference_id
-decision.requested_action    == request.requested_action
-decision.requested_scope     == request.requested_scope
-```
-
-`decision.requested_action == request.requested_action`は、`AUTHORITY_CONTRACT.md` §7.2がChange phaseへ残した義務そのものである。
+`AUTHORITY_CONTRACT.md` §7.2がChange phaseへ残した義務は、この形で果たされる。
 
 ```text
 CHANGE EXECUTION MUST PRESENT
@@ -206,7 +198,7 @@ THE IDENTICAL OPERATION FINGERPRINT
 THAT THE AUTHORITY DECISION BOUND
 ```
 
-v0.1はこれを二重に果たす。actionのfingerprintを**再計算**して宣言値と照合し（§8）、さらにaction全体をdecisionが束縛したactionと**完全一致**で照合する。fingerprintだけの照合では、fingerprintに参加しないfieldの差異が通り抜ける。
+Changeが提示するoperationは、decisionが束縛したoperationと**同一のobject**である。「同一のfingerprintを提示する」ことを検査するのではなく、提示しうるものが一つしかない。
 
 ## 7.1 Change Intent Continuity
 
@@ -218,7 +210,86 @@ Human approvalが束縛するのは`change_intent_fingerprint(action, scope)`で
 
 導出されたChangeの`action`と`scope`は、decisionが束縛したものと完全一致であり（§7）、decisionが束縛したものはapprovalが束縛したものである。したがってapprovalの`change_intent_fingerprint`は、導出されたChangeに対しても等しく成立する。この連続性はtestで証明され、記述として主張されるのではない。
 
-# 8. Canonical Input Conformance
+# 8. Authority Provenance
+
+Changeが受け取るdecisionは、**主張**であって答えではない。
+
+```text
+CALLER_SELF_ASSERTED_AUTONOMOUS_DECISION_ACCEPTED=false
+AUTHORITY_PROVENANCE_RESOLVED=true
+HASH_CONSISTENCY_IS_NOT_PROVENANCE=true
+```
+
+`decision_id`と`decision_semantic_fingerprint`は**公開された純粋関数**である。したがってevaluatorを一度も呼んでいないcallerでも、`AUTONOMOUS` decisionを組み立て、どこにも存在しないruleを引用し、再hashして内部的に完全に整合した記録を作れる。
+
+```text
+INTERNAL CONSISTENCY = 記録が自分自身と一致していること
+PROVENANCE           = 誰がそれを書いたか
+```
+
+hashが測るのは前者である。後者ではない。**自己整合性をprovenanceとして読むことが、この節が閉じる欠陥そのものである。**
+
+## 8.1 再現による解決
+
+provenanceを確立するものは一つしかない。**canonical evaluatorを実際の入力の上で走らせ、この正確なdecisionが返ること。**
+
+```text
+CHANGE REQUEST
+= AUTHORITY REQUEST（実際の入力）
++ CLAIMED AUTHORITY DECISION（callerの主張）
+
+reproduced = evaluate_authority(authority_request)
+reproduced == claimed  → provenance確立
+otherwise              → AuthorityProvenanceError
+```
+
+比較は**記録全体**で行う。addressだけの比較では足りない。addressはprojectionのdigestであり、projectionは構造上その記録ではないので、addressが覆う全fieldで一致しながらなお異なる二つの記録が存在しうる。
+
+## 8.2 これは第二のAuthorityではない
+
+```text
+SINGLE_AUTHORITY_OWNER_PRESERVED=true
+CHANGE_REDECIDES_AUTHORITY=false
+```
+
+Changeは`evaluate_authority`を**呼ぶ**。許可判断のいかなる部分も再実装しない——rule照合も、prohibition評価も、approval解決も、reversibility floorも、Changeの中には存在しない。第二のAuthorityとは、Changeが自前の許可論理を持つことであって、唯一のownerを呼ぶことではない。
+
+呼ぶ順序も意味を持つ。**evaluationはclaimの受理より先に走る。**claimの受理が先に拒否できるなら、caller供給値の形がcanonical evaluationを行うかどうかを決めることになり、それはclaimを信じることと同じ欠陥が帽子を変えただけである。
+
+## 8.3 再現が包含するもの
+
+Authorityが答える問いは、両者のために一度だけ答えられる。したがって次はChangeの側で再度検査しない——検査し忘れうる項目ではなく、**構造上そう以外に言えない**。
+
+```text
+EXACT PROJECT BINDING
+EXACT DIFFERENCE BINDING
+EXACT STATE REVISION AND FINGERPRINT BINDING
+EXACT ACTION AND COMPLETE OPERATION BINDING
+EXACT ENUMERATED SCOPE BINDING
+```
+
+Change requestには、Difference、action、scope、projectを**decisionと並べて供給する入口が存在しない**。すべては返されたdecisionから読まれる。二つの値が食い違うことは、拒否されるのではなく、表現できない。
+
+```text
+CHANGE REQUEST KEYS
+= schema_version
++ authority_request
++ authority_decision
+```
+
+## 8.4 これが閉じないもの
+
+再現は、**callerがinputそのものを偽造すること**を閉じない。存在しないruleを引用するdecisionは拒まれるが、caller供給のrule配列に偽のruleを入れれば、evaluatorは正当にそれを解決しうる。
+
+```text
+NONEXISTENT_RULE_REFERENCE_REFUSED=true
+SUPPLIED_RULE_PROVENANCE_RESOLVED=false
+SUPPLIED_APPROVAL_PROVENANCE_RESOLVED=false
+```
+
+rule・prohibition・approvalのprovenanceはAuthorityとBindingの所有であり、v0.1にはまだregistryが無い。Changeがそれを解決したふりをすることはしない。境界は明示する。
+
+## 8.5 入力の受理
 
 Changeへの入力は、Authorityと同じ一つの受理路を通る（`AUTHORITY_CONTRACT.md` §4.1）。
 
@@ -226,23 +297,12 @@ Changeへの入力は、Authorityと同じ一つの受理路を通る（`AUTHORI
 READABLE
 → SCHEMA VALID AT A SUPPORTED VERSION, NO UNKNOWN PROPERTY
 → CONTENT ADDRESS RECOMPUTED
-→ PROVENANCE PRESENT
+→ PRODUCED BY THE EVALUATOR, PROVEN BY REPRODUCTION
 ```
 
-Change requestのkey集合は**閉じている**。
+最後の一段が、この修正が加えたものである。それ以前の三段は、claimが**形として**decisionであることまでしか言わない。claimのaddressを再計算するのは形の検査であり、**何の証拠でもない**——`decision_id`は公開の純粋関数だからである。
 
-```text
-schema_version
-project_id
-difference
-authority_decision
-requested_action
-requested_scope
-```
-
-未知のkeyは無視されず拒まれる。無視されるkeyもchannelである（`AUTHORITY_CONTRACT.md` §4）。Change requestに散文を添えるcallerは、それを黙って捨てられるのではなく拒まれる。
-
-bound decisionについては、**identityとsemantic fingerprintの双方を再計算**する。decisionはここでは供給されたrecordであり、Authorityが返した値そのものであるという保証はcallerの主張でしかない。address計算はAuthority自身のowner（`authority.identity`）へ問う。decision addressの第二の実装は、そのaddressが何であるかの第二の答えであり、二つが食い違った最初の瞬間、食い違いは無音である。
+Change requestのkey集合は**閉じている**。未知のkeyは無視されず拒まれる。無視されるkeyもchannelである（`AUTHORITY_CONTRACT.md` §4）。
 
 # 9. Fail Closed
 
@@ -334,6 +394,8 @@ CHANGE_EXECUTOR_IMPLEMENTED=false
 
 ```text
 CHANGE_EXECUTION_IMPLEMENTED=false
+SUPPLIED_RULE_PROVENANCE_RESOLVED=false
+SUPPLIED_APPROVAL_PROVENANCE_RESOLVED=false
 STATE_COMMIT_IMPLEMENTED=false
 CRASH_RECOVERY_PROVEN=false
 CHANGE_LIFECYCLE_TRANSITIONS_IMPLEMENTED=false
@@ -390,6 +452,14 @@ CHANGE_INTENT_FINGERPRINT_REMAINS_BINDING=true
 ONE_CANONICAL_INPUT_ADMISSION_PATH=true
 RECORD_IDENTITY_RECOMPUTED=true
 CALLER_DECLARED_DIGEST_NOT_TRUSTED=true
+CALLER_SELF_ASSERTED_AUTONOMOUS_DECISION_ACCEPTED=false
+AUTHORITY_PROVENANCE_RESOLVED=true
+HASH_CONSISTENCY_IS_NOT_PROVENANCE=true
+SINGLE_AUTHORITY_OWNER_PRESERVED=true
+CHANGE_REDECIDES_AUTHORITY=false
+AUTHORITY_EVALUATED_BEFORE_CLAIM_ADMITTED=true
+WHOLE_DECISION_COMPARED_NOT_ONLY_ITS_ADDRESS=true
+NONEXISTENT_RULE_REFERENCE_REFUSED=true
 UNKNOWN_IS_NOT_AUTHORIZED=true
 CHANGE_DECLARES_AFTER_STATE=false
 CHANGE_DECLARES_CLOSURE=false
