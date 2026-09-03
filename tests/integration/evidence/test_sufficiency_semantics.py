@@ -27,7 +27,10 @@ from tests.evidence_helpers import (
     sufficiency_request,
 )
 
-from manosube_agent_civilization.evidence import evaluate_sufficiency
+from manosube_agent_civilization.evidence import (
+    EVIDENCE_REFERENCE_KIND,
+    evaluate_sufficiency,
+)
 
 #: Every Observation status, and the reason code sufficiency must keep it as. The mapping is
 #: injective on purpose: two statuses sharing a code would be the collapse this file exists
@@ -106,7 +109,7 @@ def test_sufficiency_names_the_evidence_it_rested_on() -> None:
     record = evaluation["evidence_sufficiency_result"]
     assert record["evidence_refs"]["collection_kind"] == "UNORDERED_SET"
     assert len(record["evidence_refs"]["members"]) == 1
-    assert record["evidence_refs"]["members"][0]["kind"] == "evidence"
+    assert record["evidence_refs"]["members"][0]["kind"] == EVIDENCE_REFERENCE_KIND
 
 
 # --------------------------------------------------------------------------- #

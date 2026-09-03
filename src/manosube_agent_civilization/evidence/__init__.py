@@ -17,6 +17,7 @@ filesystem, a network, an environment or any agent state.
 
 from .engine import (
     CHANGE_RESULT_EVIDENCE,
+    EVIDENCE_REFERENCE_KIND,
     OBSERVATION_EVIDENCE,
     derive_evidence,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "CHANGE_RESULT_EVIDENCE",
     "DERIVABLE_LEVELS",
     "EVIDENCE_LEVEL_SCALE",
+    "EVIDENCE_REFERENCE_KIND",
     "NOT_EVALUATED_HERE",
     "OBSERVATION_EVIDENCE",
     "REASON_CODES",

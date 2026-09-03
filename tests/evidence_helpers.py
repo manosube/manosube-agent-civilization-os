@@ -25,6 +25,7 @@ from tests.difference_helpers import (
     observation_request,
     observation_scope,
     raw_fact,
+    retained_status_predecessor,
     state_fingerprint,
 )
 
@@ -58,6 +59,7 @@ __all__ = [
     "closure_policy",
     "conflicted_observation_request",
     "difference_request",
+    "difference_round_trip_request",
     "evidence_level_scale_ref",
     "evidenced_difference",
     "observation_evidence_request",
@@ -393,10 +395,13 @@ def conflicted_observation_request() -> dict[str, Any]:
 #: on purpose: an Observation carrying positive Facts must be COMPLETE or CONFLICTED before
 #: Difference will derive from it, so an unfinished observation reaches Evidence as a bounded
 #: Negative Observation, which is what a bounded absence *is*.
-STATUS_ROUTES: dict[str, tuple[str, str]] = {
-    "BLOCKED": ("BLOCKED", "BLOCKED"),
-    "EMPTY": ("EMPTY", "EMPTY"),
-    "INCOMPLETE": ("PARTIAL", "INCOMPLETE"),
+STATUS_ROUTES: dict[str, tuple[str, str, bool]] = {
+    "BLOCKED": ("BLOCKED", "BLOCKED", True),
+    "EMPTY": ("EMPTY", "EMPTY", True),
+    "INCOMPLETE": ("PARTIAL", "INCOMPLETE", True),
+    # An incomplete enumeration is not an observed emptiness: with the collection unproven,
+    # the Engine reaches UNKNOWN rather than EMPTY.
+    "UNKNOWN": ("EMPTY", "UNKNOWN", False),
 }
 
 
@@ -412,14 +417,38 @@ def observation_with_status(status: str) -> dict[str, Any]:
         return before_observation_request()
     if status == "CONFLICTED":
         return conflicted_observation_request()
-    attempt, claim = STATUS_ROUTES[status]
+    attempt, claim, complete = STATUS_ROUTES[status]
     request = observation_request(
         observation_scope(),
         [],
         state_fingerprint(),
         BEFORE_REVISION,
         negative_claims=[negative_claim(claim)],
+        collection_complete=complete,
     )
     request["attempts"][0]["result"] = attempt
     request["attempts"][0]["failure_class"] = None
     return request
+
+
+def difference_round_trip_request(
+    sufficiency_result: dict[str, Any],
+) -> dict[str, Any]:
+    """A Difference derivation request carrying *sufficiency_result* as a real predecessor.
+
+    ``retained_status_predecessor("REOPENED")`` builds a lineage whose Closure Evaluation
+    cites an Evidence Sufficiency Result. The hand-written one is replaced by the record
+    Phase 6 actually produced, and the Evaluation is repointed at it, so the bundle that goes
+    into ``derive_differences`` contains this Kernel's own output rather than a stand-in.
+    """
+
+    _, later = retained_status_predecessor("REOPENED")
+    context = later["bindings"][0]["predecessor"]["context"]
+    context["evidence_sufficiency_results"] = [deepcopy(sufficiency_result)]
+    for evaluation in context["evaluations"]:
+        if evaluation.get("evidence_sufficiency_ref") is not None:
+            evaluation["evidence_sufficiency_ref"] = {
+                "kind": "evidence_sufficiency_result",
+                "id": sufficiency_result["evidence_sufficiency_id"],
+            }
+    return later

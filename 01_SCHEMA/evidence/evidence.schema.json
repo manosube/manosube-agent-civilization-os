@@ -138,7 +138,7 @@
       "required": ["derived_from", "predecessor_evidence_refs"],
       "properties": {
         "derived_from": {"$ref": "#/$defs/unordered_references"},
-        "predecessor_evidence_refs": {"$ref": "#/$defs/unordered_references"}
+        "predecessor_evidence_refs": {"$ref": "#/$defs/evidence_references"}
       },
       "additionalProperties": false
     },
@@ -148,6 +148,24 @@
       "properties": {
         "collection_kind": {"const": "UNORDERED_SET"},
         "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "../common/reference.schema.json"}}
+      },
+      "additionalProperties": false
+    },
+    "evidence_references": {
+      "type": "object",
+      "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"const": "UNORDERED_SET"},
+        "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/evidence_reference"}}
+      },
+      "additionalProperties": false
+    },
+    "evidence_reference": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"const": "observation_evidence"},
+        "id": {"type": "string", "pattern": "^EVIDENCE-[0-9A-F]{64}(?![\\s\\S])"}
       },
       "additionalProperties": false
     },

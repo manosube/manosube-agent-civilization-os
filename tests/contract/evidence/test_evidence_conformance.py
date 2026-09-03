@@ -570,37 +570,40 @@ def test_provenance_is_structural_and_therefore_has_no_error_class() -> None:
         assert not name.endswith("ProvenanceError")
 
 
-def test_the_observation_layer_s_evidence_reference_kind_is_reported_not_changed() -> None:
-    """A seam between the phases, pinned here rather than resolved by Evidence.
+def test_an_observation_can_cite_a_phase_6_evidence_record() -> None:
+    """The seam the previous head reported, closed by the same unification.
 
-    ``observation/engine.py`` requires an Observation's ``observation_evidence_refs`` to
-    carry ``kind == "observation_evidence"``. Phase 6 mints records addressed
-    ``EVIDENCE-...`` and refers to them as ``kind == "evidence"``, so an Observation cannot
-    presently cite one.
+    ``observation/engine.py`` requires ``kind == "observation_evidence"`` on an Observation's
+    ``observation_evidence_refs``, and the reviewed head minted ``kind == "evidence"`` -- so
+    no Observation could cite an Evidence record this Kernel produced. Adopting the
+    consumers' vocabulary closed the Difference round trip and this at the same time, because
+    it was one divergence and not two.
 
-    Difference is unaffected: ``difference.schema.json`` leaves the kind of
-    ``observation_evidence_refs`` open, so a Difference may cite a Phase 6 Evidence record
-    today. The narrower constraint is the Observation Engine's, and widening a predecessor's
-    reference vocabulary is that phase's decision, not this one's -- taking it here would be
-    Evidence editing Observation's contract to make its own output fit.
-
-    This test states the seam so it is visible and so a future change to either side is
-    caught rather than discovered.
+    The Observation Engine is unchanged; the assertion is that Evidence now speaks the
+    vocabulary that Engine already required.
     """
 
-    from manosube_agent_civilization.difference.validation import validators
-    from manosube_agent_civilization.observation import engine as observation_engine
+    from manosube_agent_civilization.evidence import EVIDENCE_REFERENCE_KIND
+    from manosube_agent_civilization.observation import observe
 
-    source = Path(observation_engine.__file__).read_text(encoding="utf-8")
-    assert '_require_ref_kind(reference, "observation_evidence", "observation_evidence_refs")' in (
-        source
-    )
+    minted = derive_evidence(observation_evidence_request())
+    request = before_observation_request()
+    request["observation_evidence_refs"] = [
+        {"kind": EVIDENCE_REFERENCE_KIND, "id": minted["evidence_id"]}
+    ]
+    cited = observe(request)["observations"][-1]
+    assert cited["observation_evidence_refs"] == [
+        {"kind": EVIDENCE_REFERENCE_KIND, "id": minted["evidence_id"]}
+    ]
 
-    difference_schema = validators()[
-        "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/difference.schema.json"
-    ].schema
-    open_kind = difference_schema["properties"]["observation_evidence_refs"]["items"]
-    assert open_kind == {"$ref": "../common/reference.schema.json"}
 
-    record = derive_evidence(observation_evidence_request())
-    assert record["evidence_id"].startswith("EVIDENCE-")
+def test_the_observation_engine_still_refuses_any_other_evidence_kind() -> None:
+    """The control: the Observation Engine did not become permissive, Evidence became exact."""
+
+    from manosube_agent_civilization.observation import ObservationError, observe
+
+    minted = derive_evidence(observation_evidence_request())
+    request = before_observation_request()
+    request["observation_evidence_refs"] = [{"kind": "evidence", "id": minted["evidence_id"]}]
+    with pytest.raises(ObservationError):
+        observe(request)

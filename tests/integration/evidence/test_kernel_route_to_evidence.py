@@ -278,7 +278,7 @@ def test_the_produced_result_is_shaped_for_the_section_difference_carries_it_in(
 
 
 def test_every_status_the_difference_route_admits_reaches_evidence() -> None:
-    """Five of the nine Observation statuses survive the route, and the level follows.
+    """Six of the nine Observation statuses are demonstrated here, and the level follows.
 
     Binding Evidence to a Difference means Evidence inherits the Difference producer's
     admissibility, and that is the correct direction: an Evidence record about a Difference
@@ -286,7 +286,7 @@ def test_every_status_the_difference_route_admits_reaches_evidence() -> None:
     """
 
     reached = {}
-    for status in ("COMPLETE", "EMPTY", "BLOCKED", "INCOMPLETE", "CONFLICTED"):
+    for status in ("COMPLETE", "EMPTY", "BLOCKED", "INCOMPLETE", "CONFLICTED", "UNKNOWN"):
         record = derive_evidence(
             observation_evidence_request(observation=observation_with_status(status))
         )
@@ -297,6 +297,7 @@ def test_every_status_the_difference_route_admits_reaches_evidence() -> None:
         "BLOCKED": ("BLOCKED", "E0"),
         "INCOMPLETE": ("INCOMPLETE", "E0"),
         "CONFLICTED": ("CONFLICTED", "E0"),
+        "UNKNOWN": ("UNKNOWN", "E0"),
     }
 
 
@@ -323,6 +324,20 @@ def test_a_failed_observation_stops_at_the_difference_producer_not_at_evidence()
     failed["attempts"][0]["result"] = "FAILED"
     failed["attempts"][0]["failure_class"] = "SOURCE_ERROR"
     assert observe(failed)["observations"][-1]["status"] == "FAILED"
+
+    # Exactly two statuses are excluded, and the Difference producer names them itself.
+    from manosube_agent_civilization.difference.engine import _ACCEPTED_OBSERVATION_STATUS
+
+    assert set(_ACCEPTED_OBSERVATION_STATUS) == {
+        "COMPLETE",
+        "EMPTY",
+        "UNKNOWN",
+        "UNOBSERVED",
+        "BLOCKED",
+        "INCOMPLETE",
+        "CONFLICTED",
+    }
+    assert {"FAILED", "INVALID"} & set(_ACCEPTED_OBSERVATION_STATUS) == set()
 
     with pytest.raises(EvidenceError) as raised:
         derive_evidence(observation_evidence_request(observation=failed))

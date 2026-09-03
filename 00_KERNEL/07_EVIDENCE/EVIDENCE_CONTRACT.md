@@ -71,6 +71,67 @@ Policyの`subject_difference_ref`も同一Differenceを要求するため、requ
 
 ---
 
+# 1B. Evidence参照の唯一のvocabulary
+
+```text
+EVIDENCE_REFERENCE_KIND = observation_evidence
+```
+
+Evidence recordをこのKernelのどこかから参照するとき、kindは常に`observation_evidence`で
+ある。これは新しい語彙ではなく、**consumerが既に宣言している語彙**である。
+
+```text
+graph.REFERENCE_EDGES
+  evidence_sufficiency_result.evidence_refs.members[]   observation_evidence | negative_evidence
+  difference.observation_evidence_refs[]                observation_evidence | negative_evidence
+  closure_evaluation.change_result_evidence_refs[]      observation_evidence
+  closure_evaluation.terminal_reason_evidence_refs[]    observation_evidence
+  invariant_evaluation.evidence_refs.members[]          observation_evidence | negative_evidence
+
+observation/engine.py
+  observation_evidence_refs                             observation_evidence
+```
+
+`closure_evaluation.change_result_evidence_refs`が`observation_evidence`しか受理しない点が
+決定的である。Difference層は第27条の**両位置**をこの一つのkindで参照している。
+
+`observation_evidence`は`graph.EXTERNAL_KINDS`に属する。これにより、Evidence recordが
+`01_SCHEMA/evidence/`に住んだまま——Difference bundleの外で——参照が閉じる。これが無ければ、
+DifferenceのbundleにEvidence recordを同梱する必要が生じ、同じrecordに第二のownerが生まれる。
+
+## 1B.1 tagであってpositionではない
+
+第27条の二位置は`evidence_position`としてrecord上に残る。参照tagの統一は位置を統合しない。
+identity空間も`EVIDENCE-<digest>`のまま変わらないため、全参照は依然として名指したrecordへ
+解決する。
+
+```text
+REFERENCE TAG   observation_evidence     consumer の語彙
+POSITION        OBSERVATION_EVIDENCE | CHANGE_RESULT_EVIDENCE   第27条
+IDENTITY        EVIDENCE-<sha256>       解決先
+```
+
+`negative_evidence`はObservation層のNegative Observationを裏付けるkindであり、Phase 6は
+生成しない。生成すれば、観測していない有界不在をEvidenceが主張することになる。
+
+## 1B.2 往復が成立していること
+
+producerとしての妥当性は、consumerが受理することを意味しない。
+
+```text
+Evidence
+→ Sufficiency Result
+→ evidence_sufficiency_results
+→ derive_differences()
+→ schema / identity / reference closure / relational gate
+```
+
+この往復を`tests/integration/evidence/test_difference_round_trip.py`が実行し、誤ったkindが
+必ずclosure gateで落ちることをnegative controlで示す。往復できないproducerは、単体でどれ
+ほど検証されていても未完成である。
+
+---
+
 # 2. 最低field（第28条）と欠落の禁止
 
 第28条の14 fieldは、位置にかかわらず**一つのEvidence recordへ常設**する。適用されない
@@ -332,5 +393,49 @@ evidence engine          kind == "evidence"                を発行する
 predecessorを所有するphaseの決定である。ここで変更することは、自らの出力に合わせて
 Observationのcontractを書き換えることになる。
 
-`tests/contract/evidence/test_evidence_conformance.py`が現状を固定し、どちらかが動いた
-場合に検出する。
+これはPhase 6で**解消済み**である（§1B）。Evidenceが`observation_evidence`を発行するように
+なったため、ObservationはPhase 6のEvidence recordを引用できる。Observation Engineは変更して
+いない。Evidenceが、そのEngineが既に要求していた語彙を話すようになっただけである。
+
+`tests/contract/evidence/test_evidence_conformance.py`が両方向を固定する。
+
+---
+
+# 12. 未解決Difference — FAILED／INVALID Observation
+
+Evidenceは§1AによりDifference producerの受理性を継承する。Difference producerが受理する
+Observation statusは次の7つであり、`FAILED`と`INVALID`を**明示的に除外**する。
+
+```text
+_ACCEPTED_OBSERVATION_STATUS =
+  COMPLETE  EMPTY  UNKNOWN  UNOBSERVED  BLOCKED  INCOMPLETE  CONFLICTED
+
+EXCLUDED = FAILED  INVALID
+```
+
+したがって現状は次である。
+
+```text
+INITIAL FAILED OBSERVATION
+→ Difference producer が拒否
+→ Observation Evidence を生成できない
+```
+
+一方、Change Result経路のpost-change Observationはproducerを通らないため、
+**FAILEDな再観測はEvidenceとして記録できる**。
+
+第31条は「失敗、EMPTY、BLOCKED、STALE、未到達も正式なEvidenceとして還流する」と述べる。
+初回観測がFAILEDである場合にのみ、これが成立しない。
+
+```text
+UNRESOLVED_CONTRADICTION
+  第31条            失敗は Evidence として還流する
+  difference/engine  FAILED からは Difference を導出しない
+  第27条            Observation Evidence は Difference を裏付ける
+```
+
+Phase 6はこれを**解決しない**。前段のadmissibilityを広げることはそのphaseの決定であり、
+Differenceを迂回することは§1Aで閉じた束縛を開き直す。第33条により、矛盾は削除・上書き・
+平均化せずここに保持する。
+
+`tests/integration/evidence/test_kernel_route_to_evidence.py`が現状の両側を固定する。

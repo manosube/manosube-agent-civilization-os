@@ -74,6 +74,25 @@ SCHEMA_VERSION = "0.1"
 OBSERVATION_EVIDENCE = "OBSERVATION_EVIDENCE"
 CHANGE_RESULT_EVIDENCE = "CHANGE_RESULT_EVIDENCE"
 
+#: The one kind under which an Evidence record is referenced anywhere in this Kernel.
+#:
+#: It is the Difference reference graph's vocabulary, not a new one:
+#: ``graph.REFERENCE_EDGES`` admits ``observation_evidence`` (and ``negative_evidence``,
+#: which the Observation layer owns) in every slot an Evidence record can occupy, including
+#: ``closure_evaluation.change_result_evidence_refs`` -- so the Difference layer already
+#: refers to *both* 第27条 positions by this kind. ``observation/engine.py`` requires the
+#: same kind on an Observation's ``observation_evidence_refs``.
+#:
+#: A record minted under any other tag is a record the canonical consumers cannot accept.
+#: ``observation_evidence`` is in ``graph.EXTERNAL_KINDS``, which is what lets an Evidence
+#: record live in ``01_SCHEMA/evidence/`` -- outside the Difference bundle -- and still close
+#: a reference.
+#:
+#: This is a reference tag, not a position. 第27条's two positions stay on the record, in
+#: ``evidence_position``; unifying the tag does not merge them, and the identity space stays
+#: ``EVIDENCE-<digest>`` so every reference still resolves to the record it names.
+EVIDENCE_REFERENCE_KIND = "observation_evidence"
+
 #: Every key an Evidence request may carry. Closed, for the reason ``AUTHORITY_CONTRACT.md``
 #: §4 gives: an ignored key is still a channel.
 #:
@@ -493,7 +512,9 @@ def _lineage(shaped: dict[str, Any], derived_from: list[dict[str, Any]]) -> dict
         "predecessor_evidence_refs": {
             "collection_kind": "UNORDERED_SET",
             "members": _typed_references(
-                shaped["predecessor_evidence_refs"], "evidence", "predecessor_evidence_refs"
+                shaped["predecessor_evidence_refs"],
+                EVIDENCE_REFERENCE_KIND,
+                "predecessor_evidence_refs",
             ),
         },
     }

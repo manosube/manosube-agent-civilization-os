@@ -256,6 +256,50 @@ A forged predecessor is not refused. It is inexpressible — there is no paramet
 in. `test_the_engine_takes_a_request_and_not_a_record` asserts that handing the engine a real
 minted Observation record fails, which is the property stated from the outside.
 
+## 4A. One vocabulary, because a producer nothing consumes is not finished
+
+The second review round found that Phase 6 was a producer whose output no consumer had ever
+accepted. Evidence minted `{"kind": "evidence"}`; the Difference reference graph admits
+`observation_evidence` and `negative_evidence` in that slot and treats neither `evidence` as
+admitted nor as external. A real sufficiency result put back through
+`derive_differences()` failed the whole-bundle reference-closure gate.
+
+```text
+round trip, kind="evidence"              -> reference kind is not permitted here
+round trip, kind="observation_evidence"  -> ACCEPTED
+```
+
+What made this invisible is worth stating. Two tests stood where a round trip should have
+been: one asserted that `_CARRIED_SECTIONS` names the section, the other that the produced
+result carries an `evidence_sufficiency_id`. Both passed. Neither put a reference through a
+gate, so neither could have failed for this reason — the same shape as ADR-0027 §3.5's
+assertion that could not fail, arrived at by testing *around* the thing rather than by
+writing a check that cannot fire.
+
+The fix is to adopt the consumers' vocabulary, not to invent a third. Every slot an Evidence
+record can occupy admits `observation_evidence` — including
+`closure_evaluation.change_result_evidence_refs`, so the Difference layer already refers to
+**both** 第27条 positions by that one kind — and `observation/engine.py` requires the same on
+an Observation's `observation_evidence_refs`.
+
+Three things it is not:
+
+* **Not a merge of the two positions.** `evidence_position` stays on the record. A reference
+  tag and a position are different things.
+* **Not a loss of resolution.** The identity space is unchanged: every reference still names
+  an `EVIDENCE-<digest>` a caller can reproduce from the same request.
+* **Not a second owner.** `observation_evidence` is in `graph.EXTERNAL_KINDS`, which is
+  exactly what lets an Evidence record live in `01_SCHEMA/evidence/` — outside the Difference
+  bundle — and still close a reference. Without that, binding Evidence into the graph would
+  have meant carrying Evidence records inside Difference bundles.
+
+It also closed the seam the previous head *reported*: an Observation could not cite a Phase 6
+Evidence record. That was never two divergences. It was one, seen from two sides, and the
+report should have read it that way.
+
+`tests/integration/evidence/test_difference_round_trip.py` runs the real round trip and
+fails on four wrong tags, `evidence` first.
+
 ## 5A. The two smaller corrections
 
 **Sub-second freshness (P1-C).** The age gate compared `int(delta.total_seconds())`, and
@@ -286,6 +330,34 @@ a blob address is commit-independent anyway — and the verifiable one is pinned
 with a repository test holding the pin to `git hash-object` of the live document. Every field
 that remains is checked against something. Fields that carry a claim nothing verifies are
 worse than absent fields, because absence does not assert.
+
+## 5B. An unresolved contradiction, preserved rather than resolved
+
+第31条 requires failure to reflow as Evidence. Binding Evidence to a Difference (§1A) means
+Evidence inherits the Difference producer's admissibility, and that producer names its own
+exclusions:
+
+```text
+_ACCEPTED_OBSERVATION_STATUS = COMPLETE EMPTY UNKNOWN UNOBSERVED BLOCKED INCOMPLETE CONFLICTED
+EXCLUDED                     = FAILED INVALID
+```
+
+So an *initial* FAILED Observation cannot become Observation Evidence. A FAILED
+*re-observation* can, because the post-change Observation never reaches that producer.
+
+```text
+UNRESOLVED_CONTRADICTION
+  第31条              failure reflows as Evidence
+  difference/engine   no Difference is derived from FAILED
+  第27条              Observation Evidence backs a Difference
+```
+
+Phase 6 does not resolve it, and the three ways it could are each somebody else's decision:
+widening a predecessor's admissibility belongs to that phase; routing Evidence around the
+Difference reopens §1A; and a third position in 第27条 is a constitutional amendment. 第33条
+says a contradiction is held, not deleted, overwritten or averaged — so it is recorded in
+`EVIDENCE_CONTRACT.md` §12, pinned from both sides by test, and returned to the Human
+Authority as a decision rather than taken as an implementation choice.
 
 ## 6. Four findings from this work unit, recorded with how each was found
 
@@ -363,11 +435,13 @@ The list, unchanged in shape since ADR-0027 §3.6:
 | Phase 6 P1-B | "E0–E3 from structural proof" | a string the caller wrote |
 | Phase 6 P1-C | "evidence older than the bound is stale" | a comparison that truncated first |
 | Phase 6 P2-D | "a canonical content-addressed source" | three fields nothing checked |
+| Phase 6 round 2 | "the sufficiency result is consumable" | two tests that never touched a gate |
 
-The through-line holds across all twelve: **a claim is only as good as the thing that would
-break if it were false.** The four review findings are four different ways of having nothing
-there — no binding, a caller's word, a comparison that rounds the violation away, and fields
-answerable to nothing.
+The through-line holds across all thirteen: **a claim is only as good as the thing that would
+break if it were false.** The five review findings are five different ways of having nothing
+there — no binding, a caller's word, a comparison that rounds the violation away, fields
+answerable to nothing, and a pair of tests carefully arranged around the gate they should
+have gone through.
 
 Three rows were caught in-session by asking, of each check in the diff, *what input would
 make this fail?* Four were caught by a reviewer asking it of checks that had already passed

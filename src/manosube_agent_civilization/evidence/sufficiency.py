@@ -48,7 +48,7 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
-from .engine import derive_evidence
+from .engine import EVIDENCE_REFERENCE_KIND, derive_evidence
 from .errors import EvidenceError, EvidenceValidationError
 from .levels import (
     COMPLETION_SEMANTICS_BLOB_SHA,
@@ -397,7 +397,10 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
             reason_codes.add("EVIDENCE_STATUS_EMPTY")
         evaluations.append(
             {
-                "evidence_ref": {"kind": "evidence", "id": record["evidence_id"]},
+                "evidence_ref": {
+                    "kind": EVIDENCE_REFERENCE_KIND,
+                    "id": record["evidence_id"],
+                },
                 "evidence_level": record["evidence_level"],
                 "status": status,
                 "recorded_at": record["timestamp"],
@@ -453,7 +456,10 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         "evidence_refs": {
             "collection_kind": "UNORDERED_SET",
             "members": sorted(
-                ({"kind": "evidence", "id": record["evidence_id"]} for record in records),
+                (
+                    {"kind": EVIDENCE_REFERENCE_KIND, "id": record["evidence_id"]}
+                    for record in records
+                ),
                 key=lambda reference: reference["id"],
             ),
         },
