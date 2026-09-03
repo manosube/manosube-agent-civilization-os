@@ -50,13 +50,17 @@ def test_the_policy_is_recorded_and_measured_from_schema_absence() -> None:
 
 
 def test_the_unschematized_set_is_measured_against_the_repository() -> None:
-    """Not asserted: the schema directories really are empty in v0.1."""
+    """Not asserted: these record types really do have no canonical schema.
 
-    from pathlib import Path
+    Until Phase 5 this measured that ``01_SCHEMA/change/`` and ``01_SCHEMA/reflow/`` were
+    empty. That was a proxy, and Phase 5 falsified the proxy without touching the claim:
+    ``change.schema.json`` governs a *derived* Change, whereas the ``changes`` section carries
+    *predecessor-context* Change records of a different shape. The claim this gate depends on
+    is that no schema validates those, which is what the registry says.
+    """
 
-    root = Path(__file__).resolve().parents[3] / "01_SCHEMA"
-    for directory in ("change", "reflow"):
-        assert list((root / directory).glob("*.json")) == []
+    for type_name in UNSCHEMATIZED_TYPES:
+        assert RECORD_TYPES[type_name].schema is None, type_name
 
 
 @pytest.mark.parametrize(

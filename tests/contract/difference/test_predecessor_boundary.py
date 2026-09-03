@@ -113,11 +113,22 @@ def test_every_carried_type_names_a_schema_that_exists() -> None:
 
 
 def test_the_no_schema_sections_really_have_no_canonical_schema() -> None:
-    """The non-claim is measured against the repository, not asserted."""
+    """The non-claim is measured against the registry, not asserted.
 
+    This measured directory emptiness until Phase 5, when ``01_SCHEMA/change/`` stopped being
+    empty. Emptiness was only ever a **proxy** for the claim, and Phase 5 falsified the proxy
+    without touching the claim: ``change.schema.json`` governs a *derived* Change -- thirteen
+    fields, a ``CHANGE-`` content address -- while these sections carry *predecessor-context*
+    Change records, which are historical and differently shaped (``CHG-0001`` with a
+    ``subject_ref``). Whether carried context should be held to the canonical Change schema is
+    a Difference semantic decision with a Human owner, and is not settled here.
+
+    So the assertion now reads the registry, which is where the claim actually lives.
+    """
+
+    for section in NO_CANONICAL_SCHEMA_SECTIONS:
+        assert CARRIED_TYPES[section].schema is None, section
     assert {"changes", "reflow_transitions"} == NO_CANONICAL_SCHEMA_SECTIONS
-    for directory in ("change", "reflow"):
-        assert list((ROOT / "01_SCHEMA" / directory).glob("*.schema.json")) == []
 
 
 def test_every_later_phase_section_is_declared_as_such() -> None:

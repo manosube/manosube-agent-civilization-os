@@ -63,8 +63,42 @@ def _is_resolved_member(member: str) -> bool:
     return not any(segment in ("", ".", "..") for segment in segments)
 
 
+def canonical_scope(scope: dict[str, Any]) -> dict[str, Any]:
+    """Return *scope* in its one canonical representation.
+
+    ``paths`` and ``subjects`` are **sets written as lists**: containment and overlap are
+    already computed over ``set(...)`` and the canonical schema declares them ``uniqueItems``.
+    Their order carries no meaning, so two requests naming the same members in a different
+    order are the same request -- and were deriving different Authority Decision, Change and
+    idempotency identities, because those hash the ordered representation.
+
+    ```text
+    SCOPE_AUTHORIZATION_SEMANTICS=SET
+    SCOPE_IDENTITY_SEMANTICS=SET
+    ```
+
+    This is the **one** place that normalization happens. ``authority.identity`` and
+    ``change.identity`` call it rather than sorting for themselves; a second sort would be a
+    second answer to what the canonical form is, and the first time the two disagreed the
+    disagreement would be silent.
+
+    The location fields are untouched. ``repository`` and ``branch`` are scalars, not sets.
+
+    Duplicates are **not** collapsed here. A repeated member is refused by
+    :func:`require_scope`, and silently deduplicating one would turn an input defect into an
+    accepted record.
+    """
+
+    normalized = dict(scope)
+    for key in SCOPE_COLLECTIONS:
+        members = normalized.get(key)
+        if isinstance(members, list):
+            normalized[key] = sorted(members)
+    return normalized
+
+
 def require_scope(value: Any, context: str) -> dict[str, Any]:
-    """Return *value* once it can be read as a canonical scope; reject it otherwise.
+    """Return *value* in canonical form once it can be read as a scope; reject it otherwise.
 
     A scope that cannot be enumerated is not narrowed to something safe -- it is refused.
     ``AUTHORITY_CONTRACT.md`` §3: an unresolved glob, an unresolved symlink or an implicit
@@ -116,7 +150,13 @@ def require_scope(value: Any, context: str) -> dict[str, Any]:
                     f"{context} {key}[{position}] repeats {key}[{seen[member]}]: {member!r}"
                 )
             seen[member] = position
-    return scope
+    # Admitted, then canonicalized. Callers that need the scope's *meaning* -- the evaluator
+    # deciding permission, and everything downstream that hashes what it decided -- receive
+    # the one canonical representation. Callers that admit a supplied record for validation
+    # only (a rule, a prohibition, an approval) discard this return deliberately: those are
+    # content-addressed records a human authored, and rewriting their scope in place would
+    # change the address of a record nobody re-signed.
+    return canonical_scope(scope)
 
 
 def _same_location(requested: dict[str, Any], other: dict[str, Any]) -> bool:

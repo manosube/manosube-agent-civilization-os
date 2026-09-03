@@ -209,8 +209,15 @@ RECORD_TYPES: dict[str, RecordType] = {
     "evidence_sufficiency_result": RecordType(
         "evidence_sufficiency_id", "evidence_sufficiency_result.schema.json", DIFFERENCE_BASE
     ),
-    # 01_SCHEMA/change/ and 01_SCHEMA/reflow/ are empty in v0.1: no canonical schema exists
-    # for these two, so nothing can validate them. The non-claim is explicit.
+    # No canonical schema validates these two *as carried predecessor context*, so nothing
+    # can validate them here. The non-claim is explicit.
+    #
+    # Phase 5 added `01_SCHEMA/change/change.schema.json`, and it deliberately does not
+    # appear here. That schema governs a *derived* Change -- thirteen fields, a `CHANGE-`
+    # content address -- whereas this section carries historical Change records of a
+    # different shape (`CHG-0001` with a `subject_ref`). Holding carried context to the
+    # canonical schema would be a Difference semantic decision with a Human owner; it is
+    # reported on Issue #31 rather than taken here.
     "change": RecordType("change_id", None, ""),
     "reflow_transaction": RecordType("transaction_id", None, ""),
 }

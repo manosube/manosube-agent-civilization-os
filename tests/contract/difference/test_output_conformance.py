@@ -139,8 +139,12 @@ def test_every_named_schema_exists_and_the_unschematized_set_is_measured() -> No
         assert (ROOT / "01_SCHEMA" / relative / canonical.schema).is_file(), type_name
 
     assert {"changes", "reflow_transitions"} == UNSCHEMATIZED_SECTIONS
-    for directory in ("change", "reflow"):
-        assert list((ROOT / "01_SCHEMA" / directory).glob("*.schema.json")) == []
+    # Measured from the registry rather than from directory emptiness. Emptiness was a proxy
+    # for the claim, and Phase 5 falsified the proxy alone: `change.schema.json` governs a
+    # *derived* Change, while these sections carry *predecessor-context* records of a
+    # different shape. See `test_predecessor_boundary` for the full reasoning.
+    for section in UNSCHEMATIZED_SECTIONS:
+        assert RECORD_TYPES[CARRIED_SECTIONS[section]].schema is None, section
 
 
 def test_the_output_schema_claim_is_qualified_by_the_unschematized_set() -> None:
