@@ -28,6 +28,7 @@ from tests.evidence_helpers import (
 
 from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.reflow.closure import MANDATORY_X003_CLAIM_REF
+from manosube_agent_civilization.reflow.identity import material_contradiction_id
 
 GIT_TREE_REF: dict[str, Any] = {
     "kind": "git_tree",
@@ -145,7 +146,7 @@ def base_closure_request(
         "producing_change_refs": [],
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
-        "contradiction_refs": [],
+        "material_contradictions": [],
         "terminal_reason_evidence_refs": [
             {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
         ],
@@ -184,3 +185,38 @@ def candidate_closure_request(difference: dict[str, Any], policy: dict[str, Any]
         }
     )
     return request
+
+
+def material_contradiction_record(
+    *,
+    impact: str = "MATERIAL",
+    project_id: str = "PRJ-0001",
+    detected_at_state_revision: int = AFTER_REVISION,
+    detected_at_state_fingerprint: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One schema-valid ``material_contradiction`` record, addressed by its own identity."""
+
+    record: dict[str, Any] = {
+        "schema_version": "0.1",
+        "material_contradiction_id": "",
+        "project_id": project_id,
+        "contradiction_kind": "EVIDENCE_EVIDENCE",
+        "subject_refs": {
+            "collection_kind": "UNORDERED_SET",
+            "members": [
+                {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64},
+                {"kind": "observation_evidence", "id": "EVIDENCE-" + "2" * 64},
+            ],
+        },
+        "impact": impact,
+        "reason": "two Observation Evidence records disagree on the same Target subject",
+        "detected_at_state_revision": detected_at_state_revision,
+        "detected_at_state_fingerprint": (
+            detected_at_state_fingerprint
+            if detected_at_state_fingerprint is not None
+            else state_fingerprint("KNOWN")
+        ),
+        "material_contradiction_semantic_fingerprint": "sha256:" + "3" * 64,
+    }
+    record["material_contradiction_id"] = material_contradiction_id(record)
+    return record

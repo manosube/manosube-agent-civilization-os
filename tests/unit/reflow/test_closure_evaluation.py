@@ -20,6 +20,7 @@ from tests.reflow_helpers import (
     fixture_difference,
     fixture_policy,
     mandatory_x003_claim_binding,
+    material_contradiction_record,
 )
 
 from manosube_agent_civilization.difference.validation import (
@@ -62,13 +63,11 @@ def test_terminal_policy_only_baseline_is_blocked_and_schema_valid() -> None:
     _validate(evaluation)
 
 
-def test_contradiction_refs_force_contradicted_result() -> None:
+def test_material_contradiction_forces_contradicted_result() -> None:
     difference = fixture_difference()
     policy = fixture_policy(difference)
     request = candidate_closure_request(difference, policy)
-    request["contradiction_refs"] = [
-        {"kind": "material_contradiction", "id": "CONTRA-" + "9" * 64}
-    ]
+    request["material_contradictions"] = [material_contradiction_record(impact="MATERIAL")]
     request["proposed_terminal_status"] = "RETAINED"
     request["terminal_reason_evidence_refs"] = [
         {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
@@ -78,6 +77,24 @@ def test_contradiction_refs_force_contradicted_result() -> None:
 
     assert evaluation["evaluation_mode"] == "CANDIDATE_TERMINAL"
     assert evaluation["result"] == "CONTRADICTED"
+    assert len(evaluation["contradiction_refs"]) == 1
+    _validate(evaluation)
+
+
+def test_non_material_contradiction_is_recorded_but_does_not_block_closure() -> None:
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+    request["material_contradictions"] = [material_contradiction_record(impact="NON_MATERIAL")]
+
+    evaluation = evaluate_closure(request)
+
+    # A non-material contradiction is recorded -- CLOSURE_POLICY.md's fail-closed table
+    # names only a *Material* conflict as CONTRADICTED -- so closure still proceeds while
+    # the conflict stays visible in the Evaluation's own contradiction_refs.
+    assert evaluation["evaluation_mode"] == "CANDIDATE_CLOSURE"
+    assert evaluation["result"] == "SATISFIED"
+    assert len(evaluation["contradiction_refs"]) == 1
     _validate(evaluation)
 
 

@@ -137,7 +137,7 @@ REQUEST_KEYS: frozenset[str] = frozenset(
         "producing_change_refs",
         "candidate_invariant_evaluation_bindings",
         "candidate_claim_evaluation_bindings",
-        "contradiction_refs",
+        "material_contradictions",
         "terminal_reason_evidence_refs",
         "proposed_terminal_status",
         "evaluated_at",
@@ -562,7 +562,20 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
     _evaluate_g21(gates, policy, claim_bindings)
     _evaluate_g22(gates, policy, proposed_terminal_status)
 
-    contradiction_refs = require_collection(shaped["contradiction_refs"], "contradiction_refs")
+    # Every named contradiction is recorded in the output regardless of impact --
+    # CLOSURE_POLICY.md's fail-closed table only routes a *Material* one to CONTRADICTED
+    # ("非material contradictionは記録されたまま"); a non-material one still names a real
+    # conflict this Difference's provenance carries and must not be silently dropped.
+    material_contradictions = require_collection(
+        shaped["material_contradictions"], "material_contradictions"
+    )
+    contradiction_refs = [
+        {"kind": "material_contradiction", "id": item["material_contradiction_id"]}
+        for item in material_contradictions
+    ]
+    blocking_contradictions = [
+        item for item in material_contradictions if item.get("impact") == "MATERIAL"
+    ]
     terminal_reason_evidence_refs = require_collection(
         shaped["terminal_reason_evidence_refs"], "terminal_reason_evidence_refs"
     )
@@ -586,7 +599,7 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         # there is nothing left for CONTRADICTED, STALE or NOT_SATISFIED to describe.
         result = "BLOCKED"
         evaluation_mode = "TERMINAL_POLICY_ONLY"
-    elif contradiction_refs:
+    elif blocking_contradictions:
         result = "CONTRADICTED"
         evaluation_mode = "CANDIDATE_TERMINAL"
     elif sufficiency is not None and sufficiency["result"] == "STALE":
