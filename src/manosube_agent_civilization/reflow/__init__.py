@@ -4,6 +4,7 @@ See ``00_KERNEL/08_REFLOW/REFLOW_CONTRACT.md`` for the authority boundary, the c
 input set, and the explicit list of what this element does and does not claim.
 """
 
+from .bookkeeping import apply_reflow_bookkeeping
 from .closure import (
     MANDATORY_X003_CLAIM_DESCRIPTOR,
     MANDATORY_X003_CLAIM_ID,
@@ -26,6 +27,7 @@ from .identity import (
     transaction_id,
 )
 from .lifecycle import mint_transition_event
+from .route import reflow
 
 __all__ = [
     "MANDATORY_X003_CLAIM_DESCRIPTOR",
@@ -37,6 +39,7 @@ __all__ = [
     "StaleReflowError",
     "UnauthorizedReflowError",
     "after_state_candidate_id",
+    "apply_reflow_bookkeeping",
     "build_state_transition",
     "closure_evaluation_decision_fingerprint",
     "closure_evaluation_id",
@@ -45,5 +48,6 @@ __all__ = [
     "evaluate_closure",
     "material_contradiction_id",
     "mint_transition_event",
+    "reflow",
     "transaction_id",
 ]
