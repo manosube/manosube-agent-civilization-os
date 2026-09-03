@@ -10,6 +10,7 @@ from .closure import (
     MANDATORY_X003_CLAIM_REF,
     evaluate_closure,
 )
+from .commit import build_state_transition, commit_reflow
 from .engine import REASON_CODES, decide_transition
 from .errors import (
     ReflowError,
@@ -36,8 +37,10 @@ __all__ = [
     "StaleReflowError",
     "UnauthorizedReflowError",
     "after_state_candidate_id",
+    "build_state_transition",
     "closure_evaluation_decision_fingerprint",
     "closure_evaluation_id",
+    "commit_reflow",
     "decide_transition",
     "evaluate_closure",
     "material_contradiction_id",

@@ -21,7 +21,7 @@ from manosube_agent_civilization.reflow.engine import decide_transition
 from manosube_agent_civilization.reflow.errors import ReflowValidationError
 from manosube_agent_civilization.reflow.lifecycle import mint_transition_event
 
-REFLOW_TRANSITION_REF = {"kind": "reflow_transition", "id": "TX-" + "1" * 64}
+REFLOW_TRANSITION_REF = {"kind": "state_transition", "id": "TX-" + "1" * 64}
 
 
 def _blocker_scope(difference: dict) -> dict:
