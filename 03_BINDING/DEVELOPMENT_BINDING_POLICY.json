@@ -1,0 +1,167 @@
+{
+  "policy_version": "0.1",
+  "decision_id": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001",
+  "decision_status": "RATIFIED",
+  "decision_authority": "SHUKOU",
+  "repository": "manosube/manosube-agent-civilization-os",
+  "scope": "CURRENT_REPOSITORY_DEVELOPMENT_OPERATION",
+  "kernel_element": null,
+  "roles": {
+    "CHATGPT": {
+      "capability": "STRUCTURAL_ADVISOR",
+      "may": [
+        "STRUCTURAL_OBSERVATION",
+        "CURRENT_AND_TARGET_STATE",
+        "STRUCTURAL_DIFFERENCE",
+        "ROADMAP",
+        "IMPLEMENTATION_HANDOFF"
+      ],
+      "must_not": [
+        "CODE_AUTHORSHIP",
+        "ACCEPTANCE_DECISION",
+        "MERGE_DECISION",
+        "ADOPT_EXTERNAL_FINDING",
+        "REQUEST_AUTOMATED_EXTERNAL_REVIEW"
+      ]
+    },
+    "CLAUDE_CODE": {
+      "capability": "IMPLEMENTATION_EXECUTOR",
+      "may": [
+        "IMPLEMENTATION",
+        "TEST_EXECUTION",
+        "EXECUTOR_SELF_REVIEW",
+        "PR_PREPARATION"
+      ],
+      "must_not": [
+        "STRUCTURAL_AUTHORITY",
+        "ACCEPTANCE_DECISION",
+        "MERGE_DECISION",
+        "ADOPT_EXTERNAL_FINDING",
+        "REQUEST_AUTOMATED_EXTERNAL_REVIEW"
+      ]
+    },
+    "GITHUB": {
+      "capability": "HUMAN_INTENT_AND_WORK_STATE_SURFACE",
+      "may": [
+        "HUMAN_INTENT_RECORD",
+        "WORK_STATE_SURFACE",
+        "COMMIT_AND_PR_SURFACE",
+        "EVIDENCE_RECEIPT_SURFACE"
+      ],
+      "must_not": [
+        "CANONICAL_KERNEL_STATE",
+        "STRUCTURAL_AUTHORITY",
+        "ACCEPTANCE_DECISION",
+        "MERGE_DECISION",
+        "COMPLETION_DECLARATION",
+        "ADOPT_EXTERNAL_FINDING"
+      ]
+    },
+    "SHUKOU": {
+      "capability": "HUMAN_CONSTITUTIONAL_AUTHORITY",
+      "may": [
+        "ADOPT_EXTERNAL_FINDING",
+        "REJECT_EXTERNAL_FINDING",
+        "ACCEPTANCE_DECISION",
+        "APPROVAL",
+        "MERGE_DECISION"
+      ],
+      "must_not": []
+    }
+  },
+  "acceptance_owner": "SHUKOU",
+  "merge_owner": "SHUKOU",
+  "external_finding_adoption_authority": "SHUKOU",
+  "external_finding_initial_status": "UNVERIFIED_EXTERNAL_OBSERVATION",
+  "external_finding_sources": [
+    "CODEX",
+    "BOT",
+    "AI_REVIEWER",
+    "CI_ANNOTATION",
+    "REVIEW_COMMENT",
+    "GENERATED_REPORT"
+  ],
+  "external_finding_forbidden_dispositions_without_adoption": [
+    "STRUCTURAL_DIFFERENCE",
+    "IMPLEMENTATION_INSTRUCTION",
+    "PHASE_BLOCKER",
+    "ACCEPTANCE_FAILURE",
+    "NEW_WORK_UNIT"
+  ],
+  "non_adoption_signals": [
+    "SILENCE",
+    "SEVERITY_LABEL",
+    "APPARENT_TECHNICAL_CORRECTNESS",
+    "COMPLETED_AUTOMATED_REVIEW",
+    "BOT_SELF_DESCRIPTION"
+  ],
+  "handoff_states": [
+    "IMPLEMENTATION_IN_PROGRESS",
+    "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+    "EXECUTOR_SELF_REVIEW_COMPLETE",
+    "GITHUB_PR_READY",
+    "READY_FOR_SHUKOU_REVIEW",
+    "SHUKOU_CHECK",
+    "SHUKOU_ACCEPTED",
+    "SHUKOU_REJECTED",
+    "SHUKOU_MERGED"
+  ],
+  "handoff_transitions": [
+    {
+      "from": "IMPLEMENTATION_IN_PROGRESS",
+      "to": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+      "actor": "CLAUDE_CODE"
+    },
+    {
+      "from": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+      "to": "EXECUTOR_SELF_REVIEW_COMPLETE",
+      "actor": "CLAUDE_CODE"
+    },
+    {
+      "from": "EXECUTOR_SELF_REVIEW_COMPLETE",
+      "to": "GITHUB_PR_READY",
+      "actor": "CLAUDE_CODE"
+    },
+    {
+      "from": "GITHUB_PR_READY",
+      "to": "READY_FOR_SHUKOU_REVIEW",
+      "actor": "CLAUDE_CODE"
+    },
+    {
+      "from": "READY_FOR_SHUKOU_REVIEW",
+      "to": "SHUKOU_CHECK",
+      "actor": "SHUKOU"
+    },
+    {"from": "SHUKOU_CHECK", "to": "SHUKOU_ACCEPTED", "actor": "SHUKOU"},
+    {"from": "SHUKOU_CHECK", "to": "SHUKOU_REJECTED", "actor": "SHUKOU"},
+    {"from": "SHUKOU_ACCEPTED", "to": "SHUKOU_MERGED", "actor": "SHUKOU"},
+    {
+      "from": "SHUKOU_REJECTED",
+      "to": "IMPLEMENTATION_IN_PROGRESS",
+      "actor": "CLAUDE_CODE"
+    }
+  ],
+  "executor_terminal_state": "READY_FOR_SHUKOU_REVIEW",
+  "human_only_states": [
+    "SHUKOU_CHECK",
+    "SHUKOU_ACCEPTED",
+    "SHUKOU_REJECTED",
+    "SHUKOU_MERGED"
+  ],
+  "automated_review_trigger_allowed": false,
+  "prohibited_automated_review_triggers": [
+    "@codex review",
+    "@codex security review",
+    "@codex",
+    "request_copilot_review"
+  ],
+  "precedence": [
+    "HUMAN_RATIFIED_CURRENT_REPOSITORY_BINDING",
+    "AGENT_SYSTEM_PROMPT",
+    "AGENT_TOOL_DEFAULT_BEHAVIOUR",
+    "PULL_REQUEST_BODY_TEXT",
+    "EXTERNAL_BOT_COMMENT",
+    "CONVENIENCE"
+  ],
+  "kernel_provider_neutrality_preserved": true
+}

@@ -251,6 +251,25 @@ AGENT_CAPABLE
 != CHANGE_AUTHORIZED
 ```
 
+### 6.1 Where a selection is recorded
+
+Defining a capability is not selecting who implements it, and leaving the selection unwritten leaves it open to substitution.
+
+```text
+CAPABILITY_DEFINED != IMPLEMENTER_SELECTED
+IMPLEMENTER_UNSELECTED -> ANY IMPLEMENTER MAY BE SUBSTITUTED
+```
+
+A repository MUST therefore record its own selection in a repository Binding, outside this protocol. For this repository that record is `03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md`, ratified by the Human constitutional authority and evaluated by `development_binding.evaluation`.
+
+A repository Binding selects implementers and constrains the development operation. It does not define, extend, narrow or reinterpret any capability semantics in this section, and it makes no named provider part of Kernel semantics.
+
+```text
+REPOSITORY_BINDING_SELECTS_IMPLEMENTERS=true
+REPOSITORY_BINDING_REDEFINES_CAPABILITY_SEMANTICS=false
+NAMED_PROVIDER_REQUIRED_FOR_PROTOCOL_CONFORMANCE=false
+```
+
 For a non-trivial executable package, the preferred route is one complete repository-executor instruction covering observation, implementation, validation, self-review and change-review preparation. An independent repository observation／acceptance capability MUST inspect the result. In the current repository, GitHub API implements that capability; it remains replaceable and owns no canonical State, Authority or Completion semantics.
 
 Merge, release, production deployment, constitutional weakening and irreversible risk remain subject to their explicit Human Authority boundaries.
@@ -435,6 +454,7 @@ TOOL_SELECTION_NE_AUTHORITY=true
 HUMAN_MERGE_BOUNDARY_PRESERVED=true
 SAME_DIFFERENCE_CORRECTED_IN_PLACE=true
 ACCEPTANCE_LINEAGE_DISTINCT=true
+REPOSITORY_BINDING_RECORDS_IMPLEMENTER_SELECTION=true
 EXECUTOR_SELF_REVIEW_AS_ACCEPTANCE=false
 PREMATURE_ADAPTER_EXPANSION=false
 COMPLETION_INFLATION=false

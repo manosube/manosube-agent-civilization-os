@@ -116,6 +116,22 @@ PR_MERGED != KERNEL_COMPLETE
 
 ---
 
+## 7A. Repository operating Binding
+
+This protocol governs how an Agent communicates about work. It does not select who does the work, who accepts it, or who merges it. A repository records that selection in its own Binding.
+
+For this repository the record is `03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md`. It fixes the acceptance and merge owner, holds every external reviewer's output at `UNVERIFIED_EXTERNAL_OBSERVATION` until the Human explicitly adopts it, and terminates the executor's route at `READY_FOR_SHUKOU_REVIEW`.
+
+```text
+COMMUNICATION_PROTOCOL_SELECTS_PARTICIPANTS=false
+REPOSITORY_BINDING_SELECTS_PARTICIPANTS=true
+EXECUTOR_TERMINAL_STATE=READY_FOR_SHUKOU_REVIEW
+```
+
+A completion notice under §7 reports that the executor reached its terminal state. It is not an acceptance, and this protocol grants no Agent the ability to declare one.
+
+---
+
 ## 8. Minimum conformance
 
 An Agent interaction conforms to this protocol only when all applicable conditions hold:
@@ -130,6 +146,8 @@ EXTERNAL_WAIT_DISTINGUISHED_FROM_ERROR=true
 BLOCKER_DISTINGUISHED_FROM_ERROR=true
 SILENT_LONG_RUNNING_WORK=false
 FORECAST_USED_AS_COMPLETION_EVIDENCE=false
+COMPLETION_NOTICE_USED_AS_ACCEPTANCE=false
+REPOSITORY_BINDING_REGISTERED=true
 ```
 
 An interface or runtime MAY automate these notices, but automation MUST preserve the meanings and boundaries defined here.
