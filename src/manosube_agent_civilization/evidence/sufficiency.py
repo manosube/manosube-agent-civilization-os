@@ -30,6 +30,7 @@ caller has to take that on trust.
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import timedelta
 import hashlib
 from typing import Any
 
@@ -49,7 +50,15 @@ from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 from .engine import derive_evidence
 from .errors import EvidenceError, EvidenceValidationError
-from .levels import EVIDENCE_LEVEL_SCALE, level_index, weakest
+from .levels import (
+    COMPLETION_SEMANTICS_BLOB_SHA,
+    COMPLETION_SEMANTICS_PATH,
+    DERIVABLE_LEVELS,
+    EVIDENCE_LEVEL_SCALE,
+    level_index,
+    unreachable_reason,
+    weakest,
+)
 
 SCHEMA_VERSION = "0.1"
 
@@ -63,7 +72,7 @@ REQUIRED_REQUEST_KEYS: frozenset[str] = frozenset(
         "schema_version",
         "difference_ref",
         "closure_policy",
-        "completion_semantics_ref",
+        "evidence_level_scale_ref",
         "evidence_requests",
         "evaluation_instant",
     }
@@ -156,36 +165,57 @@ def _require_request_shape(request: Any) -> dict[str, Any]:
 
 
 def _require_scale_source(value: Any) -> dict[str, Any]:
-    """Return the completion-semantics blob reference once it addresses *this* scale."""
+    """Return the Evidence Level scale reference once every field it carries is *verified*.
 
-    reference = require_object(value, "completion_semantics_ref")
-    required = {
-        "kind",
-        "repository",
-        "commit_sha",
-        "path",
-        "blob_sha",
-        "evidence_level_scale_sha256",
-    }
+    The previous shape of this reference carried ``repository``, ``commit_sha`` and
+    ``blob_sha`` and checked none of them. A fictitious commit and a fictitious blob passed,
+    and the record then claimed a canonical content-addressed source it had never addressed:
+
+    ```text
+    REFERENCE_SHAPE_VALID=true
+    REFERENCED_BLOB_VERIFIED=false
+    CONTENT_ADDRESS_BINDING_PROVEN=false
+    ```
+
+    So the unverifiable fields are gone and the verifiable one is pinned. ``repository`` and
+    ``commit_sha`` a pure function cannot check at all, and a blob address is
+    commit-independent anyway. ``blob_sha`` it can: the expected value is pinned in
+    :mod:`.levels`, and ``tests/contract/evidence/test_evidence_level_scale_source.py``
+    proves that pin equals ``git hash-object`` of the live document.
+
+    Three things therefore have to agree before a scale is applied -- the document's path,
+    the document's content, and the scale derived from it -- and each of the three is checked
+    against something rather than against nothing.
+    """
+
+    reference = require_object(value, "evidence_level_scale_ref")
+    required = {"kind", "path", "blob_sha", "evidence_level_scale_sha256"}
     unknown = set(reference) - required
     if unknown:
-        raise EvidenceError(f"completion_semantics_ref carries unknown keys: {sorted(unknown)}")
+        raise EvidenceError(f"evidence_level_scale_ref carries unknown keys: {sorted(unknown)}")
     missing = required - set(reference)
     if missing:
-        raise EvidenceError(f"completion_semantics_ref omits required keys: {sorted(missing)}")
-    if reference["kind"] != "git_blob":
+        raise EvidenceError(f"evidence_level_scale_ref omits required keys: {sorted(missing)}")
+    if reference["kind"] != "evidence_level_scale_source":
         raise EvidenceError(
-            f"completion_semantics_ref must be a git_blob reference: {reference['kind']!r}"
+            "evidence_level_scale_ref must be an evidence_level_scale_source reference: "
+            f"{reference['kind']!r}"
         )
-    if reference["path"] != "00_KERNEL/COMPLETION_SEMANTICS.md":
+    if reference["path"] != COMPLETION_SEMANTICS_PATH:
         raise EvidenceError(
-            "completion_semantics_ref must address the canonical Evidence Level source: "
+            "evidence_level_scale_ref must address the canonical Evidence Level source: "
             f"{reference['path']!r}"
+        )
+    if reference["blob_sha"] != COMPLETION_SEMANTICS_BLOB_SHA:
+        raise EvidenceError(
+            "evidence_level_scale_ref addresses a different revision of "
+            f"{COMPLETION_SEMANTICS_PATH} than the one this scale was pinned from: "
+            f"{reference['blob_sha']!r} != {COMPLETION_SEMANTICS_BLOB_SHA!r}"
         )
     expected = evidence_level_scale_digest()
     if reference["evidence_level_scale_sha256"] != expected:
         raise EvidenceError(
-            "completion_semantics_ref addresses a different Evidence Level scale than the "
+            "evidence_level_scale_ref addresses a different Evidence Level scale than the "
             f"one being applied: {reference['evidence_level_scale_sha256']!r} != {expected!r}"
         )
     return deepcopy(reference)
@@ -255,14 +285,24 @@ def _require_difference_ref(value: Any) -> dict[str, Any]:
     return deepcopy(reference)
 
 
-def _age_seconds(recorded_at: str, evaluated_at: str) -> int:
-    """Return whole seconds between an Evidence timestamp and the evaluation instant.
+def _age(recorded_at: str, evaluated_at: str) -> timedelta:
+    """Return the exact interval between an Evidence timestamp and the evaluation instant.
 
-    Negative means the Evidence is dated after the evaluation, which is not an age.
+    Exact, and returned as a ``timedelta`` rather than a number, because every verdict below
+    is decided on it. Truncating first is what the reviewed head did, and it lost precisely
+    the cases a freshness gate exists for:
+
+    ```text
+    int(0.5s in the future)  ->  0   ->  not future-dated
+    int(0.5s old), max age 0 ->  0   ->  not too old
+    ```
+
+    ``int()`` truncates toward zero, so both sub-second violations rounded to "no violation".
+    This is the same fractional-second defect the recording-instant guard had, on the other
+    side of the module; the integer survives only as a reported value, never as a comparand.
     """
 
-    delta = instant(evaluated_at) - instant(recorded_at)
-    return int(delta.total_seconds())
+    return instant(evaluated_at) - instant(recorded_at)
 
 
 def evaluate_sufficiency(request: dict[str, Any]) -> dict[str, Any]:
@@ -286,7 +326,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
     shaped = _require_request_shape(deepcopy(request))
     difference_ref = _require_difference_ref(shaped["difference_ref"])
     policy = _require_policy(shaped["closure_policy"], difference_ref)
-    _require_scale_source(shaped["completion_semantics_ref"])
+    _require_scale_source(shaped["evidence_level_scale_ref"])
 
     evaluated_at = shaped["evaluation_instant"]
     if not isinstance(evaluated_at, str) or not evaluated_at:
@@ -300,6 +340,32 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         raise EvidenceError("evidence_requests must be a list")
     records = [derive_evidence(require_object(item, "evidence request")) for item in requests]
 
+    # --- exact binding -------------------------------------------------------- #
+    #
+    # Every Evidence record carries the Difference *it* was derived against, and this is
+    # where that becomes load-bearing. Without it, three things named a Difference and
+    # nothing made them agree:
+    #
+    #     evidence about Difference A
+    #   + Closure Policy of Difference B
+    #   -> Difference B SUFFICIENT
+    #
+    # The policy's own subject is already required to match above, so with this check all
+    # three -- request, policy, and every Evidence record -- are pinned to one identity, and
+    # each of the three arrived by derivation rather than by being written down.
+    foreign = sorted(
+        {
+            str(record["difference_ref"]["id"])
+            for record in records
+            if record["difference_ref"] != difference_ref
+        }
+    )
+    if foreign:
+        raise EvidenceError(
+            "evidence_requests carry Evidence derived against other Differences than the one "
+            f"being evaluated ({difference_ref['id']}): {foreign}"
+        )
+
     maximum_age = policy["maximum_evidence_age"]
     minimum_level = policy["minimum_evidence_level"]
 
@@ -310,11 +376,11 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
     evaluations: list[dict[str, Any]] = []
 
     for record in records:
-        age = _age_seconds(record["timestamp"], evaluated_at)
-        if age < 0:
+        age = _age(record["timestamp"], evaluated_at)
+        if age < timedelta(0):
             reason_codes.add("EVIDENCE_FUTURE_DATED")
             stale = True
-        elif maximum_age is not None and age > maximum_age:
+        elif maximum_age is not None and age > timedelta(seconds=maximum_age):
             reason_codes.add("EVIDENCE_AGE_EXCEEDED")
             stale = True
         status = record["status"]
@@ -335,7 +401,9 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
                 "evidence_level": record["evidence_level"],
                 "status": status,
                 "recorded_at": record["timestamp"],
-                "age_seconds": age,
+                # Reported, never compared. The verdicts above are decided on the exact
+                # interval; this is the human-readable shadow of it.
+                "age_seconds": int(age.total_seconds()),
             }
         )
 
@@ -348,9 +416,13 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         # so more weak Evidence never raises the effective level.
         effective_level = weakest([record["evidence_level"] for record in records])
 
-    if minimum_level not in {"E0", "E1", "E2", "E3"}:
+    unreachable = minimum_level not in DERIVABLE_LEVELS
+    if unreachable:
         # Q2-A. The policy is held, not weakened: a floor Phase 6 cannot reach stays
-        # unreached, and the Difference stays open.
+        # unreached, and the Difference stays open. ``unreachable_reason`` says what would
+        # have to exist, so this reads as a gap in the Kernel rather than a verdict on the
+        # evidence -- which is the difference between "come back with better evidence" and
+        # "no evidence of this kind can be produced yet".
         reason_codes.add("EVIDENCE_LEVEL_UNREACHABLE_IN_PHASE_6")
         determinate_insufficient = True
     elif records and level_index(effective_level) < level_index(minimum_level):
@@ -412,6 +484,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "evidence_sufficiency_result": sufficiency,
         "reason_codes": sorted(reason_codes),
+        "unreachable_level_reason": unreachable_reason(minimum_level) if unreachable else None,
         "evidence_level_evaluations": sorted(
             evaluations, key=lambda item: str(item["evidence_ref"]["id"])
         ),

@@ -28,14 +28,16 @@ from tests.evidence_guards import (
 from tests.evidence_helpers import (
     before_observation_request,
     change_result_evidence_request,
+    closure_policy,
+    evidence_level_scale_ref,
     observation_evidence_request,
+    observation_with_status,
     sufficiency_request,
 )
 
 from manosube_agent_civilization.evidence import (
     EvidenceError,
     UngroundedChangeResultEvidenceError,
-    UnsupportedEvidenceLevelError,
     derive_evidence,
     evaluate_sufficiency,
 )
@@ -157,29 +159,107 @@ def test_the_ungrounded_change_result_guard_is_the_only_thing_refusing_it() -> N
     _refuses(ungrounded, UngroundedChangeResultEvidenceError)
 
 
-def test_the_level_guard_is_the_only_thing_refusing_a_runtime_claim() -> None:
-    assert derive_evidence(observation_evidence_request(method_class="INTEGRATION_TEST"))
-    _refuses(
-        observation_evidence_request(method_class="NATURAL_PATH_EXECUTION"),
-        UnsupportedEvidenceLevelError,
+def test_the_level_is_a_function_of_the_observation_and_of_nothing_a_caller_writes() -> None:
+    """The channel that produced the P1-B finding, shown closed from both sides.
+
+    Positive control first: the ordinary route still reaches E1, so the E0 below is the
+    Observation Engine's verdict rather than a route that stopped working.
+    """
+
+    assert derive_evidence(observation_evidence_request())["evidence_level"] == "E1"
+    assert (
+        derive_evidence(
+            observation_evidence_request(observation=observation_with_status("BLOCKED"))
+        )["evidence_level"]
+        == "E0"
+    )
+
+    for key, value in (
+        ("observation_method_class", "INTEGRATION_TEST"),
+        ("evidence_level", "E6"),
+    ):
+        request = observation_evidence_request()
+        request[key] = value
+        _refuses(request, EvidenceError)
+
+
+def test_an_unverified_artifact_no_longer_lifts_a_level() -> None:
+    """Both directions. Without the E1 half, a level frozen at E0 would also pass."""
+
+    fake = [
+        {
+            "kind": "artifact",
+            "id": "ARTIFACT-FAKE",
+            "content_sha256": "0" * 64,
+            "byte_length": 0,
+            "media_type": "text/plain",
+        }
+    ]
+    blocked = observation_with_status("BLOCKED")
+    assert (
+        derive_evidence(
+            observation_evidence_request(observation=blocked, artifact_references=fake)
+        )["evidence_level"]
+        == "E0"
+    )
+    assert (
+        derive_evidence(observation_evidence_request(artifact_references=fake))["evidence_level"]
+        == "E1"
     )
 
 
-def test_the_ceiling_guard_lowers_a_level_that_nothing_backs() -> None:
-    """The control is the pair: same method class, different contents, different level."""
+def test_the_difference_binding_guard_refuses_evidence_from_another_difference() -> None:
+    """P1-A, shown failing on the exact combination that used to return SUFFICIENT.
 
-    backed = derive_evidence(observation_evidence_request(method_class="UNIT_TEST"))
-    assert backed["evidence_level"] == "E2"
+    Positive control first: the same Evidence against its *own* Difference is SUFFICIENT, so
+    the refusal below is the binding and not a broken fixture.
+    """
 
-    unbacked_request = before_observation_request()
-    unbacked_request["attempts"] = []
-    unbacked_request["source_occurrences"] = []
-    unbacked = derive_evidence(
-        observation_evidence_request(
-            method_class="UNIT_TEST", observation=unbacked_request, artifact_references=[]
+    own = sufficiency_request(minimum_evidence_level="E1")
+    assert evaluate_sufficiency(own)["evidence_sufficiency_result"]["result"] == "SUFFICIENT"
+
+    other = "D-" + "B" * 64
+    with pytest.raises(EvidenceError) as raised:
+        evaluate_sufficiency(
+            {
+                "schema_version": "0.1",
+                "difference_ref": {"kind": "difference", "id": other},
+                "closure_policy": closure_policy(other, minimum_evidence_level="E1"),
+                "evidence_level_scale_ref": evidence_level_scale_ref(),
+                "evidence_requests": [observation_evidence_request()],
+                "evaluation_instant": "2026-08-30T11:00:00Z",
+            }
         )
+    assert "other Differences" in str(raised.value)
+
+
+def test_the_sub_second_freshness_guard_reports_what_truncation_hid() -> None:
+    """P1-C, both violations and both controls.
+
+    ``int()`` truncates toward zero, so at ``6640ffd`` a half-second future Evidence and a
+    half-second breach of a zero age bound both rounded to "no violation".
+    """
+
+    assert (
+        evaluate_sufficiency(sufficiency_request(maximum_evidence_age=0))[
+            "evidence_sufficiency_result"
+        ]["result"]
+        == "STALE"
     )
-    assert unbacked["evidence_level"] == "E0"
+    on_time = evaluate_sufficiency(
+        sufficiency_request(maximum_evidence_age=0, evaluation_instant="2026-08-30T10:00:00Z")
+    )
+    assert on_time["evidence_sufficiency_result"]["result"] == "SUFFICIENT"
+
+    for instant, code in (
+        ("2026-08-30T09:59:59.5Z", "EVIDENCE_FUTURE_DATED"),
+        ("2026-08-30T10:00:00.5Z", "EVIDENCE_AGE_EXCEEDED"),
+    ):
+        evaluation = evaluate_sufficiency(
+            sufficiency_request(maximum_evidence_age=0, evaluation_instant=instant)
+        )
+        assert evaluation["evidence_sufficiency_result"]["result"] == "STALE"
+        assert code in evaluation["reason_codes"]
 
 
 def test_the_re_observation_guard_refuses_the_before_picture_twice_over() -> None:
@@ -229,6 +309,6 @@ def test_the_scale_address_guard_refuses_a_reference_to_another_scale() -> None:
     assert evaluate_sufficiency(honest)
 
     swapped = sufficiency_request()
-    swapped["completion_semantics_ref"]["evidence_level_scale_sha256"] = "0" * 64
+    swapped["evidence_level_scale_ref"]["evidence_level_scale_sha256"] = "0" * 64
     with pytest.raises(EvidenceError):
         evaluate_sufficiency(swapped)

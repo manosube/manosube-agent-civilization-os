@@ -30,6 +30,7 @@ EVIDENCE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "evidence_position",
     "timestamp",
     "target",
+    "difference_ref",
     "before_state",
     "observation_method",
     "change_identity",

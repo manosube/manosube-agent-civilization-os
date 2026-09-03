@@ -39,13 +39,24 @@ E6_REACHABLE_IN_PHASE_6=false
 
 # 2. 本モジュールが決めること／決めないこと
 
-決めるのは三つだけである。
+決めるのは四つだけである。
 
 ```text
+投入された全 Evidence がこの Difference の Evidence か   ← exact binding
 Evidence が存在するか
 最弱の Evidence が Policy の床以上か
 すべての Evidence が Policy の age 上限内か（admitted instant 基準）
 ```
+
+第一項が欠けると、Differenceを名指すものが三つあって、それらを一致させるものが何も無い
+状態になる。
+
+```text
+Difference A の Evidence + Difference B の Policy → Difference B が SUFFICIENT
+```
+
+Evidence recordは自らが導出されたDifferenceを持つ（`EVIDENCE_CONTRACT.md` §1A）。
+request・Policy・全Evidence recordの三者を一つのidentityへ固定する。
 
 決めないものを、黙って飛ばすのではなく**名指す**。
 
@@ -162,6 +173,16 @@ maximum_evidence_age ≠ null  → 0 <= evaluation_instant - evidence.timestamp 
 
 単位はSI second、非負JSON integer。負の差（Evidenceが評価より後の日付）はageではなく
 `EVIDENCE_FUTURE_DATED`であり、`STALE`とする。
+
+判定は**正確なinterval**で行う。整数へ丸めてから比較してはならない。`int()`はゼロ方向へ
+切り捨てるため、freshness gateが存在する理由そのものである境界を失う。
+
+```text
+int(0.5秒 未来)          → 0 → future-dated にならない
+int(0.5秒 経過), max=0   → 0 → age 超過にならない
+```
+
+整数ageは報告値としてのみ用い、判定には用いない。
 
 時計を読めば、freshnessの判定はreviewerが検証できない判定になる。再現不能な検査は検査で
 はない。

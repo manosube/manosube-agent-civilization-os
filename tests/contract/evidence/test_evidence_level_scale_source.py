@@ -17,10 +17,13 @@ against one scale, evaluated against another.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import re
 
 from manosube_agent_civilization.evidence.levels import (
+    COMPLETION_SEMANTICS_BLOB_SHA,
+    COMPLETION_SEMANTICS_PATH,
     EVIDENCE_LEVEL_LABELS,
     EVIDENCE_LEVEL_SCALE,
 )
@@ -62,3 +65,40 @@ def test_the_source_documents_are_present_and_declare_something() -> None:
 
     assert _declared(COMPLETION_SEMANTICS)
     assert _declared(CONSTITUTION)
+
+
+def _git_blob_sha(path: Path) -> str:
+    """Return git's own object name for a file, computed the way git computes it.
+
+    ``sha1("blob " + len + "\0" + content)``. Computed here rather than shelled out to
+    ``git`` so the guard measures the file, not the availability of a binary.
+    """
+
+    content = path.read_bytes()
+    header = f"blob {len(content)}".encode() + b"\0"
+    return hashlib.sha1(header + content).hexdigest()  # noqa: S324 - git's object name
+
+
+def test_the_pinned_blob_is_the_live_completion_semantics_document() -> None:
+    """The other half of the split obligation, and the one P2-D was missing.
+
+    ``CLOSURE_POLICY.md`` §5 requires the scale to be resolved from this document *by content
+    address*. A pure engine cannot open a file, so the engine holds the expected blob name and
+    this test holds that pin to the file. Without it, ``evidence_level_scale_ref`` checked a
+    blob field against a constant that was answerable to nothing -- which is how a reference
+    carrying ``blob_sha=1111...`` was accepted as a canonical content-addressed source.
+
+    A deliberate edit to ``COMPLETION_SEMANTICS.md`` fails here. That is the intended
+    coupling: a changed scale source must invalidate the pin rather than pass silently.
+    """
+
+    assert COMPLETION_SEMANTICS_PATH == "00_KERNEL/COMPLETION_SEMANTICS.md"
+    assert _git_blob_sha(COMPLETION_SEMANTICS) == COMPLETION_SEMANTICS_BLOB_SHA
+
+
+def test_the_blob_guard_is_not_vacuous(tmp_path: Path) -> None:
+    """The control: the same function, over a file whose content is known to differ."""
+
+    other = tmp_path / "other.md"
+    other.write_text(COMPLETION_SEMANTICS.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    assert _git_blob_sha(other) != COMPLETION_SEMANTICS_BLOB_SHA

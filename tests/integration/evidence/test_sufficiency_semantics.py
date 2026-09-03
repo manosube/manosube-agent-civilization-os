@@ -19,8 +19,11 @@ import pytest
 from tests.evidence_helpers import (
     EVALUATED_AT,
     RECORDED_AT,
-    before_observation_request,
+    after_observation_with_status,
+    blocked_after_observation_request,
+    change_result_evidence_request,
     observation_evidence_request,
+    observation_with_status,
     sufficiency_request,
 )
 
@@ -41,6 +44,19 @@ STATUS_CODES: dict[str, str | None] = {
     "CONFLICTED": "EVIDENCE_STATUS_CONFLICTED",
 }
 
+#: The statuses an Evidence record can actually carry once it is bound to a Difference. The
+#: rest are not unreachable by choice: the Difference producer refuses to derive from an
+#: Observation it cannot read a State from, so ``FAILED``, ``INVALID`` and ``UNOBSERVED``
+#: stop one layer earlier. That boundary is pinned in
+#: ``test_kernel_route_to_evidence.py`` and is reported, not taken.
+REACHABLE_STATUSES: tuple[str, ...] = (
+    "COMPLETE",
+    "EMPTY",
+    "BLOCKED",
+    "INCOMPLETE",
+    "CONFLICTED",
+)
+
 
 def _evaluate(**kwargs: Any) -> dict[str, Any]:
     return evaluate_sufficiency(sufficiency_request(**kwargs))
@@ -50,11 +66,28 @@ def _result(**kwargs: Any) -> str:
     return str(_evaluate(**kwargs)["evidence_sufficiency_result"]["result"])
 
 
-def _observation_with_attempt(result: str) -> dict[str, Any]:
-    request = before_observation_request()
-    request["attempts"][0]["result"] = result
-    request["attempts"][0]["failure_class"] = None if result != "FAILED" else "SOURCE_ERROR"
-    return request
+def _evidence_with_status(status: str, **kwargs: Any) -> dict[str, Any]:
+    """An Observation Evidence request whose Observation the Engine concludes *status* for.
+
+    Each status is a different observed State, so each derives a *different* Difference.
+    That is correct and is why the mixed-status tests below use ``_after_status`` instead:
+    two Evidence records of two Differences cannot back one Closure, and sufficiency now
+    refuses the combination rather than averaging it.
+    """
+
+    return observation_evidence_request(observation=observation_with_status(status), **kwargs)
+
+
+def _after_status(status: str, **kwargs: Any) -> dict[str, Any]:
+    """A Change Result Evidence request whose *re-observation* concludes *status*.
+
+    All of these bind one Difference -- the one their shared before-Observation derives -- so
+    they can be combined in a single sufficiency evaluation.
+    """
+
+    return change_result_evidence_request(
+        post_change_observation=after_observation_with_status(status), **kwargs
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -85,8 +118,10 @@ def test_the_effective_level_is_the_weakest_not_the_strongest() -> None:
     evaluation = _evaluate(
         minimum_evidence_level="E0",
         evidence_requests=[
-            observation_evidence_request(method_class="INTEGRATION_TEST"),
-            observation_evidence_request(method_class="DECLARATION"),
+            observation_evidence_request(),
+            change_result_evidence_request(
+                post_change_observation=blocked_after_observation_request()
+            ),
         ],
     )
     assert evaluation["evidence_sufficiency_result"]["evidence_level"] == "E0"
@@ -94,12 +129,13 @@ def test_the_effective_level_is_the_weakest_not_the_strongest() -> None:
 
 def test_more_weak_evidence_does_not_reach_a_higher_floor() -> None:
     many = [
-        observation_evidence_request(
-            method_class="STATIC_INSPECTION", recorded_at=f"2026-08-30T10:0{index}:00Z"
+        change_result_evidence_request(
+            post_change_observation=blocked_after_observation_request(),
+            recorded_at=f"2026-08-30T10:0{index}:00Z",
         )
         for index in range(5)
     ]
-    evaluation = _evaluate(minimum_evidence_level="E2", evidence_requests=many)
+    evaluation = _evaluate(minimum_evidence_level="E1", evidence_requests=many)
     assert len({request["recorded_at"] for request in many}) == 5
     assert evaluation["evidence_sufficiency_result"]["result"] == "INSUFFICIENT"
     assert "EVIDENCE_LEVEL_BELOW_MINIMUM" in evaluation["reason_codes"]
@@ -115,19 +151,31 @@ def test_a_floor_at_or_below_the_evidence_is_met() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("floor", ["E4", "E5", "E6"])
-def test_a_runtime_floor_is_held_as_insufficient_rather_than_lowered(floor: str) -> None:
+@pytest.mark.parametrize("floor", ["E2", "E3", "E4", "E5", "E6"])
+def test_an_underivable_floor_is_held_as_insufficient_rather_than_lowered(floor: str) -> None:
     evaluation = _evaluate(minimum_evidence_level=floor)
     assert evaluation["evidence_sufficiency_result"]["result"] == "INSUFFICIENT"
     assert "EVIDENCE_LEVEL_UNREACHABLE_IN_PHASE_6" in evaluation["reason_codes"]
+    # The refusal names what would have to exist, rather than only that something does not.
+    assert evaluation["unreachable_level_reason"]
 
 
 def test_an_unreachable_floor_is_distinguished_from_evidence_that_is_merely_too_weak() -> None:
-    unreachable = _evaluate(minimum_evidence_level="E5")["reason_codes"]
-    too_weak = _evaluate(minimum_evidence_level="E3")["reason_codes"]
-    assert "EVIDENCE_LEVEL_UNREACHABLE_IN_PHASE_6" in unreachable
-    assert "EVIDENCE_LEVEL_UNREACHABLE_IN_PHASE_6" not in too_weak
-    assert "EVIDENCE_LEVEL_BELOW_MINIMUM" in too_weak
+    """Two situations with entirely different remedies, and one four-valued result.
+
+    "Come back with better evidence" and "no evidence of this kind can be produced yet" are
+    both INSUFFICIENT. Only the reason codes separate them.
+    """
+
+    unreachable = _evaluate(minimum_evidence_level="E5")
+    too_weak = _evaluate(
+        minimum_evidence_level="E1", evidence_requests=[_evidence_with_status("BLOCKED")]
+    )
+    assert "EVIDENCE_LEVEL_UNREACHABLE_IN_PHASE_6" in unreachable["reason_codes"]
+    assert unreachable["unreachable_level_reason"]
+    assert "EVIDENCE_LEVEL_UNREACHABLE_IN_PHASE_6" not in too_weak["reason_codes"]
+    assert "EVIDENCE_LEVEL_BELOW_MINIMUM" in too_weak["reason_codes"]
+    assert too_weak["unreachable_level_reason"] is None
 
 
 # --------------------------------------------------------------------------- #
@@ -149,12 +197,8 @@ def test_a_proven_empty_observation_is_not_an_absent_one() -> None:
     enumeration satisfies the Target is Difference's question, not this module's.
     """
 
-    empty = before_observation_request()
-    empty["source_occurrences"] = []
-    empty["attempts"][0]["result"] = "EMPTY"
     evaluation = _evaluate(
-        minimum_evidence_level="E0",
-        evidence_requests=[observation_evidence_request(observation=empty)],
+        minimum_evidence_level="E0", evidence_requests=[_evidence_with_status("EMPTY")]
     )
     codes = evaluation["reason_codes"]
     assert "EVIDENCE_STATUS_EMPTY" in codes
@@ -163,17 +207,14 @@ def test_a_proven_empty_observation_is_not_an_absent_one() -> None:
 
 
 @pytest.mark.parametrize(
-    ("attempt", "code"),
-    [("BLOCKED", "EVIDENCE_STATUS_BLOCKED"), ("FAILED", "EVIDENCE_STATUS_FAILED")],
+    ("status", "code"),
+    [("BLOCKED", "EVIDENCE_STATUS_BLOCKED"), ("CONFLICTED", "EVIDENCE_STATUS_CONFLICTED")],
 )
-def test_a_blocked_or_failed_observation_is_determinately_insufficient(
-    attempt: str, code: str
+def test_a_blocked_or_contradicted_observation_is_determinately_insufficient(
+    status: str, code: str
 ) -> None:
     evaluation = _evaluate(
-        minimum_evidence_level="E0",
-        evidence_requests=[
-            observation_evidence_request(observation=_observation_with_attempt(attempt))
-        ],
+        minimum_evidence_level="E0", evidence_requests=[_evidence_with_status(status)]
     )
     assert evaluation["evidence_sufficiency_result"]["result"] == "INSUFFICIENT"
     assert code in evaluation["reason_codes"]
@@ -183,10 +224,7 @@ def test_an_incomplete_observation_is_unknown_rather_than_insufficient() -> None
     """Reporting INSUFFICIENT here would assert a negative nobody observed."""
 
     evaluation = _evaluate(
-        minimum_evidence_level="E0",
-        evidence_requests=[
-            observation_evidence_request(observation=_observation_with_attempt("PARTIAL"))
-        ],
+        minimum_evidence_level="E0", evidence_requests=[_evidence_with_status("INCOMPLETE")]
     )
     assert evaluation["evidence_sufficiency_result"]["result"] == "UNKNOWN"
     assert "EVIDENCE_STATUS_INCOMPLETE" in evaluation["reason_codes"]
@@ -247,7 +285,11 @@ def test_staleness_outranks_every_other_verdict() -> None:
     """A stale binding is not evaluated on its merits: ``SATISFIED`` is not available to it,
     so a stale *and* weak evidence set must report STALE rather than INSUFFICIENT."""
 
-    evaluation = _evaluate(minimum_evidence_level="E3", maximum_evidence_age=1)
+    evaluation = _evaluate(
+        minimum_evidence_level="E1",
+        maximum_evidence_age=1,
+        evidence_requests=[_evidence_with_status("BLOCKED")],
+    )
     assert evaluation["evidence_sufficiency_result"]["result"] == "STALE"
     assert "EVIDENCE_LEVEL_BELOW_MINIMUM" in evaluation["reason_codes"]
 
@@ -256,15 +298,12 @@ def test_a_determinate_failure_outranks_an_indeterminate_one() -> None:
     evaluation = _evaluate(
         minimum_evidence_level="E0",
         evidence_requests=[
-            observation_evidence_request(observation=_observation_with_attempt("PARTIAL")),
-            observation_evidence_request(
-                observation=_observation_with_attempt("FAILED"),
-                recorded_at="2026-08-30T10:30:00Z",
-            ),
+            _after_status("INCOMPLETE"),
+            _after_status("BLOCKED", recorded_at="2026-08-30T10:30:00Z"),
         ],
     )
     assert evaluation["evidence_sufficiency_result"]["result"] == "INSUFFICIENT"
-    assert {"EVIDENCE_STATUS_INCOMPLETE", "EVIDENCE_STATUS_FAILED"} <= set(
+    assert {"EVIDENCE_STATUS_INCOMPLETE", "EVIDENCE_STATUS_BLOCKED"} <= set(
         evaluation["reason_codes"]
     )
 
@@ -285,34 +324,23 @@ def test_every_code_the_evaluator_emits_is_a_declared_reason_code() -> None:
     from manosube_agent_civilization.evidence import REASON_CODES
 
     emitted: set[str] = set()
-    for evaluation in (
+    evaluations = [
         _evaluate(),
-        _evaluate(minimum_evidence_level="E3"),
         _evaluate(minimum_evidence_level="E5"),
         _evaluate(maximum_evidence_age=1),
         _evaluate(evaluation_instant="2026-08-30T09:30:00Z"),
         _evaluate(evidence_requests=[]),
         _evaluate(
-            minimum_evidence_level="E0",
-            evidence_requests=[
-                observation_evidence_request(observation=_observation_with_attempt("BLOCKED")),
-            ],
+            minimum_evidence_level="E1", evidence_requests=[_evidence_with_status("BLOCKED")]
         ),
-        _evaluate(
-            minimum_evidence_level="E0",
-            evidence_requests=[
-                observation_evidence_request(observation=_observation_with_attempt("FAILED")),
-            ],
-        ),
-        _evaluate(
-            minimum_evidence_level="E0",
-            evidence_requests=[
-                observation_evidence_request(observation=_observation_with_attempt("PARTIAL")),
-            ],
-        ),
-    ):
+    ]
+    evaluations.extend(
+        _evaluate(minimum_evidence_level="E0", evidence_requests=[_evidence_with_status(status)])
+        for status in REACHABLE_STATUSES
+    )
+    for evaluation in evaluations:
         emitted |= set(evaluation["reason_codes"])
 
     assert emitted <= set(REASON_CODES)
     # The control: a run that emitted nothing would satisfy the subset check trivially.
-    assert len(emitted) >= 7
+    assert len(emitted) >= 8

@@ -3,13 +3,14 @@
   "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/evidence/evidence.schema.json",
   "title": "Canonical Evidence",
   "type": "object",
-  "required": ["schema_version", "evidence_id", "evidence_position", "timestamp", "target", "before_state", "observation_method", "change_identity", "authority_used", "after_state", "expected_result", "observed_result", "status", "artifact_references", "lineage", "remaining_differences", "evidence_level", "evidence_semantic_fingerprint"],
+  "required": ["schema_version", "evidence_id", "evidence_position", "timestamp", "target", "difference_ref", "before_state", "observation_method", "change_identity", "authority_used", "after_state", "expected_result", "observed_result", "status", "artifact_references", "lineage", "remaining_differences", "evidence_level", "evidence_semantic_fingerprint"],
   "properties": {
     "schema_version": {"const": "0.1"},
     "evidence_id": {"type": "string", "pattern": "^EVIDENCE-[0-9A-F]{64}(?![\\s\\S])"},
     "evidence_position": {"enum": ["OBSERVATION_EVIDENCE", "CHANGE_RESULT_EVIDENCE"]},
     "timestamp": {"$ref": "../common/timestamp.schema.json"},
     "target": {"type": "object", "required": ["project_id", "target_identity", "kind"], "properties": {"project_id": {"$ref": "../common/identity.schema.json"}, "target_identity": {"$ref": "../common/identity.schema.json"}, "kind": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"}}, "additionalProperties": false},
+    "difference_ref": {"$ref": "#/$defs/difference_ref"},
     "before_state": {"$ref": "#/$defs/state_binding"},
     "observation_method": {"$ref": "#/$defs/method_binding"},
     "change_identity": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/change_binding"}]},
@@ -44,12 +45,21 @@
       },
       "additionalProperties": false
     },
+    "difference_ref": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"const": "difference"},
+        "id": {"type": "string", "pattern": "^D-[0-9A-F]{64}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    },
     "method_binding": {
       "type": "object",
-      "required": ["method_ref", "method_class"],
+      "required": ["method_ref", "normalization_profile"],
       "properties": {
         "method_ref": {"$ref": "../common/reference.schema.json"},
-        "method_class": {"enum": ["DECLARATION", "STATIC_INSPECTION", "UNIT_TEST", "INTEGRATION_TEST", "NATURAL_PATH_EXECUTION", "TARGET_RUNTIME_PROOF", "REPEATED_INDEPENDENT_RUNTIME_PROOF"]}
+        "normalization_profile": {"type": "string", "pattern": "^[A-Z][A-Z0-9_.-]*-[0-9]+\\.[0-9]+(?![\\s\\S])"}
       },
       "additionalProperties": false
     },

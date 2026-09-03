@@ -18,24 +18,33 @@ import re
 from typing import Any
 
 import pytest
+from tests.authority_helpers import action, rule, scope as authority_scope
+from tests.change_helpers import route
+from tests.difference_helpers import state_fingerprint
 from tests.evidence_helpers import (
     after_observation_request,
     before_observation_request,
     change_result_evidence_request,
+    evidenced_difference,
     observation_evidence_request,
+    observation_with_status,
     real_change_request,
 )
 
+from manosube_agent_civilization.authority.errors import StaleAuthorityInputError
 from manosube_agent_civilization.evidence import (
     CHANGE_RESULT_EVIDENCE,
+    DERIVABLE_LEVELS,
+    EVIDENCE_LEVEL_SCALE,
     OBSERVATION_EVIDENCE,
+    UNDERIVABLE_LEVELS,
     EvidenceError,
     UngroundedChangeResultEvidenceError,
-    UnsupportedEvidenceLevelError,
     derive_evidence,
 )
 from manosube_agent_civilization.evidence.engine import REQUIRED_REQUEST_KEYS
 from manosube_agent_civilization.evidence.identity import EVIDENCE_SEMANTIC_FIELDS
+from manosube_agent_civilization.evidence.levels import unreachable_reason
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CONSTITUTION = REPOSITORY_ROOT / "00_KERNEL" / "KERNEL_CONSTITUTION.md"
@@ -165,61 +174,108 @@ def test_no_canonical_state_body_is_copied_into_an_evidence_record(
 
 
 @pytest.mark.parametrize(
-    ("method_class", "expected"),
+    ("status", "expected"),
     [
-        ("DECLARATION", "E0"),
-        ("STATIC_INSPECTION", "E1"),
-        ("UNIT_TEST", "E2"),
-        ("INTEGRATION_TEST", "E3"),
+        ("COMPLETE", "E1"),
+        ("EMPTY", "E1"),
+        ("BLOCKED", "E0"),
+        ("INCOMPLETE", "E0"),
+        ("CONFLICTED", "E0"),
     ],
 )
-def test_derivable_levels_come_from_the_method_class(method_class: str, expected: str) -> None:
-    record = derive_evidence(observation_evidence_request(method_class=method_class))
+def test_the_level_is_a_function_of_the_observation_engine_s_own_verdict(
+    status: str, expected: str
+) -> None:
+    """E1 is 静的確認: the Engine certified its declared scope completely observed.
+
+    Nothing in the Evidence request selects the level. The five cases differ only in what the
+    Observation Engine concluded about its own scope, from attempt outcomes and bounded
+    Negative Observations it evaluated itself.
+    """
+
+    record = derive_evidence(
+        observation_evidence_request(observation=observation_with_status(status))
+    )
+    assert record["status"] == status
     assert record["evidence_level"] == expected
 
 
-@pytest.mark.parametrize(
-    "method_class",
-    ["NATURAL_PATH_EXECUTION", "TARGET_RUNTIME_PROOF", "REPEATED_INDEPENDENT_RUNTIME_PROOF"],
-)
-def test_e4_to_e6_are_refused_rather_than_minted(method_class: str) -> None:
-    with pytest.raises(UnsupportedEvidenceLevelError) as raised:
-        derive_evidence(observation_evidence_request(method_class=method_class))
-    assert "Phase 6 cannot derive" in str(raised.value)
+def test_no_caller_string_can_name_a_level_or_a_method() -> None:
+    """The channel that produced the finding, closed by removing it rather than checking it.
+
+    At ``6640ffd`` one identical Observation produced E1, E2 or E3 depending on a string the
+    caller wrote. There is now no such key, so the three cannot be told apart by anything a
+    caller says -- and the request is closed, so writing one is refused rather than ignored.
+    """
+
+    for key, value in (
+        ("observation_method_class", "INTEGRATION_TEST"),
+        ("evidence_level", "E3"),
+        ("status", "COMPLETE"),
+        ("evidence_position", "OBSERVATION_EVIDENCE"),
+        ("difference_ref", {"kind": "difference", "id": "D-" + "0" * 64}),
+    ):
+        request = observation_evidence_request()
+        request[key] = value
+        with pytest.raises(EvidenceError) as raised:
+            derive_evidence(request)
+        assert "unknown keys" in str(raised.value)
 
 
-def test_the_vocabulary_keeps_e4_to_e6_even_though_the_derivation_stops_at_e3() -> None:
-    """Q2-A keeps the constitutional vocabulary and narrows only what may be *produced*."""
+def test_an_unverified_artifact_reference_no_longer_lifts_the_level() -> None:
+    """Evidence cannot fetch an artifact, so an artifact count was never proof of anything.
+
+    At ``6640ffd`` attaching one reference to content nobody had seen raised E0 to E1. It now
+    raises nothing: the level does not read the artifact set at all.
+    """
+
+    unbacked = [
+        {
+            "kind": "artifact",
+            "id": "ARTIFACT-FAKE",
+            "content_sha256": "0" * 64,
+            "byte_length": 0,
+            "media_type": "text/plain",
+        }
+    ]
+    blocked = observation_with_status("BLOCKED")
+    assert (
+        derive_evidence(observation_evidence_request(observation=blocked, artifact_references=[]))[
+            "evidence_level"
+        ]
+        == derive_evidence(
+            observation_evidence_request(observation=blocked, artifact_references=unbacked)
+        )["evidence_level"]
+        == "E0"
+    )
+    assert (
+        derive_evidence(observation_evidence_request(artifact_references=[]))["evidence_level"]
+        == derive_evidence(observation_evidence_request())["evidence_level"]
+        == "E1"
+    )
+
+
+@pytest.mark.parametrize("level", ["E2", "E3", "E4", "E5", "E6"])
+def test_every_underivable_level_says_what_would_have_to_exist(level: str) -> None:
+    """A refusal that only refuses tells a reader nothing about how to resolve it.
+
+    E2 and E3 are here beside E4-E6 because the frozen tree distinguishes none of the five:
+    ``observation_method.schema.json`` pins ``procedure_kind`` to one value, so no canonical
+    record separates a unit test from an integration test from a static inspection. Letting a
+    caller assert which one it was is exactly the channel this phase removed.
+    """
+
+    assert level in UNDERIVABLE_LEVELS
+    assert level not in DERIVABLE_LEVELS
+    assert unreachable_reason(level)
+
+
+def test_the_vocabulary_keeps_every_level_the_constitution_names() -> None:
+    """Q2-A narrows what may be *produced* and never what the schema admits."""
 
     schema = json.loads(EVIDENCE_SCHEMA.read_text(encoding="utf-8"))
-    assert schema["properties"]["evidence_level"]["enum"] == [
-        "E0",
-        "E1",
-        "E2",
-        "E3",
-        "E4",
-        "E5",
-        "E6",
-    ]
-
-
-def test_a_level_cannot_exceed_what_the_record_contains() -> None:
-    """``E-005``: an integration test that carries no artifact and ran nothing is a claim."""
-
-    record = derive_evidence(
-        observation_evidence_request(method_class="INTEGRATION_TEST", artifact_references=[])
-    )
-    assert record["evidence_level"] == "E3"
-
-    empty = before_observation_request()
-    empty["attempts"] = []
-    empty["source_occurrences"] = []
-    lowered = derive_evidence(
-        observation_evidence_request(
-            method_class="INTEGRATION_TEST", observation=empty, artifact_references=[]
-        )
-    )
-    assert lowered["evidence_level"] == "E0"
+    assert schema["properties"]["evidence_level"]["enum"] == list(EVIDENCE_LEVEL_SCALE)
+    assert set(DERIVABLE_LEVELS) | set(UNDERIVABLE_LEVELS) == set(EVIDENCE_LEVEL_SCALE)
 
 
 def test_there_is_no_request_key_through_which_a_level_could_be_supplied() -> None:
@@ -302,11 +358,39 @@ def test_a_re_observation_of_an_earlier_revision_is_refused() -> None:
     assert "earlier than" in str(raised.value)
 
 
-def test_a_before_observation_of_another_state_is_refused() -> None:
-    request = change_result_evidence_request(observation=after_observation_request())
+def test_the_change_before_state_agrees_by_construction_not_by_a_check() -> None:
+    """Three owners already force the agreement, so Evidence does not compare them again.
+
+    Each case below is refused *before* reaching Evidence's own record assembly, by the owner
+    that owns the question. That is why there is no before-state comparison in
+    ``_change_result_evidence``: it would be a branch no input could reach.
+    """
+
+    difference = evidenced_difference()
+    where = authority_scope()
+    permitting = [rule(difference["project_id"], rule_scope=where)]
+
+    # The Difference producer: an Observation of another State does not yield this Difference.
     with pytest.raises(EvidenceError) as raised:
-        derive_evidence(request)
-    assert "authorized against" in str(raised.value)
+        derive_evidence(change_result_evidence_request(observation=after_observation_request()))
+    assert "State" in str(raised.value)
+
+    # Authority: a decision evaluated against another State revision or fingerprint is stale,
+    # and never becomes a decision at all -- so no Change for one can reach Evidence.
+    for kwargs in (
+        {"state_revision": 5},
+        {"state_fingerprint_override": state_fingerprint("KNOWN")},
+    ):
+        with pytest.raises(StaleAuthorityInputError) as stale:
+            route(difference, action(), where, rules=permitting, **kwargs)
+        assert "not bound to the current State" in str(stale.value)
+
+    # And the record that does get built carries the one State all three agreed on.
+    record = derive_evidence(change_result_evidence_request())
+    assert record["before_state"]["state_revision"] == difference["observed_state_revision"]
+    assert (
+        record["before_state"]["semantic_fingerprint"] == difference["observed_state_fingerprint"]
+    )
 
 
 # --------------------------------------------------------------------------- #

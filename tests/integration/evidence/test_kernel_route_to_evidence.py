@@ -17,17 +17,25 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from tests.authority_helpers import derived_difference
-from tests.difference_helpers import PREDICATE_ID
+from tests.difference_helpers import (
+    PREDICATE_ID,
+    negative_claim,
+    observation_request,
+    observation_scope,
+    state_fingerprint,
+)
 from tests.evidence_helpers import (
     AFTER_REVISION,
     BEFORE_REVISION,
     after_observation_request,
+    after_observation_with_status,
     before_observation_request,
     change_result_evidence_request,
     closure_policy,
-    completion_semantics_ref,
+    evidence_level_scale_ref,
+    evidenced_difference as derived_difference,
     observation_evidence_request,
+    observation_with_status,
     real_change_request,
 )
 
@@ -174,7 +182,13 @@ def test_the_lineage_names_every_record_the_evidence_was_derived_from(
 ) -> None:
     record = derive_evidence(change_result_evidence_request(change_request=change_route["request"]))
     kinds = [member["kind"] for member in record["lineage"]["derived_from"]["members"]]
-    assert sorted(kinds) == ["authority_decision", "change", "observation", "observation"]
+    assert sorted(kinds) == [
+        "authority_decision",
+        "change",
+        "difference",
+        "observation",
+        "observation",
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -204,7 +218,7 @@ def test_sufficiency_runs_against_the_policy_the_real_difference_bound() -> None
             "schema_version": "0.1",
             "difference_ref": {"kind": "difference", "id": difference["difference_id"]},
             "closure_policy": policy,
-            "completion_semantics_ref": completion_semantics_ref(),
+            "evidence_level_scale_ref": evidence_level_scale_ref(),
             "evidence_requests": [observation_evidence_request()],
             "evaluation_instant": "2026-08-30T11:00:00Z",
         }
@@ -224,9 +238,9 @@ def test_change_result_evidence_feeds_sufficiency_on_the_same_route(
             "schema_version": "0.1",
             "difference_ref": {"kind": "difference", "id": difference["difference_id"]},
             "closure_policy": closure_policy(
-                difference["difference_id"], minimum_evidence_level="E3"
+                difference["difference_id"], minimum_evidence_level="E1"
             ),
-            "completion_semantics_ref": completion_semantics_ref(),
+            "evidence_level_scale_ref": evidence_level_scale_ref(),
             "evidence_requests": [
                 change_result_evidence_request(change_request=change_route["request"])
             ],
@@ -234,7 +248,7 @@ def test_change_result_evidence_feeds_sufficiency_on_the_same_route(
         }
     )
     assert evaluation["evidence_sufficiency_result"]["result"] == "SUFFICIENT"
-    assert evaluation["evidence_sufficiency_result"]["evidence_level"] == "E3"
+    assert evaluation["evidence_sufficiency_result"]["evidence_level"] == "E1"
 
 
 def test_the_produced_result_is_shaped_for_the_section_difference_carries_it_in() -> None:
@@ -250,9 +264,74 @@ def test_the_produced_result_is_shaped_for_the_section_difference_carries_it_in(
             "schema_version": "0.1",
             "difference_ref": {"kind": "difference", "id": derived_difference()["difference_id"]},
             "closure_policy": closure_policy(derived_difference()["difference_id"]),
-            "completion_semantics_ref": completion_semantics_ref(),
+            "evidence_level_scale_ref": evidence_level_scale_ref(),
             "evidence_requests": [observation_evidence_request()],
             "evaluation_instant": "2026-08-30T11:00:00Z",
         }
     )["evidence_sufficiency_result"]
     assert result["evidence_sufficiency_id"].startswith("EVID-SUFF-")
+
+
+# --------------------------------------------------------------------------- #
+# the boundary the Difference route imposes -- reported, not taken
+# --------------------------------------------------------------------------- #
+
+
+def test_every_status_the_difference_route_admits_reaches_evidence() -> None:
+    """Five of the nine Observation statuses survive the route, and the level follows.
+
+    Binding Evidence to a Difference means Evidence inherits the Difference producer's
+    admissibility, and that is the correct direction: an Evidence record about a Difference
+    nobody could derive is a record about nothing.
+    """
+
+    reached = {}
+    for status in ("COMPLETE", "EMPTY", "BLOCKED", "INCOMPLETE", "CONFLICTED"):
+        record = derive_evidence(
+            observation_evidence_request(observation=observation_with_status(status))
+        )
+        reached[status] = (record["status"], record["evidence_level"])
+    assert reached == {
+        "COMPLETE": ("COMPLETE", "E1"),
+        "EMPTY": ("EMPTY", "E1"),
+        "BLOCKED": ("BLOCKED", "E0"),
+        "INCOMPLETE": ("INCOMPLETE", "E0"),
+        "CONFLICTED": ("CONFLICTED", "E0"),
+    }
+
+
+def test_a_failed_observation_stops_at_the_difference_producer_not_at_evidence() -> None:
+    """A predecessor-surface consequence, pinned rather than worked around.
+
+    ``difference/engine.py`` refuses to derive from an Observation it rules ``FAILED``. 第31条
+    wants failure reflowed as Evidence, so there is a real gap between the two -- but widening
+    a predecessor's admissibility is that phase's decision, and routing around it here would
+    reopen exactly the binding P1-A closed.
+
+    The gap is narrower than it looks: a FAILED *re-observation* is recordable, because the
+    post-change Observation never reaches the Difference producer. The test asserts both, so
+    a future change on either side is caught.
+    """
+
+    failed = observation_request(
+        observation_scope(),
+        [],
+        state_fingerprint(),
+        BEFORE_REVISION,
+        negative_claims=[negative_claim("FAILED")],
+    )
+    failed["attempts"][0]["result"] = "FAILED"
+    failed["attempts"][0]["failure_class"] = "SOURCE_ERROR"
+    assert observe(failed)["observations"][-1]["status"] == "FAILED"
+
+    with pytest.raises(EvidenceError) as raised:
+        derive_evidence(observation_evidence_request(observation=failed))
+    assert "unusable Observation status: FAILED" in str(raised.value)
+
+    on_the_change_route = derive_evidence(
+        change_result_evidence_request(
+            post_change_observation=after_observation_with_status("FAILED")
+        )
+    )
+    assert on_the_change_route["status"] == "FAILED"
+    assert on_the_change_route["evidence_level"] == "E0"

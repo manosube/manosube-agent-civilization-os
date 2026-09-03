@@ -45,6 +45,7 @@ from typing import Any
 from manosube_agent_civilization.authority.errors import AuthorityError
 from manosube_agent_civilization.change import derive_change
 from manosube_agent_civilization.change.errors import ChangeError
+from manosube_agent_civilization.difference import derive_differences
 from manosube_agent_civilization.difference.admissibility import require_object
 from manosube_agent_civilization.difference.errors import DifferenceError
 from manosube_agent_civilization.difference.validation import (
@@ -62,7 +63,7 @@ from .errors import (
     UngroundedChangeResultEvidenceError,
 )
 from .identity import evidence_id, evidence_semantic_fingerprint
-from .levels import completed_attempt_count, derive_level
+from .levels import derive_level
 
 EVIDENCE_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "evidence/"
 SCHEMA_VERSION = "0.1"
@@ -77,14 +78,20 @@ CHANGE_RESULT_EVIDENCE = "CHANGE_RESULT_EVIDENCE"
 #: §4 gives: an ignored key is still a channel.
 #:
 #: Note what is *not* here. There is no ``evidence_level``, no ``status``, no
-#: ``evidence_position``, no ``observation`` and no ``change``. Each of those is a conclusion,
-#: and a conclusion supplied by the caller is a conclusion this engine did not reach.
+#: ``evidence_position``, no ``observation_method_class``, no ``difference_ref``, no
+#: ``observation`` and no ``change``. Each of those is a conclusion, and a conclusion
+#: supplied by the caller is a conclusion this engine did not reach.
+#:
+#: ``difference_request`` is the one that closes exact binding. Without it an Evidence record
+#: named no Difference at all, and sufficiency would pair any Evidence with any Closure
+#: Policy: Evidence about Difference A could carry Difference B to SUFFICIENT. The Difference
+#: is now *derived*, by its own owner, from the Observation this record is about.
 REQUIRED_REQUEST_KEYS: frozenset[str] = frozenset(
     {
         "schema_version",
         "recorded_at",
         "observation_request",
-        "observation_method_class",
+        "difference_request",
         "change_request",
         "post_change_observation_request",
         "artifact_references",
@@ -143,8 +150,8 @@ def _delegate(owner: Any, request: Any, context: str) -> Any:
         raise EvidenceError(f"{context} could not be read: {error!r}") from error
 
 
-def _observe_last(request: dict[str, Any]) -> dict[str, Any]:
-    """Run the canonical Observation Engine and return the record it just minted.
+def _observed(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the canonical Observation Engine and return its bundle and the record it minted.
 
     The extraction is inside the function ``_delegate`` guards on purpose. There is no input
     for which ``observe`` returns an empty bundle, so a branch raising "no Observation was
@@ -153,20 +160,60 @@ def _observe_last(request: dict[str, Any]) -> dict[str, Any]:
     than escaping as a crash, which is the outcome the unreachable branch was reaching for.
     """
 
-    minted: dict[str, Any] = observe(request)["observations"][-1]
-    return minted
+    bundle: dict[str, Any] = observe(request)
+    return bundle, bundle["observations"][-1]
 
 
-def _minted_observation(request: Any, context: str) -> dict[str, Any]:
-    """Reproduce one Observation through its canonical owner and return the new record.
+def _minted_observation(request: Any, context: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reproduce one Observation through its canonical owner and return what it produced.
 
     ``observe`` appends the Observation it mints to any prior bundle it was given, so the
     record this Evidence is about is the last one. Taking it by position rather than by a
     caller-supplied identity is what keeps the reproduction meaningful: there is no
     parameter here through which a caller could point at a record ``observe`` did not make.
+
+    The whole bundle comes back because the Difference derivation consumes it. Deriving the
+    Difference from anything else -- a second bundle, a supplied one -- would let the record
+    name a Difference that was never about this observation.
     """
 
-    return deepcopy(_delegate(_observe_last, request, context))
+    bundle, minted = _delegate(_observed, request, context)
+    return deepcopy(bundle), deepcopy(minted)
+
+
+def _derived_difference(request: Any, bundle: dict[str, Any]) -> dict[str, Any]:
+    """Derive the Difference this Evidence is about, from this Evidence's own Observation.
+
+    The reproduced bundle is **substituted into** the derivation request before the canonical
+    producer runs. Checking that a supplied bundle matched would have been weaker in a way
+    that matters: it leaves a request shape in which the two can disagree, and every such
+    shape eventually has a caller who makes them.
+
+    Exactly one binding and exactly one Difference are admitted. Not a simplification --
+    an Evidence record binds one Difference, so a derivation yielding two would leave the
+    engine choosing which one this record is about, and a choice like that has no canonical
+    owner.
+
+    """
+
+    shaped = require_object(deepcopy(request), "difference_request")
+    bindings = shaped.get("bindings")
+    if not isinstance(bindings, list) or len(bindings) != 1:
+        raise EvidenceError(
+            "difference_request must carry exactly one binding: an Evidence record is about "
+            f"one Difference (got {len(bindings) if isinstance(bindings, list) else 'none'})"
+        )
+    binding = require_object(bindings[0], "difference_request binding")
+    binding["observation_bundle"] = deepcopy(bundle)
+
+    derived = _delegate(derive_differences, shaped, "difference_request")
+    differences = derived.get("differences") or []
+    if len(differences) != 1:
+        raise EvidenceError(
+            "difference_request produced "
+            f"{len(differences)} Differences; an Evidence record binds exactly one"
+        )
+    return deepcopy(differences[0])
 
 
 def _typed_references(value: Any, kind: str, context: str) -> list[dict[str, Any]]:
@@ -298,7 +345,22 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
     # could refuse ahead of it, the shape of a caller-supplied value would decide whether
     # the canonical Observation ever ran, which is the same defect as trusting the caller,
     # wearing a different hat.
-    observation = _minted_observation(shaped["observation_request"], "observation_request")
+    bundle, observation = _minted_observation(shaped["observation_request"], "observation_request")
+
+    # --- the Difference this Evidence is about -------------------------------- #
+    #
+    # Derived, from the Observation just reproduced, by the Difference producer. 第27条 puts
+    # Observation Evidence *behind* a Difference -- it is what "before state と Difference を
+    # 裏付ける証拠" means -- so an Evidence record that named no Difference was not a weaker
+    # binding, it was no binding at all.
+    difference = _derived_difference(shaped["difference_request"], bundle)
+    if {"kind": "observation", "id": observation["observation_id"]} not in (
+        difference["observation_refs"]
+    ):
+        raise EvidenceError(
+            "the derived Difference does not cite the Observation this Evidence records: "
+            f"{observation['observation_id']}"
+        )
 
     change_request = shaped["change_request"]
     post_change_request = shaped["post_change_observation_request"]
@@ -316,7 +378,7 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
                 "Evidence records one observation, and a re-observation after a Change that "
                 "is not named here is a Change Result Evidence request missing its Change"
             )
-        return _observation_evidence(shaped, observation)
+        return _observation_evidence(shaped, observation, difference)
 
     # Q3-A. This is the refusal, and it comes before anything is built, because the record
     # being refused is one that would be false rather than one that is malformed.
@@ -328,7 +390,9 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
             "observe. Record the situation as Observation Evidence -- UNKNOWN, BLOCKED or "
             "INCOMPLETE is a truthful status and is not a weaker record than a false one"
         )
-    return _change_result_evidence(shaped, observation, change_request, post_change_request)
+    return _change_result_evidence(
+        shaped, observation, difference, change_request, post_change_request
+    )
 
 
 def _finalize(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -369,10 +433,23 @@ def _require_recorded_after(recorded_at: Any, observation: dict[str, Any]) -> st
     return recorded_at
 
 
-def _common(shaped: dict[str, Any], grounding: dict[str, Any]) -> dict[str, Any]:
-    """Return the fields both positions share, derived from the grounding Observation."""
+def _common(
+    shaped: dict[str, Any],
+    grounding: dict[str, Any],
+    difference: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the fields both positions share, derived from the canonical records."""
 
     artifacts = _artifact_references(shaped["artifact_references"])
+    remaining = _typed_references(
+        shaped["remaining_difference_refs"], "difference", "remaining_difference_refs"
+    )
+    difference_ref = {"kind": "difference", "id": difference["difference_id"]}
+    if difference_ref in remaining:
+        raise EvidenceError(
+            "remaining_difference_refs names the Difference this Evidence is about: "
+            f"{difference['difference_id']}"
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "evidence_id": "",
@@ -382,26 +459,27 @@ def _common(shaped: dict[str, Any], grounding: dict[str, Any]) -> dict[str, Any]
             "target_identity": grounding["target"]["target_identity"],
             "kind": grounding["target"]["kind"],
         },
+        # Derived, not named. This is the binding sufficiency rests on: it is what stops an
+        # Evidence record about one Difference from being counted toward another.
+        "difference_ref": difference_ref,
+        # Both values are the Observation Engine's, and it validated the reference against
+        # the declared Scope before minting the record (``observe`` refuses a method outside
+        # it). 第28条's closing line asks State to be held by reference rather than embedded;
+        # the same applies to a method.
         "observation_method": {
             "method_ref": deepcopy(grounding["method_ref"]),
-            "method_class": shaped["observation_method_class"],
+            "normalization_profile": grounding["normalization_profile"],
         },
         "observed_result": _observed_result(grounding),
         # Carried through from the Observation owner. Evidence does not re-derive a status:
         # a second status deriver is one that can disagree with the first.
         "status": grounding["status"],
         "artifact_references": {"collection_kind": "UNORDERED_SET", "members": artifacts},
-        "remaining_differences": {
-            "collection_kind": "UNORDERED_SET",
-            "members": _typed_references(
-                shaped["remaining_difference_refs"], "difference", "remaining_difference_refs"
-            ),
-        },
-        "evidence_level": derive_level(
-            shaped["observation_method_class"],
-            artifact_reference_count=len(artifacts),
-            completed_attempt_count=completed_attempt_count(grounding),
-        ),
+        "remaining_differences": {"collection_kind": "UNORDERED_SET", "members": remaining},
+        # From the canonical records and from nothing on this request. Note in particular
+        # that ``artifacts`` is not an input: attaching a reference to content nobody
+        # verified used to lift E0 to E1, and now lifts nothing.
+        "evidence_level": derive_level(grounding),
         "evidence_semantic_fingerprint": "",
     }
 
@@ -421,7 +499,11 @@ def _lineage(shaped: dict[str, Any], derived_from: list[dict[str, Any]]) -> dict
     }
 
 
-def _observation_evidence(shaped: dict[str, Any], observation: dict[str, Any]) -> dict[str, Any]:
+def _observation_evidence(
+    shaped: dict[str, Any],
+    observation: dict[str, Any],
+    difference: dict[str, Any],
+) -> dict[str, Any]:
     """Return Observation Evidence: 第27条's first position, before any Change exists.
 
     ``after_state``, ``change_identity``, ``authority_used`` and ``expected_result`` are
@@ -430,7 +512,7 @@ def _observation_evidence(shaped: dict[str, Any], observation: dict[str, Any]) -
     a second point in time requires a second observation. This record has one.
     """
 
-    evidence = _common(shaped, observation)
+    evidence = _common(shaped, observation, difference)
     evidence.update(
         {
             "evidence_position": OBSERVATION_EVIDENCE,
@@ -441,7 +523,10 @@ def _observation_evidence(shaped: dict[str, Any], observation: dict[str, Any]) -
             "expected_result": None,
             "lineage": _lineage(
                 shaped,
-                [{"kind": "observation", "id": observation["observation_id"]}],
+                [
+                    {"kind": "observation", "id": observation["observation_id"]},
+                    {"kind": "difference", "id": difference["difference_id"]},
+                ],
             ),
         }
     )
@@ -451,6 +536,7 @@ def _observation_evidence(shaped: dict[str, Any], observation: dict[str, Any]) -
 def _change_result_evidence(
     shaped: dict[str, Any],
     before_observation: dict[str, Any],
+    difference: dict[str, Any],
     change_request: Any,
     post_change_request: Any,
 ) -> dict[str, Any]:
@@ -481,17 +567,28 @@ def _change_result_evidence(
         "change_request.authority_decision",
     )
 
-    if before_observation["state_revision_observed"] != change["expected_state_revision"] or (
-        before_observation["state_fingerprint_observed"] != change["before_state_fingerprint"]
-    ):
+    # The Change must be about the Difference this Evidence is about. Both are derived --
+    # the Difference from this record's own Observation, the Change from the Authority
+    # decision -- so this is two independent derivations being required to agree, not a
+    # caller's two labels being compared.
+    if change["difference_ref"]["id"] != difference["difference_id"]:
         raise EvidenceError(
-            "the Observation supplied as this Change's before-state is not the State the "
-            f"Change was authorized against: observed revision "
-            f"{before_observation['state_revision_observed']} against expected "
-            f"{change['expected_state_revision']}"
+            "the Change was authorized for a different Difference than the one this Evidence "
+            f"records: {change['difference_ref']['id']} != {difference['difference_id']}"
         )
 
-    after_observation = _minted_observation(post_change_request, "post_change_observation_request")
+    # There is deliberately no comparison of the before-Observation's State binding against
+    # the Change's here, and its absence is the point. Once the Change is for the derived
+    # Difference, three owners have already forced them equal: the Difference producer binds
+    # the Difference to the State its Observation observed, Authority refuses a decision whose
+    # evaluated State is not the Difference's (``StaleAuthorityInputError``), and the Change
+    # reads its before-State from that decision. A comparison here could not fail on any
+    # input, and a check that cannot fail reads as protection and provides none.
+    # ``test_the_change_before_state_agrees_by_construction`` holds the three owners to it.
+
+    _, after_observation = _minted_observation(
+        post_change_request, "post_change_observation_request"
+    )
 
     # Independence, in the sense CLOSURE_POLICY.md §4 gives it: the Change must not supply
     # its own success flag. The before-picture is not a re-observation, so the same
@@ -512,7 +609,7 @@ def _change_result_evidence(
     # The level and the status come from the *re-observation*, because the re-observation is
     # what this record evidences. Reading them from the before-picture would let a complete
     # observation of the old state stand in for a missing observation of the new one.
-    evidence = _common(shaped, after_observation)
+    evidence = _common(shaped, after_observation, difference)
     evidence.update(
         {
             "evidence_position": CHANGE_RESULT_EVIDENCE,
@@ -544,6 +641,7 @@ def _change_result_evidence(
                 [
                     {"kind": "observation", "id": before_observation["observation_id"]},
                     {"kind": "observation", "id": after_observation["observation_id"]},
+                    {"kind": "difference", "id": difference["difference_id"]},
                     {"kind": "change", "id": change["change_id"]},
                     {"kind": "authority_decision", "id": decision["authority_decision_id"]},
                 ],

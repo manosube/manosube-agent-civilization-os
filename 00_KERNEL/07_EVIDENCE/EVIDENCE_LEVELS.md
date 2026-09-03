@@ -35,66 +35,62 @@ v0.1のschemaはこの七語をすべて保持する。語彙を狭めること�
 # 2. Phase 6が導出できる範囲
 
 ```text
-PHASE_6_DERIVABLE_LEVELS=E0..E3
-CALLER_CLAIMED_E4_E5_E6=REFUSED
-POLICY_REQUIRING_E4_E5_E6=INSUFFICIENT
+PHASE_6_DERIVABLE_LEVELS=E0..E1
+CALLER_CLAIMED_LEVEL=IMPOSSIBLE
+POLICY_REQUIRING_E2..E6=INSUFFICIENT
 ```
 
-E4〜E6について、凍結Kernelは**名称と禁止**しか持たない。`E-005`は過大申告を禁じるが、
-何をもってE4が成立するかを述べない。加えてv0.1にRuntimeは存在せず、
-`CLOSURE_POLICY.md`は`independent_verification_required`を`false`に固定し
-`verification_independence_ref`を常にnullとするため、E6の言う「独立」は観測対象として
-存在しない。
+Q2-Aは「E0〜E3を**構造的証明から**導出し、caller labelから導出しない」ことを要求する。
+凍結ツリーを両条件で読むと、導出可能なのは**E0とE1**である。
 
-Phase 6がここで述語を発明することは、Evidenceが「Runtime実証とは何か」を決めることであり、
-`E-005`が反対側から記述している欠陥そのものである。
+E2（単体テスト）とE3（統合テスト）を判定するには「testが実行された」ことを知る必要がある。
+凍結ツリーはそれを記録しない。
 
-したがってE4〜E6は**refuse**する。Policyが要求した場合は`INSUFFICIENT`として保持し、
-Policyを弱めない。E4〜E6は将来のVertical Proof、Runtime、Independent Verificationが
-述語を定義した時点で到達可能になる。
+```text
+observation_method.schema.json
+  procedure_kind        {"const": "CANONICAL_OBSERVER"}
+  normalization_profile {"const": "FIXTURE-0.1"}
+```
+
+canonical methodは一種類しかない。したがってE1・E2・E3を今日区別できる唯一の手段は、
+callerに「どれだったか」を主張させることであり、それが本Phaseで除去した経路そのもので
+ある。`E-005`が反対側から記述している欠陥でもある。
+
+E4〜E6については既述のとおり述語が存在せず、v0.1にRuntimeも独立検証者も存在しない。
+
+したがってE2〜E6を同一の理由で refuse する。これはQ2-AをE4〜E6について導いた推論を、
+証拠が実際に尽きる位置へ適用した結果であり、最初に気づいた位置に留めた結果ではない。
+語彙E0..E6はschemaに保持し、Policyは弱めず`INSUFFICIENT`として保持する。拒否は
+「何が存在すれば到達可能か」を述べる。
 
 ---
 
-# 3. Method class → claimed level
+# 3. 導出規則
 
-Evidence levelはcallerのlabelから読まない。構造化されたObservation methodのclassから
-導出する。requestには`evidence_level`を渡すkeyが存在しない。
+Evidence requestには、levelを渡すkeyも、method classを渡すkeyも**存在しない**。
 
 ```text
-DECLARATION                          E0
-STATIC_INSPECTION                    E1
-UNIT_TEST                            E2
-INTEGRATION_TEST                     E3
-NATURAL_PATH_EXECUTION               E4   REFUSED
-TARGET_RUNTIME_PROOF                 E5   REFUSED
-REPEATED_INDEPENDENT_RUNTIME_PROOF   E6   REFUSED
+E1  Observation Engine が自らの宣言Scopeを完全に観測したと判定し
+    （status ∈ {COMPLETE, EMPTY}）、かつ content-addressed source snapshot を
+    1件以上持つ
+E0  それ以外
 ```
 
-三つの導出不能classは、省略ではなく**存在**させる。省略すれば「そんなmethod classはない」
-という無内容な拒否になり、なぜ拒否されたかがcallerに伝わらない。
+唯一の入力はObservation Engineが自らのScopeについて下した判定である。
+
+artifact referenceはlevelに影響しない。Evidenceはartifactを取得できないため、artifact数
+は最初から何の証明でもなかった。実装以前の版では、誰も見ていない内容への参照を1件添える
+だけでE0がE1へ上がった。
 
 ---
 
-# 4. Structural ceiling（`E-005`の計算形）
+# 4. Method binding
 
-Method classは**主張**である。recordが実際に何を含むかが**上限**を決める。
+第28条の`observation_method`は、Observation Engineが自ら宣言Scopeに対して検証した
+`method_ref`と`normalization_profile`で構成する。`observe()`はScope外のmethodを拒否する。
 
-```text
-completed attempt が 1 件以上      → 上限 E3
-artifact reference のみ            → 上限 E1
-どちらも無い                        → 上限 E0
-
-evidence_level = min(claimed, ceiling)
-```
-
-`completed attempt`とは`result ∈ {COMPLETE, EMPTY}`のattemptである。BLOCKEDとFAILEDは
-対象へ到達しておらず、PARTIALは終わっていない。走らなかったtestはtestではない。
-
-E2とE3が同じ床を共有するのは、凍結Kernelが両者を「何を動かしたか」で区別しており、
-Evidenceにはその差を観測する手段がないからである。上限は両方を許し、method classが
-下向きにのみ決める。
-
-上限は**下げるだけ**であり、上げない。上げる規則は、記録内容を超える主張を作る規則である。
+method recordそのものはlevelに寄与しない。`procedure_kind`がschema定数である以上、読んでも
+第二の条件に**見えるだけで**条件ではない。
 
 ---
 
@@ -113,16 +109,27 @@ sufficiency.evidence_level_scale_...   addressed  → 別のscaleを名指すref
 片方だけでは成立しない。文書と照合されないpinは漂流し、addressされない文書はPolicyの下で
 差し替えられる。
 
-Sufficiency requestは次を必須とする。
+Sufficiency requestは次を必須とする。**ここに載るのは、engineが実際に検証するfieldだけ
+である。**
 
 ```text
-completion_semantics_ref = {
-  kind: git_blob
-  repository, commit_sha, blob_sha
-  path: "00_KERNEL/COMPLETION_SEMANTICS.md"
-  evidence_level_scale_sha256
+evidence_level_scale_ref = {
+  kind: evidence_level_scale_source
+  path:  "00_KERNEL/COMPLETION_SEMANTICS.md"      canonical path と照合
+  blob_sha                                        pin と照合（pin は repository test が
+                                                  git hash-object と照合）
+  evidence_level_scale_sha256                     適用中の scale と照合
 }
 ```
 
-`path`が別文書を指す場合、`evidence_level_scale_sha256`が適用中のscaleと一致しない場合、
-いずれもfail-closedで拒否する。
+`repository`と`commit_sha`は持たない。純粋関数が検証できないためであり、blob addressは
+commit非依存でもある。検証しないfieldを載せることは、`canonical content-addressed source`
+という主張を、実際には何も指していないreferenceに与えることになる。
+
+```text
+REFERENCE_SHAPE_VALID=true
+REFERENCED_BLOB_VERIFIED=false      ← これを残してはならない
+CONTENT_ADDRESS_BINDING_PROVEN=false
+```
+
+三つのfieldはいずれも何かと照合される。一つでも不一致ならfail-closedで拒否する。

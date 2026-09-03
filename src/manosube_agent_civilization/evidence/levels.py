@@ -1,9 +1,10 @@
-"""The Evidence Level scale, and what a record has to *contain* to reach one.
+"""The Evidence Level scale, and what the canonical records have to *say* to reach one.
 
 ```text
 EVIDENCE COUNT != EVIDENCE STRENGTH
 TEST PASS      != RUNTIME PROVEN
 DECLARATION    != OBSERVATION EVIDENCE
+CALLER LABEL   != STRUCTURAL PROOF
 ```
 
 Two separate things live here and must not be confused.
@@ -11,17 +12,15 @@ Two separate things live here and must not be confused.
 The **scale** is constitutional. ``KERNEL_CONSTITUTION.md`` 第29条 and
 ``COMPLETION_SEMANTICS.md`` chapter 3 both give the same closed ordered list, and
 ``CLOSURE_POLICY.md`` §5 requires the sufficiency gate to resolve it from that exact source
-by content-addressed blob reference. This module pins the scale as a value; a repository
-test resolves the live document and proves the pinned value equals it, so the pin cannot
-drift from the constitution without a test failing. That split is deliberate: the engine
-reads no filesystem, and a guard that lives in the engine could not be the thing that
-proves the engine right.
+by content address. This module pins the scale and the source's blob identity; a repository
+test resolves the live document and proves both pins equal it, so neither can drift without
+a test failing. That split is deliberate: the engine reads no filesystem, and a guard that
+lived in the engine could not be the thing that proves the engine right.
 
-The **ceiling** is not constitutional and does not claim to be. It answers one narrower
-question, the one ``E-005 EVIDENCE_LEVEL_NOT_OVERSTATED`` asks: given what this record
-actually contains, what is the highest level it could honestly carry? It only ever lowers.
-A record whose method class says INTEGRATION_TEST but which carries no completed attempt
-did not run an integration test, whatever it calls itself.
+The **derivation** is a function of the canonical Observation record and of nothing a caller
+writes. There is no method-class parameter, and there is no level parameter. A caller cannot
+name a level, cannot name a method, and cannot raise a level by adding an artifact
+reference: the only input is what the Observation Engine concluded about its own scope.
 """
 
 from __future__ import annotations
@@ -46,31 +45,53 @@ EVIDENCE_LEVEL_LABELS: dict[str, str] = {
     "E6": "反復・独立Runtime実証",
 }
 
+#: The canonical Evidence Level source, and the blob it must be. The path alone would let a
+#: reference name the right file at any content; the blob identity is what makes the
+#: reference an address. ``tests/contract/evidence/test_evidence_level_scale_source.py``
+#: proves this pin equals ``git hash-object`` of the live document.
+COMPLETION_SEMANTICS_PATH = "00_KERNEL/COMPLETION_SEMANTICS.md"
+COMPLETION_SEMANTICS_BLOB_SHA = "d377a3c8a73e556b3c52c0c79a54e7b2dbd34abb"
+
 #: The levels Phase 6 can derive. Not a subset chosen for convenience: it is exactly the
-#: prefix of the scale for which a structured predicate exists in the frozen Kernel.
-DERIVABLE_LEVELS: frozenset[str] = frozenset({"E0", "E1", "E2", "E3"})
+#: prefix of the scale for which the frozen Kernel defines something observable.
+#:
+#: ``E1 静的確認`` is what the Observation Engine produces -- normalized facts read from
+#: immutable, content-addressed source snapshots, over a scope the Engine itself certifies as
+#: completely observed. ``E0 宣言のみ`` is what is left when it does not.
+#:
+#: ``E2 単体テスト`` and ``E3 統合テスト`` are **not** here, and their absence is a finding
+#: rather than a simplification. Deciding either requires knowing that a *test executed*, and
+#: the frozen tree records no such thing: ``observation_method.schema.json`` pins
+#: ``procedure_kind`` to the single value ``CANONICAL_OBSERVER`` and ``normalization_profile``
+#: to one profile, so every canonical method is the same method. The only way to separate E1,
+#: E2 and E3 today is to let a caller assert which one it was -- which is the defect this
+#: module was rewritten to remove, and which ``E-005`` names from the other side.
+#:
+#: This is the reasoning that produced Q2-A for E4-E6, applied where the evidence actually
+#: runs out rather than where it was first noticed.
+DERIVABLE_LEVELS: frozenset[str] = frozenset({"E0", "E1"})
 
-#: The levels the vocabulary keeps and this phase refuses to mint. See
-#: :class:`UnsupportedEvidenceLevelError`.
-UNDERIVABLE_LEVELS: tuple[str, ...] = ("E4", "E5", "E6")
+#: The levels the vocabulary keeps and this phase refuses to mint.
+UNDERIVABLE_LEVELS: tuple[str, ...] = ("E2", "E3", "E4", "E5", "E6")
 
-#: Observation method class to the level it *claims*. One entry per level, so the mapping is
-#: total over the scale and a method class cannot silently mean two things. The three
-#: undecidable classes are present rather than omitted: a caller naming one gets the refusal
-#: that says why, instead of a "no such method class" that says nothing.
-METHOD_CLASS_LEVELS: dict[str, str] = {
-    "DECLARATION": "E0",
-    "STATIC_INSPECTION": "E1",
-    "UNIT_TEST": "E2",
-    "INTEGRATION_TEST": "E3",
-    "NATURAL_PATH_EXECUTION": "E4",
-    "TARGET_RUNTIME_PROOF": "E5",
-    "REPEATED_INDEPENDENT_RUNTIME_PROOF": "E6",
+#: Why each is unreachable, so a refusal says what would have to exist rather than only that
+#: something does not.
+UNDERIVABLE_REASONS: dict[str, str] = {
+    "E2": "no canonical record distinguishes a unit test from any other observation: "
+    "observation_method.schema.json pins procedure_kind to CANONICAL_OBSERVER",
+    "E3": "no canonical record distinguishes an integration test from any other observation: "
+    "observation_method.schema.json pins procedure_kind to CANONICAL_OBSERVER",
+    "E4": "v0.1 has no natural-path execution record and the Kernel defines no predicate for one",
+    "E5": "v0.1 has no Runtime",
+    "E6": "v0.1 has no independent verifier: CLOSURE_POLICY.md pins "
+    "independent_verification_required to false and verification_independence_ref to null",
 }
 
-#: An attempt that reached the thing it was observing. BLOCKED and FAILED did not, and
-#: PARTIAL did not finish, so none of the three can raise a record above 静的確認.
-COMPLETED_ATTEMPT_RESULTS: frozenset[str] = frozenset({"COMPLETE", "EMPTY"})
+#: The two Observation statuses that mean the Engine certified its declared scope as
+#: completely observed. Every other status -- INCOMPLETE, UNKNOWN, UNOBSERVED, BLOCKED,
+#: FAILED, INVALID, CONFLICTED -- means it did not, and an unfinished confirmation is not a
+#: confirmation.
+CONFIRMING_STATUSES: frozenset[str] = frozenset({"COMPLETE", "EMPTY"})
 
 
 def level_index(level: Any) -> int:
@@ -105,78 +126,33 @@ def weakest(levels: list[str]) -> str:
     return min(levels, key=level_index)
 
 
-def structural_ceiling(*, artifact_reference_count: int, completed_attempt_count: int) -> str:
-    """Return the highest level this record's *contents* can honestly carry.
+def unreachable_reason(level: str) -> str:
+    """Return why a level cannot be reached in this phase."""
 
-    This is ``E-005`` expressed as a computation rather than as a prohibition. Each step
-    names the thing 第29条 says the level is, and asks whether the record contains it:
+    return UNDERIVABLE_REASONS.get(level, "no proof predicate exists for this level in v0.1")
+
+
+def derive_level(observation: dict[str, Any]) -> str:
+    """Return the level this Evidence carries, from the canonical Observation and nothing else.
 
     ```text
-    宣言のみ    nothing is required; a declaration is a declaration
-    静的確認    something must have been confirmed -- an artifact, bound by content digest
-    単体テスト   something must have been run -- an attempt that reached its subject
-    統合テスト   likewise; whether it was integrative is the method class's claim
+    E1  the canonical Observation Engine certified its declared scope completely observed,
+        over at least one immutable content-addressed source snapshot
+    E0  otherwise
     ```
 
-    The last two share a floor because the frozen Kernel distinguishes E2 from E3 by what was
-    exercised, not by how it was recorded, and Evidence has no way to observe the difference.
-    So the ceiling admits both and the method class decides between them -- downward only,
-    since :func:`derive_level` takes the weaker of the two.
+    The single input is a record ``observe`` produced. There is no method-class parameter and
+    no level parameter on the Evidence request -- so a caller cannot assert a level, cannot
+    assert what kind of observation it was, and cannot lift E0 to E1 by attaching an artifact
+    reference to content nobody verified. All three were possible at ``6640ffd``.
 
-    Evidence cannot fetch an artifact to check its digest, so a caller could inflate the
-    artifact count with references to nothing. That buys them nothing: the ceiling only ever
-    *lowers*, so the most an inflated count can do is fail to lower a claim the caller was
-    already free to make through the method class. A rule that raised a level on the strength
-    of an unverified count would be a different matter, and there is none.
+    The method does not appear here because it cannot discriminate: ``procedure_kind`` is a
+    schema constant, so every canonical method contributes the same value. Reading it would
+    look like a second condition and be none.
     """
 
-    if completed_attempt_count > 0:
-        return "E3"
-    if artifact_reference_count > 0:
-        return "E1"
-    return "E0"
-
-
-def derive_level(
-    method_class: Any, *, artifact_reference_count: int, completed_attempt_count: int
-) -> str:
-    """Return the level this Evidence carries, derived from structure alone.
-
-    There is deliberately no parameter through which a caller can state a level. The claim
-    comes from the method class; the ceiling comes from what the record contains; the answer
-    is the weaker of the two. A caller can therefore overstate a *method*, and the record
-    still cannot overstate its *level*.
-    """
-
-    if not isinstance(method_class, str):
-        raise UnsupportedEvidenceLevelError(
-            f"observation method class is not a method class name: {type(method_class).__name__}"
-        )
-    claimed = METHOD_CLASS_LEVELS.get(method_class)
-    if claimed is None:
-        raise UnsupportedEvidenceLevelError(
-            f"observation method class is not on the canonical scale: {method_class!r}"
-        )
-    if claimed not in DERIVABLE_LEVELS:
-        raise UnsupportedEvidenceLevelError(
-            f"observation method class {method_class!r} claims {claimed} "
-            f"({EVIDENCE_LEVEL_LABELS[claimed]}), which Phase 6 cannot derive: the Kernel "
-            f"defines no proof predicate for {', '.join(UNDERIVABLE_LEVELS)} and v0.1 has no "
-            "Runtime and no independent verifier"
-        )
-    ceiling = structural_ceiling(
-        artifact_reference_count=artifact_reference_count,
-        completed_attempt_count=completed_attempt_count,
-    )
-    return weakest([claimed, ceiling])
-
-
-def completed_attempt_count(observation: dict[str, Any]) -> int:
-    """Return how many of an Observation's attempts reached the thing they observed."""
-
-    attempts = observation.get("attempts") or []
-    return sum(
-        1
-        for attempt in attempts
-        if isinstance(attempt, dict) and attempt.get("result") in COMPLETED_ATTEMPT_RESULTS
-    )
+    if observation.get("status") not in CONFIRMING_STATUSES:
+        return "E0"
+    if not observation.get("source_snapshot_refs"):
+        return "E0"
+    return "E1"

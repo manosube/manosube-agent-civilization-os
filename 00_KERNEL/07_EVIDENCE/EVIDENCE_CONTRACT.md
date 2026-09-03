@@ -30,6 +30,45 @@ CHANGE RESULT EVIDENCE
 Changeを行わないObservation Cycleでも、Observation Evidenceを正式に保存できなければ
 ならない。これは第27条の明示要件であり、Change不在を理由にEvidenceを省略してはならない。
 
+`evidence_position`のほかに、`difference_ref`を第28条の最低fieldへ追加する。第27条の
+Observation Evidenceは「before stateと**Difference**を裏付ける証拠」であり、Differenceを
+名指さないrecordは弱い束縛ではなく**束縛の不在**である。
+
+---
+
+# 1A. Exact Difference Binding
+
+Evidenceが束縛するDifferenceは、callerが書くのではなく**導出する**。
+
+```text
+observation_request              → observe()            → Observation bundle
+difference_request + bundle      → derive_differences() → Difference
+                                                        → difference_ref
+```
+
+再生成したbundleを derivation request へ**代入**してから producer を走らせる。「callerの
+bundleがobserve()の結果と一致すること」を検査する形は弱い。両者が食い違いうるrequest
+shapeが残り、そのようなshapeにはいずれ食い違わせるcallerが現れる。
+
+bindingは一つ、Differenceは一つに限る。Evidence recordは一つのDifferenceを束縛するため、
+二つ導出された場合に「どちらについてのrecordか」を選ぶ所有者が存在しない。
+
+Change Result Evidenceでは、Changeが内包する`difference_ref`が導出Differenceと一致しな
+ければならない。二つの独立した導出（Observationから来るDifference、Authority決定から来る
+Change）に一致を要求するのであって、callerの二つのlabelを比較するのではない。
+
+Sufficiencyは、投入された全Evidence recordの`difference_ref`が評価対象Differenceと一致
+することを要求する。これがなければ次が成立していた。
+
+```text
+Difference A の Evidence
++ Difference B の Closure Policy
+→ Difference B が SUFFICIENT
+```
+
+Policyの`subject_difference_ref`も同一Differenceを要求するため、request・Policy・全Evidence
+の三者が一つのidentityへ固定され、三者とも導出により到達する。
+
 ---
 
 # 2. 最低field（第28条）と欠落の禁止
@@ -217,6 +256,9 @@ RECORDING_INSTANT=ADMITTED_INPUT
 ```text
 recorded_at >= observation_ended_at
 ```
+
+Sufficiencyの`evaluation_instant`も同じくadmitted inputであり、age判定は**正確な
+interval**で行う。整数への切り捨ては表示用の値にのみ使う。
 
 観測が終わる前に、その観測についてのEvidenceを書くことはできない。
 

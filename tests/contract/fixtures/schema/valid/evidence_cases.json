@@ -4,19 +4,23 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/evidence/evidence.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "evidence_id": "EVIDENCE-B53139E7959028B874D23086AFF92ACC223A0078E416CB52E90FC45EA07DCB37",
+      "evidence_id": "EVIDENCE-8A1AF967CCE7819CEF68A2D7BDBF8B7377B5786DFDE5D39AC3CA94546F842AA9",
       "timestamp": "2026-08-30T10:00:00Z",
       "target": {
         "project_id": "PRJ-0001",
         "target_identity": "TP-0001",
         "kind": "FIXTURE"
       },
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-05160D1F2381291FC94AB5B42FDE0734A4D2B5F285B4BB8DDBF19DC3DBE16283"
+      },
       "observation_method": {
         "method_ref": {
           "kind": "observation_method",
           "id": "OBS-METHOD-0001"
         },
-        "method_class": "STATIC_INSPECTION"
+        "normalization_profile": "FIXTURE-0.1"
       },
       "observed_result": {
         "observation_ref": {
@@ -59,7 +63,7 @@
         "members": []
       },
       "evidence_level": "E1",
-      "evidence_semantic_fingerprint": "sha256:b53139e7959028b874d23086aff92acc223a0078e416cb52e90fc45ea07dcb37",
+      "evidence_semantic_fingerprint": "sha256:8a1af967cce7819cef68a2d7bdbf8b7377b5786dfde5d39ac3ca94546f842aa9",
       "evidence_position": "OBSERVATION_EVIDENCE",
       "before_state": {
         "state_revision": 2,
@@ -76,6 +80,10 @@
         "derived_from": {
           "collection_kind": "UNORDERED_SET",
           "members": [
+            {
+              "kind": "difference",
+              "id": "D-05160D1F2381291FC94AB5B42FDE0734A4D2B5F285B4BB8DDBF19DC3DBE16283"
+            },
             {
               "kind": "observation",
               "id": "OBS-B3DEE309514C8DE0849C442AD96A419541AC089F0A282284F7571C032426C494"
@@ -94,19 +102,23 @@
     "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/evidence/evidence.schema.json",
     "instance": {
       "schema_version": "0.1",
-      "evidence_id": "EVIDENCE-CDE194A29F56F38805597201A16E57A886973957E7F758BBC405755E82A33F01",
+      "evidence_id": "EVIDENCE-B92F374568EEF35679B99335BA5BC937D024B058A1C961611B7C4657D1F6103E",
       "timestamp": "2026-08-30T10:00:00Z",
       "target": {
         "project_id": "PRJ-0001",
         "target_identity": "TP-0001",
         "kind": "FIXTURE"
       },
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-05160D1F2381291FC94AB5B42FDE0734A4D2B5F285B4BB8DDBF19DC3DBE16283"
+      },
       "observation_method": {
         "method_ref": {
           "kind": "observation_method",
           "id": "OBS-METHOD-0001"
         },
-        "method_class": "INTEGRATION_TEST"
+        "normalization_profile": "FIXTURE-0.1"
       },
       "observed_result": {
         "observation_ref": {
@@ -148,8 +160,8 @@
         "collection_kind": "UNORDERED_SET",
         "members": []
       },
-      "evidence_level": "E3",
-      "evidence_semantic_fingerprint": "sha256:cde194a29f56f38805597201a16e57a886973957e7f758bbc405755e82a33f01",
+      "evidence_level": "E1",
+      "evidence_semantic_fingerprint": "sha256:b92f374568eef35679b99335ba5bc937d024b058a1c961611b7c4657d1f6103e",
       "evidence_position": "CHANGE_RESULT_EVIDENCE",
       "before_state": {
         "state_revision": 2,
@@ -160,17 +172,17 @@
       },
       "change_identity": {
         "kind": "change",
-        "id": "CHANGE-6A88081457322E3CA8087CC286E0B7C24ADBBE9F9BEDC43ED51FFB3F0CC6B7E1",
-        "change_semantic_fingerprint": "sha256:6a88081457322e3ca8087cc286e0b7c24adbbe9f9bedc43ed51ffb3f0cc6b7e1",
-        "idempotency_key": "sha256:6a88081457322e3ca8087cc286e0b7c24adbbe9f9bedc43ed51ffb3f0cc6b7e1",
+        "id": "CHANGE-B891B7302D2B73F8426CD5EF97AB86331339EDCFFAB686CE54834A77281961B6",
+        "change_semantic_fingerprint": "sha256:b891b7302d2b73f8426cd5ef97ab86331339edcffab686ce54834a77281961b6",
+        "idempotency_key": "sha256:b891b7302d2b73f8426cd5ef97ab86331339edcffab686ce54834a77281961b6",
         "execution_result": null,
         "causality_claimed": false
       },
       "authority_used": {
         "kind": "authority_decision",
-        "id": "AUTH-DEC-DAA243F5A17AFE602C61BEEB4C9DA16C19533A3C4B7747858E55EDD56A75FF60",
+        "id": "AUTH-DEC-EF7696859B5477E063D8ECA0AE466334F0BC0A2709DC68AD8F17A0FE47F21820",
         "decision": "AUTONOMOUS",
-        "decision_semantic_fingerprint": "sha256:daa243f5a17afe602c61beeb4c9da16c19533a3c4b7747858e55edd56a75ff60"
+        "decision_semantic_fingerprint": "sha256:ef7696859b5477e063d8eca0ae466334f0bc0a2709dc68ad8f17a0fe47f21820"
       },
       "after_state": {
         "state_revision": 3,
@@ -206,11 +218,15 @@
           "members": [
             {
               "kind": "authority_decision",
-              "id": "AUTH-DEC-DAA243F5A17AFE602C61BEEB4C9DA16C19533A3C4B7747858E55EDD56A75FF60"
+              "id": "AUTH-DEC-EF7696859B5477E063D8ECA0AE466334F0BC0A2709DC68AD8F17A0FE47F21820"
             },
             {
               "kind": "change",
-              "id": "CHANGE-6A88081457322E3CA8087CC286E0B7C24ADBBE9F9BEDC43ED51FFB3F0CC6B7E1"
+              "id": "CHANGE-B891B7302D2B73F8426CD5EF97AB86331339EDCFFAB686CE54834A77281961B6"
+            },
+            {
+              "kind": "difference",
+              "id": "D-05160D1F2381291FC94AB5B42FDE0734A4D2B5F285B4BB8DDBF19DC3DBE16283"
             },
             {
               "kind": "observation",

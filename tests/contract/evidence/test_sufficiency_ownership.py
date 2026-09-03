@@ -159,7 +159,7 @@ def test_the_evaluation_instant_is_admitted_and_never_read() -> None:
 
 def test_the_scale_source_must_address_the_scale_being_applied() -> None:
     request = sufficiency_request()
-    request["completion_semantics_ref"]["evidence_level_scale_sha256"] = "f" * 64
+    request["evidence_level_scale_ref"]["evidence_level_scale_sha256"] = "f" * 64
     with pytest.raises(EvidenceError) as raised:
         evaluate_sufficiency(request)
     assert "different Evidence Level scale" in str(raised.value)
@@ -167,7 +167,7 @@ def test_the_scale_source_must_address_the_scale_being_applied() -> None:
 
 def test_the_scale_source_must_be_the_canonical_document() -> None:
     request = sufficiency_request()
-    request["completion_semantics_ref"]["path"] = "docs/notes.md"
+    request["evidence_level_scale_ref"]["path"] = "docs/notes.md"
     with pytest.raises(EvidenceError) as raised:
         evaluate_sufficiency(request)
     assert "canonical Evidence Level source" in str(raised.value)

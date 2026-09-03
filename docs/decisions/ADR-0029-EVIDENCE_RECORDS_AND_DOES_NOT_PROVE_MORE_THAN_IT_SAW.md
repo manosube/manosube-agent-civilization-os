@@ -64,7 +64,43 @@ unobserved absence of change — `NO_RESULT != PROVEN_ABSENCE` with the sign fli
 carries no Change" and "this Evidence forgot to say" the same bytes. One is a fact, the other
 a defect, and a record that cannot separate them is not evidence of anything.
 
-## 2. Q2-A — the vocabulary stays; the derivation stops at E3
+## 1A. Exact Difference binding — the correction that changed the most
+
+Structural review of `6640ffd` withheld the work unit on four findings, and the first was
+the one that mattered most: **an Evidence record named no Difference at all.**
+
+```text
+Difference A's Evidence + Difference B's Closure Policy -> Difference B SUFFICIENT
+```
+
+That was reproducible in three lines. 第27条 puts Observation Evidence *behind* a
+Difference — "before state と Difference を裏付ける証拠" — so a record that named none was
+not a weaker binding, it was no binding.
+
+The Difference is now derived, by its own producer, from the Observation this record is
+about. The reproduced Observation bundle is **substituted into** the derivation request
+rather than compared against a supplied one, for the reason substitution keeps beating
+comparison: a request shape in which two things can disagree eventually meets a caller who
+makes them.
+
+Three things now name a Difference and all three arrive by derivation: the sufficiency
+request, the Closure Policy's own subject, and every Evidence record. On the Change route a
+fourth joins them — the Change's `difference_ref`, which comes from the Authority decision,
+so two independent derivations are required to agree rather than two labels compared.
+
+### 1A.1 What binding to a Difference costs, and why the cost is right
+
+Evidence now inherits the Difference producer's admissibility. Five of the nine Observation
+statuses reach an Evidence record; `FAILED` does not, because
+`difference/engine.py` refuses to derive from an Observation it cannot read a State from.
+
+第31条 wants failure reflowed as Evidence, so there is a real gap. It is reported, not
+taken: widening a predecessor's admissibility is that phase's decision, and routing around
+it here would reopen exactly the hole this correction closed. The gap is also narrower than
+it looks — a FAILED *re-observation* is recordable, since the post-change Observation never
+reaches the Difference producer — and both halves are pinned by test.
+
+## 2. Q2-A — the vocabulary stays; the derivation stops at E1
 
 ```text
 SCHEMA_VOCABULARY=E0..E6
@@ -88,26 +124,48 @@ The reason code exists so a reviewer can tell "the evidence is too weak" from "t
 cannot yet produce evidence that strong" — two situations with entirely different remedies,
 which the four-valued result cannot distinguish on its own.
 
-### 2.1 The ceiling, and why it only ever lowers
-
-The method class states a *claim*. What the record contains sets a *ceiling*.
+The first implementation of this failed the review, and the way it failed is worth stating
+plainly. It read the level from a **string on the Evidence request**:
 
 ```text
-≥1 completed attempt   → ceiling E3
-artifacts only         → ceiling E1
-neither                → ceiling E0
-
-evidence_level = min(claim, ceiling)
+one identical Observation, three caller labels -> E1, E2, E3
+one artifact reference to content nobody verified -> E0 becomes E1
 ```
 
-This is `E-005` as a computation. A record whose method class says INTEGRATION_TEST but which
-carries no completed attempt did not run an integration test, whatever it calls itself. There
-is no rule that raises a level, because a rule that raised one would be a rule for making
-claims larger than their evidence.
+That is not "E0–E3 from structural proof". It is a caller naming its own evidence strength
+with a ceiling function on top, and the ceiling only made the label harder to see.
 
-E2 and E3 share a ceiling because the Kernel separates them by *what was exercised* and
-Evidence has no way to observe that. The honest move is to let the claim decide between them
-downward, not to invent an observable difference.
+So the channel was removed rather than checked. There is no `observation_method_class` key,
+no `evidence_level` key, and the request is closed, so writing one is refused rather than
+ignored. The level is a function of one thing:
+
+```text
+E1  the Observation Engine certified its declared scope completely observed
+    (status ∈ {COMPLETE, EMPTY}) over ≥1 content-addressed source snapshot
+E0  otherwise
+```
+
+### 2.1 Why the derivation stops at E1 and not at E3
+
+Applying "from structural proof, not from a caller label" to E2 and E3 gives the same answer
+Q2-A gave for E4–E6, for the same reason. Deciding either requires knowing a *test executed*,
+and the frozen tree records no such thing:
+
+```text
+observation_method.schema.json
+  procedure_kind        {"const": "CANONICAL_OBSERVER"}
+  normalization_profile {"const": "FIXTURE-0.1"}
+```
+
+Every canonical method is the same method. The only way to separate E1, E2 and E3 today is
+to let a caller assert which one it was — the channel just removed.
+
+`PHASE_6_DERIVABLE_LEVELS` therefore narrows from `E0..E3` to `E0..E1`. This is reported
+rather than assumed: it is strictly **fail-closed** relative to the reviewed head, it narrows
+only what may be *minted* and never the schema vocabulary, and it weakens no policy — a floor
+of E2 through E6 is held `INSUFFICIENT` with a reason code and a sentence saying what would
+have to exist. If a later phase defines a proof predicate for E2 or E3, `DERIVABLE_LEVELS`
+widens and nothing else changes.
 
 ## 3. Q3-A — no executor, no Change Result Evidence
 
@@ -198,6 +256,37 @@ A forged predecessor is not refused. It is inexpressible — there is no paramet
 in. `test_the_engine_takes_a_request_and_not_a_record` asserts that handing the engine a real
 minted Observation record fails, which is the property stated from the outside.
 
+## 5A. The two smaller corrections
+
+**Sub-second freshness (P1-C).** The age gate compared `int(delta.total_seconds())`, and
+`int()` truncates toward zero, so both sub-second violations rounded to "no violation":
+
+```text
+int(0.5s in the future)    -> 0 -> not future-dated
+int(0.5s old), max age 0   -> 0 -> not too old
+```
+
+This is the *same* fractional-second defect §6.2 records on the recording-instant guard,
+surviving on the other side of the module — which says something about fixing a defect at
+one site and calling it fixed. Comparison is now on exact `timedelta`s; the integer survives
+only as a reported value.
+
+**A reference that addressed nothing (P2-D).** `completion_semantics_ref` carried
+`repository`, `commit_sha` and `blob_sha` and checked none of them, so a reference naming
+commit `0000…` and blob `1111…` was accepted as a canonical content-addressed source:
+
+```text
+REFERENCE_SHAPE_VALID=true
+REFERENCED_BLOB_VERIFIED=false
+CONTENT_ADDRESS_BINDING_PROVEN=false
+```
+
+The unverifiable fields are gone — a pure function cannot check a repository or a commit, and
+a blob address is commit-independent anyway — and the verifiable one is pinned in `levels.py`
+with a repository test holding the pin to `git hash-object` of the live document. Every field
+that remains is checked against something. Fields that carry a claim nothing verifies are
+worse than absent fields, because absence does not assert.
+
 ## 6. Four findings from this work unit, recorded with how each was found
 
 ### 6.1 Found by the totality sweep
@@ -270,7 +359,22 @@ The list, unchanged in shape since ADR-0027 §3.6:
 | Phase 6 §4.1 | "the policy address is verified" | *would have been* a second fingerprint compare |
 | Phase 6 §6.2 | "this comparison is exact" | *would have been* a lexicographic compare |
 | Phase 6 §6.2 | "no Observation was produced" | *would have been* a branch with no input |
+| Phase 6 P1-A | "the Evidence backs this Difference" | a record naming no Difference at all |
+| Phase 6 P1-B | "E0–E3 from structural proof" | a string the caller wrote |
+| Phase 6 P1-C | "evidence older than the bound is stale" | a comparison that truncated first |
+| Phase 6 P2-D | "a canonical content-addressed source" | three fields nothing checked |
 
-The last three were caught before they shipped, by one question asked of each check in the
-diff: **what input would make this fail?** Three times the answer was "none", and each time
-the check read, until that question, exactly like the ones that work.
+The through-line holds across all twelve: **a claim is only as good as the thing that would
+break if it were false.** The four review findings are four different ways of having nothing
+there — no binding, a caller's word, a comparison that rounds the violation away, and fields
+answerable to nothing.
+
+Three rows were caught in-session by asking, of each check in the diff, *what input would
+make this fail?* Four were caught by a reviewer asking it of checks that had already passed
+their own tests. That the two sets do not overlap is the argument for the review step.
+
+One correction removed a check rather than adding one. Binding the Change to the derived
+Difference made the before-state comparison unreachable — Authority already refuses a
+decision evaluated against another State — so it was deleted and replaced by a test that
+holds the three owners to the guarantee. A fix that leaves a dead branch behind has traded
+one silent claim for another.
