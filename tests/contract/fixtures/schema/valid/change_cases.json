@@ -1,0 +1,135 @@
+[
+  {
+    "name": "change_derived_from_rule_permitted_autonomous_decision",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/change/change.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "change_id": "CHANGE-03F99B2DE32DAEBD455198A4E42512FE297FACC374337BC6F145B8C3488045A6",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "authority_ref": {
+        "kind": "authority_decision",
+        "id": "AUTH-DEC-CCF7CF7E2BF1EAEA3A04A6FC6B11C892AC4CA89720B008F6A16BF8139D7AF463"
+      },
+      "before_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "expected_state_revision": 2,
+      "action": {
+        "action_kind": "WRITE_FILE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "body": "default"
+        },
+        "action_semantic_fingerprint": "sha256:9cb486bd32b962aeaf8c67949b8e4c57e3e4eb6b22cee81c1e28f3213dee3525"
+      },
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "idempotency_key": "sha256:03f99b2de32daebd455198a4e42512fe297facc374337bc6f145b8c3488045a6",
+      "execution_result": null,
+      "status": "AUTHORIZED",
+      "change_semantic_fingerprint": "sha256:03f99b2de32daebd455198a4e42512fe297facc374337bc6f145b8c3488045a6"
+    }
+  },
+  {
+    "name": "change_derived_from_exact_human_approval",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/change/change.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "change_id": "CHANGE-21C4F572BB907885A80678F5AF1E905A16AC0CF50022824942F4AFACBA8C49A3",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "authority_ref": {
+        "kind": "authority_decision",
+        "id": "AUTH-DEC-8EF4C1F934D9E31A0BAEB8F0BFD5EF8E024555CA219F55EEC624628C7811F682"
+      },
+      "before_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "expected_state_revision": 2,
+      "action": {
+        "action_kind": "MERGE",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "body": "default"
+        },
+        "action_semantic_fingerprint": "sha256:1ac092d319668dde8f13138d6b2ad81b17b5fef393359f8e7ca2e7fc578a0649"
+      },
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py"
+        ],
+        "subjects": []
+      },
+      "idempotency_key": "sha256:21c4f572bb907885a80678f5af1e905a16ac0cf50022824942f4afacba8c49a3",
+      "execution_result": null,
+      "status": "AUTHORIZED",
+      "change_semantic_fingerprint": "sha256:21c4f572bb907885a80678f5af1e905a16ac0cf50022824942f4afacba8c49a3"
+    }
+  },
+  {
+    "name": "change_carrying_a_multi_path_scope_and_argv_operation",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/change/change.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "change_id": "CHANGE-9C1B2190059529A11031F3B6BA7D76AECD96F9A0D6FCB9B3EFD3CAD6805B7003",
+      "project_id": "PRJ-0001",
+      "difference_ref": {
+        "kind": "difference",
+        "id": "D-ED5F446AED93782629EDFAEE59F97CA209E2D09AE86D8C70B215EB7C0D813E33"
+      },
+      "authority_ref": {
+        "kind": "authority_decision",
+        "id": "AUTH-DEC-2AFE30FC5E8C88C4FE492D40995391C8EA1950DE36276ABD5EA04830B5CB9EB7"
+      },
+      "before_state_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+      },
+      "expected_state_revision": 2,
+      "action": {
+        "action_kind": "RUN_COMMAND",
+        "reversibility": "REVERSIBLE",
+        "operation": {
+          "argv": [
+            "pytest",
+            "-q"
+          ],
+          "cwd": "."
+        },
+        "action_semantic_fingerprint": "sha256:5d8a5986edc355780ddf44fa8c94030b6e4bb5b5e693cab9995a681262b2098c"
+      },
+      "scope": {
+        "repository": "manosube/example",
+        "branch": "main",
+        "paths": [
+          "src/app.py",
+          "src/lib.py"
+        ],
+        "subjects": [
+          "svc:api"
+        ]
+      },
+      "idempotency_key": "sha256:9c1b2190059529a11031f3b6ba7d76aecd96f9a0d6fcb9b3efd3cad6805b7003",
+      "execution_result": null,
+      "status": "AUTHORIZED",
+      "change_semantic_fingerprint": "sha256:9c1b2190059529a11031f3b6ba7d76aecd96f9a0d6fcb9b3efd3cad6805b7003"
+    }
+  }
+]

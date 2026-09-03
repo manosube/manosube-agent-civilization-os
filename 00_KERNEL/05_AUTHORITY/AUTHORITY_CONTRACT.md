@@ -360,11 +360,12 @@ THE IDENTICAL OPERATION FINGERPRINT
 THAT THE AUTHORITY DECISION BOUND
 ```
 
-異なるfingerprintの操作は、そのdecisionによって許可されていない。この義務はChange phaseが実装する。v0.1 Phase 4はこれを**記録するだけ**である。
+異なるfingerprintの操作は、そのdecisionによって許可されていない。v0.1 Phase 4はこの義務を**記録するだけ**であった。Phase 5のChange Engineがそれを果たす（`CHANGE_CONTRACT.md` §7）——actionのfingerprintを再計算し、さらにaction全体をdecisionが束縛したものと完全一致で照合する。
 
 ```text
-CHANGE_ENGINE_IMPLEMENTED=false
+CHANGE_ENGINE_IMPLEMENTED=true
 OPERATION_FINGERPRINT_OBLIGATION_RECORDED=true
+OPERATION_FINGERPRINT_OBLIGATION_DISCHARGED=true
 ```
 
 # 8. What Authority Never Does
@@ -431,6 +432,6 @@ NONCANONICAL_PAYLOAD_FAILS_THROUGH_THE_PUBLIC_BOUNDARY=true
 AUTHORITY_CONTRACT_DEFINED=true
 AUTHORITY_SCHEMA_IMPLEMENTED=true
 AUTHORITY_ENGINE_IMPLEMENTED=true
-CHANGE_ENGINE_IMPLEMENTED=false
+CHANGE_ENGINE_IMPLEMENTED=true
 ONE_FULL_NATURAL_CYCLE_PASS=false
 ```
