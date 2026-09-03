@@ -10,6 +10,7 @@ from .closure import (
     MANDATORY_X003_CLAIM_REF,
     evaluate_closure,
 )
+from .engine import REASON_CODES, decide_transition
 from .errors import (
     ReflowError,
     ReflowValidationError,
@@ -28,6 +29,7 @@ __all__ = [
     "MANDATORY_X003_CLAIM_DESCRIPTOR",
     "MANDATORY_X003_CLAIM_ID",
     "MANDATORY_X003_CLAIM_REF",
+    "REASON_CODES",
     "ReflowError",
     "ReflowValidationError",
     "StaleReflowError",
@@ -35,6 +37,7 @@ __all__ = [
     "after_state_candidate_id",
     "closure_evaluation_decision_fingerprint",
     "closure_evaluation_id",
+    "decide_transition",
     "evaluate_closure",
     "material_contradiction_id",
     "transaction_id",
