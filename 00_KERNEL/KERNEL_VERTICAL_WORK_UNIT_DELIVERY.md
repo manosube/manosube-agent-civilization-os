@@ -171,6 +171,52 @@ DEFAULT_DECISION=KEEP_VERTICAL_PACKAGE
 
 ---
 
+## 5A. Phase Exit and Bounded Hardening
+
+A Phase is not an instruction to exhaust its entire theoretical input space. It is an owner
+boundary in one progressively connected canonical route.
+
+```text
+PHASE EXIT
+= OWNED CAPABILITY PROVEN
++ REAL PREDECESSOR CONNECTED
++ NEXT OWNER INPUT PRODUCED
++ CURRENT-PHASE BLOCKERS = 0
++ DEFERRED NON-CLAIMS RECORDED
+```
+
+The following MUST NOT become implicit exit gates unless the Objective, an accepted Closure
+Policy, or an explicit Human Constitutional decision requires them:
+
+```text
+ARBITRARY_INPUT_TOTALITY
+ALL_POSSIBLE_MUTATION_COVERAGE
+VALIDATOR_TOTALITY_OUTSIDE_THE_PHASE_OWNER
+FUTURE_PHASE_CONTRACT_ENFORCEMENT
+ZERO_POSSIBLE_FUTURE_REVIEW_FINDINGS
+```
+
+When additional hardening is discovered after the owned route is sufficient, the executor MUST
+classify it as exactly one of:
+
+```text
+CURRENT_ROUTE_BLOCKER
+REQUIRED_PHASE_GATE
+DEFERRED_NON_CLAIM
+FOLLOW_ON_DIFFERENCE
+FUTURE_OWNER_OBLIGATION
+```
+
+Only the first two prevent Phase exit. A deferred obligation is preserved, not silently fixed,
+deleted, or called complete. A current-route defect MUST NOT be mislabeled as future hardening.
+
+```text
+LOCAL_HARDENING_MAY_CONTINUE_WITHOUT_BOUND=false
+VERTICAL_ROUTE_EXTENSION_IS_THE_DEFAULT=true
+```
+
+---
+
 ## 6. Capability Selection
 
 The Structural Advisor selects the execution surface from the actual work shape.

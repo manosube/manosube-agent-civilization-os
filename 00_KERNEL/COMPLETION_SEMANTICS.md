@@ -629,6 +629,29 @@ Humanは、Evidenceと残存Differenceを確認してObjective Completionを受�
 
 Versionは機能数、commit数、経過日数では完成しない。
 
+Phaseも、入力組合せ、validator、mutation、test件数の理論的な枯渇によって完成するものではない。
+
+```text
+PHASE COMPLETE
+= OWNED CAPABILITY PROVEN
++ REAL PREDECESSOR CONNECTED
++ NEXT OWNER INPUT PRODUCED
++ CURRENT-PHASE BLOCKERS = 0
++ REMAINING NON-CLAIMS PRESERVED
+```
+
+次は、それ自体ではPhase継続を要求しない。
+
+```text
+unbounded adversarial space remains
+additional hardening is imaginable
+future owner has no implementation yet
+future independent verification may find defects
+```
+
+ただし、現行canonical routeの欠陥、required Gateの未達、または次ownerへ正しいidentityを持つ
+outputを渡せない状態はPhase継続を要求する。
+
 ```text
 VERSION COMPLETE
 = VERSION TARGET DIFFERENCE CLOSED
