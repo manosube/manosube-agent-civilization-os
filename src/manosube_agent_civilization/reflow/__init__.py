@@ -27,13 +27,15 @@ from .identity import (
     transaction_id,
 )
 from .lifecycle import mint_transition_event
-from .route import reflow
+from .reopen import REOPEN_REASON_CODES, decide_reopen
+from .route import reflow, reopen
 
 __all__ = [
     "MANDATORY_X003_CLAIM_DESCRIPTOR",
     "MANDATORY_X003_CLAIM_ID",
     "MANDATORY_X003_CLAIM_REF",
     "REASON_CODES",
+    "REOPEN_REASON_CODES",
     "ReflowError",
     "ReflowValidationError",
     "StaleReflowError",
@@ -44,10 +46,12 @@ __all__ = [
     "closure_evaluation_decision_fingerprint",
     "closure_evaluation_id",
     "commit_reflow",
+    "decide_reopen",
     "decide_transition",
     "evaluate_closure",
     "material_contradiction_id",
     "mint_transition_event",
     "reflow",
+    "reopen",
     "transaction_id",
 ]

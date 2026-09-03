@@ -34,6 +34,7 @@ from .commit import commit_reflow
 from .engine import decide_transition
 from .identity import closure_evaluation_decision_fingerprint, transaction_id
 from .lifecycle import mint_transition_event
+from .reopen import decide_reopen
 
 
 def reflow(
@@ -137,4 +138,90 @@ def reflow(
         "committed_state": committed_state,
         "state_transition_ref": committed_ref,
         "event": lifecycle_event_placeholder,
+    }
+
+
+def reopen(
+    store: Any,
+    *,
+    project_id: str,
+    difference: dict[str, Any],
+    old_closure_evaluation: dict[str, Any],
+    trigger: str,
+    previous_event_id: str,
+    event_revision: int,
+    before_project_state: dict[str, Any],
+    current_state: dict[str, Any],
+    next_observation_ref: dict[str, Any],
+    observation_refs: list[Any],
+    evidence_refs: list[Any],
+    contradiction_evidence_refs: list[Any],
+    contradiction_refs: list[Any] | None = None,
+    reflow_instant: str,
+) -> dict[str, Any]:
+    """Run one Reopen cycle: ``CLOSED -> REOPENED``, re-referencing the old closure.
+
+    Unlike :func:`reflow`, this does not run :func:`~manosube_agent_civilization.reflow.
+    closure.evaluate_closure` -- see :mod:`~manosube_agent_civilization.reflow.reopen` for
+    why. *current_state* is the State this Reopen decision is evaluated against (the old
+    Closure Evaluation's own recorded State is left untouched, per ``REFLOW_CONTRACT.md``
+    section 8: Reopen preserves it rather than superseding it).
+    """
+
+    decision = decide_reopen(old_closure_evaluation, trigger)
+    difference_ref = {"kind": "difference", "id": difference["difference_id"]}
+    tx = transaction_id(
+        project_id=project_id,
+        difference_id=difference["difference_id"],
+        closure_decision_fingerprint=closure_evaluation_decision_fingerprint(old_closure_evaluation),
+        evidence_sufficiency_id=None,
+        expected_revision=before_project_state["state_revision"],
+        reflow_instant=reflow_instant,
+    )
+    state_transition_ref = {"kind": "state_transition", "id": tx}
+
+    event = mint_transition_event(
+        difference=difference,
+        current_status="CLOSED",
+        previous_event_id=previous_event_id,
+        event_revision=event_revision,
+        decision=decision,
+        evaluation={
+            "evaluated_state_revision": current_state["revision"],
+            "evaluated_state_fingerprint": current_state["fingerprint"],
+        },
+        observation_refs=observation_refs,
+        evidence_refs=evidence_refs,
+        next_observation_ref=next_observation_ref,
+        reopen_trigger=trigger,
+        contradiction_evidence_refs=contradiction_evidence_refs,
+    )
+    lifecycle_event_ref = {"kind": "difference_event", "id": event["difference_event_id"]}
+
+    next_semantic_state = apply_reflow_bookkeeping(
+        before_project_state["semantic_state"],
+        difference_ref=difference_ref,
+        to_status="REOPENED",
+        new_evidence_refs=evidence_refs,
+        lifecycle_event_ref=lifecycle_event_ref,
+        contradiction_refs=contradiction_refs or [],
+        transaction_ref=state_transition_ref,
+    )
+
+    committed_state, committed_ref = commit_reflow(
+        store,
+        project_id=project_id,
+        before_project_state=before_project_state,
+        next_semantic_state=next_semantic_state,
+        transaction_id=tx,
+        evidence_refs=evidence_refs,
+        reflow_instant=reflow_instant,
+    )
+
+    return {
+        "decision": decision,
+        "next_semantic_state": next_semantic_state,
+        "committed_state": committed_state,
+        "state_transition_ref": committed_ref,
+        "event": event,
     }

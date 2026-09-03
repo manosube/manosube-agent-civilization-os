@@ -52,15 +52,24 @@ def mint_transition_event(
     blocker_resolution_condition: dict[str, Any] | None = None,
     next_observation_ref: dict[str, Any] | None = None,
     reflow_transition_ref: dict[str, Any] | None = None,
+    reopen_trigger: str | None = None,
+    contradiction_evidence_refs: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Return one schema-conformant, binding-valid ``TRANSITION`` lifecycle event.
 
     *decision* is :func:`~manosube_agent_civilization.reflow.engine.decide_transition`'s
-    return value. *evaluation* is the Closure Evaluation it was decided from, required
-    whenever *decision*'s ``to_status`` is one of ``CLOSED``/``BLOCKED``/``RETAINED``
+    return value for every route except Reopen, which instead is
+    :func:`~manosube_agent_civilization.reflow.reopen.decide_reopen`'s -- Reopen does not
+    run a fresh Closure Evaluation, so its own ``closure_evaluation_ref`` re-references the
+    Evaluation being contradicted rather than one just computed, and this function accepts
+    either shape because both carry the same three keys (``to_status``, ``reason_code``,
+    ``reason``, ``closure_evaluation_ref``). *evaluation* is the Closure Evaluation the
+    decision was decided from -- required whenever *decision*'s ``to_status`` is one of
+    ``CLOSED``/``BLOCKED``/``RETAINED``
     (:data:`~manosube_agent_civilization.difference.lifecycle.REQUIRES_CLOSURE_EVALUATION`)
-    and used only to bind ``state_revision_evaluated``/``state_fingerprint_evaluated`` to
-    the exact State the Evaluation itself was computed against.
+    or ``REOPENED`` from ``CLOSED`` -- and used only to bind
+    ``state_revision_evaluated``/``state_fingerprint_evaluated`` to the exact State the
+    Evaluation itself was computed against.
     """
 
     to_status = decision["to_status"]
@@ -68,6 +77,7 @@ def mint_transition_event(
         raise ReflowValidationError(
             f"not a legal transition: {current_status!r} -> {to_status!r}"
         )
+    is_reopen = current_status == "CLOSED" and to_status == "REOPENED"
 
     if evaluation is None:
         raise ReflowValidationError("a Closure Evaluation is required to mint any transition")
@@ -87,6 +97,10 @@ def mint_transition_event(
         raise ReflowValidationError(
             "CLOSED requires reflow_transition_ref from a completed Atomic State commit"
         )
+    if is_reopen and reopen_trigger is None:
+        raise ReflowValidationError("CLOSED -> REOPENED requires a reopen_trigger")
+    if not is_reopen and reopen_trigger is not None:
+        raise ReflowValidationError("reopen_trigger is only valid on CLOSED -> REOPENED")
 
     event: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -109,16 +123,18 @@ def mint_transition_event(
         "authority_ref": authority_ref,
         "change_refs": list(change_refs) if change_refs is not None else [],
         "closure_evaluation_ref": decision.get("closure_evaluation_ref")
-        if to_status in REQUIRES_CLOSURE_EVALUATION
+        if (to_status in REQUIRES_CLOSURE_EVALUATION or is_reopen)
         else None,
         "reflow_transition_ref": reflow_transition_ref,
         "next_observation_ref": next_observation_ref,
-        "reopen_trigger": None,
+        "reopen_trigger": reopen_trigger,
         "reopen_condition_ref": None,
         "reopen_condition_evaluation_ref": None,
         "revoked_evidence_refs": [],
         "invalid_evidence_refs": [],
-        "contradiction_evidence_refs": [],
+        "contradiction_evidence_refs": list(contradiction_evidence_refs)
+        if contradiction_evidence_refs is not None
+        else [],
     }
     event["difference_event_id"] = lifecycle_event_id(event)
 

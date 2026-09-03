@@ -80,8 +80,15 @@ def commit_reflow(
     transaction_id: str,
     evidence_refs: list[Any],
     reflow_instant: str,
+    fault: Any | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build the successor State and commit it atomically. Returns ``(state, ref)``.
+
+    *fault* is passed straight through to ``FileStateStore.commit`` -- it exists only so
+    a crash-recovery test can inject a ``SimulatedCrash`` at one of the Store's own
+    ``STAGES`` and prove this module's commit survives it exactly as
+    ``store/file_store.py``'s own tests already prove the Store itself does. Production
+    callers never pass it.
 
     *ref* is ``{"kind": "state_transition", "id": transaction_id}`` -- the exact reference
     a Difference lifecycle event's ``reflow_transition_ref`` and this same ``project_state``
@@ -110,5 +117,6 @@ def commit_reflow(
         before_project_state["semantic_fingerprint"],
         next_project_state,
         event,
+        fault=fault,
     )
     return committed, {"kind": "state_transition", "id": transaction_id}
