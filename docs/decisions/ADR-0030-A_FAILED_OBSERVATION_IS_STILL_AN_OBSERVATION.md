@@ -137,21 +137,57 @@ is the same defect family as a claim wider than its check:
 
 ## 8. What was proven, and by what
 
-The bundle gates are the Difference owner's own functions — `validate_emitted_bundle` and
-`reference_closure_errors` — run over the real bundle `derive_differences` emitted for the
-failed Observation, carrying the sufficiency result Phase 6 produced from Evidence about that
-same Observation, against that Difference's own emitted Closure Policy.
+Two files, and the difference between them is the point.
 
-It is done that way rather than through `difference_round_trip_request`, and the reason is
-stated in the test rather than left as a gap: that helper's retained lineage comes from
-`reobservation_pair`, which builds its bundle internally and exposes no way to make an attempt
-fail, so its predecessor Difference can never be the failed one. Reshaping a Phase 3 helper to
-force it would change a retained surface for a Phase 6 test. The two gates are the same code
-either way, and `test_difference_round_trip.py` proves the full `derive_differences` transport
-on the standard route — a transport that reads no status.
+`test_failed_observation_route.py` calls the Difference owner's own gates —
+`validate_emitted_bundle` and `reference_closure_errors` — over the real bundle
+`derive_differences` emitted for the failed Observation, carrying the sufficiency result
+Phase 6 produced, against that Difference's own emitted Closure Policy.
 
-The gate is shown non-vacuous by injecting the wrong reference kind, which is what round 3
-found, into the bundle the positive case passes.
+`test_public_failed_round_trip.py` runs the **route**:
+
+```text
+observe() → derive_differences() → derive_evidence() → evaluate_sufficiency()
+         → a real predecessor context → derive_differences()
+```
+
+The first was written when this ADR was drafted, and the reasoning offered for stopping there
+was that `difference_round_trip_request` cannot produce a failed predecessor, so the gates
+were run directly instead. That reasoning was true about the *helper* and wrong about the
+*conclusion*. A real predecessor for the failed Difference did not need that helper at all: the
+first derivation's own output — its Difference, its events, its bundle as context — is one.
+
+Structural review named the gap exactly: **running a gate is not running the route.** Both
+files are kept, because they prove different things. The gates show each check accepts these
+records; the route shows a real predecessor carrying a real sufficiency result survives a real
+re-derivation. Neither substitutes for the other, and the second is the one Issue #37 requires,
+since a demonstration run once outside the repository is not Repository Evidence.
+
+The route test also pins two things that had been left to inference:
+
+```text
+materialized status          = OPEN
+CLOSED lifecycle event count = 0
+candidate_completion_records = []
+evaluations                  = []
+```
+
+They do follow from "UNKNOWN is not evaluable knowledge" and "FAILED Evidence is never
+SUFFICIENT". An inference is not a regression test, and the thing a regression would break is
+the conclusion.
+
+And it closes a reporting overstatement worth recording. The round-4 report said the failure
+lineage was asserted "in three places — Observation, Negative and Evidence". The tests checked
+`result`/`failure_class` on the Observation and `attempt_outcomes` on the Evidence, separately;
+nothing showed the Negative Observation was about *that* attempt, so a Negative Observation
+citing a different one would have passed. The route test resolves `ATTEMPT-0001` across all
+four records. The claim was slightly wider than the check — the eighth instance of the same
+habit, caught by a reviewer reading the tests rather than the report.
+
+The negative control runs through `derive_differences` rather than through
+`reference_closure_errors` directly, because the claim being controlled is about the route. It
+is paired with an assertion that the forgery and the honest record differ in nothing but that
+one tag, so the refusal cannot be caused by something else the forgery changed.
 
 ## 9. The through-line, fourteenth instance
 
@@ -172,6 +208,7 @@ found, into the bundle the positive case passes.
 | Phase 6 P1-C | "evidence older than the bound is stale" | a comparison that truncated first |
 | Phase 6 P2-D | "a canonical content-addressed source" | three fields nothing checked |
 | Phase 6 round 2 | "the sufficiency result is consumable" | two tests that never touched a gate |
+| ADR-0030 §8 | "the failure lineage is asserted in three places" | two of the three, and not the joining one |
 | **ADR-0030** | **"the engine implements this contract"** | **a gate refusing what the contract admits** |
 
 The last row is a different shape from the rest, and worth keeping separate. Every earlier
