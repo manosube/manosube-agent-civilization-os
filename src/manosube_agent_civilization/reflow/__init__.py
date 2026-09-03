@@ -24,6 +24,7 @@ from .identity import (
     material_contradiction_id,
     transaction_id,
 )
+from .lifecycle import mint_transition_event
 
 __all__ = [
     "MANDATORY_X003_CLAIM_DESCRIPTOR",
@@ -40,5 +41,6 @@ __all__ = [
     "decide_transition",
     "evaluate_closure",
     "material_contradiction_id",
+    "mint_transition_event",
     "transaction_id",
 ]
