@@ -1,0 +1,232 @@
+[
+  {
+    "name": "observation_evidence_derived_from_the_real_observation_engine",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/evidence/evidence.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "evidence_id": "EVIDENCE-B53139E7959028B874D23086AFF92ACC223A0078E416CB52E90FC45EA07DCB37",
+      "timestamp": "2026-08-30T10:00:00Z",
+      "target": {
+        "project_id": "PRJ-0001",
+        "target_identity": "TP-0001",
+        "kind": "FIXTURE"
+      },
+      "observation_method": {
+        "method_ref": {
+          "kind": "observation_method",
+          "id": "OBS-METHOD-0001"
+        },
+        "method_class": "STATIC_INSPECTION"
+      },
+      "observed_result": {
+        "observation_ref": {
+          "kind": "observation",
+          "id": "OBS-B3DEE309514C8DE0849C442AD96A419541AC089F0A282284F7571C032426C494"
+        },
+        "observation_status": "COMPLETE",
+        "blind_spot_status": "NONE_KNOWN",
+        "normalized_fact_refs": {
+          "collection_kind": "UNORDERED_SET",
+          "members": [
+            {
+              "kind": "normalized_fact",
+              "id": "FACT-E0C33FC26B262C6E57BF54A5F7AFD23DC585C24EAC764DB1196128DB13BB6157"
+            }
+          ]
+        },
+        "attempt_outcomes": {
+          "collection_kind": "ORDERED_LIST",
+          "members": [
+            "COMPLETE"
+          ]
+        }
+      },
+      "status": "COMPLETE",
+      "artifact_references": {
+        "collection_kind": "UNORDERED_SET",
+        "members": [
+          {
+            "kind": "artifact",
+            "id": "ARTIFACT-0001",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "byte_length": 128,
+            "media_type": "application/json"
+          }
+        ]
+      },
+      "remaining_differences": {
+        "collection_kind": "UNORDERED_SET",
+        "members": []
+      },
+      "evidence_level": "E1",
+      "evidence_semantic_fingerprint": "sha256:b53139e7959028b874d23086aff92acc223a0078e416cb52e90fc45ea07dcb37",
+      "evidence_position": "OBSERVATION_EVIDENCE",
+      "before_state": {
+        "state_revision": 2,
+        "semantic_fingerprint": {
+          "profile": "MANOSUBE-STATE-SHA256-0.1",
+          "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+        }
+      },
+      "change_identity": null,
+      "authority_used": null,
+      "after_state": null,
+      "expected_result": null,
+      "lineage": {
+        "derived_from": {
+          "collection_kind": "UNORDERED_SET",
+          "members": [
+            {
+              "kind": "observation",
+              "id": "OBS-B3DEE309514C8DE0849C442AD96A419541AC089F0A282284F7571C032426C494"
+            }
+          ]
+        },
+        "predecessor_evidence_refs": {
+          "collection_kind": "UNORDERED_SET",
+          "members": []
+        }
+      }
+    }
+  },
+  {
+    "name": "change_result_evidence_grounded_in_a_real_post_change_observation",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/evidence/evidence.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "evidence_id": "EVIDENCE-CDE194A29F56F38805597201A16E57A886973957E7F758BBC405755E82A33F01",
+      "timestamp": "2026-08-30T10:00:00Z",
+      "target": {
+        "project_id": "PRJ-0001",
+        "target_identity": "TP-0001",
+        "kind": "FIXTURE"
+      },
+      "observation_method": {
+        "method_ref": {
+          "kind": "observation_method",
+          "id": "OBS-METHOD-0001"
+        },
+        "method_class": "INTEGRATION_TEST"
+      },
+      "observed_result": {
+        "observation_ref": {
+          "kind": "observation",
+          "id": "OBS-E1D19C8BD7DF507A680476F4779F2C3D213F2D93602AB40E46673702A82C4EBA"
+        },
+        "observation_status": "COMPLETE",
+        "blind_spot_status": "NONE_KNOWN",
+        "normalized_fact_refs": {
+          "collection_kind": "UNORDERED_SET",
+          "members": [
+            {
+              "kind": "normalized_fact",
+              "id": "FACT-598E7E91B17EF6D349333F0DC842FDCA0FE5C24F599C415F8C38836D2D67EECB"
+            }
+          ]
+        },
+        "attempt_outcomes": {
+          "collection_kind": "ORDERED_LIST",
+          "members": [
+            "COMPLETE"
+          ]
+        }
+      },
+      "status": "COMPLETE",
+      "artifact_references": {
+        "collection_kind": "UNORDERED_SET",
+        "members": [
+          {
+            "kind": "artifact",
+            "id": "ARTIFACT-0001",
+            "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "byte_length": 128,
+            "media_type": "application/json"
+          }
+        ]
+      },
+      "remaining_differences": {
+        "collection_kind": "UNORDERED_SET",
+        "members": []
+      },
+      "evidence_level": "E3",
+      "evidence_semantic_fingerprint": "sha256:cde194a29f56f38805597201a16e57a886973957e7f758bbc405755e82a33f01",
+      "evidence_position": "CHANGE_RESULT_EVIDENCE",
+      "before_state": {
+        "state_revision": 2,
+        "semantic_fingerprint": {
+          "profile": "MANOSUBE-STATE-SHA256-0.1",
+          "digest": "47eec7ce4dcd417c9f3c01b2f208468120bb696876408e85063285d8ab75fab3"
+        }
+      },
+      "change_identity": {
+        "kind": "change",
+        "id": "CHANGE-6A88081457322E3CA8087CC286E0B7C24ADBBE9F9BEDC43ED51FFB3F0CC6B7E1",
+        "change_semantic_fingerprint": "sha256:6a88081457322e3ca8087cc286e0b7c24adbbe9f9bedc43ed51ffb3f0cc6b7e1",
+        "idempotency_key": "sha256:6a88081457322e3ca8087cc286e0b7c24adbbe9f9bedc43ed51ffb3f0cc6b7e1",
+        "execution_result": null,
+        "causality_claimed": false
+      },
+      "authority_used": {
+        "kind": "authority_decision",
+        "id": "AUTH-DEC-DAA243F5A17AFE602C61BEEB4C9DA16C19533A3C4B7747858E55EDD56A75FF60",
+        "decision": "AUTONOMOUS",
+        "decision_semantic_fingerprint": "sha256:daa243f5a17afe602c61beeb4c9da16c19533a3c4b7747858e55edd56a75ff60"
+      },
+      "after_state": {
+        "state_revision": 3,
+        "semantic_fingerprint": {
+          "profile": "MANOSUBE-STATE-SHA256-0.1",
+          "digest": "8167c25efc56e4c9f47e345c30fb1c8c41091ffd1f45b3b4235889ae65f1da0f"
+        }
+      },
+      "expected_result": {
+        "declared_action": {
+          "action_kind": "WRITE_FILE",
+          "reversibility": "REVERSIBLE",
+          "operation": {
+            "body": "default"
+          },
+          "action_semantic_fingerprint": "sha256:9cb486bd32b962aeaf8c67949b8e4c57e3e4eb6b22cee81c1e28f3213dee3525"
+        },
+        "declared_scope": {
+          "repository": "manosube/example",
+          "branch": "main",
+          "paths": [
+            "src/app.py"
+          ],
+          "subjects": []
+        },
+        "expected_state_revision": 2,
+        "causality_claimed": false,
+        "execution_receipt_present": false
+      },
+      "lineage": {
+        "derived_from": {
+          "collection_kind": "UNORDERED_SET",
+          "members": [
+            {
+              "kind": "authority_decision",
+              "id": "AUTH-DEC-DAA243F5A17AFE602C61BEEB4C9DA16C19533A3C4B7747858E55EDD56A75FF60"
+            },
+            {
+              "kind": "change",
+              "id": "CHANGE-6A88081457322E3CA8087CC286E0B7C24ADBBE9F9BEDC43ED51FFB3F0CC6B7E1"
+            },
+            {
+              "kind": "observation",
+              "id": "OBS-B3DEE309514C8DE0849C442AD96A419541AC089F0A282284F7571C032426C494"
+            },
+            {
+              "kind": "observation",
+              "id": "OBS-E1D19C8BD7DF507A680476F4779F2C3D213F2D93602AB40E46673702A82C4EBA"
+            }
+          ]
+        },
+        "predecessor_evidence_refs": {
+          "collection_kind": "UNORDERED_SET",
+          "members": []
+        }
+      }
+    }
+  }
+]

@@ -53,11 +53,11 @@ def main() -> int:
     paths = sorted(SCHEMA_ROOT.rglob("*.schema.json"))
     schemas = [load_json(path) for path in paths]
     ids = [schema.get("$id") for schema in schemas]
-    # 33 before the Authority family; the four Authority schemas make 37, and the one
-    # Change schema makes 38. The count is asserted rather than derived so a schema added
-    # without being reconciled here fails the gate instead of silently widening the
-    # inventory.
-    if len(paths) != 38 or len(set(ids)) != len(paths) or None in ids:
+    # 33 before the Authority family; the four Authority schemas make 37, the one Change
+    # schema makes 38, and the one Evidence schema makes 39. The count is asserted rather
+    # than derived so a schema added without being reconciled here fails the gate instead of
+    # silently widening the inventory.
+    if len(paths) != 39 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
@@ -126,6 +126,8 @@ def main() -> int:
     print(f"AUTHORITY_SCHEMA_COUNT={authority_schema_count}")
     change_schema_count = len(list((SCHEMA_ROOT / "change").glob("*.schema.json")))
     print(f"CHANGE_SCHEMA_COUNT={change_schema_count}")
+    evidence_schema_count = len(list((SCHEMA_ROOT / "evidence").glob("*.schema.json")))
+    print(f"EVIDENCE_SCHEMA_COUNT={evidence_schema_count}")
     print(f"DIFFERENCE_CONFORMANCE_VALID_FIXTURE_COUNT={difference_valid_count}")
     print(f"DIFFERENCE_CONFORMANCE_INVALID_FIXTURE_COUNT={difference_invalid_count}")
     print(f"DIFFERENCE_CONFORMANCE_VALID_FAILURE_COUNT={len(difference_valid_errors)}")
