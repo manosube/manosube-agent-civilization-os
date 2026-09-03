@@ -232,6 +232,15 @@ RATIFIED_STATES: tuple[str, ...] = (
 )
 
 EXECUTOR_TERMINAL_STATE = "READY_FOR_STRUCTURAL_REVIEW"
+
+#: What Decision 0001 called the executor's terminal state, kept for one purpose only: so a
+#: conformance test can prove the superseded token appears in no active document.
+#:
+#: It survived a whole merge inside `HUMAN_AGENT_WORK_COMMUNICATION.md` §7A. The Binding, the
+#: policy, both templates and the evaluator were all corrected; the communication protocol
+#: restated the same value in prose and nothing compared the two. A value copied into four
+#: documents and checked in none will drift, and the drift is invisible from every copy.
+SUPERSEDED_EXECUTOR_TERMINAL_STATE = "READY_FOR_SHUKOU_REVIEW"
 MERGE_RECOMMENDATION_STATE = "MERGE_RECOMMENDED"
 FINAL_ACCEPTANCE_STATE = "SHUKOU_ACCEPTED"
 MERGE_OPERATION_STATE = "SHUKOU_MERGED"

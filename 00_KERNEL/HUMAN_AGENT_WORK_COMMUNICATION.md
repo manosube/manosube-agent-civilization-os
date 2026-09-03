@@ -120,15 +120,17 @@ PR_MERGED != KERNEL_COMPLETE
 
 This protocol governs how an Agent communicates about work. It does not select who does the work, who accepts it, or who merges it. A repository records that selection in its own Binding.
 
-For this repository the record is `03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md`. It fixes the acceptance and merge owner, holds every external reviewer's output at `UNVERIFIED_EXTERNAL_OBSERVATION` until the Human explicitly adopts it, and terminates the executor's route at `READY_FOR_SHUKOU_REVIEW`.
+For this repository the record is `03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md`. It fixes the structural-review, final-acceptance and merge-operation owners, holds every external reviewer's output at `UNVERIFIED_EXTERNAL_OBSERVATION` until the Human explicitly adopts it, and terminates the executor's route at the state that Binding names.
 
 ```text
 COMMUNICATION_PROTOCOL_SELECTS_PARTICIPANTS=false
 REPOSITORY_BINDING_SELECTS_PARTICIPANTS=true
-EXECUTOR_TERMINAL_STATE=READY_FOR_SHUKOU_REVIEW
+EXECUTOR_TERMINAL_STATE=READY_FOR_STRUCTURAL_REVIEW
 ```
 
-A completion notice under §7 reports that the executor reached its terminal state. It is not an acceptance, and this protocol grants no Agent the ability to declare one.
+The value above is a *copy* of what the Binding fixes, kept here so a reader of this protocol does not have to follow a link. Every such copy in an active document is compared against the Binding's own value by a conformance test — this one was stale for a whole merge, and prose that restates a value without being checked against it is how that happens.
+
+A completion notice under §7 reports that the executor reached its terminal state. It is not an acceptance, and this protocol grants no Agent the ability to declare one. The executor's terminal state is not the end of the route: a structural-review subject and then the Human follow it.
 
 ---
 
@@ -148,6 +150,7 @@ SILENT_LONG_RUNNING_WORK=false
 FORECAST_USED_AS_COMPLETION_EVIDENCE=false
 COMPLETION_NOTICE_USED_AS_ACCEPTANCE=false
 REPOSITORY_BINDING_REGISTERED=true
+EXECUTOR_TERMINAL_STATE_MATCHES_BINDING=true
 ```
 
 An interface or runtime MAY automate these notices, but automation MUST preserve the meanings and boundaries defined here.

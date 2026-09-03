@@ -281,6 +281,48 @@ missing implementer selection.
 repository the Structural Advisor is the observing and reviewing subject, using the GitHub
 API as its surface; the Human is the accepting and merging subject.
 
+### 6A.7 A value copied into four documents and checked in none
+
+Found by re-observing `main` **after** the merge, which is the wrong time to find it.
+
+Decision 0002 renamed the executor's terminal state from `READY_FOR_SHUKOU_REVIEW` to
+`READY_FOR_STRUCTURAL_REVIEW`. The Binding, the policy artifact, both executable templates
+and the evaluator were all corrected. `HUMAN_AGENT_WORK_COMMUNICATION.md` §7A restated the
+same value in prose — twice — and nothing compared the two.
+
+```text
+BINDING                = DECISION_0002
+POLICY                 = DECISION_0002
+TEMPLATES              = DECISION_0002
+EVALUATOR              = DECISION_0002
+COMMUNICATION_PROTOCOL = STALE_0001
+```
+
+It survived a structural review and a merge.
+
+The shallow reading is "one stale line". The real defect is that the terminal state existed
+as **four independent copies in prose**, and the conformance suite checked none of them
+against the Binding. It checked that §7A *mentioned* the Binding and that a couple of flags
+were present — never that the value it stated was the value in force. A copy nobody compares
+to its source is not documentation of a rule; it is a second rule that happens to agree for
+a while.
+
+The repair is not the text edit. It is a guard that finds **every** `EXECUTOR_TERMINAL_STATE=`
+in every active document and compares it against the policy, so a future rename is covered
+without anyone remembering to look. A second check proves the superseded token appears in no
+active document at all.
+
+Historical records are deliberately outside that sweep. An ADR records what was decided
+*then* and an incident regression reproduces what happened *then*; both may name a superseded
+token, and scrubbing them would destroy the record rather than fix anything. The exclusion
+list is enumerated, each entry is asserted to exist, and its size is asserted to stay small —
+an unchecked exclusion list is the same defect one level up.
+
+This is the fourth instance of the family, and the first one caught after a merge rather than
+before. The three before it were all *within* a module: a claim and its enforcement drifting
+apart. This one was *between* documents, which is why every review pass that read either
+document alone saw nothing wrong.
+
 ## 7. Consequences
 
 The four participants building this repository are now named, closed, and evaluable, while the
