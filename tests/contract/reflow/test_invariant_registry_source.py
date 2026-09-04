@@ -329,4 +329,3 @@ def test_the_live_documents_own_definition_digests_actually_changed_under_the_fi
 def test_a_trailing_delimiter_inside_a_tilde_fence_is_kept_as_body_content() -> None:
     block = "## K-999 — Fake\n\n~~~text\nliteral\n---\n~~~\n"
     assert strip_invariant_section_delimiter(block) == block
-

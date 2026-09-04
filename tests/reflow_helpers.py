@@ -30,6 +30,7 @@ from tests.evidence_helpers import (
 from tests.state_helpers import SCHEMA_ROOT, initial_state
 
 from manosube_agent_civilization.difference.completion import (
+    CANDIDATE_COMPLETION_RECORD_KIND,
     MANDATORY_X003_CLAIM_DESCRIPTOR,
     build_completion_record,
     completion_record_fingerprint,
@@ -44,7 +45,10 @@ from manosube_agent_civilization.reflow.claims import (
     candidate_claim_evaluation_event_id,
     candidate_claim_evaluation_series_id,
 )
-from manosube_agent_civilization.reflow.closure import MANDATORY_X003_CLAIM_REF
+from manosube_agent_civilization.reflow.closure import (
+    MANDATORY_X003_CLAIM_REF,
+    build_after_state_candidate,
+)
 from manosube_agent_civilization.reflow.git_witness import blob_sha1, commit_sha1, tree_sha1
 from manosube_agent_civilization.reflow.identity import material_contradiction_id
 from manosube_agent_civilization.reflow.invariant_registry import (
@@ -54,7 +58,10 @@ from manosube_agent_civilization.reflow.invariant_registry import (
     candidate_invariant_evaluation_binding_id,
     expected_g19_invariant_ids,
 )
-from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+from manosube_agent_civilization.state.fingerprint import (
+    fingerprint_project_state,
+    fingerprint_semantic_state,
+)
 from manosube_agent_civilization.store import FileStateStore
 
 GIT_TREE_REF: dict[str, Any] = {
@@ -235,12 +242,30 @@ def mandatory_x003_claim_binding(
     claim_ref: dict[str, str] | None = None,
     invariant_evaluation_refs: list[dict[str, Any]] | None = None,
     material_contradiction_refs: list[dict[str, Any]] | None = None,
+    after_state_candidate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """One conformant ``candidate_claim_evaluation_binding`` for the mandatory X-003 claim."""
+    """One conformant ``candidate_claim_evaluation_binding`` for the mandatory X-003 claim.
+
+    R5-F1: *after_state_candidate*, when supplied, is the real, content-addressed candidate
+    (:func:`~manosube_agent_civilization.reflow.closure.build_after_state_candidate`) this
+    binding's own ``candidate_id``/``candidate_semantic_fingerprint`` must match for G21 to
+    resolve it -- closure.py now verifies both against it, never accepting a caller's bare
+    restatement. Left ``None`` (a placeholder id) only for fixtures that never route through
+    G21's own candidate check, e.g. this module's ``resolve_claim_binding``-only tests.
+    """
 
     required_claim_ref = claim_ref if claim_ref is not None else MANDATORY_X003_CLAIM_REF
     policy_ref = deepcopy(difference["closure_policy"])
-    candidate_id = "STATE-CANDIDATE-" + "1" * 64
+    candidate_id = (
+        after_state_candidate["candidate_id"]
+        if after_state_candidate is not None
+        else "STATE-CANDIDATE-" + "1" * 64
+    )
+    candidate_semantic_fingerprint = (
+        after_state_candidate["semantic_fingerprint"]
+        if after_state_candidate is not None
+        else {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "1" * 64}
+    )
     series_id = candidate_claim_evaluation_series_id(
         difference_id=difference["difference_id"],
         policy_ref=policy_ref,
@@ -272,10 +297,7 @@ def mandatory_x003_claim_binding(
         "difference_id": difference["difference_id"],
         "policy_ref": policy_ref,
         "candidate_id": candidate_id,
-        "candidate_semantic_fingerprint": {
-            "profile": "MANOSUBE-STATE-SHA256-0.1",
-            "digest": "1" * 64,
-        },
+        "candidate_semantic_fingerprint": candidate_semantic_fingerprint,
         "base_state_ref": {
             "kind": "state",
             "revision": current_state["revision"],
@@ -287,7 +309,10 @@ def mandatory_x003_claim_binding(
             "kind": "candidate_claim_evaluation_event",
             "id": "CAND-CLAIM-EVT-" + "3" * 64,
         },
-        "completion_record_ref": {"kind": "completion_record", "id": completion_record["completion_id"]},
+        "completion_record_ref": {
+            "kind": CANDIDATE_COMPLETION_RECORD_KIND,
+            "id": completion_record["completion_id"],
+        },
         "evaluation_record_fingerprint": completion_record_fingerprint(completion_record),
         "evaluation_status": evaluation_status,
         "evaluation_evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
@@ -348,7 +373,7 @@ def _hex_digest(seed: str) -> str:
 
 
 def mandatory_invariant_evaluation(
-    invariant_id: str, current_state: dict[str, Any], *, status: str = "PASS"
+    difference_id: str, invariant_id: str, current_state: dict[str, Any], *, status: str = "PASS"
 ) -> dict[str, Any]:
     """One real, schema-valid ``invariant_evaluation`` record for *invariant_id*.
 
@@ -356,13 +381,18 @@ def mandatory_invariant_evaluation(
     in ``CLOSURE_POLICY.md`` -- see ``difference/invariant_evaluation.py``'s module
     docstring), so this fixture assigns the same deterministic value
     :func:`mandatory_invariant_bindings` declares on its own ``invariant_evaluation_ref``.
+
+    R5-F1: ``subject_ref`` is ``{"kind": "difference", "id": difference_id}`` -- the
+    ``difference``/``objective_revision``/``state`` set ``difference/graph.py``'s own edge
+    table permits for this field (``kernel_invariant``, an earlier round's placeholder, is
+    not among them and is rejected by that checker).
     """
 
     return {
         "schema_version": "0.1",
         "evaluation_id": "INV-EVAL-" + _hex_digest(f"eval:{invariant_id}").upper(),
         "invariant_id": invariant_id,
-        "subject_ref": {"kind": "kernel_invariant", "id": invariant_id},
+        "subject_ref": {"kind": "difference", "id": difference_id},
         "state_revision": current_state["revision"],
         "state_fingerprint": current_state["fingerprint"],
         "verification_stage": "CANDIDATE_CLOSURE",
@@ -378,37 +408,54 @@ def mandatory_invariant_evaluation(
     }
 
 
-def mandatory_invariant_evaluations(current_state: dict[str, Any]) -> list[dict[str, Any]]:
+def mandatory_invariant_evaluations(difference_id: str, current_state: dict[str, Any]) -> list[dict[str, Any]]:
     """The real Invariant Evaluation record pool matching every binding
     :func:`mandatory_invariant_bindings` builds -- the caller-supplied pool R4-F2's
     ``invariant_evaluations`` closure_request field carries.
     """
 
     return [
-        mandatory_invariant_evaluation(invariant_id, current_state)
+        mandatory_invariant_evaluation(difference_id, invariant_id, current_state)
         for invariant_id in sorted(expected_g19_invariant_ids())
     ]
 
 
-def mandatory_invariant_bindings(current_state: dict[str, Any]) -> list[dict[str, Any]]:
+def mandatory_invariant_bindings(
+    difference_id: str,
+    current_state: dict[str, Any],
+    *,
+    after_state_candidate: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """One real ``candidate_invariant_evaluation_binding`` per pinned v0.1 mandatory id.
 
     G19 now additively requires the whole :func:`expected_g19_invariant_ids` union
     regardless of what a Closure Policy itself declares (see ``reflow/closure.py``), so a
     request that wants ``CANDIDATE_CLOSURE`` to actually reach ``SATISFIED`` must bind all
     of them, not only whatever the Policy names.
+
+    R5-F1: *after_state_candidate*, when supplied, is the real candidate every binding's own
+    ``candidate_id``/``candidate_semantic_fingerprint`` is set to match -- see
+    :func:`mandatory_x003_claim_binding`'s identical parameter for why it defaults to
+    ``None`` (a placeholder id) rather than being required.
     """
 
+    candidate_id = (
+        after_state_candidate["candidate_id"]
+        if after_state_candidate is not None
+        else "STATE-CANDIDATE-" + "1" * 64
+    )
+    candidate_semantic_fingerprint = (
+        after_state_candidate["semantic_fingerprint"]
+        if after_state_candidate is not None
+        else {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "1" * 64}
+    )
     bindings = []
     for invariant_id in sorted(expected_g19_invariant_ids()):
-        record = mandatory_invariant_evaluation(invariant_id, current_state)
+        record = mandatory_invariant_evaluation(difference_id, invariant_id, current_state)
         binding = {
             "kind": "candidate_invariant_evaluation_binding",
-            "candidate_id": "STATE-CANDIDATE-" + "1" * 64,
-            "candidate_semantic_fingerprint": {
-                "profile": "MANOSUBE-STATE-SHA256-0.1",
-                "digest": "1" * 64,
-            },
+            "candidate_id": candidate_id,
+            "candidate_semantic_fingerprint": candidate_semantic_fingerprint,
             "base_state_ref": {
                 "kind": "state",
                 "revision": current_state["revision"],
@@ -475,6 +522,7 @@ def mandatory_x003_claim_binding_and_event(
     claim_ref: dict[str, str] | None = None,
     invariant_evaluation_refs: list[dict[str, Any]] | None = None,
     material_contradiction_refs: list[dict[str, Any]] | None = None,
+    after_state_candidate: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """A real ``(binding, event)`` pair whose head reference actually agrees."""
 
@@ -485,6 +533,7 @@ def mandatory_x003_claim_binding_and_event(
         claim_ref=claim_ref,
         invariant_evaluation_refs=invariant_evaluation_refs,
         material_contradiction_refs=material_contradiction_refs,
+        after_state_candidate=after_state_candidate,
     )
     event = mandatory_x003_claim_event(binding, difference, evaluation_status=evaluation_status)
     binding = dict(binding)
@@ -535,16 +584,32 @@ def candidate_closure_request(
         for item in material_contradictions
     ]
     request = base_closure_request(difference, policy)
-    invariant_bindings = mandatory_invariant_bindings(current_state)
-    invariant_evaluations = mandatory_invariant_evaluations(current_state)
+    kernel_source_ref, kernel_source_witness = real_kernel_source_witness()
+    after_semantic_state = semantic_state("KNOWN")
+    source_snapshot_refs = [{"kind": "source_snapshot", "id": "SNAP-0001"}]
+    # R5-F1: the real after_state_candidate every binding this request builds must match --
+    # built from exactly the same inputs evaluate_closure itself uses to build its own,
+    # so the two are the same content-addressed candidate.
+    after_state_candidate = build_after_state_candidate(
+        current_state=current_state,
+        kernel_source_ref=kernel_source_ref,
+        semantic_state=after_semantic_state,
+        semantic_fingerprint=fingerprint_semantic_state(after_semantic_state).as_dict(),
+        source_snapshot_refs=source_snapshot_refs,
+        producing_change_refs=[],
+    )
+    invariant_bindings = mandatory_invariant_bindings(
+        difference["difference_id"], current_state, after_state_candidate=after_state_candidate
+    )
+    invariant_evaluations = mandatory_invariant_evaluations(difference["difference_id"], current_state)
     invariant_evaluation_refs = [binding["invariant_evaluation_ref"] for binding in invariant_bindings]
     claim_binding, claim_event = mandatory_x003_claim_binding_and_event(
         difference,
         current_state,
         invariant_evaluation_refs=invariant_evaluation_refs,
         material_contradiction_refs=contradiction_refs,
+        after_state_candidate=after_state_candidate,
     )
-    kernel_source_ref, kernel_source_witness = real_kernel_source_witness()
     request.update(
         {
             "current_state": current_state,
@@ -562,8 +627,8 @@ def candidate_closure_request(
             "evidence_sufficiency_request": sufficiency_request(
                 difference_id=difference["difference_id"], policy=policy
             ),
-            "after_state_semantic_state": semantic_state("KNOWN"),
-            "source_snapshot_refs": [{"kind": "source_snapshot", "id": "SNAP-0001"}],
+            "after_state_semantic_state": after_semantic_state,
+            "source_snapshot_refs": source_snapshot_refs,
             "candidate_invariant_evaluation_bindings": invariant_bindings,
             "invariant_evaluations": invariant_evaluations,
             "candidate_claim_evaluation_bindings": [claim_binding],
@@ -622,7 +687,9 @@ def self_closing_change_bound_closure_request(
             "after_state_semantic_state": semantic_state("KNOWN"),
             "source_snapshot_refs": [{"kind": "source_snapshot", "id": "SNAP-0001"}],
             "producing_change_refs": [{"kind": "change", "id": change_record["change_id"]}],
-            "candidate_invariant_evaluation_bindings": mandatory_invariant_bindings(current_state),
+            "candidate_invariant_evaluation_bindings": mandatory_invariant_bindings(
+                difference["difference_id"], current_state
+            ),
             "candidate_claim_evaluation_bindings": [claim_binding],
             "candidate_claim_evaluation_events": [claim_event],
             "terminal_reason_evidence_refs": [],

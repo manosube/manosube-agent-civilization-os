@@ -27,6 +27,15 @@ from .validation import validate_record
 _COMPLETION_RECORD_ID_DOMAIN = b"MANOSUBE:CANDIDATE_COMPLETION_RECORD:0.1:"
 _COMPLETION_RECORD_FINGERPRINT_DOMAIN = b"MANOSUBE:COMPLETION_RECORD:0.1:"
 
+#: The canonical reference ``kind`` a ``completion_record_ref`` must carry -- the same name
+#: the schema title, ``difference/graph.py``'s own edge table, and ``difference/conformance.py``
+#: already use everywhere else for this record kind (R5-F3: CLOSURE_POLICY.md's own line
+#: 665/686 example text writes the shorter, non-canonical ``completion_record`` -- copied
+#: verbatim into an earlier round's fixtures without cross-checking it against the rest of
+#: this codebase's own established convention, which ``graph.py``'s reference-closure
+#: checker rejects outright).
+CANDIDATE_COMPLETION_RECORD_KIND = "candidate_completion_record"
+
 #: ``COMPLETION_RECORD_SCALARS``, CLOSURE_POLICY.md line 603-606.
 COMPLETION_RECORD_SCALARS: tuple[str, ...] = (
     "completion_id",
@@ -132,6 +141,7 @@ def build_completion_record(
     required_evidence_refs: list[Any],
     invariant_evaluation_refs: list[Any],
     material_contradiction_refs: list[Any],
+    reflow_transition_ref: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the one canonical, schema-shaped Completion Record *claim_descriptor*'s
     evaluation implies, with its own content-addressed ``completion_id`` already set.
@@ -140,6 +150,16 @@ def build_completion_record(
     from *claim_descriptor* -- CLOSURE_POLICY.md defines ``claim_semantic_fingerprint``
     from exactly these four Completion Record fields, so they are the descriptor's own
     fields reused, not independently chosen.
+
+    *reflow_transition_ref* defaults to ``None`` (its value at Closure-Evaluation time, when
+    no transition has committed yet -- both ``completion_id`` and
+    :func:`completion_record_fingerprint` exclude this field, so the two are stable
+    regardless of its value). R5-F3: a caller that already knows the real
+    ``state_transition_ref`` a CLOSED cycle will commit under -- computed deterministically
+    before the commit itself, the same way :func:`~manosube_agent_civilization.reflow.
+    lifecycle.mint_transition_event` already receives it for the lifecycle event -- passes
+    it here to build the *persisted* record with its post-commit lineage field already set,
+    never as a second write after the fact.
     """
 
     record: dict[str, Any] = {
@@ -158,7 +178,7 @@ def build_completion_record(
         "evaluated_state_revision": evaluated_state_revision,
         "evaluated_state_fingerprint": evaluated_state_fingerprint,
         "evaluated_at": evaluated_at,
-        "reflow_transition_ref": None,
+        "reflow_transition_ref": reflow_transition_ref,
     }
     record["completion_id"] = candidate_completion_record_id(record)
     validate_record(record, "candidate_completion_record.schema.json")
@@ -177,10 +197,23 @@ def resolve_completion_record(
 ) -> dict[str, Any]:
     """Resolve *binding*'s ``completion_record_ref`` against the one Completion Record its
     own Claim descriptor and this Evaluation's inputs imply, and verify the binding matches
-    it exactly on identity and fingerprint -- fail closed rather than trust the binding's
-    restatement of either.
+    it exactly on identity, kind, and fingerprint -- fail closed rather than trust the
+    binding's restatement of any of them.
+
+    Always resolves against the pre-commit (``reflow_transition_ref=None``) projection --
+    the one real Closure-Evaluation time can attest to, since the real ``state_transition``
+    reference does not exist until Atomic Reflow's own commit succeeds. ``completion_id``
+    and the fingerprint both exclude that field, so this is the same record a caller later
+    persists with the post-commit reference filled in (:func:`build_completion_record`'s own
+    *reflow_transition_ref* parameter) -- not a different one.
     """
 
+    if binding["completion_record_ref"].get("kind") != CANDIDATE_COMPLETION_RECORD_KIND:
+        raise DifferenceError(
+            "binding's completion_record_ref does not carry the canonical "
+            f"{CANDIDATE_COMPLETION_RECORD_KIND!r} kind: "
+            f"{binding['completion_record_ref'].get('kind')!r}"
+        )
     claim_descriptor = resolve_claim_descriptor(binding["required_claim_ref"], policy)
     record = build_completion_record(
         claim_descriptor=claim_descriptor,

@@ -589,6 +589,7 @@ def _evaluate_g19(
     kernel_source_ref: dict[str, Any] | None,
     kernel_source_witness: dict[str, Any] | None,
     invariant_evaluations: list[Any],
+    after_state_candidate: dict[str, Any] | None,
 ) -> None:
     # R2-G19: the v0.1 mandatory Invariant union is additive over whatever the Policy
     # itself declares -- an empty `required_invariants` cannot reach G19 PASS vacuously.
@@ -657,6 +658,16 @@ def _evaluate_g19(
         except ReflowValidationError as error:
             gates.set("G19", "FAIL", f"kernel_source_witness did not verify: {error}")
             return
+        # R5-F1: a candidate invariant evaluation set requires the real, content-addressed
+        # after_state_candidate -- a bare witness proves the *registry*'s own provenance,
+        # never that any binding actually names the Candidate this Evaluation is for.
+        if after_state_candidate is None:
+            gates.set(
+                "G19",
+                "FAIL",
+                "a candidate invariant evaluation set requires a real after_state_candidate",
+            )
+            return
 
     got: dict[str, tuple[str, str]] = {}
     for binding in bindings:
@@ -670,6 +681,25 @@ def _evaluate_g19(
             return
         if binding.get("evaluation_result") != "PASS":
             gates.set("G19", "FAIL", f"invariant binding is not PASS: {binding.get('binding_id')}")
+            return
+        # R5-F1: CANDIDATE_BINDING_REQUIRED/CANDIDATE_ID_AND_FINGERPRINT_EXACT_MATCH_REQUIRED
+        # -- the binding's own candidate_id/candidate_semantic_fingerprint must exactly match
+        # the real after_state_candidate this Evaluation is actually for, not merely be
+        # schema-shaped and self-consistent with the binding's own hash. ``after_state_candidate``
+        # is never ``None`` here (checked above whenever bindings is non-empty); the explicit
+        # ``is None`` clause fails closed defensively rather than asserting it away.
+        if (
+            after_state_candidate is None
+            or binding.get("candidate_id") != after_state_candidate["candidate_id"]
+            or binding.get("candidate_semantic_fingerprint") != after_state_candidate["semantic_fingerprint"]
+        ):
+            gates.set(
+                "G19",
+                "FAIL",
+                f"candidate_invariant_evaluation_binding's candidate_id/candidate_semantic_"
+                f"fingerprint does not match the real after_state_candidate: "
+                f"{binding.get('binding_id')}",
+            )
             return
         invariant_id = binding["invariant_ref"]["id"]
         if invariant_id in got:
@@ -720,6 +750,7 @@ def _evaluate_g21(
     *,
     invariant_evaluation_refs: list[Any],
     material_contradiction_refs: list[Any],
+    after_state_candidate: dict[str, Any] | None,
 ) -> None:
     expected = {MANDATORY_X003_CLAIM_ID} | {item["id"] for item in policy["required_claims"]}
     got_satisfied: set[str] = set()
@@ -729,6 +760,15 @@ def _evaluate_g21(
         "revision": current_state["revision"],
         "fingerprint": current_state["fingerprint"],
     }
+    # R5-F1: a completion Claim binding requires the real, content-addressed
+    # after_state_candidate -- see the identical G19 requirement's own comment.
+    if bindings and after_state_candidate is None:
+        gates.set(
+            "G21",
+            "FAIL",
+            "a candidate_claim_evaluation_binding requires a real after_state_candidate",
+        )
+        return
     for binding in bindings:
         claim_id = binding["required_claim_ref"]["id"]
         got_all.add(claim_id)
@@ -744,6 +784,20 @@ def _evaluate_g21(
                 "G21",
                 "FAIL",
                 f"claim binding for {claim_id} is not bound to the evaluated State",
+            )
+            return
+        # R5-F1: CANDIDATE_BINDING_REQUIRED/CANDIDATE_ID_AND_FINGERPRINT_EXACT_MATCH_REQUIRED
+        # -- see the identical G19 binding check's own comment.
+        if (
+            after_state_candidate is None
+            or binding.get("candidate_id") != after_state_candidate["candidate_id"]
+            or binding.get("candidate_semantic_fingerprint") != after_state_candidate["semantic_fingerprint"]
+        ):
+            gates.set(
+                "G21",
+                "FAIL",
+                f"claim binding for {claim_id}'s candidate_id/candidate_semantic_fingerprint "
+                "does not match the real after_state_candidate",
             )
             return
         # F8/R2-F8: the binding's own `evaluation_status` (and every other field it
@@ -815,7 +869,7 @@ def _evaluate_g22(
     gates.set("G22", "PASS")
 
 
-def _build_after_state_candidate(
+def build_after_state_candidate(
     *,
     current_state: dict[str, Any],
     kernel_source_ref: dict[str, Any],
@@ -824,6 +878,16 @@ def _build_after_state_candidate(
     source_snapshot_refs: list[Any],
     producing_change_refs: list[Any],
 ) -> dict[str, Any]:
+    """Build the one real, content-addressed ``after_state_candidate`` a request's own
+    inputs imply.
+
+    Public (R5-F1): every ``candidate_invariant_evaluation_binding``/
+    ``candidate_claim_evaluation_binding``'s own ``candidate_id``/``candidate_semantic_
+    fingerprint`` must exactly match this same candidate's own ``candidate_id``/
+    ``semantic_fingerprint`` -- a caller building a real, resolvable binding needs this
+    function too, not only :func:`evaluate_closure`'s own internal call.
+    """
+
     candidate: dict[str, Any] = {
         "kind": "after_state_candidate",
         "candidate_id": "",
@@ -864,6 +928,26 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
     proposed_terminal_status = shaped["proposed_terminal_status"]
 
     current_status = shaped["current_status"]
+
+    # R5-F1: the real, content-addressed after_state_candidate this request's own inputs
+    # imply -- built here, before G19/G21 run, so both gates can verify every binding's own
+    # candidate_id/candidate_semantic_fingerprint against it rather than accept a caller's
+    # bare restatement of either.
+    has_candidate_material = shaped["after_state_semantic_state"] is not None
+    after_state_candidate = None
+    if has_candidate_material:
+        semantic_state = require_object(shaped["after_state_semantic_state"], "after_state_semantic_state")
+        semantic_fingerprint = fingerprint_semantic_state(semantic_state).as_dict()
+        after_state_candidate = build_after_state_candidate(
+            current_state=current_state,
+            kernel_source_ref=require_object(shaped["kernel_source_ref"], "kernel_source_ref"),
+            semantic_state=semantic_state,
+            semantic_fingerprint=semantic_fingerprint,
+            source_snapshot_refs=require_collection(shaped["source_snapshot_refs"], "source_snapshot_refs"),
+            producing_change_refs=require_collection(
+                shaped["producing_change_refs"], "producing_change_refs"
+            ),
+        )
 
     gates = _Gates()
     _evaluate_g1_g2(gates, difference, current_status)
@@ -934,6 +1018,7 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         if isinstance(shaped["kernel_source_witness"], dict)
         else None,
         invariant_evaluations=invariant_evaluations,
+        after_state_candidate=after_state_candidate,
     )
     claim_bindings = require_collection(
         shaped["candidate_claim_evaluation_bindings"], "candidate_claim_evaluation_bindings"
@@ -953,6 +1038,7 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         claim_events,
         invariant_evaluation_refs=invariant_evaluation_refs_for_completion,
         material_contradiction_refs=contradiction_refs,
+        after_state_candidate=after_state_candidate,
     )
     _evaluate_g22(gates, policy, proposed_terminal_status)
 
@@ -974,7 +1060,6 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         shaped["terminal_reason_evidence_refs"], "terminal_reason_evidence_refs"
     )
 
-    has_candidate_material = shaped["after_state_semantic_state"] is not None
     all_pass = all(
         gates.results[gate] in {"PASS", "NOT_APPLICABLE"} for gate in GATE_IDS
     )
@@ -1028,7 +1113,6 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
                 f"{evaluation_mode} requires at least one terminal_reason_evidence_refs entry"
             )
 
-    after_state_candidate = None
     resolution_mode = shaped["resolution_mode"]
     change_refs = require_collection(shaped["change_refs"], "change_refs")
     change_result_evidence_refs = require_collection(
@@ -1041,20 +1125,6 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
     after_observation_refs: list[Any] = []
     evidence_sufficiency_ref = None
     if has_candidate_material:
-        semantic_state = require_object(shaped["after_state_semantic_state"], "after_state_semantic_state")
-        semantic_fingerprint = fingerprint_semantic_state(semantic_state).as_dict()
-        after_state_candidate = _build_after_state_candidate(
-            current_state=current_state,
-            kernel_source_ref=require_object(shaped["kernel_source_ref"], "kernel_source_ref"),
-            semantic_state=semantic_state,
-            semantic_fingerprint=semantic_fingerprint,
-            source_snapshot_refs=require_collection(
-                shaped["source_snapshot_refs"], "source_snapshot_refs"
-            ),
-            producing_change_refs=require_collection(
-                shaped["producing_change_refs"], "producing_change_refs"
-            ),
-        )
         reobservation = shaped["reobservation"] if isinstance(shaped["reobservation"], dict) else {}
         after_observation_refs = list(reobservation.get("after_observation_refs", []))
         if sufficiency is not None:

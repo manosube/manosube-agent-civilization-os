@@ -383,6 +383,9 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
             "required_evidence_refs.members[]",
             ("observation_evidence", "negative_evidence"),
         ),
+        # R5-F3: the post-commit transition reference, same edge shape as
+        # closure_evaluation/difference_lifecycle_event's own reflow_transition_ref.
+        ("reflow_transition_ref", ("reflow_transition", "state_transition")),
     ),
     "candidate_claim_evaluation_event": _edges(
         ("completion_record_ref", ("candidate_completion_record",)),

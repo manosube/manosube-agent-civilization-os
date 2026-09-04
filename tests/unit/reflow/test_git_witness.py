@@ -192,6 +192,63 @@ def test_a_tampered_blob_object_fails_its_own_content_address() -> None:
         )
 
 
+def test_r5f5_a_mode_inverted_graph_is_refused_even_though_every_hash_verifies() -> None:
+    """R5-F5: the intermediate ``00_KERNEL`` entry declares a blob mode (``100644``) and the
+    final ``KERNEL_INVARIANTS.md`` entry declares a tree mode (``40000``) -- every object's
+    own content-addressed hash still verifies exactly (this is not a hash forgery), but the
+    declared mode at each path position is now independently checked and refused."""
+
+    blob_content = b"hello kernel invariants\n"
+    blob_sha = blob_sha1(blob_content)
+    leaf_entry = _tree_entry("40000", "KERNEL_INVARIANTS.md", blob_sha)
+    leaf_tree_sha = tree_sha1(leaf_entry)
+    root_entry = _tree_entry("100644", "00_KERNEL", leaf_tree_sha)
+    root_tree_sha = tree_sha1(root_entry)
+    commit_object = _commit_object(root_tree_sha)
+    commit_sha = commit_sha1(commit_object)
+    witness = {
+        "commit_object": commit_object.hex(),
+        "tree_objects": {root_tree_sha: root_entry.hex(), leaf_tree_sha: leaf_entry.hex()},
+        "blob_object": blob_content.hex(),
+    }
+
+    with pytest.raises(ReflowValidationError, match="does not carry a tree \\(directory\\) mode"):
+        verify_kernel_source_witness(
+            witness=witness,
+            expected_commit_sha=commit_sha,
+            expected_tree_sha=root_tree_sha,
+            expected_blob_sha=blob_sha,
+            path=PATH,
+        )
+
+
+def test_r5f5_a_final_segment_with_a_non_blob_mode_is_refused() -> None:
+    """The final path segment declaring a submodule/gitlink mode (``160000``) rather than a
+    real blob-family mode is refused, even if its sha happens to equal the pinned blob sha."""
+
+    repo = _build_real_repo()
+    tampered_leaf = _tree_entry("160000", "KERNEL_INVARIANTS.md", repo["blob_sha"])
+    tampered_leaf_sha = tree_sha1(tampered_leaf)
+    tampered_root = _tree_entry("40000", "00_KERNEL", tampered_leaf_sha)
+    tampered_root_sha = tree_sha1(tampered_root)
+    tampered_commit = _commit_object(tampered_root_sha)
+    tampered_commit_sha = commit_sha1(tampered_commit)
+    witness = {
+        "commit_object": tampered_commit.hex(),
+        "tree_objects": {tampered_root_sha: tampered_root.hex(), tampered_leaf_sha: tampered_leaf.hex()},
+        "blob_object": repo["witness"]["blob_object"],
+    }
+
+    with pytest.raises(ReflowValidationError, match="does not carry a blob-family mode"):
+        verify_kernel_source_witness(
+            witness=witness,
+            expected_commit_sha=tampered_commit_sha,
+            expected_tree_sha=tampered_root_sha,
+            expected_blob_sha=repo["blob_sha"],
+            path=PATH,
+        )
+
+
 def test_parse_tree_entries_rejects_a_duplicate_name() -> None:
     entry = _tree_entry("100644", "same", blob_sha1(b"x"))
     with pytest.raises(ReflowValidationError, match="duplicate entry"):

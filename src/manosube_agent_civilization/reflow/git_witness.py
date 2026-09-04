@@ -32,6 +32,14 @@ from typing import Any
 
 from .errors import ReflowValidationError
 
+#: Git tree-entry modes that name a subtree (a directory one more path segment must walk
+#: into) -- the only mode a non-final path segment may carry.
+_TREE_MODES = frozenset({"40000"})
+#: Git tree-entry modes that name a blob (regular file, executable, or symlink) -- the only
+#: modes the final path segment may carry. ``160000`` (a submodule/gitlink, which names a
+#: commit in a foreign repository, not a blob this witness can hash) is deliberately absent.
+_BLOB_MODES = frozenset({"100644", "100755", "120000"})
+
 
 def _git_object_sha1(kind: bytes, content: bytes) -> str:
     """Return the Git object id: SHA-1 of ``"<kind> <len>\\0" + content`` -- Git's own
@@ -128,13 +136,20 @@ def verify_kernel_source_witness(
        assertion, the commit object's own asserted content.
     3. Each path segment of *path* resolves through a chain of tree objects supplied in
        ``tree_objects``, keyed by each tree's own sha -- each tree object independently
-       hashes to its own key before its entries are trusted, and the final segment's
-       resolved blob sha must equal *expected_blob_sha* exactly.
+       hashes to its own key before its entries are trusted, every non-final segment's own
+       tree entry must carry a directory mode (``40000``), the final segment's own entry
+       must carry a blob-family mode (``100644``/``100755``/``120000``), and the final
+       segment's resolved blob sha must equal *expected_blob_sha* exactly (R5-F5: a tree
+       entry's declared mode is independently checked against its position in the path, not
+       merely parsed and discarded -- a graph where an intermediate entry's mode claims a
+       blob and the final entry's mode claims a tree is refused even though every object's
+       own hash still verifies).
     4. ``blob_object`` independently hashes to *expected_blob_sha*.
 
     Any missing object, any object whose recomputed hash does not equal its own claimed
-    key, any path segment absent from its parent tree, or any final blob sha mismatch
-    raises :class:`~manosube_agent_civilization.reflow.errors.ReflowValidationError`.
+    key, any path segment absent from its parent tree, any path segment carrying a mode
+    inconsistent with its position, or any final blob sha mismatch raises
+    :class:`~manosube_agent_civilization.reflow.errors.ReflowValidationError`.
     """
 
     commit_object = _decode_hex_field(witness, "commit_object")
@@ -179,10 +194,22 @@ def verify_kernel_source_witness(
             raise ReflowValidationError(
                 f"kernel_source_witness tree {current_sha} has no entry for path segment {segment!r}"
             )
-        _mode, current_sha = entry
-        if position == len(segments) - 1 and current_sha != expected_blob_sha:
+        mode, current_sha = entry
+        is_final = position == len(segments) - 1
+        if is_final:
+            if mode not in _BLOB_MODES:
+                raise ReflowValidationError(
+                    f"kernel_source_witness path segment {segment!r} is the final path "
+                    f"segment but does not carry a blob-family mode: {mode!r}"
+                )
+            if current_sha != expected_blob_sha:
+                raise ReflowValidationError(
+                    "kernel_source_witness path resolves to a blob other than the pinned blob_sha"
+                )
+        elif mode not in _TREE_MODES:
             raise ReflowValidationError(
-                "kernel_source_witness path resolves to a blob other than the pinned blob_sha"
+                f"kernel_source_witness path segment {segment!r} is not the final path "
+                f"segment but does not carry a tree (directory) mode: {mode!r}"
             )
 
     blob_object = _decode_hex_field(witness, "blob_object")
