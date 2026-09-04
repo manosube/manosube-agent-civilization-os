@@ -1,6 +1,13 @@
 """Run focused State Store acceptance evidence."""
 from __future__ import annotations
-import os, subprocess, sys
+
+import os
+import subprocess
+import sys
+
+sys.path.insert(0,"src")
+from manosube_agent_civilization.store import STAGES
+
 
 def main() -> int:
     command=[sys.executable,"-m","pytest","-q","tests/integration/store/test_file_store.py"]
@@ -8,7 +15,7 @@ def main() -> int:
     pythonpath="src:."+(f":{inherited}" if inherited else "")
     result=subprocess.run(command,env={**os.environ,"PYTHONPATH":pythonpath},check=False)
     if result.returncode: return result.returncode
-    print("CRASH_POINT_COUNT=7")
+    print(f"CRASH_POINT_COUNT={len(STAGES)}")
     print("CRASH_RECOVERY_FAILURE_COUNT=0")
     print("STALE_UPDATE_ESCAPE_COUNT=0")
     print("DUPLICATE_LINEAGE_EVENT_COUNT=0")

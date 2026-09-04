@@ -1,21 +1,36 @@
 """Append-only-lineage authoritative filesystem State Store."""
 
 from __future__ import annotations
+
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 import fcntl
 import json
 import os
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any
 
-from manosube_agent_civilization.state.canonicalize import _validate, canonical_json_bytes, canonical_semantic_state_bytes
+from manosube_agent_civilization.state.canonicalize import (
+    _validate,
+    canonical_json_bytes,
+    canonical_semantic_state_bytes,
+)
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+
 from .atomic_write import atomic_write, fsync_directory
-from .errors import AlreadyInitializedError, BoundaryError, CorruptStoreError, RevisionError, StaleStateError, TransactionConflictError
+from .errors import (
+    AlreadyInitializedError,
+    BoundaryError,
+    CorruptStoreError,
+    RecordConflictError,
+    RevisionError,
+    StaleStateError,
+    TransactionConflictError,
+)
 from .interface import FaultInjector
 
-STAGES=("AFTER_JOURNAL_CREATED","AFTER_STAGED_STATE_WRITTEN","AFTER_COMMIT_INTENT","AFTER_LINEAGE_APPEND","BEFORE_CURRENT_REPLACE","AFTER_CURRENT_REPLACE","BEFORE_COMMITTED_MARKER")
+STAGES=("AFTER_JOURNAL_CREATED","AFTER_STAGED_STATE_WRITTEN","AFTER_STAGED_RECORDS_WRITTEN","AFTER_COMMIT_INTENT","AFTER_LINEAGE_APPEND","AFTER_RECORDS_PROMOTED","BEFORE_CURRENT_REPLACE","AFTER_CURRENT_REPLACE","BEFORE_COMMITTED_MARKER")
 TRANSITION_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_transition.schema.json"
 
 class FileStateStore:
@@ -48,6 +63,27 @@ class FileStateStore:
 
     def _lineage(self, project_id: str) -> Path: return self._project(project_id)/"events"/"transitions.jsonl"
     def _current(self, project_id: str) -> Path: return self._project(project_id)/"state"/"current.json"
+
+    def _record_kind_dir(self, project_id: str, kind: str) -> Path:
+        if not kind or "/" in kind or ".." in kind: raise BoundaryError("invalid record kind")
+        return self._project(project_id)/"records"/kind
+
+    def _record_path(self, project_id: str, kind: str, record_id: str) -> Path:
+        if not record_id or "/" in record_id or ".." in record_id: raise BoundaryError("invalid record identity")
+        return self._record_kind_dir(project_id,kind)/f"{record_id}.json"
+
+    def resolve_record(self, project_id: str, kind: str, record_id: str) -> dict[str,Any]|None:
+        """Return the immutable committed record of *kind* addressed by *record_id*, or ``None``.
+
+        Only records a completed transaction actually promoted are ever returned -- a
+        staged-but-uncommitted journal entry is not canonical and is never visible here.
+        """
+
+        path=self._record_path(project_id,kind,record_id)
+        if not path.exists(): return None
+        try: return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError(f"malformed record: {kind}/{record_id}") from exc
+
     def _events(self, project_id: str) -> list[dict[str,Any]]:
         path=self._lineage(project_id)
         if not path.exists(): return []
@@ -95,7 +131,48 @@ class FileStateStore:
         with path.open("ab") as stream: stream.write(canonical_json_bytes(event)+b"\n"); stream.flush(); os.fsync(stream.fileno())
         fsync_directory(path.parent)
 
-    def commit(self, project_id: str, expected_revision: int, expected_fingerprint: Mapping[str,str], next_state: Mapping[str,Any], transition: Mapping[str,Any], *, fault: FaultInjector|None=None) -> dict[str,Any]:
+    def _stage_records(self, project_id: str, journal: Path, records: list[tuple[str,str,Mapping[str,Any]]]) -> list[tuple[str,str,bytes]]:
+        """Return ``(kind, id, canonical_bytes)`` for every record this transaction must
+        promote, after a same-ID/different-body conflict pre-check against every record
+        already durably committed under a prior transaction.
+
+        A record identical, byte-for-byte, to one already committed is dropped here: it is
+        already canonical, and re-staging it would double-write the same immutable file for
+        no reason. A duplicate identity *within this one manifest* is rejected the same as a
+        conflict with a prior commit -- a transaction cannot stage two different bodies, or
+        even two identical stagings, under one (kind, id).
+        """
+
+        staged: list[tuple[str,str,bytes]] = []
+        seen: set[tuple[str,str]] = set()
+        for kind, record_id, body in records:
+            key=(kind,record_id)
+            if key in seen: raise RecordConflictError(f"{kind}/{record_id}")
+            seen.add(key)
+            canonical=canonical_json_bytes(body)
+            existing=self._record_path(project_id,kind,record_id)
+            if existing.exists():
+                if existing.read_bytes()!=canonical: raise RecordConflictError(f"{kind}/{record_id}")
+                continue
+            staged.append((kind,record_id,canonical))
+        journal_records=journal/"records"
+        for kind, record_id, canonical in staged:
+            atomic_write(journal_records/f"{kind}__{record_id}.json",canonical)
+        return staged
+
+    def _promote_staged_records(self, project_id: str, journal: Path) -> None:
+        records_dir=journal/"records"
+        if not records_dir.exists(): return
+        for path in sorted(records_dir.iterdir()):
+            kind, _, record_id = path.stem.partition("__")
+            canonical=path.read_bytes()
+            target=self._record_path(project_id,kind,record_id)
+            if target.exists():
+                if target.read_bytes()!=canonical: raise CorruptStoreError(f"staged record diverges from committed: {kind}/{record_id}")
+                continue
+            atomic_write(target,canonical)
+
+    def commit(self, project_id: str, expected_revision: int, expected_fingerprint: Mapping[str,str], next_state: Mapping[str,Any], transition: Mapping[str,Any], *, records: list[tuple[str,str,Mapping[str,Any]]]|None=None, fault: FaultInjector|None=None) -> dict[str,Any]:
         hit=lambda stage: fault(stage) if fault else None
         with self._lock(project_id):
             current=self.reconstruct(project_id); events=self._events(project_id); event=deepcopy(dict(transition)); tx=event["transaction_id"]
@@ -108,9 +185,13 @@ class FileStateStore:
             journal=self._project(project_id)/"state"/"recovery"/tx; journal.mkdir(parents=True,exist_ok=False)
             atomic_write(journal/"event.json",canonical_json_bytes(event)); hit(STAGES[0])
             atomic_write(journal/"state.json",canonical_json_bytes(state)); hit(STAGES[1])
-            atomic_write(journal/"COMMIT_INTENT",b"1"); hit(STAGES[2])
-            self._append(project_id,event); hit(STAGES[3]); hit(STAGES[4])
-            atomic_write(self._current(project_id),canonical_json_bytes(state)); hit(STAGES[5]); hit(STAGES[6])
+            self._stage_records(project_id,journal,list(records or [])); hit(STAGES[2])
+            atomic_write(journal/"COMMIT_INTENT",b"1"); hit(STAGES[3])
+            self._append(project_id,event); hit(STAGES[4])
+            self._promote_staged_records(project_id,journal); hit(STAGES[5])
+            hit(STAGES[6])
+            atomic_write(self._current(project_id),canonical_json_bytes(state)); hit(STAGES[7])
+            hit(STAGES[8])
             atomic_write(journal/"COMMITTED",b"1")
             return deepcopy(state)
 
@@ -122,5 +203,6 @@ class FileStateStore:
                     if not journal.is_dir() or not (journal/"COMMIT_INTENT").exists(): continue
                     event=json.loads((journal/"event.json").read_text(encoding="utf-8"))
                     if event["transaction_id"] not in txids: self._append(project_id,event); txids.add(event["transaction_id"])
+                    self._promote_staged_records(project_id,journal)
                     atomic_write(journal/"COMMITTED",b"1")
             state=self.reconstruct(project_id); atomic_write(self._current(project_id),canonical_json_bytes(state)); return state

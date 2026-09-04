@@ -1,14 +1,21 @@
 from __future__ import annotations
+
 from copy import deepcopy
-import json
 from pathlib import Path
 import threading
+
 import pytest
+from tests.state_helpers import SCHEMA_ROOT, initial_state
 
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
-from manosube_agent_civilization.store import FileStateStore, STAGES
-from manosube_agent_civilization.store.errors import BoundaryError, SimulatedCrash, StaleStateError, TransactionConflictError
-from tests.state_helpers import SCHEMA_ROOT, initial_state
+from manosube_agent_civilization.store import STAGES, FileStateStore
+from manosube_agent_civilization.store.errors import (
+    BoundaryError,
+    SimulatedCrash,
+    StaleStateError,
+    TransactionConflictError,
+)
+
 
 def prepared_initial() -> dict:
     state=initial_state(); state["semantic_fingerprint"]=fingerprint_project_state(state,schema_root=SCHEMA_ROOT).as_dict(); return state
@@ -46,7 +53,10 @@ def test_every_crash_point_converges(stage: str,tmp_path: Path) -> None:
         if current==stage: raise SimulatedCrash(stage)
     with pytest.raises(SimulatedCrash): s.commit("PRJ-0001",0,initial["semantic_fingerprint"],after,event,fault=fault)
     recovered=s.recover("PRJ-0001")
-    assert recovered == (initial if stage in STAGES[:2] else after)
+    # Pre-COMMIT_INTENT stages leave the old State canonical; everything from
+    # COMMIT_INTENT onward (including the new record-manifest stages) recovers forward.
+    pre_commit_intent = STAGES[:STAGES.index("AFTER_COMMIT_INTENT")]
+    assert recovered == (initial if stage in pre_commit_intent else after)
     assert len(s._events("PRJ-0001")) in {1,2}
 
 def test_competing_cas_has_one_winner(tmp_path: Path) -> None:

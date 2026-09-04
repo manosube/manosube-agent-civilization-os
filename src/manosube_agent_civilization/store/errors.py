@@ -7,5 +7,6 @@ class AlreadyInitializedError(StoreError): pass
 class StaleStateError(StoreError): pass
 class RevisionError(StoreError): pass
 class TransactionConflictError(StoreError): pass
+class RecordConflictError(StoreError): pass
 class CorruptStoreError(StoreError): pass
 class SimulatedCrash(StoreError): pass
