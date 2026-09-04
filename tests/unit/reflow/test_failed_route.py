@@ -112,6 +112,7 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         "resolution_mode": None,
         "change_refs": [],
         "change_result_evidence_refs": [],
+        "change_result_evidence_requests": [],
         "change_free_verification_evidence_refs": [],
         "reobservation": None,
         "evidence_sufficiency_request": _insufficient_sufficiency_request(first),
@@ -120,6 +121,7 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         "producing_change_refs": [],
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
+        "candidate_claim_evaluation_events": [],
         "material_contradictions": [],
         "terminal_reason_evidence_refs": [
             {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
@@ -135,10 +137,8 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
-        before_project_state=project_state,
         closure_request=closure_request,
         observation_refs=[],
-        evidence_refs=[{"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}],
         reflow_instant="2026-08-30T12:00:00Z",
         blocker_kind="EVIDENCE_INSUFFICIENT",
         blocker_scope={

@@ -13,9 +13,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
 
-from .errors import ReflowValidationError
+from .errors import ReflowValidationError, StaleReflowError
 
 SCHEMA_VERSION = "0.1"
 
@@ -80,6 +81,8 @@ def commit_reflow(
     transaction_id: str,
     evidence_refs: list[Any],
     reflow_instant: str,
+    records: list[tuple[str, str, dict[str, Any]]] | None = None,
+    evaluation_expires_at: str | None = None,
     fault: Any | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build the successor State and commit it atomically. Returns ``(state, ref)``.
@@ -99,10 +102,25 @@ def commit_reflow(
     identical canonical inputs returns the same committed State rather than erroring, and a
     different payload under the same *transaction_id* raises
     ``TransactionConflictError`` -- both are the Store's behavior, not this function's.
+
+    *records* is F3's atomic reference-closure: every immutable record (Closure Evaluation,
+    Difference lifecycle event, admitted Evidence, ...) this transition's committed
+    ``state_transition`` references, staged and promoted in the same Store transaction so a
+    committed State can never dangle a reference toward a record that never committed.
+
+    *evaluation_expires_at* is F5/G18's *second* freshness check -- the evaluator's own
+    deadline is re-verified against the explicit *reflow_instant* immediately before commit,
+    never against a wall clock, so an Evaluation that went stale between being computed and
+    being committed cannot still close the Difference it was computed for.
     """
 
     if before_project_state["project_id"] != project_id:
         raise ReflowValidationError("before_project_state belongs to a different project")
+    if evaluation_expires_at is not None and instant(reflow_instant) > instant(evaluation_expires_at):
+        raise StaleReflowError(
+            f"reflow_instant {reflow_instant!r} is past the Closure Evaluation's own "
+            f"evaluation_expires_at {evaluation_expires_at!r}"
+        )
 
     next_project_state, event = build_state_transition(
         before_project_state=before_project_state,
@@ -117,6 +135,7 @@ def commit_reflow(
         before_project_state["semantic_fingerprint"],
         next_project_state,
         event,
+        records=records,
         fault=fault,
     )
     return committed, {"kind": "state_transition", "id": transaction_id}

@@ -14,8 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from tests.reflow_helpers import candidate_closure_request, fixture_difference, fixture_policy
-from tests.state_helpers import SCHEMA_ROOT, initial_state
+from tests.reflow_helpers import (
+    candidate_closure_request,
+    fixture_difference,
+    fixture_policy,
+    store_ready_for_closure,
+)
+from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.difference.validation import (
     DIFFERENCE_SCHEMA_BASE,
@@ -26,7 +31,6 @@ from manosube_agent_civilization.reflow.errors import ReflowValidationError
 from manosube_agent_civilization.reflow.identity import transaction_id
 from manosube_agent_civilization.reflow.reopen import decide_reopen
 from manosube_agent_civilization.reflow.route import reflow, reopen
-from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import STAGES, FileStateStore
 from manosube_agent_civilization.store.errors import SimulatedCrash
 
@@ -37,11 +41,7 @@ REOPEN_NEXT_OBSERVATION_REF = {"kind": "next_observation_request", "id": "OBS-RE
 
 def _fresh_store(tmp_path: Path) -> tuple[FileStateStore, dict]:
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
-    project_state = initial_state()
-    project_state["semantic_fingerprint"] = fingerprint_project_state(
-        project_state, schema_root=SCHEMA_ROOT
-    ).as_dict()
-    store.initialize(project_state["project_id"], project_state)
+    project_state = store_ready_for_closure(store)
     return store, project_state
 
 
@@ -54,10 +54,8 @@ def _close(store: FileStateStore, project_state: dict, difference: dict, policy:
         current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
-        before_project_state=project_state,
         closure_request=closure_request,
         observation_refs=closure_request["reobservation"]["after_observation_refs"],
-        evidence_refs=closure_request["change_free_verification_evidence_refs"],
         reflow_instant=REFLOW_INSTANT,
     )
 
@@ -72,18 +70,11 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
         store,
         project_id=project_state["project_id"],
         difference=difference,
-        old_closure_evaluation=closed["evaluation"],
         trigger="MATERIAL_CONTRADICTION",
         previous_event_id=closed["event"]["difference_event_id"],
         event_revision=2,
-        before_project_state=closed["committed_state"],
-        current_state={
-            "revision": closed["committed_state"]["state_revision"],
-            "fingerprint": closed["committed_state"]["semantic_fingerprint"],
-        },
         next_observation_ref=REOPEN_NEXT_OBSERVATION_REF,
         observation_refs=[],
-        evidence_refs=[],
         contradiction_evidence_refs=[CONTRADICTION_REF],
         contradiction_refs=[CONTRADICTION_REF],
         reflow_instant="2026-08-30T14:00:00Z",
@@ -161,8 +152,9 @@ def test_reflow_commit_converges_after_a_crash_at_every_stage(stage: str, tmp_pa
         )
 
     recovered = store.recover(project_state["project_id"])
-    early_stage = stage in STAGES[:2]
-    assert recovered["state_revision"] == (0 if early_stage else 1)
+    early_stage = stage in STAGES[: STAGES.index("AFTER_COMMIT_INTENT")]
+    base_revision = project_state["state_revision"]
+    assert recovered["state_revision"] == (base_revision if early_stage else base_revision + 1)
     assert store.load_current(project_state["project_id"]) == recovered
 
     if not early_stage:

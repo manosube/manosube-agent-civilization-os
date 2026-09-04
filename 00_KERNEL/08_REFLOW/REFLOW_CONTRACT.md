@@ -323,15 +323,18 @@ Stateが既に所有する契約を別の場所で言い直すことになり、
 
 `src/manosube_agent_civilization/reflow/closure.py`が`§1.1`で述べたClosure Evaluation
 producerである。G1〜G22の全ゲートを実際の入力に対する real check として実装するが、
-`00_KERNEL/04_DIFFERENCE/CLOSURE_POLICY.md`が定義する範囲のうち、次の四点は本Work Unitが
+`00_KERNEL/04_DIFFERENCE/CLOSURE_POLICY.md`が定義する範囲のうち、次の二点は本Work Unitが
 実装しない。これは省略の見落としではなく、実装した範囲より小さいことを明示するための
 宣言である。`NOT CLAIMED`は§10と同じ意味で使う。
 
+*Phase 7構造レビュー是正（PR #40, findings F1〜F8・G19、`BOUND_HEAD=
+9459af827b65ca18af07cf040b401e58e0843f98`）でG18・G21は完全実装へ、G19はID union
+までの部分実装へ、それぞれ更新された。以下は是正後の現状であり、下の版と混同しては
+ならない。*
+
 ```text
-G9  (required_observation_scope ≠ null)          NOT CLAIMED
-G19 (v0.1 Mandatory Invariant Registry auto-derivation)  NOT CLAIMED（部分実装）
-G21 (candidate_claim_evaluation_event series再構築)      NOT CLAIMED（部分実装）
-G18 (Atomic Reflow commit直前の再検証)            NOT CLAIMED（評価時点のみ実装）
+G9  (required_observation_scope ≠ null)                  NOT CLAIMED
+G19 (v0.1 Mandatory Invariant Registry auto-derivation)  NOT CLAIMED（部分実装、is対象拡大）
 ```
 
 **G9。** `CLOSURE_POLICY.md`は`required_observation_scope ≠ null`の場合に
@@ -340,31 +343,43 @@ G18 (Atomic Reflow commit直前の再検証)            NOT CLAIMED（評価時�
 G9はfail closed（`FAIL`、`result`は`BLOCKED`へ写像）であり、無実装の第二scope解決機構で
 黙って評価しない。
 
-**G19。** `APPLICABLE_V0_1_MANDATORY_INVARIANT_REGISTRY`——`KERNEL_INVARIANTS.md`
-`# 16. v0.1 Mandatory Gate`をexact Git blob provenanceで解析し、registry fingerprintを
-機械的に導出し、promotion直前に再導出する仕組み——は、それ自体が本Work Unitと同等規模の
-独立したsub-systemであり、実装しない。`reflow/closure.py`のG19は、Closure Policy自身が
-宣言する`required_invariants`だけを期待集合として検証する（これは実の、非空虚な検証
-である：宣言と`candidate_invariant_evaluation_bindings`の集合が完全一致しない限りFAILする）。
-しかし`required_invariants`が空のPolicyでは、v0.1 mandatory invariant unionを追加しないため
-G19は空集合上でPASSする。これは`CLOSURE_POLICY.md`の文言に対する実質的なgapであり、
-「G19を実装した」と読んではならない。
+**G19（是正後）。** `APPLICABLE_V0_1_MANDATORY_INVARIANT_REGISTRY`の完全な仕組み——
+`KERNEL_INVARIANTS.md``# 16. v0.1 Mandatory Gate`を`kernel_source_ref_evaluated`の
+`commit_sha`/`tree_sha`へexact Git blob provenanceで結合し、各Invariantの定義blockから
+個別の`invariant_definition_sha256`を再計算する仕組み——は、それ自体が本Work Unitと
+同等規模の独立したsub-systemであり、実装しない。是正で実装したのは、
+`reflow/invariant_registry.py`が`evidence/levels.py`と同じ「pin-and-prove」方式で
+`# 16.`節の`ID PASS`行から抽出したid集合（`P-003`を除く）を`expected_g19_invariant_ids()`
+として保持し、`_evaluate_g19`がこれをClosure Policyの`required_invariants`へ**additive**
+union することである（`required_invariants`が空でもG19は空集合上でPASSしない）。
+mandatory-only の各idは`(kind, id)`一致とbinding上の非空な
+`invariant_definition_sha256`の存在だけを要求し、その値が該当Invariantの定義blockの
+digestと一致することまでは独立検証しない——これが残るgapである。
+`tests/contract/reflow/test_invariant_registry_source.py`がpinしたid集合と
+実文書の再parseが一致することを証明する。
 
-**G21。** mandatory X-003 completion Claimはfixed closed-form constant
-（`subject_type`・`subject_ref`・`claim`payloadがPolicy文書に固定されている）であるため、
-その識別子は`difference/identity.py`の`completion_claim_id`で計算し、Policyが何を宣言して
-いてもG21の期待集合へ常に含める。ここは実装済みである。実装しないのは、promotion直前に
-`candidate_claim_evaluation_event`のappend-only seriesを`revision 0`から再構築し、
-供給されたbindingが本当に最新headへ一致するか証明する再検証だけである。本Work Unitは
-呼び出し元が供給する`candidate_claim_evaluation_binding`自身の`evaluation_status`を
-そのまま信頼する。
+**G21（是正後、実装済み）。** mandatory X-003 completion Claimはfixed closed-form
+constant（`subject_type`・`subject_ref`・`claim`payloadがPolicy文書に固定されている）
+であるため、その識別子は`difference/identity.py`の`completion_claim_id`で計算し、
+Policyが何を宣言していてもG21の期待集合へ常に含める。是正前は、供給された
+`candidate_claim_evaluation_binding`自身の`evaluation_status`をそのまま信頼していた。
+是正後は`reflow/claims.py`の`reconstruct_claim_status`が`candidate_claim_evaluation_event`
+のappend-only seriesを`revision 0`からbindingの宣言するheadまで実際に再構築し
+（content-address自己整合性、contiguity、Difference/Claim/candidate一致を検証）、
+その**再構築されたhead eventの`evaluation_status`**をG21の判定へ用いる。bindingの
+`evaluation_status`フィールド自体はもはや信頼されない。
 
-**G18。** `CLOSURE_POLICY.md`第8節はAtomic Reflow commit直前に`evaluation_expires_at`を
-再検証することを要求する（Evaluation時点の検証とは別の、二回目の検証）。本Work Unitの
-`closure.py`はEvaluation時点の検証だけを行う。commit直前の再検証はAtomic State commit
-（RF6）の責務であり、本文書のCLAIMED範囲には未実装として残る。
+**G18（是正後、実装済み）。** `CLOSURE_POLICY.md`第8節はAtomic Reflow commit直前に
+`evaluation_expires_at`を再検証することを要求する（Evaluation時点の検証とは別の、
+二回目の検証）。是正前は`evaluation_expires_at`が常に`null`で、Evaluation時点の検証も
+実質存在しなかった。是正後、`closure.py`は`maximum_evidence_age`が有限のとき、
+Evidence Sufficiencyが再現した実際のEvidence記録群のうち最も古い`recorded_at`から
+`evaluation_expires_at`を導出する（wall clockは一切読まない）。`reflow/commit.py`の
+`commit_reflow`が、この`evaluation_expires_at`を明示的な`reflow_instant`と
+commit直前に再検証し、超過していれば`StaleReflowError`でfail closedする——これが
+RF6（Atomic State commit）の責務としての実装である。
 
-これら四点はいずれも、Closure Evaluationのgate_resultsとresultを偽らない——宣言していない
+これら二点はいずれも、Closure Evaluationのgate_resultsとresultを偽らない——宣言していない
 機構を動かした「ふり」をして`PASS`を返すことは一つもない——という一点によって、
 このKernelがGate 1〜22で守ろうとしている性質（`UNKNOWN_IS_PASS=false`）と両立している。
 狭い範囲を確定的にfail closedで検証することと、広い範囲を虚偽にPASSさせることは別物であり、

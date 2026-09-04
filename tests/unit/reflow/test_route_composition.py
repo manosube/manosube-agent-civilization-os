@@ -18,15 +18,16 @@ from tests.reflow_helpers import (
     candidate_closure_request,
     fixture_difference,
     fixture_policy,
+    store_ready_for_closure,
 )
 from tests.state_helpers import SCHEMA_ROOT, initial_state
 
 from manosube_agent_civilization.difference.identity import policy_semantic_fingerprint
 from manosube_agent_civilization.difference.lifecycle import closure_evaluation_binding_errors
+from manosube_agent_civilization.reflow.errors import StaleReflowError
 from manosube_agent_civilization.reflow.route import reflow
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
-from manosube_agent_civilization.store.errors import StaleStateError
 
 REFLOW_INSTANT = "2026-08-30T12:00:00Z"
 
@@ -86,10 +87,8 @@ def test_route_a_blocked_commits_bookkeeping_without_closing(tmp_path: Path) -> 
         current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
-        before_project_state=project_state,
         closure_request=base_closure_request(difference, policy),
         observation_refs=[],
-        evidence_refs=[{"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}],
         reflow_instant=REFLOW_INSTANT,
         blocker_scope=_blocker_scope(difference),
         blocker_resolution_condition=_blocker_condition(difference),
@@ -105,7 +104,15 @@ def test_route_a_blocked_commits_bookkeeping_without_closing(tmp_path: Path) -> 
     assert store.load_current(project_state["project_id"]) == result["committed_state"]
 
 
-def test_route_a_is_idempotent_under_the_same_transaction(tmp_path: Path) -> None:
+def test_repeated_reflow_calls_each_admit_a_fresh_transaction(tmp_path: Path) -> None:
+    """F1 changed this route's retry semantics: since the predecessor State is always the
+    Store's own *current* one rather than a caller-frozen snapshot, a second call built
+    from the identical ``closure_request`` is not a replay of the first transaction (its
+    ``transaction_id`` is bound to ``expected_revision``, which has itself advanced) -- it
+    is a second, independent admission. Both must still succeed, and each must advance the
+    Store by exactly one revision; nothing about a caller repeating the same call can make
+    it collide with, or silently reuse, the first one's transaction."""
+
     store, project_state = _fresh_store(tmp_path)
     difference = fixture_difference()
     policy = fixture_policy(difference)
@@ -117,10 +124,8 @@ def test_route_a_is_idempotent_under_the_same_transaction(tmp_path: Path) -> Non
         current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
-        before_project_state=project_state,
         closure_request=base_closure_request(difference, policy),
         observation_refs=[],
-        evidence_refs=[{"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}],
         reflow_instant=REFLOW_INSTANT,
         blocker_scope=_blocker_scope(difference),
         blocker_resolution_condition=_blocker_condition(difference),
@@ -128,14 +133,16 @@ def test_route_a_is_idempotent_under_the_same_transaction(tmp_path: Path) -> Non
         **BLOCKER_KWARGS,
     )
     first = reflow(**kwargs)
-    second = reflow(**kwargs)
+    second = reflow(**{**kwargs, "previous_event_id": first["event"]["difference_event_id"], "event_revision": 2})
 
-    assert first["committed_state"] == second["committed_state"]
-    assert first["state_transition_ref"] == second["state_transition_ref"]
+    assert first["state_transition_ref"] != second["state_transition_ref"]
+    assert second["committed_state"]["state_revision"] == first["committed_state"]["state_revision"] + 1
+    assert store.load_current(project_state["project_id"]) == second["committed_state"]
 
 
 def test_route_b_closed_removes_the_difference_from_open_differences(tmp_path: Path) -> None:
-    store, project_state = _fresh_store(tmp_path)
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
     difference = fixture_difference()
     policy = fixture_policy(difference)
     closure_request = candidate_closure_request(difference, policy)
@@ -147,10 +154,8 @@ def test_route_b_closed_removes_the_difference_from_open_differences(tmp_path: P
         current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
-        before_project_state=project_state,
         closure_request=closure_request,
         observation_refs=closure_request["reobservation"]["after_observation_refs"],
-        evidence_refs=closure_request["change_free_verification_evidence_refs"],
         reflow_instant=REFLOW_INSTANT,
     )
 
@@ -170,7 +175,8 @@ def test_route_b_closed_removes_the_difference_from_open_differences(tmp_path: P
 
 
 def test_a_second_reflow_cycle_advances_the_real_store_again(tmp_path: Path) -> None:
-    store, project_state = _fresh_store(tmp_path)
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
     difference = fixture_difference()
     policy = fixture_policy(difference)
 
@@ -181,10 +187,8 @@ def test_a_second_reflow_cycle_advances_the_real_store_again(tmp_path: Path) -> 
         current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
-        before_project_state=project_state,
         closure_request=base_closure_request(difference, policy),
         observation_refs=[],
-        evidence_refs=[{"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}],
         reflow_instant=REFLOW_INSTANT,
         blocker_scope=_blocker_scope(difference),
         blocker_resolution_condition=_blocker_condition(difference),
@@ -202,10 +206,8 @@ def test_a_second_reflow_cycle_advances_the_real_store_again(tmp_path: Path) -> 
         current_status="VERIFYING",
         previous_event_id=first["event"]["difference_event_id"],
         event_revision=2,
-        before_project_state=first["committed_state"],
         closure_request=closure_request,
         observation_refs=closure_request["reobservation"]["after_observation_refs"],
-        evidence_refs=closure_request["change_free_verification_evidence_refs"],
         reflow_instant="2026-08-30T13:00:00Z",
     )
 
@@ -214,14 +216,16 @@ def test_a_second_reflow_cycle_advances_the_real_store_again(tmp_path: Path) -> 
     assert second["committed_state"]["semantic_state"]["open_differences"] == []
 
 
-def test_a_stale_before_project_state_is_refused(tmp_path: Path) -> None:
+def test_a_stale_expected_state_revision_is_refused(tmp_path: Path) -> None:
+    """F1: the predecessor State always comes from the Store, never a caller body -- so
+    what a stale caller can forge is only its own *expectation* of that State, and even
+    that is refused rather than silently reflowed against a State it never saw."""
+
     store, project_state = _fresh_store(tmp_path)
     difference = fixture_difference()
     policy = fixture_policy(difference)
-    stale = dict(project_state)
-    stale["state_revision"] = 99
 
-    with pytest.raises(StaleStateError):
+    with pytest.raises(StaleReflowError):
         reflow(
             store,
             project_id=project_state["project_id"],
@@ -229,24 +233,32 @@ def test_a_stale_before_project_state_is_refused(tmp_path: Path) -> None:
             current_status="VERIFYING",
             previous_event_id=difference["genesis_event_ref"]["id"],
             event_revision=1,
-            before_project_state=stale,
+            expected_state_revision=99,
             closure_request=base_closure_request(difference, policy),
             observation_refs=[],
-            evidence_refs=[{"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}],
             reflow_instant=REFLOW_INSTANT,
             blocker_scope=_blocker_scope(difference),
             blocker_resolution_condition=_blocker_condition(difference),
             next_observation_ref=NEXT_OBSERVATION_REF,
             **BLOCKER_KWARGS,
         )
+    # And the refusal is real, not merely reported: nothing committed.
+    assert store.load_current(project_state["project_id"]) == project_state
 
 
 def test_closing_one_difference_leaves_other_open_differences_untouched(tmp_path: Path) -> None:
-    store, project_state = _fresh_store(tmp_path)
+    # The other Difference's presence must be real Store state, not a local mutation of a
+    # `project_state` object reflow() no longer trusts (F1) -- it is baked into the actual
+    # committed genesis State before reflow() ever loads it, and the Store is then advanced
+    # to a real revision G5's floor accepts (F2).
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    genesis = initial_state()
+    other_ref = {"kind": "difference", "id": "D-" + "7" * 64}
+    genesis["semantic_state"]["open_differences"] = [other_ref]
+    project_state = store_ready_for_closure(store, genesis=genesis)
+
     difference = fixture_difference()
     policy = fixture_policy(difference)
-    other_ref = {"kind": "difference", "id": "D-" + "7" * 64}
-    project_state["semantic_state"]["open_differences"] = [other_ref]
 
     closure_request = candidate_closure_request(difference, policy)
     result = reflow(
@@ -256,10 +268,8 @@ def test_closing_one_difference_leaves_other_open_differences_untouched(tmp_path
         current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
-        before_project_state=project_state,
         closure_request=closure_request,
         observation_refs=closure_request["reobservation"]["after_observation_refs"],
-        evidence_refs=closure_request["change_free_verification_evidence_refs"],
         reflow_instant=REFLOW_INSTANT,
     )
 

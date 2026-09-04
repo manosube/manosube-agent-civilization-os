@@ -42,38 +42,42 @@ of it.
   module supports ``required_observation_scope = null`` only; a non-null Policy fails G9
   closed (``result`` maps to ``BLOCKED``) rather than being silently evaluated by a second
   scope-resolution mechanism this module does not own.
-* G19, the ``APPLICABLE_V0_1_MANDATORY_INVARIANT_REGISTRY`` auto-derivation from
-  ``00_KERNEL/KERNEL_INVARIANTS.md`` section 16 by exact Git blob provenance. That
-  mechanism -- parsing the fenced registry block, resolving Git blob SHAs, recomputing a
-  versioned registry fingerprint, and re-deriving it again before every promotion -- is a
-  large, precisely specified sub-system in its own right and is not implemented here. G19
-  in this module checks the caller-supplied ``candidate_invariant_evaluation_bindings``
-  against the Closure Policy's own declared ``required_invariants`` only (an exact,
-  real, non-vacuous check of that narrower set); it does not add the v0.1 mandatory
-  invariant union the Policy text requires unconditionally. A caller who supplies no
-  ``required_invariants`` therefore reaches G19 ``PASS`` on an empty expected set. This is
-  a genuine, material gap against the literal Policy text, not a cosmetic one, and it must
-  stay visible in the Reflow contract and the PR body rather than be read as full G19
-  conformance.
-* G21's mandatory X-003 completion Claim, by contrast, *is* claimed in full: its identity
-  is a closed-form constant fixed by the Policy text (a fixed ``subject_type``,
-  ``subject_ref`` and ``claim`` payload, not something derived from parsing prose), so
-  :data:`MANDATORY_X003_CLAIM_REF` is computed once, here, with the same
-  :func:`manosube_agent_civilization.difference.identity.completion_claim_id` the Policy
-  document's own general Claim-identity algorithm names, and is always a member of G21's
-  expected set regardless of what the Policy declares. What is *not* claimed is the
-  ``candidate_claim_evaluation_event`` append-only series reconstruction ``CLOSURE_POLICY``
-  requires immediately before promotion: this module trusts the caller-supplied binding's
-  own ``evaluation_status`` field rather than replaying that series to prove it is current.
+* G19's full Git blob/commit/tree provenance binding -- resolving
+  ``APPLICABLE_V0_1_MANDATORY_INVARIANTS`` against the exact
+  ``kernel_source_ref_evaluated.commit_sha``/``tree_sha`` a candidate was evaluated against,
+  and recomputing each individual invariant's own ``invariant_definition_sha256`` from its
+  own definition block in ``KERNEL_INVARIANTS.md`` sections 1-15 -- is not implemented here.
+  What *is* claimed, via :mod:`.invariant_registry`, is the parsed v0.1 mandatory Invariant
+  **id** union itself (every ``ID`` the ``# 16. v0.1 Mandatory Gate`` fenced block declares,
+  minus the one Policy-excluded post-Reflow id, pinned and drift-tested against the live
+  document the same way :mod:`manosube_agent_civilization.evidence.levels` pins the Evidence
+  Level scale): G19's expected set is always this union, additively merged with whatever
+  Policy ``required_invariants`` also declares, so an empty Policy set can no longer reach
+  G19 ``PASS`` vacuously. A mandatory-only id (one the Policy itself does not also declare)
+  is matched by ``(kind, id)`` and requires a real, present
+  ``invariant_definition_ref.invariant_definition_sha256`` on its binding, but that digest's
+  exact value is not independently cross-checked against a per-invariant block digest --
+  that remains the un-implemented Git-provenance sub-system named above.
+* G21's mandatory X-003 completion Claim is claimed in full, as before: its identity is a
+  closed-form constant fixed by the Policy text, computed once as
+  :data:`MANDATORY_X003_CLAIM_REF`, and is always a member of G21's expected set regardless
+  of what the Policy declares. G21 now also reconstructs the ``candidate_claim_evaluation_
+  event`` append-only series :mod:`.claims` walks from each binding's declared head back to
+  revision 0 -- the binding's own ``evaluation_status`` is never trusted directly; the
+  reconstructed head event's status is.
 * G18's Atomic-Reflow-commit-time re-check of ``evaluation_expires_at`` (the *second*
   freshness check ``CLOSURE_POLICY.md`` section 8 requires, immediately before commit) is
-  not performed here -- this module only evaluates freshness at ``evaluated_at``. The
-  commit-time re-check is the Atomic State commit's obligation, not the evaluator's.
+  not performed here -- this module only evaluates and derives freshness at
+  ``evaluated_at``, from the oldest admitted Evidence instant and the Policy's
+  ``maximum_evidence_age``. The commit-time re-check is
+  :func:`~manosube_agent_civilization.reflow.commit.commit_reflow`'s obligation, not the
+  evaluator's, and is implemented there.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from manosube_agent_civilization.difference.admissibility import (
@@ -89,13 +93,16 @@ from manosube_agent_civilization.difference.identity import (
     policy_semantic_fingerprint,
 )
 from manosube_agent_civilization.difference.lifecycle import is_legal_transition
+from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
 from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
 
+from .claims import reconstruct_claim_status
 from .errors import ReflowValidationError
 from .identity import after_state_candidate_id, closure_evaluation_id
+from .invariant_registry import expected_g19_invariant_ids
 
 SCHEMA_VERSION = "0.1"
 
@@ -129,6 +136,7 @@ REQUEST_KEYS: frozenset[str] = frozenset(
         "resolution_mode",
         "change_refs",
         "change_result_evidence_refs",
+        "change_result_evidence_requests",
         "change_free_verification_evidence_refs",
         "reobservation",
         "evidence_sufficiency_request",
@@ -137,12 +145,24 @@ REQUEST_KEYS: frozenset[str] = frozenset(
         "producing_change_refs",
         "candidate_invariant_evaluation_bindings",
         "candidate_claim_evaluation_bindings",
+        "candidate_claim_evaluation_events",
         "material_contradictions",
         "terminal_reason_evidence_refs",
         "proposed_terminal_status",
         "evaluated_at",
     }
 )
+
+
+def _format_instant(value: datetime) -> str:
+    """Return *value* as the canonical UTC instant string ``common/timestamp.schema.json``
+    admits -- the same ``...isoformat().replace("+00:00", "Z")`` projection
+    ``observation/normalization.py`` already uses, applied here because a derived
+    ``evaluation_expires_at`` needs the same canonical round-trip a caller-supplied instant
+    already gets for free.
+    """
+
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _reference_id(reference: Any) -> str | None:
@@ -271,6 +291,9 @@ def _evaluate_reproduction_gates(
     difference: dict[str, Any],
     policy: dict[str, Any],
     reobservation: dict[str, Any] | None,
+    resolution_mode: str | None,
+    change_result_evidence_refs: list[Any],
+    change_result_evidence_requests: list[Any],
 ) -> None:
     if policy["required_observation_scope"] is not None:
         for gate in _REPRODUCTION_GATES:
@@ -332,31 +355,55 @@ def _evaluate_reproduction_gates(
 
     # G8: the after-state Observation must be distinct from anything a Change result
     # named. A Change cannot self-close: its own executed-result Evidence must not be the
-    # same Observation this module is treating as the independent re-observation.
-    change_observation_ids = {
-        _reference_id(ref) for ref in change_result_ids_from(result, after_refs)
-    }
+    # same Observation this module is treating as the independent re-observation. F4:
+    # the Change-result Evidence and its Observation identities are reproduced through
+    # Evidence's own canonical owner (`derive_evidence`) from the raw requests the caller
+    # supplies -- never trusted from the bare `change_result_evidence_refs` ids alone,
+    # which a caller could otherwise point at anything, or at nothing.
     after_ids = {_reference_id(ref) for ref in after_refs}
-    if after_ids & change_observation_ids:
-        gates.set("G8", "FAIL", "after-state Observation overlaps a Change result reference")
+    if resolution_mode == "CHANGE_BOUND":
+        if not change_result_evidence_requests:
+            gates.set(
+                "G8",
+                "FAIL",
+                "CHANGE_BOUND resolution supplied no change_result_evidence_requests to "
+                "reproduce the Change result Evidence from",
+            )
+            return
+        try:
+            reproduced = [derive_evidence(item) for item in change_result_evidence_requests]
+        except EvidenceError as error:
+            gates.set("G8", "FAIL", f"change-result Evidence reproduction failed: {error}")
+            return
+        reproduced_ids = {record["evidence_id"] for record in reproduced}
+        declared_ids = {_reference_id(ref) for ref in change_result_evidence_refs}
+        if reproduced_ids != declared_ids:
+            gates.set(
+                "G8",
+                "FAIL",
+                "change_result_evidence_refs does not exactly match the reproduced "
+                "change-result Evidence (substitution, omission or duplication)",
+            )
+            return
+        change_observation_ids = {
+            member["id"]
+            for record in reproduced
+            for member in record["lineage"]["derived_from"]["members"]
+            if member["kind"] == "observation"
+        }
+        if after_ids & change_observation_ids:
+            gates.set("G8", "FAIL", "after-state Observation overlaps a Change result reference")
+        else:
+            gates.set("G8", "PASS")
+    elif resolution_mode == "CHANGE_FREE":
+        if change_result_evidence_refs or change_result_evidence_requests:
+            gates.set(
+                "G8", "FAIL", "CHANGE_FREE resolution must not carry Change-result Evidence"
+            )
+        else:
+            gates.set("G8", "PASS")
     else:
-        gates.set("G8", "PASS")
-
-
-def change_result_ids_from(result: dict[str, Any], after_refs: list[Any]) -> list[Any]:
-    """Return an empty list.
-
-    The independence check needs the Change-result Observation identities, but this
-    module does not resolve Change or Evidence records -- that is Change's and Evidence's
-    own provenance, outside what a Closure Evaluation input can see without fabricating a
-    second reader of those schemas. G8's overlap check is therefore real (it compares the
-    supplied after-state Observation refs against whatever this returns) but this vertical
-    supplies nothing to overlap with, so the check can only ever fail closed on an
-    explicit collision the caller's own ``after_observation_refs`` introduces, never
-    silently pass one it cannot see.
-    """
-
-    return []
+        gates.set("G8", "FAIL", f"G8 requires a bound resolution_mode: {resolution_mode!r}")
 
 
 def _evaluate_g12_g18(
@@ -365,28 +412,37 @@ def _evaluate_g12_g18(
     policy: dict[str, Any],
     sufficiency_request: dict[str, Any] | None,
     evaluated_at: str,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return ``(sufficiency_result, oldest_evidence_recorded_at)``.
+
+    The second value is the earliest ``recorded_at`` among the Evidence records
+    ``evaluate_sufficiency`` itself reproduced -- F5's real source for G18's
+    ``evaluation_expires_at`` derivation, rather than a second, independent read of the
+    same Evidence.
+    """
+
     if sufficiency_request is None:
         gates.set("G12", "FAIL", "no evidence sufficiency request was supplied")
         gates.set("G18", "FAIL", "no evidence sufficiency request was supplied")
-        return None
+        return None, None
     try:
         # ``evaluate_sufficiency`` returns the canonical record wrapped alongside what it
         # deliberately does not decide (``reason_codes``, ``not_evaluated_here``, ...); the
         # canonical ``evidence_sufficiency_result`` is what this module binds against.
-        sufficiency = evaluate_sufficiency(sufficiency_request)["evidence_sufficiency_result"]
+        wrapper = evaluate_sufficiency(sufficiency_request)
+        sufficiency = wrapper["evidence_sufficiency_result"]
     except EvidenceError as error:
         gates.set("G12", "FAIL", f"evidence sufficiency evaluation failed: {error}")
         gates.set("G18", "FAIL", f"evidence sufficiency evaluation failed: {error}")
-        return None
+        return None, None
     if sufficiency["difference_ref"]["id"] != difference["difference_id"]:
         gates.set("G12", "FAIL", "sufficiency result is bound to another Difference")
         gates.set("G18", "FAIL", "sufficiency result is bound to another Difference")
-        return None
+        return None, None
     if sufficiency["policy_ref"]["semantic_fingerprint"] != policy_semantic_fingerprint(policy):
         gates.set("G12", "FAIL", "sufficiency result is bound to another Closure Policy")
         gates.set("G18", "FAIL", "sufficiency result is bound to another Closure Policy")
-        return None
+        return None, None
 
     if sufficiency["result"] == "SUFFICIENT":
         gates.set("G12", "PASS")
@@ -397,42 +453,66 @@ def _evaluate_g12_g18(
         gates.set("G18", "FAIL", "evidence sufficiency result is STALE")
     else:
         gates.set("G18", "PASS")
-    return sufficiency
+
+    evaluations = wrapper["evidence_level_evaluations"]
+    oldest = min((item["recorded_at"] for item in evaluations), key=instant) if evaluations else None
+    return sufficiency, oldest
 
 
 def _evaluate_g19(
     gates: _Gates, policy: dict[str, Any], bindings: list[Any]
 ) -> None:
-    expected = {
+    policy_expected = {
         (item["kind"], item["id"], item["contract_source_ref"]["invariant_definition_sha256"])
         for item in policy["required_invariants"]
     }
-    got = set()
+    policy_expected_ids = {(kind, invariant_id) for kind, invariant_id, _ in policy_expected}
+    # F5/G19: the v0.1 mandatory Invariant union is additive over whatever the Policy
+    # itself declares -- an empty `required_invariants` no longer reaches G19 PASS
+    # vacuously. A mandatory id the Policy does not also declare is expected by
+    # (kind, id) only; see the module docstring for the exact-digest gap this leaves.
+    mandatory_only_ids = {
+        ("kernel_invariant", invariant_id)
+        for invariant_id in expected_g19_invariant_ids()
+        if ("kernel_invariant", invariant_id) not in policy_expected_ids
+    }
+
+    got_triples: set[tuple[str, str, str]] = set()
+    got_mandatory_only: set[tuple[str, str]] = set()
     for binding in bindings:
         if binding.get("evaluation_result") != "PASS":
             gates.set("G19", "FAIL", f"invariant binding is not PASS: {binding.get('binding_id')}")
             return
-        got.add(
-            (
-                binding["invariant_ref"]["kind"],
-                binding["invariant_ref"]["id"],
-                binding["invariant_definition_ref"]["invariant_definition_sha256"],
-            )
-        )
-    if got != expected:
+        key = (binding["invariant_ref"]["kind"], binding["invariant_ref"]["id"])
+        digest = binding["invariant_definition_ref"]["invariant_definition_sha256"]
+        if key in mandatory_only_ids:
+            if not digest:
+                gates.set(
+                    "G19",
+                    "FAIL",
+                    f"mandatory invariant binding carries no definition digest: {key}",
+                )
+                return
+            got_mandatory_only.add(key)
+        else:
+            got_triples.add((key[0], key[1], digest))
+    if got_triples != policy_expected or got_mandatory_only != mandatory_only_ids:
         gates.set(
             "G19",
             "FAIL",
-            "candidate_invariant_evaluation_bindings do not exactly match the Policy's "
-            "declared required_invariants (this vertical does not add the v0.1 mandatory "
-            "invariant union; see the module docstring)",
+            "candidate_invariant_evaluation_bindings do not exactly match the expected "
+            "invariant set (Policy required_invariants union the v0.1 mandatory registry)",
         )
         return
     gates.set("G19", "PASS")
 
 
 def _evaluate_g21(
-    gates: _Gates, policy: dict[str, Any], bindings: list[Any]
+    gates: _Gates,
+    policy: dict[str, Any],
+    difference_id: str,
+    bindings: list[Any],
+    claim_events: list[Any],
 ) -> None:
     expected = {MANDATORY_X003_CLAIM_ID} | {item["id"] for item in policy["required_claims"]}
     got_satisfied: set[str] = set()
@@ -440,7 +520,27 @@ def _evaluate_g21(
     for binding in bindings:
         claim_id = binding["required_claim_ref"]["id"]
         got_all.add(claim_id)
-        if binding.get("evaluation_status") == "SATISFIED":
+        # F8: the binding's own `evaluation_status` is never trusted directly -- the
+        # append-only `candidate_claim_evaluation_event` series is reconstructed from
+        # revision 0 through the binding's declared head, and the *head event's* status
+        # is what counts. An edited, missing, reordered, foreign or non-contiguous series
+        # fails this claim closed rather than falling back to the binding's own claim.
+        try:
+            status = reconstruct_claim_status(
+                claim_events,
+                head_event_id=binding["evaluation_head_event_ref"]["id"],
+                difference_id=difference_id,
+                required_claim_ref=binding["required_claim_ref"],
+                candidate_id=binding["candidate_id"],
+            )
+        except ReflowValidationError as error:
+            gates.set(
+                "G21",
+                "FAIL",
+                f"claim evaluation series for {claim_id} did not reconstruct: {error}",
+            )
+            return
+        if status == "SATISFIED":
             got_satisfied.add(claim_id)
     if got_all != expected:
         gates.set(
@@ -537,13 +637,22 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
             "change_free_verification_evidence_refs",
         ),
     )
+    change_result_evidence_refs_in = require_collection(
+        shaped["change_result_evidence_refs"], "change_result_evidence_refs"
+    )
+    change_result_evidence_requests_in = require_collection(
+        shaped["change_result_evidence_requests"], "change_result_evidence_requests"
+    )
     _evaluate_reproduction_gates(
         gates,
         difference,
         policy,
         shaped["reobservation"] if isinstance(shaped["reobservation"], dict) else None,
+        shaped["resolution_mode"],
+        change_result_evidence_refs_in,
+        change_result_evidence_requests_in,
     )
-    sufficiency = _evaluate_g12_g18(
+    sufficiency, oldest_evidence_recorded_at = _evaluate_g12_g18(
         gates,
         difference,
         policy,
@@ -559,8 +668,26 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
     claim_bindings = require_collection(
         shaped["candidate_claim_evaluation_bindings"], "candidate_claim_evaluation_bindings"
     )
-    _evaluate_g21(gates, policy, claim_bindings)
+    claim_events = require_collection(
+        shaped["candidate_claim_evaluation_events"], "candidate_claim_evaluation_events"
+    )
+    _evaluate_g21(gates, policy, difference["difference_id"], claim_bindings, claim_events)
     _evaluate_g22(gates, policy, proposed_terminal_status)
+
+    # F5/G18: the *evaluator's* freshness deadline, derived from the oldest admitted
+    # Evidence instant plus the Policy's `maximum_evidence_age` -- never the wall clock.
+    # A `null` (unbounded) age or no admitted Evidence at all leaves no deadline to derive.
+    maximum_evidence_age = policy["maximum_evidence_age"]
+    if (
+        sufficiency is not None
+        and maximum_evidence_age is not None
+        and oldest_evidence_recorded_at is not None
+    ):
+        evaluation_expires_at = _format_instant(
+            instant(oldest_evidence_recorded_at) + timedelta(seconds=maximum_evidence_age)
+        )
+    else:
+        evaluation_expires_at = None
 
     # Every named contradiction is recorded in the output regardless of impact --
     # CLOSURE_POLICY.md's fail-closed table only routes a *Material* one to CONTRADICTED
@@ -709,7 +836,7 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         "evaluated_state_revision": current_state["revision"],
         "evaluated_state_fingerprint": current_state["fingerprint"],
         "evaluated_at": evaluated_at,
-        "evaluation_expires_at": None,
+        "evaluation_expires_at": evaluation_expires_at,
         "policy_ref": {
             "kind": "closure_policy",
             "id": policy["closure_policy_id"],
