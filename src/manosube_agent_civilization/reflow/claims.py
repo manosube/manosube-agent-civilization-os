@@ -30,6 +30,23 @@ _EVENT_DOMAIN_SEPARATOR = b"MANOSUBE:CANDIDATE_CLAIM_EVALUATION_EVENT:0.1:"
 _SERIES_DOMAIN_SEPARATOR = b"MANOSUBE:CANDIDATE_CLAIM_EVALUATION_SERIES:0.1:"
 
 
+def candidate_claim_evaluation_binding_id(binding: dict[str, Any]) -> str:
+    """R3-F2: ``CLOSURE_POLICY.md`` line 696 -- "Binding IDと検証規則はG19 bindingと同じ
+    canonical profileを使用し、prefixだけを`CAND-CLAIM-EVAL-`とする" -- the *identical*
+    ``MANOSUBE-CANDIDATE-EVALUATION-BINDING-SHA256-0.1`` derivation
+    :func:`~manosube_agent_civilization.reflow.invariant_registry.
+    candidate_invariant_evaluation_binding_id` already implements for G19's own binding,
+    with only the id prefix swapped: every field except ``binding_id`` itself, canonical
+    JSON UTF-8, SHA-256, uppercase hex, no domain separator (the contract states none for
+    this one profile, unlike the event/series ids above -- see that function's own
+    docstring for why the absence is read literally, not filled in).
+    """
+
+    closed = {key: value for key, value in binding.items() if key != "binding_id"}
+    digest = hashlib.sha256(canonical_json_bytes(closed)).hexdigest()
+    return "CAND-CLAIM-EVAL-" + digest.upper()
+
+
 def candidate_claim_evaluation_event_id(event: dict[str, Any]) -> str:
     """Return the content address of a ``candidate_claim_evaluation_event`` record."""
 
@@ -205,13 +222,37 @@ def resolve_claim_binding(
     """Reconstruct *binding*'s series, verify the binding matches its true latest event,
     and return the complete validated chain (head first) -- the set a caller must persist
     for every field this binding is now trusted on to stay reference-resolvable.
+
+    R3-F2: two checks a Round 2 caller could still forge without detection, closed here --
+    a fabricated ``binding_id`` (:func:`candidate_claim_evaluation_binding_id`) and a
+    fabricated ``evaluation_series_id`` naming a *different* series than the one the
+    binding's own ``difference_id``/``policy_ref``/``candidate_id``/``required_claim_ref``
+    recompute (:func:`candidate_claim_evaluation_series_id`) -- both were previously
+    accepted at face value because ``reconstruct_claim_series`` only ever *used* the
+    recomputed series id to filter the event pool, never compared it back against the
+    binding's own declared field.
     """
 
     if binding.get("difference_id") != difference_id:
         raise ReflowValidationError("binding's difference_id does not match this Reflow's Difference")
+    if binding.get("binding_id") != candidate_claim_evaluation_binding_id(binding):
+        raise ReflowValidationError(
+            "binding's binding_id does not match its own content-addressed derivation"
+        )
     policy_ref = binding.get("policy_ref")
     if not isinstance(policy_ref, dict):
         raise ReflowValidationError("binding's policy_ref must be an object")
+    expected_series_id = candidate_claim_evaluation_series_id(
+        difference_id=difference_id,
+        policy_ref=policy_ref,
+        candidate_id=binding["candidate_id"],
+        required_claim_ref=binding["required_claim_ref"],
+    )
+    if binding.get("evaluation_series_id") != expected_series_id:
+        raise ReflowValidationError(
+            "binding's evaluation_series_id does not match the series its own "
+            "difference_id/policy_ref/candidate_id/required_claim_ref recompute"
+        )
     chain = reconstruct_claim_series(
         events,
         difference_id=difference_id,

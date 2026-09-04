@@ -29,6 +29,7 @@ from tests.reflow_helpers import (
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.reflow.claims import (
+    candidate_claim_evaluation_binding_id,
     candidate_claim_evaluation_event_id,
     resolve_claim_binding,
 )
@@ -517,13 +518,14 @@ def test_f8_g21_a_missing_predecessor_fails_the_series_closed() -> None:
     binding, event = mandatory_x003_claim_binding_and_event(difference, current_state)
     revision_1 = _next_revision(event, evaluation_status=event["evaluation_status"])
 
+    moved_binding = {
+        **binding,
+        "evaluation_head_event_ref": {"kind": "candidate_claim_evaluation_event", "id": revision_1["event_id"]},
+    }
+    moved_binding["binding_id"] = candidate_claim_evaluation_binding_id(moved_binding)
     with pytest.raises(ReflowValidationError, match="not contiguous from revision 0"):
         # revision 0 (`event`) deliberately omitted -- only its successor is supplied.
-        resolve_claim_binding(
-            [revision_1],
-            {**binding, "evaluation_head_event_ref": {"kind": "candidate_claim_evaluation_event", "id": revision_1["event_id"]}},
-            difference_id=difference["difference_id"],
-        )
+        resolve_claim_binding([revision_1], moved_binding, difference_id=difference["difference_id"])
 
 
 def test_f8_g21_a_foreign_difference_series_is_refused() -> None:
@@ -550,6 +552,7 @@ def test_f8_g21_the_head_events_own_status_is_what_counts(tmp_path: Path) -> Non
         # NOT_SATISFIED -- R2-F8 requires the binding to match the true latest event
         # exactly, so this is refused, not silently resolved to the event's status.
         forged_binding = {**binding, "evaluation_status": "SATISFIED"}
+        forged_binding["binding_id"] = candidate_claim_evaluation_binding_id(forged_binding)
         resolve_claim_binding([event], forged_binding, difference_id=difference["difference_id"])
 
     chain = resolve_claim_binding([event], binding, difference_id=difference["difference_id"])
@@ -569,6 +572,7 @@ def test_r2f8_a_fork_at_one_revision_is_refused() -> None:
         "evaluation_head_event_ref": {"kind": "candidate_claim_evaluation_event", "id": fork_a["event_id"]},
         "evaluation_status": "SATISFIED",
     }
+    head_binding["binding_id"] = candidate_claim_evaluation_binding_id(head_binding)
     with pytest.raises(ReflowValidationError, match="forks"):
         resolve_claim_binding(
             [genesis_event, fork_a, fork_b], head_binding, difference_id=difference["difference_id"]
@@ -605,11 +609,48 @@ def test_r2f8_an_unconsumed_later_event_defeats_an_older_satisfied_binding(tmp_p
         "evaluation_record_fingerprint": revoked_event["completion_record_fingerprint"],
         "evaluated_at": revoked_event["recorded_at"],
     }
+    current_binding["binding_id"] = candidate_claim_evaluation_binding_id(current_binding)
     chain = resolve_claim_binding(
         [genesis_event, revoked_event], current_binding, difference_id=difference["difference_id"]
     )
     assert chain[0]["evaluation_status"] == "REVOKED"
     assert len(chain) == 2  # the complete series, head first
+
+
+# --- R3-F2: claim binding_id and evaluation_series_id are now independently verified -- #
+
+
+def test_r3f2_a_forged_claim_binding_id_fails_closed() -> None:
+    """A ``candidate_claim_evaluation_binding`` whose declared ``binding_id`` does not
+    match its own content-addressed derivation (CLOSURE_POLICY.md line 696: the exact
+    same profile G19's own binding_id uses, prefix swapped) is refused -- even though
+    every other field, including a real, correctly-reconstructing series and head event,
+    is otherwise conformant."""
+
+    difference = fixture_difference()
+    current_state = {"revision": 3, "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64}}
+    binding, event = mandatory_x003_claim_binding_and_event(difference, current_state)
+    forged = {**binding, "binding_id": "CAND-CLAIM-EVAL-" + "F" * 64}
+
+    with pytest.raises(ReflowValidationError, match="binding_id"):
+        resolve_claim_binding([event], forged, difference_id=difference["difference_id"])
+
+
+def test_r3f2_a_forged_evaluation_series_id_fails_closed() -> None:
+    """A binding whose declared ``evaluation_series_id`` does not equal the series its own
+    ``difference_id``/``policy_ref``/``candidate_id``/``required_claim_ref`` recompute
+    (CLOSURE_POLICY.md line 692) is refused, not merely used verbatim to filter the event
+    pool -- closing the gap where ``reconstruct_claim_series`` recomputed the series id
+    internally but never checked it back against the binding's own declared field."""
+
+    difference = fixture_difference()
+    current_state = {"revision": 3, "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64}}
+    binding, event = mandatory_x003_claim_binding_and_event(difference, current_state)
+    forged = {**binding, "evaluation_series_id": "CAND-CLAIM-SERIES-" + "F" * 64}
+    forged["binding_id"] = candidate_claim_evaluation_binding_id(forged)
+
+    with pytest.raises(ReflowValidationError, match="evaluation_series_id"):
+        resolve_claim_binding([event], forged, difference_id=difference["difference_id"])
 
 
 # --- G19: the v0.1 mandatory Invariant union is additive, never vacuous --------------- #

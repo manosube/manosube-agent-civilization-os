@@ -31,6 +31,7 @@ from tests.state_helpers import SCHEMA_ROOT, initial_state
 from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.reflow.claims import (
+    candidate_claim_evaluation_binding_id,
     candidate_claim_evaluation_event_id,
     candidate_claim_evaluation_series_id,
 )
@@ -180,9 +181,8 @@ def mandatory_x003_claim_binding(
         candidate_id=candidate_id,
         required_claim_ref=required_claim_ref,
     )
-    return {
+    binding = {
         "kind": "candidate_claim_evaluation_binding",
-        "binding_id": "CAND-CLAIM-EVAL-" + "0" * 64,
         "difference_id": difference["difference_id"],
         "policy_ref": policy_ref,
         "candidate_id": candidate_id,
@@ -207,6 +207,10 @@ def mandatory_x003_claim_binding(
         "evaluation_evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
         "evaluated_at": EVALUATED_AT,
     }
+    # R3-F2: binding_id is now checked against its own content-addressed derivation, so
+    # it must be computed last, from the assembled closed fields.
+    binding["binding_id"] = candidate_claim_evaluation_binding_id(binding)
+    return binding
 
 
 def base_closure_request(
@@ -346,6 +350,9 @@ def mandatory_x003_claim_binding_and_event(
         "kind": "candidate_claim_evaluation_event",
         "id": event["event_id"],
     }
+    # R3-F2: binding_id must be recomputed after evaluation_head_event_ref is finalized --
+    # it is part of the same closed-field hash.
+    binding["binding_id"] = candidate_claim_evaluation_binding_id(binding)
     return binding, event
 
 

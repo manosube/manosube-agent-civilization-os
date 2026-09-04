@@ -249,6 +249,32 @@ V0_1_INVARIANT_DEFINITION_DIGESTS: dict[str, str] = {
 
 _INVARIANT_HEADING = re.compile(r"^## ([KASODCERBXP]-[0-9]{3}) — .*$", re.MULTILINE)
 _ANY_HEADING = re.compile(r"^#{1,2} .*$", re.MULTILINE)
+_FENCE_LINE = re.compile(r"^```")
+
+
+def _fenced_line_starts(document_text: str) -> set[int]:
+    """R3-F4: return the character offset of every line that falls inside a fenced code
+    block (` ``` ` ... ` ``` `), so heading detection can ignore a ``#``-prefixed line
+    that only *looks* like a heading because it sits inside a fence. Not a live defect
+    against today's ``KERNEL_INVARIANTS.md`` (no such line exists there, proven by
+    :mod:`tests.contract.reflow.test_invariant_registry_source`), but the totality
+    requirement CLOSURE_POLICY.md's own grammar names elsewhere
+    (``UNKNOWN_LINE_IN_TEXT_FENCE=REJECT``) applies to this heading scan too: a parser
+    that only happens to be correct for the current document text is not the same as one
+    that is correct by construction.
+    """
+
+    fenced: set[int] = set()
+    in_fence = False
+    offset = 0
+    for line in document_text.splitlines(keepends=True):
+        stripped = line.rstrip("\n")
+        if _FENCE_LINE.match(stripped):
+            in_fence = not in_fence
+        elif in_fence:
+            fenced.add(offset)
+        offset += len(line)
+    return fenced
 
 
 def parse_invariant_definition_digests(document_text: str) -> dict[str, str]:
@@ -258,8 +284,16 @@ def parse_invariant_definition_digests(document_text: str) -> dict[str, str]:
     :data:`V0_1_INVARIANT_DEFINITION_DIGESTS` has not drifted from the document.
     """
 
-    heading_starts = [(match.group(1), match.start()) for match in _INVARIANT_HEADING.finditer(document_text)]
-    any_heading_starts = sorted(match.start() for match in _ANY_HEADING.finditer(document_text))
+    fenced_starts = _fenced_line_starts(document_text)
+    heading_starts = [
+        (match.group(1), match.start())
+        for match in _INVARIANT_HEADING.finditer(document_text)
+        if match.start() not in fenced_starts
+    ]
+    any_heading_starts = sorted(
+        match.start() for match in _ANY_HEADING.finditer(document_text)
+        if match.start() not in fenced_starts
+    )
     mandatory = set(V0_1_MANDATORY_GATE_IDS)
     digests: dict[str, str] = {}
     for invariant_id, start in heading_starts:
@@ -302,6 +336,12 @@ def registry_digest() -> str:
     """Return the raw hex digest ``CLOSURE_POLICY.md`` defines: domain-separated SHA-256 of
     the closed ``profile + schema_version + repository + path + source_section_sha256 +
     entries`` projection -- ``registry_id``/commit SHA/whole-file blob SHA excluded.
+
+    R3-F4: ``entries`` is the document's own YAML example (line 549-550 of
+    ``CLOSURE_POLICY.md``) -- an explicit ``{"collection_kind": "ORDERED_LIST", "members":
+    [...]}`` wrapper, not a bare JSON array. The prior version hashed a bare list, which
+    silently drifted the whole registry identity away from the frozen contract's own
+    literal example while staying self-consistent within this module alone.
     """
 
     payload: dict[str, Any] = {
@@ -310,7 +350,10 @@ def registry_digest() -> str:
         "repository": REGISTRY_REPOSITORY,
         "path": KERNEL_INVARIANTS_PATH,
         "source_section_sha256": "sha256:" + MANDATORY_GATE_SOURCE_SECTION_SHA256,
-        "entries": [dict(entry) for entry in registry_entries()],
+        "entries": {
+            "collection_kind": "ORDERED_LIST",
+            "members": [dict(entry) for entry in registry_entries()],
+        },
     }
     return hashlib.sha256(_REGISTRY_DOMAIN_SEPARATOR + canonical_json_bytes(payload)).hexdigest()
 

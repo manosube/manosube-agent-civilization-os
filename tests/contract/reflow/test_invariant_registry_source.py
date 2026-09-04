@@ -180,3 +180,86 @@ def test_registry_identity_fields_match_the_closure_policy_profile() -> None:
     assert REGISTRY_PROFILE == "MANOSUBE-V0_1-MANDATORY-INVARIANT-REGISTRY-0.1"
     assert REGISTRY_SCHEMA_VERSION == "0.1"
     assert REGISTRY_REPOSITORY == "manosube/manosube-agent-civilization-os"
+
+
+# --- R3-F4: entries is the contract's own explicit ORDERED_LIST wrapper, not a bare list --- #
+
+
+def test_registry_digest_hashes_entries_as_an_explicit_ordered_list_wrapper() -> None:
+    """``CLOSURE_POLICY.md`` line 549-550's own YAML example shows ``entries:
+    {collection_kind: ORDERED_LIST, members: [...]}`` -- a bare JSON array of entries
+    (the pre-R3-F4 behavior) silently drifts the whole registry identity away from the
+    frozen contract while staying self-consistent within this module alone. This pins
+    the exact byte-for-byte digest an independent recomputation against the wrapped
+    projection produces, so a regression back to the bare-array form is caught even
+    though nothing else in this codebase currently cross-checks ``registry_digest``
+    against an external oracle.
+    """
+
+    import hashlib as _hashlib
+    from typing import Any as _Any
+
+    from manosube_agent_civilization.reflow.invariant_registry import (
+        _REGISTRY_DOMAIN_SEPARATOR,
+        KERNEL_INVARIANTS_PATH as _PATH,
+        MANDATORY_GATE_SOURCE_SECTION_SHA256 as _SECTION_SHA,
+        REGISTRY_PROFILE as _PROFILE,
+        REGISTRY_REPOSITORY as _REPO,
+        REGISTRY_SCHEMA_VERSION as _VERSION,
+    )
+    from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
+
+    wrapped_payload: dict[str, _Any] = {
+        "profile": _PROFILE,
+        "schema_version": _VERSION,
+        "repository": _REPO,
+        "path": _PATH,
+        "source_section_sha256": "sha256:" + _SECTION_SHA,
+        "entries": {
+            "collection_kind": "ORDERED_LIST",
+            "members": [dict(entry) for entry in registry_entries()],
+        },
+    }
+    expected = _hashlib.sha256(
+        _REGISTRY_DOMAIN_SEPARATOR + canonical_json_bytes(wrapped_payload)
+    ).hexdigest()
+    assert registry_digest() == expected
+
+    bare_payload = dict(wrapped_payload)
+    bare_payload["entries"] = [dict(entry) for entry in registry_entries()]
+    bare_digest = _hashlib.sha256(
+        _REGISTRY_DOMAIN_SEPARATOR + canonical_json_bytes(bare_payload)
+    ).hexdigest()
+    assert registry_digest() != bare_digest
+
+
+# --- R3-F4: heading detection ignores a '#'-prefixed line inside a fenced code block --- #
+
+
+def test_a_heading_like_line_inside_a_fenced_block_is_not_treated_as_a_boundary() -> None:
+    """Not a live defect against today's document (proven by the fresh-parse-equals-pin
+    test above), but the totality requirement CLOSURE_POLICY.md's own grammar names
+    elsewhere (``UNKNOWN_LINE_IN_TEXT_FENCE=REJECT``) means the heading scanner must be
+    correct by construction, not merely correct for the current document text. This
+    injects a real ``## X-999 — Not A Real Invariant`` line inside a fenced code block in
+    the middle of ``K-001``'s own definition text and proves the parser still resolves
+    ``K-001``'s digest across the whole block rather than truncating at the fenced line.
+    """
+
+    live = _live_document()
+    anchor = "## K-001 —"
+    start = live.index(anchor)
+    next_heading = live.index("\n## ", start + 1)
+    insertion = "\n```text\n## X-999 — Not A Real Invariant\n```\n"
+    injected = live[:next_heading] + insertion + live[next_heading:]
+
+    digests = parse_invariant_definition_digests(injected)
+    assert "X-999" not in digests
+    # K-001's block now correctly extends through the injected fenced text, all the way
+    # to the real next heading (shifted by the insertion's own length) -- not truncated
+    # at the fake '## X-999' line the fence contains.
+    expected_end = next_heading + len(insertion)
+    assert digests["K-001"] == section_sha256(injected[start:expected_end])
+    # And that really did have to include the injected text, not coincidentally match
+    # what the original, un-injected block would have hashed to.
+    assert digests["K-001"] != section_sha256(live[start:next_heading])
