@@ -84,8 +84,11 @@ def test_material_contradiction_forces_contradicted_result() -> None:
 def test_non_material_contradiction_is_recorded_but_does_not_block_closure() -> None:
     difference = fixture_difference()
     policy = fixture_policy(difference)
-    request = candidate_closure_request(difference, policy)
-    request["material_contradictions"] = [material_contradiction_record(impact="NON_MATERIAL")]
+    request = candidate_closure_request(
+        difference,
+        policy,
+        material_contradictions=[material_contradiction_record(impact="NON_MATERIAL")],
+    )
 
     evaluation = evaluate_closure(request)
 

@@ -100,13 +100,19 @@ from manosube_agent_civilization.difference.admissibility import (
     require_object,
 )
 from manosube_agent_civilization.difference.canonical import unordered_set
+from manosube_agent_civilization.difference.completion import (
+    MANDATORY_X003_CLAIM_DESCRIPTOR as MANDATORY_X003_CLAIM_DESCRIPTOR,
+    MANDATORY_X003_CLAIM_ID as MANDATORY_X003_CLAIM_ID,
+    MANDATORY_X003_CLAIM_REF as MANDATORY_X003_CLAIM_REF,
+    resolve_completion_record,
+)
 from manosube_agent_civilization.difference.engine import derive_differences
 from manosube_agent_civilization.difference.errors import DifferenceError
 from manosube_agent_civilization.difference.identity import (
-    completion_claim_id,
     difference_id as recompute_difference_id,
     policy_semantic_fingerprint,
 )
+from manosube_agent_civilization.difference.invariant_evaluation import resolve_invariant_evaluation
 from manosube_agent_civilization.difference.lifecycle import is_legal_transition
 from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.evidence.errors import EvidenceError
@@ -117,8 +123,11 @@ from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_s
 
 from .claims import resolve_claim_binding
 from .errors import ReflowValidationError
+from .git_witness import verify_kernel_source_witness
 from .identity import after_state_candidate_id, closure_evaluation_id
 from .invariant_registry import (
+    KERNEL_INVARIANTS_BLOB_SHA,
+    KERNEL_INVARIANTS_PATH,
     candidate_invariant_evaluation_binding_id,
     expected_g19_invariant_entries,
 )
@@ -128,20 +137,9 @@ SCHEMA_VERSION = "0.1"
 #: Every Mandatory Closure Gate, in the order ``CLOSURE_POLICY.md`` section 3 declares.
 GATE_IDS: tuple[str, ...] = tuple(f"G{i}" for i in range(1, 23))
 
-#: The fixed, closed-form v0.1 mandatory completion Claim ``CLOSURE_POLICY.md`` requires
-#: in G21's expected set regardless of what the Closure Policy itself declares. Its
-#: payload is a Policy-text constant, not a derivation -- see the module docstring.
-MANDATORY_X003_CLAIM_DESCRIPTOR: dict[str, Any] = {
-    "subject_type": "CONTRACT_COMPLETION",
-    "subject_ref": {"kind": "kernel_invariant", "id": "X-003"},
-    "claim": {"AGENT_REQUIRED_FOR_KERNEL": False, "SESSION_INDEPENDENT": True},
-    "target_state_ref": None,
-}
-MANDATORY_X003_CLAIM_ID: str = completion_claim_id(MANDATORY_X003_CLAIM_DESCRIPTOR)
-MANDATORY_X003_CLAIM_REF: dict[str, str] = {
-    "kind": "completion_claim",
-    "id": MANDATORY_X003_CLAIM_ID,
-}
+#: ``MANDATORY_X003_CLAIM_DESCRIPTOR``/``_ID``/``_REF`` are re-exported here for backward
+#: compatibility -- their canonical home is :mod:`manosube_agent_civilization.difference.
+#: completion` (R4-F2: Completion-domain content is owned by Difference, not Reflow).
 
 REQUEST_KEYS: frozenset[str] = frozenset(
     {
@@ -165,6 +163,8 @@ REQUEST_KEYS: frozenset[str] = frozenset(
         "candidate_invariant_evaluation_bindings",
         "candidate_claim_evaluation_bindings",
         "candidate_claim_evaluation_events",
+        "invariant_evaluations",
+        "kernel_source_witness",
         "material_contradictions",
         "terminal_reason_evidence_refs",
         "proposed_terminal_status",
@@ -331,6 +331,38 @@ def _derive_after_observation_ids(request: dict[str, Any]) -> set[str]:
     return ids
 
 
+def _derive_source_snapshot_ids(request: dict[str, Any]) -> set[str]:
+    """R4-F2: the real ``source_snapshot`` reference ids the reproduction's own
+    self-consistent Observation(s) actually report -- Observation is these references'
+    canonical owner (no schema anywhere in this Kernel resolves a ``source_snapshot``
+    reference to a body of its own; every layer that carries one, Observation included,
+    treats it as an opaque immutable reference by design), so a candidate's own declared
+    ``source_snapshot_refs`` is verified by cross-reference against Observation's own
+    already-validated set, not by resolving to a second body this vertical cannot
+    construct and CLOSURE_POLICY.md never specifies the shape of.
+    """
+
+    bindings = request.get("bindings")
+    if not isinstance(bindings, list) or not bindings:
+        return set()
+    bundle = bindings[0].get("observation_bundle") if isinstance(bindings[0], dict) else None
+    observations = bundle.get("observations") if isinstance(bundle, dict) else None
+    if not isinstance(observations, list):
+        return set()
+    ids: set[str] = set()
+    for observation in observations:
+        if not isinstance(observation, dict):
+            continue
+        identity = observation.get("observation_id")
+        if not (isinstance(identity, str) and identity and identity == observation_identity(observation)):
+            continue
+        for ref in observation.get("source_snapshot_refs") or []:
+            ref_id = _reference_id(ref)
+            if ref_id is not None:
+                ids.add(ref_id)
+    return ids
+
+
 def _evaluate_reproduction_gates(
     gates: _Gates,
     difference: dict[str, Any],
@@ -339,6 +371,7 @@ def _evaluate_reproduction_gates(
     resolution_mode: str | None,
     change_result_evidence_refs: list[Any],
     change_result_evidence_requests: list[Any],
+    source_snapshot_refs: list[Any],
 ) -> None:
     if policy["required_observation_scope"] is not None:
         for gate in _REPRODUCTION_GATES:
@@ -401,6 +434,28 @@ def _evaluate_reproduction_gates(
             "FAIL",
             "after_observation_refs does not exactly match the Observation(s) the "
             "reobservation derivation request actually consumed",
+        )
+        return
+
+    # R4-F2: a candidate's own source_snapshot_refs must exactly match the real,
+    # self-consistent Observation's own reported set -- Observation is this reference
+    # kind's canonical owner, so cross-referencing its already-validated data is this
+    # vertical's actual resolution of it (see :func:`_derive_source_snapshot_ids`).
+    derived_snapshot_ids = _derive_source_snapshot_ids(request)
+    declared_snapshot_ids = {_reference_id(ref) for ref in source_snapshot_refs}
+    if declared_snapshot_ids != derived_snapshot_ids:
+        for gate in _REPRODUCTION_GATES:
+            gates.set(
+                gate,
+                "FAIL",
+                "source_snapshot_refs does not exactly match the real Observation's own "
+                "reported source snapshots",
+            )
+        gates.set(
+            "G8",
+            "FAIL",
+            "source_snapshot_refs does not exactly match the real Observation's own "
+            "reported source snapshots",
         )
         return
 
@@ -527,7 +582,13 @@ def _evaluate_g12_g18(
 
 
 def _evaluate_g19(
-    gates: _Gates, policy: dict[str, Any], bindings: list[Any]
+    gates: _Gates,
+    policy: dict[str, Any],
+    bindings: list[Any],
+    *,
+    kernel_source_ref: dict[str, Any] | None,
+    kernel_source_witness: dict[str, Any] | None,
+    invariant_evaluations: list[Any],
 ) -> None:
     # R2-G19: the v0.1 mandatory Invariant union is additive over whatever the Policy
     # itself declares -- an empty `required_invariants` cannot reach G19 PASS vacuously.
@@ -567,6 +628,36 @@ def _evaluate_g19(
     for invariant_id, entry in policy_by_id.items():
         expected.setdefault(invariant_id, entry)
 
+    # R4-F3: live Git commit/tree provenance, via a pure immutable Git object witness --
+    # only required (and only meaningful) when a real candidate Invariant set exists.
+    # OPTIONAL_OR_DEGRADING_PROVENANCE_ALLOWED=false: a candidate with bindings but no
+    # witness fails closed, never silently skips the check.
+    if bindings:
+        if kernel_source_ref is None or kernel_source_witness is None:
+            gates.set(
+                "G19",
+                "FAIL",
+                "a candidate invariant evaluation set requires both kernel_source_ref and "
+                "kernel_source_witness",
+            )
+            return
+        commit_sha = kernel_source_ref.get("commit_sha")
+        tree_sha = kernel_source_ref.get("tree_sha")
+        if not isinstance(commit_sha, str) or not isinstance(tree_sha, str):
+            gates.set("G19", "FAIL", "kernel_source_ref is missing commit_sha/tree_sha")
+            return
+        try:
+            verify_kernel_source_witness(
+                witness=kernel_source_witness,
+                expected_commit_sha=commit_sha,
+                expected_tree_sha=tree_sha,
+                expected_blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+                path=KERNEL_INVARIANTS_PATH,
+            )
+        except ReflowValidationError as error:
+            gates.set("G19", "FAIL", f"kernel_source_witness did not verify: {error}")
+            return
+
     got: dict[str, tuple[str, str]] = {}
     for binding in bindings:
         if binding.get("binding_id") != candidate_invariant_evaluation_binding_id(binding):
@@ -586,6 +677,20 @@ def _evaluate_g19(
                 "G19",
                 "FAIL",
                 f"more than one candidate_invariant_evaluation_binding for {invariant_id}",
+            )
+            return
+        # R4-F2: the binding's own invariant_evaluation_ref must resolve to a real,
+        # schema-valid Invariant Evaluation record whose recomputed fingerprint and every
+        # field the binding asserts actually match -- not merely be present.
+        try:
+            resolve_invariant_evaluation(
+                binding, invariant_evaluations, base_state_ref=binding["base_state_ref"]
+            )
+        except DifferenceError as error:
+            gates.set(
+                "G19",
+                "FAIL",
+                f"invariant_evaluation_ref for {invariant_id} did not resolve: {error}",
             )
             return
         got[invariant_id] = (
@@ -612,10 +717,18 @@ def _evaluate_g21(
     current_state: dict[str, Any],
     bindings: list[Any],
     claim_events: list[Any],
+    *,
+    invariant_evaluation_refs: list[Any],
+    material_contradiction_refs: list[Any],
 ) -> None:
     expected = {MANDATORY_X003_CLAIM_ID} | {item["id"] for item in policy["required_claims"]}
     got_satisfied: set[str] = set()
     got_all: set[str] = set()
+    observed_state_ref = {
+        "kind": "state",
+        "revision": current_state["revision"],
+        "fingerprint": current_state["fingerprint"],
+    }
     for binding in bindings:
         claim_id = binding["required_claim_ref"]["id"]
         got_all.add(claim_id)
@@ -647,6 +760,26 @@ def _evaluate_g21(
                 "G21",
                 "FAIL",
                 f"claim evaluation series for {claim_id} did not reconstruct: {error}",
+            )
+            return
+        # R4-F2/R3-F2: the binding's completion_record_ref must resolve to the one
+        # Completion Record its own Claim descriptor and this Evaluation's inputs imply --
+        # not merely echo the head event's own restated ref/fingerprint.
+        try:
+            resolve_completion_record(
+                binding,
+                policy=policy,
+                observed_state_ref=observed_state_ref,
+                evaluated_state_revision=current_state["revision"],
+                evaluated_state_fingerprint=current_state["fingerprint"],
+                invariant_evaluation_refs=invariant_evaluation_refs,
+                material_contradiction_refs=material_contradiction_refs,
+            )
+        except DifferenceError as error:
+            gates.set(
+                "G21",
+                "FAIL",
+                f"completion_record_ref for {claim_id} did not resolve: {error}",
             )
             return
         if chain[0]["evaluation_status"] == "SATISFIED":
@@ -760,6 +893,7 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         shaped["resolution_mode"],
         change_result_evidence_refs_in,
         change_result_evidence_requests_in,
+        require_collection(shaped["source_snapshot_refs"], "source_snapshot_refs"),
     )
     sufficiency, oldest_evidence_recorded_at = _evaluate_g12_g18(
         gates,
@@ -770,18 +904,55 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         else None,
         evaluated_at,
     )
+    # Every named contradiction is recorded in the output regardless of impact --
+    # CLOSURE_POLICY.md's fail-closed table only routes a *Material* one to CONTRADICTED
+    # ("非material contradictionは記録されたまま"); a non-material one still names a real
+    # conflict this Difference's provenance carries and must not be silently dropped.
+    # Computed here (moved up from after G19/G21) because R4-F2's Completion Record
+    # resolution needs `contradiction_refs` as its own `material_contradiction_refs`.
+    material_contradictions = require_collection(
+        shaped["material_contradictions"], "material_contradictions"
+    )
+    contradiction_refs = [
+        {"kind": "material_contradiction", "id": item["material_contradiction_id"]}
+        for item in material_contradictions
+    ]
+    blocking_contradictions = [
+        item for item in material_contradictions if item.get("impact") == "MATERIAL"
+    ]
+
     invariant_bindings = require_collection(
         shaped["candidate_invariant_evaluation_bindings"], "candidate_invariant_evaluation_bindings"
     )
-    _evaluate_g19(gates, policy, invariant_bindings)
+    invariant_evaluations = require_collection(shaped["invariant_evaluations"], "invariant_evaluations")
+    _evaluate_g19(
+        gates,
+        policy,
+        invariant_bindings,
+        kernel_source_ref=shaped["kernel_source_ref"] if isinstance(shaped["kernel_source_ref"], dict) else None,
+        kernel_source_witness=shaped["kernel_source_witness"]
+        if isinstance(shaped["kernel_source_witness"], dict)
+        else None,
+        invariant_evaluations=invariant_evaluations,
+    )
     claim_bindings = require_collection(
         shaped["candidate_claim_evaluation_bindings"], "candidate_claim_evaluation_bindings"
     )
     claim_events = require_collection(
         shaped["candidate_claim_evaluation_events"], "candidate_claim_evaluation_events"
     )
+    invariant_evaluation_refs_for_completion = [
+        binding["invariant_evaluation_ref"] for binding in invariant_bindings
+    ]
     _evaluate_g21(
-        gates, policy, difference["difference_id"], current_state, claim_bindings, claim_events
+        gates,
+        policy,
+        difference["difference_id"],
+        current_state,
+        claim_bindings,
+        claim_events,
+        invariant_evaluation_refs=invariant_evaluation_refs_for_completion,
+        material_contradiction_refs=contradiction_refs,
     )
     _evaluate_g22(gates, policy, proposed_terminal_status)
 
@@ -799,21 +970,6 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         )
     else:
         evaluation_expires_at = None
-
-    # Every named contradiction is recorded in the output regardless of impact --
-    # CLOSURE_POLICY.md's fail-closed table only routes a *Material* one to CONTRADICTED
-    # ("非material contradictionは記録されたまま"); a non-material one still names a real
-    # conflict this Difference's provenance carries and must not be silently dropped.
-    material_contradictions = require_collection(
-        shaped["material_contradictions"], "material_contradictions"
-    )
-    contradiction_refs = [
-        {"kind": "material_contradiction", "id": item["material_contradiction_id"]}
-        for item in material_contradictions
-    ]
-    blocking_contradictions = [
-        item for item in material_contradictions if item.get("impact") == "MATERIAL"
-    ]
     terminal_reason_evidence_refs = require_collection(
         shaped["terminal_reason_evidence_refs"], "terminal_reason_evidence_refs"
     )

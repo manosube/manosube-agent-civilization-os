@@ -122,6 +122,8 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
         "candidate_claim_evaluation_events": [],
+        "invariant_evaluations": [],
+        "kernel_source_witness": None,
         "material_contradictions": [],
         "terminal_reason_evidence_refs": [
             {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}

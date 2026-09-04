@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+from pathlib import Path
 from typing import Any
 
 from tests.difference_helpers import (
@@ -28,6 +29,14 @@ from tests.evidence_helpers import (
 )
 from tests.state_helpers import SCHEMA_ROOT, initial_state
 
+from manosube_agent_civilization.difference.completion import (
+    MANDATORY_X003_CLAIM_DESCRIPTOR,
+    build_completion_record,
+    completion_record_fingerprint,
+)
+from manosube_agent_civilization.difference.invariant_evaluation import (
+    invariant_evaluation_fingerprint,
+)
 from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.reflow.claims import (
@@ -36,8 +45,11 @@ from manosube_agent_civilization.reflow.claims import (
     candidate_claim_evaluation_series_id,
 )
 from manosube_agent_civilization.reflow.closure import MANDATORY_X003_CLAIM_REF
+from manosube_agent_civilization.reflow.git_witness import blob_sha1, commit_sha1, tree_sha1
 from manosube_agent_civilization.reflow.identity import material_contradiction_id
 from manosube_agent_civilization.reflow.invariant_registry import (
+    KERNEL_INVARIANTS_BLOB_SHA,
+    KERNEL_INVARIANTS_PATH,
     V0_1_INVARIANT_DEFINITION_DIGESTS,
     candidate_invariant_evaluation_binding_id,
     expected_g19_invariant_ids,
@@ -53,6 +65,58 @@ GIT_TREE_REF: dict[str, Any] = {
 }
 
 EVALUATED_AT = "2026-08-30T11:05:00Z"
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def real_kernel_source_witness() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return ``(kernel_source_ref, kernel_source_witness)`` -- a real, self-consistent Git
+    object witness proving ``00_KERNEL/KERNEL_INVARIANTS.md`` is reachable via a genuine
+    commit/tree/blob chain (R4-F3). ``GIT_TREE_REF``'s ``commit_sha``/``tree_sha`` are
+    fixture placeholders that can never verify against a real witness -- a real Git object
+    id is the SHA-1 of its own content, not a value a fixture can simply declare. This
+    instead builds the blob from ``KERNEL_INVARIANTS.md``'s own real on-disk bytes (so its
+    blob sha genuinely equals the pinned ``KERNEL_INVARIANTS_BLOB_SHA``) and wraps it in a
+    synthetic but internally self-consistent tree/commit -- the same real object-hashing
+    functions :func:`~manosube_agent_civilization.reflow.git_witness.verify_kernel_source_witness`
+    itself uses, applied here to build a witness that function can genuinely verify rather
+    than one this fixture merely asserts is valid.
+    """
+
+    blob_content = (REPOSITORY_ROOT / KERNEL_INVARIANTS_PATH).read_bytes()
+    blob_sha = blob_sha1(blob_content)
+    assert blob_sha == KERNEL_INVARIANTS_BLOB_SHA, (
+        "fixture drift: the on-disk KERNEL_INVARIANTS.md no longer matches the pinned blob sha"
+    )
+
+    leaf_entry = b"100644 KERNEL_INVARIANTS.md\0" + bytes.fromhex(blob_sha)
+    leaf_tree_sha = tree_sha1(leaf_entry)
+    root_entry = b"40000 00_KERNEL\0" + bytes.fromhex(leaf_tree_sha)
+    root_tree_sha = tree_sha1(root_entry)
+    commit_object = (
+        f"tree {root_tree_sha}\n"
+        "author Fixture <fixture@example.com> 0 +0000\n"
+        "committer Fixture <fixture@example.com> 0 +0000\n"
+        "\n"
+        "fixture commit\n"
+    ).encode()
+    commit_sha = commit_sha1(commit_object)
+
+    kernel_source_ref = {
+        "kind": "git_tree",
+        "repository": "manosube/manosube-agent-civilization-os",
+        "commit_sha": commit_sha,
+        "tree_sha": root_tree_sha,
+    }
+    kernel_source_witness = {
+        "commit_object": commit_object.hex(),
+        "tree_objects": {
+            root_tree_sha: root_entry.hex(),
+            leaf_tree_sha: leaf_entry.hex(),
+        },
+        "blob_object": blob_content.hex(),
+    }
+    return kernel_source_ref, kernel_source_witness
 
 
 def _advanced_project_state(
@@ -169,6 +233,8 @@ def mandatory_x003_claim_binding(
     *,
     evaluation_status: str = "SATISFIED",
     claim_ref: dict[str, str] | None = None,
+    invariant_evaluation_refs: list[dict[str, Any]] | None = None,
+    material_contradiction_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """One conformant ``candidate_claim_evaluation_binding`` for the mandatory X-003 claim."""
 
@@ -180,6 +246,26 @@ def mandatory_x003_claim_binding(
         policy_ref=policy_ref,
         candidate_id=candidate_id,
         required_claim_ref=required_claim_ref,
+    )
+    observed_state_ref = {
+        "kind": "state",
+        "revision": current_state["revision"],
+        "fingerprint": current_state["fingerprint"],
+    }
+    # R4-F2/R3-F2: the real Completion Record the binding's completion_record_ref must
+    # resolve to -- built the same way reflow.closure.resolve_completion_record verifies
+    # it, not a fake placeholder id/fingerprint.
+    completion_record = build_completion_record(
+        claim_descriptor=MANDATORY_X003_CLAIM_DESCRIPTOR,
+        policy_ref=policy_ref,
+        observed_state_ref=observed_state_ref,
+        evaluated_state_revision=current_state["revision"],
+        evaluated_state_fingerprint=current_state["fingerprint"],
+        evaluation_status=evaluation_status,
+        evaluated_at=EVALUATED_AT,
+        required_evidence_refs=[],
+        invariant_evaluation_refs=invariant_evaluation_refs or [],
+        material_contradiction_refs=material_contradiction_refs or [],
     )
     binding = {
         "kind": "candidate_claim_evaluation_binding",
@@ -201,8 +287,8 @@ def mandatory_x003_claim_binding(
             "kind": "candidate_claim_evaluation_event",
             "id": "CAND-CLAIM-EVT-" + "3" * 64,
         },
-        "completion_record_ref": {"kind": "completion_record", "id": "CMP-" + "4" * 64},
-        "evaluation_record_fingerprint": "sha256:" + "5" * 64,
+        "completion_record_ref": {"kind": "completion_record", "id": completion_record["completion_id"]},
+        "evaluation_record_fingerprint": completion_record_fingerprint(completion_record),
         "evaluation_status": evaluation_status,
         "evaluation_evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
         "evaluated_at": EVALUATED_AT,
@@ -242,6 +328,8 @@ def base_closure_request(
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
         "candidate_claim_evaluation_events": [],
+        "invariant_evaluations": [],
+        "kernel_source_witness": None,
         "material_contradictions": [],
         "terminal_reason_evidence_refs": [
             {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
@@ -259,6 +347,49 @@ def _hex_digest(seed: str) -> str:
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
+def mandatory_invariant_evaluation(
+    invariant_id: str, current_state: dict[str, Any], *, status: str = "PASS"
+) -> dict[str, Any]:
+    """One real, schema-valid ``invariant_evaluation`` record for *invariant_id*.
+
+    R4-F2: ``evaluation_id`` is caller-assigned (no content-address formula exists for it
+    in ``CLOSURE_POLICY.md`` -- see ``difference/invariant_evaluation.py``'s module
+    docstring), so this fixture assigns the same deterministic value
+    :func:`mandatory_invariant_bindings` declares on its own ``invariant_evaluation_ref``.
+    """
+
+    return {
+        "schema_version": "0.1",
+        "evaluation_id": "INV-EVAL-" + _hex_digest(f"eval:{invariant_id}").upper(),
+        "invariant_id": invariant_id,
+        "subject_ref": {"kind": "kernel_invariant", "id": invariant_id},
+        "state_revision": current_state["revision"],
+        "state_fingerprint": current_state["fingerprint"],
+        "verification_stage": "CANDIDATE_CLOSURE",
+        "method": "STRUCTURAL_CHECK",
+        "expected": {"invariant_id": invariant_id, "result": "PASS"},
+        "observed": {"invariant_id": invariant_id, "result": status},
+        "status": status,
+        "evaluated_at": EVALUATED_AT,
+        "evaluator_capability": "reflow.closure",
+        "authority_ref": None,
+        "evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        "remaining_differences": {"collection_kind": "UNORDERED_SET", "members": []},
+    }
+
+
+def mandatory_invariant_evaluations(current_state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The real Invariant Evaluation record pool matching every binding
+    :func:`mandatory_invariant_bindings` builds -- the caller-supplied pool R4-F2's
+    ``invariant_evaluations`` closure_request field carries.
+    """
+
+    return [
+        mandatory_invariant_evaluation(invariant_id, current_state)
+        for invariant_id in sorted(expected_g19_invariant_ids())
+    ]
+
+
 def mandatory_invariant_bindings(current_state: dict[str, Any]) -> list[dict[str, Any]]:
     """One real ``candidate_invariant_evaluation_binding`` per pinned v0.1 mandatory id.
 
@@ -270,6 +401,7 @@ def mandatory_invariant_bindings(current_state: dict[str, Any]) -> list[dict[str
 
     bindings = []
     for invariant_id in sorted(expected_g19_invariant_ids()):
+        record = mandatory_invariant_evaluation(invariant_id, current_state)
         binding = {
             "kind": "candidate_invariant_evaluation_binding",
             "candidate_id": "STATE-CANDIDATE-" + "1" * 64,
@@ -293,9 +425,12 @@ def mandatory_invariant_bindings(current_state: dict[str, Any]) -> list[dict[str
             },
             "invariant_evaluation_ref": {
                 "kind": "invariant_evaluation",
-                "id": "INV-EVAL-" + _hex_digest(f"eval:{invariant_id}").upper(),
+                "id": record["evaluation_id"],
             },
-            "evaluation_record_fingerprint": "sha256:" + _hex_digest(f"record:{invariant_id}"),
+            # R4-F2: the real fingerprint of the matching Invariant Evaluation record
+            # (mandatory_invariant_evaluations), not a fake placeholder -- G19 now
+            # resolves and recomputes it.
+            "evaluation_record_fingerprint": invariant_evaluation_fingerprint(record),
             "evaluation_result": "PASS",
             "evaluation_evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
             "evaluated_at": EVALUATED_AT,
@@ -338,11 +473,18 @@ def mandatory_x003_claim_binding_and_event(
     *,
     evaluation_status: str = "SATISFIED",
     claim_ref: dict[str, str] | None = None,
+    invariant_evaluation_refs: list[dict[str, Any]] | None = None,
+    material_contradiction_refs: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """A real ``(binding, event)`` pair whose head reference actually agrees."""
 
     binding = mandatory_x003_claim_binding(
-        difference, current_state, evaluation_status=evaluation_status, claim_ref=claim_ref
+        difference,
+        current_state,
+        evaluation_status=evaluation_status,
+        claim_ref=claim_ref,
+        invariant_evaluation_refs=invariant_evaluation_refs,
+        material_contradiction_refs=material_contradiction_refs,
     )
     event = mandatory_x003_claim_event(binding, difference, evaluation_status=evaluation_status)
     binding = dict(binding)
@@ -357,7 +499,11 @@ def mandatory_x003_claim_binding_and_event(
 
 
 def candidate_closure_request(
-    difference: dict[str, Any], policy: dict[str, Any], *, current_state: dict[str, Any] | None = None
+    difference: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    current_state: dict[str, Any] | None = None,
+    material_contradictions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """A fully wired ``CANDIDATE_CLOSURE``-eligible request: every gate should PASS.
 
@@ -368,16 +514,43 @@ def candidate_closure_request(
     G21's own base-State binding check (R2-F8) requires every claim binding's
     ``base_state_ref`` to equal the State the Evaluation is actually bound to, and that
     can only be known in advance for a real Store by asking it.
+
+    *material_contradictions* defaults to none. R4-F2 requires the mandatory X-003
+    claim binding's Completion Record to already carry the same ``material_contradiction_refs``
+    ``evaluate_closure`` itself derives from this same list (``reflow/closure.py``'s
+    ``contradiction_refs``, every recorded contradiction regardless of ``impact`` -- not only
+    the ``MATERIAL`` ones that block) -- so a caller who wants a non-empty
+    ``material_contradictions`` list and a still-``SATISFIED`` result (e.g. a non-material
+    contradiction) must pass the records here rather than mutate the returned request's
+    ``material_contradictions`` key afterwards, or G21 fails to resolve the binding's stale
+    Completion Record.
     """
 
     reobservation_request, after_ref, later_fingerprint = satisfied_reobservation(difference)
     if current_state is None:
         current_state = {"revision": AFTER_REVISION, "fingerprint": later_fingerprint}
+    material_contradictions = material_contradictions or []
+    contradiction_refs = [
+        {"kind": "material_contradiction", "id": item["material_contradiction_id"]}
+        for item in material_contradictions
+    ]
     request = base_closure_request(difference, policy)
-    claim_binding, claim_event = mandatory_x003_claim_binding_and_event(difference, current_state)
+    invariant_bindings = mandatory_invariant_bindings(current_state)
+    invariant_evaluations = mandatory_invariant_evaluations(current_state)
+    invariant_evaluation_refs = [binding["invariant_evaluation_ref"] for binding in invariant_bindings]
+    claim_binding, claim_event = mandatory_x003_claim_binding_and_event(
+        difference,
+        current_state,
+        invariant_evaluation_refs=invariant_evaluation_refs,
+        material_contradiction_refs=contradiction_refs,
+    )
+    kernel_source_ref, kernel_source_witness = real_kernel_source_witness()
     request.update(
         {
             "current_state": current_state,
+            "kernel_source_ref": kernel_source_ref,
+            "kernel_source_witness": kernel_source_witness,
+            "material_contradictions": material_contradictions,
             "resolution_mode": "CHANGE_FREE",
             "change_free_verification_evidence_refs": [
                 {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
@@ -391,7 +564,8 @@ def candidate_closure_request(
             ),
             "after_state_semantic_state": semantic_state("KNOWN"),
             "source_snapshot_refs": [{"kind": "source_snapshot", "id": "SNAP-0001"}],
-            "candidate_invariant_evaluation_bindings": mandatory_invariant_bindings(current_state),
+            "candidate_invariant_evaluation_bindings": invariant_bindings,
+            "invariant_evaluations": invariant_evaluations,
             "candidate_claim_evaluation_bindings": [claim_binding],
             "candidate_claim_evaluation_events": [claim_event],
             "terminal_reason_evidence_refs": [],

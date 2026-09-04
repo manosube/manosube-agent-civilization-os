@@ -827,3 +827,145 @@ def test_r2g19_a_policy_declared_same_id_matching_digest_unifies_not_duplicates(
 
     assert evaluation["gate_results"]["G19"] == "PASS"
     assert evaluation["result"] == "SATISFIED"
+
+
+# --- R4-F2: every reference admitted into a CLOSED Closure Evaluation must resolve ---- #
+
+
+def test_r4f2_the_full_reference_closure_actually_reaches_satisfied() -> None:
+    """The positive control: a ``candidate_closure_request`` whose Completion Record,
+    Invariant Evaluation pool and ``source_snapshot_refs`` are all real and mutually
+    resolvable really does reach ``SATISFIED`` -- proving R4-F2's reference-closure
+    requirement is satisfiable, not merely fail-closed."""
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G19"] == "PASS"
+    assert evaluation["gate_results"]["G21"] == "PASS"
+    assert evaluation["result"] == "SATISFIED"
+
+
+def test_r4f2_an_unresolved_invariant_evaluation_ref_fails_g19_closed() -> None:
+    """A ``candidate_invariant_evaluation_binding`` whose ``invariant_evaluation_ref``
+    names an id absent from the caller-supplied ``invariant_evaluations`` pool must not
+    pass on the binding's own say-so about the underlying record -- CLOSURE_POLICY.md
+    gives no content-address formula for ``evaluation_id`` (R4-F2's
+    ``INVARIANT_EVALUATION_ID_POLICY``), so an unresolved reference is refused rather
+    than silently trusted."""
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+    # Drop the one Invariant Evaluation record the first binding's own ref names.
+    orphaned_id = request["candidate_invariant_evaluation_bindings"][0]["invariant_evaluation_ref"]["id"]
+    request["invariant_evaluations"] = [
+        record for record in request["invariant_evaluations"] if record["evaluation_id"] != orphaned_id
+    ]
+    request["proposed_terminal_status"] = "RETAINED"
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+    ]
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G19"] == "FAIL"
+    assert evaluation["result"] == "NOT_SATISFIED"
+
+
+def test_r4f2_a_forged_completion_record_ref_fails_g21_closed() -> None:
+    """A claim binding whose ``completion_record_ref`` does not equal the one Completion
+    Record its own Claim descriptor and this Evaluation's inputs actually imply is
+    refused -- Completion Record identity belongs to Difference (R4-F2's
+    ``COMPLETION_RECORD_OWNER=DIFFERENCE``), so Reflow resolves and verifies it rather
+    than trusting a binding's restated id."""
+
+    from manosube_agent_civilization.reflow.claims import candidate_claim_evaluation_binding_id
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+    forged = dict(request["candidate_claim_evaluation_bindings"][0])
+    forged["completion_record_ref"] = {"kind": "completion_record", "id": "CMP-" + "F" * 64}
+    forged["binding_id"] = candidate_claim_evaluation_binding_id(forged)
+    request["candidate_claim_evaluation_bindings"] = [forged]
+    request["proposed_terminal_status"] = "RETAINED"
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+    ]
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G21"] == "FAIL"
+    assert evaluation["result"] == "NOT_SATISFIED"
+
+
+def test_r4f2_mismatched_source_snapshot_refs_fails_closed() -> None:
+    """A candidate's own declared ``source_snapshot_refs`` must exactly match the real,
+    self-consistent Observation's own reported set -- Observation is this reference
+    kind's canonical owner (R4-F2's ``SOURCE_SNAPSHOT_OWNER=OBSERVATION``), so a
+    candidate that substitutes a foreign or fabricated snapshot reference is refused,
+    not merely echoed through."""
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+    request["source_snapshot_refs"] = [{"kind": "source_snapshot", "id": "SNAP-FORGED"}]
+    request["proposed_terminal_status"] = "RETAINED"
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+    ]
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G8"] == "FAIL"
+    assert evaluation["result"] == "NOT_SATISFIED"
+
+
+# --- R4-F3: G19's live Git provenance is a pure immutable Git object witness ---------- #
+
+
+def test_r4f3_a_candidate_invariant_set_without_a_witness_fails_g19_closed() -> None:
+    """A candidate invariant evaluation set with no ``kernel_source_witness`` is refused,
+    never silently skipped -- R4-F3's
+    ``OPTIONAL_OR_DEGRADING_PROVENANCE_ALLOWED=false``."""
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+    request["kernel_source_witness"] = None
+    request["proposed_terminal_status"] = "RETAINED"
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+    ]
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G19"] == "FAIL"
+    assert evaluation["result"] == "NOT_SATISFIED"
+
+
+def test_r4f3_a_tampered_git_witness_fails_g19_closed() -> None:
+    """A witness whose ``blob_object`` bytes have been tampered with no longer hashes to
+    ``KERNEL_INVARIANTS_BLOB_SHA`` -- refused, not accepted on the caller's bare
+    assertion that the witness is valid (R4-F3's
+    ``CALLER_ASSERTION_ONLY_ALLOWED=false``)."""
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+    tampered_witness = dict(request["kernel_source_witness"])
+    tampered_witness["blob_object"] = (b"tampered" + bytes.fromhex(tampered_witness["blob_object"])[8:]).hex()
+    request["kernel_source_witness"] = tampered_witness
+    request["proposed_terminal_status"] = "RETAINED"
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+    ]
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G19"] == "FAIL"
+    assert evaluation["result"] == "NOT_SATISFIED"

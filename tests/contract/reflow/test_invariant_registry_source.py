@@ -37,6 +37,7 @@ from manosube_agent_civilization.reflow.invariant_registry import (
     registry_id,
     registry_semantic_fingerprint,
     section_sha256,
+    strip_invariant_section_delimiter,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -59,7 +60,13 @@ def test_the_pinned_ids_are_the_ids_the_live_document_declares() -> None:
 
 
 def test_the_pinned_section_digest_matches_the_live_document() -> None:
-    assert section_sha256(_live_section()) == MANDATORY_GATE_SOURCE_SECTION_SHA256
+    # R4-F1: source_section_sha256 uses "the same rule" (第1章と同じ...規則) as each
+    # Invariant's own definition-block digest, including the INVARIANT_SECTION_DELIMITER
+    # exclusion -- section 16 itself ends with a standalone '---' before '# 17.' in the
+    # live document, and that '---' must not be hashed as section body.
+    assert section_sha256(strip_invariant_section_delimiter(_live_section())) == (
+        MANDATORY_GATE_SOURCE_SECTION_SHA256
+    )
 
 
 def _git_blob_sha(path: Path) -> str:
@@ -259,7 +266,67 @@ def test_a_heading_like_line_inside_a_fenced_block_is_not_treated_as_a_boundary(
     # to the real next heading (shifted by the insertion's own length) -- not truncated
     # at the fake '## X-999' line the fence contains.
     expected_end = next_heading + len(insertion)
-    assert digests["K-001"] == section_sha256(injected[start:expected_end])
+    assert digests["K-001"] == section_sha256(
+        strip_invariant_section_delimiter(injected[start:expected_end])
+    )
     # And that really did have to include the injected text, not coincidentally match
     # what the original, un-injected block would have hashed to.
     assert digests["K-001"] != section_sha256(live[start:next_heading])
+
+
+# --- R4-F1: INVARIANT_SECTION_DELIMITER -- a trailing bare '---' is excluded --------- #
+
+
+def test_a_trailing_bare_delimiter_is_stripped_before_hashing() -> None:
+    block = "## K-999 — Fake\n\nBody text.\n\n---\n"
+    stripped = strip_invariant_section_delimiter(block)
+    assert stripped == "## K-999 — Fake\n\nBody text."
+    assert "---" not in stripped
+
+
+def test_thematic_breaks_other_than_bare_dashes_are_never_stripped() -> None:
+    for marker in ("***", "___"):
+        block = f"## K-999 — Fake\n\nBody text.\n\n{marker}\n"
+        assert strip_invariant_section_delimiter(block) == block
+
+
+def test_a_mid_block_delimiter_is_kept_as_body_content() -> None:
+    block = "## K-999 — Fake\n\nBefore.\n\n---\n\nAfter, the real last line.\n"
+    assert strip_invariant_section_delimiter(block) == block
+
+
+def test_a_fenced_trailing_delimiter_is_kept_as_body_content() -> None:
+    block = "## K-999 — Fake\n\n```text\nliteral\n---\n```\n"
+    assert strip_invariant_section_delimiter(block) == block
+
+
+def test_the_live_documents_own_definition_digests_actually_changed_under_the_fix() -> None:
+    """The exact regression this fix closes: 構造参謀's Round 4 finding -- eleven
+    per-invariant digests (one per category, each immediately followed by a delimiter
+    before the next category's heading) previously included the delimiter in their hash.
+    """
+
+    affected = {
+        "K-004", "A-005", "S-005", "O-004", "D-004", "C-005",
+        "E-005", "R-005", "B-004", "X-004", "P-004",
+    }
+    live = _live_document()
+    for invariant_id in affected:
+        anchor = f"## {invariant_id} —"
+        start = live.index(anchor)
+        end = live.index("\n## ", start + 1) if "\n## " in live[start + 1 :] else len(live)
+        # Only assert the delimiter is genuinely present for ids where the live document
+        # still has one immediately before the boundary this test walks to -- proves the
+        # fixture assumption, not just the fix.
+        raw = live[start:end]
+        if raw.rstrip("\n").rsplit("\n", 1)[-1].strip() == "---":
+            assert section_sha256(raw) != section_sha256(strip_invariant_section_delimiter(raw))
+
+
+# --- R4-F1: fence detection covers both backtick and tilde Markdown fences ----------- #
+
+
+def test_a_trailing_delimiter_inside_a_tilde_fence_is_kept_as_body_content() -> None:
+    block = "## K-999 — Fake\n\n~~~text\nliteral\n---\n~~~\n"
+    assert strip_invariant_section_delimiter(block) == block
+

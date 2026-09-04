@@ -17,7 +17,17 @@ uses -- CLOSURE_POLICY.md names this "第1章のInvariant block抽出規則" wit
 out a second grammar because section 1 only fixes the canonical *field* list every block
 already follows; the block boundary itself is the next ``#``/``##`` heading, which is what
 :func:`parse_invariant_definition_digests` and this module's own pinned
-:data:`V0_1_INVARIANT_DEFINITION_DIGESTS` both use). The registry's own
+:data:`V0_1_INVARIANT_DEFINITION_DIGESTS` both use). R4-F1 (Phase 7 round 4) corrected
+this extraction: the block boundary also excludes a trailing
+``INVARIANT_SECTION_DELIMITER`` -- a standalone ``---`` line, outside any code fence,
+that is the last line of the block once trailing blank lines are removed
+(:func:`strip_invariant_section_delimiter`) -- which the prior version silently hashed as
+block body, drifting eleven of the forty-eight pinned digests (one per Invariant category,
+each immediately followed by such a delimiter before the next category's heading) and
+``MANDATORY_GATE_SOURCE_SECTION_SHA256`` itself (CLOSURE_POLICY.md states the latter uses
+"the same rule" as the per-Invariant extraction) away from the frozen contract. Fence
+detection (:func:`_fenced_line_starts`) also now covers both backtick and tilde Markdown
+fences, not backticks only. The registry's own
 ``registry_semantic_fingerprint``/``registry_id`` are derived exactly as
 ``CLOSURE_POLICY.md`` specifies (:func:`registry_digest`). A binding's own ``binding_id`` is
 also derived and checked (:func:`candidate_invariant_evaluation_binding_id`), and a same-ID
@@ -69,9 +79,12 @@ MANDATORY_GATE_HEADING = "# 16. v0.1 Mandatory Gate"
 NEXT_HEADING = "# 17. Invariant Evaluation Record"
 
 #: The normalized ``# 16.`` section's own digest, pinned the same way the blob is --
-#: NFC-normalized, LF-only, single trailing newline, UTF-8 encoded, SHA-256'd.
+#: NFC-normalized, LF-only, single trailing newline, UTF-8 encoded, SHA-256'd, with the
+#: section's own trailing ``INVARIANT_SECTION_DELIMITER`` (:func:`strip_invariant_section_
+#: delimiter`) removed first per CLOSURE_POLICY.md's "第1章と同じ...規則" instruction
+#: (R4-F1 -- the prior pinned value omitted this and was independently confirmed wrong).
 MANDATORY_GATE_SOURCE_SECTION_SHA256 = (
-    "b54ebb989de78996da9b04af9495e7cec679b0d3b936a5a592bfeacc29e7b5f9"
+    "f7837cc4195c899545a9a911fab750c4d984b2e67ce6c4539abe41688d624bb1"
 )
 
 _ENTRY_PATTERN = re.compile(r"^([KASODCERBXP]-[0-9]{3}) PASS$")
@@ -200,81 +213,127 @@ V0_1_INVARIANT_DEFINITION_DIGESTS: dict[str, str] = {
     "K-001": "0e8747f833b56ac5f1b756f280ad7d6f276597249831648a2418043022818c59"[:64],
     "K-002": "6aa9a3e018dbafd62d1e30cd02d62b01d7b9eac4e7c02503704f156cfc253067"[:64],
     "K-003": "46e88f95aa0bee9d336b5fb72cf09b38e5eebcfeca27a203d9660562835353c9"[:64],
-    "K-004": "7b2aea6e574cae56c266a6b4616b6fe6a2be3f19d227cc660abdd599e0b4f8e3"[:64],
+    "K-004": "b105f6136e2d08229c9c62e61e38cf0a06f9444726f3cefa3c3cb850c17e9151"[:64],
     "A-001": "43926a695901431f5c287c2056a863cf280819c784c425ce727d0f5d232061e6"[:64],
     "A-002": "a51fd412dce483ff8b7f9a82a31a4c3a407d8822c609bea419f7a9b90c52c754"[:64],
     "A-003": "e635955491006bb0cb5e572598d54da7e4ba2dff46110e796f4a99c4b837ae08"[:64],
     "A-004": "9a991489f2aaad79165dbc9764a1006686a465ce1191fa62e76a0a7d75b30cb0"[:64],
-    "A-005": "e72cc3776d2f9cad64ebb7af8cdb7ab8de0604328d4a337c98f36117739833ba"[:64],
+    "A-005": "a97eb49d657f43172869aba5213532ef695f08c1d3bc6aa0f022b3ae4a999671"[:64],
     "S-001": "6931833977612105db24dc7f599121488b46637b555a3eb4fd83899263bb0402"[:64],
     "S-002": "238a2691b4afd1409c5adeb1bd0f0a8810adb17b622bcc04f31a34e9f9da0a56"[:64],
     "S-003": "77cdd71e73bfdfb716143551961674a34bdb0f53196a3f66e7a1b0d7418f0794"[:64],
     "S-004": "13c64bfd41644d2e66161721e3fd2465953c1deeb4d6bf3797f59fd0a425e727"[:64],
-    "S-005": "9d41ea33357d1b90398fc6a99cee00376744e82b902a61cafd82cb5f5ac9bbc6"[:64],
+    "S-005": "ff65833c00a9573abfdb3f0267959151c20766a8df2a658f21850de33a96c5df"[:64],
     "O-001": "096611804717312280729c0228fb9d57d3a92e6e56b89c2b6b32b7b50962aca4"[:64],
     "O-002": "107a9ecf660648f71c4ca644eb7ccba4d965681be67b51257cc80066a524833b"[:64],
     "O-003": "7ea52536d4bbfa9ec3301144c4f959d8dc732a222bc6eebece598cff5e87e422"[:64],
-    "O-004": "ab4471cd74cc2fed4c510f60c081674e45829b4d8353720fbaeabf05239f5b03"[:64],
+    "O-004": "c9c9e0e75b05bbca76a22801229441d8f2a98a58cb222b90d61b22ef192e98f9"[:64],
     "D-001": "a06680f3239ce663e2e38ee44869dbd1cd6b0c9559d385acfb6d15b6c38520cd"[:64],
     "D-002": "282d39925938423be8a54b8405dfd79770da3f08ef00bba38b1fce80e91405c4"[:64],
     "D-003": "542d162b527417b78703dc3f9d5e61612be910410f1540a4de76d23795f42d4b"[:64],
-    "D-004": "288856b31f51be18baa1dd956799f8daf1db6d640556c24c35cbe33ad8028f2c"[:64],
+    "D-004": "84cb64291fa9f5f000cc9b4acd784e430cf40ab61ad9317a225ff7e79da3cf28"[:64],
     "C-001": "ecc2f51d9997d2d70b142f6f0d9025f02fa952d3aef21492a73fa18fdffa11fe"[:64],
     "C-002": "871dc489bb81e0481778fb825c9d6e464c58b5009dda254d07d0bbe80a06564a"[:64],
     "C-003": "80825e80c5fd5a704d7d1aa804e8f255749bbeabdb10358b38a6b9ffae5cc156"[:64],
     "C-004": "72d5fca9ef5106bdd3b92ecee60442e42a955c1a9a1f078c5b4d65d1fe18f1dd"[:64],
-    "C-005": "2bd29749069f97468282295959ffad1b18df7256cf148de561e39949dea040e4"[:64],
+    "C-005": "436317db9f806546f159b73603a865d8dd3921032c2f454d9499d633f178e9c4"[:64],
     "E-001": "e8e89561604902c6b470d85fd8b9624fb36404041a38abb2bd07dba1acf5acdb"[:64],
     "E-002": "c8c3232b895729d9dddc2a23ff29cfe54c85551e5aabf4d874fdb08264fc2a40"[:64],
     "E-003": "d12105d9ee60d5a168d88ac47d426315f5d74aad1cb5f8afb8fdc6a9f1370998"[:64],
     "E-004": "3e9f77b43efdf0fbbd3b1dc06dcf472595df5951ee12f9721773b367ed489d58"[:64],
-    "E-005": "adfe9f4d38fa3c95707668c57fa0fd8182193027e32dc6d3d5f144b6ee67df5f"[:64],
+    "E-005": "c287549c9995b62e3097a7c0811dc91bc989b97f88d30989df627bd9c3a1ff37"[:64],
     "R-001": "b8b34a0a81c3b38a033753498713de323d187512265e3474baad7f2f1dfdd4df"[:64],
     "R-002": "a12a5bb1b7fd98ed1e81b52cd9eac6ad9569b61d1a4885aa91c4a4dc2d45784b"[:64],
     "R-003": "fce31a6e7662601d27b2f8f3c18419fa3a49c1ccfc2641a78b83867f8a902b80"[:64],
     "R-004": "4be547ac580171def53836caa57d2da2e3d372c0c4916b1410d5128c2fb016cf"[:64],
-    "R-005": "3c425b749db6c4afbcefdffad7793586a29bc37cd3a73cd67da1095cdf78b559"[:64],
+    "R-005": "b25706da33260e672ce9179acc3c2043793784bb772aaeb9f5bb097135ebcb27"[:64],
     "B-001": "787318873c5e3753f7ea32ddaec847023f19bd72342c515c9b3b4f95bceb8966"[:64],
     "B-002": "4b02d7f908c9ae41b67af9be29943af4da0f800f111313094d31076202a7e1cf"[:64],
     "B-003": "9cfc888711261d0321abc7f281fae5b1c0ec987d96cdaf33101986e493946f4d"[:64],
-    "B-004": "e5316e0d2518921db178887f031129e83ba892bd2162c20e54922a5821d95e18"[:64],
+    "B-004": "ea683cec99dc73bd775d5683e2dcf67effbc11156765bc189e3571fbf6766e18"[:64],
     "X-001": "6eb2f4cdf243518382b2dbbdfd7de47bff2314c9f87a3cef7e57c40894d57369"[:64],
     "X-002": "0eef84a3bd3060158e7ea8fc46924dcc4b3a5ba5f6ce1470dbe15307de10cfd8"[:64],
-    "X-004": "17a0139dff4194c5cc3772dd5e6c9352e1ee75cd8e9deceb76d8e3d54b2c0026"[:64],
+    "X-004": "072f366e9d78f36f0f260b7157a69f722f77e846104864998a3f9068664330b7"[:64],
     "P-001": "428a3572e180b9b1eb97368f00301d2b56fa64362518b87f8e194da2b140309b"[:64],
     "P-002": "a194b2ebac692ad3ee03b19f213294e9a756c125e25e2fd814e18ccf1af21fc8"[:64],
     "P-003": "f507084d44f680da2609c1ca86726430210e5ef1f948c59ddd116b0687e613bf"[:64],
-    "P-004": "921164b064496590afb09adde9b21916a0420e027aaaeb5abdd58b615f2f1781"[:64],
+    "P-004": "1f7b336781608c17615edb0901244eb4fe880cb681390890063a14c75f187a97"[:64],
 }
 
 _INVARIANT_HEADING = re.compile(r"^## ([KASODCERBXP]-[0-9]{3}) — .*$", re.MULTILINE)
 _ANY_HEADING = re.compile(r"^#{1,2} .*$", re.MULTILINE)
-_FENCE_LINE = re.compile(r"^```")
+#: R4-F1: standard Markdown fence tokens -- three or more backticks *or* three or more
+#: tildes. A fence opened with one marker is only closed by a line of the *same* marker
+#: (a `~~~`-shaped line inside a ```` ``` ````-fenced block is body content, not a close),
+#: matching CommonMark's own rule. ``KERNEL_INVARIANTS.md`` uses only backtick fences
+#: today (confirmed by grep), so this is a totality fix, not a live-defect fix -- the same
+#: posture as the heading-in-fence fix below.
+_FENCE_LINE = re.compile(r"^(`{3,}|~{3,})")
 
 
 def _fenced_line_starts(document_text: str) -> set[int]:
-    """R3-F4: return the character offset of every line that falls inside a fenced code
-    block (` ``` ` ... ` ``` `), so heading detection can ignore a ``#``-prefixed line
-    that only *looks* like a heading because it sits inside a fence. Not a live defect
-    against today's ``KERNEL_INVARIANTS.md`` (no such line exists there, proven by
-    :mod:`tests.contract.reflow.test_invariant_registry_source`), but the totality
-    requirement CLOSURE_POLICY.md's own grammar names elsewhere
-    (``UNKNOWN_LINE_IN_TEXT_FENCE=REJECT``) applies to this heading scan too: a parser
-    that only happens to be correct for the current document text is not the same as one
-    that is correct by construction.
+    """R3-F4/R4-F1: return the character offset of every line that falls inside a fenced
+    code block (backtick- or tilde-delimited), so heading detection and delimiter
+    detection can both ignore a line that only *looks* like a boundary because it sits
+    inside a fence. Not a live defect against today's ``KERNEL_INVARIANTS.md`` (no such
+    line exists there, proven by :mod:`tests.contract.reflow.test_invariant_registry_source`),
+    but the totality requirement CLOSURE_POLICY.md's own grammar names elsewhere
+    (``UNKNOWN_LINE_IN_TEXT_FENCE=REJECT``) applies to this scan too: a parser that only
+    happens to be correct for the current document text is not the same as one that is
+    correct by construction.
     """
 
     fenced: set[int] = set()
-    in_fence = False
+    open_marker: str | None = None
     offset = 0
     for line in document_text.splitlines(keepends=True):
         stripped = line.rstrip("\n")
-        if _FENCE_LINE.match(stripped):
-            in_fence = not in_fence
-        elif in_fence:
+        match = _FENCE_LINE.match(stripped)
+        if match:
+            token = match.group(1)[0]
+            if open_marker is None:
+                open_marker = token
+            elif open_marker == token:
+                open_marker = None
+            # A fence-shaped line of the *other* marker while one fence is already open
+            # is body content, not a close -- CommonMark's own rule.
+        elif open_marker is not None:
             fenced.add(offset)
         offset += len(line)
     return fenced
+
+
+def strip_invariant_section_delimiter(block_text: str) -> str:
+    """CLOSURE_POLICY.md line 181-183's ``INVARIANT_SECTION_DELIMITER``: a standalone
+    ``---`` that is the last line of *block_text* once trailing blank lines are removed,
+    and that sits outside any code fence, is a delimiter -- not Invariant/section body --
+    and is excluded before hashing. ``***``, ``___``, a ``---`` in the middle of the
+    block, or one inside a fence are always kept as body content ("常にbody content
+    として保持する"). Used both for each Invariant's own ``## <ID> —`` definition block
+    and for the ``# 16. v0.1 Mandatory Gate`` source section itself -- CLOSURE_POLICY.md
+    states the latter uses "第1章と同じ...規則" (the same rule as chapter 1's own
+    Invariant block extraction), confirmed by recomputing both digests against the live
+    document and matching 構造参謀's independently reported contract-correct values
+    exactly before this function existed.
+    """
+
+    fenced_starts = _fenced_line_starts(block_text)
+    lines = block_text.split("\n")
+    end_index = len(lines)
+    while end_index > 0 and lines[end_index - 1].strip() == "":
+        end_index -= 1
+    if end_index == 0:
+        return block_text
+    last_line = lines[end_index - 1]
+    if last_line.strip() != "---":
+        return block_text
+    last_line_offset = sum(len(line) + 1 for line in lines[: end_index - 1])
+    if last_line_offset in fenced_starts:
+        return block_text
+    remaining_lines = lines[: end_index - 1]
+    while remaining_lines and remaining_lines[-1].strip() == "":
+        remaining_lines.pop()
+    return "\n".join(remaining_lines)
 
 
 def parse_invariant_definition_digests(document_text: str) -> dict[str, str]:
@@ -302,7 +361,8 @@ def parse_invariant_definition_digests(document_text: str) -> dict[str, str]:
         if invariant_id in digests:
             raise ValueError(f"duplicate '## {invariant_id} —' heading in the document")
         end = next((pos for pos in any_heading_starts if pos > start), len(document_text))
-        digests[invariant_id] = section_sha256(document_text[start:end])
+        block = strip_invariant_section_delimiter(document_text[start:end])
+        digests[invariant_id] = section_sha256(block)
     missing = mandatory - set(digests)
     if missing:
         raise ValueError(f"no '## <ID> —' heading found for: {sorted(missing)}")
