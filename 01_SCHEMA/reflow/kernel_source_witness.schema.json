@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/reflow/kernel_source_witness.schema.json",
+  "title": "Kernel Source Witness", "type": "object",
+  "required": ["schema_version", "kernel_source_witness_id", "commit_sha", "tree_sha", "blob_sha", "path", "commit_object", "tree_objects", "blob_object"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "kernel_source_witness_id": {"$ref": "../common/identity.schema.json"},
+    "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "blob_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "path": {"type": "string", "minLength": 1},
+    "commit_object": {"type": "string", "pattern": "^[0-9a-f]*$"},
+    "tree_objects": {"type": "object", "minProperties": 1, "patternProperties": {"^[0-9a-f]{40}$": {"type": "string", "pattern": "^[0-9a-f]*$"}}, "additionalProperties": false},
+    "blob_object": {"type": "string", "pattern": "^[0-9a-f]*$"}
+  }, "additionalProperties": false
+}

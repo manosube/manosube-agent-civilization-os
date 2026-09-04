@@ -54,11 +54,12 @@ def main() -> int:
     schemas = [load_json(path) for path in paths]
     ids = [schema.get("$id") for schema in schemas]
     # 33 before the Authority family; the four Authority schemas make 37, the one Change
-    # schema makes 38, the one Evidence schema makes 39, and the one Reflow schema
-    # (material_contradiction) makes 40. The count is asserted rather than derived so a
+    # schema makes 38, the one Evidence schema makes 39, the one Reflow schema
+    # (material_contradiction) makes 40, R6-F4's kernel_source_witness makes 41, and
+    # R6-F1a's source_snapshot makes 42. The count is asserted rather than derived so a
     # schema added without being reconciled here fails the gate instead of silently
     # widening the inventory.
-    if len(paths) != 40 or len(set(ids)) != len(paths) or None in ids:
+    if len(paths) != 42 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
@@ -104,7 +105,8 @@ def main() -> int:
     print(f"INVALID_FIXTURE_COUNT={len(invalid_cases)}")
     print(f"VALID_FIXTURE_FAILURE_COUNT={len(valid_failures)}")
     print(f"INVALID_FIXTURE_ESCAPE_COUNT={len(invalid_escapes)}")
-    print("OBSERVATION_SCHEMA_COUNT=7")
+    # R6-F1a: source_snapshot.schema.json makes 8.
+    print("OBSERVATION_SCHEMA_COUNT=8")
     (
         observation_valid_count,
         observation_invalid_count,

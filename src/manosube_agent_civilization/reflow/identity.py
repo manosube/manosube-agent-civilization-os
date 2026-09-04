@@ -89,6 +89,19 @@ def material_contradiction_id(contradiction: dict[str, Any]) -> str:
     )
 
 
+def kernel_source_witness_id(record: dict[str, Any]) -> str:
+    """Return the content address of a ``kernel_source_witness`` record (R6-F4).
+
+    The record's own ``commit_sha``/``tree_sha``/``blob_sha``/``path`` and the raw verified
+    Git object bytes are all part of the payload -- two witnesses differing in any of them
+    (a different path, a re-serialized but byte-different tree) are different records, by the
+    same repo-wide convention every other identity here follows, not a scheme of this
+    field's own invention.
+    """
+
+    return content_address("KERNEL-WITNESS-", record, "kernel_source_witness_id")
+
+
 def transaction_id(
     *,
     project_id: str,

@@ -218,6 +218,7 @@ def resolve_claim_binding(
     binding: dict[str, Any],
     *,
     difference_id: str,
+    after_state_candidate: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Reconstruct *binding*'s series, verify the binding matches its true latest event,
     and return the complete validated chain (head first) -- the set a caller must persist
@@ -231,8 +232,26 @@ def resolve_claim_binding(
     accepted at face value because ``reconstruct_claim_series`` only ever *used* the
     recomputed series id to filter the event pool, never compared it back against the
     binding's own declared field.
+
+    R6-F2: *after_state_candidate*'s ``candidate_id``/``semantic_fingerprint`` must equal the
+    binding's own -- checked *here*, inside the one resolver G21 and the atomic preflight
+    both call, rather than inline at each call site. Round 6 found the preflight had
+    silently stopped inheriting this exact check for Invariant Evaluation bindings, because
+    R5-F1 added it only inline in ``_evaluate_g19``'s loop body; the identical gap existed
+    here for Claim bindings (confirmed with a working post-evaluation candidate-substitution
+    exploit before this fix) for the same reason. A check living inside the shared resolver
+    itself cannot again be inherited by only one caller.
     """
 
+    if binding.get("candidate_id") != after_state_candidate["candidate_id"]:
+        raise ReflowValidationError(
+            "binding's candidate_id does not match the real after_state_candidate"
+        )
+    if binding.get("candidate_semantic_fingerprint") != after_state_candidate["semantic_fingerprint"]:
+        raise ReflowValidationError(
+            "binding's candidate_semantic_fingerprint does not match the real "
+            "after_state_candidate"
+        )
     if binding.get("difference_id") != difference_id:
         raise ReflowValidationError("binding's difference_id does not match this Reflow's Difference")
     if binding.get("binding_id") != candidate_claim_evaluation_binding_id(binding):

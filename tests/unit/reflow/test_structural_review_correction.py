@@ -37,6 +37,11 @@ from manosube_agent_civilization.reflow.claims import (
 from manosube_agent_civilization.reflow.closure import evaluate_closure
 from manosube_agent_civilization.reflow.commit import commit_reflow
 from manosube_agent_civilization.reflow.errors import ReflowValidationError, StaleReflowError
+from manosube_agent_civilization.reflow.git_witness import build_kernel_source_witness_record
+from manosube_agent_civilization.reflow.invariant_registry import (
+    KERNEL_INVARIANTS_BLOB_SHA,
+    KERNEL_INVARIANTS_PATH,
+)
 from manosube_agent_civilization.reflow.route import reflow, reopen
 from manosube_agent_civilization.store import FileStateStore
 
@@ -501,6 +506,18 @@ def test_f7_reopen_succeeds_and_resolves_the_real_committed_closure_evaluation(
 # --- F8/G21: candidate_claim_evaluation_event series reconstruction, not binding trust  #
 
 
+def _placeholder_after_state_candidate(binding: dict[str, Any]) -> dict[str, Any]:
+    """A real ``after_state_candidate`` that matches *binding*'s own placeholder candidate
+    fields exactly -- these unit tests are about chain reconstruction, not candidate
+    identity (R6-F2's own check, now inside :func:`resolve_claim_binding` itself, is
+    covered by its own dedicated tests below)."""
+
+    return {
+        "candidate_id": binding["candidate_id"],
+        "semantic_fingerprint": binding["candidate_semantic_fingerprint"],
+    }
+
+
 def test_f8_g21_an_edited_event_fails_its_own_content_address() -> None:
     difference = fixture_difference()
     current_state = {"revision": 3, "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64}}
@@ -510,7 +527,12 @@ def test_f8_g21_an_edited_event_fails_its_own_content_address() -> None:
     tampered["completion_record_fingerprint"] = "sha256:" + "9" * 64  # the real edit
 
     with pytest.raises(ReflowValidationError, match="content address"):
-        resolve_claim_binding([tampered], binding, difference_id=difference["difference_id"])
+        resolve_claim_binding(
+            [tampered],
+            binding,
+            difference_id=difference["difference_id"],
+            after_state_candidate=_placeholder_after_state_candidate(binding),
+        )
 
 
 def test_f8_g21_a_missing_predecessor_fails_the_series_closed() -> None:
@@ -526,7 +548,12 @@ def test_f8_g21_a_missing_predecessor_fails_the_series_closed() -> None:
     moved_binding["binding_id"] = candidate_claim_evaluation_binding_id(moved_binding)
     with pytest.raises(ReflowValidationError, match="not contiguous from revision 0"):
         # revision 0 (`event`) deliberately omitted -- only its successor is supplied.
-        resolve_claim_binding([revision_1], moved_binding, difference_id=difference["difference_id"])
+        resolve_claim_binding(
+            [revision_1],
+            moved_binding,
+            difference_id=difference["difference_id"],
+            after_state_candidate=_placeholder_after_state_candidate(moved_binding),
+        )
 
 
 def test_f8_g21_a_foreign_difference_series_is_refused() -> None:
@@ -535,7 +562,12 @@ def test_f8_g21_a_foreign_difference_series_is_refused() -> None:
     binding, event = mandatory_x003_claim_binding_and_event(difference, current_state)
 
     with pytest.raises(ReflowValidationError, match="difference_id does not match"):
-        resolve_claim_binding([event], binding, difference_id="D-" + "9" * 64)
+        resolve_claim_binding(
+            [event],
+            binding,
+            difference_id="D-" + "9" * 64,
+            after_state_candidate=_placeholder_after_state_candidate(binding),
+        )
 
 
 def test_f8_g21_the_head_events_own_status_is_what_counts(tmp_path: Path) -> None:
@@ -554,9 +586,19 @@ def test_f8_g21_the_head_events_own_status_is_what_counts(tmp_path: Path) -> Non
         # exactly, so this is refused, not silently resolved to the event's status.
         forged_binding = {**binding, "evaluation_status": "SATISFIED"}
         forged_binding["binding_id"] = candidate_claim_evaluation_binding_id(forged_binding)
-        resolve_claim_binding([event], forged_binding, difference_id=difference["difference_id"])
+        resolve_claim_binding(
+            [event],
+            forged_binding,
+            difference_id=difference["difference_id"],
+            after_state_candidate=_placeholder_after_state_candidate(forged_binding),
+        )
 
-    chain = resolve_claim_binding([event], binding, difference_id=difference["difference_id"])
+    chain = resolve_claim_binding(
+        [event],
+        binding,
+        difference_id=difference["difference_id"],
+        after_state_candidate=_placeholder_after_state_candidate(binding),
+    )
     assert chain[0]["evaluation_status"] == "NOT_SATISFIED"
 
 
@@ -576,7 +618,10 @@ def test_r2f8_a_fork_at_one_revision_is_refused() -> None:
     head_binding["binding_id"] = candidate_claim_evaluation_binding_id(head_binding)
     with pytest.raises(ReflowValidationError, match="forks"):
         resolve_claim_binding(
-            [genesis_event, fork_a, fork_b], head_binding, difference_id=difference["difference_id"]
+            [genesis_event, fork_a, fork_b],
+            head_binding,
+            difference_id=difference["difference_id"],
+            after_state_candidate=_placeholder_after_state_candidate(head_binding),
         )
 
 
@@ -596,7 +641,10 @@ def test_r2f8_an_unconsumed_later_event_defeats_an_older_satisfied_binding(tmp_p
     # The binding still points at the old (once-true) SATISFIED head.
     with pytest.raises(ReflowValidationError, match="true latest event"):
         resolve_claim_binding(
-            [genesis_event, revoked_event], stale_binding, difference_id=difference["difference_id"]
+            [genesis_event, revoked_event],
+            stale_binding,
+            difference_id=difference["difference_id"],
+            after_state_candidate=_placeholder_after_state_candidate(stale_binding),
         )
 
     # A binding that correctly names the new true latest event resolves to REVOKED.
@@ -612,7 +660,10 @@ def test_r2f8_an_unconsumed_later_event_defeats_an_older_satisfied_binding(tmp_p
     }
     current_binding["binding_id"] = candidate_claim_evaluation_binding_id(current_binding)
     chain = resolve_claim_binding(
-        [genesis_event, revoked_event], current_binding, difference_id=difference["difference_id"]
+        [genesis_event, revoked_event],
+        current_binding,
+        difference_id=difference["difference_id"],
+        after_state_candidate=_placeholder_after_state_candidate(current_binding),
     )
     assert chain[0]["evaluation_status"] == "REVOKED"
     assert len(chain) == 2  # the complete series, head first
@@ -634,7 +685,12 @@ def test_r3f2_a_forged_claim_binding_id_fails_closed() -> None:
     forged = {**binding, "binding_id": "CAND-CLAIM-EVAL-" + "F" * 64}
 
     with pytest.raises(ReflowValidationError, match="binding_id"):
-        resolve_claim_binding([event], forged, difference_id=difference["difference_id"])
+        resolve_claim_binding(
+            [event],
+            forged,
+            difference_id=difference["difference_id"],
+            after_state_candidate=_placeholder_after_state_candidate(forged),
+        )
 
 
 def test_r3f2_a_forged_evaluation_series_id_fails_closed() -> None:
@@ -651,7 +707,12 @@ def test_r3f2_a_forged_evaluation_series_id_fails_closed() -> None:
     forged["binding_id"] = candidate_claim_evaluation_binding_id(forged)
 
     with pytest.raises(ReflowValidationError, match="evaluation_series_id"):
-        resolve_claim_binding([event], forged, difference_id=difference["difference_id"])
+        resolve_claim_binding(
+            [event],
+            forged,
+            difference_id=difference["difference_id"],
+            after_state_candidate=_placeholder_after_state_candidate(forged),
+        )
 
 
 # --- G19: the v0.1 mandatory Invariant union is additive, never vacuous --------------- #
@@ -1198,3 +1259,464 @@ def test_r5f4_preflight_reresolution_catches_a_post_evaluation_witness_mismatch(
             )
     finally:
         route_module.evaluate_closure = real_evaluate_closure  # type: ignore[attr-defined]
+
+
+# --- R6-F4: the verified Git provenance witness (not only the {commit_sha, tree_sha}     #
+# --- claim) is persisted as its own immutable kernel_source_witness record, resolvable   #
+# --- after a process restart, not left as an ephemeral request field                     #
+
+
+def test_r6f4_a_real_closed_reflow_persists_a_resolvable_kernel_source_witness(
+    tmp_path: Path,
+) -> None:
+    """The positive control this Round 6 finding demanded: after a real, committed CLOSED
+    Reflow cycle, the Closure Evaluation's own ``kernel_source_witness_ref`` resolves a real
+    ``kernel_source_witness`` record from a *fresh* ``FileStateStore`` instance pointed at
+    the same backend directory -- a restart-equivalent lookup -- carrying the same verified
+    COMMIT/TREE/BLOB object bytes ``closure_request`` supplied, proving G19's proof survives
+    a process restart rather than existing only as an ephemeral request field."""
+
+    _store, project_state, _difference, result = _closed_store(tmp_path)
+    evaluation = result["evaluation"]
+
+    witness_ref = evaluation["kernel_source_witness_ref"]
+    assert witness_ref is not None
+    assert witness_ref["kind"] == "kernel_source_witness"
+
+    fresh_store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    resolved = fresh_store.resolve_record(
+        project_state["project_id"], witness_ref["kind"], witness_ref["id"]
+    )
+    assert resolved is not None
+    assert resolved["kernel_source_witness_id"] == witness_ref["id"]
+    assert resolved["commit_sha"] == evaluation["kernel_source_ref_evaluated"]["commit_sha"]
+    assert resolved["tree_sha"] == evaluation["kernel_source_ref_evaluated"]["tree_sha"]
+
+
+def test_r6f4_a_tampered_witness_never_reaches_the_store(tmp_path: Path) -> None:
+    """When the caller-supplied witness does not verify, ``evaluate_closure`` already
+    leaves ``kernel_source_witness_ref`` ``None`` (G19 fails closed on the same tampering) --
+    proving Reflow never persists a ``kernel_source_witness`` record from an unverified
+    request field, only from a reference the evaluation itself established."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    closure_request["kernel_source_witness"] = dict(closure_request["kernel_source_witness"])
+    closure_request["kernel_source_witness"]["blob_object"] = "00" * 4
+    closure_request["proposed_terminal_status"] = "BLOCKED"
+    closure_request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "6" * 64}
+    ]
+
+    evaluation = evaluate_closure(closure_request)
+    assert evaluation["kernel_source_witness_ref"] is None
+
+    result = reflow(
+        store,
+        project_id=project_state["project_id"],
+        closure_request=closure_request,
+        previous_event_id=difference["genesis_event_ref"]["id"],
+        event_revision=1,
+        observation_refs=closure_request["reobservation"]["after_observation_refs"],
+        reflow_instant=REFLOW_INSTANT,
+        blocker_kind="OBSERVATION_PATH",
+        blocker_scope={
+            "kind": "difference_blocker_scope",
+            "affected_subject_refs": {
+                "collection_kind": "UNORDERED_SET",
+                "members": [{"kind": "difference", "id": difference["difference_id"]}],
+            },
+            "effective_boundary": difference["effective_boundary"],
+            "blocked_stage": "OBSERVATION",
+        },
+        blocker_resolution_condition={
+            "kind": "blocker_resolution_condition",
+            "condition_code": "OBSERVATION_PATH_AVAILABLE",
+            "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
+            "expected_state": "AVAILABLE",
+            "verification_request_ref": {"kind": "next_observation_request", "id": "OBS-REQ-" + "6" * 64},
+        },
+        next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "6" * 64},
+    )
+    assert result["evaluation"]["kernel_source_witness_ref"] is None
+    # The id the *untampered* witness would have produced -- proving specifically that
+    # record never reached the Store, not merely that some other id did not.
+    untampered_request = candidate_closure_request(difference, policy, current_state=current_state)
+    untampered_id = build_kernel_source_witness_record(
+        commit_sha=untampered_request["kernel_source_ref"]["commit_sha"],
+        tree_sha=untampered_request["kernel_source_ref"]["tree_sha"],
+        blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+        path=KERNEL_INVARIANTS_PATH,
+        witness=untampered_request["kernel_source_witness"],
+    )["kernel_source_witness_id"]
+    assert (
+        store.resolve_record(project_state["project_id"], "kernel_source_witness", untampered_id) is None
+    )
+
+
+# --- R6-F3: Invariant Evaluation records bind to the real proposed Candidate, not only   #
+# --- the base State they were evaluated from                                             #
+
+
+def test_r6f3_real_invariant_evaluations_bind_to_the_real_candidate(tmp_path: Path) -> None:
+    """The positive control this Round 6 finding demanded: after a real, committed CLOSED
+    Reflow cycle, every resolved ``invariant_evaluation`` record's own ``candidate_id``/
+    ``candidate_semantic_fingerprint`` equals the Closure Evaluation's own real
+    ``after_state_candidate`` -- not merely schema-shaped, the exact same Candidate this
+    cycle actually closed against."""
+
+    store, project_state, _difference, result = _closed_store(tmp_path)
+    evaluation = result["evaluation"]
+    after_state_candidate = evaluation["after_state_candidate"]
+    assert after_state_candidate is not None
+
+    invariant_bindings = evaluation["candidate_invariant_evaluation_bindings"]
+    assert len(invariant_bindings) == 47
+    for binding in invariant_bindings:
+        ref = binding["invariant_evaluation_ref"]
+        resolved = store.resolve_record(project_state["project_id"], ref["kind"], ref["id"])
+        assert resolved is not None
+        assert resolved["candidate_id"] == after_state_candidate["candidate_id"]
+        assert resolved["candidate_semantic_fingerprint"] == after_state_candidate["semantic_fingerprint"]
+
+
+def test_r6f3_tampered_invariant_evaluation_candidate_id_fails_g19(tmp_path: Path) -> None:
+    """A caller-supplied ``invariant_evaluation`` record whose ``candidate_id`` names a
+    different Candidate than the one this Evaluation is actually for no longer resolves --
+    G19 fails, even though ``state_revision``/``state_fingerprint`` (the base State) still
+    match exactly. Before R6-F3 this record would have resolved and passed regardless."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    closure_request["invariant_evaluations"] = [
+        dict(closure_request["invariant_evaluations"][0]),
+        *closure_request["invariant_evaluations"][1:],
+    ]
+    closure_request["invariant_evaluations"][0]["candidate_id"] = "STATE-CANDIDATE-" + "9" * 64
+    closure_request["proposed_terminal_status"] = "BLOCKED"
+    closure_request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "9" * 64}
+    ]
+
+    evaluation = evaluate_closure(closure_request)
+    assert evaluation["result"] != "SATISFIED"
+
+
+def test_r6f3_preflight_reresolution_catches_a_post_evaluation_candidate_mismatch(
+    tmp_path: Path,
+) -> None:
+    """The atomic preflight also re-verifies each admitted Invariant Evaluation's own
+    ``candidate_id``/``candidate_semantic_fingerprint`` against the real Candidate, not only
+    its reference chain -- a Closure Evaluation claiming G19 passed against a pool the real
+    ``closure_request`` no longer carries an intact candidate binding for is refused at
+    commit time too."""
+
+    import manosube_agent_civilization.reflow.route as route_module
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    real_evaluate_closure = route_module.evaluate_closure  # type: ignore[attr-defined]
+
+    def tampering_evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
+        evaluation = real_evaluate_closure(request)
+        request["invariant_evaluations"] = [
+            dict(request["invariant_evaluations"][0]),
+            *request["invariant_evaluations"][1:],
+        ]
+        request["invariant_evaluations"][0]["candidate_id"] = "STATE-CANDIDATE-" + "9" * 64
+        return evaluation
+
+    route_module.evaluate_closure = tampering_evaluate_closure  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(StaleReflowError, match="atomic preflight"):
+            reflow(
+                store,
+                project_id=project_state["project_id"],
+                closure_request=closure_request,
+                previous_event_id=difference["genesis_event_ref"]["id"],
+                event_revision=1,
+                observation_refs=[],
+                reflow_instant=REFLOW_INSTANT,
+            )
+    finally:
+        route_module.evaluate_closure = real_evaluate_closure  # type: ignore[attr-defined]
+
+    assert store.load_current(project_state["project_id"])["state_revision"] == project_state["state_revision"]
+
+
+# --- R6-F1a: source_snapshot_refs resolve to a real, content-addressed source_snapshot   #
+# --- body (Observation-owned), not only an ID-only cross-reference                       #
+
+
+def test_r6f1a_a_real_closed_reflow_persists_a_resolvable_source_snapshot(tmp_path: Path) -> None:
+    """The positive control this Round 6 finding demanded: after a real, committed CLOSED
+    Reflow cycle, every declared ``source_snapshot_refs`` entry resolves a real
+    ``source_snapshot`` record from a *fresh* ``FileStateStore`` instance pointed at the
+    same backend directory -- a restart-equivalent lookup -- not merely an opaque {kind, id}
+    pair no schema anywhere ever backed."""
+
+    _store, project_state, _difference, result = _closed_store(tmp_path)
+    evaluation = result["evaluation"]
+    snapshot_refs = evaluation["after_state_candidate"]["source_snapshot_refs"]["members"]
+    assert len(snapshot_refs) == 1
+
+    fresh_store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    resolved = fresh_store.resolve_record(
+        project_state["project_id"], snapshot_refs[0]["kind"], snapshot_refs[0]["id"]
+    )
+    assert resolved is not None
+    assert resolved["source_snapshot_id"] == snapshot_refs[0]["id"]
+
+
+def test_r6f1a_a_tampered_source_snapshot_fails_g8_closed(tmp_path: Path) -> None:
+    """A caller-supplied ``source_snapshot`` record whose content no longer produces the id
+    it is filed under no longer resolves -- G8 fails, even though the declared
+    ``source_snapshot_refs`` id-string still exactly matches the real Observation's own
+    reported set. Before R6-F1a, ID-only cross-reference would have accepted this."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    closure_request["source_snapshots"] = [dict(closure_request["source_snapshots"][0])]
+    closure_request["source_snapshots"][0]["content_digest"] = "sha256:" + "0" * 64
+    closure_request["proposed_terminal_status"] = "BLOCKED"
+    closure_request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "7" * 64}
+    ]
+
+    evaluation = evaluate_closure(closure_request)
+    assert evaluation["result"] != "SATISFIED"
+
+
+def test_r6f1a_preflight_reresolution_catches_a_post_evaluation_snapshot_mismatch(
+    tmp_path: Path,
+) -> None:
+    """The atomic preflight also re-verifies every declared source_snapshot_refs entry
+    against the real content-addressed pool, not only at evaluation time -- a Closure
+    Evaluation claiming G8 passed against a pool the real closure_request no longer carries
+    an intact snapshot body for is refused at commit time too."""
+
+    import manosube_agent_civilization.reflow.route as route_module
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    real_evaluate_closure = route_module.evaluate_closure  # type: ignore[attr-defined]
+
+    def tampering_evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
+        evaluation = real_evaluate_closure(request)
+        request["source_snapshots"] = [dict(request["source_snapshots"][0])]
+        request["source_snapshots"][0]["content_digest"] = "sha256:" + "0" * 64
+        return evaluation
+
+    route_module.evaluate_closure = tampering_evaluate_closure  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(StaleReflowError, match="atomic preflight"):
+            reflow(
+                store,
+                project_id=project_state["project_id"],
+                closure_request=closure_request,
+                previous_event_id=difference["genesis_event_ref"]["id"],
+                event_revision=1,
+                observation_refs=[],
+                reflow_instant=REFLOW_INSTANT,
+            )
+    finally:
+        route_module.evaluate_closure = real_evaluate_closure  # type: ignore[attr-defined]
+
+    assert store.load_current(project_state["project_id"])["state_revision"] == project_state["state_revision"]
+
+
+# --- R6-F1b: change_free_verification_evidence_refs resolve to a real Evidence record   #
+# --- (Evidence's own new CHANGE_FREE_VERIFICATION_EVIDENCE position), not only a bare   #
+# --- reference nothing backs                                                            #
+
+
+def test_r6f1b_a_real_closed_reflow_persists_a_resolvable_change_free_verification_evidence(
+    tmp_path: Path,
+) -> None:
+    """The positive control this Round 6 finding demanded: after a real, committed CLOSED
+    Reflow cycle, the declared ``change_free_verification_evidence_refs`` entry resolves a
+    real Evidence record -- Evidence's own new ``CHANGE_FREE_VERIFICATION_EVIDENCE``
+    position -- from a *fresh* ``FileStateStore`` instance, not merely an opaque
+    ``{kind, id}`` pair no schema anywhere ever backed."""
+
+    _store, project_state, _difference, result = _closed_store(tmp_path)
+    evaluation = result["evaluation"]
+    refs = evaluation["change_free_verification_evidence_refs"]
+    assert len(refs) == 1
+
+    fresh_store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    resolved = fresh_store.resolve_record(project_state["project_id"], refs[0]["kind"], refs[0]["id"])
+    assert resolved is not None
+    assert resolved["evidence_position"] == "CHANGE_FREE_VERIFICATION_EVIDENCE"
+    assert resolved["after_state"] is not None
+    assert resolved["change_identity"] is None
+
+
+def test_r6f1b_an_unreproducible_change_free_verification_evidence_fails_g8_closed(
+    tmp_path: Path,
+) -> None:
+    """A declared ``change_free_verification_evidence_refs`` entry with no real request to
+    reproduce it from no longer resolves -- G8 fails. Before R6-F1b, a bare reference
+    string was never resolved against anything and this would not have been caught."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    closure_request["change_free_verification_evidence_requests"] = []
+    closure_request["proposed_terminal_status"] = "BLOCKED"
+    closure_request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "6" * 64}
+    ]
+
+    evaluation = evaluate_closure(closure_request)
+    assert evaluation["result"] != "SATISFIED"
+
+
+# --- R6-F2: candidate identity for Claim bindings lives inside the shared resolver       #
+# --- resolve_claim_binding itself now, so G21 and the atomic preflight can never again   #
+# --- silently diverge on it the way they did for Invariant Evaluation bindings (R6-F3)   #
+
+
+def test_r6f2_preflight_reresolution_catches_a_post_evaluation_claim_candidate_mismatch(
+    tmp_path: Path,
+) -> None:
+    """The exact real defect this Round 6 finding named: before this fix, the atomic
+    preflight called ``resolve_claim_binding``/``resolve_completion_record`` for every
+    admitted Claim binding, but the candidate_id/candidate_semantic_fingerprint check R5-F1
+    added lived only inline in ``_evaluate_g21``'s loop body -- never inherited by the
+    preflight, exactly the same way R6-F3 found for Invariant Evaluation bindings.
+    Reproduced with a working exploit: a Closure Evaluation whose own Claim binding is
+    tampered to name a foreign Candidate (with a correctly recomputed ``binding_id`` so
+    nothing else catches it) after ``evaluate_closure`` already returned SATISFIED/CLOSED --
+    before this fix, ``reflow()`` promoted it anyway."""
+
+    import manosube_agent_civilization.reflow.route as route_module
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    real_evaluate_closure = route_module.evaluate_closure  # type: ignore[attr-defined]
+
+    def tampering_evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
+        # Compute the real, correctly-SATISFIED Evaluation first, then return a tampered
+        # *copy* of it -- the Evaluation reflow() itself holds and later re-derives the
+        # preflight's own bindings from, exactly like the R5-F4/R6-F3 exploits above.
+        evaluation = real_evaluate_closure(request)
+        tampered = dict(evaluation)
+        bindings = [dict(binding) for binding in tampered["candidate_claim_evaluation_bindings"]]
+        bindings[0]["candidate_id"] = "STATE-CANDIDATE-" + "9" * 64
+        bindings[0]["binding_id"] = candidate_claim_evaluation_binding_id(bindings[0])
+        tampered["candidate_claim_evaluation_bindings"] = bindings
+        return tampered
+
+    route_module.evaluate_closure = tampering_evaluate_closure  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(StaleReflowError, match="atomic preflight"):
+            reflow(
+                store,
+                project_id=project_state["project_id"],
+                closure_request=closure_request,
+                previous_event_id=difference["genesis_event_ref"]["id"],
+                event_revision=1,
+                observation_refs=[],
+                reflow_instant=REFLOW_INSTANT,
+            )
+    finally:
+        route_module.evaluate_closure = real_evaluate_closure  # type: ignore[attr-defined]
+
+    assert store.load_current(project_state["project_id"])["state_revision"] == project_state["state_revision"]
+
+
+# --- R6-F2: Evidence (change_result_evidence_refs / change_free_verification_evidence_refs) #
+# --- is re-reproduced by the atomic preflight too, not only at evaluation time            #
+
+
+def test_r6f2_preflight_reresolution_catches_an_emptied_change_free_verification_evidence(
+    tmp_path: Path,
+) -> None:
+    """The atomic preflight re-reproduces ``change_free_verification_evidence_requests`` and
+    checks the result against ``change_free_verification_evidence_refs`` by full set
+    equality -- an emptied requests list against a still-declared refs list is refused, not
+    silently skipped (a one-directional membership check would miss exactly this)."""
+
+    import manosube_agent_civilization.reflow.route as route_module
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    real_evaluate_closure = route_module.evaluate_closure  # type: ignore[attr-defined]
+
+    def tampering_evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
+        evaluation = real_evaluate_closure(request)
+        request["change_free_verification_evidence_requests"] = []
+        return evaluation
+
+    route_module.evaluate_closure = tampering_evaluate_closure  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(StaleReflowError, match="atomic preflight"):
+            reflow(
+                store,
+                project_id=project_state["project_id"],
+                closure_request=closure_request,
+                previous_event_id=difference["genesis_event_ref"]["id"],
+                event_revision=1,
+                observation_refs=[],
+                reflow_instant=REFLOW_INSTANT,
+            )
+    finally:
+        route_module.evaluate_closure = real_evaluate_closure  # type: ignore[attr-defined]
+
+    assert store.load_current(project_state["project_id"])["state_revision"] == project_state["state_revision"]

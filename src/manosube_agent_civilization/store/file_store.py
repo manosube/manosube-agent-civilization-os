@@ -84,6 +84,27 @@ class FileStateStore:
         try: return json.loads(path.read_text(encoding="utf-8"))
         except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError(f"malformed record: {kind}/{record_id}") from exc
 
+    def resolve_transaction(self, project_id: str, transaction_id: str) -> dict[str,Any]|None:
+        """Return the committed ``state_transition`` event named by *transaction_id*, or
+        ``None`` -- R6-F1/R6-F4: a public read path over the existing append-only lineage
+        log itself, not a second persistence location. A ``state_transition`` reference
+        (``{"kind": "state_transition", "id": tx}``, minted by ``reflow/identity.py``'s
+        ``transaction_id`` and published on the Completion Record, the lifecycle event, and
+        every committed State's own ``lineage_head_ref``) resolves through here, the same
+        way any other record kind resolves through :meth:`resolve_record` -- except the body
+        already lives in the lineage log every commit already appends to, so this only reads
+        it back, never writes a duplicate copy anywhere.
+
+        Only an event whose own transaction actually reached the lineage log is ever
+        returned -- the same durability guarantee :meth:`reconstruct` relies on: a
+        transaction that crashed before ``AFTER_LINEAGE_APPEND`` never appears here, exactly
+        as it never contributes a State revision.
+        """
+
+        for event in self._events(project_id):
+            if event.get("transaction_id")==transaction_id: return deepcopy(event)
+        return None
+
     def _events(self, project_id: str) -> list[dict[str,Any]]:
         path=self._lineage(project_id)
         if not path.exists(): return []

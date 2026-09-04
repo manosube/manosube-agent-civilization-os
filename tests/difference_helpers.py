@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from manosube_agent_civilization.observation import observe
+from manosube_agent_civilization.observation.source_snapshot import build_source_snapshot
 from manosube_agent_civilization.state import fingerprint_semantic_state
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,18 @@ PREDICATE_ID = "TP-0001"
 SCOPE_ID = "OBS-SCOPE-0001"
 STATE_REVISION = 2
 SNAPSHOT_REF = {"kind": "source_snapshot", "id": "SNAP-0001"}
+#: R6-F1a: a real, content-addressed ``source_snapshot`` record naming the *same* source as
+#: ``SNAPSHOT_REF`` -- used only where a caller now actually resolves the reference (Reflow's
+#: ``candidate_closure_request`` fixture), never as ``SNAPSHOT_REF``'s own replacement: every
+#: existing fixture that treats ``SNAPSHOT_REF`` as an opaque {kind, id} pair (most of this
+#: module) keeps its id unchanged, so this stays additive rather than a global identity swap
+#: with a much wider blast radius than this finding's own scope.
+REAL_SNAPSHOT_RECORD = build_source_snapshot(
+    source_locator="fixtures/source_snapshot.txt",
+    content_digest="sha256:" + "7" * 64,
+    captured_at="2026-08-30T08:59:00Z",
+)
+REAL_SNAPSHOT_REF = {"kind": "source_snapshot", "id": REAL_SNAPSHOT_RECORD["source_snapshot_id"]}
 METHOD_REF = {"kind": "observation_method", "id": "OBS-METHOD-0001"}
 EVIDENCE_REF = {"kind": "observation_evidence", "id": "EVID-0001"}
 NEGATIVE_EVIDENCE_REF = {"kind": "negative_evidence", "id": "NEG-EVID-0001"}

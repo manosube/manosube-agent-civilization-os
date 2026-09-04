@@ -49,18 +49,23 @@ lifecycle event (stored under the same ``difference_event`` kind Difference's ow
 vocabulary already uses, not a second, unreachable kind), the Evidence Sufficiency Result,
 the validated ``candidate_claim_evaluation_event`` chain and real Completion Record behind
 every admitted Claim binding, the real Invariant Evaluation record behind every admitted
-Invariant binding, and every self-consistent after-state Observation record the
-reproduction actually consumed -- is staged and promoted in the *same* atomic Store
-transaction, whose own manifest membership now participates in that transaction's replay
-identity (R2-F3B, see ``store/file_store.py``). Completion Record and Invariant Evaluation
-identity/resolution are owned by :mod:`manosube_agent_civilization.difference.completion`/
-``.invariant_evaluation`` (R4-F2/R5-F2), not by Reflow -- this module resolves and persists
-what those owners produce, it never becomes a second producer. ``source_snapshot_refs`` and
-Evidence named only by a bare reference (``change_free_verification_evidence_refs``,
-``terminal_reason_evidence_refs``) still have no schema anywhere in this tree defining a
-body for them -- Observation, their canonical owner, treats a snapshot reference as
-permanently opaque by design (see ``reflow/closure.py``'s ``_derive_source_snapshot_ids``)
--- so those stay committed by reference only, a named non-claim rather than a gap.
+Invariant binding, the real ``kernel_source_witness`` record behind the Closure Evaluation's
+own ``kernel_source_witness_ref`` (R6-F4 -- the verified Git COMMIT->TREE->PATH->BLOB object
+bytes, not only the ``kernel_source_ref_evaluated`` claim, so G19's proof survives a process
+restart), the real ``source_snapshot`` record behind every ``source_snapshot_refs`` entry
+(R6-F1a -- owned by Observation, :mod:`observation.source_snapshot`), the real Evidence
+record behind every ``change_free_verification_evidence_refs`` entry (R6-F1b -- owned by
+Evidence, its own new ``CHANGE_FREE_VERIFICATION_EVIDENCE`` position, resolved and persisted
+here exactly as Change-result Evidence already was, never produced by Reflow), and every
+self-consistent after-state Observation record the reproduction actually consumed -- is
+staged and promoted in the *same* atomic Store transaction, whose own manifest membership
+now participates in that transaction's replay identity (R2-F3B, see ``store/file_store.py``).
+Completion Record and Invariant Evaluation identity/resolution are owned by
+:mod:`manosube_agent_civilization.difference.completion`/``.invariant_evaluation``
+(R4-F2/R5-F2), not by Reflow -- this module resolves and persists what those owners produce,
+it never becomes a second producer. ``terminal_reason_evidence_refs`` alone still has no
+schema anywhere in this tree defining a body for it, and stays committed by reference only,
+a named non-claim rather than a gap.
 """
 
 from __future__ import annotations
@@ -78,8 +83,11 @@ from manosube_agent_civilization.difference.errors import DifferenceError
 from manosube_agent_civilization.difference.identity import lifecycle_event_id
 from manosube_agent_civilization.difference.invariant_evaluation import resolve_invariant_evaluation
 from manosube_agent_civilization.evidence.engine import derive_evidence
+from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
+from manosube_agent_civilization.observation.errors import ObservationError
 from manosube_agent_civilization.observation.identity import observation_identity
+from manosube_agent_civilization.observation.source_snapshot import resolve_source_snapshot
 
 from .bookkeeping import apply_reflow_bookkeeping
 from .claims import resolve_claim_binding
@@ -87,7 +95,7 @@ from .closure import evaluate_closure
 from .commit import commit_reflow
 from .engine import decide_transition
 from .errors import ReflowValidationError, StaleReflowError
-from .git_witness import verify_kernel_source_witness
+from .git_witness import build_kernel_source_witness_record, verify_kernel_source_witness
 from .identity import closure_evaluation_decision_fingerprint, closure_evaluation_id, transaction_id
 from .invariant_registry import KERNEL_INVARIANTS_BLOB_SHA, KERNEL_INVARIANTS_PATH
 from .lifecycle import mint_transition_event
@@ -270,10 +278,19 @@ def _preflight_reresolve_closure(
         "fingerprint": evaluation["evaluated_state_fingerprint"],
     }
 
+    after_state_candidate = evaluation.get("after_state_candidate")
     for binding in invariant_bindings:
+        if after_state_candidate is None:
+            raise StaleReflowError(
+                "atomic preflight: candidate_invariant_evaluation_bindings requires a real "
+                "after_state_candidate"
+            )
         try:
             resolve_invariant_evaluation(
-                binding, invariant_evaluation_pool, base_state_ref=binding["base_state_ref"]
+                binding,
+                invariant_evaluation_pool,
+                base_state_ref=binding["base_state_ref"],
+                after_state_candidate=after_state_candidate,
             )
         except DifferenceError as error:
             raise StaleReflowError(
@@ -283,8 +300,18 @@ def _preflight_reresolve_closure(
 
     for binding in claim_bindings:
         claim_id = binding["required_claim_ref"]["id"]
+        if after_state_candidate is None:
+            raise StaleReflowError(
+                "atomic preflight: candidate_claim_evaluation_bindings requires a real "
+                "after_state_candidate"
+            )
         try:
-            resolve_claim_binding(claim_events, binding, difference_id=evaluation["difference_id"])
+            resolve_claim_binding(
+                claim_events,
+                binding,
+                difference_id=evaluation["difference_id"],
+                after_state_candidate=after_state_candidate,
+            )
         except ReflowValidationError as error:
             raise StaleReflowError(
                 f"atomic preflight: claim evaluation series for {claim_id} no longer "
@@ -306,7 +333,11 @@ def _preflight_reresolve_closure(
                 f"resolves: {error}"
             ) from error
 
-    if invariant_bindings:
+    # R6-F4: also re-verified whenever the Closure Evaluation itself carries a
+    # kernel_source_witness_ref -- not only when invariant_bindings happens to be
+    # non-empty -- so the persisted record's own claim is re-proven immediately before
+    # commit exactly like every other admitted reference here.
+    if invariant_bindings or evaluation.get("kernel_source_witness_ref"):
         kernel_source_ref = closure_request.get("kernel_source_ref")
         kernel_source_witness = closure_request.get("kernel_source_witness")
         commit_sha = kernel_source_ref.get("commit_sha") if isinstance(kernel_source_ref, dict) else None
@@ -329,6 +360,61 @@ def _preflight_reresolve_closure(
             raise StaleReflowError(
                 f"atomic preflight: kernel_source_witness no longer verifies: {error}"
             ) from error
+
+    # R6-F1a: every declared source_snapshot_refs entry is re-resolved against the real,
+    # content-addressed source_snapshot pool immediately before commit too -- not only at
+    # evaluation time -- so a Candidate cannot be promoted on a snapshot binding that has
+    # since gone stale.
+    source_snapshot_pool = closure_request.get("source_snapshots") or []
+    for ref in closure_request.get("source_snapshot_refs") or []:
+        try:
+            resolve_source_snapshot(ref, source_snapshot_pool)
+        except ObservationError as error:
+            raise StaleReflowError(
+                f"atomic preflight: source_snapshot for {ref.get('id')!r} no longer resolves: "
+                f"{error}"
+            ) from error
+
+    # R6-F2: Evidence is one of the eight items SHUKOU's Round 6 adoption names the atomic
+    # preflight must re-verify -- re-reproduced fresh from closure_request's own requests,
+    # exactly like G8 itself, rather than trusted from evaluation's already-computed refs.
+    # Set equality (not one-directional membership) so an emptied requests list against a
+    # still-declared refs list is caught too, not silently skipped.
+    change_result_pool_ids: set[str] = set()
+    for item in closure_request.get("change_result_evidence_requests") or []:
+        try:
+            change_result_pool_ids.add(derive_evidence(item)["evidence_id"])
+        except EvidenceError as error:
+            raise StaleReflowError(
+                f"atomic preflight: change_result_evidence_requests no longer reproduces: {error}"
+            ) from error
+    declared_change_result_ids = {
+        ref.get("id") for ref in closure_request.get("change_result_evidence_refs") or []
+    }
+    if change_result_pool_ids != declared_change_result_ids:
+        raise StaleReflowError(
+            "atomic preflight: change_result_evidence_refs no longer matches the reproduced "
+            "change-result Evidence"
+        )
+
+    change_free_pool_ids: set[str] = set()
+    for item in closure_request.get("change_free_verification_evidence_requests") or []:
+        try:
+            change_free_pool_ids.add(derive_evidence(item)["evidence_id"])
+        except EvidenceError as error:
+            raise StaleReflowError(
+                "atomic preflight: change_free_verification_evidence_requests no longer "
+                f"reproduces: {error}"
+            ) from error
+    declared_change_free_ids = {
+        ref.get("id")
+        for ref in closure_request.get("change_free_verification_evidence_refs") or []
+    }
+    if change_free_pool_ids != declared_change_free_ids:
+        raise StaleReflowError(
+            "atomic preflight: change_free_verification_evidence_refs no longer matches the "
+            "reproduced change-free verification Evidence"
+        )
 
 
 def _admitted_records(
@@ -353,13 +439,17 @@ def _admitted_records(
     ``candidate_claim_evaluation_event`` chain behind every admitted Claim binding; the real
     Completion Record and Invariant Evaluation record behind every admitted binding (R5-F2 --
     Difference-owned producers now exist for both, see ``difference/completion.py``/
-    ``difference/invariant_evaluation.py``); and every self-consistent after-state
-    Observation record the reproduction actually consumed. Evidence named only by a bare
-    reference (``change_free_verification_evidence_refs``, ``terminal_reason_evidence_refs``)
-    and ``source_snapshot_refs`` still have no body this vertical can independently derive
-    (Observation, their canonical owner, treats them as permanently opaque by design -- see
-    ``reflow/closure.py``'s ``_derive_source_snapshot_ids`` docstring), and stay committed by
-    reference only.
+    ``difference/invariant_evaluation.py``); the real ``kernel_source_witness`` record behind
+    ``evaluation["kernel_source_witness_ref"]`` when set (R6-F4 -- re-verified fresh from
+    *closure_request* rather than trusted from *evaluation*, matching the pin-and-prove
+    pattern every other record here already follows); the real ``source_snapshot`` record
+    behind every ``source_snapshot_refs`` entry (R6-F1a, Observation-owned); the real
+    Evidence record behind every ``change_free_verification_evidence_refs`` entry (R6-F1b,
+    reproduced through :func:`~manosube_agent_civilization.evidence.engine.derive_evidence`
+    exactly like ``change_result_evidence_requests`` above -- Evidence stays the sole
+    producer); and every self-consistent after-state Observation record the reproduction
+    actually consumed. ``terminal_reason_evidence_refs`` alone still has no body this
+    vertical can independently derive, and stays committed by reference only.
 
     *reflow_transition_ref* is the real ``state_transition`` reference this transition
     commits under when *decision*'s ``to_status`` is ``CLOSED`` (``None`` otherwise) -- the
@@ -383,15 +473,90 @@ def _admitted_records(
     for item in closure_request.get("change_result_evidence_requests") or []:
         record = derive_evidence(item)
         records[("observation_evidence", record["evidence_id"])] = record
+    # R6-F1b: the same reproduce-and-persist treatment for CHANGE_FREE's own Evidence
+    # position -- Evidence remains the sole producer (:func:`derive_evidence`); Reflow only
+    # resolves and persists what that owner produces, exactly as for Change-result Evidence
+    # above.
+    for item in closure_request.get("change_free_verification_evidence_requests") or []:
+        record = derive_evidence(item)
+        records[("observation_evidence", record["evidence_id"])] = record
+
+    # R6-F1a: every declared source_snapshot_refs entry resolves against Observation's own
+    # real, content-addressed source_snapshot record (:mod:`observation.source_snapshot`) --
+    # re-verified fresh from closure_request rather than trusted from evaluate_closure's
+    # already-computed result (pin-and-prove, matching every other record here). A ref this
+    # Evaluation already required to resolve (or the Closure Evaluation could not have
+    # reached this far) that fails to resolve again here is skipped, not raised: nothing new
+    # to persist for a reference the atomic preflight will itself refuse to promote.
+    source_snapshot_pool = closure_request.get("source_snapshots") or []
+    for ref in closure_request.get("source_snapshot_refs") or []:
+        try:
+            record = resolve_source_snapshot(ref, source_snapshot_pool)
+        except ObservationError:
+            continue
+        records[("source_snapshot", record["source_snapshot_id"])] = record
 
     for observation in _self_consistent_after_observations(closure_request):
         records[("observation", observation["observation_id"])] = observation
 
+    # R6-F4: the Closure Evaluation's own kernel_source_witness_ref, when set, names a real
+    # kernel_source_witness record -- the verified Git COMMIT->TREE->PATH->BLOB object bytes,
+    # not only the {commit_sha, tree_sha} claim -- persisted here so G19's proof survives a
+    # process restart (before this, only the claim was ever committed; the witness bytes
+    # existed solely as an ephemeral request field). Re-verified fresh from closure_request
+    # rather than trusted from evaluation's own already-computed result (pin-and-prove); a
+    # failure here can only mean the request changed between evaluation and persistence
+    # within this same call, so nothing is persisted rather than a stale claim risked.
+    kernel_source_witness_ref = evaluation.get("kernel_source_witness_ref")
+    if isinstance(kernel_source_witness_ref, dict):
+        kernel_source_ref = closure_request.get("kernel_source_ref")
+        kernel_source_witness = closure_request.get("kernel_source_witness")
+        commit_sha = kernel_source_ref.get("commit_sha") if isinstance(kernel_source_ref, dict) else None
+        tree_sha = kernel_source_ref.get("tree_sha") if isinstance(kernel_source_ref, dict) else None
+        if isinstance(kernel_source_witness, dict) and isinstance(commit_sha, str) and isinstance(
+            tree_sha, str
+        ):
+            try:
+                verify_kernel_source_witness(
+                    witness=kernel_source_witness,
+                    expected_commit_sha=commit_sha,
+                    expected_tree_sha=tree_sha,
+                    expected_blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+                    path=KERNEL_INVARIANTS_PATH,
+                )
+            except ReflowValidationError:
+                pass
+            else:
+                witness_record = build_kernel_source_witness_record(
+                    commit_sha=commit_sha,
+                    tree_sha=tree_sha,
+                    blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+                    path=KERNEL_INVARIANTS_PATH,
+                    witness=kernel_source_witness,
+                )
+                # The record just rebuilt here must be the exact same one
+                # evaluate_closure's own kernel_source_witness_ref already named -- a
+                # mismatch means the two independent computations disagree (they never
+                # should, from the same verified inputs), so nothing is persisted rather
+                # than a record under a different id than the one the Evaluation refers to.
+                if witness_record["kernel_source_witness_id"] == kernel_source_witness_ref.get("id"):
+                    records[
+                        ("kernel_source_witness", witness_record["kernel_source_witness_id"])
+                    ] = witness_record
+
     invariant_evaluation_pool = closure_request.get("invariant_evaluations") or []
+    after_state_candidate_for_invariants = evaluation.get("after_state_candidate")
     for binding in evaluation.get("candidate_invariant_evaluation_bindings") or []:
+        if after_state_candidate_for_invariants is None:
+            # Already reflected as a G19 gate failure; nothing new to persist for a
+            # binding this Evaluation admits with no real Candidate to bind it to.
+            continue
         try:
             record = resolve_invariant_evaluation(
-                binding, invariant_evaluation_pool, base_state_ref=binding["base_state_ref"]
+                binding,
+                invariant_evaluation_pool,
+                base_state_ref=binding["base_state_ref"],
+                after_state_candidate=after_state_candidate_for_invariants,
             )
         except DifferenceError:
             # Already reflected as a G19 gate failure; nothing new to persist for an
@@ -410,10 +575,18 @@ def _admitted_records(
         "fingerprint": evaluation["evaluated_state_fingerprint"],
     }
     claim_events = closure_request.get("candidate_claim_evaluation_events") or []
+    after_state_candidate_for_claims = evaluation.get("after_state_candidate")
     for binding in evaluation.get("candidate_claim_evaluation_bindings") or []:
+        if after_state_candidate_for_claims is None:
+            # Already reflected as a G21 gate failure; nothing new to persist for a
+            # binding this Evaluation admits with no real Candidate to bind it to.
+            continue
         try:
             chain = resolve_claim_binding(
-                claim_events, binding, difference_id=evaluation["difference_id"]
+                claim_events,
+                binding,
+                difference_id=evaluation["difference_id"],
+                after_state_candidate=after_state_candidate_for_claims,
             )
         except ReflowValidationError:
             # Already reflected as a G21 gate failure (or this Evaluation never reached a

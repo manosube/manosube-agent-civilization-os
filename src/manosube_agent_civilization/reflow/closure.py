@@ -118,12 +118,14 @@ from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
 from manosube_agent_civilization.observation.boundary import instant
+from manosube_agent_civilization.observation.errors import ObservationError
 from manosube_agent_civilization.observation.identity import observation_identity
+from manosube_agent_civilization.observation.source_snapshot import resolve_source_snapshot
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
 
 from .claims import resolve_claim_binding
 from .errors import ReflowValidationError
-from .git_witness import verify_kernel_source_witness
+from .git_witness import build_kernel_source_witness_record, verify_kernel_source_witness
 from .identity import after_state_candidate_id, closure_evaluation_id
 from .invariant_registry import (
     KERNEL_INVARIANTS_BLOB_SHA,
@@ -155,10 +157,12 @@ REQUEST_KEYS: frozenset[str] = frozenset(
         "change_result_evidence_refs",
         "change_result_evidence_requests",
         "change_free_verification_evidence_refs",
+        "change_free_verification_evidence_requests",
         "reobservation",
         "evidence_sufficiency_request",
         "after_state_semantic_state",
         "source_snapshot_refs",
+        "source_snapshots",
         "producing_change_refs",
         "candidate_invariant_evaluation_bindings",
         "candidate_claim_evaluation_bindings",
@@ -334,12 +338,12 @@ def _derive_after_observation_ids(request: dict[str, Any]) -> set[str]:
 def _derive_source_snapshot_ids(request: dict[str, Any]) -> set[str]:
     """R4-F2: the real ``source_snapshot`` reference ids the reproduction's own
     self-consistent Observation(s) actually report -- Observation is these references'
-    canonical owner (no schema anywhere in this Kernel resolves a ``source_snapshot``
-    reference to a body of its own; every layer that carries one, Observation included,
-    treats it as an opaque immutable reference by design), so a candidate's own declared
-    ``source_snapshot_refs`` is verified by cross-reference against Observation's own
-    already-validated set, not by resolving to a second body this vertical cannot
-    construct and CLOSURE_POLICY.md never specifies the shape of.
+    canonical owner, so a candidate's own declared ``source_snapshot_refs`` is verified by
+    cross-reference against Observation's own already-validated set first, then (R6-F1a)
+    each id is independently resolved against a real, content-addressed ``source_snapshot``
+    body from the caller-supplied pool (see ``_evaluate_reproduction_gates``'s own call to
+    :func:`~manosube_agent_civilization.observation.source_snapshot.resolve_source_snapshot`)
+    -- ID-only cross-reference alone is no longer sufficient.
     """
 
     bindings = request.get("bindings")
@@ -371,7 +375,10 @@ def _evaluate_reproduction_gates(
     resolution_mode: str | None,
     change_result_evidence_refs: list[Any],
     change_result_evidence_requests: list[Any],
+    change_free_verification_evidence_refs: list[Any],
+    change_free_verification_evidence_requests: list[Any],
     source_snapshot_refs: list[Any],
+    source_snapshots: list[Any],
 ) -> None:
     if policy["required_observation_scope"] is not None:
         for gate in _REPRODUCTION_GATES:
@@ -459,6 +466,21 @@ def _evaluate_reproduction_gates(
         )
         return
 
+    # R6-F1a: ID-only cross-reference is no longer sufficient -- every declared
+    # source_snapshot_refs entry must also resolve to a real, schema-valid, content-addressed
+    # source_snapshot record (Observation's own producer, :mod:`observation.source_snapshot`)
+    # in the caller-supplied pool, whose own identity independently recomputes. A caller who
+    # names an id no real record backs, or supplies a record whose content does not actually
+    # produce that id, fails closed here rather than being accepted on the bare string match.
+    for ref in source_snapshot_refs:
+        try:
+            resolve_source_snapshot(ref, source_snapshots)
+        except ObservationError as error:
+            for gate in _REPRODUCTION_GATES:
+                gates.set(gate, "FAIL", f"source_snapshot did not resolve: {error}")
+            gates.set("G8", "FAIL", f"source_snapshot did not resolve: {error}")
+            return
+
     try:
         result = derive_differences(request)
     except DifferenceError as error:
@@ -522,8 +544,48 @@ def _evaluate_reproduction_gates(
             gates.set(
                 "G8", "FAIL", "CHANGE_FREE resolution must not carry Change-result Evidence"
             )
+        elif not change_free_verification_evidence_requests:
+            # R6-F1b: a bare change_free_verification_evidence_refs id, with no real
+            # request to reproduce it from, is exactly the "実体のない参照" (a reference
+            # without substance) SHUKOU's Round 6 adoption prohibits.
+            gates.set(
+                "G8",
+                "FAIL",
+                "CHANGE_FREE resolution supplied no change_free_verification_evidence_requests "
+                "to reproduce the change-free verification Evidence from",
+            )
         else:
-            gates.set("G8", "PASS")
+            try:
+                reproduced = [
+                    derive_evidence(item) for item in change_free_verification_evidence_requests
+                ]
+            except EvidenceError as error:
+                gates.set(
+                    "G8", "FAIL", f"change-free verification Evidence reproduction failed: {error}"
+                )
+            else:
+                reproduced_ids = {record["evidence_id"] for record in reproduced}
+                declared_ids = {_reference_id(ref) for ref in change_free_verification_evidence_refs}
+                if reproduced_ids != declared_ids:
+                    gates.set(
+                        "G8",
+                        "FAIL",
+                        "change_free_verification_evidence_refs does not exactly match the "
+                        "reproduced change-free verification Evidence (substitution, omission "
+                        "or duplication)",
+                    )
+                elif any(
+                    record["evidence_position"] != "CHANGE_FREE_VERIFICATION_EVIDENCE"
+                    for record in reproduced
+                ):
+                    gates.set(
+                        "G8",
+                        "FAIL",
+                        "a change_free_verification_evidence_requests entry did not reproduce "
+                        "as CHANGE_FREE_VERIFICATION_EVIDENCE",
+                    )
+                else:
+                    gates.set("G8", "PASS")
     else:
         gates.set("G8", "FAIL", f"G8 requires a bound resolution_mode: {resolution_mode!r}")
 
@@ -714,7 +776,10 @@ def _evaluate_g19(
         # field the binding asserts actually match -- not merely be present.
         try:
             resolve_invariant_evaluation(
-                binding, invariant_evaluations, base_state_ref=binding["base_state_ref"]
+                binding,
+                invariant_evaluations,
+                base_state_ref=binding["base_state_ref"],
+                after_state_candidate=after_state_candidate,
             )
         except DifferenceError as error:
             gates.set(
@@ -786,20 +851,12 @@ def _evaluate_g21(
                 f"claim binding for {claim_id} is not bound to the evaluated State",
             )
             return
-        # R5-F1: CANDIDATE_BINDING_REQUIRED/CANDIDATE_ID_AND_FINGERPRINT_EXACT_MATCH_REQUIRED
-        # -- see the identical G19 binding check's own comment.
-        if (
-            after_state_candidate is None
-            or binding.get("candidate_id") != after_state_candidate["candidate_id"]
-            or binding.get("candidate_semantic_fingerprint") != after_state_candidate["semantic_fingerprint"]
-        ):
-            gates.set(
-                "G21",
-                "FAIL",
-                f"claim binding for {claim_id}'s candidate_id/candidate_semantic_fingerprint "
-                "does not match the real after_state_candidate",
-            )
-            return
+        # R5-F1/R6-F2: CANDIDATE_BINDING_REQUIRED/CANDIDATE_ID_AND_FINGERPRINT_EXACT_MATCH_
+        # REQUIRED is now enforced *inside* :func:`resolve_claim_binding` itself (see its own
+        # docstring) rather than inline here -- the exact same check the atomic preflight
+        # calls, so the two can never again silently diverge on it, the way the equivalent
+        # check on Invariant Evaluation bindings once did (R6-F3).
+        #
         # F8/R2-F8: the binding's own `evaluation_status` (and every other field it
         # asserts) is never trusted directly -- the append-only
         # `candidate_claim_evaluation_event` series is fully reconstructed and its one
@@ -807,8 +864,19 @@ def _evaluate_g21(
         # exactly. A later REVOKED/STALE/non-SATISFIED event supersedes an older
         # SATISFIED one even if the binding still points at it: that binding no longer
         # matches the true latest event and fails here, not silently passes.
+        if after_state_candidate is None:
+            # Unreachable: checked above whenever bindings is non-empty. The explicit
+            # narrowing lets the shared resolver's own required parameter stay non-optional
+            # rather than accepting `None` only to reject it internally.
+            gates.set("G21", "FAIL", "a candidate_claim_evaluation_binding requires a real after_state_candidate")
+            return
         try:
-            chain = resolve_claim_binding(claim_events, binding, difference_id=difference_id)
+            chain = resolve_claim_binding(
+                claim_events,
+                binding,
+                difference_id=difference_id,
+                after_state_candidate=after_state_candidate,
+            )
         except ReflowValidationError as error:
             gates.set(
                 "G21",
@@ -949,6 +1017,46 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
             ),
         )
 
+    # R6-F4: an independent, top-level verification of the caller-supplied
+    # kernel_source_witness against kernel_source_ref -- separate from G19's own
+    # per-binding verification -- so the Closure Evaluation can carry a reference to the
+    # verified witness bytes even when no invariant binding happens to need it. Identity is
+    # the commit's own native commit_sha (already independently re-derived by
+    # verify_kernel_source_witness), not a new domain-separated hash.
+    kernel_source_witness_ref = None
+    if has_candidate_material:
+        kernel_source_ref_in = (
+            shaped["kernel_source_ref"] if isinstance(shaped["kernel_source_ref"], dict) else None
+        )
+        kernel_source_witness_in = (
+            shaped["kernel_source_witness"] if isinstance(shaped["kernel_source_witness"], dict) else None
+        )
+        if kernel_source_ref_in is not None and kernel_source_witness_in is not None:
+            commit_sha = kernel_source_ref_in.get("commit_sha")
+            tree_sha = kernel_source_ref_in.get("tree_sha")
+            if isinstance(commit_sha, str) and isinstance(tree_sha, str):
+                try:
+                    verify_kernel_source_witness(
+                        witness=kernel_source_witness_in,
+                        expected_commit_sha=commit_sha,
+                        expected_tree_sha=tree_sha,
+                        expected_blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+                        path=KERNEL_INVARIANTS_PATH,
+                    )
+                    witness_record = build_kernel_source_witness_record(
+                        commit_sha=commit_sha,
+                        tree_sha=tree_sha,
+                        blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+                        path=KERNEL_INVARIANTS_PATH,
+                        witness=kernel_source_witness_in,
+                    )
+                    kernel_source_witness_ref = {
+                        "kind": "kernel_source_witness",
+                        "id": witness_record["kernel_source_witness_id"],
+                    }
+                except ReflowValidationError:
+                    pass
+
     gates = _Gates()
     _evaluate_g1_g2(gates, difference, current_status)
     _evaluate_g3_g4(gates, difference)
@@ -977,7 +1085,16 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         shaped["resolution_mode"],
         change_result_evidence_refs_in,
         change_result_evidence_requests_in,
+        require_collection(
+            shaped["change_free_verification_evidence_refs"],
+            "change_free_verification_evidence_refs",
+        ),
+        require_collection(
+            shaped["change_free_verification_evidence_requests"],
+            "change_free_verification_evidence_requests",
+        ),
         require_collection(shaped["source_snapshot_refs"], "source_snapshot_refs"),
+        require_collection(shaped["source_snapshots"], "source_snapshots"),
     )
     sufficiency, oldest_evidence_recorded_at = _evaluate_g12_g18(
         gates,
@@ -1148,6 +1265,7 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
             shaped["base_kernel_source_ref"], "base_kernel_source_ref"
         ),
         "kernel_source_ref_evaluated": require_object(shaped["kernel_source_ref"], "kernel_source_ref"),
+        "kernel_source_witness_ref": kernel_source_witness_ref,
         "difference_event_head_ref": require_object(
             shaped["difference_event_head_ref"], "difference_event_head_ref"
         ),

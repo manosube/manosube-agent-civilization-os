@@ -38,6 +38,7 @@ from manosube_agent_civilization.observation.identity import (
     fact_identity,
     observation_identity,
 )
+from manosube_agent_civilization.observation.source_snapshot import source_snapshot_identity
 
 from . import readability
 from .admissibility import require_object
@@ -208,6 +209,12 @@ RECORD_TYPES: dict[str, RecordType] = {
     ),
     "evidence_sufficiency_result": RecordType(
         "evidence_sufficiency_id", "evidence_sufficiency_result.schema.json", DIFFERENCE_BASE
+    ),
+    "kernel_source_witness": RecordType(
+        "kernel_source_witness_id", "kernel_source_witness.schema.json", SCHEMA_BASE + "reflow/"
+    ),
+    "source_snapshot": RecordType(
+        "source_snapshot_id", "source_snapshot.schema.json", OBSERVATION_BASE, source_snapshot_identity
     ),
     # No canonical schema validates these two *as carried predecessor context*, so nothing
     # can validate them here. The non-claim is explicit.

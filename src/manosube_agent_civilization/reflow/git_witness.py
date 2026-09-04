@@ -31,6 +31,7 @@ import hashlib
 from typing import Any
 
 from .errors import ReflowValidationError
+from .identity import kernel_source_witness_id
 
 #: Git tree-entry modes that name a subtree (a directory one more path segment must walk
 #: into) -- the only mode a non-final path segment may carry.
@@ -217,3 +218,38 @@ def verify_kernel_source_witness(
         raise ReflowValidationError(
             "kernel_source_witness.blob_object does not hash to the expected blob_sha"
         )
+
+
+def build_kernel_source_witness_record(
+    *,
+    commit_sha: str,
+    tree_sha: str,
+    blob_sha: str,
+    path: str,
+    witness: dict[str, Any],
+) -> dict[str, Any]:
+    """Return one schema-conformant, content-addressed ``kernel_source_witness`` record
+    (R6-F4) -- the verified Git COMMIT->TREE->PATH->BLOB object bytes, persisted so G19's
+    proof survives a process restart, not only the ``{commit_sha, tree_sha}`` claim.
+
+    Callers verify *witness* against the four expected shas with :func:`verify_kernel_source_witness`
+    themselves, before or after calling this -- this function only shapes the record and
+    computes its identity, it re-derives nothing. Called identically wherever a
+    kernel_source_witness record is either referenced (``reflow/closure.py``) or persisted
+    (``reflow/route.py``), so the two independent computations always agree on the exact
+    same id for the exact same verified inputs.
+    """
+
+    record: dict[str, Any] = {
+        "schema_version": "0.1",
+        "kernel_source_witness_id": "",
+        "commit_sha": commit_sha,
+        "tree_sha": tree_sha,
+        "blob_sha": blob_sha,
+        "path": path,
+        "commit_object": witness["commit_object"],
+        "tree_objects": witness["tree_objects"],
+        "blob_object": witness["blob_object"],
+    }
+    record["kernel_source_witness_id"] = kernel_source_witness_id(record)
+    return record

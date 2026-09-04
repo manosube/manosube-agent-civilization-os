@@ -7,7 +7,7 @@
   "properties": {
     "schema_version": {"const": "0.1"},
     "evidence_id": {"type": "string", "pattern": "^EVIDENCE-[0-9A-F]{64}(?![\\s\\S])"},
-    "evidence_position": {"enum": ["OBSERVATION_EVIDENCE", "CHANGE_RESULT_EVIDENCE"]},
+    "evidence_position": {"enum": ["OBSERVATION_EVIDENCE", "CHANGE_RESULT_EVIDENCE", "CHANGE_FREE_VERIFICATION_EVIDENCE"]},
     "timestamp": {"$ref": "../common/timestamp.schema.json"},
     "target": {"type": "object", "required": ["project_id", "target_identity", "kind"], "properties": {"project_id": {"$ref": "../common/identity.schema.json"}, "target_identity": {"$ref": "../common/identity.schema.json"}, "kind": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"}}, "additionalProperties": false},
     "difference_ref": {"$ref": "#/$defs/difference_ref"},
@@ -33,6 +33,10 @@
     {
       "if": {"properties": {"evidence_position": {"const": "CHANGE_RESULT_EVIDENCE"}}, "required": ["evidence_position"]},
       "then": {"properties": {"change_identity": {"type": "object"}, "authority_used": {"type": "object"}, "after_state": {"type": "object"}, "expected_result": {"type": "object"}}}
+    },
+    {
+      "if": {"properties": {"evidence_position": {"const": "CHANGE_FREE_VERIFICATION_EVIDENCE"}}, "required": ["evidence_position"]},
+      "then": {"properties": {"change_identity": {"type": "null"}, "authority_used": {"type": "null"}, "after_state": {"type": "object"}, "expected_result": {"type": "null"}}}
     }
   ],
   "$defs": {

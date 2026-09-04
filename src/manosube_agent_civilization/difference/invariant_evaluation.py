@@ -17,6 +17,19 @@ content. What *is* independently verified is everything the frozen contract does
 the record's own schema, its recomputed fingerprint against the binding's declared
 ``evaluation_record_fingerprint``, and every field the binding itself asserts about the
 underlying record.
+
+**R6-F3 (Phase 7 structural-review round 6).** ``state_revision``/``state_fingerprint`` bind
+a record to the base State it was evaluated against, but nothing before this bound it to the
+specific after-state Candidate a real invariant application must have run over -- two
+Candidates proposing wildly different semantic content from the same base State produced,
+and could each accept, the identical record. ``candidate_id``/``candidate_semantic_fingerprint``
+are added to the schema and checked here against the real ``after_state_candidate`` for
+exactly this reason. They are deliberately *not* added to ``INVARIANT_EVALUATION_SCALARS``:
+that list is ``CLOSURE_POLICY.md`` §3's frozen ``MANOSUBE-RESOLVED-EVALUATION-RECORD-
+SHA256-0.1`` profile, and widening it would silently change every Invariant Evaluation's own
+fingerprint domain out from under a contract that names the scalar list exactly. The same
+precedent already exists on Completion Record's ``reflow_transition_ref``: present in the
+schema, excluded from the closed projection, checked by its own field equality instead.
 """
 
 from __future__ import annotations
@@ -79,6 +92,7 @@ def resolve_invariant_evaluation(
     pool: list[dict[str, Any]],
     *,
     base_state_ref: dict[str, Any],
+    after_state_candidate: dict[str, Any],
 ) -> dict[str, Any]:
     """Resolve *binding*'s ``invariant_evaluation_ref`` against *pool* -- the caller-supplied
     Invariant Evaluation records for this Evaluation -- by exact id, then verify every field
@@ -94,7 +108,12 @@ def resolve_invariant_evaluation(
     * its ``state_revision``/``state_fingerprint`` match *base_state_ref* exactly -- the
       same "evaluated State" binding R2-F8 already requires of Claim bindings, applied here
       so an Invariant Evaluation from a stale or foreign State can never back a binding for
-      the current one.
+      the current one;
+    * its ``candidate_id``/``candidate_semantic_fingerprint`` match *after_state_candidate*
+      exactly (R6-F3) -- ``state_revision``/``state_fingerprint`` alone only bind a record to
+      the base State an invariant was evaluated from, never to which specific proposed
+      Candidate it was actually applied against; two Candidates from the same base State can
+      otherwise share an identical, wrongly-reused record.
     """
 
     ref_id = binding["invariant_evaluation_ref"].get("id")
@@ -121,6 +140,13 @@ def resolve_invariant_evaluation(
         binding["evaluation_evidence_refs"].get("members", [])
     ):
         raise DifferenceError("resolved invariant_evaluation's evidence_refs does not match the binding")
+    if record["candidate_id"] != after_state_candidate["candidate_id"]:
+        raise DifferenceError("resolved invariant_evaluation's candidate_id does not match the real Candidate")
+    if record["candidate_semantic_fingerprint"] != after_state_candidate["semantic_fingerprint"]:
+        raise DifferenceError(
+            "resolved invariant_evaluation's candidate_semantic_fingerprint does not match the "
+            "real Candidate"
+        )
     if record["state_revision"] != base_state_ref["revision"]:
         raise DifferenceError("resolved invariant_evaluation's state_revision does not match the evaluated State")
     if record["state_fingerprint"] != base_state_ref["fingerprint"]:

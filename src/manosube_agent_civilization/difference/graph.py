@@ -117,6 +117,13 @@ EXTERNAL_KINDS: frozenset[str] = frozenset(
         "verification_independence",
         "completion_claim",
         "material_contradiction",
+        # R6-F4: a real, schema-backed, content-addressed record (produced and persisted
+        # by Reflow at commit time, ``01_SCHEMA/reflow/kernel_source_witness.schema.json``)
+        # -- but, like ``kernel_source``/``git_blob``/``git_tree`` beside it, never part of
+        # Difference's own predecessor-bundle *derivation*: nothing this phase derives
+        # emits a ``kernel_source_witness`` bundle section, so there is no Difference-owned
+        # section for this reference to travel with.
+        "kernel_source_witness",
     }
 )
 
@@ -270,6 +277,7 @@ REFERENCE_EDGES: dict[str, tuple[ReferenceEdge, ...]] = {
         ("policy_ref", ("closure_policy",)),
         ("before_state_ref", ("state",)),
         ("kernel_source_ref_evaluated", ("kernel_source", "git_blob", "git_tree")),
+        ("kernel_source_witness_ref", ("kernel_source_witness",)),
         ("after_observation_refs[]", ("observation",)),
         ("change_refs[]", ("change",)),
         ("contradiction_refs[]", ("material_contradiction", "normalized_fact")),

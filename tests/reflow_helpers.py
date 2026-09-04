@@ -14,15 +14,19 @@ from typing import Any
 
 from tests.difference_helpers import (
     PREDICATE_ID,
+    REAL_SNAPSHOT_RECORD,
+    REAL_SNAPSHOT_REF,
     derivation_request,
     objective_revision,
+    observation_request,
     observation_scope,
+    raw_fact,
     semantic_state,
     state_fingerprint,
 )
 from tests.evidence_helpers import (
     AFTER_REVISION,
-    after_observation_request,
+    change_free_verification_evidence_request,
     closure_policy,
     evidenced_difference,
     sufficiency_request,
@@ -203,17 +207,41 @@ def fixture_policy(difference: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     return closure_policy(difference["difference_id"], **kwargs)
 
 
+def real_snapshot_after_observation_request() -> dict[str, Any]:
+    """The ``after_observation_request``-shaped request every caller in this module that
+    needs the real, content-addressed ``REAL_SNAPSHOT_REF`` (rather than the widely-shared,
+    permanently-opaque ``SNAPSHOT_REF``) builds from -- factored out so two independent
+    callers building it separately still produce the byte-identical request (and therefore
+    the identical Observation record) that :func:`self_closing_change_bound_closure_request`
+    depends on for its own self-closing collision to actually collide (R6-F1a)."""
+
+    return observation_request(
+        observation_scope(snapshot_refs=[REAL_SNAPSHOT_REF]),
+        [raw_fact(value="READY", snapshot_id=REAL_SNAPSHOT_REF["id"])],
+        state_fingerprint("KNOWN"),
+        AFTER_REVISION,
+    )
+
+
 def satisfied_reobservation(
     difference: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Return ``(derivation_request, after_observation_ref, later_state_fingerprint)``.
 
     The re-observation is a real, independent Observation run through the public
-    Observation Engine (``after_observation_request`` -> ``observe``), re-derived through
-    the real ``derive_differences`` producer -- never a hand-written "satisfied" record.
+    Observation Engine (``observe``), re-derived through the real ``derive_differences``
+    producer -- never a hand-written "satisfied" record.
+
+    R6-F1a: unlike ``tests.evidence_helpers.after_observation_request`` (whose own
+    ``source_snapshot_refs`` default is the widely-shared, permanently-opaque
+    ``SNAPSHOT_REF``), this Observation is built to report the real, content-addressed
+    ``REAL_SNAPSHOT_REF`` -- this function's only two callers both build a Reflow
+    ``closure_request`` that now must resolve a real ``source_snapshot`` body for it, not
+    only cross-reference its bare id.
     """
 
-    after_bundle = observe(after_observation_request())
+    scope = observation_scope(snapshot_refs=[REAL_SNAPSHOT_REF])
+    after_bundle = observe(real_snapshot_after_observation_request())
     observation_ref = {
         "kind": "observation",
         "id": after_bundle["observations"][0]["observation_id"],
@@ -224,7 +252,7 @@ def satisfied_reobservation(
         [
             {
                 "target_predicate_id": PREDICATE_ID,
-                "observation_scope": observation_scope(),
+                "observation_scope": scope,
                 "observation_bundle": after_bundle,
             }
         ],
@@ -345,10 +373,12 @@ def base_closure_request(
         "change_result_evidence_refs": [],
         "change_result_evidence_requests": [],
         "change_free_verification_evidence_refs": [],
+        "change_free_verification_evidence_requests": [],
         "reobservation": None,
         "evidence_sufficiency_request": None,
         "after_state_semantic_state": None,
         "source_snapshot_refs": [],
+        "source_snapshots": [],
         "producing_change_refs": [],
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
@@ -372,8 +402,21 @@ def _hex_digest(seed: str) -> str:
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
+#: The same placeholder candidate identity :func:`mandatory_invariant_bindings` falls back
+#: to when no real *after_state_candidate* is supplied -- a single source of truth so a
+#: caller's Invariant Evaluation record pool and its bindings always agree even when neither
+#: passes a real Candidate (R6-F3).
+_PLACEHOLDER_CANDIDATE_ID = "STATE-CANDIDATE-" + "1" * 64
+_PLACEHOLDER_CANDIDATE_SEMANTIC_FINGERPRINT = {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "1" * 64}
+
+
 def mandatory_invariant_evaluation(
-    difference_id: str, invariant_id: str, current_state: dict[str, Any], *, status: str = "PASS"
+    difference_id: str,
+    invariant_id: str,
+    current_state: dict[str, Any],
+    *,
+    status: str = "PASS",
+    after_state_candidate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One real, schema-valid ``invariant_evaluation`` record for *invariant_id*.
 
@@ -386,8 +429,23 @@ def mandatory_invariant_evaluation(
     ``difference``/``objective_revision``/``state`` set ``difference/graph.py``'s own edge
     table permits for this field (``kernel_invariant``, an earlier round's placeholder, is
     not among them and is rejected by that checker).
+
+    R6-F3: ``candidate_id``/``candidate_semantic_fingerprint`` are set from
+    *after_state_candidate*, when supplied, matching :func:`mandatory_invariant_bindings`'s
+    identical parameter -- see its docstring for why it defaults to a placeholder rather
+    than being required.
     """
 
+    candidate_id = (
+        after_state_candidate["candidate_id"]
+        if after_state_candidate is not None
+        else _PLACEHOLDER_CANDIDATE_ID
+    )
+    candidate_semantic_fingerprint = (
+        after_state_candidate["semantic_fingerprint"]
+        if after_state_candidate is not None
+        else _PLACEHOLDER_CANDIDATE_SEMANTIC_FINGERPRINT
+    )
     return {
         "schema_version": "0.1",
         "evaluation_id": "INV-EVAL-" + _hex_digest(f"eval:{invariant_id}").upper(),
@@ -395,6 +453,8 @@ def mandatory_invariant_evaluation(
         "subject_ref": {"kind": "difference", "id": difference_id},
         "state_revision": current_state["revision"],
         "state_fingerprint": current_state["fingerprint"],
+        "candidate_id": candidate_id,
+        "candidate_semantic_fingerprint": candidate_semantic_fingerprint,
         "verification_stage": "CANDIDATE_CLOSURE",
         "method": "STRUCTURAL_CHECK",
         "expected": {"invariant_id": invariant_id, "result": "PASS"},
@@ -408,14 +468,21 @@ def mandatory_invariant_evaluation(
     }
 
 
-def mandatory_invariant_evaluations(difference_id: str, current_state: dict[str, Any]) -> list[dict[str, Any]]:
+def mandatory_invariant_evaluations(
+    difference_id: str,
+    current_state: dict[str, Any],
+    *,
+    after_state_candidate: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """The real Invariant Evaluation record pool matching every binding
     :func:`mandatory_invariant_bindings` builds -- the caller-supplied pool R4-F2's
     ``invariant_evaluations`` closure_request field carries.
     """
 
     return [
-        mandatory_invariant_evaluation(difference_id, invariant_id, current_state)
+        mandatory_invariant_evaluation(
+            difference_id, invariant_id, current_state, after_state_candidate=after_state_candidate
+        )
         for invariant_id in sorted(expected_g19_invariant_ids())
     ]
 
@@ -442,16 +509,18 @@ def mandatory_invariant_bindings(
     candidate_id = (
         after_state_candidate["candidate_id"]
         if after_state_candidate is not None
-        else "STATE-CANDIDATE-" + "1" * 64
+        else _PLACEHOLDER_CANDIDATE_ID
     )
     candidate_semantic_fingerprint = (
         after_state_candidate["semantic_fingerprint"]
         if after_state_candidate is not None
-        else {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "1" * 64}
+        else _PLACEHOLDER_CANDIDATE_SEMANTIC_FINGERPRINT
     )
     bindings = []
     for invariant_id in sorted(expected_g19_invariant_ids()):
-        record = mandatory_invariant_evaluation(difference_id, invariant_id, current_state)
+        record = mandatory_invariant_evaluation(
+            difference_id, invariant_id, current_state, after_state_candidate=after_state_candidate
+        )
         binding = {
             "kind": "candidate_invariant_evaluation_binding",
             "candidate_id": candidate_id,
@@ -586,7 +655,7 @@ def candidate_closure_request(
     request = base_closure_request(difference, policy)
     kernel_source_ref, kernel_source_witness = real_kernel_source_witness()
     after_semantic_state = semantic_state("KNOWN")
-    source_snapshot_refs = [{"kind": "source_snapshot", "id": "SNAP-0001"}]
+    source_snapshot_refs = [deepcopy(REAL_SNAPSHOT_REF)]
     # R5-F1: the real after_state_candidate every binding this request builds must match --
     # built from exactly the same inputs evaluate_closure itself uses to build its own,
     # so the two are the same content-addressed candidate.
@@ -601,7 +670,9 @@ def candidate_closure_request(
     invariant_bindings = mandatory_invariant_bindings(
         difference["difference_id"], current_state, after_state_candidate=after_state_candidate
     )
-    invariant_evaluations = mandatory_invariant_evaluations(difference["difference_id"], current_state)
+    invariant_evaluations = mandatory_invariant_evaluations(
+        difference["difference_id"], current_state, after_state_candidate=after_state_candidate
+    )
     invariant_evaluation_refs = [binding["invariant_evaluation_ref"] for binding in invariant_bindings]
     claim_binding, claim_event = mandatory_x003_claim_binding_and_event(
         difference,
@@ -610,6 +681,12 @@ def candidate_closure_request(
         material_contradiction_refs=contradiction_refs,
         after_state_candidate=after_state_candidate,
     )
+    # R6-F1b: a real, schema-valid change_free_verification_evidence record -- Evidence's
+    # own defaults deterministically re-derive the exact same Difference `difference` is
+    # (both are `evidenced_difference()`), so this Evidence's difference_ref binds to
+    # exactly the Difference this closure_request is for, by construction.
+    change_free_evidence_request = change_free_verification_evidence_request()
+    change_free_evidence_record = derive_evidence(change_free_evidence_request)
     request.update(
         {
             "current_state": current_state,
@@ -618,8 +695,9 @@ def candidate_closure_request(
             "material_contradictions": material_contradictions,
             "resolution_mode": "CHANGE_FREE",
             "change_free_verification_evidence_refs": [
-                {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+                {"kind": "observation_evidence", "id": change_free_evidence_record["evidence_id"]}
             ],
+            "change_free_verification_evidence_requests": [change_free_evidence_request],
             "reobservation": {
                 "derivation_request": reobservation_request,
                 "after_observation_refs": [after_ref],
@@ -629,6 +707,7 @@ def candidate_closure_request(
             ),
             "after_state_semantic_state": after_semantic_state,
             "source_snapshot_refs": source_snapshot_refs,
+            "source_snapshots": [deepcopy(REAL_SNAPSHOT_RECORD)],
             "candidate_invariant_evaluation_bindings": invariant_bindings,
             "invariant_evaluations": invariant_evaluations,
             "candidate_claim_evaluation_bindings": [claim_binding],
@@ -659,7 +738,15 @@ def self_closing_change_bound_closure_request(
 
     change_req = real_change_request()
     change_record = derive_change(change_req)
-    cr_evidence_request = change_result_evidence_request(change_request=change_req)
+    # R6-F1a: the post-change Observation must be built from the exact same request
+    # satisfied_reobservation's own real_snapshot_after_observation_request() uses -- the
+    # self-closing collision this fixture exists to prove only actually collides when both
+    # sides are the same Observation, and that Observation must resolve a real
+    # source_snapshot body now that G8 requires one.
+    cr_evidence_request = change_result_evidence_request(
+        change_request=change_req,
+        post_change_observation=real_snapshot_after_observation_request(),
+    )
     cr_evidence_record = derive_evidence(cr_evidence_request)
 
     reobservation_request, after_ref, later_fingerprint = satisfied_reobservation(difference)
@@ -685,7 +772,8 @@ def self_closing_change_bound_closure_request(
                 evidence_requests=[cr_evidence_request],
             ),
             "after_state_semantic_state": semantic_state("KNOWN"),
-            "source_snapshot_refs": [{"kind": "source_snapshot", "id": "SNAP-0001"}],
+            "source_snapshot_refs": [deepcopy(REAL_SNAPSHOT_REF)],
+            "source_snapshots": [deepcopy(REAL_SNAPSHOT_RECORD)],
             "producing_change_refs": [{"kind": "change", "id": change_record["change_id"]}],
             "candidate_invariant_evaluation_bindings": mandatory_invariant_bindings(
                 difference["difference_id"], current_state

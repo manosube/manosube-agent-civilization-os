@@ -68,11 +68,22 @@ from .levels import derive_level
 EVIDENCE_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "evidence/"
 SCHEMA_VERSION = "0.1"
 
-#: The two positions of 第27条. They are derived, never declared: a request that carries a
-#: Change request is Change Result Evidence and a request that does not is Observation
-#: Evidence, so a caller cannot label a record one thing and populate it as the other.
+#: The three positions of 第27条 (R6-F1b adds the third). They are derived, never declared:
+#: a request that carries a Change request is Change Result Evidence, a request that carries
+#: a ``verification_observation_request`` instead is Change-Free Verification Evidence, and
+#: a request that carries neither is Observation Evidence -- a caller cannot label a record
+#: one thing and populate it as another.
 OBSERVATION_EVIDENCE = "OBSERVATION_EVIDENCE"
 CHANGE_RESULT_EVIDENCE = "CHANGE_RESULT_EVIDENCE"
+#: CLOSURE_POLICY.md §6's ``CHANGE_FREE`` row: "independent after-state Observation Evidence
+#: proves the Target directly" -- no Change or Authority decision exists in this mode, so
+#: this position is structurally Observation Evidence with one addition: ``after_state`` is
+#: populated from a second, independent Observation, the same way Change Result Evidence's
+#: own ``after_state`` is grounded in its post-change re-observation. Reflow is never this
+#: position's producer (R6-F1b): a ``change_free_verification_evidence_refs`` entry that
+#: Reflow's own closure request carries must resolve to a real record this engine minted,
+#: never one Reflow assembled itself.
+CHANGE_FREE_VERIFICATION_EVIDENCE = "CHANGE_FREE_VERIFICATION_EVIDENCE"
 
 #: The one kind under which an Evidence record is referenced anywhere in this Kernel.
 #:
@@ -113,6 +124,7 @@ REQUIRED_REQUEST_KEYS: frozenset[str] = frozenset(
         "difference_request",
         "change_request",
         "post_change_observation_request",
+        "verification_observation_request",
         "artifact_references",
         "predecessor_evidence_refs",
         "remaining_difference_refs",
@@ -383,13 +395,15 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
 
     change_request = shaped["change_request"]
     post_change_request = shaped["post_change_observation_request"]
+    verification_request = shaped["verification_observation_request"]
 
     # --- position ------------------------------------------------------------- #
     #
-    # 第27条 separates two positions, and this is where the separation is made. It is made
-    # from what the request *contains*, so the two cannot be crossed: a record cannot be
-    # Observation Evidence carrying a Change, and it cannot be Change Result Evidence
-    # carrying no Change.
+    # 第27条 separates its positions, and this is where the separation is made. It is made
+    # from what the request *contains*, so none can be crossed: a record cannot be
+    # Observation Evidence carrying a Change, it cannot be Change Result Evidence carrying no
+    # Change, and it cannot carry both a Change and a change-free verification at once (R6-F1b
+    # -- CHANGE_BOUND and CHANGE_FREE are CLOSURE_POLICY.md §6's own mutually exclusive rows).
     if change_request is None:
         if post_change_request is not None:
             raise EvidenceError(
@@ -397,7 +411,18 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
                 "Evidence records one observation, and a re-observation after a Change that "
                 "is not named here is a Change Result Evidence request missing its Change"
             )
+        if verification_request is not None:
+            return _change_free_verification_evidence(
+                shaped, observation, difference, verification_request
+            )
         return _observation_evidence(shaped, observation, difference)
+
+    if verification_request is not None:
+        raise EvidenceError(
+            "a verification Observation was supplied together with a Change: "
+            "CHANGE_BOUND and CHANGE_FREE are mutually exclusive resolution modes, so one "
+            "Evidence request cannot carry both a Change and a change-free verification"
+        )
 
     # Q3-A. This is the refusal, and it comes before anything is built, because the record
     # being refused is one that would be false rather than one that is malformed.
@@ -546,6 +571,57 @@ def _observation_evidence(
                 shaped,
                 [
                     {"kind": "observation", "id": observation["observation_id"]},
+                    {"kind": "difference", "id": difference["difference_id"]},
+                ],
+            ),
+        }
+    )
+    return _finalize(evidence)
+
+
+def _change_free_verification_evidence(
+    shaped: dict[str, Any],
+    before_observation: dict[str, Any],
+    difference: dict[str, Any],
+    verification_request: Any,
+) -> dict[str, Any]:
+    """Return Change-Free Verification Evidence: CLOSURE_POLICY.md §6's ``CHANGE_FREE`` row
+    (R6-F1b) -- "independent after-state Observation Evidence proves the Target directly",
+    with no Change and no Authority decision anywhere in this mode.
+
+    What this record proves is exactly one thing: a second, independent Observation of the
+    Target was made. It does not prove any Change occurred (none is claimed), and it does
+    not decide whether what was observed satisfies anything -- that is still Difference's
+    own Closure Evaluation, reading this record's ``after_state`` the same way it already
+    reads Change Result Evidence's.
+    """
+
+    _, verification_observation = _minted_observation(
+        verification_request, "verification_observation_request"
+    )
+
+    # Independence, in the identical sense CLOSURE_POLICY.md §4 gives Change Result Evidence:
+    # the base Observation cannot stand in as its own verification.
+    if verification_observation["observation_id"] == before_observation["observation_id"]:
+        raise EvidenceError(
+            "the verification Observation is the same Observation as the base one: an "
+            "independent verification must be a second observation"
+        )
+
+    evidence = _common(shaped, verification_observation, difference)
+    evidence.update(
+        {
+            "evidence_position": CHANGE_FREE_VERIFICATION_EVIDENCE,
+            "before_state": _state_binding(before_observation),
+            "change_identity": None,
+            "authority_used": None,
+            "after_state": _state_binding(verification_observation),
+            "expected_result": None,
+            "lineage": _lineage(
+                shaped,
+                [
+                    {"kind": "observation", "id": before_observation["observation_id"]},
+                    {"kind": "observation", "id": verification_observation["observation_id"]},
                     {"kind": "difference", "id": difference["difference_id"]},
                 ],
             ),
