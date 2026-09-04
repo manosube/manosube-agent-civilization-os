@@ -99,11 +99,42 @@ class FileStateStore:
         returned -- the same durability guarantee :meth:`reconstruct` relies on: a
         transaction that crashed before ``AFTER_LINEAGE_APPEND`` never appears here, exactly
         as it never contributes a State revision.
+
+        R7-F5: ``commit``'s own sequence appends the event to the lineage log
+        (``AFTER_LINEAGE_APPEND``) *before* it promotes that transaction's staged records and
+        writes its recovery journal's own ``COMMITTED`` marker -- so a crash between those
+        two points once left this method returning an event whose own transaction's records
+        were still unresolvable, a real partial-transaction visibility gap. This method now
+        publishes an event only once its own transaction is durably ``COMMITTED``
+        (:meth:`_transaction_committed`), never a transaction recovery has not yet finished
+        promoting -- the same recovery journal :meth:`recover` itself completes from, read
+        here rather than written to, so there is no second persistence location for this
+        state and no divergence from what :meth:`recover` will eventually make visible.
         """
 
+        if not self._transaction_committed(project_id, transaction_id):
+            return None
         for event in self._events(project_id):
-            if event.get("transaction_id")==transaction_id: return deepcopy(event)
+            if event.get("transaction_id")==transaction_id:
+                return deepcopy(event)
         return None
+
+    def _transaction_committed(self, project_id: str, transaction_id: str) -> bool:
+        """Return whether *transaction_id* is durably ``COMMITTED`` -- R7-F5.
+
+        A transaction with no recovery journal at all is a transaction from before this
+        manifest/journal tracking existed (or the one genesis transaction, which mints no
+        journal), and is already promoted by construction -- the same "absent path means
+        legitimately empty, not unknown" reading :meth:`_transaction_manifest_keys` already
+        gives an absent manifest. A transaction *with* a journal is committed only once that
+        journal's own ``COMMITTED`` marker exists -- exactly the marker :meth:`commit` writes
+        last and :meth:`recover` writes on completing an interrupted one.
+        """
+
+        path = self._project(project_id)/"state"/"recovery"/transaction_id
+        if not path.exists():
+            return True
+        return (path/"COMMITTED").exists()
 
     def _events(self, project_id: str) -> list[dict[str,Any]]:
         path=self._lineage(project_id)

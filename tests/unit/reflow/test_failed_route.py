@@ -93,10 +93,18 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     project_state = initial_state()
     project_state["project_id"] = difference["project_id"]
+    # R7-F3: G3 requires the committed State's own objective_revision_id to exactly match
+    # this Difference's own objective_revision_ref.id.
+    project_state["objective_revision_id"] = difference["objective_revision_ref"]["id"]
     project_state["semantic_fingerprint"] = fingerprint_project_state(
         project_state, schema_root=SCHEMA_ROOT
     ).as_dict()
     store.initialize(project_state["project_id"], project_state)
+
+    from manosube_agent_civilization.evidence.engine import derive_evidence
+
+    terminal_reason_request = observation_evidence_request(observation=_failed_observation_request())
+    terminal_reason_record = derive_evidence(terminal_reason_request)
 
     closure_request = {
         "difference": difference,
@@ -107,6 +115,7 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
             "revision": project_state["state_revision"],
             "fingerprint": project_state["semantic_fingerprint"],
         },
+        "objective_revision_id": difference["objective_revision_ref"]["id"],
         "kernel_source_ref": deepcopy(GIT_TREE_REF),
         "base_kernel_source_ref": deepcopy(GIT_TREE_REF),
         "resolution_mode": None,
@@ -128,8 +137,9 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         "kernel_source_witness": None,
         "material_contradictions": [],
         "terminal_reason_evidence_refs": [
-            {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+            {"kind": "observation_evidence", "id": terminal_reason_record["evidence_id"]}
         ],
+        "terminal_reason_evidence_requests": [terminal_reason_request],
         "proposed_terminal_status": "BLOCKED",
         "evaluated_at": "2026-08-30T12:00:00Z",
     }

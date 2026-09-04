@@ -21,6 +21,7 @@ from tests.reflow_helpers import (
     fixture_policy,
     mandatory_x003_claim_binding,
     material_contradiction_record,
+    real_terminal_reason_evidence_fields,
 )
 
 from manosube_agent_civilization.difference.validation import (
@@ -69,9 +70,11 @@ def test_material_contradiction_forces_contradicted_result() -> None:
     request = candidate_closure_request(difference, policy)
     request["material_contradictions"] = [material_contradiction_record(impact="MATERIAL")]
     request["proposed_terminal_status"] = "RETAINED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     evaluation = evaluate_closure(request)
 
@@ -159,9 +162,11 @@ def test_resolution_mode_evidence_exclusivity_fails_g6_and_g11() -> None:
     # invalid combination can reach this producer at all is an absent resolution_mode.
     request["resolution_mode"] = None
     request["proposed_terminal_status"] = "RETAINED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     evaluation = evaluate_closure(request)
 
@@ -182,9 +187,11 @@ def test_reproduction_gates_fail_when_reobservation_is_still_unsatisfied() -> No
         "TP-WRONG"
     )
     request["proposed_terminal_status"] = "RETAINED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     evaluation = evaluate_closure(request)
 
@@ -198,9 +205,11 @@ def test_missing_reobservation_blocks_rather_than_marks_not_satisfied() -> None:
     request = candidate_closure_request(difference, policy)
     request["reobservation"] = None
     request["proposed_terminal_status"] = "BLOCKED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     evaluation = evaluate_closure(request)
 
@@ -224,9 +233,11 @@ def test_stale_evidence_sufficiency_yields_stale_result() -> None:
         difference_id=difference["difference_id"], policy=policy
     )
     request["proposed_terminal_status"] = "RETAINED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     evaluation = evaluate_closure(request)
 
@@ -269,9 +280,11 @@ def test_g19_rejects_a_binding_the_policy_never_declared() -> None:
         }
     ]
     request["proposed_terminal_status"] = "RETAINED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     evaluation = evaluate_closure(request)
 
@@ -285,9 +298,11 @@ def test_g21_fails_closed_without_the_mandatory_x003_claim() -> None:
     request = candidate_closure_request(difference, policy)
     request["candidate_claim_evaluation_bindings"] = []
     request["proposed_terminal_status"] = "RETAINED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     evaluation = evaluate_closure(request)
 
@@ -304,9 +319,11 @@ def test_g21_fails_closed_when_the_mandatory_claim_is_not_satisfied() -> None:
         mandatory_x003_claim_binding(difference, current_state, evaluation_status="NOT_SATISFIED")
     ]
     request["proposed_terminal_status"] = "RETAINED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     evaluation = evaluate_closure(request)
 
@@ -332,9 +349,11 @@ def test_satisfied_result_requires_closed_terminal_status() -> None:
     policy = fixture_policy(difference)
     request = candidate_closure_request(difference, policy)
     request["proposed_terminal_status"] = "RETAINED"
+    _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     request["terminal_reason_evidence_refs"] = [
-        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+        {"kind": "observation_evidence", "id": _terminal_evidence_id}
     ]
+    request["terminal_reason_evidence_requests"] = [_terminal_request]
 
     with pytest.raises(ReflowValidationError):
         evaluate_closure(request)

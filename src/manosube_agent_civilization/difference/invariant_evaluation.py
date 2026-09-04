@@ -30,6 +30,21 @@ SHA256-0.1`` profile, and widening it would silently change every Invariant Eval
 fingerprint domain out from under a contract that names the scalar list exactly. The same
 precedent already exists on Completion Record's ``reflow_transition_ref``: present in the
 schema, excluded from the closed projection, checked by its own field equality instead.
+
+**R7-F1 (Phase 7 structural-review round 7).** Every check above verifies a record's own
+*internal* self-consistency -- its fingerprint, its candidate binding, its State binding --
+but none of it verified that the record's ``expected``/``observed``/``status`` actually
+described anything real: a caller who declared ``status="PASS"`` with a correctly
+recomputed fingerprint and binding passed regardless of what ``expected``/``observed``
+said. :func:`resolve_invariant_evaluation` now also takes a *verification_context*
+(:mod:`.invariant_verifiers`) and independently re-derives ``status`` via
+:func:`~.invariant_verifiers.verify_invariant` -- the same function
+:func:`build_invariant_evaluation` calls to produce a record in the first place -- and
+requires the resolved record's own ``expected``/``observed``/``status``/``method``/
+``remaining_differences``/``evidence_refs`` to equal exactly what that independent
+derivation produces, not merely be internally coherent. A caller can no longer assemble a
+self-consistent ``PASS`` record for an invariant the real verifier does not independently
+confirm.
 """
 
 from __future__ import annotations
@@ -39,6 +54,7 @@ from typing import Any
 
 from .canonical import canonical_bytes, unordered_set
 from .errors import DifferenceError
+from .invariant_verifiers import VerificationContext, verify_invariant
 from .validation import validate_record
 
 _INVARIANT_EVALUATION_FINGERPRINT_DOMAIN = b"MANOSUBE:INVARIANT_EVALUATION:0.1:"
@@ -87,12 +103,85 @@ def invariant_evaluation_fingerprint(record: dict[str, Any]) -> str:
     return "sha256:" + digest
 
 
+#: The one fixed ``method`` and empty ``evidence_refs``/``remaining_differences`` every R7-F1
+#: verifier produces -- see :func:`build_invariant_evaluation`'s own docstring for why these
+#: are fixed constants rather than caller-suppliable values.
+STRUCTURAL_CHECK_METHOD = "STRUCTURAL_CHECK"
+
+
+def _expected_fields(invariant_id: str, context: VerificationContext) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Return ``(status, expected, observed)`` -- the one real, independently-derived verdict
+    :func:`~.invariant_verifiers.verify_invariant` computes for *invariant_id* from
+    *context*, projected into the record shape ``KERNEL_INVARIANTS.md`` §17 fixes.
+    """
+
+    status = verify_invariant(invariant_id, context)
+    expected = {"invariant_id": invariant_id, "result": "PASS"}
+    observed = {"invariant_id": invariant_id, "result": status}
+    return status, expected, observed
+
+
+def build_invariant_evaluation(
+    invariant_id: str,
+    context: VerificationContext,
+    *,
+    evaluation_id: str,
+    subject_ref: dict[str, Any],
+    state_revision: int,
+    state_fingerprint: dict[str, Any],
+    candidate_id: str,
+    candidate_semantic_fingerprint: dict[str, Any],
+    verification_stage: str,
+    evaluated_at: str,
+    evaluator_capability: str | None = None,
+    authority_ref: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return one canonical, schema-valid Invariant Evaluation record for *invariant_id*
+    (R7-F1) -- the producer :func:`resolve_invariant_evaluation` itself now demands every
+    resolved record agree with.
+
+    ``expected``/``observed``/``status``/``method``/``evidence_refs``/
+    ``remaining_differences`` are never parameters here: they are exactly what
+    :func:`~.invariant_verifiers.verify_invariant` independently derives from *context*,
+    the same real Candidate/Evidence/Policy/Difference data already flowing through this
+    Evaluation -- not a caller's restatement of them. ``evaluation_id`` stays caller-assigned
+    (R4-F2's ``INVARIANT_EVALUATION_ID_POLICY``; no content-address formula for it exists in
+    ``CLOSURE_POLICY.md``), and ``method`` is fixed to :data:`STRUCTURAL_CHECK_METHOD` for
+    every id: every verifier here is a deterministic structural check against already-
+    canonicalized data, never an empirical runtime observation, so there is exactly one true
+    value for this field and it is not a caller's to vary.
+    """
+
+    status, expected, observed = _expected_fields(invariant_id, context)
+    return {
+        "schema_version": "0.1",
+        "evaluation_id": evaluation_id,
+        "invariant_id": invariant_id,
+        "subject_ref": subject_ref,
+        "state_revision": state_revision,
+        "state_fingerprint": state_fingerprint,
+        "candidate_id": candidate_id,
+        "candidate_semantic_fingerprint": candidate_semantic_fingerprint,
+        "verification_stage": verification_stage,
+        "method": STRUCTURAL_CHECK_METHOD,
+        "expected": expected,
+        "observed": observed,
+        "status": status,
+        "evaluated_at": evaluated_at,
+        "evaluator_capability": evaluator_capability,
+        "authority_ref": authority_ref,
+        "evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        "remaining_differences": {"collection_kind": "UNORDERED_SET", "members": []},
+    }
+
+
 def resolve_invariant_evaluation(
     binding: dict[str, Any],
     pool: list[dict[str, Any]],
     *,
     base_state_ref: dict[str, Any],
     after_state_candidate: dict[str, Any],
+    verification_context: VerificationContext,
 ) -> dict[str, Any]:
     """Resolve *binding*'s ``invariant_evaluation_ref`` against *pool* -- the caller-supplied
     Invariant Evaluation records for this Evaluation -- by exact id, then verify every field
@@ -114,6 +203,12 @@ def resolve_invariant_evaluation(
       the base State an invariant was evaluated from, never to which specific proposed
       Candidate it was actually applied against; two Candidates from the same base State can
       otherwise share an identical, wrongly-reused record.
+    * its ``expected``/``observed``/``status``/``method``/``evidence_refs``/
+      ``remaining_differences`` equal exactly what
+      :func:`~.invariant_verifiers.verify_invariant` independently re-derives from
+      *verification_context* (R7-F1) -- a caller can no longer declare ``status="PASS"``
+      while what actually happened does not support it; the real check the invariant's own
+      ``CLAIM`` names must independently agree, not merely be internally self-consistent.
     """
 
     ref_id = binding["invariant_evaluation_ref"].get("id")
@@ -151,4 +246,28 @@ def resolve_invariant_evaluation(
         raise DifferenceError("resolved invariant_evaluation's state_revision does not match the evaluated State")
     if record["state_fingerprint"] != base_state_ref["fingerprint"]:
         raise DifferenceError("resolved invariant_evaluation's state_fingerprint does not match the evaluated State")
+
+    # R7-F1: independently re-derive expected/observed/status/method/evidence_refs/
+    # remaining_differences from verification_context and require the resolved record's own
+    # fields to equal exactly what that real, deterministic check produces -- a caller can no
+    # longer merely assert a self-consistent PASS record.
+    real_status, real_expected, real_observed = _expected_fields(
+        binding["invariant_ref"]["id"], verification_context
+    )
+    if record["method"] != STRUCTURAL_CHECK_METHOD:
+        raise DifferenceError("resolved invariant_evaluation's method is not the real verification method")
+    if record["expected"] != real_expected:
+        raise DifferenceError("resolved invariant_evaluation's expected does not match the real verification")
+    if record["observed"] != real_observed:
+        raise DifferenceError("resolved invariant_evaluation's observed does not match the real verification")
+    if record["status"] != real_status or real_status != "PASS":
+        raise DifferenceError(
+            f"resolved invariant_evaluation's status does not independently verify as PASS: {real_status!r}"
+        )
+    if record["evidence_refs"]["members"] or record["remaining_differences"]["members"]:
+        raise DifferenceError(
+            "resolved invariant_evaluation declares evidence_refs/remaining_differences this "
+            "vertical has no real body to resolve for -- fail closed rather than accept an "
+            "unresolvable reference"
+        )
     return record

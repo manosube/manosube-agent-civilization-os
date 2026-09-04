@@ -29,6 +29,7 @@ from tests.evidence_helpers import (
     change_free_verification_evidence_request,
     closure_policy,
     evidenced_difference,
+    observation_evidence_request,
     sufficiency_request,
 )
 from tests.state_helpers import SCHEMA_ROOT, initial_state
@@ -171,6 +172,14 @@ def store_ready_for_closure(
     if genesis is None:
         genesis = initial_state()
     genesis = deepcopy(genesis)
+    # R7-F3: G3 now requires the committed State's own objective_revision_id to exactly
+    # match the fixture Difference's objective_revision_ref.id -- the widely-shared
+    # ``initial_state_revision_zero`` contract fixture's own value never was designed to
+    # correspond to it (nothing checked the two together before this round), so every
+    # caller of this reflow-only helper (which always evaluates against
+    # ``fixture_difference()``/``evidenced_difference()``) gets it overridden here, rather
+    # than mutating the shared contract fixture every other schema test also reads.
+    genesis["objective_revision_id"] = objective_revision()["objective_revision_id"]
     genesis["semantic_fingerprint"] = fingerprint_project_state(
         genesis, schema_root=SCHEMA_ROOT
     ).as_dict()
@@ -352,11 +361,36 @@ def mandatory_x003_claim_binding(
     return binding
 
 
+def real_terminal_reason_evidence_request() -> dict[str, Any]:
+    """R7-F4: one real ``observation_evidence_request``-shaped request that reproduces the
+    exact same Difference :func:`fixture_difference`/:func:`evidenced_difference` derive --
+    a real, content-addressed terminal reason Evidence record for the fixture Difference,
+    never a bare placeholder id no request backs.
+    """
+
+    return observation_evidence_request()
+
+
+def real_terminal_reason_evidence_fields() -> tuple[dict[str, Any], str]:
+    """Return ``(request, evidence_id)`` -- the real
+    :func:`real_terminal_reason_evidence_request` paired with the ``evidence_id``
+    :func:`~manosube_agent_civilization.evidence.engine.derive_evidence` actually derives
+    from it, for the many negative-control tests that need to override
+    ``terminal_reason_evidence_refs``/``terminal_reason_evidence_requests`` together to a
+    real, self-consistent pair (R7-F4) rather than a bare placeholder id no request backs.
+    """
+
+    request = real_terminal_reason_evidence_request()
+    return request, derive_evidence(request)["evidence_id"]
+
+
 def base_closure_request(
     difference: dict[str, Any], policy: dict[str, Any]
 ) -> dict[str, Any]:
     """A candidate-free (``TERMINAL_POLICY_ONLY``-shaped) request every test starts from."""
 
+    terminal_reason_request = real_terminal_reason_evidence_request()
+    terminal_reason_record = derive_evidence(terminal_reason_request)
     return {
         "difference": difference,
         "current_status": "VERIFYING",
@@ -366,6 +400,7 @@ def base_closure_request(
             "revision": AFTER_REVISION,
             "fingerprint": state_fingerprint("KNOWN"),
         },
+        "objective_revision_id": difference["objective_revision_ref"]["id"],
         "kernel_source_ref": deepcopy(GIT_TREE_REF),
         "base_kernel_source_ref": deepcopy(GIT_TREE_REF),
         "resolution_mode": None,
@@ -387,8 +422,9 @@ def base_closure_request(
         "kernel_source_witness": None,
         "material_contradictions": [],
         "terminal_reason_evidence_refs": [
-            {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+            {"kind": "observation_evidence", "id": terminal_reason_record["evidence_id"]}
         ],
+        "terminal_reason_evidence_requests": [terminal_reason_request],
         "proposed_terminal_status": "BLOCKED",
         "evaluated_at": EVALUATED_AT,
     }
@@ -691,6 +727,7 @@ def candidate_closure_request(
         {
             "current_state": current_state,
             "kernel_source_ref": kernel_source_ref,
+            "base_kernel_source_ref": kernel_source_ref,
             "kernel_source_witness": kernel_source_witness,
             "material_contradictions": material_contradictions,
             "resolution_mode": "CHANGE_FREE",

@@ -132,6 +132,10 @@ def _reverify_to_verifying(
 def _fresh_store(tmp_path: Path) -> tuple[FileStateStore, dict]:
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     project_state = initial_state()
+    # R7-F3: G3 requires the committed State's own objective_revision_id to exactly match
+    # fixture_difference()'s own objective_revision_ref.id -- every test in this module
+    # evaluates against that fixture Difference.
+    project_state["objective_revision_id"] = fixture_difference()["objective_revision_ref"]["id"]
     project_state["semantic_fingerprint"] = fingerprint_project_state(
         project_state, schema_root=SCHEMA_ROOT
     ).as_dict()

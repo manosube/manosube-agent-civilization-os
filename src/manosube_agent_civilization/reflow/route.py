@@ -63,9 +63,12 @@ now participates in that transaction's replay identity (R2-F3B, see ``store/file
 Completion Record and Invariant Evaluation identity/resolution are owned by
 :mod:`manosube_agent_civilization.difference.completion`/``.invariant_evaluation``
 (R4-F2/R5-F2), not by Reflow -- this module resolves and persists what those owners produce,
-it never becomes a second producer. ``terminal_reason_evidence_refs`` alone still has no
-schema anywhere in this tree defining a body for it, and stays committed by reference only,
-a named non-claim rather than a gap.
+it never becomes a second producer. ``terminal_reason_evidence_refs`` (R7-F4, Phase 7
+structural-review round 7) is the same reproduce-and-persist treatment now too -- Evidence
+remains the sole producer (:func:`~manosube_agent_civilization.evidence.engine.
+derive_evidence`), reproduced from ``terminal_reason_evidence_requests`` and re-verified
+immediately before *every* commit, not only a ``CLOSED`` one (``CLOSED`` is exactly the
+outcome that never carries one).
 """
 
 from __future__ import annotations
@@ -82,6 +85,9 @@ from manosube_agent_civilization.difference.completion import (
 from manosube_agent_civilization.difference.errors import DifferenceError
 from manosube_agent_civilization.difference.identity import lifecycle_event_id
 from manosube_agent_civilization.difference.invariant_evaluation import resolve_invariant_evaluation
+from manosube_agent_civilization.difference.invariant_verifiers import (
+    build_invariant_verification_context,
+)
 from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
@@ -247,10 +253,78 @@ def _self_consistent_after_observations(closure_request: dict[str, Any]) -> list
     return verified
 
 
+def _reproduced_evidence_for_context(closure_request: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return ``(change_result_evidence, change_free_evidence)`` reproduced fresh from
+    *closure_request*'s own requests -- R7-F1: the same real Evidence
+    :func:`~manosube_agent_civilization.difference.invariant_verifiers.
+    build_invariant_verification_context` binds an invariant-verification *context* to,
+    reproduced here rather than trusted from *evaluation*'s own already-computed refs, the
+    same pin-and-prove discipline every other admitted reference in this module follows. A
+    request that no longer reproduces is not raised here: the caller's own reference-closure
+    checks already reflect that failure, and an empty list for this one context field is a
+    real answer -- there is no Evidence to bind the invariant check to.
+    """
+
+    change_result_evidence: list[dict[str, Any]] = []
+    for item in closure_request.get("change_result_evidence_requests") or []:
+        try:
+            change_result_evidence.append(derive_evidence(item))
+        except EvidenceError:
+            return [], []
+    change_free_evidence: list[dict[str, Any]] = []
+    for item in closure_request.get("change_free_verification_evidence_requests") or []:
+        try:
+            change_free_evidence.append(derive_evidence(item))
+        except EvidenceError:
+            return [], []
+    return change_result_evidence, change_free_evidence
+
+
+def _invariant_verification_context(
+    evaluation: dict[str, Any],
+    closure_request: dict[str, Any],
+    policy: dict[str, Any],
+    sufficiency: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the same *context* :func:`~manosube_agent_civilization.reflow.closure.
+    evaluate_closure`'s own G19 call built, from data this module already independently
+    resolves at preflight/persistence time -- R7-F1's "G19とatomic preflightは同じcanonical
+    resolver/verifierを使用する" requirement, applied to the context those two calls share.
+    """
+
+    difference = closure_request.get("difference") or {}
+    change_result_evidence, change_free_evidence = _reproduced_evidence_for_context(closure_request)
+    material_contradictions = closure_request.get("material_contradictions") or []
+    blocking_contradictions = [
+        item for item in material_contradictions if item.get("impact") == "MATERIAL"
+    ]
+    return build_invariant_verification_context(
+        policy=policy,
+        difference=difference,
+        current_state={
+            "revision": evaluation["evaluated_state_revision"],
+            "fingerprint": evaluation["evaluated_state_fingerprint"],
+        },
+        after_state_candidate=evaluation.get("after_state_candidate"),
+        resolution_mode=evaluation.get("resolution_mode"),
+        change_result_evidence=change_result_evidence,
+        change_free_evidence=change_free_evidence,
+        after_observation_ids={
+            ref["id"] for ref in evaluation.get("after_observation_refs") or [] if ref.get("id")
+        },
+        source_snapshot_refs=closure_request.get("source_snapshot_refs") or [],
+        source_snapshots=closure_request.get("source_snapshots") or [],
+        sufficiency=sufficiency,
+        material_contradictions=material_contradictions,
+        blocking_contradictions=blocking_contradictions,
+    )
+
+
 def _preflight_reresolve_closure(
     evaluation: dict[str, Any],
     closure_request: dict[str, Any],
     policy: dict[str, Any],
+    sufficiency: dict[str, Any] | None,
 ) -> None:
     """R5-F4: ``ATOMIC_PREFLIGHT_FULL_RERESOLUTION_REQUIRED`` -- immediately before the
     commit that actually promotes a CLOSED Difference, every admitted binding's underlying
@@ -279,6 +353,9 @@ def _preflight_reresolve_closure(
     }
 
     after_state_candidate = evaluation.get("after_state_candidate")
+    verification_context = _invariant_verification_context(
+        evaluation, closure_request, policy, sufficiency
+    )
     for binding in invariant_bindings:
         if after_state_candidate is None:
             raise StaleReflowError(
@@ -291,6 +368,7 @@ def _preflight_reresolve_closure(
                 invariant_evaluation_pool,
                 base_state_ref=binding["base_state_ref"],
                 after_state_candidate=after_state_candidate,
+                verification_context=verification_context,
             )
         except DifferenceError as error:
             raise StaleReflowError(
@@ -417,6 +495,40 @@ def _preflight_reresolve_closure(
         )
 
 
+def _preflight_reresolve_terminal_reason_evidence(
+    evaluation: dict[str, Any], closure_request: dict[str, Any]
+) -> None:
+    """R7-F4: re-reproduce every declared ``terminal_reason_evidence_refs`` entry immediately
+    before commit -- called for *every* Reflow outcome, not only ``CLOSED``, since a
+    BLOCKED/RETAINED/STALE/NOT_SATISFIED/CONTRADICTED result is exactly where this reference
+    kind is ever non-empty (``evaluate_closure`` never lets a ``CLOSED`` evaluation carry
+    one). Set equality, matching every other Evidence re-verification here: an emptied
+    ``terminal_reason_evidence_requests`` against a still-declared ``terminal_reason_evidence_
+    refs`` is refused, not silently skipped.
+    """
+
+    declared_ids = {
+        ref.get("id")
+        for ref in evaluation.get("terminal_reason_evidence_refs") or []
+        if isinstance(ref, dict)
+    }
+    if not declared_ids:
+        return
+    reproduced_ids: set[str] = set()
+    for item in closure_request.get("terminal_reason_evidence_requests") or []:
+        try:
+            reproduced_ids.add(derive_evidence(item)["evidence_id"])
+        except EvidenceError as error:
+            raise StaleReflowError(
+                f"atomic preflight: terminal_reason_evidence_requests no longer reproduces: {error}"
+            ) from error
+    if reproduced_ids != declared_ids:
+        raise StaleReflowError(
+            "atomic preflight: terminal_reason_evidence_refs no longer matches the "
+            "reproduced terminal reason Evidence"
+        )
+
+
 def _admitted_records(
     evaluation: dict[str, Any],
     lifecycle_event: dict[str, Any],
@@ -447,9 +559,10 @@ def _admitted_records(
     Evidence record behind every ``change_free_verification_evidence_refs`` entry (R6-F1b,
     reproduced through :func:`~manosube_agent_civilization.evidence.engine.derive_evidence`
     exactly like ``change_result_evidence_requests`` above -- Evidence stays the sole
-    producer); and every self-consistent after-state Observation record the reproduction
-    actually consumed. ``terminal_reason_evidence_refs`` alone still has no body this
-    vertical can independently derive, and stays committed by reference only.
+    producer); every self-consistent after-state Observation record the reproduction
+    actually consumed; and the real Evidence record behind every ``terminal_reason_evidence_
+    refs`` entry (R7-F4, reproduced through :func:`derive_evidence` from
+    ``terminal_reason_evidence_requests`` exactly like Change-result Evidence above).
 
     *reflow_transition_ref* is the real ``state_transition`` reference this transition
     commits under when *decision*'s ``to_status`` is ``CLOSED`` (``None`` otherwise) -- the
@@ -478,6 +591,13 @@ def _admitted_records(
     # resolves and persists what that owner produces, exactly as for Change-result Evidence
     # above.
     for item in closure_request.get("change_free_verification_evidence_requests") or []:
+        record = derive_evidence(item)
+        records[("observation_evidence", record["evidence_id"])] = record
+    # R7-F4: the same reproduce-and-persist treatment for terminal_reason_evidence_refs --
+    # Evidence remains the sole producer; Reflow only resolves and persists what that owner
+    # produces, so BLOCKED/RETAINED/STALE/NOT_SATISFIED/CONTRADICTED terminal reasons carry
+    # a real, resolvable body too, not only a reference that stays permanently opaque.
+    for item in closure_request.get("terminal_reason_evidence_requests") or []:
         record = derive_evidence(item)
         records[("observation_evidence", record["evidence_id"])] = record
 
@@ -546,6 +666,9 @@ def _admitted_records(
 
     invariant_evaluation_pool = closure_request.get("invariant_evaluations") or []
     after_state_candidate_for_invariants = evaluation.get("after_state_candidate")
+    invariant_verification_context = _invariant_verification_context(
+        evaluation, closure_request, policy, sufficiency
+    )
     for binding in evaluation.get("candidate_invariant_evaluation_bindings") or []:
         if after_state_candidate_for_invariants is None:
             # Already reflected as a G19 gate failure; nothing new to persist for a
@@ -557,6 +680,7 @@ def _admitted_records(
                 invariant_evaluation_pool,
                 base_state_ref=binding["base_state_ref"],
                 after_state_candidate=after_state_candidate_for_invariants,
+                verification_context=invariant_verification_context,
             )
         except DifferenceError:
             # Already reflected as a G19 gate failure; nothing new to persist for an
@@ -687,6 +811,10 @@ def reflow(
         "revision": before_project_state["state_revision"],
         "fingerprint": before_project_state["semantic_fingerprint"],
     }
+    # R7-F3: G3 binds this Evaluation to the exact Objective the canonical current State is
+    # itself bound to -- the Store's own committed objective_revision_id, never a caller
+    # restatement of it.
+    closure_request["objective_revision_id"] = before_project_state["objective_revision_id"]
 
     evaluation = evaluate_closure(closure_request)
     decision = decide_transition(evaluation, current_status)
@@ -750,8 +878,11 @@ def reflow(
     )
 
     policy = require_object(closure_request["policy"], "closure_request.policy")
+    # R7-F4: terminal reason Evidence is re-verified immediately before commit for *every*
+    # outcome -- it is CLOSED evaluations that never carry one, not the reverse.
+    _preflight_reresolve_terminal_reason_evidence(evaluation, closure_request)
     if decision["to_status"] == "CLOSED":
-        _preflight_reresolve_closure(evaluation, closure_request, policy)
+        _preflight_reresolve_closure(evaluation, closure_request, policy, sufficiency)
 
     records = _admitted_records(
         evaluation,

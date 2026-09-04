@@ -113,6 +113,9 @@ from manosube_agent_civilization.difference.identity import (
     policy_semantic_fingerprint,
 )
 from manosube_agent_civilization.difference.invariant_evaluation import resolve_invariant_evaluation
+from manosube_agent_civilization.difference.invariant_verifiers import (
+    build_invariant_verification_context,
+)
 from manosube_agent_civilization.difference.lifecycle import is_legal_transition
 from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.evidence.errors import EvidenceError
@@ -150,6 +153,7 @@ REQUEST_KEYS: frozenset[str] = frozenset(
         "policy",
         "difference_event_head_ref",
         "current_state",
+        "objective_revision_id",
         "kernel_source_ref",
         "base_kernel_source_ref",
         "resolution_mode",
@@ -171,6 +175,7 @@ REQUEST_KEYS: frozenset[str] = frozenset(
         "kernel_source_witness",
         "material_contradictions",
         "terminal_reason_evidence_refs",
+        "terminal_reason_evidence_requests",
         "proposed_terminal_status",
         "evaluated_at",
     }
@@ -249,13 +254,55 @@ def _evaluate_g1_g2(gates: _Gates, difference: dict[str, Any], current_status: s
         gates.set("G2", "FAIL", f"Difference status is not VERIFYING: {current_status!r}")
 
 
-def _evaluate_g3_g4(gates: _Gates, difference: dict[str, Any]) -> None:
-    # G3/G4 bind the Evaluation to the exact Objective/Target semantics the Difference
-    # itself carries. There is no second Objective source in this request: the Difference
-    # record already resolved and pinned both at derivation time, so the check here is
-    # that this Evaluation is built against them unchanged, not a second recomputation.
-    gates.set("G3", "PASS")
-    gates.set("G4", "PASS")
+def _evaluate_g3_g4(
+    gates: _Gates,
+    difference: dict[str, Any],
+    *,
+    objective_revision_id: str,
+    base_kernel_source_ref: dict[str, Any],
+    kernel_source_ref: dict[str, Any],
+) -> None:
+    """R7-F3: G3 binds this Evaluation to the exact Objective the current State itself is
+    bound to -- the committed State's own ``objective_revision_id`` (never a caller
+    restatement of it) must exactly equal the Difference's own ``objective_revision_ref.id``,
+    so a Difference derived against a since-superseded Objective can no longer be evaluated
+    as though it still governed the current one. G4 binds this Evaluation to the exact
+    Kernel source Phase 7 requires unchanged across the whole cycle: ``base_kernel_source_ref``
+    (the source the base State/Difference were derived under) and ``kernel_source_ref`` (the
+    source this Candidate is evaluated against) must be the identical commit/tree -- Phase 7
+    does not permit a Kernel source change mid-cycle.
+
+    Named rather than silently narrowed: recomputing the resolved Objective Revision
+    record's own semantic fingerprint against ``difference["objective_semantic_fingerprint"]``
+    -- the other half SHUKOU's Round 7 adoption names -- is not implemented here. No
+    mechanism in this vertical resolves a full Objective Revision record body at Reflow
+    evaluation time (only the Difference's own ``objective_revision_ref`` -- an id and a
+    fingerprint, never a body -- exists at this layer), and inventing one here would be
+    exactly the guessed formula the adoption's own text forbids. That gap is disclosed, not
+    silently absorbed into a PASS.
+    """
+
+    if objective_revision_id != difference["objective_revision_ref"]["id"]:
+        gates.set(
+            "G3",
+            "FAIL",
+            "current State's objective_revision_id does not match the Difference's own "
+            "objective_revision_ref",
+        )
+    else:
+        gates.set("G3", "PASS")
+
+    if base_kernel_source_ref.get("commit_sha") != kernel_source_ref.get(
+        "commit_sha"
+    ) or base_kernel_source_ref.get("tree_sha") != kernel_source_ref.get("tree_sha"):
+        gates.set(
+            "G4",
+            "FAIL",
+            "base_kernel_source_ref does not exactly match kernel_source_ref: Phase 7 does "
+            "not permit a Kernel source change mid-cycle",
+        )
+    else:
+        gates.set("G4", "PASS")
 
 
 def _evaluate_g5_g20(
@@ -379,7 +426,15 @@ def _evaluate_reproduction_gates(
     change_free_verification_evidence_requests: list[Any],
     source_snapshot_refs: list[Any],
     source_snapshots: list[Any],
-) -> None:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return ``(change_result_evidence, change_free_evidence)`` -- the real Evidence
+    records this call's own G8 branch reproduced through :func:`derive_evidence` (empty
+    when the branch never reached a reproduction, or reproduced none). R7-F1: this is the
+    same real, already-verified Evidence :func:`build_after_state_candidate`'s own
+    invariant-verification context binds to, rather than a second, independent
+    re-derivation of it.
+    """
+
     if policy["required_observation_scope"] is not None:
         for gate in _REPRODUCTION_GATES:
             gates.set(
@@ -388,12 +443,12 @@ def _evaluate_reproduction_gates(
                 "required_observation_scope is non-null; this vertical supports null only",
             )
         gates.set("G8", "FAIL", "no reproduction attempted: G9 precondition failed")
-        return
+        return [], []
     if reobservation is None:
         for gate in _REPRODUCTION_GATES:
             gates.set(gate, "UNKNOWN", "no re-observation was supplied")
         gates.set("G8", "FAIL", "no after-state Observation was supplied")
-        return
+        return [], []
 
     request = require_object(reobservation.get("derivation_request"), "reobservation.derivation_request")
     after_refs = require_collection(
@@ -403,7 +458,7 @@ def _evaluate_reproduction_gates(
         for gate in _REPRODUCTION_GATES:
             gates.set(gate, "FAIL", "after_observation_refs is empty")
         gates.set("G8", "FAIL", "after_observation_refs is empty")
-        return
+        return [], []
 
     predicate_id = difference["target_predicate_ref"]["id"]
     bindings = request.get("bindings") if isinstance(request, dict) else None
@@ -420,7 +475,7 @@ def _evaluate_reproduction_gates(
                 "reobservation derivation request is not bound to exactly this Target Predicate",
             )
         gates.set("G8", "FAIL", "reobservation derivation request binds the wrong Target Predicate")
-        return
+        return [], []
 
     # R2-F4: declared after_observation_refs must name exactly the Observation(s) the
     # reproduction request actually carries -- never a caller-chosen id substituted in
@@ -442,7 +497,7 @@ def _evaluate_reproduction_gates(
             "after_observation_refs does not exactly match the Observation(s) the "
             "reobservation derivation request actually consumed",
         )
-        return
+        return [], []
 
     # R4-F2: a candidate's own source_snapshot_refs must exactly match the real,
     # self-consistent Observation's own reported set -- Observation is this reference
@@ -464,7 +519,7 @@ def _evaluate_reproduction_gates(
             "source_snapshot_refs does not exactly match the real Observation's own "
             "reported source snapshots",
         )
-        return
+        return [], []
 
     # R6-F1a: ID-only cross-reference is no longer sufficient -- every declared
     # source_snapshot_refs entry must also resolve to a real, schema-valid, content-addressed
@@ -479,7 +534,7 @@ def _evaluate_reproduction_gates(
             for gate in _REPRODUCTION_GATES:
                 gates.set(gate, "FAIL", f"source_snapshot did not resolve: {error}")
             gates.set("G8", "FAIL", f"source_snapshot did not resolve: {error}")
-            return
+            return [], []
 
     try:
         result = derive_differences(request)
@@ -487,7 +542,7 @@ def _evaluate_reproduction_gates(
         for gate in _REPRODUCTION_GATES:
             gates.set(gate, "FAIL", f"reproduction rejected the re-observation: {error}")
         gates.set("G8", "FAIL", f"reproduction rejected the re-observation: {error}")
-        return
+        return [], []
 
     satisfied = set(result.get("satisfied_target_predicates", []))
     if predicate_id in satisfied:
@@ -513,12 +568,12 @@ def _evaluate_reproduction_gates(
                 "CHANGE_BOUND resolution supplied no change_result_evidence_requests to "
                 "reproduce the Change result Evidence from",
             )
-            return
+            return [], []
         try:
             reproduced = [derive_evidence(item) for item in change_result_evidence_requests]
         except EvidenceError as error:
             gates.set("G8", "FAIL", f"change-result Evidence reproduction failed: {error}")
-            return
+            return [], []
         reproduced_ids = {record["evidence_id"] for record in reproduced}
         declared_ids = {_reference_id(ref) for ref in change_result_evidence_refs}
         if reproduced_ids != declared_ids:
@@ -528,7 +583,7 @@ def _evaluate_reproduction_gates(
                 "change_result_evidence_refs does not exactly match the reproduced "
                 "change-result Evidence (substitution, omission or duplication)",
             )
-            return
+            return [], []
         change_observation_ids = {
             member["id"]
             for record in reproduced
@@ -539,12 +594,14 @@ def _evaluate_reproduction_gates(
             gates.set("G8", "FAIL", "after-state Observation overlaps a Change result reference")
         else:
             gates.set("G8", "PASS")
-    elif resolution_mode == "CHANGE_FREE":
+        return reproduced, []
+    if resolution_mode == "CHANGE_FREE":
         if change_result_evidence_refs or change_result_evidence_requests:
             gates.set(
                 "G8", "FAIL", "CHANGE_FREE resolution must not carry Change-result Evidence"
             )
-        elif not change_free_verification_evidence_requests:
+            return [], []
+        if not change_free_verification_evidence_requests:
             # R6-F1b: a bare change_free_verification_evidence_refs id, with no real
             # request to reproduce it from, is exactly the "実体のない参照" (a reference
             # without substance) SHUKOU's Round 6 adoption prohibits.
@@ -554,40 +611,42 @@ def _evaluate_reproduction_gates(
                 "CHANGE_FREE resolution supplied no change_free_verification_evidence_requests "
                 "to reproduce the change-free verification Evidence from",
             )
-        else:
-            try:
-                reproduced = [
-                    derive_evidence(item) for item in change_free_verification_evidence_requests
-                ]
-            except EvidenceError as error:
-                gates.set(
-                    "G8", "FAIL", f"change-free verification Evidence reproduction failed: {error}"
-                )
-            else:
-                reproduced_ids = {record["evidence_id"] for record in reproduced}
-                declared_ids = {_reference_id(ref) for ref in change_free_verification_evidence_refs}
-                if reproduced_ids != declared_ids:
-                    gates.set(
-                        "G8",
-                        "FAIL",
-                        "change_free_verification_evidence_refs does not exactly match the "
-                        "reproduced change-free verification Evidence (substitution, omission "
-                        "or duplication)",
-                    )
-                elif any(
-                    record["evidence_position"] != "CHANGE_FREE_VERIFICATION_EVIDENCE"
-                    for record in reproduced
-                ):
-                    gates.set(
-                        "G8",
-                        "FAIL",
-                        "a change_free_verification_evidence_requests entry did not reproduce "
-                        "as CHANGE_FREE_VERIFICATION_EVIDENCE",
-                    )
-                else:
-                    gates.set("G8", "PASS")
-    else:
-        gates.set("G8", "FAIL", f"G8 requires a bound resolution_mode: {resolution_mode!r}")
+            return [], []
+        try:
+            reproduced = [
+                derive_evidence(item) for item in change_free_verification_evidence_requests
+            ]
+        except EvidenceError as error:
+            gates.set(
+                "G8", "FAIL", f"change-free verification Evidence reproduction failed: {error}"
+            )
+            return [], []
+        reproduced_ids = {record["evidence_id"] for record in reproduced}
+        declared_ids = {_reference_id(ref) for ref in change_free_verification_evidence_refs}
+        if reproduced_ids != declared_ids:
+            gates.set(
+                "G8",
+                "FAIL",
+                "change_free_verification_evidence_refs does not exactly match the "
+                "reproduced change-free verification Evidence (substitution, omission "
+                "or duplication)",
+            )
+            return [], reproduced
+        if any(
+            record["evidence_position"] != "CHANGE_FREE_VERIFICATION_EVIDENCE"
+            for record in reproduced
+        ):
+            gates.set(
+                "G8",
+                "FAIL",
+                "a change_free_verification_evidence_requests entry did not reproduce "
+                "as CHANGE_FREE_VERIFICATION_EVIDENCE",
+            )
+            return [], reproduced
+        gates.set("G8", "PASS")
+        return [], reproduced
+    gates.set("G8", "FAIL", f"G8 requires a bound resolution_mode: {resolution_mode!r}")
+    return [], []
 
 
 def _evaluate_g12_g18(
@@ -652,6 +711,7 @@ def _evaluate_g19(
     kernel_source_witness: dict[str, Any] | None,
     invariant_evaluations: list[Any],
     after_state_candidate: dict[str, Any] | None,
+    verification_context: dict[str, Any],
 ) -> None:
     # R2-G19: the v0.1 mandatory Invariant union is additive over whatever the Policy
     # itself declares -- an empty `required_invariants` cannot reach G19 PASS vacuously.
@@ -780,6 +840,7 @@ def _evaluate_g19(
                 invariant_evaluations,
                 base_state_ref=binding["base_state_ref"],
                 after_state_candidate=after_state_candidate,
+                verification_context=verification_context,
             )
         except DifferenceError as error:
             gates.set(
@@ -1059,7 +1120,18 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
 
     gates = _Gates()
     _evaluate_g1_g2(gates, difference, current_status)
-    _evaluate_g3_g4(gates, difference)
+    objective_revision_id = shaped["objective_revision_id"]
+    if not isinstance(objective_revision_id, str) or not objective_revision_id:
+        raise ReflowValidationError("objective_revision_id must be a non-empty string")
+    base_kernel_source_ref = require_object(shaped["base_kernel_source_ref"], "base_kernel_source_ref")
+    kernel_source_ref_for_g4 = require_object(shaped["kernel_source_ref"], "kernel_source_ref")
+    _evaluate_g3_g4(
+        gates,
+        difference,
+        objective_revision_id=objective_revision_id,
+        base_kernel_source_ref=base_kernel_source_ref,
+        kernel_source_ref=kernel_source_ref_for_g4,
+    )
     _evaluate_g5_g20(gates, difference, current_state)
     _evaluate_g6_g11(
         gates,
@@ -1077,7 +1149,7 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
     change_result_evidence_requests_in = require_collection(
         shaped["change_result_evidence_requests"], "change_result_evidence_requests"
     )
-    _evaluate_reproduction_gates(
+    change_result_evidence_for_context, change_free_evidence_for_context = _evaluate_reproduction_gates(
         gates,
         difference,
         policy,
@@ -1126,6 +1198,30 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         shaped["candidate_invariant_evaluation_bindings"], "candidate_invariant_evaluation_bindings"
     )
     invariant_evaluations = require_collection(shaped["invariant_evaluations"], "invariant_evaluations")
+    reobservation_for_context = (
+        shaped["reobservation"] if isinstance(shaped["reobservation"], dict) else None
+    )
+    after_observation_ids_for_context: set[str] = set()
+    if reobservation_for_context is not None:
+        for ref in reobservation_for_context.get("after_observation_refs") or []:
+            ref_id = _reference_id(ref)
+            if ref_id is not None:
+                after_observation_ids_for_context.add(ref_id)
+    verification_context = build_invariant_verification_context(
+        policy=policy,
+        difference=difference,
+        current_state=current_state,
+        after_state_candidate=after_state_candidate,
+        resolution_mode=shaped["resolution_mode"],
+        change_result_evidence=change_result_evidence_for_context,
+        change_free_evidence=change_free_evidence_for_context,
+        after_observation_ids=after_observation_ids_for_context,
+        source_snapshot_refs=require_collection(shaped["source_snapshot_refs"], "source_snapshot_refs"),
+        source_snapshots=require_collection(shaped["source_snapshots"], "source_snapshots"),
+        sufficiency=sufficiency,
+        material_contradictions=material_contradictions,
+        blocking_contradictions=blocking_contradictions,
+    )
     _evaluate_g19(
         gates,
         policy,
@@ -1136,6 +1232,7 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         else None,
         invariant_evaluations=invariant_evaluations,
         after_state_candidate=after_state_candidate,
+        verification_context=verification_context,
     )
     claim_bindings = require_collection(
         shaped["candidate_claim_evaluation_bindings"], "candidate_claim_evaluation_bindings"
@@ -1228,6 +1325,39 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         if not terminal_reason_evidence_refs:
             raise ReflowValidationError(
                 f"{evaluation_mode} requires at least one terminal_reason_evidence_refs entry"
+            )
+        # R7-F4: a bare terminal_reason_evidence_refs id, with no real Evidence request to
+        # reproduce it from, is exactly the same "reference without substance" R6-F1b
+        # already refused for change_free_verification_evidence_refs -- Evidence remains
+        # the sole producer, reproduced through its own canonical owner
+        # (:func:`~manosube_agent_civilization.evidence.engine.derive_evidence`), never
+        # assembled by Reflow.
+        terminal_reason_evidence_requests = require_collection(
+            shaped["terminal_reason_evidence_requests"], "terminal_reason_evidence_requests"
+        )
+        if not terminal_reason_evidence_requests:
+            raise ReflowValidationError(
+                f"{evaluation_mode} supplied no terminal_reason_evidence_requests to "
+                "reproduce the terminal reason Evidence from"
+            )
+        try:
+            reproduced_terminal_reason_evidence = [
+                derive_evidence(item) for item in terminal_reason_evidence_requests
+            ]
+        except EvidenceError as error:
+            raise ReflowValidationError(
+                f"terminal_reason_evidence_requests did not reproduce: {error}"
+            ) from error
+        reproduced_terminal_reason_ids = {
+            record["evidence_id"] for record in reproduced_terminal_reason_evidence
+        }
+        declared_terminal_reason_ids = {
+            ref.get("id") for ref in terminal_reason_evidence_refs if isinstance(ref, dict)
+        }
+        if reproduced_terminal_reason_ids != declared_terminal_reason_ids:
+            raise ReflowValidationError(
+                "terminal_reason_evidence_refs does not exactly match the reproduced "
+                "terminal reason Evidence (substitution, omission or duplication)"
             )
 
     resolution_mode = shaped["resolution_mode"]

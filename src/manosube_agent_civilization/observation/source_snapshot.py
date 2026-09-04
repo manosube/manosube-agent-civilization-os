@@ -77,6 +77,17 @@ def resolve_source_snapshot(ref: dict[str, Any], pool: list[dict[str, Any]]) -> 
     closed on any mismatch. ID-only matching is refused by construction: a caller cannot
     supply a record under one id and reference it by another, nor supply a record whose own
     content does not actually produce the id it is filed under.
+
+    R7-F6: schema validity and content-addressed identity alone do not prove
+    ``source_locator`` is the "immutable or content-addressed reference"
+    ``STATE_METADATA.md`` section 5 requires -- a caller who assembles a record directly
+    (rather than through :func:`build_source_snapshot`) and recomputes its id correctly could
+    otherwise carry a mutable URL, an absolute path, a parent-traversal locator, or one
+    embedding a credential, and still resolve. The producer and the resolver now apply the
+    identical locator semantics (:func:`~manosube_agent_civilization.observation.scope.
+    validate_source_locator`), so a resolved record's ``source_locator`` is re-validated
+    here exactly as it was at construction, never validated only once and then trusted
+    forever after.
     """
 
     ref_id = ref.get("id")
@@ -95,4 +106,5 @@ def resolve_source_snapshot(ref: dict[str, Any], pool: list[dict[str, Any]]) -> 
         raise ObservationError("resolved source_snapshot record's own id does not match its ref")
     if record["source_snapshot_id"] != source_snapshot_identity(record):
         raise ObservationError("resolved source_snapshot record's id does not recompute")
+    validate_source_locator(record["source_locator"])
     return record

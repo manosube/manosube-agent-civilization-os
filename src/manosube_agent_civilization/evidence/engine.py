@@ -608,6 +608,25 @@ def _change_free_verification_evidence(
             "independent verification must be a second observation"
         )
 
+    # R7-F2: CLOSURE_POLICY.md §6's CHANGE_FREE row requires "independent after-state
+    # Observation Evidence proves the Target directly" -- the same Target this record's
+    # own Difference is about, not some other one a caller's verification_request happens
+    # to name. ``difference`` is already derived from, and bound to, ``before_observation``
+    # (``_derived_difference`` requires the Difference's own ``observation_refs`` name it),
+    # so requiring the verification Observation's own project/target to match
+    # ``before_observation``'s exactly also transitively binds it to the Difference's real
+    # Target -- Evidence's own ownership boundary, never a second check duplicated by a
+    # caller elsewhere.
+    if (
+        verification_observation["project_id"] != before_observation["project_id"]
+        or verification_observation["target"] != before_observation["target"]
+    ):
+        raise EvidenceError(
+            "the verification Observation's project/target does not match the base "
+            "Observation's: change-free verification Evidence must prove the same Target "
+            "this Evidence's own Difference is about, not a foreign one"
+        )
+
     evidence = _common(shaped, verification_observation, difference)
     evidence.update(
         {
