@@ -28,7 +28,10 @@ from tests.reflow_helpers import (
 )
 from tests.state_helpers import SCHEMA_ROOT
 
-from manosube_agent_civilization.reflow.claims import reconstruct_claim_status
+from manosube_agent_civilization.reflow.claims import (
+    candidate_claim_evaluation_event_id,
+    resolve_claim_binding,
+)
 from manosube_agent_civilization.reflow.closure import evaluate_closure
 from manosube_agent_civilization.reflow.commit import commit_reflow
 from manosube_agent_civilization.reflow.errors import ReflowValidationError, StaleReflowError
@@ -46,12 +49,14 @@ def _closed_store(tmp_path: Path) -> tuple[FileStateStore, dict, dict, dict]:
     project_state = store_ready_for_closure(store)
     difference = fixture_difference()
     policy = fixture_policy(difference)
-    closure_request = candidate_closure_request(difference, policy)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
     result = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=closure_request,
@@ -59,6 +64,21 @@ def _closed_store(tmp_path: Path) -> tuple[FileStateStore, dict, dict, dict]:
         reflow_instant=REFLOW_INSTANT,
     )
     return store, project_state, difference, result
+
+
+def _next_revision(predecessor: dict, *, evaluation_status: str) -> dict:
+    """Return a real, self-consistent successor ``candidate_claim_evaluation_event`` one
+    revision past *predecessor*, in the same series."""
+
+    event = dict(predecessor)
+    event["event_revision"] = predecessor["event_revision"] + 1
+    event["predecessor_event_ref"] = {
+        "kind": "candidate_claim_evaluation_event", "id": predecessor["event_id"],
+    }
+    event["evaluation_status"] = evaluation_status
+    event["event_id"] = ""
+    event["event_id"] = candidate_claim_evaluation_event_id(event)
+    return event
 
 
 # --- F1: the predecessor State always comes from the Store ---------------------------- #
@@ -91,8 +111,6 @@ def test_f1_a_stale_expected_revision_is_refused_before_anything_is_read(
         reflow(
             store,
             project_id=project_state["project_id"],
-            difference=difference,
-            current_status="CLOSED",
             previous_event_id=closed["event"]["difference_event_id"],
             event_revision=2,
             expected_state_revision=project_state["state_revision"],  # long superseded
@@ -119,8 +137,6 @@ def test_f2_a_forged_current_state_in_the_closure_request_is_silently_overridden
     result = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=closure_request,
@@ -165,7 +181,7 @@ def test_f3_a_closed_reflow_makes_its_closure_evaluation_and_event_resolvable(
         project_state["project_id"], "closure_evaluation", result["evaluation"]["closure_evaluation_id"]
     )
     resolved_event = store.resolve_record(
-        project_state["project_id"], "difference_lifecycle_event", result["event"]["difference_event_id"]
+        project_state["project_id"], "difference_event", result["event"]["difference_event_id"]
     )
     assert resolved_evaluation == result["evaluation"]
     assert resolved_event == result["event"]
@@ -411,8 +427,6 @@ def test_f7_reopen_refuses_a_resolvable_event_that_is_not_closed(tmp_path: Path)
     blocked = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=base_closure_request(difference, policy),
@@ -439,7 +453,7 @@ def test_f7_reopen_refuses_a_resolvable_event_that_is_not_closed(tmp_path: Path)
     )
     assert blocked["decision"]["to_status"] == "BLOCKED"
     assert store.resolve_record(
-        project_state["project_id"], "difference_lifecycle_event", blocked["event"]["difference_event_id"]
+        project_state["project_id"], "difference_event", blocked["event"]["difference_event_id"]
     ) == blocked["event"]
 
     with pytest.raises(ReflowValidationError, match="committed CLOSED lifecycle event"):
@@ -494,38 +508,21 @@ def test_f8_g21_an_edited_event_fails_its_own_content_address() -> None:
     tampered["completion_record_fingerprint"] = "sha256:" + "9" * 64  # the real edit
 
     with pytest.raises(ReflowValidationError, match="content address"):
-        reconstruct_claim_status(
-            [tampered],
-            head_event_id=binding["evaluation_head_event_ref"]["id"],
-            difference_id=difference["difference_id"],
-            required_claim_ref=binding["required_claim_ref"],
-            candidate_id=binding["candidate_id"],
-        )
+        resolve_claim_binding([tampered], binding, difference_id=difference["difference_id"])
 
 
 def test_f8_g21_a_missing_predecessor_fails_the_series_closed() -> None:
     difference = fixture_difference()
     current_state = {"revision": 3, "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64}}
     binding, event = mandatory_x003_claim_binding_and_event(difference, current_state)
-    # A revision-1 event whose predecessor (revision 0) is never supplied.
-    from manosube_agent_civilization.reflow.claims import candidate_claim_evaluation_event_id
+    revision_1 = _next_revision(event, evaluation_status=event["evaluation_status"])
 
-    revision_1 = dict(event)
-    revision_1["event_revision"] = 1
-    revision_1["predecessor_event_ref"] = {
-        "kind": "candidate_claim_evaluation_event",
-        "id": event["event_id"],
-    }
-    revision_1["event_id"] = ""
-    revision_1["event_id"] = candidate_claim_evaluation_event_id(revision_1)
-
-    with pytest.raises(ReflowValidationError, match="missing revision"):
-        reconstruct_claim_status(
-            [revision_1],  # revision 0 (`event`) deliberately omitted
-            head_event_id=revision_1["event_id"],
+    with pytest.raises(ReflowValidationError, match="not contiguous from revision 0"):
+        # revision 0 (`event`) deliberately omitted -- only its successor is supplied.
+        resolve_claim_binding(
+            [revision_1],
+            {**binding, "evaluation_head_event_ref": {"kind": "candidate_claim_evaluation_event", "id": revision_1["event_id"]}},
             difference_id=difference["difference_id"],
-            required_claim_ref=binding["required_claim_ref"],
-            candidate_id=binding["candidate_id"],
         )
 
 
@@ -534,14 +531,8 @@ def test_f8_g21_a_foreign_difference_series_is_refused() -> None:
     current_state = {"revision": 3, "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64}}
     binding, event = mandatory_x003_claim_binding_and_event(difference, current_state)
 
-    with pytest.raises(ReflowValidationError, match="different Difference"):
-        reconstruct_claim_status(
-            [event],
-            head_event_id=event["event_id"],
-            difference_id="D-" + "9" * 64,  # not this event's own difference_id
-            required_claim_ref=binding["required_claim_ref"],
-            candidate_id=binding["candidate_id"],
-        )
+    with pytest.raises(ReflowValidationError, match="difference_id does not match"):
+        resolve_claim_binding([event], binding, difference_id="D-" + "9" * 64)
 
 
 def test_f8_g21_the_head_events_own_status_is_what_counts(tmp_path: Path) -> None:
@@ -553,17 +544,72 @@ def test_f8_g21_the_head_events_own_status_is_what_counts(tmp_path: Path) -> Non
     binding, event = mandatory_x003_claim_binding_and_event(
         difference, current_state, evaluation_status="NOT_SATISFIED"
     )
-    forged_binding = dict(binding)
-    forged_binding["evaluation_status"] = "SATISFIED"  # the binding lies
 
-    status = reconstruct_claim_status(
-        [event],
-        head_event_id=forged_binding["evaluation_head_event_ref"]["id"],
-        difference_id=difference["difference_id"],
-        required_claim_ref=forged_binding["required_claim_ref"],
-        candidate_id=forged_binding["candidate_id"],
+    with pytest.raises(ReflowValidationError, match="evaluation_status"):
+        # The binding still claims SATISFIED while the real (only) event says
+        # NOT_SATISFIED -- R2-F8 requires the binding to match the true latest event
+        # exactly, so this is refused, not silently resolved to the event's status.
+        forged_binding = {**binding, "evaluation_status": "SATISFIED"}
+        resolve_claim_binding([event], forged_binding, difference_id=difference["difference_id"])
+
+    chain = resolve_claim_binding([event], binding, difference_id=difference["difference_id"])
+    assert chain[0]["evaluation_status"] == "NOT_SATISFIED"
+
+
+def test_r2f8_a_fork_at_one_revision_is_refused() -> None:
+    difference = fixture_difference()
+    current_state = {"revision": 3, "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64}}
+    binding, genesis_event = mandatory_x003_claim_binding_and_event(difference, current_state)
+    fork_a = _next_revision(genesis_event, evaluation_status="SATISFIED")
+    fork_b = _next_revision(genesis_event, evaluation_status="NOT_SATISFIED")
+    assert fork_a["event_id"] != fork_b["event_id"]  # two real, different bodies
+
+    head_binding = {
+        **binding,
+        "evaluation_head_event_ref": {"kind": "candidate_claim_evaluation_event", "id": fork_a["event_id"]},
+        "evaluation_status": "SATISFIED",
+    }
+    with pytest.raises(ReflowValidationError, match="forks"):
+        resolve_claim_binding(
+            [genesis_event, fork_a, fork_b], head_binding, difference_id=difference["difference_id"]
+        )
+
+
+def test_r2f8_an_unconsumed_later_event_defeats_an_older_satisfied_binding(tmp_path: Path) -> None:
+    """The exact R2-F8 exploit: a binding still names the event that *was* the latest
+    SATISFIED head, but a later REVOKED event has since superseded it. The binding no
+    longer names the series' true latest event and must be refused, not silently
+    accepted because it once was correct."""
+
+    difference = fixture_difference()
+    current_state = {"revision": 3, "fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64}}
+    stale_binding, genesis_event = mandatory_x003_claim_binding_and_event(
+        difference, current_state, evaluation_status="SATISFIED"
     )
-    assert status == "NOT_SATISFIED"  # the real, reconstructed head status, not the lie
+    revoked_event = _next_revision(genesis_event, evaluation_status="REVOKED")
+
+    # The binding still points at the old (once-true) SATISFIED head.
+    with pytest.raises(ReflowValidationError, match="true latest event"):
+        resolve_claim_binding(
+            [genesis_event, revoked_event], stale_binding, difference_id=difference["difference_id"]
+        )
+
+    # A binding that correctly names the new true latest event resolves to REVOKED.
+    current_binding = {
+        **stale_binding,
+        "evaluation_head_event_ref": {
+            "kind": "candidate_claim_evaluation_event", "id": revoked_event["event_id"],
+        },
+        "evaluation_status": "REVOKED",
+        "completion_record_ref": revoked_event["completion_record_ref"],
+        "evaluation_record_fingerprint": revoked_event["completion_record_fingerprint"],
+        "evaluated_at": revoked_event["recorded_at"],
+    }
+    chain = resolve_claim_binding(
+        [genesis_event, revoked_event], current_binding, difference_id=difference["difference_id"]
+    )
+    assert chain[0]["evaluation_status"] == "REVOKED"
+    assert len(chain) == 2  # the complete series, head first
 
 
 # --- G19: the v0.1 mandatory Invariant union is additive, never vacuous --------------- #
@@ -592,10 +638,148 @@ def test_g19_an_empty_policy_set_still_requires_the_full_mandatory_union() -> No
 
 def test_g19_the_full_mandatory_union_actually_passes(tmp_path: Path) -> None:
     """The positive control: a candidate_closure_request with every mandatory id bound
-    really does reach G19 PASS -- proving the requirement is real, not unsatisfiable."""
+    really does reach G19 PASS -- proving the requirement is real, not unsatisfiable. Since
+    ``mandatory_invariant_bindings`` now carries the real pinned per-invariant digests and
+    real content-addressed ``binding_id``s (R2-G19), this also proves the exact-digest and
+    binding-ID checks below are satisfiable, not merely fail-closed."""
 
     difference = fixture_difference()
     policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G19"] == "PASS"
+    assert evaluation["result"] == "SATISFIED"
+
+
+# --- R2-G19: exact per-invariant digest, definition-conflict, binding-ID derivation ---- #
+
+
+def test_r2g19_a_fabricated_mandatory_digest_fails_closed() -> None:
+    """A mandatory-id binding with a well-formed but wrong ``invariant_definition_sha256``
+    must not pass by mere presence -- G19's own union requires the exact pinned digest."""
+
+    from tests.reflow_helpers import mandatory_invariant_bindings
+
+    from manosube_agent_civilization.reflow.invariant_registry import (
+        candidate_invariant_evaluation_binding_id,
+    )
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+    bindings = [dict(binding) for binding in mandatory_invariant_bindings(request["current_state"])]
+    tampered = dict(bindings[0])
+    tampered["invariant_definition_ref"] = dict(tampered["invariant_definition_ref"])
+    tampered["invariant_definition_ref"]["invariant_definition_sha256"] = "sha256:" + "0" * 64
+    tampered["binding_id"] = candidate_invariant_evaluation_binding_id(tampered)
+    bindings[0] = tampered
+    request["candidate_invariant_evaluation_bindings"] = bindings
+    request["proposed_terminal_status"] = "RETAINED"
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+    ]
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G19"] == "FAIL"
+    assert evaluation["result"] == "NOT_SATISFIED"
+
+
+def test_r2g19_a_tampered_binding_id_fails_closed() -> None:
+    """A binding whose declared ``binding_id`` does not match its own content-addressed
+    derivation is refused, even though every other field is otherwise conformant."""
+
+    from tests.reflow_helpers import mandatory_invariant_bindings
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = candidate_closure_request(difference, policy)
+    bindings = [dict(binding) for binding in mandatory_invariant_bindings(request["current_state"])]
+    bindings[0] = {**bindings[0], "binding_id": "CAND-INV-EVAL-" + "F" * 64}
+    request["candidate_invariant_evaluation_bindings"] = bindings
+    request["proposed_terminal_status"] = "RETAINED"
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+    ]
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G19"] == "FAIL"
+    assert evaluation["result"] == "NOT_SATISFIED"
+
+
+def test_r2g19_a_policy_declared_same_id_definition_conflict_fails_closed() -> None:
+    """CLOSURE_POLICY.md: a Policy's own ``required_invariants`` naming a mandatory id with
+    a *different* ``invariant_definition_sha256`` than the mandatory registry's own pinned
+    digest for that id is a same-ID definition conflict -- reject, never silently pick a
+    side (first-wins/last-wins/ID-only dedup are all explicitly prohibited)."""
+
+    from manosube_agent_civilization.reflow.invariant_registry import (
+        V0_1_INVARIANT_DEFINITION_DIGESTS,
+    )
+
+    difference = fixture_difference()
+    conflicting_digest = "1" * 64
+    assert conflicting_digest != V0_1_INVARIANT_DEFINITION_DIGESTS["K-001"]
+    policy = fixture_policy(
+        difference,
+        required_invariants=[
+            {
+                "kind": "kernel_invariant",
+                "id": "K-001",
+                "contract_source_ref": {
+                    "kind": "git_blob",
+                    "repository": "manosube/manosube-agent-civilization-os",
+                    "commit_sha": "a" * 40,
+                    "path": "00_KERNEL/KERNEL_INVARIANTS.md",
+                    "blob_sha": "b" * 40,
+                    "invariant_definition_sha256": "sha256:" + conflicting_digest,
+                },
+            }
+        ],
+    )
+    request = candidate_closure_request(difference, policy)
+    request["proposed_terminal_status"] = "RETAINED"
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVIDENCE-" + "1" * 64}
+    ]
+
+    evaluation = evaluate_closure(request)
+
+    assert evaluation["gate_results"]["G19"] == "FAIL"
+    assert evaluation["result"] == "NOT_SATISFIED"
+
+
+def test_r2g19_a_policy_declared_same_id_matching_digest_unifies_not_duplicates() -> None:
+    """The converse of the conflict case: a Policy that redundantly names a mandatory id
+    with the *same* digest the registry already pins must unify into one expected
+    requirement, not demand two separate bindings for the same id."""
+
+    from manosube_agent_civilization.reflow.invariant_registry import (
+        V0_1_INVARIANT_DEFINITION_DIGESTS,
+    )
+
+    difference = fixture_difference()
+    correct_digest = "sha256:" + V0_1_INVARIANT_DEFINITION_DIGESTS["K-001"]
+    policy = fixture_policy(
+        difference,
+        required_invariants=[
+            {
+                "kind": "kernel_invariant",
+                "id": "K-001",
+                "contract_source_ref": {
+                    "kind": "git_blob",
+                    "repository": "manosube/manosube-agent-civilization-os",
+                    "commit_sha": "a" * 40,
+                    "path": "00_KERNEL/KERNEL_INVARIANTS.md",
+                    "blob_sha": "b" * 40,
+                    "invariant_definition_sha256": correct_digest,
+                },
+            }
+        ],
+    )
     request = candidate_closure_request(difference, policy)
 
     evaluation = evaluate_closure(request)

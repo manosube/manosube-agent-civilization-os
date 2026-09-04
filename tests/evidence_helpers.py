@@ -247,6 +247,7 @@ def closure_policy(
     *,
     minimum_evidence_level: str = "E1",
     maximum_evidence_age: int | None = None,
+    required_invariants: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """One Closure Policy, addressed by Difference's own identity functions.
 
@@ -264,7 +265,7 @@ def closure_policy(
         "required_observation_scope": None,
         "minimum_evidence_level": minimum_evidence_level,
         "required_claims": [],
-        "required_invariants": [],
+        "required_invariants": required_invariants if required_invariants is not None else [],
         "allowed_terminal_states": ["CLOSED", "BLOCKED", "RETAINED"],
         "independent_verification_required": False,
         "maximum_evidence_age": maximum_evidence_age,

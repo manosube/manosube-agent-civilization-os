@@ -1,112 +1,223 @@
-"""Reconstruct the append-only ``candidate_claim_evaluation_event`` series G21 must trust.
+"""Reconstruct the canonical ``candidate_claim_evaluation_event`` series G21 must trust.
 
-``CLOSURE_POLICY.md``'s G21 requires replaying this series from ``event_revision`` 0
-through a binding's declared head rather than trusting the binding's own
-``evaluation_status`` -- a caller who can write a binding can write any status onto it, so
-the status is only real once it is the terminus of a chain this module has actually walked
-and checked for contiguity, not a label copied from the chain's most recent claim.
+``CLOSURE_POLICY.md``'s G21 section (and its Phase 7 Round 2 structural-review escalation,
+R2-F8) requires more than replaying backward from a binding's declared head: "Atomic
+Reflow直前に各evaluation_series_idのappend-only event chainをrevision 0から再構築し、
+最新head eventを解決する。bindingのevaluation_head_event_refがその最新headとexact一致し
+...古いSATISFIED recordを直接参照して最新head解決を省略してはならない。" A caller who can
+write a binding can point its declared head at *any* prior event in the series -- including
+one a later ``REVOKED`` or ``NOT_SATISFIED`` event has since superseded -- so the only
+correct check is: reconstruct the *whole* series, find its one true latest event, and
+require the binding to match that event exactly, not merely to name something that once
+existed.
 
-Event identity uses the same repo-wide content-address convention every other Difference
-and Reflow record uses (:func:`~manosube_agent_civilization.difference.canonical.
-content_address`) -- the "Difference-owned public boundary" this vertical's docstrings
-elsewhere refer to as the one identity convention, not a second one invented here.
+Both identities here use the exact domain-separated profile ``CLOSURE_POLICY.md`` gives --
+the same kind of Policy-fixed exception :func:`~manosube_agent_civilization.reflow.identity.
+after_state_candidate_id` already is, not the repo-wide undecorated
+:func:`~manosube_agent_civilization.difference.canonical.content_address` convention.
 """
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
-from manosube_agent_civilization.difference.canonical import content_address
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 from .errors import ReflowValidationError
+
+_EVENT_DOMAIN_SEPARATOR = b"MANOSUBE:CANDIDATE_CLAIM_EVALUATION_EVENT:0.1:"
+_SERIES_DOMAIN_SEPARATOR = b"MANOSUBE:CANDIDATE_CLAIM_EVALUATION_SERIES:0.1:"
 
 
 def candidate_claim_evaluation_event_id(event: dict[str, Any]) -> str:
     """Return the content address of a ``candidate_claim_evaluation_event`` record."""
 
-    return content_address("CAND-CLAIM-EVT-", event, "event_id")
+    payload = {key: value for key, value in event.items() if key != "event_id"}
+    digest = hashlib.sha256(_EVENT_DOMAIN_SEPARATOR + canonical_json_bytes(payload)).hexdigest()
+    return "CAND-CLAIM-EVT-" + digest.upper()
 
 
-def reconstruct_claim_status(
-    events: list[dict[str, Any]],
+def candidate_claim_evaluation_series_id(
     *,
-    head_event_id: str,
     difference_id: str,
-    required_claim_ref: dict[str, Any],
+    policy_ref: dict[str, Any],
     candidate_id: str,
+    required_claim_ref: dict[str, Any],
 ) -> str:
-    """Walk the series backward from *head_event_id* to revision 0; return its head status.
-
-    Every event supplied must recompute its own declared ``event_id`` (an edited event is
-    refused), the walk from the declared head must reach exactly one revision-0 event with
-    a null ``predecessor_event_ref`` (a missing, reordered or non-contiguous series is
-    refused), and every event on the walked chain must belong to the same Difference,
-    required Claim and candidate the caller is evaluating (a foreign series is refused).
-    The returned status is the *head* event's own ``evaluation_status`` -- the most recent
-    admitted claim about this series, not any earlier or later one.
+    """Return the one series identity ``difference_id + policy_ref + candidate_id +
+    required_claim_ref`` implies -- the same four values, so the same Difference and
+    Claim under a different Policy (or the reverse) is a different series by
+    construction, and one series' head update can never stale-close another's.
     """
 
-    by_id: dict[str, dict[str, Any]] = {}
+    payload = {
+        "difference_id": difference_id,
+        "policy_ref": policy_ref,
+        "candidate_id": candidate_id,
+        "required_claim_ref": required_claim_ref,
+    }
+    digest = hashlib.sha256(_SERIES_DOMAIN_SEPARATOR + canonical_json_bytes(payload)).hexdigest()
+    return "CAND-CLAIM-SERIES-" + digest.upper()
+
+
+def reconstruct_claim_series(
+    events: list[dict[str, Any]],
+    *,
+    difference_id: str,
+    policy_ref: dict[str, Any],
+    candidate_id: str,
+    required_claim_ref: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the complete, contiguous, fork-free event chain for one series, from its
+    unique latest event back to revision 0 -- head first.
+
+    *events* is the whole pool a caller supplies; only events whose own declared
+    ``evaluation_series_id`` equals the identity this series' own fields recompute are
+    admitted (a foreign event is silently excluded from the pool, not merged into it). Of
+    the admitted events: each must recompute its own content address (an edited body is
+    refused); each must belong to this exact Difference/Policy/candidate/Claim (a event
+    from a same-series-id-but-different-body claim never validates -- see
+    :func:`candidate_claim_evaluation_series_id`); revision numbers must run 0..N with no
+    gap and no duplicate (two different bodies at one revision is a fork, refused); and
+    each non-zero revision's ``predecessor_event_ref`` must name exactly the previous
+    revision's own recomputed identity (refusing both a broken chain and an "unconsumed"
+    later event dangling off a revision nothing in the walked chain reaches).
+    """
+
+    expected_series_id = candidate_claim_evaluation_series_id(
+        difference_id=difference_id,
+        policy_ref=policy_ref,
+        candidate_id=candidate_id,
+        required_claim_ref=required_claim_ref,
+    )
+    by_revision: dict[int, dict[str, Any]] = {}
     for event in events:
+        if event.get("evaluation_series_id") != expected_series_id:
+            continue
         identity = candidate_claim_evaluation_event_id(event)
         if event.get("event_id") != identity:
             raise ReflowValidationError(
                 "candidate_claim_evaluation_event fails its own content address: "
                 f"{event.get('event_id')!r}"
             )
-        if identity in by_id and by_id[identity] != event:
-            raise ReflowValidationError(
-                f"candidate_claim_evaluation_event series carries two bodies for {identity}"
-            )
-        by_id[identity] = event
-
-    if head_event_id not in by_id:
-        raise ReflowValidationError(
-            f"claim evaluation series does not include its declared head: {head_event_id!r}"
-        )
-
-    seen: set[str] = set()
-    current = by_id[head_event_id]
-    head_status: str = current["evaluation_status"]
-    while True:
-        if current["event_id"] in seen:
-            raise ReflowValidationError("claim evaluation series is not acyclic")
-        seen.add(current["event_id"])
-        if current["difference_id"] != difference_id:
+        if event["difference_id"] != difference_id:
             raise ReflowValidationError(
                 "claim evaluation series belongs to a different Difference"
             )
-        if current["required_claim_ref"] != required_claim_ref:
-            raise ReflowValidationError(
-                "claim evaluation series belongs to a different required Claim"
-            )
-        if current["candidate_id"] != candidate_id:
+        if event["policy_ref"] != policy_ref:
+            raise ReflowValidationError("claim evaluation series belongs to a different Policy")
+        if event["candidate_id"] != candidate_id:
             raise ReflowValidationError(
                 "claim evaluation series belongs to a different candidate"
             )
-        predecessor_ref = current["predecessor_event_ref"]
-        if current["event_revision"] == 0:
+        if event["required_claim_ref"] != required_claim_ref:
+            raise ReflowValidationError(
+                "claim evaluation series belongs to a different required Claim"
+            )
+        revision = event["event_revision"]
+        if revision in by_revision and by_revision[revision] != event:
+            raise ReflowValidationError(
+                f"claim evaluation series forks at revision {revision}: two different "
+                "events declare the same revision"
+            )
+        by_revision[revision] = event
+
+    if not by_revision:
+        raise ReflowValidationError(
+            f"claim evaluation series {expected_series_id} has no admitted events"
+        )
+    max_revision = max(by_revision)
+    if sorted(by_revision) != list(range(max_revision + 1)):
+        raise ReflowValidationError(
+            f"claim evaluation series {expected_series_id} is not contiguous from revision 0"
+        )
+
+    chain: list[dict[str, Any]] = []
+    for revision in range(max_revision, -1, -1):
+        event = by_revision[revision]
+        predecessor_ref = event["predecessor_event_ref"]
+        if revision == 0:
             if predecessor_ref is not None:
                 raise ReflowValidationError(
                     "claim evaluation event_revision 0 must carry a null predecessor_event_ref"
                 )
-            break
-        if predecessor_ref is None:
-            raise ReflowValidationError(
-                f"claim evaluation event_revision {current['event_revision']} carries a "
-                "null predecessor_event_ref"
-            )
-        predecessor_id = predecessor_ref.get("id")
-        if predecessor_id not in by_id:
-            raise ReflowValidationError(
-                f"claim evaluation series is missing revision {current['event_revision'] - 1}"
-            )
-        predecessor = by_id[predecessor_id]
-        if predecessor["event_revision"] != current["event_revision"] - 1:
-            raise ReflowValidationError(
-                "claim evaluation series is non-contiguous: revision "
-                f"{predecessor['event_revision']} precedes {current['event_revision']}"
-            )
-        current = predecessor
+        else:
+            if predecessor_ref is None:
+                raise ReflowValidationError(
+                    f"claim evaluation event_revision {revision} carries a null "
+                    "predecessor_event_ref"
+                )
+            expected_predecessor_id = candidate_claim_evaluation_event_id(by_revision[revision - 1])
+            if predecessor_ref.get("id") != expected_predecessor_id:
+                raise ReflowValidationError(
+                    f"claim evaluation series is non-contiguous at revision {revision}: "
+                    "predecessor_event_ref does not name the true revision "
+                    f"{revision - 1} event"
+                )
+        chain.append(event)
+    return chain
 
-    return head_status
+
+def verify_claim_binding_matches_latest(
+    binding: dict[str, Any], head_event: dict[str, Any]
+) -> None:
+    """Fail closed unless *binding* matches *head_event* exactly on every field both
+    carry -- head reference, Completion Record reference and fingerprint, status,
+    candidate, Policy, and time. A binding still naming an event that was once the true
+    latest, before a later event superseded it, fails here exactly as one naming a
+    fabricated head would: *head_event* is only ever the series' one current tip.
+    """
+
+    if binding["evaluation_head_event_ref"].get("id") != head_event["event_id"]:
+        raise ReflowValidationError(
+            "binding's evaluation_head_event_ref does not name this series' true latest event"
+        )
+    if binding["completion_record_ref"] != head_event["completion_record_ref"]:
+        raise ReflowValidationError(
+            "binding's completion_record_ref does not match the latest event"
+        )
+    if binding["evaluation_record_fingerprint"] != head_event["completion_record_fingerprint"]:
+        raise ReflowValidationError(
+            "binding's evaluation_record_fingerprint does not match the latest event's "
+            "completion_record_fingerprint"
+        )
+    if binding["evaluation_status"] != head_event["evaluation_status"]:
+        raise ReflowValidationError(
+            "binding's evaluation_status does not match the latest event's evaluation_status"
+        )
+    if binding["candidate_id"] != head_event["candidate_id"]:
+        raise ReflowValidationError("binding's candidate_id does not match the latest event")
+    if binding.get("policy_ref") != head_event["policy_ref"]:
+        raise ReflowValidationError("binding's policy_ref does not match the latest event")
+    if binding["evaluated_at"] != head_event["recorded_at"]:
+        raise ReflowValidationError(
+            "binding's evaluated_at does not match the latest event's recorded_at"
+        )
+
+
+def resolve_claim_binding(
+    events: list[dict[str, Any]],
+    binding: dict[str, Any],
+    *,
+    difference_id: str,
+) -> list[dict[str, Any]]:
+    """Reconstruct *binding*'s series, verify the binding matches its true latest event,
+    and return the complete validated chain (head first) -- the set a caller must persist
+    for every field this binding is now trusted on to stay reference-resolvable.
+    """
+
+    if binding.get("difference_id") != difference_id:
+        raise ReflowValidationError("binding's difference_id does not match this Reflow's Difference")
+    policy_ref = binding.get("policy_ref")
+    if not isinstance(policy_ref, dict):
+        raise ReflowValidationError("binding's policy_ref must be an object")
+    chain = reconstruct_claim_series(
+        events,
+        difference_id=difference_id,
+        policy_ref=policy_ref,
+        candidate_id=binding["candidate_id"],
+        required_claim_ref=binding["required_claim_ref"],
+    )
+    verify_claim_binding_matches_latest(binding, chain[0])
+    return chain

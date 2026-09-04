@@ -30,10 +30,17 @@ from tests.state_helpers import SCHEMA_ROOT, initial_state
 
 from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.observation import observe
-from manosube_agent_civilization.reflow.claims import candidate_claim_evaluation_event_id
+from manosube_agent_civilization.reflow.claims import (
+    candidate_claim_evaluation_event_id,
+    candidate_claim_evaluation_series_id,
+)
 from manosube_agent_civilization.reflow.closure import MANDATORY_X003_CLAIM_REF
 from manosube_agent_civilization.reflow.identity import material_contradiction_id
-from manosube_agent_civilization.reflow.invariant_registry import expected_g19_invariant_ids
+from manosube_agent_civilization.reflow.invariant_registry import (
+    V0_1_INVARIANT_DEFINITION_DIGESTS,
+    candidate_invariant_evaluation_binding_id,
+    expected_g19_invariant_ids,
+)
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
 
@@ -164,12 +171,21 @@ def mandatory_x003_claim_binding(
 ) -> dict[str, Any]:
     """One conformant ``candidate_claim_evaluation_binding`` for the mandatory X-003 claim."""
 
+    required_claim_ref = claim_ref if claim_ref is not None else MANDATORY_X003_CLAIM_REF
+    policy_ref = deepcopy(difference["closure_policy"])
+    candidate_id = "STATE-CANDIDATE-" + "1" * 64
+    series_id = candidate_claim_evaluation_series_id(
+        difference_id=difference["difference_id"],
+        policy_ref=policy_ref,
+        candidate_id=candidate_id,
+        required_claim_ref=required_claim_ref,
+    )
     return {
         "kind": "candidate_claim_evaluation_binding",
         "binding_id": "CAND-CLAIM-EVAL-" + "0" * 64,
         "difference_id": difference["difference_id"],
-        "policy_ref": deepcopy(difference["closure_policy"]),
-        "candidate_id": "STATE-CANDIDATE-" + "1" * 64,
+        "policy_ref": policy_ref,
+        "candidate_id": candidate_id,
         "candidate_semantic_fingerprint": {
             "profile": "MANOSUBE-STATE-SHA256-0.1",
             "digest": "1" * 64,
@@ -179,8 +195,8 @@ def mandatory_x003_claim_binding(
             "revision": current_state["revision"],
             "fingerprint": current_state["fingerprint"],
         },
-        "required_claim_ref": claim_ref if claim_ref is not None else MANDATORY_X003_CLAIM_REF,
-        "evaluation_series_id": "CAND-CLAIM-SERIES-" + "2" * 64,
+        "required_claim_ref": required_claim_ref,
+        "evaluation_series_id": series_id,
         "evaluation_head_event_ref": {
             "kind": "candidate_claim_evaluation_event",
             "id": "CAND-CLAIM-EVT-" + "3" * 64,
@@ -250,36 +266,40 @@ def mandatory_invariant_bindings(current_state: dict[str, Any]) -> list[dict[str
 
     bindings = []
     for invariant_id in sorted(expected_g19_invariant_ids()):
-        bindings.append(
-            {
-                "kind": "candidate_invariant_evaluation_binding",
-                "binding_id": "CAND-INV-EVAL-" + _hex_digest(f"binding:{invariant_id}").upper(),
-                "candidate_id": "STATE-CANDIDATE-" + "1" * 64,
-                "candidate_semantic_fingerprint": {
-                    "profile": "MANOSUBE-STATE-SHA256-0.1",
-                    "digest": "1" * 64,
-                },
-                "base_state_ref": {
-                    "kind": "state",
-                    "revision": current_state["revision"],
-                    "fingerprint": current_state["fingerprint"],
-                },
-                "invariant_ref": {"kind": "kernel_invariant", "id": invariant_id},
-                "invariant_definition_ref": {
-                    "repository": "manosube/manosube-agent-civilization-os",
-                    "path": "00_KERNEL/KERNEL_INVARIANTS.md",
-                    "invariant_definition_sha256": "sha256:" + _hex_digest(f"digest:{invariant_id}"),
-                },
-                "invariant_evaluation_ref": {
-                    "kind": "invariant_evaluation",
-                    "id": "INV-EVAL-" + _hex_digest(f"eval:{invariant_id}").upper(),
-                },
-                "evaluation_record_fingerprint": "sha256:" + _hex_digest(f"record:{invariant_id}"),
-                "evaluation_result": "PASS",
-                "evaluation_evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
-                "evaluated_at": EVALUATED_AT,
-            }
-        )
+        binding = {
+            "kind": "candidate_invariant_evaluation_binding",
+            "candidate_id": "STATE-CANDIDATE-" + "1" * 64,
+            "candidate_semantic_fingerprint": {
+                "profile": "MANOSUBE-STATE-SHA256-0.1",
+                "digest": "1" * 64,
+            },
+            "base_state_ref": {
+                "kind": "state",
+                "revision": current_state["revision"],
+                "fingerprint": current_state["fingerprint"],
+            },
+            "invariant_ref": {"kind": "kernel_invariant", "id": invariant_id},
+            "invariant_definition_ref": {
+                "repository": "manosube/manosube-agent-civilization-os",
+                "path": "00_KERNEL/KERNEL_INVARIANTS.md",
+                # R2-G19: the real pinned per-invariant definition digest, not a fake
+                # placeholder -- closure.py's G19 now requires an exact match against
+                # invariant_registry.expected_g19_invariant_entries().
+                "invariant_definition_sha256": "sha256:" + V0_1_INVARIANT_DEFINITION_DIGESTS[invariant_id],
+            },
+            "invariant_evaluation_ref": {
+                "kind": "invariant_evaluation",
+                "id": "INV-EVAL-" + _hex_digest(f"eval:{invariant_id}").upper(),
+            },
+            "evaluation_record_fingerprint": "sha256:" + _hex_digest(f"record:{invariant_id}"),
+            "evaluation_result": "PASS",
+            "evaluation_evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+            "evaluated_at": EVALUATED_AT,
+        }
+        # R2-G19: binding_id is now checked against its own content-addressed derivation,
+        # so the fixture must compute the real value rather than a placeholder.
+        binding["binding_id"] = candidate_invariant_evaluation_binding_id(binding)
+        bindings.append(binding)
     return bindings
 
 
@@ -329,11 +349,23 @@ def mandatory_x003_claim_binding_and_event(
     return binding, event
 
 
-def candidate_closure_request(difference: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
-    """A fully wired ``CANDIDATE_CLOSURE``-eligible request: every gate should PASS."""
+def candidate_closure_request(
+    difference: dict[str, Any], policy: dict[str, Any], *, current_state: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """A fully wired ``CANDIDATE_CLOSURE``-eligible request: every gate should PASS.
+
+    *current_state* defaults to a fixture-computed value, for tests that call
+    ``evaluate_closure`` directly. A caller driving this through
+    ``reflow.route.reflow`` must instead pass the *real* Store-derived
+    ``{"revision", "fingerprint"}`` it expects to be loaded and substituted (F2) --
+    G21's own base-State binding check (R2-F8) requires every claim binding's
+    ``base_state_ref`` to equal the State the Evaluation is actually bound to, and that
+    can only be known in advance for a real Store by asking it.
+    """
 
     reobservation_request, after_ref, later_fingerprint = satisfied_reobservation(difference)
-    current_state = {"revision": AFTER_REVISION, "fingerprint": later_fingerprint}
+    if current_state is None:
+        current_state = {"revision": AFTER_REVISION, "fingerprint": later_fingerprint}
     request = base_closure_request(difference, policy)
     claim_binding, claim_event = mandatory_x003_claim_binding_and_event(difference, current_state)
     request.update(

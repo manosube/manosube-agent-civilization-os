@@ -141,6 +141,12 @@ class FileStateStore:
         no reason. A duplicate identity *within this one manifest* is rejected the same as a
         conflict with a prior commit -- a transaction cannot stage two different bodies, or
         even two identical stagings, under one (kind, id).
+
+        Every supplied ``(kind, id)`` -- staged fresh or already canonical -- is recorded in
+        ``manifest.json``, unconditionally: R2-F3B needs this transaction's full declared
+        membership to survive even for keys that needed no fresh file, so a replay can later
+        prove the *set* of records this transaction claims, not only the bodies of the ones
+        it happened to write.
         """
 
         staged: list[tuple[str,str,bytes]] = []
@@ -158,7 +164,23 @@ class FileStateStore:
         journal_records=journal/"records"
         for kind, record_id, canonical in staged:
             atomic_write(journal_records/f"{kind}__{record_id}.json",canonical)
+        atomic_write(journal/"manifest.json",canonical_json_bytes([[kind,record_id] for kind,record_id in sorted(seen)]))
         return staged
+
+    def _transaction_manifest_keys(self, project_id: str, tx: str) -> set[tuple[str,str]]:
+        """Return the exact ``(kind, id)`` set a *committed* transaction's manifest claims.
+
+        Read from the transaction's own recovery journal, which is never deleted -- the
+        same durable record :meth:`recover` already relies on to finish or discard an
+        interrupted commit. Absent for a transaction committed before this manifest tracking
+        existed (or one that admitted no records at all), in which case the set is empty.
+        """
+
+        path=self._project(project_id)/"state"/"recovery"/tx/"manifest.json"
+        if not path.exists(): return set()
+        try: entries=json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError(f"malformed transaction manifest: {tx}") from exc
+        return {(kind,record_id) for kind,record_id in entries}
 
     def _promote_staged_records(self, project_id: str, journal: Path) -> None:
         records_dir=journal/"records"
@@ -179,6 +201,20 @@ class FileStateStore:
             prior=[item for item in events if item["transaction_id"]==tx]
             if prior:
                 if canonical_json_bytes(prior[0])!=canonical_json_bytes(event): raise TransactionConflictError(tx)
+                # R2-F3B: identical replay must also carry the identical record manifest --
+                # exact (kind, id) membership, and exact canonical bytes for every member,
+                # matched against what this transaction actually committed. A changed,
+                # missing, additional or substituted record under the same transaction_id
+                # is the same conflict a divergent event already raises on.
+                supplied_keys: set[tuple[str,str]] = set()
+                for kind, record_id, body in (records or []):
+                    key=(kind,record_id)
+                    if key in supplied_keys: raise RecordConflictError(f"{kind}/{record_id}")
+                    supplied_keys.add(key)
+                    committed=self.resolve_record(project_id,kind,record_id)
+                    if committed is None or canonical_json_bytes(committed)!=canonical_json_bytes(body):
+                        raise TransactionConflictError(tx)
+                if supplied_keys!=self._transaction_manifest_keys(project_id,tx): raise TransactionConflictError(tx)
                 atomic_write(self._current(project_id),canonical_json_bytes(prior[0]["after_state"])); return deepcopy(prior[0]["after_state"])
             if current["state_revision"]!=expected_revision or current["semantic_fingerprint"]!=dict(expected_fingerprint): raise StaleStateError("CAS mismatch")
             state=self._validate_state(project_id,next_state); self._verify_event(project_id,event,current)

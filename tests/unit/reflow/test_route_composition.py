@@ -24,8 +24,11 @@ from tests.state_helpers import SCHEMA_ROOT, initial_state
 
 from manosube_agent_civilization.difference.identity import policy_semantic_fingerprint
 from manosube_agent_civilization.difference.lifecycle import closure_evaluation_binding_errors
+from manosube_agent_civilization.reflow.bookkeeping import apply_reflow_bookkeeping
+from manosube_agent_civilization.reflow.commit import commit_reflow
 from manosube_agent_civilization.reflow.errors import StaleReflowError
-from manosube_agent_civilization.reflow.route import reflow
+from manosube_agent_civilization.reflow.lifecycle import mint_transition_event
+from manosube_agent_civilization.reflow.route import LIFECYCLE_EVENT_KIND, reflow
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
 
@@ -64,6 +67,68 @@ def _blocker_condition(difference: dict) -> dict:
 NEXT_OBSERVATION_REF = {"kind": "next_observation_request", "id": "OBS-REQ-" + "2" * 64}
 
 
+def _reverify_to_verifying(
+    store: FileStateStore,
+    project_id: str,
+    difference: dict,
+    previous: dict,
+    *,
+    event_revision: int,
+    reflow_instant: str,
+) -> dict:
+    """Mint and commit the ``BLOCKED -> VERIFYING`` re-verification event Difference's own
+    engine (not Reflow) owns between a blocker resolving and the next Reflow cycle --
+    ``DIFFERENCE_LIFECYCLE.md``'s own table routes a resolved blocker back through
+    VERIFYING before anything can close. Reflow does not mint this event itself; this
+    stands in for the real external re-verification step so the *next* Reflow call has a
+    real, resolvable, correctly-`to_status`-VERIFYING predecessor to chain from (R2-F1).
+    """
+
+    before_state = previous["committed_state"]
+    decision = {
+        "to_status": "VERIFYING",
+        "reason_code": "BLOCKER_RESOLVED",
+        "reason": "BLOCKER_RESOLVED: external re-verification",
+        "closure_evaluation_ref": None,
+    }
+    event = mint_transition_event(
+        difference=difference,
+        current_status="BLOCKED",
+        previous_event_id=previous["event"]["difference_event_id"],
+        event_revision=event_revision,
+        decision=decision,
+        evaluation={
+            "evaluated_state_revision": before_state["state_revision"],
+            "evaluated_state_fingerprint": before_state["semantic_fingerprint"],
+        },
+        observation_refs=[],
+        evidence_refs=[],
+    )
+    difference_ref = {"kind": "difference", "id": difference["difference_id"]}
+    lifecycle_event_ref = {"kind": LIFECYCLE_EVENT_KIND, "id": event["difference_event_id"]}
+    tx = f"TX-REVERIFY-{event_revision:04d}"
+    next_semantic_state = apply_reflow_bookkeeping(
+        before_state["semantic_state"],
+        difference_ref=difference_ref,
+        to_status="VERIFYING",
+        new_evidence_refs=[],
+        lifecycle_event_ref=lifecycle_event_ref,
+        contradiction_refs=[],
+        transaction_ref={"kind": "state_transition", "id": tx},
+    )
+    committed_state, committed_ref = commit_reflow(
+        store,
+        project_id=project_id,
+        before_project_state=before_state,
+        next_semantic_state=next_semantic_state,
+        transaction_id=tx,
+        evidence_refs=[],
+        reflow_instant=reflow_instant,
+        records=[(LIFECYCLE_EVENT_KIND, event["difference_event_id"], event)],
+    )
+    return {"committed_state": committed_state, "state_transition_ref": committed_ref, "event": event}
+
+
 def _fresh_store(tmp_path: Path) -> tuple[FileStateStore, dict]:
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     project_state = initial_state()
@@ -83,8 +148,6 @@ def test_route_a_blocked_commits_bookkeeping_without_closing(tmp_path: Path) -> 
     result = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=base_closure_request(difference, policy),
@@ -120,8 +183,6 @@ def test_repeated_reflow_calls_each_admit_a_fresh_transaction(tmp_path: Path) ->
     kwargs = dict(
         store=store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=base_closure_request(difference, policy),
@@ -133,10 +194,24 @@ def test_repeated_reflow_calls_each_admit_a_fresh_transaction(tmp_path: Path) ->
         **BLOCKER_KWARGS,
     )
     first = reflow(**kwargs)
-    second = reflow(**{**kwargs, "previous_event_id": first["event"]["difference_event_id"], "event_revision": 2})
+    reverified = _reverify_to_verifying(
+        store, project_state["project_id"], difference, first, event_revision=2, reflow_instant=REFLOW_INSTANT
+    )
+    second_closure_request = dict(base_closure_request(difference, policy))
+    second_closure_request["difference_event_head_ref"] = {
+        "kind": LIFECYCLE_EVENT_KIND, "id": reverified["event"]["difference_event_id"],
+    }
+    second = reflow(
+        **{
+            **kwargs,
+            "closure_request": second_closure_request,
+            "previous_event_id": reverified["event"]["difference_event_id"],
+            "event_revision": 3,
+        }
+    )
 
     assert first["state_transition_ref"] != second["state_transition_ref"]
-    assert second["committed_state"]["state_revision"] == first["committed_state"]["state_revision"] + 1
+    assert second["committed_state"]["state_revision"] == first["committed_state"]["state_revision"] + 2
     assert store.load_current(project_state["project_id"]) == second["committed_state"]
 
 
@@ -145,13 +220,15 @@ def test_route_b_closed_removes_the_difference_from_open_differences(tmp_path: P
     project_state = store_ready_for_closure(store)
     difference = fixture_difference()
     policy = fixture_policy(difference)
-    closure_request = candidate_closure_request(difference, policy)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
 
     result = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=closure_request,
@@ -183,8 +260,6 @@ def test_a_second_reflow_cycle_advances_the_real_store_again(tmp_path: Path) -> 
     first = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=base_closure_request(difference, policy),
@@ -195,23 +270,31 @@ def test_a_second_reflow_cycle_advances_the_real_store_again(tmp_path: Path) -> 
         next_observation_ref=NEXT_OBSERVATION_REF,
         **BLOCKER_KWARGS,
     )
-    closure_request = candidate_closure_request(difference, policy)
     # BLOCKED does not transition directly to CLOSED (DIFFERENCE_LIFECYCLE.md's own table
-    # routes a resolved blocker back through VERIFYING first); this second cycle stands in
-    # for that intervening re-verification and evaluates fresh from VERIFYING again.
+    # routes a resolved blocker back through VERIFYING first); this stands in for that
+    # intervening external re-verification step (R2-F1 now requires it to be real).
+    reverified = _reverify_to_verifying(
+        store, project_state["project_id"], difference, first, event_revision=2, reflow_instant=REFLOW_INSTANT
+    )
+    second_current_state = {
+        "revision": reverified["committed_state"]["state_revision"],
+        "fingerprint": reverified["committed_state"]["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=second_current_state)
+    closure_request["difference_event_head_ref"] = {
+        "kind": LIFECYCLE_EVENT_KIND, "id": reverified["event"]["difference_event_id"],
+    }
     second = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
-        previous_event_id=first["event"]["difference_event_id"],
-        event_revision=2,
+        previous_event_id=reverified["event"]["difference_event_id"],
+        event_revision=3,
         closure_request=closure_request,
         observation_refs=closure_request["reobservation"]["after_observation_refs"],
         reflow_instant="2026-08-30T13:00:00Z",
     )
 
-    assert second["committed_state"]["state_revision"] == first["committed_state"]["state_revision"] + 1
+    assert second["committed_state"]["state_revision"] == first["committed_state"]["state_revision"] + 2
     assert second["decision"]["to_status"] == "CLOSED"
     assert second["committed_state"]["semantic_state"]["open_differences"] == []
 
@@ -229,8 +312,6 @@ def test_a_stale_expected_state_revision_is_refused(tmp_path: Path) -> None:
         reflow(
             store,
             project_id=project_state["project_id"],
-            difference=difference,
-            current_status="VERIFYING",
             previous_event_id=difference["genesis_event_ref"]["id"],
             event_revision=1,
             expected_state_revision=99,
@@ -260,12 +341,14 @@ def test_closing_one_difference_leaves_other_open_differences_untouched(tmp_path
     difference = fixture_difference()
     policy = fixture_policy(difference)
 
-    closure_request = candidate_closure_request(difference, policy)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
     result = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=closure_request,

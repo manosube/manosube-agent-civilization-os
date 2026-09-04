@@ -46,12 +46,14 @@ def _fresh_store(tmp_path: Path) -> tuple[FileStateStore, dict]:
 
 
 def _close(store: FileStateStore, project_state: dict, difference: dict, policy: dict) -> dict:
-    closure_request = candidate_closure_request(difference, policy)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
     return reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=closure_request,

@@ -19,7 +19,11 @@ from tests.state_helpers import SCHEMA_ROOT, initial_state
 
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import STAGES, FileStateStore
-from manosube_agent_civilization.store.errors import RecordConflictError, SimulatedCrash
+from manosube_agent_civilization.store.errors import (
+    RecordConflictError,
+    SimulatedCrash,
+    TransactionConflictError,
+)
 
 PROJECT_ID = "PRJ-0001"
 
@@ -123,6 +127,60 @@ def test_identical_record_replayed_across_transactions_is_not_a_conflict(tmp_pat
     )
     assert committed["state_revision"] == 2
     assert store.resolve_record(PROJECT_ID, "observation_evidence", "EVIDENCE-SHARED") == shared
+
+
+def test_r2f3b_replaying_a_transaction_with_a_divergent_manifest_conflicts(tmp_path: Path) -> None:
+    """R2-F3B: idempotent replay must compare the record manifest, not only the event.
+
+    Before this fix, ``commit()``'s ``prior`` branch compared only the canonical
+    ``state_transition`` bytes -- an identical ``transaction_id``/event pair replayed with
+    a *different* ``records=`` manifest (a substituted, added, or dropped record) was
+    silently accepted as the same idempotent replay, never raising anything.
+    """
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    store.initialize(PROJECT_ID, initial)
+    after, event = _successor(initial)
+    original = {"closure_evaluation_id": "D-CLOSE-EVAL-" + "A" * 64, "result": "SATISFIED"}
+    store.commit(
+        PROJECT_ID, 0, initial["semantic_fingerprint"], after, event,
+        records=[("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, original)],
+    )
+
+    # Same transaction_id, same event -- but a substituted record body under a *different*
+    # identity than the one this transaction actually committed.
+    substituted = {"closure_evaluation_id": "D-CLOSE-EVAL-" + "B" * 64, "result": "SATISFIED"}
+    with pytest.raises(TransactionConflictError):
+        store.commit(
+            PROJECT_ID, 0, initial["semantic_fingerprint"], after, event,
+            records=[("closure_evaluation", "D-CLOSE-EVAL-" + "B" * 64, substituted)],
+        )
+
+    # Same transaction_id, same event -- but the manifest now carries an *additional*
+    # record the original transaction never claimed.
+    extra = {"evidence_id": "EVIDENCE-EXTRA"}
+    with pytest.raises(TransactionConflictError):
+        store.commit(
+            PROJECT_ID, 0, initial["semantic_fingerprint"], after, event,
+            records=[
+                ("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, original),
+                ("observation_evidence", "EVIDENCE-EXTRA", extra),
+            ],
+        )
+
+    # Same transaction_id, same event -- but the manifest now omits the record the
+    # original transaction committed.
+    with pytest.raises(TransactionConflictError):
+        store.commit(PROJECT_ID, 0, initial["semantic_fingerprint"], after, event, records=[])
+
+    # The exact, unmodified replay is still the one thing that succeeds idempotently.
+    replayed = store.commit(
+        PROJECT_ID, 0, initial["semantic_fingerprint"], after, event,
+        records=[("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, original)],
+    )
+    assert replayed["state_revision"] == 1
+    assert store.resolve_record(PROJECT_ID, "closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64) == original
 
 
 @pytest.mark.parametrize("stage", STAGES)

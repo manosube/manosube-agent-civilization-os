@@ -133,8 +133,6 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
     result = reflow(
         store,
         project_id=project_state["project_id"],
-        difference=difference,
-        current_status="VERIFYING",
         previous_event_id=difference["genesis_event_ref"]["id"],
         event_revision=1,
         closure_request=closure_request,

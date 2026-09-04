@@ -42,22 +42,37 @@ of it.
   module supports ``required_observation_scope = null`` only; a non-null Policy fails G9
   closed (``result`` maps to ``BLOCKED``) rather than being silently evaluated by a second
   scope-resolution mechanism this module does not own.
-* G19's full Git blob/commit/tree provenance binding -- resolving
+* G19's live Git commit/tree provenance binding -- resolving
   ``APPLICABLE_V0_1_MANDATORY_INVARIANTS`` against the exact
-  ``kernel_source_ref_evaluated.commit_sha``/``tree_sha`` a candidate was evaluated against,
-  and recomputing each individual invariant's own ``invariant_definition_sha256`` from its
-  own definition block in ``KERNEL_INVARIANTS.md`` sections 1-15 -- is not implemented here.
-  What *is* claimed, via :mod:`.invariant_registry`, is the parsed v0.1 mandatory Invariant
-  **id** union itself (every ``ID`` the ``# 16. v0.1 Mandatory Gate`` fenced block declares,
-  minus the one Policy-excluded post-Reflow id, pinned and drift-tested against the live
-  document the same way :mod:`manosube_agent_civilization.evidence.levels` pins the Evidence
-  Level scale): G19's expected set is always this union, additively merged with whatever
-  Policy ``required_invariants`` also declares, so an empty Policy set can no longer reach
-  G19 ``PASS`` vacuously. A mandatory-only id (one the Policy itself does not also declare)
-  is matched by ``(kind, id)`` and requires a real, present
-  ``invariant_definition_ref.invariant_definition_sha256`` on its binding, but that digest's
-  exact value is not independently cross-checked against a per-invariant block digest --
-  that remains the un-implemented Git-provenance sub-system named above.
+  ``kernel_source_ref_evaluated.commit_sha``/``tree_sha`` a candidate was actually evaluated
+  against, by reading an arbitrary commit's tree at evaluation time -- is not implemented
+  here, for the same "engine reads no filesystem/live Git" reason named throughout this
+  vertical. What *is* claimed in full, via :mod:`.invariant_registry` (R2-G19): the parsed
+  v0.1 mandatory Invariant **id** union (every ``ID`` the ``# 16. v0.1 Mandatory Gate``
+  fenced block declares, minus the one Policy-excluded post-Reflow id P-003), *and* each
+  mandatory id's own per-invariant ``invariant_definition_sha256`` -- recomputed from its
+  own ``## <ID> — <NAME>`` definition block in ``KERNEL_INVARIANTS.md`` sections 4-15, by
+  the same normalize-then-SHA-256 profile section 16's own digest already uses -- both
+  pinned and drift-tested against the live document the same way
+  :mod:`manosube_agent_civilization.evidence.levels` pins the Evidence Level scale. G19's
+  expected set is this full ``(kind, id, invariant_definition_sha256)`` union, additively
+  merged with whatever Policy ``required_invariants`` also declares, so an empty Policy set
+  can no longer reach G19 ``PASS`` vacuously, and a fabricated digest on a mandatory-id
+  binding no longer passes by mere presence. A Policy that separately (and redundantly)
+  names a mandatory id with a *conflicting* digest is a same-ID definition conflict and
+  fails G19 closed rather than silently picking a side. The un-implemented Git-provenance
+  sub-system named above is the only remaining gap: this module cannot prove a binding's
+  digest was computed against the *specific* commit/tree ``kernel_source_ref_evaluated``
+  names, only that it equals the one pinned, currently-deployed registry's own digest.
+  A binding's own ``binding_id`` is verified against its content-addressed derivation too
+  (:func:`.invariant_registry.candidate_invariant_evaluation_binding_id` --
+  ``MANOSUBE-CANDIDATE-EVALUATION-BINDING-SHA256-0.1``): a caller cannot reuse or fabricate
+  a ``binding_id`` inconsistent with the binding's own closed fields. The registry's own
+  identity fields (``registry_digest``/``registry_semantic_fingerprint``/``registry_id``)
+  are exposed by :mod:`.invariant_registry` but have no field on
+  ``candidate_invariant_evaluation_binding`` to bind against today, so G19 does not check
+  a binding against them directly -- what it does check, the exact per-invariant definition
+  digest, is the value the registry itself is built from.
 * G21's mandatory X-003 completion Claim is claimed in full, as before: its identity is a
   closed-form constant fixed by the Policy text, computed once as
   :data:`MANDATORY_X003_CLAIM_REF`, and is always a member of G21's expected set regardless
@@ -97,12 +112,16 @@ from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
 from manosube_agent_civilization.observation.boundary import instant
+from manosube_agent_civilization.observation.identity import observation_identity
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
 
-from .claims import reconstruct_claim_status
+from .claims import resolve_claim_binding
 from .errors import ReflowValidationError
 from .identity import after_state_candidate_id, closure_evaluation_id
-from .invariant_registry import expected_g19_invariant_ids
+from .invariant_registry import (
+    candidate_invariant_evaluation_binding_id,
+    expected_g19_invariant_entries,
+)
 
 SCHEMA_VERSION = "0.1"
 
@@ -286,6 +305,32 @@ def _evaluate_g6_g11(
 _REPRODUCTION_GATES: tuple[str, ...] = ("G7", "G9", "G10", "G13", "G14", "G15", "G16", "G17")
 
 
+def _derive_after_observation_ids(request: dict[str, Any]) -> set[str]:
+    """R2-F4: the real after-state Observation identities the reobservation derivation
+    request actually consumes -- recomputed from the Observation records themselves
+    (:func:`~manosube_agent_civilization.observation.identity.observation_identity`), not
+    read from any caller-declared list. A caller cannot declare an ``after_observation_refs``
+    entry that names an Observation the reproduction did not actually derive from, and
+    cannot omit one it did.
+    """
+
+    bindings = request.get("bindings")
+    if not isinstance(bindings, list) or not bindings:
+        return set()
+    bundle = bindings[0].get("observation_bundle") if isinstance(bindings[0], dict) else None
+    observations = bundle.get("observations") if isinstance(bundle, dict) else None
+    if not isinstance(observations, list):
+        return set()
+    ids: set[str] = set()
+    for observation in observations:
+        if not isinstance(observation, dict):
+            continue
+        identity = observation.get("observation_id")
+        if isinstance(identity, str) and identity and identity == observation_identity(observation):
+            ids.add(identity)
+    return ids
+
+
 def _evaluate_reproduction_gates(
     gates: _Gates,
     difference: dict[str, Any],
@@ -335,6 +380,28 @@ def _evaluate_reproduction_gates(
                 "reobservation derivation request is not bound to exactly this Target Predicate",
             )
         gates.set("G8", "FAIL", "reobservation derivation request binds the wrong Target Predicate")
+        return
+
+    # R2-F4: declared after_observation_refs must name exactly the Observation(s) the
+    # reproduction request actually carries -- never a caller-chosen id substituted in
+    # its place. A forged after_observation_refs entry can no longer sidestep G8's
+    # overlap check by pointing somewhere the real bundle never derived from.
+    derived_after_ids = _derive_after_observation_ids(request)
+    declared_after_ids = {_reference_id(ref) for ref in after_refs}
+    if declared_after_ids != derived_after_ids:
+        for gate in _REPRODUCTION_GATES:
+            gates.set(
+                gate,
+                "FAIL",
+                "after_observation_refs does not exactly match the Observation(s) the "
+                "reobservation derivation request actually consumed",
+            )
+        gates.set(
+            "G8",
+            "FAIL",
+            "after_observation_refs does not exactly match the Observation(s) the "
+            "reobservation derivation request actually consumed",
+        )
         return
 
     try:
@@ -462,46 +529,77 @@ def _evaluate_g12_g18(
 def _evaluate_g19(
     gates: _Gates, policy: dict[str, Any], bindings: list[Any]
 ) -> None:
-    policy_expected = {
-        (item["kind"], item["id"], item["contract_source_ref"]["invariant_definition_sha256"])
-        for item in policy["required_invariants"]
-    }
-    policy_expected_ids = {(kind, invariant_id) for kind, invariant_id, _ in policy_expected}
-    # F5/G19: the v0.1 mandatory Invariant union is additive over whatever the Policy
-    # itself declares -- an empty `required_invariants` no longer reaches G19 PASS
-    # vacuously. A mandatory id the Policy does not also declare is expected by
-    # (kind, id) only; see the module docstring for the exact-digest gap this leaves.
-    mandatory_only_ids = {
-        ("kernel_invariant", invariant_id)
-        for invariant_id in expected_g19_invariant_ids()
-        if ("kernel_invariant", invariant_id) not in policy_expected_ids
-    }
+    # R2-G19: the v0.1 mandatory Invariant union is additive over whatever the Policy
+    # itself declares -- an empty `required_invariants` cannot reach G19 PASS vacuously.
+    # Each mandatory id's own pinned `invariant_definition_sha256` (:mod:`.invariant_registry`)
+    # is now the exact expected digest, not merely a presence check: a fabricated digest on
+    # a mandatory-id binding no longer passes. A Policy that separately (and redundantly)
+    # names a mandatory id in its own `required_invariants` with a *different* digest is a
+    # same-ID definition conflict -- ``repository``/``path`` are already schema-fixed
+    # constants, so the digest is the only field that can disagree -- and fails G19 closed
+    # rather than silently picking one side.
+    policy_by_id: dict[str, tuple[str, str]] = {}
+    for item in policy["required_invariants"]:
+        invariant_id = item["id"]
+        digest = item["contract_source_ref"]["invariant_definition_sha256"]
+        if invariant_id in policy_by_id and policy_by_id[invariant_id][1] != digest:
+            gates.set(
+                "G19",
+                "FAIL",
+                f"Policy required_invariants declares {invariant_id} more than once with "
+                "conflicting invariant_definition_sha256",
+            )
+            return
+        policy_by_id[invariant_id] = (item["kind"], digest)
 
-    got_triples: set[tuple[str, str, str]] = set()
-    got_mandatory_only: set[tuple[str, str]] = set()
+    expected: dict[str, tuple[str, str]] = {}
+    for _, invariant_id, mandatory_digest in expected_g19_invariant_entries():
+        policy_entry = policy_by_id.get(invariant_id)
+        if policy_entry is not None and policy_entry[1] != mandatory_digest:
+            gates.set(
+                "G19",
+                "FAIL",
+                f"required_invariants declares {invariant_id} with an invariant_definition_"
+                "sha256 that conflicts with the v0.1 mandatory registry's own pinned digest",
+            )
+            return
+        expected[invariant_id] = ("kernel_invariant", mandatory_digest)
+    for invariant_id, entry in policy_by_id.items():
+        expected.setdefault(invariant_id, entry)
+
+    got: dict[str, tuple[str, str]] = {}
     for binding in bindings:
+        if binding.get("binding_id") != candidate_invariant_evaluation_binding_id(binding):
+            gates.set(
+                "G19",
+                "FAIL",
+                f"candidate_invariant_evaluation_binding binding_id does not match its own "
+                f"content-addressed derivation: {binding.get('binding_id')}",
+            )
+            return
         if binding.get("evaluation_result") != "PASS":
             gates.set("G19", "FAIL", f"invariant binding is not PASS: {binding.get('binding_id')}")
             return
-        key = (binding["invariant_ref"]["kind"], binding["invariant_ref"]["id"])
-        digest = binding["invariant_definition_ref"]["invariant_definition_sha256"]
-        if key in mandatory_only_ids:
-            if not digest:
-                gates.set(
-                    "G19",
-                    "FAIL",
-                    f"mandatory invariant binding carries no definition digest: {key}",
-                )
-                return
-            got_mandatory_only.add(key)
-        else:
-            got_triples.add((key[0], key[1], digest))
-    if got_triples != policy_expected or got_mandatory_only != mandatory_only_ids:
+        invariant_id = binding["invariant_ref"]["id"]
+        if invariant_id in got:
+            gates.set(
+                "G19",
+                "FAIL",
+                f"more than one candidate_invariant_evaluation_binding for {invariant_id}",
+            )
+            return
+        got[invariant_id] = (
+            binding["invariant_ref"]["kind"],
+            binding["invariant_definition_ref"]["invariant_definition_sha256"],
+        )
+
+    if got != expected:
         gates.set(
             "G19",
             "FAIL",
             "candidate_invariant_evaluation_bindings do not exactly match the expected "
-            "invariant set (Policy required_invariants union the v0.1 mandatory registry)",
+            "invariant set (Policy required_invariants union the v0.1 mandatory registry, "
+            "each by exact (kind, id, invariant_definition_sha256))",
         )
         return
     gates.set("G19", "PASS")
@@ -511,6 +609,7 @@ def _evaluate_g21(
     gates: _Gates,
     policy: dict[str, Any],
     difference_id: str,
+    current_state: dict[str, Any],
     bindings: list[Any],
     claim_events: list[Any],
 ) -> None:
@@ -520,19 +619,29 @@ def _evaluate_g21(
     for binding in bindings:
         claim_id = binding["required_claim_ref"]["id"]
         got_all.add(claim_id)
-        # F8: the binding's own `evaluation_status` is never trusted directly -- the
-        # append-only `candidate_claim_evaluation_event` series is reconstructed from
-        # revision 0 through the binding's declared head, and the *head event's* status
-        # is what counts. An edited, missing, reordered, foreign or non-contiguous series
-        # fails this claim closed rather than falling back to the binding's own claim.
-        try:
-            status = reconstruct_claim_status(
-                claim_events,
-                head_event_id=binding["evaluation_head_event_ref"]["id"],
-                difference_id=difference_id,
-                required_claim_ref=binding["required_claim_ref"],
-                candidate_id=binding["candidate_id"],
+        # R2-F8: "evaluated State" -- the binding's own base_state_ref must be the exact
+        # State this Evaluation is itself bound to, never a stale or foreign one a caller
+        # could otherwise reuse from an earlier candidate.
+        base_state_ref = binding.get("base_state_ref") or {}
+        if (
+            base_state_ref.get("revision") != current_state["revision"]
+            or base_state_ref.get("fingerprint") != current_state["fingerprint"]
+        ):
+            gates.set(
+                "G21",
+                "FAIL",
+                f"claim binding for {claim_id} is not bound to the evaluated State",
             )
+            return
+        # F8/R2-F8: the binding's own `evaluation_status` (and every other field it
+        # asserts) is never trusted directly -- the append-only
+        # `candidate_claim_evaluation_event` series is fully reconstructed and its one
+        # true latest event resolved, and the binding must match that latest event
+        # exactly. A later REVOKED/STALE/non-SATISFIED event supersedes an older
+        # SATISFIED one even if the binding still points at it: that binding no longer
+        # matches the true latest event and fails here, not silently passes.
+        try:
+            chain = resolve_claim_binding(claim_events, binding, difference_id=difference_id)
         except ReflowValidationError as error:
             gates.set(
                 "G21",
@@ -540,7 +649,7 @@ def _evaluate_g21(
                 f"claim evaluation series for {claim_id} did not reconstruct: {error}",
             )
             return
-        if status == "SATISFIED":
+        if chain[0]["evaluation_status"] == "SATISFIED":
             got_satisfied.add(claim_id)
     if got_all != expected:
         gates.set(
@@ -671,7 +780,9 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
     claim_events = require_collection(
         shaped["candidate_claim_evaluation_events"], "candidate_claim_evaluation_events"
     )
-    _evaluate_g21(gates, policy, difference["difference_id"], claim_bindings, claim_events)
+    _evaluate_g21(
+        gates, policy, difference["difference_id"], current_state, claim_bindings, claim_events
+    )
     _evaluate_g22(gates, policy, proposed_terminal_status)
 
     # F5/G18: the *evaluator's* freshness deadline, derived from the oldest admitted

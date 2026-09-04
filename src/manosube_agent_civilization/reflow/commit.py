@@ -17,6 +17,7 @@ from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
 
 from .errors import ReflowValidationError, StaleReflowError
+from .invariant_registry import mandatory_bindings_still_match
 
 SCHEMA_VERSION = "0.1"
 
@@ -83,6 +84,7 @@ def commit_reflow(
     reflow_instant: str,
     records: list[tuple[str, str, dict[str, Any]]] | None = None,
     evaluation_expires_at: str | None = None,
+    mandatory_invariant_bindings: list[dict[str, Any]] | None = None,
     fault: Any | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build the successor State and commit it atomically. Returns ``(state, ref)``.
@@ -112,6 +114,13 @@ def commit_reflow(
     deadline is re-verified against the explicit *reflow_instant* immediately before commit,
     never against a wall clock, so an Evaluation that went stale between being computed and
     being committed cannot still close the Difference it was computed for.
+
+    *mandatory_invariant_bindings* is R2-G19's Atomic-Reflow pre-commit re-resolution: the
+    same ``candidate_invariant_evaluation_bindings`` the Evaluation admitted are re-checked,
+    immediately before commit, against the currently pinned v0.1 mandatory Invariant
+    registry (:func:`.invariant_registry.mandatory_bindings_still_match`). ``None`` or an
+    empty list is a no-op -- a candidate-free (``TERMINAL_POLICY_ONLY``) route never
+    supplies any bindings to begin with.
     """
 
     if before_project_state["project_id"] != project_id:
@@ -120,6 +129,11 @@ def commit_reflow(
         raise StaleReflowError(
             f"reflow_instant {reflow_instant!r} is past the Closure Evaluation's own "
             f"evaluation_expires_at {evaluation_expires_at!r}"
+        )
+    if mandatory_invariant_bindings and not mandatory_bindings_still_match(mandatory_invariant_bindings):
+        raise StaleReflowError(
+            "candidate_invariant_evaluation_bindings no longer match the currently pinned "
+            "v0.1 mandatory Invariant registry at Atomic-Reflow commit time (R2-G19)"
         )
 
     next_project_state, event = build_state_transition(
