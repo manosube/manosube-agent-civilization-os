@@ -19,7 +19,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.reflow_helpers import base_closure_request, fixture_difference, fixture_policy
+from tests.reflow_helpers import (
+    base_closure_request,
+    fixture_difference,
+    fixture_genesis_lifecycle_event,
+    fixture_policy,
+)
 from tests.state_helpers import SCHEMA_ROOT, genesis_source_snapshot_records, initial_state
 
 from manosube_agent_civilization.difference.lifecycle import (
@@ -234,6 +239,7 @@ def test_r12f3_an_ungrounded_specific_cause_is_refused_before_any_state_mutation
             store,
             project_id=project_state["project_id"],
             previous_event_id=difference["genesis_event_ref"]["id"],
+            genesis_lifecycle_event=fixture_genesis_lifecycle_event(difference),
             event_revision=1,
             closure_request=closure_request,
             observation_refs=[],
@@ -278,6 +284,7 @@ def test_r12f3_a_mechanically_grounded_cause_is_admitted_end_to_end(tmp_path: Pa
         store,
         project_id=project_state["project_id"],
         previous_event_id=difference["genesis_event_ref"]["id"],
+        genesis_lifecycle_event=fixture_genesis_lifecycle_event(difference),
         event_revision=1,
         closure_request=closure_request,
         observation_refs=[],

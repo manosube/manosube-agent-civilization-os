@@ -73,8 +73,17 @@ def semantic_state(status: str = "UNKNOWN") -> dict[str, Any]:
         **{
             key: deepcopy(domain)
             for key in (
-                "project", "objective", "repository", "requirements", "code", "tests",
-                "runtime", "infrastructure", "deployment", "authority", "lineage",
+                "project",
+                "objective",
+                "repository",
+                "requirements",
+                "code",
+                "tests",
+                "runtime",
+                "infrastructure",
+                "deployment",
+                "authority",
+                "lineage",
             )
         },
         "open_differences": [],
@@ -166,7 +175,9 @@ def observation_scope(
         },
         "freshness_limit_seconds": 300,
         "cutoff": "2026-08-30T09:00:00Z",
-        "source_snapshot_refs": deepcopy(snapshot_refs) if snapshot_refs else [deepcopy(SNAPSHOT_REF)],
+        "source_snapshot_refs": deepcopy(snapshot_refs)
+        if snapshot_refs
+        else [deepcopy(SNAPSHOT_REF)],
         "enumeration_rule": {"kind": "enumeration_rule", "id": "ENUM-0001"},
         "completion_predicate": {"kind": "completion_predicate", "id": "COMPLETE-0001"},
         "method_ref": deepcopy(METHOD_REF),
@@ -184,6 +195,7 @@ def observation_request(
     negative_claims: list[dict[str, Any]] | None = None,
     collection_complete: bool = True,
     prior_bundle: dict[str, Any] | None = None,
+    observation_evidence_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     request: dict[str, Any] = {
         "project_id": PROJECT_ID,
@@ -220,7 +232,11 @@ def observation_request(
             }
         ],
         "blind_spots": [],
-        "observation_evidence_refs": [deepcopy(EVIDENCE_REF)],
+        "observation_evidence_refs": (
+            deepcopy(observation_evidence_refs)
+            if observation_evidence_refs is not None
+            else [deepcopy(EVIDENCE_REF)]
+        ),
         "negative_evidence_refs": [deepcopy(NEGATIVE_EVIDENCE_REF)],
         "negative_claims": deepcopy(negative_claims) if negative_claims else [],
         "collection_complete": collection_complete,
@@ -481,7 +497,6 @@ def _content_addressed_request(
     return request
 
 
-
 #: A CANDIDATE_CLOSURE evaluation names an Evidence Sufficiency Result. That record is
 #: later-phase provenance the caller supplies; the reference has to resolve inside the
 #: returned bundle, so the helper supplies the record alongside the reference.
@@ -721,7 +736,6 @@ def retained_status_predecessor(
             event["closure_evaluation_ref"] = deepcopy(terminal["closure_evaluation_ref"])
             event["difference_event_id"] = lifecycle_event_id(event)
 
-
     previous = head
     for event in upstream:
         event["previous_event_id"] = previous["difference_event_id"]
@@ -743,8 +757,11 @@ def retained_status_predecessor(
         # from -- the transition it authorises, which for a REOPENED lineage is the CLOSED
         # event, not the last event in the chain.
         authorising = next(
-            (event for event in upstream if event["to_status"] in {"CLOSED", "BLOCKED",
-                                                                   "RETAINED"}),
+            (
+                event
+                for event in upstream
+                if event["to_status"] in {"CLOSED", "BLOCKED", "RETAINED"}
+            ),
             upstream[-1],
         )
         evaluation["difference_event_head_ref"] = {

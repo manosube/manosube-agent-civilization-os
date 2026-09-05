@@ -1,35 +1,39 @@
-"""Phase 8 Vertical Proof -- persisted-reference-graph closure proof (P8-R3-F1, SHUKOU
-Phase 8 final-closure round 3).
+"""Phase 8 Vertical Proof -- persisted-reference-graph closure proof (P8-R3-F1/P8-R4-F1/
+P8-R4-F2/P8-R4-F3, SHUKOU Phase 8 final-closure rounds 3-4).
 
 Round 2 proved the *accepted request graph* carried no placeholder Evidence id
 (``test_vertical_proof.py::test_the_evidence_fixed_point_closes_across_the_full_accepted_
-request_graph``). That is a different claim from this one: a persisted verification
-Observation's own ``observation_evidence_refs`` genuinely named a real, well-formed
-auxiliary Change-Free Verification Evidence id -- but that Evidence was never itself
-persisted, so the reference did not resolve. The before-Observation and post-change
-Observation the two real Evidence records already persisted (Observation Evidence,
-Change-result Evidence) also declared, but never actually adopted.
+request_graph``). Round 3 closed the persisted-graph gap for ``observation``/
+``observation_evidence`` records specifically, but scoped its own closure check to an
+opt-in caller keyword and its own test vocabulary to two record kinds, omitting
+``source_snapshot`` (P8-R4-F2), and left the Difference's own genesis lifecycle event
+unpersisted and therefore unresolvable (P8-R4-F3). Round 4 (SHUKOU's own explicit reversal
+of Round 3's opt-in scoping decision) makes Reference Closure an unconditional invariant of
+every ``reflow()`` call, walked through the single production reference-edge registry
+(:mod:`manosube_agent_civilization.reflow.reference_registry`) this file imports directly
+rather than maintaining a second, duplicate vocabulary
+(``PRODUCTION_AND_TEST_REFERENCE_VOCABULARY_MUST_MATCH=true``,
+``DUPLICATE_TEST_REFERENCE_REGISTRY=false``).
 
 This file proves ``PERSISTED_REFERENCE_GRAPH_CLOSED=true`` /
-``UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0`` over the closed, explicitly-managed reference
-vocabulary this Finding is about: an ``observation`` record's own ``source_snapshot_refs``
-and ``observation_evidence_refs``, and an ``observation_evidence`` record's own
+``UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0`` over every Store-owned reference edge the
+production registry recognizes: an ``observation`` record's own ``source_snapshot_refs``
+and ``observation_evidence_refs``; an ``observation_evidence`` record's own
 ``observed_result.observation_ref``, ``lineage.derived_from`` (``observation``-kind members
-only), and ``lineage.predecessor_evidence_refs``. References this Kernel names but never
-gives a Store-owned producer of its own -- ``difference``, ``change``, ``authority_
-decision``, ``artifact``, ``negative_evidence`` (no second canonical owner is created for
-any of them here, or anywhere else in this vertical) -- are out of this proof's scope, not
-silently treated as resolved; ``closure_evaluation.difference_event_head_ref`` in
-particular names the Difference's own genesis lifecycle event, which this Kernel's own
-design never persists as a separate ``difference_event`` record at genesis time (confirmed
-directly: it does not resolve even before any ``reflow()`` call), and that pre-existing,
-causally-unrelated non-resolution is disclosed here rather than folded into this proof's own
-claim.
+only), and ``lineage.predecessor_evidence_refs``; a ``closure_evaluation`` record's own
+``difference_event_head_ref``; and a ``difference_event`` record's own
+``previous_event_id`` (including the Difference's own genesis lifecycle event, now
+atomically persisted alongside the first real Reflow-minted event, P8-R4-F3). References
+this Kernel names but never gives a Store-owned producer of its own -- ``difference``,
+``change``, ``authority_decision``, ``artifact``, ``negative_evidence`` (no second
+canonical owner is created for any of them here, or anywhere else in this vertical) --
+remain out of this proof's scope, not silently treated as resolved.
 
 The recognition rule for a reference is structural, not a text search over key names: a
 dict shaped like ``common/reference.schema.json`` (``kind``+``id``, both non-empty
-strings), with ``kind`` restricted to :data:`STORE_OWNED_KINDS_IN_SCOPE` -- explicit and
-reviewed, never "any key ending in ``_ref``/``_refs``".
+strings), with ``kind`` restricted to the production registry's own
+:data:`~manosube_agent_civilization.reflow.reference_registry.STORE_OWNED_REFERENCE_KINDS`
+-- explicit and reviewed, never "any key ending in ``_ref``/``_refs``".
 
 Idempotent replay over this Finding's own larger record set (SHUKOU's required item 12) is
 not duplicated here: ``test_vertical_proof_negative_routes.py::test_p8r1f3_the_full_
@@ -53,13 +57,13 @@ from tests.natural_cycle.proof import assemble_vertical_proof_route, run_vertica
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.reflow.errors import ReflowValidationError
+from manosube_agent_civilization.reflow.reference_registry import (
+    STORE_OWNED_REFERENCE_KINDS,
+    reference_edges,
+)
 from manosube_agent_civilization.reflow.route import reflow
 from manosube_agent_civilization.store import STAGES, FileStateStore
 from manosube_agent_civilization.store.errors import CorruptStoreError, SimulatedCrash
-
-#: The two record kinds this Finding's own reference-closure claim is about, and the
-#: only kinds :data:`STORE_OWNED_KINDS_IN_SCOPE` below ever names as a reference *target*.
-STORE_OWNED_KINDS_IN_SCOPE = frozenset({"observation", "observation_evidence"})
 
 
 def _manifest_records(store: Any, project_id: str) -> list[tuple[str, str, dict[str, Any]]]:
@@ -78,49 +82,17 @@ def _manifest_records(store: Any, project_id: str) -> list[tuple[str, str, dict[
     return records
 
 
-def _in_scope_reference_edges(kind: str, body: dict[str, Any]) -> list[tuple[str, str]]:
-    """The explicit, per-kind reference edges this closure proof recognizes -- never a
-    fuzzy text search over key names. Only ``observation`` and ``observation_evidence``
-    records are inspected, and only their own known reference-bearing fields."""
-
-    edges: list[tuple[str, str]] = []
-
-    def _edge(ref: Any) -> None:
-        if (
-            isinstance(ref, dict)
-            and isinstance(ref.get("kind"), str)
-            and ref["kind"] in STORE_OWNED_KINDS_IN_SCOPE
-            and isinstance(ref.get("id"), str)
-            and ref["id"]
-        ):
-            edges.append((ref["kind"], ref["id"]))
-
-    if kind == "observation":
-        for ref in body.get("source_snapshot_refs") or []:
-            _edge(ref)
-        for ref in body.get("observation_evidence_refs") or []:
-            _edge(ref)
-    elif kind == "observation_evidence":
-        observed_result = body.get("observed_result") or {}
-        _edge(observed_result.get("observation_ref"))
-        lineage = body.get("lineage") or {}
-        for ref in (lineage.get("derived_from") or {}).get("members") or []:
-            _edge(ref)
-        for ref in (lineage.get("predecessor_evidence_refs") or {}).get("members") or []:
-            _edge(ref)
-    return edges
-
-
 def _closure_report(store: Any, project_id: str) -> dict[str, Any]:
-    """Walk every manifest record's own in-scope reference edges and resolve each --
-    ``PLACEHOLDER_STRING_ABSENCE`` alone is not completion; every real, in-scope reference
-    this committed graph declares must resolve through the public Store API."""
+    """Walk every manifest record's own in-scope reference edges (via the production
+    registry, :func:`reference_edges`) and resolve each -- ``PLACEHOLDER_STRING_ABSENCE``
+    alone is not completion; every real, in-scope reference this committed graph declares
+    must resolve through the public Store API."""
 
     manifest_records = _manifest_records(store, project_id)
     edges_checked: set[tuple[str, str]] = set()
     unresolved: list[tuple[str, str, str, str]] = []
     for kind, record_id, body in manifest_records:
-        for ref_kind, ref_id in _in_scope_reference_edges(kind, body):
+        for ref_kind, ref_id in reference_edges(kind, body):
             edges_checked.add((ref_kind, ref_id))
             if store.resolve_record(project_id, ref_kind, ref_id) is None:
                 unresolved.append((kind, record_id, ref_kind, ref_id))
@@ -147,7 +119,19 @@ def test_the_full_persisted_reference_graph_closes_with_zero_unresolved_edges(
     assert report["unresolved"] == []
     assert len(report["edges_checked"]) > 0
     kinds_seen = {kind for kind, _, _ in report["manifest_records"]}
-    assert {"observation", "observation_evidence"} <= kinds_seen
+    assert {
+        "observation",
+        "observation_evidence",
+        "closure_evaluation",
+        "difference_event",
+    } <= kinds_seen
+    # P8-R4-F2: the production registry actually walks source_snapshot edges now -- a
+    # vacuously-passing empty scan (no source_snapshot-kind edge ever checked) would not
+    # prove anything about them.
+    assert any(ref_kind == "source_snapshot" for ref_kind, _ in report["edges_checked"])
+    # P8-R4-F1: the registry-driven walk also covers a difference_event's own
+    # previous_event_id -- the genesis event's own resolvability, in particular.
+    assert any(ref_kind == "difference_event" for ref_kind, _ in report["edges_checked"])
 
 
 def test_the_verification_observation_resolves_its_own_auxiliary_evidence(
@@ -253,7 +237,7 @@ def test_missing_auxiliary_verification_evidence_fails_closed(tmp_path: Path) ->
     assembly = assemble_vertical_proof_route(tmp_path)
     kwargs = dict(assembly["reflow_kwargs"])
     kwargs["provenance_only_evidence_requests"] = []
-    with pytest.raises(ReflowValidationError, match="observation_evidence_refs"):
+    with pytest.raises(ReflowValidationError, match="unresolved reference"):
         reflow(assembly["store"], **kwargs)
 
     fresh = FileStateStore(assembly["store"].root, schema_root=SCHEMA_ROOT)
@@ -442,3 +426,234 @@ def test_a_real_non_closed_route_still_persists_and_reconstructs(tmp_path: Path)
 
     fresh = FileStateStore(assembly["store"].root, schema_root=SCHEMA_ROOT)
     assert fresh.reconstruct(fx.PROJECT_ID) == fresh.load_current(fx.PROJECT_ID)
+
+
+# --- P8-R4-F1: unconditional Reference Closure (no opt-in) ----------------------------------- #
+
+
+def test_reference_closure_is_unconditional_no_opt_in_keyword_needed(tmp_path: Path) -> None:
+    """P8-R4-F1 item: omitting ``provenance_only_evidence_requests``/``auxiliary_source_
+    snapshots`` entirely (never opting in at all) still fails the route closed on the same
+    unresolved auxiliary references -- ``REFERENCE_CLOSURE_OPT_IN_ALLOWED=false``: the
+    invariant holds by default, not only when a caller opts into it by passing the keyword."""
+
+    assembly = assemble_vertical_proof_route(tmp_path)
+    kwargs = dict(assembly["reflow_kwargs"])
+    kwargs.pop("provenance_only_evidence_requests", None)
+    kwargs.pop("auxiliary_source_snapshots", None)
+    with pytest.raises(ReflowValidationError, match="unresolved"):
+        reflow(assembly["store"], **kwargs)
+
+
+def test_reference_closure_still_holds_with_an_explicitly_empty_provenance_list(
+    tmp_path: Path,
+) -> None:
+    """An emptied ``provenance_only_evidence_requests=[]`` does not weaken the invariant --
+    the same unresolved-reference refusal fires whether the keyword is omitted or passed
+    empty, proving the gate is not merely toggled by the keyword's own presence."""
+
+    assembly = assemble_vertical_proof_route(tmp_path)
+    kwargs = dict(assembly["reflow_kwargs"])
+    kwargs["provenance_only_evidence_requests"] = []
+    with pytest.raises(ReflowValidationError, match="unresolved reference"):
+        reflow(assembly["store"], **kwargs)
+
+
+# --- P8-R4-F2: Source Snapshot reference closure ---------------------------------------------- #
+
+
+def test_source_snapshot_edges_are_actually_emitted_by_the_production_registry() -> None:
+    """P8-R4-F2 item: the production registry recognizes ``source_snapshot`` as a
+    Store-owned reference target and actually emits an edge for an observation's own
+    ``source_snapshot_refs`` entry -- proving the registry does not vacuously skip the
+    kind Round 3's own test-local vocabulary omitted."""
+
+    assert "source_snapshot" in STORE_OWNED_REFERENCE_KINDS
+    observation_body = {
+        "source_snapshot_refs": [{"kind": "source_snapshot", "id": "SNAP-REAL-0001"}],
+        "observation_evidence_refs": [],
+    }
+    edges = reference_edges("observation", observation_body)
+    assert ("source_snapshot", "SNAP-REAL-0001") in edges
+
+
+def test_missing_source_snapshot_fails_closed_before_any_write(tmp_path: Path) -> None:
+    """P8-R4-F2 item: removing the auxiliary before-Observation's own required Source
+    Snapshot from the pool fails the whole route closed -- the production
+    ``except ObservationError: continue`` pattern this Finding forbids no longer silently
+    admits an unresolved Source Snapshot reference."""
+
+    assembly = assemble_vertical_proof_route(tmp_path)
+    kwargs = dict(assembly["reflow_kwargs"])
+    kwargs["auxiliary_source_snapshots"] = []
+    with pytest.raises(ReflowValidationError):
+        reflow(assembly["store"], **kwargs)
+
+    fresh = FileStateStore(assembly["store"].root, schema_root=SCHEMA_ROOT)
+    current = fresh.load_current(fx.PROJECT_ID)
+    assert current["state_revision"] == assembly["genesis_state"]["state_revision"]
+    assert fresh.reconstruct(fx.PROJECT_ID) == current
+
+
+# --- P8-R4-F3: Difference genesis-event reference closure ------------------------------------- #
+
+
+def test_the_genesis_lifecycle_event_resolves_from_a_fresh_store(tmp_path: Path) -> None:
+    """P8-R4-F3 item: the Difference's own genesis lifecycle event (revision 0) -- named by
+    ``difference.genesis_event_ref``/``closure_evaluation.difference_event_head_ref`` on the
+    very first Reflow cycle -- is persisted, and a brand-new :class:`FileStateStore` over
+    only the persisted backend can resolve it."""
+
+    result = run_vertical_proof(tmp_path)
+    genesis_ref = result["identity_ledger"]["difference_lifecycle_head_ref"]
+    fresh = FileStateStore(result["store"].root, schema_root=SCHEMA_ROOT)
+    genesis_event = fresh.resolve_record(fx.PROJECT_ID, "difference_event", genesis_ref["id"])
+    assert genesis_event is not None
+    assert genesis_event["event_revision"] == 0
+    assert genesis_event["previous_event_id"] is None
+    assert genesis_event["difference_id"] == result["difference"]["difference_id"]
+
+
+def test_the_closure_evaluations_difference_event_head_ref_resolves(tmp_path: Path) -> None:
+    """P8-R4-F3 item: the persisted ``closure_evaluation`` record's own
+    ``difference_event_head_ref`` -- the genesis event, on the first cycle -- resolves
+    through the public Store API, not only through the Evaluation's own bare claim."""
+
+    result = run_vertical_proof(tmp_path)
+    store = result["store"]
+    closure_evaluation_id = result["reflow_result"]["evaluation"]["closure_evaluation_id"]
+    closure_evaluation = store.resolve_record(
+        fx.PROJECT_ID, "closure_evaluation", closure_evaluation_id
+    )
+    assert closure_evaluation is not None
+    head_ref = closure_evaluation["difference_event_head_ref"]
+    assert store.resolve_record(fx.PROJECT_ID, head_ref["kind"], head_ref["id"]) is not None
+    assert head_ref["id"] == result["identity_ledger"]["difference_lifecycle_head_ref"]["id"]
+
+
+def test_missing_genesis_lifecycle_event_fails_closed_before_any_write(tmp_path: Path) -> None:
+    """P8-R4-F3 item: omitting ``genesis_lifecycle_event`` on the very first Reflow cycle
+    fails the whole route closed (its id can never otherwise resolve), never a silently
+    unresolvable ``difference_event_head_ref``/genesis reference."""
+
+    assembly = assemble_vertical_proof_route(tmp_path)
+    kwargs = dict(assembly["reflow_kwargs"])
+    kwargs.pop("genesis_lifecycle_event", None)
+    with pytest.raises(ReflowValidationError, match="unresolved reference"):
+        reflow(assembly["store"], **kwargs)
+
+    fresh = FileStateStore(assembly["store"].root, schema_root=SCHEMA_ROOT)
+    current = fresh.load_current(fx.PROJECT_ID)
+    assert current["state_revision"] == assembly["genesis_state"]["state_revision"]
+    assert fresh.reconstruct(fx.PROJECT_ID) == current
+
+
+def test_a_genesis_event_with_a_tampered_body_fails_its_own_content_address(
+    tmp_path: Path,
+) -> None:
+    """P8-R4-F3 item: a ``genesis_lifecycle_event`` whose body was altered after the real
+    Difference owner produced it (so it no longer reproduces its own claimed id) is refused
+    -- ``CALLER_SUPPLIED_CANONICAL_BODY_MAY_BE_TRUSTED=false``."""
+
+    assembly = assemble_vertical_proof_route(tmp_path)
+    kwargs = dict(assembly["reflow_kwargs"])
+    tampered = dict(kwargs["genesis_lifecycle_event"])
+    tampered_fingerprint = dict(tampered["state_fingerprint_evaluated"])
+    tampered_fingerprint["digest"] = "0" * 64
+    tampered["state_fingerprint_evaluated"] = tampered_fingerprint
+    kwargs["genesis_lifecycle_event"] = tampered
+    with pytest.raises(ReflowValidationError, match="content address"):
+        reflow(assembly["store"], **kwargs)
+
+    fresh = FileStateStore(assembly["store"].root, schema_root=SCHEMA_ROOT)
+    current = fresh.load_current(fx.PROJECT_ID)
+    assert current["state_revision"] == assembly["genesis_state"]["state_revision"]
+
+
+def test_a_genesis_event_naming_a_different_id_than_genesis_event_ref_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """P8-R4-F3 item: a *self-consistent* genesis event (its own content address recomputes
+    correctly) that nonetheless does not match ``difference.genesis_event_ref.id`` is still
+    refused -- a real, well-formed body is not sufficient if it is not *this* Difference's
+    own genesis event."""
+
+    assembly = assemble_vertical_proof_route(tmp_path)
+    kwargs = dict(assembly["reflow_kwargs"])
+    genesis_event = dict(kwargs["genesis_lifecycle_event"])
+    tampered_fingerprint = dict(genesis_event["state_fingerprint_evaluated"])
+    tampered_fingerprint["digest"] = "0" * 64
+    genesis_event["state_fingerprint_evaluated"] = tampered_fingerprint
+    from manosube_agent_civilization.difference.identity import lifecycle_event_id
+
+    genesis_event["difference_event_id"] = lifecycle_event_id(genesis_event)
+    kwargs["genesis_lifecycle_event"] = genesis_event
+    with pytest.raises(ReflowValidationError, match="genesis_event_ref"):
+        reflow(assembly["store"], **kwargs)
+
+    fresh = FileStateStore(assembly["store"].root, schema_root=SCHEMA_ROOT)
+    current = fresh.load_current(fx.PROJECT_ID)
+    assert current["state_revision"] == assembly["genesis_state"]["state_revision"]
+
+
+def test_genesis_event_survives_replaying_the_same_committed_transaction(
+    tmp_path: Path,
+) -> None:
+    """P8-R4-F3 item: replaying the exact committed transaction id with the identical
+    canonical inputs (the Store's own idempotent-commit contract, ``FileStateStore.commit``)
+    is a true no-op over the manifest that includes the genesis event -- never a duplicate
+    or a second, diverging body under the same id."""
+
+    result = run_vertical_proof(tmp_path)
+    store = result["store"]
+    genesis_ref = result["identity_ledger"]["difference_lifecycle_head_ref"]
+    tx_id = result["reflow_result"]["state_transition_ref"]["id"]
+
+    tx_root = store.root / "projects" / fx.PROJECT_ID / "state" / "recovery" / tx_id
+    event = json.loads((tx_root / "event.json").read_text())
+    manifest = [tuple(item) for item in json.loads((tx_root / "manifest.json").read_text())]
+    records = [
+        (kind, record_id, store.resolve_record(fx.PROJECT_ID, kind, record_id))
+        for kind, record_id in manifest
+    ]
+
+    before_current = store.load_current(fx.PROJECT_ID)
+    replayed = store.commit(
+        fx.PROJECT_ID,
+        event["from_revision"],
+        event["before_fingerprint"],
+        event["after_state"],
+        event,
+        records=records,
+    )
+    assert replayed == before_current
+    assert store.resolve_record(fx.PROJECT_ID, "difference_event", genesis_ref["id"]) is not None
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_crash_at_every_stage_never_exposes_a_partial_genesis_or_revision_one_event(
+    stage: str, tmp_path: Path
+) -> None:
+    """P8-R4-F3 item: every crash-injection stage converges to exactly genesis (no new
+    records) or the one fully-closed successor -- never a State advanced with only the
+    genesis event visible and the revision-1 event missing, or vice versa (they are staged
+    and promoted in the same atomic Store transaction)."""
+
+    from tests.natural_cycle.proof import build_store
+
+    def fault(current: str, _stage: str = stage) -> None:
+        if current == _stage:
+            raise SimulatedCrash(_stage)
+
+    with pytest.raises(SimulatedCrash):
+        run_vertical_proof(tmp_path, fault=fault)
+
+    store = build_store(tmp_path)
+    store.recover(fx.PROJECT_ID)
+    current = store.load_current(fx.PROJECT_ID)
+    if current["state_revision"] == 0:
+        return
+    report = _closure_report(store, fx.PROJECT_ID)
+    assert report["unresolved"] == []
+    kinds_seen = {kind for kind, _, _ in report["manifest_records"]}
+    assert "difference_event" in kinds_seen

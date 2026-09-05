@@ -25,8 +25,11 @@ from tests.difference_helpers import (
 )
 from tests.evidence_helpers import (
     AFTER_REVISION,
+    after_observation_request,
+    before_observation_request,
     change_free_verification_evidence_request,
     closure_policy,
+    difference_request,
     evidenced_difference,
     observation_evidence_request,
     sufficiency_request,
@@ -39,6 +42,7 @@ from tests.state_helpers import (
     real_kernel_source_snapshot,
 )
 
+from manosube_agent_civilization.difference import derive_differences
 from manosube_agent_civilization.difference.completion import (
     CANDIDATE_COMPLETION_RECORD_KIND,
     MANDATORY_X003_CLAIM_DESCRIPTOR,
@@ -117,11 +121,17 @@ def _advanced_project_state(
         successor, schema_root=SCHEMA_ROOT
     ).as_dict()
     event = {
-        "schema_version": "0.1", "transaction_id": tx, "event_type": "TRANSITION",
-        "project_id": successor["project_id"], "from_revision": state["state_revision"],
-        "to_revision": successor["state_revision"], "before_fingerprint": state["semantic_fingerprint"],
-        "after_fingerprint": successor["semantic_fingerprint"], "after_state": successor,
-        "evidence_refs": [], "committed_at": "2026-08-30T09:00:00Z",
+        "schema_version": "0.1",
+        "transaction_id": tx,
+        "event_type": "TRANSITION",
+        "project_id": successor["project_id"],
+        "from_revision": state["state_revision"],
+        "to_revision": successor["state_revision"],
+        "before_fingerprint": state["semantic_fingerprint"],
+        "after_fingerprint": successor["semantic_fingerprint"],
+        "after_state": successor,
+        "evidence_refs": [],
+        "committed_at": "2026-08-30T09:00:00Z",
     }
     return successor, event
 
@@ -184,6 +194,66 @@ def fixture_difference() -> dict[str, Any]:
     """The canonical NOT-READY Difference every closure test evaluates against."""
 
     return evidenced_difference()
+
+
+def fixture_genesis_lifecycle_event(difference: dict[str, Any]) -> dict[str, Any]:
+    """P8-R4-F3 (SHUKOU Phase 8 final-closure round 4): the real genesis lifecycle event
+    (revision 0) the Difference owner already produced when deriving *difference* --
+    re-derived fresh through the identical, deterministic, content-addressed request
+    :func:`~tests.evidence_helpers.evidenced_difference` itself uses internally, rather than
+    cached or hand-built, so this always reproduces the exact same body `difference`'s own
+    ``genesis_event_ref`` names. For a caller that already has *difference* (built via
+    :func:`fixture_difference`/:func:`~tests.evidence_helpers.evidenced_difference`) and just
+    needs the matching real genesis event to pass as ``reflow()``'s own
+    ``genesis_lifecycle_event`` on the very first Reflow cycle for it.
+    """
+
+    request = difference_request()
+    request["bindings"][0]["observation_bundle"] = observe(before_observation_request())
+    result = derive_differences(request)
+    return next(
+        event
+        for event in result["events"]
+        if event["difference_event_id"] == difference["genesis_event_ref"]["id"]
+    )
+
+
+def _real_admissible_before_observation() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return ``(observation_request, difference_request)`` for a "before" Observation this
+    module admits through ``reflow.route.reflow`` -- built against the real, content-
+    addressed ``REAL_SNAPSHOT_REF`` and :func:`fixture_difference`'s own matching scope
+    (never the widely-shared, permanently-opaque default ``SNAPSHOT_REF``/scope pair), and
+    with a real, resolvable ``observation_evidence_refs`` entry rather than the widely-
+    shared, permanently-opaque ``EVID-0001`` placeholder.
+
+    P8-R4 (SHUKOU Phase 8 final-closure round 4): ``observation_evidence_refs`` is excluded
+    from an Observation's own content-addressed identity (the same fact ``tests/fixtures/
+    vertical_proof.py`` and P8-R1-F1 already rely on) -- confirmed directly here too: a
+    provisional Observation is observed first, the real Evidence this same request derives
+    from it is computed, and the corrected request -- naming that Evidence's own real id as
+    its own ``observation_evidence_refs`` entry -- is what this function returns. Once both
+    this Observation and the Evidence request built from it are admitted into the same
+    Reflow transaction (as they always are together here), the Observation's own declared
+    reference resolves against that same transaction's own manifest -- no second,
+    hand-maintained bootstrap record required.
+    """
+
+    real_difference_request = difference_request(
+        scope=observation_scope(snapshot_refs=[REAL_SNAPSHOT_REF])
+    )
+    provisional = before_observation_request(snapshot_refs=[REAL_SNAPSHOT_REF])
+    provisional_evidence = derive_evidence(
+        observation_evidence_request(
+            observation=provisional, difference=deepcopy(real_difference_request)
+        )
+    )
+    corrected = before_observation_request(
+        snapshot_refs=[REAL_SNAPSHOT_REF],
+        observation_evidence_refs=[
+            {"kind": "observation_evidence", "id": provisional_evidence["evidence_id"]}
+        ],
+    )
+    return corrected, real_difference_request
 
 
 def fixture_policy(difference: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -358,9 +428,7 @@ def real_terminal_reason_evidence_fields() -> tuple[dict[str, Any], str]:
     return request, derive_evidence(request)["evidence_id"]
 
 
-def base_closure_request(
-    difference: dict[str, Any], policy: dict[str, Any]
-) -> dict[str, Any]:
+def base_closure_request(difference: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     """A candidate-free (``TERMINAL_POLICY_ONLY``-shaped) request every test starts from.
 
     R9-F2: ``kernel_source_ref``/``kernel_source_witness``/``source_snapshots`` now default
@@ -438,7 +506,10 @@ def _hex_digest(seed: str) -> str:
 #: caller's Invariant Evaluation record pool and its bindings always agree even when neither
 #: passes a real Candidate (R6-F3).
 _PLACEHOLDER_CANDIDATE_ID = "STATE-CANDIDATE-" + "1" * 64
-_PLACEHOLDER_CANDIDATE_SEMANTIC_FINGERPRINT = {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "1" * 64}
+_PLACEHOLDER_CANDIDATE_SEMANTIC_FINGERPRINT = {
+    "profile": "MANOSUBE-STATE-SHA256-0.1",
+    "digest": "1" * 64,
+}
 
 
 def mandatory_invariant_evaluation(
@@ -613,7 +684,8 @@ def mandatory_invariant_bindings(
                 # R2-G19: the real pinned per-invariant definition digest, not a fake
                 # placeholder -- closure.py's G19 now requires an exact match against
                 # invariant_registry.expected_g19_invariant_entries().
-                "invariant_definition_sha256": "sha256:" + V0_1_INVARIANT_DEFINITION_DIGESTS[invariant_id],
+                "invariant_definition_sha256": "sha256:"
+                + V0_1_INVARIANT_DEFINITION_DIGESTS[invariant_id],
             },
             "invariant_evaluation_ref": {
                 "kind": "invariant_evaluation",
@@ -750,15 +822,30 @@ def candidate_closure_request(
     # own defaults deterministically re-derive the exact same Difference `difference` is
     # (both are `evidenced_difference()`), so this Evidence's difference_ref binds to
     # exactly the Difference this closure_request is for, by construction.
-    change_free_evidence_request = change_free_verification_evidence_request()
+    #
+    # P8-R4 (SHUKOU Phase 8 final-closure round 4): its own verification Observation is
+    # built with the real, content-addressed ``REAL_SNAPSHOT_REF`` (not the widely-shared,
+    # permanently-opaque default ``SNAPSHOT_REF``) -- P8-R3-F1 already admits this
+    # Observation into the Store (as the change-free Evidence's own named verification
+    # Observation), and the unconditional Reference Closure invariant (P8-R4-F1) now
+    # requires its declared ``source_snapshot_refs`` to actually resolve before commit.
+    change_free_before_observation, change_free_difference_request = (
+        _real_admissible_before_observation()
+    )
+    change_free_evidence_request = change_free_verification_evidence_request(
+        observation=change_free_before_observation,
+        difference=deepcopy(change_free_difference_request),
+        verification_observation=after_observation_request(snapshot_refs=[REAL_SNAPSHOT_REF]),
+    )
     change_free_evidence_record = derive_evidence(change_free_evidence_request)
     # R8-F1: the real Sufficiency result this request's own `evidence_sufficiency_request`
     # will independently re-derive at evaluation time -- `evaluate_sufficiency` is a pure
     # function of its request, so computing it here reproduces exactly what
     # `evaluate_closure` computes internally, not a fixture guess.
-    sufficiency_wrapper = evaluate_sufficiency(
-        sufficiency_request(difference_id=difference["difference_id"], policy=policy)
+    evidence_sufficiency_request = sufficiency_request(
+        difference_id=difference["difference_id"], policy=policy
     )
+    sufficiency_wrapper = evaluate_sufficiency(evidence_sufficiency_request)
     sufficiency = sufficiency_wrapper["evidence_sufficiency_result"]
     blocking_contradictions = [
         item for item in material_contradictions if item.get("impact") == "MATERIAL"
@@ -797,7 +884,9 @@ def candidate_closure_request(
         after_state_candidate=after_state_candidate,
         verification_results=verification_results,
     )
-    invariant_evaluation_refs = [binding["invariant_evaluation_ref"] for binding in invariant_bindings]
+    invariant_evaluation_refs = [
+        binding["invariant_evaluation_ref"] for binding in invariant_bindings
+    ]
     claim_binding, claim_event = mandatory_x003_claim_binding_and_event(
         difference,
         current_state,
@@ -821,9 +910,7 @@ def candidate_closure_request(
                 "derivation_request": reobservation_request,
                 "after_observation_refs": [after_ref],
             },
-            "evidence_sufficiency_request": sufficiency_request(
-                difference_id=difference["difference_id"], policy=policy
-            ),
+            "evidence_sufficiency_request": evidence_sufficiency_request,
             "after_state_semantic_state": after_semantic_state,
             "source_snapshot_refs": source_snapshot_refs,
             # R9-F2: the real Kernel Source Snapshot is appended (never replaces index 0,

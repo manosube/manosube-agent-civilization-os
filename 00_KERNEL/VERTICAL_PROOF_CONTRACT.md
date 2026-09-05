@@ -15,6 +15,7 @@ ADOPTED_BY=SHUKOU_ADOPTION_ADOPT_PHASE_8_VERTICAL_PROOF_ISSUE_41
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_STRUCTURAL_REVIEW_ROUND_1
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_STRUCTURAL_REVIEW_ROUND_2
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_3
+CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4
 ```
 
 ## 0. Revision History
@@ -84,6 +85,62 @@ Round 3 (SHUKOU Phase 8 final-closure round 3, adopted): 構造参謀's independ
             vocabulary: an observation record's own source_snapshot_refs/observation_
             evidence_refs, and an observation_evidence record's own observed_result.
             observation_ref/lineage.derived_from/lineage.predecessor_evidence_refs (§4, §7).
+
+Round 4 (SHUKOU Phase 8 final-closure round 4, adopted): 構造参謀's independent
+  re-observation of PR #42's real HEAD after Round 3 found three further findings, adopted
+  directly by SHUKOU (again not auto-adopted bot output -- BOT_FINDING_AUTO_ADOPTION=false,
+  INDEPENDENT_STRUCTURAL_REPRODUCTION=true), two of which explicitly reverse a Round 3
+  scope decision. Reproduced and corrected in place, on the same PR/branch:
+
+  P8-R4-F1  Round 3's own persisted-reference-graph closure check was gated on a caller
+            opting in (provenance_only_evidence_requests is not None) -- a caller who never
+            opted in could still commit a persisted observation/observation_evidence record
+            whose own declared reference silently never resolved. SHUKOU explicitly
+            reverses this scoping decision: Reference Closure is now an unconditional
+            reflow() invariant (REFERENCE_CLOSURE_OPT_IN_ALLOWED=false), walked through one
+            production reference-edge registry (reflow/reference_registry.py) every check
+            and every test now imports directly rather than each maintaining its own
+            vocabulary (§4, §7).
+  P8-R4-F2  Round 3's own test vocabulary omitted source_snapshot, so the closure test
+            never actually walked/validated a Source Snapshot reference edge despite
+            documentation claiming otherwise, and production's own source_snapshot
+            resolution failure silently `continue`d rather than failing closed. Both
+            closed: the production registry recognizes source_snapshot as a Store-owned
+            reference target, and an unresolvable source_snapshot_refs entry now fails
+            closed with a typed error before any write (§4, §7).
+  P8-R4-F3  The Difference's own genesis lifecycle event (revision 0) was never persisted
+            as a Store-resolvable difference_event record -- Round 3's own contract text
+            disclosed this as a pre-existing, out-of-scope non-claim rather than fixing it.
+            SHUKOU explicitly withdraws that non-claim: the genesis event (the real
+            Difference owner's own already-produced output, re-verified against its own
+            content address, never re-minted by Reflow) is now atomically persisted
+            alongside the first real Reflow-minted event, in the same Store transaction
+            (§4, §7).
+
+  Disclosed alongside the above (not a Finding, a scope-boundary report): the "correction
+  of directly-related Phase 5-7 fixtures" item this round's own adoption also authorized
+  remains incomplete. tests/reflow_helpers.py's shared fixture family (used by
+  tests/unit/reflow/test_structural_review_correction.py and four sibling files) predates
+  Source Snapshot/Observation-Evidence becoming Store-owned reference targets, and several
+  of its Evidence-request builders' own default "before"/reobservation Observations still
+  declare the widely-shared, permanently-opaque SNAPSHOT_REF ("SNAP-0001")/EVIDENCE_REF
+  ("EVID-0001") placeholders as their own source_snapshot_refs/observation_evidence_refs.
+  Under this round's now-unconditional Reference Closure invariant, any admitted Observation
+  or Evidence record built from these defaults fails closed on commit. A real fix requires
+  either giving each of these fixtures a real, resolvable Evidence/Source-Snapshot backing
+  (attempted, and shown to work for tests/reflow_helpers.py's own change_free_verification_
+  evidence_request path) or changing the shared fixture Difference's own base scope so every
+  dependent Evidence-request builder's internal re-derivation still binds to the identical
+  Difference identity Sufficiency/terminal-reason Evidence's own binding checks require --
+  both were attempted; the second, more complete redesign was found to change downstream
+  structural-comparison facts in ways not fully mapped within this round's own effort budget,
+  and was reverted rather than delivered partially-verified. 30 pre-existing tests/unit/
+  reflow/ tests remain failing under the new unconditional gate for this reason
+  (RELATED_LEGACY_FIXTURE_CORRECTION_COUNT=30, precisely enumerated in the Round 4 completion
+  report); none of them are in tests/natural_cycle/ (the actual Vertical Proof this document
+  describes), which passes in full (115/115) under every Round 4 change. This gap is
+  disclosed here as a scope-boundary report for 構造参謀's own next re-observation, not
+  silently narrowed or resolved by guessing.
 ```
 
 ---
@@ -357,27 +414,38 @@ Snapshot (`BEFORE_SOURCE_SNAPSHOT`, previously never persisted either, since the
 after-state one) now resolves too, once the before-Observation itself is admitted.
 
 `PERSISTED_REFERENCE_GRAPH_CLOSED=true`, `UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0` -- both
-proven over this Finding's own explicitly-scoped reference vocabulary (§7), not a blind
-full-graph sweep: `tests/natural_cycle/test_vertical_proof_reference_closure.py` reads the
-real committed transaction's own manifest, resolves every record it names, recursively
-walks each `observation`/`observation_evidence` record's own known reference-bearing
-fields, and resolves every edge found -- through a fresh `FileStateStore` instance and a
-brand-new Python subprocess too, never only the in-process objects this run produced.
+proven over every Store-owned reference edge the production registry recognizes (§7), not
+a blind full-graph sweep: `tests/natural_cycle/test_vertical_proof_reference_closure.py`
+reads the real committed transaction's own manifest, resolves every record it names,
+recursively walks each admitted record's own known reference-bearing fields through
+`reflow/reference_registry.py`'s `reference_edges` (never a second, duplicate test-local
+vocabulary), and resolves every edge found -- through a fresh `FileStateStore` instance and
+a brand-new Python subprocess too, never only the in-process objects this run produced.
 
-A negative control this Finding itself requires -- `provenance_only_evidence_requests`
+A negative control this claim itself requires -- `provenance_only_evidence_requests`
 supplied but empty -- fails the whole route closed (`ReflowValidationError`, before any
 State/Lineage/record/manifest mutation): the persisted verification Observation's own real
-reference to the auxiliary Evidence would otherwise silently never resolve. This check is
-gated on the caller having supplied `provenance_only_evidence_requests` at all (even an
-empty list) rather than enforced unconditionally on every `reflow()` call: several
-pre-existing Phase 5-7 test fixtures already persist an Observation whose own declared
-`observation_evidence_refs` is a bare, never-resolved placeholder, predating this Finding
-and unrelated to it (`ISSUE_22_OR_PR_27_CHANGES=false`, and retrofitting those fixtures is
-outside `P8-R3-F1`'s own authorized scope) -- an unconditional gate would have refused all
-of them. Confirmed directly: enforcing the check unconditionally during this correction's
-own development broke 20 pre-existing, otherwise-unrelated Phase 7 tests; gating it on
-opt-in restored them to green with zero behavior change for any caller that does not pass
-this keyword.
+reference to the auxiliary Evidence would otherwise silently never resolve. As of P8-R4-F1
+this check is **unconditional** on every `reflow()` call (`REFERENCE_CLOSURE_OPT_IN_
+ALLOWED=false`) -- Round 3's own opt-in gating (enforced only when a caller supplied
+`provenance_only_evidence_requests` at all) is explicitly reversed by SHUKOU's Round 4
+adoption. Several pre-existing Phase 5-7 test fixtures (`tests/reflow_helpers.py` and the
+five `tests/unit/reflow/` files that import it) persist an Observation or Evidence record
+whose own declared `source_snapshot_refs`/`observation_evidence_refs` is a bare,
+never-resolved placeholder (the widely-shared `SNAPSHOT_REF`/`EVIDENCE_REF`,
+`ISSUE_22_OR_PR_27_CHANGES=false`); Round 4 explicitly authorized correcting these
+(`CORRECT_RELATED_LEGACY_FIXTURES=true`, reversing Round 3's own scope decision to leave
+them alone), and this correction was partially completed -- the change-free verification
+path was given a real, resolvable Source Snapshot -- but the Sufficiency/terminal-reason/
+reobservation paths' own default "before" Evidence still resolves against the shared
+fixture Difference's own base scope, and giving those a real backing without changing that
+shared base was found, empirically, to require either a broader base-scope redesign (shown
+to have wider, not-fully-mapped effects on other fixtures' own structural-comparison facts)
+or a per-call fixed-point Evidence bootstrap this round's own effort budget did not
+complete safely. 30 pre-existing `tests/unit/reflow/` tests remain failing under the
+now-unconditional gate for this reason (measured precisely on the final candidate HEAD;
+see the Round 4 completion report for the exact list) -- none of them are in
+`tests/natural_cycle/` (the Vertical Proof this document describes), which passes in full.
 
 ---
 
@@ -523,38 +591,54 @@ AUTONOMOUS_CHANGE_IMPLEMENTED=false
 MULTI_AGENT_IMPLEMENTED=false
 ```
 
-**Disclosed scope boundary (P8-R3-F1): the persisted-reference-graph closure claim is
-scoped to an explicit reference vocabulary, not every reference this Kernel's own records
-carry.**
+**Disclosed scope boundary (P8-R3-F1, widened and made unconditional by P8-R4-F1/F2/F3):
+the persisted-reference-graph closure claim now covers every Store-owned reference edge,
+not an explicit, narrower vocabulary a caller had to opt into.**
 
 ```text
 AUXILIARY_VERIFICATION_EVIDENCE_ROLE=PROVENANCE_ONLY
 AUXILIARY_VERIFICATION_EVIDENCE_PERSISTED=true
 AUXILIARY_VERIFICATION_EVIDENCE_COUNTS_TOWARD_SUFFICIENCY=false
+REFERENCE_CLOSURE_SCOPE=ALL_STORE_OWNED_REFERENCE_EDGES
+REFERENCE_CLOSURE_OPT_IN=false
+REFERENCE_CLOSURE_IS_GLOBAL_REFLOW_INVARIANT=true
+PRODUCTION_REFERENCE_REGISTRY_IS_AUTHORITATIVE=true
+OBSERVATION_EVIDENCE_REFERENCE_CLOSED=true
+SOURCE_SNAPSHOT_REFERENCE_CLOSED=true
+DIFFERENCE_GENESIS_EVENT_REFERENCE_CLOSED=true
+LIFECYCLE_PREDECESSOR_CHAIN_CLOSED=true
 PERSISTED_REFERENCE_GRAPH_CLOSED=true
 UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0
 ```
 
-Both of the last two hold over the closed, explicitly-managed reference vocabulary this
-Finding is about: an `observation` record's own `source_snapshot_refs` and
-`observation_evidence_refs`, and an `observation_evidence` record's own `observed_result.
-observation_ref`, `lineage.derived_from` (`observation`-kind members only), and `lineage.
-predecessor_evidence_refs`. Recognized structurally (a dict shaped like `common/
+`PERSISTED_REFERENCE_GRAPH_CLOSED`/`UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0` now hold,
+unconditionally (no caller opt-in keyword required), over every reference edge the single
+production reference-edge registry (`reflow/reference_registry.py`,
+`PRODUCTION_REFERENCE_REGISTRY_IS_AUTHORITATIVE=true`) recognizes: an `observation`
+record's own `source_snapshot_refs` and `observation_evidence_refs`; an
+`observation_evidence` record's own `observed_result.observation_ref`, `lineage.
+derived_from` (`observation`-kind members only), and `lineage.predecessor_evidence_refs`; a
+`closure_evaluation` record's own `difference_event_head_ref`; and a `difference_event`
+record's own `previous_event_id`. Recognized structurally (a dict shaped like `common/
 reference.schema.json` -- `kind`+`id`, both non-empty strings -- with `kind` restricted to
-`{observation, observation_evidence}`), never by a fuzzy text search over key names.
+the registry's own `STORE_OWNED_REFERENCE_KINDS`), never by a fuzzy text search over key
+names, and the identical registry both the production admission gate and every test proving
+this claim import -- never a second, duplicate test-only vocabulary.
 
 References this Kernel names but never gives a Store-owned producer of its own --
-`difference`, `change`, `authority_decision`, `artifact`, `negative_evidence` -- are outside
-this scope, not silently treated as resolved (no second canonical owner is created for any
-of them here, or anywhere else in this correction, to bring them into scope).
-`closure_evaluation.difference_event_head_ref` in particular names the Difference's own
-genesis lifecycle event, which this Kernel's own design never persists as a separate
-`difference_event` record at genesis time -- confirmed directly: it does not resolve
-through `store.resolve_record` even before any `reflow()` call is ever made, on every round
-of this proof including this one. That non-resolution predates P8-R3-F1, is not caused by
-it, and is disclosed here rather than folded into this Finding's own `PERSISTED_REFERENCE_
-GRAPH_CLOSED` claim -- a materially different, wider claim this round was not asked to make
-and did not reproduce as a real gap requiring correction.
+`difference`, `change`, `authority_decision`, `artifact`, `negative_evidence` -- remain
+outside this scope, not silently treated as resolved (no second canonical owner is created
+for any of them here, or anywhere else in this correction, to bring them into scope).
+
+**Withdrawn (P8-R4-F3): Round 3's own disclosed non-resolution of `closure_evaluation.
+difference_event_head_ref` naming the Difference's own genesis lifecycle event is no longer
+true and is withdrawn as a non-claim.** The genesis event (revision 0) -- the real
+Difference owner's own already-produced output, re-verified against its own content
+address and its binding to the Difference before admission, never re-minted by Reflow -- is
+now atomically persisted alongside the first real Reflow-minted event, in the same Store
+transaction, on the very first Reflow cycle for a Difference. It resolves through
+`store.resolve_record(project_id, "difference_event", genesis_event_ref["id"])` from a
+fresh `FileStateStore` instance, proven directly by this round's own tests.
 
 In Completion Ladder terms (`00_KERNEL/COMPLETION_SEMANTICS.md` §2), this proof establishes
 `L6 CONNECTED` and `L7 NATURALLY_REACHABLE` for the v0.1 Natural Cycle. It does not claim

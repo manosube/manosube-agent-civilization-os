@@ -842,6 +842,16 @@ def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[
         # before-Observation itself is admitted and persisted (P8-R3-F1) so its own
         # declared `source_snapshot_refs` resolves too.
         "auxiliary_source_snapshots": [fx.BEFORE_SOURCE_SNAPSHOT],
+        # P8-R4-F3 (SHUKOU Phase 8 final-closure round 4): the real genesis lifecycle event
+        # (revision 0) the Difference owner already produced at derivation time -- carried
+        # here verbatim from the Difference owner's own output bundle (`diff["result"]
+        # ["events"]`), never hand-built, so Reflow's own re-verification of it is a real
+        # check against the real owner's real output, not a self-fulfilling fixture.
+        "genesis_lifecycle_event": next(
+            event
+            for event in diff["result"]["events"]
+            if event["difference_event_id"] == difference["genesis_event_ref"]["id"]
+        ),
     }
 
     return {
