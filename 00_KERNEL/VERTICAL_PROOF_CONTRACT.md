@@ -12,6 +12,37 @@ KERNEL_ELEMENT=NONE_PROOF_AND_ACCEPTANCE_LAYER
 CANONICAL_CYCLE_CHANGED=false
 COMPLETION_GATE_WEAKENED=false
 ADOPTED_BY=SHUKOU_ADOPTION_ADOPT_PHASE_8_VERTICAL_PROOF_ISSUE_41
+CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_STRUCTURAL_REVIEW_ROUND_1
+```
+
+## 0. Revision History
+
+```text
+Round 0 (initial adoption, Issue #41): first version of this document and the proof it
+  describes.
+
+Round 1 (SHUKOU Phase 8 structural-review round 1, adopted): 構造参謀's independent
+  re-observation of PR #42's real HEAD found five findings and required two further audits,
+  all adopted by SHUKOU directly (not auto-adopted from bot output --
+  BOT_FINDING_AUTO_ADOPTION=false, INDEPENDENT_STRUCTURAL_REPRODUCTION=true). Reproduced and
+  corrected in place, on the same PR/branch:
+
+  P8-R1-F1  Observation Evidence now genuinely precedes and grounds the Difference (§4, §7).
+  P8-R1-F2  A real committed non-CLOSED (RETAINED) transition is now proven, distinct from
+            the pre-existing rejected-CLOSED-proposal control (§6).
+  P8-R1-F3  Replay/conflict is now proven over the full real vertical-proof record set, not
+            an empty stub (§6).
+  P8-R1-F4  A semantic fixture-input-class sensitivity matrix now covers all twelve named
+            input classes, not one (§8A).
+  P8-R1-F5  reflow()'s own authority_ref/change_refs/observation_refs/reflow_instant are now
+            independently re-verified against real, already-verified records before commit
+            -- the prior "descriptive metadata" non-claim is withdrawn (§7).
+  Canonical-record-construction audit: invariant_evaluation now goes through its own real
+            public producer; candidate_invariant_evaluation_binding/candidate_claim_
+            evaluation_binding/_event were confirmed contractually caller-assembled, not a
+            bypassed producer (§8B).
+  Source Snapshot fixture truthfulness: both before/after Source Snapshots now digest real,
+            checked-in fixture bytes at a locator that genuinely resolves (§3).
 ```
 
 ---
@@ -117,6 +148,13 @@ FIXTURE_MUST_NEVER_SUPPLY=
 All fixture bytes are pinned: literal, explicit-instant, content-addressed-where-applicable
 values, never a wall-clock read, an environment-dependent path, or a secret-bearing value.
 
+**Source Snapshot fixture truthfulness (P8-R1, corrected).** The before/after Source
+Snapshots' own `content_digest` is the real `sha256` of two real, checked-in fixture files
+(`tests/fixtures/vertical_proof/before_source_world.txt`/`after_source_world.txt`), read and
+hashed at fixture-module load time -- the identical pattern `tests/state_helpers.py`'s own
+`real_kernel_source_snapshot` already uses for the real Kernel source. Neither the locator
+nor the digest is an arbitrary assertion about content nobody checked.
+
 This module is deliberately self-contained -- it does not import `tests/difference_helpers.py`,
 `tests/authority_helpers.py`, `tests/change_helpers.py` or `tests/evidence_helpers.py`, even
 where a literal shape below matches theirs field-for-field (that is fidelity to the frozen
@@ -166,6 +204,19 @@ records' `before_state`), `change_result_observation_id` (grounds Change-result 
 real identities here, both asserted genuinely distinct from each other and from
 `before_observation_id` (`tests/natural_cycle/test_vertical_proof.py::
 test_the_identity_ledger_names_every_required_stage_with_a_real_id`).
+
+**Corrected (P8-R1-F1): `observation_evidence_id` now genuinely grounds the Difference.**
+The prior version of this proof placed a bare, unresolved placeholder reference
+(`EVID-VP8-0001`) in the before-Observation's own declared `observation_evidence_refs` field
+-- schema-valid, but never the real Evidence this Difference's own `observation_evidence_refs`
+field (populated verbatim from it by `difference.engine._evidence_union`) ought to name. Since
+`observation.identity.OBSERVATION_SEMANTIC_FIELDS` excludes this field from an Observation's
+own content-addressed identity, `tests/natural_cycle/proof.py::observe_before` now derives the
+real Observation Evidence from a first, placeholder-seeded Observation, then re-observes with
+the corrected, real reference before deriving the Difference from that corrected bundle -- the
+identical real `observation_id` either way, but the Difference's own `observation_evidence_
+refs` field now names the real Evidence, proven by `tests/natural_cycle/test_vertical_proof.py::
+test_the_difference_actually_consumes_the_real_observation_evidence`.
 
 ---
 
@@ -221,6 +272,17 @@ A CRASH AT ANY STORE STAGE NEVER EXPOSES A PARTIAL CYCLE
   (at or after it) -- never a mixture (items E8/E9)
 ```
 
+**A rejected proposal is not the same claim as a real committed non-CLOSED outcome (P8-R1-F2,
+corrected).** The first invariant above proves a *rejected* `CLOSED` proposal leaves the Store
+untouched. Issue #41 separately requires a genuinely `NOT_SATISFIED` Evaluation, correctly
+proposed as `BLOCKED`/`RETAINED` instead of `CLOSED`, to actually commit --
+`tests/natural_cycle/test_vertical_proof_negative_routes.py::
+test_p8r1f2_a_genuinely_not_satisfied_evaluation_commits_a_real_retained_transition` proves
+both claims separately: a real `RETAINED` State revision commits, the real lifecycle event
+persists and resolves, a fresh Store instance reconstructs exactly what was committed, and the
+Difference stays open -- through the real terminal-reason Evidence binding (R7-F4) every
+non-`CLOSED` outcome already requires, not a hand-waved refusal.
+
 Two guarantees this contract still claims -- identical replay is a no-op, and a conflicting
 replay under the same transaction identity is rejected (items E10/E11) -- are proven at the
 Reflow commit owner (`manosube_agent_civilization.reflow.commit.commit_reflow`) directly, one
@@ -228,6 +290,21 @@ real layer below the full `reflow()` orchestration, because `reflow()`'s own cal
 staleness pre-check makes a literal second `reflow()` call unable to be a byte-identical replay
 by construction (its freshly-loaded `current_state` has already moved). This is a disclosed
 choice of layer, not a narrowing of the guarantee.
+
+**The replay/conflict guarantee is proven over the full real record set, not a stub (P8-R1-F3,
+corrected).** The `commit_reflow`-layer test above uses an empty `records`/`evidence_refs`
+transaction, which never exercised the vertical proof's own ~50-plus-record manifest (every
+mandatory Invariant Evaluation, the Candidate claim-evaluation event, the Completion Record,
+both Evidence records, the Observation, the Source Snapshot, the Kernel witness).
+`tests/natural_cycle/test_vertical_proof_negative_routes.py::
+test_p8r1f3_the_full_vertical_transaction_record_set_replays_as_a_true_no_op` closes that gap:
+it reads the real committed transaction's own manifest (`state/recovery/<tx>/manifest.json`,
+the identical file `FileStateStore` itself reads and writes), resolves every real record body
+through the public `resolve_record`, replays the identical `store.commit(...)` call, and
+asserts the lineage event count, per-kind record file count, `load_current`, and
+`reconstruct` are all bit-for-bit unchanged -- then asserts a single-field-tampered replay
+under the same transaction identity is rejected before any write, with the Store still
+unchanged afterward.
 
 ---
 
@@ -268,22 +345,120 @@ declared, deterministic inputs, never the output of an executed Change) and it d
 replay, conflicting-payload rejection) -- a single successful `pytest` run of this suite is
 `L7`, not `L8` or `L9`, and remains so regardless of how many times CI re-runs it.
 
-**Disclosed design decision -- `authority_ref`/`change_refs`/`observation_refs`/
-`reflow_instant` are `reflow()`'s own descriptive lifecycle-event metadata for a `CLOSED`
-route, not independently re-verified identities at that layer.** Probing confirmed that, for
-the successful `CHANGE_BOUND` → `CLOSED` route, `reflow()` accepts a mismatched value for any
-of these four keyword arguments without raising -- the actual identities G1-G22 verify for a
-`CLOSED` outcome live inside `closure_request` itself (`producing_change_refs`,
-`change_result_evidence_requests`/`_refs`, `reobservation.after_observation_refs`, the policy's
-own freshness fields), not in these four convenience parameters. This proof's own negative
-tests (item E3) therefore mutate the closure_request keys G1-G22 actually check, and this
-contract records the four inert kwargs as a truthful, bounded non-claim rather than asserting a
-"wrong X fails closed" behavior at a layer that does not implement it. This is an existing,
-unwidened Phase 7 boundary -- not a gap this Phase 8 proof introduces or is asked to close.
+**Withdrawn (P8-R1-F5): `authority_ref`/`change_refs`/`observation_refs`/`reflow_instant` are
+no longer an inert non-claim -- they are now independently re-verified.** The prior version of
+this document recorded these four `reflow()` keyword arguments as descriptive-only metadata,
+since probing had shown a mismatched value did not raise. SHUKOU's Phase 8 structural-review
+round 1 held that Issue #41's own acceptance conditions govern this, not a PR body's own
+non-claim, and required a real fix. `reflow()` (`src/manosube_agent_civilization/reflow/
+route.py::_preflight_verify_reflow_provenance`, called for every outcome, immediately before
+`_admitted_records`/commit) now independently re-verifies all four, before any commit:
+
+```text
+change_refs        must equal closure_request.producing_change_refs exactly (a field G-gates
+                    already bind to the real, reproduced Change)
+authority_ref       wherever a real change_result_evidence_requests exists, must equal the
+                    real authority_used.id that reproduction (derive_evidence) actually
+                    carries
+observation_refs    wherever a reobservation is declared, must equal its own real
+                    after_observation_refs exactly (the identical set G8 already resolves)
+reflow_instant      may never precede the Closure Evaluation's own real evaluated_at
+```
+
+Proven by five new negative controls in `tests/natural_cycle/test_vertical_proof_negative_
+routes.py` (wrong change/authority/observation refs, a too-early `reflow_instant`), all
+raising before any State or record mutation, and by the retained Phase 3-7 suite passing
+unchanged (six pre-existing fixtures in `tests/unit/reflow/test_structural_review_
+correction.py` were themselves correcting a `observation_refs=[]` placeholder their own tests
+never needed checked before -- fixed to pass their own real, already-computed
+`reobservation.after_observation_refs`, not weakened).
+
+**Disclosed, bounded non-claim -- `AUTHORITY_EVALUATION_INSTANT` is presently inert (P8-R1-F4
+matrix finding).** Unlike the four fields above, this one genuinely carries no downstream
+weight in the current Kernel: neither the real Authority Decision's own content-addressed
+`authority_decision_id` nor its `decision` verdict changes when `evaluation_time` changes --
+confirmed directly (`tests/natural_cycle/test_vertical_proof_fixture_sensitivity_matrix.py::
+test_p8r1f4_authority_evaluation_instant_is_a_disclosed_inert_input`), not assumed. This
+mirrors an already-established Kernel convention (State's own Semantic Fingerprint excludes
+`observed_at`/`observer` by design -- `00_KERNEL/KERNEL_INDEX.md` §2) and is reported here as a
+fact this round discovered, not a gap this Phase 8 proof is asked to close.
 
 ---
 
-## 8. Reading Order
+## 8A. Semantic Fixture-Input-Class Sensitivity Matrix (P8-R1-F4)
+
+`tests/natural_cycle/test_vertical_proof_fixture_sensitivity_matrix.py` proves, for every one
+of the twelve semantic input classes Issue #41 names (one single field's sensitivity --
+item E2's own before-Observation value -- does not stand in for the rest), the real,
+empirically observed downstream effect:
+
+```text
+INPUT_CLASS                       ACTUAL_CHANGED_IDENTITY_OR_VERDICT        FAIL_CLOSED_OR_REDERIVED
+OBJECTIVE_OR_OBJECTIVE_REVISION    difference_id / objective_semantic_       re-derived
+                                   fingerprint change
+BEFORE_OBSERVATION_VALUE           Difference verdict changes (0 vs 1)      re-derived (item E2)
+SOURCE_SNAPSHOT_IDENTITY_OR_DIGEST observation_id changes                   re-derived
+AUTHORITY_RULE                     Authority verdict changes                fails closed
+REQUESTED_ACTION                   Authority verdict changes                fails closed
+CHANGE_SCOPE                       Authority verdict changes                fails closed
+POST_CHANGE_OBSERVATION            Evidence identity / observed_result      re-derived (status/
+                                   change                                  level disclosed inert)
+VERIFICATION_OBSERVATION           Reflow refuses CLOSED                    fails closed
+CLOSURE_POLICY                     Sufficiency verdict changes              re-derived
+EVIDENCE_INSTANT                   Evidence derivation refused              fails closed (item E3)
+AUTHORITY_EVALUATION_INSTANT       none (§7's own disclosed finding)        neither -- disclosed
+REFLOW_INSTANT                     Reflow refuses CLOSED                    fails closed (P8-R1-F5)
+```
+
+## 8B. Canonical-Record-Construction Audit (P8-R1)
+
+"Previous test reuse of a hand-built record is not the same proof as calling the real owner"
+(SHUKOU, P8-R1). Every record kind the Candidate-assembly step produces was audited against
+this repository's own real, public producers:
+
+```text
+RECORD_KIND                          REAL_PUBLIC_PRODUCER              PRODUCED_OR_ASSEMBLED
+invariant_evaluation                 difference.invariant_evaluation.  PRODUCED (corrected --
+                                      build_invariant_evaluation        was hand-duplicated by
+                                                                        a shared test helper;
+                                                                        now called directly,
+                                                                        see tests/natural_
+                                                                        cycle/proof.py::
+                                                                        phase8_invariant_
+                                                                        bindings_and_
+                                                                        evaluations)
+candidate_invariant_evaluation_       none (contractually caller-       CALLER_ASSEMBLED
+  binding                            assembled, G19 -- only a real,    (correct; only a real
+                                      public identity function exists, ID function is
+                                      candidate_invariant_evaluation_   available; kept)
+                                      binding_id)
+candidate_claim_evaluation_binding    none (contractually caller-       CALLER_ASSEMBLED
+                                      assembled, G21 -- "caller         (correct; already uses
+                                      supplies the pool, Reflow         the real
+                                      validates and persists it",      build_completion_record
+                                      reflow/claims.py's own module     for its embedded
+                                      docstring)                       Completion Record; kept
+                                                                        unchanged)
+candidate_claim_evaluation_event      none (same G21 caller-assembled   CALLER_ASSEMBLED
+                                      design; a real, public identity   (correct; kept
+                                      function exists,                 unchanged)
+                                      candidate_claim_evaluation_
+                                      event_id)
+candidate_completion_record           difference.completion.           PRODUCED (already
+                                      build_completion_record           correct before this
+                                                                        round)
+```
+
+Rule applied: a real public producer existing anywhere in this repository means the test
+helper stops hand-duplicating it and calls that producer directly; a record kind whose own
+contract (`CLOSURE_POLICY.md`'s G19/G21 sections, `reflow/claims.py`'s own module docstring)
+names caller-assembly as the design stays caller-assembled, using only the real, public
+identity/fingerprint functions that already exist for it. No second canonical owner was
+created for any record kind in this audit.
+
+---
+
+## 9. Reading Order
 
 ```text
 1. 00_KERNEL/KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md §14 (this proof's place in the v0.1 route)
@@ -294,4 +469,6 @@ unwidened Phase 7 boundary -- not a gap this Phase 8 proof introduces or is aske
 6. tests/natural_cycle/test_vertical_proof.py (item D, the required successful route)
 7. tests/natural_cycle/test_vertical_proof_negative_routes.py (item E, the required
    negative/interruption routes)
+8. tests/natural_cycle/test_vertical_proof_fixture_sensitivity_matrix.py (§8A, item E.2's
+   full input-class matrix)
 ```

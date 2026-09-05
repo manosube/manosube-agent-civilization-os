@@ -11,6 +11,7 @@ entry itself produced.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from tests.fixtures import vertical_proof as fx
@@ -18,6 +19,24 @@ from tests.natural_cycle.proof import run_vertical_proof
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.store import FileStateStore
+
+
+def test_the_source_snapshot_fixtures_are_truthful_not_arbitrary() -> None:
+    """P8-R1 Source Snapshot fixture truthfulness (SHUKOU Phase 8 structural-review round
+    1): both the before- and after-world ``source_locator``s name a real file this
+    repository actually ships, and both ``content_digest``s are the real ``sha256`` of that
+    exact file's own on-disk bytes -- never an arbitrary digest asserted for content nobody
+    checked."""
+
+    for locator, snapshot in (
+        (fx.BEFORE_SOURCE_WORLD_LOCATOR, fx.BEFORE_SOURCE_SNAPSHOT),
+        (fx.AFTER_SOURCE_WORLD_LOCATOR, fx.AFTER_SOURCE_SNAPSHOT),
+    ):
+        path = fx.ROOT / locator
+        assert path.is_file(), f"source_locator does not name a real file: {locator}"
+        real_digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        assert snapshot["content_digest"] == real_digest
+        assert snapshot["source_locator"] == locator
 
 
 def test_the_full_natural_cycle_reaches_closed_through_real_owners_only(tmp_path: Path) -> None:
@@ -63,6 +82,23 @@ def test_reconstruction_from_lineage_matches_the_committed_state_exactly(tmp_pat
         assert resolved is not None, (
             f"{kind}/{record_id} did not resolve from the persisted backend"
         )
+
+
+def test_the_difference_actually_consumes_the_real_observation_evidence(tmp_path: Path) -> None:
+    """P8-R1-F1 (SHUKOU Phase 8 structural-review round 1): the Difference's own
+    ``observation_evidence_refs`` field names the real, already-derived Observation
+    Evidence id -- never a bare, unresolved placeholder. ``difference.engine._evidence_
+    union`` copies this field straight from the before-Observation's own declared
+    ``observation_evidence_refs``, so this also proves :func:`observe_before`'s two-pass
+    correction actually reached the Observation the Difference was derived from, not only
+    the one used to seed the Evidence derivation."""
+
+    result = run_vertical_proof(tmp_path)
+    ledger = result["identity_ledger"]
+    real_ref = {"kind": "observation_evidence", "id": ledger["observation_evidence_id"]}
+    assert real_ref in result["difference"]["observation_evidence_refs"]
+    placeholder_ref = {"kind": "observation_evidence", "id": "EVID-VP8-0001"}
+    assert placeholder_ref not in result["difference"]["observation_evidence_refs"]
 
 
 def test_the_difference_is_removed_from_open_differences_only_because_reflow_closed_it(

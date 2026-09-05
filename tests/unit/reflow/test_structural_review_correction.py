@@ -1232,7 +1232,7 @@ def test_r5f4_preflight_reresolution_catches_a_post_evaluation_invariant_pool_mi
                 closure_request=closure_request,
                 previous_event_id=difference["genesis_event_ref"]["id"],
                 event_revision=1,
-                observation_refs=[],
+                observation_refs=closure_request["reobservation"]["after_observation_refs"],
                 reflow_instant=REFLOW_INSTANT,
             )
     finally:
@@ -1285,7 +1285,7 @@ def test_r5f4_preflight_reresolution_catches_a_post_evaluation_witness_mismatch(
                 closure_request=closure_request,
                 previous_event_id=difference["genesis_event_ref"]["id"],
                 event_revision=1,
-                observation_refs=[],
+                observation_refs=closure_request["reobservation"]["after_observation_refs"],
                 reflow_instant=REFLOW_INSTANT,
             )
     finally:
@@ -1508,7 +1508,7 @@ def test_r6f3_preflight_reresolution_catches_a_post_evaluation_candidate_mismatc
                 closure_request=closure_request,
                 previous_event_id=difference["genesis_event_ref"]["id"],
                 event_revision=1,
-                observation_refs=[],
+                observation_refs=closure_request["reobservation"]["after_observation_refs"],
                 reflow_instant=REFLOW_INSTANT,
             )
     finally:
@@ -1605,7 +1605,7 @@ def test_r6f1a_preflight_reresolution_catches_a_post_evaluation_snapshot_mismatc
                 closure_request=closure_request,
                 previous_event_id=difference["genesis_event_ref"]["id"],
                 event_revision=1,
-                observation_refs=[],
+                observation_refs=closure_request["reobservation"]["after_observation_refs"],
                 reflow_instant=REFLOW_INSTANT,
             )
     finally:
@@ -1721,7 +1721,7 @@ def test_r6f2_preflight_reresolution_catches_a_post_evaluation_claim_candidate_m
                 closure_request=closure_request,
                 previous_event_id=difference["genesis_event_ref"]["id"],
                 event_revision=1,
-                observation_refs=[],
+                observation_refs=closure_request["reobservation"]["after_observation_refs"],
                 reflow_instant=REFLOW_INSTANT,
             )
     finally:
@@ -1769,7 +1769,7 @@ def test_r6f2_preflight_reresolution_catches_an_emptied_change_free_verification
                 closure_request=closure_request,
                 previous_event_id=difference["genesis_event_ref"]["id"],
                 event_revision=1,
-                observation_refs=[],
+                observation_refs=closure_request["reobservation"]["after_observation_refs"],
                 reflow_instant=REFLOW_INSTANT,
             )
     finally:

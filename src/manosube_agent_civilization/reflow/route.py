@@ -95,6 +95,7 @@ from manosube_agent_civilization.evidence.engine import (
 )
 from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
+from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.observation.errors import ObservationError
 from manosube_agent_civilization.observation.identity import observation_identity
 from manosube_agent_civilization.observation.source_snapshot import resolve_source_snapshot
@@ -662,6 +663,99 @@ def _preflight_reresolve_terminal_reason_evidence(
         ) from error
 
 
+def _preflight_verify_reflow_provenance(
+    closure_request: dict[str, Any],
+    evaluation: dict[str, Any],
+    *,
+    authority_ref: Any | None,
+    change_refs: list[Any] | None,
+    observation_refs: list[Any],
+    reflow_instant_value: str,
+) -> None:
+    """P8-R1-F5 (SHUKOU Phase 8 structural-review round 1, adopted): ``reflow()``'s own
+    caller-supplied ``authority_ref``/``change_refs``/``observation_refs``/``reflow_instant``
+    are re-verified, immediately before commit, against the same real records this
+    Evaluation is already independently bound to -- never accepted as caller-restated
+    descriptive metadata for the lifecycle event/transaction identity that carry them.
+    Called for every outcome (not only ``CLOSED``), matching the treatment every other
+    admitted reference here already gets.
+
+    *change_refs* must name exactly the Change identities ``closure_request.producing_
+    change_refs`` already declares -- a field G8/G21's own Candidate binding already holds
+    to the real, reproduced Change (a mismatch there already fails the Evaluation before
+    this ever runs). *authority_ref*, wherever this Evaluation names at least one real
+    Change-result Evidence request, must equal the real ``authority_used.id`` that request's
+    own reproduction (:func:`~manosube_agent_civilization.evidence.engine.derive_evidence`)
+    actually carries -- never a caller restatement. *observation_refs*, wherever a
+    ``reobservation`` is declared, must name exactly its own real
+    ``after_observation_refs`` -- the same identities G8's own anti-self-closing check
+    already resolves. *reflow_instant_value* may never precede the Evaluation's own real
+    ``evaluated_at`` -- committing an outcome at an instant earlier than the evidence that
+    grounds it was evaluated is incoherent.
+    """
+
+    declared_change_ids = {ref.get("id") for ref in (change_refs or []) if isinstance(ref, dict)}
+    producing_change_ids = {
+        ref.get("id")
+        for ref in closure_request.get("producing_change_refs") or []
+        if isinstance(ref, dict)
+    }
+    if declared_change_ids != producing_change_ids:
+        raise ReflowValidationError(
+            "reflow()'s own change_refs does not match closure_request.producing_change_refs"
+        )
+
+    change_result_requests = closure_request.get("change_result_evidence_requests") or []
+    if change_result_requests:
+        real_authority_ids: set[str] = set()
+        for item in change_result_requests:
+            try:
+                record = derive_evidence(item)
+            except EvidenceError as error:
+                raise StaleReflowError(
+                    f"atomic preflight: change_result_evidence_requests no longer "
+                    f"reproduces: {error}"
+                ) from error
+            authority_used = record.get("authority_used")
+            if isinstance(authority_used, dict) and authority_used.get("id"):
+                real_authority_ids.add(authority_used["id"])
+        declared_authority_id = (
+            authority_ref.get("id") if isinstance(authority_ref, dict) else None
+        )
+        if declared_authority_id not in real_authority_ids:
+            raise ReflowValidationError(
+                "reflow()'s own authority_ref does not match the real Authority Decision "
+                "the reproduced change_result_evidence actually names"
+            )
+
+    reobservation = closure_request.get("reobservation")
+    if isinstance(reobservation, dict) and reobservation.get("after_observation_refs"):
+        declared_observation_ids = {
+            ref.get("id") for ref in (observation_refs or []) if isinstance(ref, dict)
+        }
+        real_observation_ids = {
+            ref.get("id")
+            for ref in reobservation.get("after_observation_refs") or []
+            if isinstance(ref, dict)
+        }
+        if declared_observation_ids != real_observation_ids:
+            raise ReflowValidationError(
+                "reflow()'s own observation_refs does not match closure_request.reobservation"
+                ".after_observation_refs"
+            )
+
+    evaluated_at = evaluation.get("evaluated_at")
+    if (
+        isinstance(evaluated_at, str)
+        and evaluated_at
+        and instant(reflow_instant_value) < instant(evaluated_at)
+    ):
+        raise StaleReflowError(
+            f"reflow_instant {reflow_instant_value!r} precedes the Closure Evaluation's "
+            f"own evaluated_at {evaluated_at!r}"
+        )
+
+
 def _admitted_records(
     evaluation: dict[str, Any],
     lifecycle_event: dict[str, Any],
@@ -1054,6 +1148,14 @@ def reflow(
     # R7-F4: terminal reason Evidence is re-verified immediately before commit for *every*
     # outcome -- it is CLOSED evaluations that never carry one, not the reverse.
     _preflight_reresolve_terminal_reason_evidence(evaluation, closure_request, difference)
+    _preflight_verify_reflow_provenance(
+        closure_request,
+        evaluation,
+        authority_ref=authority_ref,
+        change_refs=change_refs,
+        observation_refs=observation_refs,
+        reflow_instant_value=reflow_instant,
+    )
     if decision["to_status"] == "CLOSED":
         _preflight_reresolve_closure(evaluation, closure_request, policy, sufficiency)
 

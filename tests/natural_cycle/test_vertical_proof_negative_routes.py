@@ -383,6 +383,60 @@ def test_e5_an_evaluation_that_is_not_satisfied_never_closes_and_stays_reconstru
     _assert_store_never_advanced(assembly)
 
 
+def test_p8r1f2_a_genuinely_not_satisfied_evaluation_commits_a_real_retained_transition(
+    tmp_path: Path,
+) -> None:
+    """P8-R1-F2 (SHUKOU Phase 8 structural-review round 1): the sibling test above only
+    proves a *rejected* ``CLOSED`` proposal leaves the Store untouched -- a rejected proposal
+    and a genuinely committed non-``CLOSED`` outcome are two different claims, and Issue #41
+    requires the second one too. Emptying the Evidence pool the identical way, but correctly
+    proposing ``RETAINED`` (one of this fixture's own ``allowed_terminal_states``) instead of
+    ``CLOSED``, is accepted: a real State revision commits, the real lifecycle event
+    persists and resolves, and a fresh Store instance reconstructs exactly what was
+    committed -- never ``CLOSED``, and the Difference stays open."""
+
+    assembly = assemble_vertical_proof_route(tmp_path)
+    before = assembly["before"]
+    kwargs = dict(assembly["reflow_kwargs"])
+    closure_request = dict(kwargs["closure_request"])
+
+    sufficiency_request = dict(closure_request["evidence_sufficiency_request"])
+    sufficiency_request["evidence_requests"] = []
+    closure_request["evidence_sufficiency_request"] = sufficiency_request
+    closure_request["proposed_terminal_status"] = "RETAINED"
+    # A non-CLOSED terminal status requires its own real, resolvable terminal-reason
+    # Evidence (R7-F4) -- the real Observation Evidence :func:`observe_before` already
+    # derived serves that role here, reused rather than a second Evidence derivation.
+    closure_request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": before["observation_evidence"]["evidence_id"]}
+    ]
+    closure_request["terminal_reason_evidence_requests"] = [before["observation_evidence_request"]]
+    kwargs["closure_request"] = closure_request
+    kwargs["next_observation_ref"] = {
+        "kind": "observation",
+        "id": assembly["verification_observation_id"],
+    }
+
+    result = reflow(assembly["store"], **kwargs)
+
+    assert result["decision"]["to_status"] == "RETAINED"
+    assert (
+        result["committed_state"]["state_revision"]
+        == assembly["genesis_state"]["state_revision"] + 1
+    )
+    difference_ref = {"kind": "difference", "id": assembly["difference"]["difference_id"]}
+    assert difference_ref in result["committed_state"]["semantic_state"]["open_differences"]
+
+    fresh = FileStateStore(assembly["store"].root, schema_root=SCHEMA_ROOT)
+    reconstructed = fresh.reconstruct(fx.PROJECT_ID)
+    assert reconstructed == result["committed_state"]
+    resolved_event = fresh.resolve_record(
+        fx.PROJECT_ID, "difference_event", result["event"]["difference_event_id"]
+    )
+    assert resolved_event is not None
+    assert resolved_event["to_status"] == "RETAINED"
+
+
 # --- E6: stale Evidence and a material contradiction do not become success ----------------- #
 
 
@@ -574,6 +628,94 @@ def test_e10_e11_identical_commit_replay_is_a_no_op_and_a_conflicting_replay_is_
             reflow_instant=fx.REFLOW_INSTANT,
         )
     assert store.load_current(fx.PROJECT_ID) == committed_first
+
+
+def test_p8r1f3_the_full_vertical_transaction_record_set_replays_as_a_true_no_op(
+    tmp_path: Path,
+) -> None:
+    """P8-R1-F3 (SHUKOU Phase 8 structural-review round 1): the sibling test above only
+    replays an empty ``records``/``evidence_refs`` transaction -- it never proves the *real*
+    vertical proof's own full immutable-record set (Closure Evaluation, lifecycle event,
+    Evidence Sufficiency Result, both real Evidence records, the real Observation, every
+    mandatory Invariant Evaluation, the Candidate claim-evaluation event, the Completion
+    Record, the Source Snapshot, the Kernel witness) replays as a true no-op, or that a
+    conflicting payload under the one real transaction identity is rejected.
+
+    The exact manifest -- every ``(kind, record_id)`` pair this transaction actually
+    committed -- is read from the transaction's own persisted recovery journal
+    (``state/recovery/<tx>/manifest.json``, the identical file
+    ``FileStateStore._stage_records``/``_transaction_manifest_keys`` themselves read and
+    write) and every record body is then resolved through the public
+    :meth:`~manosube_agent_civilization.store.FileStateStore.resolve_record` -- never
+    hand-reproduced -- so the replayed ``records`` argument is provably the real, complete
+    set this transaction admitted, not an approximation of it."""
+
+    result = run_vertical_proof(tmp_path)
+    store = result["store"]
+    project_id = fx.PROJECT_ID
+    tx_id = result["reflow_result"]["state_transition_ref"]["id"]
+    transition = store.resolve_transaction(project_id, tx_id)
+    assert transition is not None
+
+    manifest_path = (
+        store.root / "projects" / project_id / "state" / "recovery" / tx_id / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert len(manifest) > 10  # the real vertical proof's own full record set, not a stub
+
+    records = []
+    for kind, record_id in manifest:
+        body = store.resolve_record(project_id, kind, record_id)
+        assert body is not None, f"{kind}/{record_id} did not resolve"
+        records.append((kind, record_id, body))
+
+    events_before = list(store._events(project_id))
+    per_kind_count_before = {
+        kind: len(list((store.root / "projects" / project_id / "records" / kind).glob("*.json")))
+        for kind, _ in manifest
+    }
+    current_before = store.load_current(project_id)
+    reconstructed_before = store.reconstruct(project_id)
+
+    replayed = store.commit(
+        project_id,
+        expected_revision=999,  # irrelevant on the replay path -- the tx already exists
+        expected_fingerprint={"algorithm": "irrelevant", "digest": "irrelevant"},
+        next_state=transition["after_state"],
+        transition=transition,
+        records=records,
+    )
+
+    assert replayed == transition["after_state"] == current_before
+    events_after = list(store._events(project_id))
+    assert len(events_after) == len(events_before)
+    per_kind_count_after = {
+        kind: len(list((store.root / "projects" / project_id / "records" / kind).glob("*.json")))
+        for kind, _ in manifest
+    }
+    assert per_kind_count_after == per_kind_count_before
+    assert store.load_current(project_id) == current_before
+    assert store.reconstruct(project_id) == reconstructed_before
+    for kind, record_id, body in records:
+        assert store.resolve_record(project_id, kind, record_id) == body
+
+    conflicting_records = list(records)
+    tamper_kind, tamper_id, tamper_body = conflicting_records[0]
+    tampered_body = dict(tamper_body)
+    tampered_body["schema_version"] = "9.9"
+    conflicting_records[0] = (tamper_kind, tamper_id, tampered_body)
+    with pytest.raises(TransactionConflictError):
+        store.commit(
+            project_id,
+            expected_revision=999,
+            expected_fingerprint={"algorithm": "irrelevant", "digest": "irrelevant"},
+            next_state=transition["after_state"],
+            transition=transition,
+            records=conflicting_records,
+        )
+    assert store.load_current(project_id) == current_before
+    assert store.reconstruct(project_id) == reconstructed_before
+    assert store.resolve_record(project_id, tamper_kind, tamper_id) == tamper_body
 
 
 # --- E12: deleting/reordering/tampering lineage or a referenced record is detected --------- #

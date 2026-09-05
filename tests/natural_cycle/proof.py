@@ -15,22 +15,32 @@ real producer (:mod:`manosube_agent_civilization.observation`, ``.difference``,
 and reproduces no owner's own algorithm
 (``NO_MANUAL_INTERMEDIATE_CANONICAL_RECORD_CONSTRUCTION=true``).
 
-**Reused Candidate-assembly utilities.** Building a ``CANDIDATE_CLOSURE``-eligible Reflow
-request requires the caller to independently verify every mandatory v0.1 Invariant
-(``reflow/closure.py``'s own G19) and pre-assemble its own
+**Reused Candidate-assembly utilities, audited (P8-R1 structural-review round 1).** Building a
+``CANDIDATE_CLOSURE``-eligible Reflow request requires the caller to independently verify
+every mandatory v0.1 Invariant (``reflow/closure.py``'s own G19) and pre-assemble its own
 ``candidate_invariant_evaluation_binding``/``candidate_claim_evaluation_binding``/``_event``
 records around that real verification -- a design this Kernel's own ``reflow()`` already
-places on every caller, not something Phase 8 invents. This module reuses
-``tests/reflow_helpers.py``'s existing, generic (fixture-content-agnostic)
-``mandatory_invariant_bindings``/``mandatory_invariant_evaluations``/
-``mandatory_x003_claim_binding_and_event`` for exactly that assembly, since those functions
-themselves call nothing but real owners (:func:`~manosube_agent_civilization.difference.
-invariant_verifiers.verify_invariant`, :func:`~manosube_agent_civilization.difference.
-completion.build_completion_record`, and the real content-address identity functions) and
-carry no Phase 8 (or any other fixture's) business content of their own -- the same, already
-13-round-reviewed pattern every accepted Phase 7 ``CANDIDATE_CLOSURE`` integration test in
-this repository already depends on. Duplicating that assembly instead of reusing it would be
-a second, silently divergent copy of the identical real-owner composition, not independence.
+places on every caller, not something Phase 8 invents. A per-record-kind audit (recorded in
+``00_KERNEL/VERTICAL_PROOF_CONTRACT.md``) found: ``candidate_claim_evaluation_binding``/``
+_event`` have no producing owner of their own by contractual design (G21's own "caller
+supplies the pool, Reflow validates and persists it" pattern, ``reflow/claims.py``'s own
+module docstring) and are correctly caller-assembled already, via the real, public
+identity/fingerprint functions and the real
+:func:`~manosube_agent_civilization.difference.completion.build_completion_record` producer
+for the embedded Completion Record -- this module keeps reusing
+``tests/reflow_helpers.py``'s ``mandatory_x003_claim_binding_and_event`` for exactly that,
+unchanged. ``invariant_evaluation``, by contrast, *does* have a real, public producer
+(:func:`~manosube_agent_civilization.difference.invariant_evaluation.
+build_invariant_evaluation`) that a shared test helper was bypassing with an inline,
+hand-duplicated dict -- "previous test reuse of a hand-built record is not the same proof as
+calling the real owner" (SHUKOU, P8-R1). This module therefore calls that real producer
+directly (see :func:`phase8_invariant_bindings_and_evaluations`) for every mandatory
+Invariant's own evaluation record, rather than reusing the shared helper's hand-built
+equivalent, while still wrapping it in the identical, contractually-caller-assembled
+``candidate_invariant_evaluation_binding`` shape via the real
+:func:`~manosube_agent_civilization.reflow.invariant_registry.
+candidate_invariant_evaluation_binding_id` identity function every accepted Phase 7
+``CANDIDATE_CLOSURE`` fixture already uses.
 
 **A genuinely three-Observation route.** ``reflow()``'s own G8 gate refuses a ``CHANGE_BOUND``
 closure whose independent re-observation (``reobservation.after_observation_refs``) shares any
@@ -50,15 +60,12 @@ world, never one Observation record reused across two roles.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
 from tests.fixtures import vertical_proof as fx
-from tests.reflow_helpers import (
-    mandatory_invariant_bindings,
-    mandatory_invariant_evaluations,
-    mandatory_x003_claim_binding_and_event,
-)
+from tests.reflow_helpers import mandatory_x003_claim_binding_and_event
 from tests.state_helpers import (
     SCHEMA_ROOT,
     genesis_source_snapshot_records,
@@ -70,9 +77,12 @@ from tests.state_helpers import (
 from manosube_agent_civilization.authority import evaluate_authority
 from manosube_agent_civilization.change import derive_change
 from manosube_agent_civilization.difference import derive_differences
+from manosube_agent_civilization.difference.invariant_evaluation import (
+    build_invariant_evaluation,
+    invariant_evaluation_fingerprint,
+)
 from manosube_agent_civilization.difference.invariant_verifiers import (
     build_invariant_verification_context,
-    verify_invariant,
 )
 from manosube_agent_civilization.evidence.engine import derive_evidence
 from manosube_agent_civilization.evidence.levels import (
@@ -85,7 +95,11 @@ from manosube_agent_civilization.evidence.sufficiency import (
 )
 from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.reflow.closure import REQUEST_KEYS, build_after_state_candidate
-from manosube_agent_civilization.reflow.invariant_registry import expected_g19_invariant_ids
+from manosube_agent_civilization.reflow.invariant_registry import (
+    V0_1_INVARIANT_DEFINITION_DIGESTS,
+    candidate_invariant_evaluation_binding_id,
+    expected_g19_invariant_ids,
+)
 from manosube_agent_civilization.reflow.route import reflow
 from manosube_agent_civilization.state.fingerprint import (
     fingerprint_project_state,
@@ -195,13 +209,74 @@ def initialize_genesis(store: FileStateStore) -> dict[str, Any]:
 
 
 def observe_before(current_state: dict[str, Any]) -> dict[str, Any]:
-    """Item D.2: the real before-Observation, through the real Observation owner."""
+    """Item D.2 + D.7 first half (P8-R1-F1, SHUKOU Phase 8 structural-review round 1): the
+    real before-Observation, through the real Observation owner -- and, before any
+    Difference is derived from it, the real Observation Evidence that grounds it, through
+    the real Evidence owner.
+
+    Two real Observation Engine calls, not one, and no placeholder Evidence reference
+    reaches the committed route (``PLACEHOLDER_EVIDENCE_REFERENCE_COUNT=0``):
+    ``observation.identity.OBSERVATION_SEMANTIC_FIELDS`` excludes ``observation_evidence_
+    refs`` from an Observation's own content-addressed identity (confirmed by direct
+    reading of that module, not assumed) -- so a first, *provisional* Observation, carrying
+    only a schema-valid placeholder evidence ref, has the identical real ``observation_id``
+    a second, corrected Observation (carrying the real, already-derived Evidence id) will
+    also have. The first call seeds a real :func:`~manosube_agent_civilization.evidence.
+    engine.derive_evidence` call; the second, corrected bundle -- never the
+    placeholder-carrying one -- is what this function returns and what
+    :func:`derive_difference` actually derives the real Difference from, so the Difference's
+    own ``observation_evidence_refs`` field (populated by ``difference.engine._evidence_
+    union`` directly from the Observation's own declared field) carries the real Evidence
+    id, not a placeholder.
+    """
+
+    provisional_request = fx.before_observation_request(
+        fingerprint=current_state["semantic_fingerprint"],
+        state_revision=current_state["state_revision"],
+    )
+    provisional_bundle = observe(provisional_request)
+
+    difference_request = fx.derivation_request(
+        observation_bundle=provisional_bundle,
+        fingerprint=current_state["semantic_fingerprint"],
+        state_revision=current_state["state_revision"],
+    )
+    observation_evidence_request: dict[str, Any] = {
+        "schema_version": "0.1",
+        "recorded_at": fx.EVIDENCE_RECORDED_AT,
+        "observation_request": provisional_request,
+        "difference_request": difference_request,
+        "change_request": None,
+        "post_change_observation_request": None,
+        "verification_observation_request": None,
+        "artifact_references": [dict(fx.ARTIFACT)],
+        "predecessor_evidence_refs": [],
+        "remaining_difference_refs": [],
+    }
+    observation_evidence = derive_evidence(observation_evidence_request)
 
     request = fx.before_observation_request(
         fingerprint=current_state["semantic_fingerprint"],
         state_revision=current_state["state_revision"],
+        evidence_ref={
+            "kind": "observation_evidence",
+            "id": observation_evidence["evidence_id"],
+        },
     )
-    return {"request": request, "bundle": observe(request)}
+    bundle = observe(request)
+    # The corrected request only changed a field the Observation's own identity excludes --
+    # prove that here, mechanically, rather than merely asserting it in prose.
+    assert (
+        bundle["observations"][-1]["observation_id"]
+        == provisional_bundle["observations"][-1]["observation_id"]
+    )
+
+    return {
+        "request": request,
+        "bundle": bundle,
+        "observation_evidence_request": observation_evidence_request,
+        "observation_evidence": observation_evidence,
+    }
 
 
 def derive_difference(current_state: dict[str, Any], before: dict[str, Any]) -> dict[str, Any]:
@@ -270,34 +345,22 @@ def observe_verification(current_state: dict[str, Any]) -> dict[str, Any]:
     return {"request": request, "bundle": observe(request)}
 
 
-def derive_the_evidence(
+def derive_the_change_result_evidence(
     current_state: dict[str, Any],
     before: dict[str, Any],
     change: dict[str, Any],
     change_result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Item D.7: the real Observation Evidence and Change-result Evidence, through the real
-    Evidence owner."""
+    """Item D.7, second half: the real Change-result Evidence, through the real Evidence
+    owner. The first half -- the real Observation Evidence that grounds the Difference --
+    is already produced by :func:`observe_before` (P8-R1-F1), before any Difference
+    exists."""
 
     difference_request = fx.derivation_request(
-        observation_bundle=None,
+        observation_bundle=before["bundle"],
         fingerprint=current_state["semantic_fingerprint"],
         state_revision=current_state["state_revision"],
     )
-    observation_evidence_request: dict[str, Any] = {
-        "schema_version": "0.1",
-        "recorded_at": fx.EVIDENCE_RECORDED_AT,
-        "observation_request": before["request"],
-        "difference_request": difference_request,
-        "change_request": None,
-        "post_change_observation_request": None,
-        "verification_observation_request": None,
-        "artifact_references": [dict(fx.ARTIFACT)],
-        "predecessor_evidence_refs": [],
-        "remaining_difference_refs": [],
-    }
-    observation_evidence = derive_evidence(observation_evidence_request)
-
     change_result_evidence_request: dict[str, Any] = {
         "schema_version": "0.1",
         "recorded_at": fx.EVIDENCE_RECORDED_AT,
@@ -313,17 +376,21 @@ def derive_the_evidence(
     change_result_evidence = derive_evidence(change_result_evidence_request)
     return {
         "difference_request": difference_request,
-        "observation_evidence_request": observation_evidence_request,
-        "observation_evidence": observation_evidence,
         "change_result_evidence_request": change_result_evidence_request,
         "change_result_evidence": change_result_evidence,
     }
 
 
 def evaluate_the_sufficiency(
-    difference: dict[str, Any], policy: dict[str, Any], evidence: dict[str, Any]
+    difference: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    observation_evidence_request: dict[str, Any],
+    change_result_evidence_request: dict[str, Any],
 ) -> dict[str, Any]:
-    """Item D.8: the real Evidence Sufficiency, through the real Sufficiency owner."""
+    """Item D.8: the real Evidence Sufficiency, through the real Sufficiency owner, over
+    both real Evidence positions -- the real Observation Evidence (:func:`observe_before`)
+    and the real Change-result Evidence (:func:`derive_the_change_result_evidence`)."""
 
     request: dict[str, Any] = {
         "schema_version": "0.1",
@@ -335,10 +402,7 @@ def evaluate_the_sufficiency(
             "blob_sha": COMPLETION_SEMANTICS_BLOB_SHA,
             "evidence_level_scale_sha256": evidence_level_scale_digest(),
         },
-        "evidence_requests": [
-            evidence["observation_evidence_request"],
-            evidence["change_result_evidence_request"],
-        ],
+        "evidence_requests": [observation_evidence_request, change_result_evidence_request],
         "evaluation_instant": fx.SUFFICIENCY_EVALUATED_AT,
     }
     wrapper = evaluate_sufficiency(request)
@@ -347,6 +411,79 @@ def evaluate_the_sufficiency(
         "wrapper": wrapper,
         "result": wrapper["evidence_sufficiency_result"],
     }
+
+
+def phase8_invariant_bindings_and_evaluations(
+    difference_id: str,
+    current_state: dict[str, Any],
+    *,
+    after_state_candidate: dict[str, Any],
+    verification_context: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """P8-R1 canonical-record-construction audit: the real Invariant Evaluation record for
+    every pinned v0.1 mandatory Invariant id, through the real, public
+    :func:`~manosube_agent_civilization.difference.invariant_evaluation.
+    build_invariant_evaluation` producer (never a hand-duplicated equivalent), wrapped in the
+    contractually caller-assembled ``candidate_invariant_evaluation_binding`` (G19 has no
+    producing owner of its own for the *binding* -- only a real, public content-address
+    identity function, :func:`~manosube_agent_civilization.reflow.invariant_registry.
+    candidate_invariant_evaluation_binding_id`, which this still uses)."""
+
+    bindings: list[dict[str, Any]] = []
+    evaluations: list[dict[str, Any]] = []
+    for invariant_id in sorted(expected_g19_invariant_ids()):
+        evaluation_id = (
+            "INV-EVAL-"
+            + hashlib.sha256(f"vertical_proof:{difference_id}:{invariant_id}".encode())
+            .hexdigest()
+            .upper()
+        )
+        record = build_invariant_evaluation(
+            invariant_id,
+            verification_context,
+            evaluation_id=evaluation_id,
+            subject_ref={"kind": "difference", "id": difference_id},
+            state_revision=current_state["revision"],
+            state_fingerprint=current_state["fingerprint"],
+            candidate_id=after_state_candidate["candidate_id"],
+            candidate_semantic_fingerprint=after_state_candidate["semantic_fingerprint"],
+            evaluated_at=fx.SUFFICIENCY_EVALUATED_AT,
+            evaluator_capability="reflow.closure",
+            authority_ref=None,
+        )
+        evaluations.append(record)
+        binding: dict[str, Any] = {
+            "kind": "candidate_invariant_evaluation_binding",
+            "candidate_id": after_state_candidate["candidate_id"],
+            "candidate_semantic_fingerprint": after_state_candidate["semantic_fingerprint"],
+            "base_state_ref": {
+                "kind": "state",
+                "revision": current_state["revision"],
+                "fingerprint": current_state["fingerprint"],
+            },
+            "invariant_ref": {"kind": "kernel_invariant", "id": invariant_id},
+            "invariant_definition_ref": {
+                "repository": "manosube/manosube-agent-civilization-os",
+                "path": "00_KERNEL/KERNEL_INVARIANTS.md",
+                "invariant_definition_sha256": (
+                    "sha256:" + V0_1_INVARIANT_DEFINITION_DIGESTS[invariant_id]
+                ),
+            },
+            "invariant_evaluation_ref": {
+                "kind": "invariant_evaluation",
+                "id": record["evaluation_id"],
+            },
+            "evaluation_record_fingerprint": invariant_evaluation_fingerprint(record),
+            "evaluation_result": record["status"],
+            "evaluation_evidence_refs": {
+                "collection_kind": "UNORDERED_SET",
+                "members": list(record["evidence_refs"]["members"]),
+            },
+            "evaluated_at": record["evaluated_at"],
+        }
+        binding["binding_id"] = candidate_invariant_evaluation_binding_id(binding)
+        bindings.append(binding)
+    return bindings, evaluations
 
 
 def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[str, Any]:
@@ -374,8 +511,17 @@ def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[
     change_result_obs = observe_change_result(genesis_state)
     verification_obs = observe_verification(genesis_state)
 
-    evidence = derive_the_evidence(genesis_state, before, change, change_result_obs)
-    sufficiency = evaluate_the_sufficiency(difference, policy, evidence)
+    change_result_evidence_bundle = derive_the_change_result_evidence(
+        genesis_state, before, change, change_result_obs
+    )
+    sufficiency = evaluate_the_sufficiency(
+        difference,
+        policy,
+        observation_evidence_request=before["observation_evidence_request"],
+        change_result_evidence_request=change_result_evidence_bundle[
+            "change_result_evidence_request"
+        ],
+    )
 
     verification_difference_request = fx.derivation_request(
         observation_bundle=verification_obs["bundle"],
@@ -409,7 +555,7 @@ def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[
         current_state=current_state,
         after_state_candidate=after_state_candidate,
         resolution_mode="CHANGE_BOUND",
-        change_result_evidence=[evidence["change_result_evidence"]],
+        change_result_evidence=[change_result_evidence_bundle["change_result_evidence"]],
         change_free_evidence=[],
         after_observation_ids={verification_observation_id},
         source_snapshot_refs=[fx.AFTER_SNAPSHOT_REF],
@@ -421,21 +567,11 @@ def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[
         evaluated_at=fx.SUFFICIENCY_EVALUATED_AT,
         request_contract_keys=REQUEST_KEYS,
     )
-    verification_results = {
-        invariant_id: verify_invariant(invariant_id, verification_context)
-        for invariant_id in expected_g19_invariant_ids()
-    }
-    invariant_bindings = mandatory_invariant_bindings(
+    invariant_bindings, invariant_evaluations = phase8_invariant_bindings_and_evaluations(
         difference["difference_id"],
         current_state,
         after_state_candidate=after_state_candidate,
-        verification_results=verification_results,
-    )
-    invariant_evaluations = mandatory_invariant_evaluations(
-        difference["difference_id"],
-        current_state,
-        after_state_candidate=after_state_candidate,
-        verification_results=verification_results,
+        verification_context=verification_context,
     )
     invariant_evaluation_refs = [
         binding["invariant_evaluation_ref"] for binding in invariant_bindings
@@ -464,10 +600,12 @@ def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[
         "change_result_evidence_refs": [
             {
                 "kind": "observation_evidence",
-                "id": evidence["change_result_evidence"]["evidence_id"],
+                "id": change_result_evidence_bundle["change_result_evidence"]["evidence_id"],
             }
         ],
-        "change_result_evidence_requests": [evidence["change_result_evidence_request"]],
+        "change_result_evidence_requests": [
+            change_result_evidence_bundle["change_result_evidence_request"]
+        ],
         "change_free_verification_evidence_refs": [],
         "change_free_verification_evidence_requests": [],
         "reobservation": {
@@ -517,7 +655,7 @@ def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[
         "change_result_observation": change_result_obs,
         "verification_observation": verification_obs,
         "verification_observation_id": verification_observation_id,
-        "evidence": evidence,
+        "evidence": change_result_evidence_bundle,
         "sufficiency": sufficiency,
         "policy": policy,
         "closure_request": closure_request,
@@ -545,7 +683,7 @@ def run_vertical_proof(tmp_path: Path, *, fault: Any = None) -> dict[str, Any]:
     change_result_obs = assembly["change_result_observation"]
     verification_obs = assembly["verification_observation"]
     verification_observation_id = assembly["verification_observation_id"]
-    evidence = assembly["evidence"]
+    change_result_evidence_bundle = assembly["evidence"]
     sufficiency = assembly["sufficiency"]
     closure_request = assembly["closure_request"]
 
@@ -562,7 +700,7 @@ def run_vertical_proof(tmp_path: Path, *, fault: Any = None) -> dict[str, Any]:
         "change": change,
         "change_result_observation": change_result_obs,
         "verification_observation": verification_obs,
-        "evidence": evidence,
+        "evidence": change_result_evidence_bundle,
         "sufficiency": sufficiency,
         "closure_request": closure_request,
         "reflow_result": result,
@@ -580,8 +718,10 @@ def run_vertical_proof(tmp_path: Path, *, fault: Any = None) -> dict[str, Any]:
                 "observation_id"
             ],
             "verification_observation_id": verification_observation_id,
-            "observation_evidence_id": evidence["observation_evidence"]["evidence_id"],
-            "change_result_evidence_id": evidence["change_result_evidence"]["evidence_id"],
+            "observation_evidence_id": before["observation_evidence"]["evidence_id"],
+            "change_result_evidence_id": change_result_evidence_bundle["change_result_evidence"][
+                "evidence_id"
+            ],
             "evidence_sufficiency_id": sufficiency["result"]["evidence_sufficiency_id"],
             "closure_evaluation_id": result["evaluation"]["closure_evaluation_id"],
             "difference_lifecycle_event_id": result["event"]["difference_event_id"],

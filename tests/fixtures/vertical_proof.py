@@ -33,9 +33,17 @@ divergent copy of a proof that must name exactly one real commit/tree/blob chain
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+from pathlib import Path
 from typing import Any
 
 from manosube_agent_civilization.observation.source_snapshot import build_source_snapshot
+
+#: Repo root -- ``tests/fixtures/vertical_proof.py`` -> ``tests/fixtures`` -> ``tests`` ->
+#: repo root. Used only to read this proof's own real fixture bytes below (P8-R1 Source
+#: Snapshot fixture truthfulness), the identical pattern ``tests/state_helpers.py``'s own
+#: ``real_kernel_source_snapshot`` already uses for the real Kernel source.
+ROOT = Path(__file__).resolve().parents[2]
 
 #: This vertical proof's own dedicated project/objective/predicate/scope identities --
 #: distinct from every other suite's shared ``PRJ-0001``/``TP-0001`` fixtures, so a defect in
@@ -93,9 +101,22 @@ OBSERVATION_METHOD: dict[str, Any] = {
 #: fixture's own Change *caused* the before/after difference in these two snapshots' content --
 #: only that the Observation owner can observe each side independently, exactly as
 #: ``NATURAL_PHASE_8_ROUTE`` requires.
+#:
+#: P8-R1 Source Snapshot fixture truthfulness (SHUKOU Phase 8 structural-review round 1):
+#: both ``source_locator``\ s below name a real file this repository actually ships
+#: (``tests/fixtures/vertical_proof/{before,after}_source_world.txt``), and both
+#: ``content_digest``\ s are the real ``sha256`` of that file's own on-disk bytes, read here
+#: and hashed the identical way ``tests/state_helpers.py``'s own ``real_kernel_source_
+#: snapshot`` already reads and hashes ``00_KERNEL/KERNEL_INVARIANTS.md`` -- never an
+#: arbitrary digest asserted for a locator nobody checked.
+BEFORE_SOURCE_WORLD_LOCATOR = "tests/fixtures/vertical_proof/before_source_world.txt"
+AFTER_SOURCE_WORLD_LOCATOR = "tests/fixtures/vertical_proof/after_source_world.txt"
+_BEFORE_SOURCE_WORLD_BYTES = (ROOT / BEFORE_SOURCE_WORLD_LOCATOR).read_bytes()
+_AFTER_SOURCE_WORLD_BYTES = (ROOT / AFTER_SOURCE_WORLD_LOCATOR).read_bytes()
+
 BEFORE_SOURCE_SNAPSHOT: dict[str, Any] = build_source_snapshot(
-    source_locator="tests/fixtures/vertical_proof/before_source_world.txt",
-    content_digest="sha256:" + "5" * 64,
+    source_locator=BEFORE_SOURCE_WORLD_LOCATOR,
+    content_digest="sha256:" + hashlib.sha256(_BEFORE_SOURCE_WORLD_BYTES).hexdigest(),
     captured_at=BEFORE_SNAPSHOT_TIME,
 )
 BEFORE_SNAPSHOT_REF: dict[str, str] = {
@@ -104,8 +125,8 @@ BEFORE_SNAPSHOT_REF: dict[str, str] = {
 }
 
 AFTER_SOURCE_SNAPSHOT: dict[str, Any] = build_source_snapshot(
-    source_locator="tests/fixtures/vertical_proof/after_source_world.txt",
-    content_digest="sha256:" + "6" * 64,
+    source_locator=AFTER_SOURCE_WORLD_LOCATOR,
+    content_digest="sha256:" + hashlib.sha256(_AFTER_SOURCE_WORLD_BYTES).hexdigest(),
     captured_at=AFTER_SNAPSHOT_TIME,
 )
 AFTER_SNAPSHOT_REF: dict[str, str] = {
@@ -237,8 +258,20 @@ def observation_request(
     started_at: str,
     ended_at: str,
     attempt_id: str,
+    evidence_ref: dict[str, str] = EVIDENCE_REF,
 ) -> dict[str, Any]:
-    """One schema-valid Observation request over this proof's own bounded source world."""
+    """One schema-valid Observation request over this proof's own bounded source world.
+
+    *evidence_ref* is this Observation's own declared ``observation_evidence_refs`` entry.
+    ``observation.identity.OBSERVATION_SEMANTIC_FIELDS`` excludes this field from the
+    Observation's own content-addressed identity (confirmed by direct reading, not assumed),
+    so passing the real, already-derived ``observation_evidence`` id here -- once it is
+    known -- changes nothing about which Observation this is; it only corrects which real
+    Evidence the Observation (and, through it, the Difference's own ``_evidence_union``)
+    declares. The default (:data:`EVIDENCE_REF`) is a schema-valid placeholder used only to
+    seed that real derivation in the first place (P8-R1-F1) -- see
+    ``tests/natural_cycle/proof.py::observe_before`` for the two-pass sequence that replaces
+    it with the real id before any Difference is derived from this Observation."""
 
     scope = observation_scope(snapshot_ref=snapshot_ref)
     return {
@@ -276,7 +309,7 @@ def observation_request(
             }
         ],
         "blind_spots": [],
-        "observation_evidence_refs": [dict(EVIDENCE_REF)],
+        "observation_evidence_refs": [dict(evidence_ref)],
         "negative_evidence_refs": [dict(NEGATIVE_EVIDENCE_REF)],
         "negative_claims": [],
         "collection_complete": True,
@@ -284,9 +317,16 @@ def observation_request(
 
 
 def before_observation_request(
-    *, fingerprint: dict[str, Any], state_revision: int
+    *,
+    fingerprint: dict[str, Any],
+    state_revision: int,
+    evidence_ref: dict[str, str] = EVIDENCE_REF,
 ) -> dict[str, Any]:
-    """The genesis-world Observation: the readiness marker reads ``"NOT-READY"``."""
+    """The genesis-world Observation: the readiness marker reads ``"NOT-READY"``.
+
+    *evidence_ref* -- see :func:`observation_request`'s own docstring (P8-R1-F1): the
+    default is the placeholder used only to seed the real Observation Evidence derivation;
+    the corrected, real id is passed back in on the second pass."""
 
     return observation_request(
         value="NOT-READY",
@@ -298,6 +338,7 @@ def before_observation_request(
         started_at=BEFORE_OBSERVATION_STARTED_AT,
         ended_at=BEFORE_OBSERVATION_ENDED_AT,
         attempt_id="ATTEMPT-VP8-0001",
+        evidence_ref=evidence_ref,
     )
 
 
