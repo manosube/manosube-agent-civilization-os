@@ -112,7 +112,9 @@ def test_r12f1_all_claimants_uncommitted_is_invisible(tmp_path: Path) -> None:
 # --- 5: zero claimants -> invisible, even with a permanent file on disk --------------------- #
 
 
-def test_r12f1_zero_claimants_is_invisible_even_with_a_permanent_file_present(tmp_path: Path) -> None:
+def test_r12f1_zero_claimants_is_invisible_even_with_a_permanent_file_present(
+    tmp_path: Path,
+) -> None:
     store, _recovery = _store(tmp_path)
     snapshot = real_kernel_source_snapshot()
     record_id = snapshot["source_snapshot_id"]
@@ -124,7 +126,9 @@ def test_r12f1_zero_claimants_is_invisible_even_with_a_permanent_file_present(tm
 # --- 6: multiple COMMITTED claimants, identical body -> visible ---------------------------- #
 
 
-def test_r12f1_multiple_committed_claimants_with_the_identical_body_are_visible(tmp_path: Path) -> None:
+def test_r12f1_multiple_committed_claimants_with_the_identical_body_are_visible(
+    tmp_path: Path,
+) -> None:
     store, recovery = _store(tmp_path)
     snapshot = real_kernel_source_snapshot()
     record_id = snapshot["source_snapshot_id"]
@@ -146,7 +150,13 @@ def test_r12f1_an_uncommitted_claimants_staged_body_diverging_from_committed_fai
     record_id = snapshot["source_snapshot_id"]
     tampered = dict(snapshot, captured_at="2099-01-01T00:00:00Z")
     _write_permanent(tmp_path, record_id, snapshot)
-    _claim(recovery, "AAA-uncommitted-tampered", record_id=record_id, committed=False, staged_body=tampered)
+    _claim(
+        recovery,
+        "AAA-uncommitted-tampered",
+        record_id=record_id,
+        committed=False,
+        staged_body=tampered,
+    )
     _claim(recovery, "ZZZ-committed-real", record_id=record_id, committed=True)
 
     with pytest.raises(CorruptStoreError, match="diverges across manifest claimants"):
@@ -162,8 +172,16 @@ def test_r12f1_two_committed_claimants_with_different_bodies_fail_closed(tmp_pat
     record_id = snapshot["source_snapshot_id"]
     tampered = dict(snapshot, captured_at="2099-01-01T00:00:00Z")
     _write_permanent(tmp_path, record_id, snapshot)
-    _claim(recovery, "AAA-committed-tampered", record_id=record_id, committed=True, staged_body=tampered)
-    _claim(recovery, "ZZZ-committed-real", record_id=record_id, committed=True, staged_body=snapshot)
+    _claim(
+        recovery,
+        "AAA-committed-tampered",
+        record_id=record_id,
+        committed=True,
+        staged_body=tampered,
+    )
+    _claim(
+        recovery, "ZZZ-committed-real", record_id=record_id, committed=True, staged_body=snapshot
+    )
 
     with pytest.raises(CorruptStoreError, match="diverges across manifest claimants"):
         store.resolve_record(PROJECT_ID, KIND, record_id)
@@ -180,7 +198,13 @@ def test_r12f1_permanent_body_diverging_from_a_committed_claimants_body_fails_cl
     record_id = snapshot["source_snapshot_id"]
     tampered = dict(snapshot, captured_at="2099-01-01T00:00:00Z")
     _write_permanent(tmp_path, record_id, snapshot)
-    _claim(recovery, "AAA-committed-tampered", record_id=record_id, committed=True, staged_body=tampered)
+    _claim(
+        recovery,
+        "AAA-committed-tampered",
+        record_id=record_id,
+        committed=True,
+        staged_body=tampered,
+    )
 
     with pytest.raises(CorruptStoreError, match="diverges across manifest claimants"):
         store.resolve_record(PROJECT_ID, KIND, record_id)

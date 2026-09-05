@@ -49,9 +49,7 @@ _GROUNDED_BASELINE: dict[str, Any] = {
 
 
 def test_r12f3_other_structural_is_always_exempt() -> None:
-    assert (
-        blocker_kind_grounding_error("OTHER_STRUCTURAL", **_GROUNDED_BASELINE) is None
-    )
+    assert blocker_kind_grounding_error("OTHER_STRUCTURAL", **_GROUNDED_BASELINE) is None
     # Exempt even against the worst possible (fully ungrounded) Evaluation.
     ungrounded = dict(_GROUNDED_BASELINE)
     ungrounded["evaluation"] = {"result": "NOT_SATISFIED", "gate_results": {}}
@@ -91,12 +89,17 @@ def test_r12f3_every_specific_kind_is_refused_when_ungrounded(kind: str) -> None
     a kind's own grounding fact refuses it -- a caller's bare assertion is never enough."""
 
     ungrounded = dict(_GROUNDED_BASELINE)
-    ungrounded["evaluation"] = {"result": "NOT_SATISFIED", "gate_results": {"G19": "PASS", "G21": "PASS"}}
+    ungrounded["evaluation"] = {
+        "result": "NOT_SATISFIED",
+        "gate_results": {"G19": "PASS", "G21": "PASS"},
+    }
     ungrounded["sufficiency"] = {"result": "SUFFICIENT"}
     ungrounded["authority_ref"] = {"kind": "authority_decision", "id": "A-" + "1" * 64}
     ungrounded["change_refs"] = [{"kind": "change", "id": "C-" + "1" * 64}]
     ungrounded["observation_refs"] = [{"kind": "observation", "id": "O-" + "1" * 64}]
-    ungrounded["reobservation"] = {"after_observation_refs": [{"kind": "observation", "id": "O-" + "1" * 64}]}
+    ungrounded["reobservation"] = {
+        "after_observation_refs": [{"kind": "observation", "id": "O-" + "1" * 64}]
+    }
 
     error = blocker_kind_grounding_error(kind, **ungrounded)
     assert error is not None
@@ -114,18 +117,30 @@ def test_r12f3_every_specific_kind_is_refused_when_ungrounded(kind: str) -> None
         ("MATERIAL_CONFLICT", {"evaluation": {"result": "CONTRADICTED", "gate_results": {}}}),
         (
             "INVARIANT_FAILURE",
-            {"evaluation": {"result": "NOT_SATISFIED", "gate_results": {"G19": "FAIL", "G21": "PASS"}}},
+            {
+                "evaluation": {
+                    "result": "NOT_SATISFIED",
+                    "gate_results": {"G19": "FAIL", "G21": "PASS"},
+                }
+            },
         ),
         (
             "CLAIM_FAILURE",
-            {"evaluation": {"result": "NOT_SATISFIED", "gate_results": {"G19": "PASS", "G21": "FAIL"}}},
+            {
+                "evaluation": {
+                    "result": "NOT_SATISFIED",
+                    "gate_results": {"G19": "PASS", "G21": "FAIL"},
+                }
+            },
         ),
         ("AUTHORITY_PATH", {"authority_ref": None}),
         ("EXECUTION_PATH", {"change_refs": []}),
         ("OBSERVATION_PATH", {"observation_refs": [], "reobservation": None}),
     ],
 )
-def test_r12f3_every_specific_kind_is_admitted_when_grounded(kind: str, overrides: dict[str, Any]) -> None:
+def test_r12f3_every_specific_kind_is_admitted_when_grounded(
+    kind: str, overrides: dict[str, Any]
+) -> None:
     grounded = dict(_GROUNDED_BASELINE)
     grounded.update(overrides)
     assert blocker_kind_grounding_error(kind, **grounded) is None
@@ -134,7 +149,9 @@ def test_r12f3_every_specific_kind_is_admitted_when_grounded(kind: str, override
 # --- self-consistency is not grounding proof ------------------------------------------------- #
 
 
-def test_r12f3_a_self_consistent_blocker_kind_condition_code_pairing_is_not_grounding_proof() -> None:
+def test_r12f3_a_self_consistent_blocker_kind_condition_code_pairing_is_not_grounding_proof() -> (
+    None
+):
     """PAIRING_TABLE_NE_ACTUAL_GROUNDING_PROOF=true, proven directly: an event whose
     ``blocker_kind``/``condition_code`` pairing is perfectly self-consistent -- passing
     ``blocker_payload_errors`` outright -- is still refused by ``blocker_kind_grounding_error``
@@ -199,7 +216,9 @@ def _fresh_store(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any]]:
     return store, project_state
 
 
-def test_r12f3_an_ungrounded_specific_cause_is_refused_before_any_state_mutation(tmp_path: Path) -> None:
+def test_r12f3_an_ungrounded_specific_cause_is_refused_before_any_state_mutation(
+    tmp_path: Path,
+) -> None:
     """R12_F3_REFUSAL_HAS_ZERO_STATE_MUTATION=true, proven end-to-end: a real ``reflow()``
     call whose caller asserts ``EVIDENCE_INSUFFICIENT`` with no real
     ``evidence_sufficiency_request`` behind it at all raises before committing anything -- the
@@ -278,7 +297,10 @@ def test_r12f3_a_mechanically_grounded_cause_is_admitted_end_to_end(tmp_path: Pa
             "condition_code": "AUTHORITY_PATH_AVAILABLE",
             "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
             "expected_state": "AVAILABLE",
-            "verification_request_ref": {"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
+            "verification_request_ref": {
+                "kind": "next_observation_request",
+                "id": "OBS-REQ-" + "9" * 64,
+            },
         },
         next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
     )
