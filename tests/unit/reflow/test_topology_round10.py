@@ -156,13 +156,19 @@ def test_r10f2_a_direct_filesystem_write_call_site_outside_the_store_fails_k002_
     assert topology.k002_single_canonical_state_owner() is False
 
 
-def test_r10f2_a_wrapper_commit_call_site_fails_k003_and_r001_and_r002_even_though_commit_reflow_stays_singular(
+def test_r10f2_a_wrapper_commit_call_site_fails_k003_and_r001_even_though_commit_reflow_stays_singular(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``REFLOW_TRANSITION_COMMITTER``: some other module's own wrapper calling
     ``store.commit(...)`` directly (never named or shaped like ``commit_reflow``) is a
     second transition-commit path -- caught here regardless of what that wrapper function is
-    called, unlike Round 9's own name-based ``_functions_named("commit_reflow")`` scan."""
+    called, unlike Round 9's own name-based ``_functions_named("commit_reflow")`` scan.
+
+    R12-F2: R-002 is deliberately *not* asserted here any more -- it no longer proxies
+    R-001 (``R002_NE_R001_PROXY=true``), so a stray ``.commit(...)`` call site, which names
+    nothing about the Lineage path at all, correctly leaves R-002's own independent
+    Lineage-write-function inventory unaffected. See ``test_topology_round12.py`` for
+    R-002's own dedicated negative controls."""
 
     real_call_sites = topology._call_sites
 
@@ -175,7 +181,6 @@ def test_r10f2_a_wrapper_commit_call_site_fails_k003_and_r001_and_r002_even_thou
     assert len(topology._functions_named("commit_reflow")) == 1  # unaffected, still singular
     assert topology.k003_single_authority_and_transition_owner() is False
     assert topology.r001_single_atomic_committer() is False
-    assert topology.r002_single_lineage_owner() is False
 
 
 def test_r10f2_a_second_kernel_entry_point_function_fails_k001_even_though_evaluate_closure_stays_singular(

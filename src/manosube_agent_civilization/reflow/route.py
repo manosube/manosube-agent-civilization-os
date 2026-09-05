@@ -88,6 +88,7 @@ from manosube_agent_civilization.difference.invariant_evaluation import resolve_
 from manosube_agent_civilization.difference.invariant_verifiers import (
     build_invariant_verification_context,
 )
+from manosube_agent_civilization.difference.lifecycle import blocker_kind_grounding_error
 from manosube_agent_civilization.evidence.engine import (
     derive_evidence,
     resolve_terminal_reason_evidence,
@@ -979,6 +980,25 @@ def reflow(
         else None
     )
     evidence_refs = _derive_evidence_refs(evaluation, sufficiency)
+
+    # R12-F3 (Phase 7 Final Closure Round): a BLOCKED transition's blocker_kind is refused,
+    # before any state mutation, unless this cycle's own Evaluation mechanically grounds it
+    # -- pairing blocker_kind with a self-consistent condition_code (blocker_payload_errors,
+    # difference/lifecycle.py) is not the same proof (PAIRING_TABLE_NE_ACTUAL_GROUNDING_
+    # PROOF=true). An ungroundable specific cause is the caller's to resolve as
+    # OTHER_STRUCTURAL; this function never launders it there itself.
+    if decision["to_status"] == "BLOCKED":
+        grounding_error = blocker_kind_grounding_error(
+            blocker_kind,
+            evaluation=evaluation,
+            sufficiency=sufficiency,
+            authority_ref=authority_ref,
+            change_refs=change_refs,
+            observation_refs=observation_refs,
+            reobservation=closure_request.get("reobservation"),
+        )
+        if grounding_error is not None:
+            raise ReflowValidationError(grounding_error)
 
     difference_ref = {"kind": "difference", "id": difference["difference_id"]}
     tx = transaction_id(

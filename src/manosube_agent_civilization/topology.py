@@ -464,6 +464,86 @@ def _direct_filesystem_write_sites() -> list[str]:
     )
 
 
+#: R12-F2 (SHUKOU Phase 7 Final Closure): the exact ``"module.function"`` pairs authorized
+#: to write to the Lineage log, keyed by the semantic role each one fulfills --
+#: ``AUTHORIZED_LINEAGE_WRITE_PATHS_EXPLICIT=true``. Any *other* function anywhere in the
+#: installed package whose own body both references the Lineage-path accessor
+#: (:meth:`FileStateStore._lineage`) and calls a recognized write primitive is a second,
+#: unauthorized Lineage writer -- ``UNCLASSIFIED_LINEAGE_WRITE_PATHS=0`` is this vertical's
+#: own claim, checked against this exact set, never against a bare count alone (a rogue
+#: writer could otherwise coincide in number with a removed legitimate one).
+_AUTHORIZED_LINEAGE_WRITE_FUNCTIONS = frozenset(
+    {
+        f"{_PACKAGE_NAME}.store.file_store._append",
+        f"{_PACKAGE_NAME}.store.file_store.initialize",
+    }
+)
+#: Recognized write/read primitive names for the Lineage-specific scan below -- the same
+#: vocabulary :func:`_direct_filesystem_write_sites` already uses, reused rather than
+#: reinvented for this narrower, Lineage-path-specific question.
+_LINEAGE_WRITE_PRIMITIVE_NAMES = frozenset({"atomic_write", "write_text", "write_bytes", "write"})
+_LINEAGE_READ_PRIMITIVE_NAMES = frozenset({"read_text", "read_bytes"})
+_LINEAGE_ACCESSOR_NAME = "_lineage"
+
+
+def _lineage_reference_and_primitive_functions(
+    *, trees: list[tuple[str, ast.Module]] | None = None
+) -> tuple[list[str], list[str]]:
+    """R12-F2: independently inventory every function/method in the installed package whose
+    own body references the Lineage-path accessor (``self._lineage(...)``) -- Round 10's own
+    ``_direct_filesystem_write_sites`` proves no *unsanctioned module* writes a file
+    directly, but a rogue write added *inside* an already-sanctioned module (``store.
+    file_store`` itself) is invisible to that check by construction
+    (``REFLOW_COMMIT_OWNER_COUNT_NE_LINEAGE_WRITE_PATH_COUNT=true`` -- R-001's own "one
+    commit path" fact says nothing about how many functions touch the Lineage log
+    specifically). This closes that gap by classifying every function that references the
+    Lineage path *by what it actually does with it*, never by which module it happens to
+    live in (``SAME_MODULE_NE_AUTOMATICALLY_AUTHORIZED=true``).
+
+    Returns ``(write_functions, read_functions)`` -- ``"module.function"`` entries. A
+    function referencing the accessor whose own body also calls a recognized write
+    primitive is a writer; failing that, one that calls a recognized read primitive is a
+    reader; a function that merely checks ``.exists()`` on the path (``initialize``'s own
+    ``AlreadyInitializedError`` guard, shared by both its branches) is neither, and is
+    correctly excluded from both lists -- existence-checking is not itself reading or
+    writing the Lineage log's own content.
+    """
+
+    write_functions: list[str] = []
+    read_functions: list[str] = []
+    for module_name, tree in trees if trees is not None else _module_source_trees():
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            references_lineage = False
+            has_write = False
+            has_read = False
+            for inner in ast.walk(node):
+                if not isinstance(inner, ast.Call):
+                    continue
+                func = inner.func
+                if isinstance(func, ast.Attribute):
+                    name = func.attr
+                elif isinstance(func, ast.Name):
+                    name = func.id
+                else:
+                    continue
+                if name == _LINEAGE_ACCESSOR_NAME:
+                    references_lineage = True
+                elif name in _LINEAGE_WRITE_PRIMITIVE_NAMES:
+                    has_write = True
+                elif name in _LINEAGE_READ_PRIMITIVE_NAMES:
+                    has_read = True
+            if not references_lineage:
+                continue
+            qualname = f"{module_name}.{node.name}"
+            if has_write:
+                write_functions.append(qualname)
+            elif has_read:
+                read_functions.append(qualname)
+    return sorted(write_functions), sorted(read_functions)
+
+
 @lru_cache(maxsize=1)
 def kernel_topology_inventory() -> dict[str, list[str]]:
     """Return the real, reproducible inventory this module's own docstring names -- every
@@ -480,6 +560,7 @@ def kernel_topology_inventory() -> dict[str, list[str]]:
     module count rather than a raw site count (see that function's own docstring).
     """
 
+    lineage_write_functions, lineage_read_functions = _lineage_reference_and_primitive_functions()
     return {
         "closure_producers": _functions_named("evaluate_closure"),
         "kernel_entry_points": _functions_named("reflow"),
@@ -498,6 +579,8 @@ def kernel_topology_inventory() -> dict[str, list[str]]:
         "reflow_transition_commit_sites": _call_sites(
             frozenset({"commit"}), exclude_modules=_SANCTIONED_COMMIT_CALL_MODULES
         ),
+        "lineage_write_functions": lineage_write_functions,
+        "lineage_read_functions": lineage_read_functions,
     }
 
 
@@ -558,9 +641,25 @@ def r001_single_atomic_committer() -> bool:
 
 
 def r002_single_lineage_owner() -> bool:
-    """R-002 LINEAGE_APPEND_ONLY, its Static half: identical to R-001 -- the single canonical
-    State owner is also the sole lineage-append path (``reconstruct``, the same method
-    K-002's own inventory already required that owner to implement), with no second,
-    unsanctioned direct write path into it."""
+    """R-002 LINEAGE_APPEND_ONLY, its Static half -- R12-F2 (SHUKOU Phase 7 Final Closure):
+    no longer a bare proxy of R-001 (``R002_NE_R001_PROXY=true``/``R002_INDEPENDENT_OF_
+    R001=true``). R-001's own "one commit path" fact says nothing about how many functions
+    actually touch the Lineage log (``REFLOW_COMMIT_OWNER_COUNT_NE_LINEAGE_WRITE_PATH_
+    COUNT=true``) -- a second Lineage writer added *inside* the already-sanctioned
+    ``store.file_store`` module would pass R-001 unnoticed, since R-001 never inspects
+    Lineage-path-specific call sites at all. This Invariant now has its own, independent
+    inventory (:func:`_lineage_reference_and_primitive_functions`): the set of functions
+    that actually write to the Lineage path must equal exactly the two explicitly-named,
+    authorized roles (:data:`_AUTHORIZED_LINEAGE_WRITE_FUNCTIONS` --
+    ``AUTHORIZED_BARE_GENESIS_CREATE``/``AUTHORIZED_TRANSACTION_APPEND``; recovery
+    completion reuses the identical authorized append function rather than writing
+    directly, so it needs no third entry), and the single canonical State owner K-002
+    already proved must still hold -- Lineage stays owned by the one ``FileStateStore``
+    this vertical has, just no longer trusted merely for living inside it
+    (``SAME_MODULE_NE_AUTOMATICALLY_AUTHORIZED=true``)."""
 
-    return r001_single_atomic_committer()
+    inventory = kernel_topology_inventory()
+    return (
+        k002_single_canonical_state_owner()
+        and set(inventory["lineage_write_functions"]) == _AUTHORIZED_LINEAGE_WRITE_FUNCTIONS
+    )

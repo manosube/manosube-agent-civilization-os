@@ -2175,7 +2175,13 @@ def test_r7f4_a_real_blocked_reflow_persists_a_resolvable_terminal_reason_eviden
         closure_request=closure_request,
         observation_refs=[],
         reflow_instant=REFLOW_INSTANT,
-        blocker_kind="EVIDENCE_INSUFFICIENT",
+        # R12-F3: TERMINAL_POLICY_ONLY is candidate-independent by contract
+        # (CLOSURE_POLICY.md's own text) -- Evidence Sufficiency is a candidate-dependent
+        # concept this evaluation_mode never runs, so OTHER_STRUCTURAL (not
+        # EVIDENCE_INSUFFICIENT) is the mechanically grounded, contract-faithful cause for a
+        # candidate-free block, and the only one route.reflow's new grounding check admits
+        # here without a real evidence_sufficiency_request behind it.
+        blocker_kind="OTHER_STRUCTURAL",
         blocker_scope={
             "kind": "difference_blocker_scope",
             "affected_subject_refs": {
@@ -2187,9 +2193,9 @@ def test_r7f4_a_real_blocked_reflow_persists_a_resolvable_terminal_reason_eviden
         },
         blocker_resolution_condition={
             "kind": "blocker_resolution_condition",
-            "condition_code": "REQUIRED_EVIDENCE_AVAILABLE",
+            "condition_code": "STRUCTURAL_BLOCKER_REMOVED",
             "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
-            "expected_state": "AVAILABLE",
+            "expected_state": "REMOVED",
             "verification_request_ref": {
                 "kind": "next_observation_request",
                 "id": "OBS-REQ-" + "9" * 64,
@@ -2241,7 +2247,10 @@ def test_r7f4_preflight_reresolution_catches_an_emptied_terminal_reason_evidence
                 event_revision=1,
                 observation_refs=[],
                 reflow_instant=REFLOW_INSTANT,
-                blocker_kind="EVIDENCE_INSUFFICIENT",
+                # R12-F3: candidate-free TERMINAL_POLICY_ONLY's mechanically grounded cause
+                # is OTHER_STRUCTURAL, not EVIDENCE_INSUFFICIENT -- see the sibling R7-F4
+                # positive control above for the full rationale.
+                blocker_kind="OTHER_STRUCTURAL",
                 blocker_scope={
                     "kind": "difference_blocker_scope",
                     "affected_subject_refs": {
@@ -2253,9 +2262,9 @@ def test_r7f4_preflight_reresolution_catches_an_emptied_terminal_reason_evidence
                 },
                 blocker_resolution_condition={
                     "kind": "blocker_resolution_condition",
-                    "condition_code": "REQUIRED_EVIDENCE_AVAILABLE",
+                    "condition_code": "STRUCTURAL_BLOCKER_REMOVED",
                     "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
-                    "expected_state": "AVAILABLE",
+                    "expected_state": "REMOVED",
                     "verification_request_ref": {
                         "kind": "next_observation_request",
                         "id": "OBS-REQ-" + "9" * 64,
@@ -2336,7 +2345,10 @@ def test_r8f3_a_real_blocked_reflow_still_persists_the_matching_terminal_reason_
         closure_request=closure_request,
         observation_refs=[],
         reflow_instant=REFLOW_INSTANT,
-        blocker_kind="EVIDENCE_INSUFFICIENT",
+        # R12-F3: candidate-free TERMINAL_POLICY_ONLY's mechanically grounded cause is
+        # OTHER_STRUCTURAL, not EVIDENCE_INSUFFICIENT -- see the R7-F4 positive control
+        # above for the full rationale.
+        blocker_kind="OTHER_STRUCTURAL",
         blocker_scope={
             "kind": "difference_blocker_scope",
             "affected_subject_refs": {
@@ -2348,9 +2360,9 @@ def test_r8f3_a_real_blocked_reflow_still_persists_the_matching_terminal_reason_
         },
         blocker_resolution_condition={
             "kind": "blocker_resolution_condition",
-            "condition_code": "REQUIRED_EVIDENCE_AVAILABLE",
+            "condition_code": "STRUCTURAL_BLOCKER_REMOVED",
             "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
-            "expected_state": "AVAILABLE",
+            "expected_state": "REMOVED",
             "verification_request_ref": {
                 "kind": "next_observation_request",
                 "id": "OBS-REQ-" + "9" * 64,
@@ -2918,11 +2930,18 @@ def test_r9f3_differing_blocker_kind_never_collides_on_the_same_event_identity()
 def _terminal_policy_only_blocker_kwargs(difference: dict[str, Any]) -> dict[str, Any]:
     """The ``blocker_kind``/``blocker_scope``/``blocker_resolution_condition``/
     ``next_observation_ref`` kwargs a ``TERMINAL_POLICY_ONLY`` (candidate-free) request needs
-    to mint a real ``BLOCKED`` transition through ``reflow()`` -- the identical shape
-    ``tests/unit/reflow/test_failed_route.py`` already uses for this same route."""
+    to mint a real ``BLOCKED`` transition through ``reflow()``.
+
+    R12-F3 (Phase 7 Final Closure Round): ``blocker_kind`` is ``OTHER_STRUCTURAL``, not
+    ``EVIDENCE_INSUFFICIENT`` -- ``CLOSURE_POLICY.md`` itself reserves Evidence Sufficiency
+    for the candidate-dependent ``CANDIDATE_TERMINAL`` mode; ``TERMINAL_POLICY_ONLY`` is
+    candidate-independent by contract, so ``route.reflow``'s own new grounding check
+    (which this fixture predates) correctly refuses the previously-used
+    ``EVIDENCE_INSUFFICIENT`` here: nothing in a candidate-free cycle's own Evaluation ever
+    runs a real Evidence Sufficiency judgment to ground it."""
 
     return {
-        "blocker_kind": "EVIDENCE_INSUFFICIENT",
+        "blocker_kind": "OTHER_STRUCTURAL",
         "blocker_scope": {
             "kind": "difference_blocker_scope",
             "affected_subject_refs": {
@@ -2934,9 +2953,9 @@ def _terminal_policy_only_blocker_kwargs(difference: dict[str, Any]) -> dict[str
         },
         "blocker_resolution_condition": {
             "kind": "blocker_resolution_condition",
-            "condition_code": "REQUIRED_EVIDENCE_AVAILABLE",
+            "condition_code": "STRUCTURAL_BLOCKER_REMOVED",
             "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
-            "expected_state": "AVAILABLE",
+            "expected_state": "REMOVED",
             "verification_request_ref": {
                 "kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64
             },

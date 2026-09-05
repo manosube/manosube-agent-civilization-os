@@ -101,14 +101,11 @@ class FileStateStore:
 
     def _record_committed_by_any_transaction(self, project_id: str, kind: str, record_id: str) -> bool:
         """Return whether *(kind, record_id)*'s permanent file was promoted by a transaction
-        that is now durably ``COMMITTED`` -- R8-F4, sharpened by R10-F3.
+        that is now durably ``COMMITTED`` -- R8-F4, sharpened by R10-F3, sharpened again by
+        R12-F1.
 
         A record's own file carries no transaction-id metadata, so this asks every
-        transaction that ever recorded this same ``manifest.json`` reproduction: if *some*
-        transaction claiming this key in its manifest is ``COMMITTED``, the key is real
-        (R2-F3B already guarantees same-ID-different-payload can never have been staged
-        under two disagreeing transactions, so any one committed claimant is sufficient proof
-        -- the file's own bytes are that transaction's, whichever one first promoted them).
+        transaction that ever recorded this same ``manifest.json`` reproduction.
 
         R10-F3 (SHUKOU Round 10): a record file existing on disk is never, by itself,
         evidence that any transaction actually promoted it -- ``FILE_EXISTS_NE_CANONICAL_
@@ -127,11 +124,42 @@ class FileStateStore:
         promoted through this identical manifest mechanism under the ``TX-GENESIS`` journal,
         so they are found and committed here exactly like any other transaction's -- no
         special-casing needed in this method for genesis at all.
+
+        R12-F1 (SHUKOU Phase 7 Final Closure): the prior version of this method returned on
+        the *first* journal (in sorted directory-name order) whose manifest claimed this key
+        -- ``FIRST_CLAIMANT_NE_CANONICAL_VERDICT=true``/``JOURNAL_DIRECTORY_ORDER_NE_
+        AUTHORITY=true``. Two real bugs followed from that: an uncommitted claimant sorting
+        before a real, COMMITTED claimant made a genuinely canonical record wrongly
+        invisible; and no claimant's own staged body was ever compared against any other's,
+        so a same-identity/different-body divergence across two claimants (or between a
+        claimant and the permanent file) silently passed, or silently failed, purely by
+        chance of sort order -- never actually detected either way. This method now collects
+        *every* manifest claimant unconditionally (``ALL_CLAIMANTS_MUST_BE_EXAMINED=true``,
+        ``CLAIMANT_ORDER_PERMUTATION_INVARIANT=true`` -- the result cannot depend on
+        directory iteration order, since every claimant is always visited): the record is
+        visible only once at least one committed claimant exists
+        (``ANY_COMMITTED_CLAIMANT_MAKES_IDENTICAL_RECORD_VISIBLE=true``), and only if every
+        body actually available to compare -- the permanent file's, and every claimant's own
+        staged copy where one still exists in its journal -- is byte-identical
+        (``SAME_ID_DIFFERENT_BODY_MUST_FAIL_CLOSED=true``, via the existing
+        :class:`CorruptStoreError`, never a second, parallel Conflict authority). A claimant
+        whose manifest claims the key but carries no staged file of its own contributes no
+        body evidence either way -- :meth:`_stage_records` deliberately drops (never writes)
+        a staged copy identical to what was already the current permanent record at that
+        claimant's own staging time, so a missing staged file only ever means "nothing new to
+        compare here", never "this claimant's body differs"
+        (``MISSING_BEFORE_RECORD_STAGE`` is not ``DIFFERENT_BODY_AFTER_RECORD_STAGE``, and
+        must never be conflated with it).
         """
 
         recovery=self._project(project_id)/"state"/"recovery"
         if not recovery.exists():
             return False
+        bodies:set[bytes]=set()
+        permanent_path=self._record_path(project_id,kind,record_id)
+        if permanent_path.exists():
+            bodies.add(permanent_path.read_bytes())
+        any_committed=False
         for journal in sorted(recovery.iterdir()):
             if not journal.is_dir():
                 continue
@@ -144,8 +172,18 @@ class FileStateStore:
                 raise CorruptStoreError(f"malformed transaction manifest: {journal.name}") from exc
             if [kind,record_id] not in entries:
                 continue
-            return (journal/"COMMITTED").exists()
-        return False
+            if (journal/"COMMITTED").exists():
+                any_committed=True
+            staged_path=journal/"records"/f"{kind}__{record_id}.json"
+            if staged_path.exists():
+                bodies.add(staged_path.read_bytes())
+        if not any_committed:
+            return False
+        if len(bodies)>1:
+            raise CorruptStoreError(
+                f"same-identity record diverges across manifest claimants: {kind}/{record_id}"
+            )
+        return True
 
     def resolve_transaction(self, project_id: str, transaction_id: str) -> dict[str,Any]|None:
         """Return the committed ``state_transition`` event named by *transaction_id*, or

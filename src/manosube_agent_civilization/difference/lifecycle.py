@@ -221,6 +221,89 @@ def blocker_payload_errors(
     return errors
 
 
+#: R12-F3 (Phase 7 Final Closure Round): the specific, non-``OTHER_STRUCTURAL``
+#: ``blocker_kind`` values a BLOCKED transition can commit to are each paired here with
+#: the exact predicate that mechanically grounds it in the Evaluation Reflow has already
+#: computed *this cycle* -- not merely a caller assertion that the accompanying
+#: ``condition_code`` names it. ``BLOCKER_KIND_CONDITION_CODE`` above already proves that
+#: pairing is *self-consistent*; it does not prove the pairing is *true*
+#: (``PAIRING_TABLE_NE_ACTUAL_GROUNDING_PROOF=true``), and neither does the record's own
+#: content address (``CONTENT_ADDRESS_NE_TRUTH_PROOF=true`` -- a forged cause hashes just
+#: as validly as a real one). ``OTHER_STRUCTURAL`` is deliberately absent from this table:
+#: it is the contract's existing cause-neutral vocabulary for a real block this Phase's
+#: bounded grounding cannot itself resolve to one of the other eight kinds, not a second
+#: thing to prove.
+BLOCKER_KIND_GROUNDING_PREDICATE: dict[str, str] = {
+    "EVIDENCE_INSUFFICIENT": "evidence_sufficiency_result.result == INSUFFICIENT",
+    "STALE_BINDING": "evidence_sufficiency_result.result == STALE",
+    "MATERIAL_CONFLICT": "closure_evaluation.result == CONTRADICTED",
+    "INVARIANT_FAILURE": "closure_evaluation.gate_results[G19] != PASS/NOT_APPLICABLE",
+    "CLAIM_FAILURE": "closure_evaluation.gate_results[G21] != PASS/NOT_APPLICABLE",
+    "AUTHORITY_PATH": "authority_ref is None",
+    "EXECUTION_PATH": "change_refs is empty",
+    "OBSERVATION_PATH": "observation_refs and reobservation.after_observation_refs are both empty",
+}
+
+
+def blocker_kind_grounding_error(
+    blocker_kind: str | None,
+    *,
+    evaluation: dict[str, Any],
+    sufficiency: dict[str, Any] | None,
+    authority_ref: Any | None,
+    change_refs: list[Any] | None,
+    observation_refs: list[Any] | None,
+    reobservation: dict[str, Any] | None,
+) -> str | None:
+    """Return the one reason a BLOCKED transition's *blocker_kind* is not mechanically
+    grounded in this cycle's own Evaluation, or ``None`` if it is grounded (or exempt).
+
+    R12-F3 (Phase 7 Final Closure Round): ``FULL_NINE_KIND_TYPED_GROUNDING_REQUIRED_IN_
+    PHASE_7=false`` -- this Phase does not claim to ground every one of the nine
+    :data:`BLOCKER_KIND_VALUES` from first principles. What it does refuse
+    (``UNVERIFIED_SPECIFIC_BLOCKER_CAUSE_COMMIT_ALLOWED=false``) is committing a
+    *specific*, non-``OTHER_STRUCTURAL`` cause the caller merely asserts, with nothing in
+    this cycle's own Evaluation to prove it. A caller whose real cause this table cannot
+    verify must supply ``OTHER_STRUCTURAL`` instead; this function never launders an
+    unverified cause into that value itself
+    (``UNVERIFIED_CAUSE_TO_OTHER_STRUCTURAL_LAUNDERING_ALLOWED=false``) -- it only refuses,
+    leaving the choice of ``OTHER_STRUCTURAL`` to the caller that already holds it.
+    """
+
+    if blocker_kind is None or blocker_kind == "OTHER_STRUCTURAL":
+        return None
+    if blocker_kind not in BLOCKER_KIND_VALUES:
+        return f"blocker_kind is not a recognized value: {blocker_kind!r}"
+
+    grounded: bool
+    if blocker_kind == "EVIDENCE_INSUFFICIENT":
+        grounded = sufficiency is not None and sufficiency["result"] == "INSUFFICIENT"
+    elif blocker_kind == "STALE_BINDING":
+        grounded = sufficiency is not None and sufficiency["result"] == "STALE"
+    elif blocker_kind == "MATERIAL_CONFLICT":
+        grounded = evaluation.get("result") == "CONTRADICTED"
+    elif blocker_kind == "INVARIANT_FAILURE":
+        grounded = evaluation.get("gate_results", {}).get("G19") not in {"PASS", "NOT_APPLICABLE"}
+    elif blocker_kind == "CLAIM_FAILURE":
+        grounded = evaluation.get("gate_results", {}).get("G21") not in {"PASS", "NOT_APPLICABLE"}
+    elif blocker_kind == "AUTHORITY_PATH":
+        grounded = authority_ref is None
+    elif blocker_kind == "EXECUTION_PATH":
+        grounded = not change_refs
+    else:
+        after_observation_refs = (
+            reobservation.get("after_observation_refs") if isinstance(reobservation, dict) else None
+        )
+        grounded = not observation_refs and not after_observation_refs
+
+    if grounded:
+        return None
+    return (
+        f"blocker_kind is not mechanically grounded in this cycle's own Evaluation: "
+        f"{blocker_kind!r} requires {BLOCKER_KIND_GROUNDING_PREDICATE[blocker_kind]}"
+    )
+
+
 def next_observation_binding_errors(
     event: dict[str, Any],
     difference: dict[str, Any] | None,
