@@ -189,26 +189,50 @@ class FileStateStore:
 
     def _transaction_committed(self, project_id: str, transaction_id: str) -> bool:
         """Return whether *transaction_id* is durably ``COMMITTED`` -- R7-F5, sharpened by
-        R10-F3.
+        R10-F3, sharpened again by R11-F1.
 
-        Only the one, explicitly-named genesis transaction (:data:`GENESIS_TRANSACTION_ID`)
-        is committed by construction regardless of whether it happens to carry a recovery
-        journal (:meth:`initialize` mints one only when genesis stages real records, R10-F1
-        -- a bare genesis with no records to close a reference to still needs none). Every
-        *other* transaction_id is a real, ordinary transaction :meth:`commit` always creates
-        a journal for as its very first act -- ``NO_JOURNAL_NE_COMMITTED=true``: a missing
-        journal here is refused (never committed), not silently assumed to predate this
-        tracking (this vertical carries no actual data that does). A transaction *with* a
-        journal is committed only once that journal's own ``COMMITTED`` marker exists --
-        exactly the marker :meth:`commit` writes last and :meth:`recover` writes on
-        completing an interrupted one.
+        R11-F1: ``TRANSACTION_ID_IS_GENESIS_NE_COMMITTED=true`` -- the literal string
+        ``TX-GENESIS`` is never, by itself, sufficient proof that a transaction actually
+        finished. Two genuinely different genesis institutions share that one id
+        (``BARE_GENESIS`` vs ``GENESIS_WITH_RECORDS``, R10-F1's own distinction), and this
+        method must resolve each correctly rather than treating the name as a blanket
+        authority:
+
+        - **Bare genesis** (no recovery journal at all -- every genesis this vertical minted
+          before R10-F1, and still the common case for one with no records to close a
+          reference to): :meth:`initialize`'s own non-``records`` branch writes the lineage
+          entry and ``current.json`` in one atomic step with no partial-write window, so a
+          missing journal here means genesis already completed by construction -- committed
+          exactly as it always was.
+        - **Genesis-with-records** (a recovery journal exists, staged the identical way
+          :meth:`commit` stages any other transaction's): ``GENESIS_EVENT_APPENDED_NE_
+          GENESIS_COMMITTED=true`` -- appearing in the lineage log is not enough
+          (:meth:`initialize` appends *before* promoting records or writing ``COMMITTED``,
+          mirroring :meth:`commit`'s own sequence exactly). Only that journal's own
+          ``COMMITTED`` marker settles it -- ``COMMITTED_MARKER_IS_VISIBILITY_BOUNDARY=true``,
+          identically to every other transaction below.
+
+        Every *other* (non-genesis) transaction_id is a real, ordinary transaction
+        :meth:`commit` always creates a journal for as its very first act --
+        ``NO_JOURNAL_NE_COMMITTED=true``: a missing journal here is refused (never
+        committed), not silently assumed to predate this tracking (this vertical carries no
+        actual data that does). A transaction *with* a journal is committed only once that
+        journal's own ``COMMITTED`` marker exists -- exactly the marker :meth:`commit` writes
+        last and :meth:`recover` writes on completing an interrupted one.
+
+        One check now serves every case: a missing journal means "committed" only for the
+        one explicitly-named bare-genesis institution (``GENESIS_EXCEPTION_IS_EXPLICIT=true``,
+        never a wildcard); a present journal -- genesis or not -- is gated on its own
+        ``COMMITTED`` marker alone (``GENESIS_STATE_VISIBLE_NE_GENESIS_RECORDS_VISIBLE_IS_
+        ILLEGAL=true`` -- the same boundary :meth:`resolve_record`'s own ``_record_committed_
+        by_any_transaction`` already applied to genesis-with-records, now shared by
+        :meth:`resolve_transaction`, :meth:`reconstruct` and :meth:`load_current` too, so the
+        four public read surfaces can never again diverge on the same transaction).
         """
 
-        if transaction_id == self.GENESIS_TRANSACTION_ID:
-            return True
         path = self._project(project_id)/"state"/"recovery"/transaction_id
         if not path.exists():
-            return False
+            return transaction_id == self.GENESIS_TRANSACTION_ID
         return (path/"COMMITTED").exists()
 
     def _events(self, project_id: str) -> list[dict[str,Any]]:
@@ -249,7 +273,10 @@ class FileStateStore:
         transaction.
         """
 
-        hit=lambda stage: fault(stage) if fault else None
+        def hit(stage: str) -> None:
+            if fault:
+                fault(stage)
+
         with self._lock(project_id):
             if self._lineage(project_id).exists(): raise AlreadyInitializedError(project_id)
             state=self._validate_state(project_id,initial_state)
@@ -265,14 +292,21 @@ class FileStateStore:
                 # second recovery mechanism, no second fault-injection surface.
                 journal=self._project(project_id)/"state"/"recovery"/self.GENESIS_TRANSACTION_ID
                 journal.mkdir(parents=True,exist_ok=True)
-                atomic_write(journal/"event.json",canonical_json_bytes(event)); hit(STAGES[0])
-                atomic_write(journal/"state.json",canonical_json_bytes(state)); hit(STAGES[1])
-                self._stage_records(project_id,journal,list(records)); hit(STAGES[2])
-                atomic_write(journal/"COMMIT_INTENT",b"1"); hit(STAGES[3])
-                self._append(project_id,event); hit(STAGES[4])
-                self._promote_staged_records(project_id,journal); hit(STAGES[5])
+                atomic_write(journal/"event.json",canonical_json_bytes(event))
+                hit(STAGES[0])
+                atomic_write(journal/"state.json",canonical_json_bytes(state))
+                hit(STAGES[1])
+                self._stage_records(project_id,journal,list(records))
+                hit(STAGES[2])
+                atomic_write(journal/"COMMIT_INTENT",b"1")
+                hit(STAGES[3])
+                self._append(project_id,event)
+                hit(STAGES[4])
+                self._promote_staged_records(project_id,journal)
+                hit(STAGES[5])
                 hit(STAGES[6])
-                atomic_write(self._current(project_id),canonical_json_bytes(state)); hit(STAGES[7])
+                atomic_write(self._current(project_id),canonical_json_bytes(state))
+                hit(STAGES[7])
                 hit(STAGES[8])
                 atomic_write(journal/"COMMITTED",b"1")
             else:

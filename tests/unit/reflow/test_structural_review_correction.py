@@ -3092,18 +3092,28 @@ def test_r10f1_genesis_adopted_snapshot_still_resolves_identically_after_a_real_
 def test_r10f1_genesis_with_records_is_invisible_before_recovery_and_converges_after(
     stage: str, tmp_path: Path
 ) -> None:
-    """R10-F1 crash-recovery boundary: a genesis carrying ``records`` is staged and promoted
-    through the identical manifest/journal mechanism ``commit`` already uses (mirrored fault
-    hook, identical named :data:`STAGES`), so a crash at any of the 9 stages either leaves
-    genesis cleanly abandoned (retryable, for a crash before ``AFTER_COMMIT_INTENT``) or
-    recoverable to the identical committed State and record through the same generic
-    ``recover`` -- no second recovery mechanism for this one new path."""
+    """R10-F1 crash-recovery boundary, sharpened R11-F1 into a real joint check across all
+    four public read surfaces: a genesis carrying ``records`` is staged and promoted through
+    the identical manifest/journal mechanism ``commit`` already uses (mirrored fault hook,
+    identical named :data:`STAGES`), so a crash at any of the 9 stages either leaves genesis
+    cleanly abandoned (retryable, for a crash before ``AFTER_COMMIT_INTENT``) or recoverable
+    to the identical committed State, transaction and record through the same generic
+    ``recover`` -- no second recovery mechanism for this one new path.
+
+    R11-F1: Round 10's own version of this test only checked ``resolve_record`` before
+    recovery for a late-stage crash -- ``resolve_transaction``/``reconstruct``/
+    ``load_current`` were never exercised there, which is exactly how the real R11-F1 defect
+    (``_transaction_committed``'s blanket ``transaction_id == GENESIS_TRANSACTION_ID``
+    trusting the *name* alone, regardless of whether *this* genesis's own journal was ever
+    actually completed) escaped Round 10's own coverage. All four surfaces are now checked
+    together, both before and after recovery, at every one of the 9 stages --
+    ``GENESIS_PARTIAL_VISIBILITY_ALLOWED=false``."""
 
     from tests.difference_helpers import objective_revision as _objective_revision
     from tests.state_helpers import genesis_source_snapshot_records, initial_state
 
     from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
-    from manosube_agent_civilization.store.errors import StateNotFoundError
+    from manosube_agent_civilization.store.errors import CorruptStoreError, StateNotFoundError
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     project_state = initial_state()
@@ -3123,8 +3133,15 @@ def test_r10f1_genesis_with_records_is_invisible_before_recovery_and_converges_a
     with pytest.raises(SimulatedCrash):
         store.initialize(project_id, project_state, records=records, fault=fault)
 
-    # Unpromoted/unresolvable before recovery, at every crash stage.
+    # Joint pre-recovery check, at every one of the 9 crash stages: none of the four public
+    # read surfaces may expose this genesis until its own COMMITTED marker exists, whether or
+    # not the event already reached the raw lineage log (AFTER_LINEAGE_APPEND onward).
     assert store.resolve_record(project_id, snapshot_kind, snapshot_id) is None
+    assert store.resolve_transaction(project_id, "TX-GENESIS") is None
+    with pytest.raises(CorruptStoreError, match="lineage has no genesis"):
+        store.reconstruct(project_id)
+    with pytest.raises(CorruptStoreError, match="lineage has no genesis"):
+        store.load_current(project_id)
 
     early_stage = stage in STAGES[: STAGES.index("AFTER_COMMIT_INTENT")]
     if early_stage:
@@ -3135,11 +3152,18 @@ def test_r10f1_genesis_with_records_is_invisible_before_recovery_and_converges_a
         with pytest.raises(StateNotFoundError):
             store.recover(project_id)
         assert store.resolve_record(project_id, snapshot_kind, snapshot_id) is None
+        assert store.resolve_transaction(project_id, "TX-GENESIS") is None
         store.initialize(project_id, project_state, records=records)
         assert store.load_current(project_id) == project_state
     else:
         store.recover(project_id)
+        # Joint post-recovery check: all four surfaces now agree, together, on the same
+        # completed genesis transaction.
         resolved = store.resolve_record(project_id, snapshot_kind, snapshot_id)
         assert resolved is not None
         assert resolved["source_snapshot_id"] == snapshot_id
+        transaction = store.resolve_transaction(project_id, "TX-GENESIS")
+        assert transaction is not None
+        assert transaction["transaction_id"] == "TX-GENESIS"
+        assert store.reconstruct(project_id) == project_state
         assert store.load_current(project_id) == project_state

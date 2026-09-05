@@ -139,10 +139,10 @@ def test_r10f2_a_direct_filesystem_write_call_site_outside_the_store_fails_k002_
 
     real_call_sites = topology._call_sites
 
-    def _stray_write_site(call_name: str, *, exclude_modules: frozenset[str]) -> list[str]:
-        if call_name == "atomic_write":
+    def _stray_write_site(names: frozenset[str], **kwargs: object) -> list[str]:
+        if "atomic_write" in names:
             return ["fake.shadow_writer:1"]
-        return real_call_sites(call_name, exclude_modules=exclude_modules)
+        return real_call_sites(names, **kwargs)
 
     monkeypatch.setattr(topology, "_call_sites", _stray_write_site)
     assert (
@@ -166,10 +166,10 @@ def test_r10f2_a_wrapper_commit_call_site_fails_k003_and_r001_and_r002_even_thou
 
     real_call_sites = topology._call_sites
 
-    def _stray_commit_site(call_name: str, *, exclude_modules: frozenset[str]) -> list[str]:
-        if call_name == "commit":
+    def _stray_commit_site(names: frozenset[str], **kwargs: object) -> list[str]:
+        if "commit" in names:
             return ["fake.shadow_committer:1"]
-        return real_call_sites(call_name, exclude_modules=exclude_modules)
+        return real_call_sites(names, **kwargs)
 
     monkeypatch.setattr(topology, "_call_sites", _stray_commit_site)
     assert len(topology._functions_named("commit_reflow")) == 1  # unaffected, still singular
@@ -215,5 +215,8 @@ def test_r10f2_every_static_check_still_passes_on_the_real_installed_topology() 
     assert inventory["direct_filesystem_write_sites"] == []
     assert inventory["reflow_transition_commit_sites"] == []
     assert len(inventory["kernel_entry_points"]) == 1
-    assert len(inventory["closure_evaluation_identity_sites"]) == 1
-    assert len(inventory["authority_decision_identity_sites"]) == 1
+    # R11-F2: counted by producer *module*, not raw site -- the real producers each pair a
+    # placeholder dict-literal key with a later subscript-assignment recompute in the same
+    # module, which now legitimately shows as more than one raw site.
+    assert len(topology._site_modules(inventory["closure_evaluation_identity_sites"])) == 1
+    assert len(topology._site_modules(inventory["authority_decision_identity_sites"])) == 1
