@@ -95,6 +95,8 @@ from manosube_agent_civilization.evidence.engine import (
 )
 from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
+from manosube_agent_civilization.observation import observe
+from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.observation.errors import ObservationError
 from manosube_agent_civilization.observation.identity import observation_identity
 from manosube_agent_civilization.observation.source_snapshot import resolve_source_snapshot
@@ -109,6 +111,7 @@ from .git_witness import build_kernel_source_witness_record, verify_kernel_sourc
 from .identity import closure_evaluation_decision_fingerprint, closure_evaluation_id, transaction_id
 from .invariant_registry import KERNEL_INVARIANTS_BLOB_SHA, KERNEL_INVARIANTS_PATH
 from .lifecycle import mint_transition_event
+from .reference_registry import reference_edges
 from .reopen import decide_reopen
 
 #: The reference kind Difference's own vocabulary uses for a lifecycle event everywhere it
@@ -141,10 +144,9 @@ def _check_expected_state(
             f"expected_state_revision {expected_state_revision} does not match the "
             f"Store's current revision {before_project_state['state_revision']}"
         )
-    if (
-        expected_state_fingerprint is not None
-        and before_project_state["semantic_fingerprint"] != dict(expected_state_fingerprint)
-    ):
+    if expected_state_fingerprint is not None and before_project_state[
+        "semantic_fingerprint"
+    ] != dict(expected_state_fingerprint):
         raise StaleReflowError(
             "expected_state_fingerprint does not match the Store's current State"
         )
@@ -278,7 +280,10 @@ def _resolve_base_kernel_source_ref(
                 f"own self-consistency check: {error}"
             ) from error
         git_provenance = record.get("git_provenance")
-        if isinstance(git_provenance, dict) and git_provenance.get("path") == KERNEL_INVARIANTS_PATH:
+        if (
+            isinstance(git_provenance, dict)
+            and git_provenance.get("path") == KERNEL_INVARIANTS_PATH
+        ):
             matching_provenance.append(git_provenance)
 
     if not matching_provenance:
@@ -301,7 +306,11 @@ def _resolve_base_kernel_source_ref(
     commit_sha = git_provenance.get("commit_sha")
     tree_sha = git_provenance.get("tree_sha")
     witness = closure_request.get("kernel_source_witness")
-    if not isinstance(witness, dict) or not isinstance(commit_sha, str) or not isinstance(tree_sha, str):
+    if (
+        not isinstance(witness, dict)
+        or not isinstance(commit_sha, str)
+        or not isinstance(tree_sha, str)
+    ):
         raise ReflowValidationError(
             "base Kernel provenance: no real kernel_source_witness was supplied to "
             "independently verify the resolved Source Snapshot's Git provenance"
@@ -382,7 +391,9 @@ def _self_consistent_after_observations(closure_request: dict[str, Any]) -> list
     return verified
 
 
-def _reproduced_evidence_for_context(closure_request: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _reproduced_evidence_for_context(
+    closure_request: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return ``(change_result_evidence, change_free_evidence)`` reproduced fresh from
     *closure_request*'s own requests -- R7-F1: the same real Evidence
     :func:`~manosube_agent_civilization.difference.invariant_verifiers.
@@ -476,7 +487,9 @@ def _preflight_reresolve_closure(
     invariant_bindings = evaluation.get("candidate_invariant_evaluation_bindings") or []
     invariant_evaluation_pool = closure_request.get("invariant_evaluations") or []
     claim_events = closure_request.get("candidate_claim_evaluation_events") or []
-    invariant_evaluation_refs = [binding["invariant_evaluation_ref"] for binding in invariant_bindings]
+    invariant_evaluation_refs = [
+        binding["invariant_evaluation_ref"] for binding in invariant_bindings
+    ]
     material_contradiction_refs = evaluation.get("contradiction_refs") or []
     observed_state_ref = {
         "kind": "state",
@@ -550,10 +563,16 @@ def _preflight_reresolve_closure(
     if invariant_bindings or evaluation.get("kernel_source_witness_ref"):
         kernel_source_ref = closure_request.get("kernel_source_ref")
         kernel_source_witness = closure_request.get("kernel_source_witness")
-        commit_sha = kernel_source_ref.get("commit_sha") if isinstance(kernel_source_ref, dict) else None
-        tree_sha = kernel_source_ref.get("tree_sha") if isinstance(kernel_source_ref, dict) else None
-        if not isinstance(kernel_source_witness, dict) or not isinstance(commit_sha, str) or not isinstance(
-            tree_sha, str
+        commit_sha = (
+            kernel_source_ref.get("commit_sha") if isinstance(kernel_source_ref, dict) else None
+        )
+        tree_sha = (
+            kernel_source_ref.get("tree_sha") if isinstance(kernel_source_ref, dict) else None
+        )
+        if (
+            not isinstance(kernel_source_witness, dict)
+            or not isinstance(commit_sha, str)
+            or not isinstance(tree_sha, str)
         ):
             raise StaleReflowError(
                 "atomic preflight: kernel_source_ref/kernel_source_witness no longer present"
@@ -617,8 +636,7 @@ def _preflight_reresolve_closure(
                 f"reproduces: {error}"
             ) from error
     declared_change_free_ids = {
-        ref.get("id")
-        for ref in closure_request.get("change_free_verification_evidence_refs") or []
+        ref.get("id") for ref in closure_request.get("change_free_verification_evidence_refs") or []
     }
     if change_free_pool_ids != declared_change_free_ids:
         raise StaleReflowError(
@@ -662,6 +680,375 @@ def _preflight_reresolve_terminal_reason_evidence(
         ) from error
 
 
+#: A reference's own recognized field set (``common/reference.schema.json``): ``kind`` and
+#: ``id`` are always required, ``digest`` is the one field the schema admits beyond them.
+#: Fixed here, once, rather than re-typed at each of this module's three provenance checks.
+_REFERENCE_FIELDS = frozenset({"kind", "id", "digest"})
+
+
+def _reference_key(reference: Any, *, context: str) -> tuple[Any, ...]:
+    """Return one reference's own canonical identity key -- ``kind``, ``id`` and, if
+    present, ``digest`` -- after refusing anything that is not exactly a reference object.
+
+    P8-R2-F2 (SHUKOU Phase 8 structural-review round 2): a bare ``ref.get("id")`` treats a
+    reference naming the right id under the *wrong* ``kind`` as identical to the real one --
+    ``REFERENCE_KIND_IS_SEMANTIC=true`` refuses that. Every recognized field is folded into
+    the key (never just ``id``), so two references that agree on ``id`` alone, but disagree
+    on ``kind`` or an asserted ``digest``, compare unequal.
+    """
+
+    if not isinstance(reference, dict):
+        raise ReflowValidationError(f"{context} member is not a reference object")
+    unknown = set(reference) - _REFERENCE_FIELDS
+    if unknown:
+        raise ReflowValidationError(f"{context} member carries unknown fields: {sorted(unknown)}")
+    kind = reference.get("kind")
+    identity = reference.get("id")
+    if not isinstance(kind, str) or not kind or not isinstance(identity, str) or not identity:
+        raise ReflowValidationError(f"{context} member carries no readable kind/id")
+    return tuple(sorted(reference.items()))
+
+
+def _require_unordered_reference_set_equal(
+    declared: Any,
+    real: Any,
+    *,
+    declared_label: str,
+    real_label: str,
+) -> None:
+    """UNORDERED_SET canonical-reference equality (P8-R2-F2): canonical sort, duplicate
+    rejection, and exact member equality over the *whole* reference (never ``id`` alone) --
+    never a bare ``{ref["id"], ...}`` Python ``set``, which silently collapses a duplicate
+    reference into one, admits a right-id/wrong-kind reference as identical, and cannot
+    distinguish "missing" from "extra" once ids alone are compared. Order carries no
+    meaning for either side (this Kernel's own collections here are content-addressed
+    identity sets, never sequences), so canonical (sorted) comparison is exact equality,
+    not merely order-insensitive membership.
+    """
+
+    declared_list = declared if declared is not None else []
+    real_list = real if real is not None else []
+    if not isinstance(declared_list, list):
+        raise ReflowValidationError(f"{declared_label} must be a list of references")
+    if not isinstance(real_list, list):
+        raise ReflowValidationError(f"{real_label} must be a list of references")
+
+    declared_keys = [_reference_key(item, context=declared_label) for item in declared_list]
+    real_keys = [_reference_key(item, context=real_label) for item in real_list]
+
+    for label, keys in ((declared_label, declared_keys), (real_label, real_keys)):
+        seen: set[tuple[Any, ...]] = set()
+        for key in keys:
+            if key in seen:
+                raise ReflowValidationError(f"{label} carries a duplicate reference: {dict(key)}")
+            seen.add(key)
+
+    declared_set = set(declared_keys)
+    real_set = set(real_keys)
+    if declared_set != real_set:
+        missing = real_set - declared_set
+        extra = declared_set - real_set
+        raise ReflowValidationError(
+            f"{declared_label} does not exactly match {real_label} "
+            f"(missing={[dict(k) for k in sorted(missing)]}, "
+            f"extra={[dict(k) for k in sorted(extra)]})"
+        )
+
+
+def _require_single_reference_member(
+    declared: Any,
+    real_refs: set[tuple[Any, ...]],
+    *,
+    declared_label: str,
+    real_label: str,
+) -> None:
+    """SINGLE_REFERENCE canonical equality against a real reference set (P8-R2-F2):
+    *declared* must be exactly one of *real_refs* -- exact ``kind``, exact ``id``, no
+    unknown field -- never a bare id-string membership test that a right-id/wrong-kind
+    reference would also satisfy."""
+
+    key = _reference_key(declared, context=declared_label)
+    if key not in real_refs:
+        raise ReflowValidationError(f"{declared_label} does not exactly match {real_label}")
+
+
+def _preflight_verify_reflow_provenance(
+    closure_request: dict[str, Any],
+    evaluation: dict[str, Any],
+    *,
+    authority_ref: Any | None,
+    change_refs: list[Any] | None,
+    observation_refs: list[Any],
+    reflow_instant_value: str,
+) -> None:
+    """P8-R1-F5 (round 1) + P8-R2-F2 (round 2, SHUKOU Phase 8 structural-review, adopted):
+    ``reflow()``'s own caller-supplied ``authority_ref``/``change_refs``/``observation_
+    refs``/``reflow_instant`` are re-verified, immediately before commit, against the same
+    real records this Evaluation is already independently bound to -- never accepted as
+    caller-restated descriptive metadata for the lifecycle event/transaction identity that
+    carry them, and never merely checked by a bare ``ref["id"]`` set (P8-R2-F2:
+    ``REFERENCE_ID_ONLY_EQUALITY_SUFFICIENT=false`` -- that silently accepts a right-id
+    reference under the wrong ``kind``, collapses a genuine duplicate, and cannot
+    distinguish a missing reference from an extra one once only ids are compared).
+    Called for every outcome (not only ``CLOSED``), matching the treatment every other
+    admitted reference here already gets.
+
+    *change_refs* must equal, as a full canonical UNORDERED_SET of references (not an id
+    set), ``closure_request.producing_change_refs`` -- a field G8/G21's own Candidate
+    binding already holds to the real, reproduced Change (a mismatch there already fails
+    the Evaluation before this ever runs). *authority_ref* is a SINGLE_REFERENCE that,
+    wherever this Evaluation names at least one real Change-result Evidence request, must
+    equal -- exact ``kind`` and ``id``, not id alone -- one of the real ``authority_used``
+    references those requests' own reproduction (:func:`~manosube_agent_civilization.
+    evidence.engine.derive_evidence`) actually carries -- never a caller restatement.
+    *observation_refs* must equal, as a full canonical UNORDERED_SET, ``closure_request.
+    reobservation.after_observation_refs`` wherever a ``reobservation`` is declared -- the
+    same identities G8's own anti-self-closing check already resolves. *reflow_instant_
+    value* may never precede the Evaluation's own real ``evaluated_at`` -- committing an
+    outcome at an instant earlier than the evidence that grounds it was evaluated is
+    incoherent.
+
+    Every refusal here raises before ``_admitted_records``/commit ever runs, so no State,
+    Lineage, record or transaction manifest mutation follows a provenance mismatch.
+    """
+
+    _require_unordered_reference_set_equal(
+        change_refs,
+        closure_request.get("producing_change_refs"),
+        declared_label="reflow()'s own change_refs",
+        real_label="closure_request.producing_change_refs",
+    )
+
+    change_result_requests = closure_request.get("change_result_evidence_requests") or []
+    if change_result_requests:
+        real_authority_refs: set[tuple[Any, ...]] = set()
+        for item in change_result_requests:
+            try:
+                record = derive_evidence(item)
+            except EvidenceError as error:
+                raise StaleReflowError(
+                    f"atomic preflight: change_result_evidence_requests no longer "
+                    f"reproduces: {error}"
+                ) from error
+            authority_used = record.get("authority_used")
+            if isinstance(authority_used, dict) and authority_used.get("id"):
+                real_authority_refs.add(
+                    _reference_key(
+                        {"kind": "authority_decision", "id": authority_used["id"]},
+                        context="the real Authority Decision reference",
+                    )
+                )
+        _require_single_reference_member(
+            authority_ref,
+            real_authority_refs,
+            declared_label="reflow()'s own authority_ref",
+            real_label="the real Authority Decision the reproduced change_result_evidence "
+            "actually names",
+        )
+
+    reobservation = closure_request.get("reobservation")
+    if isinstance(reobservation, dict) and reobservation.get("after_observation_refs"):
+        _require_unordered_reference_set_equal(
+            observation_refs,
+            reobservation.get("after_observation_refs"),
+            declared_label="reflow()'s own observation_refs",
+            real_label="closure_request.reobservation.after_observation_refs",
+        )
+
+    # P8-R2 Reflow Instant semantics (SHUKOU Phase 8 structural-review round 2, adopted):
+    # ``reflow_instant`` is the real transition time, folded into the transaction identity
+    # itself (:func:`~manosube_agent_civilization.reflow.identity.transaction_id`) --
+    # ``REFLOW_INSTANT_INCLUDED_IN_TRANSACTION_ID=true``, ``DIFFERENT_VALID_REFLOW_INSTANT_
+    # MAY_PRODUCE_DIFFERENT_TRANSACTION_ID=true`` -- so a value that is not even a real
+    # timestamp must fail closed here, not merely feed a hash
+    # (``INVALID_REFLOW_INSTANT_FAILS_CLOSED=true``), before this ever reaches
+    # ``_admitted_records``/commit.
+    try:
+        reflow_instant_parsed = instant(reflow_instant_value)
+    except (ValueError, TypeError) as error:
+        raise ReflowValidationError(
+            f"reflow_instant is not a valid canonical UTC instant: {error}"
+        ) from error
+
+    # ``REFLOW_INSTANT_MUST_NOT_PRECEDE_CLOSURE_EVALUATION=true``, but
+    # ``REFLOW_INSTANT_EXACTLY_EQUALS_EVALUATED_AT=false`` -- equal to, or any later, valid
+    # instant is admitted (``LATER_VALID_REFLOW_INSTANT_ALLOWED=true``); only a *causally
+    # early* instant (one that would commit an outcome before the evidence grounding it was
+    # even evaluated) fails closed (``CAUSALLY_EARLY_REFLOW_INSTANT_FAILS_CLOSED=true``).
+    evaluated_at = evaluation.get("evaluated_at")
+    if (
+        isinstance(evaluated_at, str)
+        and evaluated_at
+        and reflow_instant_parsed < instant(evaluated_at)
+    ):
+        raise StaleReflowError(
+            f"reflow_instant {reflow_instant_value!r} precedes the Closure Evaluation's "
+            f"own evaluated_at {evaluated_at!r}"
+        )
+
+
+def _merge_verified_record(
+    records: dict[tuple[str, str], dict[str, Any]],
+    kind: str,
+    record: dict[str, Any],
+    record_id: str,
+) -> None:
+    """Merge *record* into *records* under ``(kind, record_id)``, failing closed if a
+    record already admitted under the identical key carries a different body (P8-R3-F1,
+    SHUKOU Phase 8 final-closure round 3): ``SAME_KIND_ID_DIFFERENT_BODY=CORRUPTION_OR_
+    VALIDATION_ERROR`` -- neither ``FIRST_BODY_WINS`` nor ``LAST_BODY_WINS``. Two
+    independent reproduction paths that both claim the same identity must agree bit for
+    bit, or neither is admitted, before any State/Lineage/record/manifest write.
+    """
+
+    key = (kind, record_id)
+    existing = records.get(key)
+    if existing is not None and existing != record:
+        raise ReflowValidationError(
+            f"two independent reproductions of {kind}/{record_id} produced different "
+            "bodies -- refusing to admit either"
+        )
+    records[key] = record
+
+
+def _admitted_observations_from_evidence_requests(
+    *evidence_request_sources: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """P8-R3-F1: the real before/post-change/verification Observation bodies the admitted
+    Evidence requests actually name -- reproduced fresh through the real Observation owner
+    (:func:`~manosube_agent_civilization.observation.observe`), never trusted as an
+    embedded body a caller happened to supply, and re-verified against its own
+    content-addressed identity (:func:`~manosube_agent_civilization.observation.identity.
+    observation_identity`) before being considered for admission at all.
+
+    Reproduced from every Observation-shaped request field an admitted Evidence request
+    already carries (``observation_request``, ``post_change_observation_request``,
+    ``verification_observation_request``) across every *evidence_request_sources* list this
+    function's own caller passes -- never scanned from a raw ``closure_request`` field
+    directly here, so each source is included only when this function's own caller
+    (:func:`_admitted_records`) has already decided that source's own Evidence is actually
+    admitted for this outcome (a caller-supplied ``terminal_reason_evidence_requests``, for
+    example, is real scaffolding present on every route, but its Evidence is only ever
+    persisted -- and therefore only ever needs its own Observation admitted too -- when the
+    Evaluation's own ``terminal_reason_evidence_refs`` is genuinely non-empty). The identical
+    fields :func:`~manosube_agent_civilization.evidence.engine.derive_evidence` itself already
+    re-observes when reproducing those same Evidence records, so this persists exactly what
+    Evidence's own reproduction already grounds itself in, never a second guess at it. Two
+    independent requests that reproduce the identical ``observation_id`` under different
+    bodies fail closed here (P8-R3-F1's own ``SAME_KIND_ID_DIFFERENT_BODY`` decision), before
+    anything is returned for admission.
+    """
+
+    seen: dict[str, dict[str, Any]] = {}
+    for source_items in evidence_request_sources:
+        for item in source_items or []:
+            if not isinstance(item, dict):
+                continue
+            for request_key in (
+                "observation_request",
+                "post_change_observation_request",
+                "verification_observation_request",
+            ):
+                request = item.get(request_key)
+                if not isinstance(request, dict):
+                    continue
+                try:
+                    bundle = observe(request)
+                except ObservationError:
+                    continue
+                observations = bundle.get("observations") or []
+                if not observations:
+                    continue
+                observation = observations[-1]
+                identity = observation.get("observation_id")
+                if not isinstance(identity, str) or identity != observation_identity(observation):
+                    continue
+                existing = seen.get(identity)
+                if existing is not None and existing != observation:
+                    raise ReflowValidationError(
+                        f"two independent reproductions of observation/{identity} produced "
+                        "different bodies -- refusing to admit either"
+                    )
+                seen[identity] = observation
+    return list(seen.values())
+
+
+def _admitted_provenance_only_evidence(
+    provenance_only_evidence_requests: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """P8-R3-F1: provenance-only Evidence -- for example, the auxiliary Change-Free
+    Verification Evidence a verification Observation's own ``observation_evidence_refs``
+    names -- reproduced through the real Evidence owner (:func:`~manosube_agent_
+    civilization.evidence.engine.derive_evidence`) and persisted so that reference
+    genuinely resolves, but never wired into ``evaluate_closure``/``evaluate_sufficiency``:
+    ``AUXILIARY_VERIFICATION_EVIDENCE_COUNTS_TOWARD_SUFFICIENCY=false``, ``..._CHANGES_
+    RESOLUTION_MODE=false`` -- this function's own caller (:func:`reflow`) never feeds
+    *provenance_only_evidence_requests* into either of those, so nothing here can ever
+    move a Sufficiency verdict or a Candidate's own ``resolution_mode``."""
+
+    seen: dict[str, dict[str, Any]] = {}
+    for item in provenance_only_evidence_requests or []:
+        record = derive_evidence(item)
+        identity = record["evidence_id"]
+        existing = seen.get(identity)
+        if existing is not None and existing != record:
+            raise ReflowValidationError(
+                f"two independent reproductions of observation_evidence/{identity} "
+                "produced different bodies -- refusing to admit either"
+            )
+        seen[identity] = record
+    return list(seen.values())
+
+
+def _admitted_genesis_lifecycle_event(
+    difference: dict[str, Any], genesis_lifecycle_event: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """P8-R4-F3: re-verify *genesis_lifecycle_event* -- the Difference's own revision-0
+    lifecycle event, produced once by the real Difference owner at derivation time -- against
+    its own content address and its binding to *difference*, before it is ever considered
+    for admission. Returns ``None`` (nothing to admit) when the caller supplies none; the
+    unconditional Reference Closure check this function's own caller runs afterward is what
+    fails a cycle closed if a still-unresolved genesis reference actually needed one.
+
+    Never re-derives or re-mints the event itself (there is no independent way for Reflow to
+    re-run the Difference owner's own derivation from here) -- this is the same
+    content-address self-consistency boundary :func:`_self_consistent_after_observations`
+    already applies to a caller-supplied Observation body: a record that fails its own
+    identity check, or disagrees with what *difference* itself already commits to, is
+    refused, never silently trusted.
+    """
+
+    if genesis_lifecycle_event is None:
+        return None
+    event = require_object(genesis_lifecycle_event, "genesis_lifecycle_event")
+    genesis_ref = difference.get("genesis_event_ref") or {}
+    if event.get("difference_event_id") != lifecycle_event_id(event):
+        raise ReflowValidationError("genesis_lifecycle_event fails its own content address")
+    if event["difference_event_id"] != genesis_ref.get("id"):
+        raise ReflowValidationError(
+            "genesis_lifecycle_event does not match difference.genesis_event_ref"
+        )
+    if event.get("difference_id") != difference.get("difference_id"):
+        raise ReflowValidationError("genesis_lifecycle_event belongs to a different Difference")
+    if event.get("event_revision") != 0 or event.get("previous_event_id") is not None:
+        raise ReflowValidationError(
+            "genesis_lifecycle_event is not a real genesis event (event_revision 0, no "
+            "previous_event_id)"
+        )
+    if event.get("observation_refs") != difference.get("observation_refs"):
+        raise ReflowValidationError(
+            "genesis_lifecycle_event.observation_refs does not match difference.observation_refs"
+        )
+    if event.get("state_revision_evaluated") != difference.get(
+        "observed_state_revision"
+    ) or event.get("state_fingerprint_evaluated") != difference.get("observed_state_fingerprint"):
+        raise ReflowValidationError(
+            "genesis_lifecycle_event's evaluated state does not match difference's own "
+            "observed state"
+        )
+    return event
+
+
 def _admitted_records(
     evaluation: dict[str, Any],
     lifecycle_event: dict[str, Any],
@@ -670,9 +1057,24 @@ def _admitted_records(
     *,
     policy: dict[str, Any],
     reflow_transition_ref: dict[str, Any] | None,
+    store: Any,
+    project_id: str,
+    provenance_only_evidence_requests: list[Any] | None = None,
+    auxiliary_source_snapshots: list[Any] | None = None,
+    genesis_lifecycle_event: dict[str, Any] | None = None,
 ) -> list[tuple[str, str, dict[str, Any]]]:
     """R2-F3/R5-F2: every immutable record this transition's commit must make
     reference-resolvable.
+
+    *genesis_lifecycle_event* (P8-R4-F3, SHUKOU Phase 8 final-closure round 4): the
+    Difference's own genesis lifecycle event (revision 0), produced once by the real
+    Difference owner at derivation time and carried here verbatim -- re-verified against its
+    own content address and its binding to ``closure_request["difference"]``, then admitted
+    exactly like any other pin-and-proved record, never re-minted
+    (``REFLOW_MUST_NOT_REMINT_GENESIS_EVENT=true``). The unconditional Reference Closure
+    check below (P8-R4-F1) is what actually fails a first Reflow cycle closed if this is
+    omitted while still needed -- ``difference_event_head_ref``/``previous_event_id`` name
+    it either way.
 
     Always included: the Closure Evaluation, the minted lifecycle event (under
     :data:`LIFECYCLE_EVENT_KIND`, matching the kind every reference to it is published
@@ -708,8 +1110,26 @@ def _admitted_records(
         ("closure_evaluation", evaluation["closure_evaluation_id"]): evaluation,
         (LIFECYCLE_EVENT_KIND, lifecycle_event["difference_event_id"]): lifecycle_event,
     }
+
+    # P8-R4-F3: the Difference's own genesis lifecycle event (revision 0) -- admitted here,
+    # under the same LIFECYCLE_EVENT_KIND every other difference_event is stored under, so
+    # it participates in this same atomic transaction alongside the event just minted above.
+    admitted_genesis_event = _admitted_genesis_lifecycle_event(
+        require_object(closure_request["difference"], "closure_request.difference"),
+        genesis_lifecycle_event,
+    )
+    if admitted_genesis_event is not None:
+        _merge_verified_record(
+            records,
+            LIFECYCLE_EVENT_KIND,
+            admitted_genesis_event,
+            admitted_genesis_event["difference_event_id"],
+        )
+
     if sufficiency is not None:
-        records[("evidence_sufficiency_result", sufficiency["evidence_sufficiency_id"])] = sufficiency
+        records[("evidence_sufficiency_result", sufficiency["evidence_sufficiency_id"])] = (
+            sufficiency
+        )
 
     sufficiency_request = closure_request.get("evidence_sufficiency_request")
     if isinstance(sufficiency_request, dict):
@@ -740,8 +1160,12 @@ def _admitted_records(
     # populate even when the winning Evaluation is CLOSED (and therefore carries none).
     declared_terminal_reason_refs = evaluation.get("terminal_reason_evidence_refs") or []
     if declared_terminal_reason_refs:
-        terminal_reason_evidence_requests = closure_request.get("terminal_reason_evidence_requests") or []
-        difference_for_terminal_reason = require_object(closure_request["difference"], "closure_request.difference")
+        terminal_reason_evidence_requests = (
+            closure_request.get("terminal_reason_evidence_requests") or []
+        )
+        difference_for_terminal_reason = require_object(
+            closure_request["difference"], "closure_request.difference"
+        )
         for record in resolve_terminal_reason_evidence(
             declared_terminal_reason_refs,
             terminal_reason_evidence_requests,
@@ -760,12 +1184,67 @@ def _admitted_records(
     for ref in closure_request.get("source_snapshot_refs") or []:
         try:
             record = resolve_source_snapshot(ref, source_snapshot_pool)
-        except ObservationError:
-            continue
-        records[("source_snapshot", record["source_snapshot_id"])] = record
+        except ObservationError as error:
+            raise ReflowValidationError(
+                f"admitted source_snapshot_refs entry does not resolve: {ref.get('id')!r} -- "
+                f"{error}"
+            ) from error
+        _merge_verified_record(records, "source_snapshot", record, record["source_snapshot_id"])
 
-    for observation in _self_consistent_after_observations(closure_request):
-        records[("observation", observation["observation_id"])] = observation
+    # P8-R3-F1 (SHUKOU Phase 8 final-closure round 3): every Observation an admitted
+    # Evidence request actually names -- before, post-change, and independent
+    # verification -- is persisted here too, not only the reobservation's own after-state
+    # Observation :func:`_self_consistent_after_observations` already covered. Without
+    # this, a persisted Evidence record's own ``observed_result.observation_ref``/
+    # ``lineage.derived_from`` names an Observation the Store never actually adopted --
+    # ``PERSISTED_REFERENCE_GRAPH_CLOSED=false``.
+    observations_admitted: list[dict[str, Any]] = list(
+        _self_consistent_after_observations(closure_request)
+    )
+    for observation in observations_admitted:
+        _merge_verified_record(records, "observation", observation, observation["observation_id"])
+    for observation in _admitted_observations_from_evidence_requests(
+        sufficiency_request.get("evidence_requests")
+        if isinstance(sufficiency_request, dict)
+        else None,
+        closure_request.get("change_result_evidence_requests"),
+        closure_request.get("change_free_verification_evidence_requests"),
+        # R7-F4/R8-F3/P8-R4-F1: terminal-reason Evidence is only ever actually persisted
+        # (above) when the Evaluation itself declares terminal_reason_evidence_refs -- its
+        # own named Observation only ever needs admitting on that identical condition, never
+        # merely because closure_request's own scaffolding field is present.
+        closure_request.get("terminal_reason_evidence_requests")
+        if declared_terminal_reason_refs
+        else None,
+    ):
+        _merge_verified_record(records, "observation", observation, observation["observation_id"])
+        observations_admitted.append(observation)
+
+    # P8-R3-F1: the real provenance-only Evidence a caller asks to be persisted (never fed
+    # into evaluate_closure/evaluate_sufficiency above, so it can never move a Sufficiency
+    # verdict or a Candidate's own resolution_mode) -- for example, the auxiliary
+    # Change-Free Verification Evidence a persisted verification Observation's own
+    # ``observation_evidence_refs`` names.
+    for record in _admitted_provenance_only_evidence(provenance_only_evidence_requests):
+        _merge_verified_record(records, "observation_evidence", record, record["evidence_id"])
+
+    # P8-R3-F1: every Observation admitted above may itself declare source_snapshot_refs
+    # this transaction's own G8-validated source_snapshot_pool never had to cover (that
+    # pool is validated exactly against the reobservation's own declared set, R4-F2, and
+    # widening it would loosen that gate) -- resolved instead against an extended pool
+    # carrying *auxiliary_source_snapshots* too, so a newly-admitted Observation's own real
+    # source provenance also resolves, without touching the gate-validated pool at all.
+    extended_snapshot_pool = source_snapshot_pool + list(auxiliary_source_snapshots or [])
+    for observation in observations_admitted:
+        for ref in observation.get("source_snapshot_refs") or []:
+            try:
+                record = resolve_source_snapshot(ref, extended_snapshot_pool)
+            except ObservationError as error:
+                raise ReflowValidationError(
+                    f"admitted observation/{observation['observation_id']} declares an "
+                    f"unresolved source_snapshot_refs entry: {ref.get('id')!r} -- {error}"
+                ) from error
+            _merge_verified_record(records, "source_snapshot", record, record["source_snapshot_id"])
 
     # R6-F4: the Closure Evaluation's own kernel_source_witness_ref, when set, names a real
     # kernel_source_witness record -- the verified Git COMMIT->TREE->PATH->BLOB object bytes,
@@ -779,10 +1258,16 @@ def _admitted_records(
     if isinstance(kernel_source_witness_ref, dict):
         kernel_source_ref = closure_request.get("kernel_source_ref")
         kernel_source_witness = closure_request.get("kernel_source_witness")
-        commit_sha = kernel_source_ref.get("commit_sha") if isinstance(kernel_source_ref, dict) else None
-        tree_sha = kernel_source_ref.get("tree_sha") if isinstance(kernel_source_ref, dict) else None
-        if isinstance(kernel_source_witness, dict) and isinstance(commit_sha, str) and isinstance(
-            tree_sha, str
+        commit_sha = (
+            kernel_source_ref.get("commit_sha") if isinstance(kernel_source_ref, dict) else None
+        )
+        tree_sha = (
+            kernel_source_ref.get("tree_sha") if isinstance(kernel_source_ref, dict) else None
+        )
+        if (
+            isinstance(kernel_source_witness, dict)
+            and isinstance(commit_sha, str)
+            and isinstance(tree_sha, str)
         ):
             try:
                 verify_kernel_source_witness(
@@ -807,7 +1292,9 @@ def _admitted_records(
                 # mismatch means the two independent computations disagree (they never
                 # should, from the same verified inputs), so nothing is persisted rather
                 # than a record under a different id than the one the Evaluation refers to.
-                if witness_record["kernel_source_witness_id"] == kernel_source_witness_ref.get("id"):
+                if witness_record["kernel_source_witness_id"] == kernel_source_witness_ref.get(
+                    "id"
+                ):
                     records[
                         ("kernel_source_witness", witness_record["kernel_source_witness_id"])
                     ] = witness_record
@@ -890,7 +1377,36 @@ def _admitted_records(
             # Already reflected as a G21 gate failure -- the binding's own ref never
             # resolved to this record in the first place.
             continue
-        records[(CANDIDATE_COMPLETION_RECORD_KIND, completion_record["completion_id"])] = completion_record
+        records[(CANDIDATE_COMPLETION_RECORD_KIND, completion_record["completion_id"])] = (
+            completion_record
+        )
+
+    # P8-R4-F1 (SHUKOU Phase 8 final-closure round 4): every Store-owned reference edge any
+    # admitted record here declares must itself resolve -- either among the records this
+    # same transaction is about to persist, or already committed -- before any write.
+    # Unconditional (``REFERENCE_CLOSURE_IS_GLOBAL_REFLOW_INVARIANT=true``,
+    # ``REFERENCE_CLOSURE_OPT_IN_ALLOWED=false``, reversing Round 3's own opt-in scoping
+    # decision), and walked through the single production reference-edge registry
+    # (:mod:`.reference_registry`, ``PRODUCTION_REFERENCE_REGISTRY_IS_AUTHORITATIVE=true``)
+    # rather than a narrow, one-field, one-kind check -- so an admitted Observation's
+    # ``source_snapshot_refs``/``observation_evidence_refs``, an admitted Observation
+    # Evidence's ``observed_result.observation_ref``/``lineage`` members, an admitted
+    # Closure Evaluation's ``difference_event_head_ref``, and an admitted lifecycle event's
+    # own ``previous_event_id`` (the genesis event admitted above, in particular) are all
+    # covered by the identical vocabulary any test proving
+    # ``UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0`` also imports and walks.
+    admitted_keys = set(records)
+    for (kind, record_id), body in records.items():
+        for ref_kind, ref_id in reference_edges(kind, body):
+            if (ref_kind, ref_id) in admitted_keys:
+                continue
+            if store.resolve_record(project_id, ref_kind, ref_id) is not None:
+                continue
+            raise ReflowValidationError(
+                f"admitted {kind}/{record_id} declares an unresolved reference: "
+                f"{ref_kind}/{ref_id} -- PERSISTED_REFERENCE_GRAPH_CLOSED requires it to "
+                "resolve before commit"
+            )
 
     return [(kind, record_id, body) for (kind, record_id), body in sorted(records.items())]
 
@@ -913,6 +1429,9 @@ def reflow(
     blocker_scope: dict[str, Any] | None = None,
     blocker_resolution_condition: dict[str, Any] | None = None,
     next_observation_ref: dict[str, Any] | None = None,
+    provenance_only_evidence_requests: list[Any] | None = None,
+    auxiliary_source_snapshots: list[Any] | None = None,
+    genesis_lifecycle_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one Reflow cycle to completion and return every record it produced.
 
@@ -923,6 +1442,26 @@ def reflow(
     from *store* (F1). *evidence_refs* is not a caller parameter: it is derived (F6) from
     what the Evaluation itself admits. Returns ``{"evaluation", "decision",
     "next_semantic_state", "committed_state", "state_transition_ref", "event"}``.
+
+    *provenance_only_evidence_requests* (P8-R3-F1, SHUKOU Phase 8 final-closure round 3):
+    Evidence requests reproduced through the real Evidence owner and persisted so a real
+    reference some other admitted record already declares (for example, a verification
+    Observation's own ``observation_evidence_refs``) actually resolves -- never fed into
+    ``evaluate_closure``/``evaluate_sufficiency``, so a provenance-only record can never
+    count toward Sufficiency or the Candidate's own ``resolution_mode``.
+    *auxiliary_source_snapshots* is the identical provenance-only widening for Source
+    Snapshot: a pool of real Source Snapshot bodies available when persisting an admitted
+    Observation's own declared ``source_snapshot_refs``, kept entirely separate from
+    ``closure_request["source_snapshots"]`` (which G8/G4's own exact-match gates still
+    validate unchanged) so this never loosens what those gates already require.
+    *genesis_lifecycle_event* (P8-R4-F3, SHUKOU Phase 8 final-closure round 4): the real
+    genesis lifecycle event (revision 0) the Difference owner already produced at
+    derivation time -- required, in practice, exactly on the very first Reflow cycle for a
+    Difference (the one case ``_verify_lifecycle_ground_truth`` verifies against
+    ``difference.genesis_event_ref`` rather than a committed predecessor), since only that
+    cycle's own committed ``difference_event_head_ref``/lifecycle-event ``previous_event_id``
+    can otherwise leave the genesis id permanently unresolved. Reflow never re-mints it; it
+    only re-verifies and admits the Difference owner's own already-produced output.
     """
 
     before_project_state = store.load_current(project_id)
@@ -1054,6 +1593,14 @@ def reflow(
     # R7-F4: terminal reason Evidence is re-verified immediately before commit for *every*
     # outcome -- it is CLOSED evaluations that never carry one, not the reverse.
     _preflight_reresolve_terminal_reason_evidence(evaluation, closure_request, difference)
+    _preflight_verify_reflow_provenance(
+        closure_request,
+        evaluation,
+        authority_ref=authority_ref,
+        change_refs=change_refs,
+        observation_refs=observation_refs,
+        reflow_instant_value=reflow_instant,
+    )
     if decision["to_status"] == "CLOSED":
         _preflight_reresolve_closure(evaluation, closure_request, policy, sufficiency)
 
@@ -1064,6 +1611,11 @@ def reflow(
         sufficiency,
         policy=policy,
         reflow_transition_ref=state_transition_ref if decision["to_status"] == "CLOSED" else None,
+        store=store,
+        project_id=project_id,
+        provenance_only_evidence_requests=provenance_only_evidence_requests,
+        auxiliary_source_snapshots=auxiliary_source_snapshots,
+        genesis_lifecycle_event=genesis_lifecycle_event,
     )
 
     committed_state, committed_ref = commit_reflow(
@@ -1113,9 +1665,7 @@ def _resolve_closed_closure_evaluation(
             f"{previous_event_id!r}"
         )
     if closed_event.get("difference_event_id") != lifecycle_event_id(closed_event):
-        raise ReflowValidationError(
-            "resolved lifecycle event fails its own content address"
-        )
+        raise ReflowValidationError("resolved lifecycle event fails its own content address")
     if closed_event["difference_id"] != difference_id:
         raise ReflowValidationError("previous_event_id belongs to a different Difference")
     if closed_event["to_status"] != "CLOSED":
@@ -1134,7 +1684,9 @@ def _resolve_closed_closure_evaluation(
             "the committed CLOSED lifecycle event carries no closure_evaluation_ref"
         )
 
-    old_closure_evaluation = store.resolve_record(project_id, "closure_evaluation", closure_ref["id"])
+    old_closure_evaluation = store.resolve_record(
+        project_id, "closure_evaluation", closure_ref["id"]
+    )
     if old_closure_evaluation is None:
         raise ReflowValidationError(
             f"closure_evaluation_ref does not resolve to a committed Closure Evaluation: "
@@ -1200,7 +1752,9 @@ def reopen(
     tx = transaction_id(
         project_id=project_id,
         difference_id=difference["difference_id"],
-        closure_decision_fingerprint=closure_evaluation_decision_fingerprint(old_closure_evaluation),
+        closure_decision_fingerprint=closure_evaluation_decision_fingerprint(
+            old_closure_evaluation
+        ),
         evidence_sufficiency_id=None,
         expected_revision=before_project_state["state_revision"],
         reflow_instant=reflow_instant,

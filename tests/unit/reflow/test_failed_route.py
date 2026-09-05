@@ -76,9 +76,7 @@ def _insufficient_sufficiency_request(first: dict[str, Any]) -> dict[str, Any]:
     return sufficiency_request(
         difference_id=first["differences"][0]["difference_id"],
         policy=first["policies"][0],
-        evidence_requests=[
-            observation_evidence_request(observation=_failed_observation_request())
-        ],
+        evidence_requests=[observation_evidence_request(observation=_failed_observation_request())],
     )
 
 
@@ -115,7 +113,9 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
 
     from manosube_agent_civilization.evidence.engine import derive_evidence
 
-    terminal_reason_request = observation_evidence_request(observation=_failed_observation_request())
+    terminal_reason_request = observation_evidence_request(
+        observation=_failed_observation_request()
+    )
     terminal_reason_record = derive_evidence(terminal_reason_request)
     # R9-F2: base Kernel provenance is now resolved by `reflow.route.reflow` from the
     # committed State's own `state_metadata.source_snapshot_refs` -- `initial_state()`
@@ -170,6 +170,11 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         store,
         project_id=project_state["project_id"],
         previous_event_id=difference["genesis_event_ref"]["id"],
+        genesis_lifecycle_event=next(
+            event
+            for event in first["events"]
+            if event["difference_event_id"] == difference["genesis_event_ref"]["id"]
+        ),
         event_revision=1,
         closure_request=closure_request,
         observation_refs=[],

@@ -17,6 +17,7 @@ import pytest
 from tests.reflow_helpers import (
     candidate_closure_request,
     fixture_difference,
+    fixture_genesis_lifecycle_event,
     fixture_policy,
     store_ready_for_closure,
 )
@@ -55,6 +56,7 @@ def _close(store: FileStateStore, project_state: dict, difference: dict, policy:
         store,
         project_id=project_state["project_id"],
         previous_event_id=difference["genesis_event_ref"]["id"],
+        genesis_lifecycle_event=fixture_genesis_lifecycle_event(difference),
         event_revision=1,
         closure_request=closure_request,
         observation_refs=closure_request["reobservation"]["after_observation_refs"],
@@ -89,7 +91,10 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
     semantic = result["committed_state"]["semantic_state"]
     assert {"kind": "difference", "id": difference["difference_id"]} in semantic["open_differences"]
     assert CONTRADICTION_REF in semantic["unresolved_contradictions"]
-    assert result["committed_state"]["state_revision"] == closed["committed_state"]["state_revision"] + 1
+    assert (
+        result["committed_state"]["state_revision"]
+        == closed["committed_state"]["state_revision"] + 1
+    )
 
 
 def test_reopen_refuses_an_evaluation_that_never_closed() -> None:
@@ -137,6 +142,7 @@ def test_reflow_commit_converges_after_a_crash_at_every_stage(stage: str, tmp_pa
         expected_revision=project_state["state_revision"],
         reflow_instant=REFLOW_INSTANT,
     )
+
     def fault(current: str) -> None:
         if current == stage:
             raise SimulatedCrash(stage)
