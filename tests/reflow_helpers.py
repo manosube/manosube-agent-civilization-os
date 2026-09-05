@@ -30,7 +30,6 @@ from tests.evidence_helpers import (
     change_free_verification_evidence_request,
     closure_policy,
     difference_request,
-    evidenced_difference,
     observation_evidence_request,
     sufficiency_request,
 )
@@ -165,8 +164,23 @@ def store_ready_for_closure(
     ).as_dict()
     # R10-F1: genesis's own Kernel Source Snapshot reference must close to a real,
     # Store-adopted record -- never a dangling reference the caller pool merely restates.
+    #
+    # P8-R4 completion repair: REAL_SNAPSHOT_RECORD is also adopted at genesis here (never
+    # referenced by genesis's own state_metadata, purely a Store-committed record available
+    # to resolve against) -- several R10-F1 negative controls deliberately supply an empty or
+    # poisoned ``closure_request["source_snapshots"]`` pool to prove Kernel provenance
+    # resolves from the Store rather than the caller pool, and this module's own real
+    # terminal-reason/sufficiency Evidence now always names a real Observation whose
+    # ``source_snapshot_refs`` entry is REAL_SNAPSHOT_REF -- it must resolve under
+    # ``REFERENCE_RESOLVES_IF``'s second clause (already committed in the Store) exactly like
+    # every other admitted reference, regardless of what any one test's own caller pool holds.
     store.initialize(
-        genesis["project_id"], genesis, records=genesis_source_snapshot_records(genesis)
+        genesis["project_id"],
+        genesis,
+        records=[
+            *genesis_source_snapshot_records(genesis),
+            ("source_snapshot", REAL_SNAPSHOT_RECORD["source_snapshot_id"], REAL_SNAPSHOT_RECORD),
+        ],
     )
 
     current = genesis
@@ -190,27 +204,47 @@ def store_ready_for_closure(
     return current
 
 
-def fixture_difference() -> dict[str, Any]:
-    """The canonical NOT-READY Difference every closure test evaluates against."""
+def _fixture_difference_request() -> dict[str, Any]:
+    """The one real, reference-closed derivation request :func:`fixture_difference` and
+    :func:`fixture_genesis_lifecycle_event` both build from -- derived once here so the two
+    always agree by construction, never by coincidence."""
 
-    return evidenced_difference()
+    corrected, real_difference_request = _real_admissible_before_observation()
+    request = deepcopy(real_difference_request)
+    request["bindings"][0]["observation_bundle"] = observe(corrected)
+    return request
+
+
+def fixture_difference() -> dict[str, Any]:
+    """The canonical NOT-READY Difference every Reflow closure test evaluates against.
+
+    P8-R4 completion repair (SHUKOU Phase 8 final-closure round 4 completion repair):
+    derived from the real, fixed-point-corrected before-Observation
+    :func:`_real_admissible_before_observation` builds -- the real, content-addressed
+    ``REAL_SNAPSHOT_REF`` and a real, resolvable ``observation_evidence_refs`` entry --
+    never the widely-shared, permanently-opaque ``SNAP-0001``/``EVID-0001`` placeholders
+    :func:`~tests.evidence_helpers.evidenced_difference` uses. Every consumer in this module
+    that admits this Difference's own base Observation through ``reflow.route.reflow``'s
+    unconditional Reference Closure invariant (P8-R4-F1) needs it to actually resolve, and a
+    placeholder never can (no real content hashes to a fixed literal id).
+    """
+
+    return derive_differences(_fixture_difference_request())["differences"][0]
 
 
 def fixture_genesis_lifecycle_event(difference: dict[str, Any]) -> dict[str, Any]:
     """P8-R4-F3 (SHUKOU Phase 8 final-closure round 4): the real genesis lifecycle event
     (revision 0) the Difference owner already produced when deriving *difference* --
     re-derived fresh through the identical, deterministic, content-addressed request
-    :func:`~tests.evidence_helpers.evidenced_difference` itself uses internally, rather than
-    cached or hand-built, so this always reproduces the exact same body `difference`'s own
+    :func:`_fixture_difference_request` itself uses internally (the same real,
+    reference-closed request :func:`fixture_difference` builds from), rather than cached or
+    hand-built, so this always reproduces the exact same body `difference`'s own
     ``genesis_event_ref`` names. For a caller that already has *difference* (built via
-    :func:`fixture_difference`/:func:`~tests.evidence_helpers.evidenced_difference`) and just
-    needs the matching real genesis event to pass as ``reflow()``'s own
-    ``genesis_lifecycle_event`` on the very first Reflow cycle for it.
+    :func:`fixture_difference`) and just needs the matching real genesis event to pass as
+    ``reflow()``'s own ``genesis_lifecycle_event`` on the very first Reflow cycle for it.
     """
 
-    request = difference_request()
-    request["bindings"][0]["observation_bundle"] = observe(before_observation_request())
-    result = derive_differences(request)
+    result = derive_differences(_fixture_difference_request())
     return next(
         event
         for event in result["events"]
@@ -273,6 +307,11 @@ def real_snapshot_after_observation_request() -> dict[str, Any]:
         [raw_fact(value="READY", snapshot_id=REAL_SNAPSHOT_REF["id"])],
         state_fingerprint("KNOWN"),
         AFTER_REVISION,
+        # P8-R4 completion repair: no observation_evidence_refs claim of its own -- this
+        # Observation is admitted directly (never wrapped in its own Evidence request), so
+        # the widely-shared, permanently-opaque ``EVID-0001`` default would otherwise become
+        # an unresolved reference this same Observation's own admission declares.
+        observation_evidence_refs=[],
     )
 
 
@@ -407,12 +446,24 @@ def mandatory_x003_claim_binding(
 
 def real_terminal_reason_evidence_request() -> dict[str, Any]:
     """R7-F4: one real ``observation_evidence_request``-shaped request that reproduces the
-    exact same Difference :func:`fixture_difference`/:func:`evidenced_difference` derive --
-    a real, content-addressed terminal reason Evidence record for the fixture Difference,
-    never a bare placeholder id no request backs.
+    exact same Difference :func:`fixture_difference` derives -- a real, content-addressed
+    terminal reason Evidence record for the fixture Difference, never a bare placeholder id
+    no request backs.
+
+    P8-R4 completion repair: built from :func:`_real_admissible_before_observation`'s own
+    ``(corrected, real_difference_request)`` pair -- the identical real, reference-closed
+    Observation/Difference-request combination :func:`fixture_difference` itself derives
+    from -- so the reproduced Evidence's own ``difference_ref`` binds to the exact fixture
+    Difference (R8-F3 requires the exact match) while its own Observation's declared
+    ``source_snapshot_refs``/``observation_evidence_refs`` both actually resolve, never the
+    widely-shared, permanently-opaque ``SNAP-0001``/``EVID-0001`` placeholders the bare
+    ``observation_evidence_request()`` default carried before this repair.
     """
 
-    return observation_evidence_request()
+    corrected, real_difference_request = _real_admissible_before_observation()
+    return observation_evidence_request(
+        observation=corrected, difference=deepcopy(real_difference_request)
+    )
 
 
 def real_terminal_reason_evidence_fields() -> tuple[dict[str, Any], str]:
@@ -476,7 +527,11 @@ def base_closure_request(difference: dict[str, Any], policy: dict[str, Any]) -> 
         "evidence_sufficiency_request": None,
         "after_state_semantic_state": None,
         "source_snapshot_refs": [],
-        "source_snapshots": [real_kernel_source_snapshot()],
+        # P8-R4 completion repair: REAL_SNAPSHOT_RECORD is appended (never replaces index 0)
+        # so the real terminal-reason Evidence's own Observation -- now built from
+        # REAL_SNAPSHOT_REF rather than the widely-shared, permanently-opaque SNAP-0001 --
+        # can also resolve its own source_snapshot_refs entry from this same pool.
+        "source_snapshots": [deepcopy(REAL_SNAPSHOT_RECORD), real_kernel_source_snapshot()],
         "producing_change_refs": [],
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
@@ -835,15 +890,31 @@ def candidate_closure_request(
     change_free_evidence_request = change_free_verification_evidence_request(
         observation=change_free_before_observation,
         difference=deepcopy(change_free_difference_request),
-        verification_observation=after_observation_request(snapshot_refs=[REAL_SNAPSHOT_REF]),
+        verification_observation=after_observation_request(
+            snapshot_refs=[REAL_SNAPSHOT_REF],
+            # P8-R4 completion repair: this verification Observation is admitted directly
+            # (via change_free_verification_evidence_requests), so the widely-shared,
+            # permanently-opaque ``EVID-0001`` default would otherwise become an unresolved
+            # reference this same Observation's own admission declares.
+            observation_evidence_refs=[],
+        ),
     )
     change_free_evidence_record = derive_evidence(change_free_evidence_request)
     # R8-F1: the real Sufficiency result this request's own `evidence_sufficiency_request`
     # will independently re-derive at evaluation time -- `evaluate_sufficiency` is a pure
     # function of its request, so computing it here reproduces exactly what
     # `evaluate_closure` computes internally, not a fixture guess.
+    #
+    # P8-R4 completion repair: its own `evidence_requests` is the real, reference-closed
+    # terminal-reason-shaped Evidence request (:func:`real_terminal_reason_evidence_request`)
+    # rather than the bare ``sufficiency_request()`` default -- that default's own Observation
+    # carried the widely-shared, permanently-opaque ``SNAP-0001``/``EVID-0001`` placeholders,
+    # which the unconditional Reference Closure invariant (P8-R4-F1) now requires to actually
+    # resolve once this Evidence's own Observation is admitted.
     evidence_sufficiency_request = sufficiency_request(
-        difference_id=difference["difference_id"], policy=policy
+        difference_id=difference["difference_id"],
+        policy=policy,
+        evidence_requests=[real_terminal_reason_evidence_request()],
     )
     sufficiency_wrapper = evaluate_sufficiency(evidence_sufficiency_request)
     sufficiency = sufficiency_wrapper["evidence_sufficiency_result"]

@@ -27,6 +27,7 @@ from tests.reflow_helpers import (
     fixture_policy,
     mandatory_x003_claim_binding_and_event,
     real_terminal_reason_evidence_fields,
+    real_terminal_reason_evidence_request,
     self_closing_change_bound_closure_request,
     store_ready_for_closure,
 )
@@ -318,8 +319,14 @@ def test_f5_g18_evaluation_expires_at_is_derived_from_the_oldest_evidence_instan
     request["policy"] = policy
     from tests.evidence_helpers import sufficiency_request
 
+    # P8-R4 completion repair: `evidence_requests` must be the real, reference-closed
+    # Evidence request bound to this exact `difference` (never the bare default, whose own
+    # Observation now derives against a different Difference than `fixture_difference()`
+    # itself, per evaluate_sufficiency's own cross-Difference guard).
     request["evidence_sufficiency_request"] = sufficiency_request(
-        difference_id=difference["difference_id"], policy=policy
+        difference_id=difference["difference_id"],
+        policy=policy,
+        evidence_requests=[real_terminal_reason_evidence_request()],
     )
 
     evaluation = evaluate_closure(request)
@@ -431,14 +438,15 @@ def test_f7_reopen_refuses_an_event_that_belongs_to_a_different_difference(tmp_p
 
 
 def test_f7_reopen_refuses_a_previous_event_that_is_not_the_closed_head(tmp_path: Path) -> None:
-    """The Difference's own genesis event predates any Reflow transaction, so it was never
-    part of a committed manifest -- it is unresolvable, not merely non-CLOSED, and F7
-    refuses it the same way either defect must be refused: closed."""
+    """The Difference's own genesis event is real and, since P8-R4-F3, actually committed
+    (atomically, alongside the first real Reflow-minted event) -- so it resolves, but its own
+    ``to_status`` is ``DETECTED``, never ``CLOSED``. F7 refuses it either way a previous event
+    can fail this check: unresolvable, or resolvable but not the CLOSED head."""
 
     store, project_state, difference, _closed = _closed_store(tmp_path)
 
     with pytest.raises(
-        ReflowValidationError, match="does not resolve to a committed lifecycle event"
+        ReflowValidationError, match="reopen requires the committed CLOSED lifecycle event"
     ):
         reopen(
             store,

@@ -16,6 +16,7 @@ CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_STRUCTURAL_REVIEW_ROUND_1
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_STRUCTURAL_REVIEW_ROUND_2
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_3
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4
+CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR
 ```
 
 ## 0. Revision History
@@ -117,30 +118,62 @@ Round 4 (SHUKOU Phase 8 final-closure round 4, adopted): 構造参謀's independ
             alongside the first real Reflow-minted event, in the same Store transaction
             (§4, §7).
 
-  Disclosed alongside the above (not a Finding, a scope-boundary report): the "correction
-  of directly-related Phase 5-7 fixtures" item this round's own adoption also authorized
-  remains incomplete. tests/reflow_helpers.py's shared fixture family (used by
-  tests/unit/reflow/test_structural_review_correction.py and four sibling files) predates
-  Source Snapshot/Observation-Evidence becoming Store-owned reference targets, and several
-  of its Evidence-request builders' own default "before"/reobservation Observations still
-  declare the widely-shared, permanently-opaque SNAPSHOT_REF ("SNAP-0001")/EVIDENCE_REF
-  ("EVID-0001") placeholders as their own source_snapshot_refs/observation_evidence_refs.
-  Under this round's now-unconditional Reference Closure invariant, any admitted Observation
-  or Evidence record built from these defaults fails closed on commit. A real fix requires
-  either giving each of these fixtures a real, resolvable Evidence/Source-Snapshot backing
-  (attempted, and shown to work for tests/reflow_helpers.py's own change_free_verification_
-  evidence_request path) or changing the shared fixture Difference's own base scope so every
-  dependent Evidence-request builder's internal re-derivation still binds to the identical
-  Difference identity Sufficiency/terminal-reason Evidence's own binding checks require --
-  both were attempted; the second, more complete redesign was found to change downstream
-  structural-comparison facts in ways not fully mapped within this round's own effort budget,
-  and was reverted rather than delivered partially-verified. 30 pre-existing tests/unit/
-  reflow/ tests remain failing under the new unconditional gate for this reason
-  (RELATED_LEGACY_FIXTURE_CORRECTION_COUNT=30, precisely enumerated in the Round 4 completion
-  report); none of them are in tests/natural_cycle/ (the actual Vertical Proof this document
-  describes), which passes in full (115/115) under every Round 4 change. This gap is
-  disclosed here as a scope-boundary report for 構造参謀's own next re-observation, not
-  silently narrowed or resolved by guessing.
+Round 4 completion repair (SHUKOU Phase 8 final-closure round 4 completion repair,
+  adopted): SHUKOU's own independent re-observation of Round 4's partial delivery (the 30
+  disclosed tests/unit/reflow/ failures above) determined that a disclosed gap is not the
+  same as an accepted one -- Round 4's own adoption required the full retained suite to
+  pass, and disclosure did not substitute for that. `ADOPTION_TYPE=ROUND_4_COMPLETION_
+  REPAIR`, not a new round: the same three Findings, the same unconditional Reference
+  Closure invariant, corrected to completion rather than reopened.
+
+  The fixture family's own irreducible tension was resolved by building one coherent,
+  reference-closed request graph and sharing it, rather than patching each call site's
+  placeholder independently:
+
+  - tests/reflow_helpers.py's `fixture_difference()` (previously a thin alias for
+    tests/evidence_helpers.py's `evidenced_difference()`) now derives its own Difference
+    from `_real_admissible_before_observation()`'s real, content-addressed
+    `REAL_SNAPSHOT_REF` and a real, fixed-point-derived `observation_evidence_refs` entry --
+    never `SNAP-0001`/`EVID-0001`. Every other fixture in the module that must bind to this
+    exact Difference (the genesis lifecycle event, the real terminal-reason/sufficiency
+    Evidence request, the change-free verification Evidence Round 3 already used this same
+    real-snapshot technique for) now derives from the identical shared request rather than
+    each independently re-deriving a (previously mismatched) one of their own.
+  - Every Observation admitted through `reflow.route.reflow` in this fixture family (the
+    reobservation's own after-Observation, the change-free verification Observation, the
+    terminal-reason Evidence's own Observation) now declares an empty or real, resolvable
+    `observation_evidence_refs` -- never the shared `EVID-0001` placeholder -- since that
+    field is excluded from an Observation's own content-addressed identity and so costs
+    nothing to correct.
+  - `reflow.route._admitted_records`'s own per-Observation source-snapshot resolution loop
+    (P8-R4-F2's fail-closed check) consulted only the caller-supplied pool, one clause short
+    of `REFERENCE_RESOLVES_IF`'s own two-clause rule (in-manifest OR already-committed-in-
+    Store) the generic registry-driven scan elsewhere in the same function already
+    implements. Corrected to the same two-clause rule, so a Reflow cycle whose caller
+    deliberately supplies an empty or unrelated `source_snapshots` pool (several R10-F1
+    Kernel-provenance-independence controls do exactly this, by design) still resolves a
+    real, already-Store-committed Source Snapshot rather than failing on a check stricter
+    than the rule this round itself adopted.
+  - `tests/reflow_helpers.py`'s `store_ready_for_closure()` now also adopts
+    `REAL_SNAPSHOT_RECORD` at genesis (never referenced by genesis's own state_metadata,
+    purely available to resolve against), so the fixture family's own real Source Snapshot
+    is Store-resolvable independent of what any one test's own caller pool holds.
+  - Two tests (`test_f7_reopen_refuses_a_previous_event_that_is_not_the_closed_head`,
+    `tests/unit/reflow/test_route_composition.py::test_repeated_reflow_calls_each_admit_a_
+    fresh_transaction`) had their own genuine, narrow gaps once the fixture graph closed
+    correctly: the first's docstring/assertion described the genesis event as permanently
+    unresolvable, which P8-R4-F3 itself made no longer true (it now resolves, but is
+    correctly refused as non-CLOSED rather than as unresolvable -- the assertion was
+    corrected to the new, more precise behavior); the second was simply missing the
+    `genesis_lifecycle_event=` argument every sibling `reflow()` call in the same file
+    already carries.
+
+  `PREVIOUS_FAILURE_COUNT=30`, `FINAL_FAILURE_COUNT=0`.
+  `RELATED_LEGACY_FIXTURE_CORRECTION_COMPLETE=true`. `SNAP_0001_ACCEPTED_GRAPH_OCCURRENCE_
+  COUNT=0`, `EVID_0001_ACCEPTED_GRAPH_OCCURRENCE_COUNT=0` across this fixture family's own
+  Reflow-admitted records. Full retained suite: 17839 passed, 11 skipped, 0 failed.
+  tests/natural_cycle/ (the actual Vertical Proof this document describes): 115/115,
+  unchanged.
 ```
 
 ---
@@ -429,23 +462,22 @@ reference to the auxiliary Evidence would otherwise silently never resolve. As o
 this check is **unconditional** on every `reflow()` call (`REFERENCE_CLOSURE_OPT_IN_
 ALLOWED=false`) -- Round 3's own opt-in gating (enforced only when a caller supplied
 `provenance_only_evidence_requests` at all) is explicitly reversed by SHUKOU's Round 4
-adoption. Several pre-existing Phase 5-7 test fixtures (`tests/reflow_helpers.py` and the
-five `tests/unit/reflow/` files that import it) persist an Observation or Evidence record
-whose own declared `source_snapshot_refs`/`observation_evidence_refs` is a bare,
-never-resolved placeholder (the widely-shared `SNAPSHOT_REF`/`EVIDENCE_REF`,
-`ISSUE_22_OR_PR_27_CHANGES=false`); Round 4 explicitly authorized correcting these
-(`CORRECT_RELATED_LEGACY_FIXTURES=true`, reversing Round 3's own scope decision to leave
-them alone), and this correction was partially completed -- the change-free verification
-path was given a real, resolvable Source Snapshot -- but the Sufficiency/terminal-reason/
-reobservation paths' own default "before" Evidence still resolves against the shared
-fixture Difference's own base scope, and giving those a real backing without changing that
-shared base was found, empirically, to require either a broader base-scope redesign (shown
-to have wider, not-fully-mapped effects on other fixtures' own structural-comparison facts)
-or a per-call fixed-point Evidence bootstrap this round's own effort budget did not
-complete safely. 30 pre-existing `tests/unit/reflow/` tests remain failing under the
-now-unconditional gate for this reason (measured precisely on the final candidate HEAD;
-see the Round 4 completion report for the exact list) -- none of them are in
-`tests/natural_cycle/` (the Vertical Proof this document describes), which passes in full.
+adoption. The Phase 5-7 test fixtures (`tests/reflow_helpers.py` and the five
+`tests/unit/reflow/` files that import it) predated Source Snapshot/Observation-Evidence
+becoming Store-owned reference targets, and several of their Evidence-request builders'
+own default "before"/reobservation Observations declared the widely-shared, permanently-
+opaque `SNAPSHOT_REF` ("SNAP-0001")/`EVIDENCE_REF` ("EVID-0001") placeholders as their own
+`source_snapshot_refs`/`observation_evidence_refs`. Round 4 explicitly authorized correcting
+these (`CORRECT_RELATED_LEGACY_FIXTURES=true`, reversing Round 3's own scope decision to
+leave them alone); the Round 4 completion repair (see Revision History) finished this
+correction in full: `fixture_difference()` and every dependent Evidence-request builder in
+the module now derive from one shared, real-snapshot-based, fixed-point-Evidence-backed
+request rather than each independently re-deriving a mismatched one of their own, and a
+one-clause gap in `reflow.route._admitted_records`'s own per-Observation source-snapshot
+check (missing `REFERENCE_RESOLVES_IF`'s Store-fallback clause, present everywhere else in
+the same function) was closed. `RELATED_LEGACY_FIXTURE_CORRECTION_COMPLETE=true`; the full
+retained suite (17839 passed, 11 skipped) and `tests/natural_cycle/` (115/115, the Vertical
+Proof this document describes) both pass in full with zero failures.
 
 ---
 

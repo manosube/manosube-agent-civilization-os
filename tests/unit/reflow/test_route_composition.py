@@ -202,6 +202,7 @@ def test_repeated_reflow_calls_each_admit_a_fresh_transaction(tmp_path: Path) ->
         store=store,
         project_id=project_state["project_id"],
         previous_event_id=difference["genesis_event_ref"]["id"],
+        genesis_lifecycle_event=fixture_genesis_lifecycle_event(difference),
         event_revision=1,
         closure_request=base_closure_request(difference, policy),
         observation_refs=[],

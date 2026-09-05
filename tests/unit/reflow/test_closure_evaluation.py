@@ -22,6 +22,7 @@ from tests.reflow_helpers import (
     mandatory_x003_claim_binding,
     material_contradiction_record,
     real_terminal_reason_evidence_fields,
+    real_terminal_reason_evidence_request,
 )
 
 from manosube_agent_civilization.difference.validation import (
@@ -237,8 +238,14 @@ def test_stale_evidence_sufficiency_yields_stale_result() -> None:
     request["policy"] = policy
     from tests.evidence_helpers import sufficiency_request
 
+    # P8-R4 completion repair: `evidence_requests` must be the real, reference-closed
+    # Evidence request bound to this exact `difference` (never the bare default, whose own
+    # Observation now derives against a different Difference than `fixture_difference()`
+    # itself, per evaluate_sufficiency's own cross-Difference guard).
     request["evidence_sufficiency_request"] = sufficiency_request(
-        difference_id=difference["difference_id"], policy=policy
+        difference_id=difference["difference_id"],
+        policy=policy,
+        evidence_requests=[real_terminal_reason_evidence_request()],
     )
     request["proposed_terminal_status"] = "RETAINED"
     _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()

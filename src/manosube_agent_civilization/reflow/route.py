@@ -1240,10 +1240,18 @@ def _admitted_records(
             try:
                 record = resolve_source_snapshot(ref, extended_snapshot_pool)
             except ObservationError as error:
-                raise ReflowValidationError(
-                    f"admitted observation/{observation['observation_id']} declares an "
-                    f"unresolved source_snapshot_refs entry: {ref.get('id')!r} -- {error}"
-                ) from error
+                # P8-R4 completion repair: REFERENCE_RESOLVES_IF's own second clause --
+                # already committed in the Store -- applies here exactly as it does to
+                # every other admitted reference (the generic registry-driven scan below
+                # would accept the identical resolution; this earlier, source-snapshot-
+                # specific check must not be stricter than that same rule).
+                store_record = store.resolve_record(project_id, "source_snapshot", ref.get("id"))
+                if store_record is None:
+                    raise ReflowValidationError(
+                        f"admitted observation/{observation['observation_id']} declares an "
+                        f"unresolved source_snapshot_refs entry: {ref.get('id')!r} -- {error}"
+                    ) from error
+                record = store_record
             _merge_verified_record(records, "source_snapshot", record, record["source_snapshot_id"])
 
     # R6-F4: the Closure Evaluation's own kernel_source_witness_ref, when set, names a real
