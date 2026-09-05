@@ -484,21 +484,48 @@ _AUTHORIZED_LINEAGE_WRITE_FUNCTIONS = frozenset(
 _LINEAGE_WRITE_PRIMITIVE_NAMES = frozenset({"atomic_write", "write_text", "write_bytes", "write"})
 _LINEAGE_READ_PRIMITIVE_NAMES = frozenset({"read_text", "read_bytes"})
 _LINEAGE_ACCESSOR_NAME = "_lineage"
+#: R13-F1 (SHUKOU post-Final-Closure correction): ``LINEAGE_OWNER_PROOF_MUST_COVER_CREATE_
+#: APPEND_REWRITE_AND_DESTRUCTIVE_MUTATION=true`` -- R12-F2's own primitive vocabulary above
+#: recognized only the raw atomic-write/``write_text``/``write_bytes``/bare-``.write()``
+#: shapes :func:`_direct_filesystem_write_sites` already used for the *general* filesystem
+#: scan, but never that scan's own write-mode-``open``/``os.replace``/``os.rename``/
+#: ``shutil.copy*`` widening (R11-F2) -- a rogue Lineage rewrite expressed through any of
+#: those forms was invisible to the Lineage-specific inventory even though the general scan
+#: already recognizes the identical primitive shape. Receiver-qualified to the literal
+#: ``os``/``shutil`` module for the identical reason Round 11 already established:
+#: ``replace``/``rename``/``copy`` are also ordinary ``str``/``dict``/``list`` method names
+#: in wide, unrelated use, and bare-name matching would flag every one of those as a false
+#: Lineage write.
+_LINEAGE_OS_PRIMITIVE_NAMES = frozenset({"replace", "rename"})
+_LINEAGE_SHUTIL_PRIMITIVE_NAMES = frozenset({"copy", "copyfile", "copy2"})
 
 
 def _lineage_reference_and_primitive_functions(
     *, trees: list[tuple[str, ast.Module]] | None = None
 ) -> tuple[list[str], list[str]]:
-    """R12-F2: independently inventory every function/method in the installed package whose
-    own body references the Lineage-path accessor (``self._lineage(...)``) -- Round 10's own
-    ``_direct_filesystem_write_sites`` proves no *unsanctioned module* writes a file
-    directly, but a rogue write added *inside* an already-sanctioned module (``store.
-    file_store`` itself) is invisible to that check by construction
-    (``REFLOW_COMMIT_OWNER_COUNT_NE_LINEAGE_WRITE_PATH_COUNT=true`` -- R-001's own "one
-    commit path" fact says nothing about how many functions touch the Lineage log
+    """R12-F2, widened R13-F1: independently inventory every function/method in the
+    installed package whose own body references the Lineage-path accessor
+    (``self._lineage(...)``) -- Round 10's own ``_direct_filesystem_write_sites`` proves no
+    *unsanctioned module* writes a file directly, but a rogue write added *inside* an
+    already-sanctioned module (``store.file_store`` itself) is invisible to that check by
+    construction (``REFLOW_COMMIT_OWNER_COUNT_NE_LINEAGE_WRITE_PATH_COUNT=true`` -- R-001's
+    own "one commit path" fact says nothing about how many functions touch the Lineage log
     specifically). This closes that gap by classifying every function that references the
     Lineage path *by what it actually does with it*, never by which module it happens to
     live in (``SAME_MODULE_NE_AUTOMATICALLY_AUTHORIZED=true``).
+
+    R13-F1 widens *what counts as doing something with it* to match every create/append/
+    replace/rename/copy/truncate-shaped mutation primitive the *general* filesystem scan
+    already recognizes (``LINEAGE_PATH_REFERENCE_PLUS_MUTATION_PRIMITIVE_IS_A_LINEAGE_
+    WRITER=true``, ``UNCLASSIFIED_LINEAGE_MUTATION_PATHS_ALLOWED=false``): a write-mode
+    ``open(...)`` call, ``os.replace``/``os.rename``, and ``shutil.copy``/``copyfile``/
+    ``copy2`` now count as writers here too, not only the four raw primitive names R12-F2
+    itself recognized. No statically-visible mutation path a function reaches while also
+    referencing the Lineage accessor may go unclassified
+    (``STATICALLY_VISIBLE_MUTATION_PATH_MUST_NOT_BE_MISSED=true``); a call reached only
+    through a runtime-constructed name remains the same disclosed, bounded detection
+    boundary this module's own docstring already names for every one of its content-pattern
+    scans (``DYNAMICALLY_CONSTRUCTED_CALL_NAME_STATIC_PROOF_REQUIRED=false``).
 
     Returns ``(write_functions, read_functions)`` -- ``"module.function"`` entries. A
     function referencing the accessor whose own body also calls a recognized write
@@ -534,6 +561,19 @@ def _lineage_reference_and_primitive_functions(
                     has_write = True
                 elif name in _LINEAGE_READ_PRIMITIVE_NAMES:
                     has_read = True
+                elif (
+                    isinstance(func, ast.Name)
+                    and name == "open"
+                    and _open_call_is_write_mode(inner)
+                ) or (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and (
+                        (name in _LINEAGE_OS_PRIMITIVE_NAMES and func.value.id == "os")
+                        or (name in _LINEAGE_SHUTIL_PRIMITIVE_NAMES and func.value.id == "shutil")
+                    )
+                ):
+                    has_write = True
             if not references_lineage:
                 continue
             qualname = f"{module_name}.{node.name}"
