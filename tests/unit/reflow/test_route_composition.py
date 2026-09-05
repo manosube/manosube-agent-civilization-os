@@ -20,7 +20,7 @@ from tests.reflow_helpers import (
     fixture_policy,
     store_ready_for_closure,
 )
-from tests.state_helpers import SCHEMA_ROOT, initial_state
+from tests.state_helpers import SCHEMA_ROOT, genesis_source_snapshot_records, initial_state
 
 from manosube_agent_civilization.difference.identity import policy_semantic_fingerprint
 from manosube_agent_civilization.difference.lifecycle import closure_evaluation_binding_errors
@@ -139,7 +139,13 @@ def _fresh_store(tmp_path: Path) -> tuple[FileStateStore, dict]:
     project_state["semantic_fingerprint"] = fingerprint_project_state(
         project_state, schema_root=SCHEMA_ROOT
     ).as_dict()
-    store.initialize(project_state["project_id"], project_state)
+    # R10-F1: genesis's own Kernel Source Snapshot reference must close to a real,
+    # Store-adopted record -- never a dangling reference.
+    store.initialize(
+        project_state["project_id"],
+        project_state,
+        records=genesis_source_snapshot_records(project_state),
+    )
     return store, project_state
 
 

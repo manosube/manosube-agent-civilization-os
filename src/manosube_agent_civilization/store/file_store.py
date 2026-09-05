@@ -26,6 +26,7 @@ from .errors import (
     RecordConflictError,
     RevisionError,
     StaleStateError,
+    StateNotFoundError,
     TransactionConflictError,
 )
 from .interface import FaultInjector
@@ -100,24 +101,37 @@ class FileStateStore:
 
     def _record_committed_by_any_transaction(self, project_id: str, kind: str, record_id: str) -> bool:
         """Return whether *(kind, record_id)*'s permanent file was promoted by a transaction
-        that is now durably ``COMMITTED`` -- R8-F4.
+        that is now durably ``COMMITTED`` -- R8-F4, sharpened by R10-F3.
 
-        A record's own file carries no transaction-id metadata, so this instead asks every
-        transaction that ever recorded this same ``manifest.json`` reproduction: if *any*
+        A record's own file carries no transaction-id metadata, so this asks every
+        transaction that ever recorded this same ``manifest.json`` reproduction: if *some*
         transaction claiming this key in its manifest is ``COMMITTED``, the key is real
         (R2-F3B already guarantees same-ID-different-payload can never have been staged
         under two disagreeing transactions, so any one committed claimant is sufficient proof
         -- the file's own bytes are that transaction's, whichever one first promoted them).
-        No transaction's manifest claims this key at all only when the key predates this
-        manifest tracking (or was never staged through :meth:`commit` in the first place),
-        the same "absent path means already durable" reading :meth:`_transaction_committed`
-        gives an absent recovery journal.
+
+        R10-F3 (SHUKOU Round 10): a record file existing on disk is never, by itself,
+        evidence that any transaction actually promoted it -- ``FILE_EXISTS_NE_CANONICAL_
+        RECORD=true``. Two prior readings of "no evidence found" as "must be committed" are
+        both refused now: an absent ``recovery`` directory (no transaction has ever run
+        :meth:`commit` for this project at all) no longer implies every record file predates
+        tracking and is therefore trusted; and a key no manifest anywhere claims
+        (``claimed_by_any=false``) no longer implies a legitimate pre-tracking record either
+        (``NO_MANIFEST_CLAIM_NE_COMMITTED=true``) -- this vertical carries no actual
+        pre-manifest-tracking data to reconcile, and SHUKOU's own adoption refuses that
+        inference as a permanent, unverifiable "maybe legacy" excuse. A caller that genuinely
+        needs to adopt real historical data would need an explicit, checkable migration
+        receipt (a ``STORE_FORMAT_VERSION``/``MIGRATION_RECEIPT``/``LEGACY_ADOPTION_MANIFEST``
+        fact) -- no such mechanism exists or is invented here, so an unclaimed record is
+        simply refused, not silently trusted. Genesis's own records (R10-F1) are staged and
+        promoted through this identical manifest mechanism under the ``TX-GENESIS`` journal,
+        so they are found and committed here exactly like any other transaction's -- no
+        special-casing needed in this method for genesis at all.
         """
 
         recovery=self._project(project_id)/"state"/"recovery"
         if not recovery.exists():
-            return True
-        claimed_by_any = False
+            return False
         for journal in sorted(recovery.iterdir()):
             if not journal.is_dir():
                 continue
@@ -130,10 +144,8 @@ class FileStateStore:
                 raise CorruptStoreError(f"malformed transaction manifest: {journal.name}") from exc
             if [kind,record_id] not in entries:
                 continue
-            claimed_by_any = True
-            if (journal/"COMMITTED").exists():
-                return True
-        return not claimed_by_any
+            return (journal/"COMMITTED").exists()
+        return False
 
     def resolve_transaction(self, project_id: str, transaction_id: str) -> dict[str,Any]|None:
         """Return the committed ``state_transition`` event named by *transaction_id*, or
@@ -170,21 +182,33 @@ class FileStateStore:
                 return deepcopy(event)
         return None
 
-    def _transaction_committed(self, project_id: str, transaction_id: str) -> bool:
-        """Return whether *transaction_id* is durably ``COMMITTED`` -- R7-F5.
+    #: R10-F3 (SHUKOU Round 10): the one, explicitly-named genesis transaction identity --
+    #: GENESIS_EXCEPTION_IS_EXPLICIT=true, GENESIS_EXCEPTION_IS_NOT_WILDCARD=true. Every
+    #: other transaction_id with no recovery journal is refused, never silently trusted.
+    GENESIS_TRANSACTION_ID = "TX-GENESIS"
 
-        A transaction with no recovery journal at all is a transaction from before this
-        manifest/journal tracking existed (or the one genesis transaction, which mints no
-        journal), and is already promoted by construction -- the same "absent path means
-        legitimately empty, not unknown" reading :meth:`_transaction_manifest_keys` already
-        gives an absent manifest. A transaction *with* a journal is committed only once that
-        journal's own ``COMMITTED`` marker exists -- exactly the marker :meth:`commit` writes
-        last and :meth:`recover` writes on completing an interrupted one.
+    def _transaction_committed(self, project_id: str, transaction_id: str) -> bool:
+        """Return whether *transaction_id* is durably ``COMMITTED`` -- R7-F5, sharpened by
+        R10-F3.
+
+        Only the one, explicitly-named genesis transaction (:data:`GENESIS_TRANSACTION_ID`)
+        is committed by construction regardless of whether it happens to carry a recovery
+        journal (:meth:`initialize` mints one only when genesis stages real records, R10-F1
+        -- a bare genesis with no records to close a reference to still needs none). Every
+        *other* transaction_id is a real, ordinary transaction :meth:`commit` always creates
+        a journal for as its very first act -- ``NO_JOURNAL_NE_COMMITTED=true``: a missing
+        journal here is refused (never committed), not silently assumed to predate this
+        tracking (this vertical carries no actual data that does). A transaction *with* a
+        journal is committed only once that journal's own ``COMMITTED`` marker exists --
+        exactly the marker :meth:`commit` writes last and :meth:`recover` writes on
+        completing an interrupted one.
         """
 
+        if transaction_id == self.GENESIS_TRANSACTION_ID:
+            return True
         path = self._project(project_id)/"state"/"recovery"/transaction_id
         if not path.exists():
-            return True
+            return False
         return (path/"COMMITTED").exists()
 
     def _events(self, project_id: str) -> list[dict[str,Any]]:
@@ -203,15 +227,57 @@ class FileStateStore:
             if event["event_type"]!="TRANSITION" or event["from_revision"]!=prior["state_revision"] or event["to_revision"]!=prior["state_revision"]+1 or event["before_fingerprint"]!=prior["semantic_fingerprint"] or state["previous_state_fingerprint"]!=prior["semantic_fingerprint"]: raise RevisionError("non-contiguous transition")
         return state
 
-    def initialize(self, project_id: str, initial_state: Mapping[str,Any]) -> dict[str,Any]:
+    def initialize(self, project_id: str, initial_state: Mapping[str,Any], *, records: list[tuple[str,str,Mapping[str,Any]]]|None=None, fault: FaultInjector|None=None) -> dict[str,Any]:
+        """Initialize *project_id*'s genesis State -- R10-F1: *records*, when supplied, are
+        immutable bodies (the same ``(kind, id, body)`` shape :meth:`commit` already takes)
+        this genesis State itself references and must therefore close to a real, canonical,
+        Store-adopted predecessor from the moment genesis exists -- ``CANONICAL_REFERENCE_
+        CLOSURE_REQUIRED=true``/``GENESIS_DANGLING_CANONICAL_REFERENCE_ALLOWED=false``. They
+        are staged and promoted through the identical manifest/journal mechanism
+        :meth:`commit` already uses for every later transaction, under the same explicit
+        :data:`GENESIS_TRANSACTION_ID` -- no second persistence owner, no second Source
+        Snapshot producer, no second ``initialize`` path: this is still the one
+        ``FileStateStore`` this vertical has, staging into the one canonical record store it
+        already writes to. A caller with no records to close (the common case for every
+        genesis this vertical minted before R10-F1) gets the identical bare genesis this
+        method always produced -- no journal, no manifest, nothing new to recover.
+
+        *fault* is the identical :data:`FaultInjector` hook :meth:`commit` already accepts,
+        raised at the identical named :data:`STAGES` boundaries -- no second fault-injection
+        surface, so a genesis-with-records crash is exercised, and recovered from, through
+        exactly the same mechanism and the same generic :meth:`recover` as every other
+        transaction.
+        """
+
+        hit=lambda stage: fault(stage) if fault else None
         with self._lock(project_id):
             if self._lineage(project_id).exists(): raise AlreadyInitializedError(project_id)
             state=self._validate_state(project_id,initial_state)
             if state["state_revision"]!=0 or state["previous_state_fingerprint"] is not None: raise RevisionError("initial revision must be zero")
-            event={"schema_version":"0.1","transaction_id":"TX-GENESIS","event_type":"GENESIS","project_id":project_id,"from_revision":None,"to_revision":0,"before_fingerprint":None,"after_fingerprint":state["semantic_fingerprint"],"after_state":state,"evidence_refs":[],"committed_at":state["state_metadata"]["recorded_at"]}
+            event={"schema_version":"0.1","transaction_id":self.GENESIS_TRANSACTION_ID,"event_type":"GENESIS","project_id":project_id,"from_revision":None,"to_revision":0,"before_fingerprint":None,"after_fingerprint":state["semantic_fingerprint"],"after_state":state,"evidence_refs":[],"committed_at":state["state_metadata"]["recorded_at"]}
             self._verify_event(project_id,event,None)
-            atomic_write(self._lineage(project_id),canonical_json_bytes(event)+b"\n")
-            atomic_write(self._current(project_id),canonical_json_bytes(state))
+            if records:
+                # Mirrors commit()'s own stage order exactly (event/state staged, records
+                # staged, COMMIT_INTENT, lineage append, records promoted, current
+                # published, COMMITTED marker last) so the existing, generic recover() --
+                # unaware and uncaring whether an event is GENESIS- or TRANSITION-shaped --
+                # can complete an interrupted genesis exactly like any other transaction. No
+                # second recovery mechanism, no second fault-injection surface.
+                journal=self._project(project_id)/"state"/"recovery"/self.GENESIS_TRANSACTION_ID
+                journal.mkdir(parents=True,exist_ok=True)
+                atomic_write(journal/"event.json",canonical_json_bytes(event)); hit(STAGES[0])
+                atomic_write(journal/"state.json",canonical_json_bytes(state)); hit(STAGES[1])
+                self._stage_records(project_id,journal,list(records)); hit(STAGES[2])
+                atomic_write(journal/"COMMIT_INTENT",b"1"); hit(STAGES[3])
+                self._append(project_id,event); hit(STAGES[4])
+                self._promote_staged_records(project_id,journal); hit(STAGES[5])
+                hit(STAGES[6])
+                atomic_write(self._current(project_id),canonical_json_bytes(state)); hit(STAGES[7])
+                hit(STAGES[8])
+                atomic_write(journal/"COMMITTED",b"1")
+            else:
+                atomic_write(self._lineage(project_id),canonical_json_bytes(event)+b"\n")
+                atomic_write(self._current(project_id),canonical_json_bytes(state))
             return deepcopy(state)
 
     def _committed_events(self, project_id: str) -> list[dict[str,Any]]:
@@ -370,6 +436,21 @@ class FileStateStore:
             return deepcopy(state)
 
     def recover(self, project_id: str) -> dict[str,Any]:
+        """Complete every interrupted transaction whose ``COMMIT_INTENT`` was durably
+        written but whose ``COMMITTED`` marker was not.
+
+        R10-F1: genesis itself can now carry a recovery journal (a genesis with ``records``
+        interrupted before ``initialize`` finished). A crash before genesis's own
+        ``COMMIT_INTENT`` was ever durably written leaves *no* completed transaction at all
+        -- not corruption, simply a project that never finished initializing, and therefore
+        safe to retry via :meth:`initialize` from scratch (its own ``AlreadyInitializedError``
+        guard checks the lineage log, which such a crash never touched). :meth:`reconstruct`
+        itself has no way to distinguish "nothing has ever committed" from real corruption,
+        so this method checks that case first and raises the more precise
+        :class:`~manosube_agent_civilization.store.errors.StateNotFoundError` instead of
+        letting reconstruct's own generic error leak through.
+        """
+
         with self._lock(project_id):
             recovery=self._project(project_id)/"state"/"recovery"; events=self._events(project_id); txids={e["transaction_id"] for e in events}
             if recovery.exists():
@@ -379,4 +460,6 @@ class FileStateStore:
                     if event["transaction_id"] not in txids: self._append(project_id,event); txids.add(event["transaction_id"])
                     self._promote_staged_records(project_id,journal)
                     atomic_write(journal/"COMMITTED",b"1")
+            if not self._committed_events(project_id):
+                raise StateNotFoundError(project_id)
             state=self.reconstruct(project_id); atomic_write(self._current(project_id),canonical_json_bytes(state)); return state

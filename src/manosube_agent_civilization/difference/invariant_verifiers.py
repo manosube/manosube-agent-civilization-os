@@ -200,6 +200,14 @@ def _no_weak_observation_status(records: list[dict[str, Any]]) -> bool:
 # never either alone. If the topology inventory itself cannot be computed (an installed
 # package that fails to introspect at all), the honest answer is ``"UNKNOWN"``
 # (``UNPROVEN_INVARIANT_MUST_BE_UNKNOWN=true``) rather than a silent PASS or FAIL.
+#
+# R10-F2 (SHUKOU Round 10): the ``try/except Exception: return "UNKNOWN"`` around each
+# ``k00X_...``/``r00X_...`` call below is unchanged, but what it now guards against is wider
+# than Round 9's own name-based scan -- ``manosube_agent_civilization.topology`` no longer
+# silently excludes a module that fails to import (an import failure now propagates and lands
+# here as ``UNKNOWN``), and its Static facts are no longer symbol-name counts alone
+# (``EXPECTED_SYMBOL_NAME_COUNT_NE_CANONICAL_OWNER_COUNT=true`` -- see that module's own
+# docstring for the name-independent content-pattern scans it adds).
 
 
 def _k001(ctx: VerificationContext) -> VerifierResult:

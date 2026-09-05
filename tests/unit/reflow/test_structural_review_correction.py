@@ -2607,7 +2607,16 @@ def test_r9f2_reflow_fails_closed_on_kernel_source_snapshot_git_provenance_misma
     project_state["semantic_fingerprint"] = fingerprint_project_state(
         project_state, schema_root=SCHEMA_ROOT
     ).as_dict()
-    store.initialize(project_state["project_id"], project_state)
+    # R10-F1: the Store must actually adopt the tampered snapshot itself, so this test still
+    # reaches its own intended "Kernel-source inconsistency" (blob_sha mismatch) failure --
+    # not merely the earlier "unresolvable reference" failure an un-adopted id would now hit.
+    store.initialize(
+        project_state["project_id"],
+        project_state,
+        records=[
+            ("source_snapshot", tampered_snapshot["source_snapshot_id"], tampered_snapshot)
+        ],
+    )
 
     difference = fixture_difference()
     policy = fixture_policy(difference)
@@ -2897,3 +2906,240 @@ def test_r9f3_differing_blocker_kind_never_collides_on_the_same_event_identity()
         "blocker_scope": {**scope, "blocked_stage": "DIFFERENCE_EVALUATION"},
     }
     assert lifecycle_event_id(observation_event) != lifecycle_event_id(evidence_event)
+
+
+# =========================================================================================== #
+# Phase 7 structural-review round 10 (R10-F1)
+# =========================================================================================== #
+
+# --- R10-F1: Canonical State references must close to a Store-adopted committed Record ------ #
+
+
+def _terminal_policy_only_blocker_kwargs(difference: dict[str, Any]) -> dict[str, Any]:
+    """The ``blocker_kind``/``blocker_scope``/``blocker_resolution_condition``/
+    ``next_observation_ref`` kwargs a ``TERMINAL_POLICY_ONLY`` (candidate-free) request needs
+    to mint a real ``BLOCKED`` transition through ``reflow()`` -- the identical shape
+    ``tests/unit/reflow/test_failed_route.py`` already uses for this same route."""
+
+    return {
+        "blocker_kind": "EVIDENCE_INSUFFICIENT",
+        "blocker_scope": {
+            "kind": "difference_blocker_scope",
+            "affected_subject_refs": {
+                "collection_kind": "UNORDERED_SET",
+                "members": [{"kind": "difference", "id": difference["difference_id"]}],
+            },
+            "effective_boundary": difference["effective_boundary"],
+            "blocked_stage": "DIFFERENCE_EVALUATION",
+        },
+        "blocker_resolution_condition": {
+            "kind": "blocker_resolution_condition",
+            "condition_code": "REQUIRED_EVIDENCE_AVAILABLE",
+            "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
+            "expected_state": "AVAILABLE",
+            "verification_request_ref": {
+                "kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64
+            },
+        },
+        "next_observation_ref": {"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
+    }
+
+
+def test_r10f1_reflow_resolves_kernel_provenance_from_the_store_even_with_an_empty_caller_pool(
+    tmp_path: Path,
+) -> None:
+    """R10-F1: ``STATE_REFERENCE_TO_CALLER_POOL_IS_CANONICAL_RESOLUTION=false`` -- a real
+    Reflow cycle resolves its base Kernel provenance purely from the Store's own
+    genesis-adopted record. An entirely empty ``closure_request["source_snapshots"]`` (never
+    restating the genesis snapshot at all) does not stop it -- the caller pool was never the
+    authority, so its absence cannot be either. Uses the same ``TERMINAL_POLICY_ONLY`` shape
+    the R9-F2 negative controls above already use, so this stays isolated to base-Kernel-
+    provenance resolution alone, never entangled with G19's own separate re-verification of
+    ``source_snapshots`` for a candidate."""
+
+    from tests.state_helpers import real_kernel_git_objects
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = base_closure_request(difference, policy)
+    request["source_snapshots"] = []
+
+    result = reflow(
+        store,
+        project_id=project_state["project_id"],
+        previous_event_id=difference["genesis_event_ref"]["id"],
+        event_revision=1,
+        closure_request=request,
+        observation_refs=[],
+        reflow_instant=REFLOW_INSTANT,
+        **_terminal_policy_only_blocker_kwargs(difference),
+    )
+    assert result["decision"]["to_status"] == "BLOCKED"
+    kernel_source_ref, _ = real_kernel_git_objects()
+    assert (
+        result["evaluation"]["base_kernel_source_ref_evaluated"]["commit_sha"]
+        == kernel_source_ref["commit_sha"]
+    )
+
+
+def test_r10f1_a_forged_caller_pool_entry_under_the_correct_id_cannot_override_the_stores_body(
+    tmp_path: Path,
+) -> None:
+    """R10-F1: ``CALLER_SELF_CONSISTENCY_NE_COMMITTED_PREDECESSOR=true`` -- a caller-supplied
+    ``source_snapshots`` entry stamped under the genesis snapshot's own real id, but carrying
+    a tampered ``git_provenance.blob_sha`` (so it no longer even recomputes its own id), is
+    never consulted at all: resolution reads only the Store's own adopted body, so the
+    poisoned pool entry changes nothing about the outcome."""
+
+    from tests.state_helpers import real_kernel_source_snapshot
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = base_closure_request(difference, policy)
+
+    poisoned = deepcopy(real_kernel_source_snapshot())
+    poisoned["git_provenance"]["blob_sha"] = "0" * 40
+    request["source_snapshots"] = [poisoned]
+
+    result = reflow(
+        store,
+        project_id=project_state["project_id"],
+        previous_event_id=difference["genesis_event_ref"]["id"],
+        event_revision=1,
+        closure_request=request,
+        observation_refs=[],
+        reflow_instant=REFLOW_INSTANT,
+        **_terminal_policy_only_blocker_kwargs(difference),
+    )
+    assert result["decision"]["to_status"] == "BLOCKED"
+    assert (
+        result["evaluation"]["base_kernel_source_ref_evaluated"]["commit_sha"]
+        == result["evaluation"]["kernel_source_ref_evaluated"]["commit_sha"]
+    )
+
+
+def test_r10f1_reflow_fails_closed_when_genesis_names_a_snapshot_the_store_never_adopted(
+    tmp_path: Path,
+) -> None:
+    """R10-F1: ``GENESIS_DANGLING_CANONICAL_REFERENCE_ALLOWED=false`` -- a genesis State
+    naming a real, well-formed Kernel Source Snapshot id that the Store itself never adopted
+    (``store.initialize`` called with no ``records=``) fails closed even though the caller's
+    own ``closure_request["source_snapshots"]`` supplies a perfectly self-consistent record
+    under that exact id -- a caller pool can never substitute for the Store's own adoption of
+    a predecessor reference."""
+
+    from tests.difference_helpers import objective_revision as _objective_revision
+    from tests.state_helpers import initial_state, real_kernel_source_snapshot
+
+    from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = initial_state()
+    project_state["objective_revision_id"] = _objective_revision()["objective_revision_id"]
+    project_state["semantic_fingerprint"] = fingerprint_project_state(
+        project_state, schema_root=SCHEMA_ROOT
+    ).as_dict()
+    # Deliberately no records= -- the genesis reference is left dangling at the Store.
+    store.initialize(project_state["project_id"], project_state)
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = base_closure_request(difference, policy)
+    request["source_snapshots"] = [real_kernel_source_snapshot()]
+
+    with pytest.raises(ReflowValidationError, match="does not resolve to a Store-adopted"):
+        reflow(
+            store,
+            project_id=project_state["project_id"],
+            previous_event_id=difference["genesis_event_ref"]["id"],
+            event_revision=1,
+            closure_request=request,
+            observation_refs=[],
+            reflow_instant=REFLOW_INSTANT,
+        )
+    # Nothing committed at all.
+    assert store.load_current(project_state["project_id"]) == project_state
+
+
+def test_r10f1_genesis_adopted_snapshot_still_resolves_identically_after_a_real_reflow_cycle(
+    tmp_path: Path,
+) -> None:
+    """R10-F1: the genesis-adopted Kernel Source Snapshot record's own identity survives a
+    real committed Reflow cycle unchanged -- persistence, not merely one-shot resolution at
+    genesis time."""
+
+    from tests.state_helpers import real_kernel_source_snapshot
+
+    from manosube_agent_civilization.observation.source_snapshot import resolve_source_snapshot
+
+    store, project_state, _difference, result = _closed_store(tmp_path)
+    assert result["decision"]["to_status"] == "CLOSED"
+
+    snapshot = real_kernel_source_snapshot()
+    resolved = store.resolve_record(
+        project_state["project_id"], "source_snapshot", snapshot["source_snapshot_id"]
+    )
+    assert resolved == snapshot
+    ref = {"kind": "source_snapshot", "id": snapshot["source_snapshot_id"]}
+    assert resolve_source_snapshot(ref, [resolved])["source_snapshot_id"] == snapshot["source_snapshot_id"]
+
+
+@pytest.mark.parametrize("stage", list(STAGES))
+def test_r10f1_genesis_with_records_is_invisible_before_recovery_and_converges_after(
+    stage: str, tmp_path: Path
+) -> None:
+    """R10-F1 crash-recovery boundary: a genesis carrying ``records`` is staged and promoted
+    through the identical manifest/journal mechanism ``commit`` already uses (mirrored fault
+    hook, identical named :data:`STAGES`), so a crash at any of the 9 stages either leaves
+    genesis cleanly abandoned (retryable, for a crash before ``AFTER_COMMIT_INTENT``) or
+    recoverable to the identical committed State and record through the same generic
+    ``recover`` -- no second recovery mechanism for this one new path."""
+
+    from tests.difference_helpers import objective_revision as _objective_revision
+    from tests.state_helpers import genesis_source_snapshot_records, initial_state
+
+    from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+    from manosube_agent_civilization.store.errors import StateNotFoundError
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = initial_state()
+    project_state["objective_revision_id"] = _objective_revision()["objective_revision_id"]
+    project_state["semantic_fingerprint"] = fingerprint_project_state(
+        project_state, schema_root=SCHEMA_ROOT
+    ).as_dict()
+    records = genesis_source_snapshot_records(project_state)
+    assert records, "this fixture must actually reference the real Kernel snapshot"
+    snapshot_kind, snapshot_id, _snapshot_body = records[0]
+    project_id = project_state["project_id"]
+
+    def fault(current: str) -> None:
+        if current == stage:
+            raise SimulatedCrash(stage)
+
+    with pytest.raises(SimulatedCrash):
+        store.initialize(project_id, project_state, records=records, fault=fault)
+
+    # Unpromoted/unresolvable before recovery, at every crash stage.
+    assert store.resolve_record(project_id, snapshot_kind, snapshot_id) is None
+
+    early_stage = stage in STAGES[: STAGES.index("AFTER_COMMIT_INTENT")]
+    if early_stage:
+        # Abandoned, not completed -- genesis's own COMMIT_INTENT was never durably
+        # written, so recover() has nothing to complete. The project stays cleanly
+        # uninitialized (StateNotFoundError, not corruption), and a caller may safely
+        # retry initialize() from scratch.
+        with pytest.raises(StateNotFoundError):
+            store.recover(project_id)
+        assert store.resolve_record(project_id, snapshot_kind, snapshot_id) is None
+        store.initialize(project_id, project_state, records=records)
+        assert store.load_current(project_id) == project_state
+    else:
+        store.recover(project_id)
+        resolved = store.resolve_record(project_id, snapshot_kind, snapshot_id)
+        assert resolved is not None
+        assert resolved["source_snapshot_id"] == snapshot_id
+        assert store.load_current(project_id) == project_state

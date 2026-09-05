@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = ROOT / "01_SCHEMA"
 
@@ -123,3 +122,30 @@ def real_kernel_source_snapshot() -> dict[str, Any]:
             "blob_sha": blob_sha1(blob_content),
         },
     )
+
+
+def genesis_source_snapshot_records(
+    state: dict[str, Any],
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """R10-F1 (SHUKOU Round 10): the Store-adopted ``records`` a fixture must pass to
+    :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.initialize` so a
+    genesis ``state`` naming the real Kernel Source Snapshot in its own ``state_metadata.
+    source_snapshot_refs`` resolves that reference to a real, committed record rather than
+    a dangling one -- ``reflow.route.reflow``'s own ``_resolve_base_kernel_source_ref`` now
+    refuses (``GENESIS_DANGLING_CANONICAL_REFERENCE_ALLOWED=false``) to resolve it from a
+    caller-supplied ``closure_request["source_snapshots"]`` pool alone.
+
+    Returns ``[("source_snapshot", snapshot_id, snapshot_body)]`` for the one snapshot id
+    ``state`` actually references, or ``[]`` when ``state`` names no such id (a deliberate
+    negative-control fixture with empty/unrelated ``source_snapshot_refs`` should not gain
+    a record it never asked for).
+    """
+
+    refs = state.get("state_metadata", {}).get("source_snapshot_refs") or []
+    ref_ids = {ref["id"] for ref in refs if isinstance(ref, dict) and isinstance(ref.get("id"), str)}
+    if not ref_ids:
+        return []
+    snapshot = real_kernel_source_snapshot()
+    if snapshot["source_snapshot_id"] not in ref_ids:
+        return []
+    return [("source_snapshot", snapshot["source_snapshot_id"], snapshot)]

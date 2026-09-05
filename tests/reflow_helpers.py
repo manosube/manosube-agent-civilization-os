@@ -33,6 +33,7 @@ from tests.evidence_helpers import (
 )
 from tests.state_helpers import (
     SCHEMA_ROOT,
+    genesis_source_snapshot_records,
     initial_state,
     real_kernel_git_objects,
     real_kernel_source_snapshot,
@@ -152,7 +153,11 @@ def store_ready_for_closure(
     genesis["semantic_fingerprint"] = fingerprint_project_state(
         genesis, schema_root=SCHEMA_ROOT
     ).as_dict()
-    store.initialize(genesis["project_id"], genesis)
+    # R10-F1: genesis's own Kernel Source Snapshot reference must close to a real,
+    # Store-adopted record -- never a dangling reference the caller pool merely restates.
+    store.initialize(
+        genesis["project_id"], genesis, records=genesis_source_snapshot_records(genesis)
+    )
 
     current = genesis
     for step in range(1, AFTER_REVISION + 1):

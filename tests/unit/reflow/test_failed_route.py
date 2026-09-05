@@ -29,7 +29,13 @@ from tests.difference_helpers import (
     state_fingerprint,
 )
 from tests.evidence_helpers import BEFORE_REVISION, difference_request, observation_evidence_request
-from tests.state_helpers import SCHEMA_ROOT, initial_state, real_kernel_git_objects, real_kernel_source_snapshot
+from tests.state_helpers import (
+    SCHEMA_ROOT,
+    genesis_source_snapshot_records,
+    initial_state,
+    real_kernel_git_objects,
+    real_kernel_source_snapshot,
+)
 
 from manosube_agent_civilization.difference import derive_differences
 from manosube_agent_civilization.difference.validation import (
@@ -99,7 +105,13 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
     project_state["semantic_fingerprint"] = fingerprint_project_state(
         project_state, schema_root=SCHEMA_ROOT
     ).as_dict()
-    store.initialize(project_state["project_id"], project_state)
+    # R10-F1: genesis's own Kernel Source Snapshot reference must close to a real,
+    # Store-adopted record -- never a dangling reference.
+    store.initialize(
+        project_state["project_id"],
+        project_state,
+        records=genesis_source_snapshot_records(project_state),
+    )
 
     from manosube_agent_civilization.evidence.engine import derive_evidence
 
