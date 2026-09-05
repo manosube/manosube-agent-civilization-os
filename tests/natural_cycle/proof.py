@@ -438,18 +438,25 @@ def observe_change_result(
 
 
 def observe_verification(current_state: dict[str, Any], before: dict[str, Any]) -> dict[str, Any]:
-    """Item D.6 (second half) fixed point (P8-R2-F1): the real, independent re-observation
-    Reflow's own G8 gate verifies -- a genuinely separate Observation from
-    :func:`observe_change_result` -- closed the identical two-pass way, since its own
-    natural real backing Evidence is a Change-Free Verification Evidence pairing it with the
-    identical before-Observation the real Difference was derived from
-    (``CLOSURE_POLICY.md``'s own ``CHANGE_FREE`` row structurally accepts exactly this
-    request shape -- ``change_request=None``, ``verification_observation_request``
-    populated -- regardless of this route's own, separate real ``CHANGE_BOUND`` closure;
-    this auxiliary record documents only that a second, independent observation of the
-    identical real post-change world was made, is never persisted, and is never referenced
-    by anything downstream -- the identical role the seed Evidence in :func:`observe_before`
-    plays).
+    """Item D.6 (second half) fixed point (P8-R2-F1, corrected P8-R3-F1, SHUKOU Phase 8
+    final-closure round 3): the real, independent re-observation Reflow's own G8 gate
+    verifies -- a genuinely separate Observation from :func:`observe_change_result` --
+    closed the identical two-pass way, since its own natural real backing Evidence is a
+    Change-Free Verification Evidence pairing it with the identical before-Observation the
+    real Difference was derived from (``CLOSURE_POLICY.md``'s own ``CHANGE_FREE`` row
+    structurally accepts exactly this request shape -- ``change_request=None``,
+    ``verification_observation_request`` populated -- regardless of this route's own,
+    separate real ``CHANGE_BOUND`` closure).
+
+    P8-R3-F1 corrected the prior claim that this auxiliary Evidence is "never persisted,
+    and never referenced by anything downstream": the verification Observation's own
+    ``observation_evidence_refs`` field genuinely names it, and once a caller (correctly)
+    persists that Observation, the reference is real and must resolve -- a provenance-only
+    record this vertical's own Reflow admission (``route.py::_admitted_provenance_only_
+    evidence``) now reproduces through the real Evidence owner and persists, never counted
+    toward Sufficiency or the Candidate's own ``resolution_mode``. This function therefore
+    returns the corrected request/Evidence too, so :func:`assemble_vertical_proof_route` can
+    carry them through to Reflow's own admission step -- previously discarded here.
     """
 
     difference_request = fx.derivation_request(
@@ -511,7 +518,12 @@ def observe_verification(current_state: dict[str, Any], before: dict[str, Any]) 
             f"{provisional_evidence['evidence_id']!r}"
         )
 
-    return {"request": request, "bundle": bundle}
+    return {
+        "request": request,
+        "bundle": bundle,
+        "verification_evidence_request": verification_evidence_request,
+        "verification_evidence": verification_evidence,
+    }
 
 
 def derive_the_change_result_evidence(
@@ -818,6 +830,18 @@ def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[
             "id": authority["decision"]["authority_decision_id"],
         },
         "change_refs": [change_ref],
+        # P8-R3-F1 (SHUKOU Phase 8 final-closure round 3): the auxiliary Change-Free
+        # Verification Evidence the verification Observation's own `observation_evidence_
+        # refs` names -- provenance-only, never fed into Sufficiency/resolution_mode
+        # (`observe_verification`'s own fixed point already derived it; Reflow's own
+        # admission reproduces and persists it here so the reference genuinely resolves).
+        "provenance_only_evidence_requests": [verification_obs["verification_evidence_request"]],
+        # The before-Observation's own real Source Snapshot -- not part of the G8-validated
+        # `closure_request["source_snapshots"]` pool (that pool is exact-matched against
+        # the reobservation's own declared after-state set only), but needed once the
+        # before-Observation itself is admitted and persisted (P8-R3-F1) so its own
+        # declared `source_snapshot_refs` resolves too.
+        "auxiliary_source_snapshots": [fx.BEFORE_SOURCE_SNAPSHOT],
     }
 
     return {

@@ -95,6 +95,7 @@ from manosube_agent_civilization.evidence.engine import (
 )
 from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
+from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.observation.errors import ObservationError
 from manosube_agent_civilization.observation.identity import observation_identity
@@ -876,6 +877,116 @@ def _preflight_verify_reflow_provenance(
         )
 
 
+def _merge_verified_record(
+    records: dict[tuple[str, str], dict[str, Any]],
+    kind: str,
+    record: dict[str, Any],
+    record_id: str,
+) -> None:
+    """Merge *record* into *records* under ``(kind, record_id)``, failing closed if a
+    record already admitted under the identical key carries a different body (P8-R3-F1,
+    SHUKOU Phase 8 final-closure round 3): ``SAME_KIND_ID_DIFFERENT_BODY=CORRUPTION_OR_
+    VALIDATION_ERROR`` -- neither ``FIRST_BODY_WINS`` nor ``LAST_BODY_WINS``. Two
+    independent reproduction paths that both claim the same identity must agree bit for
+    bit, or neither is admitted, before any State/Lineage/record/manifest write.
+    """
+
+    key = (kind, record_id)
+    existing = records.get(key)
+    if existing is not None and existing != record:
+        raise ReflowValidationError(
+            f"two independent reproductions of {kind}/{record_id} produced different "
+            "bodies -- refusing to admit either"
+        )
+    records[key] = record
+
+
+def _admitted_observations_from_evidence_requests(
+    closure_request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """P8-R3-F1: the real before/post-change/verification Observation bodies the admitted
+    Evidence requests actually name -- reproduced fresh through the real Observation owner
+    (:func:`~manosube_agent_civilization.observation.observe`), never trusted as an
+    embedded body a caller happened to supply, and re-verified against its own
+    content-addressed identity (:func:`~manosube_agent_civilization.observation.identity.
+    observation_identity`) before being considered for admission at all.
+
+    Reproduced from every Observation-shaped request field an admitted Evidence request
+    already carries (``observation_request``, ``post_change_observation_request``,
+    ``verification_observation_request``) across both ``change_result_evidence_requests``
+    and ``change_free_verification_evidence_requests`` -- the identical fields
+    :func:`~manosube_agent_civilization.evidence.engine.derive_evidence` itself already
+    re-observes when reproducing those same Evidence records, so this persists exactly
+    what Evidence's own reproduction already grounds itself in, never a second guess at it.
+    Two independent requests that reproduce the identical ``observation_id`` under
+    different bodies fail closed here (P8-R3-F1's own ``SAME_KIND_ID_DIFFERENT_BODY``
+    decision), before anything is returned for admission.
+    """
+
+    seen: dict[str, dict[str, Any]] = {}
+    for source_key in (
+        "change_result_evidence_requests",
+        "change_free_verification_evidence_requests",
+    ):
+        for item in closure_request.get(source_key) or []:
+            if not isinstance(item, dict):
+                continue
+            for request_key in (
+                "observation_request",
+                "post_change_observation_request",
+                "verification_observation_request",
+            ):
+                request = item.get(request_key)
+                if not isinstance(request, dict):
+                    continue
+                try:
+                    bundle = observe(request)
+                except ObservationError:
+                    continue
+                observations = bundle.get("observations") or []
+                if not observations:
+                    continue
+                observation = observations[-1]
+                identity = observation.get("observation_id")
+                if not isinstance(identity, str) or identity != observation_identity(observation):
+                    continue
+                existing = seen.get(identity)
+                if existing is not None and existing != observation:
+                    raise ReflowValidationError(
+                        f"two independent reproductions of observation/{identity} produced "
+                        "different bodies -- refusing to admit either"
+                    )
+                seen[identity] = observation
+    return list(seen.values())
+
+
+def _admitted_provenance_only_evidence(
+    provenance_only_evidence_requests: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """P8-R3-F1: provenance-only Evidence -- for example, the auxiliary Change-Free
+    Verification Evidence a verification Observation's own ``observation_evidence_refs``
+    names -- reproduced through the real Evidence owner (:func:`~manosube_agent_
+    civilization.evidence.engine.derive_evidence`) and persisted so that reference
+    genuinely resolves, but never wired into ``evaluate_closure``/``evaluate_sufficiency``:
+    ``AUXILIARY_VERIFICATION_EVIDENCE_COUNTS_TOWARD_SUFFICIENCY=false``, ``..._CHANGES_
+    RESOLUTION_MODE=false`` -- this function's own caller (:func:`reflow`) never feeds
+    *provenance_only_evidence_requests* into either of those, so nothing here can ever
+    move a Sufficiency verdict or a Candidate's own ``resolution_mode``."""
+
+    seen: dict[str, dict[str, Any]] = {}
+    for item in provenance_only_evidence_requests or []:
+        record = derive_evidence(item)
+        identity = record["evidence_id"]
+        existing = seen.get(identity)
+        if existing is not None and existing != record:
+            raise ReflowValidationError(
+                f"two independent reproductions of observation_evidence/{identity} "
+                "produced different bodies -- refusing to admit either"
+            )
+        seen[identity] = record
+    return list(seen.values())
+
+
 def _admitted_records(
     evaluation: dict[str, Any],
     lifecycle_event: dict[str, Any],
@@ -884,6 +995,10 @@ def _admitted_records(
     *,
     policy: dict[str, Any],
     reflow_transition_ref: dict[str, Any] | None,
+    store: Any,
+    project_id: str,
+    provenance_only_evidence_requests: list[Any] | None = None,
+    auxiliary_source_snapshots: list[Any] | None = None,
 ) -> list[tuple[str, str, dict[str, Any]]]:
     """R2-F3/R5-F2: every immutable record this transition's commit must make
     reference-resolvable.
@@ -976,10 +1091,46 @@ def _admitted_records(
             record = resolve_source_snapshot(ref, source_snapshot_pool)
         except ObservationError:
             continue
-        records[("source_snapshot", record["source_snapshot_id"])] = record
+        _merge_verified_record(records, "source_snapshot", record, record["source_snapshot_id"])
 
-    for observation in _self_consistent_after_observations(closure_request):
-        records[("observation", observation["observation_id"])] = observation
+    # P8-R3-F1 (SHUKOU Phase 8 final-closure round 3): every Observation an admitted
+    # Evidence request actually names -- before, post-change, and independent
+    # verification -- is persisted here too, not only the reobservation's own after-state
+    # Observation :func:`_self_consistent_after_observations` already covered. Without
+    # this, a persisted Evidence record's own ``observed_result.observation_ref``/
+    # ``lineage.derived_from`` names an Observation the Store never actually adopted --
+    # ``PERSISTED_REFERENCE_GRAPH_CLOSED=false``.
+    observations_admitted: list[dict[str, Any]] = list(
+        _self_consistent_after_observations(closure_request)
+    )
+    for observation in observations_admitted:
+        _merge_verified_record(records, "observation", observation, observation["observation_id"])
+    for observation in _admitted_observations_from_evidence_requests(closure_request):
+        _merge_verified_record(records, "observation", observation, observation["observation_id"])
+        observations_admitted.append(observation)
+
+    # P8-R3-F1: the real provenance-only Evidence a caller asks to be persisted (never fed
+    # into evaluate_closure/evaluate_sufficiency above, so it can never move a Sufficiency
+    # verdict or a Candidate's own resolution_mode) -- for example, the auxiliary
+    # Change-Free Verification Evidence a persisted verification Observation's own
+    # ``observation_evidence_refs`` names.
+    for record in _admitted_provenance_only_evidence(provenance_only_evidence_requests):
+        _merge_verified_record(records, "observation_evidence", record, record["evidence_id"])
+
+    # P8-R3-F1: every Observation admitted above may itself declare source_snapshot_refs
+    # this transaction's own G8-validated source_snapshot_pool never had to cover (that
+    # pool is validated exactly against the reobservation's own declared set, R4-F2, and
+    # widening it would loosen that gate) -- resolved instead against an extended pool
+    # carrying *auxiliary_source_snapshots* too, so a newly-admitted Observation's own real
+    # source provenance also resolves, without touching the gate-validated pool at all.
+    extended_snapshot_pool = source_snapshot_pool + list(auxiliary_source_snapshots or [])
+    for observation in observations_admitted:
+        for ref in observation.get("source_snapshot_refs") or []:
+            try:
+                record = resolve_source_snapshot(ref, extended_snapshot_pool)
+            except ObservationError:
+                continue
+            _merge_verified_record(records, "source_snapshot", record, record["source_snapshot_id"])
 
     # R6-F4: the Closure Evaluation's own kernel_source_witness_ref, when set, names a real
     # kernel_source_witness record -- the verified Git COMMIT->TREE->PATH->BLOB object bytes,
@@ -1106,6 +1257,46 @@ def _admitted_records(
             continue
         records[(CANDIDATE_COMPLETION_RECORD_KIND, completion_record["completion_id"])] = completion_record
 
+    # P8-R3-F1 (SHUKOU Phase 8 final-closure round 3): every admitted Observation's own
+    # declared observation_evidence_refs must itself resolve -- either among the records
+    # this same transaction is about to persist, or already committed -- before any write.
+    # Scoped deliberately to this one field (not every reference field on every admitted
+    # record kind): it is the specific gap this Finding names -- a persisted verification
+    # Observation naming an auxiliary Evidence record nothing ever adopted -- and the one
+    # this function's own new admission logic above is responsible for closing.
+    #
+    # Gated on *provenance_only_evidence_requests* being explicitly supplied (not ``None``,
+    # even an empty list) -- this Finding's own stricter closure contract is opt-in, not a
+    # retroactive requirement on every existing caller. Many pre-existing Phase 5-7 test
+    # fixtures already persist an Observation carrying a bare, never-resolved placeholder
+    # ``observation_evidence_refs`` entry (predating this Finding, unrelated to it, and out
+    # of the scope this round is authorized to correct); enforcing this check
+    # unconditionally would refuse all of them. A caller that opts in -- passing this
+    # keyword at all -- and then omits the provenance-only Evidence request a real
+    # reference needs (P8-R3-F1's own required negative control) fails closed here, rather
+    # than committing a persisted Observation whose own declared reference silently never
+    # resolves.
+    if provenance_only_evidence_requests is not None:
+        admitted_keys = set(records)
+        for (kind, record_id), body in records.items():
+            if kind != "observation":
+                continue
+            for ref in body.get("observation_evidence_refs") or []:
+                if not isinstance(ref, dict):
+                    continue
+                ref_kind, ref_id = ref.get("kind"), ref.get("id")
+                if not isinstance(ref_kind, str) or not isinstance(ref_id, str) or not ref_id:
+                    continue
+                if (ref_kind, ref_id) in admitted_keys:
+                    continue
+                if store.resolve_record(project_id, ref_kind, ref_id) is not None:
+                    continue
+                raise ReflowValidationError(
+                    f"admitted observation/{record_id} declares an unresolved "
+                    f"observation_evidence_refs entry: {ref_kind}/{ref_id} -- "
+                    "PERSISTED_REFERENCE_GRAPH_CLOSED requires it to resolve before commit"
+                )
+
     return [(kind, record_id, body) for (kind, record_id), body in sorted(records.items())]
 
 
@@ -1127,6 +1318,8 @@ def reflow(
     blocker_scope: dict[str, Any] | None = None,
     blocker_resolution_condition: dict[str, Any] | None = None,
     next_observation_ref: dict[str, Any] | None = None,
+    provenance_only_evidence_requests: list[Any] | None = None,
+    auxiliary_source_snapshots: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Run one Reflow cycle to completion and return every record it produced.
 
@@ -1137,6 +1330,18 @@ def reflow(
     from *store* (F1). *evidence_refs* is not a caller parameter: it is derived (F6) from
     what the Evaluation itself admits. Returns ``{"evaluation", "decision",
     "next_semantic_state", "committed_state", "state_transition_ref", "event"}``.
+
+    *provenance_only_evidence_requests* (P8-R3-F1, SHUKOU Phase 8 final-closure round 3):
+    Evidence requests reproduced through the real Evidence owner and persisted so a real
+    reference some other admitted record already declares (for example, a verification
+    Observation's own ``observation_evidence_refs``) actually resolves -- never fed into
+    ``evaluate_closure``/``evaluate_sufficiency``, so a provenance-only record can never
+    count toward Sufficiency or the Candidate's own ``resolution_mode``.
+    *auxiliary_source_snapshots* is the identical provenance-only widening for Source
+    Snapshot: a pool of real Source Snapshot bodies available when persisting an admitted
+    Observation's own declared ``source_snapshot_refs``, kept entirely separate from
+    ``closure_request["source_snapshots"]`` (which G8/G4's own exact-match gates still
+    validate unchanged) so this never loosens what those gates already require.
     """
 
     before_project_state = store.load_current(project_id)
@@ -1286,6 +1491,10 @@ def reflow(
         sufficiency,
         policy=policy,
         reflow_transition_ref=state_transition_ref if decision["to_status"] == "CLOSED" else None,
+        store=store,
+        project_id=project_id,
+        provenance_only_evidence_requests=provenance_only_evidence_requests,
+        auxiliary_source_snapshots=auxiliary_source_snapshots,
     )
 
     committed_state, committed_ref = commit_reflow(

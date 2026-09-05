@@ -14,6 +14,7 @@ COMPLETION_GATE_WEAKENED=false
 ADOPTED_BY=SHUKOU_ADOPTION_ADOPT_PHASE_8_VERTICAL_PROOF_ISSUE_41
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_STRUCTURAL_REVIEW_ROUND_1
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_STRUCTURAL_REVIEW_ROUND_2
+CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_3
 ```
 
 ## 0. Revision History
@@ -68,6 +69,21 @@ Round 2 (SHUKOU Phase 8 final structural-review round 2, adopted): 構造参謀'
             Closure Evaluation's evaluated_at is now stated precisely (equal-or-later valid
             is admitted, an invalid timestamp fails closed with a typed error, a different
             valid instant may produce a different transaction identity) (§6).
+
+Round 3 (SHUKOU Phase 8 final-closure round 3, adopted): 構造参謀's independent
+  re-observation of PR #42's real HEAD after Round 2 found one further finding, adopted
+  directly by SHUKOU (again not auto-adopted bot output -- BOT_FINDING_AUTO_ADOPTION=false,
+  INDEPENDENT_STRUCTURAL_REPRODUCTION=true). Reproduced and corrected in place, on the same
+  PR/branch:
+
+  P8-R3-F1  The verification Observation's own observation_evidence_refs genuinely named
+            the auxiliary Change-Free Verification Evidence Round 2 introduced -- but that
+            Evidence, and the before-/post-change Observations two already-persisted
+            Evidence records also named, were never themselves persisted. The persisted
+            reference graph is now closed over this Finding's own explicitly-scoped
+            vocabulary: an observation record's own source_snapshot_refs/observation_
+            evidence_refs, and an observation_evidence record's own observed_result.
+            observation_ref/lineage.derived_from/lineage.predecessor_evidence_refs (§4, §7).
 ```
 
 ---
@@ -263,8 +279,105 @@ re-observation Observations (`change_result_observation_id`, `verification_obser
 are closed the identical way: the former's own natural real backing Evidence is the
 Change-result Evidence itself (self-referential, exactly like the before-Observation), the
 latter's is an auxiliary Change-Free Verification Evidence pairing it with the same
-before-Observation the real Difference was derived from -- never persisted or referenced
-downstream, the identical role the before-Observation's own seed Evidence plays.
+before-Observation the real Difference was derived from.
+
+**Withdrawn (P8-R3-F1): the auxiliary Change-Free Verification Evidence is not "never
+persisted or referenced downstream."** The paragraph above, as this document stood after
+Round 2, claimed the auxiliary Verification Evidence played "the identical role the
+before-Observation's own seed Evidence plays" -- true of the *provisional* seed inside the
+Evidence fixed point, but false of what actually reaches the Store: the verification
+Observation's own `observation_evidence_refs` field genuinely names this auxiliary
+Evidence's real id, and once that Observation is persisted (which it always was, via
+Reflow's own G8 reobservation admission), the reference is real and must resolve --
+reproduced directly: the field named a real, well-formed id that `store.resolve_record`
+could not find. See §7's own corrected section and §4's continuation below for what
+changes.
+
+**Corrected (P8-R3-F1): the persisted reference graph now closes, not only the accepted
+request graph.** Round 2 proved every *request* reaching Sufficiency/Closure/Reflow was
+placeholder-free; it did not prove every *persisted record*'s own declared reference
+resolves through the Store. Three gaps existed simultaneously: the verification
+Observation's own `observation_evidence_refs` named the auxiliary Change-Free Verification
+Evidence, never itself persisted; Observation Evidence's own `observed_result.
+observation_ref` and Change-result Evidence's own `observed_result.observation_ref`/
+`lineage.derived_from` named the before-Observation and the post-change Observation, and
+neither of those two Observations was itself persisted as a Store record either (confirmed
+directly: `store.resolve_record(project_id, "observation", before_observation_id)` returned
+`None` on the unmodified Round 2 HEAD, even though the real Evidence records naming it were
+already committed).
+
+`tests/natural_cycle/proof.py`'s `observe_change_result` and `observe_verification` now
+return their own corrected artifacts too (a Change-result Evidence request/record; a
+verification Evidence request/record) rather than discarding them, and
+`assemble_vertical_proof_route` threads the auxiliary Verification Evidence request through
+a new, dedicated `reflow()` keyword, `provenance_only_evidence_requests` (never fed into
+`evaluate_closure`/`evaluate_sufficiency`, so it can never move a Sufficiency verdict or a
+Candidate's own `resolution_mode` -- `AUXILIARY_VERIFICATION_EVIDENCE_COUNTS_TOWARD_
+SUFFICIENCY=false`). `route.py::_admitted_records` gains three additions, all reusing only
+existing canonical owners (no second Evidence/Observation/Store/Lineage/Recovery owner is
+created anywhere in this correction):
+
+```text
+_admitted_observations_from_evidence_requests  re-observes (real Observation owner,
+                                                 manosube_agent_civilization.observation.
+                                                 observe) the before/post-change/
+                                                 verification Observation every admitted
+                                                 Evidence request's own observation_request/
+                                                 post_change_observation_request/
+                                                 verification_observation_request field
+                                                 names, re-verifies each against its own
+                                                 content-addressed identity
+                                                 (observation.identity.observation_identity),
+                                                 and persists it
+_admitted_provenance_only_evidence             reproduces (real Evidence owner,
+                                                 evidence.engine.derive_evidence) the
+                                                 auxiliary provenance-only Evidence request
+                                                 a caller supplies and persists the result,
+                                                 entirely outside evaluate_closure/
+                                                 evaluate_sufficiency
+_merge_verified_record                          the one merge primitive both of the above
+                                                 (and the existing source_snapshot
+                                                 admission) now go through: two independent
+                                                 reproductions that claim the identical
+                                                 (kind, id) but disagree on body raise
+                                                 before any write --
+                                                 SAME_KIND_ID_DIFFERENT_BODY=CORRUPTION_
+                                                 OR_VALIDATION_ERROR, neither
+                                                 FIRST_BODY_WINS nor LAST_BODY_WINS
+```
+
+An admitted Observation's own `source_snapshot_refs` is resolved against an *extended*
+snapshot pool (the existing, G8/G4-validated `closure_request["source_snapshots"]` plus a
+new, separate `auxiliary_source_snapshots` `reflow()` keyword) rather than widening the
+gate-validated pool itself -- widening it would have loosened G4/G8's own exact-match
+checks against the reobservation's own declared snapshot set, an unrelated regression this
+correction must not introduce. This is how the before-Observation's own real Source
+Snapshot (`BEFORE_SOURCE_SNAPSHOT`, previously never persisted either, since the existing
+`closure_request["source_snapshot_refs"]`/`["source_snapshots"]` pair only ever carried the
+after-state one) now resolves too, once the before-Observation itself is admitted.
+
+`PERSISTED_REFERENCE_GRAPH_CLOSED=true`, `UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0` -- both
+proven over this Finding's own explicitly-scoped reference vocabulary (§7), not a blind
+full-graph sweep: `tests/natural_cycle/test_vertical_proof_reference_closure.py` reads the
+real committed transaction's own manifest, resolves every record it names, recursively
+walks each `observation`/`observation_evidence` record's own known reference-bearing
+fields, and resolves every edge found -- through a fresh `FileStateStore` instance and a
+brand-new Python subprocess too, never only the in-process objects this run produced.
+
+A negative control this Finding itself requires -- `provenance_only_evidence_requests`
+supplied but empty -- fails the whole route closed (`ReflowValidationError`, before any
+State/Lineage/record/manifest mutation): the persisted verification Observation's own real
+reference to the auxiliary Evidence would otherwise silently never resolve. This check is
+gated on the caller having supplied `provenance_only_evidence_requests` at all (even an
+empty list) rather than enforced unconditionally on every `reflow()` call: several
+pre-existing Phase 5-7 test fixtures already persist an Observation whose own declared
+`observation_evidence_refs` is a bare, never-resolved placeholder, predating this Finding
+and unrelated to it (`ISSUE_22_OR_PR_27_CHANGES=false`, and retrofitting those fixtures is
+outside `P8-R3-F1`'s own authorized scope) -- an unconditional gate would have refused all
+of them. Confirmed directly: enforcing the check unconditionally during this correction's
+own development broke 20 pre-existing, otherwise-unrelated Phase 7 tests; gating it on
+opt-in restored them to green with zero behavior change for any caller that does not pass
+this keyword.
 
 ---
 
@@ -409,6 +522,39 @@ GITHUB_ADAPTER_IMPLEMENTED=false
 AUTONOMOUS_CHANGE_IMPLEMENTED=false
 MULTI_AGENT_IMPLEMENTED=false
 ```
+
+**Disclosed scope boundary (P8-R3-F1): the persisted-reference-graph closure claim is
+scoped to an explicit reference vocabulary, not every reference this Kernel's own records
+carry.**
+
+```text
+AUXILIARY_VERIFICATION_EVIDENCE_ROLE=PROVENANCE_ONLY
+AUXILIARY_VERIFICATION_EVIDENCE_PERSISTED=true
+AUXILIARY_VERIFICATION_EVIDENCE_COUNTS_TOWARD_SUFFICIENCY=false
+PERSISTED_REFERENCE_GRAPH_CLOSED=true
+UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0
+```
+
+Both of the last two hold over the closed, explicitly-managed reference vocabulary this
+Finding is about: an `observation` record's own `source_snapshot_refs` and
+`observation_evidence_refs`, and an `observation_evidence` record's own `observed_result.
+observation_ref`, `lineage.derived_from` (`observation`-kind members only), and `lineage.
+predecessor_evidence_refs`. Recognized structurally (a dict shaped like `common/
+reference.schema.json` -- `kind`+`id`, both non-empty strings -- with `kind` restricted to
+`{observation, observation_evidence}`), never by a fuzzy text search over key names.
+
+References this Kernel names but never gives a Store-owned producer of its own --
+`difference`, `change`, `authority_decision`, `artifact`, `negative_evidence` -- are outside
+this scope, not silently treated as resolved (no second canonical owner is created for any
+of them here, or anywhere else in this correction, to bring them into scope).
+`closure_evaluation.difference_event_head_ref` in particular names the Difference's own
+genesis lifecycle event, which this Kernel's own design never persists as a separate
+`difference_event` record at genesis time -- confirmed directly: it does not resolve
+through `store.resolve_record` even before any `reflow()` call is ever made, on every round
+of this proof including this one. That non-resolution predates P8-R3-F1, is not caused by
+it, and is disclosed here rather than folded into this Finding's own `PERSISTED_REFERENCE_
+GRAPH_CLOSED` claim -- a materially different, wider claim this round was not asked to make
+and did not reproduce as a real gap requiring correction.
 
 In Completion Ladder terms (`00_KERNEL/COMPLETION_SEMANTICS.md` §2), this proof establishes
 `L6 CONNECTED` and `L7 NATURALLY_REACHABLE` for the v0.1 Natural Cycle. It does not claim
@@ -590,4 +736,7 @@ created for any record kind in this audit.
 9. tests/natural_cycle/test_vertical_proof_reflow_provenance_matrix.py (§7's P8-R2-F2
    canonical-reference-equality negative controls and §6's Reflow Instant causal-order
    proof)
+10. tests/natural_cycle/test_vertical_proof_reference_closure.py (§4/§7's P8-R3-F1
+    persisted-reference-graph closure proof, its explicit scope boundary, and its
+    required negative controls)
 ```
