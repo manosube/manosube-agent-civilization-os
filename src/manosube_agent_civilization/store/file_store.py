@@ -75,14 +75,55 @@ class FileStateStore:
     def resolve_record(self, project_id: str, kind: str, record_id: str) -> dict[str,Any]|None:
         """Return the immutable committed record of *kind* addressed by *record_id*, or ``None``.
 
-        Only records a completed transaction actually promoted are ever returned -- a
-        staged-but-uncommitted journal entry is not canonical and is never visible here.
+        Only a record whose promoting transaction is durably ``COMMITTED`` is ever returned
+        -- R8-F4. ``commit``'s own sequence promotes a transaction's staged records
+        (``AFTER_RECORDS_PROMOTED``) *before* it replaces ``current.json`` and writes that
+        transaction's recovery journal's own ``COMMITTED`` marker (``BEFORE_COMMITTED_MARKER``
+        onward): a crash in that window once left a record's permanent file already on disk,
+        and therefore already resolvable here, while the State transition it belongs to had
+        not yet published anywhere else -- the same partial-transaction visibility gap
+        R7-F5 already closed for :meth:`resolve_transaction`, now closed for this method too,
+        through the identical durability check (:meth:`_record_committed_by_any_transaction`,
+        built on the same ``_transaction_committed`` this class already uses) so the two
+        methods' visibility can never again diverge.
         """
 
         path=self._record_path(project_id,kind,record_id)
         if not path.exists(): return None
+        if not self._record_committed_by_any_transaction(project_id,kind,record_id): return None
         try: return json.loads(path.read_text(encoding="utf-8"))
         except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError(f"malformed record: {kind}/{record_id}") from exc
+
+    def _record_committed_by_any_transaction(self, project_id: str, kind: str, record_id: str) -> bool:
+        """Return whether *(kind, record_id)*'s permanent file was promoted by a transaction
+        that is now durably ``COMMITTED`` -- R8-F4.
+
+        A record's own file carries no transaction-id metadata, so this instead asks every
+        transaction that ever recorded this same ``manifest.json`` reproduction: if *any*
+        transaction claiming this key in its manifest is ``COMMITTED``, the key is real
+        (R2-F3B already guarantees same-ID-different-payload can never have been staged
+        under two disagreeing transactions, so any one committed claimant is sufficient proof
+        -- the file's own bytes are that transaction's, whichever one first promoted them).
+        No transaction's manifest claims this key at all only when the key predates this
+        manifest tracking (or was never staged through :meth:`commit` in the first place),
+        the same "absent path means already durable" reading :meth:`_transaction_committed`
+        gives an absent recovery journal.
+        """
+
+        recovery=self._project(project_id)/"state"/"recovery"
+        if not recovery.exists(): return True
+        claimed_by_any = False
+        for journal in sorted(recovery.iterdir()):
+            if not journal.is_dir(): continue
+            manifest_path=journal/"manifest.json"
+            if not manifest_path.exists(): continue
+            try: entries=json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError,json.JSONDecodeError) as exc:
+                raise CorruptStoreError(f"malformed transaction manifest: {journal.name}") from exc
+            if [kind,record_id] not in entries: continue
+            claimed_by_any = True
+            if (journal/"COMMITTED").exists(): return True
+        return not claimed_by_any
 
     def resolve_transaction(self, project_id: str, transaction_id: str) -> dict[str,Any]|None:
         """Return the committed ``state_transition`` event named by *transaction_id*, or

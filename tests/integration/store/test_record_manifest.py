@@ -216,3 +216,61 @@ def test_manifest_crash_recovery_never_leaves_a_dangling_reference(stage: str, t
         # New-complete: State advanced and the record it references resolves.
         assert recovered["state_revision"] == 1
         assert resolved == record
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_r8f4_a_record_promoted_before_committed_is_invisible_until_recovery(
+    stage: str, tmp_path: Path
+) -> None:
+    """R8-F4: ``resolve_record`` must not return a transaction's records while that
+    transaction is not durably ``COMMITTED`` -- even once its file already physically
+    exists on disk. ``commit``'s own sequence writes a staged record's permanent file
+    (``AFTER_RECORDS_PROMOTED``) *before* it replaces ``current.json``
+    (``AFTER_CURRENT_REPLACE``) and writes the transaction's own ``COMMITTED`` marker
+    (after ``BEFORE_COMMITTED_MARKER``) -- so a crash anywhere in that window once left the
+    record's file already resolvable through ``resolve_record`` while ``resolve_transaction``
+    (R7-F5) still correctly reported no such transaction: a real split between the two
+    methods' own visibility, not simulated. This checks the record is invisible at exactly
+    that crash point, immediately -- before :meth:`recover` ever runs -- and only becomes
+    visible, alongside its transaction, once :meth:`recover` actually completes it."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    store.initialize(PROJECT_ID, initial)
+    after, event = _successor(initial)
+    record_kind, record_id = "closure_evaluation", "D-CLOSE-EVAL-" + "C" * 64
+    record = {"closure_evaluation_id": record_id, "result": "BLOCKED"}
+
+    def fault(current: str) -> None:
+        if current == stage:
+            raise SimulatedCrash(stage)
+
+    with pytest.raises(SimulatedCrash):
+        store.commit(
+            PROJECT_ID, 0, initial["semantic_fingerprint"], after, event,
+            records=[(record_kind, record_id, record)], fault=fault,
+        )
+
+    # Immediately after the crash, before recover() ever runs: every fault point this
+    # module's own STAGES names fires strictly before the transaction's COMMITTED marker
+    # is ever written, so the state_transition and the record it references must both stay
+    # invisible -- regardless of whether the record's own file already physically exists
+    # on disk (AFTER_RECORDS_PROMOTED onward).
+    resolved_before_recovery = store.resolve_record(PROJECT_ID, record_kind, record_id)
+    transaction_before_recovery = store.resolve_transaction(PROJECT_ID, event["transaction_id"])
+    assert resolved_before_recovery is None
+    assert transaction_before_recovery is None
+
+    recovered = store.recover(PROJECT_ID)
+    resolved_after_recovery = store.resolve_record(PROJECT_ID, record_kind, record_id)
+    transaction_after_recovery = store.resolve_transaction(PROJECT_ID, event["transaction_id"])
+    pre_commit_intent = STAGES[: STAGES.index("AFTER_COMMIT_INTENT")]
+    if stage in pre_commit_intent:
+        assert recovered["state_revision"] == 0
+        assert resolved_after_recovery is None
+        assert transaction_after_recovery is None
+    else:
+        assert recovered["state_revision"] == 1
+        assert resolved_after_recovery == record
+        assert transaction_after_recovery is not None
+        assert transaction_after_recovery["transaction_id"] == event["transaction_id"]

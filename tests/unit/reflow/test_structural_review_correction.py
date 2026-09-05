@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.difference_helpers import objective_revision
 from tests.reflow_helpers import (
     base_closure_request,
     candidate_closure_request,
@@ -1766,8 +1767,9 @@ def test_r6f2_preflight_reresolution_catches_an_emptied_change_free_verification
 def test_r7f1_verify_invariant_independently_derives_the_real_verdict() -> None:
     """The dispatch this module's fix relies on returns a real, non-fabricated verdict from
     *context* alone -- never a caller's own restated status. Tampering one real fact
-    (``allowed_terminal_states`` no longer includes ``BLOCKED``, R-005's own real check)
-    flips only that one invariant's own verdict, proving the check is not vacuous."""
+    (``proposed_terminal_status`` set to a fourth, lifecycle-illegal value -- R-005's own
+    real ``FAILED_AND_BLOCKED_RESULTS_REFLOWED`` check, R8-F1) flips only that one
+    invariant's own verdict, proving the check is not vacuous."""
 
     from manosube_agent_civilization.difference.invariant_verifiers import (
         build_invariant_verification_context,
@@ -1791,18 +1793,23 @@ def test_r7f1_verify_invariant_independently_derives_the_real_verdict() -> None:
         sufficiency=None,
         material_contradictions=[],
         blocking_contradictions=[],
+        proposed_terminal_status="CLOSED",
     )
-    assert verify_invariant("R-005", context) == "PASS"
+    status, evidence_refs = verify_invariant("R-005", context)
+    assert status == "PASS"
+    assert evidence_refs == []
 
-    tampered_policy = dict(policy)
-    tampered_policy["allowed_terminal_states"] = ["CLOSED"]
     tampered_context = dict(context)
-    tampered_context["policy"] = tampered_policy
-    assert verify_invariant("R-005", tampered_context) == "FAIL"
+    tampered_context["proposed_terminal_status"] = "UNKNOWN"
+    tampered_status, tampered_refs = verify_invariant("R-005", tampered_context)
+    assert tampered_status == "FAIL"
+    assert tampered_refs == []
 
     # An invariant id no verifier is implemented for fails closed too (the disposition's own
     # explicit escape valve), never fabricates a PASS by simple absence.
-    assert verify_invariant("Z-999", context) == "FAIL"
+    unimplemented_status, unimplemented_refs = verify_invariant("Z-999", context)
+    assert unimplemented_status == "FAIL"
+    assert unimplemented_refs == []
 
 
 def test_r7f1_a_caller_declared_pass_that_disagrees_with_the_real_verifier_fails_g19(
@@ -1811,34 +1818,27 @@ def test_r7f1_a_caller_declared_pass_that_disagrees_with_the_real_verifier_fails
     """R7-F1's own exploit: before this fix, a caller-supplied Invariant Evaluation record
     declaring ``status=PASS`` (with a correctly recomputed fingerprint, candidate binding and
     State binding) was accepted regardless of whether anything real backed that status. Here
-    the Policy's own ``allowed_terminal_states`` is tampered to exclude ``BLOCKED`` --
-    R-005's real, independent check now genuinely fails -- while the caller-supplied R-005
-    Invariant Evaluation record (built by the same fixture every positive control uses)
-    still declares ``status=PASS``, untouched. G19 must now fail; before this fix it would
-    have passed."""
-
-    from manosube_agent_civilization.difference.identity import (
-        closure_policy_id,
-        policy_semantic_fingerprint,
-    )
+    a real, well-formed golden request is built first (so every Invariant Evaluation record
+    genuinely PASSed against its own real construction-time context, R8-F1), then
+    ``evidence_sufficiency_request`` is withdrawn -- the one input E-001's real check
+    (``EVIDENCE_SUFFICIENCY_RESULT_BOUND``) actually reads at G19-recompute time. The frozen
+    E-001 record, built earlier against the real Sufficiency that no longer exists, still
+    declares its original ``PASS``/``observed`` untouched. G19 must now fail on that
+    disagreement; before this fix it would have passed on the caller's bare say-so."""
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     project_state = store_ready_for_closure(store)
     difference = fixture_difference()
-    policy = dict(fixture_policy(difference))
-    policy["allowed_terminal_states"] = ["CLOSED"]
-    policy["policy_semantic_fingerprint"] = policy_semantic_fingerprint(policy)
-    policy["closure_policy_id"] = closure_policy_id(
-        policy["policy_semantic_fingerprint"], difference["difference_id"]
-    )
+    policy = fixture_policy(difference)
     current_state = {
         "revision": project_state["state_revision"],
         "fingerprint": project_state["semantic_fingerprint"],
     }
     closure_request = candidate_closure_request(difference, policy, current_state=current_state)
-    # G19 is now expected to fail (real_status disagrees with the fabricated PASS), so this
+    # G19 is now expected to fail (real_observed disagrees with the frozen record), so this
     # Evaluation can no longer honestly propose CLOSED -- a real caller preparing for either
     # outcome supplies real terminal reason Evidence too.
+    closure_request["evidence_sufficiency_request"] = None
     closure_request["proposed_terminal_status"] = "BLOCKED"
     _terminal_request, _terminal_evidence_id = real_terminal_reason_evidence_fields()
     closure_request["terminal_reason_evidence_refs"] = [
@@ -1990,6 +1990,132 @@ def test_r7f3_g3_and_g4_both_pass_for_the_real_fixture_candidate(tmp_path: Path)
     assert evaluation["gate_results"]["G4"] == "PASS"
 
 
+# --- R8-F2: G3/G4 bind to the real Objective Revision body and a verified Kernel source ----- #
+
+
+def test_r8f2_g3_fails_when_the_real_objective_revision_body_disagrees(tmp_path: Path) -> None:
+    """R8-F2's own exploit: before this fix, G3 compared only the top-level
+    ``objective_revision_id`` strings -- the real Objective Revision body actually present at
+    ``reobservation.derivation_request.objective_revision`` (SHUKOU Round 8's explicit
+    correction to Round 7's own disclosed non-claim that no such body exists at this layer)
+    was never independently validated or fingerprinted. Here that real body's own content is
+    tampered (a different ``statement``, same ``objective_revision_id`` as the untouched
+    Difference's own ``objective_revision_ref``) -- the bare id-equality above would still
+    agree, so before this fix G3 would have passed on the caller's restated id alone. The
+    real, independently recomputed semantic fingerprint now disagrees and G3 must fail."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+
+    tampered_objective = objective_revision(statement="A materially different objective statement.")
+    assert (
+        tampered_objective["objective_revision_id"]
+        == closure_request["reobservation"]["derivation_request"]["objective_revision"]["objective_revision_id"]
+    )
+    closure_request = deepcopy(closure_request)
+    closure_request["reobservation"]["derivation_request"]["objective_revision"] = tampered_objective
+    closure_request["proposed_terminal_status"] = "BLOCKED"
+    terminal_request, terminal_evidence_id = real_terminal_reason_evidence_fields()
+    closure_request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": terminal_evidence_id}
+    ]
+    closure_request["terminal_reason_evidence_requests"] = [terminal_request]
+
+    evaluation = evaluate_closure(closure_request)
+    assert evaluation["gate_results"]["G3"] == "FAIL"
+    assert evaluation["result"] != "SATISFIED"
+
+
+def test_r8f2_g3_fails_when_the_objective_revision_body_is_entirely_absent(tmp_path: Path) -> None:
+    """A candidate evaluation whose reobservation carries no ``objective_revision`` body at
+    all (a malformed or stripped derivation request) has nothing for G3 to independently
+    validate and fails closed rather than falling back to the bare id-equality alone."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    closure_request = deepcopy(closure_request)
+    del closure_request["reobservation"]["derivation_request"]["objective_revision"]
+    closure_request["proposed_terminal_status"] = "BLOCKED"
+    terminal_request, terminal_evidence_id = real_terminal_reason_evidence_fields()
+    closure_request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": terminal_evidence_id}
+    ]
+    closure_request["terminal_reason_evidence_requests"] = [terminal_request]
+
+    evaluation = evaluate_closure(closure_request)
+    assert evaluation["gate_results"]["G3"] == "FAIL"
+    assert evaluation["result"] != "SATISFIED"
+
+
+def test_r8f2_g4_fails_when_the_kernel_source_witness_does_not_verify(tmp_path: Path) -> None:
+    """R8-F2's other own exploit: before this fix, G4 accepted any two matching
+    ``base_kernel_source_ref``/``kernel_source_ref`` strings regardless of whether either was
+    ever independently proven to be a genuine Git object -- ``kernel_source_witness`` was
+    verified elsewhere (feeding only the Closure Evaluation's own output reference) but its
+    result never fed G4's own PASS/FAIL decision. Here the witness bytes are corrupted while
+    ``base_kernel_source_ref``/``kernel_source_ref`` still agree with each other exactly --
+    before this fix G4 would still have passed on that bare agreement alone."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    closure_request = deepcopy(closure_request)
+    closure_request["kernel_source_witness"]["blob_object"] = "00" * 4
+    closure_request["proposed_terminal_status"] = "BLOCKED"
+    terminal_request, terminal_evidence_id = real_terminal_reason_evidence_fields()
+    closure_request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": terminal_evidence_id}
+    ]
+    closure_request["terminal_reason_evidence_requests"] = [terminal_request]
+
+    evaluation = evaluate_closure(closure_request)
+    assert evaluation["gate_results"]["G4"] == "FAIL"
+    assert evaluation["result"] != "SATISFIED"
+
+
+def test_r8f2_g3_and_g4_still_pass_for_the_real_fixture_candidate_after_the_deeper_checks(
+    tmp_path: Path,
+) -> None:
+    """The positive control: the real fixture's Objective Revision body independently
+    validates and recomputes to match, and its Kernel source witness genuinely verifies --
+    CLOSED remains reachable through the deeper R8-F2 checks, not only the bare floors."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+
+    evaluation = evaluate_closure(closure_request)
+    assert evaluation["gate_results"]["G3"] == "PASS"
+    assert evaluation["gate_results"]["G4"] == "PASS"
+    assert evaluation["result"] == "SATISFIED"
+
+
 # --- R7-F4: terminal reason Evidence resolves to a real, reproducible record ---------------- #
 
 
@@ -2122,6 +2248,106 @@ def test_r7f4_preflight_reresolution_catches_an_emptied_terminal_reason_evidence
         route_module.evaluate_closure = real_evaluate_closure  # type: ignore[attr-defined]
 
     assert store.load_current(project_state["project_id"])["state_revision"] == project_state["state_revision"]
+
+
+# --- R8-F3: terminal reason Evidence binds to the real Difference/project ------------------- #
+
+
+def test_r8f3_a_legitimate_evidence_for_a_different_difference_is_refused() -> None:
+    """R8-F3's own exploit: before this fix, only Evidence ID regeneration and
+    reference-set equality were checked -- a real, correctly-reproducing, self-consistent
+    Evidence record about a *different* Difference satisfied both just as well as one about
+    the right Difference. Here a genuine second Difference (a real re-observation of the same
+    Target with a different observed fact) grounds a real Evidence record, substituted whole
+    as this request's terminal reason -- it reproduces perfectly and would have passed the
+    old check. The real, independently-derived ``difference_ref`` on that Evidence names the
+    *other* Difference, not this one, and must now be refused."""
+
+    from tests.difference_helpers import (
+        observation_request,
+        observation_scope,
+        raw_fact,
+        state_fingerprint,
+    )
+    from tests.evidence_helpers import (
+        BEFORE_REVISION,
+        difference_request,
+        observation_evidence_request,
+    )
+
+    from manosube_agent_civilization.evidence.engine import derive_evidence
+
+    foreign_observation = observation_request(
+        observation_scope(), [raw_fact(value="STILL-NOT-READY")], state_fingerprint(), BEFORE_REVISION
+    )
+    foreign_request = observation_evidence_request(observation=foreign_observation, difference=difference_request())
+    foreign_evidence = derive_evidence(foreign_request)
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    assert foreign_evidence["difference_ref"]["id"] != difference["difference_id"]
+    request = base_closure_request(difference, policy)
+    request["terminal_reason_evidence_refs"] = [
+        {"kind": "observation_evidence", "id": foreign_evidence["evidence_id"]}
+    ]
+    request["terminal_reason_evidence_requests"] = [foreign_request]
+
+    with pytest.raises(ReflowValidationError, match="different Difference"):
+        evaluate_closure(request)
+
+
+def test_r8f3_a_real_blocked_reflow_still_persists_the_matching_terminal_reason_evidence(
+    tmp_path: Path,
+) -> None:
+    """The positive control: the fixture's own real, matching terminal reason Evidence still
+    resolves and commits through a real Reflow cycle after the deeper R8-F3 binding checks
+    (unchanged from R7-F4's own positive control, run again against the tightened resolver)."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    closure_request = base_closure_request(difference, policy)
+
+    result = reflow(
+        store,
+        project_id=project_state["project_id"],
+        previous_event_id=difference["genesis_event_ref"]["id"],
+        event_revision=1,
+        closure_request=closure_request,
+        observation_refs=[],
+        reflow_instant=REFLOW_INSTANT,
+        blocker_kind="EVIDENCE_INSUFFICIENT",
+        blocker_scope={
+            "kind": "difference_blocker_scope",
+            "affected_subject_refs": {
+                "collection_kind": "UNORDERED_SET",
+                "members": [{"kind": "difference", "id": difference["difference_id"]}],
+            },
+            "effective_boundary": difference["effective_boundary"],
+            "blocked_stage": "DIFFERENCE_EVALUATION",
+        },
+        blocker_resolution_condition={
+            "kind": "blocker_resolution_condition",
+            "condition_code": "REQUIRED_EVIDENCE_AVAILABLE",
+            "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
+            "expected_state": "AVAILABLE",
+            "verification_request_ref": {
+                "kind": "next_observation_request",
+                "id": "OBS-REQ-" + "9" * 64,
+            },
+        },
+        next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
+    )
+    assert result["decision"]["to_status"] == "BLOCKED"
+    refs = result["evaluation"]["terminal_reason_evidence_refs"]
+    assert refs
+
+    fresh_store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    for ref in refs:
+        resolved = fresh_store.resolve_record(project_state["project_id"], ref["kind"], ref["id"])
+        assert resolved is not None
+        assert resolved["difference_ref"]["id"] == difference["difference_id"]
 
 
 # --- R7-F5: resolve_transaction only publishes COMMITTED transactions ---------------------- #

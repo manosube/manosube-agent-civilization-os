@@ -88,7 +88,10 @@ from manosube_agent_civilization.difference.invariant_evaluation import resolve_
 from manosube_agent_civilization.difference.invariant_verifiers import (
     build_invariant_verification_context,
 )
-from manosube_agent_civilization.evidence.engine import derive_evidence
+from manosube_agent_civilization.evidence.engine import (
+    derive_evidence,
+    resolve_terminal_reason_evidence,
+)
 from manosube_agent_civilization.evidence.errors import EvidenceError
 from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
 from manosube_agent_civilization.observation.errors import ObservationError
@@ -317,6 +320,7 @@ def _invariant_verification_context(
         sufficiency=sufficiency,
         material_contradictions=material_contradictions,
         blocking_contradictions=blocking_contradictions,
+        proposed_terminal_status=evaluation.get("proposed_terminal_status"),
     )
 
 
@@ -496,15 +500,19 @@ def _preflight_reresolve_closure(
 
 
 def _preflight_reresolve_terminal_reason_evidence(
-    evaluation: dict[str, Any], closure_request: dict[str, Any]
+    evaluation: dict[str, Any], closure_request: dict[str, Any], difference: dict[str, Any]
 ) -> None:
-    """R7-F4: re-reproduce every declared ``terminal_reason_evidence_refs`` entry immediately
-    before commit -- called for *every* Reflow outcome, not only ``CLOSED``, since a
-    BLOCKED/RETAINED/STALE/NOT_SATISFIED/CONTRADICTED result is exactly where this reference
-    kind is ever non-empty (``evaluate_closure`` never lets a ``CLOSED`` evaluation carry
-    one). Set equality, matching every other Evidence re-verification here: an emptied
-    ``terminal_reason_evidence_requests`` against a still-declared ``terminal_reason_evidence_
-    refs`` is refused, not silently skipped.
+    """R7-F4/R8-F3: re-resolve every declared ``terminal_reason_evidence_refs`` entry
+    immediately before commit, through the same shared resolver
+    (:func:`~manosube_agent_civilization.evidence.engine.resolve_terminal_reason_evidence`)
+    Closure Evaluation itself calls -- called for *every* Reflow outcome, not only
+    ``CLOSED``, since a BLOCKED/RETAINED/STALE/NOT_SATISFIED/CONTRADICTED result is exactly
+    where this reference kind is ever non-empty (``evaluate_closure`` never lets a
+    ``CLOSED`` evaluation carry one). An emptied ``terminal_reason_evidence_requests``
+    against a still-declared ``terminal_reason_evidence_refs`` is refused, not silently
+    skipped -- and R8-F3 closes the same real-content gap here a second time would have
+    left open: this resolver also verifies the reproduced Evidence actually names this
+    Difference and actually supports a non-SATISFIED terminal reason.
     """
 
     declared_ids = {
@@ -514,19 +522,16 @@ def _preflight_reresolve_terminal_reason_evidence(
     }
     if not declared_ids:
         return
-    reproduced_ids: set[str] = set()
-    for item in closure_request.get("terminal_reason_evidence_requests") or []:
-        try:
-            reproduced_ids.add(derive_evidence(item)["evidence_id"])
-        except EvidenceError as error:
-            raise StaleReflowError(
-                f"atomic preflight: terminal_reason_evidence_requests no longer reproduces: {error}"
-            ) from error
-    if reproduced_ids != declared_ids:
-        raise StaleReflowError(
-            "atomic preflight: terminal_reason_evidence_refs no longer matches the "
-            "reproduced terminal reason Evidence"
+    try:
+        resolve_terminal_reason_evidence(
+            evaluation.get("terminal_reason_evidence_refs") or [],
+            closure_request.get("terminal_reason_evidence_requests") or [],
+            difference=difference,
         )
+    except EvidenceError as error:
+        raise StaleReflowError(
+            f"atomic preflight: terminal_reason_evidence_refs no longer resolves: {error}"
+        ) from error
 
 
 def _admitted_records(
@@ -593,13 +598,28 @@ def _admitted_records(
     for item in closure_request.get("change_free_verification_evidence_requests") or []:
         record = derive_evidence(item)
         records[("observation_evidence", record["evidence_id"])] = record
-    # R7-F4: the same reproduce-and-persist treatment for terminal_reason_evidence_refs --
-    # Evidence remains the sole producer; Reflow only resolves and persists what that owner
-    # produces, so BLOCKED/RETAINED/STALE/NOT_SATISFIED/CONTRADICTED terminal reasons carry
-    # a real, resolvable body too, not only a reference that stays permanently opaque.
-    for item in closure_request.get("terminal_reason_evidence_requests") or []:
-        record = derive_evidence(item)
-        records[("observation_evidence", record["evidence_id"])] = record
+    # R7-F4/R8-F3: the same reproduce-and-persist treatment for terminal_reason_evidence_refs
+    # -- Evidence remains the sole producer; Reflow only resolves and persists what that
+    # owner produces, so BLOCKED/RETAINED/STALE/NOT_SATISFIED/CONTRADICTED terminal reasons
+    # carry a real, resolvable body too, not only a reference that stays permanently opaque.
+    # Resolved through the same shared resolver the preflight re-check already used
+    # (:func:`~manosube_agent_civilization.evidence.engine.resolve_terminal_reason_evidence`)
+    # rather than a bare :func:`derive_evidence` loop -- persistence never admits a record
+    # this transition's own preflight would have refused.
+    # The Evaluation's own, actually-determined terminal_reason_evidence_refs is the
+    # authoritative signal for whether this transition carries one at all -- never the raw
+    # closure_request's own terminal_reason_evidence_requests, which a caller may still
+    # populate even when the winning Evaluation is CLOSED (and therefore carries none).
+    declared_terminal_reason_refs = evaluation.get("terminal_reason_evidence_refs") or []
+    if declared_terminal_reason_refs:
+        terminal_reason_evidence_requests = closure_request.get("terminal_reason_evidence_requests") or []
+        difference_for_terminal_reason = require_object(closure_request["difference"], "closure_request.difference")
+        for record in resolve_terminal_reason_evidence(
+            declared_terminal_reason_refs,
+            terminal_reason_evidence_requests,
+            difference=difference_for_terminal_reason,
+        ):
+            records[("observation_evidence", record["evidence_id"])] = record
 
     # R6-F1a: every declared source_snapshot_refs entry resolves against Observation's own
     # real, content-addressed source_snapshot record (:mod:`observation.source_snapshot`) --
@@ -880,7 +900,7 @@ def reflow(
     policy = require_object(closure_request["policy"], "closure_request.policy")
     # R7-F4: terminal reason Evidence is re-verified immediately before commit for *every*
     # outcome -- it is CLOSED evaluations that never carry one, not the reverse.
-    _preflight_reresolve_terminal_reason_evidence(evaluation, closure_request)
+    _preflight_reresolve_terminal_reason_evidence(evaluation, closure_request, difference)
     if decision["to_status"] == "CLOSED":
         _preflight_reresolve_closure(evaluation, closure_request, policy, sufficiency)
 

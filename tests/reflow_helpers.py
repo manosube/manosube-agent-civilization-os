@@ -43,7 +43,12 @@ from manosube_agent_civilization.difference.completion import (
 from manosube_agent_civilization.difference.invariant_evaluation import (
     invariant_evaluation_fingerprint,
 )
+from manosube_agent_civilization.difference.invariant_verifiers import (
+    build_invariant_verification_context,
+    verify_invariant,
+)
 from manosube_agent_civilization.evidence.engine import derive_evidence
+from manosube_agent_civilization.evidence.sufficiency import evaluate_sufficiency
 from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.reflow.claims import (
     candidate_claim_evaluation_binding_id,
@@ -452,9 +457,19 @@ def mandatory_invariant_evaluation(
     current_state: dict[str, Any],
     *,
     status: str = "PASS",
+    evidence_refs: list[dict[str, str]] | None = None,
     after_state_candidate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One real, schema-valid ``invariant_evaluation`` record for *invariant_id*.
+
+    R8-F1: *evidence_refs* defaults to empty, matching invariant ids
+    :mod:`~manosube_agent_civilization.difference.invariant_verifiers`'s own
+    ``_EVIDENCE_SOURCE`` does not map. A caller exercising an id that map does cover (through
+    :func:`mandatory_invariant_evaluations`) must instead pass the real, independently
+    recomputed refs :func:`~manosube_agent_civilization.difference.invariant_verifiers.
+    verify_invariant` itself returns for that id -- ``resolve_invariant_evaluation`` now
+    fails closed on any declared ``evidence_refs`` that does not match that real
+    recomputation.
 
     R4-F2: ``evaluation_id`` is caller-assigned (no content-address formula exists for it
     in ``CLOSURE_POLICY.md`` -- see ``difference/invariant_evaluation.py``'s module
@@ -499,7 +514,10 @@ def mandatory_invariant_evaluation(
         "evaluated_at": EVALUATED_AT,
         "evaluator_capability": "reflow.closure",
         "authority_ref": None,
-        "evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        "evidence_refs": {
+            "collection_kind": "UNORDERED_SET",
+            "members": list(evidence_refs) if evidence_refs else [],
+        },
         "remaining_differences": {"collection_kind": "UNORDERED_SET", "members": []},
     }
 
@@ -509,15 +527,30 @@ def mandatory_invariant_evaluations(
     current_state: dict[str, Any],
     *,
     after_state_candidate: dict[str, Any] | None = None,
+    verification_results: dict[str, tuple[str, list[dict[str, str]]]] | None = None,
 ) -> list[dict[str, Any]]:
     """The real Invariant Evaluation record pool matching every binding
     :func:`mandatory_invariant_bindings` builds -- the caller-supplied pool R4-F2's
     ``invariant_evaluations`` closure_request field carries.
+
+    R8-F1: *verification_results*, when supplied, is the real ``{invariant_id: (status,
+    evidence_refs)}`` map :func:`~manosube_agent_civilization.difference.invariant_verifiers.
+    verify_invariant` itself returned for every mandatory id against this same request's real
+    verification context (see :func:`candidate_closure_request`) -- each record's own
+    ``status``/``evidence_refs`` are set from that real recomputation rather than a fixed
+    ``PASS``/empty default, so a fixture claiming ``CANDIDATE_CLOSURE`` genuinely reproduces
+    what the shared resolver will independently verify, not merely what the fixture asserts.
     """
 
+    results = verification_results or {}
     return [
         mandatory_invariant_evaluation(
-            difference_id, invariant_id, current_state, after_state_candidate=after_state_candidate
+            difference_id,
+            invariant_id,
+            current_state,
+            status=results[invariant_id][0] if invariant_id in results else "PASS",
+            evidence_refs=results[invariant_id][1] if invariant_id in results else None,
+            after_state_candidate=after_state_candidate,
         )
         for invariant_id in sorted(expected_g19_invariant_ids())
     ]
@@ -528,6 +561,7 @@ def mandatory_invariant_bindings(
     current_state: dict[str, Any],
     *,
     after_state_candidate: dict[str, Any] | None = None,
+    verification_results: dict[str, tuple[str, list[dict[str, str]]]] | None = None,
 ) -> list[dict[str, Any]]:
     """One real ``candidate_invariant_evaluation_binding`` per pinned v0.1 mandatory id.
 
@@ -540,6 +574,15 @@ def mandatory_invariant_bindings(
     ``candidate_id``/``candidate_semantic_fingerprint`` is set to match -- see
     :func:`mandatory_x003_claim_binding`'s identical parameter for why it defaults to
     ``None`` (a placeholder id) rather than being required.
+
+    R8-F1: *verification_results*, when supplied, is the same real ``{invariant_id: (status,
+    evidence_refs)}`` map :func:`mandatory_invariant_evaluations` takes -- every bound
+    invariant's own Invariant Evaluation record (and therefore
+    ``evaluation_record_fingerprint``, which is derived from that record) reflects the real
+    recomputed ``evidence_refs``, never a fixed empty default. ``evaluation_result`` on the
+    binding itself is unconditionally ``"PASS"``: a binding only exists on the golden
+    CANDIDATE_CLOSURE path this helper builds, where every mandatory id's real status is
+    independently confirmed PASS by :func:`candidate_closure_request` before binding.
     """
 
     candidate_id = (
@@ -552,10 +595,16 @@ def mandatory_invariant_bindings(
         if after_state_candidate is not None
         else _PLACEHOLDER_CANDIDATE_SEMANTIC_FINGERPRINT
     )
+    results = verification_results or {}
     bindings = []
     for invariant_id in sorted(expected_g19_invariant_ids()):
         record = mandatory_invariant_evaluation(
-            difference_id, invariant_id, current_state, after_state_candidate=after_state_candidate
+            difference_id,
+            invariant_id,
+            current_state,
+            status=results[invariant_id][0] if invariant_id in results else "PASS",
+            evidence_refs=results[invariant_id][1] if invariant_id in results else None,
+            after_state_candidate=after_state_candidate,
         )
         binding = {
             "kind": "candidate_invariant_evaluation_binding",
@@ -584,7 +633,10 @@ def mandatory_invariant_bindings(
             # resolves and recomputes it.
             "evaluation_record_fingerprint": invariant_evaluation_fingerprint(record),
             "evaluation_result": "PASS",
-            "evaluation_evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+            "evaluation_evidence_refs": {
+                "collection_kind": "UNORDERED_SET",
+                "members": list(record["evidence_refs"]["members"]),
+            },
             "evaluated_at": EVALUATED_AT,
         }
         # R2-G19: binding_id is now checked against its own content-addressed derivation,
@@ -703,11 +755,54 @@ def candidate_closure_request(
         source_snapshot_refs=source_snapshot_refs,
         producing_change_refs=[],
     )
+    # R6-F1b: a real, schema-valid change_free_verification_evidence record -- Evidence's
+    # own defaults deterministically re-derive the exact same Difference `difference` is
+    # (both are `evidenced_difference()`), so this Evidence's difference_ref binds to
+    # exactly the Difference this closure_request is for, by construction.
+    change_free_evidence_request = change_free_verification_evidence_request()
+    change_free_evidence_record = derive_evidence(change_free_evidence_request)
+    # R8-F1: the real Sufficiency result this request's own `evidence_sufficiency_request`
+    # will independently re-derive at evaluation time -- `evaluate_sufficiency` is a pure
+    # function of its request, so computing it here reproduces exactly what
+    # `evaluate_closure` computes internally, not a fixture guess.
+    sufficiency_wrapper = evaluate_sufficiency(
+        sufficiency_request(difference_id=difference["difference_id"], policy=policy)
+    )
+    sufficiency = sufficiency_wrapper["evidence_sufficiency_result"]
+    blocking_contradictions = [
+        item for item in material_contradictions if item.get("impact") == "MATERIAL"
+    ]
+    verification_context = build_invariant_verification_context(
+        policy=policy,
+        difference=difference,
+        current_state=current_state,
+        after_state_candidate=after_state_candidate,
+        resolution_mode="CHANGE_FREE",
+        change_result_evidence=[],
+        change_free_evidence=[change_free_evidence_record],
+        after_observation_ids={after_ref["id"]},
+        source_snapshot_refs=source_snapshot_refs,
+        source_snapshots=[deepcopy(REAL_SNAPSHOT_RECORD)],
+        sufficiency=sufficiency,
+        material_contradictions=material_contradictions,
+        blocking_contradictions=blocking_contradictions,
+        proposed_terminal_status="CLOSED",
+    )
+    verification_results = {
+        invariant_id: verify_invariant(invariant_id, verification_context)
+        for invariant_id in expected_g19_invariant_ids()
+    }
     invariant_bindings = mandatory_invariant_bindings(
-        difference["difference_id"], current_state, after_state_candidate=after_state_candidate
+        difference["difference_id"],
+        current_state,
+        after_state_candidate=after_state_candidate,
+        verification_results=verification_results,
     )
     invariant_evaluations = mandatory_invariant_evaluations(
-        difference["difference_id"], current_state, after_state_candidate=after_state_candidate
+        difference["difference_id"],
+        current_state,
+        after_state_candidate=after_state_candidate,
+        verification_results=verification_results,
     )
     invariant_evaluation_refs = [binding["invariant_evaluation_ref"] for binding in invariant_bindings]
     claim_binding, claim_event = mandatory_x003_claim_binding_and_event(
@@ -717,12 +812,6 @@ def candidate_closure_request(
         material_contradiction_refs=contradiction_refs,
         after_state_candidate=after_state_candidate,
     )
-    # R6-F1b: a real, schema-valid change_free_verification_evidence record -- Evidence's
-    # own defaults deterministically re-derive the exact same Difference `difference` is
-    # (both are `evidenced_difference()`), so this Evidence's difference_ref binds to
-    # exactly the Difference this closure_request is for, by construction.
-    change_free_evidence_request = change_free_verification_evidence_request()
-    change_free_evidence_record = derive_evidence(change_free_evidence_request)
     request.update(
         {
             "current_state": current_state,

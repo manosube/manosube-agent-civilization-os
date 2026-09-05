@@ -109,16 +109,21 @@ def invariant_evaluation_fingerprint(record: dict[str, Any]) -> str:
 STRUCTURAL_CHECK_METHOD = "STRUCTURAL_CHECK"
 
 
-def _expected_fields(invariant_id: str, context: VerificationContext) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    """Return ``(status, expected, observed)`` -- the one real, independently-derived verdict
-    :func:`~.invariant_verifiers.verify_invariant` computes for *invariant_id* from
-    *context*, projected into the record shape ``KERNEL_INVARIANTS.md`` §17 fixes.
+def _expected_fields(
+    invariant_id: str, context: VerificationContext
+) -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, str]]]:
+    """Return ``(status, expected, observed, evidence_refs)`` -- the one real,
+    independently-derived verdict :func:`~.invariant_verifiers.verify_invariant` computes
+    for *invariant_id* from *context*, projected into the record shape
+    ``KERNEL_INVARIANTS.md`` §17 fixes. ``evidence_refs`` (R8-F1 item 4) is the real,
+    already Difference/State/Candidate-bound Evidence reference set that genuinely grounds
+    a ``PASS`` -- never a caller-suppliable, always-empty placeholder.
     """
 
-    status = verify_invariant(invariant_id, context)
+    status, evidence_refs = verify_invariant(invariant_id, context)
     expected = {"invariant_id": invariant_id, "result": "PASS"}
     observed = {"invariant_id": invariant_id, "result": status}
-    return status, expected, observed
+    return status, expected, observed, evidence_refs
 
 
 def build_invariant_evaluation(
@@ -144,15 +149,18 @@ def build_invariant_evaluation(
     ``remaining_differences`` are never parameters here: they are exactly what
     :func:`~.invariant_verifiers.verify_invariant` independently derives from *context*,
     the same real Candidate/Evidence/Policy/Difference data already flowing through this
-    Evaluation -- not a caller's restatement of them. ``evaluation_id`` stays caller-assigned
-    (R4-F2's ``INVARIANT_EVALUATION_ID_POLICY``; no content-address formula for it exists in
+    Evaluation -- not a caller's restatement of them (``evidence_refs`` real and non-empty
+    per R8-F1 item 4 wherever a real resolved Evidence record actually grounds the
+    verdict; ``remaining_differences`` stays empty -- this vertical produces no such
+    record for any invariant). ``evaluation_id`` stays caller-assigned (R4-F2's
+    ``INVARIANT_EVALUATION_ID_POLICY``; no content-address formula for it exists in
     ``CLOSURE_POLICY.md``), and ``method`` is fixed to :data:`STRUCTURAL_CHECK_METHOD` for
     every id: every verifier here is a deterministic structural check against already-
     canonicalized data, never an empirical runtime observation, so there is exactly one true
     value for this field and it is not a caller's to vary.
     """
 
-    status, expected, observed = _expected_fields(invariant_id, context)
+    status, expected, observed, evidence_refs = _expected_fields(invariant_id, context)
     return {
         "schema_version": "0.1",
         "evaluation_id": evaluation_id,
@@ -170,7 +178,7 @@ def build_invariant_evaluation(
         "evaluated_at": evaluated_at,
         "evaluator_capability": evaluator_capability,
         "authority_ref": authority_ref,
-        "evidence_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+        "evidence_refs": {"collection_kind": "UNORDERED_SET", "members": list(evidence_refs)},
         "remaining_differences": {"collection_kind": "UNORDERED_SET", "members": []},
     }
 
@@ -250,8 +258,11 @@ def resolve_invariant_evaluation(
     # R7-F1: independently re-derive expected/observed/status/method/evidence_refs/
     # remaining_differences from verification_context and require the resolved record's own
     # fields to equal exactly what that real, deterministic check produces -- a caller can no
-    # longer merely assert a self-consistent PASS record.
-    real_status, real_expected, real_observed = _expected_fields(
+    # longer merely assert a self-consistent PASS record. R8-F1 item 4: evidence_refs is now
+    # the real, already Difference/State/Candidate-bound Evidence set (drawn from the same
+    # change_result_evidence/change_free_evidence/Sufficiency data verification_context
+    # itself carries) that genuinely grounds a PASS -- not always required empty.
+    real_status, real_expected, real_observed, real_evidence_refs = _expected_fields(
         binding["invariant_ref"]["id"], verification_context
     )
     if record["method"] != STRUCTURAL_CHECK_METHOD:
@@ -264,10 +275,15 @@ def resolve_invariant_evaluation(
         raise DifferenceError(
             f"resolved invariant_evaluation's status does not independently verify as PASS: {real_status!r}"
         )
-    if record["evidence_refs"]["members"] or record["remaining_differences"]["members"]:
+    if unordered_set(record["evidence_refs"]["members"]) != unordered_set(real_evidence_refs):
         raise DifferenceError(
-            "resolved invariant_evaluation declares evidence_refs/remaining_differences this "
-            "vertical has no real body to resolve for -- fail closed rather than accept an "
-            "unresolvable reference"
+            "resolved invariant_evaluation's evidence_refs does not match the real, "
+            "independently-resolved Evidence grounding this verdict"
+        )
+    if record["remaining_differences"]["members"]:
+        raise DifferenceError(
+            "resolved invariant_evaluation declares remaining_differences this vertical has "
+            "no real body to resolve for -- fail closed rather than accept an unresolvable "
+            "reference"
         )
     return record

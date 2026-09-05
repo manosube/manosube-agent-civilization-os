@@ -366,6 +366,89 @@ def derive_evidence(request: dict[str, Any]) -> dict[str, Any]:
         raise EvidenceError(str(error)) from error
 
 
+def resolve_terminal_reason_evidence(
+    refs: list[Any],
+    requests: list[Any],
+    *,
+    difference: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the real, verified terminal reason Evidence *refs* names -- R8-F3.
+
+    Reflow's own terminal reason binding (a non-``CLOSED`` Closure Evaluation's
+    ``terminal_reason_evidence_refs``) used to stop at "Evidence ID regeneration and
+    reference-set equality": every *request* reproduces through :func:`derive_evidence`
+    (never a second, Reflow-owned producer) and the reproduced id set exactly matches
+    *refs* -- but nothing checked that a reproduced, genuinely-real record actually says
+    anything about *this* Difference, or actually names a problem at all. A legitimate
+    Evidence record about a *different* Difference, correctly reproduced and correctly
+    self-consistent, satisfied that check just as well as one about the right Difference --
+    a caller could reuse any real terminal reason Evidence it happened to hold as an excuse
+    for an unrelated Difference's own BLOCKED/RETAINED/STALE/NOT_SATISFIED/CONTRADICTED
+    result.
+
+    Two real, CLAIM-grounded checks close that gap, applied to every reproduced record: its
+    own ``difference_ref.id`` (the field Evidence's own producer derives from the Difference
+    it was actually constructed against -- "the binding sufficiency rests on", per
+    :mod:`evidence.engine`'s own ``_common``) must equal *difference*'s ``difference_id``,
+    and its own ``target.project_id`` must equal *difference*'s ``project_id``. Together
+    these are exactly the fields ``_common`` derives from the real Observation/Difference
+    this record was actually constructed against, never a caller-suppliable label -- a
+    record about a different Difference, or a different project, fails closed here
+    regardless of how correctly it otherwise reproduces.
+
+    Disclosed, not silently narrowed (R8-F1's own SEMANTIC_DECISION_REQUIRED discipline,
+    applied here): the adoption's third, deeper ask -- that the record's content "actually
+    supports the real terminal status/blocker/failure class" -- is not implemented as a
+    check against Evidence's own ``status`` enum. A first attempt did try exactly that
+    (refusing ``COMPLETE``, reasoning that Evidence reporting no problem cannot excuse one);
+    it does not hold: a genuinely COMPLETE Observation that simply reports a Target-unmet
+    fact is an entirely legitimate NOT_SATISFIED/BLOCKED terminal reason, and Evidence's
+    ``status`` (which ``derive_differences`` even requires to be ``COMPLETE`` or
+    ``CONFLICTED`` before it will admit a KNOWN observed state at all, whenever the
+    Observation carries a positive Fact -- see ``difference/engine.py``'s own
+    ``_observed_projection``) is a description of the *observation process*, not of whether
+    the Target it observed was satisfied. Neither ``CLOSURE_POLICY.md`` nor the Evidence
+    schema names any enum mapping from a Closure Evaluation ``result``
+    (``BLOCKED``/``RETAINED``/``STALE``/``NOT_SATISFIED``/``CONTRADICTED``) to a required
+    Evidence ``status`` -- inventing one would be exactly the guessed formula the Round 8
+    adoption forbids, and this vertical's own retained fixtures show it would reject the
+    ordinary case. That gap is named here for SHUKOU rather than resolved by a check that
+    would silently narrow CLOSED's own reachable neighbor states.
+
+    This is the one shared resolver Closure Evaluation (``reflow/closure.py``), the atomic
+    preflight re-resolution and admitted-record persistence (``reflow/route.py``) all call,
+    rather than three independent re-implementations of the same rule (R8-F1/R7's own
+    established discipline) -- Evidence remains the sole producer either way; this module
+    never becomes a second one, and Reflow never re-derives what a genuine record's content
+    already says.
+
+    Raises :class:`EvidenceError` on any reproduction failure, set mismatch, or content
+    disagreement; returns the reproduced records (already schema-valid, already
+    content-address-verified by :func:`derive_evidence` itself) otherwise.
+    """
+
+    reproduced = [derive_evidence(item) for item in requests]
+    reproduced_ids = {record["evidence_id"] for record in reproduced}
+    declared_ids = {ref.get("id") for ref in refs if isinstance(ref, dict)}
+    if reproduced_ids != declared_ids:
+        raise EvidenceError(
+            "terminal_reason_evidence_refs does not exactly match the reproduced terminal "
+            "reason Evidence (substitution, omission or duplication)"
+        )
+    for record in reproduced:
+        if record["difference_ref"]["id"] != difference["difference_id"]:
+            raise EvidenceError(
+                "terminal reason Evidence names a different Difference than the one this "
+                "Closure Evaluation is actually for"
+            )
+        if record["target"]["project_id"] != difference["project_id"]:
+            raise EvidenceError(
+                "terminal reason Evidence names a different project than the one this "
+                "Closure Evaluation is actually for"
+            )
+    return reproduced
+
+
 def _derive(request: dict[str, Any]) -> dict[str, Any]:
     request = deepcopy(request)
     shaped = _require_request_shape(request)

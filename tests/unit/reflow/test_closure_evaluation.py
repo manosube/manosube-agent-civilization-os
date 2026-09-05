@@ -105,6 +105,14 @@ def test_non_material_contradiction_is_recorded_but_does_not_block_closure() -> 
 
 
 def test_forged_difference_id_fails_g1_and_blocks() -> None:
+    """A forged ``difference_id`` fails G1 closed -- and, R8-F3, can no longer even reach a
+    graceful ``BLOCKED`` result on a bare gate failure: the request's own terminal reason
+    Evidence (built once, honestly, against the real fixture Difference every other request
+    in this suite shares) provably cannot belong to a Difference id nothing ever really
+    derived, so terminal reason resolution itself now refuses the request. A forged identity
+    cannot simultaneously carry real, independently-verified terminal reason Evidence for
+    itself -- there is no such Evidence to construct."""
+
     difference = fixture_difference()
     policy = fixture_policy(difference)
     forged = deepcopy(difference)
@@ -113,11 +121,11 @@ def test_forged_difference_id_fails_g1_and_blocks() -> None:
     forged_policy["subject_difference_ref"] = {"kind": "difference", "id": forged["difference_id"]}
 
     request = base_closure_request(forged, forged_policy)
-    evaluation = evaluate_closure(request)
 
-    assert evaluation["gate_results"]["G1"] == "FAIL"
-    assert evaluation["result"] == "BLOCKED"
-    _validate(evaluation)
+    with pytest.raises(
+        ReflowValidationError, match="terminal_reason_evidence_refs did not resolve"
+    ):
+        evaluate_closure(request)
 
 
 def test_wrong_current_status_fails_g2() -> None:
