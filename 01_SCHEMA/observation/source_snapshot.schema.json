@@ -3,13 +3,30 @@
   "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/observation/source_snapshot.schema.json",
   "title": "Source Snapshot",
   "type": "object",
-  "required": ["schema_version", "source_snapshot_id", "source_locator", "content_digest", "captured_at"],
+  "required": ["schema_version", "source_snapshot_id", "source_locator", "content_digest", "captured_at", "git_provenance"],
   "properties": {
     "schema_version": {"const": "0.1"},
     "source_snapshot_id": {"$ref": "../common/identity.schema.json"},
     "source_locator": {"type": "string", "minLength": 1},
     "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "captured_at": {"$ref": "../common/timestamp.schema.json"}
+    "captured_at": {"$ref": "../common/timestamp.schema.json"},
+    "git_provenance": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["repository", "commit_sha", "tree_sha", "path", "blob_sha"],
+          "properties": {
+            "repository": {"type": "string", "minLength": 1},
+            "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "path": {"type": "string", "minLength": 1},
+            "blob_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
   },
   "additionalProperties": false
 }

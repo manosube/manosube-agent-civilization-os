@@ -109,6 +109,46 @@ BLOCKER_CONDITION_EXPECTED_STATE: dict[str, str] = {
     "STRUCTURAL_BLOCKER_REMOVED": "REMOVED",
 }
 
+#: R9-F3 (SHUKOU Round 9): the closed ``blocker_kind`` enum ``DIFFERENCE_LIFECYCLE.md``
+#: itself names (also ``01_SCHEMA/difference/difference_lifecycle_event.schema.json``'s own
+#: ``blocker_kind`` enum), transcribed here so the pairing table below has one place to
+#: enumerate against.
+BLOCKER_KIND_VALUES: frozenset[str] = frozenset(
+    {
+        "AUTHORITY_PATH",
+        "EXECUTION_PATH",
+        "OBSERVATION_PATH",
+        "EVIDENCE_INSUFFICIENT",
+        "STALE_BINDING",
+        "MATERIAL_CONFLICT",
+        "INVARIANT_FAILURE",
+        "CLAIM_FAILURE",
+        "OTHER_STRUCTURAL",
+    }
+)
+
+#: R9-F3 (SHUKOU Round 9): each ``blocker_kind``'s own one, fixed ``condition_code`` --
+#: before this round the two fields were independently free (a caller could declare
+#: ``blocker_kind=EVIDENCE_INSUFFICIENT`` alongside ``condition_code=INVARIANTS_PASS`` and
+#: nothing checked the two actually name the same real blocker). This pairing was already
+#: implicit in this vertical's own naming (every fixture in the tree already used exactly
+#: this pairing) -- R9-F3 makes it an enforced, canonical fact
+#: (:func:`blocker_payload_errors` below), not merely an unstated convention. Difference
+#: owns this mapping (cause-mapping stays Difference-owned, never a second Reflow producer);
+#: it is a closed, one-to-one table over :data:`BLOCKER_KIND_VALUES`, matching
+#: :data:`BLOCKER_CONDITION_EXPECTED_STATE`'s own domain exactly.
+BLOCKER_KIND_CONDITION_CODE: dict[str, str] = {
+    "AUTHORITY_PATH": "AUTHORITY_PATH_AVAILABLE",
+    "EXECUTION_PATH": "EXECUTION_PATH_AVAILABLE",
+    "OBSERVATION_PATH": "OBSERVATION_PATH_AVAILABLE",
+    "EVIDENCE_INSUFFICIENT": "REQUIRED_EVIDENCE_AVAILABLE",
+    "STALE_BINDING": "BINDINGS_CURRENT",
+    "MATERIAL_CONFLICT": "MATERIAL_CONFLICT_RESOLVED",
+    "INVARIANT_FAILURE": "INVARIANTS_PASS",
+    "CLAIM_FAILURE": "CLAIMS_PASS",
+    "OTHER_STRUCTURAL": "STRUCTURAL_BLOCKER_REMOVED",
+}
+
 #: The blocker payload fields a ``BLOCKED`` event must carry and every other event must
 #: leave null.
 BLOCKER_PAYLOAD_FIELDS: tuple[str, ...] = (
@@ -130,11 +170,13 @@ def blocker_payload_errors(
 ) -> list[str]:
     """Return every ``BLOCKED`` payload violation this event carries.
 
-    The blocker payload is outside lifecycle event identity, so a schema-valid event can
-    retain its ``difference_event_id`` while its blocker scope, effective boundary or
-    resolution condition is forged. These rules are the executable projection of
-    ``DIFFERENCE_LIFECYCLE.md`` section 4, owned here so the Engine and the independent
-    cross-record validator decide them one way.
+    R9-F3 (SHUKOU Round 9): ``difference_event_id`` now itself incorporates
+    ``blocker_kind``/``blocker_scope``/``blocker_resolution_condition``
+    (:data:`~manosube_agent_civilization.difference.identity._EVENT_IDENTITY_FIELDS`) -- a
+    forged blocker payload no longer keeps the same identity a genuine one would have had,
+    closing what this docstring used to disclose here as an open gap. These rules are the
+    executable projection of ``DIFFERENCE_LIFECYCLE.md`` section 4, owned here so the Engine
+    and the independent cross-record validator decide them one way.
     """
 
     identity = event["difference_event_id"]
@@ -148,10 +190,14 @@ def blocker_payload_errors(
         errors.append(f"blocked lifecycle Evidence missing: {identity}")
     scope = event["blocker_scope"]
     condition = event["blocker_resolution_condition"]
-    if scope is None or condition is None or event["blocker_kind"] is None:
+    blocker_kind = event["blocker_kind"]
+    if scope is None or condition is None or blocker_kind is None:
         errors.append(f"incomplete blocker payload: {identity}")
         return errors
 
+    if blocker_kind not in BLOCKER_KIND_VALUES:
+        errors.append(f"blocker_kind is not a recognized value: {identity}")
+        return errors
     if not scope["affected_subject_refs"]["members"]:
         errors.append(f"empty blocker subject set: {identity}")
     if difference is not None and scope["effective_boundary"] != difference["effective_boundary"]:
@@ -166,6 +212,12 @@ def blocker_payload_errors(
         "expected_state"
     ]:
         errors.append(f"blocker condition state mismatch: {identity}")
+    # R9-F3: blocker_kind and condition_code used to be two independently free fields --
+    # a caller could declare blocker_kind=EVIDENCE_INSUFFICIENT alongside, say,
+    # condition_code=INVARIANTS_PASS and nothing checked the two actually name the same
+    # real blocker. The canonical pairing table is now enforced, closing that gap.
+    if BLOCKER_KIND_CONDITION_CODE.get(blocker_kind) != condition["condition_code"]:
+        errors.append(f"blocker_kind does not match its own canonical condition_code: {identity}")
     return errors
 
 

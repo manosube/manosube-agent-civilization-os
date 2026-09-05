@@ -54,7 +54,7 @@ from typing import Any
 
 from .canonical import canonical_bytes, unordered_set
 from .errors import DifferenceError
-from .invariant_verifiers import VerificationContext, verify_invariant
+from .invariant_verifiers import VerificationContext, verification_stage_and_method, verify_invariant
 from .validation import validate_record
 
 _INVARIANT_EVALUATION_FINGERPRINT_DOMAIN = b"MANOSUBE:INVARIANT_EVALUATION:0.1:"
@@ -103,10 +103,11 @@ def invariant_evaluation_fingerprint(record: dict[str, Any]) -> str:
     return "sha256:" + digest
 
 
-#: The one fixed ``method`` and empty ``evidence_refs``/``remaining_differences`` every R7-F1
-#: verifier produces -- see :func:`build_invariant_evaluation`'s own docstring for why these
-#: are fixed constants rather than caller-suppliable values.
-STRUCTURAL_CHECK_METHOD = "STRUCTURAL_CHECK"
+#: R9-F1 (SHUKOU Round 9, superseding this fixed constant): ``verification_stage``/``method``
+#: are no longer one mechanical pair for all 47 invariants -- see :func:`~.invariant_
+#: verifiers.verification_stage_and_method`, the real per-invariant registry both
+#: :func:`build_invariant_evaluation` and :func:`resolve_invariant_evaluation` now derive
+#: from instead.
 
 
 def _expected_fields(
@@ -136,7 +137,6 @@ def build_invariant_evaluation(
     state_fingerprint: dict[str, Any],
     candidate_id: str,
     candidate_semantic_fingerprint: dict[str, Any],
-    verification_stage: str,
     evaluated_at: str,
     evaluator_capability: str | None = None,
     authority_ref: dict[str, Any] | None = None,
@@ -145,22 +145,23 @@ def build_invariant_evaluation(
     (R7-F1) -- the producer :func:`resolve_invariant_evaluation` itself now demands every
     resolved record agree with.
 
-    ``expected``/``observed``/``status``/``method``/``evidence_refs``/
-    ``remaining_differences`` are never parameters here: they are exactly what
-    :func:`~.invariant_verifiers.verify_invariant` independently derives from *context*,
-    the same real Candidate/Evidence/Policy/Difference data already flowing through this
-    Evaluation -- not a caller's restatement of them (``evidence_refs`` real and non-empty
-    per R8-F1 item 4 wherever a real resolved Evidence record actually grounds the
-    verdict; ``remaining_differences`` stays empty -- this vertical produces no such
-    record for any invariant). ``evaluation_id`` stays caller-assigned (R4-F2's
-    ``INVARIANT_EVALUATION_ID_POLICY``; no content-address formula for it exists in
-    ``CLOSURE_POLICY.md``), and ``method`` is fixed to :data:`STRUCTURAL_CHECK_METHOD` for
-    every id: every verifier here is a deterministic structural check against already-
-    canonicalized data, never an empirical runtime observation, so there is exactly one true
-    value for this field and it is not a caller's to vary.
+    ``expected``/``observed``/``status``/``verification_stage``/``method``/
+    ``evidence_refs``/``remaining_differences`` are never parameters here: they are exactly
+    what :func:`~.invariant_verifiers.verify_invariant`/:func:`~.invariant_verifiers.
+    verification_stage_and_method` independently derive for *invariant_id* -- the former
+    from *context* (the same real Candidate/Evidence/Policy/Difference data already flowing
+    through this Evaluation), the latter a fixed fact about the technique itself
+    (R9-F1: no longer one mechanical ``verification_stage``/``method`` pair a caller could
+    vary or that every id shared) -- never a caller's restatement of any of them
+    (``evidence_refs`` real and non-empty per R8-F1 item 4 wherever a real resolved Evidence
+    record actually grounds the verdict; ``remaining_differences`` stays empty -- this
+    vertical produces no such record for any invariant). ``evaluation_id`` stays
+    caller-assigned (R4-F2's ``INVARIANT_EVALUATION_ID_POLICY``; no content-address formula
+    for it exists in ``CLOSURE_POLICY.md``).
     """
 
     status, expected, observed, evidence_refs = _expected_fields(invariant_id, context)
+    verification_stage, method = verification_stage_and_method(invariant_id)
     return {
         "schema_version": "0.1",
         "evaluation_id": evaluation_id,
@@ -171,7 +172,7 @@ def build_invariant_evaluation(
         "candidate_id": candidate_id,
         "candidate_semantic_fingerprint": candidate_semantic_fingerprint,
         "verification_stage": verification_stage,
-        "method": STRUCTURAL_CHECK_METHOD,
+        "method": method,
         "expected": expected,
         "observed": observed,
         "status": status,
@@ -265,7 +266,17 @@ def resolve_invariant_evaluation(
     real_status, real_expected, real_observed, real_evidence_refs = _expected_fields(
         binding["invariant_ref"]["id"], verification_context
     )
-    if record["method"] != STRUCTURAL_CHECK_METHOD:
+    # R9-F1: verification_stage/method are no longer one mechanical pair shared by every
+    # id -- both must equal this invariant's own real, fixed (verification_stage, method)
+    # (INVARIANT_VERIFICATION_STAGE_MUST_MATCH_CONTRACT=true/INVARIANT_METHOD_MUST_MATCH_
+    # CLAIM=true), never a caller-suppliable value that happens to look plausible.
+    real_verification_stage, real_method = verification_stage_and_method(binding["invariant_ref"]["id"])
+    if record["verification_stage"] != real_verification_stage:
+        raise DifferenceError(
+            "resolved invariant_evaluation's verification_stage does not match the real, "
+            "contract-defined stage for this invariant"
+        )
+    if record["method"] != real_method:
         raise DifferenceError("resolved invariant_evaluation's method is not the real verification method")
     if record["expected"] != real_expected:
         raise DifferenceError("resolved invariant_evaluation's expected does not match the real verification")

@@ -159,6 +159,7 @@ REQUEST_KEYS: frozenset[str] = frozenset(
         "difference_event_head_ref",
         "current_state",
         "objective_revision_id",
+        "objective_revision",
         "kernel_source_ref",
         "base_kernel_source_ref",
         "resolution_mode",
@@ -259,12 +260,59 @@ def _evaluate_g1_g2(gates: _Gates, difference: dict[str, Any], current_status: s
         gates.set("G2", "FAIL", f"Difference status is not VERIFYING: {current_status!r}")
 
 
+def _validate_objective_revision_body(
+    gates: _Gates,
+    difference: dict[str, Any],
+    objective_body: Any,
+    *,
+    absent_reason: str,
+) -> None:
+    """Shared G3 body-level validation -- R8-F2's real Objective Revision body proof, now
+    applied identically whether that body arrives via ``reobservation.derivation_request.
+    objective_revision`` (a real candidate evaluation) or via the request's own top-level
+    ``objective_revision`` field (R9-F2: TERMINAL_POLICY_ONLY_ONLY_OBJECTIVE_ID_ONLY_
+    ALLOWED=false -- a TERMINAL_POLICY_ONLY request with no reobservation at all no longer
+    settles G3 on bare id equality alone either). *objective_body*, when present, is
+    independently schema-validated and its semantic fingerprint recomputed and bound to
+    both ``difference["objective_revision_ref"]["id"]`` and
+    ``difference["objective_semantic_fingerprint"]`` -- never merely trusted as a caller
+    restatement of either.
+    """
+
+    if not isinstance(objective_body, dict):
+        gates.set("G3", "FAIL", absent_reason)
+        return
+    try:
+        validate_derivation_input(objective_body, "objective_revision")
+    except DifferenceError as error:
+        gates.set("G3", "FAIL", f"objective_revision body is schema-invalid: {error}")
+        return
+    if objective_body.get("objective_revision_id") != difference["objective_revision_ref"]["id"]:
+        gates.set(
+            "G3",
+            "FAIL",
+            "objective_revision body's own objective_revision_id does not match the "
+            "Difference's own objective_revision_ref",
+        )
+        return
+    if objective_semantic_fingerprint(objective_body) != difference["objective_semantic_fingerprint"]:
+        gates.set(
+            "G3",
+            "FAIL",
+            "objective_revision body's independently recomputed semantic fingerprint "
+            "does not match the Difference's own objective_semantic_fingerprint",
+        )
+        return
+    gates.set("G3", "PASS")
+
+
 def _evaluate_g3_g4(
     gates: _Gates,
     difference: dict[str, Any],
     *,
     objective_revision_id: str,
     reobservation: dict[str, Any] | None,
+    objective_revision_body: dict[str, Any] | None,
     base_kernel_source_ref: dict[str, Any],
     kernel_source_ref: dict[str, Any],
     has_candidate_material: bool,
@@ -285,10 +333,13 @@ def _evaluate_g3_g4(
     ``difference["objective_revision_ref"]["id"]`` and
     ``difference["objective_semantic_fingerprint"]`` -- never merely the bare id-equality
     above, which by itself proves only that two strings match, not that either names a real,
-    schema-valid Objective. A candidate evaluation with no reobservation at all (the
-    ``TERMINAL_POLICY_ONLY``/``BLOCKED`` route, which never derives a candidate in the first
-    place) has no such body to validate and is unaffected -- G3's id-equality floor is the
-    only proof available or required there, unchanged from R7-F3.
+    schema-valid Objective. R9-F2 (SHUKOU Round 9, closing what this docstring used to
+    disclose as an open non-claim) extends the identical proof to the ``TERMINAL_POLICY_
+    ONLY``/``BLOCKED`` route too: *objective_revision_body* -- the request's own top-level
+    ``objective_revision`` field -- is validated the same way whenever no reobservation was
+    supplied, through the same shared helper (:func:`_validate_objective_revision_body`), so
+    a TERMINAL_POLICY_ONLY request can no longer settle G3 on bare id equality alone either
+    (``TERMINAL_POLICY_ONLY_ONLY_OBJECTIVE_ID_ONLY_ALLOWED=false``).
 
     G4 binds this Evaluation to the exact Kernel source Phase 7 requires unchanged across
     the whole cycle: ``base_kernel_source_ref``/``kernel_source_ref`` must be the identical
@@ -301,26 +352,20 @@ def _evaluate_g3_g4(
     already-computed result (never re-derived a second time here); the caller passes
     ``False`` whenever no witness was supplied or it failed to verify.
 
-    Disclosed, not silently absorbed into a PASS (R8-F1's own SEMANTIC_DECISION_REQUIRED
-    discipline, applied here): G4 does not additionally resolve ``base_kernel_source_ref``
-    from the canonical base State's own persisted metadata/source snapshot, the deeper half
-    SHUKOU's Round 8 adoption also names. No mechanism in this vertical persists "the Kernel
-    source a given committed State was itself derived under" as a queryable fact for every
-    State -- ``STATE_METADATA.md``/the ``project_state`` schema carry no such field, the
-    genesis State never went through a Reflow cycle that could mint one, and even a
-    Reflow-produced State's own ``kernel_source_witness`` record (R6-F4b) is minted only
-    when that closing cycle happened to carry Invariant bindings, never unconditionally. This
-    module (``reflow/closure.py``) is also, by design, a pure function of its own request --
-    it holds no Store handle to resolve a historical transaction against even where one might
-    exist (``reflow/route.py`` is the only layer with Store access, and does not currently
-    resolve or override this field the way F2 already overrides ``current_state``). Closing
-    this gap uniquely would mean either minting a new, unconditional Store-visible kernel
-    source binding on every future committed State (an additive schema change this round's
-    own scope boundary does not authorize inventing unilaterally) or accepting the caller's
-    ``base_kernel_source_ref`` claim as the intended floor once its own commit/tree is
-    independently witness-verified via the check above (already implemented). That choice is
-    SHUKOU's to make, not this vertical's to guess -- named here rather than silently
-    resolved.
+    R9-F2 (SHUKOU Round 9) closes the gap this docstring used to disclose here: this module
+    still does not itself resolve ``base_kernel_source_ref`` from the canonical base State's
+    own persisted metadata (it remains, by design, a pure function of its own request, with
+    no Store handle) -- but ``reflow/route.py`` (the one layer that does hold the Store) now
+    does exactly that before ever calling this function, the same F2/R7-F3 pattern already
+    used for ``current_state``/``objective_revision_id``: it resolves the canonical predecessor
+    State's own ``state_metadata.source_snapshot_refs`` to a real, content-addressed Source
+    Snapshot naming this vertical's pinned Kernel path, independently re-verifies its
+    ``git_provenance`` against a real Git object witness, and only then overrides
+    ``closure_request["base_kernel_source_ref"]`` with that resolved value -- so by the time
+    this function ever sees ``base_kernel_source_ref`` on a real ``reflow()`` cycle, it is
+    already the canonical State's own proven provenance, not a caller's bare restatement of
+    it. G4's own floor here is unchanged: bare equality against ``kernel_source_ref``, now
+    checking two values this module knows are each independently real.
     """
 
     if objective_revision_id != difference["objective_revision_ref"]["id"]:
@@ -339,37 +384,27 @@ def _evaluate_g3_g4(
             if isinstance(derivation_request, dict)
             else None
         )
-        if not isinstance(objective_body, dict):
-            gates.set(
-                "G3",
-                "FAIL",
-                "reobservation.derivation_request carries no real objective_revision body to "
-                "independently validate",
-            )
-        else:
-            try:
-                validate_derivation_input(objective_body, "objective_revision")
-            except DifferenceError as error:
-                gates.set("G3", "FAIL", f"objective_revision body is schema-invalid: {error}")
-            else:
-                if objective_body.get("objective_revision_id") != difference["objective_revision_ref"]["id"]:
-                    gates.set(
-                        "G3",
-                        "FAIL",
-                        "objective_revision body's own objective_revision_id does not match the "
-                        "Difference's own objective_revision_ref",
-                    )
-                elif objective_semantic_fingerprint(objective_body) != difference["objective_semantic_fingerprint"]:
-                    gates.set(
-                        "G3",
-                        "FAIL",
-                        "objective_revision body's independently recomputed semantic fingerprint "
-                        "does not match the Difference's own objective_semantic_fingerprint",
-                    )
-                else:
-                    gates.set("G3", "PASS")
+        _validate_objective_revision_body(
+            gates,
+            difference,
+            objective_body,
+            absent_reason="reobservation.derivation_request carries no real objective_revision "
+            "body to independently validate",
+        )
     else:
-        gates.set("G3", "PASS")
+        # R9-F2 (SHUKOU Round 9): TERMINAL_POLICY_ONLY_ONLY_OBJECTIVE_ID_ONLY_ALLOWED=false --
+        # the disclosed non-claim R7-F3/R8-F2 left open above ("unaffected -- G3's
+        # id-equality floor is the only proof available or required there") is now closed:
+        # the request's own top-level ``objective_revision`` field is validated the same
+        # real way, from an existing owner (Difference's own conformance/identity
+        # functions), never a second canonical authority.
+        _validate_objective_revision_body(
+            gates,
+            difference,
+            objective_revision_body,
+            absent_reason="TERMINAL_POLICY_ONLY requires a real objective_revision body to "
+            "independently validate (TERMINAL_POLICY_ONLY_ONLY_OBJECTIVE_ID_ONLY_ALLOWED=false)",
+        )
 
     if base_kernel_source_ref.get("commit_sha") != kernel_source_ref.get(
         "commit_sha"
@@ -1170,39 +1205,44 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
     # verified witness bytes even when no invariant binding happens to need it. Identity is
     # the commit's own native commit_sha (already independently re-derived by
     # verify_kernel_source_witness), not a new domain-separated hash.
+    #
+    # R9-F2 (SHUKOU Round 9): EVERY_COMMITTED_STATE_KERNEL_PROVENANCE_REQUIRED=true -- this
+    # is no longer gated on ``has_candidate_material``. A TERMINAL_POLICY_ONLY evaluation
+    # commits a real State transition too (R-005), and its own base Kernel source needs the
+    # identical real proof a candidate evaluation already gets, not a permanently-``None``
+    # witness reference solely because no Candidate happened to exist this cycle.
     kernel_source_witness_ref = None
-    if has_candidate_material:
-        kernel_source_ref_in = (
-            shaped["kernel_source_ref"] if isinstance(shaped["kernel_source_ref"], dict) else None
-        )
-        kernel_source_witness_in = (
-            shaped["kernel_source_witness"] if isinstance(shaped["kernel_source_witness"], dict) else None
-        )
-        if kernel_source_ref_in is not None and kernel_source_witness_in is not None:
-            commit_sha = kernel_source_ref_in.get("commit_sha")
-            tree_sha = kernel_source_ref_in.get("tree_sha")
-            if isinstance(commit_sha, str) and isinstance(tree_sha, str):
-                try:
-                    verify_kernel_source_witness(
-                        witness=kernel_source_witness_in,
-                        expected_commit_sha=commit_sha,
-                        expected_tree_sha=tree_sha,
-                        expected_blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
-                        path=KERNEL_INVARIANTS_PATH,
-                    )
-                    witness_record = build_kernel_source_witness_record(
-                        commit_sha=commit_sha,
-                        tree_sha=tree_sha,
-                        blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
-                        path=KERNEL_INVARIANTS_PATH,
-                        witness=kernel_source_witness_in,
-                    )
-                    kernel_source_witness_ref = {
-                        "kind": "kernel_source_witness",
-                        "id": witness_record["kernel_source_witness_id"],
-                    }
-                except ReflowValidationError:
-                    pass
+    kernel_source_ref_in = (
+        shaped["kernel_source_ref"] if isinstance(shaped["kernel_source_ref"], dict) else None
+    )
+    kernel_source_witness_in = (
+        shaped["kernel_source_witness"] if isinstance(shaped["kernel_source_witness"], dict) else None
+    )
+    if kernel_source_ref_in is not None and kernel_source_witness_in is not None:
+        commit_sha = kernel_source_ref_in.get("commit_sha")
+        tree_sha = kernel_source_ref_in.get("tree_sha")
+        if isinstance(commit_sha, str) and isinstance(tree_sha, str):
+            try:
+                verify_kernel_source_witness(
+                    witness=kernel_source_witness_in,
+                    expected_commit_sha=commit_sha,
+                    expected_tree_sha=tree_sha,
+                    expected_blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+                    path=KERNEL_INVARIANTS_PATH,
+                )
+                witness_record = build_kernel_source_witness_record(
+                    commit_sha=commit_sha,
+                    tree_sha=tree_sha,
+                    blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+                    path=KERNEL_INVARIANTS_PATH,
+                    witness=kernel_source_witness_in,
+                )
+                kernel_source_witness_ref = {
+                    "kind": "kernel_source_witness",
+                    "id": witness_record["kernel_source_witness_id"],
+                }
+            except ReflowValidationError:
+                pass
 
     gates = _Gates()
     _evaluate_g1_g2(gates, difference, current_status)
@@ -1216,6 +1256,9 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         difference,
         objective_revision_id=objective_revision_id,
         reobservation=shaped["reobservation"] if isinstance(shaped["reobservation"], dict) else None,
+        objective_revision_body=shaped["objective_revision"]
+        if isinstance(shaped["objective_revision"], dict)
+        else None,
         base_kernel_source_ref=base_kernel_source_ref,
         kernel_source_ref=kernel_source_ref_for_g4,
         has_candidate_material=has_candidate_material,
@@ -1311,6 +1354,8 @@ def evaluate_closure(request: dict[str, Any]) -> dict[str, Any]:
         material_contradictions=material_contradictions,
         blocking_contradictions=blocking_contradictions,
         proposed_terminal_status=proposed_terminal_status,
+        evaluated_at=evaluated_at,
+        request_contract_keys=REQUEST_KEYS,
     )
     _evaluate_g19(
         gates,

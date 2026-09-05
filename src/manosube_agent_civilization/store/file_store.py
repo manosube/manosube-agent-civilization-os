@@ -89,10 +89,14 @@ class FileStateStore:
         """
 
         path=self._record_path(project_id,kind,record_id)
-        if not path.exists(): return None
-        if not self._record_committed_by_any_transaction(project_id,kind,record_id): return None
-        try: return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError(f"malformed record: {kind}/{record_id}") from exc
+        if not path.exists():
+            return None
+        if not self._record_committed_by_any_transaction(project_id,kind,record_id):
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc:
+            raise CorruptStoreError(f"malformed record: {kind}/{record_id}") from exc
 
     def _record_committed_by_any_transaction(self, project_id: str, kind: str, record_id: str) -> bool:
         """Return whether *(kind, record_id)*'s permanent file was promoted by a transaction
@@ -111,18 +115,24 @@ class FileStateStore:
         """
 
         recovery=self._project(project_id)/"state"/"recovery"
-        if not recovery.exists(): return True
+        if not recovery.exists():
+            return True
         claimed_by_any = False
         for journal in sorted(recovery.iterdir()):
-            if not journal.is_dir(): continue
+            if not journal.is_dir():
+                continue
             manifest_path=journal/"manifest.json"
-            if not manifest_path.exists(): continue
-            try: entries=json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not manifest_path.exists():
+                continue
+            try:
+                entries=json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError,json.JSONDecodeError) as exc:
                 raise CorruptStoreError(f"malformed transaction manifest: {journal.name}") from exc
-            if [kind,record_id] not in entries: continue
+            if [kind,record_id] not in entries:
+                continue
             claimed_by_any = True
-            if (journal/"COMMITTED").exists(): return True
+            if (journal/"COMMITTED").exists():
+                return True
         return not claimed_by_any
 
     def resolve_transaction(self, project_id: str, transaction_id: str) -> dict[str,Any]|None:
@@ -204,20 +214,55 @@ class FileStateStore:
             atomic_write(self._current(project_id),canonical_json_bytes(state))
             return deepcopy(state)
 
+    def _committed_events(self, project_id: str) -> list[dict[str,Any]]:
+        """The append-only lineage log, filtered to events whose own transaction is
+        durably ``COMMITTED`` -- R9-F4. ``commit``'s own sequence appends an event to the
+        lineage (``AFTER_LINEAGE_APPEND``) *before* it promotes that transaction's staged
+        records, replaces ``current.json`` or writes that transaction's own ``COMMITTED``
+        marker -- a crash in that window once left every public read surface built on top
+        of the raw log (``reconstruct``, and therefore ``load_current``) reporting a
+        revision no different call ever agreed was real. Only the trailing entry can ever
+        be uncommitted this way (this Store enforces one in-flight transaction at a time
+        via its own project lock, and every earlier entry was necessarily committed before
+        the next commit began), so this stops at -- and excludes -- the first event whose
+        transaction is not yet durably ``COMMITTED``, the same check :meth:`resolve_
+        transaction`/:meth:`resolve_record` already apply per-transaction (R7-F5/R8-F4),
+        now the single boundary every public read shares. Recovery's own bookkeeping (
+        :meth:`recover`) reads the unfiltered log directly (:meth:`_events`) -- it is the
+        one caller allowed to see a dangling entry, since completing or discarding it is
+        exactly its job.
+        """
+
+        committed: list[dict[str,Any]] = []
+        for event in self._events(project_id):
+            if not self._transaction_committed(project_id, event["transaction_id"]):
+                break
+            committed.append(event)
+        return committed
+
     def reconstruct(self, project_id: str) -> dict[str,Any]:
         prior=None
-        for event in self._events(project_id): prior=self._verify_event(project_id,event,prior)
+        for event in self._committed_events(project_id): prior=self._verify_event(project_id,event,prior)
         if prior is None: raise CorruptStoreError("lineage has no genesis")
         return deepcopy(prior)
 
     def load_current(self, project_id: str) -> dict[str,Any]:
         reconstructed=self.reconstruct(project_id); path=self._current(project_id)
-        if not path.exists(): atomic_write(path,canonical_json_bytes(reconstructed))
+        if not path.exists():
+            atomic_write(path,canonical_json_bytes(reconstructed)); return deepcopy(reconstructed)
         try: current=json.loads(path.read_text(encoding="utf-8"))
         except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError("invalid current view") from exc
         self._validate_state(project_id,current)
-        if canonical_json_bytes(current)!=canonical_json_bytes(reconstructed): raise CorruptStoreError("current view differs from lineage")
-        return current
+        if canonical_json_bytes(current)==canonical_json_bytes(reconstructed): return current
+        # R9-F4: current.json can legitimately be one revision ahead of the committed
+        # lineage view -- a crash between AFTER_CURRENT_REPLACE and the transaction's own
+        # COMMITTED marker leaves exactly this gap, and recover() has not yet run. The
+        # committed (reconstructed) view stays authoritative until it does; this is a
+        # recoverable, expected state, never corruption. Anything else -- current.json
+        # behind the committed view, or more than one revision ahead -- has no such
+        # explanation and still raises.
+        if current.get("state_revision")==reconstructed["state_revision"]+1: return deepcopy(reconstructed)
+        raise CorruptStoreError("current view differs from lineage")
 
     def _append(self, project_id: str, event: Mapping[str,Any]) -> None:
         path=self._lineage(project_id); path.parent.mkdir(parents=True,exist_ok=True)

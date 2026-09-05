@@ -198,10 +198,12 @@ def validate_carried_event(
 ) -> None:
     """Validate one carried lifecycle event's schema, identity and status payload.
 
-    The blocker payload and the Next Observation Request binding sit **outside** lifecycle
-    event identity, so a schema-valid event can retain its ``difference_event_id`` while
-    either is forged. Both are decided by the single shared lifecycle authority that the
-    independent cross-record validator also uses, so no second rule set exists.
+    The Next Observation Request binding, and (R9-F3) ``blocker_resolution_condition`` --
+    but no longer ``blocker_kind``/``blocker_scope``, which identity now covers directly --
+    sit **outside** lifecycle event identity, so a schema-valid event can retain its
+    ``difference_event_id`` while either is forged. Both are decided by the single shared
+    lifecycle authority that the independent cross-record validator also uses, so no second
+    rule set exists.
     """
 
     validate_record(

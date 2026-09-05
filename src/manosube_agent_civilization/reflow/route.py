@@ -100,7 +100,7 @@ from manosube_agent_civilization.observation.source_snapshot import resolve_sour
 
 from .bookkeeping import apply_reflow_bookkeeping
 from .claims import resolve_claim_binding
-from .closure import evaluate_closure
+from .closure import REQUEST_KEYS, evaluate_closure
 from .commit import commit_reflow
 from .engine import decide_transition
 from .errors import ReflowValidationError, StaleReflowError
@@ -200,6 +200,103 @@ def _verify_lifecycle_ground_truth(
         raise ReflowValidationError(
             f"the first Reflow cycle from genesis must be event_revision 1, not {event_revision!r}"
         )
+
+
+def _resolve_base_kernel_source_ref(
+    before_project_state: dict[str, Any], closure_request: dict[str, Any]
+) -> dict[str, Any]:
+    """R9-F2 (Phase 7 structural-review round 9): resolve this cycle's base Kernel source
+    provenance from the canonical predecessor State's own committed metadata -- never from
+    ``closure_request``'s own caller-supplied ``base_kernel_source_ref``, which
+    ``BASE_STATE_KERNEL_PROVENANCE_REQUIRED=true``/``CALLER_BASE_KERNEL_ASSERTION_
+    SUFFICIENT=false`` (SHUKOU Round 9) now refuses to trust on its own. The canonical path
+    is fixed: Canonical State -> ``state_metadata.source_snapshot_refs`` -> Observation-owned
+    immutable Source Snapshot -> ``repository``/``commit_sha``/``tree_sha``/``path``/
+    ``blob_sha`` -> verified Git object witness (the same
+    :func:`~manosube_agent_civilization.reflow.git_witness.verify_kernel_source_witness`
+    every candidate Kernel-source claim is already proven against). State metadata stays
+    State-owned and Source Snapshot stays Observation-owned -- this function resolves what
+    those owners already produced, it never becomes a second producer of either.
+
+    Called unconditionally for *every* ``reflow()`` cycle (``EVERY_COMMITTED_STATE_KERNEL_
+    PROVENANCE_REQUIRED=true`` -- a ``TERMINAL_POLICY_ONLY``/``BLOCKED`` cycle still commits
+    a real State transition, R-005, and needs the identical real proof), including the very
+    first cycle from genesis (``GENESIS_KERNEL_PROVENANCE_REQUIRED=true`` -- genesis's own
+    ``state_metadata.source_snapshot_refs`` is populated the same way, see
+    ``tests/state_helpers.py``'s ``initial_state``).
+
+    Fails closed on: no ``state_metadata.source_snapshot_refs`` entry naming this vertical's
+    pinned Kernel path (missing), more than one doing so (ambiguous), a ref that does not
+    resolve against ``closure_request["source_snapshots"]`` (unresolvable), a resolved
+    ``git_provenance.blob_sha`` disagreeing with the pinned ``KERNEL_INVARIANTS_BLOB_SHA``
+    (Kernel-source inconsistency), or no real ``kernel_source_witness`` independently proving
+    the claimed commit/tree/blob chain (unverifiable). Returns the ``{"kind": "git_tree",
+    "repository", "commit_sha", "tree_sha"}`` reference ``closure_request["base_kernel_
+    source_ref"]`` is overridden to -- the same shape :func:`~manosube_agent_civilization.
+    reflow.closure.evaluate_closure`'s own G4 already compares against ``kernel_source_ref``
+    (unchanged floor: Phase 7 does not permit a Kernel source change mid-cycle in v0.1).
+    """
+
+    refs = before_project_state.get("state_metadata", {}).get("source_snapshot_refs") or []
+    pool = closure_request.get("source_snapshots") or []
+    matching_provenance: list[dict[str, Any]] = []
+    for ref in refs:
+        try:
+            record = resolve_source_snapshot(ref, pool)
+        except ObservationError as error:
+            raise ReflowValidationError(
+                f"base Kernel provenance: source_snapshot_refs entry does not resolve "
+                f"against closure_request.source_snapshots: {error}"
+            ) from error
+        git_provenance = record.get("git_provenance")
+        if isinstance(git_provenance, dict) and git_provenance.get("path") == KERNEL_INVARIANTS_PATH:
+            matching_provenance.append(git_provenance)
+
+    if not matching_provenance:
+        raise ReflowValidationError(
+            "base Kernel provenance: no committed state_metadata.source_snapshot_refs entry "
+            f"names the Kernel source path {KERNEL_INVARIANTS_PATH!r}"
+        )
+    if len(matching_provenance) > 1:
+        raise ReflowValidationError(
+            "base Kernel provenance: more than one committed state_metadata.source_snapshot_"
+            f"refs entry names the Kernel source path {KERNEL_INVARIANTS_PATH!r}"
+        )
+    git_provenance = matching_provenance[0]
+    if git_provenance.get("blob_sha") != KERNEL_INVARIANTS_BLOB_SHA:
+        raise ReflowValidationError(
+            "base Kernel provenance: resolved Source Snapshot's git_provenance.blob_sha does "
+            "not match the pinned KERNEL_INVARIANTS_BLOB_SHA"
+        )
+
+    commit_sha = git_provenance.get("commit_sha")
+    tree_sha = git_provenance.get("tree_sha")
+    witness = closure_request.get("kernel_source_witness")
+    if not isinstance(witness, dict) or not isinstance(commit_sha, str) or not isinstance(tree_sha, str):
+        raise ReflowValidationError(
+            "base Kernel provenance: no real kernel_source_witness was supplied to "
+            "independently verify the resolved Source Snapshot's Git provenance"
+        )
+    try:
+        verify_kernel_source_witness(
+            witness=witness,
+            expected_commit_sha=commit_sha,
+            expected_tree_sha=tree_sha,
+            expected_blob_sha=KERNEL_INVARIANTS_BLOB_SHA,
+            path=KERNEL_INVARIANTS_PATH,
+        )
+    except ReflowValidationError as error:
+        raise ReflowValidationError(
+            f"base Kernel provenance: kernel_source_witness did not independently verify "
+            f"against the resolved Source Snapshot's git_provenance: {error}"
+        ) from error
+
+    return {
+        "kind": "git_tree",
+        "repository": git_provenance["repository"],
+        "commit_sha": commit_sha,
+        "tree_sha": tree_sha,
+    }
 
 
 def _derive_evidence_refs(
@@ -321,6 +418,8 @@ def _invariant_verification_context(
         material_contradictions=material_contradictions,
         blocking_contradictions=blocking_contradictions,
         proposed_terminal_status=evaluation.get("proposed_terminal_status"),
+        evaluated_at=evaluation["evaluated_at"],
+        request_contract_keys=REQUEST_KEYS,
     )
 
 
@@ -835,6 +934,12 @@ def reflow(
     # itself bound to -- the Store's own committed objective_revision_id, never a caller
     # restatement of it.
     closure_request["objective_revision_id"] = before_project_state["objective_revision_id"]
+    # R9-F2: G4 binds this Evaluation's base Kernel source to the canonical predecessor
+    # State's own proven provenance -- never a caller restatement of it -- resolved
+    # unconditionally, for every outcome, before evaluate_closure ever runs.
+    closure_request["base_kernel_source_ref"] = _resolve_base_kernel_source_ref(
+        before_project_state, closure_request
+    )
 
     evaluation = evaluate_closure(closure_request)
     decision = decide_transition(evaluation, current_status)

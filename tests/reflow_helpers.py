@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
-from pathlib import Path
 from typing import Any
 
 from tests.difference_helpers import (
@@ -32,7 +31,12 @@ from tests.evidence_helpers import (
     observation_evidence_request,
     sufficiency_request,
 )
-from tests.state_helpers import SCHEMA_ROOT, initial_state
+from tests.state_helpers import (
+    SCHEMA_ROOT,
+    initial_state,
+    real_kernel_git_objects,
+    real_kernel_source_snapshot,
+)
 
 from manosube_agent_civilization.difference.completion import (
     CANDIDATE_COMPLETION_RECORD_KIND,
@@ -45,6 +49,7 @@ from manosube_agent_civilization.difference.invariant_evaluation import (
 )
 from manosube_agent_civilization.difference.invariant_verifiers import (
     build_invariant_verification_context,
+    verification_stage_and_method,
     verify_invariant,
 )
 from manosube_agent_civilization.evidence.engine import derive_evidence
@@ -57,13 +62,11 @@ from manosube_agent_civilization.reflow.claims import (
 )
 from manosube_agent_civilization.reflow.closure import (
     MANDATORY_X003_CLAIM_REF,
+    REQUEST_KEYS,
     build_after_state_candidate,
 )
-from manosube_agent_civilization.reflow.git_witness import blob_sha1, commit_sha1, tree_sha1
 from manosube_agent_civilization.reflow.identity import material_contradiction_id
 from manosube_agent_civilization.reflow.invariant_registry import (
-    KERNEL_INVARIANTS_BLOB_SHA,
-    KERNEL_INVARIANTS_PATH,
     V0_1_INVARIANT_DEFINITION_DIGESTS,
     candidate_invariant_evaluation_binding_id,
     expected_g19_invariant_ids,
@@ -83,57 +86,18 @@ GIT_TREE_REF: dict[str, Any] = {
 
 EVALUATED_AT = "2026-08-30T11:05:00Z"
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-
 
 def real_kernel_source_witness() -> tuple[dict[str, Any], dict[str, Any]]:
     """Return ``(kernel_source_ref, kernel_source_witness)`` -- a real, self-consistent Git
     object witness proving ``00_KERNEL/KERNEL_INVARIANTS.md`` is reachable via a genuine
-    commit/tree/blob chain (R4-F3). ``GIT_TREE_REF``'s ``commit_sha``/``tree_sha`` are
-    fixture placeholders that can never verify against a real witness -- a real Git object
-    id is the SHA-1 of its own content, not a value a fixture can simply declare. This
-    instead builds the blob from ``KERNEL_INVARIANTS.md``'s own real on-disk bytes (so its
-    blob sha genuinely equals the pinned ``KERNEL_INVARIANTS_BLOB_SHA``) and wraps it in a
-    synthetic but internally self-consistent tree/commit -- the same real object-hashing
-    functions :func:`~manosube_agent_civilization.reflow.git_witness.verify_kernel_source_witness`
-    itself uses, applied here to build a witness that function can genuinely verify rather
-    than one this fixture merely asserts is valid.
+    commit/tree/blob chain (R4-F3). Delegates to :func:`tests.state_helpers.
+    real_kernel_git_objects` (R9-F2 factored this construction out to the one place both
+    this module and genesis's own ``state_metadata.source_snapshot_refs`` need it, so a
+    Candidate's own witness and the base State's own Kernel provenance always name the
+    identical commit/tree/blob by construction, never by coincidence).
     """
 
-    blob_content = (REPOSITORY_ROOT / KERNEL_INVARIANTS_PATH).read_bytes()
-    blob_sha = blob_sha1(blob_content)
-    assert blob_sha == KERNEL_INVARIANTS_BLOB_SHA, (
-        "fixture drift: the on-disk KERNEL_INVARIANTS.md no longer matches the pinned blob sha"
-    )
-
-    leaf_entry = b"100644 KERNEL_INVARIANTS.md\0" + bytes.fromhex(blob_sha)
-    leaf_tree_sha = tree_sha1(leaf_entry)
-    root_entry = b"40000 00_KERNEL\0" + bytes.fromhex(leaf_tree_sha)
-    root_tree_sha = tree_sha1(root_entry)
-    commit_object = (
-        f"tree {root_tree_sha}\n"
-        "author Fixture <fixture@example.com> 0 +0000\n"
-        "committer Fixture <fixture@example.com> 0 +0000\n"
-        "\n"
-        "fixture commit\n"
-    ).encode()
-    commit_sha = commit_sha1(commit_object)
-
-    kernel_source_ref = {
-        "kind": "git_tree",
-        "repository": "manosube/manosube-agent-civilization-os",
-        "commit_sha": commit_sha,
-        "tree_sha": root_tree_sha,
-    }
-    kernel_source_witness = {
-        "commit_object": commit_object.hex(),
-        "tree_objects": {
-            root_tree_sha: root_entry.hex(),
-            leaf_tree_sha: leaf_entry.hex(),
-        },
-        "blob_object": blob_content.hex(),
-    }
-    return kernel_source_ref, kernel_source_witness
+    return real_kernel_git_objects()
 
 
 def _advanced_project_state(
@@ -392,10 +356,30 @@ def real_terminal_reason_evidence_fields() -> tuple[dict[str, Any], str]:
 def base_closure_request(
     difference: dict[str, Any], policy: dict[str, Any]
 ) -> dict[str, Any]:
-    """A candidate-free (``TERMINAL_POLICY_ONLY``-shaped) request every test starts from."""
+    """A candidate-free (``TERMINAL_POLICY_ONLY``-shaped) request every test starts from.
+
+    R9-F2: ``kernel_source_ref``/``kernel_source_witness``/``source_snapshots`` now default
+    to the same real, self-consistent Kernel Git witness and content-addressed Source
+    Snapshot every candidate route already uses (:func:`real_kernel_source_witness`,
+    :func:`~tests.state_helpers.real_kernel_source_snapshot`) -- not the bare, unverifiable
+    ``GIT_TREE_REF`` placeholder this fixture used before this round. A ``TERMINAL_POLICY_
+    ONLY`` cycle commits a real State transition too (R-005) and now gets the identical real
+    Kernel-provenance proof a candidate cycle already got (``EVERY_COMMITTED_STATE_KERNEL_
+    PROVENANCE_REQUIRED=true``), both at this module's own direct-``evaluate_closure`` level
+    (the now-unconditional ``kernel_source_witness_ref`` computation) and, for a caller
+    driving this request through ``reflow.route.reflow``, at the Store-derived
+    ``_resolve_base_kernel_source_ref`` level -- which requires this same real ``source_
+    snapshots``/``kernel_source_witness`` pair to resolve the genesis State's own committed
+    ``state_metadata.source_snapshot_refs`` against. ``objective_revision`` is the new field
+    R9-F2 also adds: TERMINAL_POLICY_ONLY's own G3 now validates a real Objective Revision
+    body here too, not only via a candidate's ``reobservation.derivation_request`` -- the
+    identical real fixture (:func:`~tests.difference_helpers.objective_revision`) already
+    used to build *difference*'s own ``objective_revision_ref`` in the first place.
+    """
 
     terminal_reason_request = real_terminal_reason_evidence_request()
     terminal_reason_record = derive_evidence(terminal_reason_request)
+    kernel_source_ref, kernel_source_witness = real_kernel_source_witness()
     return {
         "difference": difference,
         "current_status": "VERIFYING",
@@ -406,8 +390,9 @@ def base_closure_request(
             "fingerprint": state_fingerprint("KNOWN"),
         },
         "objective_revision_id": difference["objective_revision_ref"]["id"],
-        "kernel_source_ref": deepcopy(GIT_TREE_REF),
-        "base_kernel_source_ref": deepcopy(GIT_TREE_REF),
+        "objective_revision": objective_revision(),
+        "kernel_source_ref": kernel_source_ref,
+        "base_kernel_source_ref": deepcopy(kernel_source_ref),
         "resolution_mode": None,
         "change_refs": [],
         "change_result_evidence_refs": [],
@@ -418,13 +403,13 @@ def base_closure_request(
         "evidence_sufficiency_request": None,
         "after_state_semantic_state": None,
         "source_snapshot_refs": [],
-        "source_snapshots": [],
+        "source_snapshots": [real_kernel_source_snapshot()],
         "producing_change_refs": [],
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
         "candidate_claim_evaluation_events": [],
         "invariant_evaluations": [],
-        "kernel_source_witness": None,
+        "kernel_source_witness": kernel_source_witness,
         "material_contradictions": [],
         "terminal_reason_evidence_refs": [
             {"kind": "observation_evidence", "id": terminal_reason_record["evidence_id"]}
@@ -497,6 +482,7 @@ def mandatory_invariant_evaluation(
         if after_state_candidate is not None
         else _PLACEHOLDER_CANDIDATE_SEMANTIC_FINGERPRINT
     )
+    verification_stage, method = verification_stage_and_method(invariant_id)
     return {
         "schema_version": "0.1",
         "evaluation_id": "INV-EVAL-" + _hex_digest(f"eval:{invariant_id}").upper(),
@@ -506,8 +492,8 @@ def mandatory_invariant_evaluation(
         "state_fingerprint": current_state["fingerprint"],
         "candidate_id": candidate_id,
         "candidate_semantic_fingerprint": candidate_semantic_fingerprint,
-        "verification_stage": "CANDIDATE_CLOSURE",
-        "method": "STRUCTURAL_CHECK",
+        "verification_stage": verification_stage,
+        "method": method,
         "expected": {"invariant_id": invariant_id, "result": "PASS"},
         "observed": {"invariant_id": invariant_id, "result": status},
         "status": status,
@@ -787,6 +773,8 @@ def candidate_closure_request(
         material_contradictions=material_contradictions,
         blocking_contradictions=blocking_contradictions,
         proposed_terminal_status="CLOSED",
+        evaluated_at=EVALUATED_AT,
+        request_contract_keys=REQUEST_KEYS,
     )
     verification_results = {
         invariant_id: verify_invariant(invariant_id, verification_context)
@@ -833,7 +821,11 @@ def candidate_closure_request(
             ),
             "after_state_semantic_state": after_semantic_state,
             "source_snapshot_refs": source_snapshot_refs,
-            "source_snapshots": [deepcopy(REAL_SNAPSHOT_RECORD)],
+            # R9-F2: the real Kernel Source Snapshot is appended (never replaces index 0,
+            # REAL_SNAPSHOT_RECORD, which several negative controls tamper with by position)
+            # so `reflow.route.reflow`'s own base-Kernel-provenance resolution can also
+            # resolve it from this same pool.
+            "source_snapshots": [deepcopy(REAL_SNAPSHOT_RECORD), real_kernel_source_snapshot()],
             "candidate_invariant_evaluation_bindings": invariant_bindings,
             "invariant_evaluations": invariant_evaluations,
             "candidate_claim_evaluation_bindings": [claim_binding],
@@ -899,7 +891,7 @@ def self_closing_change_bound_closure_request(
             ),
             "after_state_semantic_state": semantic_state("KNOWN"),
             "source_snapshot_refs": [deepcopy(REAL_SNAPSHOT_REF)],
-            "source_snapshots": [deepcopy(REAL_SNAPSHOT_RECORD)],
+            "source_snapshots": [deepcopy(REAL_SNAPSHOT_RECORD), real_kernel_source_snapshot()],
             "producing_change_refs": [{"kind": "change", "id": change_record["change_id"]}],
             "candidate_invariant_evaluation_bindings": mandatory_invariant_bindings(
                 difference["difference_id"], current_state

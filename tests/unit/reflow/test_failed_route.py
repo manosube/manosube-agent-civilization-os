@@ -23,13 +23,13 @@ from typing import Any
 
 from tests.difference_helpers import (
     negative_claim,
+    objective_revision,
     observation_request,
     observation_scope,
     state_fingerprint,
 )
 from tests.evidence_helpers import BEFORE_REVISION, difference_request, observation_evidence_request
-from tests.reflow_helpers import GIT_TREE_REF
-from tests.state_helpers import SCHEMA_ROOT, initial_state
+from tests.state_helpers import SCHEMA_ROOT, initial_state, real_kernel_git_objects, real_kernel_source_snapshot
 
 from manosube_agent_civilization.difference import derive_differences
 from manosube_agent_civilization.difference.validation import (
@@ -105,6 +105,13 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
 
     terminal_reason_request = observation_evidence_request(observation=_failed_observation_request())
     terminal_reason_record = derive_evidence(terminal_reason_request)
+    # R9-F2: base Kernel provenance is now resolved by `reflow.route.reflow` from the
+    # committed State's own `state_metadata.source_snapshot_refs` -- `initial_state()`
+    # already names the real Kernel Source Snapshot there, so `kernel_source_ref`/
+    # `base_kernel_source_ref`/`kernel_source_witness`/`source_snapshots` here must be the
+    # identical real Git witness that Source Snapshot's own `git_provenance` claims, not the
+    # bare, unverifiable placeholder this fixture used before this round.
+    kernel_source_ref, kernel_source_witness = real_kernel_git_objects()
 
     closure_request = {
         "difference": difference,
@@ -116,8 +123,11 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
             "fingerprint": project_state["semantic_fingerprint"],
         },
         "objective_revision_id": difference["objective_revision_ref"]["id"],
-        "kernel_source_ref": deepcopy(GIT_TREE_REF),
-        "base_kernel_source_ref": deepcopy(GIT_TREE_REF),
+        # R9-F2: TERMINAL_POLICY_ONLY_ONLY_OBJECTIVE_ID_ONLY_ALLOWED=false -- the same real
+        # Objective Revision body `difference_request()` itself built this Difference from.
+        "objective_revision": objective_revision(),
+        "kernel_source_ref": kernel_source_ref,
+        "base_kernel_source_ref": deepcopy(kernel_source_ref),
         "resolution_mode": None,
         "change_refs": [],
         "change_result_evidence_refs": [],
@@ -128,13 +138,13 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         "evidence_sufficiency_request": _insufficient_sufficiency_request(first),
         "after_state_semantic_state": None,
         "source_snapshot_refs": [],
-        "source_snapshots": [],
+        "source_snapshots": [real_kernel_source_snapshot()],
         "producing_change_refs": [],
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
         "candidate_claim_evaluation_events": [],
         "invariant_evaluations": [],
-        "kernel_source_witness": None,
+        "kernel_source_witness": kernel_source_witness,
         "material_contradictions": [],
         "terminal_reason_evidence_refs": [
             {"kind": "observation_evidence", "id": terminal_reason_record["evidence_id"]}

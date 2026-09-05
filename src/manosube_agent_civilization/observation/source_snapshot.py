@@ -28,7 +28,22 @@ from .identity import deterministic_id
 from .schemas import OBSERVATION_SCHEMA_BASE, validators
 from .scope import validate_source_locator
 
-_SOURCE_SNAPSHOT_SCALARS: tuple[str, ...] = ("source_locator", "content_digest", "captured_at")
+_SOURCE_SNAPSHOT_SCALARS: tuple[str, ...] = (
+    "source_locator",
+    "content_digest",
+    "captured_at",
+    "git_provenance",
+)
+
+#: The five fields a real Git provenance claim carries -- R9-F2 (Phase 7 structural-review
+#: round 9): "Source Snapshotはimmutableまたはcontent-addressed であり、少なくとも該当する
+#: Git provenanceを再検証できなければならない" (SHUKOU's own text). A ``None`` value keeps
+#: every existing, non-Kernel-sourced Source Snapshot use schema-valid unchanged; a
+#: Kernel-source-provenance use (``reflow/route.py``'s own G4 resolution) requires it
+#: present, checked there against the exact same real Git object witness
+#: (:mod:`~manosube_agent_civilization.reflow.git_witness`) the candidate side already
+#: verifies -- this module never re-implements that verification a second time.
+_GIT_PROVENANCE_FIELDS: tuple[str, ...] = ("repository", "commit_sha", "tree_sha", "path", "blob_sha")
 
 
 def source_snapshot_identity(record: dict[str, Any]) -> str:
@@ -38,7 +53,11 @@ def source_snapshot_identity(record: dict[str, Any]) -> str:
 
 
 def build_source_snapshot(
-    *, source_locator: str, content_digest: str, captured_at: str
+    *,
+    source_locator: str,
+    content_digest: str,
+    captured_at: str,
+    git_provenance: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return one schema-conformant, content-addressed ``source_snapshot`` record.
 
@@ -48,17 +67,28 @@ def build_source_snapshot(
     identity on its own. *content_digest* must be an explicit ``sha256:`` digest of the
     snapshotted content bytes: the one field that makes this record's identity actually bind
     to content rather than to a caller's bare say-so about what a locator contained.
+
+    *git_provenance*, when supplied, is the ``{repository, commit_sha, tree_sha, path,
+    blob_sha}`` claim R9-F2 adds -- itself part of this record's own content address (a
+    caller cannot silently attach a different Git claim to an otherwise-identical
+    snapshot), independently re-verifiable by a real Git object witness at the point this
+    record is used for Kernel-source provenance, never trusted here as a bare assertion.
     """
 
     validate_source_locator(source_locator)
     if not isinstance(content_digest, str) or not content_digest.startswith("sha256:"):
         raise ObservationError("source_snapshot content_digest must be an explicit sha256: digest")
+    if git_provenance is not None and set(git_provenance) != set(_GIT_PROVENANCE_FIELDS):
+        raise ObservationError(
+            f"source_snapshot git_provenance must carry exactly {sorted(_GIT_PROVENANCE_FIELDS)}"
+        )
     record: dict[str, Any] = {
         "schema_version": "0.1",
         "source_snapshot_id": "",
         "source_locator": source_locator,
         "content_digest": content_digest,
         "captured_at": captured_at,
+        "git_provenance": dict(git_provenance) if git_provenance is not None else None,
     }
     record["source_snapshot_id"] = source_snapshot_identity(record)
     validator = validators()[OBSERVATION_SCHEMA_BASE + "source_snapshot.schema.json"]

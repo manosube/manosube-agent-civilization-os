@@ -274,3 +274,76 @@ def test_r8f4_a_record_promoted_before_committed_is_invisible_until_recovery(
         assert resolved_after_recovery == record
         assert transaction_after_recovery is not None
         assert transaction_after_recovery["transaction_id"] == event["transaction_id"]
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_r9f4_all_four_public_read_surfaces_converge_atomically(stage: str, tmp_path: Path) -> None:
+    """R9-F4: ``load_current``, ``reconstruct``, ``resolve_transaction`` and
+    ``resolve_record`` must agree at every point -- not only the two R7-F5/R8-F4 already
+    gated. Before this fix, ``reconstruct`` (and therefore ``load_current``) read the raw,
+    unfiltered lineage log directly: a crash at ``AFTER_LINEAGE_APPEND`` or later left the
+    advanced revision *already visible* through ``load_current``/``reconstruct`` while
+    ``resolve_transaction``/``resolve_record`` still correctly reported nothing for that
+    same transaction -- a real split across the four surfaces, not simulated. A crash
+    between ``AFTER_CURRENT_REPLACE`` and the transaction's own ``COMMITTED`` marker also
+    once made ``load_current`` raise ``CorruptStoreError`` outright (``current.json``
+    already advanced, the lineage view still not), rather than gracefully reporting the
+    old, complete view a recoverable incomplete transaction must never corrupt.
+
+    Verified for all 9 crash stages, with a non-empty record manifest: immediately after
+    the crash (before :meth:`recover` ever runs) all four surfaces agree on the *old*,
+    complete view, with no exception raised; after :meth:`recover` completes, all four
+    converge together either to the *new* view (stage at or after
+    ``AFTER_COMMIT_INTENT``) or stay together at the *old* view (an earlier stage, where
+    the transaction never truly began committing)."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    store.initialize(PROJECT_ID, initial)
+    after, event = _successor(initial)
+    record_kind, record_id = "closure_evaluation", "D-CLOSE-EVAL-" + "D" * 64
+    record = {"closure_evaluation_id": record_id, "result": "BLOCKED"}
+
+    def fault(current: str) -> None:
+        if current == stage:
+            raise SimulatedCrash(stage)
+
+    with pytest.raises(SimulatedCrash):
+        store.commit(
+            PROJECT_ID, 0, initial["semantic_fingerprint"], after, event,
+            records=[(record_kind, record_id, record)], fault=fault,
+        )
+
+    # Before recover(): every surface must agree on the old, complete view -- and none
+    # may raise, even though current.json may already have been advanced on disk.
+    current_before = store.load_current(PROJECT_ID)
+    reconstructed_before = store.reconstruct(PROJECT_ID)
+    transaction_before = store.resolve_transaction(PROJECT_ID, event["transaction_id"])
+    resolved_before = store.resolve_record(PROJECT_ID, record_kind, record_id)
+    assert current_before["state_revision"] == 0
+    assert reconstructed_before["state_revision"] == 0
+    assert current_before == reconstructed_before
+    assert transaction_before is None
+    assert resolved_before is None
+
+    recovered = store.recover(PROJECT_ID)
+    current_after = store.load_current(PROJECT_ID)
+    reconstructed_after = store.reconstruct(PROJECT_ID)
+    transaction_after = store.resolve_transaction(PROJECT_ID, event["transaction_id"])
+    resolved_after = store.resolve_record(PROJECT_ID, record_kind, record_id)
+
+    pre_commit_intent = STAGES[: STAGES.index("AFTER_COMMIT_INTENT")]
+    if stage in pre_commit_intent:
+        assert recovered["state_revision"] == 0
+        assert current_after["state_revision"] == 0
+        assert reconstructed_after["state_revision"] == 0
+        assert transaction_after is None
+        assert resolved_after is None
+    else:
+        assert recovered["state_revision"] == 1
+        assert current_after["state_revision"] == 1
+        assert reconstructed_after["state_revision"] == 1
+        assert current_after == reconstructed_after
+        assert transaction_after is not None
+        assert transaction_after["transaction_id"] == event["transaction_id"]
+        assert resolved_after == record

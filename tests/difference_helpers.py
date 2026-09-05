@@ -629,13 +629,13 @@ def retained_status_predecessor(
         upstream.append(event)
     terminal = upstream[-1] if upstream else deepcopy(head)
 
-    request = _content_addressed_request(
-        difference, terminal, method["observation_method_id"], reason_code
-    )
-    reference = {"kind": "next_observation_request", "id": request["observation_request_id"]}
+    # R9-F3: blocker_kind/blocker_scope are now part of the event's own identity
+    # (difference_event_id) -- set before that identity is (re)computed and before the Next
+    # Observation Request is built from it, never after. blocker_resolution_condition is
+    # not part of that identity (it names the request back, which is itself derived from
+    # this event's id -- see identity.py's own circularity note), so it is still set once
+    # the request's real id is known, below.
     subject_ref = {"kind": "difference", "id": difference_id}
-    if status in {"BLOCKED", "RETAINED", "REOPENED"}:
-        terminal["next_observation_ref"] = deepcopy(reference)
     if status == "BLOCKED":
         terminal.update(
             {
@@ -649,15 +649,24 @@ def retained_status_predecessor(
                     },
                     "blocked_stage": "OBSERVATION",
                 },
-                "blocker_resolution_condition": {
-                    "kind": "blocker_resolution_condition",
-                    "condition_code": "OBSERVATION_PATH_AVAILABLE",
-                    "subject_ref": deepcopy(subject_ref),
-                    "expected_state": "AVAILABLE",
-                    "verification_request_ref": deepcopy(reference),
-                },
             }
         )
+        terminal["difference_event_id"] = lifecycle_event_id(terminal)
+
+    request = _content_addressed_request(
+        difference, terminal, method["observation_method_id"], reason_code
+    )
+    reference = {"kind": "next_observation_request", "id": request["observation_request_id"]}
+    if status in {"BLOCKED", "RETAINED", "REOPENED"}:
+        terminal["next_observation_ref"] = deepcopy(reference)
+    if status == "BLOCKED":
+        terminal["blocker_resolution_condition"] = {
+            "kind": "blocker_resolution_condition",
+            "condition_code": "OBSERVATION_PATH_AVAILABLE",
+            "subject_ref": deepcopy(subject_ref),
+            "expected_state": "AVAILABLE",
+            "verification_request_ref": deepcopy(reference),
+        }
 
     evaluation = deepcopy(fixture["evaluations"][0])
     evaluation.update(

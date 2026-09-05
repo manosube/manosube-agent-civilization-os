@@ -1328,7 +1328,19 @@ def test_r6f4_a_tampered_witness_never_reaches_the_store(tmp_path: Path) -> None
     """When the caller-supplied witness does not verify, ``evaluate_closure`` already
     leaves ``kernel_source_witness_ref`` ``None`` (G19 fails closed on the same tampering) --
     proving Reflow never persists a ``kernel_source_witness`` record from an unverified
-    request field, only from a reference the evaluation itself established."""
+    request field, only from a reference the evaluation itself established.
+
+    R9-F2 (SHUKOU Round 9) sharpens what happens one layer up, through ``reflow.route.
+    reflow``: ``kernel_source_witness`` is the one real Git witness this vertical ever has
+    for the Kernel source (G4's own unconditional floor already requires ``base_kernel_
+    source_ref`` and ``kernel_source_ref`` to be the identical commit/tree, so there is no
+    second, independently-corruptible witness to distinguish) -- ``_resolve_base_kernel_
+    source_ref`` re-verifies that same witness against the canonical State's own committed
+    Source Snapshot chain *before* ``evaluate_closure`` ever runs, so a tampered witness now
+    fails the whole cycle closed (``ReflowValidationError``, nothing committed) rather than
+    only degrading ``evaluate_closure``'s own ``kernel_source_witness_ref`` to ``None`` while
+    the cycle still quietly commits a BLOCKED transition.
+    """
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     project_state = store_ready_for_closure(store)
@@ -1351,36 +1363,41 @@ def test_r6f4_a_tampered_witness_never_reaches_the_store(tmp_path: Path) -> None
     evaluation = evaluate_closure(closure_request)
     assert evaluation["kernel_source_witness_ref"] is None
 
-    result = reflow(
-        store,
-        project_id=project_state["project_id"],
-        closure_request=closure_request,
-        previous_event_id=difference["genesis_event_ref"]["id"],
-        event_revision=1,
-        observation_refs=closure_request["reobservation"]["after_observation_refs"],
-        reflow_instant=REFLOW_INSTANT,
-        blocker_kind="OBSERVATION_PATH",
-        blocker_scope={
-            "kind": "difference_blocker_scope",
-            "affected_subject_refs": {
-                "collection_kind": "UNORDERED_SET",
-                "members": [{"kind": "difference", "id": difference["difference_id"]}],
+    with pytest.raises(ReflowValidationError, match="base Kernel provenance"):
+        reflow(
+            store,
+            project_id=project_state["project_id"],
+            closure_request=closure_request,
+            previous_event_id=difference["genesis_event_ref"]["id"],
+            event_revision=1,
+            observation_refs=closure_request["reobservation"]["after_observation_refs"],
+            reflow_instant=REFLOW_INSTANT,
+            blocker_kind="OBSERVATION_PATH",
+            blocker_scope={
+                "kind": "difference_blocker_scope",
+                "affected_subject_refs": {
+                    "collection_kind": "UNORDERED_SET",
+                    "members": [{"kind": "difference", "id": difference["difference_id"]}],
+                },
+                "effective_boundary": difference["effective_boundary"],
+                "blocked_stage": "OBSERVATION",
             },
-            "effective_boundary": difference["effective_boundary"],
-            "blocked_stage": "OBSERVATION",
-        },
-        blocker_resolution_condition={
-            "kind": "blocker_resolution_condition",
-            "condition_code": "OBSERVATION_PATH_AVAILABLE",
-            "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
-            "expected_state": "AVAILABLE",
-            "verification_request_ref": {"kind": "next_observation_request", "id": "OBS-REQ-" + "6" * 64},
-        },
-        next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "6" * 64},
-    )
-    assert result["evaluation"]["kernel_source_witness_ref"] is None
-    # The id the *untampered* witness would have produced -- proving specifically that
-    # record never reached the Store, not merely that some other id did not.
+            blocker_resolution_condition={
+                "kind": "blocker_resolution_condition",
+                "condition_code": "OBSERVATION_PATH_AVAILABLE",
+                "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
+                "expected_state": "AVAILABLE",
+                "verification_request_ref": {
+                    "kind": "next_observation_request",
+                    "id": "OBS-REQ-" + "6" * 64,
+                },
+            },
+            next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "6" * 64},
+        )
+
+    # Nothing committed at all -- the Store's own current State is untouched, and the id the
+    # *untampered* witness would have produced never reached the Store either.
+    assert store.load_current(project_state["project_id"]) == project_state
     untampered_request = candidate_closure_request(difference, policy, current_state=current_state)
     untampered_id = build_kernel_source_witness_record(
         commit_sha=untampered_request["kernel_source_ref"]["commit_sha"],
@@ -1794,6 +1811,8 @@ def test_r7f1_verify_invariant_independently_derives_the_real_verdict() -> None:
         material_contradictions=[],
         blocking_contradictions=[],
         proposed_terminal_status="CLOSED",
+        evaluated_at=REFLOW_INSTANT,
+        request_contract_keys=frozenset(),
     )
     status, evidence_refs = verify_invariant("R-005", context)
     assert status == "PASS"
@@ -2475,6 +2494,7 @@ def test_r7f6_resolve_source_snapshot_rejects_a_mutable_locator_even_with_a_reco
         "source_locator": "https://mutable.example/branch/main?token=secret",
         "content_digest": "sha256:" + "1" * 64,
         "captured_at": "2026-08-30T09:00:00Z",
+        "git_provenance": None,
     }
     forged["source_snapshot_id"] = source_snapshot_identity(forged)
     ref = {"kind": "source_snapshot", "id": forged["source_snapshot_id"]}
@@ -2492,3 +2512,388 @@ def test_r7f6_resolve_source_snapshot_still_accepts_a_genuine_immutable_locator(
 
     resolved = resolve_source_snapshot(REAL_SNAPSHOT_REF, [REAL_SNAPSHOT_RECORD])
     assert resolved["source_snapshot_id"] == REAL_SNAPSHOT_REF["id"]
+
+
+# =========================================================================================== #
+# Phase 7 structural-review round 9 (R9-F1/R9-F2/R9-F3)
+# =========================================================================================== #
+
+# --- R9-F2: base Kernel provenance resolved from the canonical State's own Source Snapshot -- #
+
+
+def _fresh_store_missing_kernel_provenance(tmp_path: Path) -> tuple[FileStateStore, dict]:
+    """A real Store whose genesis carries no ``state_metadata.source_snapshot_refs`` entry
+    naming the Kernel path at all -- the ``MISSING`` half of R9-F2's fail-closed table."""
+
+    from tests.difference_helpers import objective_revision as _objective_revision
+    from tests.state_helpers import initial_state
+
+    from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = initial_state()
+    project_state["state_metadata"]["source_snapshot_refs"] = []
+    project_state["objective_revision_id"] = _objective_revision()["objective_revision_id"]
+    project_state["semantic_fingerprint"] = fingerprint_project_state(
+        project_state, schema_root=SCHEMA_ROOT
+    ).as_dict()
+    store.initialize(project_state["project_id"], project_state)
+    return store, project_state
+
+
+def test_r9f2_reflow_fails_closed_when_genesis_names_no_kernel_source_snapshot(
+    tmp_path: Path,
+) -> None:
+    """R9-F2: ``GENESIS_KERNEL_PROVENANCE_REQUIRED=true`` -- a genesis State whose own
+    ``state_metadata.source_snapshot_refs`` names nothing at the Kernel path fails the very
+    first Reflow cycle closed, before ``evaluate_closure`` ever runs, rather than silently
+    trusting the caller's own ``base_kernel_source_ref`` claim."""
+
+    store, project_state = _fresh_store_missing_kernel_provenance(tmp_path)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+
+    with pytest.raises(ReflowValidationError, match="base Kernel provenance"):
+        reflow(
+            store,
+            project_id=project_state["project_id"],
+            previous_event_id=difference["genesis_event_ref"]["id"],
+            event_revision=1,
+            closure_request=base_closure_request(difference, policy),
+            observation_refs=[],
+            reflow_instant=REFLOW_INSTANT,
+        )
+    # Nothing committed at all.
+    assert store.load_current(project_state["project_id"]) == project_state
+
+
+def test_r9f2_reflow_fails_closed_on_kernel_source_snapshot_git_provenance_mismatch(
+    tmp_path: Path,
+) -> None:
+    """R9-F2: a genesis State naming a Kernel Source Snapshot whose own ``git_provenance.
+    blob_sha`` disagrees with the pinned ``KERNEL_INVARIANTS_BLOB_SHA`` fails closed -- a
+    Kernel-source inconsistency, not merely an absent reference."""
+
+    from tests.difference_helpers import objective_revision as _objective_revision
+    from tests.state_helpers import initial_state, real_kernel_git_objects
+
+    from manosube_agent_civilization.observation.source_snapshot import build_source_snapshot
+    from manosube_agent_civilization.reflow.invariant_registry import KERNEL_INVARIANTS_PATH
+    from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+
+    # A wholly self-consistent Source Snapshot (its own id genuinely recomputes from its own
+    # content) that simply claims the wrong blob for the pinned Kernel path -- the
+    # "Kernel-source inconsistency" R9-F2 names, distinct from an unresolvable reference.
+    kernel_source_ref, _ = real_kernel_git_objects()
+    tampered_snapshot = build_source_snapshot(
+        source_locator=KERNEL_INVARIANTS_PATH,
+        content_digest="sha256:" + "0" * 64,
+        captured_at="2026-08-29T09:00:00Z",
+        git_provenance={
+            "repository": kernel_source_ref["repository"],
+            "commit_sha": kernel_source_ref["commit_sha"],
+            "tree_sha": kernel_source_ref["tree_sha"],
+            "path": KERNEL_INVARIANTS_PATH,
+            "blob_sha": "0" * 40,
+        },
+    )
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = initial_state()
+    project_state["state_metadata"]["source_snapshot_refs"] = [
+        {"kind": "source_snapshot", "id": tampered_snapshot["source_snapshot_id"]}
+    ]
+    project_state["objective_revision_id"] = _objective_revision()["objective_revision_id"]
+    project_state["semantic_fingerprint"] = fingerprint_project_state(
+        project_state, schema_root=SCHEMA_ROOT
+    ).as_dict()
+    store.initialize(project_state["project_id"], project_state)
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = base_closure_request(difference, policy)
+    request["source_snapshots"] = [tampered_snapshot]
+
+    with pytest.raises(ReflowValidationError, match="base Kernel provenance"):
+        reflow(
+            store,
+            project_id=project_state["project_id"],
+            previous_event_id=difference["genesis_event_ref"]["id"],
+            event_revision=1,
+            closure_request=request,
+            observation_refs=[],
+            reflow_instant=REFLOW_INSTANT,
+        )
+
+
+def test_r9f2_a_real_closed_cycle_resolves_base_kernel_provenance_from_the_store(
+    tmp_path: Path,
+) -> None:
+    """The positive control: a genuine Reflow cycle through a real Store whose genesis
+    already names the real Kernel Source Snapshot resolves ``base_kernel_source_ref`` for
+    real and reaches CLOSED -- R9-F2 wired all the way through, not merely refusing forgeries."""
+
+    _store, _project_state, _difference, result = _closed_store(tmp_path)
+    assert result["decision"]["to_status"] == "CLOSED"
+    evaluated = result["evaluation"]["base_kernel_source_ref_evaluated"]
+    assert evaluated["commit_sha"] == result["evaluation"]["kernel_source_ref_evaluated"]["commit_sha"]
+
+
+# --- R9-F1: real per-invariant verification, not a single mechanical local-field proxy ------ #
+
+
+def _real_g19_context() -> dict[str, Any]:
+    """A real, fully-wired G19 verification context -- the same shape ``candidate_closure_
+    request`` builds internally, exposed here for direct ``verify_invariant`` calls."""
+
+    from tests.difference_helpers import state_fingerprint
+    from tests.reflow_helpers import AFTER_REVISION, EVALUATED_AT, real_kernel_source_witness
+    from tests.state_helpers import initial_state
+
+    from manosube_agent_civilization.difference.invariant_verifiers import (
+        build_invariant_verification_context,
+    )
+    from manosube_agent_civilization.reflow.closure import REQUEST_KEYS, build_after_state_candidate
+    from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {"revision": AFTER_REVISION, "fingerprint": state_fingerprint("KNOWN")}
+    kernel_source_ref, _ = real_kernel_source_witness()
+    semantic_state = initial_state()["semantic_state"]
+    after_state_candidate = build_after_state_candidate(
+        current_state=current_state,
+        kernel_source_ref=kernel_source_ref,
+        semantic_state=semantic_state,
+        semantic_fingerprint=fingerprint_semantic_state(semantic_state).as_dict(),
+        source_snapshot_refs=[],
+        producing_change_refs=[],
+    )
+    return build_invariant_verification_context(
+        policy=policy,
+        difference=difference,
+        current_state=current_state,
+        after_state_candidate=after_state_candidate,
+        resolution_mode="CHANGE_FREE",
+        change_result_evidence=[],
+        change_free_evidence=[],
+        after_observation_ids=set(),
+        source_snapshot_refs=[],
+        source_snapshots=[],
+        sufficiency=None,
+        material_contradictions=[],
+        blocking_contradictions=[],
+        proposed_terminal_status="CLOSED",
+        evaluated_at=EVALUATED_AT,
+        request_contract_keys=REQUEST_KEYS,
+    ), after_state_candidate
+
+
+def test_r9f1_k001_k002_k003_pass_on_the_real_installed_topology() -> None:
+    """The positive control: against this vertical's own real, single-owner installed
+    package, K-001/K-002/K-003's now-real Static topology check genuinely passes -- proving
+    the deepening is not merely a stricter check that never PASSes."""
+
+    from manosube_agent_civilization.difference.invariant_verifiers import verify_invariant
+
+    ctx, _ = _real_g19_context()
+    for invariant_id in ("K-001", "K-002", "K-003"):
+        status, _ = verify_invariant(invariant_id, ctx)
+        assert status == "PASS", invariant_id
+
+
+def test_r9f1_k001_reports_unknown_when_the_topology_inventory_cannot_be_computed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R9-F1: ``UNPROVEN_INVARIANT_MUST_BE_UNKNOWN=true`` -- when the Static topology
+    inventory itself cannot be computed, K-001 reports ``UNKNOWN``, never a silently
+    rounded-up ``PASS`` nor a conflated-with-a-real-violation ``FAIL``."""
+
+    from manosube_agent_civilization import topology
+    from manosube_agent_civilization.difference import invariant_verifiers
+    from manosube_agent_civilization.difference.invariant_verifiers import verify_invariant
+
+    def _raise() -> None:
+        raise RuntimeError("simulated introspection failure")
+
+    monkeypatch.setattr(topology, "k001_single_kernel_entry_point", _raise)
+    monkeypatch.setattr(invariant_verifiers, "k001_single_kernel_entry_point", _raise)
+    ctx, _ = _real_g19_context()
+    status, evidence_refs = verify_invariant("K-001", ctx)
+    assert status == "UNKNOWN"
+    assert evidence_refs == []
+
+
+def test_r9f1_s002_catches_a_semantic_fingerprint_that_does_not_really_recompute() -> None:
+    """R9-F1 deepening: S-002 used to accept any present, shaped-like-a-fingerprint value.
+    Now it independently recomputes the Candidate's own semantic fingerprint and requires an
+    exact match -- a Candidate whose declared fingerprint does not match its own semantic_
+    state content fails closed, which the pre-deepening proxy would have silently passed."""
+
+    from manosube_agent_civilization.difference.invariant_verifiers import verify_invariant
+
+    ctx, after_state_candidate = _real_g19_context()
+    tampered_candidate = dict(after_state_candidate)
+    tampered_candidate["semantic_fingerprint"] = {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "9" * 64,
+    }
+    tampered_ctx = dict(ctx)
+    tampered_ctx["after_state_candidate"] = tampered_candidate
+    status, _ = verify_invariant("S-002", tampered_ctx)
+    assert status == "FAIL"
+    # The positive control: the real, untampered candidate still passes.
+    status, _ = verify_invariant("S-002", ctx)
+    assert status == "PASS"
+
+
+def test_r9f1_a003_fails_when_the_grounding_evidence_postdates_the_evaluation() -> None:
+    """R9-F1 deepening: A-003's real freshness check -- the grounding Change-result
+    Evidence's own ``timestamp`` may not postdate this Evaluation's own ``evaluated_at``. v0.1
+    has no executor to order an authority-grant against an execution-start, but an Evidence
+    record recorded *after* the Evaluation that relies on it is a real, checkable
+    impossibility this deepening now catches."""
+
+    from tests.evidence_helpers import change_result_evidence_request
+
+    from manosube_agent_civilization.difference.invariant_verifiers import verify_invariant
+    from manosube_agent_civilization.evidence.engine import derive_evidence
+
+    ctx, _after_state_candidate = _real_g19_context()
+    future_request = change_result_evidence_request(recorded_at="2099-01-01T00:00:00Z")
+    future_record = derive_evidence(future_request)
+    tampered_ctx = dict(ctx)
+    tampered_ctx["resolution_mode"] = "CHANGE_BOUND"
+    tampered_ctx["change_result_evidence"] = [future_record]
+    status, _ = verify_invariant("A-003", tampered_ctx)
+    assert status == "FAIL"
+
+
+def test_r9f1_a004_no_longer_asserts_authoritys_own_vocabulary() -> None:
+    """R9-F1 correction: A-004 must never itself become a second module asserting one of
+    Authority's own three decision-value literals -- ``tests/contract/authority/
+    test_authority_authority.py``'s own totality sweep is the independent proof; this test
+    pins the narrower, direct fact for this module."""
+
+    import ast
+    import inspect as _inspect
+
+    from manosube_agent_civilization import authority
+    from manosube_agent_civilization.authority import levels
+    from manosube_agent_civilization.difference import invariant_verifiers
+
+    source = _inspect.getsource(invariant_verifiers)
+    tree = ast.parse(source)
+    literal_decisions = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in levels.DECISIONS
+    }
+    assert literal_decisions == set()
+    assert authority  # imported only to prove the module itself is reachable for this check
+
+
+# --- R9-F3: typed terminal-cause binding per blocker_kind ------------------------------------ #
+
+
+def test_r9f3_blocker_kind_must_match_its_own_canonical_condition_code() -> None:
+    """R9-F3: ``blocker_kind`` and ``blocker_resolution_condition.condition_code`` used to
+    be two independently free fields -- a caller could declare ``OBSERVATION_PATH`` alongside
+    ``INVARIANTS_PASS`` and nothing checked the two actually name the same real blocker. The
+    canonical pairing table now refuses that combination closed."""
+
+    from manosube_agent_civilization.reflow.lifecycle import mint_transition_event
+
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    request = base_closure_request(difference, policy)
+
+    _terminal_request, terminal_evidence_id = real_terminal_reason_evidence_fields()
+    evaluation = evaluate_closure(
+        {
+            **request,
+            "terminal_reason_evidence_refs": [
+                {"kind": "observation_evidence", "id": terminal_evidence_id}
+            ],
+            "terminal_reason_evidence_requests": [_terminal_request],
+        }
+    )
+    # mint_transition_event's own last step already calls blocker_payload_errors and refuses
+    # to mint a payload it flags -- so a mismatched pairing never reaches a returned event at
+    # all, caught here at the earliest possible point.
+    with pytest.raises(ReflowValidationError, match="does not match its own canonical condition_code"):
+        mint_transition_event(
+            difference=difference,
+            current_status="VERIFYING",
+            previous_event_id=difference["genesis_event_ref"]["id"],
+            event_revision=1,
+            decision={
+                "to_status": "BLOCKED",
+                "reason_code": "OBSERVATION_UNAVAILABLE",
+                "reason": "",
+                "closure_evaluation_ref": None,
+            },
+            evaluation=evaluation,
+            observation_refs=[],
+            evidence_refs=[{"kind": "observation_evidence", "id": terminal_evidence_id}],
+            blocker_kind="OBSERVATION_PATH",
+            blocker_scope={
+                "kind": "difference_blocker_scope",
+                "affected_subject_refs": {
+                    "collection_kind": "UNORDERED_SET",
+                    "members": [{"kind": "difference", "id": difference["difference_id"]}],
+                },
+                "effective_boundary": difference["effective_boundary"],
+                "blocked_stage": "OBSERVATION",
+            },
+            blocker_resolution_condition={
+                "kind": "blocker_resolution_condition",
+                "condition_code": "INVARIANTS_PASS",
+                "subject_ref": {"kind": "difference", "id": difference["difference_id"]},
+                "expected_state": "PASS",
+                "verification_request_ref": {
+                    "kind": "next_observation_request", "id": "OBS-REQ-" + "7" * 64
+                },
+            },
+            next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "7" * 64},
+        )
+
+
+def test_r9f3_differing_blocker_kind_never_collides_on_the_same_event_identity() -> None:
+    """R9-F3: ``blocker_kind``/``blocker_scope`` are now part of ``difference_event_id``
+    itself -- two otherwise-identical events differing only in which terminal cause they
+    name can no longer share the same identity (before this fix they always did, since the
+    blocker payload sat entirely outside the content address)."""
+
+    from manosube_agent_civilization.difference.identity import lifecycle_event_id
+
+    difference = fixture_difference()
+    base_event = {
+        "difference_id": difference["difference_id"],
+        "event_kind": "TRANSITION",
+        "event_revision": 1,
+        "previous_event_id": difference["genesis_event_ref"]["id"],
+        "from_status": "VERIFYING",
+        "to_status": "BLOCKED",
+        "state_revision_evaluated": 3,
+        "state_fingerprint_evaluated": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "1" * 64},
+        "reason_code": "OBSERVATION_UNAVAILABLE",
+        "observation_refs": [],
+        "evidence_refs": [{"kind": "observation_evidence", "id": "EVID-0001"}],
+    }
+    subject_ref = {"kind": "difference", "id": difference["difference_id"]}
+    scope = {
+        "kind": "difference_blocker_scope",
+        "affected_subject_refs": {"collection_kind": "UNORDERED_SET", "members": [subject_ref]},
+        "effective_boundary": difference["effective_boundary"],
+        "blocked_stage": "OBSERVATION",
+    }
+    observation_event = {**base_event, "blocker_kind": "OBSERVATION_PATH", "blocker_scope": scope}
+    evidence_event = {
+        **base_event,
+        "blocker_kind": "EVIDENCE_INSUFFICIENT",
+        "blocker_scope": {**scope, "blocked_stage": "DIFFERENCE_EVALUATION"},
+    }
+    assert lifecycle_event_id(observation_event) != lifecycle_event_id(evidence_event)

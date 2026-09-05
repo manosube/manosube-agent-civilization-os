@@ -68,12 +68,27 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.observation.errors import ObservationError
 from manosube_agent_civilization.observation.source_snapshot import resolve_source_snapshot
+from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
+from manosube_agent_civilization.topology import (
+    k001_single_kernel_entry_point,
+    k002_single_canonical_state_owner,
+    k003_single_authority_and_transition_owner,
+    r001_single_atomic_committer,
+    r002_single_lineage_owner,
+)
 
 from .identity import difference_id as recompute_difference_id, policy_semantic_fingerprint
 
 VerificationContext = dict[str, Any]
+
+#: A verifier's real, three-way verdict on its own claim -- ``True``/``False`` for a
+#: decidable PASS/FAIL, or the literal string ``"UNKNOWN"`` when the check this vertical can
+#: actually perform is itself indeterminate (R9-F1: ``UNPROVEN_INVARIANT_MUST_BE_UNKNOWN=
+#: true`` -- an unprovable claim is never silently rounded up to ``True``).
+VerifierResult = bool | str
 
 #: The literal Evidence Level scale ``01_SCHEMA/evidence/evidence.schema.json`` pins for
 #: ``evidence_level`` -- duplicated here (a fixed six-member enum, not derived logic) only
@@ -102,6 +117,15 @@ CONTEXT_KEYS: frozenset[str] = frozenset(
         "material_contradictions",
         "blocking_contradictions",
         "proposed_terminal_status",
+        # R9-F1: A-003's real timestamp/freshness deepening needs the instant this
+        # Evaluation itself is being evaluated at (never the wall clock -- the same
+        # evaluator-time discipline G18/F5 already established).
+        "evaluated_at",
+        # R9-F1: X-001's real deepening needs the actual, closed request-contract key set
+        # this Evaluation's own caller defines (``reflow.closure.REQUEST_KEYS`` -- handed in
+        # as data by that caller, never imported directly here: ``difference`` does not
+        # depend on ``reflow``, see ``topology.py``'s own docstring on this layering).
+        "request_contract_keys",
     }
 )
 
@@ -163,17 +187,35 @@ def _no_weak_observation_status(records: list[dict[str, Any]]) -> bool:
 
 # --- K: Kernel Identity ----------------------------------------------------------------- #
 #
-# K-001/K-002/K-003's own REQUIRED_EVIDENCE names whole-codebase inventories this vertical
-# has no owner for (see module docstring). Each verifier below checks the sharpest real
-# fact actually available instead.
+# R9-F1 (SHUKOU Round 9, closing R8-F1's own disclosed gap): K-001/K-002/K-003 are no longer
+# a permanent local-field proxy accepted as PASS regardless of whether it actually proves the
+# Invariant's own whole-codebase CLAIM (K001_K002_K003_PARTIAL_PASS_ACCEPTED=false). Each is
+# now the conjunction of two real, independent facts: the Static repository-topology
+# inventory (:mod:`manosube_agent_civilization.topology` -- singular ownership of the
+# Kernel entry point / State surface / Authority and transition producers, computed once from
+# the installed package itself) *and* the same Natural-Cycle local binding this round's
+# predecessor already checked (this call's own inputs are consistent with there being one
+# canonical pairing/State/resolution-path). ``KERNEL_INVARIANTS.md`` section 15's own
+# Verification Matrix lists Kernel Identity invariants at both stages, so both are required,
+# never either alone. If the topology inventory itself cannot be computed (an installed
+# package that fails to introspect at all), the honest answer is ``"UNKNOWN"``
+# (``UNPROVEN_INVARIANT_MUST_BE_UNKNOWN=true``) rather than a silent PASS or FAIL.
 
 
-def _k001(ctx: VerificationContext) -> bool:
-    """Partial (SEMANTIC_DECISION_REQUIRED, see module docstring): binds this Evaluation to
-    exactly one Policy governing exactly one Difference, both content-address verified --
-    proof this call names one canonical (Policy, Difference) pairing, not proof only one
-    Kernel implementation exists in the tree."""
+def _k001(ctx: VerificationContext) -> VerifierResult:
+    """K-001 EXACTLY_ONE_CANONICAL_KERNEL: the Static topology fact (exactly one
+    ``evaluate_closure`` producer in the installed package) *and* the Natural-Cycle local
+    fact (this Evaluation binds exactly one Policy to exactly one Difference, both
+    content-address verified) together -- proof both that only one Kernel implementation
+    exists in the tree, and that this call names one canonical (Policy, Difference) pairing
+    within it."""
 
+    try:
+        topology_ok = k001_single_kernel_entry_point()
+    except Exception:
+        return "UNKNOWN"
+    if not topology_ok:
+        return False
     policy = ctx["policy"]
     subject = policy.get("subject_difference_ref") or {}
     return bool(
@@ -181,19 +223,37 @@ def _k001(ctx: VerificationContext) -> bool:
     )
 
 
-def _k002(ctx: VerificationContext) -> bool:
-    """Partial (SEMANTIC_DECISION_REQUIRED): the Candidate's own ``base_state_ref`` is
-    exactly the one canonical State this Evaluation loaded -- proof no second State source
-    was consulted for *this* Candidate, not proof only one State owner exists system-wide."""
+def _k002(ctx: VerificationContext) -> VerifierResult:
+    """K-002 (canonical State ownership): the Static topology fact (exactly one concrete
+    class implements the full canonical-State surface) *and* the Natural-Cycle local fact
+    (the Candidate's own ``base_state_ref`` is exactly the one canonical State this
+    Evaluation loaded, so no second State source was consulted for *this* Candidate) --
+    proof both that only one State owner exists system-wide, and that this call actually used
+    it."""
 
+    try:
+        topology_ok = k002_single_canonical_state_owner()
+    except Exception:
+        return "UNKNOWN"
+    if not topology_ok:
+        return False
     return _base_state_matches_current(ctx)
 
 
-def _k003(ctx: VerificationContext) -> bool:
-    """Partial (SEMANTIC_DECISION_REQUIRED): exactly one resolution path is bound, and (for
-    CHANGE_BOUND) exactly one authorizing Change grounds it -- never zero, never two
-    competing ones."""
+def _k003(ctx: VerificationContext) -> VerifierResult:
+    """K-003 (Authority/transition/persistence ownership, absence of parallel canonical
+    authority): the Static topology fact (exactly one Authority producer, one Reflow
+    transition committer, and the same single State owner K-002 already proved) *and* the
+    Natural-Cycle local fact (exactly one resolution path is bound this cycle, and, for
+    CHANGE_BOUND, exactly one authorizing Change grounds it -- never zero, never two
+    competing ones)."""
 
+    try:
+        topology_ok = k003_single_authority_and_transition_owner()
+    except Exception:
+        return "UNKNOWN"
+    if not topology_ok:
+        return False
     candidate = ctx["after_state_candidate"]
     producing = candidate.get("producing_change_refs", {}).get("members", [])
     if ctx["resolution_mode"] == "CHANGE_BOUND":
@@ -238,32 +298,72 @@ def _a002(ctx: VerificationContext) -> bool:
 
 
 def _a003(ctx: VerificationContext) -> bool:
-    """A-003 AUTHORITY_PRECEDES_EXECUTION: v0.1 has no executor (``execution_result`` is
-    schema-pinned null; there is no ``execution_started_at`` to order against an
-    ``authority_granted_at``), so the literal timing claim is not decidable here. What is
-    real and checked: the Authority decision grounding a CHANGE_BOUND result is itself a
-    real, identified record (``authority_decision_id``/``decision_semantic_fingerprint``
-    present), never a bare capability assertion standing in for one."""
+    """A-003 AUTHORITY_PRECEDES_EXECUTION, deepened (R9-F1): v0.1 has no executor
+    (``execution_result`` is schema-pinned null; there is no ``execution_started_at`` to
+    order against an ``authority_granted_at``), so the literal timing claim is still not
+    decidable in full. What is real and checked, beyond the Authority decision's own
+    identity (``id``/``decision_semantic_fingerprint`` present, never a bare capability
+    assertion standing in for one): the grounding Change-result Evidence's own top-level
+    ``timestamp`` is a real, parseable canonical instant that does not come *after* this
+    Evaluation's own ``evaluated_at`` -- a real, checkable ordering fact (the Evidence this
+    Authority decision grounds cannot itself be recorded in this Evaluation's own future),
+    even though the deeper Authority-decision-to-execution-start ordering v0.1 has no
+    executor to supply remains undecidable."""
+
+    if not _change_bound(ctx):
+        return True
+    evaluated_at = ctx["evaluated_at"]
+    try:
+        evaluated_instant = instant(evaluated_at) if evaluated_at else None
+    except Exception:
+        evaluated_instant = None
+    if evaluated_instant is None:
+        return False
+    for record in _change_result_records(ctx):
+        authority_used = record.get("authority_used") or {}
+        if not bool(authority_used.get("id")) or not bool(
+            authority_used.get("decision_semantic_fingerprint")
+        ):
+            return False
+        timestamp = record.get("timestamp")
+        if not isinstance(timestamp, str) or not timestamp:
+            return False
+        try:
+            if instant(timestamp) > evaluated_instant:
+                return False
+        except Exception:
+            return False
+    return True
+
+
+def _a004(ctx: VerificationContext) -> bool:
+    """A-004 PROHIBITION_OVERRIDES_CAPABILITY, corrected (R9-F1): an earlier round checked
+    this field against the literal string ``"AUTHORIZED"`` -- a value ``evidence.schema.
+    json``'s own ``authority_binding`` def (``"decision": {"const": "AUTONOMOUS"}``) never
+    permits there, so that check could never actually pass against a real record. The
+    correction is *not* to compare against the literal ``"AUTONOMOUS"`` string instead:
+    ``tests/contract/authority/test_authority_authority.py``'s own
+    ``test_no_module_outside_the_owner_produces_a_decision`` deliberately fails closed on any
+    module outside :mod:`~manosube_agent_civilization.authority` that so much as *names* one
+    of Authority's own three decision values as a literal -- and ``authority`` itself already
+    depends on ``difference`` (``authority/engine.py`` imports ``difference.admissibility``
+    et al.), so ``difference`` importing ``authority.levels.AUTONOMOUS`` back would be a real
+    circular dependency, not merely a style question. What is real and checked here, from
+    this layer's own vantage point, without duplicating Authority's vocabulary: a real,
+    identified Authority decision (A-002's own presence check) grounds every Change-result
+    Evidence record -- the schema's own ``const`` already fixes what value that decision can
+    ever be for a record that reaches this evaluator at all (a caller must tamper the record
+    *after* construction to defeat it, which is exactly what B-002/B-003's own content-address
+    and locator re-verification, not this invariant, is positioned to catch). Disclosed, not
+    silently absorbed: this invariant's own literal-decision-value claim is therefore not
+    independently re-provable from ``difference`` without either restating Authority's
+    vocabulary or importing it -- both refused above."""
 
     if not _change_bound(ctx):
         return True
     return all(
         bool((record.get("authority_used") or {}).get("id"))
         and bool((record.get("authority_used") or {}).get("decision_semantic_fingerprint"))
-        for record in _change_result_records(ctx)
-    )
-
-
-def _a004(ctx: VerificationContext) -> bool:
-    """A-004 PROHIBITION_OVERRIDES_CAPABILITY: the grounding Authority decision's own
-    ``decision`` field is exactly ``AUTHORIZED`` -- a PROHIBITED decision could never have
-    produced a real Change record in the first place (``derive_change`` refuses it), so this
-    catches a record whose ``authority_used`` was tampered to claim otherwise."""
-
-    if not _change_bound(ctx):
-        return True
-    return all(
-        (record.get("authority_used") or {}).get("decision") == "AUTHORIZED"
         for record in _change_result_records(ctx)
     )
 
@@ -302,10 +402,23 @@ def _s001(ctx: VerificationContext) -> bool:
 
 
 def _s002(ctx: VerificationContext) -> bool:
-    """S-002 SEMANTIC_FINGERPRINT_DETERMINISTIC is literally this check: the Candidate's own
-    ``semantic_fingerprint`` is present and structurally a real fingerprint object."""
+    """S-002 SEMANTIC_FINGERPRINT_DETERMINISTIC, deepened (R9-F1): the Candidate's own
+    ``semantic_fingerprint`` is not merely present and shaped like one -- it is independently
+    *recomputed* from the Candidate's own ``semantic_state`` (:func:`~manosube_agent_
+    civilization.state.fingerprint.fingerprint_semantic_state`, the same real, deterministic
+    function ``state.canonicalize`` builds on) and must equal the declared value exactly.
+    Determinism is precisely the property that a second, independent recomputation from the
+    same semantic content always agrees -- checking presence/shape alone (the previous
+    round's proxy) never actually exercised that."""
 
-    return _candidate_fingerprint_consistent(ctx)
+    if not _candidate_fingerprint_consistent(ctx):
+        return False
+    candidate = ctx["after_state_candidate"]
+    try:
+        recomputed = fingerprint_semantic_state(candidate["semantic_state"]).as_dict()
+    except Exception:
+        return False
+    return recomputed == candidate["semantic_fingerprint"]
 
 
 def _s003(ctx: VerificationContext) -> bool:
@@ -323,14 +436,23 @@ def _s004(ctx: VerificationContext) -> bool:
     return _base_state_matches_current(ctx)
 
 
-def _s005(ctx: VerificationContext) -> bool:
-    """S-005 CURRENT_STATE_RECONSTRUCTABLE is ``FileStateStore.reconstruct``'s own
-    guarantee, proven by that module's own tests (``scripts/verify_state_store.py``'s
-    ``LINEAGE_RECONSTRUCTABLE``) -- a property of the append-only log after commit, not of
-    any pre-commit Candidate this evaluator can observe. What is real and checked here: the
+def _s005(ctx: VerificationContext) -> VerifierResult:
+    """S-005 CURRENT_STATE_RECONSTRUCTABLE, deepened (R9-F1): reconstruction being genuinely
+    possible after commit is not something a pre-commit Evaluation can itself observe -- what
+    is real and reproducible *before* commit is the Static topology fact that exactly one
+    canonical class in the installed package actually implements ``reconstruct`` at all (the
+    same single State-owner inventory K-002 already proved -- a second, competing
+    reconstruction path would make "the" reconstructable State ambiguous even if some
+    class's own log replay worked), combined with the Natural-Cycle local fact that the
     current State this Evaluation itself loaded carries a well-formed revision/fingerprint
-    pair to reconstruct *from*."""
+    pair to reconstruct *from* in the first place."""
 
+    try:
+        topology_ok = k002_single_canonical_state_owner()
+    except Exception:
+        return "UNKNOWN"
+    if not topology_ok:
+        return False
     current_state = ctx["current_state"]
     fingerprint = current_state.get("fingerprint")
     revision = current_state.get("revision")
@@ -564,22 +686,40 @@ def _e005(ctx: VerificationContext) -> bool:
 # --- R: Reflow and Lineage -------------------------------------------------------------------- #
 
 
-def _r001(ctx: VerificationContext) -> bool:
-    """R-001 REFLOW_ATOMIC is ``FileStateStore.commit``'s own guarantee, proven by that
-    module's own tests after this Evaluation returns (see module docstring). What is real
-    and checked here: the Candidate this Evaluation would hand to that commit is itself a
-    real, fingerprint-consistent body, not something already malformed before commit even
-    begins."""
+def _r001(ctx: VerificationContext) -> VerifierResult:
+    """R-001 REFLOW_ATOMIC, deepened (R9-F1): atomicity is ``FileStateStore.commit``'s own
+    guarantee, proven by that module's own tests after this Evaluation returns -- but
+    *which* commit path this cycle would actually go through is itself a real, checkable
+    Static fact: the same single canonical State-owner inventory K-002 already proved (one
+    class implements the write path this Evaluation would hand its Candidate to, not a
+    choice between two competing commit implementations). Combined, as always, with the
+    Natural-Cycle local fact that the Candidate this Evaluation would hand to that commit is
+    itself a real, fingerprint-consistent body, not something already malformed before
+    commit even begins."""
 
+    try:
+        topology_ok = r001_single_atomic_committer()
+    except Exception:
+        return "UNKNOWN"
+    if not topology_ok:
+        return False
     return _candidate_fingerprint_consistent(ctx)
 
 
-def _r002(ctx: VerificationContext) -> bool:
-    """R-002 LINEAGE_APPEND_ONLY is likewise the Store's own guarantee (see R-001). What is
-    real and checked here: the Candidate's declared base is exactly the current lineage
-    head this Evaluation loaded -- it does not propose appending after rewriting or
-    skipping a position."""
+def _r002(ctx: VerificationContext) -> VerifierResult:
+    """R-002 LINEAGE_APPEND_ONLY, deepened (R9-F1): likewise the Store's own guarantee (see
+    R-001), with the identical Static topology half -- one canonical lineage owner, not a
+    second append path a caller could otherwise reach -- combined with the Natural-Cycle
+    local fact that the Candidate's declared base is exactly the current lineage head this
+    Evaluation loaded -- it does not propose appending after rewriting or skipping a
+    position."""
 
+    try:
+        topology_ok = r002_single_lineage_owner()
+    except Exception:
+        return "UNKNOWN"
+    if not topology_ok:
+        return False
     return _base_state_matches_current(ctx)
 
 
@@ -667,17 +807,35 @@ def _b004(ctx: VerificationContext) -> bool:
 # --- X: External Surface --------------------------------------------------------------------- #
 
 
+#: Substrings an adapter-shaped request-contract field name would plausibly carry (a PR/
+#: issue/CI/webhook reference an external Adapter could use to assert Objective/Authority/
+#: Closure/State on its own) -- X-001's real, reproducible scan target (R9-F1 deepening).
+_ADAPTER_SHAPED_KEY_SUBSTRINGS: tuple[str, ...] = (
+    "github", "pull_request", "pr_", "issue", "webhook", "ci_", "adapter",
+)
+
+
 def _x001(ctx: VerificationContext) -> bool:
-    """X-001 ADAPTER_NOT_AUTHORITY: this Evaluation's own request contract
-    (``reflow/closure.py``'s ``REQUEST_KEYS``) carries no adapter-shaped field at all -- no
-    PR/issue/CI reference anywhere an Adapter could use to assert Objective/Authority/
-    Closure/State on its own -- so the current State this Evaluation binds against is
-    structurally reachable only through the fields this vertical's own schema admits.
-    Checked here: that binding is real (the current State this Evaluation reads carries
-    exactly the closed shape this contract defines, no extra channel smuggled in)."""
+    """X-001 ADAPTER_NOT_AUTHORITY, deepened (R9-F1): this Evaluation's own request contract
+    (the real, closed field set the caller hands in as ``request_contract_keys`` --
+    ``reflow/closure.py``'s own ``REQUEST_KEYS``, never imported directly here: ``difference``
+    does not depend on ``reflow``) is scanned for any field name shaped like a PR/issue/CI/
+    webhook reference an external Adapter could use to assert Objective/Authority/Closure/
+    State on its own -- a real, reproducible inventory of the actual contract, not only the
+    previous round's check that a single runtime value happens to omit such a field. Combined
+    with that same runtime check: the current State this Evaluation reads carries exactly the
+    closed ``{revision, fingerprint}`` shape this contract defines, no extra channel smuggled
+    in."""
 
     current_state = ctx["current_state"]
-    return set(current_state.keys()) == {"revision", "fingerprint"}
+    if set(current_state.keys()) != {"revision", "fingerprint"}:
+        return False
+    contract_keys = ctx["request_contract_keys"]
+    return not any(
+        substring in key.lower()
+        for key in contract_keys
+        for substring in _ADAPTER_SHAPED_KEY_SUBSTRINGS
+    )
 
 
 def _x002(ctx: VerificationContext) -> bool:
@@ -737,7 +895,7 @@ def _p004(ctx: VerificationContext) -> bool:
     return not (ctx.get("blocking_contradictions") or [])
 
 
-_VERIFIERS: dict[str, Callable[[VerificationContext], bool]] = {
+_VERIFIERS: dict[str, Callable[[VerificationContext], VerifierResult]] = {
     "K-001": _k001,
     "K-002": _k002,
     "K-003": _k003,
@@ -817,6 +975,89 @@ _EVIDENCE_SOURCE: dict[str, str] = {
 }
 
 
+#: R9-F1 (SHUKOU Round 9): every mandatory invariant's own ``(verification_stage, method)``,
+#: never a single mechanical ``("CANDIDATE_CLOSURE", "STRUCTURAL_CHECK")`` default for all 47
+#: (``INVARIANT_VERIFICATION_STAGE_MUST_MATCH_CONTRACT=true``/``INVARIANT_METHOD_MUST_MATCH_
+#: CLAIM=true``). ``verification_stage`` is drawn from ``KERNEL_INVARIANTS.md`` section 15's
+#: own Verification Matrix, crossed with what this evaluator's own call actually is (a real
+#: per-Reflow-cycle evaluation -- the Matrix's own "Natural Cycle" column) and with the two
+#: stages this round's own topology inventory genuinely adds for K-001/K-002/K-003/R-001/
+#: R-002/S-005 ("Static" *and* "Natural Cycle", both required). The Matrix marks External
+#: Surface's own Natural Cycle column "v0.3以降" (not yet required in v0.1) -- so X-001/
+#: X-002/X-004 are labelled "INTEGRATION" instead, the sharpest stage the Matrix already
+#: lists ✓ for that class in v0.1 that this evaluator's own real per-request-contract check
+#: actually demonstrates. ``method`` names the real technique each verifier function above
+#: actually performs -- never a placeholder that happens to be the same string for all 47.
+_STATIC_AND_NATURAL_CYCLE = "STATIC_AND_NATURAL_CYCLE"
+_NATURAL_CYCLE = "NATURAL_CYCLE"
+_INTEGRATION = "INTEGRATION"
+
+_VERIFICATION_META: dict[str, tuple[str, str]] = {
+    "K-001": (_STATIC_AND_NATURAL_CYCLE, "REPOSITORY_TOPOLOGY_INVENTORY_AND_POLICY_DIFFERENCE_BINDING"),
+    "K-002": (_STATIC_AND_NATURAL_CYCLE, "REPOSITORY_TOPOLOGY_INVENTORY_AND_BASE_STATE_BINDING"),
+    "K-003": (_STATIC_AND_NATURAL_CYCLE, "REPOSITORY_TOPOLOGY_INVENTORY_AND_RESOLUTION_PATH_BINDING"),
+    "K-004": (_NATURAL_CYCLE, "CAUSAL_PREDECESSOR_PRESENCE_CHECK"),
+    "A-001": (_NATURAL_CYCLE, "CONTENT_ADDRESS_RECOMPUTATION"),
+    "A-002": (_NATURAL_CYCLE, "AUTHORITY_BINDING_PRESENCE_CHECK"),
+    "A-003": (_NATURAL_CYCLE, "AUTHORITY_DECISION_IDENTITY_AND_TIMESTAMP_FRESHNESS_CHECK"),
+    "A-004": (_NATURAL_CYCLE, "AUTHORITY_DECISION_FIELD_CHECK"),
+    "A-005": (_NATURAL_CYCLE, "CHANGE_AND_STATE_BINDING_FIELD_CHECK"),
+    "S-001": (_NATURAL_CYCLE, "SEMANTIC_FINGERPRINT_RECOMPUTATION"),
+    "S-002": (_NATURAL_CYCLE, "SEMANTIC_FINGERPRINT_RECOMPUTATION"),
+    "S-003": (_NATURAL_CYCLE, "SEMANTIC_FINGERPRINT_RECOMPUTATION"),
+    "S-004": (_NATURAL_CYCLE, "BASE_STATE_REVISION_BINDING"),
+    "S-005": (_STATIC_AND_NATURAL_CYCLE, "REPOSITORY_TOPOLOGY_INVENTORY_AND_STATE_BINDING"),
+    "O-001": (_NATURAL_CYCLE, "SCHEMA_FIELD_PRESENCE_CHECK"),
+    "O-002": (_NATURAL_CYCLE, "EVIDENCE_FIELD_PRESENCE_CHECK"),
+    "O-003": (_NATURAL_CYCLE, "EVIDENCE_STATUS_ENUM_CHECK_AND_SUFFICIENCY_BINDING"),
+    "O-004": (_NATURAL_CYCLE, "TARGET_OPERATOR_SCOPE_CHECK"),
+    "D-001": (_NATURAL_CYCLE, "CONTENT_ADDRESS_RECOMPUTATION"),
+    "D-002": (_NATURAL_CYCLE, "SCHEMA_FIELD_PRESENCE_CHECK"),
+    "D-003": (_NATURAL_CYCLE, "OBSERVATION_IDENTITY_OVERLAP_CHECK"),
+    "D-004": (_NATURAL_CYCLE, "OBSERVATION_IDENTITY_PRESENCE_CHECK"),
+    "C-001": (_NATURAL_CYCLE, "EVIDENCE_DIFFERENCE_BINDING_CHECK"),
+    "C-002": (_NATURAL_CYCLE, "EVIDENCE_FIELD_PRESENCE_CHECK"),
+    "C-003": (_NATURAL_CYCLE, "BEFORE_STATE_REVISION_BINDING"),
+    "C-004": (_NATURAL_CYCLE, "EVIDENCE_FIELD_PRESENCE_CHECK"),
+    "C-005": (_NATURAL_CYCLE, "SEMANTIC_FINGERPRINT_RECOMPUTATION"),
+    "E-001": (_NATURAL_CYCLE, "SUFFICIENCY_EVIDENCE_PRESENCE_CHECK"),
+    "E-002": (_NATURAL_CYCLE, "EVIDENCE_FIELD_PRESENCE_CHECK"),
+    "E-003": (_NATURAL_CYCLE, "EVIDENCE_IDENTITY_PRESENCE_CHECK"),
+    "E-004": (_NATURAL_CYCLE, "SUFFICIENCY_RESULT_CHECK"),
+    "E-005": (_NATURAL_CYCLE, "EVIDENCE_LEVEL_ENUM_CHECK"),
+    "R-001": (_STATIC_AND_NATURAL_CYCLE, "REPOSITORY_TOPOLOGY_INVENTORY_AND_FINGERPRINT_RECOMPUTATION"),
+    "R-002": (_STATIC_AND_NATURAL_CYCLE, "REPOSITORY_TOPOLOGY_INVENTORY_AND_BASE_STATE_BINDING"),
+    "R-003": (_NATURAL_CYCLE, "STATE_REVISION_MONOTONICITY_CHECK"),
+    "R-004": (_NATURAL_CYCLE, "CONTRADICTION_IDENTITY_UNIQUENESS_CHECK"),
+    "R-005": (_NATURAL_CYCLE, "TERMINAL_STATUS_ENUM_CHECK"),
+    "B-001": (_NATURAL_CYCLE, "EVIDENCE_FIELD_PRESENCE_CHECK"),
+    "B-002": (_NATURAL_CYCLE, "CONTENT_ADDRESS_RECOMPUTATION"),
+    "B-003": (_NATURAL_CYCLE, "SOURCE_LOCATOR_VALIDATION"),
+    "B-004": (_NATURAL_CYCLE, "SOURCE_LOCATOR_VALIDATION"),
+    "X-001": (_INTEGRATION, "REQUEST_CONTRACT_FIELD_INVENTORY_AND_STATE_SHAPE_CHECK"),
+    "X-002": (_INTEGRATION, "REQUEST_CONTRACT_FIELD_INVENTORY_AND_LOCATOR_VALIDATION"),
+    "X-004": (_INTEGRATION, "SUFFICIENCY_IDENTITY_BINDING_CHECK"),
+    "P-001": (_NATURAL_CYCLE, "EVIDENCE_LEVEL_ENUM_CHECK"),
+    "P-002": (_NATURAL_CYCLE, "SOURCE_SNAPSHOT_IDENTITY_CROSS_REFERENCE"),
+    "P-004": (_NATURAL_CYCLE, "CONTRADICTION_PRESENCE_CHECK"),
+}
+
+#: The one fixed value an invariant id this dispatch has no verifier for -- and, symmetrically,
+#: no verification-stage/method entry for -- reports. Never fabricated per-id metadata for an
+#: unimplemented check.
+_UNIMPLEMENTED_VERIFICATION_META = ("NATURAL_CYCLE", "UNIMPLEMENTED_VERIFIER")
+
+
+def verification_stage_and_method(invariant_id: str) -> tuple[str, str]:
+    """Return the real ``(verification_stage, method)`` pair *invariant_id* is independently
+    known to use -- a fixed fact about the technique itself (see :data:`_VERIFICATION_META`),
+    never a caller-suppliable value :func:`~manosube_agent_civilization.difference.
+    invariant_evaluation.resolve_invariant_evaluation` could be talked into accepting a
+    different value for."""
+
+    return _VERIFICATION_META.get(invariant_id, _UNIMPLEMENTED_VERIFICATION_META)
+
+
 def _evidence_refs_for(invariant_id: str, ctx: VerificationContext) -> list[dict[str, str]]:
     source = _EVIDENCE_SOURCE.get(invariant_id)
     if source is None:
@@ -858,6 +1099,8 @@ def build_invariant_verification_context(
     material_contradictions: list[dict[str, Any]],
     blocking_contradictions: list[dict[str, Any]],
     proposed_terminal_status: str | None,
+    evaluated_at: str,
+    request_contract_keys: frozenset[str] | set[str],
 ) -> VerificationContext:
     """Build one *context* dict from data both the evaluator (``reflow/closure.py``'s G19)
     and the atomic preflight/persistence layer (``reflow/route.py``) already independently
@@ -869,6 +1112,12 @@ def build_invariant_verification_context(
     reference); a ref that fails to resolve is simply excluded -- the caller's own gates
     already reflect that failure, and there is nothing further for this context to add for
     it.
+
+    R9-F1: *evaluated_at* is this Evaluation's own evaluator-time instant (A-003's real
+    freshness check), and *request_contract_keys* is the real, closed request-contract key
+    set the caller already defines (``reflow.closure.REQUEST_KEYS`` -- X-001's real
+    contract-shape inventory) -- both handed in as data, never resolved by this function
+    itself.
     """
 
     resolved_snapshots: list[dict[str, Any]] = []
@@ -892,6 +1141,8 @@ def build_invariant_verification_context(
         "material_contradictions": material_contradictions,
         "blocking_contradictions": blocking_contradictions,
         "proposed_terminal_status": proposed_terminal_status,
+        "evaluated_at": evaluated_at,
+        "request_contract_keys": set(request_contract_keys),
     }
 
 
@@ -905,6 +1156,13 @@ def verify_invariant(
     with no natural Evidence grounding). An *invariant_id* this dispatch carries no
     verifier for returns ``("FAIL", [])``: the disposition's own explicit instruction for
     an unimplemented verifier.
+
+    R9-F1: a verifier may also return the literal string ``"UNKNOWN"`` -- this vertical's
+    own check for that invariant is itself indeterminate (the Static topology inventory
+    could not be computed), never silently rounded up to ``PASS`` nor down to a
+    conflated-with-a-real-violation ``FAIL`` (``UNPROVEN_INVARIANT_MUST_BE_UNKNOWN=true``).
+    ``evidence_refs`` stays empty for ``UNKNOWN``, exactly as for ``FAIL``: nothing genuinely
+    grounds a verdict this vertical could not actually reach.
     """
 
     missing = CONTEXT_KEYS - set(context)
@@ -914,9 +1172,11 @@ def verify_invariant(
     if verifier is None:
         return "FAIL", []
     try:
-        passed = verifier(context)
+        outcome = verifier(context)
     except (KeyError, TypeError, AttributeError):
         return "FAIL", []
-    if not passed:
+    if outcome == "UNKNOWN":
+        return "UNKNOWN", []
+    if not outcome:
         return "FAIL", []
     return "PASS", _evidence_refs_for(invariant_id, context)
