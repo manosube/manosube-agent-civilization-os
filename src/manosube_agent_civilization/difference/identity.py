@@ -287,16 +287,40 @@ _EVENT_IDENTITY_FIELDS = (
     "reason_code",
     "observation_refs",
     "evidence_refs",
+    # R9-F3 (SHUKOU Round 9): the blocker payload used to sit almost entirely outside this
+    # projection -- a schema-valid event could retain its own identity while its
+    # blocker_kind/blocker_scope were forged, since nothing about *which* terminal cause an
+    # event names was part of what made the event *this* event. Two differing blocker
+    # payloads can no longer collide on the same difference_event_id. This vertical has no
+    # CLOSURE_POLICY.md-style frozen content-address formula for this identity (unlike,
+    # e.g., Invariant Evaluation's own ``INVARIANT_EVALUATION_SCALARS``) -- widening it here
+    # is this module's own choice, not a break of a pinned contract profile.
+    #
+    # ``blocker_resolution_condition`` is deliberately NOT added here, for the identical
+    # circularity reason ``next_observation_ref`` is already excluded: its own
+    # ``verification_request_ref`` names the very Next Observation Request that is itself
+    # derived *from* this event (the request's own content address embeds this event's
+    # ``difference_event_id`` as its ``derived_from_event_ref``) -- including the condition
+    # object here would make the event's own identity depend on a request that depends on
+    # that identity. ``blocker_kind``/``blocker_scope`` already carry this event's own
+    # terminal-cause semantics without that forward reference (R9-F3's own canonical
+    # ``BLOCKER_KIND_CONDITION_CODE`` pairing, enforced in ``blocker_payload_errors``, means
+    # a fixed ``blocker_kind`` already pins one fixed ``condition_code`` too, so the
+    # resolution condition's own identity-bearing content is not actually lost).
+    "blocker_kind",
+    "blocker_scope",
 )
 
 
 def lifecycle_event_id(event: dict[str, Any]) -> str:
     """Return the deterministic identity of a Difference Lifecycle Event.
 
-    The identity input is the event's lineage position and transition semantics. The
-    forward-looking ``next_observation_ref`` is excluded because the Next Observation
-    Request is derived *from* this event and references it back; including it would make
-    both identities circular.
+    The identity input is the event's lineage position, transition semantics, and (R9-F3)
+    its own declared ``blocker_kind``/``blocker_scope``. The forward-looking
+    ``next_observation_ref`` (and, for the same circularity reason, the full
+    ``blocker_resolution_condition`` object) is excluded because the Next Observation
+    Request is derived *from* this event and references it back; including either would
+    make both identities circular.
     """
 
     projection = {key: event[key] for key in _EVENT_IDENTITY_FIELDS}

@@ -55,6 +55,7 @@ __all__ = [
     "artifact",
     "before_observation_request",
     "blocked_after_observation_request",
+    "change_free_verification_evidence_request",
     "change_result_evidence_request",
     "closure_policy",
     "conflicted_observation_request",
@@ -177,6 +178,7 @@ def observation_evidence_request(
         "difference_request": difference if difference is not None else difference_request(),
         "change_request": None,
         "post_change_observation_request": None,
+        "verification_observation_request": None,
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),
@@ -234,6 +236,38 @@ def change_result_evidence_request(
         "post_change_observation_request": post_change_observation
         if post_change_observation is not None
         else after_observation_request(),
+        "verification_observation_request": None,
+        "artifact_references": list(
+            artifact_references if artifact_references is not None else [dict(ARTIFACT)]
+        ),
+        "predecessor_evidence_refs": [],
+        "remaining_difference_refs": [],
+    }
+
+
+def change_free_verification_evidence_request(
+    *,
+    recorded_at: str = RECORDED_AT,
+    observation: dict[str, Any] | None = None,
+    difference: dict[str, Any] | None = None,
+    verification_observation: dict[str, Any] | None = None,
+    artifact_references: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """An Evidence request in CLOSURE_POLICY.md §6's ``CHANGE_FREE`` row (R6-F1b): no
+    Change, an independent verification Observation grounds the after-state directly."""
+
+    return {
+        "schema_version": "0.1",
+        "recorded_at": recorded_at,
+        "observation_request": observation
+        if observation is not None
+        else before_observation_request(),
+        "difference_request": difference if difference is not None else difference_request(),
+        "change_request": None,
+        "post_change_observation_request": None,
+        "verification_observation_request": verification_observation
+        if verification_observation is not None
+        else after_observation_request(),
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),
@@ -247,6 +281,7 @@ def closure_policy(
     *,
     minimum_evidence_level: str = "E1",
     maximum_evidence_age: int | None = None,
+    required_invariants: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """One Closure Policy, addressed by Difference's own identity functions.
 
@@ -264,7 +299,7 @@ def closure_policy(
         "required_observation_scope": None,
         "minimum_evidence_level": minimum_evidence_level,
         "required_claims": [],
-        "required_invariants": [],
+        "required_invariants": required_invariants if required_invariants is not None else [],
         "allowed_terminal_states": ["CLOSED", "BLOCKED", "RETAINED"],
         "independent_verification_required": False,
         "maximum_evidence_age": maximum_evidence_age,

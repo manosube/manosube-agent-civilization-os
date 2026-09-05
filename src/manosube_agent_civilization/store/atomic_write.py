@@ -1,9 +1,11 @@
 """Durable same-directory atomic replacement."""
 
 from __future__ import annotations
+
 import os
 from pathlib import Path
 import tempfile
+
 
 def fsync_directory(path: Path) -> None:
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))

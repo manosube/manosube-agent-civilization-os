@@ -261,7 +261,19 @@ def test_a_forged_blocker_effective_boundary_fails_closed() -> None:
         "start": "2000-01-01T00:00:00Z",
         "end": "2000-01-01T01:00:00Z",
     }
-    assert event["difference_event_id"] == before == lifecycle_event_id(event)
+    # R9-F3: blocker_scope is now part of lifecycle event identity, so a forged boundary no
+    # longer leaves the event's own stored id valid -- the self-recompute check now catches
+    # this before blocker_payload_errors's own boundary-mismatch check ever runs.
+    assert lifecycle_event_id(event) != before
+    with pytest.raises(DifferenceError, match="predecessor event identity does not recompute"):
+        derive_differences(request)
+
+    # Re-stamping the event's own id to match its (still-forged) content proves the
+    # boundary-mismatch check itself remains real and non-redundant: an event can be wholly
+    # self-consistent (its own id matches its own content) while its blocker_scope.
+    # effective_boundary still disagrees with the Difference it is carried for -- identity
+    # alone cannot see that; it is a cross-record fact only blocker_payload_errors checks.
+    event["difference_event_id"] = lifecycle_event_id(event)
     with pytest.raises(DifferenceError, match="blocker boundary mismatch"):
         derive_differences(request)
 
@@ -276,7 +288,10 @@ def test_a_non_blocked_event_carrying_blocker_payload_fails_closed() -> None:
     genesis["blocker_kind"] = blocked["blocker_kind"]
     genesis["blocker_scope"] = deepcopy(blocked["blocker_scope"])
     genesis["blocker_resolution_condition"] = deepcopy(blocked["blocker_resolution_condition"])
-    assert genesis["difference_event_id"] == lifecycle_event_id(genesis)
+    # R9-F3: blocker_kind/blocker_scope are now part of identity too -- re-stamp so this
+    # test reaches the payload-position check it targets rather than the (now earlier)
+    # identity self-recompute failure.
+    genesis["difference_event_id"] = lifecycle_event_id(genesis)
     # The canonical event schema pins the blocker payload to null off BLOCKED, so the
     # schema gate reaches this first; the shared lifecycle authority states the same rule
     # for a payload the schema would admit.

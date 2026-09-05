@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/reflow/material_contradiction.schema.json",
+  "title": "Material Contradiction",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "material_contradiction_id",
+    "project_id",
+    "contradiction_kind",
+    "subject_refs",
+    "impact",
+    "reason",
+    "detected_at_state_revision",
+    "detected_at_state_fingerprint",
+    "material_contradiction_semantic_fingerprint"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "material_contradiction_id": {
+      "type": "string",
+      "pattern": "^CONTRA-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "project_id": {
+      "$ref": "../common/identity.schema.json"
+    },
+    "contradiction_kind": {
+      "enum": [
+        "EVIDENCE_EVIDENCE",
+        "EVIDENCE_AUTHORITY",
+        "DESIGN_OBSERVATION"
+      ]
+    },
+    "subject_refs": {
+      "$ref": "#/$defs/subject_refs"
+    },
+    "impact": {
+      "enum": [
+        "MATERIAL",
+        "NON_MATERIAL"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detected_at_state_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "detected_at_state_fingerprint": {
+      "$ref": "../common/fingerprint.schema.json"
+    },
+    "material_contradiction_semantic_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "subject_refs": {
+      "type": "object",
+      "required": [
+        "collection_kind",
+        "members"
+      ],
+      "properties": {
+        "collection_kind": {
+          "const": "UNORDERED_SET"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/subject_ref"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "subject_ref": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "observation_evidence",
+            "authority_decision"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

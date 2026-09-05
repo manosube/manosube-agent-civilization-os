@@ -68,11 +68,22 @@ from .levels import derive_level
 EVIDENCE_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "evidence/"
 SCHEMA_VERSION = "0.1"
 
-#: The two positions of 第27条. They are derived, never declared: a request that carries a
-#: Change request is Change Result Evidence and a request that does not is Observation
-#: Evidence, so a caller cannot label a record one thing and populate it as the other.
+#: The three positions of 第27条 (R6-F1b adds the third). They are derived, never declared:
+#: a request that carries a Change request is Change Result Evidence, a request that carries
+#: a ``verification_observation_request`` instead is Change-Free Verification Evidence, and
+#: a request that carries neither is Observation Evidence -- a caller cannot label a record
+#: one thing and populate it as another.
 OBSERVATION_EVIDENCE = "OBSERVATION_EVIDENCE"
 CHANGE_RESULT_EVIDENCE = "CHANGE_RESULT_EVIDENCE"
+#: CLOSURE_POLICY.md §6's ``CHANGE_FREE`` row: "independent after-state Observation Evidence
+#: proves the Target directly" -- no Change or Authority decision exists in this mode, so
+#: this position is structurally Observation Evidence with one addition: ``after_state`` is
+#: populated from a second, independent Observation, the same way Change Result Evidence's
+#: own ``after_state`` is grounded in its post-change re-observation. Reflow is never this
+#: position's producer (R6-F1b): a ``change_free_verification_evidence_refs`` entry that
+#: Reflow's own closure request carries must resolve to a real record this engine minted,
+#: never one Reflow assembled itself.
+CHANGE_FREE_VERIFICATION_EVIDENCE = "CHANGE_FREE_VERIFICATION_EVIDENCE"
 
 #: The one kind under which an Evidence record is referenced anywhere in this Kernel.
 #:
@@ -113,6 +124,7 @@ REQUIRED_REQUEST_KEYS: frozenset[str] = frozenset(
         "difference_request",
         "change_request",
         "post_change_observation_request",
+        "verification_observation_request",
         "artifact_references",
         "predecessor_evidence_refs",
         "remaining_difference_refs",
@@ -354,6 +366,89 @@ def derive_evidence(request: dict[str, Any]) -> dict[str, Any]:
         raise EvidenceError(str(error)) from error
 
 
+def resolve_terminal_reason_evidence(
+    refs: list[Any],
+    requests: list[Any],
+    *,
+    difference: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the real, verified terminal reason Evidence *refs* names -- R8-F3.
+
+    Reflow's own terminal reason binding (a non-``CLOSED`` Closure Evaluation's
+    ``terminal_reason_evidence_refs``) used to stop at "Evidence ID regeneration and
+    reference-set equality": every *request* reproduces through :func:`derive_evidence`
+    (never a second, Reflow-owned producer) and the reproduced id set exactly matches
+    *refs* -- but nothing checked that a reproduced, genuinely-real record actually says
+    anything about *this* Difference, or actually names a problem at all. A legitimate
+    Evidence record about a *different* Difference, correctly reproduced and correctly
+    self-consistent, satisfied that check just as well as one about the right Difference --
+    a caller could reuse any real terminal reason Evidence it happened to hold as an excuse
+    for an unrelated Difference's own BLOCKED/RETAINED/STALE/NOT_SATISFIED/CONTRADICTED
+    result.
+
+    Two real, CLAIM-grounded checks close that gap, applied to every reproduced record: its
+    own ``difference_ref.id`` (the field Evidence's own producer derives from the Difference
+    it was actually constructed against -- "the binding sufficiency rests on", per
+    :mod:`evidence.engine`'s own ``_common``) must equal *difference*'s ``difference_id``,
+    and its own ``target.project_id`` must equal *difference*'s ``project_id``. Together
+    these are exactly the fields ``_common`` derives from the real Observation/Difference
+    this record was actually constructed against, never a caller-suppliable label -- a
+    record about a different Difference, or a different project, fails closed here
+    regardless of how correctly it otherwise reproduces.
+
+    Disclosed, not silently narrowed (R8-F1's own SEMANTIC_DECISION_REQUIRED discipline,
+    applied here): the adoption's third, deeper ask -- that the record's content "actually
+    supports the real terminal status/blocker/failure class" -- is not implemented as a
+    check against Evidence's own ``status`` enum. A first attempt did try exactly that
+    (refusing ``COMPLETE``, reasoning that Evidence reporting no problem cannot excuse one);
+    it does not hold: a genuinely COMPLETE Observation that simply reports a Target-unmet
+    fact is an entirely legitimate NOT_SATISFIED/BLOCKED terminal reason, and Evidence's
+    ``status`` (which ``derive_differences`` even requires to be ``COMPLETE`` or
+    ``CONFLICTED`` before it will admit a KNOWN observed state at all, whenever the
+    Observation carries a positive Fact -- see ``difference/engine.py``'s own
+    ``_observed_projection``) is a description of the *observation process*, not of whether
+    the Target it observed was satisfied. Neither ``CLOSURE_POLICY.md`` nor the Evidence
+    schema names any enum mapping from a Closure Evaluation ``result``
+    (``BLOCKED``/``RETAINED``/``STALE``/``NOT_SATISFIED``/``CONTRADICTED``) to a required
+    Evidence ``status`` -- inventing one would be exactly the guessed formula the Round 8
+    adoption forbids, and this vertical's own retained fixtures show it would reject the
+    ordinary case. That gap is named here for SHUKOU rather than resolved by a check that
+    would silently narrow CLOSED's own reachable neighbor states.
+
+    This is the one shared resolver Closure Evaluation (``reflow/closure.py``), the atomic
+    preflight re-resolution and admitted-record persistence (``reflow/route.py``) all call,
+    rather than three independent re-implementations of the same rule (R8-F1/R7's own
+    established discipline) -- Evidence remains the sole producer either way; this module
+    never becomes a second one, and Reflow never re-derives what a genuine record's content
+    already says.
+
+    Raises :class:`EvidenceError` on any reproduction failure, set mismatch, or content
+    disagreement; returns the reproduced records (already schema-valid, already
+    content-address-verified by :func:`derive_evidence` itself) otherwise.
+    """
+
+    reproduced = [derive_evidence(item) for item in requests]
+    reproduced_ids = {record["evidence_id"] for record in reproduced}
+    declared_ids = {ref.get("id") for ref in refs if isinstance(ref, dict)}
+    if reproduced_ids != declared_ids:
+        raise EvidenceError(
+            "terminal_reason_evidence_refs does not exactly match the reproduced terminal "
+            "reason Evidence (substitution, omission or duplication)"
+        )
+    for record in reproduced:
+        if record["difference_ref"]["id"] != difference["difference_id"]:
+            raise EvidenceError(
+                "terminal reason Evidence names a different Difference than the one this "
+                "Closure Evaluation is actually for"
+            )
+        if record["target"]["project_id"] != difference["project_id"]:
+            raise EvidenceError(
+                "terminal reason Evidence names a different project than the one this "
+                "Closure Evaluation is actually for"
+            )
+    return reproduced
+
+
 def _derive(request: dict[str, Any]) -> dict[str, Any]:
     request = deepcopy(request)
     shaped = _require_request_shape(request)
@@ -383,13 +478,15 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
 
     change_request = shaped["change_request"]
     post_change_request = shaped["post_change_observation_request"]
+    verification_request = shaped["verification_observation_request"]
 
     # --- position ------------------------------------------------------------- #
     #
-    # 第27条 separates two positions, and this is where the separation is made. It is made
-    # from what the request *contains*, so the two cannot be crossed: a record cannot be
-    # Observation Evidence carrying a Change, and it cannot be Change Result Evidence
-    # carrying no Change.
+    # 第27条 separates its positions, and this is where the separation is made. It is made
+    # from what the request *contains*, so none can be crossed: a record cannot be
+    # Observation Evidence carrying a Change, it cannot be Change Result Evidence carrying no
+    # Change, and it cannot carry both a Change and a change-free verification at once (R6-F1b
+    # -- CHANGE_BOUND and CHANGE_FREE are CLOSURE_POLICY.md §6's own mutually exclusive rows).
     if change_request is None:
         if post_change_request is not None:
             raise EvidenceError(
@@ -397,7 +494,18 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
                 "Evidence records one observation, and a re-observation after a Change that "
                 "is not named here is a Change Result Evidence request missing its Change"
             )
+        if verification_request is not None:
+            return _change_free_verification_evidence(
+                shaped, observation, difference, verification_request
+            )
         return _observation_evidence(shaped, observation, difference)
+
+    if verification_request is not None:
+        raise EvidenceError(
+            "a verification Observation was supplied together with a Change: "
+            "CHANGE_BOUND and CHANGE_FREE are mutually exclusive resolution modes, so one "
+            "Evidence request cannot carry both a Change and a change-free verification"
+        )
 
     # Q3-A. This is the refusal, and it comes before anything is built, because the record
     # being refused is one that would be false rather than one that is malformed.
@@ -546,6 +654,76 @@ def _observation_evidence(
                 shaped,
                 [
                     {"kind": "observation", "id": observation["observation_id"]},
+                    {"kind": "difference", "id": difference["difference_id"]},
+                ],
+            ),
+        }
+    )
+    return _finalize(evidence)
+
+
+def _change_free_verification_evidence(
+    shaped: dict[str, Any],
+    before_observation: dict[str, Any],
+    difference: dict[str, Any],
+    verification_request: Any,
+) -> dict[str, Any]:
+    """Return Change-Free Verification Evidence: CLOSURE_POLICY.md §6's ``CHANGE_FREE`` row
+    (R6-F1b) -- "independent after-state Observation Evidence proves the Target directly",
+    with no Change and no Authority decision anywhere in this mode.
+
+    What this record proves is exactly one thing: a second, independent Observation of the
+    Target was made. It does not prove any Change occurred (none is claimed), and it does
+    not decide whether what was observed satisfies anything -- that is still Difference's
+    own Closure Evaluation, reading this record's ``after_state`` the same way it already
+    reads Change Result Evidence's.
+    """
+
+    _, verification_observation = _minted_observation(
+        verification_request, "verification_observation_request"
+    )
+
+    # Independence, in the identical sense CLOSURE_POLICY.md §4 gives Change Result Evidence:
+    # the base Observation cannot stand in as its own verification.
+    if verification_observation["observation_id"] == before_observation["observation_id"]:
+        raise EvidenceError(
+            "the verification Observation is the same Observation as the base one: an "
+            "independent verification must be a second observation"
+        )
+
+    # R7-F2: CLOSURE_POLICY.md §6's CHANGE_FREE row requires "independent after-state
+    # Observation Evidence proves the Target directly" -- the same Target this record's
+    # own Difference is about, not some other one a caller's verification_request happens
+    # to name. ``difference`` is already derived from, and bound to, ``before_observation``
+    # (``_derived_difference`` requires the Difference's own ``observation_refs`` name it),
+    # so requiring the verification Observation's own project/target to match
+    # ``before_observation``'s exactly also transitively binds it to the Difference's real
+    # Target -- Evidence's own ownership boundary, never a second check duplicated by a
+    # caller elsewhere.
+    if (
+        verification_observation["project_id"] != before_observation["project_id"]
+        or verification_observation["target"] != before_observation["target"]
+    ):
+        raise EvidenceError(
+            "the verification Observation's project/target does not match the base "
+            "Observation's: change-free verification Evidence must prove the same Target "
+            "this Evidence's own Difference is about, not a foreign one"
+        )
+
+    evidence = _common(shaped, verification_observation, difference)
+    evidence.update(
+        {
+            "evidence_position": CHANGE_FREE_VERIFICATION_EVIDENCE,
+            "before_state": _state_binding(before_observation),
+            "change_identity": None,
+            "authority_used": None,
+            "after_state": _state_binding(verification_observation),
+            "expected_result": None,
+            "lineage": _lineage(
+                shaped,
+                [
+                    {"kind": "observation", "id": before_observation["observation_id"]},
+                    {"kind": "observation", "id": verification_observation["observation_id"]},
                     {"kind": "difference", "id": difference["difference_id"]},
                 ],
             ),

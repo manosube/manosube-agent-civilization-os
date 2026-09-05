@@ -656,6 +656,7 @@
         "commit_sha": "1111111111111111111111111111111111111111",
         "tree_sha": "2222222222222222222222222222222222222222"
       },
+      "kernel_source_witness_ref": null,
       "difference_event_head_ref": {
         "kind": "difference_event",
         "id": "D-EVT-EFC7DAA64D4FC0EEDB44CDBA37EF59A4949E3C89A4EDA6507DC5C5C7BCADAA49"

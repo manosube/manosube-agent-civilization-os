@@ -3,7 +3,7 @@
   "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/difference/closure_evaluation.schema.json",
   "title": "Difference Closure Evaluation",
   "type": "object",
-  "required": ["schema_version", "closure_evaluation_id", "difference_id", "evaluation_mode", "terminal_reason_evidence_refs", "base_kernel_source_ref_evaluated", "kernel_source_ref_evaluated", "difference_event_head_ref", "target_predicate_ref", "objective_revision_ref_evaluated", "objective_semantic_fingerprint_evaluated", "before_state_ref", "resolution_mode", "change_refs", "after_state_candidate", "after_observation_refs", "change_result_evidence_refs", "change_free_verification_evidence_refs", "verification_independence_ref", "evidence_sufficiency_ref", "candidate_invariant_evaluation_bindings", "candidate_claim_evaluation_bindings", "contradiction_refs", "evaluated_state_revision", "evaluated_state_fingerprint", "evaluated_at", "evaluation_expires_at", "policy_ref", "policy_version_evaluated", "policy_semantic_fingerprint_evaluated", "proposed_terminal_status", "gate_results", "result", "failure_reasons", "reflow_transition_ref"],
+  "required": ["schema_version", "closure_evaluation_id", "difference_id", "evaluation_mode", "terminal_reason_evidence_refs", "base_kernel_source_ref_evaluated", "kernel_source_ref_evaluated", "kernel_source_witness_ref", "difference_event_head_ref", "target_predicate_ref", "objective_revision_ref_evaluated", "objective_semantic_fingerprint_evaluated", "before_state_ref", "resolution_mode", "change_refs", "after_state_candidate", "after_observation_refs", "change_result_evidence_refs", "change_free_verification_evidence_refs", "verification_independence_ref", "evidence_sufficiency_ref", "candidate_invariant_evaluation_bindings", "candidate_claim_evaluation_bindings", "contradiction_refs", "evaluated_state_revision", "evaluated_state_fingerprint", "evaluated_at", "evaluation_expires_at", "policy_ref", "policy_version_evaluated", "policy_semantic_fingerprint_evaluated", "proposed_terminal_status", "gate_results", "result", "failure_reasons", "reflow_transition_ref"],
   "properties": {
     "schema_version": {"const": "0.1"},
     "closure_evaluation_id": {"type": "string", "pattern": "^D-CLOSE-EVAL-[0-9A-F]{64}$"},
@@ -11,6 +11,7 @@
     "evaluation_mode": {"enum": ["CANDIDATE_CLOSURE", "CANDIDATE_TERMINAL", "TERMINAL_POLICY_ONLY"]},
     "base_kernel_source_ref_evaluated": {"$ref": "#/$defs/git_tree_ref"},
     "kernel_source_ref_evaluated": {"$ref": "#/$defs/git_tree_ref"},
+    "kernel_source_witness_ref": {"oneOf": [{"type": "null"}, {"$ref": "../common/reference.schema.json"}]},
     "difference_event_head_ref": {"$ref": "../common/reference.schema.json"},
     "target_predicate_ref": {"$ref": "../common/reference.schema.json"},
     "objective_revision_ref_evaluated": {"$ref": "../common/reference.schema.json"},

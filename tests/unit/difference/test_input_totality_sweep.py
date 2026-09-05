@@ -189,7 +189,8 @@ NON_OBJECT_ROOTS: list[Any] = [None, [], "request", 7, True]
 #: stops contributing locations fails the measurement rather than shrinking it.
 EXPECTED_SPAN: dict[str, dict[str, int]] = {
     "request": {"locations": 266},
-    "predecessor": {"locations": 1029},
+    # R6-F4: closure_evaluation.kernel_source_witness_ref is one new reachable location.
+    "predecessor": {"locations": 1030},
 }
 
 

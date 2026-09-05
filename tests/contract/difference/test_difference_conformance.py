@@ -43,6 +43,7 @@ def _semantic_state() -> dict:
             "runtime", "infrastructure", "deployment", "authority", "lineage",
         )},
         "open_differences": [], "active_changes": [], "evidence": [],
+        "unresolved_contradictions": [], "reflow_state": {"last_transaction_ref": None},
     }
 
 

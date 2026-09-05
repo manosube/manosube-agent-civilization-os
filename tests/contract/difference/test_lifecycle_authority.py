@@ -175,12 +175,22 @@ def test_one_observation_record_verification_authority() -> None:
     ):
         assert owned_by_observation not in difference_source
 
-    # The authority validates exactly the six canonical Observation record schemas.
+    # The authority validates exactly the six canonical Observation record schemas -- the
+    # Observation *bundle*'s own carried record kinds. ``source_snapshot`` (R6-F1a) is a
+    # real Observation-owned schema too, but it is never a bundle section (no
+    # ``bundle["source_snapshots"]`` list exists anywhere): it is resolved standalone, by
+    # Reflow, from a caller-supplied pool, the same way ``observation_scope``/
+    # ``observation_method`` already sit outside this bundle-validation authority.
     declared = set(RECORD_SCHEMAS.values())
     on_disk = {
         path.name
         for path in (ROOT / "01_SCHEMA" / "observation").glob("*.schema.json")
-        if path.name not in {"observation_scope.schema.json", "observation_method.schema.json"}
+        if path.name
+        not in {
+            "observation_scope.schema.json",
+            "observation_method.schema.json",
+            "source_snapshot.schema.json",
+        }
     }
     assert declared == on_disk
 
