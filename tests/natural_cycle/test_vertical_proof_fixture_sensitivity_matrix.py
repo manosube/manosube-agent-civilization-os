@@ -9,23 +9,30 @@ false`` -- a matrix covering every named semantic input *class* is required inst
 
 Each test below mutates exactly one bounded fixture input from a real assembled route
 (never a second, hand-built substitute) and asserts the real, empirically-observed
-downstream effect. Two classes turned out to be *disclosed, bounded non-claims* rather than
-"fails closed" or "changes the verdict" -- reported as such, not silently omitted or
-misrepresented:
+downstream effect. One class is a *disclosed, bounded non-claim* rather than "fails closed"
+or "changes the verdict" -- reported as such, not silently omitted or misrepresented:
 
-    AUTHORITY_EVALUATION_INSTANT is presently inert (see its own test below) --
-        neither the Authority Decision's own content-addressed identity nor its verdict is
-        sensitive to it. This mirrors an already-established Kernel convention (State's own
-        Semantic Fingerprint likewise excludes ``observed_at``/``observer`` --
-        ``00_KERNEL/KERNEL_INDEX.md`` §2 -- and Observation's own identity, confirmed
-        separately, excludes ``observation_evidence_refs`` and even the observed *value*
-        itself; see ``OBSERVATION_SEMANTIC_FIELDS`` in ``observation/identity.py``), not a
-        gap this Phase 8 proof introduces or is asked to close.
     POST_CHANGE_OBSERVATION's downstream ``status``/``evidence_level`` are unaffected by the
-        observed *value* for the identical reason (Observation completeness is measured
-        independently of what was found) -- the real, changed effect there is on the
-        Evidence record's own content-addressed identity and its ``observed_result``, both
-        asserted directly below, not on those two categorical fields.
+        observed *value* (Observation completeness is measured independently of what was
+        found) -- the real, changed effect there is on the Evidence record's own
+        content-addressed identity and its ``observed_result``, both asserted directly
+        below, not on those two categorical fields.
+
+AUTHORITY_EVALUATION_INSTANT was, before P8-R2-F3 (SHUKOU Phase 8 structural-review round
+2), reported here as fully inert -- true only along the one route this matrix originally
+exercised (a rule granting ``AUTONOMOUS`` outright, no Approval ever consulted for its
+outcome). ``authority/approval.py::binding_mismatches`` reads ``evaluation_time`` against
+every Approval's own ``approved_at``/``expires_at`` validity window whenever an Approval
+must actually bind a request (``HUMAN_APPROVAL_REQUIRED`` with a real Approval on file) --
+so the field is not inert in general. What *is* still true, and is unchanged from the
+original finding: the real Authority Decision's own content-addressed ``authority_decision_
+id`` never includes ``evaluation_time`` (mirroring State's own Semantic Fingerprint
+excluding ``observed_at``/``observer`` -- ``00_KERNEL/KERNEL_INDEX.md`` §2 -- and
+Observation's own identity excluding ``observation_evidence_refs`` and the observed value
+itself). Its corrected role: ``AUTHORITY_EVALUATION_INSTANT_ROLE=TRANSIENT_ADMISSION_
+CONTEXT``, ``AUTHORITY_EVALUATION_INSTANT_IN_DECISION_ID=false``, ``AUTHORITY_EVALUATION_
+INSTANT_AFFECTS_TIME_BOUND_ADMISSION=true`` -- see :func:`test_p8r2f3_...` below, which
+proves the time-bound-Approval route this matrix's original test never exercised.
 
 Required matrix (Issue #41's own required rows, in order):
 
@@ -51,7 +58,16 @@ Required matrix (Issue #41's own required rows, in order):
                                                                     closed (already proven in
                                                                     test_vertical_proof_negative_
                                                                     routes.py item E3)
-    AUTHORITY_EVALUATION_INSTANT   evaluation_time                  inert -- disclosed non-claim
+    AUTHORITY_EVALUATION_INSTANT   evaluation_time                  transient admission context
+                                                                    (P8-R2-F3): inert on the
+                                                                    no-Approval AUTONOMOUS-by-
+                                                                    rule route, but governs
+                                                                    real time-bound Approval
+                                                                    admission on the route
+                                                                    where an Approval must
+                                                                    bind; never part of
+                                                                    authority_decision_id
+                                                                    either way
     REFLOW_INSTANT                 reflow_instant                   Reflow fails closed (already
                                                                     proven by P8-R1-F5's own
                                                                     provenance check, re-asserted
@@ -80,7 +96,13 @@ from tests.natural_cycle.proof import (
 )
 
 from manosube_agent_civilization.authority import evaluate_authority
-from manosube_agent_civilization.authority.identity import action_fingerprint, rule_id
+from manosube_agent_civilization.authority.errors import AuthorityError
+from manosube_agent_civilization.authority.identity import (
+    action_fingerprint,
+    approval_id,
+    change_intent_fingerprint,
+    rule_id,
+)
 from manosube_agent_civilization.difference import derive_differences
 from manosube_agent_civilization.difference.identity import (
     closure_policy_id,
@@ -254,7 +276,7 @@ def test_p8r1f4_post_change_observation_value_changes_the_evidence_identity(
     from tests.natural_cycle.proof import derive_the_change
 
     change = derive_the_change(authority)
-    change_result_obs = observe_change_result(genesis)
+    change_result_obs = observe_change_result(genesis, before, change)
     real_bundle = derive_the_change_result_evidence(genesis, before, change, change_result_obs)
     real_evidence = real_bundle["change_result_evidence"]
 
@@ -340,7 +362,7 @@ def test_p8r1f4_closure_policy_minimum_evidence_level_changes_the_sufficiency_ve
     from tests.natural_cycle.proof import derive_the_change
 
     change = derive_the_change(authority)
-    change_result_obs = observe_change_result(genesis)
+    change_result_obs = observe_change_result(genesis, before, change)
     change_result_evidence_bundle = derive_the_change_result_evidence(
         genesis, before, change, change_result_obs
     )
@@ -372,15 +394,18 @@ def test_p8r1f4_closure_policy_minimum_evidence_level_changes_the_sufficiency_ve
     assert mutated_sufficiency["result"]["result"] == "INSUFFICIENT"
 
 
-def test_p8r1f4_authority_evaluation_instant_is_a_disclosed_inert_input(tmp_path: Path) -> None:
-    """INPUT_CLASS=AUTHORITY_EVALUATION_INSTANT, MUTATED_FIELD=evaluation_time.
-    FAIL_CLOSED_OR_REDERIVED=neither -- a disclosed, bounded non-claim, not silently
-    misrepresented as either. Mirrors an already-established Kernel convention (State's own
-    Semantic Fingerprint excludes ``observed_at``/``observer`` by design --
-    ``00_KERNEL/KERNEL_INDEX.md`` §2): the real Authority Decision's own content-addressed
-    ``authority_decision_id`` and its ``decision`` verdict are both, in fact, unaffected by
-    this field in the current Kernel. This is reported here as a fact this round discovered
-    and is not asked to fix -- not asserted as "fails closed" when it observably does not."""
+def test_p8r1f4_authority_evaluation_instant_is_inert_on_the_no_approval_route(
+    tmp_path: Path,
+) -> None:
+    """INPUT_CLASS=AUTHORITY_EVALUATION_INSTANT, MUTATED_FIELD=evaluation_time, on the one
+    route this repository's original vertical proof exercises (a rule granting
+    ``AUTONOMOUS`` outright, no Approval ever consulted for the outcome).
+    FAIL_CLOSED_OR_REDERIVED=neither, on *this* route -- the real Authority Decision's own
+    content-addressed ``authority_decision_id`` and ``decision`` verdict are unaffected by
+    this field here, exactly as originally reported. P8-R2-F3 (SHUKOU Phase 8
+    structural-review round 2) corrected the *scope* of this claim -- it does not generalize
+    to every route, and :func:`test_p8r2f3_authority_evaluation_instant_governs_time_bound_
+    approval_admission` below proves the route where the field genuinely matters."""
 
     store = build_store(tmp_path)
     genesis = initialize_genesis(store)
@@ -396,6 +421,111 @@ def test_p8r1f4_authority_evaluation_instant_is_a_disclosed_inert_input(tmp_path
 
     assert mutated_decision["decision"] == base_decision["decision"] == "AUTONOMOUS"
     assert mutated_decision["authority_decision_id"] == base_decision["authority_decision_id"]
+
+
+def test_p8r2f3_authority_evaluation_instant_governs_time_bound_approval_admission(
+    tmp_path: Path,
+) -> None:
+    """P8-R2-F3 (SHUKOU Phase 8 structural-review round 2): on the route the original
+    AUTONOMOUS-by-rule test above never exercises -- a rule that itself requires
+    ``HUMAN_APPROVAL_REQUIRED``, with a real, time-bound Approval on file -- ``evaluation_
+    time`` genuinely decides whether that Approval binds
+    (``authority/approval.py::binding_mismatches``' own validity-window check), and so
+    genuinely decides the Decision's own ``decision``/``approval_ref``.
+    ``AUTHORITY_EVALUATION_INSTANT_ROLE=TRANSIENT_ADMISSION_CONTEXT``,
+    ``AUTHORITY_EVALUATION_INSTANT_AFFECTS_TIME_BOUND_ADMISSION=true``.
+
+    ``AUTHORITY_EVALUATION_INSTANT_IN_DECISION_ID=false`` is proven in the same breath, not
+    contradicted by the above: two evaluation times that land the Approval in the identical
+    outcome (both inside the window, or both outside it) reproduce byte-identical Decision
+    content and therefore one identical ``authority_decision_id`` -- only a time that
+    actually changes the outcome changes the id, and it changes because the *outcome*
+    changed, never because the raw timestamp was folded into the identity itself."""
+
+    store = build_store(tmp_path)
+    genesis = initialize_genesis(store)
+    before = observe_before(genesis)
+    difference = derive_difference(genesis, before)["difference"]
+
+    approval_required_rule = dict(fx.authority_rule(project_id=difference["project_id"]))
+    approval_required_rule["decision"] = "HUMAN_APPROVAL_REQUIRED"
+    approval_required_rule["authority_rule_id"] = rule_id(approval_required_rule)
+
+    requested_action = fx.requested_action()
+    requested_scope = fx.action_scope()
+    valid_from = "2026-09-05T08:00:00Z"
+    valid_until = "2026-09-05T09:00:00Z"
+
+    approval_record: dict[str, Any] = {
+        "schema_version": "0.1",
+        "approval_id": "",
+        "project_id": difference["project_id"],
+        "difference_ref": {"kind": "difference", "id": difference["difference_id"]},
+        "change_intent_fingerprint": change_intent_fingerprint(requested_action, requested_scope),
+        "change_ref": None,
+        "approved_state_revision": difference["observed_state_revision"],
+        "approved_state_fingerprint": dict(difference["observed_state_fingerprint"]),
+        "approved_action_fingerprint": requested_action["action_semantic_fingerprint"],
+        "approved_scope": dict(requested_scope),
+        "prohibited_actions": [],
+        "approved_by": dict(fx.HUMAN_AUTHORITY),
+        "approved_at": valid_from,
+        "expires_at": valid_until,
+        "status": "ACTIVE",
+    }
+    approval_record["approval_id"] = approval_id(approval_record)
+
+    def _request(evaluation_time: str) -> dict[str, Any]:
+        return {
+            "schema_version": "0.1",
+            "project_id": difference["project_id"],
+            "difference": difference,
+            "requested_action": requested_action,
+            "requested_scope": requested_scope,
+            "current_state_revision": difference["observed_state_revision"],
+            "current_state_fingerprint": difference["observed_state_fingerprint"],
+            "authority_rules": [approval_required_rule],
+            "prohibitions": [],
+            "approvals": [approval_record],
+            "evaluation_time": evaluation_time,
+        }
+
+    # INVALID_EVALUATION_TIME_REJECTED=true: admission belongs to the whole request, not
+    # only the branch that happens to read it -- already proven repository-wide (``tests/
+    # contract/authority/``); re-asserted once here for this matrix's own completeness.
+    with pytest.raises(AuthorityError):
+        evaluate_authority(_request("not-a-timestamp"))
+
+    before_window = evaluate_authority(_request("2026-09-05T07:59:59Z"))
+    within_window_a = evaluate_authority(_request(valid_from))
+    within_window_b = evaluate_authority(_request("2026-09-05T08:30:00Z"))
+    after_window = evaluate_authority(_request("2026-09-05T09:00:01Z"))
+
+    # BEFORE_APPROVAL_VALID_FROM / AFTER_APPROVAL_EXPIRY: the Approval does not bind, so
+    # authorization is not granted -- APPROVAL_NOT_USED_OR_AUTHORIZATION_NOT_GRANTED.
+    for outside in (before_window, after_window):
+        assert outside["decision"] == "HUMAN_APPROVAL_REQUIRED"
+        assert outside["approval_ref"] is None
+        assert "APPROVAL_OUTSIDE_VALIDITY_WINDOW" in outside["decision_reason_codes"]
+
+    # WITHIN_APPROVAL_VALIDITY_WINDOW: the Approval binds and is used, as the contract
+    # requires -- APPROVAL_USED_AS_CONTRACT_REQUIRES.
+    for inside in (within_window_a, within_window_b):
+        assert inside["decision"] == "AUTONOMOUS"
+        assert inside["approval_ref"] == {
+            "kind": "approval",
+            "id": approval_record["approval_id"],
+        }
+
+    # AUTHORITY_EVALUATION_INSTANT_IN_DECISION_ID=false: two different valid times that land
+    # in the identical real outcome share one Decision id...
+    assert within_window_a["authority_decision_id"] == within_window_b["authority_decision_id"]
+    assert before_window["authority_decision_id"] == after_window["authority_decision_id"]
+    # ...while a time that genuinely changes the outcome changes the id too --
+    # AUTHORITY_EVALUATION_INSTANT_AFFECTS_TIME_BOUND_ADMISSION=true, not
+    # AUTHORITY_EVALUATION_INSTANT_IS_INERT.
+    assert before_window["authority_decision_id"] != within_window_a["authority_decision_id"]
+    assert after_window["authority_decision_id"] != within_window_a["authority_decision_id"]
 
 
 def test_p8r1f4_reflow_instant_fails_the_route_closed(tmp_path: Path) -> None:

@@ -343,14 +343,23 @@ def before_observation_request(
 
 
 def change_result_observation_request(
-    *, fingerprint: dict[str, Any], state_revision: int
+    *,
+    fingerprint: dict[str, Any],
+    state_revision: int,
+    evidence_ref: dict[str, str] = EVIDENCE_REF,
 ) -> dict[str, Any]:
     """The Change's own post-change-world Observation: the readiness marker now reads
     ``"READY"``. Bound into ``change_result_evidence``'s own ``after_state`` -- never used as
     Reflow's own independent ``reobservation`` (see :func:`verification_observation_request`
     for that role; reusing this exact Observation for both would collide with the Kernel's own
     ``G8`` anti-self-closing check, since a Change's own claimed result cannot also stand in as
-    the independent re-observation that verifies it)."""
+    the independent re-observation that verifies it).
+
+    *evidence_ref* -- see :func:`observation_request`'s own docstring (P8-R2-F1): the
+    default is the placeholder used only to seed the real Change-result Evidence
+    derivation -- the corrected, real id (Change-result Evidence's own, this Observation's
+    natural real backing) is passed back in on the second pass. See
+    ``tests/natural_cycle/proof.py::observe_change_result`` for the two-pass sequence."""
 
     return observation_request(
         value="READY",
@@ -362,17 +371,28 @@ def change_result_observation_request(
         started_at=CHANGE_RESULT_OBSERVATION_STARTED_AT,
         ended_at=CHANGE_RESULT_OBSERVATION_ENDED_AT,
         attempt_id="ATTEMPT-VP8-0002",
+        evidence_ref=evidence_ref,
     )
 
 
 def verification_observation_request(
-    *, fingerprint: dict[str, Any], state_revision: int
+    *,
+    fingerprint: dict[str, Any],
+    state_revision: int,
+    evidence_ref: dict[str, str] = EVIDENCE_REF,
 ) -> dict[str, Any]:
     """Reflow's own independent re-observation of the identical real post-change world --
     a second, genuinely separate Observation Engine invocation (a later observation window,
     its own ``attempt_id``), not a restatement of :func:`change_result_observation_request`.
     This is the one Observation whose identity becomes ``reobservation.after_observation_
-    refs`` in the Reflow closure request."""
+    refs`` in the Reflow closure request.
+
+    *evidence_ref* -- see :func:`observation_request`'s own docstring (P8-R2-F1): the
+    default is the placeholder used only to seed a real, auxiliary Change-Free Verification
+    Evidence record documenting this second, independent observation of the post-change
+    world (paired with the identical before-Observation the real Difference was derived
+    from) -- the corrected, real id is passed back in on the second pass. See
+    ``tests/natural_cycle/proof.py::observe_verification`` for the two-pass sequence."""
 
     return observation_request(
         value="READY",
@@ -384,6 +404,7 @@ def verification_observation_request(
         started_at=VERIFICATION_OBSERVATION_STARTED_AT,
         ended_at=VERIFICATION_OBSERVATION_ENDED_AT,
         attempt_id="ATTEMPT-VP8-0003",
+        evidence_ref=evidence_ref,
     )
 
 

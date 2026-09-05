@@ -209,25 +209,47 @@ def initialize_genesis(store: FileStateStore) -> dict[str, Any]:
 
 
 def observe_before(current_state: dict[str, Any]) -> dict[str, Any]:
-    """Item D.2 + D.7 first half (P8-R1-F1, SHUKOU Phase 8 structural-review round 1): the
-    real before-Observation, through the real Observation owner -- and, before any
-    Difference is derived from it, the real Observation Evidence that grounds it, through
-    the real Evidence owner.
+    """Item D.2 + D.7 first half (P8-R1-F1, corrected P8-R2-F1, SHUKOU Phase 8
+    structural-review rounds 1-2): the real before-Observation, through the real Observation
+    owner -- and, before any Difference is derived from it, the real Observation Evidence
+    that grounds it, through the real Evidence owner. No placeholder Evidence reference
+    reaches the accepted request graph this function hands back
+    (``FULL_ACCEPTED_REQUEST_GRAPH_PLACEHOLDER_COUNT=0``), not merely the final Difference.
 
-    Two real Observation Engine calls, not one, and no placeholder Evidence reference
-    reaches the committed route (``PLACEHOLDER_EVIDENCE_REFERENCE_COUNT=0``):
-    ``observation.identity.OBSERVATION_SEMANTIC_FIELDS`` excludes ``observation_evidence_
-    refs`` from an Observation's own content-addressed identity (confirmed by direct
-    reading of that module, not assumed) -- so a first, *provisional* Observation, carrying
-    only a schema-valid placeholder evidence ref, has the identical real ``observation_id``
-    a second, corrected Observation (carrying the real, already-derived Evidence id) will
-    also have. The first call seeds a real :func:`~manosube_agent_civilization.evidence.
-    engine.derive_evidence` call; the second, corrected bundle -- never the
-    placeholder-carrying one -- is what this function returns and what
-    :func:`derive_difference` actually derives the real Difference from, so the Difference's
-    own ``observation_evidence_refs`` field (populated by ``difference.engine._evidence_
-    union`` directly from the Observation's own declared field) carries the real Evidence
-    id, not a placeholder.
+    P8-R1 closed the fixed point only at the Difference: the *provisional*, placeholder-
+    seeded ``observation_evidence_request`` (naming ``EVID-VP8-0001`` inside its own nested
+    ``observation_request``) was still what reached Sufficiency, Closure and Reflow, because
+    it was returned unchanged alongside the corrected Observation *bundle*. P8-R2-F1 closes
+    that: a placeholder may seed the fixed point's *provisional* derivation, but it may not
+    survive into the accepted Sufficiency/Closure/Reflow request graph
+    (``PLACEHOLDER_MAY_ENTER_ACCEPTED_CLOSURE_REQUEST=false``).
+
+    The full ten-step fixed point, mechanically:
+
+    1. a provisional Observation Request, carrying the schema-valid placeholder evidence ref
+    2. the provisional Observation, through the real Observation owner
+    3. the provisional Observation Evidence, through the real Evidence owner (seeds the real
+       Evidence id)
+    4. a corrected Observation Request, carrying that real Evidence id
+    5. the corrected Observation, through the real Observation owner again
+       (``observation.identity.OBSERVATION_SEMANTIC_FIELDS`` excludes ``observation_
+       evidence_refs`` from the Observation's own content-addressed identity -- confirmed by
+       direct reading, not assumed -- so this is the identical real ``observation_id`` step 2
+       produced)
+    6. a corrected Difference Request, built from the corrected Observation bundle (step 5)
+    7. a corrected Observation Evidence Request, built from the corrected Observation Request
+       (step 4) and the corrected Difference Request (step 6)
+    8. the corrected Observation Evidence, through the real Evidence owner again
+    9. verify the corrected Evidence id equals the provisional Evidence id from step 3 --
+       fail closed (not silently substituted) if the fixed point does not converge
+    10. return *only* the corrected Observation Evidence Request/Evidence -- never the
+        provisional one -- for Sufficiency/Closure/Reflow to consume
+
+    ``evidence.identity.EVIDENCE_SEMANTIC_FIELDS`` is derived entirely from the real,
+    minted Observation/Difference *records* (``target``, ``observed_result``, ``status``,
+    ...), never from the raw request's own placeholder-or-real evidence ref, which is why
+    step 9's equality is guaranteed to hold rather than merely hoped for -- proven
+    mechanically by a dedicated test, not asserted in prose.
     """
 
     provisional_request = fx.before_observation_request(
@@ -236,16 +258,16 @@ def observe_before(current_state: dict[str, Any]) -> dict[str, Any]:
     )
     provisional_bundle = observe(provisional_request)
 
-    difference_request = fx.derivation_request(
+    provisional_difference_request = fx.derivation_request(
         observation_bundle=provisional_bundle,
         fingerprint=current_state["semantic_fingerprint"],
         state_revision=current_state["state_revision"],
     )
-    observation_evidence_request: dict[str, Any] = {
+    provisional_evidence_request: dict[str, Any] = {
         "schema_version": "0.1",
         "recorded_at": fx.EVIDENCE_RECORDED_AT,
         "observation_request": provisional_request,
-        "difference_request": difference_request,
+        "difference_request": provisional_difference_request,
         "change_request": None,
         "post_change_observation_request": None,
         "verification_observation_request": None,
@@ -253,14 +275,14 @@ def observe_before(current_state: dict[str, Any]) -> dict[str, Any]:
         "predecessor_evidence_refs": [],
         "remaining_difference_refs": [],
     }
-    observation_evidence = derive_evidence(observation_evidence_request)
+    provisional_evidence = derive_evidence(provisional_evidence_request)
 
     request = fx.before_observation_request(
         fingerprint=current_state["semantic_fingerprint"],
         state_revision=current_state["state_revision"],
         evidence_ref={
             "kind": "observation_evidence",
-            "id": observation_evidence["evidence_id"],
+            "id": provisional_evidence["evidence_id"],
         },
     )
     bundle = observe(request)
@@ -270,6 +292,34 @@ def observe_before(current_state: dict[str, Any]) -> dict[str, Any]:
         bundle["observations"][-1]["observation_id"]
         == provisional_bundle["observations"][-1]["observation_id"]
     )
+
+    difference_request = fx.derivation_request(
+        observation_bundle=bundle,
+        fingerprint=current_state["semantic_fingerprint"],
+        state_revision=current_state["state_revision"],
+    )
+    observation_evidence_request: dict[str, Any] = {
+        "schema_version": "0.1",
+        "recorded_at": fx.EVIDENCE_RECORDED_AT,
+        "observation_request": request,
+        "difference_request": difference_request,
+        "change_request": None,
+        "post_change_observation_request": None,
+        "verification_observation_request": None,
+        "artifact_references": [dict(fx.ARTIFACT)],
+        "predecessor_evidence_refs": [],
+        "remaining_difference_refs": [],
+    }
+    observation_evidence = derive_evidence(observation_evidence_request)
+    # P8-R2-F1 step 9: the fixed point must actually close. A provisional-seeded id that the
+    # corrected re-derivation does not reproduce is a design blocker, not something to paper
+    # over by substituting one id for the other.
+    if observation_evidence["evidence_id"] != provisional_evidence["evidence_id"]:
+        raise AssertionError(
+            "P8-R2-F1 Evidence fixed point did not converge: corrected Observation Evidence "
+            f"id {observation_evidence['evidence_id']!r} != provisional seed id "
+            f"{provisional_evidence['evidence_id']!r}"
+        )
 
     return {
         "request": request,
@@ -323,26 +373,145 @@ def derive_the_change(authority: dict[str, Any]) -> dict[str, Any]:
     return {"request": request, "change": change}
 
 
-def observe_change_result(current_state: dict[str, Any]) -> dict[str, Any]:
-    """Item D.6 (first half): the real post-change Observation Change-result Evidence binds
-    to."""
+def observe_change_result(
+    current_state: dict[str, Any],
+    before: dict[str, Any],
+    change: dict[str, Any],
+) -> dict[str, Any]:
+    """Item D.6 (first half) fixed point (P8-R2-F1, SHUKOU Phase 8 structural-review round
+    2): the real post-change Observation Change-result Evidence binds to -- closed the
+    identical two-pass way :func:`observe_before` closes the before-Observation/Evidence
+    fixed point (P8-R1-F1), since the post-change Observation's own natural real backing
+    Evidence is Change-result Evidence itself: a provisional, placeholder-seeded post-change
+    Observation seeds a real (but discarded) Change-result Evidence derivation, and the
+    corrected Observation -- carrying that real Evidence id -- is what this function
+    returns. :func:`derive_the_change_result_evidence` performs the one, real, kept
+    derivation and verifies it reproduces the identical id this function's own seed
+    established.
+    """
+
+    difference_request = fx.derivation_request(
+        observation_bundle=before["bundle"],
+        fingerprint=current_state["semantic_fingerprint"],
+        state_revision=current_state["state_revision"],
+    )
+
+    provisional_request = fx.change_result_observation_request(
+        fingerprint=current_state["semantic_fingerprint"],
+        state_revision=current_state["state_revision"],
+    )
+    provisional_bundle = observe(provisional_request)
+    provisional_evidence_request: dict[str, Any] = {
+        "schema_version": "0.1",
+        "recorded_at": fx.EVIDENCE_RECORDED_AT,
+        "observation_request": before["request"],
+        "difference_request": difference_request,
+        "change_request": change["request"],
+        "post_change_observation_request": provisional_request,
+        "verification_observation_request": None,
+        "artifact_references": [dict(fx.ARTIFACT)],
+        "predecessor_evidence_refs": [],
+        "remaining_difference_refs": [],
+    }
+    provisional_evidence = derive_evidence(provisional_evidence_request)
 
     request = fx.change_result_observation_request(
         fingerprint=current_state["semantic_fingerprint"],
         state_revision=current_state["state_revision"],
+        evidence_ref={
+            "kind": "observation_evidence",
+            "id": provisional_evidence["evidence_id"],
+        },
     )
-    return {"request": request, "bundle": observe(request)}
+    bundle = observe(request)
+    assert (
+        bundle["observations"][-1]["observation_id"]
+        == provisional_bundle["observations"][-1]["observation_id"]
+    )
+
+    return {
+        "request": request,
+        "bundle": bundle,
+        "difference_request": difference_request,
+        "_seed_evidence_id": provisional_evidence["evidence_id"],
+    }
 
 
-def observe_verification(current_state: dict[str, Any]) -> dict[str, Any]:
-    """Item D.6 (second half): the real, independent re-observation Reflow's own G8 gate
-    verifies -- a genuinely separate Observation from :func:`observe_change_result`."""
+def observe_verification(current_state: dict[str, Any], before: dict[str, Any]) -> dict[str, Any]:
+    """Item D.6 (second half) fixed point (P8-R2-F1): the real, independent re-observation
+    Reflow's own G8 gate verifies -- a genuinely separate Observation from
+    :func:`observe_change_result` -- closed the identical two-pass way, since its own
+    natural real backing Evidence is a Change-Free Verification Evidence pairing it with the
+    identical before-Observation the real Difference was derived from
+    (``CLOSURE_POLICY.md``'s own ``CHANGE_FREE`` row structurally accepts exactly this
+    request shape -- ``change_request=None``, ``verification_observation_request``
+    populated -- regardless of this route's own, separate real ``CHANGE_BOUND`` closure;
+    this auxiliary record documents only that a second, independent observation of the
+    identical real post-change world was made, is never persisted, and is never referenced
+    by anything downstream -- the identical role the seed Evidence in :func:`observe_before`
+    plays).
+    """
+
+    difference_request = fx.derivation_request(
+        observation_bundle=before["bundle"],
+        fingerprint=current_state["semantic_fingerprint"],
+        state_revision=current_state["state_revision"],
+    )
+
+    provisional_request = fx.verification_observation_request(
+        fingerprint=current_state["semantic_fingerprint"],
+        state_revision=current_state["state_revision"],
+    )
+    provisional_bundle = observe(provisional_request)
+    provisional_evidence_request: dict[str, Any] = {
+        "schema_version": "0.1",
+        "recorded_at": fx.EVIDENCE_RECORDED_AT,
+        "observation_request": before["request"],
+        "difference_request": difference_request,
+        "change_request": None,
+        "post_change_observation_request": None,
+        "verification_observation_request": provisional_request,
+        "artifact_references": [dict(fx.ARTIFACT)],
+        "predecessor_evidence_refs": [],
+        "remaining_difference_refs": [],
+    }
+    provisional_evidence = derive_evidence(provisional_evidence_request)
 
     request = fx.verification_observation_request(
         fingerprint=current_state["semantic_fingerprint"],
         state_revision=current_state["state_revision"],
+        evidence_ref={
+            "kind": "observation_evidence",
+            "id": provisional_evidence["evidence_id"],
+        },
     )
-    return {"request": request, "bundle": observe(request)}
+    bundle = observe(request)
+    assert (
+        bundle["observations"][-1]["observation_id"]
+        == provisional_bundle["observations"][-1]["observation_id"]
+    )
+
+    verification_evidence_request: dict[str, Any] = {
+        "schema_version": "0.1",
+        "recorded_at": fx.EVIDENCE_RECORDED_AT,
+        "observation_request": before["request"],
+        "difference_request": difference_request,
+        "change_request": None,
+        "post_change_observation_request": None,
+        "verification_observation_request": request,
+        "artifact_references": [dict(fx.ARTIFACT)],
+        "predecessor_evidence_refs": [],
+        "remaining_difference_refs": [],
+    }
+    verification_evidence = derive_evidence(verification_evidence_request)
+    if verification_evidence["evidence_id"] != provisional_evidence["evidence_id"]:
+        raise AssertionError(
+            "P8-R2-F1 verification-Observation Evidence fixed point did not converge: "
+            f"{verification_evidence['evidence_id']!r} != "
+            f"{provisional_evidence['evidence_id']!r}"
+        )
+
+    return {"request": request, "bundle": bundle}
 
 
 def derive_the_change_result_evidence(
@@ -352,11 +521,12 @@ def derive_the_change_result_evidence(
     change_result: dict[str, Any],
 ) -> dict[str, Any]:
     """Item D.7, second half: the real Change-result Evidence, through the real Evidence
-    owner. The first half -- the real Observation Evidence that grounds the Difference --
-    is already produced by :func:`observe_before` (P8-R1-F1), before any Difference
-    exists."""
+    owner -- the one, kept derivation :func:`observe_change_result`'s own two-pass fixed
+    point (P8-R2-F1) already seeded and corrected the post-change Observation for. The
+    first half -- the real Observation Evidence that grounds the Difference -- is already
+    produced by :func:`observe_before` (P8-R1-F1), before any Difference exists."""
 
-    difference_request = fx.derivation_request(
+    difference_request = change_result.get("difference_request") or fx.derivation_request(
         observation_bundle=before["bundle"],
         fingerprint=current_state["semantic_fingerprint"],
         state_revision=current_state["state_revision"],
@@ -374,6 +544,12 @@ def derive_the_change_result_evidence(
         "remaining_difference_refs": [],
     }
     change_result_evidence = derive_evidence(change_result_evidence_request)
+    seed_evidence_id = change_result.get("_seed_evidence_id")
+    if seed_evidence_id is not None and change_result_evidence["evidence_id"] != seed_evidence_id:
+        raise AssertionError(
+            "P8-R2-F1 Change-result Evidence fixed point did not converge: "
+            f"{change_result_evidence['evidence_id']!r} != {seed_evidence_id!r}"
+        )
     return {
         "difference_request": difference_request,
         "change_result_evidence_request": change_result_evidence_request,
@@ -508,8 +684,8 @@ def assemble_vertical_proof_route(tmp_path: Path, *, fault: Any = None) -> dict[
     authority = check_authority(difference)
     change = derive_the_change(authority)
 
-    change_result_obs = observe_change_result(genesis_state)
-    verification_obs = observe_verification(genesis_state)
+    change_result_obs = observe_change_result(genesis_state, before, change)
+    verification_obs = observe_verification(genesis_state, before)
 
     change_result_evidence_bundle = derive_the_change_result_evidence(
         genesis_state, before, change, change_result_obs

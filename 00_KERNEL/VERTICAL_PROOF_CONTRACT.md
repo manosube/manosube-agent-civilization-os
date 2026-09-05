@@ -13,6 +13,7 @@ CANONICAL_CYCLE_CHANGED=false
 COMPLETION_GATE_WEAKENED=false
 ADOPTED_BY=SHUKOU_ADOPTION_ADOPT_PHASE_8_VERTICAL_PROOF_ISSUE_41
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_STRUCTURAL_REVIEW_ROUND_1
+CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_STRUCTURAL_REVIEW_ROUND_2
 ```
 
 ## 0. Revision History
@@ -43,6 +44,30 @@ Round 1 (SHUKOU Phase 8 structural-review round 1, adopted): 構造参謀's inde
             bypassed producer (§8B).
   Source Snapshot fixture truthfulness: both before/after Source Snapshots now digest real,
             checked-in fixture bytes at a locator that genuinely resolves (§3).
+
+Round 2 (SHUKOU Phase 8 final structural-review round 2, adopted): 構造参謀's independent
+  re-observation of PR #42's real HEAD after Round 1 found three further findings, all
+  adopted directly by SHUKOU (again not auto-adopted bot output --
+  BOT_FINDING_AUTO_ADOPTION=false, INDEPENDENT_STRUCTURAL_REPRODUCTION=true). Reproduced and
+  corrected in place, on the same PR/branch:
+
+  P8-R2-F1  Round 1 closed the placeholder-Evidence fixed point only at the final
+            Difference -- the *accepted* request graph reaching Sufficiency, Closure and
+            Reflow still carried the provisional, placeholder-seeded requests. Now closed
+            across the whole accepted request graph and every persisted record (§4).
+  P8-R2-F2  reflow()'s own provenance check (P8-R1-F5) compared only bare id sets, which
+            silently accepted a right-id/wrong-kind reference, collapsed a duplicate, and
+            could not distinguish a missing reference from an extra one. Now full canonical
+            reference equality -- kind, id and any asserted digest, never id alone (§7).
+  P8-R2-F3  The prior round's AUTHORITY_EVALUATION_INSTANT non-claim ("fully inert") was
+            true only along the one no-Approval AUTONOMOUS-by-rule route it tested. The
+            field is a transient admission context that governs real time-bound Approval
+            admission on the route where an Approval must actually bind, and is still never
+            part of authority_decision_id either way (§7, §8A).
+  Reflow Instant semantic decision: reflow_instant's own causal-order contract against the
+            Closure Evaluation's evaluated_at is now stated precisely (equal-or-later valid
+            is admitted, an invalid timestamp fails closed with a typed error, a different
+            valid instant may produce a different transaction identity) (§6).
 ```
 
 ---
@@ -218,6 +243,29 @@ identical real `observation_id` either way, but the Difference's own `observatio
 refs` field now names the real Evidence, proven by `tests/natural_cycle/test_vertical_proof.py::
 test_the_difference_actually_consumes_the_real_observation_evidence`.
 
+**Corrected (P8-R2-F1): the Evidence fixed point closes across the whole accepted request
+graph, not only the final Difference.** P8-R1-F1 proved the final Difference's own
+`observation_evidence_refs` was placeholder-free, but `observe_before`'s own returned
+`observation_evidence_request` -- what Sufficiency, Closure and Reflow actually consume --
+was still the provisional, placeholder-seeded request. `tests/natural_cycle/proof.py`'s
+`observe_before`, `observe_change_result`, and `observe_verification` each now run the full
+ten-step fixed point (provisional Observation Request → provisional Observation →
+provisional Evidence, seeding a corrected Observation Request → corrected Observation →
+corrected Difference/Evidence Request → corrected Evidence, verified to reproduce the
+identical id the provisional seed established) and return *only* the corrected artifacts --
+`FULL_ACCEPTED_REQUEST_GRAPH_PLACEHOLDER_COUNT=0`, proven by `tests/natural_cycle/
+test_vertical_proof.py::test_the_evidence_fixed_point_closes_across_the_full_accepted_
+request_graph` over an exact leaf-value scan of `before["observation_evidence_request"]`,
+`sufficiency.request`, `closure_request`, `reflow_kwargs`, the final Difference, and every
+record this run's own committed transaction manifest names -- never a single-field check
+this round's own finding showed was insufficient. The post-change and independent-
+re-observation Observations (`change_result_observation_id`, `verification_observation_id`)
+are closed the identical way: the former's own natural real backing Evidence is the
+Change-result Evidence itself (self-referential, exactly like the before-Observation), the
+latter's is an auxiliary Change-Free Verification Evidence pairing it with the same
+before-Observation the real Difference was derived from -- never persisted or referenced
+downstream, the identical role the before-Observation's own seed Evidence plays.
+
 ---
 
 ## 5. Terminal Receipt
@@ -306,6 +354,32 @@ asserts the lineage event count, per-kind record file count, `load_current`, and
 under the same transaction identity is rejected before any write, with the Store still
 unchanged afterward.
 
+**Reflow Instant causal-order semantics (P8-R2, adopted).** `reflow_instant` is the real
+transition time and is folded into the transaction's own content address
+(`reflow.identity.transaction_id`) -- it is not required to exactly equal the Closure
+Evaluation's own `evaluated_at`, only to never precede it:
+
+```text
+REFLOW_INSTANT_IS_TRANSITION_TIME=true
+REFLOW_INSTANT_EXACTLY_EQUALS_EVALUATED_AT=false
+REFLOW_INSTANT_MUST_NOT_PRECEDE_CLOSURE_EVALUATION=true
+LATER_VALID_REFLOW_INSTANT_ALLOWED=true
+REFLOW_INSTANT_INCLUDED_IN_TRANSACTION_ID=true
+DIFFERENT_VALID_REFLOW_INSTANT_MAY_PRODUCE_DIFFERENT_TRANSACTION_ID=true
+```
+
+"Wrong instant" is fixed as `INVALID_TIMESTAMP OR REFLOW_INSTANT_BEFORE_CLOSURE_EVALUATION`,
+never merely "differs from a fixture's own pinned value". `route.py::_preflight_verify_
+reflow_provenance` now parses `reflow_instant` through the canonical `instant()` grammar
+before any comparison and raises this Kernel's own typed `ReflowValidationError` on a
+malformed value (previously a bare `ValueError` could escape uncaught), and still refuses
+one that is well-formed but causally early. `tests/natural_cycle/
+test_vertical_proof_reflow_provenance_matrix.py` proves all five required rows: an invalid
+timestamp is rejected, an instant before `evaluated_at` is rejected, one exactly equal to it
+is allowed, one strictly after it is allowed, and two otherwise-identical routes committed
+at two different valid instants real a genuinely different transaction identity -- every
+rejection proven to leave the Store's committed State, Lineage and manifest untouched.
+
 ---
 
 ## 7. Explicit Non-Claims
@@ -355,14 +429,19 @@ route.py::_preflight_verify_reflow_provenance`, called for every outcome, immedi
 `_admitted_records`/commit) now independently re-verifies all four, before any commit:
 
 ```text
-change_refs        must equal closure_request.producing_change_refs exactly (a field G-gates
-                    already bind to the real, reproduced Change)
-authority_ref       wherever a real change_result_evidence_requests exists, must equal the
-                    real authority_used.id that reproduction (derive_evidence) actually
-                    carries
+change_refs        must equal closure_request.producing_change_refs exactly, as a full
+                    canonical reference (kind, id and any asserted digest -- never id
+                    alone), as an UNORDERED_SET (canonical sort, duplicate rejection, exact
+                    member equality) -- a field G-gates already bind to the real, reproduced
+                    Change
+authority_ref       wherever a real change_result_evidence_requests exists, must equal --
+                    as a full canonical SINGLE_REFERENCE, exact kind and id, no unknown
+                    field -- the real Authority Decision reference that reproduction
+                    (derive_evidence) actually carries
 observation_refs    wherever a reobservation is declared, must equal its own real
-                    after_observation_refs exactly (the identical set G8 already resolves)
-reflow_instant      may never precede the Closure Evaluation's own real evaluated_at
+                    after_observation_refs exactly, under the identical full canonical
+                    UNORDERED_SET equality (the identical set G8 already resolves)
+reflow_instant      may never precede the Closure Evaluation's own real evaluated_at (§6)
 ```
 
 Proven by five new negative controls in `tests/natural_cycle/test_vertical_proof_negative_
@@ -373,15 +452,49 @@ correction.py` were themselves correcting a `observation_refs=[]` placeholder th
 never needed checked before -- fixed to pass their own real, already-computed
 `reobservation.after_observation_refs`, not weakened).
 
-**Disclosed, bounded non-claim -- `AUTHORITY_EVALUATION_INSTANT` is presently inert (P8-R1-F4
-matrix finding).** Unlike the four fields above, this one genuinely carries no downstream
-weight in the current Kernel: neither the real Authority Decision's own content-addressed
-`authority_decision_id` nor its `decision` verdict changes when `evaluation_time` changes --
-confirmed directly (`tests/natural_cycle/test_vertical_proof_fixture_sensitivity_matrix.py::
-test_p8r1f4_authority_evaluation_instant_is_a_disclosed_inert_input`), not assumed. This
-mirrors an already-established Kernel convention (State's own Semantic Fingerprint excludes
-`observed_at`/`observer` by design -- `00_KERNEL/KERNEL_INDEX.md` §2) and is reported here as a
-fact this round discovered, not a gap this Phase 8 proof is asked to close.
+**Corrected (P8-R2-F2): canonical reference equality, not bare id-set equality.** The
+Round 1 check above compared only `{ref["id"], ...}` Python sets for `change_refs`/
+`observation_refs`, and only a bare `ref["id"]` membership test for `authority_ref` --
+`REFERENCE_ID_ONLY_EQUALITY_SUFFICIENT=false`: this silently accepted a reference naming the
+right id under the wrong `kind`, collapsed a genuine duplicate reference into one, and could
+not distinguish a missing reference from an extra one once only ids were compared.
+`route.py::_reference_key`/`_require_unordered_reference_set_equal`/`_require_single_
+reference_member` now compare the whole reference (kind, id, and any asserted digest),
+reject an unknown field, and reject a duplicate rather than silently collapsing it.
+`tests/natural_cycle/test_vertical_proof_reflow_provenance_matrix.py` proves every required
+negative control -- right-id/wrong-kind, duplicate, missing, extra, and wrong-id, for both
+`change_refs` and `observation_refs`, plus right-id/wrong-kind, wrong-id, and an unknown
+field for `authority_ref` -- each raising before any State, Lineage, record or transaction
+manifest mutation.
+
+**Corrected (P8-R2-F3): `AUTHORITY_EVALUATION_INSTANT` is a transient admission context, not
+an inert field.** The Round 1 finding ("fully inert") held only along the one route its own
+test exercised -- a rule granting `AUTONOMOUS` outright, with no Approval ever consulted for
+the outcome. `authority/approval.py::binding_mismatches` reads `evaluation_time` against
+every Approval's own `approved_at`/`expires_at` validity window whenever an Approval must
+actually bind a request (`HUMAN_APPROVAL_REQUIRED` with a real Approval on file), so the
+field is not inert in general:
+
+```text
+AUTHORITY_EVALUATION_INSTANT_ROLE=TRANSIENT_ADMISSION_CONTEXT
+AUTHORITY_EVALUATION_INSTANT_IN_DECISION_ID=false
+AUTHORITY_EVALUATION_INSTANT_AFFECTS_TIME_BOUND_ADMISSION=true
+```
+
+What is unchanged from the original finding: the real Authority Decision's own
+content-addressed `authority_decision_id` never includes `evaluation_time` (mirroring
+State's own Semantic Fingerprint excluding `observed_at`/`observer` by design --
+`00_KERNEL/KERNEL_INDEX.md` §2). `tests/natural_cycle/
+test_vertical_proof_fixture_sensitivity_matrix.py::
+test_p8r2f3_authority_evaluation_instant_governs_time_bound_approval_admission` proves a
+real, time-bound Approval: before its `approved_at` and after its `expires_at`, the Approval
+does not bind and authorization is not granted; within the window, it binds and is used;
+two valid times landing in the identical real outcome share one Decision id, while a time
+that genuinely changes the outcome changes the id too -- never because the raw timestamp
+was folded into the identity itself, only because the outcome it produced actually differed.
+`test_p8r1f4_authority_evaluation_instant_is_inert_on_the_no_approval_route` (renamed from
+the withdrawn claim) keeps proving the original, narrower route's own real behavior
+unchanged.
 
 ---
 
@@ -406,7 +519,10 @@ POST_CHANGE_OBSERVATION            Evidence identity / observed_result      re-d
 VERIFICATION_OBSERVATION           Reflow refuses CLOSED                    fails closed
 CLOSURE_POLICY                     Sufficiency verdict changes              re-derived
 EVIDENCE_INSTANT                   Evidence derivation refused              fails closed (item E3)
-AUTHORITY_EVALUATION_INSTANT       none (§7's own disclosed finding)        neither -- disclosed
+AUTHORITY_EVALUATION_INSTANT       inert on no-Approval AUTONOMOUS-by-rule  transient admission
+                                   route; governs real time-bound Approval  context (P8-R2-F3);
+                                   admission where an Approval must bind;   never in
+                                   never in authority_decision_id           authority_decision_id
 REFLOW_INSTANT                     Reflow refuses CLOSED                    fails closed (P8-R1-F5)
 ```
 
@@ -471,4 +587,7 @@ created for any record kind in this audit.
    negative/interruption routes)
 8. tests/natural_cycle/test_vertical_proof_fixture_sensitivity_matrix.py (§8A, item E.2's
    full input-class matrix)
+9. tests/natural_cycle/test_vertical_proof_reflow_provenance_matrix.py (§7's P8-R2-F2
+   canonical-reference-equality negative controls and §6's Reflow Instant causal-order
+   proof)
 ```

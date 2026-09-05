@@ -663,6 +663,104 @@ def _preflight_reresolve_terminal_reason_evidence(
         ) from error
 
 
+#: A reference's own recognized field set (``common/reference.schema.json``): ``kind`` and
+#: ``id`` are always required, ``digest`` is the one field the schema admits beyond them.
+#: Fixed here, once, rather than re-typed at each of this module's three provenance checks.
+_REFERENCE_FIELDS = frozenset({"kind", "id", "digest"})
+
+
+def _reference_key(reference: Any, *, context: str) -> tuple[Any, ...]:
+    """Return one reference's own canonical identity key -- ``kind``, ``id`` and, if
+    present, ``digest`` -- after refusing anything that is not exactly a reference object.
+
+    P8-R2-F2 (SHUKOU Phase 8 structural-review round 2): a bare ``ref.get("id")`` treats a
+    reference naming the right id under the *wrong* ``kind`` as identical to the real one --
+    ``REFERENCE_KIND_IS_SEMANTIC=true`` refuses that. Every recognized field is folded into
+    the key (never just ``id``), so two references that agree on ``id`` alone, but disagree
+    on ``kind`` or an asserted ``digest``, compare unequal.
+    """
+
+    if not isinstance(reference, dict):
+        raise ReflowValidationError(f"{context} member is not a reference object")
+    unknown = set(reference) - _REFERENCE_FIELDS
+    if unknown:
+        raise ReflowValidationError(
+            f"{context} member carries unknown fields: {sorted(unknown)}"
+        )
+    kind = reference.get("kind")
+    identity = reference.get("id")
+    if not isinstance(kind, str) or not kind or not isinstance(identity, str) or not identity:
+        raise ReflowValidationError(f"{context} member carries no readable kind/id")
+    return tuple(sorted(reference.items()))
+
+
+def _require_unordered_reference_set_equal(
+    declared: Any,
+    real: Any,
+    *,
+    declared_label: str,
+    real_label: str,
+) -> None:
+    """UNORDERED_SET canonical-reference equality (P8-R2-F2): canonical sort, duplicate
+    rejection, and exact member equality over the *whole* reference (never ``id`` alone) --
+    never a bare ``{ref["id"], ...}`` Python ``set``, which silently collapses a duplicate
+    reference into one, admits a right-id/wrong-kind reference as identical, and cannot
+    distinguish "missing" from "extra" once ids alone are compared. Order carries no
+    meaning for either side (this Kernel's own collections here are content-addressed
+    identity sets, never sequences), so canonical (sorted) comparison is exact equality,
+    not merely order-insensitive membership.
+    """
+
+    declared_list = declared if declared is not None else []
+    real_list = real if real is not None else []
+    if not isinstance(declared_list, list):
+        raise ReflowValidationError(f"{declared_label} must be a list of references")
+    if not isinstance(real_list, list):
+        raise ReflowValidationError(f"{real_label} must be a list of references")
+
+    declared_keys = [_reference_key(item, context=declared_label) for item in declared_list]
+    real_keys = [_reference_key(item, context=real_label) for item in real_list]
+
+    for label, keys in ((declared_label, declared_keys), (real_label, real_keys)):
+        seen: set[tuple[Any, ...]] = set()
+        for key in keys:
+            if key in seen:
+                raise ReflowValidationError(
+                    f"{label} carries a duplicate reference: {dict(key)}"
+                )
+            seen.add(key)
+
+    declared_set = set(declared_keys)
+    real_set = set(real_keys)
+    if declared_set != real_set:
+        missing = real_set - declared_set
+        extra = declared_set - real_set
+        raise ReflowValidationError(
+            f"{declared_label} does not exactly match {real_label} "
+            f"(missing={[dict(k) for k in sorted(missing)]}, "
+            f"extra={[dict(k) for k in sorted(extra)]})"
+        )
+
+
+def _require_single_reference_member(
+    declared: Any,
+    real_refs: set[tuple[Any, ...]],
+    *,
+    declared_label: str,
+    real_label: str,
+) -> None:
+    """SINGLE_REFERENCE canonical equality against a real reference set (P8-R2-F2):
+    *declared* must be exactly one of *real_refs* -- exact ``kind``, exact ``id``, no
+    unknown field -- never a bare id-string membership test that a right-id/wrong-kind
+    reference would also satisfy."""
+
+    key = _reference_key(declared, context=declared_label)
+    if key not in real_refs:
+        raise ReflowValidationError(
+            f"{declared_label} does not exactly match {real_label}"
+        )
+
+
 def _preflight_verify_reflow_provenance(
     closure_request: dict[str, Any],
     evaluation: dict[str, Any],
@@ -672,42 +770,47 @@ def _preflight_verify_reflow_provenance(
     observation_refs: list[Any],
     reflow_instant_value: str,
 ) -> None:
-    """P8-R1-F5 (SHUKOU Phase 8 structural-review round 1, adopted): ``reflow()``'s own
-    caller-supplied ``authority_ref``/``change_refs``/``observation_refs``/``reflow_instant``
-    are re-verified, immediately before commit, against the same real records this
-    Evaluation is already independently bound to -- never accepted as caller-restated
-    descriptive metadata for the lifecycle event/transaction identity that carry them.
+    """P8-R1-F5 (round 1) + P8-R2-F2 (round 2, SHUKOU Phase 8 structural-review, adopted):
+    ``reflow()``'s own caller-supplied ``authority_ref``/``change_refs``/``observation_
+    refs``/``reflow_instant`` are re-verified, immediately before commit, against the same
+    real records this Evaluation is already independently bound to -- never accepted as
+    caller-restated descriptive metadata for the lifecycle event/transaction identity that
+    carry them, and never merely checked by a bare ``ref["id"]`` set (P8-R2-F2:
+    ``REFERENCE_ID_ONLY_EQUALITY_SUFFICIENT=false`` -- that silently accepts a right-id
+    reference under the wrong ``kind``, collapses a genuine duplicate, and cannot
+    distinguish a missing reference from an extra one once only ids are compared).
     Called for every outcome (not only ``CLOSED``), matching the treatment every other
     admitted reference here already gets.
 
-    *change_refs* must name exactly the Change identities ``closure_request.producing_
-    change_refs`` already declares -- a field G8/G21's own Candidate binding already holds
-    to the real, reproduced Change (a mismatch there already fails the Evaluation before
-    this ever runs). *authority_ref*, wherever this Evaluation names at least one real
-    Change-result Evidence request, must equal the real ``authority_used.id`` that request's
-    own reproduction (:func:`~manosube_agent_civilization.evidence.engine.derive_evidence`)
-    actually carries -- never a caller restatement. *observation_refs*, wherever a
-    ``reobservation`` is declared, must name exactly its own real
-    ``after_observation_refs`` -- the same identities G8's own anti-self-closing check
-    already resolves. *reflow_instant_value* may never precede the Evaluation's own real
-    ``evaluated_at`` -- committing an outcome at an instant earlier than the evidence that
-    grounds it was evaluated is incoherent.
+    *change_refs* must equal, as a full canonical UNORDERED_SET of references (not an id
+    set), ``closure_request.producing_change_refs`` -- a field G8/G21's own Candidate
+    binding already holds to the real, reproduced Change (a mismatch there already fails
+    the Evaluation before this ever runs). *authority_ref* is a SINGLE_REFERENCE that,
+    wherever this Evaluation names at least one real Change-result Evidence request, must
+    equal -- exact ``kind`` and ``id``, not id alone -- one of the real ``authority_used``
+    references those requests' own reproduction (:func:`~manosube_agent_civilization.
+    evidence.engine.derive_evidence`) actually carries -- never a caller restatement.
+    *observation_refs* must equal, as a full canonical UNORDERED_SET, ``closure_request.
+    reobservation.after_observation_refs`` wherever a ``reobservation`` is declared -- the
+    same identities G8's own anti-self-closing check already resolves. *reflow_instant_
+    value* may never precede the Evaluation's own real ``evaluated_at`` -- committing an
+    outcome at an instant earlier than the evidence that grounds it was evaluated is
+    incoherent.
+
+    Every refusal here raises before ``_admitted_records``/commit ever runs, so no State,
+    Lineage, record or transaction manifest mutation follows a provenance mismatch.
     """
 
-    declared_change_ids = {ref.get("id") for ref in (change_refs or []) if isinstance(ref, dict)}
-    producing_change_ids = {
-        ref.get("id")
-        for ref in closure_request.get("producing_change_refs") or []
-        if isinstance(ref, dict)
-    }
-    if declared_change_ids != producing_change_ids:
-        raise ReflowValidationError(
-            "reflow()'s own change_refs does not match closure_request.producing_change_refs"
-        )
+    _require_unordered_reference_set_equal(
+        change_refs,
+        closure_request.get("producing_change_refs"),
+        declared_label="reflow()'s own change_refs",
+        real_label="closure_request.producing_change_refs",
+    )
 
     change_result_requests = closure_request.get("change_result_evidence_requests") or []
     if change_result_requests:
-        real_authority_ids: set[str] = set()
+        real_authority_refs: set[tuple[Any, ...]] = set()
         for item in change_result_requests:
             try:
                 record = derive_evidence(item)
@@ -718,37 +821,54 @@ def _preflight_verify_reflow_provenance(
                 ) from error
             authority_used = record.get("authority_used")
             if isinstance(authority_used, dict) and authority_used.get("id"):
-                real_authority_ids.add(authority_used["id"])
-        declared_authority_id = (
-            authority_ref.get("id") if isinstance(authority_ref, dict) else None
+                real_authority_refs.add(
+                    _reference_key(
+                        {"kind": "authority_decision", "id": authority_used["id"]},
+                        context="the real Authority Decision reference",
+                    )
+                )
+        _require_single_reference_member(
+            authority_ref,
+            real_authority_refs,
+            declared_label="reflow()'s own authority_ref",
+            real_label="the real Authority Decision the reproduced change_result_evidence "
+            "actually names",
         )
-        if declared_authority_id not in real_authority_ids:
-            raise ReflowValidationError(
-                "reflow()'s own authority_ref does not match the real Authority Decision "
-                "the reproduced change_result_evidence actually names"
-            )
 
     reobservation = closure_request.get("reobservation")
     if isinstance(reobservation, dict) and reobservation.get("after_observation_refs"):
-        declared_observation_ids = {
-            ref.get("id") for ref in (observation_refs or []) if isinstance(ref, dict)
-        }
-        real_observation_ids = {
-            ref.get("id")
-            for ref in reobservation.get("after_observation_refs") or []
-            if isinstance(ref, dict)
-        }
-        if declared_observation_ids != real_observation_ids:
-            raise ReflowValidationError(
-                "reflow()'s own observation_refs does not match closure_request.reobservation"
-                ".after_observation_refs"
-            )
+        _require_unordered_reference_set_equal(
+            observation_refs,
+            reobservation.get("after_observation_refs"),
+            declared_label="reflow()'s own observation_refs",
+            real_label="closure_request.reobservation.after_observation_refs",
+        )
 
+    # P8-R2 Reflow Instant semantics (SHUKOU Phase 8 structural-review round 2, adopted):
+    # ``reflow_instant`` is the real transition time, folded into the transaction identity
+    # itself (:func:`~manosube_agent_civilization.reflow.identity.transaction_id`) --
+    # ``REFLOW_INSTANT_INCLUDED_IN_TRANSACTION_ID=true``, ``DIFFERENT_VALID_REFLOW_INSTANT_
+    # MAY_PRODUCE_DIFFERENT_TRANSACTION_ID=true`` -- so a value that is not even a real
+    # timestamp must fail closed here, not merely feed a hash
+    # (``INVALID_REFLOW_INSTANT_FAILS_CLOSED=true``), before this ever reaches
+    # ``_admitted_records``/commit.
+    try:
+        reflow_instant_parsed = instant(reflow_instant_value)
+    except (ValueError, TypeError) as error:
+        raise ReflowValidationError(
+            f"reflow_instant is not a valid canonical UTC instant: {error}"
+        ) from error
+
+    # ``REFLOW_INSTANT_MUST_NOT_PRECEDE_CLOSURE_EVALUATION=true``, but
+    # ``REFLOW_INSTANT_EXACTLY_EQUALS_EVALUATED_AT=false`` -- equal to, or any later, valid
+    # instant is admitted (``LATER_VALID_REFLOW_INSTANT_ALLOWED=true``); only a *causally
+    # early* instant (one that would commit an outcome before the evidence grounding it was
+    # even evaluated) fails closed (``CAUSALLY_EARLY_REFLOW_INSTANT_FAILS_CLOSED=true``).
     evaluated_at = evaluation.get("evaluated_at")
     if (
         isinstance(evaluated_at, str)
         and evaluated_at
-        and instant(reflow_instant_value) < instant(evaluated_at)
+        and reflow_instant_parsed < instant(evaluated_at)
     ):
         raise StaleReflowError(
             f"reflow_instant {reflow_instant_value!r} precedes the Closure Evaluation's "
