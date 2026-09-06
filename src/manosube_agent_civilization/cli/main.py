@@ -2,7 +2,10 @@
 
 ``manosube boot --store-root PATH --schema-root PATH --project-id ID --project-binding-id ID``
 
-This module owns exactly three things: argument parsing, process exit status, and
+installed as the sole ``[project.scripts]`` console-script entry point -- there is no second,
+module-execution public entry point (SHUKOU adoption
+``ADOPT_P11_R1_CLI_PUBLIC_SURFACE_AND_FAILURE_BOUNDARY``, Issue #47 Structural Review Round
+1). This module owns exactly three things: argument parsing, process exit status, and
 deterministic canonical-JSON serialization of the result. It creates no second Boot, Store,
 Binding, Objective, Authority, or reference-resolution owner: it constructs the existing
 ``FileStateStore`` from the two explicit filesystem roots the caller supplies and invokes the
@@ -19,7 +22,19 @@ canonicalization owner Store and State already use, never a second serializer --
 key and normalizes every string deterministically). A rejection writes exactly one canonical
 JSON error object to stderr and exits non-zero, with stdout empty and no traceback: this
 adapter never catches or rewraps a propagating domain error, it only classifies the existing
-exception's own class name into a stable ``error`` field (frozen semantic decision 7).
+exception's own class name into a stable ``error`` field (frozen semantic decision 7). The
+success projection, its canonical serialization, and its stdout emission all run *inside* that
+same traceback-free failure boundary -- a downstream pipe closing mid-write, or any other
+failure while producing that one document, still surfaces as the typed JSON/non-zero-exit
+contract, never a leaked traceback.
+
+The command line accepts only the exact ``boot`` subcommand and the exact four required long
+flags: both the top-level parser and the ``boot`` subparser are built with
+``allow_abbrev=False`` (no ``--store``/``--project-i``-style abbreviation) and
+``add_help=False`` (argparse's own automatic ``-h``/``--help`` action is never registered, so
+a help flag is simply an unrecognized argument and gets the identical typed-JSON,
+non-zero-exit, non-exiting-early treatment as any other malformed command line, rather than
+argparse's own plain-text help dump plus ``SystemExit(0)``).
 """
 
 from __future__ import annotations
@@ -70,9 +85,9 @@ class _ArgumentParser(argparse.ArgumentParser):
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = _ArgumentParser(prog=_PROG)
+    parser = _ArgumentParser(prog=_PROG, allow_abbrev=False, add_help=False)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    boot = subparsers.add_parser("boot")
+    boot = subparsers.add_parser("boot", allow_abbrev=False, add_help=False)
     boot.add_argument("--store-root", required=True)
     boot.add_argument("--schema-root", required=True)
     boot.add_argument("--project-id", required=True)
@@ -157,6 +172,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         context = boot_project(
             store, project_id=args.project_id, project_binding_id=args.project_binding_id
         )
+        # Projection, canonical serialization, and the stdout write itself all stay inside
+        # this same try -- a downstream pipe closing mid-write (BrokenPipeError) or any other
+        # failure while producing this one document still surfaces through the identical
+        # typed-JSON/non-zero-exit contract below, never a leaked traceback.
+        _emit(sys.stdout, canonical_json_bytes(_projection(context)) + b"\n")
     except _DOMAIN_ERRORS as exc:
         _emit(sys.stderr, canonical_json_bytes(_error_document(exc)) + b"\n")
         return 1
@@ -168,13 +188,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         _emit(sys.stderr, canonical_json_bytes(_error_document(exc)) + b"\n")
         return 1
 
-    _emit(sys.stdout, canonical_json_bytes(_projection(context)) + b"\n")
     return 0
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     raise SystemExit(run(argv))
-
-
-if __name__ == "__main__":
-    main()

@@ -1,27 +1,30 @@
 """Phase 11 (Issue #47) CLI Boot adapter: the one public command (``boot``), end-to-end,
 over a real ``FileStateStore``.
 
-Proves the canonical successful route (``CLI_CONTRACT.md`` §5), the required rejection proofs
-(§6), and that no rejection ever mutates canonical Binding, State, Lineage, record, or
+Proves the canonical successful route (``CLI_CONTRACT.md`` §5) and the required rejection
+proofs (§6), and that no rejection ever mutates canonical Binding, State, Lineage, record, or
 transaction-manifest visibility.
 
-The primary positive-route and determinism proofs invoke the CLI as a real
-``python -m manosube_agent_civilization.cli`` subprocess (frozen semantic decision 9); the
-rejection matrix invokes ``cli.main.run`` in-process (the identical function the module entry
-point itself calls, capturing the same ``sys.stdout.buffer``/``sys.stderr.buffer`` writes via
-pytest's ``capsysbinary``) so the full matrix stays fast without weakening any proof -- every
+Every test here invokes ``cli.main.run`` in-process (the identical function the console
+script itself calls, capturing the same ``sys.stdout.buffer``/``sys.stderr.buffer`` writes via
+pytest's ``capsysbinary``), so the full matrix stays fast without weakening any proof -- every
 assertion is about ``run``'s own return value and byte-exact stdout/stderr, not about process
-mechanics a subprocess would add nothing to check.
+mechanics a subprocess would add nothing to check. The primary positive-route and determinism
+proofs against the real, installed ``manosube`` console-script executable (frozen semantic
+decision 9, Structural Review Round 1) live in
+``tests/integration/cli/test_cli_installed_command.py``, which is the only place a wheel is
+built and a fresh virtual environment is created -- doing that once there, not per-test here,
+keeps this file's own rejection matrix fast.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import importlib
 import json
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 from typing import Any
 
@@ -34,6 +37,13 @@ from manosube_agent_civilization.cli.main import run
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import STAGES, FileStateStore
 from manosube_agent_civilization.store.errors import SimulatedCrash
+
+# ``importlib.import_module`` (never ``import package.main as alias``): cli/__init__.py's own
+# ``from .main import main, run`` rebinds the package attribute ``cli.main`` to the *function*
+# ``main``, so a plain ``import ... as cli_main`` would silently hand this module the function
+# instead of the module (see tests/contract/cli/test_cli_static_conformance.py for the same
+# gotcha).
+cli_main = importlib.import_module("manosube_agent_civilization.cli.main")
 
 
 def _bound(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, Any]]:
@@ -101,58 +111,6 @@ def _advance(
         "committed_at": "2026-09-06T10:00:00Z",
     }
     return successor, event
-
-
-# --- canonical successful route (fresh-process, frozen semantic decision 9) -------------- #
-
-
-def test_cli_boots_a_real_bound_project_in_a_fresh_process(tmp_path: Path) -> None:
-    store_root, kwargs, result = _bound(tmp_path)
-    project_id = kwargs["project_id"]
-    before = _snapshot(store_root, project_id)
-
-    proc = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "-m",
-            "manosube_agent_civilization.cli",
-            *_argv(store_root, SCHEMA_ROOT, project_id, result["project_binding_id"]),
-        ],
-        capture_output=True,
-    )
-
-    assert proc.returncode == 0
-    assert proc.stderr == b""
-    assert proc.stdout.endswith(b"\n")
-    document = json.loads(proc.stdout)
-    assert document["project_id"] == project_id
-    assert document["project_binding_id"] == result["project_binding_id"]
-    assert document["current_state"] == result["committed_state"]
-    assert document["objective_revision"] == result["objective_revision"]
-    assert document["authority_rule"] == result["authority_rule"]
-    assert _snapshot(store_root, project_id) == before
-
-
-def test_cli_success_is_deterministic_across_repeated_fresh_process_invocations(
-    tmp_path: Path,
-) -> None:
-    store_root, kwargs, result = _bound(tmp_path)
-    project_id = kwargs["project_id"]
-    argv = [
-        sys.executable,
-        "-m",
-        "manosube_agent_civilization.cli",
-        *_argv(store_root, SCHEMA_ROOT, project_id, result["project_binding_id"]),
-    ]
-    before = _snapshot(store_root, project_id)
-
-    first = subprocess.run(argv, capture_output=True)  # noqa: S603
-    second = subprocess.run(argv, capture_output=True)  # noqa: S603
-
-    assert first.returncode == 0
-    assert second.returncode == 0
-    assert first.stdout == second.stdout
-    assert _snapshot(store_root, project_id) == before
 
 
 # --- canonical successful route, in-process (missing/present current view) --------------- #
@@ -422,4 +380,79 @@ def test_cli_rejects_a_later_transactions_journal_replaced_by_a_non_directory_en
     assert exit_code != 0
     assert out == b""
     assert json.loads(err)["error"] == "CorruptStoreError"
+    assert _snapshot(store_root, project_id) == before
+
+
+# --- Structural Review Round 1 (P11-R1-F2/F3/F4) ------------------------------------------ #
+
+
+@pytest.mark.parametrize(
+    "abbreviated_flag",
+    ["--store", "--schema", "--project-i", "--project-b"],
+)
+def test_cli_rejects_an_abbreviated_long_flag(
+    abbreviated_flag: str, tmp_path: Path, capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    """``allow_abbrev=False`` on the ``boot`` subparser: none of the four required flags may
+    be spelled as an unambiguous abbreviation (P11-R1-F2)."""
+
+    exit_code = run(["boot", abbreviated_flag, str(tmp_path), "--project-id", "PRJ-X"])
+    out, err = capsysbinary.readouterr()
+
+    assert exit_code != 0
+    assert out == b""
+    assert json.loads(err)["error"] == "CLIArgumentError"
+    assert b"Traceback" not in err
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["-h"], ["boot", "--help"], ["boot", "-h"]])
+def test_cli_rejects_a_help_flag_through_the_json_run_contract(
+    argv: list[str], capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    """``add_help=False`` on both parsers: argparse's own automatic help action is never
+    registered, so a help flag is simply an unrecognized argument -- rejected with the
+    identical typed-JSON, non-zero-exit, no-traceback contract as any other malformed command
+    line, never argparse's own plain-text help dump plus ``SystemExit(0)`` (P11-R1-F3)."""
+
+    exit_code = run(argv)
+    out, err = capsysbinary.readouterr()
+
+    assert exit_code != 0
+    assert out == b""
+    document = json.loads(err)
+    assert document["error"] == "CLIArgumentError"
+    assert b"Traceback" not in err
+    assert b"show this help message" not in err
+
+
+def test_cli_keeps_success_emission_inside_the_failure_boundary(
+    tmp_path: Path, capsysbinary: pytest.CaptureFixture[bytes], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Projection, canonical serialization, and the stdout write itself all run inside the
+    same top-level ``try`` as ``boot_project`` -- so a failure while producing the success
+    document (e.g. a downstream pipe closing mid-write) still surfaces through the identical
+    typed-JSON stderr/non-zero-exit contract, never a leaked traceback, and the successful
+    Boot it followed still made zero Store mutation (P11-R1-F4)."""
+
+    store_root, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    before = _snapshot(store_root, project_id)
+
+    real_emit = cli_main._emit
+
+    def faulty_emit(stream: Any, payload: bytes) -> None:
+        if stream is sys.stdout:
+            raise BrokenPipeError("simulated broken output pipe")
+        real_emit(stream, payload)
+
+    monkeypatch.setattr(cli_main, "_emit", faulty_emit)
+
+    exit_code = run(_argv(store_root, SCHEMA_ROOT, project_id, result["project_binding_id"]))
+    out, err = capsysbinary.readouterr()
+
+    assert exit_code != 0
+    assert out == b""
+    document = json.loads(err)
+    assert document["error"] == "BrokenPipeError"
+    assert b"Traceback" not in err
     assert _snapshot(store_root, project_id) == before

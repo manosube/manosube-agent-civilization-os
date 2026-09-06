@@ -69,7 +69,6 @@ CLI_MAY_ACCESS_NETWORK=false
 ```text
 src/manosube_agent_civilization/cli/
 ├── __init__.py     public exports
-├── __main__.py      python -m manosube_agent_civilization.cli entry point
 ├── errors.py        CLIError / CLIArgumentError / CLIInvalidRootError
 └── main.py          the one public command's own parser, route, and serialization
 ```
@@ -80,15 +79,22 @@ entry point (`manosube_agent_civilization.boot.boot_project`); the Store is cons
 exclusively through the existing `FileStateStore` over the two caller-supplied roots; no new
 schema and no new persisted record kind is introduced.
 
-This v0.1 delivery adds no `[project.scripts]` console-script entry to `pyproject.toml` --
-that file's own pre-existing note ("No `[project.scripts]` entry exists in v0.1. The local
-CLI is a v0.2 adapter and must not become part of the kernel early.") is a real, deliberate
-repository constraint this delivery respects rather than overrides. Issue #47's own required
-package section explicitly allows either "one console-script/module entry point"; this
-delivery resolves that choice to the module entry point,
-`python -m manosube_agent_civilization.cli boot ...`, with the parser's own displayed program
-name set to `manosube` so the visible command shape still matches the Issue's own
-`manosube boot --store-root ... ...` illustration exactly.
+**Structural Review Round 1 correction (SHUKOU adoption
+`ADOPT_P11_R1_CLI_PUBLIC_SURFACE_AND_FAILURE_BOUNDARY`).** The initial delivery resolved
+Issue #47's "one console-script/module entry point" choice to a module entry point
+(`python -m manosube_agent_civilization.cli boot ...`, via a `cli/__main__.py`), respecting
+`pyproject.toml`'s own pre-existing v0.1 note that no `[project.scripts]` entry existed yet.
+構造参謀 found this an unauthorized narrowing of Issue #47's own frozen semantic decision 3,
+which fixes the public command's shape as exactly `manosube boot ...` -- with no
+`[project.scripts]` entry, no installed environment actually exposes a `manosube` executable
+at all. `pyproject.toml` now carries the one console-script entry
+(`manosube = "manosube_agent_civilization.cli.main:main"`); `cli/__main__.py` is removed
+entirely (its module-execution route is not merely undocumented but no longer exists), and
+the trailing `if __name__ == "__main__":` guard is removed from `main.py` as well, since
+`python -m manosube_agent_civilization.cli.main` would otherwise still resolve to a second,
+undocumented invocation regardless of the package's own `__main__.py`. `manosube boot ...` is
+now the sole external invocation of this adapter, in every sense: documented, installed, and
+technically reachable.
 
 ## 4. Explicit non-claims
 
@@ -109,7 +115,8 @@ MODEL_ADAPTER_IMPLEMENTED=false
 URL_READ_ONLY_IMPLEMENTED=false
 AUTONOMOUS_CHANGE_IMPLEMENTED=false
 MULTI_AGENT_IMPLEMENTED=false
-CONSOLE_SCRIPT_ENTRY_ADDED=false
+CONSOLE_SCRIPT_ENTRY_ADDED=true
+SECOND_PUBLIC_CLI_ENTRYPOINT=false
 PHASE_11_COMPLETE=false
 PHASE_12_ALLOWED=false
 ```

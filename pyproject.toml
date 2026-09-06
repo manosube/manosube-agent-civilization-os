@@ -50,8 +50,11 @@ Repository = "https://github.com/manosube/manosube-agent-civilization-os"
 Issues = "https://github.com/manosube/manosube-agent-civilization-os/issues"
 Origin = "https://github.com/manosube/manosube-civilization-os"
 
-# No [project.scripts] entry exists in v0.1.
-# The local CLI is a v0.2 adapter and must not become part of the kernel early.
+# The one public CLI Boot adapter command (Phase 11, Issue #47; SHUKOU adoption
+# ADOPT_P11_R1_CLI_PUBLIC_SURFACE_AND_FAILURE_BOUNDARY). `manosube boot ...` is the sole
+# canonical external invocation -- there is no second, module-execution entry point.
+[project.scripts]
+manosube = "manosube_agent_civilization.cli.main:main"
 
 [dependency-groups]
 dev = [

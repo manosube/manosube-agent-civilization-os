@@ -30,15 +30,21 @@ PUBLIC_CLI_COMMAND_COUNT=1
 ## 2. Public signature
 
 ```text
-python -m manosube_agent_civilization.cli boot \
-    --store-root PATH --schema-root PATH --project-id ID --project-binding-id ID
+manosube boot --store-root PATH --schema-root PATH --project-id ID --project-binding-id ID
 ```
 
-displayed (via the parser's own `prog`) as `manosube boot --store-root ... --schema-root ...
---project-id ... --project-binding-id ...` -- the exact command shape Issue #47 itself
-illustrates. All four flags are required; there is no current-working-directory, environment
-variable, filesystem scan, repository URL, directory name, or "only project" inference of any
-kind (frozen semantic decision 2, below).
+installed as the sole `[project.scripts]` console-script entry
+(`pyproject.toml`: `manosube = "manosube_agent_civilization.cli.main:main"`) -- the exact
+command shape Issue #47 itself illustrates, and (since Structural Review Round 1) the only
+way to invoke this adapter from outside Python: there is no `python -m
+manosube_agent_civilization.cli` module-execution route, and no `python -m
+manosube_agent_civilization.cli.main` route either (`main.py` carries no trailing
+`if __name__ == "__main__":` guard). All four flags are required, exactly as spelled, with no
+abbreviation: both the top-level parser and the `boot` subparser are built with
+`allow_abbrev=False`, and both are built with `add_help=False` so argparse's own automatic
+`-h`/`--help` action is never registered either. There is no current-working-directory,
+environment variable, filesystem scan, repository URL, directory name, or "only project"
+inference of any kind (frozen semantic decision 2, below).
 
 ## 3. Frozen semantic decisions
 
@@ -51,8 +57,11 @@ kind (frozen semantic decision 2, below).
    environment, filesystem scan, repository URL, directory name, or "only project" inference
    is allowed.
 3. **One public command.** The initial surface is exactly `boot`, with exactly the four
-   flags above. Aliases, interactive prompts, default project selection, and future command
-   placeholders are forbidden.
+   flags above, spelled exactly as shown. Aliases, interactive prompts, default project
+   selection, future command placeholders, abbreviated flags (`allow_abbrev=False` on both
+   the top-level and `boot` parsers), and argparse's own automatic `-h`/`--help` action
+   (`add_help=False` on both parsers -- a help flag is simply an unrecognized argument) are
+   all forbidden.
 4. **CLI invokes Boot once.** The route calls `boot_project` exactly once and must not call
    `bind_project`, `FileStateStore.initialize`, `.commit`, `.recover`, `.load_current`, or
    read a Store-private path directly.
@@ -74,15 +83,25 @@ kind (frozen semantic decision 2, below).
    non-zero. No traceback is ever emitted. Stdout remains empty. The CLI never catches and
    rewraps a domain error into a different category; the `error` field is always the already-
    raised instance's own class name, never a hand-maintained second classification that could
-   drift from it.
+   drift from it. This same failure boundary covers the successful route's own projection,
+   canonical serialization, and stdout write, not only Boot's own invocation -- a downstream
+   pipe closing mid-write, or any other failure while producing that one document, still
+   surfaces through this identical typed-JSON/non-zero-exit contract rather than a leaked
+   traceback (Structural Review Round 1, P11-R1-F4).
 8. **No capability escalation.** A successful result is a projection, not a grant of
    Authority or a command-execution handle. No tokens, credentials, secrets, network clients,
    or persistent CLI receipts are emitted or created (and `canonical_json_bytes` itself still
    refuses any accidental secret-bearing field name at any depth, exactly as it already does
    for Store/State's own canonical bodies).
-9. **Fresh process is load-bearing.** The primary positive proof invokes the CLI as a real
-   `python -m manosube_agent_civilization.cli` subprocess against a real Phase 9-bound Store,
-   and proves byte-equivalent stdout across repeated invocations.
+9. **Fresh process is load-bearing.** The primary positive proof invokes the CLI as the real,
+   installed `manosube` console-script executable -- from a wheel built from this repository
+   and installed into a fresh, isolated virtual environment outside the repository, invoked
+   with a working directory outside the repository and with no repository path injected via
+   `PYTHONPATH` -- against a real Phase 9-bound Store, and proves byte-equivalent stdout
+   across repeated invocations of that same installed executable (Structural Review Round 1,
+   P11-R1-F1). A source-tree `python -m ...` invocation is not this proof: there is no such
+   entry point to invoke (decision 3, above), and even if there were, it would not establish
+   that installing the package actually exposes a runnable command.
 10. **Phase boundary remains strict.** Temporary Agent (12), Independent Verification (13),
     GitHub (14), Runtime (15), model adapters, URL reads, autonomous Change, and multi-agent
     execution remain out of scope; Phase 12 remains forbidden until this PR is structurally
@@ -93,10 +112,14 @@ kind (frozen semantic decision 2, below).
 ```text
 src/manosube_agent_civilization/cli/
 ├── __init__.py     public exports
-├── __main__.py      python -m manosube_agent_civilization.cli entry point
 ├── errors.py        CLIError / CLIArgumentError / CLIInvalidRootError
 └── main.py          the one public command's own parser, route, and serialization
 ```
+
+`main.py::main` is installed as the sole `[project.scripts]` console-script entry point
+(`pyproject.toml`). There is no `cli/__main__.py` and no trailing
+`if __name__ == "__main__":` guard in `main.py` -- `run`/`main` remain importable only as the
+internal API the console script itself calls, never a second public entry point.
 
 `CLIArgumentError` and `CLIInvalidRootError` exist only for the two checks this adapter
 itself owns (malformed/missing command-line arguments; a `--store-root`/`--schema-root` that
@@ -122,8 +145,9 @@ authority.errors.*`, and `manosube_agent_civilization.state.errors.Canonicalizat
 5. Convert the returned immutable BootContext to its deterministic JSON projection
    (main.py::_projection, via _plain then canonical_json_bytes).
 6. Write that one document plus one trailing newline to stdout, and exit 0. Stderr is empty.
-7. Prove the identical route from a fresh python -m manosube_agent_civilization.cli
-   subprocess, repeated, with byte-equal stdout each time and zero Store mutation.
+7. Prove the identical route from the real, installed `manosube` console-script executable,
+   run as a fresh subprocess from a fresh, isolated virtual environment outside the
+   repository, repeated, with byte-equal stdout each time and zero Store mutation.
 ```
 
 ## 6. Required rejection proofs
@@ -154,11 +178,26 @@ At minimum, the CLI fails closed, with zero Store mutation
 - a malformed or lineage-divergent present current.json view (CorruptStoreError)
 - an attempted CLI path to Store initialization, recovery completion, State commit, Binding
   adoption, filesystem discovery, command execution, network/GitHub access, or Agent startup
-  (proven by a static AST/import scan over cli/main.py, cli/__init__.py, cli/__main__.py)
+  (proven by a static AST/import scan over cli/main.py and cli/__init__.py)
+- an abbreviated long flag (e.g. `--store`, `--schema`, `--project-i`, `--project-b`) on
+  either the top-level or `boot` parser -- rejected as an unrecognized argument
+  (CLIArgumentError), never silently accepted (P11-R1-F2)
+- a `-h`/`--help` flag, on either the top-level command or `boot` -- rejected as an
+  unrecognized argument (CLIArgumentError) with empty stdout, a typed JSON stderr document,
+  and a non-zero exit, never argparse's own plain-text help dump plus `SystemExit(0)`
+  (P11-R1-F3)
+- a failure while producing the success projection, its canonical serialization, or its
+  stdout write itself (e.g. a broken output pipe) -- still the identical typed JSON
+  stderr/non-zero-exit contract, never a leaked traceback, because that code path runs inside
+  the same top-level boundary as Boot's own invocation (P11-R1-F4)
 - stderr/stdout channel inversion, traceback leakage, or non-deterministic output (every
   rejection test asserts empty stdout, a parseable single-line JSON stderr document with no
   "Traceback" substring, and a non-zero exit; the positive route additionally proves
   byte-equal stdout across repeated fresh-process invocations)
+- `python -m manosube_agent_civilization.cli` and `python -m
+  manosube_agent_civilization.cli.main` both fail to invoke this adapter at all (no such
+  module-execution route exists), and the installed distribution's own `console_scripts`
+  entry-point group names exactly one command, `manosube` (P11-R1-F1)
 ```
 
 A missing materialized `current.json` view is **not** a rejection: Boot succeeds and the CLI
@@ -181,5 +220,6 @@ MODEL_ADAPTER_IMPLEMENTED=false
 URL_READ_ONLY_IMPLEMENTED=false
 AUTONOMOUS_CHANGE_IMPLEMENTED=false
 MULTI_AGENT_IMPLEMENTED=false
-CONSOLE_SCRIPT_ENTRY_ADDED=false
+CONSOLE_SCRIPT_ENTRY_ADDED=true
+SECOND_PUBLIC_CLI_ENTRYPOINT=false
 ```
