@@ -166,11 +166,8 @@ class FileStateStore:
             manifest_path=journal/"manifest.json"
             if not manifest_path.exists():
                 continue
-            try:
-                entries=json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError,json.JSONDecodeError) as exc:
-                raise CorruptStoreError(f"malformed transaction manifest: {journal.name}") from exc
-            if [kind,record_id] not in entries:
+            entries=self._read_manifest_entries(manifest_path, journal.name)
+            if (kind,record_id) not in entries:
                 continue
             if (journal/"COMMITTED").exists():
                 any_committed=True
@@ -245,10 +242,34 @@ class FileStateStore:
         path=self._project(project_id)/"state"/"recovery"/transaction_id/"manifest.json"
         if not path.exists():
             return []
+        return self._read_manifest_entries(path, transaction_id)
+
+    def _read_manifest_entries(self, manifest_path: Path, label: str) -> list[tuple[str,str]]:
+        """Parse and validate one transaction manifest.json's own member list --
+        ``MANIFEST_MEMBER_CONTRACT`` (Phase 9 Completion Repair 4, P9-C4-F1): JSON decode
+        success alone never implies manifest validity. A public Store method may not treat a
+        persisted file as a trusted Python object merely because ``json.loads`` succeeded --
+        a malformed top-level shape, malformed member, or non-string/empty ``kind``/``id``
+        must fail closed as :class:`CorruptStoreError`, never leak a raw ``ValueError`` or
+        ``TypeError`` from tuple-unpacking a shape nobody validated, and never be silently
+        accepted (a ``null`` or numeric ``kind``/``id`` is not a valid canonical identity).
+
+        The one shared reader every call site in this class uses for this identical on-disk
+        shape (:meth:`resolve_transaction_manifest`, :meth:`_transaction_manifest_keys`,
+        :meth:`_record_committed_by_any_transaction`, and :meth:`_genesis_records_orphaned`
+        below) -- never a second, competing manifest parser, validated in one reader and
+        trusted raw in another.
+
+        *label* names the transaction/journal this manifest belongs to, for diagnostics
+        only -- never echoed as a value, only as an identifying label.
+        """
+
         try:
-            entries=json.loads(path.read_text(encoding="utf-8"))
+            entries=json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError,json.JSONDecodeError) as exc:
-            raise CorruptStoreError(f"malformed transaction manifest: {transaction_id}") from exc
+            raise CorruptStoreError(f"malformed transaction manifest: {label}") from exc
+        if not isinstance(entries,list):
+            raise CorruptStoreError(f"transaction manifest is not a JSON array: {label}")
         # Phase 9 Structural Review Round 3, P9-R3-F1 (boundary 3 of 3: the committed
         # manifest read itself): a tampered manifest.json naming the same (kind, id) twice
         # is corruption, not a legitimate duplicate -- fail closed here, before a caller can
@@ -256,11 +277,20 @@ class FileStateStore:
         # revealed the tamper.
         seen: set[tuple[str,str]] = set()
         result: list[tuple[str,str]] = []
-        for kind, record_id in entries:
+        for member in entries:
+            if not isinstance(member,list) or len(member)!=2:
+                raise CorruptStoreError(
+                    f"transaction manifest member is not a two-element array: {label}"
+                )
+            kind,record_id=member
+            if not isinstance(kind,str) or not kind or not isinstance(record_id,str) or not record_id:
+                raise CorruptStoreError(
+                    f"transaction manifest member has a non-string or empty kind/id: {label}"
+                )
             key=(kind,record_id)
             if key in seen:
                 raise CorruptStoreError(
-                    f"transaction manifest names {kind}/{record_id} more than once: {transaction_id}"
+                    f"transaction manifest names {kind}/{record_id} more than once: {label}"
                 )
             seen.add(key)
             result.append(key)
@@ -339,9 +369,65 @@ class FileStateStore:
         # A project for which ``initialize`` was never called at all has no lineage log
         # (``_events`` returns ``[]``) and correctly reports uncommitted here, never
         # conflated with a genuinely committed bare genesis again.
-        return any(
+        if not any(
             event.get("transaction_id") == transaction_id for event in self._events(project_id)
-        )
+        ):
+            return False
+        # P9-C4-F2: the lineage event alone still does not, by itself, distinguish a
+        # genuinely bare genesis from a genesis-with-records transaction whose own journal
+        # directory has since been lost, deleted, or tampered with -- both produce a
+        # byte-identical lineage event, and both now share the identical "no journal"
+        # shape once that directory is gone. ``LINEAGE_TRANSACTION_ID_ALONE_NE_BARE_
+        # GENESIS_EVIDENCE=true``: a genuinely bare genesis never promotes any record file
+        # at all (``initialize``'s own non-``records`` branch never touches ``records/``),
+        # so any promoted record file this project's own Store already holds that no
+        # currently-resolvable transaction manifest claims is direct, durable evidence that
+        # some transaction -- necessarily this one, since no ordinary ``commit`` can precede
+        # genesis -- once promoted records whose own recovery journal is now gone. This
+        # requires no new persisted artifact and no migration/legacy-marker scheme: a
+        # genuinely historical bare genesis, from any round, never promoted a record in the
+        # first place, so it can never trip this check -- ``LEGACY_BARE_GENESIS_
+        # COMPATIBILITY_PRESERVED=true`` falls out for free, not by special-casing.
+        return not self._genesis_records_orphaned(project_id)
+
+    def _genesis_records_orphaned(self, project_id: str) -> bool:
+        """Return whether *project_id* holds at least one promoted record file (under its
+        own ``records/<kind>/<id>.json`` tree) that no currently-resolvable transaction
+        journal's own manifest claims (P9-C4-F2).
+
+        Every record file this Store ever writes is written by :meth:`_promote_staged_
+        records`, called only from :meth:`commit` or :meth:`initialize`'s own
+        ``records``-bearing branch, and only after that same transaction's own manifest was
+        durably written alongside it. Recovery journals are never deleted by any normal
+        operation this Store performs, so a promoted record file with no claimant among the
+        journals currently on disk is not an ambiguous or borderline case -- it is direct
+        proof that the journal which once accounted for it is gone. This scan touches only
+        already-persisted state (every record file, every still-present manifest) and writes
+        nothing -- no new persistence format, no migration receipt, no legacy marker.
+        """
+
+        records_root = self._project(project_id)/"records"
+        if not records_root.exists():
+            return False
+        claimed: set[tuple[str,str]] = set()
+        recovery = self._project(project_id)/"state"/"recovery"
+        if recovery.exists():
+            for journal in recovery.iterdir():
+                if not journal.is_dir():
+                    continue
+                manifest_path = journal/"manifest.json"
+                if not manifest_path.exists():
+                    continue
+                claimed.update(self._read_manifest_entries(manifest_path, journal.name))
+        for kind_dir in records_root.iterdir():
+            if not kind_dir.is_dir():
+                continue
+            for record_file in kind_dir.iterdir():
+                if not record_file.is_file():
+                    continue
+                if (kind_dir.name, record_file.stem) not in claimed:
+                    return True
+        return False
 
     def _events(self, project_id: str) -> list[dict[str,Any]]:
         path=self._lineage(project_id)
@@ -524,9 +610,7 @@ class FileStateStore:
 
         path=self._project(project_id)/"state"/"recovery"/tx/"manifest.json"
         if not path.exists(): return set()
-        try: entries=json.loads(path.read_text(encoding="utf-8"))
-        except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError(f"malformed transaction manifest: {tx}") from exc
-        return {(kind,record_id) for kind,record_id in entries}
+        return set(self._read_manifest_entries(path, tx))
 
     def _promote_staged_records(self, project_id: str, journal: Path) -> None:
         records_dir=journal/"records"

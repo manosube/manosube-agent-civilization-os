@@ -511,3 +511,177 @@ def test_committed_genesis_manifest_missing_file_reports_empty_not_none(tmp_path
 
     assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is not None
     assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == []
+
+
+# --- Phase 9 Completion Repair 4, P9-C4-F1: manifest.json shape is validated fail-closed ---- #
+
+
+def _committed_genesis_with_records(tmp_path: Path) -> tuple[FileStateStore, Path]:
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    record = {"closure_evaluation_id": "D-CLOSE-EVAL-" + "A" * 64, "result": "SATISFIED"}
+    store.initialize(
+        PROJECT_ID, initial, records=[("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, record)]
+    )
+    manifest_path = (
+        store.root / "projects" / PROJECT_ID / "state" / "recovery" / "TX-GENESIS" / "manifest.json"
+    )
+    return store, manifest_path
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param('{"a": 1}', id="top_level_object"),
+        pytest.param('"not a list"', id="top_level_string"),
+        pytest.param("null", id="null"),
+        pytest.param('["not-a-pair"]', id="member_is_string"),
+        pytest.param("[123]", id="member_is_number"),
+        pytest.param("[[]]", id="empty_member"),
+        pytest.param('[["only_kind"]]', id="one_element_member"),
+        pytest.param('[["kind", "id", "extra"]]', id="three_element_member"),
+        pytest.param('[[null, "some-id"]]', id="kind_is_null"),
+        pytest.param('[["kind", null]]', id="id_is_null"),
+        pytest.param('[[123, "some-id"]]', id="kind_is_number"),
+        pytest.param('[["kind", 123]]', id="id_is_number"),
+        pytest.param('[["", "some-id"]]', id="empty_kind"),
+        pytest.param('[["kind", ""]]', id="empty_id"),
+        pytest.param(
+            '[["source_snapshot", "SNAP-1"], ["source_snapshot", "SNAP-1"]]',
+            id="identical_duplicate",
+        ),
+        pytest.param(
+            '[["source_snapshot", "SNAP-1"], ["source_snapshot", "SNAP-1"], ["other", "X"]]',
+            id="conflicting_tampered_duplicate",
+        ),
+    ],
+)
+def test_malformed_manifest_shape_fails_closed(payload: str, tmp_path: Path) -> None:
+    """P9-C4-F1: ``resolve_transaction_manifest`` must never leak a raw ``ValueError``/
+    ``TypeError`` from an unvalidated shape, and must never silently accept a null, numeric,
+    or empty ``kind``/``id`` -- every malformed shape is refused as ``CorruptStoreError``,
+    and no State/lineage/record/manifest visibility changes as a result."""
+
+    store, manifest_path = _committed_genesis_with_records(tmp_path)
+    before_current = store.load_current(PROJECT_ID)
+    manifest_path.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError):
+        store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS")
+
+    # No visibility change: current State is still readable and unchanged (the manifest
+    # tamper does not touch the lineage log or current.json at all).
+    assert store.load_current(PROJECT_ID) == before_current
+
+
+def test_valid_empty_committed_manifest_is_empty_list(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    store.initialize(PROJECT_ID, initial)
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == []
+
+
+def test_valid_one_member_manifest_resolves(tmp_path: Path) -> None:
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == [
+        ("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64)
+    ]
+
+
+def test_valid_multiple_member_manifest_preserves_membership(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    records = [
+        ("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, {"result": "SATISFIED"}),
+        ("observation_evidence", "EVIDENCE-" + "B" * 60, {"status": "COMPLETE"}),
+    ]
+    store.initialize(PROJECT_ID, initial, records=records)
+    manifest = store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS")
+    assert set(manifest) == {(kind, record_id) for kind, record_id, _body in records}
+    assert len(manifest) == 2
+
+
+# --- Phase 9 Completion Repair 4, P9-C4-F2: bare genesis vs. lost genesis-with-records ------- #
+
+
+def test_genesis_with_records_journal_directory_deleted_is_unresolvable_everywhere(
+    tmp_path: Path,
+) -> None:
+    """P9-C4-F2: a genesis-with-records transaction whose entire recovery journal directory
+    has been deleted/tampered must never be misclassified as a legitimate bare genesis --
+    every public read surface must agree it is now unresolvable, never three of them
+    silently disagreeing about what the orphaned, still-physically-present record file
+    already disproves."""
+
+    import shutil
+
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+    record_kind, record_id = "closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64
+
+    # Before tamper: everything resolves normally.
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is not None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == [
+        (record_kind, record_id)
+    ]
+    assert store.resolve_record(PROJECT_ID, record_kind, record_id) is not None
+
+    journal_dir = store.root / "projects" / PROJECT_ID / "state" / "recovery" / "TX-GENESIS"
+    shutil.rmtree(journal_dir)
+
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") is None
+    assert store.resolve_record(PROJECT_ID, record_kind, record_id) is None
+    with pytest.raises(CorruptStoreError, match="lineage has no genesis"):
+        store.load_current(PROJECT_ID)
+    with pytest.raises(CorruptStoreError, match="lineage has no genesis"):
+        store.reconstruct(PROJECT_ID)
+
+    # Fresh Store instance / fresh process (same on-disk backend) agrees.
+    fresh = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    assert fresh.resolve_transaction(PROJECT_ID, "TX-GENESIS") is None
+    assert fresh.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") is None
+    assert fresh.resolve_record(PROJECT_ID, record_kind, record_id) is None
+
+
+def test_never_initialized_still_resolves_none_after_c4_f2(tmp_path: Path) -> None:
+    """Positive control: a genuinely never-initialized project (no records ever promoted)
+    is completely unaffected by the P9-C4-F2 orphan check -- it has no ``records/``
+    directory at all, so the check trivially returns ``False`` and the P9-R3-F2 behavior is
+    preserved unchanged."""
+
+    store = _store(tmp_path)
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") is None
+
+
+def test_true_bare_genesis_committed_after_c4_f2(tmp_path: Path) -> None:
+    """Positive control: a genuine bare genesis (no records ever promoted) still resolves as
+    committed -- the orphan check can never trip for a project that has no ``records/``
+    directory at all, so legacy/ordinary bare genesis institutions are completely
+    unaffected (``LEGACY_BARE_GENESIS_COMPATIBILITY_PRESERVED=true``)."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    store.initialize(PROJECT_ID, initial)
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is not None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == []
+
+
+def test_bare_genesis_followed_by_later_records_is_unaffected_by_orphan_check(
+    tmp_path: Path,
+) -> None:
+    """Positive control: a legitimate bare genesis followed by later ordinary commits that
+    do promote records (with their own intact journals) never trips the orphan check for
+    TX-GENESIS -- those later records are claimed by their own still-present manifests."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    store.initialize(PROJECT_ID, initial)
+    after, event = _successor(initial)
+    store.commit(
+        PROJECT_ID, 0, initial["semantic_fingerprint"], after, event,
+        records=[("observation_evidence", "EVIDENCE-LATER-" + "C" * 60, {"status": "COMPLETE"})],
+    )
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is not None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == []
+    assert store.resolve_record(PROJECT_ID, "observation_evidence", "EVIDENCE-LATER-" + "C" * 60) is not None
