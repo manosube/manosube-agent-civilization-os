@@ -106,16 +106,43 @@ def secret_exclusion_policy() -> dict[str, Any]:
     }
 
 
-def authority_policy_ref() -> dict[str, Any]:
-    """A real, correctly-kinded, caller-declared Authority policy reference -- Authority
-    stays reference-only here, exactly as Reflow's own ``authority_decision`` provenance
-    (canonical-reference equality against caller input, never a second Store-owned kind)."""
-
-    return {"kind": "authority_rule", "id": "AUTH-RULE-" + "7" * 64}
-
-
 def human_authority_ref() -> dict[str, Any]:
     return {"kind": "human_authority", "id": "AUTH-BIND-0001"}
+
+
+def authority_rule() -> dict[str, Any]:
+    """A real, schema-valid Authority Rule body -- the Human-declared input Product Binding
+    accepts, validates against Authority's own schema, identity-reverifies via Authority's
+    own :func:`~manosube_agent_civilization.authority.identity.rule_id`, and persists
+    verbatim (Issue #43 Phase 9 Round 1 P9-R1-F1: ``authority_policy_ref`` must resolve to a
+    real canonical body, never a merely well-formed but unresolved id)."""
+
+    from manosube_agent_civilization.authority.identity import rule_id
+
+    body: dict[str, Any] = {
+        "schema_version": "0.1",
+        "project_id": PROJECT_ID,
+        "action_kinds": ["READ_ONLY_QUERY"],
+        "maximum_reversibility": "REVERSIBLE",
+        "scope": {
+            "repository": PROJECT_ID,
+            "branch": "main",
+            "paths": ["repo"],
+            "subjects": ["binding"],
+        },
+        "decision": "AUTONOMOUS",
+        "declared_by": human_authority_ref(),
+    }
+    body["authority_rule_id"] = rule_id(body)
+    return body
+
+
+def authority_policy_ref() -> dict[str, Any]:
+    """A real, correctly-kinded reference to :func:`authority_rule`'s own content-addressed
+    identity -- resolvable from a fresh Store once ``bind_project`` persists that real body
+    alongside it, never a bare, unbacked id (Phase 9 Round 1 P9-R1-F1)."""
+
+    return {"kind": "authority_rule", "id": authority_rule()["authority_rule_id"]}
 
 
 def genesis_state() -> dict[str, Any]:
@@ -153,6 +180,7 @@ def bind_project_kwargs() -> dict[str, Any]:
         "objective_revision": objective_revision(),
         "boundary": boundary(),
         "authority_policy_ref": authority_policy_ref(),
+        "authority_rule": authority_rule(),
         "source_registrations": source_registrations(),
         "command_policy": command_policy(),
         "secret_exclusion_policy": secret_exclusion_policy(),

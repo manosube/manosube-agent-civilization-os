@@ -37,8 +37,9 @@ project_id                  common/identity.schema.json -- Human-declared, seman
 objective_revision_ref      {kind: "objective_revision", id} -- names the real Objective
                              Revision body bind_project also persists (§5)
 boundary                    boundary.schema.json (BOUNDARY_CONTRACT.md)
-authority_policy_ref        {kind: "authority_rule", id} -- caller-declared reference only,
-                             never a second Authority owner (TRUST_MODEL.md §2)
+authority_policy_ref        {kind: "authority_rule", id} -- resolves to a real, persisted
+                             Authority Rule body (§5b), never a second Authority owner
+                             (TRUST_MODEL.md §2)
 source_registrations        array of source_registration.schema.json (SOURCE_REGISTRATION.md)
 command_policy               command_policy.schema.json (COMMAND_EXECUTION_POLICY.md)
 secret_exclusion_policy      forbidden_field_names + allowed_secret_reference_kinds
@@ -106,18 +107,51 @@ OBJECTIVE_REVISION_SECOND_PRODUCER=false
 OBJECTIVE_REVISION_PERSISTED_AS_A_STORE_RECORD=true
 ```
 
+## 5b. Authority Rule is accepted and persisted, not re-produced
+
+**Added in Phase 9 Structural Review Round 1 (P9-R1-F1).** `bind_project` accepts the real
+Authority Rule body `authority_policy_ref` names (a new required `authority_rule` keyword),
+validates it against Authority's own existing schema (`01_SCHEMA/authority/
+authority_rule.schema.json`, never restated here), and reverifies its identity via
+Authority's own existing `authority.identity.rule_id` (never a second identity algorithm) --
+requiring `rule_id(authority_rule) == authority_policy_ref["id"] ==
+authority_rule["authority_rule_id"]`.
+
+Two further checks, before any write:
+
+```text
+authority_rule.project_id == project_id                          (else BindingIdentityError)
+authority_rule.declared_by == human_authority_ref                 (else BindingIdentityError,
+                                                                    canonical-reference exact
+                                                                    equality; see TRUST_MODEL
+                                                                    .md §2b)
+```
+
+`authority_rule` is persisted as a Store-owned record (`kind="authority_rule"`) in the same
+atomic `TX-GENESIS` manifest as the Objective Revision and Project Binding, through the
+existing, generic `FileStateStore.initialize` -- protected by the Store's own generic
+manifest-claimant mechanism identically to every other persisted record, with no
+domain-specific content-address logic added to the Store itself.
+
+```text
+AUTHORITY_RULE_SECOND_PRODUCER=false
+AUTHORITY_RULE_SECOND_IDENTITY_ALGORITHM=false
+AUTHORITY_RULE_PERSISTED_AS_A_STORE_RECORD=true
+AUTHORITY_POLICY_REF_RESOLVABLE_FROM_FRESH_STORE=true
+```
+
 ## 6. Atomic adoption
 
 `bind_project` builds a fully assembled genesis `project_state` dict (caller-supplied
 `semantic_state`/`state_metadata`, `state_revision=0`), computes its real
 `semantic_fingerprint` via `state.fingerprint.fingerprint_project_state` (the existing
 State owner's own real producer), and calls `FileStateStore.initialize` once, with
-`records=[objective_revision, project_binding, *additional_genesis_records]` -- the
-identical `(kind, id, body)` shape, and the identical atomic staged/journaled transaction
-mechanism (`TX-GENESIS`), R10-F1 already established for genesis records this vertical's
-own State references. `additional_genesis_records` carries whatever further records
-genesis State's own declared content references (its own Kernel Source Snapshot, in
-particular) -- never a second genesis-record surface.
+`records=[objective_revision, authority_rule, project_binding,
+*additional_genesis_records]` -- the identical `(kind, id, body)` shape, and the identical
+atomic staged/journaled transaction mechanism (`TX-GENESIS`), R10-F1 already established for
+genesis records this vertical's own State references. `additional_genesis_records` carries
+whatever further records genesis State's own declared content references (its own Kernel
+Source Snapshot, in particular) -- never a second genesis-record surface.
 
 ```text
 BINDING_AND_GENESIS_ATOMICALLY_VISIBLE=true
@@ -127,6 +161,10 @@ SECOND_STATE_OR_STORE_OWNER_CREATED=false
 ## 7. Cross-consistency, checked before any write
 
 ```text
+objective_revision.project_id == project_id                     (else BindingIdentityError,
+                                                                   Round 1 P9-R1-F2)
+objective_revision.human_authority_ref == human_authority_ref     (else BindingIdentityError,
+                                                                    Round 1 P9-R1-F2)
 genesis_state.project_id == project_id                         (else BindingIdentityError)
 genesis_state.objective_revision_id == objective_revision_id    (else BindingIdentityError)
 genesis_state.state_revision == 0                               (else BindingValidationError)
@@ -134,19 +172,65 @@ genesis_state.previous_state_fingerprint is None                (else BindingVal
 genesis_state.lineage_head_ref is None                          (else BindingValidationError)
 ```
 
+See §5b for the Authority Rule's own cross-consistency checks.
+
 ## 8. Replay semantics
 
-`FileStateStore.initialize` treats genesis as strictly one-shot: any second call for an
-already-initialized `project_id` raises `AlreadyInitializedError`, with no body comparison
-of its own. `bind_project` draws the identical-replay/conflicting-replay distinction over
-the Store's own existing, generic read surfaces (`load_current`/`resolve_record`):
+**Corrected in Phase 9 Structural Review Round 1 (P9-R1-F4).** `FileStateStore.initialize`
+treats genesis as strictly one-shot: any second call for an already-initialized
+`project_id` raises `AlreadyInitializedError`, with no body comparison of its own.
+`bind_project` draws the identical-replay/conflicting-replay distinction over the Store's
+own existing, generic read surfaces (`load_current`/`resolve_record`), plus a direct,
+read-only reproduction of the genesis transaction's own recovery journal manifest
+(`state/recovery/TX-GENESIS/manifest.json`, the identical file the Store's own
+`_transaction_manifest_keys` reads for the same purpose) -- never a second persistence
+mechanism, and never any Binding-specific comparison logic added to the Store itself.
+
+The comparison now covers the **full** atomic manifest -- every member the genesis
+transaction actually adopted (Objective Revision, Authority Rule, Project Binding, and
+every `additional_genesis_records` member), not merely three named records. It is
+order-independent (a replay supplying `additional_genesis_records` in a different order is
+still a no-op) but duplicate-aware (two different bodies claimed under one `(kind, id)` in
+one replay attempt is rejected as a conflict, never silently resolved to the last one seen).
 
 ```text
-IDENTICAL_REPLAY_IS_NO_OP=true       (byte-identical Objective Revision, Project Binding,
-                                       and genesis State -> the already-committed result,
-                                       no new write)
-CONFLICTING_REPLAY_REJECTED_BEFORE_WRITE=true   (anything else -> AlreadyInitializedError
-                                                  re-raised, nothing new persisted)
+IDENTICAL_REPLAY_IS_NO_OP=true       (byte-identical Objective Revision, Authority Rule,
+                                       Project Binding, genesis State, and every
+                                       additional_genesis_records member, any order ->
+                                       the already-committed result, no new write)
+CONFLICTING_REPLAY_REJECTED_BEFORE_WRITE=true   (a missing, extra, wrong-kind, or
+                                                  same-kind/id-different-body member ->
+                                                  AlreadyInitializedError re-raised,
+                                                  nothing new persisted)
+FULL_MANIFEST_REPLAY_COMPARED=true
+```
+
+## 10. Typed reference classification
+
+**Added in Phase 9 Structural Review Round 1 (P9-R1-F5).** Product Binding's own top-level
+reference fields are classified, once, in `manosube_agent_civilization.binding.
+reference_classification` -- pattern-compatible with, but organizationally separate from,
+`reflow/reference_registry.py` (a different domain's own vocabulary, never repurposed as
+this one's owner):
+
+```text
+field                    expected kind          classification
+objective_revision_ref   objective_revision     Store-owned
+authority_policy_ref     authority_rule         Store-owned
+human_authority_ref      human_authority        external constitutional identity
+```
+
+`reject_wrong_kind_reference` runs before any Store lookup: a reference whose own `kind` is
+not the one closed kind its field permits is refused, never silently accepted or narrowed
+to whatever kind happened to be there (`CROSS_KIND_SUBSTITUTION_ALLOWED=false`).
+`resolve_binding_references` recursively resolves every Store-owned field against a real
+Store, proving `UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0` from both a fresh Store instance
+and a fresh process.
+
+```text
+PRODUCT_BINDING_REFERENCE_CLASSIFICATION_COMPLETE=true
+WRONG_KIND_REFERENCE_ACCEPTED=false
+UNRESOLVED_STORE_OWNED_REFERENCE_ACCEPTED=false
 ```
 
 ## 9. Explicit non-claims

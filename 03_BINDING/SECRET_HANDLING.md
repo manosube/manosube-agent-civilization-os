@@ -35,15 +35,27 @@ any other field (a real value, an inline credential) fails schema validation imm
 
 ## 3. Scan boundary
 
-`manosube_agent_civilization.binding.engine.assemble_project_binding` runs the repo-wide
-secret scan (`difference.canonical.reject_secret_material`) over the whole accepted
-declaration *except* `secret_exclusion_policy` itself -- that subtree's own field names
-(`allowed_secret_reference_kinds`, ...) legitimately name the concept they forbid, and
-would otherwise trip the scan's own secret-*key*-name pattern by simply naming it. Every
-other field (Boundary, Source Registrations, Command Policy, every typed reference) is
-scanned, both by key name and by value pattern (recognizable token/private-key/credential
-shapes), before any identity is minted.
+**Corrected in Phase 9 Structural Review Round 1 (P9-R1-F3).** A prior version of this scan
+excluded `secret_exclusion_policy` wholesale (both its field *names* and its own *values*)
+to avoid a false positive on its own field name `allowed_secret_reference_kinds` (which
+legitimately names the concept it forbids). That exclusion was too broad: it also silently
+exempted that subtree's own *values* (e.g. `forbidden_field_names` list entries) from the
+secret-*value*-pattern check, letting a real secret-shaped string smuggled in as a "field
+name" escape scanning entirely.
+
+`manosube_agent_civilization.binding.engine.assemble_project_binding` now runs the
+repo-wide secret scan (`difference.canonical.reject_secret_material`) over the **whole**
+accepted declaration, `secret_exclusion_policy`'s own subtree included. The two field
+*names* that legitimately name the concept they forbid (`secret_exclusion_policy` itself
+and its own `allowed_secret_reference_kinds`) are allowlisted at the scan's one shared
+source (`difference.canonical._SECRET_KEY_ALLOWLIST`, alongside the pre-existing
+`credential_paths` entry) -- no second, competing secret-key-name taxonomy is created. Every
+field's own *value* is scanned uniformly, `secret_exclusion_policy`'s own values included:
+a real secret-shaped string (a GitHub-token-shaped value, a private-key block, ...) is
+rejected wherever it appears in the accepted graph, this subtree included.
 
 ```text
-SECRET_SCAN_COVERS_WHOLE_DECLARATION_EXCEPT_ITS_OWN_POLICY_SUBTREE=true
+SECRET_SCAN_COVERS_WHOLE_ACCEPTED_GRAPH=true
+SECRET_POLICY_FIELD_NAMES_ALLOWED=true
+SECRET_VALUE_IN_SECRET_POLICY_REJECTED=true
 ```

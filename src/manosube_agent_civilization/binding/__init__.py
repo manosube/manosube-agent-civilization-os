@@ -15,6 +15,7 @@ See ``03_BINDING/BINDING_INDEX.md`` for the full contract set.
 from .engine import assemble_project_binding
 from .errors import BindingError, BindingIdentityError, BindingValidationError
 from .identity import project_binding_id, verify_project_binding_identity
+from .reference_classification import reject_wrong_kind_reference, resolve_binding_references
 from .route import bind_project
 
 __all__ = [
@@ -24,5 +25,7 @@ __all__ = [
     "assemble_project_binding",
     "bind_project",
     "project_binding_id",
+    "reject_wrong_kind_reference",
+    "resolve_binding_references",
     "verify_project_binding_identity",
 ]

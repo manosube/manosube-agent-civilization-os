@@ -23,6 +23,7 @@ from manosube_agent_civilization.difference.canonical import (
 
 from .errors import BindingValidationError
 from .identity import project_binding_id, verify_project_binding_identity
+from .reference_classification import reject_wrong_kind_reference
 from .validation import validate_record
 
 
@@ -146,15 +147,29 @@ def assemble_project_binding(
         "human_authority_ref": human_authority_ref,
     }
 
-    # 4. Secret-value and moving-reference scan over the whole accepted declaration, before
-    #    any identity is minted or anything is persisted. `secret_exclusion_policy` itself is
-    #    excluded from the scan: its own schema already forecloses any actual secret value
-    #    (only field-name strings and a closed reference-kind enum are accepted there), and
-    #    its own field names (`allowed_secret_reference_kinds`, ...) would otherwise trip the
-    #    repo-wide secret-*key*-name pattern by simply naming the concept they forbid.
-    scan_target = {key: value for key, value in record.items() if key != "secret_exclusion_policy"}
-    reject_secret_material(scan_target, "project_binding")
-    walk_references(scan_target, "project_binding")
+    # 3b. Typed reference-kind classification (Issue #43 P9-R1-F5) -- every top-level
+    #     reference field is checked against its own one closed expected kind before any
+    #     identity is minted or any Store lookup ever happens (there is none in this
+    #     Store-free engine, but the same classification governs route.py's later
+    #     resolution). Reused by both this pre-mint check and the fresh-Store/fresh-process
+    #     resolution proofs -- one shared classification, not a second competing table.
+    for field_name in ("objective_revision_ref", "authority_policy_ref", "human_authority_ref"):
+        reject_wrong_kind_reference(field_name, record[field_name])
+
+    # 4. Secret-value and moving-reference scan over the WHOLE accepted declaration,
+    #    `secret_exclusion_policy`'s own subtree included, before any identity is minted or
+    #    anything is persisted (Issue #43 P9-R1-F3). A prior version of this scan excluded
+    #    `secret_exclusion_policy` wholesale to avoid a false positive on its own field name
+    #    `allowed_secret_reference_kinds` (which legitimately names the concept it forbids) --
+    #    that exclusion was too broad: it also silently exempted that subtree's own *values*
+    #    (e.g. `forbidden_field_names` list entries) from the secret-*value*-pattern check,
+    #    letting a real secret-shaped string smuggled in as a "field name" escape scanning
+    #    entirely. The one legitimate field-name false positive is now allowlisted at its one
+    #    shared source (`difference.canonical._SECRET_KEY_ALLOWLIST`) instead of exempting an
+    #    entire subtree here -- no second, competing secret taxonomy is created, and every
+    #    field's *value* is scanned uniformly, `secret_exclusion_policy` included.
+    reject_secret_material(record, "project_binding")
+    walk_references(record, "project_binding")
 
     # 5. Mint the content-addressed identity, assemble the full record, and reverify.
     record["project_binding_id"] = project_binding_id(record)

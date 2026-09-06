@@ -78,12 +78,15 @@ PHASE_9_BINDING=true`). Neither fixture world imports the other.
 
 ```text
 src/manosube_agent_civilization/binding/
-├── __init__.py    public exports
-├── errors.py      BindingError / BindingValidationError / BindingIdentityError
-├── identity.py    project_binding_id, verify_project_binding_identity
-├── validation.py  schema-registry validation (the same registry every domain reads)
-├── engine.py      assemble_project_binding -- the one validation+identity engine
-└── route.py       bind_project -- the one public entry point
+├── __init__.py                    public exports
+├── errors.py                      BindingError / BindingValidationError / BindingIdentityError
+├── identity.py                    project_binding_id, verify_project_binding_identity
+├── validation.py                  schema-registry validation (the same registry every
+                                    domain reads)
+├── reference_classification.py    typed reference-edge classification (Round 1 P9-R1-F5)
+├── engine.py                      assemble_project_binding -- the one validation+identity
+                                    engine
+└── route.py                       bind_project -- the one public entry point
 ```
 
 No second State, Store, Lineage, Recovery, Objective, Boundary, or Authority owner is
@@ -94,20 +97,56 @@ adoption reuses the existing, generic `FileStateStore.initialize`.
 ## 5. Canonical successful route
 
 ```text
-1. Human declares a Project Binding (Objective Revision body, Boundary, Authority policy
-   reference, Source Registrations, Command Policy, secret-exclusion policy)
-2. bind_project validates every embedded structure and cross-field constraint
+1. Human declares a Project Binding (Objective Revision body, Authority Rule body,
+   Boundary, Source Registrations, Command Policy, secret-exclusion policy)
+2. bind_project validates every embedded structure and cross-field constraint, including
+   Authority Rule identity reverification and the three-way Human Authority cross-match
+   (Round 1 P9-R1-F1/F2)
 3. bind_project mints and reverifies the content-addressed project_binding_id
 4. bind_project computes genesis State's own semantic_fingerprint via the real State owner
-5. FileStateStore.initialize atomically adopts the Objective Revision, the Project
-   Binding, and genesis State in one transaction
-6. A fresh Store instance / a fresh Python process resolves the identical Binding and
-   reconstructs the identical State
-7. An identical replay is a no-op; a conflicting replay is rejected before any mutation
+5. FileStateStore.initialize atomically adopts the Objective Revision, the Authority
+   Rule, the Project Binding, and genesis State in one transaction
+6. A fresh Store instance / a fresh Python process resolves the identical Binding,
+   Authority Rule, and genesis State (Round 1 P9-R1-F1/F5)
+7. An identical replay -- the full atomic manifest, order-independent -- is a no-op; a
+   conflicting replay (missing, extra, wrong-kind, or differing member) is rejected before
+   any mutation (Round 1 P9-R1-F4)
 ```
 
 No fake Observation, Evidence, Difference, Change, Closure, or Reflow record is ever
 created to simulate this route.
+
+## 5a. Accepted graph inventory (Phase 9 Structural Review Round 1 §9.1)
+
+Every body the successful route accepts, persists, or references:
+
+```text
+body                    producer/authority owner     schema owner        identity owner
+Project Binding         binding.engine                binding schema      binding.identity
+                                                                            (content-addressed)
+Objective Revision      Human Authority (declared)     objective schema    Human-declared
+                                                                            (accepted verbatim)
+Authority Rule          Human Authority (declared)      authority schema    authority.identity.
+                                                                            rule_id
+genesis State           state.fingerprint               state schema        state.fingerprint
+additional genesis      their own real producers         their own schemas   their own real
+records (e.g. Kernel                                                        identity owners
+Source Snapshot)
+TX-GENESIS manifest     store.file_store (generic,      n/a (not itself     n/a -- membership
+                        Binding-agnostic)                schema-validated)   only, per-member
+                                                                             identity is each
+                                                                             member's own
+external Human          none (external constitutional  n/a                  n/a -- cross-
+Authority reference     identity, never Store-owned)                        checked for
+                                                                             equality only
+```
+
+```text
+persistence owner: manosube_agent_civilization.store.file_store.FileStateStore (the one
+                    Store this repository has; no domain-specific persistence logic added)
+reference classification / replay comparison owner: manosube_agent_civilization.binding.
+                    route (bind_project) and .reference_classification -- never the Store
+```
 
 ## 6. Explicit non-claims
 

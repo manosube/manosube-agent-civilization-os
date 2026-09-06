@@ -2,10 +2,13 @@
 
 ``bind_project`` is the sole public route: it validates a Human-declared Project Binding
 (:mod:`.engine`), accepts and schema-validates the real Objective Revision body the Binding
-names (Objective's own schema, never restated here), produces genesis State through the
-existing State owner (:func:`~manosube_agent_civilization.state.fingerprint.
-fingerprint_project_state`), and atomically adopts all three -- Objective Revision, Project
-Binding, genesis State -- through the existing, generic
+names (Objective's own schema, never restated here), accepts and schema-validates the real
+Authority Rule body the Binding's ``authority_policy_ref`` names (Authority's own schema and
+:func:`~manosube_agent_civilization.authority.identity.rule_id`, never restated here --
+Phase 9 Round 1 P9-R1-F1), produces genesis State through the existing State owner
+(:func:`~manosube_agent_civilization.state.fingerprint.fingerprint_project_state`), and
+atomically adopts all four -- Objective Revision, Authority Rule, Project Binding, genesis
+State -- through the existing, generic
 :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.initialize`.
 
 ``PRODUCT_BINDING_OWNER_COUNT=1``, ``PUBLIC_PRODUCT_BINDING_ENTRY_POINT_COUNT=1``:
@@ -15,20 +18,87 @@ created anywhere in this module.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+from manosube_agent_civilization.authority.identity import rule_id
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.errors import AlreadyInitializedError
 
 from .engine import assemble_project_binding
 from .errors import BindingIdentityError, BindingValidationError
+from .reference_classification import reject_wrong_kind_reference
 from .validation import validate_against_schema_id
 
 #: Objective's own schema -- this module accepts and persists an Objective Revision body,
 #: but never mints its identity and never restates its schema (Issue #43 §4.1/§4.9: Product
 #: Binding is not a second Objective Revision producer).
 OBJECTIVE_REVISION_SCHEMA_ID = "https://schemas.manosube.org/agent-civilization-os/v0.1/objective/objective_revision.schema.json"
+
+#: Authority's own schema -- this module accepts and persists an Authority Rule body, but
+#: never mints its identity (:func:`~manosube_agent_civilization.authority.identity.rule_id`
+#: is the one reused identity function) and never restates its schema (Issue #43 Phase 9
+#: Round 1 P9-R1-F1: Product Binding is not a second Authority Rule producer or a second
+#: identity algorithm).
+AUTHORITY_RULE_SCHEMA_ID = (
+    "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/authority_rule.schema.json"
+)
+
+#: The one genesis transaction identity every ``FileStateStore.initialize`` call with
+#: ``records`` stages and promotes under -- read-only here, to recover the full committed
+#: manifest membership on replay (see :func:`_read_committed_genesis_manifest_keys`).
+_GENESIS_TRANSACTION_ID = "TX-GENESIS"
+
+
+def _canonical_reference_equal(left: Any, right: Any, *, context: str) -> None:
+    """Fail closed unless *left* and *right* are the identical ``{"kind": ..., "id": ...}``
+    canonical reference -- the exact-equality convention this repository's provenance checks
+    already use (P8-R1-F5/P8-R2-F2), never a looser id-only or kind-only comparison."""
+
+    if left != right:
+        raise BindingIdentityError(f"{context}: {left!r} != {right!r}")
+
+
+def _read_committed_genesis_manifest_keys(
+    store: Any, project_id: str
+) -> set[tuple[str, str]] | None:
+    """Read ``TX-GENESIS``'s own already-committed manifest membership directly from the
+    Store's existing, versioned, never-deleted recovery journal file (Issue #43 Phase 9
+    Round 1 P9-R1-F4) -- ``state/recovery/TX-GENESIS/manifest.json``, the identical file
+    layout :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
+    _transaction_manifest_keys` and this repository's own Phase 8 test suite already read
+    directly for the identical purpose. This function only reads a file the Store itself
+    already wrote and never deletes; it mutates nothing and adds no second Store owner, and
+    every *comparison* semantic (what counts as identical, additional-record handling,
+    order-independence, duplicate-awareness) stays here in the Binding route layer, never in
+    :class:`~manosube_agent_civilization.store.file_store.FileStateStore` itself.
+
+    Returns ``None`` if genesis was adopted with no ``records`` at all (no journal was ever
+    written) -- ``bind_project`` never does this (it always stages at least the Objective
+    Revision, Authority Rule and Project Binding), so callers of this function only ever see
+    ``None`` for a project genesis-initialized by some other, non-Binding caller -- itself a
+    real conflict this function's own caller must reject, never silently accept as a no-op.
+    """
+
+    manifest_path = (
+        Path(store.root)
+        / "projects"
+        / project_id
+        / "state"
+        / "recovery"
+        / _GENESIS_TRANSACTION_ID
+        / "manifest.json"
+    )
+    if not manifest_path.exists():
+        return None
+    try:
+        entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BindingIdentityError(
+            f"genesis transaction manifest for {project_id!r} is unreadable: {exc}"
+        ) from exc
+    return {(kind, record_id) for kind, record_id in entries}
 
 
 def bind_project(
@@ -38,6 +108,7 @@ def bind_project(
     objective_revision: dict[str, Any],
     boundary: dict[str, Any],
     authority_policy_ref: dict[str, Any],
+    authority_rule: dict[str, Any],
     source_registrations: list[dict[str, Any]],
     command_policy: dict[str, Any],
     secret_exclusion_policy: dict[str, Any],
@@ -52,36 +123,59 @@ def bind_project(
 
     *objective_revision* is the real, Human-Authority-declared Objective Revision body
     (schema-owned by Objective, validated here against that same schema, never a second
-    producer's restatement of it). *genesis_state* is a fully assembled ``project_state``
-    dict -- ``project_id``, ``objective_revision_id``, ``state_revision`` (must be ``0``),
-    ``previous_state_fingerprint``/``lineage_head_ref`` (must be ``None``), ``semantic_
-    state``, ``state_metadata``, ``evidence_refs`` -- everything the existing State owner's
-    real producer (:func:`fingerprint_project_state`) needs; this function computes and
-    fills in ``semantic_fingerprint`` itself, the one step that function performs, exactly
-    as every other genesis-building caller in this repository already does (see
-    ``tests/reflow_helpers.py::store_ready_for_closure``).
+    producer's restatement of it). *authority_rule* is the real Authority Rule body
+    *authority_policy_ref* names (schema-owned by Authority, identity-owned by
+    :func:`~manosube_agent_civilization.authority.identity.rule_id`, both reused here rather
+    than restated -- Issue #43 Phase 9 Round 1 P9-R1-F1). *genesis_state* is a fully
+    assembled ``project_state`` dict -- ``project_id``, ``objective_revision_id``,
+    ``state_revision`` (must be ``0``), ``previous_state_fingerprint``/``lineage_head_ref``
+    (must be ``None``), ``semantic_state``, ``state_metadata``, ``evidence_refs`` --
+    everything the existing State owner's real producer (:func:`fingerprint_project_state`)
+    needs; this function computes and fills in ``semantic_fingerprint`` itself, the one step
+    that function performs, exactly as every other genesis-building caller in this
+    repository already does (see ``tests/reflow_helpers.py::store_ready_for_closure``).
 
     *additional_genesis_records* carries any further immutable ``(kind, id, body)`` records
     *genesis_state* itself references (its own real Kernel Source Snapshot, in particular --
     see ``tests/state_helpers.py::genesis_source_snapshot_records``) and that must therefore
-    close to a real, canonical, Store-adopted predecessor from the moment genesis exists,
-    the identical ``GENESIS_DANGLING_CANONICAL_REFERENCE_ALLOWED=false`` invariant R10-F1
-    already established for Reflow's own genesis path -- staged into the same one atomic
-    transaction as the Objective Revision and Project Binding records below, never a second
-    genesis-record surface.
+    close to a real, canonical, Store-adopted predecessor from the moment genesis exists, the
+    identical ``GENESIS_DANGLING_CANONICAL_REFERENCE_ALLOWED=false`` invariant R10-F1 already
+    established for Reflow's own genesis path -- staged into the same one atomic transaction
+    as the Objective Revision, Authority Rule and Project Binding records below, never a
+    second genesis-record surface.
 
-    Cross-checks *project_id*/*objective_revision*'s own id against *genesis_state*'s own
-    matching fields before any write -- Issue #43's required "project-id mismatch across
-    Binding and genesis State" and "wrong Objective Revision identity" negative controls.
+    Cross-checks (Issue #43 §4/§7, Phase 9 Round 1 P9-R1-F1/P9-R1-F2), all before any write:
 
-    An identical replay (byte-identical Objective Revision, Project Binding, and genesis
-    State) is accepted as a no-op, returning the already-committed result; any other replay
-    against an already-initialized *project_id* is rejected before anything new is written
-    (Issue #43's required "stale or already-initialized Store"/"conflicting replay" proofs) --
-    the Store's own :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
-    initialize` treats genesis as strictly one-shot, so this distinction is drawn here, over
-    its own existing, generic read surfaces (:meth:`load_current`/:meth:`resolve_record`),
-    never a second persistence mechanism.
+    - *project_id*/*objective_revision*'s own id against *genesis_state*'s own matching
+      fields ("project-id mismatch across Binding and genesis State", "wrong Objective
+      Revision identity");
+    - *objective_revision*'s own ``project_id`` field against the declared *project_id*
+      (P9-R1-F2 -- previously unchecked: a Binding could declare one project while carrying
+      an Objective Revision that names a different one);
+    - *authority_rule*'s own recomputed :func:`rule_id` against *authority_policy_ref*'s own
+      ``id``, its own ``project_id`` against the declared *project_id*, and its own
+      ``declared_by`` against *human_authority_ref* (P9-R1-F1);
+    - a three-way Human Authority cross-match: *human_authority_ref* ==
+      *objective_revision*'s own ``human_authority_ref`` == *authority_rule*'s own
+      ``declared_by``, every one a canonical-reference exact match (P9-R1-F2). Human
+      Authority itself is never a Store record here (``HUMAN_AUTHORITY_STORE_RECORD_
+      REQUIRED=false``, SHUKOU's own adopted, non-negotiable-without-escalation position) --
+      only cross-consistency between its three declared appearances is enforced.
+
+    An identical replay (byte-identical Objective Revision, Authority Rule, Project Binding,
+    genesis State, and every ``additional_genesis_records`` member) is accepted as a no-op,
+    returning the already-committed result; any other replay against an already-initialized
+    *project_id* is rejected before anything new is written (Issue #43's required "stale or
+    already-initialized Store"/"conflicting replay" proofs, Phase 9 Round 1 P9-R1-F4: the
+    comparison now covers the FULL atomic manifest -- every member the genesis transaction
+    ever adopted, not merely three named records -- order-independent, duplicate-aware, and
+    rejecting a missing, extra, or wrong-kind member exactly as it rejects a same-kind/id
+    body divergence) -- the Store's own :meth:`~manosube_agent_civilization.store.
+    file_store.FileStateStore.initialize` treats genesis as strictly one-shot, so this
+    distinction is drawn here, over its own existing, generic read surfaces
+    (:meth:`load_current`/:meth:`resolve_record`) plus a direct, read-only reproduction of
+    its own recovery journal's ``manifest.json`` (never a second persistence mechanism, and
+    never any Binding-specific comparison logic added to the Store itself).
     """
 
     objective_revision_id = objective_revision.get("objective_revision_id")
@@ -89,6 +183,41 @@ def bind_project(
         raise BindingValidationError("objective_revision has no objective_revision_id")
     validate_against_schema_id(
         objective_revision, OBJECTIVE_REVISION_SCHEMA_ID, schema_root=schema_root
+    )
+
+    reject_wrong_kind_reference("authority_policy_ref", authority_policy_ref)
+    validate_against_schema_id(authority_rule, AUTHORITY_RULE_SCHEMA_ID, schema_root=schema_root)
+    recomputed_rule_id = rule_id(authority_rule)
+    if authority_policy_ref.get("id") != recomputed_rule_id:
+        raise BindingIdentityError(
+            "authority_policy_ref does not reproduce from the declared authority_rule body: "
+            f"{authority_policy_ref.get('id')!r} != {recomputed_rule_id!r}"
+        )
+    if authority_rule.get("authority_rule_id") != recomputed_rule_id:
+        raise BindingIdentityError(
+            "authority_rule's own authority_rule_id does not reproduce from its own body: "
+            f"{authority_rule.get('authority_rule_id')!r} != {recomputed_rule_id!r}"
+        )
+    if authority_rule.get("project_id") != project_id:
+        raise BindingIdentityError(
+            "authority_rule's own project_id does not match the declared Project Binding "
+            f"project_id: {authority_rule.get('project_id')!r} != {project_id!r}"
+        )
+    _canonical_reference_equal(
+        authority_rule.get("declared_by"),
+        human_authority_ref,
+        context="authority_rule.declared_by vs human_authority_ref",
+    )
+
+    if objective_revision.get("project_id") != project_id:
+        raise BindingIdentityError(
+            "objective_revision's own project_id does not match the declared Project "
+            f"Binding project_id: {objective_revision.get('project_id')!r} != {project_id!r}"
+        )
+    _canonical_reference_equal(
+        objective_revision.get("human_authority_ref"),
+        human_authority_ref,
+        context="objective_revision.human_authority_ref vs human_authority_ref",
     )
 
     if genesis_state.get("project_id") != project_id:
@@ -131,36 +260,48 @@ def bind_project(
 
     records: list[tuple[str, str, dict[str, Any]]] = [
         ("objective_revision", objective_revision_id, objective_revision),
+        ("authority_rule", recomputed_rule_id, authority_rule),
         ("project_binding", project_binding["project_binding_id"], project_binding),
         *(additional_genesis_records or []),
     ]
 
     try:
         committed_state = store.initialize(project_id, genesis_state, records=records, fault=fault)
-    except AlreadyInitializedError:
+    except AlreadyInitializedError as already_initialized:
         existing_current = store.load_current(project_id)
-        existing_binding = store.resolve_record(
-            project_id, "project_binding", project_binding["project_binding_id"]
-        )
-        existing_objective_revision = store.resolve_record(
-            project_id, "objective_revision", objective_revision_id
-        )
-        if (
-            existing_current == genesis_state
-            and existing_binding == project_binding
-            and existing_objective_revision == objective_revision
-        ):
-            return {
-                "project_binding": project_binding,
-                "project_binding_id": project_binding["project_binding_id"],
-                "objective_revision": objective_revision,
-                "committed_state": existing_current,
-            }
-        raise
+        if existing_current != genesis_state:
+            raise
+
+        expected_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        for kind, record_id, body in records:
+            key = (kind, record_id)
+            if key in expected_by_key and expected_by_key[key] != body:
+                raise BindingValidationError(
+                    f"conflicting genesis manifest member supplied twice in this one replay "
+                    f"attempt: {kind}/{record_id}"
+                ) from already_initialized
+            expected_by_key[key] = body
+
+        existing_keys = _read_committed_genesis_manifest_keys(store, project_id)
+        if existing_keys is None or set(expected_by_key.keys()) != existing_keys:
+            raise
+
+        for (kind, record_id), body in expected_by_key.items():
+            if store.resolve_record(project_id, kind, record_id) != body:
+                raise
+
+        return {
+            "project_binding": project_binding,
+            "project_binding_id": project_binding["project_binding_id"],
+            "objective_revision": objective_revision,
+            "authority_rule": authority_rule,
+            "committed_state": existing_current,
+        }
 
     return {
         "project_binding": project_binding,
         "project_binding_id": project_binding["project_binding_id"],
         "objective_revision": objective_revision,
+        "authority_rule": authority_rule,
         "committed_state": committed_state,
     }

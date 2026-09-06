@@ -242,6 +242,65 @@ def test_product_binding_engine_has_no_development_binding_shaped_surface() -> N
     assert not hasattr(binding_module, "evaluate")
 
 
+def test_every_public_route_reaching_store_initialize_runs_the_full_admission_chain() -> None:
+    """Issue #43 Phase 9 Round 1 §9.2: a real call-graph scan of ``route.py``'s own module
+    source -- not a grep, not a hardcoded name list -- proving
+    ``PUBLIC_COMMITTING_ROUTE_COUNT=1`` (``bind_project``), and that this one route reaches,
+    directly or through an intermediate helper, every required admission stage: schema
+    validation (``validate_record``/``validate_against_schema_id``), cross-binding
+    validation (``assemble_project_binding``), identity reverification (``rule_id``,
+    ``verify_project_binding_identity``), secret exclusion (``reject_secret_material``),
+    typed reference admission (``reject_wrong_kind_reference``). A future new route calling
+    ``store.initialize`` without reaching one of these would fail this test, structurally --
+    no update to a name list is what makes it pass or fail."""
+
+    import ast
+    import inspect
+
+    import manosube_agent_civilization.binding.engine as engine_module
+    import manosube_agent_civilization.binding.route as route_module
+
+    calls: dict[str, set[str]] = {}
+    for module in (route_module, engine_module):
+        tree = ast.parse(inspect.getsource(module))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                called: set[str] = set()
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Call):
+                        if isinstance(sub.func, ast.Name):
+                            called.add(sub.func.id)
+                        elif isinstance(sub.func, ast.Attribute):
+                            called.add(sub.func.attr)
+                calls[node.name] = called
+
+    def reaches(fn_name: str, target: str, seen: set[str]) -> bool:
+        if fn_name in seen:
+            return False
+        seen.add(fn_name)
+        direct = calls.get(fn_name, set())
+        if target in direct:
+            return True
+        return any(callee in calls and reaches(callee, target, seen) for callee in direct)
+
+    committing_routes = {name for name, called in calls.items() if "initialize" in called}
+    assert committing_routes == {"bind_project"}
+    required_stages = (
+        "validate_against_schema_id",
+        "assemble_project_binding",
+        "rule_id",
+        "verify_project_binding_identity",
+        "reject_secret_material",
+        "reject_wrong_kind_reference",
+    )
+    for name in sorted(committing_routes):
+        for stage in required_stages:
+            assert reaches(name, stage, set()), (
+                f"{name} calls store.initialize without reaching required admission stage "
+                f"{stage!r} -- PUBLIC_COMMITTING_ROUTE_BYPASS_COUNT must be 0"
+            )
+
+
 def test_product_binding_fixture_never_imports_the_phase_8_fixture_module() -> None:
     """``tests/fixtures/product_binding.py`` is deliberately self-contained -- it must never
     *import* ``tests/fixtures/vertical_proof.py``, the Phase 8 fixture, which this Finding
