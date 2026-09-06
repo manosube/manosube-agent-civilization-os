@@ -69,12 +69,23 @@ def test_boot_route_never_calls_load_current() -> None:
     assert "load_current" not in _called_names(route_module)
 
 
-def test_boot_route_calls_reconstruct() -> None:
+def test_boot_route_calls_read_current_consistent() -> None:
     """The positive counterpart of the above: current State restoration must go through
-    ``FileStateStore.reconstruct`` -- the pure, read-only lineage replay -- and not merely
-    lack a call to ``load_current`` by omission."""
+    ``FileStateStore.read_current_consistent`` -- the quiescence-checked, read-only surface
+    (Phase 10 Structural Review Round 2, P10-R2-F1/F2) -- and not merely lack a call to
+    ``load_current`` by omission."""
 
-    assert "reconstruct" in _called_names(route_module)
+    assert "read_current_consistent" in _called_names(route_module)
+
+
+def test_boot_route_never_calls_reconstruct_directly() -> None:
+    """A bare ``FileStateStore.reconstruct`` call, while read-only, silently tolerates a
+    still-pending later transaction and never checks a present ``current.json`` view --
+    ``read_current_consistent`` is the one surface that adds both checks on top of it.
+    ``boot_project`` must reach current-State restoration only through that one surface,
+    never by calling ``reconstruct`` itself."""
+
+    assert "reconstruct" not in _called_names(route_module)
 
 
 def test_boot_route_never_imports_a_command_execution_or_network_surface() -> None:

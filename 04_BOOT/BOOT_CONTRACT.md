@@ -44,15 +44,20 @@ knows -- never a locator Boot must resolve, search, or infer.
    explicitly. Boot never enumerates Store projects, scans a filesystem, inspects the
    current working directory, or infers identity from a path/URL/directory name.
 3. **The existing Store and owners remain authoritative.** Boot uses only `FileStateStore`'s
-   public read surfaces (`resolve_record`, `load_current`) and Product Binding's own public
-   identity/reference-resolution functions. It creates no second Store/State/Binding/
-   Objective/Authority/reference-resolution owner and duplicates no identity algorithm.
-4. **Lineage is the State restoration authority.** Current State is reconstructed through
-   `FileStateStore.reconstruct`, which replays exclusively from the committed append-only
-   lineage log and performs no write of any kind -- **not** `FileStateStore.load_current`,
-   which materializes a missing `current.json` view via a real write when the committed
-   lineage is otherwise sound (Structural Review Round 1, P10-R1-F2: that write is not
-   read-only, and a successful Boot must never mutate the Store). A materialized
+   public read surfaces (`resolve_record`, `read_current_consistent`) and Product Binding's
+   own public identity/reference-resolution functions. It creates no second Store/State/
+   Binding/Objective/Authority/reference-resolution owner and duplicates no identity
+   algorithm.
+4. **Lineage is the State restoration authority, and the Store must be quiescent.** Current
+   State is reconstructed through `FileStateStore.read_current_consistent`, which replays
+   exclusively from the committed append-only lineage log, performs no write of any kind, and
+   additionally requires the Store to carry no pending transaction and any *present*
+   `current.json` view to agree exactly with the committed lineage (Structural Review Round 2,
+   P10-R2-F1/F2). Neither `FileStateStore.load_current` (materializes a missing `current.json`
+   view via a real write, and tolerates a *present* view one revision ahead as an expected,
+   not-yet-recovered gap -- correct for its own existing callers, wrong for Boot) nor a bare
+   `FileStateStore.reconstruct` (silently tolerates a still-pending later transaction and never
+   looks at a present `current.json` view at all) is used directly. A materialized
    `current.json` body, a caller-supplied State, a cache, or a fixture is never a substitute
    for lineage reconstruction either way.
 5. **Binding identity and reference closure are reverified.** Boot resolves the exact
@@ -72,12 +77,13 @@ knows -- never a locator Boot must resolve, search, or infer.
    `types.MappingProxyType` and every nested list as a new `tuple`, recursively, bottom-up, so
    the returned structure shares no mutable container with any body a caller or the Store
    supplied. The dataclass itself is frozen.
-8. **Boot is fail-closed and transactionally read-only.** A successful Boot performs no
-   State transition, manifest adoption, lineage append, record promotion, command
-   execution, or external write. A Store indicating corruption, partial visibility, an
-   interrupted transaction, a missing genesis institution, or an inconsistent public read
-   surface propagates its own typed Store error unchanged -- Boot never calls
-   `FileStateStore.recover` and never "repairs" canonical history.
+8. **Boot is fail-closed, transactionally read-only, and requires a quiescent Store.** A
+   successful Boot performs no State transition, manifest adoption, lineage append, record
+   promotion, command execution, or external write. A Store indicating corruption, partial
+   visibility, a pending transaction at any crash stage, a missing genesis institution, or an
+   inconsistent public read surface -- present-`current.json` divergence from the committed
+   lineage included (Round 2, P10-R2-F1) -- propagates its own typed Store error unchanged --
+   Boot never calls `FileStateStore.recover` and never "repairs" canonical history.
 
 ## 4. Canonical owner
 
@@ -129,9 +135,10 @@ boundary violations.
      = authority_rule.declared_by
    (canonical reference exact equality throughout -- kind correctness never substitutes for
    identity equality).
-9. Reconstruct current State via store.reconstruct (never store.load_current, which performs
-   a real write to materialize a missing current.json view -- P10-R1-F2; never
-   store.recover). Require:
+9. Reconstruct current State via store.read_current_consistent -- never store.load_current
+   (real write to materialize a missing current.json -- P10-R1-F2), never a bare
+   store.reconstruct (tolerates a still-pending later transaction and never checks a present
+   current.json view -- P10-R2-F1/F2), never store.recover. Require:
    reconstructed_state.project_id = requested project_id
    reconstructed_state.objective_revision_id = project_binding.objective_revision_ref.id
 10. Return one immutable BootContext (deep-frozen: every nested mapping/list recursively
@@ -171,14 +178,20 @@ At minimum, `boot_project` fails closed, with zero Store mutation
 - four-way Human Authority mismatch
 - Authority Rule identity or project mismatch
 - missing, malformed, or substituted genesis receipt/reference (closed by
-  FileStateStore.reconstruct's own genesis-institution verification)
+  FileStateStore.read_current_consistent's own genesis-institution verification, via
+  reconstruct)
 - transaction-manifest or lineage tamper (closed by FileStateStore's own reconstruction)
-- materialized-current divergence: irrelevant to Boot since P10-R1-F2 -- current.json is
-  never read by `store.reconstruct`, so a stale, missing, or divergent materialized view
-  neither blocks nor corrupts a Boot whose committed lineage is otherwise sound
-- an interrupted/uncommitted transaction (a project with only an interrupted genesis has no
-  committed events at all; reconstruct raises CorruptStoreError, never silently boot from
-  nothing, and Boot never calls recover() to complete it)
+- materialized-current divergence that the existing Store classifies as corruption: a
+  *present* current.json that is malformed, schema-invalid, identity/fingerprint-
+  inconsistent, behind the committed lineage, or unrelated to it fails closed
+  (read_current_consistent, P10-R2-F1) -- a *missing* current.json is not itself corruption
+  and is never recreated by Boot
+- an interrupted/uncommitted transaction, at any crash stage -- genesis itself (a project
+  with only an interrupted genesis has no committed events at all; read_current_consistent
+  raises CorruptStoreError, never silently boot from nothing) or a later transition on an
+  already-bound project (a pending transaction's own recovery journal without its COMMITTED
+  marker is rejected regardless of how far it progressed before crashing -- P10-R2-F2); Boot
+  never calls recover() to complete either case
 - an uninitialized Store
 - a caller-supplied State/Binding body attempting to bypass Store resolution (structurally
   impossible: boot_project's own signature accepts no such parameter)
@@ -227,7 +240,47 @@ declared-id equality matrix over a stand-in store) and by two static proofs in
 `tests/contract/boot/test_boot_route_static_conformance.py` (`store.reconstruct` is called;
 `store.load_current` is not).
 
-## 8. Explicit non-claims
+## 8. Structural Review Round 2 corrections (構造参謀, P10-R2)
+
+Two further findings, independently reproduced against Round 1's own delivered HEAD
+(`c99b02dded783a8e6f21d3c2fd0dd0c15f20dc42`) before any fix -- both exposed precisely by
+Round 1's own switch from `load_current` to a bare `reconstruct`, which is read-only but not
+sufficient on its own for the quiescent-Store guarantee frozen semantic decision 8 requires:
+
+- **P10-R2-F1 (present current.json corruption ignored).** A bare `reconstruct` never reads
+  `current.json` at all, so a *present* but corrupted view (wrong `project_id`, wrong
+  fingerprint, behind the committed lineage, or an unrelated-but-valid State) went completely
+  unnoticed. Reproduced: writing a `current.json` with the wrong `project_id` into a real
+  bound project's Store, then calling `boot_project`, booted successfully as if nothing were
+  wrong.
+- **P10-R2-F2 (a later pending transaction silently ignored).** `reconstruct`'s own
+  `_committed_events` deliberately tolerates a dangling, still-uncommitted lineage tail --
+  correct for its own generic callers (`commit`'s own CAS check in particular), but wrong for
+  a caller that needs the Store to be quiescent. Reproduced: committing a real second State
+  transition with a crash injected at `AFTER_LINEAGE_APPEND`, then calling `boot_project`,
+  booted successfully at the prior (genesis) revision while the later transaction sat pending.
+
+Both close on the same minimal, read-only public Store surface,
+`FileStateStore.read_current_consistent` (`store/file_store.py`): it requires
+`_has_pending_transaction` to be false (any transaction's own recovery journal without its
+`COMMITTED` marker, at any of the nine crash stages, not merely a dangling lineage tail) before
+ever reconstructing, then -- if `current.json` is present -- requires it to agree exactly with
+the reconstructed State, raising the existing `CorruptStoreError` otherwise. A *missing*
+`current.json` is still not an error and is still never written back. `FileStateStore.
+load_current`'s own existing tolerant semantics (materializes a missing view; accepts a
+present view exactly one revision ahead as a recoverable gap) are completely unchanged for its
+own existing callers -- this is a second, stricter surface alongside it, not a rewrite of it.
+`boot_project` now calls `read_current_consistent` exclusively; it calls neither
+`load_current` nor `reconstruct` directly.
+
+Exercised by `tests/integration/store/test_read_current_consistent.py` (the Store method's own
+positive routes, a present-current corruption matrix, and the full nine-stage crash-injection
+quiescence matrix), by a matching Boot-level matrix in `tests/integration/boot/
+test_boot_project_route.py`, and by two further static proofs in `tests/contract/boot/
+test_boot_route_static_conformance.py` (`read_current_consistent` is called; `reconstruct` is
+not called directly).
+
+## 9. Explicit non-claims
 
 ```text
 PROJECT_DISCOVERY_IMPLEMENTED=false

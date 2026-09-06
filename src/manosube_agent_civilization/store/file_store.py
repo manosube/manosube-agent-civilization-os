@@ -757,6 +757,65 @@ class FileStateStore:
         if prior is None: raise CorruptStoreError("lineage has no genesis")
         return deepcopy(prior)
 
+    def _has_pending_transaction(self, project_id: str) -> bool:
+        """Return whether any transaction's own recovery journal exists without its
+        ``COMMITTED`` marker -- Phase 10 Structural Review Round 2 (P10-R2-F2): every crash
+        stage from journal creation through immediately before the ``COMMITTED`` marker
+        itself, not merely a dangling append-only lineage tail (:meth:`_committed_events`
+        tolerates exactly that one gap as a normal, recoverable in-flight state for its own
+        callers -- :meth:`commit`'s own CAS check in particular -- and continues to; this is
+        a separate, stricter question a caller demanding a quiescent Store asks instead)."""
+
+        recovery=self._project(project_id)/"state"/"recovery"
+        if not recovery.exists():
+            return False
+        for journal in recovery.iterdir():
+            if journal.is_dir() and not (journal/"COMMITTED").exists():
+                return True
+        return False
+
+    def read_current_consistent(self, project_id: str) -> dict[str,Any]:
+        """The one public, read-only, quiescence-checked current-State surface (Phase 10
+        Structural Review Round 2, P10-R2-F1/F2).
+
+        Neither existing read surface is sufficient for a caller -- Boot -- that must both
+        perform zero writes and reject a Store that is not currently quiescent:
+        :meth:`reconstruct` silently tolerates a dangling uncommitted transaction (by design,
+        for its own generic callers) and never looks at a present ``current.json`` at all;
+        :meth:`load_current` materializes a *missing* ``current.json`` via a real write, and
+        tolerates a *present* view exactly one revision ahead as an expected, not-yet-
+        recovered gap -- both correct for those methods' own existing callers, and both
+        unchanged here.
+
+        Fails closed, with no Store mutation of any kind, if:
+
+        - any transaction's own recovery journal exists without its ``COMMITTED`` marker
+          (:meth:`_has_pending_transaction`) -- a pending transaction at any crash stage; or
+        - a present ``current.json`` view is malformed, schema-invalid, identity/fingerprint-
+          inconsistent, or diverges in any way from the committed lineage's own reconstructed
+          State (a present view is never State authority, but its own consistency is still
+          checked here -- ``PRESENT_CURRENT_VIEW_CONTRADICTION_IS_ALLOWED=false``).
+
+        A *missing* ``current.json`` is not itself an error: the committed lineage remains
+        reconstructible and authoritative regardless, and this method never writes one back
+        (``MISSING_CURRENT_VIEW_RECREATED_BY_BOOT=false``).
+        """
+
+        if self._has_pending_transaction(project_id):
+            raise CorruptStoreError(f"a transaction is pending, not yet committed: {project_id}")
+        reconstructed=self.reconstruct(project_id)
+        path=self._current(project_id)
+        if not path.exists():
+            return reconstructed
+        try:
+            current=json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc:
+            raise CorruptStoreError("invalid current view") from exc
+        self._validate_state(project_id,current)
+        if canonical_json_bytes(current)!=canonical_json_bytes(reconstructed):
+            raise CorruptStoreError("current view differs from lineage")
+        return reconstructed
+
     def load_current(self, project_id: str) -> dict[str,Any]:
         reconstructed=self.reconstruct(project_id); path=self._current(project_id)
         if not path.exists():

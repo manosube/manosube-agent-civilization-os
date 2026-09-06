@@ -82,9 +82,12 @@ src/manosube_agent_civilization/boot/
 
 No second State, Store, Lineage, Recovery, Objective, Boundary, Authority, or Binding owner
 is created anywhere in this package. Current State is reconstructed exclusively through the
-existing append-only lineage owner's pure, read-only replay (`FileStateStore.reconstruct` --
-never `FileStateStore.load_current`, which performs a real write to materialize a missing
-`current.json` view, Structural Review Round 1 P10-R1-F2); the Project Binding, Objective
+existing append-only lineage owner's quiescence-checked, read-only surface
+(`FileStateStore.read_current_consistent`, added to that same existing Store class in
+Structural Review Round 2, P10-R2-F1/F2) -- never `FileStateStore.load_current`, which
+performs a real write to materialize a missing `current.json` view (Round 1, P10-R1-F2), and
+never a bare `FileStateStore.reconstruct`, which tolerates a still-pending later transaction
+and never checks a present `current.json` view at all. The Project Binding, Objective
 Revision, and Authority Rule are resolved exclusively through the existing Product Binding
 owners; no new schema and no new persisted record kind is introduced.
 

@@ -9,10 +9,10 @@ its Store-owned references through the existing Phase 9 reference-resolution own
 (:func:`~manosube_agent_civilization.binding.resolve_binding_references`), reverifies the
 Authority Rule through the existing Authority identity owner
 (:func:`~manosube_agent_civilization.authority.identity.rule_id`), reconstructs current State
-through the existing append-only lineage owner
-(:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.reconstruct`), and
-checks the cross-record project/Objective/Authority/reference invariants Issue #45 assigns to
-this route itself (``BOOT_CONTRACT.md`` §6). It creates no second State, Store, Binding,
+through the existing append-only lineage owner's quiescence-checked, read-only surface
+(:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.read_current_consistent`),
+and checks the cross-record project/Objective/Authority/reference invariants Issue #45 assigns
+to this route itself (``BOOT_CONTRACT.md`` §6). It creates no second State, Store, Binding,
 Objective, Authority, or reference-resolution owner, and never calls ``store.initialize``,
 ``store.commit``, or ``store.recover`` -- Boot is restoration, never initialization, adoption,
 or repair (frozen semantic decisions 1, 3, 8). A Store that indicates corruption, an
@@ -22,10 +22,18 @@ unchanged; this route neither swallows nor "repairs" it.
 Phase 10 Structural Review Round 1 correction (P10-R1-F2): ``FileStateStore.load_current``
 materializes a missing ``current.json`` view via a real write when the committed lineage is
 otherwise sound, which is not a read-only operation -- a successful Boot must never mutate
-the Store (frozen semantic decision 8). This route now reconstructs current State exclusively
-through :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.reconstruct`,
-which replays the committed append-only lineage and returns a value with no Store write of
-any kind, materialized-view included.
+the Store (frozen semantic decision 8).
+
+Phase 10 Structural Review Round 2 correction (P10-R2-F1/F2): a bare
+:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.reconstruct` call, while
+genuinely read-only, is not sufficient either -- it silently tolerates a dangling, still-
+pending later transaction (by design, for its own generic callers), and never looks at a
+present ``current.json`` view at all, so a corrupted-but-present view goes completely
+unnoticed. This route now calls
+:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.read_current_consistent`
+instead, which additionally requires the Store to be quiescent (no transaction pending at any
+crash stage) and, when a ``current.json`` view is present, requires it to agree exactly with
+the committed lineage -- still with zero writes of any kind.
 """
 
 from __future__ import annotations
@@ -167,14 +175,16 @@ def boot_project(store: Any, *, project_id: str, project_binding_id: str) -> Boo
         context="authority_rule.declared_by vs project_binding.human_authority_ref",
     )
 
-    # P10-R1-F2: reconstructed exclusively through the existing append-only lineage owner's
-    # pure replay (store.reconstruct) -- never a materialized current.json body, a caller-
-    # supplied State, a cache, and never store.load_current(), which performs a real write to
-    # materialize a missing current.json even when the caller only asked to read. A Store
-    # still carrying an interrupted transaction, missing genesis institution, or any other
-    # lineage-authority failure propagates its own typed Store error unchanged (frozen
-    # semantic decision 8); this route never calls store.recover() to complete it.
-    current_state = store.reconstruct(project_id)
+    # P10-R1-F2/P10-R2-F1/F2: reconstructed exclusively through the existing append-only
+    # lineage owner's quiescence-checked, read-only surface (store.read_current_consistent)
+    # -- never a caller-supplied State or a cache; never store.load_current(), which performs
+    # a real write to materialize a missing current.json even when the caller only asked to
+    # read; never a bare store.reconstruct(), which tolerates a still-pending later
+    # transaction and never checks a present current.json view at all. A Store still carrying
+    # a pending transaction, missing genesis institution, corrupted present current view, or
+    # any other lineage-authority failure propagates its own typed Store error unchanged
+    # (frozen semantic decision 8); this route never calls store.recover() to complete it.
+    current_state = store.read_current_consistent(project_id)
     if current_state.get("project_id") != project_id:
         raise BootConsistencyError(
             "reconstructed current State's own project_id does not match the requested "

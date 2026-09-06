@@ -38,7 +38,7 @@ from manosube_agent_civilization.boot import (
     BootNotFoundError,
     boot_project,
 )
-from manosube_agent_civilization.store import FileStateStore
+from manosube_agent_civilization.store import STAGES, FileStateStore
 from manosube_agent_civilization.store.errors import (
     CorruptStoreError,
     SimulatedCrash,
@@ -106,7 +106,7 @@ class _FakeStore:
     def resolve_record(self, project_id: str, kind: str, record_id: str) -> dict[str, Any] | None:
         return self._records.get((project_id, kind, record_id))
 
-    def reconstruct(self, project_id: str) -> dict[str, Any]:
+    def read_current_consistent(self, project_id: str) -> dict[str, Any]:
         if isinstance(self._current_state, BaseException):
             raise self._current_state
         return self._current_state
@@ -616,6 +616,132 @@ def test_boot_with_the_current_view_already_present_writes_nothing_either(
 
     assert current_path.read_bytes() == before_bytes
     assert _snapshot(store, project_id) == before
+
+
+# --- P10-R2-F1: Boot requires a quiescent Store -- a present but corrupted materialized
+#     current.json view must not be silently ignored ------------------------------------- #
+
+
+def test_boot_rejects_a_present_current_view_with_the_wrong_project_id(tmp_path: Path) -> None:
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    body = json.loads(current_path.read_text(encoding="utf-8"))
+    body["project_id"] = "PRJ-SOMETHING-ELSE"
+    current_path.write_text(json.dumps(body), encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError):
+        boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+
+def test_boot_rejects_a_present_current_view_behind_committed_lineage(tmp_path: Path) -> None:
+    """Requires a real second committed transition so the present view can legitimately be
+    made to lag behind it."""
+
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    genesis_state = result["committed_state"]
+    successor = deepcopy(genesis_state)
+    successor["state_revision"] = genesis_state["state_revision"] + 1
+    successor["previous_state_fingerprint"] = genesis_state["semantic_fingerprint"]
+    successor["lineage_head_ref"] = {"kind": "state_transition", "id": "TX-ADVANCE-0001"}
+    from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+
+    successor["semantic_fingerprint"] = fingerprint_project_state(
+        successor, schema_root=SCHEMA_ROOT
+    ).as_dict()
+    event = {
+        "schema_version": "0.1",
+        "transaction_id": "TX-ADVANCE-0001",
+        "event_type": "TRANSITION",
+        "project_id": project_id,
+        "from_revision": genesis_state["state_revision"],
+        "to_revision": successor["state_revision"],
+        "before_fingerprint": genesis_state["semantic_fingerprint"],
+        "after_fingerprint": successor["semantic_fingerprint"],
+        "after_state": successor,
+        "evidence_refs": [],
+        "committed_at": "2026-09-06T10:00:00Z",
+    }
+    store.commit(
+        project_id,
+        genesis_state["state_revision"],
+        genesis_state["semantic_fingerprint"],
+        successor,
+        event,
+    )
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    current_path.write_text(json.dumps(genesis_state), encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError):
+        boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+
+# --- P10-R2-F2: Boot requires a quiescent Store -- a later, still-pending transaction must
+#     never be silently ignored in favor of the last committed State ---------------------- #
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_boot_rejects_every_crash_stage_of_a_later_pending_transaction(
+    stage: str, tmp_path: Path
+) -> None:
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    genesis_state = result["committed_state"]
+    successor = deepcopy(genesis_state)
+    successor["state_revision"] = genesis_state["state_revision"] + 1
+    successor["previous_state_fingerprint"] = genesis_state["semantic_fingerprint"]
+    successor["lineage_head_ref"] = {"kind": "state_transition", "id": "TX-ADVANCE-0001"}
+    from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+
+    successor["semantic_fingerprint"] = fingerprint_project_state(
+        successor, schema_root=SCHEMA_ROOT
+    ).as_dict()
+    event = {
+        "schema_version": "0.1",
+        "transaction_id": "TX-ADVANCE-0001",
+        "event_type": "TRANSITION",
+        "project_id": project_id,
+        "from_revision": genesis_state["state_revision"],
+        "to_revision": successor["state_revision"],
+        "before_fingerprint": genesis_state["semantic_fingerprint"],
+        "after_fingerprint": successor["semantic_fingerprint"],
+        "after_state": successor,
+        "evidence_refs": [],
+        "committed_at": "2026-09-06T10:00:00Z",
+    }
+
+    def fault(current: str, _stage: str = stage) -> None:
+        if current == _stage:
+            raise SimulatedCrash(_stage)
+
+    with pytest.raises(SimulatedCrash):
+        store.commit(
+            project_id,
+            genesis_state["state_revision"],
+            genesis_state["semantic_fingerprint"],
+            successor,
+            event,
+            fault=fault,
+        )
+    before = _snapshot(store, project_id)
+
+    with pytest.raises(CorruptStoreError):
+        boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+    # No mutation from the rejection itself, and the pending transaction was never
+    # completed via recover() -- its own journal is exactly as the crash left it.
+    assert _snapshot(store, project_id) == before
+    journal = (
+        store.root
+        / "projects"
+        / project_id
+        / "state"
+        / "recovery"
+        / "TX-ADVANCE-0001"
+        / "COMMITTED"
+    )
+    assert not journal.is_file()
 
 
 # --- persisted-record tamper detection (Store's own generic mechanism) -------------------- #
