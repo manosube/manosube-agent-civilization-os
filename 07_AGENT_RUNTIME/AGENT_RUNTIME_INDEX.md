@@ -87,7 +87,7 @@ MULTI_AGENT_IMPLEMENTED=false
 ```text
 src/manosube_agent_civilization/agent_runtime/
 ├── __init__.py     public exports
-├── errors.py        AgentRuntimeError / AgentReleasedError
+├── errors.py        AgentRuntimeError / AgentReleasedError / AgentConstructionError
 ├── agent.py         TemporaryAgent -- the one ephemeral, non-persisted lifecycle handle
 └── route.py         start_temporary_agent -- the one public start route
 ```
@@ -97,6 +97,18 @@ created anywhere in this package. `start_temporary_agent` invokes the existing
 `manosube_agent_civilization.boot.boot_project` exactly once and wraps its returned
 `BootContext` in one `TemporaryAgent`; no new schema and no new persisted record kind is
 introduced.
+
+**Structural Review Round 1 correction (SHUKOU adoption
+`ADOPT_P12_R1_CANONICAL_TEMPORARY_AGENT_CONSTRUCTION`).** The initial delivery left
+`TemporaryAgent.__init__` publicly callable with any caller-supplied `BootContext` --
+`BootContext` is itself publicly constructible, so a caller could fabricate an active Agent
+without ever calling `start_temporary_agent` or `boot_project`. `TemporaryAgent.__init__` now
+requires a private construction token (`agent._ROUTE_CONSTRUCTION_TOKEN`) that only `route.py`
+ever imports, and requires its `boot_context` argument to already be a real `BootContext`
+instance; either check failing raises `AgentConstructionError` before anything is stored. This
+is a construction-boundary correction, not a semantic redesign: the public start route,
+release terminality, deep immutability, typed owner-error propagation, and zero-Store-mutation
+guarantees are all unchanged.
 
 ## 5. Explicit non-claims
 

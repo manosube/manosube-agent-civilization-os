@@ -80,6 +80,15 @@ second public lifecycle entry point is introduced in this Phase.
 10. **Strict phase boundary.** Independent Verification (13), GitHub (14), Runtime (15),
     model replaceability (16), URL read-only (17), autonomous Change (18), and multi-Agent
     (19) remain out of scope.
+11. **Canonical construction only (Structural Review Round 1, P12-R1-F1).** `TemporaryAgent`
+    is necessarily a public lifecycle type, but its constructor accepts a private
+    construction token only `start_temporary_agent` ever supplies, and requires its
+    `boot_context` argument to already be a real `BootContext` instance. A direct
+    `TemporaryAgent(...)` call -- from any caller other than this layer's own `route.py`, or
+    over any payload that is not already a verified `BootContext` -- raises
+    `AgentConstructionError` before anything is stored. `BootContext` being publicly
+    constructible must never let a caller fabricate an active Agent without `boot_project`
+    ever running.
 
 ## 4. Canonical owner
 
@@ -91,14 +100,21 @@ src/manosube_agent_civilization/agent_runtime/
 └── route.py         start_temporary_agent -- the one public start route
 ```
 
-`AgentReleasedError` exists only for the one lifecycle check this layer itself owns (access
-to a released Agent's context). Every other failure mode propagates the existing owning
-domain's own typed error unchanged -- `manosube_agent_civilization.boot.
+`AgentReleasedError` and `AgentConstructionError` exist only for the two lifecycle checks this
+layer itself owns (access to a released Agent's context; construction bypassing the canonical
+route or over a non-`BootContext` payload). Every other failure mode propagates the existing
+owning domain's own typed error unchanged -- `manosube_agent_civilization.boot.
 {BootNotFoundError,BootConsistencyError}`, `manosube_agent_civilization.binding.errors.
 {BindingIdentityError,BindingValidationError}`, `manosube_agent_civilization.store.errors.
 {CorruptStoreError,StateNotFoundError,BoundaryError,...}`, and
 `manosube_agent_civilization.authority.errors.*` -- this layer never catches or rewraps any
 of them.
+
+`agent.py` owns one further, unexported implementation detail: a private `_ConstructionToken`
+type and its one singleton instance, `_ROUTE_CONSTRUCTION_TOKEN`. `TemporaryAgent.__init__`
+requires that exact object, by identity, as its `_construction_token` keyword-only argument;
+`route.py` is the only module that ever imports it. Neither name is part of this package's
+public exports.
 
 ## 5. Canonical successful route
 
@@ -151,6 +167,18 @@ And, for this layer's own lifecycle boundary:
   initialize/commit/recover/load_current/bind_project/reconstruct; and that no module in this
   package imports a model, subprocess, shell, network, GitHub, Observer, Change-execution,
   scheduler, or multi-Agent surface
+- a direct TemporaryAgent(context) call -- even over a real BootContext obtained through a
+  direct boot_project call, never through start_temporary_agent -- raises
+  AgentConstructionError; a wrong or missing _construction_token has the identical effect;
+  and a real _construction_token cannot rescue a non-BootContext payload (P12-R1-F1)
+- a rejected direct construction attempt calls boot_project zero times and mutates the Store
+  zero times; the canonical start_temporary_agent route itself remains completely unaffected
+  and still calls boot_project exactly once
+- static conformance additionally proves TemporaryAgent.__init__ declares a keyword-only
+  _construction_token parameter, that route.py is the only module importing
+  _ROUTE_CONSTRUCTION_TOKEN, that route.py's own TemporaryAgent(...) call site passes
+  _construction_token= explicitly, and that neither _ROUTE_CONSTRUCTION_TOKEN nor
+  _ConstructionToken is ever exported
 ```
 
 ## 7. Explicit non-claims

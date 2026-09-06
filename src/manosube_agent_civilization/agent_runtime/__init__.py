@@ -16,16 +16,20 @@ restores, or reverifies a Project itself -- that remains Boot's own, one-owner c
 grants Authority, executes a Change, or observes an external system. A ``TemporaryAgent``
 exists only in process memory: it creates no canonical record, schema, directory, journal,
 manifest, cache, resume token, durable agent id, or long-term memory, and is never model-,
-tool-, command-, or network-capable.
+tool-, command-, or network-capable. ``TemporaryAgent`` is constructible only through
+``start_temporary_agent`` (Structural Review Round 1, P12-R1-F1) -- a direct
+``TemporaryAgent(...)`` call, or one over a payload that is not already a real ``BootContext``,
+raises ``AgentConstructionError`` rather than producing an Agent over unverified data.
 
 See ``07_AGENT_RUNTIME/AGENT_RUNTIME_INDEX.md`` for the full contract set.
 """
 
 from .agent import TemporaryAgent
-from .errors import AgentReleasedError, AgentRuntimeError
+from .errors import AgentConstructionError, AgentReleasedError, AgentRuntimeError
 from .route import start_temporary_agent
 
 __all__ = [
+    "AgentConstructionError",
     "AgentReleasedError",
     "AgentRuntimeError",
     "TemporaryAgent",

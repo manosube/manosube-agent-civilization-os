@@ -16,6 +16,11 @@ record, a malformed or divergent current view, a pending transaction, a deleted 
 substituted recovery journal -- propagates its own typed error unchanged; this route neither
 catches nor reclassifies it (frozen semantic decision 7), and produces no ``TemporaryAgent``
 and no Store mutation on any such rejection.
+
+This is the only module that ever imports ``agent._ROUTE_CONSTRUCTION_TOKEN`` (Structural
+Review Round 1, P12-R1-F1): ``TemporaryAgent.__init__`` refuses to construct an active Agent
+for any other caller, so a direct ``TemporaryAgent(fabricated_context)`` call -- bypassing
+``boot_project`` entirely -- fails closed rather than producing an Agent over unverified data.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from typing import Any
 
 from manosube_agent_civilization.boot import boot_project
 
-from .agent import TemporaryAgent
+from .agent import _ROUTE_CONSTRUCTION_TOKEN, TemporaryAgent
 
 
 def start_temporary_agent(
@@ -37,4 +42,4 @@ def start_temporary_agent(
     """
 
     boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
-    return TemporaryAgent(boot_context)
+    return TemporaryAgent(boot_context, _construction_token=_ROUTE_CONSTRUCTION_TOKEN)

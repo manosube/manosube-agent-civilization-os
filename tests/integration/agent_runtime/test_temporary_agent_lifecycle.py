@@ -24,10 +24,12 @@ from tests.fixtures.product_binding import bind_project_kwargs, genesis_records
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.agent_runtime import (
+    AgentConstructionError,
     AgentReleasedError,
     TemporaryAgent,
     start_temporary_agent,
 )
+from manosube_agent_civilization.agent_runtime.agent import _ROUTE_CONSTRUCTION_TOKEN
 import manosube_agent_civilization.agent_runtime.route as agent_runtime_route_module
 from manosube_agent_civilization.binding import bind_project
 from manosube_agent_civilization.boot import BootNotFoundError, boot_project
@@ -251,6 +253,85 @@ def test_a_released_agent_cannot_be_restarted_or_resumed(tmp_path: Path) -> None
     assert second_agent.boot_context == original_context  # via BootContext's own equality
     with pytest.raises(AgentReleasedError):
         _ = agent.boot_context  # still released, unaffected by the second start
+
+
+# --- Structural Review Round 1 (P12-R1-F1): direct construction must fail closed ------------ #
+
+
+def test_temporary_agent_cannot_be_constructed_directly(tmp_path: Path) -> None:
+    """A bare ``TemporaryAgent(context)`` call -- bypassing ``start_temporary_agent`` and
+    ``boot_project`` entirely -- must fail closed, even over a genuine, real ``BootContext``
+    (obtained here through a direct ``boot_project`` call, never through the public
+    ``start_temporary_agent`` route)."""
+
+    store_root, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    store = FileStateStore(store_root, schema_root=SCHEMA_ROOT)
+    real_context = boot_project(
+        store, project_id=project_id, project_binding_id=result["project_binding_id"]
+    )
+
+    with pytest.raises(AgentConstructionError):
+        TemporaryAgent(real_context)
+
+
+def test_temporary_agent_rejects_a_wrong_construction_token(tmp_path: Path) -> None:
+    store_root, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    store = FileStateStore(store_root, schema_root=SCHEMA_ROOT)
+    real_context = boot_project(
+        store, project_id=project_id, project_binding_id=result["project_binding_id"]
+    )
+
+    with pytest.raises(AgentConstructionError):
+        TemporaryAgent(real_context, _construction_token=object())
+
+
+def test_temporary_agent_rejects_a_fabricated_boot_context_even_with_the_real_token() -> None:
+    """Defense in depth: even the one real construction token cannot make a non-``BootContext``
+    payload -- a plain dict standing in for a fabricated, unverified context -- become an
+    active Agent."""
+
+    fabricated_context = {
+        "project_id": "PRJ-FAKE",
+        "project_binding_id": "PROJBIND-FAKE",
+        "current_state": {"status": "FORGED"},
+    }
+
+    with pytest.raises(AgentConstructionError):
+        TemporaryAgent(
+            fabricated_context,  # type: ignore[arg-type]
+            _construction_token=_ROUTE_CONSTRUCTION_TOKEN,
+        )
+
+
+def test_rejected_direct_construction_reaches_neither_boot_nor_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_root, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    store = FileStateStore(store_root, schema_root=SCHEMA_ROOT)
+    before = _snapshot(store_root, project_id)
+
+    calls: list[int] = []
+    real_boot_project = boot_project
+
+    def counting_boot_project(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return real_boot_project(*args, **kwargs)
+
+    monkeypatch.setattr(agent_runtime_route_module, "boot_project", counting_boot_project)
+
+    with pytest.raises(AgentConstructionError):
+        TemporaryAgent({"fabricated": True})  # type: ignore[arg-type]
+
+    assert calls == []
+    assert _snapshot(store_root, project_id) == before
+    # The real route is unaffected -- it still works, and still calls Boot exactly once.
+    start_temporary_agent(
+        store, project_id=project_id, project_binding_id=result["project_binding_id"]
+    )
+    assert len(calls) == 1
 
 
 # --- required rejection proofs (propagated unchanged from Boot/Store) ----------------------- #
