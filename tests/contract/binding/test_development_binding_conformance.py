@@ -402,17 +402,26 @@ def test_no_participant_name_reaches_the_canonical_schema_registry() -> None:
 def test_the_policy_artifact_is_not_in_the_canonical_schema_registry() -> None:
     """Registering it there would make named providers part of Kernel semantics.
 
-    ``01_SCHEMA/binding/`` exists and is empty. It is reserved for the future **Kernel
-    Binding element** -- the OS concept that binds a Project to a repository -- which shares
-    a word with this repository-development Binding and is otherwise unrelated. This artifact
-    does not belong there and must not drift into it.
+    ``01_SCHEMA/binding/`` is no longer empty as of Phase 9 (Issue #43): it now holds
+    **Product Binding**'s own schemas -- the OS concept that binds a real Project to its
+    Objective Revision, Boundary, Authority policy reference, Source Registrations, and
+    Command Policy. Product Binding shares a word with this repository-development Binding
+    and is otherwise unrelated -- explicitly `KERNEL_ELEMENT=NONE_PRODUCT_BINDING_LAYER`
+    (Issue #43's own frozen decision), never a ninth Kernel element, correcting this test's
+    own earlier "future Kernel Binding element" expectation to the ratified reality. What
+    this test still protects is unchanged: Development Binding's own policy artifact must
+    never be the thing that appears there, or anywhere in the canonical schema registry.
     """
 
     assert POLICY_PATH.parent.name == "03_BINDING"
     assert POLICY_PATH.suffix == ".json"
     assert not POLICY_PATH.name.endswith(".schema.json")
-    assert list((ROOT / "01_SCHEMA" / "binding").glob("*.schema.json")) == []
     assert POLICY_PATH not in set((ROOT / "01_SCHEMA").rglob("*.json"))
+    for schema in (ROOT / "01_SCHEMA" / "binding").glob("*.schema.json"):
+        assert schema != POLICY_PATH
+        text = schema.read_text(encoding="utf-8").upper()
+        for participant in ("CHATGPT", "CLAUDE_CODE", "SHUKOU", "CODEX"):
+            assert participant not in text, f"{schema.name} names {participant}"
 
 
 def test_the_binding_is_not_a_kernel_record_type() -> None:

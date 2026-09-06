@@ -18,6 +18,7 @@ observation=7
 difference=12
 authority=4
 change=1
+binding=4
 ```
 
 Observation schemas cover the immutable Observation／Fact／Negative Observation records, source-occurrence provenance Bindings, and append-only Fact／Negative evaluation records. Schema existence does not prove Observation Engine execution, Evidence persistence, Difference derivation, Reflow, or completion.
@@ -28,20 +29,24 @@ Authority schemas cover the Authority Decision, the Authority Rule that permits,
 
 The Change schema covers the one Change Record an authorized decision yields. Its `status` enum is closed to `AUTHORIZED`: `KERNEL_CONSTITUTION.md` 第25条 defines seven statuses, and v0.1 emits one, because the other six belong to an executor and to refusals that close as exceptions rather than records. `execution_result` is held `null` for an `AUTHORIZED` Change by the schema itself. Schema existence does not prove Change execution, State commit, crash recovery or Difference closure.
 
+The Binding schemas (`01_SCHEMA/binding/`, Phase 9, Issue #43) cover the one Project Binding record and its three embedded structures -- Boundary, Source Registration, Command Policy. `KERNEL_ELEMENT=NONE_PRODUCT_BINDING_LAYER`: this is not a Kernel element and not the pre-existing repository-development Binding (`03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md`), whose own policy artifact remains outside this registry by design. Schema existence does not prove Boot, command execution, or Phase 9 completion.
+
 ```text
-SCHEMA_COUNT=38
 OBSERVATION_SCHEMA_COUNT=7
 DIFFERENCE_SCHEMA_COUNT=12
 AUTHORITY_SCHEMA_COUNT=4
 CHANGE_SCHEMA_COUNT=1
+BINDING_SCHEMA_COUNT=4
 OBSERVATION_SCHEMA_VALIDATION_DEFINED=true
 DIFFERENCE_SCHEMA_VALIDATION_DEFINED=true
 AUTHORITY_SCHEMA_VALIDATION_DEFINED=true
 CHANGE_SCHEMA_VALIDATION_DEFINED=true
+BINDING_SCHEMA_VALIDATION_DEFINED=true
 OBSERVATION_ENGINE_IMPLEMENTED=true
 DIFFERENCE_ENGINE_IMPLEMENTED=true
 AUTHORITY_ENGINE_IMPLEMENTED=true
 STATE_ENGINE_IMPLEMENTED=false
 CHANGE_ENGINE_IMPLEMENTED=true
+PRODUCT_BINDING_ENGINE_IMPLEMENTED=true
 KERNEL_V0_1_COMPLETE=false
 ```

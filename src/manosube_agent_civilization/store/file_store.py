@@ -6,6 +6,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from manosube_agent_civilization.state.canonicalize import (
     canonical_json_bytes,
     canonical_semantic_state_bytes,
 )
+from manosube_agent_civilization.state.errors import SchemaValidationError
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 
 from .atomic_write import atomic_write, fsync_directory
@@ -33,6 +35,26 @@ from .interface import FaultInjector
 
 STAGES=("AFTER_JOURNAL_CREATED","AFTER_STAGED_STATE_WRITTEN","AFTER_STAGED_RECORDS_WRITTEN","AFTER_COMMIT_INTENT","AFTER_LINEAGE_APPEND","AFTER_RECORDS_PROMOTED","BEFORE_CURRENT_REPLACE","AFTER_CURRENT_REPLACE","BEFORE_COMMITTED_MARKER")
 TRANSITION_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_transition.schema.json"
+GENESIS_RECEIPT_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json"
+#: MANOSUBE-GENESIS-MANIFEST-DIGEST-SHA256-0.1 -- the same sha256+domain-separator+profile
+#: convention `state.fingerprint`'s own `MANOSUBE-STATE-SHA256-0.1` already uses, applied to
+#: a genesis transaction's own exact (kind, id) manifest membership (never body content --
+#: NEVER_CONFUSED_WITH_BODY_SEMANTIC_IDENTITY=true). A distinct domain separator from
+#: State's own semantic fingerprint keeps the two digest spaces from ever colliding.
+_GENESIS_MANIFEST_DIGEST_DOMAIN=b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_MANIFEST\x000.1\x00"
+#: MANOSUBE-GENESIS-RECEIPT-ID-SHA256-0.1 (Phase 9 Completion Repair 6, P9-C6-F1): a
+#: content-addressed identity for the genesis receipt itself, so a genesis institution's
+#: own receipt is never authoritative merely by being schema-valid and internally self-
+#: consistent (SCHEMA_VALID_GENESIS_RECEIPT_SUBSTITUTION_ALLOWED=false) -- its own claimed
+#: id must reproduce from its own closed field set, and the genesis event committed at
+#: genesis time must independently, externally reference that exact id. A distinct domain
+#: separator from both State's own fingerprint and the manifest digest above keeps all
+#: three digest spaces from ever colliding.
+_GENESIS_RECEIPT_ID_DOMAIN=b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_RECEIPT\x000.1\x00"
+#: The closed identity input set `genesis_receipt_id` is computed over, in this exact
+#: order. `genesis_receipt_id` itself is excluded from its own preimage
+#: (GENESIS_RECEIPT_ID_EXCLUDED_FROM_OWN_PREIMAGE=true).
+_GENESIS_RECEIPT_IDENTITY_FIELDS=("schema_version","project_id","transaction_id","genesis_mode","manifest_member_count","manifest_digest")
 
 class FileStateStore:
     def __init__(self, root: Path, *, schema_root: Path) -> None:
@@ -166,13 +188,16 @@ class FileStateStore:
             manifest_path=journal/"manifest.json"
             if not manifest_path.exists():
                 continue
-            try:
-                entries=json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError,json.JSONDecodeError) as exc:
-                raise CorruptStoreError(f"malformed transaction manifest: {journal.name}") from exc
-            if [kind,record_id] not in entries:
+            entries=self._read_manifest_entries(manifest_path, journal.name)
+            if (kind,record_id) not in entries:
                 continue
-            if (journal/"COMMITTED").exists():
+            # P9-C6-F1: route through the one committed-transaction authority
+            # (:meth:`_transaction_committed`) rather than a second, raw ``COMMITTED``
+            # marker check -- a record TX-GENESIS's own manifest claims must undergo the
+            # identical genesis receipt/event validation every other TX-GENESIS read
+            # surface does, never a bypass that lets a corrupted genesis institution still
+            # make its own claimed records visible.
+            if self._transaction_committed(project_id, journal.name):
                 any_committed=True
             staged_path=journal/"records"/f"{kind}__{record_id}.json"
             if staged_path.exists():
@@ -220,58 +245,356 @@ class FileStateStore:
                 return deepcopy(event)
         return None
 
+    def resolve_transaction_manifest(self, project_id: str, transaction_id: str) -> list[tuple[str,str]]|None:
+        """Return the exact ``(kind, id)`` membership list a *committed* transaction's own
+        recovery-journal manifest claims, or ``None`` if *transaction_id* is unresolvable --
+        does not exist, or exists but is not yet durably committed (Phase 9 Structural
+        Review Round 2, P9-R2-F4).
+
+        A generic, transaction-agnostic public read surface -- no domain-specific comparison
+        semantics of any kind live here; a caller decides what "identical", "conflicting",
+        "duplicate" mean for its own manifest members. Gated on the identical committed-
+        boundary check :meth:`resolve_transaction` already uses
+        (:meth:`_transaction_committed`), so the two can never diverge on what counts as
+        "this transaction happened". Mirrors :meth:`_transaction_manifest_keys` (``commit``'s
+        own internal replay-comparison helper), now exposed publicly rather than restated by
+        a caller reading the Store's own on-disk recovery-journal layout directly.
+
+        An empty list means the transaction is committed but adopted no records at all (a
+        bare genesis, or an ordinary commit with no ``records`` argument) -- genuinely
+        different from ``None``, which means the transaction itself is unresolvable.
+        """
+
+        if not self._transaction_committed(project_id, transaction_id):
+            return None
+        path=self._project(project_id)/"state"/"recovery"/transaction_id/"manifest.json"
+        if not path.exists():
+            return []
+        return self._read_manifest_entries(path, transaction_id)
+
+    def _read_manifest_entries(self, manifest_path: Path, label: str) -> list[tuple[str,str]]:
+        """Parse and validate one transaction manifest.json's own member list --
+        ``MANIFEST_MEMBER_CONTRACT`` (Phase 9 Completion Repair 4, P9-C4-F1): JSON decode
+        success alone never implies manifest validity. A public Store method may not treat a
+        persisted file as a trusted Python object merely because ``json.loads`` succeeded --
+        a malformed top-level shape, malformed member, or non-string/empty ``kind``/``id``
+        must fail closed as :class:`CorruptStoreError`, never leak a raw ``ValueError`` or
+        ``TypeError`` from tuple-unpacking a shape nobody validated, and never be silently
+        accepted (a ``null`` or numeric ``kind``/``id`` is not a valid canonical identity).
+
+        The one shared reader every call site in this class uses for this identical on-disk
+        shape (:meth:`resolve_transaction_manifest`, :meth:`_transaction_manifest_keys`,
+        :meth:`_record_committed_by_any_transaction`, and :meth:`_genesis_transaction_
+        committed`) -- never a second, competing manifest parser, validated in one reader
+        and trusted raw in another.
+
+        *label* names the transaction/journal this manifest belongs to, for diagnostics
+        only -- never echoed as a value, only as an identifying label.
+        """
+
+        try:
+            entries=json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc:
+            raise CorruptStoreError(f"malformed transaction manifest: {label}") from exc
+        if not isinstance(entries,list):
+            raise CorruptStoreError(f"transaction manifest is not a JSON array: {label}")
+        # Phase 9 Structural Review Round 3, P9-R3-F1 (boundary 3 of 3: the committed
+        # manifest read itself): a tampered manifest.json naming the same (kind, id) twice
+        # is corruption, not a legitimate duplicate -- fail closed here, before a caller can
+        # silently collapse it into a set and lose the very multiplicity that would have
+        # revealed the tamper.
+        seen: set[tuple[str,str]] = set()
+        result: list[tuple[str,str]] = []
+        for member in entries:
+            if not isinstance(member,list) or len(member)!=2:
+                raise CorruptStoreError(
+                    f"transaction manifest member is not a two-element array: {label}"
+                )
+            kind,record_id=member
+            if not isinstance(kind,str) or not kind or not isinstance(record_id,str) or not record_id:
+                raise CorruptStoreError(
+                    f"transaction manifest member has a non-string or empty kind/id: {label}"
+                )
+            key=(kind,record_id)
+            if key in seen:
+                raise CorruptStoreError(
+                    f"transaction manifest names {kind}/{record_id} more than once: {label}"
+                )
+            seen.add(key)
+            result.append(key)
+        return result
+
     #: R10-F3 (SHUKOU Round 10): the one, explicitly-named genesis transaction identity --
     #: GENESIS_EXCEPTION_IS_EXPLICIT=true, GENESIS_EXCEPTION_IS_NOT_WILDCARD=true. Every
     #: other transaction_id with no recovery journal is refused, never silently trusted.
     GENESIS_TRANSACTION_ID = "TX-GENESIS"
 
-    def _transaction_committed(self, project_id: str, transaction_id: str) -> bool:
-        """Return whether *transaction_id* is durably ``COMMITTED`` -- R7-F5, sharpened by
-        R10-F3, sharpened again by R11-F1.
+    def _manifest_digest(self, members: list[tuple[str,str]]) -> str:
+        """Return the ``MANOSUBE-GENESIS-MANIFEST-DIGEST-SHA256-0.1`` digest of *members*
+        (Phase 9 Completion Repair 5, P9-C5-F1): a canonical, order-independent commitment
+        to the exact ``(kind, id)`` set a genesis manifest claims.
 
-        R11-F1: ``TRANSACTION_ID_IS_GENESIS_NE_COMMITTED=true`` -- the literal string
-        ``TX-GENESIS`` is never, by itself, sufficient proof that a transaction actually
-        finished. Two genuinely different genesis institutions share that one id
-        (``BARE_GENESIS`` vs ``GENESIS_WITH_RECORDS``, R10-F1's own distinction), and this
-        method must resolve each correctly rather than treating the name as a blanket
-        authority:
-
-        - **Bare genesis** (no recovery journal at all -- every genesis this vertical minted
-          before R10-F1, and still the common case for one with no records to close a
-          reference to): :meth:`initialize`'s own non-``records`` branch writes the lineage
-          entry and ``current.json`` in one atomic step with no partial-write window, so a
-          missing journal here means genesis already completed by construction -- committed
-          exactly as it always was.
-        - **Genesis-with-records** (a recovery journal exists, staged the identical way
-          :meth:`commit` stages any other transaction's): ``GENESIS_EVENT_APPENDED_NE_
-          GENESIS_COMMITTED=true`` -- appearing in the lineage log is not enough
-          (:meth:`initialize` appends *before* promoting records or writing ``COMMITTED``,
-          mirroring :meth:`commit`'s own sequence exactly). Only that journal's own
-          ``COMMITTED`` marker settles it -- ``COMMITTED_MARKER_IS_VISIBILITY_BOUNDARY=true``,
-          identically to every other transaction below.
-
-        Every *other* (non-genesis) transaction_id is a real, ordinary transaction
-        :meth:`commit` always creates a journal for as its very first act --
-        ``NO_JOURNAL_NE_COMMITTED=true``: a missing journal here is refused (never
-        committed), not silently assumed to predate this tracking (this vertical carries no
-        actual data that does). A transaction *with* a journal is committed only once that
-        journal's own ``COMMITTED`` marker exists -- exactly the marker :meth:`commit` writes
-        last and :meth:`recover` writes on completing an interrupted one.
-
-        One check now serves every case: a missing journal means "committed" only for the
-        one explicitly-named bare-genesis institution (``GENESIS_EXCEPTION_IS_EXPLICIT=true``,
-        never a wildcard); a present journal -- genesis or not -- is gated on its own
-        ``COMMITTED`` marker alone (``GENESIS_STATE_VISIBLE_NE_GENESIS_RECORDS_VISIBLE_IS_
-        ILLEGAL=true`` -- the same boundary :meth:`resolve_record`'s own ``_record_committed_
-        by_any_transaction`` already applied to genesis-with-records, now shared by
-        :meth:`resolve_transaction`, :meth:`reconstruct` and :meth:`load_current` too, so the
-        four public read surfaces can never again diverge on the same transaction).
+        *members* must already be known duplicate-free (:meth:`_read_manifest_entries`
+        itself refuses a manifest naming the same key twice, before this is ever called) --
+        ``GENESIS_MANIFEST_MULTIPLICITY_VALIDATED_BEFORE_DIGEST=true``, this never silently
+        folds a duplicate away and digests the collapsed result. Sorting canonically before
+        digesting makes an order-only difference between two replays of the identical
+        membership produce the identical digest (``ORDER_ONLY_DIFFERENCE_SEMANTICS=
+        CANONICAL_ORDER_EQUIVALENT``), while genuinely different membership -- a missing,
+        extra, or wrong-kind member -- always produces a different digest.
         """
 
-        path = self._project(project_id)/"state"/"recovery"/transaction_id
+        canonical=sorted(members)
+        payload=canonical_json_bytes([[kind,record_id] for kind,record_id in canonical])
+        return "sha256:"+hashlib.sha256(_GENESIS_MANIFEST_DIGEST_DOMAIN+payload).hexdigest()
+
+    def _genesis_receipt_path(self, project_id: str) -> Path:
+        return self._project(project_id)/"state"/"genesis_receipt.json"
+
+    def _genesis_receipt_id(self, body: Mapping[str,Any]) -> str:
+        """Return the ``GENESIS-RECEIPT-`` content address of *body*'s own closed identity
+        field set (:data:`_GENESIS_RECEIPT_IDENTITY_FIELDS`) -- P9-C6-F1.
+
+        *body* need not yet carry ``genesis_receipt_id`` -- only the identity payload
+        fields are read, so this same method both mints the id (before that field exists)
+        and re-derives it for verification (once it does), exactly as
+        ``binding.identity.project_binding_id`` mints and re-derives
+        ``project_binding_id``."""
+
+        payload={key: body[key] for key in _GENESIS_RECEIPT_IDENTITY_FIELDS}
+        digest=hashlib.sha256(_GENESIS_RECEIPT_ID_DOMAIN+canonical_json_bytes(payload)).hexdigest()
+        return "GENESIS-RECEIPT-"+digest.upper()
+
+    def _read_genesis_receipt(self, project_id: str) -> dict[str,Any]|None:
+        """Read and schema-validate *project_id*'s own genesis institution receipt (P9-C5-F1),
+        or ``None`` if none has ever been written for it. Never trusts a decoded receipt
+        object without validating its own shape first -- the identical discipline
+        :meth:`_read_manifest_entries` already applies to manifest.json.
+
+        P9-C6-F1: schema validity alone is not canonicality
+        (``GENESIS_RECEIPT_SCHEMA_VALIDITY_IS_CANONICALITY=false``) -- a receipt's own
+        claimed ``genesis_receipt_id`` must also reproduce from its own closed field set
+        (``GENESIS_RECEIPT_SELF_DECLARATION_IS_AUTHORITY=false``,
+        ``GENESIS_RECEIPT_RECOMPUTED_IDENTITY_IS_AUTHORITY=true``). This only proves the
+        receipt is internally self-consistent; whether it is the *one* a genesis event
+        externally, durably committed to is :meth:`_verify_genesis_event_receipt_binding`'s
+        own, separate job."""
+
+        path=self._genesis_receipt_path(project_id)
         if not path.exists():
-            return transaction_id == self.GENESIS_TRANSACTION_ID
-        return (path/"COMMITTED").exists()
+            return None
+        try:
+            receipt: dict[str,Any]=json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc:
+            raise CorruptStoreError(f"malformed genesis receipt: {project_id}") from exc
+        try:
+            _validate(receipt,GENESIS_RECEIPT_SCHEMA_ID,self.schema_root)
+        except SchemaValidationError as exc:
+            raise CorruptStoreError(f"genesis receipt fails its own schema: {project_id}") from exc
+        if receipt["project_id"]!=project_id:
+            raise CorruptStoreError(
+                f"genesis receipt project_id does not match its own project: {project_id}"
+            )
+        recomputed_id=self._genesis_receipt_id(receipt)
+        if receipt["genesis_receipt_id"]!=recomputed_id:
+            raise CorruptStoreError(
+                f"genesis receipt id does not match its own recomputed identity: {project_id}"
+            )
+        return receipt
+
+    def _verify_genesis_event_receipt_binding(self, project_id: str, event: Mapping[str,Any], receipt: Mapping[str,Any]) -> None:
+        """Cross-validate a GENESIS event's own ``genesis_receipt_ref`` against *receipt*
+        (P9-C6-F1): the one check that makes receipt substitution fail even when the
+        substituted receipt is schema-valid and internally self-consistent
+        (``SCHEMA_VALID_GENESIS_RECEIPT_SUBSTITUTION_ALLOWED=false``). *event* is trusted
+        evidence external to the receipt itself -- the durable lineage event when no
+        journal survives, or the journal's own event once cross-checked against lineage --
+        so a receipt that reproduces its own claimed id from its own fields is not yet
+        canonical until the genesis event committed at genesis time is shown to reference
+        that exact id."""
+
+        ref=event.get("genesis_receipt_ref")
+        if not isinstance(ref,Mapping) or ref.get("kind")!="genesis_receipt":
+            raise CorruptStoreError(
+                f"genesis event's own genesis_receipt_ref is missing or malformed: {project_id}"
+            )
+        if ref.get("id")!=receipt["genesis_receipt_id"]:
+            raise CorruptStoreError(
+                f"genesis event's genesis_receipt_ref does not match its own genesis receipt: {project_id}"
+            )
+        if event.get("project_id")!=receipt["project_id"]:
+            raise CorruptStoreError(
+                f"genesis event project_id does not match its own genesis receipt: {project_id}"
+            )
+        if event.get("transaction_id")!=receipt["transaction_id"]:
+            raise CorruptStoreError(
+                f"genesis event transaction_id does not match its own genesis receipt: {project_id}"
+            )
+
+    def _transaction_committed(self, project_id: str, transaction_id: str) -> bool:
+        """Return whether *transaction_id* is durably ``COMMITTED`` -- R7-F5, sharpened by
+        R10-F3, R11-F1, P9-R3-F2, and P9-C4-F2 in turn, replaced again by Phase 9 Completion
+        Repair 5 (P9-C5-F1).
+
+        Every prior version of this method's own genesis-institution check inferred
+        ``BARE`` vs ``WITH_RECORDS`` from *circumstantial* evidence -- the transaction_id
+        string, the lineage event, which journals happen to still exist, which manifests
+        happen to still claim a given record -- and SHUKOU's own Completion Repair 5
+        adoption formally rejects every one of those as authority
+        (``GLOBAL_RECORD_CLAIM_INFERENCE_IS_AUTHORITY=false``, ``LINEAGE_TRANSACTION_ID_
+        ALONE_IS_AUTHORITY=false``, ``ORPHANED_PROMOTED_RECORD_HEURISTIC_IS_AUTHORITY=
+        false``): P9-C4-F2's own orphaned-record heuristic was itself defeated by a later,
+        wholly legitimate transaction reclaiming the identical ``(kind, id, body)`` in its
+        own still-intact manifest, making the genuinely-tampered genesis look un-orphaned
+        again.
+
+        A genesis transaction's own institution is now settled by an explicit, durable
+        receipt (:meth:`_read_genesis_receipt`) written atomically at genesis time,
+        declaring ``genesis_mode`` (``BARE``/``WITH_RECORDS``) and -- for ``WITH_RECORDS``
+        -- the exact manifest membership's own digest and count. See
+        :meth:`_genesis_transaction_committed` for the full decision table.
+        """
+
+        if transaction_id != self.GENESIS_TRANSACTION_ID:
+            path = self._project(project_id)/"state"/"recovery"/transaction_id
+            if not path.exists():
+                return False
+            return (path/"COMMITTED").exists()
+        return self._genesis_transaction_committed(project_id)
+
+    def _find_genesis_event(self, project_id: str) -> dict[str,Any]|None:
+        """Return ``TX-GENESIS``'s own event from the durable lineage log, or ``None`` if
+        it has never been appended there."""
+
+        for event in self._events(project_id):
+            if event.get("transaction_id")==self.GENESIS_TRANSACTION_ID:
+                return event
+        return None
+
+    def _read_journal_event(self, journal: Path, project_id: str) -> dict[str,Any]:
+        path=journal/"event.json"
+        try:
+            event: dict[str,Any]=json.loads(path.read_text(encoding="utf-8"))
+            return event
+        except (OSError,json.JSONDecodeError) as exc:
+            raise CorruptStoreError(f"malformed genesis journal event: {project_id}") from exc
+
+    def _verify_genesis_journal(self, project_id: str, journal: Path) -> dict[str,Any]:
+        """Validate one genesis transaction's own recovery journal against its own genesis
+        receipt (P9-C6-F1) -- shared by :meth:`_genesis_transaction_committed` (a genesis
+        already durably ``COMMITTED``) and :meth:`recover` (a genesis whose
+        ``COMMIT_INTENT`` was durably written but whose ``COMMITTED`` marker was not, about
+        to be completed). Neither ever trusts or completes a genesis transaction whose own
+        receipt binding does not hold.
+
+        Returns the journal's own event body, already schema-validated, for the caller's
+        own further use (:meth:`recover` still needs it to append to the lineage log)."""
+
+        event=self._read_journal_event(journal,project_id)
+        _validate(event,TRANSITION_SCHEMA_ID,self.schema_root)
+        receipt=self._read_genesis_receipt(project_id)
+        if receipt is None:
+            raise CorruptStoreError(
+                f"genesis transaction's own recovery journal exists but carries no "
+                f"genesis receipt: {project_id}"
+            )
+        if receipt["genesis_mode"]!="WITH_RECORDS":
+            raise CorruptStoreError(
+                f"genesis receipt does not declare WITH_RECORDS for a genesis whose own "
+                f"recovery journal exists: {project_id}"
+            )
+        self._verify_genesis_event_receipt_binding(project_id,event,receipt)
+        manifest_path=journal/"manifest.json"
+        if not manifest_path.exists():
+            raise CorruptStoreError(
+                f"genesis receipt declares WITH_RECORDS but its own manifest is "
+                f"missing: {project_id}"
+            )
+        entries=self._read_manifest_entries(manifest_path,self.GENESIS_TRANSACTION_ID)
+        if len(entries)!=receipt["manifest_member_count"] or self._manifest_digest(entries)!=receipt["manifest_digest"]:
+            raise CorruptStoreError(
+                f"genesis receipt's manifest digest does not match its own journal's "
+                f"manifest: {project_id}"
+            )
+        return event
+
+    def _genesis_transaction_committed(self, project_id: str) -> bool:
+        """The one authority for whether ``TX-GENESIS`` is durably committed, and for which
+        of the two genesis institutions it was (P9-C5-F1, sharpened by P9-C6-F1).
+
+        While a genesis-with-records journal directory still exists, its own ``COMMITTED``
+        marker alone still gates crash-stage visibility exactly as before this fix -- a
+        journal created but not yet committed (any of the pre-``COMMITTED`` crash stages
+        :meth:`initialize` exercises) is legitimately "not yet committed" (``False``, no
+        raise), never a contradiction to report, since nothing has durably claimed a
+        genesis institution yet. Only once that journal's own ``COMMITTED`` marker exists
+        does this method additionally demand the receipt agree with it, via
+        :meth:`_verify_genesis_journal` -- and additionally demand the journal's own event
+        agree, byte-for-byte, with the durable lineage event this same transaction already
+        appended (P9-C6-F1: a receipt and journal event rewritten *together*, consistently
+        with each other but diverging from the untouchable lineage log, must still fail
+        closed).
+
+        Once the journal is gone (never existed -- bare genesis or never-initialized -- or
+        has since been lost/tampered with), the receipt becomes the sole remaining
+        authority for its own self-consistency -- but P9-C6-F1 (SHUKOU Completion Repair 6)
+        formally rejects a schema-valid, self-consistent receipt alone as canonical
+        (``GENESIS_RECEIPT_SELF_DECLARATION_IS_AUTHORITY=false``,
+        ``SCHEMA_VALID_GENESIS_RECEIPT_SUBSTITUTION_ALLOWED=false``): the durable lineage
+        event -- immune to a deleted recovery journal, since it lives in the separate,
+        append-only lineage log -- must independently reference that exact receipt id via
+        its own ``genesis_receipt_ref``, checked by :meth:`_verify_genesis_event_receipt_
+        binding`. SHUKOU: ``LEGACY_GENESIS_AUTO_CLASSIFICATION_ALLOWED=false`` -- a lineage
+        event with no receipt to explain it is never silently assumed ``BARE`` or
+        ``WITH_RECORDS``; it fails closed as :class:`CorruptStoreError` (a legacy
+        pre-receipt genesis or an unexplained migration gap). A receipt that explicitly
+        declares ``WITH_RECORDS`` while no journal exists is exactly the P9-C5-F1 fix
+        itself: ``MISSING_WITH_RECORDS_JOURNAL_FAILS_CLOSED=true``.
+        """
+
+        journal=self._project(project_id)/"state"/"recovery"/self.GENESIS_TRANSACTION_ID
+        if journal.exists():
+            if not (journal/"COMMITTED").exists():
+                return False
+            journal_event=self._verify_genesis_journal(project_id,journal)
+            lineage_event=self._find_genesis_event(project_id)
+            if lineage_event is None:
+                raise CorruptStoreError(
+                    f"genesis transaction is COMMITTED but its own lineage event is "
+                    f"missing: {project_id}"
+                )
+            if canonical_json_bytes(journal_event)!=canonical_json_bytes(lineage_event):
+                raise CorruptStoreError(
+                    f"genesis journal event diverges from its own lineage event: {project_id}"
+                )
+            return True
+
+        receipt=self._read_genesis_receipt(project_id)
+        lineage_event=self._find_genesis_event(project_id)
+        if receipt is None:
+            if lineage_event is None:
+                return False
+            raise CorruptStoreError(
+                f"genesis transaction's own lineage event exists but no genesis receipt "
+                f"explains it -- migration required or corrupt: {project_id}"
+            )
+        mode=receipt["genesis_mode"]
+        if mode=="WITH_RECORDS":
+            raise CorruptStoreError(
+                f"genesis receipt declares WITH_RECORDS but its recovery journal is "
+                f"missing: {project_id}"
+            )
+        if mode=="BARE":
+            if receipt["manifest_member_count"]!=0 or receipt["manifest_digest"]!=self._manifest_digest([]):
+                raise CorruptStoreError(
+                    f"BARE genesis receipt's own manifest fields are not the canonical "
+                    f"empty manifest: {project_id}"
+                )
+            if lineage_event is None:
+                return False
+            self._verify_genesis_event_receipt_binding(project_id,lineage_event,receipt)
+            return True
+        raise CorruptStoreError(f"unknown genesis_mode in genesis receipt: {mode!r}: {project_id}")
 
     def _events(self, project_id: str) -> list[dict[str,Any]]:
         path=self._lineage(project_id)
@@ -309,6 +632,14 @@ class FileStateStore:
         surface, so a genesis-with-records crash is exercised, and recovered from, through
         exactly the same mechanism and the same generic :meth:`recover` as every other
         transaction.
+
+        Phase 9 Completion Repair 5 (P9-C5-F1): every genesis -- bare or with-records --
+        also writes an explicit, durable genesis institution receipt
+        (:meth:`_genesis_receipt_path`, deliberately outside ``state/recovery/`` so it
+        survives even a wholesale-deleted recovery journal directory), declaring
+        ``genesis_mode`` and, for ``WITH_RECORDS``, the exact manifest membership's own
+        digest and count -- see :meth:`_genesis_transaction_committed` for how this receipt
+        becomes the one authority a genesis institution is ever settled by.
         """
 
         def hit(stage: str) -> None:
@@ -319,7 +650,40 @@ class FileStateStore:
             if self._lineage(project_id).exists(): raise AlreadyInitializedError(project_id)
             state=self._validate_state(project_id,initial_state)
             if state["state_revision"]!=0 or state["previous_state_fingerprint"] is not None: raise RevisionError("initial revision must be zero")
-            event={"schema_version":"0.1","transaction_id":self.GENESIS_TRANSACTION_ID,"event_type":"GENESIS","project_id":project_id,"from_revision":None,"to_revision":0,"before_fingerprint":None,"after_fingerprint":state["semantic_fingerprint"],"after_state":state,"evidence_refs":[],"committed_at":state["state_metadata"]["recorded_at"]}
+            receipt_path=self._genesis_receipt_path(project_id)
+            # P9-C6-F1: the receipt body -- and therefore its own content-addressed
+            # ``genesis_receipt_id`` -- is fully determined before the genesis event is
+            # ever built, so the event can embed a ``genesis_receipt_ref`` naming it from
+            # its own very first, crash-safe write (``event.json`` at STAGES[0], before any
+            # fault can occur). For WITH_RECORDS this is computed directly from *records*
+            # itself rather than re-read from the not-yet-created journal:
+            # :meth:`_stage_records` writes every supplied ``(kind, id)`` to
+            # ``manifest.json`` unconditionally (never filters -- only rejects the whole
+            # transaction outright on conflict, in which case nothing past this point ever
+            # executes), so the two are always byte-for-byte the same set; no later re-read
+            # is needed to guarantee consistency.
+            if records:
+                manifest_entries=sorted({(kind,record_id) for kind,record_id,_ in records})
+                receipt_body: dict[str,Any]={
+                    "schema_version":"0.1","project_id":project_id,
+                    "transaction_id":self.GENESIS_TRANSACTION_ID,"genesis_mode":"WITH_RECORDS",
+                    "manifest_member_count":len(manifest_entries),
+                    "manifest_digest":self._manifest_digest(manifest_entries),
+                }
+            else:
+                receipt_body={
+                    "schema_version":"0.1","project_id":project_id,
+                    "transaction_id":self.GENESIS_TRANSACTION_ID,"genesis_mode":"BARE",
+                    "manifest_member_count":0,"manifest_digest":self._manifest_digest([]),
+                }
+            receipt_body["genesis_receipt_id"]=self._genesis_receipt_id(receipt_body)
+            event={
+                "schema_version":"0.1","transaction_id":self.GENESIS_TRANSACTION_ID,"event_type":"GENESIS",
+                "project_id":project_id,"from_revision":None,"to_revision":0,"before_fingerprint":None,
+                "after_fingerprint":state["semantic_fingerprint"],"after_state":state,"evidence_refs":[],
+                "committed_at":state["state_metadata"]["recorded_at"],
+                "genesis_receipt_ref":{"kind":"genesis_receipt","id":receipt_body["genesis_receipt_id"]},
+            }
             self._verify_event(project_id,event,None)
             if records:
                 # Mirrors commit()'s own stage order exactly (event/state staged, records
@@ -335,6 +699,7 @@ class FileStateStore:
                 atomic_write(journal/"state.json",canonical_json_bytes(state))
                 hit(STAGES[1])
                 self._stage_records(project_id,journal,list(records))
+                atomic_write(receipt_path,canonical_json_bytes(receipt_body))
                 hit(STAGES[2])
                 atomic_write(journal/"COMMIT_INTENT",b"1")
                 hit(STAGES[3])
@@ -348,6 +713,14 @@ class FileStateStore:
                 hit(STAGES[8])
                 atomic_write(journal/"COMMITTED",b"1")
             else:
+                # Written before the lineage/current pair below: a crash between this
+                # write and those (this branch carries no fault-injection/recovery support,
+                # identically to before this fix) leaves only the receipt durable, which
+                # _genesis_transaction_committed already correctly reads as "not yet
+                # committed" (no raise) rather than a contradiction -- never the reverse
+                # ordering, which would instead leave a lineage event with no receipt to
+                # explain it, indistinguishable from unmigrated legacy evidence.
+                atomic_write(receipt_path,canonical_json_bytes(receipt_body))
                 atomic_write(self._lineage(project_id),canonical_json_bytes(event)+b"\n")
                 atomic_write(self._current(project_id),canonical_json_bytes(state))
             return deepcopy(state)
@@ -454,9 +827,7 @@ class FileStateStore:
 
         path=self._project(project_id)/"state"/"recovery"/tx/"manifest.json"
         if not path.exists(): return set()
-        try: entries=json.loads(path.read_text(encoding="utf-8"))
-        except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError(f"malformed transaction manifest: {tx}") from exc
-        return {(kind,record_id) for kind,record_id in entries}
+        return set(self._read_manifest_entries(path, tx))
 
     def _promote_staged_records(self, project_id: str, journal: Path) -> None:
         records_dir=journal/"records"
@@ -528,8 +899,30 @@ class FileStateStore:
             if recovery.exists():
                 for journal in sorted(recovery.iterdir()):
                     if not journal.is_dir() or not (journal/"COMMIT_INTENT").exists(): continue
-                    event=json.loads((journal/"event.json").read_text(encoding="utf-8"))
-                    if event["transaction_id"] not in txids: self._append(project_id,event); txids.add(event["transaction_id"])
+                    if journal.name==self.GENESIS_TRANSACTION_ID:
+                        # P9-C6-F1: never complete -- append, promote, or mark COMMITTED --
+                        # an interrupted genesis transaction whose own receipt binding does
+                        # not hold; the identical validation :meth:`_genesis_transaction_
+                        # committed` applies once COMMITTED, applied here before ever
+                        # reaching that state.
+                        event=self._verify_genesis_journal(project_id,journal)
+                        existing=next((e for e in events if e.get("transaction_id")==self.GENESIS_TRANSACTION_ID),None)
+                        if existing is not None:
+                            # The lineage append already happened before an earlier crash
+                            # interrupted promotion/COMMITTED -- require the journal's own
+                            # event to still agree with it byte-for-byte, never silently
+                            # re-trust a journal that has since diverged.
+                            if canonical_json_bytes(existing)!=canonical_json_bytes(event):
+                                raise CorruptStoreError(
+                                    f"genesis journal event diverges from its own "
+                                    f"already-appended lineage event: {project_id}"
+                                )
+                        else:
+                            self._append(project_id,event)
+                            txids.add(event["transaction_id"])
+                    else:
+                        event=json.loads((journal/"event.json").read_text(encoding="utf-8"))
+                        if event["transaction_id"] not in txids: self._append(project_id,event); txids.add(event["transaction_id"])
                     self._promote_staged_records(project_id,journal)
                     atomic_write(journal/"COMMITTED",b"1")
             if not self._committed_events(project_id):
