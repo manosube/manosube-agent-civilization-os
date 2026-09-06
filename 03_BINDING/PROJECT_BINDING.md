@@ -176,22 +176,32 @@ See §5b for the Authority Rule's own cross-consistency checks.
 
 ## 8. Replay semantics
 
-**Corrected in Phase 9 Structural Review Round 1 (P9-R1-F4).** `FileStateStore.initialize`
-treats genesis as strictly one-shot: any second call for an already-initialized
-`project_id` raises `AlreadyInitializedError`, with no body comparison of its own.
-`bind_project` draws the identical-replay/conflicting-replay distinction over the Store's
-own existing, generic read surfaces (`load_current`/`resolve_record`), plus a direct,
-read-only reproduction of the genesis transaction's own recovery journal manifest
-(`state/recovery/TX-GENESIS/manifest.json`, the identical file the Store's own
-`_transaction_manifest_keys` reads for the same purpose) -- never a second persistence
-mechanism, and never any Binding-specific comparison logic added to the Store itself.
+**Corrected in Phase 9 Structural Review Round 1 (P9-R1-F4), corrected again in Round 2
+(P9-R2-F4).** `FileStateStore.initialize` treats genesis as strictly one-shot: any second
+call for an already-initialized `project_id` raises `AlreadyInitializedError`, with no body
+comparison of its own. `bind_project` draws the identical-replay/conflicting-replay
+distinction over the Store's own existing, generic read surfaces
+(`load_current`/`resolve_record`/`resolve_transaction_manifest`) -- never a second
+persistence mechanism, and never any Binding-specific comparison logic added to the Store
+itself.
 
-The comparison now covers the **full** atomic manifest -- every member the genesis
-transaction actually adopted (Objective Revision, Authority Rule, Project Binding, and
-every `additional_genesis_records` member), not merely three named records. It is
+Round 1's own version of this read the Store's private on-disk recovery-journal layout
+directly (`state/recovery/TX-GENESIS/manifest.json`), which 構造参謀's Round 2
+re-observation correctly found inappropriate for a module whose own Store parameter is
+typed `Any` -- Binding has no business knowing the Store's internal file layout. Round 2
+adds one minimal, generic, Binding-agnostic public method to `FileStateStore` itself,
+`resolve_transaction_manifest(project_id, transaction_id) -> list[tuple[str, str]] | None`,
+mirroring `resolve_transaction`'s own existing committed-boundary gate -- `bind_project` now
+reads the manifest through this public API, never the private path.
+
+The comparison covers the **full** atomic manifest -- every member the genesis transaction
+actually adopted (Objective Revision, Authority Rule, Project Binding, and every
+`additional_genesis_records` member), not merely three named records. It is
 order-independent (a replay supplying `additional_genesis_records` in a different order is
 still a no-op) but duplicate-aware (two different bodies claimed under one `(kind, id)` in
-one replay attempt is rejected as a conflict, never silently resolved to the last one seen).
+one replay attempt is rejected as a conflict, never silently resolved to the last one seen;
+two *identical* bodies claimed under one `(kind, id)` collapse harmlessly, since they name
+the same, single membership).
 
 ```text
 IDENTICAL_REPLAY_IS_NO_OP=true       (byte-identical Objective Revision, Authority Rule,
@@ -203,34 +213,99 @@ CONFLICTING_REPLAY_REJECTED_BEFORE_WRITE=true   (a missing, extra, wrong-kind, o
                                                   AlreadyInitializedError re-raised,
                                                   nothing new persisted)
 FULL_MANIFEST_REPLAY_COMPARED=true
+BINDING_ROUTE_READS_STORE_PRIVATE_PATH=false
+```
+
+## 9b. Whole-graph admission (Round 2 P9-R2-F1/F2/F3/F5)
+
+**Added in Phase 9 Structural Review Round 2.** Round 1's own secret-scan and reference
+classification covered only the Project Binding record itself
+(`assemble_project_binding`'s own internal checks). 構造参謀's Round 2 re-observation found
+this insufficient: `bind_project` also accepts and persists Objective Revision, Authority
+Rule, genesis State, and every `additional_genesis_records` member, none of which were
+scanned or reference-checked at all -- a secret-shaped value in an Objective Revision's own
+free-text field, or a genesis State naming a dangling Kernel Source Snapshot, passed
+silently.
+
+`manosube_agent_civilization.binding.admission.admit_genesis_transaction` is now the one
+shared pre-commit admission every accepted body passes through, before `store.initialize`
+is ever called:
+
+1. secret-value and moving-reference scanning over the **whole** candidate genesis manifest
+   (Objective Revision, Authority Rule, Project Binding, genesis State, every
+   `additional_genesis_records` member) -- `difference.canonical.reject_secret_material`
+   reused, never restated;
+2. typed reference-edge classification and closure over that same whole candidate manifest
+   -- see §10;
+3. duplicate `(kind, id)` detection across the candidate manifest.
+
+```text
+SECRET_SCAN_COVERS_WHOLE_ACCEPTED_GRAPH=true
+CANONICAL_BINDING_PRECOMMIT_ADMISSION_OWNER_COUNT=1
+EVERY_PERSISTED_BODY_PASSES_SHARED_ADMISSION=true
+ALL_VALIDATION_PRECEDES_STORE_INITIALIZE=true
 ```
 
 ## 10. Typed reference classification
 
-**Added in Phase 9 Structural Review Round 1 (P9-R1-F5).** Product Binding's own top-level
-reference fields are classified, once, in `manosube_agent_civilization.binding.
-reference_classification` -- pattern-compatible with, but organizationally separate from,
-`reflow/reference_registry.py` (a different domain's own vocabulary, never repurposed as
-this one's owner):
+**Added in Phase 9 Structural Review Round 1 (P9-R1-F5), extended in Round 2 (P9-R2-F2/
+F3).** Round 1 classified only Project Binding's own three top-level reference fields.
+構造参謀's Round 2 re-observation found this incomplete: Objective Revision, Authority Rule,
+and genesis State each carry their own reference fields that were never classified at all
+-- most importantly, genesis State's own `state_metadata.source_snapshot_refs` (its real
+Kernel Source Snapshot) and `evidence_refs`, left completely unchecked, so a dangling
+Source Snapshot reference at genesis passed silently.
+
+`manosube_agent_civilization.binding.reference_classification` now classifies every
+reference field on every record kind `bind_project` accepts, keyed
+`(source_record_kind, field_path)` -- pattern-compatible with, but organizationally
+separate from, `reflow/reference_registry.py` (a different domain's own vocabulary, never
+repurposed as this one's owner; `additional_genesis_records` members whose kind Reflow's own
+registry already recognizes delegate to that registry instead of a second, duplicated
+field/path table):
 
 ```text
-field                    expected kind          classification
-objective_revision_ref   objective_revision     Store-owned
-authority_policy_ref     authority_rule         Store-owned
-human_authority_ref      human_authority        external constitutional identity
+source_kind          field                     expected kind(s)          classification
+project_binding      objective_revision_ref    objective_revision        Store-owned
+project_binding      authority_policy_ref      authority_rule            Store-owned
+project_binding      human_authority_ref       human_authority           external
+objective_revision   owner_authority_ref       human_authority           external
+objective_revision   human_authority_ref       human_authority           external
+objective_revision   boundary_ref              objective_boundary        no Store producer
+objective_revision   previous_objective_ref    objective_revision        Store-owned
+authority_rule       declared_by               human_authority           external
+project_state        state_metadata.           source_snapshot           Store-owned
+                     source_snapshot_refs[]
+project_state        state_metadata.           observation_scope         no Store producer
+                     observation_scope_refs[]
+project_state        evidence_refs[]           observation_evidence,     Store-owned
+                                                negative_evidence
+project_state        lineage_head_ref          state_transition          (must be null at
+                                                                          genesis; see §7)
 ```
 
-`reject_wrong_kind_reference` runs before any Store lookup: a reference whose own `kind` is
-not the one closed kind its field permits is refused, never silently accepted or narrowed
-to whatever kind happened to be there (`CROSS_KIND_SUBSTITUTION_ALLOWED=false`).
-`resolve_binding_references` recursively resolves every Store-owned field against a real
-Store, proving `UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0` from both a fresh Store instance
-and a fresh process.
+`objective_revision.owner_authority_ref` is classified as the Human Authority kind on the
+existing Kernel contract's own authority (`00_KERNEL/01_OBJECTIVE/OBJECTIVE_CONTRACT.md`
+§"owner_authority_ref resolves to Human Objective Authority") -- no new semantics invented
+here. `observation_evidence`/`negative_evidence` are treated as Store-owned specifically so
+that a non-empty `evidence_refs` at genesis (state_revision 0, where no Evidence can yet
+exist) fails closed as unresolvable, rather than silently passing unchecked.
+
+`reject_wrong_kind_reference`/`reference_edges` run before any Store lookup: a reference
+whose own `kind` is not the one closed kind its field permits is refused, never silently
+accepted or narrowed to whatever kind happened to be there
+(`CROSS_KIND_SUBSTITUTION_ALLOWED=false`). Every Store-owned edge must resolve against the
+current candidate genesis manifest -- there is nothing else to resolve against, since
+genesis means no record for this `project_id` exists in the Store yet.
+`resolve_binding_references` recursively resolves Project Binding's own Store-owned fields
+against a real Store, proving `UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0` from both a fresh
+Store instance and a fresh process.
 
 ```text
 PRODUCT_BINDING_REFERENCE_CLASSIFICATION_COMPLETE=true
 WRONG_KIND_REFERENCE_ACCEPTED=false
 UNRESOLVED_STORE_OWNED_REFERENCE_ACCEPTED=false
+GENESIS_DANGLING_CANONICAL_REFERENCE_ALLOWED=false
 ```
 
 ## 9. Explicit non-claims

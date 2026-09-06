@@ -83,7 +83,12 @@ src/manosube_agent_civilization/binding/
 ├── identity.py                    project_binding_id, verify_project_binding_identity
 ├── validation.py                  schema-registry validation (the same registry every
                                     domain reads)
-├── reference_classification.py    typed reference-edge classification (Round 1 P9-R1-F5)
+├── reference_classification.py    typed reference-edge classification over every accepted
+                                    record kind (Round 1 P9-R1-F5, extended Round 2
+                                    P9-R2-F2/F3)
+├── admission.py                   admit_genesis_transaction -- the one shared pre-commit
+                                    admission (whole-graph secret scan + reference closure,
+                                    Round 2 P9-R2-F1/F2/F3/F5)
 ├── engine.py                      assemble_project_binding -- the one validation+identity
                                     engine
 └── route.py                       bind_project -- the one public entry point
@@ -92,7 +97,10 @@ src/manosube_agent_civilization/binding/
 No second State, Store, Lineage, Recovery, Objective, Boundary, or Authority owner is
 created anywhere in this package. Genesis State is produced by the existing State owner
 (`manosube_agent_civilization.state.fingerprint.fingerprint_project_state`); atomic
-adoption reuses the existing, generic `FileStateStore.initialize`.
+adoption reuses the existing, generic `FileStateStore.initialize`. Replay comparison reads
+the Store's own manifest membership through its public
+`resolve_transaction_manifest(project_id, transaction_id)` method (Round 2 P9-R2-F4) --
+Binding never reads the Store's private on-disk layout.
 
 ## 5. Canonical successful route
 
@@ -104,13 +112,17 @@ adoption reuses the existing, generic `FileStateStore.initialize`.
    (Round 1 P9-R1-F1/F2)
 3. bind_project mints and reverifies the content-addressed project_binding_id
 4. bind_project computes genesis State's own semantic_fingerprint via the real State owner
-5. FileStateStore.initialize atomically adopts the Objective Revision, the Authority
+5. admit_genesis_transaction scans the WHOLE candidate genesis manifest for secret material
+   and closes every typed reference edge it declares -- Objective Revision, Authority Rule,
+   Project Binding, genesis State, and every additional_genesis_records member (Round 2
+   P9-R2-F1/F2/F3/F5)
+6. FileStateStore.initialize atomically adopts the Objective Revision, the Authority
    Rule, the Project Binding, and genesis State in one transaction
-6. A fresh Store instance / a fresh Python process resolves the identical Binding,
+7. A fresh Store instance / a fresh Python process resolves the identical Binding,
    Authority Rule, and genesis State (Round 1 P9-R1-F1/F5)
-7. An identical replay -- the full atomic manifest, order-independent -- is a no-op; a
+8. An identical replay -- the full atomic manifest, order-independent -- is a no-op; a
    conflicting replay (missing, extra, wrong-kind, or differing member) is rejected before
-   any mutation (Round 1 P9-R1-F4)
+   any mutation (Round 1 P9-R1-F4, corrected Round 2 P9-R2-F4)
 ```
 
 No fake Observation, Evidence, Difference, Change, Closure, or Reflow record is ever
@@ -143,9 +155,16 @@ Authority reference     identity, never Store-owned)                        chec
 
 ```text
 persistence owner: manosube_agent_civilization.store.file_store.FileStateStore (the one
-                    Store this repository has; no domain-specific persistence logic added)
-reference classification / replay comparison owner: manosube_agent_civilization.binding.
-                    route (bind_project) and .reference_classification -- never the Store
+                    Store this repository has; the one generic, Binding-agnostic method
+                    added this round -- resolve_transaction_manifest -- carries no
+                    domain-specific persistence or comparison logic)
+secret scan / reference classification / closure owner (Round 2 P9-R2-F1/F2/F3/F5):
+                    manosube_agent_civilization.binding.admission
+                    (admit_genesis_transaction) and .reference_classification -- covering
+                    every accepted body above, never just Project Binding, never the Store
+replay comparison owner: manosube_agent_civilization.binding.route (bind_project), reading
+                    Store membership through the public resolve_transaction_manifest API
+                    (Round 2 P9-R2-F4)
 ```
 
 ## 6. Explicit non-claims

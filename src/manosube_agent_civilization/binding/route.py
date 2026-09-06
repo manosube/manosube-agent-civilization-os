@@ -18,7 +18,6 @@ created anywhere in this module.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,7 @@ from manosube_agent_civilization.authority.identity import rule_id
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.errors import AlreadyInitializedError
 
+from .admission import admit_genesis_transaction
 from .engine import assemble_project_binding
 from .errors import BindingIdentityError, BindingValidationError
 from .reference_classification import reject_wrong_kind_reference
@@ -63,42 +63,26 @@ def _canonical_reference_equal(left: Any, right: Any, *, context: str) -> None:
 def _read_committed_genesis_manifest_keys(
     store: Any, project_id: str
 ) -> set[tuple[str, str]] | None:
-    """Read ``TX-GENESIS``'s own already-committed manifest membership directly from the
-    Store's existing, versioned, never-deleted recovery journal file (Issue #43 Phase 9
-    Round 1 P9-R1-F4) -- ``state/recovery/TX-GENESIS/manifest.json``, the identical file
-    layout :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
-    _transaction_manifest_keys` and this repository's own Phase 8 test suite already read
-    directly for the identical purpose. This function only reads a file the Store itself
-    already wrote and never deletes; it mutates nothing and adds no second Store owner, and
-    every *comparison* semantic (what counts as identical, additional-record handling,
-    order-independence, duplicate-awareness) stays here in the Binding route layer, never in
-    :class:`~manosube_agent_civilization.store.file_store.FileStateStore` itself.
+    """Read ``TX-GENESIS``'s own already-committed manifest membership through the Store's
+    own public, generic, Binding-agnostic
+    :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
+    resolve_transaction_manifest` (Phase 9 Structural Review Round 2 P9-R2-F4 -- Round 1's
+    own version of this function read the Store's private on-disk recovery-journal layout
+    directly, which this module has no business knowing). All *comparison* semantics (what
+    counts as identical, additional-record handling, order-independence, duplicate-awareness)
+    still stay here in the Binding route layer; the Store method itself carries none.
 
-    Returns ``None`` if genesis was adopted with no ``records`` at all (no journal was ever
-    written) -- ``bind_project`` never does this (it always stages at least the Objective
-    Revision, Authority Rule and Project Binding), so callers of this function only ever see
-    ``None`` for a project genesis-initialized by some other, non-Binding caller -- itself a
-    real conflict this function's own caller must reject, never silently accept as a no-op.
+    Returns ``None`` if the transaction is unresolvable -- ``bind_project`` never reaches
+    this function unless a prior genesis for *project_id* already exists (an
+    ``AlreadyInitializedError`` was just caught), so ``None`` here means some other,
+    non-Binding caller initialized this project without ``records`` at all -- itself a real
+    conflict this function's own caller must reject, never silently accept as a no-op.
     """
 
-    manifest_path = (
-        Path(store.root)
-        / "projects"
-        / project_id
-        / "state"
-        / "recovery"
-        / _GENESIS_TRANSACTION_ID
-        / "manifest.json"
-    )
-    if not manifest_path.exists():
+    manifest = store.resolve_transaction_manifest(project_id, _GENESIS_TRANSACTION_ID)
+    if manifest is None:
         return None
-    try:
-        entries = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise BindingIdentityError(
-            f"genesis transaction manifest for {project_id!r} is unreadable: {exc}"
-        ) from exc
-    return {(kind, record_id) for kind, record_id in entries}
+    return set(manifest)
 
 
 def bind_project(
@@ -264,6 +248,20 @@ def bind_project(
         ("project_binding", project_binding["project_binding_id"], project_binding),
         *(additional_genesis_records or []),
     ]
+
+    # The one shared pre-commit admission (Phase 9 Structural Review Round 2 P9-R2-F1/F2/
+    # F3/F5): secret-value scanning and typed reference-edge closure over the WHOLE
+    # candidate genesis manifest -- every body above, not merely the Project Binding record
+    # `assemble_project_binding` already scanned on its own. Runs before `store.initialize`
+    # is ever called, so a rejection here never advances Store visibility.
+    admit_genesis_transaction(
+        project_id=project_id,
+        objective_revision=objective_revision,
+        authority_rule=authority_rule,
+        project_binding=project_binding,
+        genesis_state=genesis_state,
+        additional_genesis_records=additional_genesis_records or [],
+    )
 
     try:
         committed_state = store.initialize(project_id, genesis_state, records=records, fault=fault)

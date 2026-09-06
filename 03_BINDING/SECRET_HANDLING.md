@@ -55,7 +55,29 @@ a real secret-shaped string (a GitHub-token-shaped value, a private-key block, .
 rejected wherever it appears in the accepted graph, this subtree included.
 
 ```text
-SECRET_SCAN_COVERS_WHOLE_ACCEPTED_GRAPH=true
 SECRET_POLICY_FIELD_NAMES_ALLOWED=true
 SECRET_VALUE_IN_SECRET_POLICY_REJECTED=true
+```
+
+## 4. Scan scope corrected to the whole accepted/persisted graph (Round 2 P9-R2-F1)
+
+**Corrected in Phase 9 Structural Review Round 2.** §3's own "whole accepted declaration"
+claim was itself incomplete: it described only `assemble_project_binding`'s own scan of the
+Project Binding record. 構造参謀's Round 2 re-observation found that `bind_project` also
+accepts and persists Objective Revision, Authority Rule, genesis State, and every
+`additional_genesis_records` member -- none of which were ever scanned. A secret-shaped
+value in, for example, an Objective Revision's own free-text `semantic_change_summary`
+field passed silently through to persistence.
+
+`manosube_agent_civilization.binding.admission.admit_genesis_transaction` (see
+`PROJECT_BINDING.md` §9b) now scans every one of those bodies too, before
+`store.initialize` is ever called. `session_id` (`01_SCHEMA/state/state_metadata.
+schema.json`'s own `execution_context.session_id` field) is added to the shared
+`difference.canonical._SECRET_KEY_ALLOWLIST` alongside the existing entries -- a real,
+pre-existing Kernel schema field name that only became reachable by the scan once genesis
+State itself was included in scope, never a secret carrier.
+
+```text
+SECRET_SCAN_COVERS_WHOLE_ACCEPTED_GRAPH=true
+SECRET_SCAN_ERROR_NEVER_ECHOES_THE_SECRET_VALUE=true
 ```

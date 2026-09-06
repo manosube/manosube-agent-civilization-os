@@ -35,9 +35,18 @@ _SECRET_VALUE = re.compile(
 # field (Phase 9, Issue #43 P9-R1-F3) both legitimately name the concept they forbid --
 # allowed here by *key name* only, without exempting either one's own *values* from the scan
 # below: a real secret-shaped string is still rejected wherever it appears, including inside
-# these fields' own sibling values.
+# these fields' own sibling values. ``session_id`` (Phase 9 Structural Review Round 2,
+# P9-R2-F1) is ``01_SCHEMA/state/state_metadata.schema.json``'s own
+# ``execution_context.session_id`` field -- a real, pre-existing Kernel schema field naming
+# a run/session identifier, never a secret carrier -- surfaced only now that Product Binding
+# scans the whole accepted genesis State for the first time.
 _SECRET_KEY_ALLOWLIST = frozenset(
-    {"credential_paths", "secret_exclusion_policy", "allowed_secret_reference_kinds"}
+    {
+        "credential_paths",
+        "secret_exclusion_policy",
+        "allowed_secret_reference_kinds",
+        "session_id",
+    }
 )
 MOVING_REFERENCE = re.compile(
     r"^(?:HEAD|LATEST|CURRENT|MAIN|MASTER|TRUNK|DEFAULT)$|"

@@ -25,6 +25,7 @@ from manosube_agent_civilization.binding import (
     BindingValidationError,
     bind_project,
 )
+from manosube_agent_civilization.difference.errors import SecurityRejectionError
 from manosube_agent_civilization.store import STAGES, FileStateStore
 from manosube_agent_civilization.store.errors import (
     AlreadyInitializedError,
@@ -230,7 +231,11 @@ def test_replay_missing_a_previously_adopted_additional_genesis_record_is_reject
     _bind(store)
     before = store.load_current(_kwargs()["project_id"])
 
-    with pytest.raises(AlreadyInitializedError):
+    # Dropping the fixture's only additional_genesis_records member also breaks genesis
+    # State's own declared source_snapshot_refs closure (Phase 9 Round 2 P9-R2-F2) -- an
+    # even earlier admission gate than the replay comparison this test was originally
+    # written to prove, and a legitimate rejection of the same bad input either way.
+    with pytest.raises((AlreadyInitializedError, BindingIdentityError)):
         bind_project(store, **_kwargs(), additional_genesis_records=[], schema_root=SCHEMA_ROOT)
     assert store.load_current(_kwargs()["project_id"]) == before
 
@@ -265,7 +270,11 @@ def test_replay_with_a_right_id_wrong_kind_additional_record_is_rejected(tmp_pat
 
     kind, record_id, body = genesis_records()[0]
     wrong_kind_records = [("not_" + kind, record_id, body)]
-    with pytest.raises(AlreadyInitializedError):
+    # Relabeling the fixture's only additional_genesis_records member also breaks genesis
+    # State's own declared source_snapshot_refs closure (Phase 9 Round 2 P9-R2-F2) -- an
+    # even earlier admission gate than the replay comparison this test was originally
+    # written to prove, and a legitimate rejection of the same bad input either way.
+    with pytest.raises((AlreadyInitializedError, BindingIdentityError)):
         bind_project(
             store,
             **_kwargs(),
@@ -790,6 +799,277 @@ def test_resolve_binding_references_rejects_a_wrong_kind_reference_before_store_
     tampered["authority_policy_ref"] = {"kind": "objective_revision", "id": "OBJ-REV-FAKE-0001"}
     with pytest.raises(_BVE, match="CROSS_KIND_SUBSTITUTION_ALLOWED"):
         resolve_binding_references(store, tampered)
+
+
+# --- P9-R2-F1: secret scan across the WHOLE accepted/persisted graph -------------------------- #
+
+
+def _fake_secret() -> str:
+    return "ghp_" + "C" * 36
+
+
+def test_secret_shaped_value_in_authority_rule_is_rejected(tmp_path: Path) -> None:
+    from manosube_agent_civilization.authority.identity import rule_id as _rule_id
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kwargs["authority_rule"]["scope"]["subjects"] = [_fake_secret()]
+    # Recompute the Authority Rule's own content-addressed id so identity reverification
+    # (P9-R1-F1) does not preempt the secret scan this test means to prove.
+    kwargs["authority_rule"]["authority_rule_id"] = _rule_id(
+        {k: v for k, v in kwargs["authority_rule"].items() if k != "authority_rule_id"}
+    )
+    kwargs["authority_policy_ref"]["id"] = kwargs["authority_rule"]["authority_rule_id"]
+    with pytest.raises(SecurityRejectionError, match="secret-bearing value"):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_secret_shaped_value_in_genesis_state_is_rejected(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kwargs["genesis_state"]["state_metadata"]["producer"] = _fake_secret()
+    with pytest.raises(SecurityRejectionError, match="secret-bearing value"):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_secret_shaped_value_in_an_additional_genesis_record_is_rejected(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    tampered_records = deepcopy(genesis_records())
+    kind, record_id, body = tampered_records[0]
+    body = {**body, "source_locator": _fake_secret()}
+    tampered_records[0] = (kind, record_id, body)
+    with pytest.raises(SecurityRejectionError, match="secret-bearing value"):
+        bind_project(
+            store, **kwargs, additional_genesis_records=tampered_records, schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_secret_scan_error_never_echoes_the_secret_value_itself(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    secret = _fake_secret()
+    kwargs["objective_revision"]["semantic_change_summary"] = secret
+    with pytest.raises(SecurityRejectionError) as excinfo:
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    assert secret not in str(excinfo.value)
+
+
+# --- P9-R2-F2: genesis State's own Store-owned reference closure ------------------------------ #
+
+
+def test_genesis_state_dangling_source_snapshot_ref_is_rejected(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kwargs["genesis_state"]["state_metadata"]["source_snapshot_refs"] = [
+        {"kind": "source_snapshot", "id": "SNAP-DOES-NOT-EXIST-0001"}
+    ]
+    with pytest.raises(BindingIdentityError, match="GENESIS_DANGLING_CANONICAL_REFERENCE"):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_genesis_state_wrong_kind_source_snapshot_ref_is_rejected(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    real_snapshot_id = kwargs["genesis_state"]["state_metadata"]["source_snapshot_refs"][0]["id"]
+    kwargs["genesis_state"]["state_metadata"]["source_snapshot_refs"] = [
+        {"kind": "observation_evidence", "id": real_snapshot_id}
+    ]
+    with pytest.raises(BindingValidationError, match="CROSS_KIND_SUBSTITUTION_ALLOWED"):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_genesis_state_dangling_evidence_ref_is_rejected(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kwargs["genesis_state"]["evidence_refs"] = [
+        {"kind": "observation_evidence", "id": "EVID-DOES-NOT-EXIST-0001"}
+    ]
+    with pytest.raises(BindingIdentityError, match="GENESIS_DANGLING_CANONICAL_REFERENCE"):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_genesis_state_source_snapshot_ref_resolves_via_additional_genesis_records(
+    tmp_path: Path,
+) -> None:
+    """Positive control: the real fixture's own genesis State resolves its declared
+    ``source_snapshot_refs`` against the candidate ``additional_genesis_records`` member --
+    proving the closure check does not merely reject everything."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    result = _bind(store)
+    assert result["committed_state"]["state_revision"] == 0
+
+
+# --- P9-R2-F3: full accepted-graph reference classification ----------------------------------- #
+
+
+def test_objective_revision_wrong_kind_owner_authority_ref_is_rejected(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kwargs["objective_revision"]["owner_authority_ref"] = {
+        "kind": "authority_rule",
+        "id": kwargs["authority_policy_ref"]["id"],
+    }
+    with pytest.raises(BindingValidationError, match="CROSS_KIND_SUBSTITUTION_ALLOWED"):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_authority_rule_wrong_kind_declared_by_is_rejected(tmp_path: Path) -> None:
+    """Authority's own existing schema (``authority.schema.json#/$defs/human_authority_ref``)
+    already forecloses a wrong-kind ``declared_by`` with a ``const`` -- this reference field
+    is still classified in ``reference_classification.py`` (P9-R2-F3) for the table's own
+    completeness, but the real rejection observed here is schema validation, not the
+    classification layer, and that is the correct division of labor (schema owns shape,
+    this module owns cross-record closure)."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kwargs["authority_rule"]["declared_by"] = {
+        "kind": "objective_revision",
+        "id": kwargs["objective_revision"]["objective_revision_id"],
+    }
+    with pytest.raises(BindingValidationError, match="declared_by"):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_reference_edges_rejects_an_unclassified_source_kind() -> None:
+    from manosube_agent_civilization.binding.reference_classification import reference_edges
+
+    with pytest.raises(BindingValidationError, match="UNKNOWN_SOURCE_RECORD_KIND"):
+        reference_edges("not_a_classified_kind", {})
+
+
+def test_reference_edges_classifies_every_field_on_every_accepted_record_kind() -> None:
+    """A real, positive-control walk over each accepted record kind's own real fixture body
+    -- every declared reference field resolves without a classification error, proving no
+    accepted record kind carries an unclassified reference field in practice."""
+
+    from manosube_agent_civilization.binding.reference_classification import reference_edges
+
+    kwargs = _kwargs()
+    # Objective Revision, Authority Rule and genesis State are exercised directly here;
+    # Project Binding's own three fields were already proven in Round 1's own identity
+    # tests. None of these calls should raise -- every reference field on each real fixture
+    # body is classified.
+    reference_edges("objective_revision", kwargs["objective_revision"])
+    reference_edges("authority_rule", kwargs["authority_rule"])
+    reference_edges("project_state", kwargs["genesis_state"])
+
+
+# --- P9-R2-F4: duplicate-aware full-manifest replay -------------------------------------------- #
+
+
+def test_replay_with_an_identical_duplicate_additional_record_is_a_no_op(tmp_path: Path) -> None:
+    """An identical duplicate ``(kind, id, body)`` supplied twice in one replay's own
+    ``additional_genesis_records`` is silently fine -- the same member named twice changes
+    nothing (P9-R2-F4's own "duplicate-aware, not merely order-independent" requirement)."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    first = _bind(store)
+    real_records = genesis_records()
+    doubled_records = [*real_records, *real_records]
+    second = bind_project(
+        store, **_kwargs(), additional_genesis_records=doubled_records, schema_root=SCHEMA_ROOT
+    )
+    assert second["committed_state"] == first["committed_state"]
+
+
+def test_replay_with_a_conflicting_duplicate_additional_record_is_rejected(tmp_path: Path) -> None:
+    """Two different bodies claimed under the same ``(kind, id)`` in one replay's own
+    ``additional_genesis_records`` is a conflict, never silently resolved to the last one
+    supplied."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    _bind(store)
+    before = store.load_current(_kwargs()["project_id"])
+
+    real_records = genesis_records()
+    kind, record_id, body = real_records[0]
+    conflicting = [(kind, record_id, body), (kind, record_id, {**body, "captured_at": "X"})]
+    with pytest.raises(BindingValidationError, match="conflicting"):
+        bind_project(
+            store, **_kwargs(), additional_genesis_records=conflicting, schema_root=SCHEMA_ROOT
+        )
+    assert store.load_current(_kwargs()["project_id"]) == before
+
+
+# --- P9-R2-F5: single shared admission -- zero Store mutation on any rejection ----------------- #
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(
+            lambda k: k["objective_revision"].__setitem__("statement", ""),
+            id="objective_revision_invalid_schema",
+        ),
+        pytest.param(
+            lambda k: k["authority_rule"].__setitem__("decision", "NOT_A_REAL_DECISION"),
+            id="authority_rule_invalid_schema",
+        ),
+        pytest.param(
+            lambda k: k["genesis_state"]["state_metadata"].__setitem__("producer", _fake_secret()),
+            id="genesis_state_secret",
+        ),
+        pytest.param(
+            lambda k: k["boundary"].__setitem__("root_paths", ["../escape"]),
+            id="project_binding_boundary_escape",
+        ),
+    ],
+)
+def test_every_rejected_body_type_leaves_zero_store_mutation(mutate, tmp_path: Path) -> None:
+    """P9-R2-F5: whichever accepted body type is malformed, the shared admission rejects it
+    before ``store.initialize`` -- proven here by exact-count assertions, not merely "an
+    exception was raised"."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    mutate(kwargs)
+    with pytest.raises(Exception):  # noqa: B017 -- deliberately kind-agnostic across mutations
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError, match="lineage has no genesis"):
+        store.load_current(kwargs["project_id"])
+    assert store.resolve_transaction(kwargs["project_id"], "TX-GENESIS") is None
+    # A project that never reached `store.initialize` at all is indistinguishable, by the
+    # Store's own documented bare-genesis convention, from one whose bare genesis legitimately
+    # adopted zero records -- both report an empty manifest here, never a real record.
+    assert store.resolve_transaction_manifest(kwargs["project_id"], "TX-GENESIS") == []
+    assert store.resolve_record(kwargs["project_id"], "project_binding", "anything") is None
 
 
 # --- Development Binding / Phase 8 fixture substitution --------------------------------------- #

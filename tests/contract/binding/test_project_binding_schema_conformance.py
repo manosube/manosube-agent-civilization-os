@@ -243,25 +243,30 @@ def test_product_binding_engine_has_no_development_binding_shaped_surface() -> N
 
 
 def test_every_public_route_reaching_store_initialize_runs_the_full_admission_chain() -> None:
-    """Issue #43 Phase 9 Round 1 §9.2: a real call-graph scan of ``route.py``'s own module
-    source -- not a grep, not a hardcoded name list -- proving
-    ``PUBLIC_COMMITTING_ROUTE_COUNT=1`` (``bind_project``), and that this one route reaches,
-    directly or through an intermediate helper, every required admission stage: schema
-    validation (``validate_record``/``validate_against_schema_id``), cross-binding
-    validation (``assemble_project_binding``), identity reverification (``rule_id``,
-    ``verify_project_binding_identity``), secret exclusion (``reject_secret_material``),
-    typed reference admission (``reject_wrong_kind_reference``). A future new route calling
-    ``store.initialize`` without reaching one of these would fail this test, structurally --
-    no update to a name list is what makes it pass or fail."""
+    """Issue #43 Phase 9 Round 1 §9.2, extended by Phase 9 Round 2 P9-R2-F5: a real
+    call-graph scan of ``route.py``/``engine.py``/``admission.py``'s own module source --
+    not a grep, not a hardcoded name list -- proving ``PUBLIC_COMMITTING_ROUTE_COUNT=1``
+    (``bind_project``), ``CANONICAL_BINDING_PRECOMMIT_ADMISSION_OWNER_COUNT=1``
+    (``admit_genesis_transaction``), and that this one route reaches, directly or through an
+    intermediate helper, every required admission stage: schema validation
+    (``validate_record``/``validate_against_schema_id``), cross-binding validation
+    (``assemble_project_binding``), identity reverification (``rule_id``,
+    ``verify_project_binding_identity``), the one shared pre-commit admission
+    (``admit_genesis_transaction``, which itself performs whole-graph secret exclusion and
+    reference-edge closure -- P9-R2-F1/F2/F3), and typed reference admission
+    (``reject_wrong_kind_reference``). A future new route calling ``store.initialize``
+    without reaching one of these would fail this test, structurally -- no update to a name
+    list is what makes it pass or fail."""
 
     import ast
     import inspect
 
+    import manosube_agent_civilization.binding.admission as admission_module
     import manosube_agent_civilization.binding.engine as engine_module
     import manosube_agent_civilization.binding.route as route_module
 
     calls: dict[str, set[str]] = {}
-    for module in (route_module, engine_module):
+    for module in (route_module, engine_module, admission_module):
         tree = ast.parse(inspect.getsource(module))
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
@@ -292,6 +297,8 @@ def test_every_public_route_reaching_store_initialize_runs_the_full_admission_ch
         "verify_project_binding_identity",
         "reject_secret_material",
         "reject_wrong_kind_reference",
+        "admit_genesis_transaction",
+        "reference_edges",
     )
     for name in sorted(committing_routes):
         for stage in required_stages:

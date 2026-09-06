@@ -220,6 +220,37 @@ class FileStateStore:
                 return deepcopy(event)
         return None
 
+    def resolve_transaction_manifest(self, project_id: str, transaction_id: str) -> list[tuple[str,str]]|None:
+        """Return the exact ``(kind, id)`` membership list a *committed* transaction's own
+        recovery-journal manifest claims, or ``None`` if *transaction_id* is unresolvable --
+        does not exist, or exists but is not yet durably committed (Phase 9 Structural
+        Review Round 2, P9-R2-F4).
+
+        A generic, transaction-agnostic public read surface -- no domain-specific comparison
+        semantics of any kind live here; a caller decides what "identical", "conflicting",
+        "duplicate" mean for its own manifest members. Gated on the identical committed-
+        boundary check :meth:`resolve_transaction` already uses
+        (:meth:`_transaction_committed`), so the two can never diverge on what counts as
+        "this transaction happened". Mirrors :meth:`_transaction_manifest_keys` (``commit``'s
+        own internal replay-comparison helper), now exposed publicly rather than restated by
+        a caller reading the Store's own on-disk recovery-journal layout directly.
+
+        An empty list means the transaction is committed but adopted no records at all (a
+        bare genesis, or an ordinary commit with no ``records`` argument) -- genuinely
+        different from ``None``, which means the transaction itself is unresolvable.
+        """
+
+        if not self._transaction_committed(project_id, transaction_id):
+            return None
+        path=self._project(project_id)/"state"/"recovery"/transaction_id/"manifest.json"
+        if not path.exists():
+            return []
+        try:
+            entries=json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc:
+            raise CorruptStoreError(f"malformed transaction manifest: {transaction_id}") from exc
+        return [(kind,record_id) for kind,record_id in entries]
+
     #: R10-F3 (SHUKOU Round 10): the one, explicitly-named genesis transaction identity --
     #: GENESIS_EXCEPTION_IS_EXPLICIT=true, GENESIS_EXCEPTION_IS_NOT_WILDCARD=true. Every
     #: other transaction_id with no recovery journal is refused, never silently trusted.
