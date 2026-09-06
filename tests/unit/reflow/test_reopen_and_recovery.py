@@ -17,6 +17,7 @@ import pytest
 from tests.reflow_helpers import (
     candidate_closure_request,
     fixture_difference,
+    fixture_genesis_lifecycle_event,
     fixture_policy,
     store_ready_for_closure,
 )
@@ -29,6 +30,7 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.reflow.commit import commit_reflow
 from manosube_agent_civilization.reflow.errors import ReflowValidationError
 from manosube_agent_civilization.reflow.identity import transaction_id
+from manosube_agent_civilization.reflow.reference_registry import reference_edges
 from manosube_agent_civilization.reflow.reopen import decide_reopen
 from manosube_agent_civilization.reflow.route import reflow, reopen
 from manosube_agent_civilization.store import STAGES, FileStateStore
@@ -55,6 +57,7 @@ def _close(store: FileStateStore, project_state: dict, difference: dict, policy:
         store,
         project_id=project_state["project_id"],
         previous_event_id=difference["genesis_event_ref"]["id"],
+        genesis_lifecycle_event=fixture_genesis_lifecycle_event(difference),
         event_revision=1,
         closure_request=closure_request,
         observation_refs=closure_request["reobservation"]["after_observation_refs"],
@@ -68,6 +71,16 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
     policy = fixture_policy(difference)
     closed = _close(store, project_state, difference, policy)
 
+    # P8-R4 completion repair 3 (P8-R4-C3-F1): `contradiction_evidence_refs` is Evidence
+    # provenance ("contradiction Evidence refs", DIFFERENCE_LIFECYCLE.md section 8) -- its
+    # own field semantics permit only `observation_evidence`/`negative_evidence`, never
+    # `material_contradiction`. Reused here from the CLOSED route's own already-committed
+    # Evidence (real and Store-resolvable), never a bespoke unresolvable placeholder.
+    # `contradiction_refs` is the separate, unrelated State-bookkeeping field
+    # (`unresolved_contradictions`), whose own real kind is `material_contradiction` --
+    # kept as `CONTRADICTION_REF`.
+    contradiction_evidence_ref = closed["event"]["evidence_refs"][0]
+
     result = reopen(
         store,
         project_id=project_state["project_id"],
@@ -77,7 +90,7 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
         event_revision=2,
         next_observation_ref=REOPEN_NEXT_OBSERVATION_REF,
         observation_refs=[],
-        contradiction_evidence_refs=[CONTRADICTION_REF],
+        contradiction_evidence_refs=[contradiction_evidence_ref],
         contradiction_refs=[CONTRADICTION_REF],
         reflow_instant="2026-08-30T14:00:00Z",
     )
@@ -89,7 +102,33 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
     semantic = result["committed_state"]["semantic_state"]
     assert {"kind": "difference", "id": difference["difference_id"]} in semantic["open_differences"]
     assert CONTRADICTION_REF in semantic["unresolved_contradictions"]
-    assert result["committed_state"]["state_revision"] == closed["committed_state"]["state_revision"] + 1
+    assert (
+        result["committed_state"]["state_revision"]
+        == closed["committed_state"]["state_revision"] + 1
+    )
+    # P8-R4 completion repair 2 (P8-R4-C2-F1): the widened production registry now also
+    # recognizes this REOPENED event's own contradiction_evidence_refs as a Store-owned
+    # reference edge -- proving the reopen() route's own persisted record still closes
+    # (every edge it declares either resolves, or names a kind this registry correctly
+    # never treats as Store-owned, such as this fixture's own material_contradiction-kind
+    # CONTRADICTION_REF), not merely that reflow()'s own CLOSED/BLOCKED/RETAINED admission
+    # path does.
+    for edge in reference_edges("difference_event", result["event"]):
+        assert (
+            store.resolve_record(project_state["project_id"], edge.target_kind, edge.target_id)
+            is not None
+        ), (
+            f"reopen()'s own persisted event declares an unresolved reference at "
+            f"{edge.field_path}: {edge.target_kind}/{edge.target_id}"
+        )
+    # P8-R4-C4-F1 item 8.4 (positive control): the shared pre-commit admission now wired
+    # into reopen() does not merely fail to block a valid Reopen -- the REOPENED State it
+    # commits still reconstructs identically from a brand-new FileStateStore instance over
+    # only the persisted backend, never the in-process store object this test already used.
+    fresh = FileStateStore(store.root, schema_root=SCHEMA_ROOT)
+    fresh_current = fresh.load_current(project_state["project_id"])
+    assert fresh_current == result["committed_state"]
+    assert fresh.reconstruct(project_state["project_id"]) == fresh_current
 
 
 def test_reopen_refuses_an_evaluation_that_never_closed() -> None:
@@ -137,6 +176,7 @@ def test_reflow_commit_converges_after_a_crash_at_every_stage(stage: str, tmp_pa
         expected_revision=project_state["state_revision"],
         reflow_instant=REFLOW_INSTANT,
     )
+
     def fault(current: str) -> None:
         if current == stage:
             raise SimulatedCrash(stage)

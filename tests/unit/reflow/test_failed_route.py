@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from tests.difference_helpers import (
+    REAL_SNAPSHOT_RECORD,
+    REAL_SNAPSHOT_REF,
     negative_claim,
     objective_revision,
     observation_request,
@@ -52,12 +54,19 @@ FAILURE_CLASS = "SOURCE_ERROR"
 
 
 def _failed_observation_request() -> dict[str, Any]:
+    # P8-R4 completion repair (SHUKOU Phase 8 final-closure round 4 completion repair): the
+    # real, content-addressed REAL_SNAPSHOT_REF (never the widely-shared, permanently-opaque
+    # SNAP-0001 default) and no observation_evidence_refs claim of its own -- this Observation
+    # is admitted directly as this Difference's own terminal-reason Evidence's Observation,
+    # and the unconditional Reference Closure invariant (P8-R4-F1) requires every declared
+    # reference it carries to actually resolve.
     request = observation_request(
-        observation_scope(),
+        observation_scope(snapshot_refs=[REAL_SNAPSHOT_REF]),
         [],
         state_fingerprint(),
         BEFORE_REVISION,
-        negative_claims=[negative_claim("FAILED")],
+        negative_claims=[negative_claim("FAILED", snapshot_id=REAL_SNAPSHOT_REF["id"])],
+        observation_evidence_refs=[],
     )
     request["attempts"][0]["result"] = "FAILED"
     request["attempts"][0]["failure_class"] = FAILURE_CLASS
@@ -65,7 +74,11 @@ def _failed_observation_request() -> dict[str, Any]:
 
 
 def _first_derivation() -> dict[str, Any]:
-    request = difference_request()
+    # P8-R4 completion repair: the binding's own observation_scope must name the identical
+    # REAL_SNAPSHOT_REF the Observation itself reports, or the Difference Engine's own
+    # boundary check refuses the mismatch as an Observation whose source snapshots escape
+    # the resolved Scope.
+    request = difference_request(scope=observation_scope(snapshot_refs=[REAL_SNAPSHOT_REF]))
     request["bindings"][0]["observation_bundle"] = observe(_failed_observation_request())
     return derive_differences(request)
 
@@ -77,7 +90,15 @@ def _insufficient_sufficiency_request(first: dict[str, Any]) -> dict[str, Any]:
         difference_id=first["differences"][0]["difference_id"],
         policy=first["policies"][0],
         evidence_requests=[
-            observation_evidence_request(observation=_failed_observation_request())
+            observation_evidence_request(
+                observation=_failed_observation_request(),
+                # P8-R4 completion repair: the identical real-snapshot-scoped
+                # difference_request _first_derivation() itself derives from, or the
+                # Difference Engine's own boundary check refuses the mismatch.
+                difference=difference_request(
+                    scope=observation_scope(snapshot_refs=[REAL_SNAPSHOT_REF])
+                ),
+            )
         ],
     )
 
@@ -115,7 +136,13 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
 
     from manosube_agent_civilization.evidence.engine import derive_evidence
 
-    terminal_reason_request = observation_evidence_request(observation=_failed_observation_request())
+    terminal_reason_request = observation_evidence_request(
+        observation=_failed_observation_request(),
+        # P8-R4 completion repair: the identical real-snapshot-scoped difference_request
+        # _first_derivation() itself derives from, or the Difference Engine's own boundary
+        # check refuses the mismatch.
+        difference=difference_request(scope=observation_scope(snapshot_refs=[REAL_SNAPSHOT_REF])),
+    )
     terminal_reason_record = derive_evidence(terminal_reason_request)
     # R9-F2: base Kernel provenance is now resolved by `reflow.route.reflow` from the
     # committed State's own `state_metadata.source_snapshot_refs` -- `initial_state()`
@@ -150,7 +177,10 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         "evidence_sufficiency_request": _insufficient_sufficiency_request(first),
         "after_state_semantic_state": None,
         "source_snapshot_refs": [],
-        "source_snapshots": [real_kernel_source_snapshot()],
+        # P8-R4 completion repair: REAL_SNAPSHOT_RECORD is appended (never replaces index 0)
+        # so the real terminal-reason Evidence's own Observation -- built from
+        # REAL_SNAPSHOT_REF -- can also resolve its own source_snapshot_refs entry.
+        "source_snapshots": [REAL_SNAPSHOT_RECORD, real_kernel_source_snapshot()],
         "producing_change_refs": [],
         "candidate_invariant_evaluation_bindings": [],
         "candidate_claim_evaluation_bindings": [],
@@ -170,6 +200,11 @@ def test_failed_route_commits_state_without_closing_or_completing(tmp_path: Path
         store,
         project_id=project_state["project_id"],
         previous_event_id=difference["genesis_event_ref"]["id"],
+        genesis_lifecycle_event=next(
+            event
+            for event in first["events"]
+            if event["difference_event_id"] == difference["genesis_event_ref"]["id"]
+        ),
         event_revision=1,
         closure_request=closure_request,
         observation_refs=[],

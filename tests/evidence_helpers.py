@@ -106,29 +106,47 @@ def artifact(
 ARTIFACT = artifact()
 
 
-def before_observation_request(**kwargs: Any) -> dict[str, Any]:
+def before_observation_request(
+    *, snapshot_refs: list[dict[str, Any]] | None = None, **kwargs: Any
+) -> dict[str, Any]:
     """The Observation of the State the fixture Difference and Change were built on.
 
     ``evidenced_difference`` derives the Difference from exactly this request, and
     ``real_change_request`` authorizes its Change against that Difference, so the Evidence
     and the Change are about one Difference by construction rather than by coincidence.
+
+    *snapshot_refs*, when supplied, overrides the default (widely-shared, permanently-opaque)
+    ``SNAPSHOT_REF`` this Observation's own ``observation_scope`` reports -- for a caller that
+    needs this Observation admitted through ``reflow.route.reflow`` and therefore needs its
+    ``source_snapshot_refs`` to resolve against a real, content-addressed record. The one
+    reported raw Fact's own ``effective_boundary`` is derived from the same override (its
+    ``snapshot_id`` must name the identical source occurrence the Observation Engine itself
+    checks it against), never left pointing at the default snapshot's id.
     """
 
+    fact_snapshot_id = snapshot_refs[0]["id"] if snapshot_refs else "SNAP-0001"
     return observation_request(
-        observation_scope(),
-        [raw_fact(value="NOT-READY")],
+        observation_scope(snapshot_refs=snapshot_refs),
+        [raw_fact(value="NOT-READY", snapshot_id=fact_snapshot_id)],
         state_fingerprint(),
         BEFORE_REVISION,
         **kwargs,
     )
 
 
-def after_observation_request(**kwargs: Any) -> dict[str, Any]:
-    """A re-observation at a later revision, by the same public Observation Engine."""
+def after_observation_request(
+    *, snapshot_refs: list[dict[str, Any]] | None = None, **kwargs: Any
+) -> dict[str, Any]:
+    """A re-observation at a later revision, by the same public Observation Engine.
 
+    *snapshot_refs* is the identical real-source-snapshot override :func:`before_observation_
+    request` takes, for the same reason.
+    """
+
+    fact_snapshot_id = snapshot_refs[0]["id"] if snapshot_refs else "SNAP-0001"
     return observation_request(
-        observation_scope(),
-        [raw_fact(value="READY")],
+        observation_scope(snapshot_refs=snapshot_refs),
+        [raw_fact(value="READY", snapshot_id=fact_snapshot_id)],
         state_fingerprint("KNOWN"),
         AFTER_REVISION,
         **kwargs,
