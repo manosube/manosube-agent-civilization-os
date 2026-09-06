@@ -59,6 +59,23 @@ def _bound(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any], dict[str, An
     return store, kwargs, result
 
 
+def _unfreeze(value: Any) -> Any:
+    """Recursively convert a ``BootContext`` field's own frozen shape (``MappingProxyType``
+    over ``dict``, ``tuple`` in place of ``list``) back into plain ``dict``/``list`` for
+    equality comparison against a JSON-shaped body -- P10-R1-F1's own deep-freeze
+    (:func:`~manosube_agent_civilization.boot.context._deep_freeze`) intentionally changes
+    every nested container's own type, so a bare ``dict(...)``/``==`` comparison against the
+    original plain body no longer applies at any depth beyond the outermost mapping."""
+
+    if isinstance(value, dict):
+        return {key: _unfreeze(item) for key, item in value.items()}
+    if hasattr(value, "items"):  # MappingProxyType and other Mapping implementations
+        return {key: _unfreeze(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_unfreeze(item) for item in value]
+    return value
+
+
 def _snapshot(store: FileStateStore, project_id: str) -> dict[str, str]:
     """A content-hash snapshot of every file under *project_id*'s own Store directory --
     proves ``RECORD_COUNT_DELTA=0``/``LINEAGE_APPEND_COUNT_DELTA=0``/
@@ -89,7 +106,7 @@ class _FakeStore:
     def resolve_record(self, project_id: str, kind: str, record_id: str) -> dict[str, Any] | None:
         return self._records.get((project_id, kind, record_id))
 
-    def load_current(self, project_id: str) -> dict[str, Any]:
+    def reconstruct(self, project_id: str) -> dict[str, Any]:
         if isinstance(self._current_state, BaseException):
             raise self._current_state
         return self._current_state
@@ -148,13 +165,13 @@ def test_boot_project_restores_the_real_bound_project(tmp_path: Path) -> None:
     assert isinstance(ctx, BootContext)
     assert ctx.project_id == kwargs["project_id"]
     assert ctx.project_binding_id == result["project_binding_id"]
-    assert dict(ctx.project_binding) == result["project_binding"]
-    assert dict(ctx.objective_revision) == result["objective_revision"]
-    assert dict(ctx.authority_rule) == result["authority_rule"]
-    assert dict(ctx.current_state) == result["committed_state"]
+    assert _unfreeze(ctx.project_binding) == result["project_binding"]
+    assert _unfreeze(ctx.objective_revision) == result["objective_revision"]
+    assert _unfreeze(ctx.authority_rule) == result["authority_rule"]
+    assert _unfreeze(ctx.current_state) == result["committed_state"]
     assert ctx.authority_rule_id == result["authority_rule"]["authority_rule_id"]
     assert ctx.objective_revision_id == result["objective_revision"]["objective_revision_id"]
-    assert dict(ctx.human_authority_ref) == result["project_binding"]["human_authority_ref"]
+    assert _unfreeze(ctx.human_authority_ref) == result["project_binding"]["human_authority_ref"]
 
 
 def test_boot_context_mapping_fields_are_immutable(tmp_path: Path) -> None:
@@ -177,14 +194,120 @@ def test_boot_context_mapping_fields_are_immutable(tmp_path: Path) -> None:
         ctx.project_id = "OTHER"  # type: ignore[misc]
 
 
+# --- P10-R1-F1: BootContext immutability covers the full accepted graph, not merely each
+#     field's own outer mapping ---------------------------------------------------------- #
+
+
+def test_nested_mapping_mutation_is_rejected(tmp_path: Path) -> None:
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    before = _snapshot(store, project_id)
+    ctx = boot_project(
+        store, project_id=project_id, project_binding_id=result["project_binding_id"]
+    )
+    with pytest.raises(TypeError):
+        ctx.project_binding["command_policy"]["max_commands_per_change"] = 999
+    assert _snapshot(store, project_id) == before
+
+
+def test_deeply_nested_mapping_mutation_is_rejected(tmp_path: Path) -> None:
+    """At least two levels deep -- ``state_metadata`` inside ``current_state``."""
+
+    store, kwargs, result = _bound(tmp_path)
+    ctx = boot_project(
+        store, project_id=kwargs["project_id"], project_binding_id=result["project_binding_id"]
+    )
+    with pytest.raises(TypeError):
+        ctx.current_state["state_metadata"]["producer"] = "tampered"
+
+
+def test_nested_sequence_mutation_is_rejected(tmp_path: Path) -> None:
+    store, kwargs, result = _bound(tmp_path)
+    ctx = boot_project(
+        store, project_id=kwargs["project_id"], project_binding_id=result["project_binding_id"]
+    )
+    assert isinstance(ctx.project_binding["boundary"]["root_paths"], tuple)
+    with pytest.raises(AttributeError):
+        ctx.project_binding["boundary"]["root_paths"].append("injected")  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        ctx.project_binding["boundary"]["root_paths"][0] = "injected"  # type: ignore[index]
+
+
+def test_nested_mapping_inside_a_sequence_is_also_immutable(tmp_path: Path) -> None:
+    """``source_registrations`` is a list of objects on the real schema -- each element must
+    itself be frozen, not merely the outer list-turned-tuple."""
+
+    store, kwargs, result = _bound(tmp_path)
+    ctx = boot_project(
+        store, project_id=kwargs["project_id"], project_binding_id=result["project_binding_id"]
+    )
+    registrations = ctx.project_binding["source_registrations"]
+    assert isinstance(registrations, tuple) and len(registrations) >= 1
+    with pytest.raises(TypeError):
+        registrations[0]["locator"] = "injected"
+
+
+def test_mutating_the_original_resolved_body_after_boot_never_affects_the_context(
+    tmp_path: Path,
+) -> None:
+    store, kwargs, result = _bound(tmp_path)
+    ctx = boot_project(
+        store, project_id=kwargs["project_id"], project_binding_id=result["project_binding_id"]
+    )
+    original_before = ctx.project_binding["command_policy"]["max_commands_per_change"]
+
+    # A fresh, independent resolve of the same committed record, then mutate that copy --
+    # BootContext must not alias it.
+    separately_resolved = store.resolve_record(
+        kwargs["project_id"], "project_binding", result["project_binding_id"]
+    )
+    assert separately_resolved is not None
+    separately_resolved["command_policy"]["max_commands_per_change"] = 424242
+
+    assert ctx.project_binding["command_policy"]["max_commands_per_change"] == original_before
+
+
+def test_mutating_the_callers_own_kwargs_before_boot_never_leaks_into_the_context(
+    tmp_path: Path,
+) -> None:
+    """Defensive full-projection construction: even the exact dict objects the Store itself
+    returned to ``boot_project`` must not be shared with the returned ``BootContext`` -- a
+    caller that later mutates its own reference to what it thinks is "the same" body must
+    never retroactively alter an already-returned context."""
+
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    binding_id = result["project_binding_id"]
+
+    real_resolve_record = store.resolve_record
+    captured: dict[str, Any] = {}
+
+    def _capturing_resolve_record(pid: str, kind: str, rid: str) -> dict[str, Any] | None:
+        body = real_resolve_record(pid, kind, rid)
+        if kind == "project_binding" and body is not None:
+            captured["project_binding"] = body
+        return body
+
+    store_any: Any = store
+    store_any.resolve_record = _capturing_resolve_record
+    try:
+        ctx = boot_project(store_any, project_id=project_id, project_binding_id=binding_id)
+    finally:
+        del store_any.resolve_record  # restore the bound method
+
+    assert "project_binding" in captured
+    captured["project_binding"]["command_policy"]["max_commands_per_change"] = 999999
+    assert ctx.project_binding["command_policy"]["max_commands_per_change"] != 999999
+
+
 def test_fresh_file_state_store_boots_the_identical_context(tmp_path: Path) -> None:
     store, kwargs, result = _bound(tmp_path)
     fresh = FileStateStore(store.root, schema_root=SCHEMA_ROOT)
     ctx = boot_project(
         fresh, project_id=kwargs["project_id"], project_binding_id=result["project_binding_id"]
     )
-    assert dict(ctx.current_state) == result["committed_state"]
-    assert dict(ctx.project_binding) == result["project_binding"]
+    assert _unfreeze(ctx.current_state) == result["committed_state"]
+    assert _unfreeze(ctx.project_binding) == result["project_binding"]
 
 
 def test_a_fresh_python_process_boots_successfully(tmp_path: Path) -> None:
@@ -416,7 +539,7 @@ def test_boot_project_never_completes_an_interrupted_transaction_via_recover(
     assert store.resolve_transaction(kwargs["project_id"], "TX-GENESIS") is None
 
 
-def test_lineage_corruption_after_binding_is_rejected_at_load_current(tmp_path: Path) -> None:
+def test_lineage_corruption_after_binding_is_rejected_at_reconstruct(tmp_path: Path) -> None:
     store, kwargs, result = _bound(tmp_path)
     project_id = kwargs["project_id"]
     lineage_path = store.root / "projects" / project_id / "events" / "transitions.jsonl"
@@ -425,6 +548,74 @@ def test_lineage_corruption_after_binding_is_rejected_at_load_current(tmp_path: 
 
     with pytest.raises(CorruptStoreError):
         boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+
+# --- P10-R1-F2: Boot is transactionally read-only -- a missing materialized current.json
+#     view is restored from canonical lineage, never repaired as a side effect ------------- #
+
+
+def test_boot_succeeds_when_the_materialized_current_view_is_missing(tmp_path: Path) -> None:
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    assert current_path.is_file()
+    current_path.unlink()
+    assert not current_path.is_file()
+
+    ctx = boot_project(
+        store, project_id=project_id, project_binding_id=result["project_binding_id"]
+    )
+    assert ctx.current_state["state_revision"] == 0
+    assert _unfreeze(ctx.current_state) == result["committed_state"]
+
+
+def test_boot_never_recreates_a_missing_materialized_current_view(tmp_path: Path) -> None:
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    current_path.unlink()
+
+    boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+    assert not current_path.is_file()
+
+
+def test_boot_with_a_missing_current_view_writes_nothing_anywhere_in_the_store(
+    tmp_path: Path,
+) -> None:
+    """The strongest form of the read-only proof: not merely "current.json is still absent",
+    but the entire project directory's file set and every file's own bytes are identical
+    before and after -- Boot introduces no new file, deletes none, and rewrites none."""
+
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    current_path.unlink()
+    before = _snapshot(store, project_id)
+
+    boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+    assert _snapshot(store, project_id) == before
+
+
+def test_boot_with_the_current_view_already_present_writes_nothing_either(
+    tmp_path: Path,
+) -> None:
+    """Positive control: the ordinary case (current.json already present and up to date) is
+    equally read-only -- this was already implied by the mutation-free repeated-boot proof,
+    stated here explicitly against the exact file this Round's finding was about."""
+
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    assert current_path.is_file()
+    before_bytes = current_path.read_bytes()
+    before = _snapshot(store, project_id)
+
+    boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+    assert current_path.read_bytes() == before_bytes
+    assert _snapshot(store, project_id) == before
 
 
 # --- persisted-record tamper detection (Store's own generic mechanism) -------------------- #
@@ -568,6 +759,65 @@ def test_unresolved_objective_revision_is_rejected(tmp_path: Path) -> None:
             project_id=graph["project_id"],
             project_binding_id=graph["project_binding"]["project_binding_id"],
         )
+
+
+# --- P10-R1-F3: Objective Revision's own declared id must equal the Binding's
+#     objective_revision_ref.id (Objective Revision carries no content-addressed identity of
+#     its own, so lookup-key success alone never proves this) ----------------------------- #
+
+
+def test_objective_revision_declared_id_differing_from_binding_ref_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """A Store (or adapter) that returns a body resolving under the requested
+    ``objective_revision_ref.id`` lookup key, but whose own declared ``objective_revision_id``
+    field names a different id, must fail closed -- lookup-key success is not identity
+    equality."""
+
+    graph = _real_graph(tmp_path)
+    ref_id = graph["project_binding"]["objective_revision_ref"]["id"]
+    self_inconsistent_orev = dict(graph["objective_revision"])
+    self_inconsistent_orev["objective_revision_id"] = "OBJ-REV-DECLARED-DIFFERENTLY-0001"
+
+    store = _FakeStore(
+        {
+            (
+                graph["project_id"],
+                "project_binding",
+                graph["project_binding"]["project_binding_id"],
+            ): graph["project_binding"],
+            (graph["project_id"], "objective_revision", ref_id): self_inconsistent_orev,
+            (
+                graph["project_id"],
+                "authority_rule",
+                graph["authority_rule"]["authority_rule_id"],
+            ): graph["authority_rule"],
+        },
+        graph["current_state"],
+    )
+    with pytest.raises(BootConsistencyError, match="objective_revision_id"):
+        boot_project(
+            store,
+            project_id=graph["project_id"],
+            project_binding_id=graph["project_binding"]["project_binding_id"],
+        )
+
+
+def test_objective_revision_declared_id_matching_binding_ref_succeeds(tmp_path: Path) -> None:
+    """Positive control: the ordinary, self-consistent case (declared id equals the lookup
+    key equals the Binding's own reference) still boots successfully -- the new check does
+    not reject everything."""
+
+    graph = _real_graph(tmp_path)
+    ref_id = graph["project_binding"]["objective_revision_ref"]["id"]
+    assert graph["objective_revision"]["objective_revision_id"] == ref_id
+    store = _fake_store_for(graph)
+    ctx = boot_project(
+        store,
+        project_id=graph["project_id"],
+        project_binding_id=graph["project_binding"]["project_binding_id"],
+    )
+    assert ctx.objective_revision_id == ref_id
 
 
 def test_unresolved_authority_rule_is_rejected(tmp_path: Path) -> None:

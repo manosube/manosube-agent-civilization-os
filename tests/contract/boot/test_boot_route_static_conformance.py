@@ -60,6 +60,23 @@ def test_boot_route_never_calls_store_initialize_commit_or_recover() -> None:
     assert not (called & forbidden), f"boot/route.py must never call: {called & forbidden}"
 
 
+def test_boot_route_never_calls_load_current() -> None:
+    """Phase 10 Structural Review Round 1 (P10-R1-F2): ``FileStateStore.load_current``
+    performs a real write to materialize a missing ``current.json`` view, which is not a
+    read-only operation -- ``boot_project`` must never reach it, on any code path, ever
+    again."""
+
+    assert "load_current" not in _called_names(route_module)
+
+
+def test_boot_route_calls_reconstruct() -> None:
+    """The positive counterpart of the above: current State restoration must go through
+    ``FileStateStore.reconstruct`` -- the pure, read-only lineage replay -- and not merely
+    lack a call to ``load_current`` by omission."""
+
+    assert "reconstruct" in _called_names(route_module)
+
+
 def test_boot_route_never_imports_a_command_execution_or_network_surface() -> None:
     forbidden_substrings = (
         "subprocess",

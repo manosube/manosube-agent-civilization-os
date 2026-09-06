@@ -10,7 +10,7 @@ its Store-owned references through the existing Phase 9 reference-resolution own
 Authority Rule through the existing Authority identity owner
 (:func:`~manosube_agent_civilization.authority.identity.rule_id`), reconstructs current State
 through the existing append-only lineage owner
-(:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.load_current`), and
+(:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.reconstruct`), and
 checks the cross-record project/Objective/Authority/reference invariants Issue #45 assigns to
 this route itself (``BOOT_CONTRACT.md`` §6). It creates no second State, Store, Binding,
 Objective, Authority, or reference-resolution owner, and never calls ``store.initialize``,
@@ -18,6 +18,14 @@ Objective, Authority, or reference-resolution owner, and never calls ``store.ini
 or repair (frozen semantic decisions 1, 3, 8). A Store that indicates corruption, an
 interrupted transaction, or an uninitialized project propagates its own typed Store error
 unchanged; this route neither swallows nor "repairs" it.
+
+Phase 10 Structural Review Round 1 correction (P10-R1-F2): ``FileStateStore.load_current``
+materializes a missing ``current.json`` view via a real write when the committed lineage is
+otherwise sound, which is not a read-only operation -- a successful Boot must never mutate
+the Store (frozen semantic decision 8). This route now reconstructs current State exclusively
+through :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.reconstruct`,
+which replays the committed append-only lineage and returns a value with no Store write of
+any kind, materialized-view included.
 """
 
 from __future__ import annotations
@@ -100,6 +108,19 @@ def boot_project(store: Any, *, project_id: str, project_binding_id: str) -> Boo
         raise BootNotFoundError(
             f"objective_revision/{project_binding['objective_revision_ref']['id']} does not resolve"
         )
+    # P10-R1-F3: Objective Revision carries no content-addressed identity of its own, so the
+    # Store-owned resolution above only proves *a* body resolved under the requested lookup
+    # key -- it never proved that body's own declared objective_revision_id agrees with that
+    # key. A Store (or adapter) that returns a self-inconsistent body for a given key must
+    # fail closed here, before that declared id is ever trusted as ctx.objective_revision_id.
+    objective_revision_ref_id = project_binding["objective_revision_ref"]["id"]
+    if objective_revision.get("objective_revision_id") != objective_revision_ref_id:
+        raise BootConsistencyError(
+            "the resolved objective_revision's own declared objective_revision_id does not "
+            "match project_binding.objective_revision_ref.id: "
+            f"{objective_revision.get('objective_revision_id')!r} != "
+            f"{objective_revision_ref_id!r}"
+        )
     authority_rule = resolved["authority_policy_ref"]
     if authority_rule is None:
         raise BootNotFoundError(
@@ -146,12 +167,14 @@ def boot_project(store: Any, *, project_id: str, project_binding_id: str) -> Boo
         context="authority_rule.declared_by vs project_binding.human_authority_ref",
     )
 
-    # Reconstructed exclusively through the existing append-only lineage owner -- never a
-    # materialized current.json body, a caller-supplied State, or a cache -- and never
-    # through store.recover(): a Store still carrying an interrupted transaction, missing
-    # genesis institution, or any other lineage-authority failure propagates its own typed
-    # Store error unchanged (frozen semantic decision 8).
-    current_state = store.load_current(project_id)
+    # P10-R1-F2: reconstructed exclusively through the existing append-only lineage owner's
+    # pure replay (store.reconstruct) -- never a materialized current.json body, a caller-
+    # supplied State, a cache, and never store.load_current(), which performs a real write to
+    # materialize a missing current.json even when the caller only asked to read. A Store
+    # still carrying an interrupted transaction, missing genesis institution, or any other
+    # lineage-authority failure propagates its own typed Store error unchanged (frozen
+    # semantic decision 8); this route never calls store.recover() to complete it.
+    current_state = store.reconstruct(project_id)
     if current_state.get("project_id") != project_id:
         raise BootConsistencyError(
             "reconstructed current State's own project_id does not match the requested "
