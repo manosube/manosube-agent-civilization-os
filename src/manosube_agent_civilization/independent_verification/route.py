@@ -13,24 +13,47 @@ one -- and calls its explicit
 :class:`~manosube_agent_civilization.independent_verification.types.IndependentVerifier`
 exactly once. It creates no second State, Evidence, Difference, Authority, Change, Store, or
 Closure owner: it never calls ``FileStateStore.initialize``, ``.commit``, ``.recover``,
-``.load_current``, ``.read_current_consistent``, or ``.reconstruct``, never calls
-``bind_project`` or ``boot_project``, and never calls into ``evidence``, ``difference``, or
-``reflow`` at all -- carrying an admissible verification result into existing Evidence-
-sufficiency semantics remains entirely that existing owner's own, separate concern (frozen
-semantic decision 6), a concern this route does not implement any bypass of.
+``.load_current``, ``.read_current_consistent``, ``.reconstruct``, or ``bind_project``, and
+never calls into ``evidence``, ``difference``, ``authority``, ``reflow``, or ``binding`` at
+all -- carrying an admissible verification result into existing Evidence-sufficiency
+semantics remains entirely that existing owner's own, separate concern (frozen semantic
+decision 6), a concern this route does not implement any bypass of.
 
-Every requirement/selection/boundary/target admission failure raises
+Structural Review Round 1 correction (P13-R1-F2): a caller-supplied
+``verifier_selection.selection_authority_ref`` that merely equals
+``verification_requirement.selection_authority_ref`` -- both values the same caller
+constructed -- proves nothing about SHUKOU's own explicit authorization; two self-consistent
+fabricated references satisfy that equality just as well as two genuine ones. This route now
+calls the existing, already-established Boot owner
+(:func:`~manosube_agent_civilization.boot.boot_project`) exactly once, over an explicit
+*project_binding_id* the caller supplies, and requires both references to canonical-
+reference-equal the real, independently re-verified ``BootContext.human_authority_ref`` that
+call returns -- never a second Authority owner, registry, token, or cache; every
+Boot/Binding/Store failure `boot_project` itself already proves fail-closed propagates
+unchanged, exactly as `boot/route.py`'s own callers already rely on.
+
+Structural Review Round 1 correction (P13-R1-F1): the callable actually invoked as *verifier*
+must declare, on itself, the identical identity SHUKOU selected
+(``verifier.verifier_identity``) -- checked by exact equality against
+``verifier_selection.verifier_identity`` *before* this route ever calls it, so a mismatched,
+absent, or unreadable declared identity never reaches invocation and no arbitrary callable's
+output can be attributed to a different, selected verifier.
+
+Every requirement/selection/boundary/target/authority admission failure raises
 :class:`~manosube_agent_civilization.independent_verification.errors.
 VerificationRequirementError` before this route ever calls the supplied verifier, and calling
 the verifier is this route's own single side effect: no Store write, no second read beyond the
-one ``resolve_record`` provenance check per Store-owned target, and no exception this route
-catches or reclassifies once raised, in either direction.
+one ``resolve_record`` provenance check per Store-owned target plus the one ``boot_project``
+authority re-verification, and no exception this route catches or reclassifies once raised, in
+either direction.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+
+from manosube_agent_civilization.boot import boot_project
 
 from .errors import VerificationRequirementError, VerifierOutputError
 from .types import (
@@ -111,17 +134,23 @@ def run_independent_verification(
     store: Any,
     *,
     project_id: str,
+    project_binding_id: str,
     verification_requirement: VerificationRequirement,
     verifier_selection: VerifierSelection,
     verifier: IndependentVerifier,
 ) -> VerificationResult:
     """Run one explicit Independent Verification and return its one immutable result.
 
+    *project_binding_id* (Structural Review Round 1, P13-R1-F2) names the already-bound
+    Project whose real Human Authority reference this route re-verifies through the
+    existing Boot owner before either selection authority reference is trusted.
+
     See ``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 for the full canonical route this
     function implements, step by step.
     """
 
     _require_canonical_identity("project_id", project_id)
+    _require_canonical_identity("project_binding_id", project_binding_id)
 
     if not isinstance(verification_requirement, VerificationRequirement):
         raise VerificationRequirementError(
@@ -158,12 +187,31 @@ def run_independent_verification(
             f"verifier_selection is not ACTIVE -- {verifier_selection.status!r} may never "
             "authorize a verifier invocation"
         )
+
+    # P13-R1-F2: neither selection_authority_ref is trusted merely because the two
+    # caller-supplied values agree with each other -- both are required to canonical-
+    # reference-equal the real, independently re-verified Human Authority reference the
+    # existing Boot owner returns for this exact project/binding. boot_project's own
+    # BootNotFoundError/BootConsistencyError (missing binding, tampered record, wrong
+    # project) propagate completely unchanged; this route neither catches nor reclassifies
+    # them, and produces no VerificationResult and calls the verifier zero times on any such
+    # rejection.
+    boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
+    real_human_authority_ref = boot_context.human_authority_ref
+    _canonical_reference_equal(
+        verification_requirement.selection_authority_ref,
+        real_human_authority_ref,
+        context=(
+            "verification_requirement.selection_authority_ref vs the real, Boot-verified "
+            "Human Authority reference"
+        ),
+    )
     _canonical_reference_equal(
         verifier_selection.selection_authority_ref,
-        verification_requirement.selection_authority_ref,
+        real_human_authority_ref,
         context=(
-            "verifier_selection.selection_authority_ref vs "
-            "verification_requirement.selection_authority_ref"
+            "verifier_selection.selection_authority_ref vs the real, Boot-verified Human "
+            "Authority reference"
         ),
     )
     _canonical_reference_equal(
@@ -189,6 +237,23 @@ def run_independent_verification(
                     f"target_refs[{index}] does not resolve for project {project_id!r}: "
                     f"{checked['kind']}/{checked['id']}"
                 )
+
+    # P13-R1-F1: the callable actually invoked must declare, on itself, the identical
+    # identity SHUKOU selected -- checked before this route ever calls it, so a mismatched,
+    # absent, or unreadable declared identity never reaches invocation and no arbitrary
+    # callable's output can be attributed to a different, selected verifier.
+    declared_identity = getattr(verifier, "verifier_identity", None)
+    if not isinstance(declared_identity, Mapping):
+        raise VerificationRequirementError(
+            "verifier does not declare a readable verifier_identity attribute -- an "
+            "unstated or unverifiable identity may never be attributed to the selected "
+            "verifier"
+        )
+    _canonical_reference_equal(
+        dict(declared_identity),
+        verifier_selection.verifier_identity,
+        context="verifier's own declared verifier_identity vs verifier_selection.verifier_identity",
+    )
 
     result_payload = verifier(requirement=verification_requirement, selection=verifier_selection)
     if not isinstance(result_payload, Mapping):

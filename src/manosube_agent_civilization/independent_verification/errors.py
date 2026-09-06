@@ -31,4 +31,20 @@ class VerifierOutputError(IndependentVerificationError):
     Raised for: a non-mapping return value, an unrecognized ``status``, a malformed
     ``input_refs``/``observations`` shape, or input references that cite nothing beyond the
     requirement's own target references -- implementation-indistinguishable provenance does
-    not satisfy an independent verification requirement (frozen semantic decision 5)."""
+    not satisfy an independent verification requirement (frozen semantic decision 5). Also
+    raised (Structural Review Round 1, P13-R1-F1) when the supplied ``verifier`` callable's
+    own declared identity does not match the SHUKOU-authorized
+    :class:`~manosube_agent_civilization.independent_verification.types.VerifierSelection` --
+    checked before the callable is ever invoked."""
+
+
+class VerificationValueError(IndependentVerificationError):
+    """A supplied value could not be safely deep-frozen (Structural Review Round 1,
+    P13-R1-F3).
+
+    Raised by every immutable value type's own construction for any nested value that is
+    neither a ``Mapping``, a ``Sequence`` (excluding ``str``/``bytes``), nor one of the
+    JSON-compatible immutable scalars (``str``, ``bytes``, ``int``, ``float``, ``bool``,
+    ``None``) -- a ``set`` or any other mutable object is refused rather than silently
+    admitted unfrozen, so a value this layer reports as ``frozen`` is always either
+    recursively immutable or was never accepted in the first place."""

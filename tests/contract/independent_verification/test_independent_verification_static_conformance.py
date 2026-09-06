@@ -27,13 +27,17 @@ _VERIFICATION_MODULES = (route_module, types_module, errors_module)
 #: Existing canonical owners this package must never import -- Issue #51's own delivery
 #: constraint ("reuse existing public owners; do not copy canonical Evidence, Difference,
 #: Authority, Reflow, Store, Boot, or Binding logic") made checkable rather than merely
-#: asserted in prose.
+#: asserted in prose. ``boot`` is deliberately absent here (Structural Review Round 1,
+#: P13-R1-F2): this package now calls the existing Boot owner's own public
+#: ``boot_project`` exactly once, to independently re-verify the real Human Authority
+#: reference rather than trusting a caller-supplied equality check -- reuse by call, not a
+#: second Boot owner. ``test_route_calls_boot_project_exactly_once`` below is the positive
+#: proof that pairs with this negative one.
 _FORBIDDEN_OWNER_MODULE_PREFIXES = (
     "manosube_agent_civilization.evidence",
     "manosube_agent_civilization.difference",
     "manosube_agent_civilization.authority",
     "manosube_agent_civilization.reflow",
-    "manosube_agent_civilization.boot",
     "manosube_agent_civilization.binding",
 )
 
@@ -200,3 +204,33 @@ def test_verification_statuses_are_exactly_the_four_issue_51_fixes() -> None:
 
 def test_selection_statuses_are_exactly_active_revoked_expired() -> None:
     assert frozenset({"ACTIVE", "REVOKED", "EXPIRED"}) == types_module.SELECTION_STATUSES
+
+
+def test_route_calls_boot_project_exactly_once() -> None:
+    """Structural Review Round 1 (P13-R1-F2): the existing Boot owner's own public
+    ``boot_project`` is the surface this route reuses to independently re-verify the real
+    Human Authority reference -- called exactly once, and only from ``route.py``."""
+
+    assert _call_site_count(route_module, "boot_project") == 1
+    for module in (types_module, errors_module):
+        assert _call_site_count(module, "boot_project") == 0
+
+
+def test_verification_value_error_is_a_distinct_independent_verification_error() -> None:
+    assert issubclass(
+        errors_module.VerificationValueError, errors_module.IndependentVerificationError
+    )
+    error_types: set[type] = {
+        errors_module.VerificationValueError,
+        errors_module.VerificationRequirementError,
+        errors_module.VerifierOutputError,
+    }
+    assert len(error_types) == 3
+
+
+def test_independent_verifier_protocol_declares_a_verifier_identity_attribute() -> None:
+    """Structural Review Round 1 (P13-R1-F1): a conforming verifier must declare its own
+    identity as a real attribute (never a method) for the route to check before invocation."""
+
+    annotations = types_module.IndependentVerifier.__annotations__
+    assert "verifier_identity" in annotations

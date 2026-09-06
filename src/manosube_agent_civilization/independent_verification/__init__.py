@@ -8,6 +8,7 @@ Adds exactly one provider-neutral, explicit Independent Verification adapter:
    result = run_independent_verification(
        store,
        project_id=project_id,
+       project_binding_id=project_binding_id,
        verification_requirement=requirement,
        verifier_selection=selection,
        verifier=verifier,
@@ -26,10 +27,22 @@ Authority Decision, a Closure receipt, a State transition, or a Merge authorizat
 an admissible verification result into existing Evidence-sufficiency semantics remains
 entirely the existing Evidence owner's own, separate concern.
 
+Structural Review Round 1 corrections: the real selection authority is now re-verified
+through the existing Boot owner rather than trusted by caller-supplied equality alone
+(P13-R1-F2); the callable actually invoked as *verifier* must declare, on itself, the
+identical identity SHUKOU selected, checked before it is ever called (P13-R1-F1); and every
+immutable value type's own deep-freeze now refuses an unsupported mutable value rather than
+returning it unfrozen (P13-R1-F3).
+
 See ``08_VERIFICATION/VERIFICATION_INDEX.md`` for the full contract set.
 """
 
-from .errors import IndependentVerificationError, VerificationRequirementError, VerifierOutputError
+from .errors import (
+    IndependentVerificationError,
+    VerificationRequirementError,
+    VerificationValueError,
+    VerifierOutputError,
+)
 from .route import run_independent_verification
 from .types import (
     SELECTION_STATUSES,
@@ -50,6 +63,7 @@ __all__ = [
     "VerificationRequirement",
     "VerificationRequirementError",
     "VerificationResult",
+    "VerificationValueError",
     "VerifierOutputError",
     "VerifierSelection",
     "run_independent_verification",

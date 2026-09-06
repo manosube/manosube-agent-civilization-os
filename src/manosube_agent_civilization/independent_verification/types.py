@@ -15,6 +15,13 @@ Every nested ``Mapping``/``Sequence`` field is deep-frozen through the identical
 imported, so this package creates no dependency on Boot's own private helper and remains, as
 Issue #51 requires, decoupled from every existing owner it reuses only by call, never by
 import of implementation detail.
+
+Structural Review Round 1 (P13-R1-F3): unlike ``boot/context.py``'s own ``_deep_freeze``,
+this module's own copy fails closed on any leaf value that is neither a ``Mapping``, a
+``Sequence``, nor a JSON-compatible immutable scalar -- a ``set`` or other mutable object is
+refused (:class:`~manosube_agent_civilization.independent_verification.errors.
+VerificationValueError`) rather than returned unfrozen. A value this layer reports as
+``frozen`` is always either recursively immutable or was never accepted at all.
 """
 
 from __future__ import annotations
@@ -24,13 +31,28 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Protocol
 
+from .errors import VerificationValueError
+
+#: The complete, closed set of JSON-compatible immutable scalar types
+#: :func:`_deep_freeze` ever returns unchanged. Every other leaf value -- a ``set``, a
+#: custom mutable object, anything not already handled by the ``Mapping``/``Sequence``
+#: branches above it -- is refused (Structural Review Round 1, P13-R1-F3) rather than
+#: silently returned as a live, still-mutable alias into whatever a ``frozen`` value type
+#: claims to own.
+_IMMUTABLE_SCALAR_TYPES: tuple[type, ...] = (str, bytes, int, float, bool, type(None))
+
 
 def _deep_freeze(value: Any) -> Any:
     if isinstance(value, Mapping):
         return MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
     if isinstance(value, Sequence) and not isinstance(value, str | bytes):
         return tuple(_deep_freeze(item) for item in value)
-    return value
+    if isinstance(value, _IMMUTABLE_SCALAR_TYPES):
+        return value
+    raise VerificationValueError(
+        "refusing to deep-freeze an unsupported mutable value -- only Mapping, Sequence, "
+        f"and JSON-compatible scalars are admitted: {value!r} ({type(value).__name__})"
+    )
 
 
 #: The four outcomes Issue #51 fixes for a :class:`VerificationResult`. ``VERIFIED`` is only
@@ -166,7 +188,21 @@ class IndependentVerifier(Protocol):
     protocol's shape lets an implementation claim automation, since ``verifier_identity`` is
     always the caller's own explicit, SHUKOU-authorized :class:`VerifierSelection` field,
     never inferred or labeled by this module.
+
+    Structural Review Round 1 (P13-R1-F1): ``verifier_selection.verifier_identity`` is not
+    merely a result label -- the callable actually invoked must declare, on itself, the
+    identical identity SHUKOU selected. A conforming implementation therefore carries its
+    own ``verifier_identity`` attribute (a plain ``Mapping``, not a method); the route
+    :func:`~manosube_agent_civilization.independent_verification.route.
+    run_independent_verification` calls checks this attribute against the supplied
+    ``VerifierSelection`` -- exact match required -- *before* ever invoking the callable, and
+    refuses (never calling it) on a mismatched, absent, or unreadable declared identity.
     """
+
+    #: The identity/capability this callable itself claims to be -- checked against the
+    #: caller's own ``VerifierSelection.verifier_identity`` before this callable is ever
+    #: invoked. Never a method: a real attribute the route reads without calling anything.
+    verifier_identity: Mapping[str, Any]
 
     def __call__(
         self, *, requirement: VerificationRequirement, selection: VerifierSelection
