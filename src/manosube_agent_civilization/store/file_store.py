@@ -757,6 +757,117 @@ class FileStateStore:
         if prior is None: raise CorruptStoreError("lineage has no genesis")
         return deepcopy(prior)
 
+    def _has_pending_transaction(self, project_id: str) -> bool:
+        """Return whether any transaction's own recovery journal exists without its
+        ``COMMITTED`` marker -- Phase 10 Structural Review Round 2 (P10-R2-F2): every crash
+        stage from journal creation through immediately before the ``COMMITTED`` marker
+        itself, not merely a dangling append-only lineage tail (:meth:`_committed_events`
+        tolerates exactly that one gap as a normal, recoverable in-flight state for its own
+        callers -- :meth:`commit`'s own CAS check in particular -- and continues to; this is
+        a separate, stricter question a caller demanding a quiescent Store asks instead)."""
+
+        recovery=self._project(project_id)/"state"/"recovery"
+        if not recovery.exists():
+            return False
+        for journal in recovery.iterdir():
+            if journal.is_dir() and not (journal/"COMMITTED").exists():
+                return True
+        return False
+
+    def _has_unexplained_lineage_event(self, project_id: str) -> bool:
+        """Return whether any non-genesis event in the raw, unfiltered append-only lineage
+        (:meth:`_events`) has no recovery-journal *directory* of its own -- Phase 10
+        Structural Review Round 3 (P10-R3-F1), sharpened in Round 4 (P10-R4-F1).
+
+        ``commit`` always creates a transaction's own recovery journal directory (``STAGES[0]``)
+        strictly before that same transaction's event is ever appended to the lineage
+        (``STAGES[4]``, ``AFTER_LINEAGE_APPEND``), and nothing in this Store ever deletes a
+        journal directory afterward -- every later public read surface that resolves a
+        transaction's own manifest (:meth:`resolve_transaction_manifest`,
+        :meth:`resolve_record`) depends on exactly that durability. So a non-genesis lineage
+        event whose journal path is not a real directory can never be a legitimate, merely-
+        not-yet-committed trailing transaction (that case always still has its journal
+        *directory*, just not yet its ``COMMITTED`` marker -- :meth:`_has_pending_transaction`'s
+        own question); it can only be external corruption -- the journal directory was
+        destroyed after the fact, taking with it the one durable record of whether that
+        transaction's own promotion ever actually completed, whether or not some other
+        filesystem entry (a regular file, a symlink) now occupies the identical path.
+        ``P10-R4-F1``: checking mere path *existence* is not enough -- a plain file written to
+        the same path reads as "exists" while carrying no journal evidence whatsoever, and
+        both :meth:`_transaction_committed` (``(path/"COMMITTED").exists()`` is simply
+        ``False`` against a non-directory *path*, exactly like an in-flight journal) and
+        :meth:`_has_pending_transaction` (its own scan requires ``journal.is_dir()`` before
+        ever looking, so a non-directory entry is silently skipped, not flagged) both leave
+        this case completely unflagged on their own -- only an explicit ``is_dir()`` check
+        here closes it. :meth:`_transaction_committed` (via :meth:`_committed_events`) answers
+        "not committed" for this identical case, by design, for its own generic callers
+        (:meth:`reconstruct`, :meth:`commit`'s own CAS check) that correctly tolerate a
+        dangling *trailing* entry -- but silently stopping there also silently discards this
+        event and hides that discard from a caller that specifically requires a *quiescent*
+        Store, one where every durable lineage event's own fate is fully accounted for.
+        ``TX-GENESIS`` is excluded here -- its own institution is settled exclusively by the
+        explicit, durable Genesis Receipt (:meth:`_genesis_transaction_committed`), immune by
+        design to a deleted (or substituted) recovery journal, and unaffected by this check."""
+
+        for event in self._events(project_id):
+            transaction_id=event["transaction_id"]
+            if transaction_id==self.GENESIS_TRANSACTION_ID:
+                continue
+            journal=self._project(project_id)/"state"/"recovery"/transaction_id
+            if not journal.is_dir():
+                return True
+        return False
+
+    def read_current_consistent(self, project_id: str) -> dict[str,Any]:
+        """The one public, read-only, quiescence-checked current-State surface (Phase 10
+        Structural Review Round 2, P10-R2-F1/F2; Round 3, P10-R3-F1).
+
+        Neither existing read surface is sufficient for a caller -- Boot -- that must both
+        perform zero writes and reject a Store that is not currently quiescent:
+        :meth:`reconstruct` silently tolerates a dangling uncommitted transaction (by design,
+        for its own generic callers) and never looks at a present ``current.json`` at all;
+        :meth:`load_current` materializes a *missing* ``current.json`` via a real write, and
+        tolerates a *present* view exactly one revision ahead as an expected, not-yet-
+        recovered gap -- both correct for those methods' own existing callers, and both
+        unchanged here.
+
+        Fails closed, with no Store mutation of any kind, if:
+
+        - any transaction's own recovery journal exists without its ``COMMITTED`` marker
+          (:meth:`_has_pending_transaction`) -- a pending transaction at any crash stage; or
+        - any non-genesis event in the durable lineage has no recovery-journal evidence of
+          its own fate at all (:meth:`_has_unexplained_lineage_event`) -- Round 3, P10-R3-F1:
+          a Store is quiescent only once *every* durable lineage event, not merely every
+          still-existing journal, resolves to committed-transaction evidence; or
+        - a present ``current.json`` view is malformed, schema-invalid, identity/fingerprint-
+          inconsistent, or diverges in any way from the committed lineage's own reconstructed
+          State (a present view is never State authority, but its own consistency is still
+          checked here -- ``PRESENT_CURRENT_VIEW_CONTRADICTION_IS_ALLOWED=false``).
+
+        A *missing* ``current.json`` is not itself an error: the committed lineage remains
+        reconstructible and authoritative regardless, and this method never writes one back
+        (``MISSING_CURRENT_VIEW_RECREATED_BY_BOOT=false``).
+        """
+
+        if self._has_pending_transaction(project_id):
+            raise CorruptStoreError(f"a transaction is pending, not yet committed: {project_id}")
+        if self._has_unexplained_lineage_event(project_id):
+            raise CorruptStoreError(
+                f"a durable lineage event has no recovery-journal evidence: {project_id}"
+            )
+        reconstructed=self.reconstruct(project_id)
+        path=self._current(project_id)
+        if not path.exists():
+            return reconstructed
+        try:
+            current=json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc:
+            raise CorruptStoreError("invalid current view") from exc
+        self._validate_state(project_id,current)
+        if canonical_json_bytes(current)!=canonical_json_bytes(reconstructed):
+            raise CorruptStoreError("current view differs from lineage")
+        return reconstructed
+
     def load_current(self, project_id: str) -> dict[str,Any]:
         reconstructed=self.reconstruct(project_id); path=self._current(project_id)
         if not path.exists():

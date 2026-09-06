@@ -1,0 +1,386 @@
+# Boot Contract (Phase 10, Issue #45)
+
+```text
+DOC_TYPE=BOOT_CONTRACT
+DOCUMENT_ID=BOOT-CONTRACT-0001
+SCHEMA_VERSION=0.1
+STATUS=CANONICAL_DESIGN
+KERNEL_ELEMENT=NONE_ADAPTER_ENTRY
+BASE_SHA=af2624ca5a73b1ae0811c320a5102552cdf6175e
+```
+
+See `BOOT_INDEX.md` for this contract set's own position and reading order.
+
+## 1. Position
+
+Boot restores one already-bound Project -- its Project Binding, Objective Revision,
+Authority Rule, and current State -- from an existing, already-initialized canonical Store
+into one immutable, non-authoritative Boot Context, so a caller can begin a Phase 8 Reflow
+cycle. It is produced by exactly one owner
+(`manosube_agent_civilization.boot.route.boot_project`) and returns exactly one
+non-authoritative projection type (`manosube_agent_civilization.boot.context.BootContext`).
+
+```text
+BOOT_OWNER_COUNT=1
+PUBLIC_BOOT_ENTRY_POINT_COUNT=1
+```
+
+## 2. Public signature
+
+```python
+boot_project(store, *, project_id: str, project_binding_id: str) -> BootContext
+```
+
+*store* is an already-constructed `FileStateStore` (or any object exposing its public read
+surfaces) over a Store root that already has a real, committed genesis for *project_id*.
+*project_id* and *project_binding_id* are explicit canonical identities the caller already
+knows -- never a locator Boot must resolve, search, or infer.
+
+## 3. Frozen semantic decisions
+
+1. **Boot is restoration, not initialization.** Boot never calls `bind_project`,
+   `FileStateStore.initialize`, or synthesizes a missing Binding/State record.
+2. **Boot is not discovery.** The caller supplies `project_id`/`project_binding_id`
+   explicitly. Boot never enumerates Store projects, scans a filesystem, inspects the
+   current working directory, or infers identity from a path/URL/directory name.
+3. **The existing Store and owners remain authoritative.** Boot uses only `FileStateStore`'s
+   public read surfaces (`resolve_record`, `read_current_consistent`) and Product Binding's
+   own public identity/reference-resolution functions. It creates no second Store/State/
+   Binding/Objective/Authority/reference-resolution owner and duplicates no identity
+   algorithm.
+4. **Lineage is the State restoration authority, and the Store must be quiescent.** Current
+   State is reconstructed through `FileStateStore.read_current_consistent`, which replays
+   exclusively from the committed append-only lineage log, performs no write of any kind, and
+   additionally requires the Store to carry no pending transaction, every durable lineage
+   event to resolve to committed-transaction evidence of its own (Structural Review Round 3,
+   P10-R3-F1), and any *present* `current.json` view to agree exactly with the committed
+   lineage (Structural Review Round 2, P10-R2-F1/F2). Neither `FileStateStore.load_current` (materializes a missing `current.json`
+   view via a real write, and tolerates a *present* view one revision ahead as an expected,
+   not-yet-recovered gap -- correct for its own existing callers, wrong for Boot) nor a bare
+   `FileStateStore.reconstruct` (silently tolerates a still-pending later transaction and never
+   looks at a present `current.json` view at all) is used directly. A materialized
+   `current.json` body, a caller-supplied State, a cache, or a fixture is never a substitute
+   for lineage reconstruction either way.
+5. **Binding identity and reference closure are reverified.** Boot resolves the exact
+   `project_binding` record, recomputes its content-addressed identity through
+   `manosube_agent_civilization.binding.verify_project_binding_identity`, and resolves its
+   Store-owned references through `manosube_agent_civilization.binding.
+   resolve_binding_references`. Missing, wrong-kind, same-id/different-body, or unresolved
+   references fail closed. Objective Revision carries no content-addressed identity of its
+   own, so this also requires the resolved body's own declared `objective_revision_id` to
+   equal `project_binding.objective_revision_ref.id` (Round 1, P10-R1-F3) -- lookup-key
+   success alone is not identity equality.
+6. **Cross-record equality is mandatory** (§5, step 8, below).
+7. **Boot Context is an ephemeral projection, not Canonical State.** `BootContext` grants no
+   Authority, closes no Difference, changes no State, and is never persisted as a second
+   canonical record. Immutability covers the full accepted graph, not merely each field's own
+   outer mapping (Round 1, P10-R1-F1): every nested mapping is rebuilt as a new
+   `types.MappingProxyType` and every nested list as a new `tuple`, recursively, bottom-up, so
+   the returned structure shares no mutable container with any body a caller or the Store
+   supplied. The dataclass itself is frozen.
+8. **Boot is fail-closed, transactionally read-only, and requires a quiescent Store.** A
+   successful Boot performs no State transition, manifest adoption, lineage append, record
+   promotion, command execution, or external write. A Store indicating corruption, partial
+   visibility, a pending transaction at any crash stage, a missing genesis institution, or an
+   inconsistent public read surface -- present-`current.json` divergence from the committed
+   lineage included (Round 2, P10-R2-F1) -- propagates its own typed Store error unchanged --
+   Boot never calls `FileStateStore.recover` and never "repairs" canonical history.
+
+## 4. Canonical owner
+
+```text
+src/manosube_agent_civilization/boot/
+├── __init__.py     public exports
+├── errors.py       BootError / BootNotFoundError / BootConsistencyError
+├── context.py      BootContext
+└── route.py        boot_project
+```
+
+`BootNotFoundError` and `BootConsistencyError` exist only for the checks this route itself
+owns (a required reference does not resolve; a cross-record invariant §5 step 8 requires
+does not hold). Every other failure mode propagates the existing owner's own typed error
+unchanged: `manosube_agent_civilization.binding.errors.BindingIdentityError`/
+`BindingValidationError` for Product Binding identity/shape,
+`manosube_agent_civilization.authority.identity.rule_id`'s own recompute for Authority Rule
+identity, and `manosube_agent_civilization.store.errors.CorruptStoreError`/
+`StateNotFoundError`/`BoundaryError` for Store-owned corruption, uninitialized-project, and
+boundary violations.
+
+## 5. Canonical successful route
+
+```text
+1. Receive an existing Store plus explicit project_id and project_binding_id.
+2. Reject either identity if it is not a plain, non-empty string, or looks like a path/URL
+   (contains "/", "\", "://", or a ".." prefix) -- never a locator.
+3. Resolve project_binding/<project_binding_id> through store.resolve_record.
+4. Require the resolved record's own declared project_binding_id to equal the requested
+   project_binding_id.
+5. Reverify Product Binding identity via
+   manosube_agent_civilization.binding.verify_project_binding_identity.
+6. Require the resolved record's own project_id to equal the requested project_id.
+7. Reject a wrong-kind objective_revision_ref/authority_policy_ref/human_authority_ref via
+   manosube_agent_civilization.binding.reject_wrong_kind_reference.
+8. Resolve Objective Revision and Authority Rule via
+   manosube_agent_civilization.binding.resolve_binding_references; require both to resolve.
+   Require the resolved objective_revision's own declared objective_revision_id to equal
+   project_binding.objective_revision_ref.id (P10-R1-F3 -- Objective Revision has no
+   content-addressed identity of its own, so lookup-key success alone does not prove this).
+   Recompute the Authority Rule's own authority_rule_id via
+   manosube_agent_civilization.authority.identity.rule_id and require it to equal both the
+   rule's own declared id and project_binding.authority_policy_ref.id. Require:
+   requested project_id
+     = project_binding.project_id = authority_rule.project_id = objective_revision.project_id
+   project_binding.human_authority_ref
+     = objective_revision.owner_authority_ref
+     = objective_revision.human_authority_ref
+     = authority_rule.declared_by
+   (canonical reference exact equality throughout -- kind correctness never substitutes for
+   identity equality).
+9. Reconstruct current State via store.read_current_consistent -- never store.load_current
+   (real write to materialize a missing current.json -- P10-R1-F2), never a bare
+   store.reconstruct (tolerates a still-pending later transaction, silently excludes a durable
+   lineage event whose own recovery journal was deleted, and never checks a present
+   current.json view -- P10-R2-F1/F2, P10-R3-F1), never store.recover. Require:
+   reconstructed_state.project_id = requested project_id
+   reconstructed_state.objective_revision_id = project_binding.objective_revision_ref.id
+10. Return one immutable BootContext (deep-frozen: every nested mapping/list recursively
+    rebuilt as MappingProxyType/tuple -- P10-R1-F1) carrying the verified Project Binding,
+    Objective Revision, Authority Rule, reconstructed current State, and Human Authority
+    reference.
+```
+
+A fresh `FileStateStore` instance and a fresh Python process reach the identical route and
+the identical result. No fake Observation, Evidence, Difference, Change, Closure, or Reflow
+record is ever created to simulate this route.
+
+## 6. Required negative and interruption proofs
+
+At minimum, `boot_project` fails closed, with zero Store mutation
+(`STATE_TRANSITION_COUNT_DELTA=0`, `LINEAGE_APPEND_COUNT_DELTA=0`, `RECORD_COUNT_DELTA=0`,
+`TRANSACTION_MANIFEST_COUNT_DELTA=0`, `EXTERNAL_OPERATION_COUNT_DELTA=0`), for:
+
+```text
+- missing project (unresolvable project_binding/project_binding_id under project_id)
+- missing Product Binding
+- wrong-kind Binding reference (objective_revision_ref/authority_policy_ref/
+  human_authority_ref)
+- project-id/path/URL/directory-name substitution
+- a valid Binding belonging to another project
+- caller-supplied project_binding_id differing from the resolved record's own declared id
+- Binding body whose content no longer reproduces its declared identity
+- unresolved Objective Revision
+- unresolved Authority Rule
+- Objective Revision declared id differing from project_binding.objective_revision_ref.id
+  even when it resolves under the requested lookup key (P10-R1-F3)
+- wrong-kind Objective/Authority reference
+- same-kind/id-different-body Objective or Authority substitution (closed by the Store's
+  own manifest-claimant tamper detection on every resolve_record call)
+- reconstructed State project mismatch
+- reconstructed State Objective Revision mismatch
+- four-way Human Authority mismatch
+- Authority Rule identity or project mismatch
+- missing, malformed, or substituted genesis receipt/reference (closed by
+  FileStateStore.read_current_consistent's own genesis-institution verification, via
+  reconstruct)
+- transaction-manifest or lineage tamper (closed by FileStateStore's own reconstruction)
+- materialized-current divergence that the existing Store classifies as corruption: a
+  *present* current.json that is malformed, schema-invalid, identity/fingerprint-
+  inconsistent, behind the committed lineage, or unrelated to it fails closed
+  (read_current_consistent, P10-R2-F1) -- a *missing* current.json is not itself corruption
+  and is never recreated by Boot
+- an interrupted/uncommitted transaction, at any crash stage -- genesis itself (a project
+  with only an interrupted genesis has no committed events at all; read_current_consistent
+  raises CorruptStoreError, never silently boot from nothing) or a later transition on an
+  already-bound project (a pending transaction's own recovery journal without its COMMITTED
+  marker is rejected regardless of how far it progressed before crashing -- P10-R2-F2); Boot
+  never calls recover() to complete either case
+- a durable lineage event -- committed or merely crash-appended -- whose own recovery journal
+  directory has been destroyed after the fact, leaving no evidence of its transaction's own
+  fate: never silently excluded in favor of the last revision Boot can still fully account for,
+  even when a still-present current.json happens to match that stale revision exactly, and
+  even when the materialized current.json view is also absent (P10-R3-F1); TX-GENESIS is
+  unaffected -- its own institution is settled exclusively by the existing Genesis Receipt
+- an uninitialized Store
+- a caller-supplied State/Binding body attempting to bypass Store resolution (structurally
+  impossible: boot_project's own signature accepts no such parameter)
+- Development Binding substituted for Product Binding (resolve_record is called with the
+  fixed record kind "project_binding"; a Development Binding record under a different kind
+  never resolves under that pair)
+- Phase 8 fixture object substituted for a production Binding (fails identity
+  reverification unless it is independently self-consistent, in which case it is a real
+  Binding, not a substitution)
+- any Boot path attempting Store initialization, recovery completion, State commit, command
+  execution, filesystem discovery, GitHub access, or Agent startup (proven by a static
+  AST/import scan over `boot/route.py`)
+```
+
+## 7. Structural Review Round 1 corrections (構造参謀, P10-R1)
+
+Three findings, each independently reproduced against the delivered HEAD before any fix, and
+each closing a real gap between the delivered code and this contract's own frozen semantic
+decisions 4, 5, and 7 (not new hardening, not a scope change):
+
+- **P10-R1-F1 (deep immutability).** The original `BootContext` wrapped only each field's
+  own outer mapping in `types.MappingProxyType`; every nested mapping and list remained the
+  caller's own mutable object. Reproduced: `ctx.project_binding["command_policy"]
+  ["max_commands_per_change"] = 999` succeeded silently. Fixed by rebuilding the full
+  accepted graph recursively (`boot/context.py::_deep_freeze`): every nested mapping becomes
+  a new `MappingProxyType`, every nested list becomes a new `tuple`, bottom-up, sharing no
+  container with any input body.
+- **P10-R1-F2 (Boot must be read-only).** The original route reconstructed current State via
+  `FileStateStore.load_current`, which materializes a missing `current.json` via a real
+  write when the committed lineage is otherwise sound. Reproduced: deleting a bound
+  project's `state/current.json` and then calling `boot_project` left the file recreated on
+  disk. Fixed by switching to `FileStateStore.reconstruct` (`boot/route.py`), the pure,
+  read-only lineage replay with no materialized-view write of any kind.
+- **P10-R1-F3 (Objective Revision declared-id binding).** Objective Revision carries no
+  content-addressed identity of its own, and the original route never checked that the
+  resolved body's own declared `objective_revision_id` agreed with the lookup key
+  (`project_binding.objective_revision_ref.id`) that produced it. Reproduced: a store
+  returning a body under the requested key whose own declared id named a different
+  Objective Revision was accepted without error. Fixed by an explicit equality check in
+  `boot/route.py` immediately after resolution.
+
+All three are exercised by dedicated tests in `tests/integration/boot/
+test_boot_project_route.py` (a deep-immutability matrix, missing-materialized-view read-only
+proofs including a full Store-tree zero-byte-delta check, and an Objective Revision
+declared-id equality matrix over a stand-in store) and by two static proofs in
+`tests/contract/boot/test_boot_route_static_conformance.py` (`store.reconstruct` is called;
+`store.load_current` is not).
+
+## 8. Structural Review Round 2 corrections (構造参謀, P10-R2)
+
+Two further findings, independently reproduced against Round 1's own delivered HEAD
+(`c99b02dded783a8e6f21d3c2fd0dd0c15f20dc42`) before any fix -- both exposed precisely by
+Round 1's own switch from `load_current` to a bare `reconstruct`, which is read-only but not
+sufficient on its own for the quiescent-Store guarantee frozen semantic decision 8 requires:
+
+- **P10-R2-F1 (present current.json corruption ignored).** A bare `reconstruct` never reads
+  `current.json` at all, so a *present* but corrupted view (wrong `project_id`, wrong
+  fingerprint, behind the committed lineage, or an unrelated-but-valid State) went completely
+  unnoticed. Reproduced: writing a `current.json` with the wrong `project_id` into a real
+  bound project's Store, then calling `boot_project`, booted successfully as if nothing were
+  wrong.
+- **P10-R2-F2 (a later pending transaction silently ignored).** `reconstruct`'s own
+  `_committed_events` deliberately tolerates a dangling, still-uncommitted lineage tail --
+  correct for its own generic callers (`commit`'s own CAS check in particular), but wrong for
+  a caller that needs the Store to be quiescent. Reproduced: committing a real second State
+  transition with a crash injected at `AFTER_LINEAGE_APPEND`, then calling `boot_project`,
+  booted successfully at the prior (genesis) revision while the later transaction sat pending.
+
+Both close on the same minimal, read-only public Store surface,
+`FileStateStore.read_current_consistent` (`store/file_store.py`): it requires
+`_has_pending_transaction` to be false (any transaction's own recovery journal without its
+`COMMITTED` marker, at any of the nine crash stages, not merely a dangling lineage tail) before
+ever reconstructing, then -- if `current.json` is present -- requires it to agree exactly with
+the reconstructed State, raising the existing `CorruptStoreError` otherwise. A *missing*
+`current.json` is still not an error and is still never written back. `FileStateStore.
+load_current`'s own existing tolerant semantics (materializes a missing view; accepts a
+present view exactly one revision ahead as a recoverable gap) are completely unchanged for its
+own existing callers -- this is a second, stricter surface alongside it, not a rewrite of it.
+`boot_project` now calls `read_current_consistent` exclusively; it calls neither
+`load_current` nor `reconstruct` directly.
+
+Exercised by `tests/integration/store/test_read_current_consistent.py` (the Store method's own
+positive routes, a present-current corruption matrix, and the full nine-stage crash-injection
+quiescence matrix), by a matching Boot-level matrix in `tests/integration/boot/
+test_boot_project_route.py`, and by two further static proofs in `tests/contract/boot/
+test_boot_route_static_conformance.py` (`read_current_consistent` is called; `reconstruct` is
+not called directly).
+
+## 9. Structural Review Round 3 corrections (構造参謀, P10-R3)
+
+One further finding, independently reproduced against Round 2's own delivered HEAD
+(`78527b06cb1d68dca57681b0b66736087216f420`) before any fix:
+
+- **P10-R3-F1 (a durable lineage event can survive deletion of its own recovery journal, and
+  be silently ignored by Boot).** `commit` always creates a transaction's own recovery journal
+  directory strictly before that same transaction's event is ever appended to the lineage, and
+  nothing in this Store ever deletes a journal directory afterward -- every later public read
+  surface that resolves a transaction's own manifest depends on exactly that durability. Round
+  2's own `_has_pending_transaction` only scans journal directories that still *exist*; it has
+  no way to notice one that is simply gone. `_transaction_committed` (via `_committed_events`,
+  via `reconstruct`) reads a wholly missing journal identically to "not yet committed" and
+  `_committed_events` correctly, deliberately stops there for its own generic callers -- but
+  silently excluding that event is exactly the wrong answer for a caller that requires a
+  quiescent Store, one where *every* durable lineage event's own fate is fully accounted for,
+  not merely every still-existing journal's. Reproduced exactly per SHUKOU's own required
+  steps: committing a real second State transition with a crash injected at
+  `AFTER_LINEAGE_APPEND`, then destroying that transaction's complete recovery journal
+  directory while leaving the prior, still-matching `current.json` untouched, then calling
+  `read_current_consistent`/`boot_project` -- both returned the stale prior (genesis) revision
+  without ever raising.
+
+Closed by extending `FileStateStore.read_current_consistent` (`store/file_store.py`) with a
+second, independent quiescence check, `_has_unexplained_lineage_event`: it walks the raw,
+unfiltered lineage (`_events`) and requires every non-genesis event's own recovery-journal
+directory to exist at all -- a wholly absent journal for a lineage-visible transaction can
+only be external corruption (the journal necessarily existed the moment that event was
+appended), never a legitimate merely-not-yet-committed trailing case (that case's journal
+still exists, just without its own `COMMITTED` marker -- `_has_pending_transaction`'s own,
+unchanged question). `TX-GENESIS` is excluded -- its own institution remains settled
+exclusively by the existing Genesis Receipt, immune by design to a deleted recovery journal.
+Neither `_committed_events`, `reconstruct`, nor `_has_pending_transaction` is changed; every
+other caller of the generic, tolerant `reconstruct`/`commit` path is unaffected.
+
+Exercised by six new tests in `tests/integration/store/test_read_current_consistent.py` (the
+exact crash-injection-then-journal-deletion scenario with a still-matching `current.json`; a
+fully committed transaction whose journal is deleted only afterward; both a deleted journal
+and a deleted `current.json` together; a genesis-only Store; a `WITH_RECORDS` genesis; and a
+fully quiescent Store with a real committed later transition, to keep the positive route
+proven true) and two new tests in `tests/integration/boot/test_boot_project_route.py` proving
+`boot_project` itself rejects both the crash-injected and the fully-committed-then-deleted
+variants, with zero Store mutation from the rejection either way.
+
+## 10. Structural Review Round 4 corrections (構造参謀, P10-R4)
+
+One further finding, independently reproduced against Round 3's own delivered HEAD
+(`0101502729dee3891f5006c619f8d1833f149027`) before any fix:
+
+- **P10-R4-F1 (recovery journal file substitution bypasses Round 3's lineage-journal check).**
+  Round 3's `_has_unexplained_lineage_event` checked only `journal.exists()` -- a plain regular
+  file (or symlink) written to the identical path where a deleted recovery journal directory
+  used to be reads as "exists" too, so it silently passed this check unflagged. Worse,
+  `_transaction_committed`'s own `(path/"COMMITTED").exists()` against a non-directory path is
+  simply `False` (identical to an in-flight journal, not an error), and `_has_pending_
+  transaction`'s own scan requires `journal.is_dir()` before ever looking at a candidate, so a
+  non-directory entry is silently skipped there too -- all three of this Store's existing
+  quiescence checks left this substitution completely unflagged. Reproduced exactly per
+  SHUKOU's own required steps: crashing a later transaction at `AFTER_LINEAGE_APPEND`, deleting
+  its complete recovery journal directory, then writing a plain regular file at the identical
+  path while leaving the prior, still-matching `current.json` untouched -- both
+  `read_current_consistent` and `boot_project` returned the stale prior revision without ever
+  raising.
+
+Closed by strengthening `FileStateStore._has_unexplained_lineage_event` (`store/file_store.py`)
+to require `journal.is_dir()` rather than mere `journal.exists()` -- a non-genesis lineage
+event's journal path must be a real directory, never merely a path that exists. `TX-GENESIS`
+remains excluded, settled exclusively by the existing Genesis Receipt, immune to a deleted or
+substituted recovery journal either way. `_has_pending_transaction`, `_committed_events`,
+`reconstruct`, and `load_current` are all unchanged.
+
+Exercised by three new tests in `tests/integration/store/test_read_current_consistent.py` (the
+exact crash-injection-then-file-substitution scenario with a still-matching `current.json`; a
+fully committed transaction whose journal directory is replaced by a file with `current.json`
+also removed; a zero-Store-mutation proof of the rejection itself) and one new test in
+`tests/integration/boot/test_boot_project_route.py` proving `boot_project` itself rejects the
+same substitution with zero Store mutation.
+
+## 11. Explicit non-claims
+
+```text
+PROJECT_DISCOVERY_IMPLEMENTED=false
+FILESYSTEM_SCAN_IMPLEMENTED=false
+SYMLINK_RUNTIME_CONTAINMENT_PROVEN=false
+STORE_PATH_INFERRED_FROM_CWD=false
+STORE_RECOVERY_AUTO_EXECUTED=false
+CLI_IMPLEMENTED=false
+COMMAND_EXECUTION_IMPLEMENTED=false
+GITHUB_ADAPTER_IMPLEMENTED=false
+EXTERNAL_OPERATION_EXECUTED=false
+RUNTIME_OBSERVATION_IMPLEMENTED=false
+TEMPORARY_AGENT_IMPLEMENTED=false
+INDEPENDENT_VERIFICATION_IMPLEMENTED=false
+AUTONOMOUS_CHANGE_IMPLEMENTED=false
+MULTI_AGENT_IMPLEMENTED=false
+```
