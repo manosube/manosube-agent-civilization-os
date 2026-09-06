@@ -531,6 +531,16 @@ def test_f7_reopen_succeeds_and_resolves_the_real_committed_closure_evaluation(
     tmp_path: Path,
 ) -> None:
     store, project_state, difference, closed = _closed_store(tmp_path)
+    # P8-R4 completion repair 4 (P8-R4-C4-F1): `contradiction_evidence_refs` is Evidence
+    # provenance (`DIFFERENCE_LIFECYCLE.md` section 8) -- its own field semantics permit only
+    # `observation_evidence`/`negative_evidence`, never `material_contradiction`. This
+    # fixture's own prior single `contradiction_ref` object, reused for both fields, was
+    # silently tolerated only because `reopen()` ran no reference validation of its own before
+    # this repair; now that it does, the real, already-committed Evidence from the CLOSED
+    # route above is used for `contradiction_evidence_refs`, and the separate,
+    # State-bookkeeping `material_contradiction` reference (`DIFFERENCE_LIFECYCLE.md`'s own
+    # `unresolved_contradictions`) is kept only for `contradiction_refs`.
+    contradiction_evidence_ref = closed["event"]["evidence_refs"][0]
     contradiction_ref = {"kind": "material_contradiction", "id": "CONTRA-" + "5" * 64}
 
     result = reopen(
@@ -542,7 +552,7 @@ def test_f7_reopen_succeeds_and_resolves_the_real_committed_closure_evaluation(
         event_revision=2,
         next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
         observation_refs=[],
-        contradiction_evidence_refs=[contradiction_ref],
+        contradiction_evidence_refs=[contradiction_evidence_ref],
         contradiction_refs=[contradiction_ref],
         reflow_instant="2026-08-30T14:00:00Z",
     )

@@ -1049,6 +1049,44 @@ def _admitted_genesis_lifecycle_event(
     return event
 
 
+def _validate_reference_admission(
+    store: Any, project_id: str, records: dict[tuple[str, str], dict[str, Any]]
+) -> None:
+    """P8-R4 completion repair 4 (P8-R4-C4-F1, SHUKOU Phase 8 final-closure round 4): the
+    one shared pre-commit typed Reference Closure admission every public route that
+    persists Store-owned records must run -- extracted from :func:`_admitted_records`'s own
+    former inline loop so :func:`reflow`/:func:`reopen` share the identical check rather
+    than each carrying (or, as `reopen` did until this repair, omitting) a route-local copy
+    (``CANONICAL_REFERENCE_ADMISSION_OWNER_COUNT=1``, ``DUPLICATE_ROUTE_LOCAL_REFERENCE_
+    GATE=false``).
+
+    *records* is the complete, about-to-be-committed record set for this one atomic
+    transaction, keyed by ``(kind, id)``. Every admitted record's own typed reference edges
+    (:func:`~manosube_agent_civilization.reflow.reference_registry.reference_edges`,
+    ``PRODUCTION_REFERENCE_REGISTRY_IS_AUTHORITATIVE=true``) must each resolve -- either
+    among *records* itself, or already committed in the Store -- before this function
+    returns; a wrong-kind, unresolved, or malformed reference raises
+    :class:`ReflowValidationError` here, before any caller proceeds to
+    ``commit_reflow``/``store.commit`` (``KIND_VALIDATION_PRECEDES_STORE_RESOLUTION=true``,
+    ``POST_COMMIT_REFERENCE_VALIDATION_SUFFICIENT=false`` -- calling ``reference_edges`` on
+    an already-persisted record after the fact is a diagnostic, never a substitute for this
+    gate having run first).
+    """
+
+    admitted_keys = set(records)
+    for (kind, record_id), body in records.items():
+        for edge in reference_edges(kind, body):
+            if (edge.target_kind, edge.target_id) in admitted_keys:
+                continue
+            if store.resolve_record(project_id, edge.target_kind, edge.target_id) is not None:
+                continue
+            raise ReflowValidationError(
+                f"admitted {kind}/{record_id} declares an unresolved reference at "
+                f"{edge.field_path}: {edge.target_kind}/{edge.target_id} -- "
+                "PERSISTED_REFERENCE_GRAPH_CLOSED requires it to resolve before commit"
+            )
+
+
 def _admitted_records(
     evaluation: dict[str, Any],
     lifecycle_event: dict[str, Any],
@@ -1389,32 +1427,21 @@ def _admitted_records(
             completion_record
         )
 
-    # P8-R4-F1 (SHUKOU Phase 8 final-closure round 4): every Store-owned reference edge any
-    # admitted record here declares must itself resolve -- either among the records this
-    # same transaction is about to persist, or already committed -- before any write.
-    # Unconditional (``REFERENCE_CLOSURE_IS_GLOBAL_REFLOW_INVARIANT=true``,
-    # ``REFERENCE_CLOSURE_OPT_IN_ALLOWED=false``, reversing Round 3's own opt-in scoping
-    # decision), and walked through the single production reference-edge registry
-    # (:mod:`.reference_registry`, ``PRODUCTION_REFERENCE_REGISTRY_IS_AUTHORITATIVE=true``)
-    # rather than a narrow, one-field, one-kind check -- so an admitted Observation's
-    # ``source_snapshot_refs``/``observation_evidence_refs``, an admitted Observation
-    # Evidence's ``observed_result.observation_ref``/``lineage`` members, an admitted
-    # Closure Evaluation's ``difference_event_head_ref``, and an admitted lifecycle event's
-    # own ``previous_event_id`` (the genesis event admitted above, in particular) are all
+    # P8-R4-F1 (SHUKOU Phase 8 final-closure round 4), typed since P8-R4-C3-F1, shared with
+    # reopen() since P8-R4-C4-F1: every Store-owned reference edge any admitted record here
+    # declares must itself resolve -- either among the records this same transaction is
+    # about to persist, or already committed -- before any write. Unconditional
+    # (``REFERENCE_CLOSURE_IS_GLOBAL_REFLOW_INVARIANT=true``,
+    # ``REFERENCE_CLOSURE_OPT_IN_ALLOWED=false``), through the single shared pre-commit
+    # admission (:func:`_validate_reference_admission`) both this function and
+    # :func:`reopen` call, so an admitted Observation's ``source_snapshot_refs``/
+    # ``observation_evidence_refs``, an admitted Observation Evidence's ``observed_result.
+    # observation_ref``/``lineage`` members, an admitted Closure Evaluation's
+    # ``difference_event_head_ref``, and an admitted lifecycle event's own
+    # ``previous_event_id`` (the genesis event admitted above, in particular) are all
     # covered by the identical vocabulary any test proving
     # ``UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0`` also imports and walks.
-    admitted_keys = set(records)
-    for (kind, record_id), body in records.items():
-        for edge in reference_edges(kind, body):
-            if (edge.target_kind, edge.target_id) in admitted_keys:
-                continue
-            if store.resolve_record(project_id, edge.target_kind, edge.target_id) is not None:
-                continue
-            raise ReflowValidationError(
-                f"admitted {kind}/{record_id} declares an unresolved reference at "
-                f"{edge.field_path}: {edge.target_kind}/{edge.target_id} -- "
-                "PERSISTED_REFERENCE_GRAPH_CLOSED requires it to resolve before commit"
-            )
+    _validate_reference_admission(store, project_id, records)
 
     return [(kind, record_id, body) for (kind, record_id), body in sorted(records.items())]
 
@@ -1806,6 +1833,21 @@ def reopen(
     records: list[tuple[str, str, dict[str, Any]]] = [
         (LIFECYCLE_EVENT_KIND, event["difference_event_id"], event),
     ]
+
+    # P8-R4-C4-F1 (SHUKOU Phase 8 final-closure round 4): reopen() used to build this
+    # records set and hand it straight to commit_reflow with no reference validation at
+    # all -- the same shared pre-commit admission reflow()'s own _admitted_records runs
+    # must run here too, before commit, not as a post-hoc diagnostic
+    # (REOPEN_TYPED_REFERENCE_ADMISSION=true, CANONICAL_REFERENCE_ADMISSION_OWNER_COUNT=1,
+    # POST_COMMIT_REFERENCE_VALIDATION_SUFFICIENT=false). Reopen's own referenced existing
+    # records (predecessor event, contradiction evidence, observation) resolve from the
+    # Store via this same function's Store-fallback clause; nothing here is Store-owned by
+    # itself, so this transaction's own admitted record set is exactly `records`.
+    _validate_reference_admission(
+        store,
+        project_id,
+        {(kind, record_id): body for kind, record_id, body in records},
+    )
 
     committed_state, committed_ref = commit_reflow(
         store,

@@ -121,6 +121,14 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
             f"reopen()'s own persisted event declares an unresolved reference at "
             f"{edge.field_path}: {edge.target_kind}/{edge.target_id}"
         )
+    # P8-R4-C4-F1 item 8.4 (positive control): the shared pre-commit admission now wired
+    # into reopen() does not merely fail to block a valid Reopen -- the REOPENED State it
+    # commits still reconstructs identically from a brand-new FileStateStore instance over
+    # only the persisted backend, never the in-process store object this test already used.
+    fresh = FileStateStore(store.root, schema_root=SCHEMA_ROOT)
+    fresh_current = fresh.load_current(project_state["project_id"])
+    assert fresh_current == result["committed_state"]
+    assert fresh.reconstruct(project_state["project_id"]) == fresh_current
 
 
 def test_reopen_refuses_an_evaluation_that_never_closed() -> None:

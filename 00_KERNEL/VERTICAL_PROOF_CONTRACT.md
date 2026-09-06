@@ -19,6 +19,7 @@ CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR_2
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR_3
+CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR_4
 ```
 
 ## 0. Revision History
@@ -388,6 +389,126 @@ Round 4 completion repair 3 (P8-R4-C3-F1, adopted, `REVIEWED_HEAD=
   `REFERENCE_BODY_SELF_DECLARED_KIND_IS_AUTHORITY=false`, `WRONG_KIND_REFERENCE_COUNT=0`,
   `RIGHT_ID_WRONG_KIND_ACCEPTED=false`, `CROSS_KIND_RECORD_SUBSTITUTION_ALLOWED=false`,
   `UNKNOWN_SOURCE_RECORD_KIND_FAILS_CLOSED=true`.
+
+Round 4 completion repair 4 (P8-R4-C4-F1_REOPEN_BYPASSES_TYPED_REFERENCE_ADMISSION, adopted,
+  `REVIEWED_HEAD=3ca0b0c106a81770baa80348d4510edf2ea55822`): 構造参謀's own further independent
+  re-observation found Repair 3's own positive-control test for `reopen()`
+  (`test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed`) was itself
+  flawed as acceptance evidence: it let `reopen()` *succeed*, persist the wrong-kind event,
+  and advance State, then called `reference_edges()` on the already-committed, returned body
+  as a post-hoc diagnostic (`POST_COMMIT_REFERENCE_VALIDATION_SUFFICIENT=false`, never an
+  acceptable fail-closed proof). The underlying cause: `reopen()` never ran any reference
+  admission at all before commit -- a structurally different code path from `reflow()`'s own
+  `_admitted_records`, not merely a narrower one. Same Round 4, same unconditional Reference
+  Closure invariant, extended to cover `reopen()` too -- explicitly not Round 5.
+
+  **Independent reproduction:** confirmed directly, before any fix, against a real committed
+  CLOSED route: a real, already-Store-committed `observation_evidence` reference substituted
+  into `reopen()`'s own `observation_refs` (a field that must always name an `observation`)
+  made `reopen()` return successfully, commit the wrong-kind event, and advance the State
+  revision -- only a caller-added, after-the-fact `reference_edges()` call detected the
+  violation, exactly as the Finding described.
+
+  **Semantic decision (SHUKOU): every public route persisting Store-owned records must run
+  typed Reference Closure admission, through one shared pre-commit owner, in the order
+  build/reproduce canonical records → verify identity/schema → validate the typed reference
+  graph → commit atomically** (`EVERY_ROUTE_PERSISTING_STORE_OWNED_RECORDS_MUST_RUN_TYPED_
+  REFERENCE_ADMISSION=true`, `REFLOW_TYPED_REFERENCE_ADMISSION=true`,
+  `REOPEN_TYPED_REFERENCE_ADMISSION=true`, `DIRECT_COMMIT_BYPASS_ALLOWED=false`,
+  `POST_COMMIT_REFERENCE_VALIDATION_SUFFICIENT=false`,
+  `REFERENCE_VALIDATION_AFTER_STATE_TRANSITION_ALLOWED=false`). `route.py`'s own former
+  inline validation loop (previously private to `_admitted_records`) is extracted into one
+  shared function, `_validate_reference_admission(store, project_id, records)`
+  (`CANONICAL_REFERENCE_ADMISSION_OWNER_COUNT=1`, `DUPLICATE_ROUTE_LOCAL_REFERENCE_GATE=
+  false`), which both `_admitted_records` (and therefore `reflow()`) and `reopen()` now call
+  over their own complete current-transaction record set, before either ever calls
+  `commit_reflow` -- placement determined by reading the real call graph (both callers already
+  lived in `route.py`, the validation loop already lived there too), requiring no new
+  cross-module coupling, no new canonical owner, and no semantic-decision escalation.
+  `FileStateStore` itself is untouched by this repair (`FILE_STATE_STORE_REMAINS_GENERIC_
+  ATOMIC_PERSISTENCE_OWNER=true`, `FILE_STATE_STORE_BECOMES_REFLOW_SEMANTIC_OWNER=false`).
+  Reopen's own referenced existing records (predecessor event, contradiction evidence,
+  observation) resolve from the Store via the identical two-clause rule
+  (`REFERENCE_RESOLVES_IF=EXACT_TYPED_TARGET_EXISTS_IN_CURRENT_ATOMIC_RECORD_SET OR
+  EXACT_TYPED_TARGET_ALREADY_EXISTS_IN_STORE`) reflow()'s own admission already used --
+  confirmed directly against `decide_reopen()`'s own `closure_evaluation_ref` construction,
+  which always names the OLD, already-committed Closure Evaluation, requiring no special
+  handling.
+
+  **Full public committing-route inventory:** a real call-graph scan of `route.py`'s own
+  module source (`tests/natural_cycle/test_vertical_proof_reference_closure.py::
+  test_every_public_route_reaching_commit_reflow_runs_the_shared_reference_admission`, an AST
+  walk, never a grep or a hardcoded name list) confirms `reflow()` and `reopen()` are the only
+  two functions in this module reaching `commit_reflow`
+  (`PUBLIC_COMMITTING_ROUTE_COUNT=2`), and that both reach the shared admission, `reflow()`
+  through `_admitted_records`, `reopen()` directly
+  (`PUBLIC_COMMITTING_ROUTE_WITH_TYPED_ADMISSION_COUNT=2`,
+  `PUBLIC_COMMITTING_ROUTE_BYPASS_COUNT=0`); a future new route calling `commit_reflow`
+  without ever reaching `_validate_reference_admission` fails this test structurally. A
+  repository-wide search confirms `store.commit` itself is called only from `reflow/
+  commit.py::commit_reflow` (already independently enforced by the R10-F2 topology check),
+  so no third committing route exists anywhere in this vertical.
+
+  **Required tests (item 8):** the flawed test is rewritten
+  (`test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed`) to assert
+  `reopen()` itself raises `ReflowValidationError`, with nothing committed -- verified from a
+  fresh `FileStateStore` instance over only the persisted backend: State revision and
+  semantic fingerprint unchanged, `reconstruct()` equal to `load_current()`, the transaction
+  recovery directory set unchanged (no new transaction directory), the `difference_event`
+  record-file set unchanged, and the Lineage log's own line count unchanged
+  (`REOPEN_RESULT_RETURNED=false`, `REOPENED_STATE_COMMITTED=false`,
+  `WRONG_KIND_EVENT_PERSISTED=false`, `TRANSACTION_MANIFEST_ABSENT=true`). A companion test
+  (`test_wrong_kind_reference_in_the_current_atomic_manifest_fails_closed_before_commit`)
+  proves the identical rejection for a wrong-kind reference that is not yet an
+  already-committed Store record but merely another member of the same current atomic
+  transaction (`WRONG_KIND_CURRENT_MANIFEST_RECORD_ACCEPTED=false`) -- proven directly
+  against the shared admission owner, per SHUKOU's own explicit allowance, since `reopen()`'s
+  own real call shape only ever mints one record per transaction and cannot naturally
+  construct a multi-record manifest itself. A third
+  (`test_reopen_missing_target_right_kind_nonexistent_id_fails_closed`) proves a correct-kind
+  reference naming a nonexistent id fails closed the same way
+  (`RIGHT_KIND_MISSING_ID_ACCEPTED=false`). The existing positive control
+  (`tests/unit/reflow/test_reopen_and_recovery.py::
+  test_material_contradiction_reopens_a_closed_difference`) is extended to reconstruct the
+  REOPENED State from a brand-new `FileStateStore` instance, proving the shared admission
+  does not merely fail to block a valid Reopen but leaves its own committed State fully
+  reconstructable.
+
+  **Legacy-fixture correction (same class as §6.5's Round 4 corrections):** independent
+  full-suite verification surfaced one further pre-existing fixture confusion, invisible until
+  `reopen()` ran any validation of its own:
+  `tests/unit/reflow/test_structural_review_correction.py::
+  test_f7_reopen_succeeds_and_resolves_the_real_committed_closure_evaluation` reused one
+  `material_contradiction`-kind reference object for both `contradiction_evidence_refs`
+  (Evidence provenance, permits only `observation_evidence`/`negative_evidence`) and
+  `contradiction_refs` (the separate, State-bookkeeping `material_contradiction` field) --
+  silently tolerated only because `reopen()` ran no reference validation at all before this
+  repair. Corrected to use the real, already-committed Evidence from its own CLOSED route for
+  `contradiction_evidence_refs`, keeping the `material_contradiction` reference only for
+  `contradiction_refs`; no other such fixture was found (repository-wide search for the
+  identical confusion pattern).
+
+  `PREVIOUS_30_FAILURE_COUNT=30`, `FINAL_30_FAILURE_COUNT=0` (unaffected by this repair).
+  `FULL_TEST_FAILURE_COUNT=0`. `tests/natural_cycle/` 117 -> 120 (+3: the rewritten test is a
+  like-for-like replacement, plus the two new negative controls and the route-inventory
+  test); `tests/unit/reflow/` unchanged at 268 (one test extended with fresh-Store assertions,
+  one legacy fixture corrected, no test added or removed); `tests/contract/reflow/` unchanged
+  at 129. Full retained suite: 17947 passed, 11 skipped, 0 failed (17944 + 3 new tests).
+  Schema validation, State Engine conformance, State Store acceptance, and development
+  binding conformance all pass unchanged. `ruff check`/`ruff format --check` clean on every
+  touched file (a pre-existing, unrelated repository-wide ruff backlog is untouched by this
+  repair and out of this repair's own scope, as in every prior round). `mypy` re-run
+  empirically on this candidate HEAD (not merely cited) still reports the identical
+  pre-existing config error; `pyproject.toml` is unmodified by any commit across this or any
+  prior round, so the identical error necessarily reproduces on both the reviewed baseline
+  HEAD and this candidate HEAD.
+
+  `CANONICAL_REFERENCE_ADMISSION_OWNER_COUNT=1`, `REFLOW_USES_SHARED_REFERENCE_ADMISSION=
+  true`, `REOPEN_USES_SHARED_REFERENCE_ADMISSION=true`, `PUBLIC_COMMITTING_ROUTE_COUNT=2`,
+  `PUBLIC_COMMITTING_ROUTE_WITH_TYPED_ADMISSION_COUNT=2`,
+  `PUBLIC_COMMITTING_ROUTE_BYPASS_COUNT=0`, `POST_COMMIT_REFERENCE_VALIDATION_SUFFICIENT=
+  false`, `WRONG_KIND_CURRENT_MANIFEST_RECORD_ACCEPTED=false`,
+  `RIGHT_KIND_MISSING_ID_ACCEPTED=false`.
 ```
 
 ---
@@ -843,14 +964,68 @@ MULTI_AGENT_IMPLEMENTED=false
 
 **Disclosed scope boundary (P8-R3-F1, widened and made unconditional by P8-R4-F1/F2/F3, the
 registry's own field coverage independently re-verified by Round 4 completion repair 2
-P8-R4-C2-F1, and its own per-field kind identity independently re-verified by Round 4
-completion repair 3 P8-R4-C3-F1): the persisted-reference-graph closure claim now covers
+P8-R4-C2-F1, its own per-field kind identity independently re-verified by Round 4 completion
+repair 3 P8-R4-C3-F1, and its own commit-path coverage independently re-verified by Round 4
+completion repair 4 P8-R4-C4-F1): the persisted-reference-graph closure claim now covers
 every Store-owned reference edge, not an explicit, narrower vocabulary a caller had to opt
 into; this coverage is proven complete against each kind's own live schema, not merely
-against the registry's own prior self-consistency; and each edge's own canonical identity
+against the registry's own prior self-consistency; each edge's own canonical identity
 now includes the specific field-path's own expected target kind, not merely a reference's
 self-declared one, so a right-id/wrong-kind substitution is refused rather than silently
-accepted or resolved against a different, coincidentally-shared id.**
+accepted or resolved against a different, coincidentally-shared id; and this validation now
+runs, through one shared pre-commit admission owner, before every public route's own commit
+-- never only on the route (`reflow()`) this vertical's own natural CLOSED/BLOCKED/RETAINED
+route happens to exercise, and never as a post-commit diagnostic a caller must remember to
+run for itself.**
+
+**Withdrawn (P8-R4-C4-F1): `reopen()` no longer bypasses the shared admission, and the
+implicit non-claim carried by Completion Repair 2/3's own Revision History entries above (that
+`reopen()` "mints its own event directly and never runs the generic admission scan") is
+withdrawn.** 構造参謀's own further independent re-observation of this repair's own delivered
+HEAD found that Repair 3's positive-control test for `reopen()`
+(`test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed`, as it stood after
+Repair 3) let `reopen()` *succeed*, persist the wrong-kind event, and advance State, only
+*then* calling `reference_edges()` on the returned, already-committed body as a post-hoc
+diagnostic -- `POST_COMMIT_REFERENCE_VALIDATION_SUFFICIENT=false`, never an acceptable
+fail-closed proof. Reproduced directly, before any fix: a real, already-Store-committed
+`observation_evidence` reference substituted into `reopen()`'s own `observation_refs` (a field
+that must always name an `observation`) made `reopen()` return successfully, commit the
+wrong-kind event, and advance the State revision -- only a caller-added, after-the-fact
+`reference_edges()` call detected the violation. `route.py`'s own inline reference-validation
+loop (formerly private to `_admitted_records`) is now extracted into one shared function,
+`_validate_reference_admission(store, project_id, records)`
+(`CANONICAL_REFERENCE_ADMISSION_OWNER_COUNT=1`, `DUPLICATE_ROUTE_LOCAL_REFERENCE_GATE=false`),
+which both `_admitted_records` (and therefore `reflow()`) and `reopen()` now call over their
+own complete current-transaction record set, before either ever calls `commit_reflow`
+(`REFLOW_TYPED_REFERENCE_ADMISSION=true`, `REOPEN_TYPED_REFERENCE_ADMISSION=true`,
+`KIND_VALIDATION_PRECEDES_STORE_RESOLUTION=true`). A real call-graph scan of `route.py`'s own
+module source (`tests/natural_cycle/test_vertical_proof_reference_closure.py::
+test_every_public_route_reaching_commit_reflow_runs_the_shared_reference_admission`) confirms
+these are the only two public routes reaching `commit_reflow`
+(`PUBLIC_COMMITTING_ROUTE_COUNT=2`), both now reaching the shared admission
+(`PUBLIC_COMMITTING_ROUTE_WITH_TYPED_ADMISSION_COUNT=2`,
+`PUBLIC_COMMITTING_ROUTE_BYPASS_COUNT=0`) -- a future new route calling `commit_reflow`
+without ever reaching `_validate_reference_admission` would fail that test structurally, not
+by a name list falling out of date. The rewritten test
+(`test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed`) now asserts
+`reopen()` itself raises `ReflowValidationError` and that nothing commits (State revision,
+semantic fingerprint, Lineage line count, `difference_event` record set, and transaction
+recovery directories all verified unchanged, from a fresh `FileStateStore` instance over only
+the persisted backend); a companion test
+(`test_wrong_kind_reference_in_the_current_atomic_manifest_fails_closed_before_commit`) proves
+the identical rejection for a wrong-kind reference that is not yet an already-committed Store
+record but merely another member of the same current atomic transaction
+(`WRONG_KIND_CURRENT_MANIFEST_RECORD_ACCEPTED=false`), proven directly against the shared
+admission owner since `reopen()`'s own real call shape only ever mints one record per
+transaction; a third
+(`test_reopen_missing_target_right_kind_nonexistent_id_fails_closed`) proves a correct-kind
+reference naming a nonexistent id fails the same way
+(`RIGHT_KIND_MISSING_ID_ACCEPTED=false`); and the existing positive control
+(`tests/unit/reflow/test_reopen_and_recovery.py::
+test_material_contradiction_reopens_a_closed_difference`) is extended to reconstruct the
+REOPENED State from a brand-new `FileStateStore` instance, proving the shared admission does
+not merely fail to block a valid Reopen but leaves its own committed State fully
+reconstructable.**
 
 ```text
 AUXILIARY_VERIFICATION_EVIDENCE_ROLE=PROVENANCE_ONLY
@@ -880,6 +1055,17 @@ CROSS_KIND_RECORD_SUBSTITUTION_ALLOWED=false
 UNKNOWN_SOURCE_RECORD_KIND_FAILS_CLOSED=true
 PERSISTED_REFERENCE_GRAPH_CLOSED=true
 UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0
+CANONICAL_REFERENCE_ADMISSION_OWNER_COUNT=1
+DUPLICATE_ROUTE_LOCAL_REFERENCE_GATE=false
+REFLOW_TYPED_REFERENCE_ADMISSION=true
+REOPEN_TYPED_REFERENCE_ADMISSION=true
+POST_COMMIT_REFERENCE_VALIDATION_SUFFICIENT=false
+REFERENCE_VALIDATION_AFTER_STATE_TRANSITION_ALLOWED=false
+PUBLIC_COMMITTING_ROUTE_COUNT=2
+PUBLIC_COMMITTING_ROUTE_WITH_TYPED_ADMISSION_COUNT=2
+PUBLIC_COMMITTING_ROUTE_BYPASS_COUNT=0
+WRONG_KIND_CURRENT_MANIFEST_RECORD_ACCEPTED=false
+RIGHT_KIND_MISSING_ID_ACCEPTED=false
 ```
 
 `PERSISTED_REFERENCE_GRAPH_CLOSED`/`UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0` now hold,

@@ -699,22 +699,9 @@ def test_crash_at_every_stage_never_exposes_a_partial_genesis_or_revision_one_ev
 # --- P8-R4-C3-F1: field-specific target-kind identity, proven through the real public route --- #
 
 
-def test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed(
-    tmp_path: Path,
-) -> None:
-    """P8-R4-C3-F1, exercised against a real persisted record rather than a synthetic one:
-    ``difference_event.observation_refs`` must always name an ``observation``. Every
-    classification-A field on ``reflow()``'s own CLOSED/BLOCKED/RETAINED routes turns out to
-    already be independently re-verified by an earlier, established gate before it is ever
-    minted (P8-R1-F5/P8-R2-F2's canonical-reference-equality preflight for
-    ``observation_refs`` in particular) -- substituting a wrong-kind value there trips that
-    earlier gate first, for an unrelated reason, never reaching this one. ``reopen()``'s own
-    ``observation_refs`` carries no such independent re-verification (disclosed scope
-    decision, Completion Repair 2: ``reopen()`` mints its own event directly and never runs
-    the generic admission scan), so a real ``reopen()`` call's own real, persisted event body
-    is the one natural place a wrong-kind value genuinely reaches this Finding's own check
-    unobstructed -- proven here by feeding that exact real body through the one production
-    registry, the same call ``_admitted_records`` itself would make had ``reopen()`` run it."""
+def _reopen_world(tmp_path: Path) -> dict[str, Any]:
+    """Shared setup for the P8-R4-C4-F1 negative/positive tests below: a real committed
+    CLOSED route, ready to be reopened."""
 
     from tests.reflow_helpers import (
         candidate_closure_request,
@@ -723,8 +710,6 @@ def test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed(
         fixture_policy,
         store_ready_for_closure,
     )
-
-    from manosube_agent_civilization.reflow.route import reopen
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     project_state = store_ready_for_closure(store)
@@ -745,37 +730,182 @@ def test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed(
         observation_refs=closure_request["reobservation"]["after_observation_refs"],
         reflow_instant="2026-08-30T12:00:00Z",
     )
-    # A real, already-Store-committed Evidence reference (from the CLOSED route above),
-    # named under its own true kind (observation_evidence) but planted in a field that
-    # requires observation -- real, resolvable at its own true kind, and the wrong kind for
-    # this particular field.
+    return {
+        "store": store,
+        "project_state": project_state,
+        "difference": difference,
+        "closed": closed,
+    }
+
+
+def _committed_transaction_dirs(store: Any, project_id: str) -> set[str]:
+    recovery_root = store.root / "projects" / project_id / "state" / "recovery"
+    if not recovery_root.is_dir():
+        return set()
+    return {p.name for p in recovery_root.iterdir() if p.is_dir()}
+
+
+def _difference_event_record_ids(store: Any, project_id: str) -> set[str]:
+    kind_dir = store.root / "projects" / project_id / "records" / "difference_event"
+    if not kind_dir.is_dir():
+        return set()
+    return {p.stem for p in kind_dir.glob("*.json")}
+
+
+def _lineage_line_count(store: Any, project_id: str) -> int:
+    path = store.root / "projects" / project_id / "events" / "transitions.jsonl"
+    if not path.is_file():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """P8-R4-C4-F1 item 8.1, rewritten from the flawed P8-R4-C3-F1 version this Finding
+    itself identifies: that earlier test let ``reopen()`` *succeed*, persist the wrong-kind
+    event, and advance State, only *then* calling ``reference_edges`` on the returned body as
+    a post-hoc diagnostic -- ``POST_COMMIT_REFERENCE_VALIDATION_SUFFICIENT=false``, so that
+    was never an acceptable fail-closed proof. ``reopen()`` now runs the same shared
+    pre-commit admission ``reflow()`` does (``REOPEN_TYPED_REFERENCE_ADMISSION=true``), so a
+    real, already-Store-committed Evidence reference -- resolvable at its own true kind
+    (``observation_evidence``), the wrong kind for a field that requires ``observation`` --
+    must make ``reopen()`` itself raise, before any commit: nothing persisted, State/Lineage
+    untouched."""
+
+    from manosube_agent_civilization.reflow.route import reopen
+
+    world = _reopen_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_state"]["project_id"]
+    difference = world["difference"]
+    closed = world["closed"]
+
+    # A real, already-Store-committed Evidence reference, named under its own true kind
+    # (observation_evidence) but planted in a field that requires observation -- real,
+    # resolvable at its own true kind, and the wrong kind for this particular field.
     wrong_kind_but_real_ref = closed["event"]["evidence_refs"][0]
-    result = reopen(
-        store,
-        project_id=project_state["project_id"],
-        difference=difference,
-        trigger="MATERIAL_CONTRADICTION",
-        previous_event_id=closed["event"]["difference_event_id"],
-        event_revision=2,
-        next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
-        observation_refs=[wrong_kind_but_real_ref],
-        contradiction_evidence_refs=[closed["event"]["evidence_refs"][0]],
-        contradiction_refs=[{"kind": "material_contradiction", "id": "CONTRA-" + "5" * 64}],
-        reflow_instant="2026-08-30T14:00:00Z",
-    )
-    assert result["decision"]["to_status"] == "REOPENED"
-    # The substituted reference is not merely unresolvable -- it genuinely resolves, at its
-    # own true kind, proving this is a kind violation and not a disguised missing-id case.
     assert (
         store.resolve_record(
-            project_state["project_id"],
-            wrong_kind_but_real_ref["kind"],
-            wrong_kind_but_real_ref["id"],
+            project_id, wrong_kind_but_real_ref["kind"], wrong_kind_but_real_ref["id"]
         )
         is not None
     )
+
+    before_current = store.load_current(project_id)
+    before_tx_dirs = _committed_transaction_dirs(store, project_id)
+    before_event_ids = _difference_event_record_ids(store, project_id)
+    before_lineage_count = _lineage_line_count(store, project_id)
+
     with pytest.raises(ReflowValidationError, match="not permitted here"):
-        reference_edges("difference_event", result["event"])
+        reopen(
+            store,
+            project_id=project_id,
+            difference=difference,
+            trigger="MATERIAL_CONTRADICTION",
+            previous_event_id=closed["event"]["difference_event_id"],
+            event_revision=2,
+            next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
+            observation_refs=[wrong_kind_but_real_ref],
+            contradiction_evidence_refs=[closed["event"]["evidence_refs"][0]],
+            contradiction_refs=[{"kind": "material_contradiction", "id": "CONTRA-" + "5" * 64}],
+            reflow_instant="2026-08-30T14:00:00Z",
+        )
+
+    # REOPEN_DECISION_COMMITTED=false / REOPENED_STATE_COMMITTED=false /
+    # STATE_REVISION_UNCHANGED=true / STATE_FINGERPRINT_UNCHANGED=true /
+    # LINEAGE_EVENT_COUNT_UNCHANGED=true / WRONG_KIND_EVENT_PERSISTED=false /
+    # TRANSACTION_MANIFEST_ABSENT=true: verified directly against the persisted backend,
+    # never against the (never returned) call result.
+    fresh = FileStateStore(store.root, schema_root=SCHEMA_ROOT)
+    after_current = fresh.load_current(project_id)
+    assert after_current == before_current
+    assert after_current["state_revision"] == before_current["state_revision"]
+    assert after_current["semantic_fingerprint"] == before_current["semantic_fingerprint"]
+    assert fresh.reconstruct(project_id) == after_current
+    assert _committed_transaction_dirs(fresh, project_id) == before_tx_dirs
+    assert _difference_event_record_ids(fresh, project_id) == before_event_ids
+    assert _lineage_line_count(fresh, project_id) == before_lineage_count
+
+
+def test_wrong_kind_reference_in_the_current_atomic_manifest_fails_closed_before_commit(
+    tmp_path: Path,
+) -> None:
+    """P8-R4-C4-F1 item 8.2: the shared pre-commit admission owner rejects a wrong-kind
+    reference even when the wrong-kind record with that same id is not an already-committed
+    Store record, but merely another member of the *same* current atomic transaction's own
+    record set (``WRONG_KIND_CURRENT_MANIFEST_RECORD_ACCEPTED=false``). ``reopen()``'s own
+    real call shape only ever mints one lifecycle-event record per transaction, so it cannot
+    itself naturally construct a multi-record atomic manifest to exercise this; SHUKOU's own
+    adoption message explicitly permits proving it directly against the shared admission
+    owner instead, rather than unnaturally extending the public route to force the shape."""
+
+    from tests.reflow_helpers import store_ready_for_closure
+
+    from manosube_agent_civilization.reflow.route import _validate_reference_admission
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    project_id = project_state["project_id"]
+
+    shared_id = "SHARED-" + "1" * 64
+    # Same transaction admits both a difference_event that names `shared_id` under the
+    # `observation` field, and a *different-kind* record that happens to reuse that
+    # exact id -- the id resolves in the current manifest, but only at the wrong kind.
+    records: dict[tuple[str, str], dict[str, Any]] = {
+        ("difference_event", "EVT-" + "2" * 64): {
+            "observation_refs": [{"kind": "observation", "id": shared_id}],
+        },
+        ("observation_evidence", shared_id): {"observed_result": {}},
+    }
+    assert store.resolve_record(project_id, "observation", shared_id) is None
+    with pytest.raises(ReflowValidationError, match="unresolved reference"):
+        _validate_reference_admission(store, project_id, records)
+
+
+def test_reopen_missing_target_right_kind_nonexistent_id_fails_closed(tmp_path: Path) -> None:
+    """P8-R4-C4-F1 item 8.3: a correct-kind reference naming an id that simply does not
+    exist -- neither in the Store nor in the current transaction -- fails closed the same
+    way a wrong-kind reference does (``RIGHT_KIND_MISSING_ID_ACCEPTED=false``), through the
+    same shared admission, now wired into the real public ``reopen()`` route."""
+
+    from manosube_agent_civilization.reflow.route import reopen
+
+    world = _reopen_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_state"]["project_id"]
+    difference = world["difference"]
+    closed = world["closed"]
+
+    missing_observation_ref = {"kind": "observation", "id": "OBS-" + "0" * 64}
+    assert (
+        store.resolve_record(
+            project_id, missing_observation_ref["kind"], missing_observation_ref["id"]
+        )
+        is None
+    )
+
+    before_current = store.load_current(project_id)
+
+    with pytest.raises(ReflowValidationError, match="unresolved reference"):
+        reopen(
+            store,
+            project_id=project_id,
+            difference=difference,
+            trigger="MATERIAL_CONTRADICTION",
+            previous_event_id=closed["event"]["difference_event_id"],
+            event_revision=2,
+            next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
+            observation_refs=[missing_observation_ref],
+            contradiction_evidence_refs=[closed["event"]["evidence_refs"][0]],
+            contradiction_refs=[{"kind": "material_contradiction", "id": "CONTRA-" + "5" * 64}],
+            reflow_instant="2026-08-30T14:00:00Z",
+        )
+
+    fresh = FileStateStore(store.root, schema_root=SCHEMA_ROOT)
+    after_current = fresh.load_current(project_id)
+    assert after_current == before_current
+    assert fresh.reconstruct(project_id) == after_current
 
 
 def test_right_kind_right_id_observation_ref_passes_through_the_real_route(tmp_path: Path) -> None:
@@ -789,3 +919,55 @@ def test_right_kind_right_id_observation_ref_passes_through_the_real_route(tmp_p
     for ref in event["observation_refs"]:
         assert ref["kind"] == "observation"
         assert result["store"].resolve_record(fx.PROJECT_ID, ref["kind"], ref["id"]) is not None
+
+
+# --- P8-R4-C4-F1 item 9: full public committing-route inventory ---------------------------- #
+
+
+def test_every_public_route_reaching_commit_reflow_runs_the_shared_reference_admission() -> None:
+    """A real call-graph scan of ``route.py``'s own module source -- not a grep, not a
+    hardcoded name list -- proving ``PUBLIC_COMMITTING_ROUTE_COUNT=2`` (``reflow``,
+    ``reopen``), ``PUBLIC_COMMITTING_ROUTE_WITH_TYPED_ADMISSION_COUNT=2``, and
+    ``PUBLIC_COMMITTING_ROUTE_BYPASS_COUNT=0``: every top-level function in this module whose
+    own body reaches a call to ``commit_reflow`` also reaches a call to the one shared
+    admission owner (``_validate_reference_admission``), directly or through an intermediate
+    helper such as ``_admitted_records``. A future new route that called ``commit_reflow``
+    without ever reaching ``_validate_reference_admission`` would fail this test, structurally
+    -- no update to a name list is what makes it pass or fail."""
+
+    import ast
+    import inspect
+
+    from manosube_agent_civilization.reflow import route as route_module
+
+    tree = ast.parse(inspect.getsource(route_module))
+
+    calls: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            called: set[str] = set()
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    if isinstance(sub.func, ast.Name):
+                        called.add(sub.func.id)
+                    elif isinstance(sub.func, ast.Attribute):
+                        called.add(sub.func.attr)
+            calls[node.name] = called
+
+    def reaches(fn_name: str, target: str, seen: set[str]) -> bool:
+        if fn_name in seen:
+            return False
+        seen.add(fn_name)
+        direct = calls.get(fn_name, set())
+        if target in direct:
+            return True
+        return any(callee in calls and reaches(callee, target, seen) for callee in direct)
+
+    committing_routes = {name for name, called in calls.items() if "commit_reflow" in called}
+    assert committing_routes == {"reflow", "reopen"}
+    for name in sorted(committing_routes):
+        assert reaches(name, "_validate_reference_admission", set()), (
+            f"{name} calls commit_reflow without reaching the shared pre-commit reference "
+            "admission (_validate_reference_admission) -- PUBLIC_COMMITTING_ROUTE_BYPASS_"
+            "COUNT must be 0"
+        )
