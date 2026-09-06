@@ -92,7 +92,8 @@ def _closure_report(store: Any, project_id: str) -> dict[str, Any]:
     edges_checked: set[tuple[str, str]] = set()
     unresolved: list[tuple[str, str, str, str]] = []
     for kind, record_id, body in manifest_records:
-        for ref_kind, ref_id in reference_edges(kind, body):
+        for edge in reference_edges(kind, body):
+            ref_kind, ref_id = edge.target_kind, edge.target_id
             edges_checked.add((ref_kind, ref_id))
             if store.resolve_record(project_id, ref_kind, ref_id) is None:
                 unresolved.append((kind, record_id, ref_kind, ref_id))
@@ -510,7 +511,7 @@ def test_source_snapshot_edges_are_actually_emitted_by_the_production_registry()
         "observation_evidence_refs": [],
     }
     edges = reference_edges("observation", observation_body)
-    assert ("source_snapshot", "SNAP-REAL-0001") in edges
+    assert ("source_snapshot", "SNAP-REAL-0001") in {(e.target_kind, e.target_id) for e in edges}
 
 
 def test_missing_source_snapshot_fails_closed_before_any_write(tmp_path: Path) -> None:
@@ -693,3 +694,98 @@ def test_crash_at_every_stage_never_exposes_a_partial_genesis_or_revision_one_ev
     assert report["unresolved"] == []
     kinds_seen = {kind for kind, _, _ in report["manifest_records"]}
     assert "difference_event" in kinds_seen
+
+
+# --- P8-R4-C3-F1: field-specific target-kind identity, proven through the real public route --- #
+
+
+def test_wrong_kind_reference_in_a_real_reopen_events_own_body_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """P8-R4-C3-F1, exercised against a real persisted record rather than a synthetic one:
+    ``difference_event.observation_refs`` must always name an ``observation``. Every
+    classification-A field on ``reflow()``'s own CLOSED/BLOCKED/RETAINED routes turns out to
+    already be independently re-verified by an earlier, established gate before it is ever
+    minted (P8-R1-F5/P8-R2-F2's canonical-reference-equality preflight for
+    ``observation_refs`` in particular) -- substituting a wrong-kind value there trips that
+    earlier gate first, for an unrelated reason, never reaching this one. ``reopen()``'s own
+    ``observation_refs`` carries no such independent re-verification (disclosed scope
+    decision, Completion Repair 2: ``reopen()`` mints its own event directly and never runs
+    the generic admission scan), so a real ``reopen()`` call's own real, persisted event body
+    is the one natural place a wrong-kind value genuinely reaches this Finding's own check
+    unobstructed -- proven here by feeding that exact real body through the one production
+    registry, the same call ``_admitted_records`` itself would make had ``reopen()`` run it."""
+
+    from tests.reflow_helpers import (
+        candidate_closure_request,
+        fixture_difference,
+        fixture_genesis_lifecycle_event,
+        fixture_policy,
+        store_ready_for_closure,
+    )
+
+    from manosube_agent_civilization.reflow.route import reopen
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    project_state = store_ready_for_closure(store)
+    difference = fixture_difference()
+    policy = fixture_policy(difference)
+    current_state = {
+        "revision": project_state["state_revision"],
+        "fingerprint": project_state["semantic_fingerprint"],
+    }
+    closure_request = candidate_closure_request(difference, policy, current_state=current_state)
+    closed = reflow(
+        store,
+        project_id=project_state["project_id"],
+        previous_event_id=difference["genesis_event_ref"]["id"],
+        genesis_lifecycle_event=fixture_genesis_lifecycle_event(difference),
+        event_revision=1,
+        closure_request=closure_request,
+        observation_refs=closure_request["reobservation"]["after_observation_refs"],
+        reflow_instant="2026-08-30T12:00:00Z",
+    )
+    # A real, already-Store-committed Evidence reference (from the CLOSED route above),
+    # named under its own true kind (observation_evidence) but planted in a field that
+    # requires observation -- real, resolvable at its own true kind, and the wrong kind for
+    # this particular field.
+    wrong_kind_but_real_ref = closed["event"]["evidence_refs"][0]
+    result = reopen(
+        store,
+        project_id=project_state["project_id"],
+        difference=difference,
+        trigger="MATERIAL_CONTRADICTION",
+        previous_event_id=closed["event"]["difference_event_id"],
+        event_revision=2,
+        next_observation_ref={"kind": "next_observation_request", "id": "OBS-REQ-" + "9" * 64},
+        observation_refs=[wrong_kind_but_real_ref],
+        contradiction_evidence_refs=[closed["event"]["evidence_refs"][0]],
+        contradiction_refs=[{"kind": "material_contradiction", "id": "CONTRA-" + "5" * 64}],
+        reflow_instant="2026-08-30T14:00:00Z",
+    )
+    assert result["decision"]["to_status"] == "REOPENED"
+    # The substituted reference is not merely unresolvable -- it genuinely resolves, at its
+    # own true kind, proving this is a kind violation and not a disguised missing-id case.
+    assert (
+        store.resolve_record(
+            project_state["project_id"],
+            wrong_kind_but_real_ref["kind"],
+            wrong_kind_but_real_ref["id"],
+        )
+        is not None
+    )
+    with pytest.raises(ReflowValidationError, match="not permitted here"):
+        reference_edges("difference_event", result["event"])
+
+
+def test_right_kind_right_id_observation_ref_passes_through_the_real_route(tmp_path: Path) -> None:
+    """The positive control this Finding itself requires: the real, correctly-kinded
+    ``observation`` reference the successful route already uses is unaffected --
+    ``RIGHT_ID_RIGHT_KIND_ACCEPTED=true``, not merely "wrong kind rejected"."""
+
+    result = run_vertical_proof(tmp_path)
+    assert result["reflow_result"]["decision"]["to_status"] == "CLOSED"
+    event = result["reflow_result"]["event"]
+    for ref in event["observation_refs"]:
+        assert ref["kind"] == "observation"
+        assert result["store"].resolve_record(fx.PROJECT_ID, ref["kind"], ref["id"]) is not None

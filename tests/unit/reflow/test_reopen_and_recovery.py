@@ -71,6 +71,16 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
     policy = fixture_policy(difference)
     closed = _close(store, project_state, difference, policy)
 
+    # P8-R4 completion repair 3 (P8-R4-C3-F1): `contradiction_evidence_refs` is Evidence
+    # provenance ("contradiction Evidence refs", DIFFERENCE_LIFECYCLE.md section 8) -- its
+    # own field semantics permit only `observation_evidence`/`negative_evidence`, never
+    # `material_contradiction`. Reused here from the CLOSED route's own already-committed
+    # Evidence (real and Store-resolvable), never a bespoke unresolvable placeholder.
+    # `contradiction_refs` is the separate, unrelated State-bookkeeping field
+    # (`unresolved_contradictions`), whose own real kind is `material_contradiction` --
+    # kept as `CONTRADICTION_REF`.
+    contradiction_evidence_ref = closed["event"]["evidence_refs"][0]
+
     result = reopen(
         store,
         project_id=project_state["project_id"],
@@ -80,7 +90,7 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
         event_revision=2,
         next_observation_ref=REOPEN_NEXT_OBSERVATION_REF,
         observation_refs=[],
-        contradiction_evidence_refs=[CONTRADICTION_REF],
+        contradiction_evidence_refs=[contradiction_evidence_ref],
         contradiction_refs=[CONTRADICTION_REF],
         reflow_instant="2026-08-30T14:00:00Z",
     )
@@ -103,9 +113,13 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
     # never treats as Store-owned, such as this fixture's own material_contradiction-kind
     # CONTRADICTION_REF), not merely that reflow()'s own CLOSED/BLOCKED/RETAINED admission
     # path does.
-    for ref_kind, ref_id in reference_edges("difference_event", result["event"]):
-        assert store.resolve_record(project_state["project_id"], ref_kind, ref_id) is not None, (
-            f"reopen()'s own persisted event declares an unresolved reference: {ref_kind}/{ref_id}"
+    for edge in reference_edges("difference_event", result["event"]):
+        assert (
+            store.resolve_record(project_state["project_id"], edge.target_kind, edge.target_id)
+            is not None
+        ), (
+            f"reopen()'s own persisted event declares an unresolved reference at "
+            f"{edge.field_path}: {edge.target_kind}/{edge.target_id}"
         )
 
 

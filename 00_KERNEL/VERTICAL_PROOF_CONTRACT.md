@@ -18,6 +18,7 @@ CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_3
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR_2
+CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR_3
 ```
 
 ## 0. Revision History
@@ -280,6 +281,113 @@ Round 4 completion repair 2 (P8-R4-C2-F1, adopted, `REVIEWED_HEAD=
   `REGISTRY_OMITTED_STORE_OWNED_REFERENCE_FIELD_COUNT=0`,
   `REGISTRY_EXTRA_UNDECLARED_REFERENCE_FIELD_COUNT=0`,
   `PERSISTED_RECORD_KIND_INVENTORY_COMPLETE=true`.
+
+Round 4 completion repair 3 (P8-R4-C3-F1, adopted, `REVIEWED_HEAD=
+  6676ba78ac9473275bb1a8d0e6f6823f69f9e8f8`): 構造参謀's own further independent
+  re-observation found the widened registry's own *edge identity* still incomplete --
+  `reference_edges()` trusted a reference's own self-declared `kind` as the authority for
+  what it names, never checking it against the specific field's own expected kind. A
+  right-id, wrong-kind reference (e.g. an `observation_evidence` id planted in
+  `difference_event.observation_refs`, a field that must always name an `observation`) was
+  silently accepted, and -- if a real record of that wrong kind happened to share the id --
+  resolved. Same Round 4, same three Findings, same unconditional invariant -- a further
+  completion repair.
+
+  **Independent reproduction:** confirmed directly against the delivered `_edge()` helper --
+  it accepted any reference whose self-declared `kind` was merely a member of
+  `STORE_OWNED_REFERENCE_KINDS`, with no field-specific check at all; `route.py`'s own
+  admission loop then passed that same untyped `ref_kind` straight into
+  `store.resolve_record`, so a right-ID/wrong-kind reference existing in the Store under its
+  own (different, but also Store-owned) kind would resolve. The completeness suite's own
+  uniform sentinel (`_SENTINEL_TARGET_KIND = "observation_evidence"` for every field)
+  independently confirmed the same gap: it never exercised a field requiring any other kind.
+
+  **Semantic decision (SHUKOU): canonical reference-edge identity is now source-record-kind +
+  source-field-path + expected-target-kind + target-id** (`REFERENCE_BODY_SELF_DECLARED_
+  KIND_IS_AUTHORITY=false`, `FIELD_SPECIFIC_TARGET_KIND_REQUIRED=true`,
+  `ACTUAL_KIND_MUST_EQUAL_EXPECTED_KIND=true`, `CROSS_KIND_ID_ALIASING_ALLOWED=false`,
+  `CROSS_KIND_RECORD_SUBSTITUTION_ALLOWED=false`). `reflow/reference_registry.py` now carries
+  `FIELD_EXPECTED_TARGET_KINDS`, a field-path-keyed table of the closed kind-set each
+  classification-A field may actually carry (one kind for most fields; an explicit finite set
+  -- never an unbounded "any Store-owned kind" -- for the handful real production code
+  populates with more than one, e.g. `evidence_refs`-shaped fields admitting
+  `observation_evidence` or `negative_evidence`). `reference_edges()` now returns
+  `TypedReferenceEdge` objects (`source_kind`, `field_path`, `target_kind`, `target_id` --
+  `BARE_KIND_ID_TUPLE_SUFFICIENT=false`) and validates every reference's actual kind against
+  its own field's expected set *before* returning an edge for any caller to resolve
+  (`KIND_VALIDATION_PRECEDES_STORE_RESOLUTION=true`); a violation raises
+  `ReflowValidationError` naming the exact field/path and index. `route.py`'s admission loop
+  is updated to the typed edges and its own diagnostic now names the failing field path.
+
+  The full kind table is not guessed: every field this vertical shares with
+  `difference/graph.py` (`REFERENCE_EDGES`, an already-adopted, schema-cross-validated typed
+  registry for Difference's own emitted predecessor bundle) is cross-checked against that
+  module's own closed sets; fields unique to this vertical
+  (`observation_evidence.lineage.derived_from`/`.predecessor_evidence_refs`/
+  `artifact_references.members[].source_snapshot_ref`) are confirmed directly against
+  `evidence/engine.py`'s own producer code (an exhaustive AST walk of every literal `"kind":`
+  value ever passed to its `_lineage()` helper, across all three call sites, found
+  `derived_from` genuinely admits four kinds -- `observation`, `difference`, `change`,
+  `authority_decision` -- not the three an initial reading found).
+
+  **Reclassification:** `difference_event.reopen_condition_ref`/
+  `reopen_condition_evaluation_ref` were classified "D" (deferred-A-in-shape) in Repair 2's
+  own table; `difference/graph.py`'s own `REFERENCE_EDGES` confirms both fields' target kinds
+  (`target_predicate`/`reopen_condition_evaluation`) are never Store-owned regardless of
+  population, so "D" (would-be-A-if-populated) never described them -- corrected to "C",
+  unwalked, same as `authority_ref`/`change_refs`/`next_observation_ref`.
+
+  **Independent completeness verification (extended):** `tests/contract/reflow/
+  test_reference_registry_completeness.py` gained an independently hand-authored
+  `_EXPECTED_TARGET_KINDS` table (cross-cited as above, never imported from production),
+  asserted equal to `reference_registry.FIELD_EXPECTED_TARGET_KINDS` in both directions
+  (`REGISTRY_OMITTED_TYPED_FIELD_COUNT=0`, `REGISTRY_EXTRA_TYPED_FIELD_COUNT=0`), and
+  cross-checked against the schema-required-field classification table
+  (`EVERY_CLASSIFICATION_A_FIELD_HAS_EXPECTED_TARGET_KIND=true`). Every classification-A
+  field/path now has a parametrized minimal-pair proof: the field's own real, permitted,
+  Store-owned kind with a real id produces exactly that edge; a real, existing Store-owned
+  kind the field does not permit is refused before an edge is ever returned
+  (`WRONG_KIND_REFERENCE_COUNT=0` once refused); a field admitting more than one kind accepts
+  every one of them, including the non-Store-owned member(s), which correctly produce no
+  edge. The uniform sentinel design itself is retired; every base-body fixture now plants
+  each field's own correct kind.
+
+  **Natural-route proof:** every classification-A field on `reflow()`'s own CLOSED route
+  turned out to already be independently re-verified by an established earlier gate before
+  ever being minted (P8-R1-F5/P8-R2-F2's canonical-reference-equality preflight for
+  `observation_refs` in particular) -- substituting a wrong-kind value there trips that
+  earlier gate first, for an unrelated reason, disclosed rather than claimed as exercising
+  this Finding's own mechanism. `reopen()`'s own `observation_refs` carries no such
+  independent re-verification (a disclosed scope boundary since Completion Repair 2:
+  `reopen()` mints its own event directly and never runs the generic admission scan), so a
+  real `reopen()` call's own real, persisted event body -- naming a real, already-committed
+  Evidence reference under its own true kind (`observation_evidence`) in a field that
+  requires `observation` -- is proven refused when fed through the one production registry,
+  the identical call `_admitted_records` itself would make had `reopen()` run it; the
+  positive control (the same route's own real, correctly-kinded `observation` reference)
+  passes unaffected.
+
+  **Fail-closed hardening:** an unrecognized source record kind (never one of the ten
+  `STORE_OWNED_REFERENCE_KINDS`) now raises immediately rather than silently returning no
+  edges -- previously indistinguishable from a genuine leaf kind's (`source_snapshot`/
+  `kernel_source_witness`) legitimate zero-edge result.
+
+  `PREVIOUS_30_FAILURE_COUNT=30`, `FINAL_30_FAILURE_COUNT=0` (unaffected by this repair).
+  `FULL_TEST_FAILURE_COUNT=0`. `tests/contract/reflow/test_reference_registry_completeness.py`
+  25 -> 103 tests (+78); `tests/natural_cycle/` 115 -> 117 (+2, the natural-route proof
+  above); `tests/unit/reflow/` unchanged at 268. Full retained suite: 17944 passed, 11
+  skipped, 0 failed (17864 + 80 new tests). Schema validation, State Engine conformance,
+  State Store acceptance, and development binding conformance all pass unchanged. `ruff
+  check`/`ruff format --check` clean on every touched file. `mypy` re-run empirically on this
+  candidate HEAD (not merely cited) still reports the identical pre-existing config error;
+  `pyproject.toml` is unmodified by any commit across this or any prior round, so the
+  identical error necessarily reproduces on both the reviewed baseline HEAD and this
+  candidate HEAD.
+
+  `CANONICAL_REFERENCE_EDGE_IDENTITY_TYPED=true`, `FIELD_SPECIFIC_TARGET_KIND_REQUIRED=true`,
+  `REFERENCE_BODY_SELF_DECLARED_KIND_IS_AUTHORITY=false`, `WRONG_KIND_REFERENCE_COUNT=0`,
+  `RIGHT_ID_WRONG_KIND_ACCEPTED=false`, `CROSS_KIND_RECORD_SUBSTITUTION_ALLOWED=false`,
+  `UNKNOWN_SOURCE_RECORD_KIND_FAILS_CLOSED=true`.
 ```
 
 ---
@@ -560,6 +668,10 @@ recursively walks each admitted record's own known reference-bearing fields thro
 `reflow/reference_registry.py`'s `reference_edges` (never a second, duplicate test-local
 vocabulary), and resolves every edge found -- through a fresh `FileStateStore` instance and
 a brand-new Python subprocess too, never only the in-process objects this run produced.
+Each edge (P8-R4-C3-F1) carries its own field-specific expected target kind, checked against
+the reference's own actual kind before it is ever returned for resolution, so a right-id/
+wrong-kind substitution fails closed rather than resolving against a coincidentally
+identical id under a different, unpermitted kind (§7).
 
 A negative control this claim itself requires -- `provenance_only_evidence_requests`
 supplied but empty -- fails the whole route closed (`ReflowValidationError`, before any
@@ -730,11 +842,15 @@ MULTI_AGENT_IMPLEMENTED=false
 ```
 
 **Disclosed scope boundary (P8-R3-F1, widened and made unconditional by P8-R4-F1/F2/F3, the
-registry's own completeness independently re-verified by Round 4 completion repair 2
-P8-R4-C2-F1): the persisted-reference-graph closure claim now covers every Store-owned
-reference edge, not an explicit, narrower vocabulary a caller had to opt into, and this
-coverage is proven complete against each kind's own live schema, not merely against the
-registry's own prior self-consistency.**
+registry's own field coverage independently re-verified by Round 4 completion repair 2
+P8-R4-C2-F1, and its own per-field kind identity independently re-verified by Round 4
+completion repair 3 P8-R4-C3-F1): the persisted-reference-graph closure claim now covers
+every Store-owned reference edge, not an explicit, narrower vocabulary a caller had to opt
+into; this coverage is proven complete against each kind's own live schema, not merely
+against the registry's own prior self-consistency; and each edge's own canonical identity
+now includes the specific field-path's own expected target kind, not merely a reference's
+self-declared one, so a right-id/wrong-kind substitution is refused rather than silently
+accepted or resolved against a different, coincidentally-shared id.**
 
 ```text
 AUXILIARY_VERIFICATION_EVIDENCE_ROLE=PROVENANCE_ONLY
@@ -753,6 +869,15 @@ EVERY_SCHEMA_REFERENCE_FIELD_CLASSIFIED=true
 UNCLASSIFIED_REFERENCE_FIELD_COUNT=0
 REGISTRY_OMITTED_STORE_OWNED_REFERENCE_FIELD_COUNT=0
 REGISTRY_EXTRA_UNDECLARED_REFERENCE_FIELD_COUNT=0
+CANONICAL_REFERENCE_EDGE_IDENTITY_TYPED=true
+FIELD_SPECIFIC_TARGET_KIND_REQUIRED=true
+REFERENCE_BODY_SELF_DECLARED_KIND_IS_AUTHORITY=false
+REGISTRY_OMITTED_TYPED_FIELD_COUNT=0
+REGISTRY_EXTRA_TYPED_FIELD_COUNT=0
+WRONG_KIND_REFERENCE_COUNT=0
+RIGHT_ID_WRONG_KIND_ACCEPTED=false
+CROSS_KIND_RECORD_SUBSTITUTION_ALLOWED=false
+UNKNOWN_SOURCE_RECORD_KIND_FAILS_CLOSED=true
 PERSISTED_REFERENCE_GRAPH_CLOSED=true
 UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0
 ```
@@ -766,38 +891,66 @@ own self-consistency but independently, against each kind's own live schema (§0
 History; `tests/contract/reflow/test_reference_registry_completeness.py`) -- ten Store-owned
 record kinds, every one of the following reference fields walked (classification A, per the
 Reference Field Classification table maintained in that module's own
-`_REQUIRED_FIELD_CLASSIFICATION`):
+`_REQUIRED_FIELD_CLASSIFICATION`). As of Round 4 completion repair 3 (P8-R4-C3-F1), each
+field below additionally carries its own closed expected-target-kind set
+(`reference_registry.FIELD_EXPECTED_TARGET_KINDS`) -- a reference's self-declared `kind` is
+checked against that field's own set before any edge is returned, never trusted on its own:
 
-- `observation`: `source_snapshot_refs`, `observation_evidence_refs`.
-- `observation_evidence`: `observed_result.observation_ref`, `lineage.derived_from`
-  members, `lineage.predecessor_evidence_refs` members, and each `artifact_references`
-  member's own optional `source_snapshot_ref`.
-- `closure_evaluation`: `kernel_source_witness_ref`, `difference_event_head_ref`, the
-  embedded `after_state_candidate.source_snapshot_refs` members, `after_observation_refs`,
-  `change_result_evidence_refs`, `change_free_verification_evidence_refs`,
-  `evidence_sufficiency_ref`, `terminal_reason_evidence_refs`, and -- recursively -- each
-  `candidate_invariant_evaluation_bindings` entry's own `invariant_evaluation_ref`/
-  `evaluation_evidence_refs` and each `candidate_claim_evaluation_bindings` entry's own
-  `evaluation_head_event_ref`/`completion_record_ref`/`evaluation_evidence_refs`.
-- `difference_event`: `previous_event_id`, `observation_refs`, `evidence_refs`,
-  `closure_evaluation_ref`, `revoked_evidence_refs`, `invalid_evidence_refs`,
-  `contradiction_evidence_refs`.
-- `evidence_sufficiency_result`, `invariant_evaluation`: `evidence_refs` members.
-- `candidate_claim_evaluation_event`: `predecessor_event_ref`, `completion_record_ref`.
-- `candidate_completion_record`: `required_evidence_refs` members,
-  `invariant_evaluation_refs` members.
+- `observation`: `source_snapshot_refs` (kind `source_snapshot`), `observation_evidence_refs`
+  (kind `observation_evidence`).
+- `observation_evidence`: `observed_result.observation_ref` (kind `observation`),
+  `lineage.derived_from` members (kind `observation`, `difference`, `change`, or
+  `authority_decision` -- only `observation` is Store-owned, the other three classified and
+  correctly never resolved), `lineage.predecessor_evidence_refs` members (kind
+  `observation_evidence`, schema-pinned), and each `artifact_references` member's own
+  optional `source_snapshot_ref` (kind `source_snapshot`).
+- `closure_evaluation`: `kernel_source_witness_ref` (kind `kernel_source_witness`),
+  `difference_event_head_ref` (kind `difference_event`), the embedded
+  `after_state_candidate.source_snapshot_refs` members (kind `source_snapshot`),
+  `after_observation_refs` (kind `observation`), `change_result_evidence_refs`/
+  `change_free_verification_evidence_refs`/`terminal_reason_evidence_refs` (kind
+  `observation_evidence` only -- unlike the two-kind `evidence_refs`-shaped fields below),
+  `evidence_sufficiency_ref` (kind `evidence_sufficiency_result`), `contradiction_refs` (kind
+  `material_contradiction` or `normalized_fact` -- neither Store-owned, checked but never
+  emitted), and -- recursively -- each `candidate_invariant_evaluation_bindings` entry's own
+  `invariant_evaluation_ref` (kind `invariant_evaluation`)/`evaluation_evidence_refs` (kind
+  `observation_evidence` or `negative_evidence`) and each
+  `candidate_claim_evaluation_bindings` entry's own `evaluation_head_event_ref` (kind
+  `candidate_claim_evaluation_event`)/`completion_record_ref` (kind
+  `candidate_completion_record`)/`evaluation_evidence_refs` (kind `observation_evidence` or
+  `negative_evidence`).
+- `difference_event`: `previous_event_id` (bare id string, kind always `difference_event`),
+  `observation_refs` (kind `observation`), `evidence_refs`/`revoked_evidence_refs`/
+  `invalid_evidence_refs`/`contradiction_evidence_refs` (kind `observation_evidence` or
+  `negative_evidence`), `closure_evaluation_ref` (kind `closure_evaluation`).
+- `evidence_sufficiency_result`, `invariant_evaluation`: `evidence_refs` members (kind
+  `observation_evidence` or `negative_evidence`).
+- `candidate_claim_evaluation_event`: `predecessor_event_ref` (kind
+  `candidate_claim_evaluation_event`), `completion_record_ref` (kind
+  `candidate_completion_record`).
+- `candidate_completion_record`: `required_evidence_refs` members (kind `observation_evidence`
+  or `negative_evidence`), `invariant_evaluation_refs` members (kind `invariant_evaluation`).
 - `source_snapshot`, `kernel_source_witness`: leaf kinds, no reference field of their own.
 
 Recognized structurally (a dict shaped like `common/reference.schema.json` -- `kind`+`id`,
-both non-empty strings -- with `kind` restricted to the registry's own
-`STORE_OWNED_REFERENCE_KINDS`), never by a fuzzy text search over key names, and the
-identical registry both the production admission gate and every test proving this claim
-import -- never a second, duplicate test-only vocabulary.
+both non-empty strings -- with the field's own expected kind checked against
+`FIELD_EXPECTED_TARGET_KINDS` before `kind` is trusted, and restricted overall to the
+registry's own `STORE_OWNED_REFERENCE_KINDS`), never by a fuzzy text search over key names,
+and the identical registry both the production admission gate and every test proving this
+claim import -- never a second, duplicate test-only vocabulary. The two-kind fields above
+(`observation_evidence` permitted alongside `negative_evidence`, an Observation-layer sibling
+never persisted by this vertical's Reflow Store) and `lineage.derived_from`'s four-kind set
+are not guessed: cross-checked against `difference/graph.py`'s own already-adopted, schema-
+cross-validated typed reference registry for the identical field names, and, where that
+module does not describe the field, directly against `evidence/engine.py`'s own producer code
+(an exhaustive walk of every literal reference kind its own `_lineage()` call sites emit).
 
 References this Kernel names but never gives a Store-owned producer of its own --
-`difference`, `change`, `authority_decision`, `artifact`, `negative_evidence` -- remain
-outside this scope, not silently treated as resolved (no second canonical owner is created
-for any of them here, or anywhere else in this correction, to bring them into scope).
+`difference`, `change`, `authority_decision`, `artifact`, `negative_evidence`,
+`material_contradiction`, `normalized_fact`, `target_predicate`, `reopen_condition_evaluation`,
+`completion_claim` -- remain outside this scope, not silently treated as resolved (no second
+canonical owner is created for any of them here, or anywhere else in this correction, to
+bring them into scope).
 
 **Withdrawn (P8-R4-F3): Round 3's own disclosed non-resolution of `closure_evaluation.
 difference_event_head_ref` naming the Difference's own genesis lifecycle event is no longer

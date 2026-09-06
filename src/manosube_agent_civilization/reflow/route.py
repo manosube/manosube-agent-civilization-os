@@ -1405,15 +1405,15 @@ def _admitted_records(
     # ``UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0`` also imports and walks.
     admitted_keys = set(records)
     for (kind, record_id), body in records.items():
-        for ref_kind, ref_id in reference_edges(kind, body):
-            if (ref_kind, ref_id) in admitted_keys:
+        for edge in reference_edges(kind, body):
+            if (edge.target_kind, edge.target_id) in admitted_keys:
                 continue
-            if store.resolve_record(project_id, ref_kind, ref_id) is not None:
+            if store.resolve_record(project_id, edge.target_kind, edge.target_id) is not None:
                 continue
             raise ReflowValidationError(
-                f"admitted {kind}/{record_id} declares an unresolved reference: "
-                f"{ref_kind}/{ref_id} -- PERSISTED_REFERENCE_GRAPH_CLOSED requires it to "
-                "resolve before commit"
+                f"admitted {kind}/{record_id} declares an unresolved reference at "
+                f"{edge.field_path}: {edge.target_kind}/{edge.target_id} -- "
+                "PERSISTED_REFERENCE_GRAPH_CLOSED requires it to resolve before commit"
             )
 
     return [(kind, record_id, body) for (kind, record_id), body in sorted(records.items())]
