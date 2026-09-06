@@ -410,3 +410,123 @@ def test_quiescent_store_with_a_real_committed_later_transition_still_boots(
     s.commit("PRJ-0001", 0, initial["semantic_fingerprint"], after, event)
 
     assert s.read_current_consistent("PRJ-0001") == after
+
+
+# --- P10-R4-F1: a plain filesystem entry substituted for a deleted recovery journal
+#     directory must not be mistaken for journal evidence -- checking mere path *existence*
+#     is not enough; the path must be a real directory -------------------------------------- #
+
+
+def test_a_crash_appended_transactions_journal_directory_replaced_by_a_file_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """The exact P10-R4-F1 scenario: crash right after the lineage event is appended (before
+    ``COMMITTED``), delete that transaction's complete recovery journal directory, then write
+    a plain regular file at the identical path -- leaving the prior, still-matching
+    ``current.json`` untouched. Pre-fix, ``_has_unexplained_lineage_event`` only checked
+    ``journal.exists()``, so this file-at-the-same-path read as "explained" and the stale
+    prior State was returned without ever raising."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize("PRJ-0001", initial)
+    after, event = successor(initial)
+
+    def fault(current: str) -> None:
+        if current == "AFTER_LINEAGE_APPEND":
+            raise SimulatedCrash("AFTER_LINEAGE_APPEND")
+
+    with pytest.raises(SimulatedCrash):
+        s.commit("PRJ-0001", 0, initial["semantic_fingerprint"], after, event, fault=fault)
+
+    journal = (
+        tmp_path
+        / "backend"
+        / "projects"
+        / "PRJ-0001"
+        / "state"
+        / "recovery"
+        / event["transaction_id"]
+    )
+    assert journal.is_dir()
+    import shutil
+
+    shutil.rmtree(journal)
+    journal.write_text("not-a-journal-directory", encoding="utf-8")
+    assert journal.exists() and not journal.is_dir()
+    assert json.loads(_current_path(tmp_path).read_text(encoding="utf-8")) == initial
+
+    with pytest.raises(CorruptStoreError, match="recovery-journal evidence"):
+        s.read_current_consistent("PRJ-0001")
+
+
+def test_a_committed_later_transactions_journal_replaced_by_a_file_and_current_removed_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """A fully committed later transaction whose recovery journal directory is destroyed and
+    replaced by a plain file, with the materialized ``current.json`` view also removed --
+    nothing is left to contradict except the raw lineage itself, and the substituted file must
+    still not be mistaken for journal evidence."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize("PRJ-0001", initial)
+    after, event = successor(initial)
+    s.commit("PRJ-0001", 0, initial["semantic_fingerprint"], after, event)
+
+    journal = (
+        tmp_path
+        / "backend"
+        / "projects"
+        / "PRJ-0001"
+        / "state"
+        / "recovery"
+        / event["transaction_id"]
+    )
+    assert (journal / "COMMITTED").is_file()
+    import shutil
+
+    shutil.rmtree(journal)
+    journal.write_text("not-a-journal-directory", encoding="utf-8")
+    _current_path(tmp_path).unlink()
+
+    with pytest.raises(CorruptStoreError, match="recovery-journal evidence"):
+        s.read_current_consistent("PRJ-0001")
+
+
+def test_rejection_from_a_journal_file_substitution_introduces_zero_store_mutation(
+    tmp_path: Path,
+) -> None:
+    """The rejection itself must never write, delete, or replace anything further."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize("PRJ-0001", initial)
+    after, event = successor(initial)
+
+    def fault(current: str) -> None:
+        if current == "AFTER_LINEAGE_APPEND":
+            raise SimulatedCrash("AFTER_LINEAGE_APPEND")
+
+    with pytest.raises(SimulatedCrash):
+        s.commit("PRJ-0001", 0, initial["semantic_fingerprint"], after, event, fault=fault)
+
+    journal = (
+        tmp_path
+        / "backend"
+        / "projects"
+        / "PRJ-0001"
+        / "state"
+        / "recovery"
+        / event["transaction_id"]
+    )
+    import shutil
+
+    shutil.rmtree(journal)
+    journal.write_text("not-a-journal-directory", encoding="utf-8")
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(CorruptStoreError):
+        s.read_current_consistent("PRJ-0001")
+
+    assert _snapshot(tmp_path) == before

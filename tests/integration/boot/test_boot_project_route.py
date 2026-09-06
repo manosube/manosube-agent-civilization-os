@@ -840,6 +840,39 @@ def test_boot_rejects_when_a_later_transactions_journal_and_current_view_are_bot
     assert _snapshot(store, project_id) == before
 
 
+# --- P10-R4-F1: a plain filesystem entry substituted for a deleted recovery journal
+#     directory must not be mistaken for journal evidence -------------------------------- #
+
+
+def test_boot_rejects_a_committed_later_transactions_journal_replaced_by_a_file(
+    tmp_path: Path,
+) -> None:
+    """The exact P10-R4-F1 scenario at the Boot level: a real, honestly-committed later
+    transition whose recovery journal directory is destroyed and replaced by a plain regular
+    file at the identical path, while the prior, matching ``current.json`` is left untouched.
+    Boot must reject, never mistake the substituted file for journal evidence."""
+
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    genesis_state = result["committed_state"]
+    _advance(store, project_id, genesis_state)
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    current_path.write_text(json.dumps(genesis_state), encoding="utf-8")
+    journal = store.root / "projects" / project_id / "state" / "recovery" / "TX-ADVANCE-0001"
+    assert journal.is_dir()
+    import shutil
+
+    shutil.rmtree(journal)
+    journal.write_text("not-a-journal-directory", encoding="utf-8")
+    assert journal.exists() and not journal.is_dir()
+    before = _snapshot(store, project_id)
+
+    with pytest.raises(CorruptStoreError):
+        boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+    assert _snapshot(store, project_id) == before
+
+
 # --- persisted-record tamper detection (Store's own generic mechanism) -------------------- #
 
 

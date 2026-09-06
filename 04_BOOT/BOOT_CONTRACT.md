@@ -332,7 +332,41 @@ proven true) and two new tests in `tests/integration/boot/test_boot_project_rout
 `boot_project` itself rejects both the crash-injected and the fully-committed-then-deleted
 variants, with zero Store mutation from the rejection either way.
 
-## 10. Explicit non-claims
+## 10. Structural Review Round 4 corrections (構造参謀, P10-R4)
+
+One further finding, independently reproduced against Round 3's own delivered HEAD
+(`0101502729dee3891f5006c619f8d1833f149027`) before any fix:
+
+- **P10-R4-F1 (recovery journal file substitution bypasses Round 3's lineage-journal check).**
+  Round 3's `_has_unexplained_lineage_event` checked only `journal.exists()` -- a plain regular
+  file (or symlink) written to the identical path where a deleted recovery journal directory
+  used to be reads as "exists" too, so it silently passed this check unflagged. Worse,
+  `_transaction_committed`'s own `(path/"COMMITTED").exists()` against a non-directory path is
+  simply `False` (identical to an in-flight journal, not an error), and `_has_pending_
+  transaction`'s own scan requires `journal.is_dir()` before ever looking at a candidate, so a
+  non-directory entry is silently skipped there too -- all three of this Store's existing
+  quiescence checks left this substitution completely unflagged. Reproduced exactly per
+  SHUKOU's own required steps: crashing a later transaction at `AFTER_LINEAGE_APPEND`, deleting
+  its complete recovery journal directory, then writing a plain regular file at the identical
+  path while leaving the prior, still-matching `current.json` untouched -- both
+  `read_current_consistent` and `boot_project` returned the stale prior revision without ever
+  raising.
+
+Closed by strengthening `FileStateStore._has_unexplained_lineage_event` (`store/file_store.py`)
+to require `journal.is_dir()` rather than mere `journal.exists()` -- a non-genesis lineage
+event's journal path must be a real directory, never merely a path that exists. `TX-GENESIS`
+remains excluded, settled exclusively by the existing Genesis Receipt, immune to a deleted or
+substituted recovery journal either way. `_has_pending_transaction`, `_committed_events`,
+`reconstruct`, and `load_current` are all unchanged.
+
+Exercised by three new tests in `tests/integration/store/test_read_current_consistent.py` (the
+exact crash-injection-then-file-substitution scenario with a still-matching `current.json`; a
+fully committed transaction whose journal directory is replaced by a file with `current.json`
+also removed; a zero-Store-mutation proof of the rejection itself) and one new test in
+`tests/integration/boot/test_boot_project_route.py` proving `boot_project` itself rejects the
+same substitution with zero Store mutation.
+
+## 11. Explicit non-claims
 
 ```text
 PROJECT_DISCOVERY_IMPLEMENTED=false

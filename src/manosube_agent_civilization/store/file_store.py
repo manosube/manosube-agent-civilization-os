@@ -776,8 +776,8 @@ class FileStateStore:
 
     def _has_unexplained_lineage_event(self, project_id: str) -> bool:
         """Return whether any non-genesis event in the raw, unfiltered append-only lineage
-        (:meth:`_events`) has no recovery-journal directory of its own at all -- Phase 10
-        Structural Review Round 3 (P10-R3-F1).
+        (:meth:`_events`) has no recovery-journal *directory* of its own -- Phase 10
+        Structural Review Round 3 (P10-R3-F1), sharpened in Round 4 (P10-R4-F1).
 
         ``commit`` always creates a transaction's own recovery journal directory (``STAGES[0]``)
         strictly before that same transaction's event is ever appended to the lineage
@@ -785,28 +785,36 @@ class FileStateStore:
         journal directory afterward -- every later public read surface that resolves a
         transaction's own manifest (:meth:`resolve_transaction_manifest`,
         :meth:`resolve_record`) depends on exactly that durability. So a non-genesis lineage
-        event whose journal directory does not exist can never be a legitimate, merely-not-
-        yet-committed trailing transaction (that case always still has its journal, just not
-        yet its ``COMMITTED`` marker -- :meth:`_has_pending_transaction`'s own question); it
-        can only be external corruption -- the journal was destroyed after the fact, taking
-        with it the one durable record of whether that transaction's own promotion ever
-        actually completed. :meth:`_transaction_committed` (via :meth:`_committed_events`)
-        answers "not committed" for this identical case, by design, for its own generic
-        callers (:meth:`reconstruct`, :meth:`commit`'s own CAS check) that correctly tolerate
-        a dangling *trailing* entry -- but silently stopping there also silently discards
-        this event and hides that discard from a caller that specifically requires a
-        *quiescent* Store, one where every durable lineage event's own fate is fully
-        accounted for. ``TX-GENESIS`` is excluded here -- its own institution is settled
-        exclusively by the explicit, durable Genesis Receipt (:meth:`_genesis_transaction_
-        committed`), immune by design to a deleted recovery journal, and unaffected by this
-        check."""
+        event whose journal path is not a real directory can never be a legitimate, merely-
+        not-yet-committed trailing transaction (that case always still has its journal
+        *directory*, just not yet its ``COMMITTED`` marker -- :meth:`_has_pending_transaction`'s
+        own question); it can only be external corruption -- the journal directory was
+        destroyed after the fact, taking with it the one durable record of whether that
+        transaction's own promotion ever actually completed, whether or not some other
+        filesystem entry (a regular file, a symlink) now occupies the identical path.
+        ``P10-R4-F1``: checking mere path *existence* is not enough -- a plain file written to
+        the same path reads as "exists" while carrying no journal evidence whatsoever, and
+        both :meth:`_transaction_committed` (``(path/"COMMITTED").exists()`` is simply
+        ``False`` against a non-directory *path*, exactly like an in-flight journal) and
+        :meth:`_has_pending_transaction` (its own scan requires ``journal.is_dir()`` before
+        ever looking, so a non-directory entry is silently skipped, not flagged) both leave
+        this case completely unflagged on their own -- only an explicit ``is_dir()`` check
+        here closes it. :meth:`_transaction_committed` (via :meth:`_committed_events`) answers
+        "not committed" for this identical case, by design, for its own generic callers
+        (:meth:`reconstruct`, :meth:`commit`'s own CAS check) that correctly tolerate a
+        dangling *trailing* entry -- but silently stopping there also silently discards this
+        event and hides that discard from a caller that specifically requires a *quiescent*
+        Store, one where every durable lineage event's own fate is fully accounted for.
+        ``TX-GENESIS`` is excluded here -- its own institution is settled exclusively by the
+        explicit, durable Genesis Receipt (:meth:`_genesis_transaction_committed`), immune by
+        design to a deleted (or substituted) recovery journal, and unaffected by this check."""
 
         for event in self._events(project_id):
             transaction_id=event["transaction_id"]
             if transaction_id==self.GENESIS_TRANSACTION_ID:
                 continue
             journal=self._project(project_id)/"state"/"recovery"/transaction_id
-            if not journal.exists():
+            if not journal.is_dir():
                 return True
         return False
 
