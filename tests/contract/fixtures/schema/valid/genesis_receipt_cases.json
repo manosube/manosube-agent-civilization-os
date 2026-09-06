@@ -1,0 +1,26 @@
+[
+  {
+    "name": "bare_genesis_receipt_canonical_empty_manifest",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "BARE",
+      "manifest_member_count": 0,
+      "manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  {
+    "name": "with_records_genesis_receipt_positive_member_count",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "WITH_RECORDS",
+      "manifest_member_count": 1,
+      "manifest_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  }
+]

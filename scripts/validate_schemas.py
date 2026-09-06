@@ -60,8 +60,9 @@ def main() -> int:
     # (project_binding, boundary, source_registration, command_policy -- Issue #43,
     # KERNEL_ELEMENT=NONE_PRODUCT_BINDING_LAYER, not a ninth Kernel element) make 46. The
     # count is asserted rather than derived so a schema added without being reconciled
-    # here fails the gate instead of silently widening the inventory.
-    if len(paths) != 46 or len(set(ids)) != len(paths) or None in ids:
+    # here fails the gate instead of silently widening the inventory. Phase 9 Completion
+    # Repair 5's own genesis institution receipt (P9-C5-F1) adds one more, making 47.
+    if len(paths) != 47 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

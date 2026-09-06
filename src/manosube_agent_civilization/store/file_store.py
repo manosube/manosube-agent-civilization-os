@@ -6,6 +6,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from manosube_agent_civilization.state.canonicalize import (
     canonical_json_bytes,
     canonical_semantic_state_bytes,
 )
+from manosube_agent_civilization.state.errors import SchemaValidationError
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 
 from .atomic_write import atomic_write, fsync_directory
@@ -33,6 +35,13 @@ from .interface import FaultInjector
 
 STAGES=("AFTER_JOURNAL_CREATED","AFTER_STAGED_STATE_WRITTEN","AFTER_STAGED_RECORDS_WRITTEN","AFTER_COMMIT_INTENT","AFTER_LINEAGE_APPEND","AFTER_RECORDS_PROMOTED","BEFORE_CURRENT_REPLACE","AFTER_CURRENT_REPLACE","BEFORE_COMMITTED_MARKER")
 TRANSITION_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_transition.schema.json"
+GENESIS_RECEIPT_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json"
+#: MANOSUBE-GENESIS-MANIFEST-DIGEST-SHA256-0.1 -- the same sha256+domain-separator+profile
+#: convention `state.fingerprint`'s own `MANOSUBE-STATE-SHA256-0.1` already uses, applied to
+#: a genesis transaction's own exact (kind, id) manifest membership (never body content --
+#: NEVER_CONFUSED_WITH_BODY_SEMANTIC_IDENTITY=true). A distinct domain separator from
+#: State's own semantic fingerprint keeps the two digest spaces from ever colliding.
+_GENESIS_MANIFEST_DIGEST_DOMAIN=b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_MANIFEST\x000.1\x00"
 
 class FileStateStore:
     def __init__(self, root: Path, *, schema_root: Path) -> None:
@@ -256,9 +265,9 @@ class FileStateStore:
 
         The one shared reader every call site in this class uses for this identical on-disk
         shape (:meth:`resolve_transaction_manifest`, :meth:`_transaction_manifest_keys`,
-        :meth:`_record_committed_by_any_transaction`, and :meth:`_genesis_records_orphaned`
-        below) -- never a second, competing manifest parser, validated in one reader and
-        trusted raw in another.
+        :meth:`_record_committed_by_any_transaction`, and :meth:`_genesis_transaction_
+        committed`) -- never a second, competing manifest parser, validated in one reader
+        and trusted raw in another.
 
         *label* names the transaction/journal this manifest belongs to, for diagnostics
         only -- never echoed as a value, only as an identifying label.
@@ -301,133 +310,161 @@ class FileStateStore:
     #: other transaction_id with no recovery journal is refused, never silently trusted.
     GENESIS_TRANSACTION_ID = "TX-GENESIS"
 
+    def _manifest_digest(self, members: list[tuple[str,str]]) -> str:
+        """Return the ``MANOSUBE-GENESIS-MANIFEST-DIGEST-SHA256-0.1`` digest of *members*
+        (Phase 9 Completion Repair 5, P9-C5-F1): a canonical, order-independent commitment
+        to the exact ``(kind, id)`` set a genesis manifest claims.
+
+        *members* must already be known duplicate-free (:meth:`_read_manifest_entries`
+        itself refuses a manifest naming the same key twice, before this is ever called) --
+        ``GENESIS_MANIFEST_MULTIPLICITY_VALIDATED_BEFORE_DIGEST=true``, this never silently
+        folds a duplicate away and digests the collapsed result. Sorting canonically before
+        digesting makes an order-only difference between two replays of the identical
+        membership produce the identical digest (``ORDER_ONLY_DIFFERENCE_SEMANTICS=
+        CANONICAL_ORDER_EQUIVALENT``), while genuinely different membership -- a missing,
+        extra, or wrong-kind member -- always produces a different digest.
+        """
+
+        canonical=sorted(members)
+        payload=canonical_json_bytes([[kind,record_id] for kind,record_id in canonical])
+        return "sha256:"+hashlib.sha256(_GENESIS_MANIFEST_DIGEST_DOMAIN+payload).hexdigest()
+
+    def _genesis_receipt_path(self, project_id: str) -> Path:
+        return self._project(project_id)/"state"/"genesis_receipt.json"
+
+    def _read_genesis_receipt(self, project_id: str) -> dict[str,Any]|None:
+        """Read and schema-validate *project_id*'s own genesis institution receipt (P9-C5-F1),
+        or ``None`` if none has ever been written for it. Never trusts a decoded receipt
+        object without validating its own shape first -- the identical discipline
+        :meth:`_read_manifest_entries` already applies to manifest.json."""
+
+        path=self._genesis_receipt_path(project_id)
+        if not path.exists():
+            return None
+        try:
+            receipt: dict[str,Any]=json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,json.JSONDecodeError) as exc:
+            raise CorruptStoreError(f"malformed genesis receipt: {project_id}") from exc
+        try:
+            _validate(receipt,GENESIS_RECEIPT_SCHEMA_ID,self.schema_root)
+        except SchemaValidationError as exc:
+            raise CorruptStoreError(f"genesis receipt fails its own schema: {project_id}") from exc
+        if receipt["project_id"]!=project_id:
+            raise CorruptStoreError(
+                f"genesis receipt project_id does not match its own project: {project_id}"
+            )
+        return receipt
+
     def _transaction_committed(self, project_id: str, transaction_id: str) -> bool:
         """Return whether *transaction_id* is durably ``COMMITTED`` -- R7-F5, sharpened by
-        R10-F3, sharpened again by R11-F1, sharpened again by Phase 9 Structural Review
-        Round 3 (P9-R3-F2).
+        R10-F3, R11-F1, P9-R3-F2, and P9-C4-F2 in turn, replaced again by Phase 9 Completion
+        Repair 5 (P9-C5-F1).
 
-        R11-F1: ``TRANSACTION_ID_IS_GENESIS_NE_COMMITTED=true`` -- the literal string
-        ``TX-GENESIS`` is never, by itself, sufficient proof that a transaction actually
-        finished. Two genuinely different genesis institutions share that one id
-        (``BARE_GENESIS`` vs ``GENESIS_WITH_RECORDS``, R10-F1's own distinction), and this
-        method must resolve each correctly rather than treating the name as a blanket
-        authority:
+        Every prior version of this method's own genesis-institution check inferred
+        ``BARE`` vs ``WITH_RECORDS`` from *circumstantial* evidence -- the transaction_id
+        string, the lineage event, which journals happen to still exist, which manifests
+        happen to still claim a given record -- and SHUKOU's own Completion Repair 5
+        adoption formally rejects every one of those as authority
+        (``GLOBAL_RECORD_CLAIM_INFERENCE_IS_AUTHORITY=false``, ``LINEAGE_TRANSACTION_ID_
+        ALONE_IS_AUTHORITY=false``, ``ORPHANED_PROMOTED_RECORD_HEURISTIC_IS_AUTHORITY=
+        false``): P9-C4-F2's own orphaned-record heuristic was itself defeated by a later,
+        wholly legitimate transaction reclaiming the identical ``(kind, id, body)`` in its
+        own still-intact manifest, making the genuinely-tampered genesis look un-orphaned
+        again.
 
-        P9-R3-F2: that same principle was not yet carried far enough -- a *never-initialized*
-        project (``initialize`` never called at all: no recovery journal, no lineage log,
-        possibly not even a project directory) has no recovery journal either, and was
-        previously indistinguishable from a genuinely committed bare genesis purely because
-        both share the one absent-journal shape. ``TRANSACTION_ID_STRING_NE_COMMIT_
-        EVIDENCE=true``: the bare-genesis branch below now additionally requires real
-        evidence that genesis actually happened -- the lineage log itself durably carries
-        this transaction's own event -- rather than inferring it from the transaction_id
-        string alone.
-
-        - **Bare genesis** (no recovery journal at all -- every genesis this vertical minted
-          before R10-F1, and still the common case for one with no records to close a
-          reference to): :meth:`initialize`'s own non-``records`` branch writes the lineage
-          entry and ``current.json`` in one atomic step with no partial-write window, so a
-          missing journal here means genesis already completed by construction -- committed
-          exactly as it always was.
-        - **Genesis-with-records** (a recovery journal exists, staged the identical way
-          :meth:`commit` stages any other transaction's): ``GENESIS_EVENT_APPENDED_NE_
-          GENESIS_COMMITTED=true`` -- appearing in the lineage log is not enough
-          (:meth:`initialize` appends *before* promoting records or writing ``COMMITTED``,
-          mirroring :meth:`commit`'s own sequence exactly). Only that journal's own
-          ``COMMITTED`` marker settles it -- ``COMMITTED_MARKER_IS_VISIBILITY_BOUNDARY=true``,
-          identically to every other transaction below.
-
-        Every *other* (non-genesis) transaction_id is a real, ordinary transaction
-        :meth:`commit` always creates a journal for as its very first act --
-        ``NO_JOURNAL_NE_COMMITTED=true``: a missing journal here is refused (never
-        committed), not silently assumed to predate this tracking (this vertical carries no
-        actual data that does). A transaction *with* a journal is committed only once that
-        journal's own ``COMMITTED`` marker exists -- exactly the marker :meth:`commit` writes
-        last and :meth:`recover` writes on completing an interrupted one.
-
-        One check now serves every case: a missing journal means "committed" only for the
-        one explicitly-named bare-genesis institution (``GENESIS_EXCEPTION_IS_EXPLICIT=true``,
-        never a wildcard); a present journal -- genesis or not -- is gated on its own
-        ``COMMITTED`` marker alone (``GENESIS_STATE_VISIBLE_NE_GENESIS_RECORDS_VISIBLE_IS_
-        ILLEGAL=true`` -- the same boundary :meth:`resolve_record`'s own ``_record_committed_
-        by_any_transaction`` already applied to genesis-with-records, now shared by
-        :meth:`resolve_transaction`, :meth:`reconstruct` and :meth:`load_current` too, so the
-        four public read surfaces can never again diverge on the same transaction).
+        A genesis transaction's own institution is now settled by an explicit, durable
+        receipt (:meth:`_read_genesis_receipt`) written atomically at genesis time,
+        declaring ``genesis_mode`` (``BARE``/``WITH_RECORDS``) and -- for ``WITH_RECORDS``
+        -- the exact manifest membership's own digest and count. See
+        :meth:`_genesis_transaction_committed` for the full decision table.
         """
 
-        path = self._project(project_id)/"state"/"recovery"/transaction_id
-        if path.exists():
-            return (path/"COMMITTED").exists()
         if transaction_id != self.GENESIS_TRANSACTION_ID:
-            return False
-        # Bare genesis (P9-R3-F2): no recovery journal exists by construction for this
-        # institution, whether it actually happened or not -- so a missing journal alone
-        # settles nothing. Real evidence is the lineage log itself already durably carrying
-        # this transaction's own event (``initialize``'s own non-``records`` branch writes
-        # the lineage entry and ``current.json`` with no partial-write window this vertical
-        # exercises via fault injection, so an appended event here means genesis completed).
-        # A project for which ``initialize`` was never called at all has no lineage log
-        # (``_events`` returns ``[]``) and correctly reports uncommitted here, never
-        # conflated with a genuinely committed bare genesis again.
-        if not any(
-            event.get("transaction_id") == transaction_id for event in self._events(project_id)
-        ):
-            return False
-        # P9-C4-F2: the lineage event alone still does not, by itself, distinguish a
-        # genuinely bare genesis from a genesis-with-records transaction whose own journal
-        # directory has since been lost, deleted, or tampered with -- both produce a
-        # byte-identical lineage event, and both now share the identical "no journal"
-        # shape once that directory is gone. ``LINEAGE_TRANSACTION_ID_ALONE_NE_BARE_
-        # GENESIS_EVIDENCE=true``: a genuinely bare genesis never promotes any record file
-        # at all (``initialize``'s own non-``records`` branch never touches ``records/``),
-        # so any promoted record file this project's own Store already holds that no
-        # currently-resolvable transaction manifest claims is direct, durable evidence that
-        # some transaction -- necessarily this one, since no ordinary ``commit`` can precede
-        # genesis -- once promoted records whose own recovery journal is now gone. This
-        # requires no new persisted artifact and no migration/legacy-marker scheme: a
-        # genuinely historical bare genesis, from any round, never promoted a record in the
-        # first place, so it can never trip this check -- ``LEGACY_BARE_GENESIS_
-        # COMPATIBILITY_PRESERVED=true`` falls out for free, not by special-casing.
-        return not self._genesis_records_orphaned(project_id)
+            path = self._project(project_id)/"state"/"recovery"/transaction_id
+            if not path.exists():
+                return False
+            return (path/"COMMITTED").exists()
+        return self._genesis_transaction_committed(project_id)
 
-    def _genesis_records_orphaned(self, project_id: str) -> bool:
-        """Return whether *project_id* holds at least one promoted record file (under its
-        own ``records/<kind>/<id>.json`` tree) that no currently-resolvable transaction
-        journal's own manifest claims (P9-C4-F2).
+    def _genesis_transaction_committed(self, project_id: str) -> bool:
+        """The one authority for whether ``TX-GENESIS`` is durably committed, and for which
+        of the two genesis institutions it was (P9-C5-F1).
 
-        Every record file this Store ever writes is written by :meth:`_promote_staged_
-        records`, called only from :meth:`commit` or :meth:`initialize`'s own
-        ``records``-bearing branch, and only after that same transaction's own manifest was
-        durably written alongside it. Recovery journals are never deleted by any normal
-        operation this Store performs, so a promoted record file with no claimant among the
-        journals currently on disk is not an ambiguous or borderline case -- it is direct
-        proof that the journal which once accounted for it is gone. This scan touches only
-        already-persisted state (every record file, every still-present manifest) and writes
-        nothing -- no new persistence format, no migration receipt, no legacy marker.
+        While a genesis-with-records journal directory still exists, its own ``COMMITTED``
+        marker alone still gates crash-stage visibility exactly as before this fix -- a
+        journal created but not yet committed (any of the pre-``COMMITTED`` crash stages
+        :meth:`initialize` exercises) is legitimately "not yet committed" (``False``, no
+        raise), never a contradiction to report, since nothing has durably claimed a
+        genesis institution yet. Only once that journal's own ``COMMITTED`` marker exists
+        does this method additionally demand the receipt agree with it -- by then, both are
+        supposed to already be durably consistent by construction.
+
+        Once the journal is gone (never existed -- bare genesis or never-initialized -- or
+        has since been lost/tampered with), the receipt becomes the sole remaining
+        authority. SHUKOU: ``LEGACY_GENESIS_AUTO_CLASSIFICATION_ALLOWED=false`` -- a lineage
+        event with no receipt to explain it is never silently assumed ``BARE`` or
+        ``WITH_RECORDS``; it fails closed as :class:`CorruptStoreError` (a legacy
+        pre-receipt genesis or an unexplained migration gap). A receipt that explicitly
+        declares ``WITH_RECORDS`` while no journal exists is exactly the P9-C5-F1 fix
+        itself: ``MISSING_WITH_RECORDS_JOURNAL_FAILS_CLOSED=true`` -- this can never again
+        be silently reinterpreted as bare merely because the journal (and with it, the only
+        place a record-reclaim heuristic could ever have looked) is gone.
         """
 
-        records_root = self._project(project_id)/"records"
-        if not records_root.exists():
-            return False
-        claimed: set[tuple[str,str]] = set()
-        recovery = self._project(project_id)/"state"/"recovery"
-        if recovery.exists():
-            for journal in recovery.iterdir():
-                if not journal.is_dir():
-                    continue
-                manifest_path = journal/"manifest.json"
-                if not manifest_path.exists():
-                    continue
-                claimed.update(self._read_manifest_entries(manifest_path, journal.name))
-        for kind_dir in records_root.iterdir():
-            if not kind_dir.is_dir():
-                continue
-            for record_file in kind_dir.iterdir():
-                if not record_file.is_file():
-                    continue
-                if (kind_dir.name, record_file.stem) not in claimed:
-                    return True
-        return False
+        journal=self._project(project_id)/"state"/"recovery"/self.GENESIS_TRANSACTION_ID
+        if journal.exists():
+            if not (journal/"COMMITTED").exists():
+                return False
+            receipt=self._read_genesis_receipt(project_id)
+            if receipt is None:
+                raise CorruptStoreError(
+                    f"genesis transaction is COMMITTED but carries no genesis receipt: {project_id}"
+                )
+            if receipt["genesis_mode"]!="WITH_RECORDS":
+                raise CorruptStoreError(
+                    f"genesis receipt does not declare WITH_RECORDS for a genesis whose "
+                    f"own recovery journal exists: {project_id}"
+                )
+            manifest_path=journal/"manifest.json"
+            if not manifest_path.exists():
+                raise CorruptStoreError(
+                    f"genesis receipt declares WITH_RECORDS but its own manifest is "
+                    f"missing: {project_id}"
+                )
+            entries=self._read_manifest_entries(manifest_path,self.GENESIS_TRANSACTION_ID)
+            if len(entries)!=receipt["manifest_member_count"] or self._manifest_digest(entries)!=receipt["manifest_digest"]:
+                raise CorruptStoreError(
+                    f"genesis receipt's manifest digest does not match its own journal's "
+                    f"manifest: {project_id}"
+                )
+            return True
+
+        receipt=self._read_genesis_receipt(project_id)
+        lineage_has_event=any(
+            event.get("transaction_id")==self.GENESIS_TRANSACTION_ID
+            for event in self._events(project_id)
+        )
+        if receipt is None:
+            if not lineage_has_event:
+                return False
+            raise CorruptStoreError(
+                f"genesis transaction's own lineage event exists but no genesis receipt "
+                f"explains it -- migration required or corrupt: {project_id}"
+            )
+        mode=receipt["genesis_mode"]
+        if mode=="WITH_RECORDS":
+            raise CorruptStoreError(
+                f"genesis receipt declares WITH_RECORDS but its recovery journal is "
+                f"missing: {project_id}"
+            )
+        if mode=="BARE":
+            if receipt["manifest_member_count"]!=0 or receipt["manifest_digest"]!=self._manifest_digest([]):
+                raise CorruptStoreError(
+                    f"BARE genesis receipt's own manifest fields are not the canonical "
+                    f"empty manifest: {project_id}"
+                )
+            return lineage_has_event
+        raise CorruptStoreError(f"unknown genesis_mode in genesis receipt: {mode!r}: {project_id}")
 
     def _events(self, project_id: str) -> list[dict[str,Any]]:
         path=self._lineage(project_id)
@@ -465,6 +502,14 @@ class FileStateStore:
         surface, so a genesis-with-records crash is exercised, and recovered from, through
         exactly the same mechanism and the same generic :meth:`recover` as every other
         transaction.
+
+        Phase 9 Completion Repair 5 (P9-C5-F1): every genesis -- bare or with-records --
+        also writes an explicit, durable genesis institution receipt
+        (:meth:`_genesis_receipt_path`, deliberately outside ``state/recovery/`` so it
+        survives even a wholesale-deleted recovery journal directory), declaring
+        ``genesis_mode`` and, for ``WITH_RECORDS``, the exact manifest membership's own
+        digest and count -- see :meth:`_genesis_transaction_committed` for how this receipt
+        becomes the one authority a genesis institution is ever settled by.
         """
 
         def hit(stage: str) -> None:
@@ -477,6 +522,7 @@ class FileStateStore:
             if state["state_revision"]!=0 or state["previous_state_fingerprint"] is not None: raise RevisionError("initial revision must be zero")
             event={"schema_version":"0.1","transaction_id":self.GENESIS_TRANSACTION_ID,"event_type":"GENESIS","project_id":project_id,"from_revision":None,"to_revision":0,"before_fingerprint":None,"after_fingerprint":state["semantic_fingerprint"],"after_state":state,"evidence_refs":[],"committed_at":state["state_metadata"]["recorded_at"]}
             self._verify_event(project_id,event,None)
+            receipt_path=self._genesis_receipt_path(project_id)
             if records:
                 # Mirrors commit()'s own stage order exactly (event/state staged, records
                 # staged, COMMIT_INTENT, lineage append, records promoted, current
@@ -491,6 +537,17 @@ class FileStateStore:
                 atomic_write(journal/"state.json",canonical_json_bytes(state))
                 hit(STAGES[1])
                 self._stage_records(project_id,journal,list(records))
+                # The receipt is written once the manifest itself is durable, re-reading it
+                # (rather than re-deriving from the caller's own *records* argument) so the
+                # receipt's own digest/count are guaranteed byte-for-byte consistent with
+                # what this transaction's own manifest.json actually, durably claims.
+                manifest_entries=self._read_manifest_entries(journal/"manifest.json",self.GENESIS_TRANSACTION_ID)
+                atomic_write(receipt_path,canonical_json_bytes({
+                    "schema_version":"0.1","project_id":project_id,
+                    "transaction_id":self.GENESIS_TRANSACTION_ID,"genesis_mode":"WITH_RECORDS",
+                    "manifest_member_count":len(manifest_entries),
+                    "manifest_digest":self._manifest_digest(manifest_entries),
+                }))
                 hit(STAGES[2])
                 atomic_write(journal/"COMMIT_INTENT",b"1")
                 hit(STAGES[3])
@@ -504,6 +561,18 @@ class FileStateStore:
                 hit(STAGES[8])
                 atomic_write(journal/"COMMITTED",b"1")
             else:
+                # Written before the lineage/current pair below: a crash between this
+                # write and those (this branch carries no fault-injection/recovery support,
+                # identically to before this fix) leaves only the receipt durable, which
+                # _genesis_transaction_committed already correctly reads as "not yet
+                # committed" (no raise) rather than a contradiction -- never the reverse
+                # ordering, which would instead leave a lineage event with no receipt to
+                # explain it, indistinguishable from unmigrated legacy evidence.
+                atomic_write(receipt_path,canonical_json_bytes({
+                    "schema_version":"0.1","project_id":project_id,
+                    "transaction_id":self.GENESIS_TRANSACTION_ID,"genesis_mode":"BARE",
+                    "manifest_member_count":0,"manifest_digest":self._manifest_digest([]),
+                }))
                 atomic_write(self._lineage(project_id),canonical_json_bytes(event)+b"\n")
                 atomic_write(self._current(project_id),canonical_json_bytes(state))
             return deepcopy(state)

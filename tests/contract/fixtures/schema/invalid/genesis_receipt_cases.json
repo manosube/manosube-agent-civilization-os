@@ -1,0 +1,98 @@
+[
+  {
+    "name": "genesis_receipt_missing_required_field",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "BARE",
+      "manifest_member_count": 0
+    }
+  },
+  {
+    "name": "genesis_receipt_additional_property_rejected",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "BARE",
+      "manifest_member_count": 0,
+      "manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "unexpected_field": "not allowed"
+    }
+  },
+  {
+    "name": "genesis_receipt_unknown_genesis_mode_enum",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "SOMETHING_ELSE",
+      "manifest_member_count": 0,
+      "manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  {
+    "name": "genesis_receipt_wrong_transaction_id_const",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-OTHER",
+      "genesis_mode": "BARE",
+      "manifest_member_count": 0,
+      "manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  {
+    "name": "genesis_receipt_bare_mode_with_nonzero_member_count",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "BARE",
+      "manifest_member_count": 1,
+      "manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  {
+    "name": "genesis_receipt_with_records_mode_with_zero_member_count",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "WITH_RECORDS",
+      "manifest_member_count": 0,
+      "manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  {
+    "name": "genesis_receipt_malformed_manifest_digest_pattern",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "BARE",
+      "manifest_member_count": 0,
+      "manifest_digest": "not-a-digest"
+    }
+  },
+  {
+    "name": "genesis_receipt_wrong_schema_version_const",
+    "schema_id": "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json",
+    "instance": {
+      "schema_version": "9.9",
+      "project_id": "PRJ-0001",
+      "transaction_id": "TX-GENESIS",
+      "genesis_mode": "BARE",
+      "manifest_member_count": 0,
+      "manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+]

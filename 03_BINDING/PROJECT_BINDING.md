@@ -243,6 +243,30 @@ FULL_MANIFEST_REPLAY_COMPARED=true
 BINDING_ROUTE_READS_STORE_PRIVATE_PATH=false
 ```
 
+**Corrected in Phase 9 Completion Repair 5 (P9-C5-F1).** An interim heuristic (Completion
+Repair 4, P9-C4-F2) had distinguished a genuine bare genesis from a genesis-with-records
+transaction whose recovery journal was lost by scanning whether any *other* transaction's
+manifest still claimed the same record -- and that heuristic was itself defeated the moment
+a later, otherwise-legitimate transaction reclaimed the identical `(kind, id, body)` under
+its own still-intact manifest, making the genuinely-tampered genesis look un-orphaned again.
+The Store no longer infers the genesis institution from any such circumstantial evidence.
+`FileStateStore.initialize` now writes one explicit, durable genesis institution receipt
+(`state/genesis_receipt.json`, outside the recovery journal so it survives the journal's own
+deletion) declaring `genesis_mode` (`BARE`/`WITH_RECORDS`) and, for `WITH_RECORDS`, the exact
+manifest membership's own digest and count. A genesis-with-records transaction whose journal
+is later deleted or tampered now raises `CorruptStoreError` from `resolve_transaction`,
+`resolve_transaction_manifest`, `load_current`, and `reconstruct` alike -- a stronger,
+more definite failure than the interim heuristic's own `None`/`[]` -- while `bind_project`'s
+own replay comparison is unaffected, since it only ever reads an already-committed genesis
+through these same public surfaces.
+
+```text
+GENESIS_INSTITUTION_HEURISTIC_INFERENCE_IS_AUTHORITY=false
+GENESIS_INSTITUTION_RECEIPT_IS_AUTHORITY=true
+GENESIS_RECEIPT_SURVIVES_JOURNAL_DELETION=true
+LATER_RECORD_RECLAIM_DEFEATS_HEURISTIC_DETECTION=false
+```
+
 ## 9b. Whole-graph admission (Round 2 P9-R2-F1/F2/F3/F5)
 
 **Added in Phase 9 Structural Review Round 2.** Round 1's own secret-scan and reference
