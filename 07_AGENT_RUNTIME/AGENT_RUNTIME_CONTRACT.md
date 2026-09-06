@@ -80,15 +80,24 @@ second public lifecycle entry point is introduced in this Phase.
 10. **Strict phase boundary.** Independent Verification (13), GitHub (14), Runtime (15),
     model replaceability (16), URL read-only (17), autonomous Change (18), and multi-Agent
     (19) remain out of scope.
-11. **Canonical construction only (Structural Review Round 1, P12-R1-F1).** `TemporaryAgent`
-    is necessarily a public lifecycle type, but its constructor accepts a private
-    construction token only `start_temporary_agent` ever supplies, and requires its
-    `boot_context` argument to already be a real `BootContext` instance. A direct
-    `TemporaryAgent(...)` call -- from any caller other than this layer's own `route.py`, or
-    over any payload that is not already a verified `BootContext` -- raises
-    `AgentConstructionError` before anything is stored. `BootContext` being publicly
-    constructible must never let a caller fabricate an active Agent without `boot_project`
-    ever running.
+11. **Canonical construction only (Structural Review Round 2, P12-R2-F1; supersedes Round 1's
+    `AgentConstructionError`/construction-token design).** Round 1's private construction
+    token was only an importable module attribute -- it proved no real provenance, since any
+    caller could `import` it directly and hand it, plus a directly-constructed `BootContext`,
+    to `TemporaryAgent(...)` without `boot_project` ever running. `TemporaryAgent` is instead
+    the public lifecycle *interface*: an `abc.ABC` declaring only `boot_context`/`release` as
+    abstract members, with no `__init__` of its own. `TemporaryAgent(...)` therefore always
+    raises Python's own `TypeError` for an uninstantiable abstract class, regardless of what
+    is supplied. The concrete implementation, `_ActiveTemporaryAgent`, is never exported from
+    this package; only `start_temporary_agent`, immediately after its own single
+    `boot_project` call, ever instantiates it, returning it typed as the public
+    `TemporaryAgent` interface. This is a public-API and ownership boundary, not a claim that
+    hostile code running in the same Python process -- deliberately importing this private
+    module and subclassing or monkeypatching around it -- is somehow cryptographically
+    sandboxed; no mechanism in Python achieves that, and this layer does not claim otherwise.
+    What it actually guarantees: every ordinary caller going through this package's public,
+    documented surface (`TemporaryAgent` the type, `start_temporary_agent` the function)
+    cannot obtain an active Agent except by way of a real `boot_project` call.
 
 ## 4. Canonical owner
 
@@ -96,25 +105,24 @@ second public lifecycle entry point is introduced in this Phase.
 src/manosube_agent_civilization/agent_runtime/
 ├── __init__.py     public exports
 ├── errors.py        AgentRuntimeError / AgentReleasedError
-├── agent.py         TemporaryAgent -- the one ephemeral, non-persisted lifecycle handle
+├── agent.py         TemporaryAgent (public ABC interface) / _ActiveTemporaryAgent (private)
 └── route.py         start_temporary_agent -- the one public start route
 ```
 
-`AgentReleasedError` and `AgentConstructionError` exist only for the two lifecycle checks this
-layer itself owns (access to a released Agent's context; construction bypassing the canonical
-route or over a non-`BootContext` payload). Every other failure mode propagates the existing
-owning domain's own typed error unchanged -- `manosube_agent_civilization.boot.
+`AgentReleasedError` exists only for the one lifecycle check this layer itself owns (access to
+a released Agent's context). Every other failure mode propagates the existing owning domain's
+own typed error unchanged -- `manosube_agent_civilization.boot.
 {BootNotFoundError,BootConsistencyError}`, `manosube_agent_civilization.binding.errors.
 {BindingIdentityError,BindingValidationError}`, `manosube_agent_civilization.store.errors.
 {CorruptStoreError,StateNotFoundError,BoundaryError,...}`, and
 `manosube_agent_civilization.authority.errors.*` -- this layer never catches or rewraps any
 of them.
 
-`agent.py` owns one further, unexported implementation detail: a private `_ConstructionToken`
-type and its one singleton instance, `_ROUTE_CONSTRUCTION_TOKEN`. `TemporaryAgent.__init__`
-requires that exact object, by identity, as its `_construction_token` keyword-only argument;
-`route.py` is the only module that ever imports it. Neither name is part of this package's
-public exports.
+`agent.py` owns one further, unexported implementation detail: `_ActiveTemporaryAgent`, the
+one private concrete subclass of the public `TemporaryAgent` interface. `route.py` is the only
+module that ever imports or instantiates it (Structural Review Round 2, P12-R2-F1); it is not
+part of this package's public exports, and `TemporaryAgent` itself, being an `abc.ABC` with no
+concrete implementation, cannot be instantiated directly by anyone.
 
 ## 5. Canonical successful route
 
@@ -167,18 +175,18 @@ And, for this layer's own lifecycle boundary:
   initialize/commit/recover/load_current/bind_project/reconstruct; and that no module in this
   package imports a model, subprocess, shell, network, GitHub, Observer, Change-execution,
   scheduler, or multi-Agent surface
-- a direct TemporaryAgent(context) call -- even over a real BootContext obtained through a
-  direct boot_project call, never through start_temporary_agent -- raises
-  AgentConstructionError; a wrong or missing _construction_token has the identical effect;
-  and a real _construction_token cannot rescue a non-BootContext payload (P12-R1-F1)
+- a direct TemporaryAgent(...) call -- with no arguments, or with a real BootContext obtained
+  through a direct boot_project call rather than through start_temporary_agent -- always
+  raises Python's own TypeError for an uninstantiable abstract class (P12-R2-F1, superseding
+  Round 1's AgentConstructionError/token proof)
+- static conformance proves inspect.isabstract(TemporaryAgent) and that its
+  __abstractmethods__ are exactly {"boot_context", "release"}; that _ActiveTemporaryAgent is
+  imported and instantiated nowhere but route.py, and exported nowhere in __all__; and that no
+  construction-token/capability scheme (_ROUTE_CONSTRUCTION_TOKEN, _ConstructionToken,
+  AgentConstructionError) remains anywhere in this package
 - a rejected direct construction attempt calls boot_project zero times and mutates the Store
   zero times; the canonical start_temporary_agent route itself remains completely unaffected
   and still calls boot_project exactly once
-- static conformance additionally proves TemporaryAgent.__init__ declares a keyword-only
-  _construction_token parameter, that route.py is the only module importing
-  _ROUTE_CONSTRUCTION_TOKEN, that route.py's own TemporaryAgent(...) call site passes
-  _construction_token= explicitly, and that neither _ROUTE_CONSTRUCTION_TOKEN nor
-  _ConstructionToken is ever exported
 ```
 
 ## 7. Explicit non-claims

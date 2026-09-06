@@ -15,6 +15,8 @@ import ast
 import inspect
 from types import ModuleType
 
+import pytest
+
 import manosube_agent_civilization.agent_runtime as agent_runtime_module
 import manosube_agent_civilization.agent_runtime.agent as agent_module
 import manosube_agent_civilization.agent_runtime.errors as errors_module
@@ -79,46 +81,42 @@ def test_agent_runtime_package_exports_exactly_one_public_start_route_and_lifecy
     assert public_types == ["TemporaryAgent"]
 
 
-def test_temporary_agent_constructor_requires_the_route_construction_token() -> None:
-    """Structural Review Round 1 (P12-R1-F1): ``TemporaryAgent.__init__`` must declare a
-    keyword-only ``_construction_token`` parameter -- the technical boundary that makes a
-    bare, direct ``TemporaryAgent(some_context)`` call fail closed rather than silently
-    producing an active Agent over unverified data."""
+def test_temporary_agent_is_an_abstract_base_class_with_no_concrete_implementation() -> None:
+    """Structural Review Round 2 (P12-R2-F1): the public ``TemporaryAgent`` interface must be
+    a real ``abc.ABC`` declaring only ``boot_context``/``release`` as abstract members, so
+    ``TemporaryAgent(...)`` always raises Python's own ``TypeError`` -- never a private,
+    merely-conventional "construction token" that an importer could simply import too."""
 
-    tree = ast.parse(inspect.getsource(agent_module))
-    init_defs = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
-    ]
-    assert len(init_defs) == 1
-    kwonly_names = {arg.arg for arg in init_defs[0].args.kwonlyargs}
-    assert "_construction_token" in kwonly_names
+    assert inspect.isabstract(agent_runtime_module.TemporaryAgent)
+    assert agent_runtime_module.TemporaryAgent.__abstractmethods__ == frozenset(
+        {"boot_context", "release"}
+    )
+    with pytest.raises(TypeError):
+        agent_runtime_module.TemporaryAgent()  # type: ignore[abstract]
 
 
-def test_route_is_the_only_module_that_imports_the_construction_token() -> None:
-    """Only ``route.py`` may ever import ``agent._ROUTE_CONSTRUCTION_TOKEN`` -- proven by a
-    real AST walk over every other module in this package, never merely by convention."""
+def test_route_is_the_only_module_that_imports_the_private_concrete_implementation() -> None:
+    """Only ``route.py`` may ever import ``agent._ActiveTemporaryAgent`` -- proven by a real
+    AST walk over every other module in this package, never merely by convention."""
 
-    for module in (agent_module, errors_module):
+    for module in (errors_module,):
         tree = ast.parse(inspect.getsource(module))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 imported_names = {alias.name for alias in node.names}
-                assert "_ROUTE_CONSTRUCTION_TOKEN" not in imported_names
+                assert "_ActiveTemporaryAgent" not in imported_names
 
     route_tree = ast.parse(inspect.getsource(route_module))
     imported_from_agent: set[str] = set()
     for node in ast.walk(route_tree):
         if isinstance(node, ast.ImportFrom) and node.module and node.module.endswith("agent"):
             imported_from_agent.update(alias.name for alias in node.names)
-    assert "_ROUTE_CONSTRUCTION_TOKEN" in imported_from_agent
+    assert "_ActiveTemporaryAgent" in imported_from_agent
 
 
-def test_route_passes_the_construction_token_to_every_temporaryagent_call_site() -> None:
-    """Every ``TemporaryAgent(...)`` call inside ``route.py`` must pass
-    ``_construction_token=`` explicitly -- proving the one canonical route itself supplies the
-    proof of authorization, never relying on a default that happens to work."""
+def test_route_returns_the_private_concrete_implementation() -> None:
+    """``start_temporary_agent`` must return ``_ActiveTemporaryAgent(...)`` -- the one call
+    site in this package that ever instantiates the concrete implementation."""
 
     tree = ast.parse(inspect.getsource(route_module))
     call_sites = [
@@ -126,18 +124,26 @@ def test_route_passes_the_construction_token_to_every_temporaryagent_call_site()
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "TemporaryAgent"
+        and node.func.id == "_ActiveTemporaryAgent"
     ]
     assert len(call_sites) == 1
-    keyword_names = {kw.arg for kw in call_sites[0].keywords}
-    assert "_construction_token" in keyword_names
 
 
-def test_agent_runtime_never_exports_the_construction_token_or_its_type() -> None:
-    assert "_ROUTE_CONSTRUCTION_TOKEN" not in agent_runtime_module.__all__
-    assert "_ConstructionToken" not in agent_runtime_module.__all__
-    assert not hasattr(agent_runtime_module, "_ROUTE_CONSTRUCTION_TOKEN")
-    assert not hasattr(agent_runtime_module, "_ConstructionToken")
+def test_agent_runtime_never_exports_the_private_concrete_implementation() -> None:
+    assert "_ActiveTemporaryAgent" not in agent_runtime_module.__all__
+    assert not hasattr(agent_runtime_module, "_ActiveTemporaryAgent")
+
+
+def test_no_construction_token_or_capability_scheme_remains() -> None:
+    """Structural Review Round 2 (P12-R2-F1) removed the Round 1 token/capability scheme
+    entirely -- no importable token, its type, or its dedicated error may remain anywhere in
+    this package."""
+
+    for module in (agent_module, errors_module, route_module):
+        assert not hasattr(module, "_ROUTE_CONSTRUCTION_TOKEN")
+        assert not hasattr(module, "_ConstructionToken")
+        assert not hasattr(module, "AgentConstructionError")
+    assert not hasattr(agent_runtime_module, "AgentConstructionError")
 
 
 def test_agent_runtime_calls_boot_project_exactly_once() -> None:

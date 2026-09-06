@@ -17,19 +17,17 @@ import subprocess
 import sys
 import textwrap
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from tests.fixtures.product_binding import bind_project_kwargs, genesis_records
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.agent_runtime import (
-    AgentConstructionError,
     AgentReleasedError,
     TemporaryAgent,
     start_temporary_agent,
 )
-from manosube_agent_civilization.agent_runtime.agent import _ROUTE_CONSTRUCTION_TOKEN
 import manosube_agent_civilization.agent_runtime.route as agent_runtime_route_module
 from manosube_agent_civilization.binding import bind_project
 from manosube_agent_civilization.boot import BootNotFoundError, boot_project
@@ -255,14 +253,30 @@ def test_a_released_agent_cannot_be_restarted_or_resumed(tmp_path: Path) -> None
         _ = agent.boot_context  # still released, unaffected by the second start
 
 
-# --- Structural Review Round 1 (P12-R1-F1): direct construction must fail closed ------------ #
+# --- Structural Review Round 2 (P12-R2-F1): the public interface is not instantiable -------- #
 
 
-def test_temporary_agent_cannot_be_constructed_directly(tmp_path: Path) -> None:
-    """A bare ``TemporaryAgent(context)`` call -- bypassing ``start_temporary_agent`` and
-    ``boot_project`` entirely -- must fail closed, even over a genuine, real ``BootContext``
-    (obtained here through a direct ``boot_project`` call, never through the public
-    ``start_temporary_agent`` route)."""
+def test_temporary_agent_cannot_be_constructed_directly() -> None:
+    """The public ``TemporaryAgent`` interface is an ``abc.ABC`` with no concrete
+    implementation -- ``TemporaryAgent()`` always raises ``TypeError``, because Python itself
+    refuses to instantiate an abstract class. This is a real language-level guarantee, not a
+    private-by-convention value a determined importer could simply import too (P12-R2-F1)."""
+
+    with pytest.raises(TypeError):
+        TemporaryAgent()  # type: ignore[abstract]
+
+
+def test_temporary_agent_direct_construction_fails_even_with_a_real_boot_context(
+    tmp_path: Path,
+) -> None:
+    """Even a genuine ``BootContext``, obtained here through a direct ``boot_project`` call
+    rather than through ``start_temporary_agent``, cannot rescue a direct
+    ``TemporaryAgent(...)`` call -- the public interface declares no constructor that could
+    ever accept it.
+
+    Called through ``cast(Any, ...)`` rather than a ``# type: ignore`` comment: mypy reports
+    this exact call site under either of two different error codes (``call-arg``/``abstract``)
+    depending on unrelated internal ordering, so no single error code is stable here."""
 
     store_root, kwargs, result = _bound(tmp_path)
     project_id = kwargs["project_id"]
@@ -271,38 +285,8 @@ def test_temporary_agent_cannot_be_constructed_directly(tmp_path: Path) -> None:
         store, project_id=project_id, project_binding_id=result["project_binding_id"]
     )
 
-    with pytest.raises(AgentConstructionError):
-        TemporaryAgent(real_context)
-
-
-def test_temporary_agent_rejects_a_wrong_construction_token(tmp_path: Path) -> None:
-    store_root, kwargs, result = _bound(tmp_path)
-    project_id = kwargs["project_id"]
-    store = FileStateStore(store_root, schema_root=SCHEMA_ROOT)
-    real_context = boot_project(
-        store, project_id=project_id, project_binding_id=result["project_binding_id"]
-    )
-
-    with pytest.raises(AgentConstructionError):
-        TemporaryAgent(real_context, _construction_token=object())
-
-
-def test_temporary_agent_rejects_a_fabricated_boot_context_even_with_the_real_token() -> None:
-    """Defense in depth: even the one real construction token cannot make a non-``BootContext``
-    payload -- a plain dict standing in for a fabricated, unverified context -- become an
-    active Agent."""
-
-    fabricated_context = {
-        "project_id": "PRJ-FAKE",
-        "project_binding_id": "PROJBIND-FAKE",
-        "current_state": {"status": "FORGED"},
-    }
-
-    with pytest.raises(AgentConstructionError):
-        TemporaryAgent(
-            fabricated_context,  # type: ignore[arg-type]
-            _construction_token=_ROUTE_CONSTRUCTION_TOKEN,
-        )
+    with pytest.raises(TypeError):
+        cast(Any, TemporaryAgent)(real_context)
 
 
 def test_rejected_direct_construction_reaches_neither_boot_nor_store(
@@ -322,8 +306,8 @@ def test_rejected_direct_construction_reaches_neither_boot_nor_store(
 
     monkeypatch.setattr(agent_runtime_route_module, "boot_project", counting_boot_project)
 
-    with pytest.raises(AgentConstructionError):
-        TemporaryAgent({"fabricated": True})  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        TemporaryAgent()  # type: ignore[abstract]
 
     assert calls == []
     assert _snapshot(store_root, project_id) == before

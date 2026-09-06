@@ -87,8 +87,8 @@ MULTI_AGENT_IMPLEMENTED=false
 ```text
 src/manosube_agent_civilization/agent_runtime/
 ├── __init__.py     public exports
-├── errors.py        AgentRuntimeError / AgentReleasedError / AgentConstructionError
-├── agent.py         TemporaryAgent -- the one ephemeral, non-persisted lifecycle handle
+├── errors.py        AgentRuntimeError / AgentReleasedError
+├── agent.py         TemporaryAgent (public ABC interface) / _ActiveTemporaryAgent (private)
 └── route.py         start_temporary_agent -- the one public start route
 ```
 
@@ -99,16 +99,33 @@ created anywhere in this package. `start_temporary_agent` invokes the existing
 introduced.
 
 **Structural Review Round 1 correction (SHUKOU adoption
-`ADOPT_P12_R1_CANONICAL_TEMPORARY_AGENT_CONSTRUCTION`).** The initial delivery left
-`TemporaryAgent.__init__` publicly callable with any caller-supplied `BootContext` --
-`BootContext` is itself publicly constructible, so a caller could fabricate an active Agent
-without ever calling `start_temporary_agent` or `boot_project`. `TemporaryAgent.__init__` now
-requires a private construction token (`agent._ROUTE_CONSTRUCTION_TOKEN`) that only `route.py`
-ever imports, and requires its `boot_context` argument to already be a real `BootContext`
-instance; either check failing raises `AgentConstructionError` before anything is stored. This
-is a construction-boundary correction, not a semantic redesign: the public start route,
-release terminality, deep immutability, typed owner-error propagation, and zero-Store-mutation
-guarantees are all unchanged.
+`ADOPT_P12_R1_CANONICAL_TEMPORARY_AGENT_CONSTRUCTION`) -- superseded by Round 2, below.** The
+initial delivery left `TemporaryAgent.__init__` publicly callable with any caller-supplied
+`BootContext` -- `BootContext` is itself publicly constructible, so a caller could fabricate an
+active Agent without ever calling `start_temporary_agent` or `boot_project`. Round 1 added a
+private construction token (`agent._ROUTE_CONSTRUCTION_TOKEN`) that only `route.py` ever
+imported, required as `TemporaryAgent.__init__`'s `_construction_token` argument.
+
+**Structural Review Round 2 correction (SHUKOU adoption of P12-R2-F1).** Round 1's token was
+only an importable module attribute -- it proved no real construction provenance, since any
+caller could `import` it directly, construct a `BootContext` directly, and hand both to
+`TemporaryAgent(...)` without `boot_project` ever running. The token/capability scheme
+(`_ROUTE_CONSTRUCTION_TOKEN`, `_ConstructionToken`, `AgentConstructionError`) is removed
+entirely, with no replacement secret, closure, stack-inspection, environment value, cache,
+registry, or persisted receipt. `TemporaryAgent` is now the public lifecycle *interface*: a
+real `abc.ABC` declaring only `boot_context`/`release` as abstract members and no `__init__` of
+its own, so `TemporaryAgent(...)` always raises Python's own `TypeError` regardless of what is
+supplied. The concrete implementation, `_ActiveTemporaryAgent`, is never exported from this
+package; only `start_temporary_agent`, immediately after its own single `boot_project` call,
+ever instantiates it. This is a public-API and ownership boundary, not a claim that hostile
+code running in the same Python process -- deliberately importing this private module and
+subclassing or monkeypatching around it -- is cryptographically isolated; no mechanism in
+Python achieves that, and this layer never claims otherwise. What it actually guarantees: every
+ordinary caller going through this package's public, documented surface cannot obtain an active
+Agent except by way of a real `boot_project` call. This is again a construction-boundary
+correction, not a semantic redesign: the public start route, release terminality, deep
+immutability, typed owner-error propagation, and zero-Store-mutation guarantees are all
+unchanged and independently retested.
 
 ## 5. Explicit non-claims
 

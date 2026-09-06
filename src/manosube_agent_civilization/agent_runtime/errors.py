@@ -20,13 +20,3 @@ class AgentReleasedError(AgentRuntimeError):
     Its Boot Context and lifecycle service are no longer accessible through this handle, and
     a released Agent cannot be restarted, resumed, used to restore, or used to recover a
     Store (frozen semantic decision 6)."""
-
-
-class AgentConstructionError(AgentRuntimeError):
-    """A ``TemporaryAgent`` was constructed directly, bypassing the one canonical
-    ``start_temporary_agent`` route, or was constructed over a payload that is not already a
-    real, verified ``BootContext``.
-
-    Refused before anything is stored: only ``start_temporary_agent`` -- which calls
-    ``boot_project`` exactly once first -- may ever produce an active Agent (Phase 12
-    Structural Review Round 1, P12-R1-F1)."""
