@@ -56,10 +56,12 @@ def main() -> int:
     # 33 before the Authority family; the four Authority schemas make 37, the one Change
     # schema makes 38, the one Evidence schema makes 39, the one Reflow schema
     # (material_contradiction) makes 40, R6-F4's kernel_source_witness makes 41, and
-    # R6-F1a's source_snapshot makes 42. The count is asserted rather than derived so a
-    # schema added without being reconciled here fails the gate instead of silently
-    # widening the inventory.
-    if len(paths) != 42 or len(set(ids)) != len(paths) or None in ids:
+    # R6-F1a's source_snapshot makes 42. Phase 9's own four Product Binding schemas
+    # (project_binding, boundary, source_registration, command_policy -- Issue #43,
+    # KERNEL_ELEMENT=NONE_PRODUCT_BINDING_LAYER, not a ninth Kernel element) make 46. The
+    # count is asserted rather than derived so a schema added without being reconciled
+    # here fails the gate instead of silently widening the inventory.
+    if len(paths) != 46 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
