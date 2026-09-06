@@ -124,6 +124,16 @@ def test_the_full_persisted_reference_graph_closes_with_zero_unresolved_edges(
         "observation_evidence",
         "closure_evaluation",
         "difference_event",
+        # P8-R4 completion repair 2 (P8-R4-C2-F1): these four kinds were already persisted
+        # by production before this repair, but never recognized by the registry as
+        # reference *targets* at all -- their own presence in a real committed transaction
+        # is asserted here too, not only in the synthetic unit-level completeness proof
+        # (tests/contract/reflow/test_reference_registry_completeness.py).
+        "evidence_sufficiency_result",
+        "invariant_evaluation",
+        "candidate_claim_evaluation_event",
+        "candidate_completion_record",
+        "kernel_source_witness",
     } <= kinds_seen
     # P8-R4-F2: the production registry actually walks source_snapshot edges now -- a
     # vacuously-passing empty scan (no source_snapshot-kind edge ever checked) would not
@@ -132,6 +142,22 @@ def test_the_full_persisted_reference_graph_closes_with_zero_unresolved_edges(
     # P8-R4-F1: the registry-driven walk also covers a difference_event's own
     # previous_event_id -- the genesis event's own resolvability, in particular.
     assert any(ref_kind == "difference_event" for ref_kind, _ in report["edges_checked"])
+    # P8-R4 completion repair 2 (P8-R4-C2-F1): the widened registry's own new edges --
+    # closure_evaluation's kernel_source_witness_ref/evidence_sufficiency_ref and the
+    # embedded candidate_invariant/claim bindings' own invariant_evaluation_ref/
+    # evaluation_head_event_ref/completion_record_ref -- are each actually exercised by
+    # this real CLOSED route, not merely present in the registry's own code and never
+    # reached by any real committed transaction.
+    for ref_kind in (
+        "kernel_source_witness",
+        "evidence_sufficiency_result",
+        "invariant_evaluation",
+        "candidate_claim_evaluation_event",
+        "candidate_completion_record",
+    ):
+        assert any(checked_kind == ref_kind for checked_kind, _ in report["edges_checked"]), (
+            f"the registry-driven walk never checked a {ref_kind} edge on this real route"
+        )
 
 
 def test_the_verification_observation_resolves_its_own_auxiliary_evidence(
@@ -415,6 +441,16 @@ def test_a_real_non_closed_route_still_persists_and_reconstructs(tmp_path: Path)
     closure_request["terminal_reason_evidence_requests"] = [
         assembly["before"]["observation_evidence_request"]
     ]
+    # P8-R4 completion repair 2: the base CLOSED-route fixture's own candidate invariant/
+    # claim bindings were verified against the *original*, non-empty Sufficiency context --
+    # emptying it above makes their own re-verification (G19/G21) genuinely stale, so
+    # neither route.py's own admission code nor evaluate_closure's echoed output can still
+    # carry them as if they resolved. Cleared here rather than left to dangle as an
+    # unresolved Store-owned reference this test's own claim never depended on.
+    closure_request["candidate_invariant_evaluation_bindings"] = []
+    closure_request["invariant_evaluations"] = []
+    closure_request["candidate_claim_evaluation_bindings"] = []
+    closure_request["candidate_claim_evaluation_events"] = []
     kwargs["closure_request"] = closure_request
     kwargs["next_observation_ref"] = {
         "kind": "observation",

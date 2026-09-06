@@ -17,6 +17,7 @@ CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_STRUCTURAL_REVIEW_ROUND_2
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_3
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4
 CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR
+CORRECTED_BY=SHUKOU_ADOPTION_PHASE_8_FINAL_CLOSURE_ROUND_4_COMPLETION_REPAIR_2
 ```
 
 ## 0. Revision History
@@ -174,6 +175,111 @@ Round 4 completion repair (SHUKOU Phase 8 final-closure round 4 completion repai
   Reflow-admitted records. Full retained suite: 17839 passed, 11 skipped, 0 failed.
   tests/natural_cycle/ (the actual Vertical Proof this document describes): 115/115,
   unchanged.
+
+Round 4 completion repair 2 (P8-R4-C2-F1, adopted, `REVIEWED_HEAD=
+  ab1b7feee74ca6c711a8ce73e276017c4f285b87`): 構造参謀's own independent re-observation of
+  the completion repair's own delivered HEAD found the production reference-edge registry
+  itself -- the single vocabulary Round 4 named as authoritative -- incomplete, not merely
+  its callers: `reflow/reference_registry.py`'s `reference_edges()` recognized only
+  `difference_event`'s own `previous_event_id` and `closure_evaluation`'s own
+  `difference_event_head_ref`, while both records' own canonical schemas declare many more
+  genuinely Store-owned reference fields the registry never walked at all. A record whose
+  only checked field resolved could still carry an unresolved reference anywhere else in its
+  own body, undetected by any test built on this registry's own vocabulary. Same Round 4,
+  same three Findings (P8-R4-F1/F2/F3), same unconditional invariant -- a further completion
+  repair, not a new round.
+
+  **Independent reproduction (§2 of the adoption message):** confirmed directly against the
+  real code -- `reference_edges()`'s own `difference_event`/`closure_evaluation` branches (as
+  delivered by the first completion repair) each read exactly one field; every other
+  reference field either schema declared, verified by direct inspection of
+  `01_SCHEMA/difference_lifecycle_event.schema.json` and
+  `01_SCHEMA/closure_evaluation.schema.json` plus every producer of those bodies
+  (`reflow/route.py`, `reflow/closure.py`, `reflow/reopen.py`), was unwalked.
+
+  **Reference Field Classification (SHUKOU §3.1, full table maintained as executable
+  specification in `tests/contract/reflow/test_reference_registry_completeness.py`'s own
+  `_REQUIRED_FIELD_CLASSIFICATION`, cross-checked field-for-field against each kind's live
+  schema `required` list by `test_every_schema_required_field_is_classified_exactly_once`):
+  every reference field of every Store-persisted record kind classified A (Store-owned-
+  resolvable) / B (State-or-transaction-reference, resolved through `load_current`/
+  `resolve_transaction`, never `resolve_record`) / C (external-or-non-Store-owned target --
+  no Store-owned producer exists for it in this vertical) / D (nullable-conditionally-absent
+  -- schema-legal class A shape, no production code path currently populates it) / E
+  (embedded, recursively classified). Zero fields left unclassified.
+
+  **Fix:** `STORE_OWNED_REFERENCE_KINDS` widened from four kinds to ten -- adding
+  `closure_evaluation`, `evidence_sufficiency_result`, `kernel_source_witness`,
+  `invariant_evaluation`, `candidate_claim_evaluation_event`, `candidate_completion_record`,
+  each confirmed a genuine Store-owned persisted kind by grepping every `records[...] =`/
+  `_merge_verified_record` call site in `reflow/route.py`, never assumed. `reference_edges()`
+  rewritten to walk every classification-A field of every kind (full field list in §4/§7
+  below and in the module's own docstring), including the nested Store-owned references
+  inside each `candidate_invariant_evaluation_bindings`/`candidate_claim_evaluation_bindings`
+  entry. One further gap, not named in SHUKOU's own adoption message, was found during this
+  same classification pass and closed in the same fix: `closure_evaluation.
+  after_state_candidate.source_snapshot_refs` (confirmed, via `reflow/closure.py`'s own
+  `build_after_state_candidate()`, to carry real `source_snapshot`-kind references) was also
+  unwalked by the pre-repair registry. Classification-C fields (target kind never Store-
+  persisted -- e.g. `closure_evaluation.contradiction_refs` naming `material_contradiction`)
+  are classified and documented, never silently omitted, and correctly never emit an edge.
+
+  **Independent completeness verification (SHUKOU §3.3(a)):** a dedicated contract test
+  module, `tests/contract/reflow/test_reference_registry_completeness.py` (25 tests), proves
+  registry completeness by a route the registry's own self-consistency cannot provide --
+  cross-checking the hand-built classification table against each kind's live schema
+  `required`-field set (not merely walking the registry and checking it agrees with itself),
+  planting one distinct sentinel reference per classification-A field via minimal-pair
+  construction and asserting `reference_edges()` returns exactly that edge set (proving
+  neither omission nor over-eager extra scanning, and that each field is independently load-
+  bearing by removing it and checking only its own edge disappears), and a required negative
+  control that temporarily monkeypatches `STORE_OWNED_REFERENCE_KINDS` to exclude one real
+  kind and asserts the completeness test then fails -- run against the real, unmodified
+  production `reference_edges`, restored in a `finally` block, never a second implementation.
+
+  Widening the registry surfaced two pre-existing test-fixture staleness gaps, not production
+  bugs: `tests/natural_cycle/test_vertical_proof_negative_routes.py::
+  test_p8r1f2_a_genuinely_not_satisfied_evaluation_commits_a_real_retained_transition` and
+  `tests/natural_cycle/test_vertical_proof_reference_closure.py::
+  test_a_real_non_closed_route_still_persists_and_reconstructs` each emptied
+  `terminal_reason_evidence_requests` from a shared base fixture without also clearing that
+  fixture's own stale `candidate_invariant_evaluation_bindings`/`invariant_evaluations`/
+  `candidate_claim_evaluation_bindings`/`candidate_claim_evaluation_events`, which then named
+  invariant/claim evaluations `evaluate_closure()` no longer actually produced once
+  Sufficiency was emptied (confirmed by direct REPL reproduction of `evaluate_closure()` on
+  the mutated request before either fix). Both corrected by clearing all four fields
+  alongside `terminal_reason_evidence_requests`; both tests' own `to_status`/state-revision/
+  pre-existing assertions are unaffected.
+
+  The REOPENED route's own persisted event is proven independently reference-closed too
+  (`tests/unit/reflow/test_reopen_and_recovery.py::
+  test_material_contradiction_reopens_a_closed_difference`, extended to walk
+  `reference_edges("difference_event", result["event"])` and resolve every edge found)
+  without retrofitting the generic registry-driven admission scan into `reopen()` itself --
+  disclosed as a deliberate scope boundary: `reflow.route.reopen()` persists only its own
+  minted `difference_event` directly, never running `_admitted_records`'s own scan, and its
+  own `closure_evaluation_ref` to the prior CLOSED evaluation is independently re-verified by
+  a bespoke resolver (`_resolve_closed_closure_evaluation`) already in place since Round 1/2;
+  Round 4's own semantic decision named `REFERENCE_CLOSURE_IS_GLOBAL_REFLOW_INVARIANT=true`
+  as a `reflow()` invariant specifically, and retrofitting it into `reopen()` as well would be
+  a further architectural change this repair's own adoption did not name as required.
+
+  `PREVIOUS_30_FAILURE_COUNT=30` (Repair 1's own baseline), `FINAL_30_FAILURE_COUNT=0`
+  (still, unaffected by this repair). `FULL_TEST_FAILURE_COUNT=0`: full retained suite
+  17864 passed, 11 skipped, 0 failed (25 more than Repair 1's 17839, exactly the 25 new
+  completeness tests added). `tests/natural_cycle/` 115/115; `tests/unit/reflow/` 268/268.
+  Schema validation, State Engine conformance, State Store acceptance, and development
+  binding conformance all pass unchanged. `ruff check`/`ruff format --check` clean. `mypy`
+  re-run empirically on this candidate HEAD (not merely cited) still reports the identical
+  pre-existing config error (`Can only use --explicit-package-bases with
+  --namespace-packages...`); `pyproject.toml` is unmodified by any commit in this or the
+  prior round, so the identical error necessarily reproduces on both the reviewed baseline
+  HEAD and this candidate HEAD.
+
+  `EVERY_SCHEMA_REFERENCE_FIELD_CLASSIFIED=true`, `UNCLASSIFIED_REFERENCE_FIELD_COUNT=0`,
+  `REGISTRY_OMITTED_STORE_OWNED_REFERENCE_FIELD_COUNT=0`,
+  `REGISTRY_EXTRA_UNDECLARED_REFERENCE_FIELD_COUNT=0`,
+  `PERSISTED_RECORD_KIND_INVENTORY_COMPLETE=true`.
 ```
 
 ---
@@ -623,9 +729,12 @@ AUTONOMOUS_CHANGE_IMPLEMENTED=false
 MULTI_AGENT_IMPLEMENTED=false
 ```
 
-**Disclosed scope boundary (P8-R3-F1, widened and made unconditional by P8-R4-F1/F2/F3):
-the persisted-reference-graph closure claim now covers every Store-owned reference edge,
-not an explicit, narrower vocabulary a caller had to opt into.**
+**Disclosed scope boundary (P8-R3-F1, widened and made unconditional by P8-R4-F1/F2/F3, the
+registry's own completeness independently re-verified by Round 4 completion repair 2
+P8-R4-C2-F1): the persisted-reference-graph closure claim now covers every Store-owned
+reference edge, not an explicit, narrower vocabulary a caller had to opt into, and this
+coverage is proven complete against each kind's own live schema, not merely against the
+registry's own prior self-consistency.**
 
 ```text
 AUXILIARY_VERIFICATION_EVIDENCE_ROLE=PROVENANCE_ONLY
@@ -639,6 +748,11 @@ OBSERVATION_EVIDENCE_REFERENCE_CLOSED=true
 SOURCE_SNAPSHOT_REFERENCE_CLOSED=true
 DIFFERENCE_GENESIS_EVENT_REFERENCE_CLOSED=true
 LIFECYCLE_PREDECESSOR_CHAIN_CLOSED=true
+PERSISTED_RECORD_KIND_INVENTORY_COMPLETE=true
+EVERY_SCHEMA_REFERENCE_FIELD_CLASSIFIED=true
+UNCLASSIFIED_REFERENCE_FIELD_COUNT=0
+REGISTRY_OMITTED_STORE_OWNED_REFERENCE_FIELD_COUNT=0
+REGISTRY_EXTRA_UNDECLARED_REFERENCE_FIELD_COUNT=0
 PERSISTED_REFERENCE_GRAPH_CLOSED=true
 UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0
 ```
@@ -646,16 +760,39 @@ UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0
 `PERSISTED_REFERENCE_GRAPH_CLOSED`/`UNRESOLVED_STORE_OWNED_REFERENCE_COUNT=0` now hold,
 unconditionally (no caller opt-in keyword required), over every reference edge the single
 production reference-edge registry (`reflow/reference_registry.py`,
-`PRODUCTION_REFERENCE_REGISTRY_IS_AUTHORITATIVE=true`) recognizes: an `observation`
-record's own `source_snapshot_refs` and `observation_evidence_refs`; an
-`observation_evidence` record's own `observed_result.observation_ref`, `lineage.
-derived_from` (`observation`-kind members only), and `lineage.predecessor_evidence_refs`; a
-`closure_evaluation` record's own `difference_event_head_ref`; and a `difference_event`
-record's own `previous_event_id`. Recognized structurally (a dict shaped like `common/
-reference.schema.json` -- `kind`+`id`, both non-empty strings -- with `kind` restricted to
-the registry's own `STORE_OWNED_REFERENCE_KINDS`), never by a fuzzy text search over key
-names, and the identical registry both the production admission gate and every test proving
-this claim import -- never a second, duplicate test-only vocabulary.
+`PRODUCTION_REFERENCE_REGISTRY_IS_AUTHORITATIVE=true`) recognizes. As of Round 4 completion
+repair 2 (P8-R4-C2-F1), this coverage is re-proven complete not merely against the registry's
+own self-consistency but independently, against each kind's own live schema (§0 Revision
+History; `tests/contract/reflow/test_reference_registry_completeness.py`) -- ten Store-owned
+record kinds, every one of the following reference fields walked (classification A, per the
+Reference Field Classification table maintained in that module's own
+`_REQUIRED_FIELD_CLASSIFICATION`):
+
+- `observation`: `source_snapshot_refs`, `observation_evidence_refs`.
+- `observation_evidence`: `observed_result.observation_ref`, `lineage.derived_from`
+  members, `lineage.predecessor_evidence_refs` members, and each `artifact_references`
+  member's own optional `source_snapshot_ref`.
+- `closure_evaluation`: `kernel_source_witness_ref`, `difference_event_head_ref`, the
+  embedded `after_state_candidate.source_snapshot_refs` members, `after_observation_refs`,
+  `change_result_evidence_refs`, `change_free_verification_evidence_refs`,
+  `evidence_sufficiency_ref`, `terminal_reason_evidence_refs`, and -- recursively -- each
+  `candidate_invariant_evaluation_bindings` entry's own `invariant_evaluation_ref`/
+  `evaluation_evidence_refs` and each `candidate_claim_evaluation_bindings` entry's own
+  `evaluation_head_event_ref`/`completion_record_ref`/`evaluation_evidence_refs`.
+- `difference_event`: `previous_event_id`, `observation_refs`, `evidence_refs`,
+  `closure_evaluation_ref`, `revoked_evidence_refs`, `invalid_evidence_refs`,
+  `contradiction_evidence_refs`.
+- `evidence_sufficiency_result`, `invariant_evaluation`: `evidence_refs` members.
+- `candidate_claim_evaluation_event`: `predecessor_event_ref`, `completion_record_ref`.
+- `candidate_completion_record`: `required_evidence_refs` members,
+  `invariant_evaluation_refs` members.
+- `source_snapshot`, `kernel_source_witness`: leaf kinds, no reference field of their own.
+
+Recognized structurally (a dict shaped like `common/reference.schema.json` -- `kind`+`id`,
+both non-empty strings -- with `kind` restricted to the registry's own
+`STORE_OWNED_REFERENCE_KINDS`), never by a fuzzy text search over key names, and the
+identical registry both the production admission gate and every test proving this claim
+import -- never a second, duplicate test-only vocabulary.
 
 References this Kernel names but never gives a Store-owned producer of its own --
 `difference`, `change`, `authority_decision`, `artifact`, `negative_evidence` -- remain

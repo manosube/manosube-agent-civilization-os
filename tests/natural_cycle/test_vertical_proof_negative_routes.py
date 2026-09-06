@@ -411,6 +411,18 @@ def test_p8r1f2_a_genuinely_not_satisfied_evaluation_commits_a_real_retained_tra
         {"kind": "observation_evidence", "id": before["observation_evidence"]["evidence_id"]}
     ]
     closure_request["terminal_reason_evidence_requests"] = [before["observation_evidence_request"]]
+    # P8-R4 completion repair 2: the base CLOSED-route fixture's own candidate invariant/
+    # claim bindings were verified against the *original*, non-empty Sufficiency context --
+    # emptying it above makes their own re-verification (G19/G21) genuinely stale, so
+    # neither route.py's own admission code nor evaluate_closure's echoed output can still
+    # carry them as if they resolved. This test's own claim is only that a genuinely
+    # NOT_SATISFIED evaluation still commits a real RETAINED transition, never that stale
+    # invariant/claim bindings inherited from an unrelated fixture also resolve, so both are
+    # cleared here rather than left to dangle as an unresolved Store-owned reference.
+    closure_request["candidate_invariant_evaluation_bindings"] = []
+    closure_request["invariant_evaluations"] = []
+    closure_request["candidate_claim_evaluation_bindings"] = []
+    closure_request["candidate_claim_evaluation_events"] = []
     kwargs["closure_request"] = closure_request
     kwargs["next_observation_ref"] = {
         "kind": "observation",

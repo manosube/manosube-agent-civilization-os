@@ -30,6 +30,7 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.reflow.commit import commit_reflow
 from manosube_agent_civilization.reflow.errors import ReflowValidationError
 from manosube_agent_civilization.reflow.identity import transaction_id
+from manosube_agent_civilization.reflow.reference_registry import reference_edges
 from manosube_agent_civilization.reflow.reopen import decide_reopen
 from manosube_agent_civilization.reflow.route import reflow, reopen
 from manosube_agent_civilization.store import STAGES, FileStateStore
@@ -95,6 +96,17 @@ def test_material_contradiction_reopens_a_closed_difference(tmp_path: Path) -> N
         result["committed_state"]["state_revision"]
         == closed["committed_state"]["state_revision"] + 1
     )
+    # P8-R4 completion repair 2 (P8-R4-C2-F1): the widened production registry now also
+    # recognizes this REOPENED event's own contradiction_evidence_refs as a Store-owned
+    # reference edge -- proving the reopen() route's own persisted record still closes
+    # (every edge it declares either resolves, or names a kind this registry correctly
+    # never treats as Store-owned, such as this fixture's own material_contradiction-kind
+    # CONTRADICTION_REF), not merely that reflow()'s own CLOSED/BLOCKED/RETAINED admission
+    # path does.
+    for ref_kind, ref_id in reference_edges("difference_event", result["event"]):
+        assert store.resolve_record(project_state["project_id"], ref_kind, ref_id) is not None, (
+            f"reopen()'s own persisted event declares an unresolved reference: {ref_kind}/{ref_id}"
+        )
 
 
 def test_reopen_refuses_an_evaluation_that_never_closed() -> None:
