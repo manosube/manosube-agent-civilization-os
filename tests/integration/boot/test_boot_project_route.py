@@ -744,6 +744,102 @@ def test_boot_rejects_every_crash_stage_of_a_later_pending_transaction(
     assert not journal.is_file()
 
 
+# --- P10-R3-F1: a durable lineage event whose own recovery journal has been deleted must
+#     never be silently excluded -- Boot requires every durable lineage event, not merely
+#     every still-existing journal, to resolve to committed-transaction evidence ---------- #
+
+
+def _advance(
+    store: FileStateStore, project_id: str, genesis_state: dict[str, Any]
+) -> dict[str, Any]:
+    """Build and commit a real second State transition -- shared by both Round 3 tests below,
+    mirroring the identical shape ``test_boot_rejects_a_present_current_view_behind_committed_
+    lineage`` and the Round 2 crash-stage matrix already build inline."""
+
+    from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+
+    successor = deepcopy(genesis_state)
+    successor["state_revision"] = genesis_state["state_revision"] + 1
+    successor["previous_state_fingerprint"] = genesis_state["semantic_fingerprint"]
+    successor["lineage_head_ref"] = {"kind": "state_transition", "id": "TX-ADVANCE-0001"}
+    successor["semantic_fingerprint"] = fingerprint_project_state(
+        successor, schema_root=SCHEMA_ROOT
+    ).as_dict()
+    event = {
+        "schema_version": "0.1",
+        "transaction_id": "TX-ADVANCE-0001",
+        "event_type": "TRANSITION",
+        "project_id": project_id,
+        "from_revision": genesis_state["state_revision"],
+        "to_revision": successor["state_revision"],
+        "before_fingerprint": genesis_state["semantic_fingerprint"],
+        "after_fingerprint": successor["semantic_fingerprint"],
+        "after_state": successor,
+        "evidence_refs": [],
+        "committed_at": "2026-09-06T10:00:00Z",
+    }
+    store.commit(
+        project_id,
+        genesis_state["state_revision"],
+        genesis_state["semantic_fingerprint"],
+        successor,
+        event,
+    )
+    return successor
+
+
+def test_boot_rejects_a_committed_later_transaction_whose_journal_was_deleted(
+    tmp_path: Path,
+) -> None:
+    """The exact P10-R3-F1 scenario: a real, honestly-committed later transition whose own
+    recovery journal directory is later destroyed -- the last durable evidence that it was
+    ever completed -- while the prior, matching ``current.json`` is left untouched. Boot must
+    reject, never silently reconstruct and return the stale prior revision."""
+
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    genesis_state = result["committed_state"]
+    _advance(store, project_id, genesis_state)
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    current_path.write_text(json.dumps(genesis_state), encoding="utf-8")
+    journal = store.root / "projects" / project_id / "state" / "recovery" / "TX-ADVANCE-0001"
+    assert journal.is_dir()
+    import shutil
+
+    shutil.rmtree(journal)
+    before = _snapshot(store, project_id)
+
+    with pytest.raises(CorruptStoreError):
+        boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+    assert _snapshot(store, project_id) == before
+
+
+def test_boot_rejects_when_a_later_transactions_journal_and_current_view_are_both_removed(
+    tmp_path: Path,
+) -> None:
+    """A sharper variant: the materialized ``current.json`` view is also removed, so nothing
+    is left to contradict except the raw lineage itself -- Boot must still reject rather than
+    reconstruct and return the last revision it can still fully account for."""
+
+    store, kwargs, result = _bound(tmp_path)
+    project_id = kwargs["project_id"]
+    genesis_state = result["committed_state"]
+    _advance(store, project_id, genesis_state)
+    journal = store.root / "projects" / project_id / "state" / "recovery" / "TX-ADVANCE-0001"
+    current_path = store.root / "projects" / project_id / "state" / "current.json"
+    import shutil
+
+    shutil.rmtree(journal)
+    current_path.unlink()
+    before = _snapshot(store, project_id)
+
+    with pytest.raises(CorruptStoreError):
+        boot_project(store, project_id=project_id, project_binding_id=result["project_binding_id"])
+
+    assert _snapshot(store, project_id) == before
+
+
 # --- persisted-record tamper detection (Store's own generic mechanism) -------------------- #
 
 

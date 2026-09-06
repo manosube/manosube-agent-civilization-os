@@ -251,3 +251,162 @@ def test_uninitialized_project_is_rejected(tmp_path: Path) -> None:
     s = store(tmp_path)
     with pytest.raises(CorruptStoreError):
         s.read_current_consistent("PRJ-NEVER-INITIALIZED-0001")
+
+
+# --- P10-R3-F1: a durable lineage event whose own recovery journal has been deleted must
+#     never be silently excluded -- a Store is quiescent only once every durable lineage
+#     event, not merely every still-existing journal, resolves to committed-transaction
+#     evidence ------------------------------------------------------------------------------ #
+
+
+def test_a_committed_later_transactions_deleted_journal_is_rejected_even_with_a_matching_current(
+    tmp_path: Path,
+) -> None:
+    """The exact P10-R3-F1 scenario: crash right after the lineage event is appended (before
+    ``COMMITTED``), then delete that transaction's complete recovery journal directory, and
+    leave the prior, still-matching ``current.json`` untouched. Pre-fix, ``_transaction_
+    committed`` reads the missing journal path identically to "not yet committed", so
+    ``_committed_events`` silently stops before this event and ``read_current_consistent``
+    returns the stale prior State without ever raising."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize("PRJ-0001", initial)
+    after, event = successor(initial)
+
+    def fault(current: str) -> None:
+        if current == "AFTER_LINEAGE_APPEND":
+            raise SimulatedCrash("AFTER_LINEAGE_APPEND")
+
+    with pytest.raises(SimulatedCrash):
+        s.commit("PRJ-0001", 0, initial["semantic_fingerprint"], after, event, fault=fault)
+
+    journal = (
+        tmp_path
+        / "backend"
+        / "projects"
+        / "PRJ-0001"
+        / "state"
+        / "recovery"
+        / event["transaction_id"]
+    )
+    assert journal.is_dir()
+    import shutil
+
+    shutil.rmtree(journal)
+    # current.json is untouched -- the crash landed before it was ever replaced, so it still
+    # holds `initial`, byte-for-byte consistent with what a naive reconstruction would return.
+    assert json.loads(_current_path(tmp_path).read_text(encoding="utf-8")) == initial
+
+    with pytest.raises(CorruptStoreError, match="recovery-journal evidence"):
+        s.read_current_consistent("PRJ-0001")
+
+
+def test_a_deleted_journal_for_a_fully_committed_later_transaction_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """Sharper than the crash-injection case above: the later transaction actually completed
+    (its own ``COMMITTED`` marker was genuinely written), and only afterward is its recovery
+    journal destroyed -- e.g. external corruption, not an interrupted commit. The lineage
+    event is real and fully committed; only the durable evidence proving so is gone. Must
+    still be rejected: a Store is quiescent only once every durable lineage event resolves to
+    committed-transaction evidence that Boot -- or any other quiescence-checked reader -- can
+    itself still verify."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize("PRJ-0001", initial)
+    after, event = successor(initial)
+    s.commit("PRJ-0001", 0, initial["semantic_fingerprint"], after, event)
+
+    journal = (
+        tmp_path
+        / "backend"
+        / "projects"
+        / "PRJ-0001"
+        / "state"
+        / "recovery"
+        / event["transaction_id"]
+    )
+    assert (journal / "COMMITTED").is_file()
+    import shutil
+
+    shutil.rmtree(journal)
+
+    with pytest.raises(CorruptStoreError, match="recovery-journal evidence"):
+        s.read_current_consistent("PRJ-0001")
+
+
+def test_deleted_journal_and_deleted_current_view_together_are_still_rejected(
+    tmp_path: Path,
+) -> None:
+    """Removing the materialized ``current.json`` view too leaves nothing to contradict
+    except the raw lineage itself -- read_current_consistent must still fail closed rather
+    than silently reconstruct and return the last revision it can still fully account for."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize("PRJ-0001", initial)
+    after, event = successor(initial)
+    s.commit("PRJ-0001", 0, initial["semantic_fingerprint"], after, event)
+
+    journal = (
+        tmp_path
+        / "backend"
+        / "projects"
+        / "PRJ-0001"
+        / "state"
+        / "recovery"
+        / event["transaction_id"]
+    )
+    import shutil
+
+    shutil.rmtree(journal)
+    _current_path(tmp_path).unlink()
+
+    with pytest.raises(CorruptStoreError, match="recovery-journal evidence"):
+        s.read_current_consistent("PRJ-0001")
+
+
+def test_bare_genesis_only_store_is_unaffected_by_the_lineage_event_check(tmp_path: Path) -> None:
+    """``TX-GENESIS`` is explicitly excluded from the new check -- its own institution is
+    settled exclusively by the existing Genesis Receipt, never by a recovery journal, so a
+    genesis-only Store (no recovery directory has ever existed) must still boot."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize("PRJ-0001", initial)
+
+    assert s.read_current_consistent("PRJ-0001") == initial
+
+
+def test_with_records_genesis_is_unaffected_by_the_lineage_event_check(tmp_path: Path) -> None:
+    """A ``WITH_RECORDS`` genesis's own recovery journal persists forever by the same
+    contract every other committed transaction's journal does -- unaffected either way, since
+    ``TX-GENESIS`` is excluded from this check regardless of its journal's presence."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize(
+        "PRJ-0001",
+        initial,
+        records=[("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, {"result": "SATISFIED"})],
+    )
+
+    assert s.read_current_consistent("PRJ-0001") == initial
+
+
+def test_quiescent_store_with_a_real_committed_later_transition_still_boots(
+    tmp_path: Path,
+) -> None:
+    """The positive control this whole matrix exists to keep true: an honestly-operating,
+    fully quiescent Store with a real committed later transition -- journal intact, COMMITTED
+    marker intact -- must still succeed."""
+
+    s = store(tmp_path)
+    initial = prepared_initial()
+    s.initialize("PRJ-0001", initial)
+    after, event = successor(initial)
+    s.commit("PRJ-0001", 0, initial["semantic_fingerprint"], after, event)
+
+    assert s.read_current_consistent("PRJ-0001") == after

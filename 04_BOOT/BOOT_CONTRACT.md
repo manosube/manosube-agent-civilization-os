@@ -51,9 +51,10 @@ knows -- never a locator Boot must resolve, search, or infer.
 4. **Lineage is the State restoration authority, and the Store must be quiescent.** Current
    State is reconstructed through `FileStateStore.read_current_consistent`, which replays
    exclusively from the committed append-only lineage log, performs no write of any kind, and
-   additionally requires the Store to carry no pending transaction and any *present*
-   `current.json` view to agree exactly with the committed lineage (Structural Review Round 2,
-   P10-R2-F1/F2). Neither `FileStateStore.load_current` (materializes a missing `current.json`
+   additionally requires the Store to carry no pending transaction, every durable lineage
+   event to resolve to committed-transaction evidence of its own (Structural Review Round 3,
+   P10-R3-F1), and any *present* `current.json` view to agree exactly with the committed
+   lineage (Structural Review Round 2, P10-R2-F1/F2). Neither `FileStateStore.load_current` (materializes a missing `current.json`
    view via a real write, and tolerates a *present* view one revision ahead as an expected,
    not-yet-recovered gap -- correct for its own existing callers, wrong for Boot) nor a bare
    `FileStateStore.reconstruct` (silently tolerates a still-pending later transaction and never
@@ -137,8 +138,9 @@ boundary violations.
    identity equality).
 9. Reconstruct current State via store.read_current_consistent -- never store.load_current
    (real write to materialize a missing current.json -- P10-R1-F2), never a bare
-   store.reconstruct (tolerates a still-pending later transaction and never checks a present
-   current.json view -- P10-R2-F1/F2), never store.recover. Require:
+   store.reconstruct (tolerates a still-pending later transaction, silently excludes a durable
+   lineage event whose own recovery journal was deleted, and never checks a present
+   current.json view -- P10-R2-F1/F2, P10-R3-F1), never store.recover. Require:
    reconstructed_state.project_id = requested project_id
    reconstructed_state.objective_revision_id = project_binding.objective_revision_ref.id
 10. Return one immutable BootContext (deep-frozen: every nested mapping/list recursively
@@ -192,6 +194,12 @@ At minimum, `boot_project` fails closed, with zero Store mutation
   already-bound project (a pending transaction's own recovery journal without its COMMITTED
   marker is rejected regardless of how far it progressed before crashing -- P10-R2-F2); Boot
   never calls recover() to complete either case
+- a durable lineage event -- committed or merely crash-appended -- whose own recovery journal
+  directory has been destroyed after the fact, leaving no evidence of its transaction's own
+  fate: never silently excluded in favor of the last revision Boot can still fully account for,
+  even when a still-present current.json happens to match that stale revision exactly, and
+  even when the materialized current.json view is also absent (P10-R3-F1); TX-GENESIS is
+  unaffected -- its own institution is settled exclusively by the existing Genesis Receipt
 - an uninitialized Store
 - a caller-supplied State/Binding body attempting to bypass Store resolution (structurally
   impossible: boot_project's own signature accepts no such parameter)
@@ -280,7 +288,51 @@ test_boot_project_route.py`, and by two further static proofs in `tests/contract
 test_boot_route_static_conformance.py` (`read_current_consistent` is called; `reconstruct` is
 not called directly).
 
-## 9. Explicit non-claims
+## 9. Structural Review Round 3 corrections (構造参謀, P10-R3)
+
+One further finding, independently reproduced against Round 2's own delivered HEAD
+(`78527b06cb1d68dca57681b0b66736087216f420`) before any fix:
+
+- **P10-R3-F1 (a durable lineage event can survive deletion of its own recovery journal, and
+  be silently ignored by Boot).** `commit` always creates a transaction's own recovery journal
+  directory strictly before that same transaction's event is ever appended to the lineage, and
+  nothing in this Store ever deletes a journal directory afterward -- every later public read
+  surface that resolves a transaction's own manifest depends on exactly that durability. Round
+  2's own `_has_pending_transaction` only scans journal directories that still *exist*; it has
+  no way to notice one that is simply gone. `_transaction_committed` (via `_committed_events`,
+  via `reconstruct`) reads a wholly missing journal identically to "not yet committed" and
+  `_committed_events` correctly, deliberately stops there for its own generic callers -- but
+  silently excluding that event is exactly the wrong answer for a caller that requires a
+  quiescent Store, one where *every* durable lineage event's own fate is fully accounted for,
+  not merely every still-existing journal's. Reproduced exactly per SHUKOU's own required
+  steps: committing a real second State transition with a crash injected at
+  `AFTER_LINEAGE_APPEND`, then destroying that transaction's complete recovery journal
+  directory while leaving the prior, still-matching `current.json` untouched, then calling
+  `read_current_consistent`/`boot_project` -- both returned the stale prior (genesis) revision
+  without ever raising.
+
+Closed by extending `FileStateStore.read_current_consistent` (`store/file_store.py`) with a
+second, independent quiescence check, `_has_unexplained_lineage_event`: it walks the raw,
+unfiltered lineage (`_events`) and requires every non-genesis event's own recovery-journal
+directory to exist at all -- a wholly absent journal for a lineage-visible transaction can
+only be external corruption (the journal necessarily existed the moment that event was
+appended), never a legitimate merely-not-yet-committed trailing case (that case's journal
+still exists, just without its own `COMMITTED` marker -- `_has_pending_transaction`'s own,
+unchanged question). `TX-GENESIS` is excluded -- its own institution remains settled
+exclusively by the existing Genesis Receipt, immune by design to a deleted recovery journal.
+Neither `_committed_events`, `reconstruct`, nor `_has_pending_transaction` is changed; every
+other caller of the generic, tolerant `reconstruct`/`commit` path is unaffected.
+
+Exercised by six new tests in `tests/integration/store/test_read_current_consistent.py` (the
+exact crash-injection-then-journal-deletion scenario with a still-matching `current.json`; a
+fully committed transaction whose journal is deleted only afterward; both a deleted journal
+and a deleted `current.json` together; a genesis-only Store; a `WITH_RECORDS` genesis; and a
+fully quiescent Store with a real committed later transition, to keep the positive route
+proven true) and two new tests in `tests/integration/boot/test_boot_project_route.py` proving
+`boot_project` itself rejects both the crash-injected and the fully-committed-then-deleted
+variants, with zero Store mutation from the rejection either way.
+
+## 10. Explicit non-claims
 
 ```text
 PROJECT_DISCOVERY_IMPLEMENTED=false
