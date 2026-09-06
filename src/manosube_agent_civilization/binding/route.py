@@ -77,12 +77,28 @@ def _read_committed_genesis_manifest_keys(
     ``AlreadyInitializedError`` was just caught), so ``None`` here means some other,
     non-Binding caller initialized this project without ``records`` at all -- itself a real
     conflict this function's own caller must reject, never silently accept as a no-op.
+
+    Phase 9 Structural Review Round 3 (P9-R3-F1): the returned list is walked member-by-
+    member -- proving shape and multiplicity (no ``(kind, id)`` claimed twice) -- *before*
+    ever being folded into the returned set, rather than handed straight to ``set(...)``,
+    which would silently collapse a tampered manifest's own duplicate claim without ever
+    revealing it (the Store's own ``resolve_transaction_manifest`` already fails closed on
+    this same tamper independently; this is defense in depth at the layer that actually
+    performs the set-normalization, not a substitute for that check).
     """
 
     manifest = store.resolve_transaction_manifest(project_id, _GENESIS_TRANSACTION_ID)
     if manifest is None:
         return None
-    return set(manifest)
+    keys: set[tuple[str, str]] = set()
+    for kind, record_id in manifest:
+        key = (kind, record_id)
+        if key in keys:
+            raise BindingIdentityError(
+                f"committed genesis manifest names {kind}/{record_id} more than once"
+            )
+        keys.add(key)
+    return keys
 
 
 def bind_project(
@@ -203,6 +219,17 @@ def bind_project(
         human_authority_ref,
         context="objective_revision.human_authority_ref vs human_authority_ref",
     )
+    # Phase 9 Structural Review Round 3, P9-R3-F4: kind-correctness alone
+    # (`reference_classification`'s own closed-kind check) never proved *identity*
+    # equality -- a caller could declare a different, but still correctly-kinded,
+    # human_authority id here and nothing rejected it. The four-way canonical exact
+    # match: project_binding.human_authority_ref == objective_revision.owner_authority_ref
+    # == objective_revision.human_authority_ref == authority_rule.declared_by.
+    _canonical_reference_equal(
+        objective_revision.get("owner_authority_ref"),
+        human_authority_ref,
+        context="objective_revision.owner_authority_ref vs human_authority_ref",
+    )
 
     if genesis_state.get("project_id") != project_id:
         raise BindingIdentityError(
@@ -270,13 +297,18 @@ def bind_project(
         if existing_current != genesis_state:
             raise
 
+        # P9-R3-F1: admit_genesis_transaction (above) already rejects any duplicate
+        # (kind, id) in *records* -- identical or conflicting -- before this point is ever
+        # reached, so no duplicate should survive to here. This walk still builds the
+        # expected-body map explicitly (never `dict(...)`-collapsing silently) and re-raises
+        # the identical failure defensively should that invariant ever be violated.
         expected_by_key: dict[tuple[str, str], dict[str, Any]] = {}
         for kind, record_id, body in records:
             key = (kind, record_id)
-            if key in expected_by_key and expected_by_key[key] != body:
+            if key in expected_by_key:
                 raise BindingValidationError(
-                    f"conflicting genesis manifest member supplied twice in this one replay "
-                    f"attempt: {kind}/{record_id}"
+                    f"duplicate genesis manifest member supplied twice in this one replay "
+                    f"attempt (even if identical): {kind}/{record_id}"
                 ) from already_initialized
             expected_by_key[key] = body
 

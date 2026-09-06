@@ -12,6 +12,7 @@ different-payload commit already was.
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from tests.state_helpers import SCHEMA_ROOT, initial_state
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import STAGES, FileStateStore
 from manosube_agent_civilization.store.errors import (
+    CorruptStoreError,
     RecordConflictError,
     SimulatedCrash,
     TransactionConflictError,
@@ -347,3 +349,165 @@ def test_r9f4_all_four_public_read_surfaces_converge_atomically(stage: str, tmp_
         assert transaction_after is not None
         assert transaction_after["transaction_id"] == event["transaction_id"]
         assert resolved_after == record
+
+
+# --- P9-R3-F2: TX-GENESIS transaction_id string is not, by itself, commit evidence ---------- #
+
+
+def test_never_initialized_project_reports_unresolvable_not_committed_bare_genesis(
+    tmp_path: Path,
+) -> None:
+    """A project for which ``initialize`` was never called at all has no recovery journal --
+    the identical absent-journal shape a genuinely committed bare genesis has. Before P9-R3-F2
+    the transaction_id string ``TX-GENESIS`` alone was taken as commit evidence, so this
+    never-initialized project was indistinguishable from one whose bare genesis legitimately
+    committed with zero records. Both public read surfaces must now agree it is unresolvable."""
+
+    store = _store(tmp_path)
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") is None
+
+
+def test_bare_project_directory_with_no_lineage_reports_unresolvable(tmp_path: Path) -> None:
+    """A project directory that exists (e.g. created by an unrelated failed attempt) but
+    carries no lineage log and no recovery journal is still never-initialized -- the mere
+    existence of the directory is not commit evidence either."""
+
+    store = _store(tmp_path)
+    (store.root / "projects" / PROJECT_ID).mkdir(parents=True)
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") is None
+
+
+def test_bare_genesis_manifest_is_empty_list_not_none(tmp_path: Path) -> None:
+    """A real, committed bare genesis (``initialize`` called with no ``records``) has real
+    evidence in the lineage log -- ``resolve_transaction`` resolves the real event and
+    ``resolve_transaction_manifest`` reports ``[]`` (committed, adopted nothing), never
+    ``None`` (unresolvable) -- the positive control distinguishing it from the never-
+    initialized case above."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    store.initialize(PROJECT_ID, initial)
+
+    transaction = store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+    assert transaction is not None
+    assert transaction["transaction_id"] == "TX-GENESIS"
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == []
+
+    # Fresh Store instance / fresh process (same on-disk backend) agrees.
+    fresh = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    assert fresh.resolve_transaction(PROJECT_ID, "TX-GENESIS") is not None
+    assert fresh.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == []
+
+
+def test_genesis_with_records_manifest_is_the_exact_member_list(tmp_path: Path) -> None:
+    """A real, committed genesis-with-records adoption reports the exact ``(kind, id)``
+    membership both public read surfaces agree on."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    record = {"closure_evaluation_id": "D-CLOSE-EVAL-" + "A" * 64, "result": "SATISFIED"}
+    store.initialize(
+        PROJECT_ID, initial, records=[("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, record)]
+    )
+
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is not None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == [
+        ("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64)
+    ]
+
+    fresh = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    assert fresh.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == [
+        ("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64)
+    ]
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_genesis_with_records_crash_stages_joint_visibility(stage: str, tmp_path: Path) -> None:
+    """``resolve_transaction`` and ``resolve_transaction_manifest`` must agree at every crash
+    stage of a genesis-with-records adoption -- both report the real transaction/manifest
+    once ``COMMITTED`` is durable, and neither reports one before that, matching the existing
+    ``AFTER_COMMIT_INTENT`` recovery-outcome boundary this vertical already establishes."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    record_kind, record_id, record = "closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, {
+        "closure_evaluation_id": "D-CLOSE-EVAL-" + "A" * 64,
+        "result": "SATISFIED",
+    }
+
+    def fault(hit_stage: str) -> None:
+        if hit_stage == stage:
+            raise SimulatedCrash(stage)
+
+    with pytest.raises(SimulatedCrash):
+        store.initialize(PROJECT_ID, initial, records=[(record_kind, record_id, record)], fault=fault)
+
+    transaction_before = store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+    manifest_before = store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS")
+    assert (transaction_before is None) == (manifest_before is None)
+
+    pre_commit_intent = STAGES[: STAGES.index("AFTER_COMMIT_INTENT")]
+    if stage in pre_commit_intent:
+        # A crash on genesis itself, before its own COMMIT_INTENT was durably written,
+        # leaves no completed transaction at all for this project -- recover() correctly
+        # refuses to recover something that never started committing (StateNotFoundError,
+        # the same "nothing has ever committed" boundary this method already documents).
+        from manosube_agent_civilization.store.errors import StateNotFoundError
+
+        with pytest.raises(StateNotFoundError):
+            store.recover(PROJECT_ID)
+        transaction_after = store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+        manifest_after = store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS")
+        assert transaction_after is None
+        assert manifest_after is None
+    else:
+        store.recover(PROJECT_ID)
+        transaction_after = store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+        manifest_after = store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS")
+        assert transaction_after is not None
+        assert manifest_after == [(record_kind, record_id)]
+
+
+def test_committed_genesis_manifest_with_a_tampered_duplicate_member_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """A committed genesis-with-records manifest.json tampered to name the same (kind, id)
+    twice is corruption, not a legitimate duplicate -- P9-R3-F1's third boundary (the
+    committed-manifest read itself, not merely the pre-commit candidate)."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    record = {"closure_evaluation_id": "D-CLOSE-EVAL-" + "A" * 64, "result": "SATISFIED"}
+    store.initialize(
+        PROJECT_ID, initial, records=[("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, record)]
+    )
+
+    manifest_path = store.root / "projects" / PROJECT_ID / "state" / "recovery" / "TX-GENESIS" / "manifest.json"
+    entry = ["closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64]
+    manifest_path.write_text(json.dumps([entry, entry]), encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError, match="more than once"):
+        store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS")
+
+
+def test_committed_genesis_manifest_missing_file_reports_empty_not_none(tmp_path: Path) -> None:
+    """A committed genesis-with-records transaction whose ``manifest.json`` file is itself
+    absent (e.g. removed after commit) is treated identically to a committed transaction that
+    adopted no records -- the existing, unchanged convention for a missing (as opposed to
+    malformed) manifest file, distinct from the never-initialized case above which has no
+    recovery journal *directory* at all."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    record = {"closure_evaluation_id": "D-CLOSE-EVAL-" + "A" * 64, "result": "SATISFIED"}
+    store.initialize(
+        PROJECT_ID, initial, records=[("closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64, record)]
+    )
+
+    manifest_path = store.root / "projects" / PROJECT_ID / "state" / "recovery" / "TX-GENESIS" / "manifest.json"
+    manifest_path.unlink()
+
+    assert store.resolve_transaction(PROJECT_ID, "TX-GENESIS") is not None
+    assert store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS") == []

@@ -51,19 +51,41 @@ any commit -- see `PROJECT_BINDING.md` §5b and the negative controls in
 Human Authority itself is unaffected by this correction and keeps its own, separate
 position: `human_authority_ref` is an external constitutional identity, never a Store
 record of its own kind (`HUMAN_AUTHORITY_STORE_RECORD_REQUIRED=false`) -- only
-cross-consistency between its three declared appearances (Project Binding, Objective
-Revision, Authority Rule) is enforced, per §2b.
+cross-consistency between its four declared appearances (Project Binding, Objective
+Revision's two fields, Authority Rule) is enforced, per §2b.
 
-## 2b. Three-way Human Authority cross-match
+## 2b. Four-way Human Authority cross-match
 
-**Added in Phase 9 Structural Review Round 1 (P9-R1-F2).** `bind_project` requires
-`human_authority_ref` (the Binding's own), `objective_revision.human_authority_ref`, and
-`authority_rule.declared_by` to be the identical canonical reference (`{kind, id}` exact
-equality) -- a Binding may not declare one Human Authority while carrying an Objective
-Revision or Authority Rule that names a different one.
+**Added in Phase 9 Structural Review Round 1 (P9-R1-F2) as a three-way check; extended to
+four in Phase 9 Structural Review Round 3 (P9-R3-F4).** Round 1/Round 2 enforced
+`human_authority_ref` (the Binding's own) == `objective_revision.human_authority_ref` ==
+`authority_rule.declared_by`, but left `objective_revision.owner_authority_ref` checked for
+*kind* correctness only (`reference_classification.py`'s own closed-kind gate) -- never for
+*identity* equality. A caller could declare a different, but still correctly-kinded,
+`human_authority` id there and nothing rejected it; kind correctness and identity equality
+are separate invariants, and only the first was enforced.
+
+`bind_project` now requires all four canonical references to be identical (`{kind, id}`
+exact equality, ``CANONICAL_REFERENCE_EXACT_EQUALITY_REQUIRED=true``):
 
 ```text
-THREE_WAY_HUMAN_AUTHORITY_CROSS_MATCH_ENFORCED=true
+project_binding.human_authority_ref
+== objective_revision.owner_authority_ref
+== objective_revision.human_authority_ref
+== authority_rule.declared_by
+```
+
+Objective's own existing contract (`00_KERNEL/01_OBJECTIVE/OBJECTIVE_CONTRACT.md`
+§"owner_authority_ref resolves to Human Objective Authority") already settles
+`owner_authority_ref`'s semantic as the Human Authority kind -- this correction reuses that
+existing decision rather than inventing a new one.
+
+```text
+THREE_WAY_HUMAN_AUTHORITY_CROSS_MATCH_ENFORCED=true (Round 1, superseded below)
+HUMAN_AUTHORITY_FOUR_WAY_EQUALITY=true
+HUMAN_AUTHORITY_KIND_CORRECTNESS=true
+HUMAN_AUTHORITY_IDENTITY_EQUALITY=true
+CANONICAL_REFERENCE_EXACT_EQUALITY=true
 ```
 
 ## 3. Source Registration declares trust; it does not observe

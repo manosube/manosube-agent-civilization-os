@@ -198,10 +198,30 @@ The comparison covers the **full** atomic manifest -- every member the genesis t
 actually adopted (Objective Revision, Authority Rule, Project Binding, and every
 `additional_genesis_records` member), not merely three named records. It is
 order-independent (a replay supplying `additional_genesis_records` in a different order is
-still a no-op) but duplicate-aware (two different bodies claimed under one `(kind, id)` in
-one replay attempt is rejected as a conflict, never silently resolved to the last one seen;
-two *identical* bodies claimed under one `(kind, id)` collapse harmlessly, since they name
-the same, single membership).
+still a no-op).
+
+**Corrected in Phase 9 Structural Review Round 3 (P9-R3-F1).** Round 2's own claim directly
+above this correction -- that two *identical* bodies claimed under one `(kind, id)` "collapse
+harmlessly" -- was itself SHUKOU's own ratified finding: `IDENTICAL_DUPLICATE_ALLOWED=false`,
+`DUPLICATE_BODY_EQUALITY_IRRELEVANT=true`. The SECOND appearance of any `(kind, id)` in one
+candidate manifest is now refused outright, whether its body is identical to or differs from
+the first -- `admission.admit_genesis_transaction` walks the candidate as an ordered list and
+rejects on the second occurrence of any key, *before* ever folding it into a set for
+order-independent comparison (`MANIFEST_MULTIPLICITY_MUST_BE_VALIDATED_BEFORE_SET_
+NORMALIZATION=true`). This applies uniformly at every boundary: the very first `bind_project`
+call, a caller-supplied replay candidate, and (as a tamper-detection fail-safe)
+`FileStateStore.resolve_transaction_manifest`'s own read of an already-committed manifest.
+
+**Also corrected in Round 3 (P9-R3-F2).** `resolve_transaction_manifest` (and
+`resolve_transaction`) previously took the literal transaction-id string `TX-GENESIS` as
+sufficient commit evidence for the bare-genesis institution, which made a project for which
+`initialize` was *never called at all* indistinguishable from one whose bare genesis
+legitimately committed with zero records -- both incorrectly returned `[]`.
+`TRANSACTION_ID_STRING_NE_COMMIT_EVIDENCE=true`: the Store now additionally requires the
+lineage log itself to durably carry the bare genesis's own event before reporting it
+committed, so a never-initialized project correctly reports `None` from both public read
+surfaces, agreeing with each other (`PUBLIC_TRANSACTION_READ_SURFACES_MUST_AGREE=true`) at
+every crash-injection stage.
 
 ```text
 IDENTICAL_REPLAY_IS_NO_OP=true       (byte-identical Objective Revision, Authority Rule,
@@ -212,6 +232,13 @@ CONFLICTING_REPLAY_REJECTED_BEFORE_WRITE=true   (a missing, extra, wrong-kind, o
                                                   same-kind/id-different-body member ->
                                                   AlreadyInitializedError re-raised,
                                                   nothing new persisted)
+IDENTICAL_DUPLICATE_IS_REJECTED=true      (Round 3 correction -- superseding Round 2's
+                                            "collapses harmlessly" claim above)
+DUPLICATE_MANIFEST_MEMBER_ACCEPTED=false
+MANIFEST_MULTIPLICITY_PRESERVED=true      (validated before, not merely alongside, order-
+                                            independent set normalization)
+NONEXISTENT_TRANSACTION_NE_EMPTY_COMMITTED_TRANSACTION=true
+PUBLIC_TRANSACTION_READ_SURFACES_MUST_AGREE=true
 FULL_MANIFEST_REPLAY_COMPARED=true
 BINDING_ROUTE_READS_STORE_PRIVATE_PATH=false
 ```
@@ -231,19 +258,48 @@ silently.
 shared pre-commit admission every accepted body passes through, before `store.initialize`
 is ever called:
 
-1. secret-value and moving-reference scanning over the **whole** candidate genesis manifest
+0. closed additional-genesis-record kind allowlist + schema/identity reverification for
+   every `additional_genesis_records` member (Round 3, P9-R3-F3 -- see below);
+1. duplicate `(kind, id)` detection across the candidate manifest -- the second appearance
+   of any key is refused, whether identical to or different from the first (Round 3,
+   P9-R3-F1 -- see §8);
+2. secret-value and moving-reference scanning over the **whole** candidate genesis manifest
    (Objective Revision, Authority Rule, Project Binding, genesis State, every
    `additional_genesis_records` member) -- `difference.canonical.reject_secret_material`
    reused, never restated;
-2. typed reference-edge classification and closure over that same whole candidate manifest
-   -- see §10;
-3. duplicate `(kind, id)` detection across the candidate manifest.
+3. typed reference-edge classification and closure over that same whole candidate manifest,
+   scoped to the candidate manifest only, never an existing Store record -- see §10.
 
 ```text
 SECRET_SCAN_COVERS_WHOLE_ACCEPTED_GRAPH=true
 CANONICAL_BINDING_PRECOMMIT_ADMISSION_OWNER_COUNT=1
 EVERY_PERSISTED_BODY_PASSES_SHARED_ADMISSION=true
 ALL_VALIDATION_PRECEDES_STORE_INITIALIZE=true
+```
+
+**Added in Phase 9 Structural Review Round 3 (P9-R3-F3): closed additional-record kind
+allowlist.** Before this round, any caller-supplied `kind` in `additional_genesis_records`
+whose value happened to be recognized by Reflow's own `reference_registry` received a
+reference-edge check, but a kind Reflow's registry did *not* recognize was persisted
+verbatim -- schema-unchecked, identity-unverified, arbitrary caller-controlled data adopted
+into the Store as a real record.
+
+`admission.ADDITIONAL_GENESIS_RECORD_KIND_VERIFIERS` is now a closed allowlist; the only
+kind any real Phase 9 genesis fixture or existing State contract actually requires is
+`source_snapshot` (genesis State's own `state_metadata.source_snapshot_refs` is the sole
+reference genesis closure needs an additional record for). Each allowed kind's own verifier
+reuses that kind's real, existing schema owner and real, existing content-addressed identity
+function (`observation.source_snapshot.source_snapshot_identity` for `source_snapshot`) --
+never a second identity algorithm invented in this module -- and cross-checks the recomputed
+identity against both the caller-supplied tuple `record_id` and the body's own declared id
+field.
+
+```text
+ADDITIONAL_GENESIS_RECORD_KIND_SET=CLOSED
+UNKNOWN_ADDITIONAL_GENESIS_RECORD_KIND_ALLOWED=false
+EVERY_ALLOWED_ADDITIONAL_KIND_SCHEMA_VERIFIED=true
+EVERY_ALLOWED_ADDITIONAL_KIND_IDENTITY_REVERIFIED=true
+CALLER_SUPPLIED_CANONICAL_BODY_TRUSTED=false
 ```
 
 ## 10. Typed reference classification
@@ -290,6 +346,41 @@ existing Kernel contract's own authority (`00_KERNEL/01_OBJECTIVE/OBJECTIVE_CONT
 here. `observation_evidence`/`negative_evidence` are treated as Store-owned specifically so
 that a non-empty `evidence_refs` at genesis (state_revision 0, where no Evidence can yet
 exist) fails closed as unresolvable, rather than silently passing unchecked.
+
+**Corrected in Phase 9 Structural Review Round 3 (P9-R3-F4): classification alone is not
+identity equality.** The table above proves `owner_authority_ref` carries the right *kind*
+(`human_authority`), but Round 1/Round 2 never checked whether its *id* actually matched the
+Binding's own declared Human Authority -- a caller could substitute a different, still
+correctly-kinded, `human_authority` id there undetected. `bind_project` now additionally
+requires all four of `project_binding.human_authority_ref`,
+`objective_revision.owner_authority_ref`, `objective_revision.human_authority_ref`, and
+`authority_rule.declared_by` to be the *identical* canonical reference (see
+`TRUST_MODEL.md` §2b) -- kind correctness (this table) and identity equality (that check) are
+separate invariants, and both are now enforced.
+
+```text
+HUMAN_AUTHORITY_REFERENCE_COUNT_CROSS_CHECKED=4
+HUMAN_AUTHORITY_FOUR_WAY_EQUALITY=true
+```
+
+**Ratified in Phase 9 Structural Review Round 3 (P9-R3-F5): reference resolution scope.**
+Every Store-owned edge above must resolve against the current candidate genesis manifest --
+there is nothing else to resolve against, since genesis means no record for this
+`project_id` exists in the Store yet (stated already, unchanged, at the end of this
+section). SHUKOU's Round 3 adoption formally ratifies this as the permanent semantic, not
+merely an implementation detail: a Store-owned reference genesis declares must resolve
+within THIS genesis transaction's own atomic manifest, never against a pre-existing Store
+record -- even one with an identical `(kind, id, body)` already committed under this same
+`project_id` from an earlier ordinary commit, and never across `project_id` namespaces. A
+replay's own reference resolution is scoped identically to its own exact original genesis
+manifest (see §8) -- never the current Store's full contents.
+
+```text
+FIRST_BINDING_REFERENCE_RESOLUTION_SCOPE=CURRENT_ATOMIC_GENESIS_MANIFEST_ONLY
+PREEXISTING_SAME_PROJECT_RECORD_AS_FIRST_BINDING_INPUT_ALLOWED=false
+GENESIS_REFERENCE_TO_PREEXISTING_STORE_RECORD_ALLOWED=false
+REPLAY_REFERENCE_RESOLUTION_SCOPE=EXACT_ORIGINAL_GENESIS_MANIFEST
+```
 
 `reject_wrong_kind_reference`/`reference_edges` run before any Store lookup: a reference
 whose own `kind` is not the one closed kind its field permits is refused, never silently

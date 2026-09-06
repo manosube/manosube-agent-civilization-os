@@ -249,7 +249,22 @@ class FileStateStore:
             entries=json.loads(path.read_text(encoding="utf-8"))
         except (OSError,json.JSONDecodeError) as exc:
             raise CorruptStoreError(f"malformed transaction manifest: {transaction_id}") from exc
-        return [(kind,record_id) for kind,record_id in entries]
+        # Phase 9 Structural Review Round 3, P9-R3-F1 (boundary 3 of 3: the committed
+        # manifest read itself): a tampered manifest.json naming the same (kind, id) twice
+        # is corruption, not a legitimate duplicate -- fail closed here, before a caller can
+        # silently collapse it into a set and lose the very multiplicity that would have
+        # revealed the tamper.
+        seen: set[tuple[str,str]] = set()
+        result: list[tuple[str,str]] = []
+        for kind, record_id in entries:
+            key=(kind,record_id)
+            if key in seen:
+                raise CorruptStoreError(
+                    f"transaction manifest names {kind}/{record_id} more than once: {transaction_id}"
+                )
+            seen.add(key)
+            result.append(key)
+        return result
 
     #: R10-F3 (SHUKOU Round 10): the one, explicitly-named genesis transaction identity --
     #: GENESIS_EXCEPTION_IS_EXPLICIT=true, GENESIS_EXCEPTION_IS_NOT_WILDCARD=true. Every
@@ -258,7 +273,8 @@ class FileStateStore:
 
     def _transaction_committed(self, project_id: str, transaction_id: str) -> bool:
         """Return whether *transaction_id* is durably ``COMMITTED`` -- R7-F5, sharpened by
-        R10-F3, sharpened again by R11-F1.
+        R10-F3, sharpened again by R11-F1, sharpened again by Phase 9 Structural Review
+        Round 3 (P9-R3-F2).
 
         R11-F1: ``TRANSACTION_ID_IS_GENESIS_NE_COMMITTED=true`` -- the literal string
         ``TX-GENESIS`` is never, by itself, sufficient proof that a transaction actually
@@ -266,6 +282,16 @@ class FileStateStore:
         (``BARE_GENESIS`` vs ``GENESIS_WITH_RECORDS``, R10-F1's own distinction), and this
         method must resolve each correctly rather than treating the name as a blanket
         authority:
+
+        P9-R3-F2: that same principle was not yet carried far enough -- a *never-initialized*
+        project (``initialize`` never called at all: no recovery journal, no lineage log,
+        possibly not even a project directory) has no recovery journal either, and was
+        previously indistinguishable from a genuinely committed bare genesis purely because
+        both share the one absent-journal shape. ``TRANSACTION_ID_STRING_NE_COMMIT_
+        EVIDENCE=true``: the bare-genesis branch below now additionally requires real
+        evidence that genesis actually happened -- the lineage log itself durably carries
+        this transaction's own event -- rather than inferring it from the transaction_id
+        string alone.
 
         - **Bare genesis** (no recovery journal at all -- every genesis this vertical minted
           before R10-F1, and still the common case for one with no records to close a
@@ -300,9 +326,22 @@ class FileStateStore:
         """
 
         path = self._project(project_id)/"state"/"recovery"/transaction_id
-        if not path.exists():
-            return transaction_id == self.GENESIS_TRANSACTION_ID
-        return (path/"COMMITTED").exists()
+        if path.exists():
+            return (path/"COMMITTED").exists()
+        if transaction_id != self.GENESIS_TRANSACTION_ID:
+            return False
+        # Bare genesis (P9-R3-F2): no recovery journal exists by construction for this
+        # institution, whether it actually happened or not -- so a missing journal alone
+        # settles nothing. Real evidence is the lineage log itself already durably carrying
+        # this transaction's own event (``initialize``'s own non-``records`` branch writes
+        # the lineage entry and ``current.json`` with no partial-write window this vertical
+        # exercises via fault injection, so an appended event here means genesis completed).
+        # A project for which ``initialize`` was never called at all has no lineage log
+        # (``_events`` returns ``[]``) and correctly reports uncommitted here, never
+        # conflated with a genuinely committed bare genesis again.
+        return any(
+            event.get("transaction_id") == transaction_id for event in self._events(project_id)
+        )
 
     def _events(self, project_id: str) -> list[dict[str,Any]]:
         path=self._lineage(project_id)

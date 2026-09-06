@@ -205,7 +205,12 @@ def test_replay_with_a_different_additional_genesis_record_body_is_rejected(
 ) -> None:
     """P9-R1-F4 scenario: an ``additional_genesis_records``-only change (Objective Revision,
     Authority Rule and Project Binding all byte-identical) is still a conflicting replay --
-    the prior 3-record-only comparison would have missed this."""
+    the prior 3-record-only comparison would have missed this.
+
+    Mutating ``captured_at`` changes the body's own content address (P9-R3-F3's identity
+    reverification), so this now legitimately fails one gate earlier than the replay
+    comparison this test was originally written to prove -- the same "an earlier admission
+    gate preempts a later one" precedent Round 2 already established."""
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     _bind(store)
@@ -214,7 +219,7 @@ def test_replay_with_a_different_additional_genesis_record_body_is_rejected(
     real_records = genesis_records()
     kind, record_id, body = real_records[0]
     tampered_records = [(kind, record_id, {**body, "captured_at": "2099-01-01T00:00:00Z"})]
-    with pytest.raises(AlreadyInitializedError):
+    with pytest.raises((AlreadyInitializedError, BindingIdentityError)):
         bind_project(
             store, **_kwargs(), additional_genesis_records=tampered_records, schema_root=SCHEMA_ROOT
         )
@@ -225,11 +230,20 @@ def test_replay_missing_a_previously_adopted_additional_genesis_record_is_reject
     tmp_path: Path,
 ) -> None:
     """P9-R1-F4 scenario: a replay that simply drops a member the first call adopted is a
-    conflicting replay, not a smaller no-op."""
+    conflicting replay, not a smaller no-op.
+
+    P9-R3-F5: this also proves ``REPLAY_REFERENCE_RESOLUTION_SCOPE=EXACT_ORIGINAL_GENESIS_
+    MANIFEST`` -- the dropped member's own real record still exists, resolvable, in this
+    exact project's own Store (the first ``_bind`` call above persisted it), yet the
+    replay's own reference-closure check still fails, proving admission never falls back to
+    "does a matching record already exist in the Store" -- only this replay's own supplied
+    candidate manifest is ever consulted."""
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     _bind(store)
     before = store.load_current(_kwargs()["project_id"])
+    kind, record_id, _body = genesis_records()[0]
+    assert store.resolve_record(_kwargs()["project_id"], kind, record_id) is not None
 
     # Dropping the fixture's only additional_genesis_records member also breaks genesis
     # State's own declared source_snapshot_refs closure (Phase 9 Round 2 P9-R2-F2) -- an
@@ -240,9 +254,60 @@ def test_replay_missing_a_previously_adopted_additional_genesis_record_is_reject
     assert store.load_current(_kwargs()["project_id"]) == before
 
 
+# --- P9-R3-F5: first-binding reference resolution scoped to the candidate manifest only -------- #
+
+
+def test_first_binding_reference_missing_from_candidate_manifest_is_rejected_even_though_an_identical_record_already_exists_in_this_project_s_store(
+    tmp_path: Path,
+) -> None:
+    """SHUKOU's own Round 3 ratification: ``FIRST_BINDING_REFERENCE_RESOLUTION_SCOPE=
+    CURRENT_ATOMIC_GENESIS_MANIFEST_ONLY`` -- a Store-owned reference genesis declares must
+    resolve against THIS genesis transaction's own candidate manifest, never against an
+    already-committed Store record, even one with the identical (kind, id, body) already
+    sitting in this exact project's own Store from an earlier ordinary commit.
+
+    ``PREEXISTING_SAME_PROJECT_RECORD_AS_FIRST_BINDING_INPUT_ALLOWED=false``."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    real_kind, real_id, real_body = genesis_records()[0]
+
+    # First, legitimately bind and commit the real project with its required source_snapshot
+    # (as any successful genesis would) -- the record now really exists in this project's own
+    # Store, resolvable by kind/id.
+    _bind(store)
+    assert store.resolve_record(kwargs["project_id"], real_kind, real_id) == real_body
+
+    # A second, DIFFERENT project's own fresh genesis names the exact same source_snapshot id
+    # in its own genesis State, but never supplies it as one of its own
+    # additional_genesis_records -- relying (if a Store-wide fallback existed) on it already
+    # being a real, resolvable record. It must still be rejected: Store-owned reference
+    # resolution never looks past this genesis transaction's own candidate manifest.
+    other_kwargs = _kwargs()
+    other_kwargs["project_id"] = "PRJ-BIND-OTHER-0001"
+    other_kwargs["objective_revision"]["project_id"] = other_kwargs["project_id"]
+    other_kwargs["authority_rule"]["project_id"] = other_kwargs["project_id"]
+    from manosube_agent_civilization.authority.identity import rule_id
+
+    other_kwargs["authority_rule"]["authority_rule_id"] = rule_id(other_kwargs["authority_rule"])
+    other_kwargs["authority_policy_ref"] = {
+        "kind": "authority_rule",
+        "id": other_kwargs["authority_rule"]["authority_rule_id"],
+    }
+    other_kwargs["genesis_state"]["project_id"] = other_kwargs["project_id"]
+    with pytest.raises(BindingIdentityError, match="GENESIS_DANGLING_CANONICAL_REFERENCE_ALLOWED"):
+        bind_project(store, **other_kwargs, additional_genesis_records=[], schema_root=SCHEMA_ROOT)
+    with pytest.raises(CorruptStoreError):
+        store.load_current(other_kwargs["project_id"])
+
+
 def test_replay_with_an_extra_additional_genesis_record_is_rejected(tmp_path: Path) -> None:
     """P9-R1-F4 scenario: a replay that adds a member the first call never adopted is a
-    conflicting replay, not a superset no-op."""
+    conflicting replay, not a superset no-op.
+
+    ``{"extra": "record"}`` is not itself a schema-valid ``source_snapshot`` body, so
+    P9-R3-F3's own schema-validation gate now legitimately fires one step earlier than the
+    replay comparison this test was originally written to prove."""
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     _bind(store)
@@ -252,7 +317,7 @@ def test_replay_with_an_extra_additional_genesis_record_is_rejected(tmp_path: Pa
         *genesis_records(),
         ("source_snapshot", "SNAP-EXTRA-0001", {"extra": "record"}),
     ]
-    with pytest.raises(AlreadyInitializedError):
+    with pytest.raises((AlreadyInitializedError, BindingValidationError)):
         bind_project(
             store, **_kwargs(), additional_genesis_records=extra_records, schema_root=SCHEMA_ROOT
         )
@@ -271,10 +336,11 @@ def test_replay_with_a_right_id_wrong_kind_additional_record_is_rejected(tmp_pat
     kind, record_id, body = genesis_records()[0]
     wrong_kind_records = [("not_" + kind, record_id, body)]
     # Relabeling the fixture's only additional_genesis_records member also breaks genesis
-    # State's own declared source_snapshot_refs closure (Phase 9 Round 2 P9-R2-F2) -- an
-    # even earlier admission gate than the replay comparison this test was originally
-    # written to prove, and a legitimate rejection of the same bad input either way.
-    with pytest.raises((AlreadyInitializedError, BindingIdentityError)):
+    # State's own declared source_snapshot_refs closure (Phase 9 Round 2 P9-R2-F2) and is no
+    # longer an allowed additional-record kind at all (Phase 9 Round 3 P9-R3-F3) -- both even
+    # earlier admission gates than the replay comparison this test was originally written to
+    # prove, and a legitimate rejection of the same bad input either way.
+    with pytest.raises((AlreadyInitializedError, BindingIdentityError, BindingValidationError)):
         bind_project(
             store,
             **_kwargs(),
@@ -841,12 +907,26 @@ def test_secret_shaped_value_in_genesis_state_is_rejected(tmp_path: Path) -> Non
 
 
 def test_secret_shaped_value_in_an_additional_genesis_record_is_rejected(tmp_path: Path) -> None:
+    """A secret-shaped ``source_locator`` value must be rejected by the secret scan even
+    when the record is otherwise self-consistent -- P9-R3-F3's own identity reverification
+    is deliberately built (via
+    :func:`~manosube_agent_civilization.observation.source_snapshot.source_snapshot_identity`)
+    from this same tampered body, so it does not preempt the secret scan the way a body
+    mutated independently of its own declared id would (see the widened replay tests above)."""
+
+    from manosube_agent_civilization.observation.source_snapshot import source_snapshot_identity
+
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     kwargs = _kwargs()
-    tampered_records = deepcopy(genesis_records())
-    kind, record_id, body = tampered_records[0]
-    body = {**body, "source_locator": _fake_secret()}
-    tampered_records[0] = (kind, record_id, body)
+    real_records = genesis_records()
+    kind, _record_id, body = real_records[0]
+    tampered_body = {**body, "source_locator": _fake_secret()}
+    tampered_id = source_snapshot_identity(tampered_body)
+    tampered_body["source_snapshot_id"] = tampered_id
+    tampered_records = [(kind, tampered_id, tampered_body)]
+    kwargs["genesis_state"]["state_metadata"]["source_snapshot_refs"] = [
+        {"kind": "source_snapshot", "id": tampered_id}
+    ]
     with pytest.raises(SecurityRejectionError, match="secret-bearing value"):
         bind_project(
             store, **kwargs, additional_genesis_records=tampered_records, schema_root=SCHEMA_ROOT
@@ -929,13 +1009,20 @@ def test_genesis_state_source_snapshot_ref_resolves_via_additional_genesis_recor
 
 
 def test_objective_revision_wrong_kind_owner_authority_ref_is_rejected(tmp_path: Path) -> None:
+    """Corrected Phase 9 Structural Review Round 3 (P9-R3-F4): ``bind_project`` now also
+    cross-checks ``owner_authority_ref`` for canonical *identity* equality against
+    ``human_authority_ref`` (not merely kind-correctness), and that check runs earlier than
+    ``reference_classification``'s own kind check -- so a wrong-kind ``owner_authority_ref``
+    is now caught as an identity mismatch first, the same "an earlier admission gate
+    preempts a later one" precedent already established elsewhere in this suite."""
+
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     kwargs = _kwargs()
     kwargs["objective_revision"]["owner_authority_ref"] = {
         "kind": "authority_rule",
         "id": kwargs["authority_policy_ref"]["id"],
     }
-    with pytest.raises(BindingValidationError, match="CROSS_KIND_SUBSTITUTION_ALLOWED"):
+    with pytest.raises((BindingValidationError, BindingIdentityError)):
         bind_project(
             store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
         )
@@ -965,6 +1052,113 @@ def test_authority_rule_wrong_kind_declared_by_is_rejected(tmp_path: Path) -> No
         store.load_current(kwargs["project_id"])
 
 
+# --- P9-R3-F4: four-way Human Authority canonical reference exact equality --------------------- #
+
+
+def test_owner_authority_ref_right_kind_wrong_id_is_rejected(tmp_path: Path) -> None:
+    """A same-kind (``human_authority``), different-id ``owner_authority_ref`` is refused --
+    kind correctness alone (already enforced by ``reference_classification.py``) is not
+    identity equality."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kwargs["objective_revision"]["owner_authority_ref"] = {
+        "kind": "human_authority",
+        "id": "AUTH-DIFFERENT-0001",
+    }
+    with pytest.raises(
+        BindingIdentityError,
+        match=r"objective_revision\.owner_authority_ref vs human_authority_ref",
+    ):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_objective_revision_human_authority_ref_right_kind_wrong_id_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """A same-kind, different-id ``objective_revision.human_authority_ref`` is refused (the
+    existing check this suite already had -- confirmed here as still exercising a wrong-*id*
+    case specifically, not only the wrong-*kind* cases covered elsewhere)."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kwargs["objective_revision"]["human_authority_ref"] = {
+        "kind": "human_authority",
+        "id": "AUTH-DIFFERENT-0002",
+    }
+    with pytest.raises(
+        BindingIdentityError,
+        match=r"objective_revision\.human_authority_ref vs human_authority_ref",
+    ):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_authority_rule_declared_by_right_kind_wrong_id_is_rejected(tmp_path: Path) -> None:
+    """A same-kind, different-id ``authority_rule.declared_by`` is refused."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    from manosube_agent_civilization.authority.identity import rule_id
+
+    authority_rule = kwargs["authority_rule"]
+    authority_rule["declared_by"] = {"kind": "human_authority", "id": "AUTH-DIFFERENT-0003"}
+    authority_rule["authority_rule_id"] = rule_id(authority_rule)
+    kwargs["authority_policy_ref"] = {
+        "kind": "authority_rule",
+        "id": authority_rule["authority_rule_id"],
+    }
+    with pytest.raises(
+        BindingIdentityError, match=r"authority_rule\.declared_by vs human_authority_ref"
+    ):
+        bind_project(
+            store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError):
+        store.load_current(kwargs["project_id"])
+
+
+def test_four_way_human_authority_agreement_on_a_different_id_still_succeeds(
+    tmp_path: Path,
+) -> None:
+    """Positive control: the four-way equality check cares only that all four canonical
+    references agree with each other, not that they equal any particular fixture id -- a
+    Binding whose Human Authority id differs from the fixture default but is consistent
+    across all four appearances still succeeds and reconstructs from a fresh Store."""
+
+    from manosube_agent_civilization.authority.identity import rule_id
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    new_ref = {"kind": "human_authority", "id": "AUTH-CONSISTENT-9999"}
+    kwargs["human_authority_ref"] = new_ref
+    kwargs["objective_revision"]["owner_authority_ref"] = new_ref
+    kwargs["objective_revision"]["human_authority_ref"] = new_ref
+    kwargs["authority_rule"]["declared_by"] = new_ref
+    kwargs["authority_rule"]["authority_rule_id"] = rule_id(kwargs["authority_rule"])
+    kwargs["authority_policy_ref"] = {
+        "kind": "authority_rule",
+        "id": kwargs["authority_rule"]["authority_rule_id"],
+    }
+    result = bind_project(
+        store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
+    )
+    assert result["committed_state"]["state_revision"] == 0
+
+    fresh = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    assert (
+        fresh.resolve_record(kwargs["project_id"], "project_binding", result["project_binding_id"])
+        == result["project_binding"]
+    )
+
+
 def test_reference_edges_rejects_an_unclassified_source_kind() -> None:
     from manosube_agent_civilization.binding.reference_classification import reference_edges
 
@@ -992,25 +1186,37 @@ def test_reference_edges_classifies_every_field_on_every_accepted_record_kind() 
 # --- P9-R2-F4: duplicate-aware full-manifest replay -------------------------------------------- #
 
 
-def test_replay_with_an_identical_duplicate_additional_record_is_a_no_op(tmp_path: Path) -> None:
-    """An identical duplicate ``(kind, id, body)`` supplied twice in one replay's own
-    ``additional_genesis_records`` is silently fine -- the same member named twice changes
-    nothing (P9-R2-F4's own "duplicate-aware, not merely order-independent" requirement)."""
+def test_replay_with_an_identical_duplicate_additional_record_is_rejected(tmp_path: Path) -> None:
+    """Corrected Phase 9 Structural Review Round 3 (P9-R3-F1): SHUKOU's own ratified
+    semantics reject the SECOND appearance of any ``(kind, id)`` regardless of whether its
+    body is identical to the first -- ``IDENTICAL_DUPLICATE_ALLOWED=false``,
+    ``DUPLICATE_BODY_EQUALITY_IRRELEVANT=true``. Round 2's own version of this test treated
+    an identical duplicate as a legitimate no-op; that was itself the finding."""
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
-    first = _bind(store)
+    _bind(store)
+    before = store.load_current(_kwargs()["project_id"])
+
     real_records = genesis_records()
     doubled_records = [*real_records, *real_records]
-    second = bind_project(
-        store, **_kwargs(), additional_genesis_records=doubled_records, schema_root=SCHEMA_ROOT
-    )
-    assert second["committed_state"] == first["committed_state"]
+    with pytest.raises(BindingValidationError, match="duplicate"):
+        bind_project(
+            store, **_kwargs(), additional_genesis_records=doubled_records, schema_root=SCHEMA_ROOT
+        )
+    assert store.load_current(_kwargs()["project_id"]) == before
 
 
 def test_replay_with_a_conflicting_duplicate_additional_record_is_rejected(tmp_path: Path) -> None:
     """Two different bodies claimed under the same ``(kind, id)`` in one replay's own
     ``additional_genesis_records`` is a conflict, never silently resolved to the last one
-    supplied."""
+    supplied.
+
+    For a content-addressed kind like ``source_snapshot`` (the only allowed additional-
+    record kind, P9-R3-F3), two genuinely different, self-consistent bodies can never
+    legitimately share one declared id in the first place -- the second entry's own identity
+    reverification (step 0) necessarily fails before step 1's duplicate-key detection ever
+    gets to compare the two bodies. This is a strictly earlier, equally fail-closed gate,
+    the same "an earlier admission gate preempts a later one" precedent already established."""
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     _bind(store)
@@ -1018,12 +1224,176 @@ def test_replay_with_a_conflicting_duplicate_additional_record_is_rejected(tmp_p
 
     real_records = genesis_records()
     kind, record_id, body = real_records[0]
-    conflicting = [(kind, record_id, body), (kind, record_id, {**body, "captured_at": "X"})]
-    with pytest.raises(BindingValidationError, match="conflicting"):
+    conflicting = [
+        (kind, record_id, body),
+        (kind, record_id, {**body, "captured_at": "2099-01-01T00:00:00Z"}),
+    ]
+    with pytest.raises(BindingIdentityError, match="does not recompute"):
         bind_project(
             store, **_kwargs(), additional_genesis_records=conflicting, schema_root=SCHEMA_ROOT
         )
     assert store.load_current(_kwargs()["project_id"]) == before
+
+
+def test_first_bind_with_an_identical_duplicate_additional_record_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """The identical duplicate rejection applies at the very first ``bind_project`` call too,
+    not merely on replay (P9-R3-F1's own boundary 1 of 3) -- and is owned by the shared
+    admission gate itself, not incidentally by a lower Store-level conflict check."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    real_records = genesis_records()
+    doubled_records = [*real_records, *real_records]
+    with pytest.raises(BindingValidationError, match="duplicate"):
+        bind_project(
+            store, **_kwargs(), additional_genesis_records=doubled_records, schema_root=SCHEMA_ROOT
+        )
+    with pytest.raises(CorruptStoreError, match="lineage has no genesis"):
+        store.load_current(_kwargs()["project_id"])
+
+
+def test_additional_record_sharing_a_key_with_a_core_record_is_rejected(tmp_path: Path) -> None:
+    """An additional genesis record claiming the same kind as the Objective Revision,
+    Authority Rule, or Project Binding itself -- even with an identical body -- is refused.
+
+    Under the closed additional-record kind allowlist (P9-R3-F3, ``source_snapshot`` only),
+    this is caught even earlier than the duplicate-key check it would otherwise trip: none
+    of the three core record kinds is an allowed additional-record kind at all, so a
+    genuine ``(kind, id)`` collision between an additional record and a core record is now
+    structurally unreachable in the first place -- a stronger guarantee than the duplicate
+    check alone would give."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    objective_revision = kwargs["objective_revision"]
+    collision = [
+        (
+            "objective_revision",
+            objective_revision["objective_revision_id"],
+            deepcopy(objective_revision),
+        )
+    ]
+    with pytest.raises(BindingValidationError, match="ADDITIONAL_GENESIS_RECORD_KIND_SET"):
+        bind_project(
+            store,
+            **kwargs,
+            additional_genesis_records=[*genesis_records(), *collision],
+            schema_root=SCHEMA_ROOT,
+        )
+
+
+# --- P9-R3-F3: closed additional-genesis-record kind allowlist + identity reverification ------- #
+
+
+def test_completely_unknown_additional_record_kind_is_rejected(tmp_path: Path) -> None:
+    """A kind this repository does not recognize at all is refused before it can ever reach
+    duplicate detection, secret scanning, reference classification, or Store persistence."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    fake_record = ("totally_unknown_kind", "FAKE-ID-0001", {"schema_version": "0.1", "junk": "x"})
+    with pytest.raises(BindingValidationError, match="ADDITIONAL_GENESIS_RECORD_KIND_SET"):
+        bind_project(
+            store,
+            **kwargs,
+            additional_genesis_records=[*genesis_records(), fake_record],
+            schema_root=SCHEMA_ROOT,
+        )
+    assert (
+        store.resolve_record(kwargs["project_id"], "totally_unknown_kind", "FAKE-ID-0001") is None
+    )
+
+
+def test_known_store_owned_kind_outside_the_binding_allowlist_is_rejected(tmp_path: Path) -> None:
+    """A kind this repository DOES recognize elsewhere (Reflow's own Store-owned registry)
+    but that Phase 9 has not added to its own closed additional-record allowlist is still
+    refused -- recognition by some other owner is not, by itself, admission here."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    fake_record = ("authority_rule", "AUTH-RULE-NOT-CORE-0001", {"schema_version": "0.1"})
+    with pytest.raises(BindingValidationError, match="ADDITIONAL_GENESIS_RECORD_KIND_SET"):
+        bind_project(
+            store,
+            **kwargs,
+            additional_genesis_records=[*genesis_records(), fake_record],
+            schema_root=SCHEMA_ROOT,
+        )
+
+
+def test_additional_record_wrong_tuple_id_is_rejected(tmp_path: Path) -> None:
+    """A ``source_snapshot`` additional record whose caller-supplied tuple ``record_id``
+    does not match its own body's recomputed identity is refused, even though the body's own
+    ``source_snapshot_id`` field is internally self-consistent."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kind, _record_id, body = genesis_records()[0]
+    wrong_tuple_id_records = [(kind, "SRC-SNAP-" + "0" * 64, body)]
+    with pytest.raises(
+        BindingIdentityError, match="does not match the body's own recomputed identity"
+    ):
+        bind_project(
+            store,
+            **kwargs,
+            additional_genesis_records=wrong_tuple_id_records,
+            schema_root=SCHEMA_ROOT,
+        )
+    with pytest.raises(CorruptStoreError, match="lineage has no genesis"):
+        store.load_current(kwargs["project_id"])
+
+
+def test_additional_record_schema_invalid_body_is_rejected(tmp_path: Path) -> None:
+    """A ``source_snapshot`` additional record whose body fails Observation's own real
+    schema is refused by that same schema, never accepted verbatim."""
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    kind, record_id, body = genesis_records()[0]
+    invalid_body = {**body, "content_digest": "not-a-real-digest"}
+    with pytest.raises(BindingValidationError, match="schema-invalid"):
+        bind_project(
+            store,
+            **kwargs,
+            additional_genesis_records=[(kind, record_id, invalid_body)],
+            schema_root=SCHEMA_ROOT,
+        )
+
+
+def test_a_real_producer_built_additional_record_is_accepted_and_resolves(
+    tmp_path: Path,
+) -> None:
+    """Positive control: a real Source Snapshot minted through Observation's own actual
+    producer (:func:`~manosube_agent_civilization.observation.source_snapshot.
+    build_source_snapshot`), not merely hand-copied fixture JSON, passes F3's schema and
+    identity reverification and resolves unchanged from a fresh Store."""
+
+    from manosube_agent_civilization.observation.source_snapshot import build_source_snapshot
+
+    store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    kwargs = _kwargs()
+    real = build_source_snapshot(
+        source_locator="repo/README.md",
+        content_digest="sha256:" + "a" * 64,
+        captured_at="2026-09-01T00:00:00Z",
+    )
+    kwargs["genesis_state"]["state_metadata"]["source_snapshot_refs"] = [
+        {"kind": "source_snapshot", "id": real["source_snapshot_id"]}
+    ]
+    result = bind_project(
+        store,
+        **kwargs,
+        additional_genesis_records=[("source_snapshot", real["source_snapshot_id"], real)],
+        schema_root=SCHEMA_ROOT,
+    )
+    assert result["committed_state"]["state_revision"] == 0
+
+    fresh = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
+    assert (
+        fresh.resolve_record(kwargs["project_id"], "source_snapshot", real["source_snapshot_id"])
+        == real
+    )
 
 
 # --- P9-R2-F5: single shared admission -- zero Store mutation on any rejection ----------------- #
@@ -1053,7 +1423,14 @@ def test_replay_with_a_conflicting_duplicate_additional_record_is_rejected(tmp_p
 def test_every_rejected_body_type_leaves_zero_store_mutation(mutate, tmp_path: Path) -> None:
     """P9-R2-F5: whichever accepted body type is malformed, the shared admission rejects it
     before ``store.initialize`` -- proven here by exact-count assertions, not merely "an
-    exception was raised"."""
+    exception was raised".
+
+    Corrected Phase 9 Structural Review Round 3 (P9-R3-F2): a project that never reached
+    ``store.initialize`` at all is durably *unresolvable*, never indistinguishable from one
+    whose bare genesis legitimately committed with zero records -- ``resolve_transaction``
+    and ``resolve_transaction_manifest`` both report ``None`` here, never the ``[]`` a real
+    committed-but-recordless bare genesis would report (see
+    ``test_bare_genesis_manifest_is_empty_list_not_none`` for that positive control)."""
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     kwargs = _kwargs()
@@ -1065,10 +1442,7 @@ def test_every_rejected_body_type_leaves_zero_store_mutation(mutate, tmp_path: P
     with pytest.raises(CorruptStoreError, match="lineage has no genesis"):
         store.load_current(kwargs["project_id"])
     assert store.resolve_transaction(kwargs["project_id"], "TX-GENESIS") is None
-    # A project that never reached `store.initialize` at all is indistinguishable, by the
-    # Store's own documented bare-genesis convention, from one whose bare genesis legitimately
-    # adopted zero records -- both report an empty manifest here, never a real record.
-    assert store.resolve_transaction_manifest(kwargs["project_id"], "TX-GENESIS") == []
+    assert store.resolve_transaction_manifest(kwargs["project_id"], "TX-GENESIS") is None
     assert store.resolve_record(kwargs["project_id"], "project_binding", "anything") is None
 
 

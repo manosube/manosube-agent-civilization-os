@@ -87,8 +87,10 @@ src/manosube_agent_civilization/binding/
                                     record kind (Round 1 P9-R1-F5, extended Round 2
                                     P9-R2-F2/F3)
 ├── admission.py                   admit_genesis_transaction -- the one shared pre-commit
-                                    admission (whole-graph secret scan + reference closure,
-                                    Round 2 P9-R2-F1/F2/F3/F5)
+                                    admission (closed additional-record kind allowlist,
+                                    duplicate detection, whole-graph secret scan, reference
+                                    closure scoped to the candidate manifest only; Round 2
+                                    P9-R2-F1/F2/F3/F5, extended Round 3 P9-R3-F1/F3/F5)
 ├── engine.py                      assemble_project_binding -- the one validation+identity
                                     engine
 └── route.py                       bind_project -- the one public entry point
@@ -108,21 +110,25 @@ Binding never reads the Store's private on-disk layout.
 1. Human declares a Project Binding (Objective Revision body, Authority Rule body,
    Boundary, Source Registrations, Command Policy, secret-exclusion policy)
 2. bind_project validates every embedded structure and cross-field constraint, including
-   Authority Rule identity reverification and the three-way Human Authority cross-match
-   (Round 1 P9-R1-F1/F2)
+   Authority Rule identity reverification and the four-way Human Authority cross-match
+   (Round 1 P9-R1-F1/F2, extended to four-way Round 3 P9-R3-F4)
 3. bind_project mints and reverifies the content-addressed project_binding_id
 4. bind_project computes genesis State's own semantic_fingerprint via the real State owner
-5. admit_genesis_transaction scans the WHOLE candidate genesis manifest for secret material
-   and closes every typed reference edge it declares -- Objective Revision, Authority Rule,
-   Project Binding, genesis State, and every additional_genesis_records member (Round 2
-   P9-R2-F1/F2/F3/F5)
+5. admit_genesis_transaction refuses any additional_genesis_records member whose kind is
+   outside a closed allowlist, rejects any duplicate (kind, id) member (identical or
+   conflicting), scans the WHOLE candidate genesis manifest for secret material, and closes
+   every typed reference edge it declares -- Objective Revision, Authority Rule, Project
+   Binding, genesis State, and every additional_genesis_records member -- strictly against
+   this genesis transaction's own candidate manifest, never a pre-existing Store record
+   (Round 2 P9-R2-F1/F2/F3/F5, extended Round 3 P9-R3-F1/F3/F5)
 6. FileStateStore.initialize atomically adopts the Objective Revision, the Authority
    Rule, the Project Binding, and genesis State in one transaction
 7. A fresh Store instance / a fresh Python process resolves the identical Binding,
    Authority Rule, and genesis State (Round 1 P9-R1-F1/F5)
-8. An identical replay -- the full atomic manifest, order-independent -- is a no-op; a
-   conflicting replay (missing, extra, wrong-kind, or differing member) is rejected before
-   any mutation (Round 1 P9-R1-F4, corrected Round 2 P9-R2-F4)
+8. An identical replay -- the full atomic manifest, order-independent, no duplicate member
+   of any kind -- is a no-op; a conflicting replay (missing, extra, wrong-kind, differing, or
+   duplicated member) is rejected before any mutation (Round 1 P9-R1-F4, corrected Round 2
+   P9-R2-F4, corrected again Round 3 P9-R3-F1/F2)
 ```
 
 No fake Observation, Evidence, Difference, Change, Closure, or Reflow record is ever
@@ -142,8 +148,10 @@ Authority Rule          Human Authority (declared)      authority schema    auth
                                                                             rule_id
 genesis State           state.fingerprint               state schema        state.fingerprint
 additional genesis      their own real producers         their own schemas   their own real
-records (e.g. Kernel                                                        identity owners
-Source Snapshot)
+records (a closed                                                           identity owners
+allowlist, Round 3
+P9-R3-F3 -- currently
+source_snapshot only)
 TX-GENESIS manifest     store.file_store (generic,      n/a (not itself     n/a -- membership
                         Binding-agnostic)                schema-validated)   only, per-member
                                                                              identity is each
@@ -158,12 +166,18 @@ persistence owner: manosube_agent_civilization.store.file_store.FileStateStore (
                     Store this repository has; the one generic, Binding-agnostic method
                     added this round -- resolve_transaction_manifest -- carries no
                     domain-specific persistence or comparison logic)
-secret scan / reference classification / closure owner (Round 2 P9-R2-F1/F2/F3/F5):
-                    manosube_agent_civilization.binding.admission
+secret scan / additional-record kind allowlist / duplicate detection / reference
+                    classification / closure owner (Round 2 P9-R2-F1/F2/F3/F5, extended
+                    Round 3 P9-R3-F1/F3/F5): manosube_agent_civilization.binding.admission
                     (admit_genesis_transaction) and .reference_classification -- covering
-                    every accepted body above, never just Project Binding, never the Store
+                    every accepted body above, never just Project Binding, never the Store;
+                    reference closure scoped strictly to this genesis transaction's own
+                    candidate manifest, never a pre-existing Store record
 replay comparison owner: manosube_agent_civilization.binding.route (bind_project), reading
                     Store membership through the public resolve_transaction_manifest API
+                    (Round 3 P9-R3-F2: this method, and resolve_transaction, now agree that a
+                    never-initialized project is unresolvable, never indistinguishable from
+                    a genuinely committed bare genesis)
                     (Round 2 P9-R2-F4)
 ```
 

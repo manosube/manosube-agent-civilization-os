@@ -81,3 +81,23 @@ State itself was included in scope, never a secret carrier.
 SECRET_SCAN_COVERS_WHOLE_ACCEPTED_GRAPH=true
 SECRET_SCAN_ERROR_NEVER_ECHOES_THE_SECRET_VALUE=true
 ```
+
+## 5. Scan ordering relative to additional-record identity reverification (Round 3 P9-R3-F3)
+
+**Added in Phase 9 Structural Review Round 3.** `admit_genesis_transaction` now reverifies
+each `additional_genesis_records` member's own content-addressed identity (P9-R3-F3) before
+the secret scan runs (SHUKOU's own required admission order, §2 of the Round 3 adoption:
+schema validation and identity reverification precede the secret scan). For a
+content-addressed kind such as `source_snapshot`, every substantive field participates in
+that content address, so a secret-shaped value injected into any of them necessarily changes
+the record's own recomputed identity too -- identity reverification fails closed first,
+before the secret scan is ever reached. This is not a gap: a body that fails identity
+reverification is refused regardless of what the secret scan would have found, and a body
+that is genuinely self-consistent (its own declared id legitimately recomputes, including
+when a legitimately-content-addressed field happens to contain a secret-shaped string) still
+reaches, and is caught by, the secret scan.
+
+```text
+SECRET_SCAN_MAY_BE_PREEMPTED_BY_IDENTITY_REVERIFICATION_FOR_CONTENT_ADDRESSED_KINDS=true
+SELF_CONSISTENT_SECRET_SHAPED_ADDITIONAL_RECORD_BODY_STILL_REJECTED=true
+```
