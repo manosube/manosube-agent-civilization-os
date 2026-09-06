@@ -11,13 +11,16 @@ different-payload commit already was.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tests.state_helpers import SCHEMA_ROOT, initial_state
 
+from manosube_agent_civilization.state.errors import SchemaValidationError
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import STAGES, FileStateStore
 from manosube_agent_civilization.store.errors import (
@@ -760,11 +763,16 @@ def test_genesis_receipt_unknown_schema_version_fails_closed(tmp_path: Path) -> 
         pytest.param("project_id", "PRJ-OTHER", "project_id does not match", id="project_id"),
         pytest.param("transaction_id", "TX-OTHER", "fails its own schema", id="transaction_id"),
         pytest.param("genesis_mode", "SOMETHING_ELSE", "fails its own schema", id="genesis_mode"),
-        pytest.param("manifest_member_count", 99, "manifest digest does not match", id="member_count"),
+        pytest.param(
+            "manifest_member_count",
+            99,
+            "genesis receipt id does not match its own recomputed identity",
+            id="member_count",
+        ),
         pytest.param(
             "manifest_digest",
             "sha256:" + "0" * 64,
-            "manifest digest does not match",
+            "genesis receipt id does not match its own recomputed identity",
             id="manifest_digest",
         ),
     ],
@@ -776,7 +784,16 @@ def test_genesis_receipt_tampered_field_fails_closed(
     (project_id, transaction_id, genesis_mode, manifest_member_count, manifest_digest)
     independently fails closed when tampered, per SHUKOU's ``RECEIPT_*_MISMATCH_FAILS_
     CLOSED=true``/``RECEIPT_MODE_CONTRADICTION_FAILS_CLOSED=true``/``UNKNOWN_GENESIS_MODE_
-    FAILS_CLOSED=true`` requirements."""
+    FAILS_CLOSED=true`` requirements.
+
+    Phase 9 Completion Repair 6 (P9-C6-F1): tampering ``manifest_member_count`` or
+    ``manifest_digest`` alone -- without also recomputing ``genesis_receipt_id`` to match
+    -- is now caught earlier and more definitively, by the receipt's own content-addressed
+    identity recompute (:meth:`FileStateStore._genesis_receipt_id`), before the manifest
+    cross-check downstream ever runs. See ``test_genesis_receipt_self_consistent_but_
+    manifest_mismatched_fails_closed`` below for the deeper check: a receipt tampered
+    *and* re-identified consistently with its own new (wrong) fields still fails, because
+    the genesis event's own ``genesis_receipt_ref`` no longer names it."""
 
     store, _manifest_path = _committed_genesis_with_records(tmp_path)
     receipt = json.loads(_receipt_path(store).read_text(encoding="utf-8"))
@@ -785,6 +802,254 @@ def test_genesis_receipt_tampered_field_fails_closed(
 
     with pytest.raises(CorruptStoreError, match=match):
         store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+
+
+def test_genesis_receipt_id_tampered_alone_fails_closed(tmp_path: Path) -> None:
+    """Required negative control #1 (P9-C6-F1): ``genesis_receipt_id`` itself tampered,
+    while every other field stays byte-for-byte the real, committed value, is caught by
+    the recompute check -- the claimed id no longer reproduces from the (unchanged) other
+    fields."""
+
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+    receipt = json.loads(_receipt_path(store).read_text(encoding="utf-8"))
+    receipt["genesis_receipt_id"] = "GENESIS-RECEIPT-" + "F" * 64
+    _receipt_path(store).write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError, match="genesis receipt id does not match its own recomputed identity"):
+        store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+
+
+def test_genesis_receipt_self_consistent_but_manifest_mismatched_fails_closed(tmp_path: Path) -> None:
+    """Required negative control (P9-C6-F1 manifest/receipt contradiction matrix): a
+    receipt tampered to claim a *different* manifest membership, with
+    ``genesis_receipt_id`` recomputed to stay internally self-consistent with its own new
+    (wrong) fields, still fails closed -- because the genesis event's own
+    ``genesis_receipt_ref``, minted at commit time, no longer names this new id. A
+    schema-valid, internally self-consistent receipt is not canonical merely by being
+    schema-valid and self-consistent (``GENESIS_RECEIPT_SELF_DECLARATION_IS_AUTHORITY=
+    false``)."""
+
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+    receipt = json.loads(_receipt_path(store).read_text(encoding="utf-8"))
+    receipt["manifest_member_count"] = 99
+    receipt["manifest_digest"] = "sha256:" + "0" * 64
+    receipt["genesis_receipt_id"] = store._genesis_receipt_id(receipt)
+    _receipt_path(store).write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError, match="genesis event's genesis_receipt_ref does not match"):
+        store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+
+
+def _lineage_path(store: FileStateStore) -> Path:
+    return store.root / "projects" / PROJECT_ID / "events" / "transitions.jsonl"
+
+
+def _rewrite_lineage_genesis_event(store: FileStateStore, mutate: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
+    """Rewrite the durable lineage log's own ``TX-GENESIS`` event, applying *mutate* to a
+    deep copy of it first. The rest of the log, if any, is left untouched."""
+
+    path = _lineage_path(store)
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    rewritten = []
+    for line in lines:
+        event = json.loads(line)
+        if event.get("transaction_id") == "TX-GENESIS":
+            event = mutate(deepcopy(event))
+        rewritten.append(json.dumps(event, sort_keys=True))
+    path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+
+def _rewrite_genesis_event_everywhere(store: FileStateStore, mutate: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
+    """Rewrite ``TX-GENESIS``'s own event identically in both the durable lineage log and
+    its own recovery journal's ``event.json`` -- isolating a tamper to the event's own
+    content, never tripping the separate journal-vs-lineage divergence check, so the
+    receipt-binding check under test is the one that actually fires."""
+
+    _rewrite_lineage_genesis_event(store, mutate)
+    journal_event_path = (
+        store.root / "projects" / PROJECT_ID / "state" / "recovery" / "TX-GENESIS" / "event.json"
+    )
+    event = mutate(deepcopy(json.loads(journal_event_path.read_text(encoding="utf-8"))))
+    journal_event_path.write_text(json.dumps(event, sort_keys=True), encoding="utf-8")
+
+
+def test_lineage_genesis_event_receipt_ref_kind_tampered_fails_closed(tmp_path: Path) -> None:
+    """Required negative control #11 (P9-C6-F1): the genesis event's own
+    ``genesis_receipt_ref.kind`` tampered to something other than ``genesis_receipt``
+    fails closed -- at the schema layer (``kind`` is schema-constrained to the literal
+    ``genesis_receipt``), even before :meth:`FileStateStore._verify_genesis_event_receipt_
+    binding`'s own identical defensive check (still load-bearing for the BARE-genesis, no-
+    journal path, which never independently schema-validates the lineage event first) ever
+    runs."""
+
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+
+    def mutate(event: dict[str, Any]) -> dict[str, Any]:
+        event["genesis_receipt_ref"]["kind"] = "not_genesis_receipt"
+        return event
+
+    _rewrite_genesis_event_everywhere(store, mutate)
+
+    with pytest.raises(SchemaValidationError, match="genesis_receipt_ref"):
+        store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+
+
+def test_lineage_genesis_event_receipt_ref_id_tampered_fails_closed(tmp_path: Path) -> None:
+    """Required negative control #12 (P9-C6-F1): the genesis event's own
+    ``genesis_receipt_ref.id`` tampered to a well-formed but wrong id fails closed."""
+
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+
+    def mutate(event: dict[str, Any]) -> dict[str, Any]:
+        event["genesis_receipt_ref"]["id"] = "GENESIS-RECEIPT-" + "E" * 64
+        return event
+
+    _rewrite_genesis_event_everywhere(store, mutate)
+
+    with pytest.raises(CorruptStoreError, match="genesis_receipt_ref does not match"):
+        store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+
+
+def test_lineage_genesis_event_receipt_ref_deleted_fails_closed(tmp_path: Path) -> None:
+    """Required negative control #13 (P9-C6-F1): the durable lineage event's own
+    ``genesis_receipt_ref`` deleted outright fails closed at schema validation (the field
+    is required for a GENESIS event) the moment anything reconstructs through it."""
+
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+
+    def mutate(event: dict[str, Any]) -> dict[str, Any]:
+        del event["genesis_receipt_ref"]
+        return event
+
+    _rewrite_lineage_genesis_event(store, mutate)
+
+    with pytest.raises(CorruptStoreError):
+        store.reconstruct(PROJECT_ID)
+
+
+def test_transition_event_with_genesis_receipt_ref_rejected_by_schema(tmp_path: Path) -> None:
+    """Required negative control #14 (P9-C6-F1): an ordinary ``TRANSITION`` event carrying
+    a ``genesis_receipt_ref`` of its own is refused by schema -- the field is exclusively
+    the GENESIS event's own, never a Binding-specific or general-purpose event field
+    (``TRANSITION_EVENT_RECEIPT_REF_ALLOWED=false``)."""
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    store.initialize(PROJECT_ID, initial)
+    after, event = _successor(initial)
+    event["genesis_receipt_ref"] = {"kind": "genesis_receipt", "id": "GENESIS-RECEIPT-" + "A" * 64}
+
+    with pytest.raises(SchemaValidationError):
+        store.commit(PROJECT_ID, 0, initial["semantic_fingerprint"], after, event)
+
+
+def test_genesis_journal_event_diverges_from_lineage_event_fails_closed(tmp_path: Path) -> None:
+    """Required negative controls #15/#16/#20/#21 (P9-C6-F1): the journal's own
+    ``event.json`` rewritten (its ``committed_at`` changed) while the durable lineage
+    event is left untouched -- or the reverse -- fails closed the moment the two are
+    compared, regardless of which one still, on its own, looks internally consistent
+    with a (possibly also rewritten) receipt."""
+
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+    journal_event_path = (
+        store.root / "projects" / PROJECT_ID / "state" / "recovery" / "TX-GENESIS" / "event.json"
+    )
+    event = json.loads(journal_event_path.read_text(encoding="utf-8"))
+    event["committed_at"] = "2099-01-01T00:00:00Z"
+    journal_event_path.write_text(json.dumps(event, sort_keys=True), encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError, match="genesis journal event diverges from its own lineage event"):
+        store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+
+
+def test_p9_c6_f1_schema_valid_self_consistent_receipt_substitution_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """P9-C6-F1's own required acceptance test (compound tamper #17): a genesis-with-
+    records transaction's own recovery journal is deleted, and its genesis receipt is
+    replaced with a schema-valid, internally self-consistent BARE receipt -- correct
+    ``project_id``/``transaction_id``, a canonical empty manifest, and a
+    ``genesis_receipt_id`` freshly, correctly recomputed from those very fields.
+
+    Before this fix, a schema-valid receipt whose own fields were mutually consistent was
+    trusted outright (Completion Repair 5's own ``_read_genesis_receipt`` never asked
+    whether anything *external* to the receipt itself had ever committed to its
+    identity). The genesis event's own ``genesis_receipt_ref``, minted once at genesis
+    time and durable in the append-only lineage log the journal deletion never touches,
+    still names the *original* WITH_RECORDS receipt's id -- which the substituted BARE
+    receipt's own (different, but internally correct) recomputed id can never reproduce."""
+
+    import shutil
+
+    store, _manifest_path = _committed_genesis_with_records(tmp_path)
+    journal_dir = store.root / "projects" / PROJECT_ID / "state" / "recovery" / "TX-GENESIS"
+    shutil.rmtree(journal_dir)
+
+    fabricated: dict[str, Any] = {
+        "schema_version": "0.1",
+        "project_id": PROJECT_ID,
+        "transaction_id": "TX-GENESIS",
+        "genesis_mode": "BARE",
+        "manifest_member_count": 0,
+        "manifest_digest": store._manifest_digest([]),
+    }
+    fabricated["genesis_receipt_id"] = store._genesis_receipt_id(fabricated)
+    _receipt_path(store).write_text(json.dumps(fabricated, sort_keys=True), encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError, match="genesis_receipt_ref does not match"):
+        store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+    with pytest.raises(CorruptStoreError, match="genesis_receipt_ref does not match"):
+        store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS")
+    with pytest.raises(CorruptStoreError, match="genesis_receipt_ref does not match"):
+        store.load_current(PROJECT_ID)
+    with pytest.raises(CorruptStoreError, match="genesis_receipt_ref does not match"):
+        store.reconstruct(PROJECT_ID)
+
+
+def test_p9_c6_f1_compound_substitution_combined_with_record_reclaim(tmp_path: Path) -> None:
+    """Required negative control (compound tamper #23): the exact P9-C6-F1 scenario
+    (journal deleted, receipt substituted with a schema-valid, self-consistent BARE
+    receipt) combined with a later, wholly legitimate transaction reclaiming the
+    identical ``(kind, id, body)`` genesis originally promoted. TX-GENESIS's own four
+    transaction-level surfaces still fail closed for TX-GENESIS's own corrupted
+    institution; the reclaimed record's own visibility, established independently by the
+    later transaction's own intact manifest, is unaffected -- the same design decision
+    Completion Repair 5 already established, still true under Completion Repair 6's own
+    stronger receipt binding."""
+
+    import shutil
+
+    store = _store(tmp_path)
+    initial = _prepared_initial()
+    record_kind, record_id = "closure_evaluation", "D-CLOSE-EVAL-" + "A" * 64
+    record_body = {"closure_evaluation_id": record_id, "result": "SATISFIED"}
+    store.initialize(PROJECT_ID, initial, records=[(record_kind, record_id, record_body)])
+
+    after, event = _successor(initial)
+    store.commit(
+        PROJECT_ID, 0, initial["semantic_fingerprint"], after, event,
+        records=[(record_kind, record_id, record_body)],
+    )
+
+    journal_dir = store.root / "projects" / PROJECT_ID / "state" / "recovery" / "TX-GENESIS"
+    shutil.rmtree(journal_dir)
+
+    fabricated: dict[str, Any] = {
+        "schema_version": "0.1",
+        "project_id": PROJECT_ID,
+        "transaction_id": "TX-GENESIS",
+        "genesis_mode": "BARE",
+        "manifest_member_count": 0,
+        "manifest_digest": store._manifest_digest([]),
+    }
+    fabricated["genesis_receipt_id"] = store._genesis_receipt_id(fabricated)
+    _receipt_path(store).write_text(json.dumps(fabricated, sort_keys=True), encoding="utf-8")
+
+    with pytest.raises(CorruptStoreError, match="genesis_receipt_ref does not match"):
+        store.resolve_transaction(PROJECT_ID, "TX-GENESIS")
+    with pytest.raises(CorruptStoreError, match="genesis_receipt_ref does not match"):
+        store.resolve_transaction_manifest(PROJECT_ID, "TX-GENESIS")
+    assert store.resolve_record(PROJECT_ID, record_kind, record_id) == record_body
 
 
 def test_bare_genesis_receipt_tampered_to_claim_nonzero_members_fails_closed(

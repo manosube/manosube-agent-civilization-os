@@ -267,6 +267,30 @@ GENESIS_RECEIPT_SURVIVES_JOURNAL_DELETION=true
 LATER_RECORD_RECLAIM_DEFEATS_HEURISTIC_DETECTION=false
 ```
 
+**Corrected in Phase 9 Completion Repair 6 (P9-C6-F1).** A schema-valid, internally
+self-consistent genesis receipt was itself not yet canonical: an attacker who deleted a
+genesis-with-records transaction's own recovery journal and replaced its receipt with a
+schema-valid, self-consistent `BARE` receipt (correct `project_id`/`transaction_id`, the
+canonical empty manifest, and a `genesis_receipt_id` freshly, correctly recomputed from
+those very fields) still fooled every public read surface, since the receipt was never
+checked against anything external to itself. The receipt now carries a content-addressed
+`genesis_receipt_id` (`GENESIS-RECEIPT-<sha256 hex>`, its own distinct domain separator
+from both State's fingerprint and the manifest digest, excluded from its own preimage),
+and the GENESIS event `FileStateStore.initialize` durably commits to the lineage log at
+genesis time now carries a `genesis_receipt_ref` naming that exact id -- required by
+schema for `event_type=GENESIS`, forbidden for `TRANSITION`. Since the lineage log is
+immune to a deleted recovery journal, a substituted receipt's own (different, but
+internally correct) recomputed id can never reproduce the original event's own durable
+reference, so the substitution still fails closed. `bind_project`'s own replay comparison
+remains unaffected, unchanged from Completion Repair 5.
+
+```text
+GENESIS_RECEIPT_SELF_DECLARATION_IS_AUTHORITY=false
+GENESIS_RECEIPT_CONTENT_ADDRESSED=true
+GENESIS_RECEIPT_EXTERNALLY_COMMITTED=true
+SCHEMA_VALID_GENESIS_RECEIPT_SUBSTITUTION_ALLOWED=false
+```
+
 ## 9b. Whole-graph admission (Round 2 P9-R2-F1/F2/F3/F5)
 
 **Added in Phase 9 Structural Review Round 2.** Round 1's own secret-scan and reference
