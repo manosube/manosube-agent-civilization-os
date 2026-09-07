@@ -4,10 +4,13 @@ A real AST walk over the ``independent_verification`` package's own module sourc
 grep, never a hardcoded name list -- proving exactly two public callables
 (``run_independent_verification``, and Structural Review Round 2's
 ``route_verification_result_to_evidence``), that ``store.resolve_record`` is the only Store
-method this package ever calls, that no existing owner (Difference, Authority, Reflow,
-Binding) is ever imported anywhere, that ``evidence`` is imported only from
-``evidence_handoff.py`` and only to call ``derive_evidence`` exactly once, and that no module
-in this package imports a model, subprocess, shell, network, GitHub, Observer,
+method this package ever calls, that no existing owner (Difference, Reflow, Binding) is ever
+imported anywhere, that ``evidence`` is imported only from ``evidence_handoff.py`` and only to
+call ``derive_evidence`` exactly once, that ``authority`` is imported only from ``route.py``
+and only to call the existing Authority owner's own
+``evaluate_verifier_selection`` exactly once (Structural Review Round 3, P13-R3-F1 -- the
+identical reuse-by-call pattern Round 1 already established for ``boot_project``), and that no
+module in this package imports a model, subprocess, shell, network, GitHub, Observer,
 Change-execution, scheduler, or multi-Agent surface. The identical AST-walk technique
 ``tests/contract/agent_runtime/test_agent_runtime_static_conformance.py`` and
 ``tests/contract/boot/test_boot_route_static_conformance.py`` already use for their own static
@@ -36,32 +39,44 @@ _VERIFICATION_MODULES = (route_module, types_module, errors_module)
 #: surface, no Store method beyond ``resolve_record``, no development-binding fixture).
 _ALL_PACKAGE_MODULES = (route_module, types_module, errors_module, evidence_handoff_module)
 
-#: Existing canonical owners this package must never import -- Issue #51's own delivery
-#: constraint ("reuse existing public owners; do not copy canonical Evidence, Difference,
-#: Authority, Reflow, Store, Boot, or Binding logic") made checkable rather than merely
-#: asserted in prose. ``boot`` is deliberately absent here (Structural Review Round 1,
-#: P13-R1-F2): this package now calls the existing Boot owner's own public
-#: ``boot_project`` exactly once, to independently re-verify the real Human Authority
-#: reference rather than trusting a caller-supplied equality check -- reuse by call, not a
-#: second Boot owner. ``test_route_calls_boot_project_exactly_once`` below is the positive
-#: proof that pairs with this negative one. ``evidence`` is likewise absent from this list
-#: (Structural Review Round 2, P13-R2-F2): the identical reuse-by-call pattern now applies
-#: to ``evidence_handoff.py`` calling the existing Evidence owner's own public
-#: ``derive_evidence`` -- checked by ``_FORBIDDEN_OWNER_MODULE_PREFIXES_STRICT`` below, which
-#: still forbids ``evidence`` for every *other* module in this package.
+#: Existing canonical owners no module in this package may ever import -- Issue #51's own
+#: delivery constraint ("reuse existing public owners; do not copy canonical Evidence,
+#: Difference, Authority, Reflow, Store, Boot, or Binding logic") made checkable rather than
+#: merely asserted in prose. Neither ``evidence`` nor ``authority`` appears here: each has
+#: exactly one module permitted to import it, checked by name below rather than folded into
+#: one shared list, so a permission granted to one module can never silently cover another.
 _FORBIDDEN_OWNER_MODULE_PREFIXES = (
     "manosube_agent_civilization.difference",
-    "manosube_agent_civilization.authority",
     "manosube_agent_civilization.reflow",
     "manosube_agent_civilization.binding",
 )
 
-#: The stricter list applied to ``_VERIFICATION_MODULES`` only (never to
-#: ``evidence_handoff.py``): ``evidence`` is forbidden everywhere except the one module whose
-#: entire purpose is the real handoff into it.
-_FORBIDDEN_OWNER_MODULE_PREFIXES_STRICT = (
+#: Applied to every module except ``evidence_handoff.py`` (Structural Review Round 2,
+#: P13-R2-F2: it alone calls the existing Evidence owner's own public ``derive_evidence`` --
+#: reuse by call, not a second Evidence owner).
+_FORBIDDEN_FOR_NON_EVIDENCE_HANDOFF = (
     *_FORBIDDEN_OWNER_MODULE_PREFIXES,
     "manosube_agent_civilization.evidence",
+)
+
+#: Applied to every module except ``route.py`` (Structural Review Round 1, P13-R1-F2 for
+#: ``boot``, and Round 3, P13-R3-F1 for ``authority``: ``route.py`` alone calls the existing
+#: Boot owner's own public ``boot_project`` and the existing Authority owner's own public
+#: ``evaluate_verifier_selection``, each exactly once -- reuse by call, not a second owner of
+#: either). ``boot`` was never added to ``_FORBIDDEN_OWNER_MODULE_PREFIXES`` at all (Round 1),
+#: so only ``authority`` needs adding here; the positive proofs
+#: ``test_route_calls_boot_project_exactly_once`` and
+#: ``test_route_calls_evaluate_verifier_selection_exactly_once`` below pair with both.
+_FORBIDDEN_FOR_NON_ROUTE = (
+    *_FORBIDDEN_FOR_NON_EVIDENCE_HANDOFF,
+    "manosube_agent_civilization.authority",
+)
+
+#: ``evidence_handoff.py``'s own forbidden set: it may import ``evidence`` (its whole
+#: purpose), but not ``authority`` -- that reuse belongs to ``route.py`` alone.
+_FORBIDDEN_FOR_EVIDENCE_HANDOFF = (
+    *_FORBIDDEN_OWNER_MODULE_PREFIXES,
+    "manosube_agent_civilization.authority",
 )
 
 
@@ -138,16 +153,29 @@ def test_independent_verification_exports_exactly_the_three_value_types_and_prot
 def test_independent_verification_never_imports_an_existing_kernel_owner() -> None:
     """Issue #51: reuse existing owners by call, never by importing their implementation.
 
-    ``route.py``/``types.py``/``errors.py``/``__init__.py`` may never import ``evidence``
-    either -- only ``evidence_handoff.py`` may, and only to call ``derive_evidence``
-    (Structural Review Round 2, P13-R2-F2); checked separately below."""
+    ``types.py``/``errors.py``/``__init__.py`` may never import ``evidence`` or ``authority``
+    -- only ``evidence_handoff.py`` may import ``evidence`` (Structural Review Round 2,
+    P13-R2-F2) and only ``route.py`` may import ``authority`` (Structural Review Round 3,
+    P13-R3-F1); both checked separately below."""
 
-    for module in (verification_module, *_VERIFICATION_MODULES):
+    for module in (verification_module, types_module, errors_module):
         imported = _imported_module_names(module)
         for name in imported:
-            assert not any(
-                name.startswith(prefix) for prefix in _FORBIDDEN_OWNER_MODULE_PREFIXES_STRICT
-            ), f"{module.__name__} imports a forbidden existing-owner module: {name}"
+            assert not any(name.startswith(prefix) for prefix in _FORBIDDEN_FOR_NON_ROUTE), (
+                f"{module.__name__} imports a forbidden existing-owner module: {name}"
+            )
+
+
+def test_route_never_imports_evidence_or_a_difference_reflow_binding_owner() -> None:
+    """``route.py`` may import ``authority`` (to call ``evaluate_verifier_selection``, checked
+    separately below) and ``boot``, but never ``evidence``, ``difference``, ``reflow``, or
+    ``binding`` -- it stays a thin route, not a second owner of any of those."""
+
+    imported = _imported_module_names(route_module)
+    for name in imported:
+        assert not any(name.startswith(prefix) for prefix in _FORBIDDEN_FOR_NON_EVIDENCE_HANDOFF), (
+            f"{route_module.__name__} imports a forbidden existing-owner module: {name}"
+        )
 
 
 def test_evidence_handoff_never_imports_a_non_evidence_existing_owner() -> None:
@@ -157,7 +185,7 @@ def test_evidence_handoff_never_imports_a_non_evidence_existing_owner() -> None:
 
     imported = _imported_module_names(evidence_handoff_module)
     for name in imported:
-        assert not any(name.startswith(prefix) for prefix in _FORBIDDEN_OWNER_MODULE_PREFIXES), (
+        assert not any(name.startswith(prefix) for prefix in _FORBIDDEN_FOR_EVIDENCE_HANDOFF), (
             f"{evidence_handoff_module.__name__} imports a forbidden existing-owner module: {name}"
         )
 
@@ -170,6 +198,17 @@ def test_evidence_handoff_calls_derive_evidence_exactly_once_and_only_there() ->
     assert _call_site_count(evidence_handoff_module, "derive_evidence") == 1
     for module in _VERIFICATION_MODULES:
         assert _call_site_count(module, "derive_evidence") == 0
+
+
+def test_route_calls_evaluate_verifier_selection_exactly_once() -> None:
+    """Structural Review Round 3 (P13-R3-F1): the existing Authority owner's own public
+    ``evaluate_verifier_selection`` is the surface this route reuses to independently
+    re-verify that a real Human Authority selected this exact ``VerifierSelection`` -- called
+    exactly once, and only from ``route.py``."""
+
+    assert _call_site_count(route_module, "evaluate_verifier_selection") == 1
+    for module in (types_module, errors_module, evidence_handoff_module):
+        assert _call_site_count(module, "evaluate_verifier_selection") == 0
 
 
 def test_route_calls_resolve_record_and_no_other_store_method() -> None:

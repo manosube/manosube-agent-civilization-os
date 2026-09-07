@@ -11,6 +11,7 @@ Adds exactly one provider-neutral, explicit Independent Verification adapter:
        project_binding_id=project_binding_id,
        verification_requirement=requirement,
        verifier_selection=selection,
+       verifier_selection_grants=grants,
        verifier=verifier,
    )
    result.status  # VERIFIED | FAILED | INSUFFICIENT | UNAVAILABLE
@@ -37,12 +38,26 @@ Structural Review Round 2 corrections: a real handoff --
 ``VerificationResult`` to the existing Evidence owner's own public ``derive_evidence``, rather
 than leaving that connection as the caller's own, separate, undocumented concern (P13-R2-F2);
 every status, including ``UNAVAILABLE``, now requires the identical distinguishable-input
-provenance (P13-R2-F3, superseding Round 0's disclosed ``UNAVAILABLE`` exemption). P13-R2-F1
-(binding a ``VerifierSelection`` to a real per-Requirement Authority Decision, not merely a
-project's own Human Authority reference) is disclosed, unresolved: no existing Authority owner
-exposes a public surface for it without misusing ``evaluate_authority``'s Change/Difference/
-State-bound machinery for a purpose it was not designed for -- see ``VERIFICATION_CONTRACT.md``
-§10 and this round's own completion report.
+provenance (P13-R2-F3, superseding Round 0's disclosed ``UNAVAILABLE`` exemption). Round 2 also
+disclosed P13-R2-F1 (binding a ``VerifierSelection`` to a real per-Requirement Authority
+Decision, not merely a project's own Human Authority reference) as unresolved, since no
+existing Authority owner exposed a public surface for it without misusing
+``evaluate_authority``'s Change/Difference/State-bound machinery for a purpose it was not
+designed for.
+
+Structural Review Round 3 correction (P13-R3-F1) resolves that disclosed gap by extending the
+existing Authority owner rather than inventing a second one: ``run_independent_verification``
+now takes an explicit *verifier_selection_grants* collection and re-verifies
+``verifier_selection`` through the existing Authority owner's own new, dedicated, read-only
+:func:`~manosube_agent_civilization.authority.evaluate_verifier_selection` exactly once, before
+the verifier is ever called. That surface binds ``project_id``, ``requirement_id``,
+``verifier_identity``, ``permitted_boundary``, ``selection_status``, and the real,
+Boot-verified selection authority identity to a genuine, content-addressed, Human-Authority-
+declared ``verifier_selection_grant`` record -- a caller-created selection duplicating
+known-real values without such a grant is refused (``VerificationRequirementError``) with the
+verifier called zero times. It introduces no new Authority owner, registry, token, cache, or
+Store write of its own (``EXISTING_EVIDENCE_OWNER_HANDOFF_REQUIRED``'s own sibling constraint
+for Authority: reuse by call, never a second owner).
 
 See ``08_VERIFICATION/VERIFICATION_INDEX.md`` for the full contract set.
 """

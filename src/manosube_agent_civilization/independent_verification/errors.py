@@ -7,8 +7,10 @@ independent_verification.types.VerificationResult` and the existing Evidence req
 off with it. Every Boot/Binding/Store/Authority/Evidence/Difference/Reflow failure remains
 that owning domain's own typed error; this module never catches or reclassifies one, because
 this package never calls into any of them beyond the one read-only ``store.resolve_record``
-provenance check and the one ``evidence.derive_evidence`` handoff call
-(``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 documents both call sites).
+provenance check, the one ``boot_project`` Human Authority re-verification, the one
+``authority.evaluate_verifier_selection`` selection-decision re-verification (Structural
+Review Round 3, P13-R3-F1), and the one ``evidence.derive_evidence`` handoff call
+(``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 documents every call site).
 """
 
 from __future__ import annotations
@@ -24,7 +26,10 @@ class VerificationRequirementError(IndependentVerificationError):
     Raised for: a wrong project, a selection that does not apply to the supplied
     requirement, a selection whose own authority or boundary diverges from the
     requirement's, a selection that is not ``ACTIVE``, a malformed or out-of-vocabulary
-    target reference, or a target reference this project's Store does not resolve."""
+    target reference, a target reference this project's Store does not resolve, or
+    (Structural Review Round 3, P13-R3-F1) a ``verifier_selection`` the existing Authority
+    owner's own ``evaluate_verifier_selection`` does not answer ``SELECTED`` for -- a
+    caller-created selection is never trusted merely because it repeats known-real values."""
 
 
 class VerifierOutputError(IndependentVerificationError):

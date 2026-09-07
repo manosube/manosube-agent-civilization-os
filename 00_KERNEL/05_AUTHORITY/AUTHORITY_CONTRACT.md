@@ -401,6 +401,54 @@ OPERATION_FINGERPRINT_OBLIGATION_RECORDED=true
 OPERATION_FINGERPRINT_OBLIGATION_DISCHARGED=true
 ```
 
+# 7.3 Verifier Selection Decision (Structural Review Round 3, Issue #51, P13-R3-F1)
+
+`evaluate_authority`が答えるのは「このexact StateとDifferenceに対して、このactionをいま実行してよいか」である。Independent Verification（Phase 13）は別の問いを持つ——「特定の`VerificationRequirement`に対して、特定の`VerifierSelection`（verifier identity・permitted boundary・selection status）をSHUKOUが選んだと、既存Authority ownerは再検証できるか」。
+
+`boot_project(...).human_authority_ref`は、Project Bindingの正規Human Authorityを再検証する参照であり、この問いへの答えではない。project全体が正しいHuman Authorityへ束縛されていることは、その中の**特定のVerifierSelection**をそのHuman Authorityが選んだことを意味しない。二つの問いを混同すれば、`human_authority_ref`を単に複製したcaller-created selectionが、実在するAuthority Decisionであるかのように扱われる。
+
+`evaluate_verifier_selection`は、この一つの owner の中の、**第二の、狭く限定された評価器**である。
+
+```text
+CANONICAL_AUTHORITY_OWNER_COUNT=1
+VERIFIER_SELECTION_EVALUATOR_COUNT=1
+NEW_AUTHORITY_OWNER=false
+NEW_AUTHORITY_REGISTRY=false
+NEW_SELECTION_TOKEN=false
+NEW_SELECTION_CACHE=false
+CALLER_MAPPING_EQUALITY_AS_AUTHORITY=false
+BOOT_HUMAN_AUTHORITY_REF_ALONE_IS_SELECTION_DECISION=false
+```
+
+Verifier Selection Decisionは、少なくとも次のすべてを一つのimmutable・content-addressedな決定へ束縛する。
+
+```text
+VERIFIER SELECTION DECISION IDENTITY INPUT
+= project_id + requirement_id + selection_id
++ verifier_identity + permitted_boundary + selection_status
++ selection_authority_ref（Boot-verified human_authority_ref、caller供給の等価claimではない）
++ grant_ref + sorted excluding_grant_refs
++ decision + decision_reason_codes
+```
+
+決定が有効になるのは、既存Authority ownerが公開する`admit`/`admit_all`——`authority_rule`・`approval`・`prohibition`と同じ admission gate——を通過した、実在する`verifier_selection_grant`（Human Authorityにより宣言され、content addressが再計算され一致する）が、上記の全フィールドへ完全一致で束縛するときだけである。一つも束縛しなければ`VERIFIER_SELECTION_REFUSED`であり、束縛するが`status`が`ACTIVE`でないgrantは、approvalのexclusionと同じ理由で選択を無効にする。caller が偽造した、または単に既知の値を複製しただけのgrantは、`grants`自体の欠如と同じく決定を`SELECTED`にしない。
+
+```text
+GRANT_MISSING → VERIFIER_SELECTION_REFUSED
+GRANT NAMES A DIFFERENT project/requirement/selection/verifier/boundary/status → does not bind
+GRANT NOT DECLARED BY THE REAL human_authority_ref → GRANT_AUTHORITY_MISMATCH
+GRANT BINDS BUT status != ACTIVE → withholds, VERIFIER_SELECTION_REFUSED
+EXACTLY ONE GENUINE, FULLY-BOUND, ACTIVE GRANT → VERIFIER_SELECTION_SELECTED
+```
+
+Independent Verificationのroute（`08_VERIFICATION/VERIFICATION_CONTRACT.md`）は、この決定をVerifier呼び出しの前に一度だけ再検証する。既存Authority ownerが読めない入力へ返す typed error は、そのまま伝播する——このroute自身は例外を捕捉も再分類もしない。
+
+```text
+INDEPENDENT_VERIFICATION_DIRECT_STORE_WRITE=false
+VERIFIER_SELECTION_DECISION_IMPLIES_CHANGE_EXECUTION=false
+VERIFIER_SELECTION_DECISION_IMPLIES_CLOSURE=false
+```
+
 # 8. What Authority Never Does
 
 ```text
@@ -463,6 +511,9 @@ APPROVAL_EXCLUSION_INDEPENDENT_OF_RULE_LEVEL=true
 CITED_RULE_SUPPORTS_THE_DECISION=true
 EVALUATION_TIME_ADMITTED_BEFORE_RESOLUTION=true
 NONCANONICAL_PAYLOAD_FAILS_THROUGH_THE_PUBLIC_BOUNDARY=true
+VERIFIER_SELECTION_DECISION_IMPLEMENTED=true
+VERIFIER_SELECTION_DECISION_IDENTITY_INCLUDES_PROVENANCE=true
+VERIFIER_SELECTION_GRANT_SAME_ADMISSION_GATE_AS_EXISTING_RECORDS=true
 ```
 
 ```text

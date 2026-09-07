@@ -36,6 +36,7 @@ run_independent_verification(
     project_binding_id: str,
     verification_requirement: VerificationRequirement,
     verifier_selection: VerifierSelection,
+    verifier_selection_grants: Sequence[Mapping[str, Any]],
     verifier: IndependentVerifier,
 ) -> VerificationResult
 
@@ -49,6 +50,14 @@ route_verification_result_to_evidence(
 owner's own public `boot_project` to independently re-verify the real Human Authority
 reference this project is bound to, rather than trusting a caller-supplied equality check
 alone.
+
+`verifier_selection_grants` (Structural Review Round 3, P13-R3-F1) is the caller's own
+explicit collection of canonical `verifier_selection_grant` records -- real,
+Human-Authority-declared, content-addressed, admitted through the existing Authority owner's
+own admission gate. This route passes them, together with `verifier_selection`'s own fields
+and the real, Boot-verified Human Authority reference, to the existing Authority owner's own
+new, dedicated, read-only `evaluate_verifier_selection` exactly once, and requires it to
+answer `VERIFIER_SELECTION_SELECTED` before the verifier is ever called.
 
 `route_verification_result_to_evidence` (Structural Review Round 2, P13-R2-F2) hands an
 admissible `VerificationResult` to the existing Evidence owner's own public `derive_evidence`
@@ -110,12 +119,19 @@ IndependentVerifier
    deterministic test runner, a schema validator, a runtime observer, a distinct AI, or a
    Human review may all implement it identically. No product, model, provider, or bot is
    selected by this package.
-4. **SHUKOU selects explicitly.** `VerifierSelection` is always caller-supplied. Its
-   `selection_authority_ref` must canonical-reference-equal the requirement's own, and its
-   `permitted_boundary` must canonical-reference-equal the requirement's own
-   `verification_boundary` -- a selection bound to a different authority or boundary is
-   rejected before the verifier is ever called. No automatic selection, fallback,
-   cwd/environment/cache inference, or "only available reviewer" rule exists.
+4. **SHUKOU selects explicitly, and the existing Authority owner re-verifies the selection
+   itself.** `VerifierSelection` is always caller-supplied. Its `selection_authority_ref`
+   must canonical-reference-equal the requirement's own, and its `permitted_boundary` must
+   canonical-reference-equal the requirement's own `verification_boundary` -- a selection
+   bound to a different authority or boundary is rejected before the verifier is ever called.
+   No automatic selection, fallback, cwd/environment/cache inference, or "only available
+   reviewer" rule exists. Structural Review Round 3 (P13-R3-F1) resolves the further gap
+   Round 2 disclosed: the real, Boot-verified Human Authority reference alone does not prove
+   SHUKOU selected *this* `VerifierSelection` for *this* `VerificationRequirement` -- only the
+   existing Authority owner's own `evaluate_verifier_selection`, re-verifying a real,
+   Human-Authority-declared `verifier_selection_grant` that binds every one of project_id,
+   requirement_id, verifier_identity, permitted_boundary, selection status, and the real
+   selection authority identity together, can. See §10.
 5. **Independence is provenance plus boundary, for every status alike.** A
    `VerificationResult` carries target refs, frozen boundary, verifier identity, selection
    authority ref, input refs, and result. A verifier whose own `input_refs` cite nothing
@@ -191,13 +207,18 @@ src/manosube_agent_civilization/independent_verification/
 `VerificationRequirementError`, `VerifierOutputError`, and `VerificationValueError` exist
 only for the admission boundaries this layer itself owns (requirement/selection/boundary/
 target admission; the shape of what an explicit verifier returns; deep-freeze admission of a
-supplied value). `EvidenceHandoffError` (Structural Review Round 2, P13-R2-F2) exists only for
-`evidence_handoff.py`'s own two boundaries (Change-freedom of the supplied `evidence_request`;
-that the derived Evidence record is actually about the supplied `VerificationResult`). Every
-other failure mode -- a caller-supplied `store` that itself raises a typed Store error from
-`resolve_record`, the existing Boot owner's own `boot_project` failure, or the existing
-Evidence owner's own `derive_evidence` failure -- propagates unchanged; this layer never
-catches or reclassifies any of them.
+supplied value). `VerificationRequirementError` is also what this route raises when the
+existing Authority owner's own `evaluate_verifier_selection` does not answer
+`VERIFIER_SELECTION_SELECTED` (Structural Review Round 3, P13-R3-F1) -- a readable-but-refused
+decision, not an exception the Authority owner itself raises. `EvidenceHandoffError`
+(Structural Review Round 2, P13-R2-F2) exists only for `evidence_handoff.py`'s own two
+boundaries (Change-freedom of the supplied `evidence_request`; that the derived Evidence
+record is actually about the supplied `VerificationResult`). Every other failure mode -- a
+caller-supplied `store` that itself raises a typed Store error from `resolve_record`, the
+existing Boot owner's own `boot_project` failure, the existing Authority owner's own
+`evaluate_verifier_selection` failure for an unreadable request (an `AuthorityError`), or the
+existing Evidence owner's own `derive_evidence` failure -- propagates unchanged; this layer
+never catches or reclassifies any of them.
 
 ## 5. Canonical route
 
@@ -217,21 +238,28 @@ catches or reclassifies any of them.
    propagates unchanged.
 6. Validate verifier_selection.permitted_boundary canonical-reference-equals
    verification_requirement.verification_boundary.
-7. Validate verification_requirement.target_refs is non-empty, and each entry is an
+7. Call the existing Authority owner's own public evaluate_verifier_selection(...) exactly
+   once (Structural Review Round 3, P13-R3-F1), over project_id, verification_requirement.
+   requirement_id, verifier_selection.selection_id/verifier_identity/permitted_boundary/
+   status, the real Boot-verified Human Authority reference from step 5, and
+   verifier_selection_grants. Require the returned decision to be VERIFIER_SELECTION_SELECTED;
+   any other decision refuses before the verifier is ever called. Every AuthorityError this
+   call itself raises for an unreadable request propagates unchanged.
+8. Validate verification_requirement.target_refs is non-empty, and each entry is an
    explicit {"kind", "id"} reference whose kind is difference/change/observation_evidence.
    Every observation_evidence target is resolved through store.resolve_record(project_id,
    "observation_evidence", id) -- an unresolvable one refuses before the verifier is called.
-8. Validate the supplied verifier itself declares, on its own verifier_identity attribute,
+9. Validate the supplied verifier itself declares, on its own verifier_identity attribute,
    the identical identity canonical-reference-equal to verifier_selection.verifier_identity
    (Structural Review Round 1, P13-R1-F1) -- checked before the verifier is ever called.
-9. Call verifier(requirement=verification_requirement, selection=verifier_selection)
-   exactly once. Zero Store writes occur, in this route or in the verifier call itself
-   (the verifier is a plain Python callable this route never grants Store access to).
-10. Validate the verifier's own return value: status in {VERIFIED, FAILED, INSUFFICIENT,
+10. Call verifier(requirement=verification_requirement, selection=verifier_selection)
+    exactly once. Zero Store writes occur, in this route or in the verifier call itself
+    (the verifier is a plain Python callable this route never grants Store access to).
+11. Validate the verifier's own return value: status in {VERIFIED, FAILED, INSUFFICIENT,
     UNAVAILABLE}; input_refs a non-empty list of explicit {"kind", "id"} references that is
     not a subset of target_refs, for every status alike including UNAVAILABLE (Structural
     Review Round 2, P13-R2-F3 -- no exemption); observations an explicit mapping.
-11. Return one immutable VerificationResult carrying every field above, deep-frozen.
+12. Return one immutable VerificationResult carrying every field above, deep-frozen.
 ```
 
 ## 6. Required rejection proofs
@@ -254,6 +282,15 @@ and no `VerificationResult` produced, and the supplied `verifier` never called, 
   reference (not merely from each other -- Structural Review Round 1, P13-R1-F2)
 - a verifier_selection whose permitted_boundary diverges from the requirement's own
   verification_boundary
+- verifier_selection_grants that name no genuine, Human-Authority-declared grant binding
+  every one of project_id, requirement_id, verifier_identity, permitted_boundary, selection
+  status, and the real, Boot-verified selection authority identity together -- including no
+  grants at all, a grant naming a different selection, and a grant declared by a fabricated
+  or different Human Authority (Structural Review Round 3, P13-R3-F1; the existing Authority
+  owner's own evaluate_verifier_selection answers anything but VERIFIER_SELECTION_SELECTED)
+- any AuthorityError the existing Authority owner's own evaluate_verifier_selection itself
+  raises for an unreadable request (propagates unchanged -- Structural Review Round 3,
+  P13-R3-F1)
 - an empty target_refs, a target reference missing kind/id, or a target reference whose
   kind is outside {difference, change, observation_evidence}
 - an observation_evidence target reference the Store does not resolve for this project
@@ -300,14 +337,15 @@ passed):
 
 Static conformance additionally proves: exactly two public callables
 (`run_independent_verification`, `route_verification_result_to_evidence`) and exactly one
-lifecycle-free result type (`VerificationResult`); that `route.py`, `types.py`, and `errors.py`
-never import `evidence`, `difference`, `authority`, `reflow`, or `binding` (only
-`evidence_handoff.py` may import `evidence`, and only to call `derive_evidence`); that
-`store.resolve_record` is the only Store method this package ever calls, and is called at
-most once per Store-owned target reference; that `derive_evidence` is called exactly once,
-and only from `evidence_handoff.py`; and that no module in this package imports a model,
-subprocess, shell, network, GitHub, Observer, Change-execution, scheduler, or multi-Agent
-surface.
+lifecycle-free result type (`VerificationResult`); that no module in this package ever
+imports `difference`, `reflow`, or `binding`; that `evidence` is importable only from
+`evidence_handoff.py` (Structural Review Round 2, P13-R2-F2) and only to call
+`derive_evidence` exactly once; that `authority` is importable only from `route.py`
+(Structural Review Round 3, P13-R3-F1) and only to call `evaluate_verifier_selection` exactly
+once; that `store.resolve_record` is the only Store method this package ever calls, and is
+called at most once per Store-owned target reference; and that no module in this package
+imports a model, subprocess, shell, network, GitHub, Observer, Change-execution, scheduler,
+or multi-Agent surface.
 
 ## 7. Explicit non-claims
 
@@ -333,6 +371,12 @@ NEW_STORE_OWNER=false
 VERIFIER_DIRECT_STORE_WRITE=false
 INDEPENDENT_VERIFICATION_DIRECT_STORE_COMMIT=false
 EXISTING_EVIDENCE_OWNER_HANDOFF_REQUIRED=true
+NEW_SELECTION_REGISTRY=false
+NEW_SELECTION_TOKEN=false
+NEW_SELECTION_CACHE=false
+FAKE_DIFFERENCE_OR_STATE_FOR_AUTHORITY=false
+CALLER_MAPPING_EQUALITY_AS_AUTHORITY=false
+BOOT_HUMAN_AUTHORITY_REF_ALONE_IS_SELECTION_DECISION=false
 ```
 
 ## 8. Failed verification is now actually connected to existing ownership, not merely representable
@@ -369,35 +413,41 @@ Three corrections were adopted and implemented on the same branch/PR as Round 1
   canonical grounding beyond the target it was asked to verify) is rejected with
   `VerifierOutputError`, not silently accepted. This supersedes §9 as it read before this
   round (the disclosed `UNAVAILABLE` exemption is withdrawn, not merely narrowed).
-- **P13-R2-F1 (disclosed, unresolved):** see §10.
+- **P13-R2-F1 (was disclosed, unresolved; resolved by Round 3):** see §10.
 
-## 10. Disclosed gap: P13-R2-F1, binding a VerifierSelection to a real per-Requirement Authority Decision
+## 10. Structural Review Round 3 resolution (P13-R3-F1)
 
-The adopted finding requires binding `VerifierSelection` (verifier_identity,
-permitted_boundary, status, selection authority identity) and the `VerificationRequirement`
-it is for (project_id, requirement_id) to a real, existing Authority Decision surface for
-*this specific selection* -- not merely to the project's own Human Authority reference. This
-package investigated whether `authority.evaluate_authority` (the only public surface
-`manosube_agent_civilization.authority` exports; `authority.approval.binding_mismatches` is
-an internal helper, not a re-exported public surface, and is out of bounds as "existing
-public surface" under Issue #51's own delivery constraint) could serve this purpose, and
-found that it cannot without misuse: `evaluate_authority`'s own `_evaluate` requires a full,
-real, materialized Difference (via `admit_difference`) whose `observed_state_revision` and
-`observed_state_fingerprint` must exactly match a supplied current State, or it refuses as
-`STALE`. It is a Change-against-Difference-and-State evaluator, not a generic "was this
-caller-supplied object selected by a Human" surface -- constructing a synthetic Difference
-and State solely to launder a `VerifierSelection` through it would not be reuse of an
-existing owner, it would be misuse of one for a purpose it was not designed for, and Issue
-#51's own delivery constraint forbids inventing a new Authority owner, registry, token,
-cache, in-memory registry, or persisted artifact to close this gap instead.
+Round 2 disclosed that no existing Authority owner public surface could bind a
+`VerifierSelection` (verifier_identity, permitted_boundary, status, selection authority
+identity) and the `VerificationRequirement` it is for (project_id, requirement_id) to a real
+Authority Decision *for this specific selection* -- `authority.evaluate_authority`, the only
+public surface `manosube_agent_civilization.authority` exported at the time, requires a full,
+real, materialized Difference and a matching current State (a Change-against-
+Difference-and-State evaluator), and constructing a synthetic Difference/State solely to
+launder a `VerifierSelection` through it would have been misuse of an existing owner, not
+reuse of one.
 
-Round 1's own `project_binding_id` correction (P13-R1-F2: `boot_project(...).
-human_authority_ref` independently re-verified through the existing Boot owner) therefore
-remains in place, unchanged, as a **necessary but not sufficient** partial safeguard: it
-proves the project itself is bound to a real Human Authority, but it does not prove that
-Human Authority specifically authorized *this* `VerifierSelection` for *this*
-`VerificationRequirement`. This gap is disclosed here, in `__init__.py`'s own module
-docstring, and in this round's completion report, rather than silently narrowed, silently
-resolved, or left undocumented -- consistent with the adopted finding's own escape valve: "if
-no such surface exists, STOP and report the gap." A future round, presented with a properly
-designed Authority-Decision-per-Selection surface (should one be adopted), may close it.
+SHUKOU adopted `ADOPT_P13_R3_AUTHORITY_OWNED_VERIFIER_SELECTION_DECISION`
+(`https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5563790496`),
+authorizing exactly the escape valve P13-R2-F1 itself named: **extend** the existing
+Authority owner with one further, narrowly-scoped, read-only, deterministic public surface --
+never a second Authority owner, registry, token, or cache. `authority.
+evaluate_verifier_selection` is that extension (`00_KERNEL/05_AUTHORITY/AUTHORITY_CONTRACT.md`
+§7.3): it binds `project_id`, `requirement_id`, `verifier_identity`, `permitted_boundary`,
+`selection_status`, and the real, Boot-verified `human_authority_ref` to a genuine, canonical,
+content-addressed `verifier_selection_grant` record -- admitted through the identical
+`admit`/`admit_all` gate every other Authority-owned record (`authority_rule`, `approval`,
+`prohibition`) already crosses -- and answers `VERIFIER_SELECTION_SELECTED` only when exactly
+one such grant, declared by that real Human Authority, binds every one of those fields
+together. A caller-created selection that merely repeats known-real values (including the
+real `human_authority_ref` itself) without a genuine backing grant is refused, with the
+verifier called zero times, exactly as P13-R2-F1's own required proof demanded.
+
+`run_independent_verification` now takes an explicit `verifier_selection_grants` collection
+and calls `evaluate_verifier_selection` exactly once, before the verifier is ever called (§5
+step 7); every `AuthorityError` that call itself raises for an unreadable request propagates
+unchanged (§6). Round 1's own Boot-verified `human_authority_ref` check remains in place,
+unchanged, as the necessary (but, alone, no longer treated as sufficient) precondition this
+new Authority-owned decision itself now consumes as one of its own bound fields
+(`selection_authority_ref` in the resulting Verifier Selection Decision record) -- P13-R2-F1
+is resolved, not narrowed: the gap this section previously disclosed no longer exists.

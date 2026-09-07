@@ -14,10 +14,16 @@ one -- and calls its explicit
 exactly once. It creates no second State, Evidence, Difference, Authority, Change, Store, or
 Closure owner: it never calls ``FileStateStore.initialize``, ``.commit``, ``.recover``,
 ``.load_current``, ``.read_current_consistent``, ``.reconstruct``, or ``bind_project``, and
-never calls into ``evidence``, ``difference``, ``authority``, ``reflow``, or ``binding`` at
-all -- carrying an admissible verification result into existing Evidence-sufficiency
-semantics remains entirely that existing owner's own, separate concern (frozen semantic
-decision 6), a concern this route does not implement any bypass of.
+never calls into ``evidence``, ``difference``, ``reflow``, or ``binding`` at all -- carrying
+an admissible verification result into existing Evidence-sufficiency semantics remains
+entirely that existing owner's own, separate concern (frozen semantic decision 6), a concern
+this route does not implement any bypass of. It calls into ``authority`` exactly once per
+invocation, read-only: the existing Authority owner's own dedicated
+:func:`~manosube_agent_civilization.authority.evaluate_verifier_selection` (Structural Review
+Round 3, P13-R3-F1) -- never a second Authority owner, registry, token, or cache. Together
+with the existing Boot owner's own ``boot_project`` (Structural Review Round 1, P13-R1-F2,
+called once, from ``boot`` rather than ``authority``), these are the only two owners this
+route reuses by call.
 
 Structural Review Round 1 correction (P13-R1-F2): a caller-supplied
 ``verifier_selection.selection_authority_ref`` that merely equals
@@ -39,20 +45,37 @@ must declare, on itself, the identical identity SHUKOU selected
 absent, or unreadable declared identity never reaches invocation and no arbitrary callable's
 output can be attributed to a different, selected verifier.
 
+Structural Review Round 3 correction (P13-R3-F1): the real, Boot-verified
+``human_authority_ref`` alone is a necessary precondition, not itself proof that SHUKOU
+selected *this* ``verifier_selection`` for *this* ``verification_requirement`` -- two
+self-consistent, caller-fabricated references satisfy a mere mapping-equality check just as
+well as two genuine ones, the identical gap Round 1 already closed for the Human Authority
+reference itself. This route now takes an explicit *verifier_selection_grants* collection and
+calls the existing Authority owner's own dedicated
+:func:`~manosube_agent_civilization.authority.evaluate_verifier_selection` exactly once,
+requiring it to answer ``SELECTED`` -- a real, canonical, Human-Authority-declared grant
+binding project, requirement, verifier identity, permitted boundary, selection status, and the
+real selection authority identity together -- before the verifier is ever called; a
+caller-created selection duplicating known-real values without such a grant is refused with
+the verifier called zero times, and every ``AuthorityError`` this call itself raises for an
+unreadable request propagates unchanged.
+
 Every requirement/selection/boundary/target/authority admission failure raises
 :class:`~manosube_agent_civilization.independent_verification.errors.
 VerificationRequirementError` before this route ever calls the supplied verifier, and calling
 the verifier is this route's own single side effect: no Store write, no second read beyond the
 one ``resolve_record`` provenance check per Store-owned target plus the one ``boot_project``
-authority re-verification, and no exception this route catches or reclassifies once raised, in
-either direction.
+authority re-verification and the one ``evaluate_verifier_selection`` Authority-owned
+selection-decision re-verification, and no exception this route catches or reclassifies once
+raised, in either direction.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+from manosube_agent_civilization.authority import SELECTED, evaluate_verifier_selection
 from manosube_agent_civilization.boot import boot_project
 
 from .errors import VerificationRequirementError, VerifierOutputError
@@ -137,6 +160,7 @@ def run_independent_verification(
     project_binding_id: str,
     verification_requirement: VerificationRequirement,
     verifier_selection: VerifierSelection,
+    verifier_selection_grants: Sequence[Mapping[str, Any]],
     verifier: IndependentVerifier,
 ) -> VerificationResult:
     """Run one explicit Independent Verification and return its one immutable result.
@@ -144,6 +168,16 @@ def run_independent_verification(
     *project_binding_id* (Structural Review Round 1, P13-R1-F2) names the already-bound
     Project whose real Human Authority reference this route re-verifies through the
     existing Boot owner before either selection authority reference is trusted.
+
+    *verifier_selection_grants* (Structural Review Round 3, P13-R3-F1) is the caller's own
+    explicit collection of canonical ``verifier_selection_grant`` records -- the same shape
+    every other Authority-owned record already takes as an explicit request input, never
+    read from a registry this route or the Authority owner hold. This route re-verifies
+    *verifier_selection* against them through the existing Authority owner's own
+    :func:`~manosube_agent_civilization.authority.evaluate_verifier_selection` exactly once,
+    before the verifier is ever called: the real, Boot-verified Human Authority reference
+    alone is a necessary precondition for that decision, never itself the decision that
+    SHUKOU selected *this* ``VerifierSelection`` for *this* ``VerificationRequirement``.
 
     See ``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 for the full canonical route this
     function implements, step by step.
@@ -219,6 +253,34 @@ def run_independent_verification(
         verification_requirement.verification_boundary,
         context="verifier_selection.permitted_boundary vs verification_requirement.verification_boundary",
     )
+
+    # P13-R3-F1: the real, Boot-verified Human Authority reference above is a necessary
+    # precondition, not itself the decision that SHUKOU selected *this* VerifierSelection for
+    # *this* VerificationRequirement -- that decision belongs to the existing Authority
+    # owner's own dedicated, read-only surface, re-verified exactly once, before the verifier
+    # is ever called. A caller-created selection that merely repeats real_human_authority_ref
+    # (or any other field) is never itself an Authority Decision; only a genuine, canonical,
+    # Human-Authority-declared verifier_selection_grant binding every one of project_id,
+    # requirement_id, verifier_identity, permitted_boundary, selection status, and the real
+    # selection authority identity together produces one.
+    selection_decision = evaluate_verifier_selection(
+        {
+            "schema_version": "0.1",
+            "project_id": project_id,
+            "requirement_id": verification_requirement.requirement_id,
+            "selection_id": verifier_selection.selection_id,
+            "verifier_identity": dict(verifier_selection.verifier_identity),
+            "permitted_boundary": dict(verifier_selection.permitted_boundary),
+            "selection_status": verifier_selection.status,
+            "human_authority_ref": dict(real_human_authority_ref),
+            "grants": [dict(grant) for grant in verifier_selection_grants],
+        }
+    )
+    if selection_decision["decision"] != SELECTED:
+        raise VerificationRequirementError(
+            "verifier_selection is not an Authority-owned SELECTED decision: "
+            f"{selection_decision['decision_reason_codes']}"
+        )
 
     if not verification_requirement.target_refs:
         raise VerificationRequirementError(

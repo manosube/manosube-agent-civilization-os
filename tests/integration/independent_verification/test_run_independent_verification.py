@@ -14,6 +14,13 @@ succeeds, and commits one real, Store-resolvable ``observation_evidence`` record
 through the Store's own public ``commit`` (the identical low-level surface Reflow's own
 route calls), rather than the pre-Binding ``tests.natural_cycle`` fixture world this file
 used before Round 1 (which never binds a Project and therefore cannot boot).
+
+Structural Review Round 3 (P13-R3-F1): every call to ``run_independent_verification`` now
+also supplies an explicit ``verifier_selection_grants`` collection -- real, canonical,
+Human-Authority-declared ``verifier_selection_grant`` records the existing Authority owner's
+own ``evaluate_verifier_selection`` re-verifies. ``_grant`` below builds the one that binds
+the default fixture selection by construction, so every retained test below still exercises
+its own concern rather than incidentally failing at the new Authority-owned check.
 """
 
 from __future__ import annotations
@@ -30,6 +37,8 @@ from tests.evidence_helpers import change_free_verification_evidence_request, su
 from tests.fixtures.product_binding import PROJECT_ID, bind_project_kwargs, genesis_records
 from tests.state_helpers import SCHEMA_ROOT
 
+from manosube_agent_civilization.authority import AuthorityError
+from manosube_agent_civilization.authority.identity import verifier_selection_grant_id
 from manosube_agent_civilization.binding import bind_project
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.boot.errors import BootNotFoundError
@@ -184,6 +193,28 @@ def _selection(human_authority_ref: dict[str, Any], **overrides: Any) -> Verifie
     return VerifierSelection(**fields)
 
 
+def _grant(fx: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    """One real, canonical, Human-Authority-declared ``verifier_selection_grant`` that binds
+    the default fixture selection by construction (Structural Review Round 3, P13-R3-F1) --
+    the existing Authority owner's own ``evaluate_verifier_selection`` re-verifies it, never
+    trusting a caller-repeated ``human_authority_ref`` alone."""
+
+    fields: dict[str, Any] = {
+        "schema_version": "0.1",
+        "verifier_selection_grant_id": "",
+        "project_id": fx["project_id"],
+        "requirement_id": "VREQ-0001",
+        "selection_id": "VSEL-0001",
+        "verifier_identity": dict(_DEFAULT_VERIFIER_IDENTITY),
+        "permitted_boundary": {"scope": "repository", "boundary_id": "VB-0001"},
+        "status": "ACTIVE",
+        "granted_by": dict(fx["human_authority_ref"]),
+    }
+    fields.update(overrides)
+    fields["verifier_selection_grant_id"] = verifier_selection_grant_id(fields)
+    return fields
+
+
 def _identified(func: Any, identity: dict[str, Any] | None = None) -> Any:
     """Attach the ``verifier_identity`` attribute Round 1's route now requires (P13-R1-F1)
     before invocation -- a plain function is a real Python object and may carry one."""
@@ -211,6 +242,7 @@ def _run(
     verifier: Any,
     *,
     project_id: str | None = None,
+    grants: list[dict[str, Any]] | None = None,
 ) -> VerificationResult:
     return run_independent_verification(
         fx["store"],
@@ -218,6 +250,7 @@ def _run(
         project_binding_id=fx["project_binding_id"],
         verification_requirement=requirement,
         verifier_selection=selection,
+        verifier_selection_grants=grants if grants is not None else [_grant(fx)],
         verifier=verifier,
     )
 
@@ -767,6 +800,168 @@ def test_every_real_negative_outcome_is_representable_with_distinguishable_input
     assert result.status == status
 
 
+# --- required rejection proofs: Authority-owned verifier selection decision (P13-R3-F1) - #
+
+
+def test_no_verifier_selection_grants_is_rejected_and_never_calls_the_verifier(
+    _real_route: dict[str, Any],
+) -> None:
+    """The finding's own first required proof: a caller-created selection that merely repeats
+    known-real values (project_id, requirement_id, verifier_identity, permitted_boundary,
+    status, the real Boot-verified Human Authority reference) is not itself an Authority
+    Decision. With no grant supplied at all, the existing Authority owner's own
+    ``evaluate_verifier_selection`` cannot answer ``SELECTED``, and the verifier is never
+    called."""
+
+    store: FileStateStore = _real_route["store"]
+    project_id = _real_route["project_id"]
+    before = _snapshot(store.root, project_id)
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+
+    with pytest.raises(VerificationRequirementError, match="SELECTED"):
+        _run(_real_route, requirement, selection, verifier, grants=[])
+    assert calls == []
+    assert _snapshot(store.root, project_id) == before
+
+
+@pytest.mark.parametrize(
+    ("label", "override"),
+    [
+        ("project", {"project_id": "OTHER-PROJECT"}),
+        ("requirement", {"requirement_id": "VREQ-OTHER"}),
+        ("selection", {"selection_id": "VSEL-OTHER"}),
+        (
+            "verifier identity",
+            {"verifier_identity": {"kind": "deterministic_test_runner", "id": "OTHER"}},
+        ),
+        ("boundary", {"permitted_boundary": {"scope": "different"}}),
+    ],
+)
+def test_a_grant_naming_a_different_selection_does_not_bind(
+    _real_route: dict[str, Any], label: str, override: dict[str, Any]
+) -> None:
+    """A grant that binds every field but one is not *this* selection's grant at all."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+
+    with pytest.raises(VerificationRequirementError, match="SELECTED"):
+        _run(
+            _real_route,
+            requirement,
+            selection,
+            verifier,
+            grants=[_grant(_real_route, **override)],
+        )
+    assert calls == []
+
+
+def test_a_grant_declared_by_a_fabricated_human_authority_is_rejected(
+    _real_route: dict[str, Any],
+) -> None:
+    """A grant may repeat every other field of the real selection exactly and still not
+    bind, if its own ``granted_by`` does not canonical-reference-equal the real,
+    Boot-verified Human Authority reference -- self-fabricated provenance never substitutes
+    for the genuine one."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+    fabricated = _grant(
+        _real_route, granted_by={"kind": "human_authority", "id": "AUTH-FABRICATED-BY-CALLER"}
+    )
+
+    with pytest.raises(VerificationRequirementError, match="SELECTED"):
+        _run(_real_route, requirement, selection, verifier, grants=[fabricated])
+    assert calls == []
+
+
+def test_a_grant_whose_real_status_is_not_active_does_not_bind(
+    _real_route: dict[str, Any],
+) -> None:
+    """``run_independent_verification`` itself already requires ``verifier_selection.status
+    == "ACTIVE"`` before this Authority-owned check ever runs (frozen semantic decision, kept
+    from before Round 3), so a grant whose own real status differs -- ``REVOKED`` here -- can
+    never agree with the declared ``selection_status`` this route passes through: it is
+    refused as a status mismatch, not silently treated as binding."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+    revoked = _grant(_real_route, status="REVOKED")
+
+    with pytest.raises(VerificationRequirementError, match="GRANT_SELECTION_STATUS_MISMATCH"):
+        _run(_real_route, requirement, selection, verifier, grants=[revoked])
+    assert calls == []
+
+
+def test_a_tampered_grant_propagates_the_existing_authority_owners_own_typed_error(
+    _real_route: dict[str, Any],
+) -> None:
+    """A grant edited after its own content address was computed is a forged record, exactly
+    the case ``authority.conformance.admit`` already refuses for every other Authority-owned
+    record kind -- the resulting ``AuthorityError`` propagates unchanged, never caught or
+    reclassified by this route."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+    tampered = _grant(_real_route)
+    tampered["status"] = "REVOKED"  # edited after the identity above was already computed
+
+    with pytest.raises(AuthorityError, match="identity does not match"):
+        _run(_real_route, requirement, selection, verifier, grants=[tampered])
+    assert calls == []
+
+
+def test_only_a_genuine_grant_permits_exactly_one_verifier_call(
+    _real_route: dict[str, Any],
+) -> None:
+    """The control: a real, canonical, Human-Authority-declared grant binding every field
+    exactly is required and sufficient for the existing Authority owner to answer
+    ``SELECTED`` -- and only then is the verifier ever invoked, exactly once."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {
+            "status": "VERIFIED",
+            "input_refs": [{"kind": "source_snapshot", "id": "SS-1"}],
+            "observations": {},
+        }
+    )
+
+    result = _run(_real_route, requirement, selection, verifier, grants=[_grant(_real_route)])
+    assert calls == [1]
+    assert result.status == "VERIFIED"
+
+
 # --- construction-time input type checks ----------------------------------------------- #
 
 
@@ -783,6 +978,7 @@ def test_non_instance_requirement_or_selection_is_rejected(_real_route: dict[str
             project_binding_id=_real_route["project_binding_id"],
             verification_requirement={"not": "a requirement instance"},  # type: ignore[arg-type]
             verifier_selection=selection,
+            verifier_selection_grants=[_grant(_real_route)],
             verifier=verifier,
         )
     assert calls == []
@@ -824,6 +1020,7 @@ def test_boot_project_failure_propagates_unchanged_and_never_calls_the_verifier(
             project_binding_id="PB-DOES-NOT-EXIST",
             verification_requirement=requirement,
             verifier_selection=selection,
+            verifier_selection_grants=[_grant(_real_route)],
             verifier=verifier,
         )
     assert calls == []

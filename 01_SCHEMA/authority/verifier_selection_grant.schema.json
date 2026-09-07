@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/verifier_selection_grant.schema.json",
+  "title": "Verifier Selection Grant",
+  "type": "object",
+  "required": ["schema_version", "verifier_selection_grant_id", "project_id", "requirement_id", "selection_id", "verifier_identity", "permitted_boundary", "status", "granted_by"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "verifier_selection_grant_id": {"type": "string", "pattern": "^VSEL-GRANT-[0-9A-F]{64}(?![\\s\\S])"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "requirement_id": {"$ref": "../common/identity.schema.json"},
+    "selection_id": {"$ref": "../common/identity.schema.json"},
+    "verifier_identity": {},
+    "permitted_boundary": {},
+    "status": {"enum": ["ACTIVE", "REVOKED", "EXPIRED"]},
+    "granted_by": {"$ref": "authority.schema.json#/$defs/human_authority_ref"}
+  },
+  "additionalProperties": false
+}

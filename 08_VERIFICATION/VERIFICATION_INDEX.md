@@ -49,19 +49,27 @@ CANONICAL_KERNEL_COUNT=1
 
 `run_independent_verification` never mints canonical Evidence itself, never evaluates
 Evidence Sufficiency, never evaluates a Closure Policy, never emits a Difference Lifecycle
-Event or a Closure Evaluation, never evaluates an Authority Decision, and never mutates the
-Store. It resolves exactly one Store-owned reference kind (`observation_evidence`) through
-the existing Store's own read-only `resolve_record` -- the identical, already-established
-surface Boot itself calls -- calls the existing Boot owner's own `boot_project` exactly once
-to independently re-verify the real Human Authority reference (Structural Review Round 1,
-P13-R1-F2), and calls its one explicit `IndependentVerifier` exactly once. Structural Review
-Round 2 (P13-R2-F2) adds the one real connection into existing Evidence ownership:
-`route_verification_result_to_evidence` calls the existing Evidence owner's own public
-`derive_evidence` exactly once, over a caller-supplied, already-real, Change-free request --
-superseding the earlier "the existing Evidence owner's own, separate concern" stance. This
-package still mints no canonical Evidence itself (the existing Evidence owner alone decides
-the derived record's identity and schema validation), evaluates no sufficiency or closure
-itself, and creates no second Evidence, Difference, Authority, Reflow, or Store owner.
+Event or a Closure Evaluation, never evaluates a Change-permission Authority Decision, and
+never mutates the Store. It resolves exactly one Store-owned reference kind
+(`observation_evidence`) through the existing Store's own read-only `resolve_record` -- the
+identical, already-established surface Boot itself calls -- calls the existing Boot owner's
+own `boot_project` exactly once to independently re-verify the real Human Authority reference
+(Structural Review Round 1, P13-R1-F2), and calls its one explicit `IndependentVerifier`
+exactly once. Structural Review Round 2 (P13-R2-F2) adds the one real connection into
+existing Evidence ownership: `route_verification_result_to_evidence` calls the existing
+Evidence owner's own public `derive_evidence` exactly once, over a caller-supplied,
+already-real, Change-free request -- superseding the earlier "the existing Evidence owner's
+own, separate concern" stance. Structural Review Round 3 (P13-R3-F1) adds one further real
+call into existing Authority ownership: `run_independent_verification` also calls the
+existing Authority owner's own new, dedicated `evaluate_verifier_selection` exactly once,
+requiring it to answer `VERIFIER_SELECTION_SELECTED` before the verifier is ever called --
+this is real reuse of the one existing Authority owner by call (`authority` gains a second,
+narrowly-scoped public evaluator of its own, documented in
+`00_KERNEL/05_AUTHORITY/AUTHORITY_CONTRACT.md` §7.3; this package still never becomes a
+second Authority owner itself). This package still mints no canonical Evidence itself (the
+existing Evidence owner alone decides the derived record's identity and schema validation),
+evaluates no Change-permission Authority Decision, sufficiency, or closure itself, and
+creates no second Evidence, Difference, Authority, Reflow, or Store owner.
 
 ```text
 VERIFICATION_IS_A_SECOND_EVIDENCE_OWNER=false
@@ -103,25 +111,29 @@ src/manosube_agent_civilization/independent_verification/
 ├── types.py              VerificationRequirement / VerifierSelection / VerificationResult /
 │                         IndependentVerifier -- immutable, non-persisted value types
 ├── route.py              run_independent_verification -- the one public verification route
+│                         (also calls the existing Authority owner's own
+│                         evaluate_verifier_selection exactly once -- Structural Review
+│                         Round 3, P13-R3-F1)
 └── evidence_handoff.py   route_verification_result_to_evidence -- the one public
                           VerificationResult-to-Evidence handoff (Structural Review Round 2)
 ```
 
 No second Boot, Store, Binding, Evidence, Difference, Authority, or Reflow owner is created
-anywhere in this package. `route.py`, `types.py`, and `errors.py` never import
-`manosube_agent_civilization.evidence`, `manosube_agent_civilization.difference`,
-`manosube_agent_civilization.authority`, `manosube_agent_civilization.reflow`, or
-`manosube_agent_civilization.binding` -- static conformance proves it. Only
-`evidence_handoff.py` imports `manosube_agent_civilization.evidence`, and only to call its
-one public `derive_evidence` exactly once. This package's interaction with existing owners is:
-one call to the caller-supplied `store`'s own already-public `resolve_record` method (to
-confirm a Store-owned target reference is real before the verifier this route calls could
-otherwise be pointed at a fabricated one), one call to the existing Boot owner's own
-`boot_project` (Structural Review Round 1, P13-R1-F2, to independently re-verify the real
-Human Authority reference), and one call to the existing Evidence owner's own
-`derive_evidence` (Structural Review Round 2, P13-R2-F2, the real handoff). Binding a
-`VerifierSelection` to a real per-Requirement Authority Decision (P13-R2-F1) remains a
-disclosed, unresolved gap -- see `VERIFICATION_CONTRACT.md` §10.
+anywhere in this package. `difference`, `reflow`, and `binding` are never imported by any
+module in this package. `evidence` is importable only from `evidence_handoff.py`, and only to
+call its one public `derive_evidence` exactly once (Structural Review Round 2, P13-R2-F2).
+`authority` is importable only from `route.py`, and only to call its one public
+`evaluate_verifier_selection` exactly once (Structural Review Round 3, P13-R3-F1) -- static
+conformance proves both. This package's interaction with existing owners is: one call to the
+caller-supplied `store`'s own already-public `resolve_record` method (to confirm a
+Store-owned target reference is real before the verifier this route calls could otherwise be
+pointed at a fabricated one), one call to the existing Boot owner's own `boot_project`
+(Structural Review Round 1, P13-R1-F2, to independently re-verify the real Human Authority
+reference), one call to the existing Authority owner's own `evaluate_verifier_selection`
+(Structural Review Round 3, P13-R3-F1, to independently re-verify that a real Human Authority
+selected this exact `VerifierSelection` for this exact `VerificationRequirement` -- resolving
+the gap Round 2 disclosed), and one call to the existing Evidence owner's own `derive_evidence`
+(Structural Review Round 2, P13-R2-F2, the real handoff).
 
 ## 5. Explicit non-claims
 
@@ -144,6 +156,14 @@ NEW_EVIDENCE_OWNER=false
 NEW_AUTHORITY_OWNER=false
 NEW_STORE_OWNER=false
 EXISTING_EVIDENCE_OWNER_HANDOFF_REQUIRED=true
+VERIFIER_SELECTION_DECISION_IMPLEMENTED=true
+EXISTING_AUTHORITY_OWNER_SELECTION_CHECK_REQUIRED=true
+NEW_SELECTION_REGISTRY=false
+NEW_SELECTION_TOKEN=false
+NEW_SELECTION_CACHE=false
+FAKE_DIFFERENCE_OR_STATE_FOR_AUTHORITY=false
+CALLER_MAPPING_EQUALITY_AS_AUTHORITY=false
+BOOT_HUMAN_AUTHORITY_REF_ALONE_IS_SELECTION_DECISION=false
 PHASE_13_COMPLETE=false
 PHASE_14_ALLOWED=false
 ```

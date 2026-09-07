@@ -41,7 +41,7 @@ from manosube_agent_civilization.difference.validation import (
 )
 
 from .errors import AuthorityError, AuthorityValidationError
-from .identity import approval_id, prohibition_id, rule_id
+from .identity import approval_id, prohibition_id, rule_id, verifier_selection_grant_id
 
 AUTHORITY_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "authority/"
 SUPPORTED_SCHEMA_VERSION = "0.1"
@@ -69,6 +69,12 @@ RECORD_TYPES: dict[str, RecordType] = {
     "approval": RecordType("approval.schema.json", "approval_id", approval_id, "approved_by"),
     "prohibition": RecordType(
         "prohibition.schema.json", "prohibition_id", prohibition_id, "declared_by"
+    ),
+    "verifier_selection_grant": RecordType(
+        "verifier_selection_grant.schema.json",
+        "verifier_selection_grant_id",
+        verifier_selection_grant_id,
+        "granted_by",
     ),
 }
 
@@ -121,6 +127,8 @@ AUTHORITY_SCHEMA_SEEDS: tuple[str, ...] = (
     AUTHORITY_SCHEMA_BASE + "authority_rule.schema.json",
     AUTHORITY_SCHEMA_BASE + "prohibition.schema.json",
     AUTHORITY_SCHEMA_BASE + "approval.schema.json",
+    AUTHORITY_SCHEMA_BASE + "verifier_selection_grant.schema.json",
+    AUTHORITY_SCHEMA_BASE + "verifier_selection_decision.schema.json",
     CANONICAL_SCHEMA_BASE + "difference/difference.schema.json",
 )
 
