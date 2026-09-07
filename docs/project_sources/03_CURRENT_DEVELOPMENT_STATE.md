@@ -19,6 +19,19 @@ PHASE_13_COMPLETE=false
 PHASE_14_ALLOWED=false
 ```
 
+**Bounded addendum (2026-09-07, R6-R1 companion update -- see §5.2 rows 5-9):** the header
+block and sections 5-8 above/below this note still project the repository as of
+`OBSERVED_AT_UTC` (Round 3 delivered). Rounds 4 through 6-R1 have since been adopted on
+Issue #51 and are implemented on PR #52; §5.2's table records only the adoption lineage fact,
+independently re-observed
+via the GitHub API at the time of this edit. It does not re-run the full current-state
+projection this document otherwise performs (PR head/commit/file counts, structural review
+status, blocker table) -- that remains a separate, later full re-observation. This addendum
+exists to satisfy `03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` section 2's own requirement:
+a `kernel_surface` change must be paired with a `docs/project_sources/*.md` update in the same
+diff, and `ADOPT_P13_R6_R1_EVIDENCE_OWNER_GLOBAL_PROVENANCE_ENFORCEMENT`'s own
+`SOURCE_IMPACT_GATE_REQUIRED` clause names this obligation explicitly.
+
 ---
 
 # 0. Purpose
@@ -207,6 +220,18 @@ Issue本文に残る初期の`DESIGNED_AWAITING_HUMAN_ADOPTION`または`IMPLEME
 | 2 | [`ADOPT_P13_R1_VERIFIER_BINDING_CANONICAL_SELECTION_AND_DEEP_IMMUTABILITY`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5562869144) | PR #52 head `5d071a3…` | Round 1 minimal forward correction authorized |
 | 3 | [`ADOPT_P13_R2_CANONICAL_SELECTION_EVIDENCE_HANDOFF_AND_UNAVAILABLE_PROVENANCE`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5563356966) | PR #52 head `4697550…` | Round 2 minimal forward correction authorized |
 | 4 | [`ADOPT_P13_R3_AUTHORITY_OWNED_VERIFIER_SELECTION_DECISION`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5563790496) | PR #52 head `becc1c7…` | Round 3 minimal forward correction authorized |
+| 5 | [`ADOPT_P13_R4_CANONICAL_GRANT_PROVENANCE_BINDING`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5570217097) | PR #52 head `2be9645…` | Round 4 minimal forward correction authorized (P13-R3-F2, Authority Provenance Bypass) |
+| 6 | [`ADOPT_P13_R5_CANONICAL_HUMAN_GRANT_DECLARATION_ANCHOR`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5571089236) | PR #52 head `7119ffd…` | Round 5 minimal forward correction authorized (canonical Human Grant Declaration anchor) |
+| 7 | [`ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5571758907) | PR #52 head `a392df6…` | Round 5-R1 minimal forward correction authorized (signed declaration anchor + single shared committer) |
+| 8 | [`ADOPT_P13_R6_PROVENANCE_COMPLETE_EVIDENCE_HANDOFF`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5572707862) | PR #52 head `dbb769c…` | Round 6 minimal forward correction authorized (provenance-complete Evidence handoff) |
+| 9 | [`ADOPT_P13_R6_R1_EVIDENCE_OWNER_GLOBAL_PROVENANCE_ENFORCEMENT`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5573559225) | PR #52 head `0d7f4a6…`; `main@e931743…` | Round 6-R1 minimal forward correction authorized (global Evidence-owner provenance enforcement, reverses Round 6's handoff-only layering; also requires main reintegration and this source-impact-gate correction) |
+
+Rows 5-9 were independently re-observed via the GitHub API (`issue_read.get_comments`,
+Issue #51) at the time of this addendum; each `Reviewed target` head SHA is the adoption
+comment's own `REVIEWED_HEAD`, taken verbatim from the comment body. None of Rounds 4-6-R1
+has yet had an independent 構造参謀 structural-review pass recorded against its own
+delivered head on Issue #51 -- the same open condition §7.1 already records for Round 3's
+own successor heads, now extended through Round 6-R1's own delivered head.
 
 Round 2 adoptionは三つの意味論を凍結する。
 
