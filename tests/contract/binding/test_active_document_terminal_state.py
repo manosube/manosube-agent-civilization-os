@@ -58,6 +58,7 @@ PACKAGE = ROOT / "src" / "manosube_agent_civilization" / "development_binding"
 #: The documents that state the development route. Everything here is swept token by token.
 ROUTE_BEARING: tuple[Path, ...] = (
     ROOT / "03_BINDING" / "CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md",
+    ROOT / "03_BINDING" / "GOVERNANCE_ADOPTION_RECORD_ENFORCEMENT.md",
     ROOT / "03_BINDING" / "templates" / "IMPLEMENTATION_HANDOFF_TEMPLATE.md",
     ROOT / "03_BINDING" / "templates" / "PR_COMPLETION_TEMPLATE.md",
     ROOT / "00_KERNEL" / "HUMAN_AGENT_WORK_COMMUNICATION.md",
@@ -97,10 +98,20 @@ _ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)\s*=", re.MULTILINE)
 
 
 def _reason_codes() -> frozenset[str]:
-    """Every verdict reason code the evaluator can emit, read from its own source."""
+    """Every verdict reason code any evaluator in this package can emit, read from source.
 
-    source = (PACKAGE / "evaluation.py").read_text(encoding="utf-8")
-    return frozenset(re.findall(r'"([A-Z][A-Z0-9_]{3,})"', source))
+    Swept across every module in the package, not only ``evaluation.py`` -- a second
+    evaluator sharing this owner (mirroring ``authority``'s own ``evaluate_authority`` +
+    ``evaluate_verifier_selection`` precedent) has its own reason-code vocabulary, and
+    hardcoding one file's name here is the same kind of blind spot this file's own
+    docstring names: a claim ("every verdict reason code") wider than what was checked.
+    """
+
+    codes: set[str] = set()
+    for path in PACKAGE.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        codes.update(re.findall(r'"([A-Z][A-Z0-9_]{3,})"', source))
+    return frozenset(codes)
 
 
 def _policy_vocabulary() -> frozenset[str]:
