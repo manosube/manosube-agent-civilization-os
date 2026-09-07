@@ -1,13 +1,19 @@
 """Issue #57 (`ADOPT_MERGE_SOURCE_REFLOW_MACHINE_OWNED_CONVERGENCE`, Issue #57 comment
-5566512915), `03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` sections 1-2: the pre-merge
+5566512915), hardened by Structural Review Round 1
+(`ADOPT_MSR_R1_EVENT_BOUND_REVALIDATED_AND_PATH_HARDENED_REFLOW`, Issue #57 comment
+5567433361), `03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` sections 1-2: the pre-merge
 source-impact gate.
 
 Proves the classification table verbatim (every row of `03_BINDING/
-MERGE_SOURCE_REFLOW_CONTRACT.md` section 2), the fail-closed
+MERGE_SOURCE_REFLOW_CONTRACT.md` section 2, six classes as of Round 1), the fail-closed
 `OS_CHANGE_DETECTED AND REQUIRED_SOURCE_UPDATE_MISSING = MERGE_BLOCKED` invariant on both
-its positive and negative route, and this Issue's own required self-consistency property:
-a PR touching only `scripts/`, `tests/`, `03_BINDING/`, and `.github/workflows/` -- exactly
-what this delivery's own PR touches -- is never blocked by the gate it introduces.
+its positive and negative route -- now precise per kernel_surface area against the closed
+`KERNEL_SURFACE_IMPACT_MAP` rather than "any `docs/project_sources/*.md` update"
+(MSR-R1-F4) -- the parallel protected-governance-surface rule (MSR-R1-F3), and this
+Issue's own required self-consistency property: a PR touching only `scripts/`, `tests/`,
+`03_BINDING/`, and `.github/workflows/` -- exactly what this delivery's own PR touches --
+is never blocked by the gate it introduces, because it always pairs its protected-surface
+and kernel-surface-adjacent changes with the required `03_BINDING/` update.
 
 This module makes no network call and never merges, approves, or comments on anything; it
 only classifies changed paths and computes one decision (contract section 1's
@@ -59,13 +65,18 @@ pytestmark = pytest.mark.contract
         # governance_binding
         ("03_BINDING/GOVERNANCE_ADOPTION_RECORD_ENFORCEMENT.md", "governance_binding"),
         ("03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md", "governance_binding"),
-        # other: deliberately including scripts/ and tests/ -- see contract section 2
-        ("scripts/merge_source_reflow.py", "other"),
-        ("scripts/source_impact_gate.py", "other"),
+        # protected_governance_surface (MSR-R1-F3): the executor scripts and workflow
+        # files that implement Merge Source Reflow's own enforcement
+        ("scripts/merge_source_reflow.py", "protected_governance_surface"),
+        ("scripts/source_impact_gate.py", "protected_governance_surface"),
+        (".github/workflows/merge_source_pre_merge_gate.yml", "protected_governance_surface"),
+        (".github/workflows/merge_source_post_merge_reflow.yml", "protected_governance_surface"),
+        # other: every other script/test/misc path, deliberately including scripts/ and
+        # tests/ generally -- see contract section 2
+        ("scripts/bounded_generated_block.py", "other"),
         ("tests/contract/governance/test_source_impact_gate.py", "other"),
         ("docs/decisions/0001-example.md", "other"),
         ("examples/foo.py", "other"),
-        (".github/workflows/merge_source_post_merge_reflow.yml", "other"),
     ],
 )
 def test_classify_path_matches_the_ownership_table(path: str, expected_class: str) -> None:
@@ -73,7 +84,7 @@ def test_classify_path_matches_the_ownership_table(path: str, expected_class: st
 
 
 def test_every_declared_class_is_covered_by_the_table_above() -> None:
-    """No fifth, undocumented class exists -- `CLASSES` is exactly the five rows the
+    """No seventh, undocumented class exists -- `CLASSES` is exactly the six rows the
     parametrized table above already exercises at least once each."""
 
     exercised = {
@@ -83,6 +94,7 @@ def test_every_declared_class_is_covered_by_the_table_above() -> None:
             ("docs/project_sources/00_SOURCE_AUTHORITY_INDEX.md", "source_document"),
             ("README.md", "generated"),
             ("03_BINDING/x.md", "governance_binding"),
+            ("scripts/merge_source_reflow.py", "protected_governance_surface"),
             ("scripts/x.py", "other"),
         ]
     }
@@ -106,6 +118,7 @@ def test_a_kernel_surface_change_without_a_paired_source_document_update_is_bloc
     manifest = gate.build_manifest(["src/manosube_agent_civilization/foo.py"])
     assert manifest["os_change_detected"] is True
     assert manifest["required_source_update_missing"] is True
+    assert manifest["unmet_kernel_surface_areas"] == ["src/"]
     assert manifest["merge_blocked"] is True
     assert manifest["decision"] == "BLOCKED"
 
@@ -119,6 +132,121 @@ def test_a_kernel_surface_change_with_a_paired_source_document_update_passes() -
     )
     assert manifest["os_change_detected"] is True
     assert manifest["required_source_update_missing"] is False
+    assert manifest["unmet_kernel_surface_areas"] == []
+    assert manifest["merge_blocked"] is False
+    assert manifest["decision"] == "PASS"
+
+
+# --------------------------------------------------------------------------- #
+# MSR-R1-F4: the closed impact mapping -- an arbitrary docs/project_sources/*.md
+# update must not satisfy an unrelated kernel_surface obligation
+# --------------------------------------------------------------------------- #
+
+
+def test_an_unrelated_source_document_does_not_satisfy_a_kernel_surface_obligation() -> None:
+    """The exact flaw MSR-R1-F4 names: pairing a kernel_surface change with *some*
+    docs/project_sources/*.md document that is not in that area's own declared
+    KERNEL_SURFACE_IMPACT_MAP entry must still block the merge."""
+
+    manifest = gate.build_manifest(
+        [
+            "src/manosube_agent_civilization/foo.py",
+            "docs/project_sources/06_DEFERRED_DIFFERENCES.md",
+        ]
+    )
+    assert manifest["required_source_update_missing"] is True
+    assert manifest["unmet_kernel_surface_areas"] == ["src/"]
+    assert manifest["merge_blocked"] is True
+    assert manifest["decision"] == "BLOCKED"
+
+
+def test_the_other_mapped_document_also_satisfies_the_kernel_surface_obligation() -> None:
+    """`KERNEL_SURFACE_IMPACT_MAP` names two legitimate documents for every area --
+    04_REPOSITORY_ARCHITECTURE.md satisfies the pairing exactly as
+    03_CURRENT_DEVELOPMENT_STATE.md does (proven separately above)."""
+
+    manifest = gate.build_manifest(
+        [
+            "05_CLI/cli.py",
+            "docs/project_sources/04_REPOSITORY_ARCHITECTURE.md",
+        ]
+    )
+    assert manifest["required_source_update_missing"] is False
+    assert manifest["merge_blocked"] is False
+    assert manifest["decision"] == "PASS"
+
+
+def test_kernel_surface_impact_map_is_closed_and_covers_every_declared_area() -> None:
+    """The impact mapping is declared over exactly the areas KERNEL_SURFACE_PREFIXES and
+    KERNEL_SURFACE_EXACT name -- no area is silently unmapped, and no mapped required-doc
+    set is empty (which would make that area's obligation impossible to satisfy)."""
+
+    declared_areas = set(gate.KERNEL_SURFACE_PREFIXES) | set(gate.KERNEL_SURFACE_EXACT)
+    assert set(gate.KERNEL_SURFACE_IMPACT_MAP) == declared_areas
+    for required_docs in gate.KERNEL_SURFACE_IMPACT_MAP.values():
+        assert required_docs, "an area with an empty required-doc set can never be satisfied"
+
+
+def test_kernel_surface_area_resolves_to_the_same_key_the_impact_map_uses() -> None:
+    for path, expected_area in (
+        ("src/manosube_agent_civilization/foo.py", "src/"),
+        ("00_KERNEL/08_REFLOW/reflow.py", "00_KERNEL/"),
+        ("pyproject.toml", "pyproject.toml"),
+    ):
+        area = gate._kernel_surface_area(path)
+        assert area == expected_area
+        assert area in gate.KERNEL_SURFACE_IMPACT_MAP
+    assert gate._kernel_surface_area("scripts/foo.py") is None
+
+
+# --------------------------------------------------------------------------- #
+# MSR-R1-F3: protected governance surfaces require a paired governance_binding
+# update -- the executor scripts and reflow workflows implement the gate itself
+# --------------------------------------------------------------------------- #
+
+
+def test_a_protected_surface_change_without_a_paired_governance_binding_update_is_blocked() -> None:
+    manifest = gate.build_manifest(["scripts/merge_source_reflow.py"])
+    assert manifest["protected_surface_changed"] is True
+    assert manifest["required_governance_update_missing"] is True
+    assert manifest["merge_blocked"] is True
+    assert manifest["decision"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "protected_path",
+    [
+        "scripts/merge_source_reflow.py",
+        "scripts/source_impact_gate.py",
+        ".github/workflows/merge_source_pre_merge_gate.yml",
+        ".github/workflows/merge_source_post_merge_reflow.yml",
+    ],
+)
+def test_every_protected_surface_alone_is_blocked_and_paired_with_binding_passes(
+    protected_path: str,
+) -> None:
+    alone = gate.build_manifest([protected_path])
+    assert alone["merge_blocked"] is True
+
+    paired = gate.build_manifest([protected_path, "03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md"])
+    assert paired["merge_blocked"] is False
+    assert paired["decision"] == "PASS"
+
+
+def test_a_protected_surface_change_paired_with_governance_binding_passes() -> None:
+    manifest = gate.build_manifest(
+        ["scripts/merge_source_reflow.py", "03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md"]
+    )
+    assert manifest["protected_surface_changed"] is True
+    assert manifest["required_governance_update_missing"] is False
+    assert manifest["merge_blocked"] is False
+    assert manifest["decision"] == "PASS"
+
+
+def test_a_non_protected_scripts_change_never_triggers_the_protected_surface_rule() -> None:
+    manifest = gate.build_manifest(["scripts/bounded_generated_block.py"])
+    assert manifest["protected_surface_changed"] is False
+    assert manifest["required_governance_update_missing"] is False
     assert manifest["merge_blocked"] is False
     assert manifest["decision"] == "PASS"
 
@@ -146,7 +274,9 @@ def test_an_empty_change_set_never_blocks() -> None:
 def test_this_issues_own_pr_shape_is_self_consistently_never_blocked() -> None:
     """The required self-consistency property: a PR touching only `scripts/`, `tests/`,
     `03_BINDING/`, and `.github/workflows/` -- exactly this delivery's own shape -- passes
-    the very gate it introduces, without needing a paired `docs/project_sources/` update."""
+    the very gate it introduces without needing a paired `docs/project_sources/` update,
+    because its `03_BINDING/` change is itself the required pairing the protected-surface
+    rule (MSR-R1-F3) demands for the executor scripts and workflow files it also touches."""
 
     manifest = gate.build_manifest(
         [
@@ -215,5 +345,7 @@ def test_cli_output_flag_writes_the_manifest_to_the_named_file(tmp_path: Path) -
 
 
 def test_cli_combines_repeated_flags_and_a_file() -> None:
-    manifest_via_combination = gate.build_manifest(["src/foo.py", "docs/project_sources/x.md"])
+    manifest_via_combination = gate.build_manifest(
+        ["src/foo.py", "docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md"]
+    )
     assert manifest_via_combination["decision"] == "PASS"

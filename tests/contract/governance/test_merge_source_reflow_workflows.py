@@ -1,16 +1,21 @@
 """Static-shape assertions for Issue #57's two GitHub Actions workflows
-(`03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` sections 10-12).
+(`03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` sections 10-12), hardened by Structural
+Review Round 1 (`ADOPT_MSR_R1_EVENT_BOUND_REVALIDATED_AND_PATH_HARDENED_REFLOW`, Issue
+#57 comment 5567433361).
 
 This session cannot execute a live GitHub Actions run against a real Pull Request or the
 protected `main` branch (contract section 12) -- these tests review the workflow YAML by
 inspection, the identical text-based pattern `test_source_freshness_drift_detection.py`
 already applies to the Issue #54 workflow (no YAML-parsing dependency added), never by a
 live push. They prove: the pre-merge gate workflow makes no write of its own
-(`contents: read`, no merge/approve/comment action); the post-merge workflow's `git add`
-step names exactly the paths the reflow itself reports as written, never `git add -A` or
-a wider glob; a commit only happens when `files_written` is non-empty; and neither
-workflow can push to anywhere but `main` nor touch any Kernel, Schema, Binding, or
-workflow-definition path itself (`WORKFLOW_SELF_MODIFICATION=false`).
+(`contents: read`, no merge/approve/comment action); the post-merge workflow triggers only
+on a Pull Request being closed as merged, never on every push to main (MSR-R1-F1);
+candidate-output validation runs before any `git add`/`commit`/`push` (MSR-R1-F2); staging
+is gated by this workflow's own literal, hardcoded path allowlist checked against the
+actual working-tree diff, never by trusting `merge_source_reflow.py`'s own reported file
+list (MSR-R1-F3); and neither workflow can push to anywhere but `main` nor touch any
+Kernel, Schema, Binding, or workflow-definition path itself
+(`WORKFLOW_SELF_MODIFICATION=false`).
 """
 
 from __future__ import annotations
@@ -101,12 +106,28 @@ def test_pre_merge_gate_invokes_source_impact_gate_with_the_diff_of_base_and_hea
 # --------------------------------------------------------------------------- #
 
 
-def test_post_merge_reflow_triggers_only_on_push_to_main() -> None:
+def test_post_merge_reflow_triggers_only_on_pull_request_closed_and_merged() -> None:
+    """MSR-R1-F1: bound to the specific manually merged Pull Request, never to every push
+    to main -- so this workflow's own reflow commit (a direct push, not a Pull Request
+    being closed as merged) can never itself re-trigger this workflow."""
+
     text = POST_MERGE_PATH.read_text(encoding="utf-8")
-    assert "push:\n    branches: [main]" in text
-    assert "pull_request" not in text
+    assert "pull_request:\n    types: [closed]" in text
+    assert "if: github.event.pull_request.merged == true" in text
+    assert "\npush:" not in text
+    assert "branches: [main]" not in text  # no push trigger of any shape
     assert "schedule:" not in text
     assert "workflow_dispatch" not in text
+
+
+def test_post_merge_reflow_binds_main_sha_and_observed_at_to_the_merge_event_itself() -> None:
+    """MSR-R1-F1: `main_sha` is the Pull Request's own `merge_commit_sha`, never a freshly
+    resolved `HEAD`; `observed_at_utc` is the Pull Request's own `merged_at`, never the
+    wall-clock time this job happens to run."""
+
+    text = POST_MERGE_PATH.read_text(encoding="utf-8")
+    assert "github.event.pull_request.merge_commit_sha" in text
+    assert "github.event.pull_request.merged_at" in text
 
 
 def test_post_merge_reflow_declares_contents_write_and_nothing_broader() -> None:
@@ -133,16 +154,70 @@ def test_post_merge_reflow_never_uses_git_add_dash_a_or_a_wildcard_glob() -> Non
     assert "git add --all" not in text
 
 
-def test_post_merge_reflow_adds_only_the_paths_reflow_itself_reports_as_written() -> None:
+def test_post_merge_reflow_never_trusts_files_written_as_staging_authority() -> None:
+    """MSR-R1-F3: the workflow must never trust `merge_source_reflow.py`'s own reported
+    `files_written` list as authority to stage paths -- staging is instead gated by this
+    workflow's own literal allowlist checked against the actual working-tree diff."""
+
     text = POST_MERGE_PATH.read_text(encoding="utf-8")
-    assert "files_written" in text
+    assert "files_written" not in text
     assert "git add --" in text
-    assert "xargs git add" in text
+
+
+def test_post_merge_reflow_enforces_its_own_literal_hardcoded_path_allowlist() -> None:
+    """MSR-R1-F3: a literal, workflow-defined allowlist (not sourced from
+    `merge_source_reflow.py`'s own output) checked against `git status`'s actual report of
+    the working-tree diff -- covering untracked new files too, since the very first reflow
+    run creates paths that do not yet exist as tracked files."""
+
+    text = POST_MERGE_PATH.read_text(encoding="utf-8")
+    for allowlisted_path in (
+        "docs/project_sources/generated/CURRENT_REPOSITORY_FACTS.json",
+        "docs/project_sources/generated/REPOSITORY_TREE.txt",
+        "docs/project_sources/generated/PHASE_EVIDENCE_INDEX.json",
+        "docs/project_sources/generated/SOURCE_REFLOW_RECEIPT.json",
+        "HANDOFF.md",
+        "SHA256SUMS",
+        "README.md",
+    ):
+        assert allowlisted_path in text
+    assert "git status --porcelain" in text
+    assert "--untracked-files=all" in text
+    assert "refusing: changed path outside this workflow's own literal allowlist" in text
+
+
+def test_post_merge_reflow_validates_the_candidate_before_any_commit_or_push() -> None:
+    """MSR-R1-F2: source-freshness/drift validation against the candidate (already
+    reflowed, not yet committed) working tree must run, and must run *before* `git add`,
+    `git commit`, or `git push` appear in the file -- a validation failure aborts the job
+    before any of those steps runs."""
+
+    text = POST_MERGE_PATH.read_text(encoding="utf-8")
+    validate_index = text.index("Validate the candidate output before any commit or push")
+    add_index = text.index("git add --")
+    commit_index = text.index("git commit")
+    push_index = text.index("git push")
+    assert validate_index < add_index < commit_index < push_index
+    assert "convergence_proven" in text
+
+
+def test_post_merge_reflow_allowlist_enforcement_precedes_staging() -> None:
+    """MSR-R1-F3: the literal-allowlist check must run before the commit/push step stages
+    anything -- never after."""
+
+    text = POST_MERGE_PATH.read_text(encoding="utf-8")
+    allowlist_step_index = text.index(
+        "Enforce this workflow's own literal path allowlist against the actual diff"
+    )
+    commit_step_index = text.index(
+        "Commit and push only the paths this workflow's own allowlist check passed"
+    )
+    assert allowlist_step_index < commit_step_index
 
 
 def test_post_merge_reflow_skips_the_commit_when_nothing_was_written() -> None:
     text = POST_MERGE_PATH.read_text(encoding="utf-8")
-    assert 'if [ -z "$FILES_WRITTEN" ]' in text
+    assert 'if [ -z "$CHANGED" ]' in text
     assert "not committing" in text
 
 
@@ -165,7 +240,7 @@ def test_post_merge_reflow_invokes_the_reflow_script_with_verify_git_head() -> N
     assert "github.sha" not in text  # same SFD-R1-F2 discipline: resolve, never trust the event
 
 
-def test_post_merge_reflow_revalidates_source_freshness_after_writing() -> None:
+def test_post_merge_reflow_validates_source_freshness_before_committing() -> None:
     text = POST_MERGE_PATH.read_text(encoding="utf-8")
     assert "scripts/collect_repository_snapshot.py" in text
     assert "scripts/validate_source_freshness.py" in text

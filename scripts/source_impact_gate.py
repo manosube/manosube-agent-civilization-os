@@ -1,11 +1,21 @@
 """The pre-merge source-impact gate (Issue #57, `03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md`
-section 2).
+section 2), hardened by Structural Review Round 1
+(`ADOPT_MSR_R1_EVENT_BOUND_REVALIDATED_AND_PATH_HARDENED_REFLOW`, Issue #57 comment
+5567433361).
 
-Classifies every path a pull request changes into exactly one of five closed classes, and
-answers one question: does this set of changed paths carry an actual OS-implementation
-change (``kernel_surface``) without any accompanying Human-owned
-``docs/project_sources/*.md`` update (``source_document``)? If so, the merge is blocked --
-never inferred from a green or mergeable PR, only from the declared paths themselves.
+Classifies every path a pull request changes into exactly one of six closed classes, and
+enforces two independent fail-closed rules -- never inferred from a green or mergeable PR,
+only from the declared paths themselves:
+
+1. A `kernel_surface` change (an actual OS-implementation change) must be paired with a
+   `source_document` update from the *specific* closed set :data:`KERNEL_SURFACE_IMPACT_MAP`
+   declares for that area -- an arbitrary, unrelated `docs/project_sources/*.md` edit no
+   longer satisfies the obligation (MSR-R1-F4).
+2. A change to a `protected_governance_surface` path (this gate's own executor script,
+   the reflow's own executor script, or either reflow workflow file) must be paired with a
+   `governance_binding` update -- these are the surfaces that *implement* Merge Source
+   Reflow's own enforcement, so a change to them is itself a governance-sensitive event
+   (MSR-R1-F3).
 
 This module makes no network call, holds no GitHub token, and never merges, approves, or
 comments on anything. It answers a classification question; the GitHub Actions required
@@ -40,8 +50,10 @@ KERNEL_SURFACE_PREFIXES: tuple[str, ...] = (
 )
 KERNEL_SURFACE_EXACT: tuple[str, ...] = ("pyproject.toml",)
 
-#: Human-owned narrative documents. A change here is the *paired update* the gate looks for
-#: -- never the `generated/` subdirectory, which is machine-owned.
+#: Human-owned narrative documents. A change here is a *candidate* paired update the gate
+#: looks for -- never the `generated/` subdirectory, which is machine-owned, and only
+#: admitted when it is also a member of the specific area's own
+#: :data:`KERNEL_SURFACE_IMPACT_MAP` entry (MSR-R1-F4).
 SOURCE_DOCUMENT_PREFIX = "docs/project_sources/"
 GENERATED_SUBDIR_PREFIX = "docs/project_sources/generated/"
 
@@ -53,9 +65,43 @@ GOVERNANCE_BINDING_PREFIX = "03_BINDING/"
 #: counts as the required paired `source_document` update (contract section 2).
 GENERATED_EXACT_PATHS: tuple[str, ...] = ("HANDOFF.md", "SHA256SUMS", "README.md")
 
-CLASSES: frozenset[str] = frozenset(
-    {"kernel_surface", "source_document", "generated", "governance_binding", "other"}
+#: The executor scripts and workflow files that *implement* Merge Source Reflow's own
+#: enforcement -- protected governance surfaces the pre-merge gate itself requires a
+#: paired `governance_binding` update to change (MSR-R1-F3), never merely `other`.
+PROTECTED_GOVERNANCE_SURFACE_EXACT: tuple[str, ...] = (
+    "scripts/merge_source_reflow.py",
+    "scripts/source_impact_gate.py",
+    ".github/workflows/merge_source_pre_merge_gate.yml",
+    ".github/workflows/merge_source_post_merge_reflow.yml",
 )
+
+CLASSES: frozenset[str] = frozenset(
+    {
+        "kernel_surface",
+        "source_document",
+        "generated",
+        "governance_binding",
+        "protected_governance_surface",
+        "other",
+    }
+)
+
+#: The closed, declared impact mapping (MSR-R1-F4): the specific `source_document` path(s)
+#: that are the legitimate required pairing for a `kernel_surface` change in a given area --
+#: never "any `docs/project_sources/*.md` update satisfies any kernel_surface change."
+#: Every area maps to the identical two-document set today, since both documents
+#: legitimately describe any OS-implementation change (current state, and as-built
+#: architecture, respectively); the mapping is declared per-area rather than globally so it
+#: can be refined to per-subsystem granularity later without changing the gate's own
+#: admission logic (contract section 2.1).
+_KERNEL_SURFACE_REQUIRED_DOCS: tuple[str, ...] = (
+    "docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md",
+    "docs/project_sources/04_REPOSITORY_ARCHITECTURE.md",
+)
+KERNEL_SURFACE_IMPACT_MAP: dict[str, tuple[str, ...]] = {
+    **dict.fromkeys(KERNEL_SURFACE_PREFIXES, _KERNEL_SURFACE_REQUIRED_DOCS),
+    **dict.fromkeys(KERNEL_SURFACE_EXACT, _KERNEL_SURFACE_REQUIRED_DOCS),
+}
 
 
 def classify_path(path: str) -> str:
@@ -74,7 +120,22 @@ def classify_path(path: str) -> str:
         return "kernel_surface"
     if path.startswith(GOVERNANCE_BINDING_PREFIX):
         return "governance_binding"
+    if path in PROTECTED_GOVERNANCE_SURFACE_EXACT:
+        return "protected_governance_surface"
     return "other"
+
+
+def _kernel_surface_area(path: str) -> str | None:
+    """The specific :data:`KERNEL_SURFACE_EXACT`/:data:`KERNEL_SURFACE_PREFIXES` key
+    *path* matched -- the same key :data:`KERNEL_SURFACE_IMPACT_MAP` is declared over --
+    or ``None`` if *path* does not classify as ``kernel_surface``."""
+
+    if path in KERNEL_SURFACE_EXACT:
+        return path
+    for prefix in KERNEL_SURFACE_PREFIXES:
+        if path.startswith(prefix):
+            return prefix
+    return None
 
 
 def build_manifest(changed_paths: list[str]) -> dict[str, Any]:
@@ -91,8 +152,24 @@ def build_manifest(changed_paths: list[str]) -> dict[str, Any]:
         paths.sort()
 
     os_change_detected = bool(classified["kernel_surface"])
-    required_source_update_missing = os_change_detected and not classified["source_document"]
-    merge_blocked = os_change_detected and required_source_update_missing
+
+    touched_source_documents = set(classified["source_document"])
+    unmet_kernel_surface_areas = sorted(
+        {
+            area
+            for path in classified["kernel_surface"]
+            if (area := _kernel_surface_area(path)) is not None
+            and touched_source_documents.isdisjoint(KERNEL_SURFACE_IMPACT_MAP[area])
+        }
+    )
+    required_source_update_missing = bool(unmet_kernel_surface_areas)
+
+    protected_surface_changed = bool(classified["protected_governance_surface"])
+    required_governance_update_missing = (
+        protected_surface_changed and not classified["governance_binding"]
+    )
+
+    merge_blocked = required_source_update_missing or required_governance_update_missing
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -100,6 +177,9 @@ def build_manifest(changed_paths: list[str]) -> dict[str, Any]:
         "classified_paths": classified,
         "os_change_detected": os_change_detected,
         "required_source_update_missing": required_source_update_missing,
+        "unmet_kernel_surface_areas": unmet_kernel_surface_areas,
+        "protected_surface_changed": protected_surface_changed,
+        "required_governance_update_missing": required_governance_update_missing,
         "merge_blocked": merge_blocked,
         "decision": "BLOCKED" if merge_blocked else "PASS",
     }
