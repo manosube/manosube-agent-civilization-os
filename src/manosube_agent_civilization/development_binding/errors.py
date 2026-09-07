@@ -12,3 +12,13 @@ class DevelopmentBindingError(ValueError):
 
 class PolicyIntegrityError(DevelopmentBindingError):
     """The policy artifact is absent, unreadable, or not the closed shape declared."""
+
+
+class AdoptionRecordError(DevelopmentBindingError):
+    """A Governance Adoption Record is absent, unreadable, or not the closed shape declared.
+
+    Raised for an *unreadable* record only -- the wrong Python shape, an unknown key, a
+    missing required key, or a field of the wrong type. A record that is readable but does
+    not admit (an unverified URL, an unconfirmed read-back, a mismatched reviewed SHA) is
+    never an exception; see :func:`.adoption_record.evaluate_adoption_record`.
+    """
