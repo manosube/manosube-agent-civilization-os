@@ -59,6 +59,17 @@ proves the record and its own supporting evidence are not describing the same th
 refused for exactly the field(s) that disagree. This is the one binding this module can prove
 offline: not that the comment *hosting* the record and the Issue it *governs* share a number,
 but that what the record says and what its own cited read-back showed are the same claim.
+
+Round 3 (GAR-R3, Issue #53 comment 5566075546) closed two further gaps in that binding.
+**GAR-R3-F1**: ``comment_url`` -- and so, transitively, any receipt required to agree with it
+-- is now scoped to this repository (``manosube/manosube-agent-civilization-os``) rather than
+any GitHub owner/repo whatsoever; a receipt for a comment hosted in a *different* repository
+must never authorize work here, even when the record's own declared ``comment_url`` names
+that same foreign repository (so the two would otherwise "agree"). **GAR-R3-F2**: the receipt
+itself grew from four fields to six -- ``decision_authority`` and ``decision_status`` join
+``adoption_id``, ``governing_issue``, ``reviewed_sha``, and ``comment_url``, so a caller
+cannot declare ``decision_authority="SHUKOU"`` while the read-back the receipt claims to
+represent actually showed a different authority or status.
 """
 
 from __future__ import annotations
@@ -98,19 +109,31 @@ REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
     "authorized_target_sha",
 )
 
-#: The read-back receipt's own closed shape (GAR-R2-F1) -- the same four field names as the
-#: record's own top-level declarations they are checked against, so the binding below is a
-#: plain, named field-by-field comparison rather than a derived or parsed relationship.
+#: The read-back receipt's own closed shape (GAR-R2-F1, extended by GAR-R3-F2) -- the same
+#: six field names as the record's own top-level declarations they are checked against, so
+#: the binding below is a plain, named field-by-field comparison rather than a derived or
+#: parsed relationship.
 RECEIPT_KEYS: frozenset[str] = frozenset(
-    {"adoption_id", "governing_issue", "reviewed_sha", "comment_url"}
+    {
+        "adoption_id",
+        "governing_issue",
+        "reviewed_sha",
+        "comment_url",
+        "decision_authority",
+        "decision_status",
+    }
 )
 
-#: A GitHub Issue or Pull Request comment URL, anchored to its own ``#issuecomment-<id>``
-#: fragment -- the one part of a GitHub URL that names an individual, immutable comment
-#: rather than a whole, editable, ever-changing Issue or PR body. A URL without this
-#: fragment might be real, but it names a moving target, not a recorded decision.
+#: A GitHub Issue or Pull Request comment URL in *this* repository, anchored to its own
+#: ``#issuecomment-<id>`` fragment -- the one part of a GitHub URL that names an individual,
+#: immutable comment rather than a whole, editable, ever-changing Issue or PR body. A URL
+#: without this fragment might be real, but it names a moving target, not a recorded
+#: decision. Scoped to ``manosube/manosube-agent-civilization-os`` rather than any owner/repo
+#: (GAR-R3-F1): a comment hosted in a different repository must never authorize work here,
+#: whatever a receipt built to match it might claim.
 _COMMENT_URL_PATTERN = re.compile(
-    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[0-9]+#issuecomment-[0-9]+$"
+    r"^https://github\.com/manosube/manosube-agent-civilization-os"
+    r"/(?:issues|pull)/[0-9]+#issuecomment-[0-9]+$"
 )
 
 #: A Governance Adoption identifier: non-empty, and shaped like every adoption this
@@ -201,6 +224,12 @@ def evaluate_adoption_record(record: dict[str, Any]) -> dict[str, Any]:
     receipt_comment_url = _require_string(
         receipt["comment_url"], "adoption record api_read_back_receipt comment_url"
     )
+    receipt_decision_authority = _require_string(
+        receipt["decision_authority"], "adoption record api_read_back_receipt decision_authority"
+    )
+    receipt_decision_status = _require_string(
+        receipt["decision_status"], "adoption record api_read_back_receipt decision_status"
+    )
     reviewed_sha = _require_string(shaped["reviewed_sha"], "adoption record reviewed_sha")
     authorized_target_sha = _require_string(
         shaped["authorized_target_sha"], "adoption record authorized_target_sha"
@@ -234,6 +263,14 @@ def evaluate_adoption_record(record: dict[str, Any]) -> dict[str, Any]:
         reasons.append("API_READ_BACK_RECEIPT_REVIEWED_SHA_MISMATCH")
     if receipt_comment_url != comment_url:
         reasons.append("API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH")
+
+    # GAR-R3-F2: the receipt binds decision_authority and decision_status too -- a caller
+    # cannot declare "SHUKOU"/"RATIFIED" at the record's own top level while the read-back
+    # the receipt claims to represent actually showed a different authority or status.
+    if receipt_decision_authority != decision_authority:
+        reasons.append("API_READ_BACK_RECEIPT_DECISION_AUTHORITY_MISMATCH")
+    if receipt_decision_status != decision_status:
+        reasons.append("API_READ_BACK_RECEIPT_DECISION_STATUS_MISMATCH")
 
     if decision_authority != HUMAN_AUTHORITY:
         reasons.append("DECISION_AUTHORITY_NOT_HUMAN")
@@ -278,6 +315,8 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
         "API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH",
         "API_READ_BACK_RECEIPT_REVIEWED_SHA_MISMATCH",
         "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
+        "API_READ_BACK_RECEIPT_DECISION_AUTHORITY_MISMATCH",
+        "API_READ_BACK_RECEIPT_DECISION_STATUS_MISMATCH",
         "DECISION_AUTHORITY_NOT_HUMAN",
         "DECISION_STATUS_NOT_RATIFIED",
         "REVIEWED_SHA_NOT_A_COMMIT_SHA",

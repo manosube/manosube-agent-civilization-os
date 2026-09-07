@@ -91,30 +91,34 @@ adoption_id                 the adoption's own stable identifier, e.g.
                              ADOPT_GOVERNANCE_ADOPTION_RECORD_ENFORCEMENT
 governing_issue             the Issue or Pull Request this adoption semantically governs,
                              e.g. "#53" -- distinct from wherever it happens to be recorded
-comment_url                 an immutable GitHub comment URL --
-                             https://github.com/<owner>/<repo>/(issues|pull)/<n>#issuecomment-<id>
+comment_url                 an immutable GitHub comment URL, scoped to this repository --
+                             https://github.com/manosube/manosube-agent-civilization-os
+                             /(issues|pull)/<n>#issuecomment-<id>
 decision_authority           must be "SHUKOU"
 decision_status               must be "RATIFIED"
 api_read_back_receipt       a structured receipt: the caller's own claim of what the
                              independent API read-back actually showed for adoption_id,
-                             governing_issue, reviewed_sha, and comment_url
+                             governing_issue, reviewed_sha, comment_url, decision_authority,
+                             and decision_status
 reviewed_sha                 the exact commit SHA the adoption reviewed
 authorized_target_sha        the exact commit SHA the work this record authorizes
                              is based on or targets
 ```
 
-`api_read_back_receipt` is itself a closed object with exactly four keys -- `adoption_id`,
-`governing_issue`, `reviewed_sha`, `comment_url` -- the same four names as the record's own
-top-level declarations, checked field-by-field for exact agreement.
+`api_read_back_receipt` is itself a closed object with exactly six keys -- `adoption_id`,
+`governing_issue`, `reviewed_sha`, `comment_url`, `decision_authority`, `decision_status` --
+the same six names as the record's own top-level declarations, checked field-by-field for
+exact agreement.
 
 The record admits (`ADOPTION_RECORD_ADMITTED`) only when every one of the following holds:
 
 ```text
-comment_url matches the immutable-comment URL pattern
+comment_url matches the immutable-comment URL pattern, scoped to this repository
 adoption_id is non-empty and ADOPT_-shaped
 governing_issue is a well-formed #<number> reference
 api_read_back_receipt agrees, field by field, with adoption_id / governing_issue /
-    reviewed_sha / comment_url as the record itself declares them
+    reviewed_sha / comment_url / decision_authority / decision_status as the record
+    itself declares them
 decision_authority == "SHUKOU"
 decision_status == "RATIFIED"
 reviewed_sha and authorized_target_sha are both real-shaped commit SHAs
@@ -151,6 +155,27 @@ MISMATCH`, or `API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH`. An absent or empty r
 disagrees with every non-empty declared field, so "the read-back was never actually
 confirmed" needs no separate boolean flag or reason code of its own -- it surfaces as these
 same mismatches.
+
+### 2.2 Repository scope and decision-field binding (GAR-R3)
+
+Round 3 (Issue #53 comment 5566075546) closed two further gaps.
+
+**GAR-R3-F1**: `comment_url` -- previously any `https://github.com/<owner>/<repo>/...`
+address -- is now scoped to exactly `manosube/manosube-agent-civilization-os`. A comment
+hosted in a different repository is refused as `COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT`,
+the same code a chat draft receives, *even when the record's own receipt names that same
+foreign repository and would otherwise "agree"* -- a matching receipt for the wrong
+repository is not a verified adoption for this one. Within this repository, §2.1's
+decoupling is unchanged: `governing_issue` and `comment_url`'s own Issue/PR number may still
+differ.
+
+**GAR-R3-F2**: the read-back receipt grew from four fields to six. `decision_authority` and
+`decision_status` are now bound the identical way `adoption_id`, `governing_issue`,
+`reviewed_sha`, and `comment_url` already were -- a caller cannot declare
+`decision_authority="SHUKOU"` at the record's own top level while the receipt's own claim of
+what the read-back showed names a different authority or status. Disagreement on either
+field is refused as `API_READ_BACK_RECEIPT_DECISION_AUTHORITY_MISMATCH` or
+`API_READ_BACK_RECEIPT_DECISION_STATUS_MISMATCH`.
 
 ## 3. What this enforcement is not
 
@@ -246,5 +271,21 @@ GAR_R2_F1_CROSS_ISSUE_PR_RECORDING_POSITIVE_CASE_ADMITTED=true
 GAR_R2_F2_EMITTED_REASON_CODES_DECLARED_PER_EVALUATOR=true
 GAR_R2_F2_ALLOWLIST_DERIVED_FROM_DECLARED_SURFACE_ONLY=true
 GAR_R2_F2_BIDIRECTIONAL_REACHABILITY_AND_DECLARATION_PROOF=true
+NETWORK_TOKEN_SECRET_ADAPTER_ADDED=false
+```
+
+### 5.3 Structural Review Round 3 (GAR-R3)
+
+Issue #53 comment 5566075546 (`ADOPT_GAR_R3_REPOSITORY_SCOPED_AND_DECISION_BOUND_RECEIPT`)
+closed two further gaps -- see §2.2: `comment_url` is scoped to this repository, and the
+read-back receipt now also binds `decision_authority` and `decision_status`.
+
+```text
+GAR_R3_F1_COMMENT_URL_SCOPED_TO_THIS_REPOSITORY=true
+GAR_R3_F1_FOREIGN_REPOSITORY_URL_REJECTED_EVEN_WHEN_RECEIPT_AGREES=true
+GAR_R3_F1_SAME_REPOSITORY_CROSS_ISSUE_PR_RECORDING_STILL_ADMITTED=true
+GAR_R3_F2_RECEIPT_EXTENDED_TO_SIX_FIELDS=true
+GAR_R3_F2_DECISION_AUTHORITY_AND_STATUS_BOUND_BY_RECEIPT=true
+GAR_R3_F2_EMITTED_REASON_CODES_AND_BIDIRECTIONAL_PROOF_UPDATED=true
 NETWORK_TOKEN_SECRET_ADAPTER_ADDED=false
 ```

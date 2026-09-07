@@ -42,6 +42,8 @@ def _receipt(**overrides: Any) -> dict[str, Any]:
         "governing_issue": "#53",
         "reviewed_sha": _SHA_A,
         "comment_url": _REAL_COMMENT_URL,
+        "decision_authority": "SHUKOU",
+        "decision_status": "RATIFIED",
     }
     base.update(overrides)
     return base
@@ -135,6 +137,8 @@ def test_an_unverified_read_back_receipt_is_refused_even_when_otherwise_complete
         "governing_issue": "",
         "reviewed_sha": "",
         "comment_url": "",
+        "decision_authority": "",
+        "decision_status": "",
     }
     decision = evaluate_adoption_record(_record(api_read_back_receipt=empty_receipt))
     assert decision["decision"] == ADOPTION_RECORD_REFUSED
@@ -143,6 +147,8 @@ def test_an_unverified_read_back_receipt_is_refused_even_when_otherwise_complete
         "API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH",
         "API_READ_BACK_RECEIPT_REVIEWED_SHA_MISMATCH",
         "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
+        "API_READ_BACK_RECEIPT_DECISION_AUTHORITY_MISMATCH",
+        "API_READ_BACK_RECEIPT_DECISION_STATUS_MISMATCH",
     }
 
 
@@ -232,20 +238,53 @@ def test_a_governing_issue_recorded_through_a_pull_request_comment_is_admitted()
             "https://github.com/manosube/manosube-agent-civilization-os/issues/999#issuecomment-1",
             "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
         ),
+        ("decision_authority", "CHATGPT", "API_READ_BACK_RECEIPT_DECISION_AUTHORITY_MISMATCH"),
+        ("decision_status", "DRAFT", "API_READ_BACK_RECEIPT_DECISION_STATUS_MISMATCH"),
     ],
 )
 def test_a_receipt_field_disagreeing_with_the_declared_record_is_refused(
     field: str, mismatched_value: str, reason_code: str
 ) -> None:
     """A record cannot relabel a real, verified receipt as authority for a different
-    adoption, governing unit, reviewed SHA, or comment -- each field is bound independently,
-    so a single disagreeing field is refused for exactly that field."""
+    adoption, governing unit, reviewed SHA, comment, decision authority, or decision status --
+    each field is bound independently, so a single disagreeing field is refused for exactly
+    that field."""
 
     decision = evaluate_adoption_record(
         _record(api_read_back_receipt=_receipt(**{field: mismatched_value}))
     )
     assert decision["decision"] == ADOPTION_RECORD_REFUSED
     assert decision["decision_reason_codes"] == [reason_code]
+
+
+# --------------------------------------------------------------------------- #
+# GAR-R3-F1 (Issue #53 comment 5566075546): comment_url is scoped to this
+# repository. A receipt for a comment hosted in a different repository must
+# never authorize work here, even when the receipt itself agrees with a
+# record that also names that foreign repository.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "foreign_url",
+    [
+        "https://github.com/manosube/some-other-repository/issues/53#issuecomment-1",
+        "https://github.com/someone-else/manosube-agent-civilization-os/issues/53#issuecomment-1",
+        "https://github.com/someone-else/some-other-repository/issues/53#issuecomment-1",
+    ],
+)
+def test_a_foreign_repository_comment_url_is_refused_even_when_the_receipt_agrees(
+    foreign_url: str,
+) -> None:
+    """A verified-looking receipt for another repository must never authorize work here --
+    the record is refused for exactly the same reason a chat draft is: it does not name a
+    verifiable comment in *this* repository, whatever a matching receipt might claim."""
+
+    decision = evaluate_adoption_record(
+        _record(comment_url=foreign_url, api_read_back_receipt=_receipt(comment_url=foreign_url))
+    )
+    assert decision["decision"] == ADOPTION_RECORD_REFUSED
+    assert decision["decision_reason_codes"] == ["COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT"]
 
 
 # --------------------------------------------------------------------------- #
@@ -289,8 +328,25 @@ _REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
             )
         },
     ),
-    ("DECISION_AUTHORITY_NOT_HUMAN", {"decision_authority": "CHATGPT"}),
-    ("DECISION_STATUS_NOT_RATIFIED", {"decision_status": "DRAFT"}),
+    (
+        "API_READ_BACK_RECEIPT_DECISION_AUTHORITY_MISMATCH",
+        {"api_read_back_receipt": _receipt(decision_authority="CHATGPT")},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_DECISION_STATUS_MISMATCH",
+        {"api_read_back_receipt": _receipt(decision_status="DRAFT")},
+    ),
+    (
+        "DECISION_AUTHORITY_NOT_HUMAN",
+        {
+            "decision_authority": "CHATGPT",
+            "api_read_back_receipt": _receipt(decision_authority="CHATGPT"),
+        },
+    ),
+    (
+        "DECISION_STATUS_NOT_RATIFIED",
+        {"decision_status": "DRAFT", "api_read_back_receipt": _receipt(decision_status="DRAFT")},
+    ),
     (
         "REVIEWED_SHA_NOT_A_COMMIT_SHA",
         {"reviewed_sha": "not-a-sha", "api_read_back_receipt": _receipt(reviewed_sha="not-a-sha")},
@@ -346,6 +402,7 @@ def test_multiple_failures_are_reported_together() -> None:
     assert set(decision["decision_reason_codes"]) == {
         "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT",
         "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
+        "API_READ_BACK_RECEIPT_DECISION_AUTHORITY_MISMATCH",
         "DECISION_AUTHORITY_NOT_HUMAN",
     }
 
