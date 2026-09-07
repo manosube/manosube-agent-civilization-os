@@ -2,9 +2,9 @@
 decision that the Structural Advisor has recorded on GitHub, read back through the API, and
 identified by its immutable comment URL, may become implementation authority for Claude
 Code. This proves the mechanical check for that rule -- the four required negative cases
-(a chat draft, unposted text, a reviewed-SHA mismatch, an unverified URL), the required
-positive case, and that the module never performs the network call it is not allowed to
-perform.
+(a chat draft, unposted text, a reviewed-SHA mismatch, an unverified read-back receipt), the
+required positive case, and that the module never performs the network call it is not
+allowed to perform.
 
 See `03_BINDING/GOVERNANCE_ADOPTION_RECORD_ENFORCEMENT.md` for the operating guide this
 suite proves.
@@ -36,6 +36,17 @@ _SHA_A = "2a81f782bfaccd72f1e27bbe3378bd5cd3f2e9c5"
 _SHA_B = "070c1fa88f7eebce77b38d3ed026f23e500a6e4f"
 
 
+def _receipt(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "adoption_id": "ADOPT_GOVERNANCE_ADOPTION_RECORD_ENFORCEMENT",
+        "governing_issue": "#53",
+        "reviewed_sha": _SHA_A,
+        "comment_url": _REAL_COMMENT_URL,
+    }
+    base.update(overrides)
+    return base
+
+
 def _record(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "schema_version": "0.1",
@@ -44,7 +55,7 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "comment_url": _REAL_COMMENT_URL,
         "decision_authority": "SHUKOU",
         "decision_status": "RATIFIED",
-        "api_read_back_confirmed": True,
+        "api_read_back_receipt": _receipt(),
         "reviewed_sha": _SHA_A,
         "authorized_target_sha": _SHA_A,
     }
@@ -87,9 +98,7 @@ def test_the_decision_is_deterministic_and_the_input_is_never_mutated() -> None:
     ],
 )
 def test_a_chat_draft_is_refused(chat_draft_url: str) -> None:
-    decision = evaluate_adoption_record(
-        _record(comment_url=chat_draft_url, api_read_back_confirmed=False)
-    )
+    decision = evaluate_adoption_record(_record(comment_url=chat_draft_url))
     assert decision["decision"] == ADOPTION_RECORD_REFUSED
     assert "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT" in decision["decision_reason_codes"]
 
@@ -106,9 +115,7 @@ def test_unposted_text_is_refused(unposted_url: str) -> None:
     """An Issue/PR URL with no `#issuecomment-<id>` fragment names a whole, editable,
     ever-changing body -- never one individually addressable, immutable comment."""
 
-    decision = evaluate_adoption_record(
-        _record(comment_url=unposted_url, api_read_back_confirmed=False)
-    )
+    decision = evaluate_adoption_record(_record(comment_url=unposted_url))
     assert decision["decision"] == ADOPTION_RECORD_REFUSED
     assert "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT" in decision["decision_reason_codes"]
 
@@ -119,14 +126,24 @@ def test_a_reviewed_sha_mismatch_is_refused() -> None:
     assert decision["decision_reason_codes"] == ["REVIEWED_SHA_DOES_NOT_MATCH_AUTHORIZED_TARGET"]
 
 
-def test_an_unverified_url_is_refused_even_when_otherwise_complete() -> None:
-    """A syntactically real, individually addressable comment URL is not enough on its
-    own -- the caller must also claim the API read-back that confirms it actually
-    happened."""
+def test_an_unverified_read_back_receipt_is_refused_even_when_otherwise_complete() -> None:
+    """A syntactically real, individually addressable comment URL is not enough on its own --
+    the caller must also supply a read-back receipt that actually agrees with the record."""
 
-    decision = evaluate_adoption_record(_record(api_read_back_confirmed=False))
+    empty_receipt = {
+        "adoption_id": "",
+        "governing_issue": "",
+        "reviewed_sha": "",
+        "comment_url": "",
+    }
+    decision = evaluate_adoption_record(_record(api_read_back_receipt=empty_receipt))
     assert decision["decision"] == ADOPTION_RECORD_REFUSED
-    assert decision["decision_reason_codes"] == ["API_READ_BACK_NOT_CONFIRMED"]
+    assert set(decision["decision_reason_codes"]) == {
+        "API_READ_BACK_RECEIPT_ADOPTION_ID_MISMATCH",
+        "API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH",
+        "API_READ_BACK_RECEIPT_REVIEWED_SHA_MISMATCH",
+        "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -156,12 +173,6 @@ def test_a_malformed_reviewed_sha_is_refused(bad_sha: str) -> None:
     assert "REVIEWED_SHA_NOT_A_COMMIT_SHA" in decision["decision_reason_codes"]
 
 
-# --------------------------------------------------------------------------- #
-# GAR-R1-F1 (Issue #53 comment 5565302174): bind adoption_id and governing_issue
-# to the individually-addressable comment context they claim to authorize.
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.parametrize(
     "bad_adoption_id",
     ["", "not shaped like an adoption id", "adopt_lowercase_is_wrong", "ADOPTION_MISSING_PREFIX"],
@@ -179,54 +190,66 @@ def test_a_malformed_governing_reference_is_refused(bad_reference: str) -> None:
     assert "GOVERNING_REFERENCE_MALFORMED" in decision["decision_reason_codes"]
 
 
-def test_a_governing_reference_naming_a_different_issue_than_the_comment_url_is_refused() -> None:
-    """A syntactically real, individually addressable comment URL under Issue #53 must not
-    be relabeled as authority for a different governing Issue or Pull Request."""
+# --------------------------------------------------------------------------- #
+# GAR-R2-F1 (Issue #53 comment 5565703135): governing_issue (semantic jurisdiction)
+# and comment_url (recording location) are separate contexts. The read-back
+# receipt binds the record to what its own cited API read-back actually showed --
+# never to the Issue/PR number that happens to host the comment.
+# --------------------------------------------------------------------------- #
 
-    decision = evaluate_adoption_record(_record(governing_issue="#54"))
-    assert decision["decision"] == ADOPTION_RECORD_REFUSED
-    assert decision["decision_reason_codes"] == ["GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT"]
 
+def test_a_governing_issue_recorded_through_a_pull_request_comment_is_admitted() -> None:
+    """The required GAR-R2-F1 positive case: an adoption governing Issue #53, recorded
+    through a comment on a *different* Issue or Pull Request (here, PR #56), is admitted in
+    full -- not merely un-refused -- once the read-back receipt itself agrees with the
+    record. GAR-R1's superseded rule would have refused this outright."""
 
-def test_a_governing_reference_naming_the_comment_urls_own_issue_is_not_a_binding_failure() -> None:
-    decision = evaluate_adoption_record(_record(governing_issue="#53"))
-    assert (
-        "GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT" not in decision["decision_reason_codes"]
+    pr_comment_url = (
+        "https://github.com/manosube/manosube-agent-civilization-os/pull/56#issuecomment-1"
     )
-
-
-def test_the_binding_check_is_not_compounded_onto_an_already_malformed_url_or_reference() -> None:
-    """The binding check runs only once both halves are independently well-formed -- a
-    malformed URL or reference is reported once by its own check, not doubled."""
-
-    malformed_url = evaluate_adoption_record(_record(comment_url=""))
-    assert (
-        "GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT"
-        not in malformed_url["decision_reason_codes"]
+    record = _record(
+        comment_url=pr_comment_url,
+        governing_issue="#53",
+        api_read_back_receipt=_receipt(comment_url=pr_comment_url, governing_issue="#53"),
     )
-
-    malformed_reference = evaluate_adoption_record(_record(governing_issue=""))
-    assert (
-        "GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT"
-        not in malformed_reference["decision_reason_codes"]
-    )
+    decision = evaluate_adoption_record(record)
+    assert decision["decision"] == ADOPTION_RECORD_ADMITTED
+    assert decision["decision_reason_codes"] == []
 
 
-def test_a_pull_request_governing_reference_binds_against_a_pull_request_comment_url() -> None:
-    """The binding is symmetric across Issue and Pull Request comment URLs -- only the
-    number in the URL's own path is what ``governing_issue`` must match."""
+@pytest.mark.parametrize(
+    "field,mismatched_value,reason_code",
+    [
+        (
+            "adoption_id",
+            "ADOPT_SOMETHING_ELSE_ENTIRELY",
+            "API_READ_BACK_RECEIPT_ADOPTION_ID_MISMATCH",
+        ),
+        ("governing_issue", "#99", "API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH"),
+        ("reviewed_sha", _SHA_B, "API_READ_BACK_RECEIPT_REVIEWED_SHA_MISMATCH"),
+        (
+            "comment_url",
+            "https://github.com/manosube/manosube-agent-civilization-os/issues/999#issuecomment-1",
+            "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
+        ),
+    ],
+)
+def test_a_receipt_field_disagreeing_with_the_declared_record_is_refused(
+    field: str, mismatched_value: str, reason_code: str
+) -> None:
+    """A record cannot relabel a real, verified receipt as authority for a different
+    adoption, governing unit, reviewed SHA, or comment -- each field is bound independently,
+    so a single disagreeing field is refused for exactly that field."""
 
-    pr_url = "https://github.com/manosube/manosube-agent-civilization-os/pull/56#issuecomment-1"
     decision = evaluate_adoption_record(
-        _record(comment_url=pr_url, governing_issue="#56", api_read_back_confirmed=True)
+        _record(api_read_back_receipt=_receipt(**{field: mismatched_value}))
     )
-    assert (
-        "GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT" not in decision["decision_reason_codes"]
-    )
+    assert decision["decision"] == ADOPTION_RECORD_REFUSED
+    assert decision["decision_reason_codes"] == [reason_code]
 
 
 # --------------------------------------------------------------------------- #
-# GAR-R1: every declared reason code is actually reachable
+# GAR-R2: every declared reason code is actually reachable
 # --------------------------------------------------------------------------- #
 #
 # One crafted record per reason code, isolated so it is the *only* failure -- proving the
@@ -236,22 +259,43 @@ def test_a_pull_request_governing_reference_binds_against_a_pull_request_comment
 _REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
     (
         "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT",
-        {"comment_url": "", "api_read_back_confirmed": False},
+        {"comment_url": "", "api_read_back_receipt": _receipt(comment_url="")},
     ),
-    ("API_READ_BACK_NOT_CONFIRMED", {"api_read_back_confirmed": False}),
-    ("ADOPTION_ID_MALFORMED", {"adoption_id": ""}),
-    ("GOVERNING_REFERENCE_MALFORMED", {"governing_issue": ""}),
-    ("GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT", {"governing_issue": "#54"}),
+    (
+        "ADOPTION_ID_MALFORMED",
+        {"adoption_id": "", "api_read_back_receipt": _receipt(adoption_id="")},
+    ),
+    (
+        "GOVERNING_REFERENCE_MALFORMED",
+        {"governing_issue": "", "api_read_back_receipt": _receipt(governing_issue="")},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_ADOPTION_ID_MISMATCH",
+        {"api_read_back_receipt": _receipt(adoption_id="ADOPT_SOMETHING_ELSE")},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH",
+        {"api_read_back_receipt": _receipt(governing_issue="#99")},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_REVIEWED_SHA_MISMATCH",
+        {"api_read_back_receipt": _receipt(reviewed_sha=_SHA_B)},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
+        {
+            "api_read_back_receipt": _receipt(
+                comment_url="https://github.com/manosube/manosube-agent-civilization-os/issues/999#issuecomment-1"
+            )
+        },
+    ),
     ("DECISION_AUTHORITY_NOT_HUMAN", {"decision_authority": "CHATGPT"}),
     ("DECISION_STATUS_NOT_RATIFIED", {"decision_status": "DRAFT"}),
     (
         "REVIEWED_SHA_NOT_A_COMMIT_SHA",
-        {"reviewed_sha": "not-a-sha", "authorized_target_sha": "not-a-sha"},
+        {"reviewed_sha": "not-a-sha", "api_read_back_receipt": _receipt(reviewed_sha="not-a-sha")},
     ),
-    (
-        "AUTHORIZED_TARGET_SHA_NOT_A_COMMIT_SHA",
-        {"reviewed_sha": "not-a-sha", "authorized_target_sha": "not-a-sha"},
-    ),
+    ("AUTHORIZED_TARGET_SHA_NOT_A_COMMIT_SHA", {"authorized_target_sha": "not-a-sha"}),
     ("REVIEWED_SHA_DOES_NOT_MATCH_AUTHORIZED_TARGET", {"authorized_target_sha": _SHA_B}),
 )
 
@@ -264,20 +308,24 @@ def test_every_declared_reason_code_is_reachable(
 ) -> None:
     decision = evaluate_adoption_record(_record(**overrides))
     assert decision["decision"] == ADOPTION_RECORD_REFUSED
-    assert reason_code in decision["decision_reason_codes"]
+    assert decision["decision_reason_codes"] == [reason_code]
 
 
-def test_the_reachability_matrix_covers_every_reason_code_this_module_can_emit() -> None:
-    """The control on the sweep above: every reason code this module's source can name is
-    covered by exactly one crafted case, so the matrix cannot silently go stale.
+def test_the_reachability_matrix_covers_every_declared_reason_code() -> None:
+    """Direction one of GAR-R2-F2's bidirectional proof: every code this module declares is
+    reachable -- proven dynamically above, checked here against the declared surface itself
+    rather than only against whatever the crafted cases happen to cover."""
 
-    Deliberately self-contained rather than importing the AST extraction
-    ``test_active_document_terminal_state._codes_from_source`` uses (GAR-R1-F2) -- this test
-    file has no dependency on that one's private implementation, and this repository's tests
-    are not a package other test modules import from. The two extractions agreeing is what
-    the reachability property actually rests on, so this proves it independently rather than
-    by construction.
-    """
+    covered = {reason_code for reason_code, _overrides in _REACHABILITY_CASES}
+    assert covered == adoption_record_module.EMITTED_REASON_CODES
+
+
+def test_every_emittable_reason_code_is_declared() -> None:
+    """Direction two: nothing this module's own source can actually emit escapes the
+    declared surface. Self-contained AST extraction (a string literal ``.append()``-ed onto
+    ``reasons`` -- the only shape this module's own reason codes reach their caller through,
+    it has no ``_verdict`` helper or ``return``-based indirection) rather than importing
+    another test module's private implementation."""
 
     tree = ast.parse(inspect.getsource(adoption_record_module))
     emittable: set[str] = set()
@@ -289,18 +337,15 @@ def test_the_reachability_matrix_covers_every_reason_code_this_module_can_emit()
         for arg in node.args:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 emittable.add(arg.value)
-    covered = {reason_code for reason_code, _ in _REACHABILITY_CASES}
-    assert covered == emittable
+    assert emittable == adoption_record_module.EMITTED_REASON_CODES
 
 
 def test_multiple_failures_are_reported_together() -> None:
-    decision = evaluate_adoption_record(
-        _record(comment_url="", api_read_back_confirmed=False, decision_authority="CHATGPT")
-    )
+    decision = evaluate_adoption_record(_record(comment_url="", decision_authority="CHATGPT"))
     assert decision["decision"] == ADOPTION_RECORD_REFUSED
     assert set(decision["decision_reason_codes"]) == {
         "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT",
-        "API_READ_BACK_NOT_CONFIRMED",
+        "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
         "DECISION_AUTHORITY_NOT_HUMAN",
     }
 
@@ -333,12 +378,31 @@ def test_an_unsupported_schema_version_raises() -> None:
         evaluate_adoption_record(_record(schema_version="99.9"))
 
 
-def test_a_non_boolean_api_read_back_confirmed_raises() -> None:
-    """``"true"`` is not ``True`` -- a string that merely looks like the claim must not be
-    accepted as the claim itself."""
+def test_a_non_object_receipt_raises() -> None:
+    """``"true"`` is not a receipt -- a string that merely claims confirmation must not be
+    accepted as the structured receipt itself."""
 
-    with pytest.raises(AdoptionRecordError, match="api_read_back_confirmed"):
-        evaluate_adoption_record(_record(api_read_back_confirmed="true"))
+    with pytest.raises(AdoptionRecordError, match="api_read_back_receipt"):
+        evaluate_adoption_record(_record(api_read_back_receipt="true"))
+
+
+def test_a_receipt_carrying_an_unknown_key_raises() -> None:
+    with pytest.raises(AdoptionRecordError, match="unknown keys"):
+        evaluate_adoption_record(_record(api_read_back_receipt=_receipt(extra="not part of it")))
+
+
+@pytest.mark.parametrize("missing_key", list(_receipt().keys()))
+def test_a_receipt_missing_a_required_key_raises(missing_key: str) -> None:
+    receipt = _receipt()
+    del receipt[missing_key]
+    with pytest.raises(AdoptionRecordError, match="omits required keys"):
+        evaluate_adoption_record(_record(api_read_back_receipt=receipt))
+
+
+@pytest.mark.parametrize("field", list(_receipt().keys()))
+def test_a_non_string_receipt_field_raises(field: str) -> None:
+    with pytest.raises(AdoptionRecordError):
+        evaluate_adoption_record(_record(api_read_back_receipt=_receipt(**{field: 12345})))
 
 
 @pytest.mark.parametrize("field", ["comment_url", "adoption_id", "reviewed_sha"])

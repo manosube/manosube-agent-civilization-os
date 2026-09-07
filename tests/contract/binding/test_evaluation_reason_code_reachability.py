@@ -8,6 +8,13 @@ constructible record, or that the scrape had found all of them. One crafted reco
 reason code closes that gap directly: each case is isolated so the named code is the *cause*
 of the refusal (or, for the two ``PERMITTED`` codes, the reason the record was admitted), not
 an incidental side effect of some other check.
+
+GAR-R2-F2 (Issue #53 comment 5565703135) required a stronger, bidirectional static proof --
+every declared reason code is reachable, *and* every emittable reason code is declared --
+against an explicit ``EMITTED_REASON_CODES`` surface each evaluator module now declares,
+rather than one this file infers on the route-drift guard's behalf. Both directions are
+proven below: the reachability cases above prove every declared code is reachable; a
+self-contained AST extraction proves nothing outside that declared set is emittable.
 """
 
 from __future__ import annotations
@@ -410,75 +417,28 @@ def test_every_declared_reason_code_is_reachable(
 
 
 # --------------------------------------------------------------------------- #
-# The control: the matrix itself cannot silently go stale
+# GAR-R2-F2 (Issue #53 comment 5565703135): the bidirectional proof, against the
+# module's own declared emitted-reason-code surface rather than an inferred one
 # --------------------------------------------------------------------------- #
 
 
-def _for_loop_append_literals(tree: ast.AST) -> set[str]:
-    """Reason codes reachable through ``for state, code in (...): reasons.append(code)`` --
-    one level of indirection deeper than a literal call argument, present once in
-    ``evaluation.py`` for ``UNKNOWN_FROM_STATE``/``UNKNOWN_TO_STATE``.
-
-    The production route-drift sweep (``test_active_document_terminal_state.py``,
-    GAR-R1-F2) deliberately does not resolve this indirection: its allowlist only needs to
-    hold what a route-bearing document could actually be mistaken for a state name, and
-    neither of these two codes shares two or more segments with a ratified state, so nothing
-    there depends on catching them. This reachability matrix is held to a stricter standard
-    -- it must match what ``evaluate()`` can *actually* emit, not the production sweep's
-    narrower, purpose-built definition -- so it resolves this one concrete pattern rather
-    than silently under-covering it.
+def _codes_from_source(source: str) -> frozenset[str]:
+    """A string literal passed as a non-decision argument to ``_verdict(...)``, ``.append()``
+    -ed onto a ``reasons`` list, or ``return``-ed directly by a ``_closed``/``_scalars``
+    -shaped helper -- the three syntactic forms a reason code reaches its caller through in
+    this codebase. Self-contained rather than importing
+    ``test_active_document_terminal_state._codes_from_source`` -- this repository's tests are
+    not a package other test modules import from -- but this is now purely a proof helper,
+    never the production allowlist's own source (GAR-R2-F2 moved that to
+    ``evaluation.EMITTED_REASON_CODES`` itself).
     """
 
-    found: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.For):
-            continue
-        if not (
-            isinstance(node.target, ast.Tuple) and isinstance(node.iter, (ast.Tuple, ast.List))
-        ):
-            continue
-        target_names = [elt.id for elt in node.target.elts if isinstance(elt, ast.Name)]
-        if len(target_names) != len(node.target.elts):
-            continue
-        appended_names = {
-            arg.id
-            for call in ast.walk(node)
-            if isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Attribute)
-            and call.func.attr == "append"
-            for arg in call.args
-            if isinstance(arg, ast.Name)
-        }
-        positions = {
-            index: name for index, name in enumerate(target_names) if name in appended_names
-        }
-        if not positions:
-            continue
-        for element in node.iter.elts:
-            if not isinstance(element, ast.Tuple):
-                continue
-            for index in positions:
-                if index < len(element.elts):
-                    literal = element.elts[index]
-                    if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
-                        found.add(literal.value)
-    return found
-
-
-def test_the_reachability_matrix_covers_every_reason_code_this_module_can_emit() -> None:
-    """Every reason code ``evaluation.py``'s own source can name is covered by at least one
-    crafted case above. Self-contained AST extraction (GAR-R1-F2's own shape: a string
-    literal passed as a non-decision argument to ``_verdict(...)``, ``.append()``-ed onto
-    ``reasons``, or ``return``-ed directly by a ``_closed``/``_scalars``-shaped helper --
-    plus the one indirection :func:`_for_loop_append_literals` resolves) so this file has no
-    dependency on another test module's private implementation."""
-
-    tree = ast.parse(inspect.getsource(evaluation_module))
-    emittable: set[str] = set(_for_loop_append_literals(tree))
+    codes: set[str] = set()
+    tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, ast.Return):
             if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                emittable.add(node.value.value)
+                codes.add(node.value.value)
             continue
         if not isinstance(node, ast.Call):
             continue
@@ -492,7 +452,23 @@ def test_the_reachability_matrix_covers_every_reason_code_this_module_can_emit()
             continue
         for arg in literal_args:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                emittable.add(arg.value)
+                codes.add(arg.value)
+    return frozenset(codes)
+
+
+def test_every_declared_reason_code_is_covered_by_a_reachability_case() -> None:
+    """Direction one: every code ``evaluation.EMITTED_REASON_CODES`` declares is reachable --
+    proven dynamically above, and checked here for completeness against the declared set
+    itself rather than only against whatever the crafted cases happen to cover."""
 
     covered = {reason_code for reason_code, _decision, _record in _REACHABILITY_CASES}
-    assert covered == emittable
+    assert covered == evaluation_module.EMITTED_REASON_CODES
+
+
+def test_every_emittable_reason_code_is_declared() -> None:
+    """Direction two: nothing ``evaluate()``'s own source can actually emit escapes the
+    declared surface -- a static proof, since a branch can be emittable in source shape
+    without this suite's own crafted cases having found it yet."""
+
+    emittable = _codes_from_source(inspect.getsource(evaluation_module))
+    assert emittable == evaluation_module.EMITTED_REASON_CODES

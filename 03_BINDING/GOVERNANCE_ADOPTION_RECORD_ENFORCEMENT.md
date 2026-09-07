@@ -89,23 +89,32 @@ that a specific record actually carries one.
 schema_version              "0.1"
 adoption_id                 the adoption's own stable identifier, e.g.
                              ADOPT_GOVERNANCE_ADOPTION_RECORD_ENFORCEMENT
-governing_issue             the Issue this adoption governs, e.g. "#53"
+governing_issue             the Issue or Pull Request this adoption semantically governs,
+                             e.g. "#53" -- distinct from wherever it happens to be recorded
 comment_url                 an immutable GitHub comment URL --
                              https://github.com/<owner>/<repo>/(issues|pull)/<n>#issuecomment-<id>
 decision_authority           must be "SHUKOU"
 decision_status               must be "RATIFIED"
-api_read_back_confirmed     a boolean: was comment_url actually read back
-                             through the GitHub API before this record was built?
+api_read_back_receipt       a structured receipt: the caller's own claim of what the
+                             independent API read-back actually showed for adoption_id,
+                             governing_issue, reviewed_sha, and comment_url
 reviewed_sha                 the exact commit SHA the adoption reviewed
 authorized_target_sha        the exact commit SHA the work this record authorizes
                              is based on or targets
 ```
 
+`api_read_back_receipt` is itself a closed object with exactly four keys -- `adoption_id`,
+`governing_issue`, `reviewed_sha`, `comment_url` -- the same four names as the record's own
+top-level declarations, checked field-by-field for exact agreement.
+
 The record admits (`ADOPTION_RECORD_ADMITTED`) only when every one of the following holds:
 
 ```text
 comment_url matches the immutable-comment URL pattern
-api_read_back_confirmed is exactly true
+adoption_id is non-empty and ADOPT_-shaped
+governing_issue is a well-formed #<number> reference
+api_read_back_receipt agrees, field by field, with adoption_id / governing_issue /
+    reviewed_sha / comment_url as the record itself declares them
 decision_authority == "SHUKOU"
 decision_status == "RATIFIED"
 reviewed_sha and authorized_target_sha are both real-shaped commit SHAs
@@ -113,11 +122,35 @@ reviewed_sha == authorized_target_sha
 ```
 
 Any other well-formed record is `ADOPTION_RECORD_REFUSED`, with the specific reason codes
-named in `adoption_record.py`. A record that is not even the right Python shape -- an
-unknown key, a missing key, a field of the wrong type -- raises `AdoptionRecordError`
-instead: there is no admission question to answer for something unreadable, the same
-distinction `authority.errors` and `authority.verifier_selection` already draw between an
-unreadable input and a readable-but-wrong one.
+named in `adoption_record.py` (and declared, explicitly, in its `EMITTED_REASON_CODES`
+constant). A record that is not even the right Python shape -- an unknown key, a missing
+key, a field of the wrong type, at either the record's own top level or within the receipt
+-- raises `AdoptionRecordError` instead: there is no admission question to answer for
+something unreadable, the same distinction `authority.errors` and
+`authority.verifier_selection` already draw between an unreadable input and a
+readable-but-wrong one.
+
+### 2.1 Governing context and recording location are separate (GAR-R2-F1)
+
+Structural Review Round 1 (GAR-R1-F1) required `governing_issue` to name the same Issue or
+Pull Request number that hosts `comment_url`'s own comment. Round 2 (GAR-R2-F1, Issue #53
+comment 5565703135) superseded that rule as itself incorrect: a governing Issue may
+legitimately be recorded through a comment on a *different* Issue or Pull Request -- an
+adoption governing Issue #53 may be recorded as a comment on Pull Request #56, exactly as
+this correction itself was. `governing_issue` (which unit this adoption semantically
+governs) and `comment_url` (where it happens to have been recorded) are separate contexts,
+and the module no longer conflates them.
+
+What binds the record instead is the read-back receipt: the caller's own structured claim,
+independently obtained through the GitHub API read-back, of what `adoption_id`,
+`governing_issue`, `reviewed_sha`, and `comment_url` the read comment actually showed. A
+receipt disagreeing with even one of the record's own declared fields of the same name is
+refused for exactly that field -- `API_READ_BACK_RECEIPT_ADOPTION_ID_MISMATCH`,
+`API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH`, `API_READ_BACK_RECEIPT_REVIEWED_SHA_
+MISMATCH`, or `API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH`. An absent or empty receipt
+disagrees with every non-empty declared field, so "the read-back was never actually
+confirmed" needs no separate boolean flag or reason code of its own -- it surfaces as these
+same mismatches.
 
 ## 3. What this enforcement is not
 
@@ -130,14 +163,14 @@ AUTOMATIC_IMPLEMENTATION_AUTHORIZATION=false
 NEW_CANONICAL_AUTHORITY_OWNER=false
 ```
 
-`api_read_back_confirmed` is the caller's own structured claim that the read-back already
-happened, out of band, before the record was constructed -- exactly the same independent
-API confirmation this repository's own commit and Pull Request history already performs
-before acting on every adoption it cites. This module can prove that the claim is
-*present*, *well-typed*, and *bound to a real-looking, individually addressable GitHub
-comment URL*. It cannot prove, and never claims to prove, that the remote comment
-currently exists or currently reads as claimed -- that would require the network call this
-module deliberately does not make.
+`api_read_back_receipt` is the caller's own structured claim of what the read-back already
+showed, out of band, before the record was constructed -- exactly the same independent API
+confirmation this repository's own commit and Pull Request history already performs before
+acting on every adoption it cites. This module can prove that the claim is *present*,
+*well-typed*, and *internally consistent with the record it accompanies* (§2.1). It cannot
+prove, and never claims to prove, that the remote comment currently exists or currently
+reads as claimed -- that would require the network call this module deliberately does not
+make.
 
 ```text
 LOCAL_TEST_PROVES_RECORD_ADMISSION=true
@@ -171,7 +204,7 @@ POSITIVE_TEST_PRESENT=true
 CHAT_DRAFT_REJECTED=true
 UNPOSTED_TEXT_REJECTED=true
 REVIEWED_SHA_MISMATCH_REJECTED=true
-UNVERIFIED_URL_REJECTED=true
+UNVERIFIED_READ_BACK_RECEIPT_REJECTED=true
 COMPLETE_VERIFIED_ADOPTION_ADMITTED=true
 SEMANTIC_AUTHORITY_TRANSFERRED=false
 PR_52_MODIFIED=false
@@ -181,4 +214,37 @@ NEW_KERNEL_ELEMENT=false
 NEW_AUTHORITY_OWNER=false
 GITHUB_ADAPTER_IMPLEMENTED=false
 RUNTIME_ENFORCEMENT_IMPLEMENTED=false
+```
+
+### 5.1 Structural Review Round 1 (GAR-R1) -- superseded by Round 2
+
+Issue #53 comment 5565302174 (`ADOPT_GAR_R1_BOUND_RECORD_IDENTITY_AND_PRECISE_REASON_CODE_
+SWEEP`) required `adoption_id` and `governing_issue` to be well-formed, and required
+`governing_issue` to name the same Issue/PR number as `comment_url`'s own hosting path. The
+route-drift guard's allowlist was replaced with an AST-based sweep limited to `_verdict(...)`
+arguments and `.append()` calls.
+
+```text
+GAR_R1_F1_ADOPTION_ID_GOVERNING_REFERENCE_SHAPE_CHECKS=true
+GAR_R1_F1_GOVERNING_ISSUE_BOUND_TO_COMMENT_URL_HOSTING_NUMBER=SUPERSEDED_BY_GAR_R2
+GAR_R1_F2_AST_BASED_REASON_CODE_SWEEP=SUPERSEDED_BY_GAR_R2
+```
+
+### 5.2 Structural Review Round 2 (GAR-R2)
+
+Issue #53 comment 5565703135 (`ADOPT_GAR_R2_SEPARATE_GOVERNING_AND_RECORDING_CONTEXTS`)
+found GAR-R1-F1's own binding wrong -- see §2.1 -- and replaced it with the structured
+read-back receipt. It also required the route-drift allowlist to derive only from each
+evaluator's own explicit `EMITTED_REASON_CODES` declaration, with a bidirectional static
+proof (every declared code reachable; every emitted code declared) rather than an inferred
+sweep, however precise.
+
+```text
+GAR_R2_F1_READ_BACK_RECEIPT_INTRODUCED=true
+GAR_R2_F1_GOVERNING_ISSUE_AND_COMMENT_URL_HOSTING_NUMBER_DECOUPLED=true
+GAR_R2_F1_CROSS_ISSUE_PR_RECORDING_POSITIVE_CASE_ADMITTED=true
+GAR_R2_F2_EMITTED_REASON_CODES_DECLARED_PER_EVALUATOR=true
+GAR_R2_F2_ALLOWLIST_DERIVED_FROM_DECLARED_SURFACE_ONLY=true
+GAR_R2_F2_BIDIRECTIONAL_REACHABILITY_AND_DECLARATION_PROOF=true
+NETWORK_TOKEN_SECRET_ADAPTER_ADDED=false
 ```

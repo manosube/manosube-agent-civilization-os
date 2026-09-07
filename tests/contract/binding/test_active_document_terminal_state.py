@@ -34,6 +34,7 @@ single-segment names. Inside route-bearing documents it is checked like any othe
 from __future__ import annotations
 
 import ast
+import importlib
 from pathlib import Path
 import re
 
@@ -139,7 +140,7 @@ def _codes_from_source(source: str) -> frozenset[str]:
 
 
 def _reason_codes() -> frozenset[str]:
-    """Every verdict reason code any evaluator in this package can actually emit.
+    """Every reason code any evaluator in this package has explicitly declared.
 
     Swept across every module in the package, not only ``evaluation.py`` -- a second
     evaluator sharing this owner (mirroring ``authority``'s own ``evaluate_authority`` +
@@ -148,17 +149,32 @@ def _reason_codes() -> frozenset[str]:
     docstring names: a claim ("every verdict reason code") wider than what was checked.
 
     GAR-R1-F2 (Issue #53 comment 5565302174) replaced an earlier version of this function
-    that matched *any* quoted upper-case string anywhere in the source -- which is not a
-    reason code, it is a shape that role constants (``HUMAN_AUTHORITY = "SHUKOU"``), decision
-    constants (``PERMITTED = "PERMITTED"``) and any future upper-case prose all happen to
-    share too. A wider allowlist than the reason codes actually emitted is exactly the
-    over-admission this file's own module docstring warns a route-drift guard against. See
-    :func:`_codes_from_source` for exactly what is and is not admitted.
+    that matched *any* quoted upper-case string anywhere in the source with the precise AST
+    extraction :func:`_codes_from_source` performs. GAR-R2-F2 (Issue #53 comment 5565703135)
+    replaced *that* in turn: even a precise inference over source shape is still an
+    inference, and the allowlist must derive only from an explicit declared surface. Each
+    evaluator module now names its own reachable vocabulary in a module-level
+    ``EMITTED_REASON_CODES`` constant; this function imports every module in the package and
+    unions whichever ones declare it, so a module that emits verdicts without declaring the
+    constant is a completeness gap this file cannot silently paper over.
+
+    :func:`_codes_from_source` is not dead code -- it is now the static half of the
+    bidirectional proof GAR-R2-F2 requires (every declared code is reachable; every emitted
+    code is declared), applied against each module's own ``EMITTED_REASON_CODES`` in
+    ``test_adoption_record_enforcement.py`` and
+    ``test_evaluation_reason_code_reachability.py``. It no longer builds this allowlist.
     """
 
     codes: set[str] = set()
-    for path in PACKAGE.glob("*.py"):
-        codes |= _codes_from_source(path.read_text(encoding="utf-8"))
+    for path in sorted(PACKAGE.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        module = importlib.import_module(
+            f"manosube_agent_civilization.development_binding.{path.stem}"
+        )
+        declared = getattr(module, "EMITTED_REASON_CODES", None)
+        if declared is not None:
+            codes.update(declared)
     return frozenset(codes)
 
 
@@ -452,6 +468,28 @@ def test_an_uppercase_string_outside_verdict_or_append_is_never_admitted(
     label: str, source: str
 ) -> None:
     assert "SOME_REASON_CODE" not in _codes_from_source(source), label
+
+
+def test_every_modules_declared_reason_codes_exactly_match_its_own_emittable_codes() -> None:
+    """GAR-R2-F2's bidirectional proof (Issue #53 comment 5565703135): every declared reason
+    code is reachable, and every emitted reason code is declared -- checked as one set
+    equality per module, generically, for whichever modules in the package declare
+    ``EMITTED_REASON_CODES`` at all. Not hardcoded to one module's name, for the identical
+    reason :func:`_reason_codes` is not: a second evaluator sharing this owner has its own
+    vocabulary, and this proof must catch it drifting too.
+    """
+
+    for path in sorted(PACKAGE.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        module = importlib.import_module(
+            f"manosube_agent_civilization.development_binding.{path.stem}"
+        )
+        declared = getattr(module, "EMITTED_REASON_CODES", None)
+        if declared is None:
+            continue
+        emittable = _codes_from_source(path.read_text(encoding="utf-8"))
+        assert frozenset(declared) == emittable, path.name
 
 
 def test_an_undeclared_route_token_is_still_flagged_regardless_of_sweep_precision() -> None:

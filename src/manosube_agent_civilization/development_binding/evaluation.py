@@ -33,6 +33,52 @@ from .policy import (
 PERMITTED = "PERMITTED"
 REFUSED = "REFUSED"
 
+#: Every reason code :func:`evaluate` can actually emit, declared explicitly rather than
+#: inferred from source shape (GAR-R2-F2, Issue #53 comment 5565703135). The sole source of
+#: truth the route-drift guard in ``test_active_document_terminal_state.py`` and this
+#: module's own reachability tests read from -- ``test_evaluation_reason_code_reachability.py``
+#: statically proves this set is neither wider nor narrower than what this module's own
+#: source can actually emit.
+EMITTED_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "RECORD_UNREADABLE",
+        "RECORD_FIELD_IS_NOT_A_SCALAR",
+        "UNKNOWN_RECORD_TYPE",
+        "RECORD_CARRIES_UNKNOWN_KEYS",
+        "RECORD_OMITS_REQUIRED_KEYS",
+        "UNKNOWN_ACTOR",
+        "UNKNOWN_FROM_STATE",
+        "UNKNOWN_TO_STATE",
+        "MERGE_OPERATION_DRIFT",
+        "FINAL_ACCEPTANCE_DRIFT",
+        "HUMAN_ONLY_STATE_ENTERED_BY_NON_HUMAN",
+        "MERGE_READINESS_RECOMMENDATION_DRIFT",
+        "STRUCTURAL_REVIEW_DRIFT",
+        "ADVISOR_ONLY_STATE_ENTERED_BY_NON_ADVISOR",
+        "EXECUTOR_CONTINUED_PAST_TERMINAL_STATE",
+        "STRUCTURAL_REVIEW_SKIPPED",
+        "MERGE_WITHOUT_FINAL_ACCEPTANCE",
+        "TRANSITION_NOT_DECLARED",
+        "DECLARED_TRANSITION",
+        "AUTOMATED_REVIEW_TRIGGER_PROHIBITED",
+        "ROLE_DRIFT",
+        "ACTION_WITHIN_ROLE",
+        "ACTION_NOT_GRANTED_TO_ROLE",
+        "FINDING_UNREADABLE",
+        "UNKNOWN_FINDING_SOURCE",
+        "FINDING_ASSERTS_ITS_OWN_VERIFICATION",
+        "OBSERVATION_PRESENTED_NOT_ADOPTED",
+        "UNKNOWN_DISPOSITION",
+        "BOT_FINDING_AUTO_ADOPTION",
+        "EXPLICIT_HUMAN_ADOPTION_ABSENT",
+        "ADOPTION_UNREADABLE",
+        "ADOPTION_BY_NON_HUMAN_AUTHORITY",
+        "ADOPTION_NOT_BOUND_TO_THIS_OBSERVATION",
+        "ADOPTION_NOT_BOUND_TO_THIS_DISPOSITION",
+        "HUMAN_ADOPTED_OBSERVATION",
+    }
+)
+
 #: Every record type this guard understands. A record naming any other type is refused,
 #: never waved through: an unrecognised record is precisely where an unreviewed route hides.
 RECORD_TYPES: frozenset[str] = frozenset(
@@ -118,9 +164,14 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
     reasons: list[str] = []
     if actor not in policy["roles"]:
         reasons.append("UNKNOWN_ACTOR")
-    for state, code in ((source, "UNKNOWN_FROM_STATE"), (target, "UNKNOWN_TO_STATE")):
-        if state not in policy["handoff_states"]:
-            reasons.append(code)
+    # Written as two direct checks rather than a loop over (state, code) pairs so each
+    # reason code reaches its caller as a literal argument to .append() -- the one AST shape
+    # GAR-R2-F2's declared-surface proof (EMITTED_REASON_CODES, below) can recognize without
+    # tracing a code through a loop variable.
+    if source not in policy["handoff_states"]:
+        reasons.append("UNKNOWN_FROM_STATE")
+    if target not in policy["handoff_states"]:
+        reasons.append("UNKNOWN_TO_STATE")
     if reasons:
         return _verdict(REFUSED, *reasons)
 

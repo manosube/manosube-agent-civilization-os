@@ -19,13 +19,13 @@ however complete it otherwise looks.
 **What this module is not.** It performs no network call, holds no GitHub token or
 credential, and calls no GitHub API itself -- see `03_BINDING/
 GOVERNANCE_ADOPTION_RECORD_ENFORCEMENT.md` and the adoption's own explicit boundary. The
-``api_read_back_confirmed`` field this module requires is the caller's own structured claim
-that the read-back already happened (out of band, exactly as every adoption cited in this
+``api_read_back_receipt`` field this module requires is the caller's own structured claim of
+what the read-back already showed (out of band, exactly as every adoption cited in this
 repository's own commit and PR history was independently confirmed before use) -- this
-module can prove that claim is *present, well-shaped, and bound to a real-looking GitHub
-comment URL*, never that the remote comment currently exists or currently reads as claimed.
-A local, offline test can accordingly prove admission or refusal of a *recorded* instruction;
-it cannot prove, and never claims to prove, current remote GitHub state
+module can prove that claim is *present, well-shaped, and internally consistent with the
+record it accompanies*, never that the remote comment currently exists or currently reads as
+claimed. A local, offline test can accordingly prove admission or refusal of a *recorded*
+instruction; it cannot prove, and never claims to prove, current remote GitHub state
 (`RUNTIME_ENFORCEMENT_IMPLEMENTED=false`, the same non-claim
 `CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md` section 9 already makes for the ratified policy
 this module extends).
@@ -34,19 +34,31 @@ Following this repository's own admission-grammar convention (`authority.conform
 `authority.verifier_selection`): an **unreadable** record -- the wrong Python shape, a
 missing required key, an unknown key -- raises :class:`~.errors.AdoptionRecordError`, since
 there is no admission question to answer. A **readable-but-insufficient** record -- a
-present-but-empty URL, an unverified read-back, a reviewed SHA that does not match the work
-unit it claims to authorize -- is never an exception; it is the decision ``ADOPTION_RECORD_
-REFUSED``, with the specific reason codes this module can name.
+present-but-empty URL, a read-back receipt that does not match what the record itself
+declares, a reviewed SHA that does not match the work unit it claims to authorize -- is never
+an exception; it is the decision ``ADOPTION_RECORD_REFUSED``, with the specific reason codes
+this module can name.
 
-Structural Review Round 1 (GAR-R1-F1, Issue #53 comment 5565302174) adopted a further
-binding: a syntactically valid comment URL must not be relabeled as authority for a
-*different* adoption or governing work unit. This module cannot compare a caller's declared
-``adoption_id`` against the comment's own body without the network call it deliberately
-never makes, but it *can* prove -- offline, from the URL's own text -- that the declared
-``governing_issue`` names the same Issue or Pull Request the comment URL itself points at.
-A record naming ``governing_issue="#54"`` while citing a comment URL under
-``/issues/53/...`` is refused for exactly that mismatch, whatever else about the record is
-correct.
+Structural Review Round 1 (GAR-R1-F1, Issue #53 comment 5565302174) adopted, and Round 2
+(GAR-R2-F1, Issue #53 comment 5565703135) *superseded*, a binding between ``governing_issue``
+and the Issue/Pull Request number embedded in ``comment_url``'s own path. Round 1's rule --
+that the two numbers must be identical -- was itself wrong: a governing Issue may legitimately
+be recorded through a comment on a *different* Issue or Pull Request (this very correction
+was recorded as a comment on Issue #53 while governing PR #56's own implementation; an
+adoption governing Issue #53 could equally be recorded as a comment on PR #56). ``governing_
+issue`` (which unit this adoption semantically governs) and ``comment_url`` (where it happens
+to have been recorded) are separate contexts, and this module no longer conflates them.
+
+What Round 2 introduces instead is a structured **read-back receipt**
+(``api_read_back_receipt``): the caller's own claim of what ``adoption_id``, ``governing_
+issue``, ``reviewed_sha``, and ``comment_url`` the independent API read-back actually showed,
+checked field-by-field for exact agreement with the record's own top-level declared values of
+the same names. A receipt that disagrees with even one declared field -- including an absent
+or empty receipt, which disagrees with every non-empty field it was compared against --
+proves the record and its own supporting evidence are not describing the same thing, and is
+refused for exactly the field(s) that disagree. This is the one binding this module can prove
+offline: not that the comment *hosting* the record and the Issue it *governs* share a number,
+but that what the record says and what its own cited read-back showed are the same claim.
 """
 
 from __future__ import annotations
@@ -81,32 +93,34 @@ REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
     "comment_url",
     "decision_authority",
     "decision_status",
-    "api_read_back_confirmed",
+    "api_read_back_receipt",
     "reviewed_sha",
     "authorized_target_sha",
+)
+
+#: The read-back receipt's own closed shape (GAR-R2-F1) -- the same four field names as the
+#: record's own top-level declarations they are checked against, so the binding below is a
+#: plain, named field-by-field comparison rather than a derived or parsed relationship.
+RECEIPT_KEYS: frozenset[str] = frozenset(
+    {"adoption_id", "governing_issue", "reviewed_sha", "comment_url"}
 )
 
 #: A GitHub Issue or Pull Request comment URL, anchored to its own ``#issuecomment-<id>``
 #: fragment -- the one part of a GitHub URL that names an individual, immutable comment
 #: rather than a whole, editable, ever-changing Issue or PR body. A URL without this
-#: fragment might be real, but it names a moving target, not a recorded decision. The
-#: ``number`` group is the Issue/PR number the URL itself names -- the one piece of the
-#: comment's own context this module can bind ``governing_issue`` against without a
-#: network call (GAR-R1-F1).
+#: fragment might be real, but it names a moving target, not a recorded decision.
 _COMMENT_URL_PATTERN = re.compile(
-    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
-    r"/(?:issues|pull)/(?P<number>[0-9]+)#issuecomment-[0-9]+$"
+    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[0-9]+#issuecomment-[0-9]+$"
 )
 
 #: A Governance Adoption identifier: non-empty, and shaped like every adoption this
 #: repository has actually recorded (``ADOPT_...``). This module cannot verify offline that
-#: the string names the *correct* adoption -- that is exactly what the comment body itself,
-#: independently re-read, is for -- but an empty or non-``ADOPT_``-shaped identifier is
-#: never that, whatever else about the record is correct.
+#: the string names the *correct* adoption -- that is exactly what the read-back receipt
+#: below is for -- but an empty or non-``ADOPT_``-shaped identifier is never that, whatever
+#: else about the record is correct.
 _ADOPTION_ID_PATTERN = re.compile(r"^ADOPT_[A-Z0-9_]+$")
 
-#: A governing Issue or Pull Request reference, e.g. ``#53``. Bound against the comment
-#: URL's own ``number`` group below -- see the module docstring.
+#: A governing Issue or Pull Request reference, e.g. ``#53``.
 _GOVERNING_REFERENCE_PATTERN = re.compile(r"^#[0-9]+$")
 
 
@@ -130,14 +144,6 @@ def _require_string(value: Any, context: str) -> str:
     return value
 
 
-def _require_bool(value: Any, context: str) -> bool:
-    # bool is a subclass of int; isinstance(1, bool) is False but isinstance(True, int) is
-    # True, so this order matters and this check is deliberately exact, not truthy.
-    if not isinstance(value, bool):
-        raise AdoptionRecordError(f"{context} is not a boolean: {type(value).__name__}")
-    return value
-
-
 def _require_request_shape(record: Any) -> dict[str, Any]:
     shaped = _require_object(record, "adoption record")
     unknown = set(shaped) - set(REQUIRED_REQUEST_KEYS)
@@ -149,6 +155,17 @@ def _require_request_shape(record: Any) -> dict[str, Any]:
     version = _require_string(shaped["schema_version"], "adoption record schema_version")
     if version != SCHEMA_VERSION:
         raise AdoptionRecordError(f"unsupported adoption record schema_version: {version!r}")
+    return shaped
+
+
+def _require_receipt_shape(value: Any, context: str) -> dict[str, Any]:
+    shaped = _require_object(value, context)
+    unknown = set(shaped) - RECEIPT_KEYS
+    if unknown:
+        raise AdoptionRecordError(f"{context} carries unknown keys: {sorted(unknown)}")
+    missing = RECEIPT_KEYS - set(shaped)
+    if missing:
+        raise AdoptionRecordError(f"{context} omits required keys: {sorted(missing)}")
     return shaped
 
 
@@ -169,8 +186,20 @@ def evaluate_adoption_record(record: dict[str, Any]) -> dict[str, Any]:
         shaped["decision_authority"], "adoption record decision_authority"
     )
     decision_status = _require_string(shaped["decision_status"], "adoption record decision_status")
-    api_read_back_confirmed = _require_bool(
-        shaped["api_read_back_confirmed"], "adoption record api_read_back_confirmed"
+    receipt = _require_receipt_shape(
+        shaped["api_read_back_receipt"], "adoption record api_read_back_receipt"
+    )
+    receipt_adoption_id = _require_string(
+        receipt["adoption_id"], "adoption record api_read_back_receipt adoption_id"
+    )
+    receipt_governing_issue = _require_string(
+        receipt["governing_issue"], "adoption record api_read_back_receipt governing_issue"
+    )
+    receipt_reviewed_sha = _require_string(
+        receipt["reviewed_sha"], "adoption record api_read_back_receipt reviewed_sha"
+    )
+    receipt_comment_url = _require_string(
+        receipt["comment_url"], "adoption record api_read_back_receipt comment_url"
     )
     reviewed_sha = _require_string(shaped["reviewed_sha"], "adoption record reviewed_sha")
     authorized_target_sha = _require_string(
@@ -180,36 +209,31 @@ def evaluate_adoption_record(record: dict[str, Any]) -> dict[str, Any]:
     reasons: list[str] = []
 
     # Distinguishes a chat draft or an unposted paragraph (no real comment exists at all)
-    # from a real, individually addressable GitHub comment. Checked before every other
-    # comment_url-dependent reason so a malformed URL is reported once, not compounded.
-    url_match = _COMMENT_URL_PATTERN.match(comment_url)
-    if not url_match:
+    # from a real, individually addressable GitHub comment.
+    if not _COMMENT_URL_PATTERN.match(comment_url):
         reasons.append("COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT")
-
-    # The caller's own structured claim that the URL above was actually read back through
-    # the GitHub API before this record was constructed -- see the module docstring for
-    # exactly what this module can and cannot prove about that claim.
-    if not api_read_back_confirmed:
-        reasons.append("API_READ_BACK_NOT_CONFIRMED")
 
     if not _ADOPTION_ID_PATTERN.match(adoption_id):
         reasons.append("ADOPTION_ID_MALFORMED")
 
-    governing_reference_well_formed = bool(_GOVERNING_REFERENCE_PATTERN.match(governing_issue))
-    if not governing_reference_well_formed:
+    if not _GOVERNING_REFERENCE_PATTERN.match(governing_issue):
         reasons.append("GOVERNING_REFERENCE_MALFORMED")
 
-    # The one binding this module can prove offline (GAR-R1-F1): a syntactically valid,
-    # individually addressable comment URL must not be relabeled as authority for a
-    # *different* Issue or Pull Request than the one it actually points at. Checked only
-    # once both halves are themselves well-formed, so a malformed URL or reference is
-    # reported once by the two checks above rather than compounded into a third.
-    if (
-        url_match
-        and governing_reference_well_formed
-        and governing_issue[1:] != url_match.group("number")
-    ):
-        reasons.append("GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT")
+    # GAR-R2-F1: the read-back receipt is the caller's own structured claim of what the
+    # independent API read-back actually showed. Bound field-by-field against the record's
+    # own declared fields of the same name -- never against comment_url's own hosting
+    # Issue/PR number (GAR-R1's superseded approach; a governing Issue may legitimately be
+    # recorded through a comment on a different Issue or Pull Request). An absent or empty
+    # receipt disagrees with every non-empty declared field, so "not actually confirmed"
+    # needs no separate boolean or reason code -- it surfaces as these same mismatches.
+    if receipt_adoption_id != adoption_id:
+        reasons.append("API_READ_BACK_RECEIPT_ADOPTION_ID_MISMATCH")
+    if receipt_governing_issue != governing_issue:
+        reasons.append("API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH")
+    if receipt_reviewed_sha != reviewed_sha:
+        reasons.append("API_READ_BACK_RECEIPT_REVIEWED_SHA_MISMATCH")
+    if receipt_comment_url != comment_url:
+        reasons.append("API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH")
 
     if decision_authority != HUMAN_AUTHORITY:
         reasons.append("DECISION_AUTHORITY_NOT_HUMAN")
@@ -237,3 +261,27 @@ def evaluate_adoption_record(record: dict[str, Any]) -> dict[str, Any]:
         "decision": decision,
         "decision_reason_codes": sorted(set(reasons)),
     }
+
+
+#: Every reason code :func:`evaluate_adoption_record` can actually emit, declared explicitly
+#: rather than inferred from source shape (GAR-R2-F2, Issue #53 comment 5565703135). The sole
+#: source of truth the route-drift guard in ``test_active_document_terminal_state.py`` and
+#: this module's own reachability tests read from -- ``test_adoption_record_enforcement.py``
+#: statically proves this set is neither wider nor narrower than what this module's own
+#: source can actually emit.
+EMITTED_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT",
+        "ADOPTION_ID_MALFORMED",
+        "GOVERNING_REFERENCE_MALFORMED",
+        "API_READ_BACK_RECEIPT_ADOPTION_ID_MISMATCH",
+        "API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH",
+        "API_READ_BACK_RECEIPT_REVIEWED_SHA_MISMATCH",
+        "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
+        "DECISION_AUTHORITY_NOT_HUMAN",
+        "DECISION_STATUS_NOT_RATIFIED",
+        "REVIEWED_SHA_NOT_A_COMMIT_SHA",
+        "AUTHORIZED_TARGET_SHA_NOT_A_COMMIT_SHA",
+        "REVIEWED_SHA_DOES_NOT_MATCH_AUTHORIZED_TARGET",
+    }
+)
