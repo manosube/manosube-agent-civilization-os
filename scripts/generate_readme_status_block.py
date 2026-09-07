@@ -19,8 +19,12 @@ import argparse
 from pathlib import Path
 
 try:
+    from scripts.bounded_generated_block import apply_bounded_block
     from scripts.validate_source_freshness import extract_fields
 except ImportError:  # running as `python scripts/generate_readme_status_block.py` directly
+    from bounded_generated_block import (  # type: ignore[import-not-found,no-redef]
+        apply_bounded_block,
+    )
     from validate_source_freshness import extract_fields  # type: ignore[import-not-found,no-redef]
 
 BEGIN_MARKER = "<!-- SOURCE_STATUS:GENERATED:BEGIN -->"
@@ -69,18 +73,12 @@ def render_block(recorded: dict[str, str]) -> str:
 
 
 def apply(readme_text: str, block: str) -> str:
-    begin_count = readme_text.count(BEGIN_MARKER)
-    end_count = readme_text.count(END_MARKER)
-    if begin_count != 1 or end_count != 1:
-        raise SystemExit(
-            f"README must contain exactly one {BEGIN_MARKER!r} and one {END_MARKER!r} "
-            f"marker; found {begin_count} and {end_count}"
-        )
-    begin_index = readme_text.index(BEGIN_MARKER)
-    end_index = readme_text.index(END_MARKER) + len(END_MARKER)
-    if end_index <= begin_index:
-        raise SystemExit("the END marker must appear after the BEGIN marker")
-    return readme_text[:begin_index] + block + readme_text[end_index:]
+    """Delegates to :func:`scripts.bounded_generated_block.apply_bounded_block` (Issue #57)
+    -- this function's own name and signature are kept for every existing caller, but the
+    replacement algorithm itself now has exactly one implementation, shared with
+    ``merge_source_reflow.py``'s ``HANDOFF.md`` writer."""
+
+    return apply_bounded_block(readme_text, block, BEGIN_MARKER, END_MARKER)
 
 
 def main(argv: list[str] | None = None) -> int:

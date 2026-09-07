@@ -506,10 +506,15 @@ def test_render_block_stays_within_its_own_markers() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_workflow_file_exists_and_is_the_only_one_in_the_repository() -> None:
+def test_the_workflow_file_exists_and_is_the_only_source_freshness_workflow() -> None:
+    """Issue #57 legitimately adds two further workflows
+    (``merge_source_pre_merge_gate.yml``, ``merge_source_post_merge_reflow.yml``) --
+    this Issue #54 workflow is no longer the *only* workflow in the repository, only the
+    only one still concerned with source-freshness drift detection itself."""
+
     workflows_dir = WORKFLOW_PATH.parent
     assert workflows_dir.is_dir()
-    assert [p.name for p in sorted(workflows_dir.glob("*.yml"))] == [WORKFLOW_PATH.name]
+    assert WORKFLOW_PATH.name in {p.name for p in workflows_dir.glob("*.yml")}
 
 
 def test_the_workflow_declares_read_only_permissions_and_nothing_else() -> None:
