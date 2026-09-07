@@ -11,8 +11,8 @@ SOURCE_AUTHORITY_CLASS=OBSERVED_AS_BUILT_PLUS_HUMAN_RATIFIED_TARGET
 HUMAN_AUTHORITY=SHUKOU
 REPOSITORY=manosube/manosube-agent-civilization-os
 DEFAULT_BRANCH=main
-OBSERVED_AT_UTC=2026-09-07T01:01:40Z
-AS_BUILT_REF=36b06d88cf779d9f04b79e41022b42d1f3d47510
+OBSERVED_AT_UTC=2026-09-07T10:42:45Z
+AS_BUILT_REF=1d41f7d1e79441249382be07e8d8dbed618331c8
 IN_FLIGHT_REF=46975506299ada4cc5708b559d7de734cb05236f
 AS_BUILT_TREE_COMPLETE=true
 TARGET_TREE_IS_NOT_IMPLEMENTATION_EVIDENCE=true
@@ -60,11 +60,11 @@ EQUIVALENT_PLACEMENT
 |---|---|
 | Repository | [`manosube/manosube-agent-civilization-os`](https://github.com/manosube/manosube-agent-civilization-os) |
 | Default branch | `main` |
-| Observed commit | [`36b06d88cf779d9f04b79e41022b42d1f3d47510`](https://github.com/manosube/manosube-agent-civilization-os/commit/36b06d88cf779d9f04b79e41022b42d1f3d47510) |
+| Observed commit | [`1d41f7d1e79441249382be07e8d8dbed618331c8`](https://github.com/manosube/manosube-agent-civilization-os/commit/1d41f7d1e79441249382be07e8d8dbed618331c8) |
 | Tree traversal | Recursive and untruncated |
-| Tree entries | 516 |
-| Blob entries | 416 |
-| Directory entries | 100 |
+| Tree entries | 547 |
+| Blob entries | 443 |
+| Directory entries | 104 |
 
 ```text
 AS_BUILT_MEANS=EXISTS_ON_ACCEPTED_MAIN_REF
@@ -670,11 +670,11 @@ Human decision when target architecture changes
 # 19. Architecture receipt
 
 ```text
-OBSERVED_AT_UTC=2026-09-07T01:01:40Z
-AS_BUILT_REF=36b06d88cf779d9f04b79e41022b42d1f3d47510
-AS_BUILT_TREE_ENTRY_COUNT=516
-AS_BUILT_BLOB_COUNT=416
-AS_BUILT_DIRECTORY_COUNT=100
+OBSERVED_AT_UTC=2026-09-07T10:42:45Z
+AS_BUILT_REF=1d41f7d1e79441249382be07e8d8dbed618331c8
+AS_BUILT_TREE_ENTRY_COUNT=547
+AS_BUILT_BLOB_COUNT=443
+AS_BUILT_DIRECTORY_COUNT=104
 AS_BUILT_TREE_TRUNCATED=false
 
 IN_FLIGHT_REF=46975506299ada4cc5708b559d7de734cb05236f

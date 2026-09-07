@@ -11,6 +11,12 @@ This is supporting governance automation, not a Kernel element -- see
 ``docs/project_sources/00_SOURCE_AUTHORITY_INDEX.md`` and the adoption's own
 ``SUPPORTING_GOVERNANCE_WORK_ONLY=true``. Nothing here evaluates Authority, Evidence,
 Difference, or Reflow.
+
+Also proves MSR-R3 (``ADOPT_MSR_R3_COMPLETE_PROJECTION_REFRESH``, Issue #57): every
+duplicate copy of the same as-built ref/timestamp/tree-fact -- a document's own header
+block, prose table, and closing receipt -- agrees with every other copy, and the two
+source documents agree with each other on the one accepted `main` ref they each name
+under their own field.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
@@ -31,9 +38,11 @@ ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = ROOT / "docs" / "project_sources"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "source_freshness_drift_detection.yml"
 
-#: The base SHA both the actual PR #55 branch and its own source documents were built
-#: against -- the exact scenario SFD-R1-F1's own required proof #2 names.
-_REAL_MAIN_SHA = "36b06d88cf779d9f04b79e41022b42d1f3d47510"
+#: The value `MAIN_ACCEPTED_BASE_SHA`/`AS_BUILT_REF` actually record on disk right now --
+#: the exact scenario SFD-R1-F1's own required proof #2 names. Synced to PR #58's own
+#: merge commit by `ADOPT_MSR_SOURCE_AUTHORITY_SYNC_AFTER_PR58` (Issue #57); update this
+#: constant, not the real documents, whenever a future authorized sync changes them again.
+_REAL_MAIN_SHA = "1d41f7d1e79441249382be07e8d8dbed618331c8"
 #: A later, hypothetical main SHA -- stands in for "some subsequent merge" in the SFD-R1
 #: required proofs; deliberately a different, equally SHA-shaped value.
 _LATER_MAIN_SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
@@ -429,7 +438,7 @@ def test_cli_writes_to_stdout_when_no_output_path_is_given(
         ["--main-sha", _REAL_MAIN_SHA, "--predecessor-main-sha", _REAL_MAIN_SHA]
     )
     assert exit_code == 0
-    assert '"main_sha": "36b06d88' in capsys.readouterr().out
+    assert f'"main_sha": "{_REAL_MAIN_SHA[:8]}' in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- #
@@ -569,3 +578,97 @@ def test_the_workflow_computes_a_predecessor_distinct_from_main_sha_for_both_tri
     assert "github.event.before" in text
     assert "git rev-parse HEAD^" in text
     assert "--predecessor-main-sha" in text
+
+
+# --------------------------------------------------------------------------- #
+# MSR-R3 (ADOPT_MSR_R3_COMPLETE_PROJECTION_REFRESH, Issue #57): every copy of the
+# same as-built ref/timestamp/tree-fact -- across a document's own header, prose
+# table, and closing receipt -- must agree with every other copy. A refresh that
+# updates one copy and misses a sibling produces exactly the kind of internally
+# self-contradictory document this suite proves can never survive.
+# --------------------------------------------------------------------------- #
+
+_SHA_PATTERN = r"[0-9a-f]{40}"
+_TIMESTAMP_PATTERN = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
+
+
+def _repository_architecture_text() -> str:
+    return (DOCS_DIR / "04_REPOSITORY_ARCHITECTURE.md").read_text(encoding="utf-8")
+
+
+def _current_development_state_text() -> str:
+    return (DOCS_DIR / "03_CURRENT_DEVELOPMENT_STATE.md").read_text(encoding="utf-8")
+
+
+def test_repository_architecture_as_built_ref_agrees_across_header_table_and_receipt() -> None:
+    text = _repository_architecture_text()
+    fenced_refs = re.findall(rf"AS_BUILT_REF=({_SHA_PATTERN})", text)
+    table_ref = re.search(rf"\| Observed commit \| \[`({_SHA_PATTERN})`\]", text)
+    assert len(fenced_refs) == 2, "expected exactly the header block and the §19 receipt block"
+    assert table_ref is not None, "§1.1 table's Observed commit row is missing"
+    assert len({*fenced_refs, table_ref.group(1)}) == 1, (fenced_refs, table_ref.group(1))
+
+
+def test_repository_architecture_observed_at_utc_agrees_across_header_and_receipt() -> None:
+    text = _repository_architecture_text()
+    timestamps = re.findall(rf"OBSERVED_AT_UTC=({_TIMESTAMP_PATTERN})", text)
+    assert len(timestamps) == 2, "expected exactly the header block and the §19 receipt block"
+    assert len(set(timestamps)) == 1, timestamps
+
+
+def test_repository_architecture_tree_counts_agree_between_1_1_table_and_19_receipt() -> None:
+    text = _repository_architecture_text()
+    table_entries = re.search(r"\| Tree entries \| (\d+) \|", text)
+    table_blobs = re.search(r"\| Blob entries \| (\d+) \|", text)
+    table_dirs = re.search(r"\| Directory entries \| (\d+) \|", text)
+    receipt_entries = re.search(r"AS_BUILT_TREE_ENTRY_COUNT=(\d+)", text)
+    receipt_blobs = re.search(r"AS_BUILT_BLOB_COUNT=(\d+)", text)
+    receipt_dirs = re.search(r"AS_BUILT_DIRECTORY_COUNT=(\d+)", text)
+    for table_match, receipt_match in (
+        (table_entries, receipt_entries),
+        (table_blobs, receipt_blobs),
+        (table_dirs, receipt_dirs),
+    ):
+        assert table_match is not None and receipt_match is not None
+        assert table_match.group(1) == receipt_match.group(1)
+
+
+def test_repository_architecture_tree_counts_are_internally_consistent() -> None:
+    """entries = blobs + directories -- the same identity the reflow's own
+    ``merge_source_reflow.py`` computation and this suite's `git ls-tree` reproduction
+    both hold; a refresh that updates one count and not its siblings would break it."""
+
+    text = _repository_architecture_text()
+    entries = int(re.search(r"AS_BUILT_TREE_ENTRY_COUNT=(\d+)", text).group(1))  # type: ignore[union-attr]
+    blobs = int(re.search(r"AS_BUILT_BLOB_COUNT=(\d+)", text).group(1))  # type: ignore[union-attr]
+    dirs = int(re.search(r"AS_BUILT_DIRECTORY_COUNT=(\d+)", text).group(1))  # type: ignore[union-attr]
+    assert entries == blobs + dirs, (entries, blobs, dirs)
+
+
+def test_current_development_state_observed_at_utc_agrees_across_header_and_receipt() -> None:
+    text = _current_development_state_text()
+    timestamps = re.findall(rf"OBSERVED_AT_UTC=({_TIMESTAMP_PATTERN})", text)
+    assert len(timestamps) == 2, "expected exactly the header block and the §14 receipt block"
+    assert len(set(timestamps)) == 1, timestamps
+
+
+def test_current_development_state_main_accepted_base_sha_agrees_across_all_copies() -> None:
+    text = _current_development_state_text()
+    fenced_shas = re.findall(rf"MAIN_ACCEPTED_BASE_SHA=({_SHA_PATTERN})", text)
+    table_sha = re.search(rf"\| Current accepted base \| `({_SHA_PATTERN})` \|", text)
+    assert len(fenced_shas) == 2, "expected exactly the §3 fenced block and the §14 receipt block"
+    assert table_sha is not None, "§3 table's Current accepted base row is missing"
+    assert len({*fenced_shas, table_sha.group(1)}) == 1, (fenced_shas, table_sha.group(1))
+
+
+def test_current_development_state_and_repository_architecture_agree_on_accepted_ref() -> None:
+    """The two documents' own separate as-built facts -- ``MAIN_ACCEPTED_BASE_SHA`` and
+    ``AS_BUILT_REF`` -- describe the identical accepted `main` commit and must never
+    diverge, even though each document owns its own field name."""
+
+    current_state = re.search(
+        rf"MAIN_ACCEPTED_BASE_SHA=({_SHA_PATTERN})", _current_development_state_text()
+    )
+    architecture = re.search(rf"AS_BUILT_REF=({_SHA_PATTERN})", _repository_architecture_text())
+    assert current_state is not None and architecture is not None
+    assert current_state.group(1) == architecture.group(1)
