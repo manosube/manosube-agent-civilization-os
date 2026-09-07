@@ -11,7 +11,7 @@ SOURCE_AUTHORITY_CLASS=DATED_REPOSITORY_PROJECTION
 HUMAN_AUTHORITY=SHUKOU
 REPOSITORY=manosube/manosube-agent-civilization-os
 DEFAULT_BRANCH=main
-OBSERVED_AT_UTC=2026-09-07T00:55:27Z
+OBSERVED_AT_UTC=2026-09-07T10:42:45Z
 COMPLETED_THROUGH_PHASE=12
 CURRENT_PHASE=13_INDEPENDENT_VERIFICATION
 CURRENT_PHASE_STATE=ROUND_2_ADOPTED_AWAITING_IMPLEMENTATION
@@ -414,6 +414,14 @@ README_MAY_OVERRIDE_THIS_FILE=false
 
 READMEの更新要否は現在Phase 13のscopeを拡張して決めてはならない。独立したbounded changeまたは次の適切なdocumentation work unitとして扱う。
 
+`ADOPT_MSR_FULL_SOURCE_SNAPSHOT_REFRESH_FOR_PR58`（Issue #57）が`OBSERVED_AT_UTC`を更新した際、独立GitHub API再観測によりPR #52のheadが本書のセクション5-9が投影する`46975506…`（Round 2 adopted, awaiting implementation）を超えて進行していることが判明した。PR #52の現在のheadは、Round 3レビュー・採択・実装、および自己発見のcorrectionまでを含む。この事実の完全な再投影は、Issue #57のこのbounded refresh（as-built tree snapshotのみを対象とする）のscope外であり、`KERNEL_OR_PHASE_SEMANTICS_CHANGE`（本refreshで明示的にPROHIBITED）に該当しうるため、意図的に本書へ反映していない。
+
+```text
+PR_52_SECTIONS_5_TO_9_MAY_BE_STALE_AS_OF_THIS_OBSERVED_AT_UTC=true
+PR_52_STALENESS_CORRECTION_IS_OUT_OF_SCOPE_FOR_THIS_REFRESH=true
+PR_52_STALENESS_CORRECTION_REQUIRES_ITS_OWN_BOUNDED_ADOPTION=true
+```
+
 ---
 
 # 12. Information-source reconstruction state
@@ -464,7 +472,7 @@ STALE_SHA_MUST_NOT_DIRECT_IMPLEMENTATION=true
 # 14. Current state receipt
 
 ```text
-OBSERVED_AT_UTC=2026-09-07T00:55:27Z
+OBSERVED_AT_UTC=2026-09-07T10:42:45Z
 DEFAULT_BRANCH=main
 MAIN_ACCEPTED_BASE_SHA=1d41f7d1e79441249382be07e8d8dbed618331c8
 
