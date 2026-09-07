@@ -31,9 +31,11 @@ ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = ROOT / "docs" / "project_sources"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "source_freshness_drift_detection.yml"
 
-#: The base SHA both the actual PR #55 branch and its own source documents were built
-#: against -- the exact scenario SFD-R1-F1's own required proof #2 names.
-_REAL_MAIN_SHA = "36b06d88cf779d9f04b79e41022b42d1f3d47510"
+#: The value `MAIN_ACCEPTED_BASE_SHA`/`AS_BUILT_REF` actually record on disk right now --
+#: the exact scenario SFD-R1-F1's own required proof #2 names. Synced to PR #58's own
+#: merge commit by `ADOPT_MSR_SOURCE_AUTHORITY_SYNC_AFTER_PR58` (Issue #57); update this
+#: constant, not the real documents, whenever a future authorized sync changes them again.
+_REAL_MAIN_SHA = "1d41f7d1e79441249382be07e8d8dbed618331c8"
 #: A later, hypothetical main SHA -- stands in for "some subsequent merge" in the SFD-R1
 #: required proofs; deliberately a different, equally SHA-shaped value.
 _LATER_MAIN_SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
@@ -429,7 +431,7 @@ def test_cli_writes_to_stdout_when_no_output_path_is_given(
         ["--main-sha", _REAL_MAIN_SHA, "--predecessor-main-sha", _REAL_MAIN_SHA]
     )
     assert exit_code == 0
-    assert '"main_sha": "36b06d88' in capsys.readouterr().out
+    assert f'"main_sha": "{_REAL_MAIN_SHA[:8]}' in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- #
