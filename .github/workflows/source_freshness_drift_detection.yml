@@ -1,0 +1,58 @@
+name: Source freshness drift detection
+
+# Issue #54, adoption ADOPT_SOURCE_FRESHNESS_DRIFT_DETECTION_ONLY.
+#
+# First automation is detection-and-report only: this workflow never writes to the
+# repository, never opens or updates a Pull Request, and never pushes to `main`. It
+# observes exactly one fact (the pushed commit SHA) and compares it, read-only, against
+# the mutable-projection fields recorded in docs/project_sources/. A mismatch fails this
+# job -- a visible signal on the commit, since the push has already happened and nothing
+# here can block it -- but changes nothing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: source-freshness-drift-detection
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  detect-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Collect observed facts (read-only)
+        run: |
+          python scripts/collect_repository_snapshot.py \
+            --main-sha "${{ github.sha }}" \
+            --output snapshot.json
+
+      - name: Validate source freshness (read-only)
+        id: validate
+        run: |
+          python scripts/validate_source_freshness.py \
+            --docs-dir docs/project_sources \
+            --observed-snapshot snapshot.json \
+            --fail-on-drift \
+            --output drift_report.json
+
+      - name: Publish drift report to job summary
+        if: always()
+        run: |
+          {
+            echo "## Source freshness drift report"
+            echo
+            echo '```json'
+            cat drift_report.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
