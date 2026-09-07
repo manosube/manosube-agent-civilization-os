@@ -1,0 +1,83 @@
+name: Source freshness drift detection
+
+# Issue #54, adoption ADOPT_SOURCE_FRESHNESS_DRIFT_DETECTION_ONLY, hardened by
+# Structural Review Round 1 (ADOPT_SFD_R1_PREDECESSOR_MAIN_BASELINE_AND_EXECUTION_HARDENING,
+# Issue #54 comment 5564639335).
+#
+# First automation is detection-and-report only: this workflow never writes to the
+# repository, never opens or updates a Pull Request, and never pushes to `main`. It
+# resolves the real `main` ref explicitly -- SFD-R1-F2 -- regardless of what triggered the
+# run, so a workflow_dispatch against an arbitrary branch or tag can never have its own SHA
+# reported as `main_sha`. It compares the source projections against the immediately
+# preceding accepted `main` state -- SFD-R1-F1 -- never against the commit that happens to
+# be running this check, and reports that predecessor read-only, never opens or updates a
+# Pull Request, and never pushes to `main`. A mismatch fails this job -- a visible signal
+# on the commit, since the push has already happened and nothing here can block it -- but
+# changes nothing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: source-freshness-drift-detection
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  detect-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve main and its predecessor (read-only)
+        id: resolve
+        run: |
+          MAIN_SHA=$(git rev-parse HEAD)
+          BEFORE_SHA="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" = "push" ] && \
+             [ -n "$BEFORE_SHA" ] && \
+             [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            PREDECESSOR_SHA="$BEFORE_SHA"
+          else
+            PREDECESSOR_SHA=$(git rev-parse HEAD^)
+          fi
+          echo "main_sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
+          echo "predecessor_sha=$PREDECESSOR_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Collect observed facts (read-only)
+        run: |
+          python scripts/collect_repository_snapshot.py \
+            --main-sha "${{ steps.resolve.outputs.main_sha }}" \
+            --predecessor-main-sha "${{ steps.resolve.outputs.predecessor_sha }}" \
+            --output snapshot.json
+
+      - name: Validate source freshness (read-only)
+        id: validate
+        run: |
+          python scripts/validate_source_freshness.py \
+            --docs-dir docs/project_sources \
+            --observed-snapshot snapshot.json \
+            --fail-on-drift \
+            --output drift_report.json
+
+      - name: Publish drift report to job summary
+        if: always()
+        run: |
+          {
+            echo "## Source freshness drift report"
+            echo
+            echo '```json'
+            cat drift_report.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
