@@ -1,0 +1,59 @@
+name: Merge source pre-merge gate
+
+# Issue #57, ADOPT_MERGE_SOURCE_REFLOW_MACHINE_OWNED_CONVERGENCE (Issue #57 comment
+# 5566512915), 03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md sections 1-2 and 10.
+#
+# The pre-merge stage of Merge Source Reflow. Classifies this Pull Request's changed
+# paths against the ownership table and fails the check when a kernel_surface change has
+# no paired docs/project_sources/*.md update -- OS_CHANGE_DETECTED AND
+# REQUIRED_SOURCE_UPDATE_MISSING = MERGE_BLOCKED -- never inferred from a green or
+# mergeable PR alone. This workflow makes no write of its own: it never merges, approves,
+# or comments on the Pull Request itself -- the required-status-check GitHub builds on
+# this job's own exit code is what actually blocks a merge (contract section 10).
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: merge-source-pre-merge-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  source-impact-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compute changed paths against the Pull Request base (read-only)
+        id: changed
+        run: |
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > changed_paths.txt
+          cat changed_paths.txt
+
+      - name: Classify changed paths and enforce the source-impact gate
+        run: |
+          python scripts/source_impact_gate.py \
+            --changed-paths-file changed_paths.txt \
+            --output source_impact_manifest.json
+
+      - name: Publish the source-impact manifest to the job summary
+        if: always()
+        run: |
+          {
+            echo "## Source-impact manifest"
+            echo
+            echo '```json'
+            cat source_impact_manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

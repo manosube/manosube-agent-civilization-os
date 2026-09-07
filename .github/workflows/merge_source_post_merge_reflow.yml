@@ -1,0 +1,95 @@
+name: Merge source post-merge reflow
+
+# Issue #57, ADOPT_MERGE_SOURCE_REFLOW_MACHINE_OWNED_CONVERGENCE (Issue #57 comment
+# 5566512915), 03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md sections 3-9 and 11.
+#
+# The post-merge stage of Merge Source Reflow. Regenerates exactly the closed set of
+# machine-owned surfaces scripts/merge_source_reflow.py names (HANDOFF.md's generated
+# block, SHA256SUMS, README.md's generated block, and the generated repository facts
+# under docs/project_sources/generated/) from the exact resulting main SHA, then commits
+# and pushes only the paths the reflow itself reports as written -- never `git add -A`,
+# never a commit when nothing changed (contract section 11). This is a narrow, declared
+# exception to "no direct push to main," not general direct-push authority: no other job
+# or trigger in this repository can push anything, and this workflow's own reflow commit
+# re-triggers this same workflow on push -- the idempotence proof in contract section 7
+# is what makes that second run a true no-op rather than an infinite loop.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: merge-source-post-merge-reflow
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  post-merge-reflow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve the exact resulting main SHA (read-only)
+        id: resolve
+        run: |
+          MAIN_SHA=$(git rev-parse HEAD)
+          OBSERVED_AT_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "main_sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
+          echo "observed_at_utc=$OBSERVED_AT_UTC" >> "$GITHUB_OUTPUT"
+
+      - name: Compute and apply the bounded generated-only reflow
+        run: |
+          python scripts/merge_source_reflow.py \
+            --root . \
+            --main-sha "${{ steps.resolve.outputs.main_sha }}" \
+            --observed-at-utc "${{ steps.resolve.outputs.observed_at_utc }}" \
+            --verify-git-head \
+            > reflow_result.json
+          cat reflow_result.json
+
+      - name: Commit and push only the paths the reflow itself reports as written
+        run: |
+          FILES_WRITTEN=$(python -c "import json; print('\n'.join(json.load(open('reflow_result.json'))['files_written']))")
+          if [ -z "$FILES_WRITTEN" ]; then
+            echo "reflow converged with nothing to write; not committing"
+            exit 0
+          fi
+          git config user.name "manosube-merge-source-reflow[bot]"
+          git config user.email "manosube-merge-source-reflow[bot]@users.noreply.github.com"
+          echo "$FILES_WRITTEN" | xargs git add --
+          git commit -m "chore(reflow): bounded generated-only source reflow for ${{ steps.resolve.outputs.main_sha }}"
+          git push origin HEAD:main
+
+      - name: Revalidate source freshness after reflow (read-only)
+        if: always()
+        run: |
+          CURRENT_SHA=$(git rev-parse HEAD)
+          python scripts/collect_repository_snapshot.py \
+            --main-sha "$CURRENT_SHA" \
+            --predecessor-main-sha "$(git rev-parse HEAD^)" \
+            --output post_reflow_snapshot.json
+          python scripts/validate_source_freshness.py \
+            --docs-dir docs/project_sources \
+            --observed-snapshot post_reflow_snapshot.json \
+            --fail-on-drift \
+            --output post_reflow_drift_report.json
+
+      - name: Publish post-reflow drift report to job summary
+        if: always()
+        run: |
+          {
+            echo "## Post-reflow source freshness drift report"
+            echo
+            echo '```json'
+            cat post_reflow_drift_report.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
