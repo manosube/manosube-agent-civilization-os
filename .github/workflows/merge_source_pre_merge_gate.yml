@@ -1,0 +1,72 @@
+name: Merge source pre-merge gate
+
+# Issue #57, ADOPT_MERGE_SOURCE_REFLOW_MACHINE_OWNED_CONVERGENCE (Issue #57 comment
+# 5566512915), hardened by Structural Review Round 2
+# (ADOPT_MSR_R2_PR_INTRODUCED_DIFF_AND_COMPLETE_GENERATED_TREE, Issue #57 comment
+# 5567994773), 03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md sections 1-2 and 10.
+#
+# The pre-merge stage of Merge Source Reflow. Classifies this Pull Request's changed
+# paths against the ownership table and fails the check when a kernel_surface change has
+# no paired docs/project_sources/*.md update -- OS_CHANGE_DETECTED AND
+# REQUIRED_SOURCE_UPDATE_MISSING = MERGE_BLOCKED -- never inferred from a green or
+# mergeable PR alone. This workflow makes no write of its own: it never merges, approves,
+# or comments on the Pull Request itself -- the required-status-check GitHub builds on
+# this job's own exit code is what actually blocks a merge (contract section 10).
+#
+# The changed-path diff is computed against the real merge-base commit (MSR-R2-F1), never
+# against the base branch's current tip directly: `github.event.pull_request.base.sha` is
+# the base branch's tip *at event time*, which can have moved past where this Pull
+# Request's own branch actually diverged -- a plain two-way diff against that tip would
+# incorrectly attribute base-only changes (landed on main after divergence, before this
+# PR's own head) to this PR's own source-impact obligation.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: merge-source-pre-merge-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  source-impact-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compute changed paths introduced by this Pull Request since its merge base (read-only)
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          MERGE_BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          git diff --name-only "$MERGE_BASE" "$HEAD_SHA" > changed_paths.txt
+          cat changed_paths.txt
+
+      - name: Classify changed paths and enforce the source-impact gate
+        run: |
+          python scripts/source_impact_gate.py \
+            --changed-paths-file changed_paths.txt \
+            --output source_impact_manifest.json
+
+      - name: Publish the source-impact manifest to the job summary
+        if: always()
+        run: |
+          {
+            echo "## Source-impact manifest"
+            echo
+            echo '```json'
+            cat source_impact_manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

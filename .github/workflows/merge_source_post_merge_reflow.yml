@@ -1,0 +1,144 @@
+name: Merge source post-merge reflow
+
+# Issue #57, ADOPT_MERGE_SOURCE_REFLOW_MACHINE_OWNED_CONVERGENCE (Issue #57 comment
+# 5566512915), hardened by Structural Review Round 1
+# (ADOPT_MSR_R1_EVENT_BOUND_REVALIDATED_AND_PATH_HARDENED_REFLOW, Issue #57 comment
+# 5567433361), 03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md sections 3-9 and 11.
+#
+# Triggers once per manually merged Pull Request (MSR-R1-F1) -- never on every push to
+# main, so this workflow's own reflow commit, a direct push rather than a Pull Request
+# being closed as merged, can never itself re-trigger it. main_sha is the Pull Request's
+# own merge_commit_sha, never a freshly resolved HEAD, and observed_at_utc is the Pull
+# Request's own merged_at -- both bound to the specific merge event, not to whenever this
+# job happens to run. A later merge landing first is refused, not raced against: the
+# --verify-git-head guard below fails closed, and that later merge's own event reflows the
+# now-current state on its own.
+#
+# The candidate reflow is validated against source-freshness/drift detection BEFORE any
+# commit or push (MSR-R1-F2); a validation failure leaves main untouched. Before staging,
+# this workflow enforces its own literal, workflow-defined path allowlist against the
+# actual working-tree diff (MSR-R1-F3) -- it never trusts merge_source_reflow.py's own
+# reported file list as sole authority to stage paths. This is a narrow, declared
+# exception to "no direct push to main," not general direct-push authority: no other job
+# or trigger in this repository can push anything, and merge_source_reflow.py and both
+# reflow workflow files are themselves protected governance surfaces the pre-merge gate
+# requires a paired 03_BINDING/ update to change.
+
+on:
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: merge-source-post-merge-reflow
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  post-merge-reflow:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve this Pull Request's own merge event (read-only)
+        id: resolve
+        env:
+          MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MERGED_AT: ${{ github.event.pull_request.merged_at }}
+        run: |
+          echo "main_sha=$MERGE_COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "observed_at_utc=$MERGED_AT" >> "$GITHUB_OUTPUT"
+
+      - name: Compute the candidate reflow (writes to the working tree, commits nothing)
+        env:
+          MAIN_SHA: ${{ steps.resolve.outputs.main_sha }}
+          OBSERVED_AT_UTC: ${{ steps.resolve.outputs.observed_at_utc }}
+        run: |
+          python scripts/merge_source_reflow.py \
+            --root . \
+            --main-sha "$MAIN_SHA" \
+            --observed-at-utc "$OBSERVED_AT_UTC" \
+            --verify-git-head \
+            > reflow_result.json
+          cat reflow_result.json
+
+      - name: Validate the candidate output before any commit or push
+        run: |
+          python -c "
+          import json, sys
+          result = json.load(open('reflow_result.json'))
+          if not result['receipt']['convergence_proven']:
+              sys.exit('candidate reflow did not prove convergence -- refusing to commit')
+          "
+          CURRENT_SHA=$(git rev-parse HEAD)
+          python scripts/collect_repository_snapshot.py \
+            --main-sha "$CURRENT_SHA" \
+            --predecessor-main-sha "$(git rev-parse HEAD^)" \
+            --output candidate_snapshot.json
+          python scripts/validate_source_freshness.py \
+            --docs-dir docs/project_sources \
+            --observed-snapshot candidate_snapshot.json \
+            --fail-on-drift \
+            --output candidate_drift_report.json
+
+      - name: Enforce this workflow's own literal path allowlist against the actual diff
+        id: allowlist
+        run: |
+          ALLOWLIST=$(cat <<'PATHS_EOF'
+          docs/project_sources/generated/CURRENT_REPOSITORY_FACTS.json
+          docs/project_sources/generated/REPOSITORY_TREE.txt
+          docs/project_sources/generated/PHASE_EVIDENCE_INDEX.json
+          docs/project_sources/generated/SOURCE_REFLOW_RECEIPT.json
+          HANDOFF.md
+          SHA256SUMS
+          README.md
+          PATHS_EOF
+          )
+          CHANGED=$(git status --porcelain=v1 --untracked-files=all | cut -c4-)
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if ! grep -qxF "$path" <<< "$ALLOWLIST"; then
+              echo "refusing: changed path outside this workflow's own literal allowlist: $path" >&2
+              exit 1
+            fi
+          done <<< "$CHANGED"
+          {
+            echo "changed<<REFLOW_CHANGED_EOF"
+            echo "$CHANGED"
+            echo "REFLOW_CHANGED_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push only the paths this workflow's own allowlist check passed
+        env:
+          CHANGED: ${{ steps.allowlist.outputs.changed }}
+          MAIN_SHA: ${{ steps.resolve.outputs.main_sha }}
+        run: |
+          if [ -z "$CHANGED" ]; then
+            echo "reflow converged with nothing to write; not committing"
+            exit 0
+          fi
+          git config user.name "manosube-merge-source-reflow[bot]"
+          git config user.email "manosube-merge-source-reflow[bot]@users.noreply.github.com"
+          echo "$CHANGED" | xargs git add --
+          git commit -m "chore(reflow): bounded generated-only source reflow for $MAIN_SHA"
+          git push origin HEAD:main
+
+      - name: Publish the candidate drift report to the job summary
+        if: always()
+        run: |
+          {
+            echo "## Candidate source freshness drift report (pre-commit)"
+            echo
+            echo '```json'
+            cat candidate_drift_report.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

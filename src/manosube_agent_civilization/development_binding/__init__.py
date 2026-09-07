@@ -18,7 +18,12 @@ acceptance and execution capabilities without naming a provider, and that neutra
 preserved and proven by test.
 """
 
-from .errors import DevelopmentBindingError, PolicyIntegrityError
+from .adoption_record import (
+    ADOPTION_RECORD_ADMITTED,
+    ADOPTION_RECORD_REFUSED,
+    evaluate_adoption_record,
+)
+from .errors import AdoptionRecordError, DevelopmentBindingError, PolicyIntegrityError
 from .evaluation import (
     PERMITTED,
     REFUSED,
@@ -28,14 +33,18 @@ from .evaluation import (
 from .policy import EXECUTOR_TERMINAL_STATE, HUMAN_AUTHORITY, ROLES, load_policy
 
 __all__ = [
+    "ADOPTION_RECORD_ADMITTED",
+    "ADOPTION_RECORD_REFUSED",
     "EXECUTOR_TERMINAL_STATE",
     "HUMAN_AUTHORITY",
     "PERMITTED",
     "REFUSED",
     "ROLES",
+    "AdoptionRecordError",
     "DevelopmentBindingError",
     "PolicyIntegrityError",
     "evaluate",
+    "evaluate_adoption_record",
     "load_policy",
     "prohibited_trigger_in",
 ]
