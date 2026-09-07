@@ -14,7 +14,7 @@ DEFAULT_BRANCH=main
 OBSERVED_AT_UTC=2026-09-07T10:42:45Z
 COMPLETED_THROUGH_PHASE=12
 CURRENT_PHASE=13_INDEPENDENT_VERIFICATION
-CURRENT_PHASE_STATE=ROUND_2_ADOPTED_AWAITING_IMPLEMENTATION
+CURRENT_PHASE_STATE=ROUND_3_DELIVERED_AWAITING_STRUCTURAL_REVIEW
 PHASE_13_COMPLETE=false
 PHASE_14_ALLOWED=false
 ```
@@ -111,7 +111,7 @@ COMPLETED_THROUGH_PHASE=12
 CURRENT_PHASE=13_INDEPENDENT_VERIFICATION
 CURRENT_PHASE_ISSUE=#51
 CURRENT_PHASE_PR=#52
-CURRENT_PHASE_STATE=ROUND_2_ADOPTED_AWAITING_IMPLEMENTATION
+CURRENT_PHASE_STATE=ROUND_3_DELIVERED_AWAITING_STRUCTURAL_REVIEW
 
 PHASE_12_TEMPORARY_AGENT_LIFECYCLE=COMPLETE
 TEMPORARY_AGENT_EXECUTION_CONTRACT=DEFERRED_REMAINING_DIFFERENCE
@@ -206,13 +206,28 @@ Issue本文に残る初期の`DESIGNED_AWAITING_HUMAN_ADOPTION`または`IMPLEME
 | 1 | [`ADOPT_PHASE_13_INDEPENDENT_VERIFICATION`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5562611201) | `main@36b06d8…` | Initial Phase 13 implementation authorized |
 | 2 | [`ADOPT_P13_R1_VERIFIER_BINDING_CANONICAL_SELECTION_AND_DEEP_IMMUTABILITY`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5562869144) | PR #52 head `5d071a3…` | Round 1 minimal forward correction authorized |
 | 3 | [`ADOPT_P13_R2_CANONICAL_SELECTION_EVIDENCE_HANDOFF_AND_UNAVAILABLE_PROVENANCE`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5563356966) | PR #52 head `4697550…` | Round 2 minimal forward correction authorized |
+| 4 | [`ADOPT_P13_R3_AUTHORITY_OWNED_VERIFIER_SELECTION_DECISION`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5563790496) | PR #52 head `becc1c7…` | Round 3 minimal forward correction authorized |
 
-Round 2 adoption freezes three remaining semantics.
+Round 2 adoptionは三つの意味論を凍結する。
 
 ```text
 P13_R2_F1=VERIFIER_SELECTION_MUST_RESOLVE_THROUGH_CANONICAL_AUTHORITY_OWNER
 P13_R2_F2=VERIFICATION_RESULT_MUST_HANDOFF_TO_EXISTING_EVIDENCE_OWNER
 P13_R2_F3=UNAVAILABLE_REQUIRES_DISTINGUISHABLE_PROVENANCE
+```
+
+Round 3 adoptionは、既存Authority ownerを拡張した一つのVerifier Selection Decision surfaceを凍結する（P13-R2-F1をnarrowingではなくresolveする位置づけ）。
+
+```text
+P13_R3_F1=AUTHORITY_OWNED_VERIFIER_SELECTION_DECISION_REQUIRED
+```
+
+2026-09-07T10:42:45Z時点の独立GitHub API再観測（`ADOPT_MSR_R3_COMPLETE_PROJECTION_REFRESH`、Issue #57）によれば、PR #52はRound 3実装後、自己発見のcorrectionによりさらに先へ進んでいる。この事実はIMPLEMENTER_REPORTED_EVIDENCEとしてPR #52本文が報告するものであり、`OBSERVED_GITHUB_FACT`（head SHA、commit数、changed files数）を除き、構造参謀による独立再観測は未実施である。
+
+```text
+PR_52_ROUND_3_INITIAL_HEAD=b09a684
+PR_52_SELF_CAUGHT_CORRECTION_HEAD=2be9645
+PR_52_SELF_CAUGHT_CORRECTION_STRUCTURALLY_REVIEWED=false
 ```
 
 ---
@@ -225,38 +240,42 @@ P13_R2_F3=UNAVAILABLE_REQUIRES_DISTINGUISHABLE_PROVENANCE
 | State | Open |
 | Draft | No |
 | Merged | No |
-| GitHub mergeable observation | `true` |
+| GitHub mergeable observation | `true` (`mergeable_state=clean`) |
 | Base | `main@36b06d88cf779d9f04b79e41022b42d1f3d47510` |
 | Head branch | `agent/issue-51-independent-verification` |
-| Delivered head | `46975506299ada4cc5708b559d7de734cb05236f` |
-| Commits | 2 |
-| Changed files | 8 |
-| Additions / deletions | `2084 / 0` |
-| Last observed PR update | `2026-09-06T23:57:18Z` |
+| Delivered head | `2be9645cdfafb48e6f30ac968938fd15fb87717d` |
+| Commits | 5 |
+| Changed files | 22 |
+| Additions / deletions | `4026 / 22` |
+| Last observed PR update | `2026-09-07T02:38:04Z` |
 
 GitHub APIが未マージPRへ返す`merge_commit_sha`候補はmerge receiptではない。本書はそれをaccepted SHAとして記録しない。
 
 ## 6.1 Implementer-reported verification
 
-PR本文は現HEADについて次を報告している。
+PR本文は現HEAD `2be9645…`について次を報告している（2026-09-07T10:42:45Z、Issue #57の独立GitHub API再観測時点）。
 
 ```text
-INDEPENDENT_VERIFICATION_TARGETED_SUITE=66 passed
-RETAINED_AGENT_RUNTIME_BOOT_STORE_CLI_BINDING_TARGETED=1069 passed
-RETAINED_PHASE_8_NATURAL_CYCLE=120 passed
-FULL_SUITE=18473 passed, 0 failed, 11 skipped
-RUFF_CHECK=178 repo-wide errors; 0 in touched independent-verification scope
-RUFF_FORMAT=114 repo-wide files; touched scope clean against baseline
-MYPY=217 repo-wide errors; 0 in touched scope
-WORKTREE_CLEAN=true
+INDEPENDENT_VERIFICATION_TARGETED_SUITE=91 passed (19 static + 72 integration, Round 3 included)
+AUTHORITY_VERIFIER_SELECTION_TARGETED_SUITE=50 passed (new, Round 3)
+AUTHORITY_VERIFIER_SELECTION_INPUT_TOTALITY_SUITE=283 passed (new, Round 3 self-caught correction)
+COMBINED_TARGETED_SUITE=3645 passed (independent_verification + authority + adjacent, post-correction)
+FULL_SUITE=18837 passed, 0 failed, 11 skipped (post-correction, per PR body)
+RUFF_CHECK=178 repo-wide errors -- matches baseline exactly, 0 net new (per PR body)
+RUFF_FORMAT=113 repo-wide files would be reformatted (baseline 114); every new/touched file format-clean (per PR body)
+MYPY=217 repo-wide errors -- matches baseline exactly, 0 net new (per PR body)
+SCHEMA_VALIDATION=PASS (49 schemas total, 6 Authority schemas -- 2 new, per PR body)
+WORKTREE_CLEAN=true (per PR body)
 ```
 
-これは重要な`IMPLEMENTER_REPORTED_EVIDENCE`であるが、Round 2 correction後のEvidenceではなく、Human acceptanceまたはmerge receiptでもない。
+これは重要な`IMPLEMENTER_REPORTED_EVIDENCE`であり、Round 2とRound 3双方のcorrectionを含むが、本書はそれらの試験結果自体を独立再実行していない。Human acceptanceまたはmerge receiptでもない。
 
 ```text
 REPORTED_TESTS_PASS=true
-ROUND_2_CORRECTION_INCLUDED=false
+ROUND_2_CORRECTION_INCLUDED=true
+ROUND_3_CORRECTION_INCLUDED=true
 CURRENT_HEAD_ACCEPTED=false
+CURRENT_HEAD_INDEPENDENTLY_RETESTED_BY_THIS_DOCUMENT=false
 ```
 
 ---
@@ -265,11 +284,11 @@ CURRENT_HEAD_ACCEPTED=false
 
 ## 7.1 Structural review
 
-現HEAD `4697550…` は構造参謀により再観測され、その結果がRound 2 adoptionとしてIssue #51に記録された。
+最新の構造review採択はRound 3（[`ADOPT_P13_R3_AUTHORITY_OWNED_VERIFIER_SELECTION_DECISION`](https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5563790496)）であり、対象headは`becc1c7d…`であった。実装はその後`b09a684…`へ配達され、自己発見のcorrectionにより現HEAD `2be9645c…`へ到達した。`b09a684…`・`2be9645c…`のいずれについても、構造参謀による独立構造reviewはまだIssue #51に記録されていない。
 
 ```text
-CURRENT_HEAD_STRUCTURAL_FINDINGS_ADOPTED=true
-CURRENT_HEAD_STRUCTURAL_REVIEW_PASS=false
+CURRENT_HEAD_STRUCTURAL_FINDINGS_ADOPTED=true (最新採択対象head: becc1c7d…, Round 3)
+CURRENT_HEAD_STRUCTURAL_REVIEW_PASS=false (現HEAD 2be9645c…は未review)
 NEXT_STRUCTURAL_REVIEW_REQUIRED_AFTER_NEW_HEAD=true
 ```
 
@@ -287,7 +306,7 @@ PR #52には、旧HEAD `5d071a30a03581d067002d98fb496db43ca06f77`を対象とし
 
 ```text
 CODEX_REVIEWED_HEAD=5d071a30a03581d067002d98fb496db43ca06f77
-CURRENT_PR_HEAD=46975506299ada4cc5708b559d7de734cb05236f
+CURRENT_PR_HEAD=2be9645cdfafb48e6f30ac968938fd15fb87717d
 CURRENT_HEAD_EXTERNAL_REVIEW=false
 OPEN_REVIEW_THREAD_COUNT=3
 EXTERNAL_REVIEW_IS_COMPLETION_GATE=false
@@ -308,17 +327,18 @@ CI statusが存在しないことはtest failureを意味しない。同時に�
 
 # 8. Current-route blockers
 
-Phase 13 exitまでのblockerは次である。
+Phase 13 exitまでのblockerは次である。2026-09-07T10:42:45Z時点の独立GitHub API再観測（`ADOPT_MSR_R3_COMPLETE_PROJECTION_REFRESH`、Issue #57）により、PR #52はcommit数2→5・changed files 8→22という`OBSERVED_GITHUB_FACT`を伴ってRound 2およびRound 3のforward correction、さらに1件の自己発見correctionまでpushされていることを確認した。この観測によりP13-B01は「pushされたか」という closure condition自体は満たすが、pushされた内容の正しさは引き続きIMPLEMENTER_REPORTED_EVIDENCEに留まり、構造参謀による独立再観測を経ていない。
 
-| ID | Classification | Blocker | Closure condition |
-|---|---|---|---|
-| `P13-B01` | `CURRENT_ROUTE_BLOCKER` | Round 2の採択済み3要件が現HEADに未実装 | 同一branch・同一PRへminimal forward correctionをpush |
-| `P13-B02` | `REQUIRED_PHASE_GATE` | Round 2後の新HEADに対する構造review passがない | 構造参謀が新HEADを独立再観測し、blocker 0を確認 |
-| `P13-B03` | `REQUIRED_PHASE_GATE` | SHUKOU acceptanceがない | SHUKOUが明示的にPhase 13を受入 |
-| `P13-B04` | `REQUIRED_PHASE_GATE` | merge receiptとafter-state re-observationがない | PR #52 merge SHAを確認し、mainを再観測 |
+| ID | Classification | Blocker | Closure condition | Status |
+|---|---|---|---|---|
+| `P13-B01` | `CURRENT_ROUTE_BLOCKER` | Round 2の採択済み3要件が現HEADに未実装 | 同一branch・同一PRへminimal forward correctionをpush | Closed（`OBSERVED_GITHUB_FACT`: push確認済み。Round 3・自己発見correctionまで確認） |
+| `P13-B02` | `REQUIRED_PHASE_GATE` | Round 3後の新HEAD（`2be9645c…`、自己発見correction含む）に対する構造review passがない | 構造参謀が新HEADを独立再観測し、blocker 0を確認 | Open |
+| `P13-B03` | `REQUIRED_PHASE_GATE` | SHUKOU acceptanceがない | SHUKOUが明示的にPhase 13を受入 | Open |
+| `P13-B04` | `REQUIRED_PHASE_GATE` | merge receiptとafter-state re-observationがない | PR #52 merge SHAを確認し、mainを再観測 | Open |
 
 ```text
 CURRENT_ROUTE_BLOCKER_COUNT=4
+OPEN_ROUTE_BLOCKER_COUNT=3
 PHASE_13_EXIT_ALLOWED=false
 ```
 
@@ -328,13 +348,13 @@ Round 2 implementationが既存Authority ownerの不足により不可能な場�
 
 # 9. Next authorized action
 
-現在の正規の次作業は一つである。
+2026-09-07T10:42:45Z時点の独立GitHub API再観測（Issue #57のbounded refresh）によれば、`OBSERVED_GITHUB_FACT`としてRound 2 correction・Round 3 correction・自己発見correctionはいずれも既にpush済みである（現HEAD `2be9645c…`）。したがって`APPLY_ADOPTED_PHASE_13_ROUND_2_CORRECTIONS`は完了済みの投影であり、現在の正規の次作業は次の一つに更新する。
 
 ```text
-NEXT_ACTION=APPLY_ADOPTED_PHASE_13_ROUND_2_CORRECTIONS
-NEXT_IMPLEMENTATION_OWNER=CLAUDE_CODE
-AUTHORIZED_TARGET=PR_52_EXISTING_BRANCH_ONLY
-AUTHORIZED_BASE_HEAD=46975506299ada4cc5708b559d7de734cb05236f
+NEXT_ACTION=STRUCTURAL_REVIEW_OF_CURRENT_HEAD
+NEXT_IMPLEMENTATION_OWNER=NONE_PENDING_ON_ISSUE_51
+NEXT_REVIEW_OWNER=CHATGPT_STRUCTURAL_ADVISOR
+REVIEW_TARGET_HEAD=2be9645cdfafb48e6f30ac968938fd15fb87717d
 NEW_BRANCH_ALLOWED=false
 NEW_PR_ALLOWED=false
 MERGE_ALLOWED=false
@@ -343,35 +363,52 @@ PHASE_14_ALLOWED=false
 EXTERNAL_REVIEW_REQUEST_ALLOWED=false
 ```
 
+この`NEXT_ACTION`はPR #52本文自身の停止宣言（`READY_FOR_STRUCTURAL_REVIEW`、Claude Codeはmerge・close・Phase 14着手をしない）をOBSERVED_GITHUB_FACTとして反映したものであり、Phase 13の受入や完了を決定するものではない。
+
 配達後の順序は次である。
 
 ```text
-Claude Code pushes Round 2 correction
-→ records delivered HEAD and verification report
-→ stops
-→ ChatGPT Structural Advisor re-observes the new HEAD
-→ closes or retains Phase 13 blockers
-→ SHUKOU decides acceptance
-→ authorized Human merge
-→ main merge receipt is observed
-→ after-state is re-observed
-→ Phase 13 may be recorded complete
+Claude Code pushes Round 2/Round 3/self-caught corrections (already observed complete)
+→ records delivered HEAD and verification report (already observed complete)
+→ stops (already observed complete)
+→ ChatGPT Structural Advisor re-observes the new HEAD (pending)
+→ closes or retains Phase 13 blockers (pending)
+→ SHUKOU decides acceptance (pending)
+→ authorized Human merge (pending)
+→ main merge receipt is observed (pending)
+→ after-state is re-observed (pending)
+→ Phase 13 may be recorded complete (pending)
 ```
 
 ---
 
 # 10. Other open repository work
 
-## 10.1 Governance Issue #53
+## 10.1 Governance Issue #53 and related, separate governance work (Issue #57)
 
-| Field | Value |
-|---|---|
-| Issue | [#53 — Record SHUKOU adoptions through the Structural Advisor](https://github.com/manosube/manosube-agent-civilization-os/issues/53) |
-| State | Open |
-| Meaning | SHUKOUのsemantic decisionを構造参謀がGitHubへ記録する運用規則の正準化 |
-| Current relationship to PR #52 | Separate governance work; must not be mixed into PR #52 |
+2026-09-07T10:42:45Z時点の独立GitHub API再観測（`ADOPT_MSR_R3_COMPLETE_PROJECTION_REFRESH`、Issue #57）により、Issue #53は既にclosed（completed）であり、関連するIssue #57系列の governance PRのうち2件がmergeされていることを確認した。これらはいずれもPhase 13/Issue #51/PR #52とは別系列の governance-only 作業であり、Phase 13自身の open・未受入状態には影響しない。
 
-Issue #53は次の役割分離を提案している。
+| Item | State | Detail |
+|---|---|---|
+| Issue #53 | **Closed (completed)** | [PR #56](https://github.com/manosube/manosube-agent-civilization-os/pull/56) により2026-09-07T07:04:20Zにmerge、Issueは同時刻にclose |
+| PR #56 | **Merged** | merged_at=2026-09-07T07:04:20Z |
+| Issue #57 | Open | Merge Source Reflow governance (未受入) |
+| PR #58 | **Merged** | merged_at=2026-09-07T09:24:09Z（Issue #57への貢献の一部；Issue #57自体はまだopen） |
+| PR #59 | Open | 本Issue #57系列の現在の実装PR；SHUKOU acceptance・manual mergeは未付与 |
+| Issue #51 | Open | 未受入（Phase 13） |
+| PR #52 | Open | 未受入（Phase 13、head `2be9645c…`、詳細はセクション5-9） |
+
+```text
+ISSUE_53_MERGED_CLOSED=true
+PR_56_MERGED=true
+PR_58_MERGED=true
+ISSUE_57_STILL_OPEN=true
+PR_59_STILL_OPEN_NOT_ACCEPTED=true
+ISSUE_51_STILL_OPEN_NOT_ACCEPTED=true
+PR_52_STILL_OPEN_NOT_ACCEPTED=true
+```
+
+Issue #53が採用した役割分離は次のとおりである。
 
 ```text
 SEMANTIC_DECISION_OWNER=SHUKOU
@@ -380,7 +417,7 @@ IMPLEMENTATION_EXECUTOR=CLAUDE_CODE
 GITHUB_AUDIT_SURFACE=GITHUB
 ```
 
-これは現在openであり、専用governance changeとして未実装である。Issue #53自体はPR #52への変更Authorityではない。
+Issue #53はPR #56のmergeにより実装済み・closed済みである。Issue #53自体はPR #52への変更Authorityではなく、この事実の投影もPR #52自体を変更しない。
 
 ## 10.2 Deferred PR #27
 
@@ -414,12 +451,12 @@ README_MAY_OVERRIDE_THIS_FILE=false
 
 READMEの更新要否は現在Phase 13のscopeを拡張して決めてはならない。独立したbounded changeまたは次の適切なdocumentation work unitとして扱う。
 
-`ADOPT_MSR_FULL_SOURCE_SNAPSHOT_REFRESH_FOR_PR58`（Issue #57）が`OBSERVED_AT_UTC`を更新した際、独立GitHub API再観測によりPR #52のheadが本書のセクション5-9が投影する`46975506…`（Round 2 adopted, awaiting implementation）を超えて進行していることが判明した。PR #52の現在のheadは、Round 3レビュー・採択・実装、および自己発見のcorrectionまでを含む。この事実の完全な再投影は、Issue #57のこのbounded refresh（as-built tree snapshotのみを対象とする）のscope外であり、`KERNEL_OR_PHASE_SEMANTICS_CHANGE`（本refreshで明示的にPROHIBITED）に該当しうるため、意図的に本書へ反映していない。
+`ADOPT_MSR_FULL_SOURCE_SNAPSHOT_REFRESH_FOR_PR58`（Issue #57）の時点では、独立GitHub API再観測によりPR #52のheadが本書のセクション5-9が投影していた`46975506…`（Round 2 adopted, awaiting implementation）を超えて進行していることが判明していたが、その完全な再投影はそのbounded refresh自身のscope外として意図的に据え置かれていた。`ADOPT_MSR_R3_COMPLETE_PROJECTION_REFRESH`（Issue #57、同じくPR #59向け）はその据え置きを明示的に解消する追加adoptionであり、セクション5-9・10.1は本書のこの版で現在のOBSERVED_AT_UTC時点のOBSERVED_GITHUB_FACTへ再投影済みである。
 
 ```text
-PR_52_SECTIONS_5_TO_9_MAY_BE_STALE_AS_OF_THIS_OBSERVED_AT_UTC=true
-PR_52_STALENESS_CORRECTION_IS_OUT_OF_SCOPE_FOR_THIS_REFRESH=true
-PR_52_STALENESS_CORRECTION_REQUIRES_ITS_OWN_BOUNDED_ADOPTION=true
+PR_52_SECTIONS_5_TO_9_REPROJECTED_AT_THIS_OBSERVED_AT_UTC=true
+PR_52_REPROJECTION_IS_OBSERVED_GITHUB_FACT_ONLY=true
+PR_52_REPROJECTION_DOES_NOT_ACCEPT_PHASE_13_OR_CLOSE_BLOCKERS_BEYOND_THE_OBSERVED_PUSH=true
 ```
 
 ---
@@ -480,10 +517,10 @@ COMPLETED_THROUGH_PHASE=12
 CURRENT_PHASE=13_INDEPENDENT_VERIFICATION
 CURRENT_ISSUE=51
 CURRENT_PR=52
-CURRENT_PR_HEAD=46975506299ada4cc5708b559d7de734cb05236f
-LATEST_HUMAN_ADOPTION=ADOPT_P13_R2_CANONICAL_SELECTION_EVIDENCE_HANDOFF_AND_UNAVAILABLE_PROVENANCE
+CURRENT_PR_HEAD=2be9645cdfafb48e6f30ac968938fd15fb87717d
+LATEST_HUMAN_ADOPTION=ADOPT_P13_R3_AUTHORITY_OWNED_VERIFIER_SELECTION_DECISION
 
-CURRENT_PHASE_STATE=ROUND_2_ADOPTED_AWAITING_IMPLEMENTATION
+CURRENT_PHASE_STATE=ROUND_3_DELIVERED_AWAITING_STRUCTURAL_REVIEW
 PHASE_13_COMPLETE=false
 PHASE_14_ALLOWED=false
 MERGE_ALLOWED=false

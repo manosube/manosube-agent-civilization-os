@@ -60,11 +60,11 @@ EQUIVALENT_PLACEMENT
 |---|---|
 | Repository | [`manosube/manosube-agent-civilization-os`](https://github.com/manosube/manosube-agent-civilization-os) |
 | Default branch | `main` |
-| Observed commit | [`36b06d88cf779d9f04b79e41022b42d1f3d47510`](https://github.com/manosube/manosube-agent-civilization-os/commit/36b06d88cf779d9f04b79e41022b42d1f3d47510) |
+| Observed commit | [`1d41f7d1e79441249382be07e8d8dbed618331c8`](https://github.com/manosube/manosube-agent-civilization-os/commit/1d41f7d1e79441249382be07e8d8dbed618331c8) |
 | Tree traversal | Recursive and untruncated |
-| Tree entries | 516 |
-| Blob entries | 416 |
-| Directory entries | 100 |
+| Tree entries | 547 |
+| Blob entries | 443 |
+| Directory entries | 104 |
 
 ```text
 AS_BUILT_MEANS=EXISTS_ON_ACCEPTED_MAIN_REF
