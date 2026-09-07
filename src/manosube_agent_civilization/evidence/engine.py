@@ -496,6 +496,13 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
     # failure on the finished record -- a caller attaching a Verification Result's provenance
     # to an Observation Evidence or Change Result Evidence request is a request the engine
     # itself can see is misdirected, before any record is built.
+    #
+    # P13-R6-R1: on the one position that admits it, ``verification_result_provenance`` is
+    # not merely admissible -- it is required. A Change-Free Verification Evidence record
+    # with no provenance is exactly the shape ADOPT_P13_R6_PROVENANCE_COMPLETE_EVIDENCE_
+    # HANDOFF closed; that requirement is now enforced by this engine's own public surface,
+    # not deferred to whichever caller happens to route through the Independent Verification
+    # handoff. There is no compatibility exception for a caller that predates this field.
     if change_request is None:
         if post_change_request is not None:
             raise EvidenceError(
@@ -504,6 +511,12 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
                 "is not named here is a Change Result Evidence request missing its Change"
             )
         if verification_request is not None:
+            if verification_result_provenance is None:
+                raise EvidenceError(
+                    "verification_result_provenance is required on Change-Free "
+                    "Verification Evidence: this position must carry the complete "
+                    "ten-field VerificationResult provenance projection, never null"
+                )
             return _change_free_verification_evidence(
                 shaped,
                 observation,
@@ -708,13 +721,14 @@ def _change_free_verification_evidence(
     own Closure Evaluation, reading this record's ``after_state`` the same way it already
     reads Change Result Evidence's.
 
-    ``verification_result_provenance`` is carried through from the request unchanged (P13-R6):
-    this position is the one place it is admissible, but this engine does not construct it --
-    that is Independent Verification's handoff's own responsibility (``evidence_handoff.py``),
-    which is the one caller positioned to know the real ``VerificationResult`` this Evidence is
-    being derived for. A caller outside that handoff may still supply ``None`` here, exactly
-    as the pre-existing, Independent-Verification-unrelated Change-Free Verification Evidence
-    callers do.
+    ``verification_result_provenance`` is carried through from the request unchanged (P13-R6),
+    and is required here (P13-R6-R1): this position is the one place it is admissible, and
+    this engine's own caller (``_derive``) has already refused to reach this function at all
+    with a null value. This engine does not construct the projection itself -- that is
+    Independent Verification's handoff's own responsibility (``evidence_handoff.py``), which
+    is the one caller positioned to know the real ``VerificationResult`` this Evidence is
+    being derived for -- but every caller of this position, handoff or otherwise, must supply
+    a complete one; there is no compatibility exception for a caller that predates this field.
     """
 
     _, verification_observation = _minted_observation(
@@ -757,9 +771,7 @@ def _change_free_verification_evidence(
             "authority_used": None,
             "after_state": _state_binding(verification_observation),
             "expected_result": None,
-            "verification_result_provenance": deepcopy(verification_result_provenance)
-            if verification_result_provenance is not None
-            else None,
+            "verification_result_provenance": deepcopy(verification_result_provenance),
             "lineage": _lineage(
                 shaped,
                 [

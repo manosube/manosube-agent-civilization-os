@@ -763,7 +763,8 @@ new field's own shape and semantics (`verification_result_provenance`, one of th
 plus-position minimum fields the Evidence record now always carries); this section states
 only what changes on this contract's own public route.
 
-**The handoff, not the engine, is the enforcement point.** `verification_result_provenance`
+**The handoff, not the engine, is the enforcement point (P13-R6; reversed by P13-R6-R1 --
+see §15).** `verification_result_provenance`
 is schema-admissible (null or a full ten-field projection) only on the Change-Free
 Verification Evidence position this route already produces, and the Evidence engine itself
 refuses a non-null value on either other position. But the schema leaves it nullable even on
@@ -799,6 +800,41 @@ NEW_STORE_CALL=false
 NEW_PREDECESSOR_REPRODUCTION=false
 SECOND_EVIDENCE_OWNER=false
 DERIVE_EVIDENCE_CALL_SITE_COUNT=1
+PHASE_13_ACCEPTANCE=false
+PHASE_14_ALLOWED=false
+```
+
+## 15. Structural Review Round 6, Round 1 correction (Issue #51, P13-R6-R1,
+`ADOPT_P13_R6_R1_EVIDENCE_OWNER_GLOBAL_PROVENANCE_ENFORCEMENT`)
+
+SHUKOU adopted `ADOPT_P13_R6_R1_EVIDENCE_OWNER_GLOBAL_PROVENANCE_ENFORCEMENT` (Issue #51
+comment 5573559225, `REVIEWED_HEAD=0d7f4a6b825c5e5d3e665c8d7d92fd072d28bd39`), reversing §14's
+"the handoff, not the engine, is the enforcement point" characterization. §14's own account
+of the P13-R6 design remains above, unchanged, as the record of what was actually built and
+adopted at that Round; this section states what SHUKOU has since required in its place.
+
+The adoption explicitly prohibited the §14 layering as a narrowing done "for the reason of
+existing fixtures" (既存fixtureを理由に handoff限定へ弱めることを禁止). `derive_evidence`
+itself -- the Evidence owner, not merely the one route that happens to call it through this
+handoff -- now refuses a null, missing, extra-keyed, wrong-typed, or mis-positioned
+`verification_result_provenance` on the Change-Free Verification Evidence position, for any
+caller, not only one that routes through `route_verification_result_to_evidence`. The full
+account of the schema/engine change is `EVIDENCE_CONTRACT.md` §13.1-13.2 (as corrected).
+
+For this contract's own route, the practical effect is that the third line of §14's diagram
+(`derive_evidence RETURNS a record whose own verification_result_provenance does not
+exactly equal what the handoff just constructed`) is no longer the only thing standing
+between a null provenance and a persisted record: `derive_evidence` itself would have
+already refused the request before this handoff's own round-trip check ever ran. The
+handoff's own refusals (§14's diagram, in full) remain independently in force -- they are not
+redundant, since they are what stops a *caller-supplied* (non-null but wrong) provenance from
+overriding the one this route itself constructs, which the engine's own position-owner
+enforcement does not by itself address.
+
+```text
+ENFORCEMENT_OWNER=DERIVE_EVIDENCE_ITSELF (not only route_verification_result_to_evidence)
+NULL_PROVENANCE_ON_CHANGE_FREE_VERIFICATION_EVIDENCE=REFUSED_UNCONDITIONALLY
+EXISTING_FIXTURE_COMPATIBILITY_EXCEPTION=NONE
 PHASE_13_ACCEPTANCE=false
 PHASE_14_ALLOWED=false
 ```

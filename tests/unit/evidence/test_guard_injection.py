@@ -355,12 +355,65 @@ def test_verification_result_provenance_participates_in_evidence_identity() -> N
     share an address (``E-003 EVIDENCE_IMMUTABLE`` is only enforceable if the address covers
     the whole meaning)."""
 
-    without_provenance = change_free_verification_evidence_request()
-    without = derive_evidence(without_provenance)
+    default_provenance = change_free_verification_evidence_request()
+    default_ = derive_evidence(default_provenance)
 
-    with_provenance = dict(without_provenance)
+    with_provenance = dict(default_provenance)
     with_provenance["verification_result_provenance"] = dict(_PROVENANCE)
     with_ = derive_evidence(with_provenance)
 
-    assert with_["evidence_id"] != without["evidence_id"]
-    assert with_["evidence_semantic_fingerprint"] != without["evidence_semantic_fingerprint"]
+    assert with_["evidence_id"] != default_["evidence_id"]
+    assert with_["evidence_semantic_fingerprint"] != default_["evidence_semantic_fingerprint"]
+
+
+def test_a_null_verification_result_provenance_on_change_free_is_refused_by_the_engine_itself() -> (
+    None
+):
+    """P13-R6-R1 (``ADOPT_P13_R6_R1_EVIDENCE_OWNER_GLOBAL_PROVENANCE_ENFORCEMENT``): the
+    refusal of a null ``verification_result_provenance`` on Change-Free Verification
+    Evidence is ``derive_evidence``'s own, unconditional -- not something a caller reaches
+    only by routing through the Independent Verification handoff. Positive control first:
+    the identical request with a real provenance still derives, so the refusal below is
+    this guard and not a broken fixture."""
+
+    accepted = change_free_verification_evidence_request()
+    assert derive_evidence(accepted)["verification_result_provenance"] is not None
+
+    nulled = change_free_verification_evidence_request()
+    nulled["verification_result_provenance"] = None
+    error = _refuses(nulled, EvidenceError)
+    assert "verification_result_provenance is required" in error
+
+
+def test_a_missing_provenance_field_on_change_free_is_refused_by_the_engine_itself() -> None:
+    """P13-R6-R1: the ten-field projection is a *complete* projection -- one field missing
+    is refused the same as none at all, by the schema ``derive_evidence`` itself validates
+    the finished record against."""
+
+    incomplete = change_free_verification_evidence_request()
+    provenance = dict(incomplete["verification_result_provenance"])
+    del provenance["observations"]
+    incomplete["verification_result_provenance"] = provenance
+    _refuses(incomplete, EvidenceError)
+
+
+def test_an_extra_provenance_field_on_change_free_is_refused_by_the_engine_itself() -> None:
+    """P13-R6-R1: ``verification_result_provenance`` is a closed ten-field object --
+    ``additionalProperties: false`` -- so a caller cannot smuggle an eleventh field past
+    the projection this position requires."""
+
+    with_extra = change_free_verification_evidence_request()
+    provenance = dict(with_extra["verification_result_provenance"])
+    provenance["extra_field"] = "unexpected"
+    with_extra["verification_result_provenance"] = provenance
+    _refuses(with_extra, EvidenceError)
+
+
+def test_a_wrong_typed_provenance_on_change_free_is_refused_by_the_engine_itself() -> None:
+    """P13-R6-R1: a ``verification_result_provenance`` that is not an object at all is
+    refused the same as one that is missing entirely."""
+
+    for value in (True, 0, "PROVENANCE", [], "verification_result_provenance"):
+        wrong_typed = change_free_verification_evidence_request()
+        wrong_typed["verification_result_provenance"] = value
+        _refuses(wrong_typed, EvidenceError)

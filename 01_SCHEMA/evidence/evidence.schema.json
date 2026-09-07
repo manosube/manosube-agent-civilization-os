@@ -37,7 +37,7 @@
     },
     {
       "if": {"properties": {"evidence_position": {"const": "CHANGE_FREE_VERIFICATION_EVIDENCE"}}, "required": ["evidence_position"]},
-      "then": {"properties": {"change_identity": {"type": "null"}, "authority_used": {"type": "null"}, "after_state": {"type": "object"}, "expected_result": {"type": "null"}}}
+      "then": {"properties": {"change_identity": {"type": "null"}, "authority_used": {"type": "null"}, "after_state": {"type": "object"}, "expected_result": {"type": "null"}, "verification_result_provenance": {"type": "object"}}}
     }
   ],
   "$defs": {
