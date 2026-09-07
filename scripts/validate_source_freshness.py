@@ -6,15 +6,31 @@ between "A. Machine-owned observation" and "C. Drift detection") against the
 mutable-projection fields recorded inside ``docs/project_sources/03_CURRENT_DEVELOPMENT_
 STATE.md`` and ``docs/project_sources/04_REPOSITORY_ARCHITECTURE.md``, and reports drift.
 
+Structural Review Round 1 (SFD-R1-F1, Issue #54 comment 5564639335) adopted the
+convergent baseline rule this module implements: **a source projection describes the
+immediately preceding accepted ``main`` state, not the commit that writes the
+projection.** So every comparison here is against the snapshot's
+``predecessor_main_sha`` -- the push event's own "before" state -- never against the
+snapshot's ``main_sha`` (the actual, just-pushed commit), which is carried through into
+the report purely as an observation. A normal merge to ``main`` therefore drifts (the
+recorded baseline still names an older predecessor), while a Human-reviewed source-sync
+merge whose own documents name *this* merge's predecessor converges, even though its
+own resulting ``main_sha`` is necessarily different from that predecessor.
+
 This module never writes to ``docs/project_sources/`` or anywhere else, never opens a
 network connection, and never reads the wall clock -- every fact it reasons about is
 supplied by its two callers (the on-disk source documents and the caller-supplied
-snapshot). It answers exactly one question per checked field: does the observed value
-still match what the mutable source document records? A mismatch is reported as
+snapshot). It answers exactly one question per checked field: does the predecessor
+baseline still match what the mutable source document records? A mismatch is reported as
 ``SOURCE_DRIFT_DETECTED`` with the fields Issue #54 section C names
 (``AFFECTED_FILES``/``OBSERVED_VALUES``/``RECORDED_VALUES``/``REQUIRED_OWNER``); it is
 never silently repaired, and this module holds no authority to decide whether the drift
 matters -- see ``docs/project_sources/00_SOURCE_AUTHORITY_INDEX.md`` sections 6 and 11.
+
+Structural Review Round 1 (SFD-R1-F3) also removed ``argparse.FileType`` from this
+script's CLI -- see ``collect_repository_snapshot.py``'s module docstring for why.
+``--observed-snapshot`` and ``--output`` are now plain path strings, opened only once,
+each right before its one read or write, and always closed explicitly.
 """
 
 from __future__ import annotations
@@ -40,18 +56,20 @@ _FIELD_LINE = re.compile(r"^([A-Z][A-Z0-9_]*)=(.*)$")
 #: ``docs/project_sources/00_SOURCE_AUTHORITY_INDEX.md`` section 13: both
 #: ``03_CURRENT_DEVELOPMENT_STATE.md`` and ``04_REPOSITORY_ARCHITECTURE.md`` are
 #: "Structural Advisor prepares; SHUKOU accepts", so a mismatch is theirs to resolve, not
-#: this validator's and not this repository's automation's.
+#: this validator's and not this repository's automation's. The observed snapshot key is
+#: ``predecessor_main_sha`` for both, per SFD-R1-F1 -- never the snapshot's own
+#: ``main_sha``, which is compared against nothing (see the module docstring).
 CHECKS: tuple[tuple[str, str, str, str], ...] = (
     (
         "03_CURRENT_DEVELOPMENT_STATE.md",
         "MAIN_ACCEPTED_BASE_SHA",
-        "main_sha",
+        "predecessor_main_sha",
         "CHATGPT_STRUCTURAL_ADVISOR",
     ),
     (
         "04_REPOSITORY_ARCHITECTURE.md",
         "AS_BUILT_REF",
-        "main_sha",
+        "predecessor_main_sha",
         "CHATGPT_STRUCTURAL_ADVISOR",
     ),
 )
@@ -98,11 +116,15 @@ def load_recorded_facts(docs_dir: Path) -> dict[str, dict[str, str]]:
 def validate(recorded: dict[str, dict[str, str]], observed: dict[str, Any]) -> dict[str, Any]:
     """Compare *recorded* (from :func:`load_recorded_facts`) against *observed*.
 
-    Never mutates either argument. A recorded field the source document omits entirely is
-    a source-document integrity problem, reported separately from ordinary drift -- it
-    means the document no longer carries the metadata this validator (and, per the
-    documents' own section 14, every reader) depends on, not that the value merely
-    changed.
+    Never mutates either argument. Every comparison is against ``observed``'s
+    ``predecessor_main_sha`` (SFD-R1-F1); ``observed``'s own ``main_sha`` -- the actual,
+    just-pushed commit -- is carried into the report as ``checked_main_sha`` purely as an
+    observation, never compared against anything.
+
+    A recorded field the source document omits entirely is a source-document integrity
+    problem, reported separately from ordinary drift -- it means the document no longer
+    carries the metadata this validator (and, per the documents' own section 14, every
+    reader) depends on, not that the value merely changed.
     """
 
     affected: list[dict[str, str]] = []
@@ -131,6 +153,8 @@ def validate(recorded: dict[str, dict[str, str]], observed: dict[str, Any]) -> d
         "recorded_values": recorded_values,
         "required_owner": required_owners or None,
         "missing_recorded_fields": missing_recorded_fields,
+        "checked_main_sha": observed.get("main_sha"),
+        "checked_predecessor_main_sha": observed.get("predecessor_main_sha"),
         "checked_observed_at_utc": observed.get("observed_at_utc"),
     }
 
@@ -151,9 +175,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--output",
-        type=argparse.FileType("w", encoding="utf-8"),
-        default=sys.stdout,
-        help="where to write the JSON drift report (default: stdout)",
+        default=None,
+        help="path to write the JSON drift report to (default: stdout)",
     )
     parser.add_argument(
         "--fail-on-drift",
@@ -166,9 +189,12 @@ def main(argv: list[str] | None = None) -> int:
     observed = json.loads(args.observed_snapshot.read_text(encoding="utf-8"))
     recorded = load_recorded_facts(args.docs_dir)
     report = validate(recorded, observed)
-    _write_json(args.output, report)
-    if args.output is not sys.stdout:
-        args.output.close()
+
+    if args.output is None:
+        _write_json(sys.stdout, report)
+    else:
+        with open(args.output, "w", encoding="utf-8") as stream:
+            _write_json(stream, report)
 
     if report["missing_recorded_fields"]:
         return 2
