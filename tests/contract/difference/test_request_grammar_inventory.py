@@ -213,7 +213,13 @@ def test_every_input_side_unconstrained_location_has_generated_coverage() -> Non
         location
         for location, side in admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS.items()
         if side == "AUTHORITY_INPUT"
-    } == {"authority/authority.schema.json#/$defs/action/properties/operation"}
+    } == {
+        "authority/authority.schema.json#/$defs/action/properties/operation",
+        "authority/verifier_selection_grant.schema.json#/properties/verifier_identity",
+        "authority/verifier_selection_grant.schema.json#/properties/permitted_boundary",
+        "authority/verifier_selection_decision.schema.json#/properties/verifier_identity",
+        "authority/verifier_selection_decision.schema.json#/properties/permitted_boundary",
+    }
 
 
 # --------------------------------------------------------------------------- #

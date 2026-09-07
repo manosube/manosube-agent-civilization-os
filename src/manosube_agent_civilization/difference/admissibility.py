@@ -134,6 +134,22 @@ UNCONSTRAINED_CONTRACT_LOCATIONS: dict[str, str] = {
     # and never interprets it. Constraining it here would be this schema deciding what a
     # Change may do, which is a later phase's to say.
     "authority/authority.schema.json#/$defs/action/properties/operation": "AUTHORITY_INPUT",
+    # Opaque by contract (Structural Review Round 3, P13-R3-F1): Authority binds
+    # verifier_identity/permitted_boundary into a Verifier Selection Decision's identity and
+    # never interprets them -- what a verifier identity or a boundary means is Independent
+    # Verification's own concern, not this schema's to constrain.
+    "authority/verifier_selection_grant.schema.json#/properties/verifier_identity": (
+        "AUTHORITY_INPUT"
+    ),
+    "authority/verifier_selection_grant.schema.json#/properties/permitted_boundary": (
+        "AUTHORITY_INPUT"
+    ),
+    "authority/verifier_selection_decision.schema.json#/properties/verifier_identity": (
+        "AUTHORITY_INPUT"
+    ),
+    "authority/verifier_selection_decision.schema.json#/properties/permitted_boundary": (
+        "AUTHORITY_INPUT"
+    ),
     "difference/candidate_completion_record.schema.json#/properties/claim": "EMITTED",
     "difference/difference.schema.json"
     "#/$defs/normalized_target_state/properties/expected_value": "EMITTED",
