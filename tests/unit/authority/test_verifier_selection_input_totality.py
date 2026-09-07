@@ -2,11 +2,12 @@
 
 The same declaration-and-sweep pattern ``test_authority_input_totality.py`` uses for
 ``evaluate_authority``'s own request, applied to ``evaluate_verifier_selection``'s request
-(Structural Review Round 3, P13-R3-F1). This is the suite
-``difference.admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS`` names when it tags
-``verifier_identity`` and ``permitted_boundary`` (on both the request and the grants it
-carries) ``AUTHORITY_INPUT``: an unconstrained schema location is only real coverage once some
-owner suite is generated against it, and this file is that suite for these four locations.
+(Structural Review Round 3, P13-R3-F1; declaration signature widened Round 5-R1, Issue #51,
+P13-R5-R1). This is the suite ``difference.admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS``
+names when it tags ``verifier_identity`` and ``permitted_boundary`` (on the request, the
+grants it carries, and -- since R5-R1 -- the declarations it carries) ``AUTHORITY_INPUT``: an
+unconstrained schema location is only real coverage once some owner suite is generated against
+it, and this file is that suite for these six locations.
 
 **The sweep** walks every location the built request instantiates, deletes it and retypes it.
 **The declaration generator** starts from ``REQUIRED_REQUEST_KEYS`` instead, so a key added
@@ -24,6 +25,10 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
+from tests.fixtures.product_binding import (
+    human_authority_signing_key,
+    sign_human_grant_declaration,
+)
 
 from manosube_agent_civilization.authority import AuthorityError, evaluate_verifier_selection
 from manosube_agent_civilization.authority.identity import verifier_selection_grant_id
@@ -40,6 +45,7 @@ _VERIFIER_IDENTITY = {"kind": "deterministic_test_runner", "id": "VERIFIER-0001"
 _BOUNDARY = {"scope": "repository", "boundary_id": "VB-0001"}
 _PROJECT_BINDING_ID = "PROJBIND-" + "0" * 64
 _DECLARED_AT = "2026-09-07T13:00:00Z"
+_SIGNING_KEY = human_authority_signing_key()
 
 #: Ill-typed values, one per JSON type -- the same substitution set
 #: ``test_authority_input_totality.py`` uses for the same reason: every case they generate is
@@ -73,9 +79,8 @@ def _grant(**overrides: Any) -> dict[str, Any]:
 
 def _declaration(grant: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
     bound_grant = grant if grant is not None else _grant()
-    record: dict[str, Any] = {
+    fields: dict[str, Any] = {
         "schema_version": "0.1",
-        "human_grant_declaration_id": "",
         "project_id": "PRJ-0001",
         "project_binding_id": _PROJECT_BINDING_ID,
         "grant_ref": {
@@ -83,10 +88,28 @@ def _declaration(grant: dict[str, Any] | None = None, **overrides: Any) -> dict[
             "id": bound_grant["verifier_selection_grant_id"],
         },
         "declared_by": dict(_HUMAN),
+        "requirement_id": bound_grant["requirement_id"],
+        "selection_id": bound_grant["selection_id"],
+        "verifier_identity": deepcopy(bound_grant["verifier_identity"]),
+        "permitted_boundary": deepcopy(bound_grant["permitted_boundary"]),
         "status": "ACTIVE",
         "declared_at": _DECLARED_AT,
     }
-    record.update(overrides)
+    fields.update(overrides)
+    signature = sign_human_grant_declaration(
+        project_id=fields["project_id"],
+        project_binding_id=fields["project_binding_id"],
+        grant_ref=fields["grant_ref"],
+        declared_by=fields["declared_by"],
+        requirement_id=fields["requirement_id"],
+        selection_id=fields["selection_id"],
+        verifier_identity=fields["verifier_identity"],
+        permitted_boundary=fields["permitted_boundary"],
+        status=fields["status"],
+        declared_at=fields["declared_at"],
+    )
+    record = dict(fields)
+    record["signature"] = signature
     record["human_grant_declaration_id"] = human_grant_declaration_id(record)
     return record
 
@@ -101,6 +124,7 @@ def _request() -> dict[str, Any]:
         "permitted_boundary": dict(_BOUNDARY),
         "selection_status": "ACTIVE",
         "human_authority_ref": dict(_HUMAN),
+        "human_authority_signing_key": dict(_SIGNING_KEY),
         "grants": [_grant()],
         "grant_declarations": [_declaration()],
     }
@@ -150,9 +174,9 @@ def test_the_base_request_decides() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The sweep: every location the fixture instantiates, including the four
-# AUTHORITY_INPUT locations (verifier_identity/permitted_boundary, request-level
-# and per-grant) UNCONSTRAINED_CONTRACT_LOCATIONS names this file as owning.
+# The sweep: every location the fixture instantiates, including the AUTHORITY_INPUT
+# locations (verifier_identity/permitted_boundary, request-level, per-grant, and -- since
+# R5-R1 -- per-declaration) UNCONSTRAINED_CONTRACT_LOCATIONS names this file as owning.
 # --------------------------------------------------------------------------- #
 
 

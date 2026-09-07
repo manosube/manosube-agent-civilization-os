@@ -32,6 +32,7 @@ from typing import Any
 
 from manosube_agent_civilization.authority.identity import rule_id
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import AlreadyInitializedError
 
 from .admission import admit_genesis_transaction
@@ -122,6 +123,7 @@ def bind_project(
     command_policy: dict[str, Any],
     secret_exclusion_policy: dict[str, Any],
     human_authority_ref: dict[str, Any],
+    human_authority_signing_key: dict[str, Any],
     bound_at: str,
     genesis_state: dict[str, Any],
     additional_genesis_records: list[tuple[str, str, dict[str, Any]]] | None = None,
@@ -269,6 +271,7 @@ def bind_project(
         command_policy=command_policy,
         secret_exclusion_policy=secret_exclusion_policy,
         human_authority_ref=human_authority_ref,
+        human_authority_signing_key=human_authority_signing_key,
         bound_at=bound_at,
         schema_root=schema_root,
     )
@@ -354,6 +357,7 @@ def declare_human_grant(
     grant_ref: dict[str, Any],
     status: str,
     declared_at: str,
+    signature: dict[str, Any],
     schema_root: Path | None = None,
     fault: Any | None = None,
 ) -> dict[str, Any]:
@@ -386,10 +390,20 @@ def declare_human_grant(
     Round 4 (P13-R4) already established for the grant's own resolution in
     ``independent_verification/route.py``.
 
-    Because :func:`~manosube_agent_civilization.binding.identity.human_grant_declaration_id`
-    binds ``grant_ref`` -- itself a content address over the grant's own project/requirement/
-    selection/verifier/boundary/status -- this one declaration, once resolved, anchors every
-    one of those fields completely; no second, redundant copy of them is ever declared here.
+    R5-R1 (Issue #51, ``ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER``)
+    supersedes Round 5's own ``grant_ref``-only design: durable Store commission of a
+    self-consistent, correctly-``granted_by``-shaped grant is not, by itself, proof a Human
+    declared it -- it proves only that *some* Store-write-capable caller committed it. A real
+    cryptographic signature, checked against the real Project Binding's own
+    ``human_authority_signing_key`` (never a caller-supplied copy), is what proves authorship.
+    *signature* is *this* function's own caller-supplied claim -- this route never generates
+    one -- verified read-only, before persisting anything, via
+    :func:`~manosube_agent_civilization.binding.signature.verify_declaration_signature`. The
+    grant's own ``requirement_id``/``selection_id``/``verifier_identity``/``permitted_
+    boundary`` are read directly off the real, already-resolved *grant* record above -- never
+    a caller-supplied copy either -- and restated into the signed payload, per R5-R1's own
+    adopted decision that ``grant_ref``'s content address alone is not sufficient; the
+    signature must cover a complete, self-describing payload.
     """
 
     real_project_binding = store.resolve_record(project_id, "project_binding", project_binding_id)
@@ -415,8 +429,14 @@ def declare_human_grant(
         project_binding_id=project_binding_id,
         grant_ref={"kind": "verifier_selection_grant", "id": grant_id},
         declared_by=real_project_binding["human_authority_ref"],
+        requirement_id=real_grant["requirement_id"],
+        selection_id=real_grant["selection_id"],
+        verifier_identity=real_grant["verifier_identity"],
+        permitted_boundary=real_grant["permitted_boundary"],
         status=status,
         declared_at=declared_at,
+        signature=signature,
+        signing_key=real_project_binding["human_authority_signing_key"],
         schema_root=schema_root,
     )
     declaration_id = declaration["human_grant_declaration_id"]
@@ -444,7 +464,8 @@ def declare_human_grant(
         "committed_at": declared_at,
     }
 
-    committed_state = store.commit(
+    committed_state = commit_state_transition(
+        store,
         project_id,
         current_state["state_revision"],
         current_state["semantic_fingerprint"],

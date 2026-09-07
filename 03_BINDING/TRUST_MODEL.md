@@ -131,3 +131,40 @@ HUMAN_GRANT_DECLARATION_DECLARED_BY_CALLER_SUPPLIED=false
 See `PROJECT_BINDING.md` §11 for the record's own shape and `AUTHORITY_CONTRACT.md` §7.3's
 Round 5 addendum and `08_VERIFICATION/VERIFICATION_CONTRACT.md` §12 for how Authority and
 Independent Verification each consume it, read-only.
+
+**Corrected by Structural Review Round 5-R1 (Issue #51, P13-R5-R1,
+`ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER`).** This section's own central
+claim, above, no longer holds: SHUKOU's own follow-on structural review found that the
+non-cryptographic discipline described here -- independent re-resolution and cross-consistency
+checking alone -- still left `human_grant_declaration` provable only as "some Store-write-
+capable caller committed a record shaped like a Human declaration," never as "a Human actually
+authored it." `human_authority_ref` is not a secret, so the cross-consistency discipline this
+section describes, however careful, cannot by itself distinguish a Human's own act from any
+caller who can write to the Store. SHUKOU's own adoption judged that only a Human's own
+verifiable signature closes this, and this Kernel now introduces exactly one piece of
+cryptography to do it -- deliberately narrow, and still not a secret:
+
+```text
+HUMAN_GRANT_DECLARATION_INTRODUCES_A_SIGNING_KEY=true
+HUMAN_GRANT_DECLARATION_SIGNING_KEY_IS_A_SECRET=false
+HUMAN_GRANT_DECLARATION_PRIVATE_KEY_TOUCHES_PRODUCTION_CODE=false
+HUMAN_GRANT_DECLARATION_INTRODUCES_A_SECOND_HUMAN_IDENTITY_SOURCE=false
+```
+
+Project Binding's own `human_authority_signing_key`
+(`01_SCHEMA/binding/project_binding.schema.json#/$defs/signing_key`:
+`{algorithm: "ed25519", key_id, public_key}`) is a *public verification key*, not a secret --
+holding it grants no capability, exactly as knowing a `human_authority_ref`'s own id grants
+none. The Human's own private key never touches this system's code at any point; production
+code (`manosube_agent_civilization.binding.signature`) only ever verifies a caller-supplied
+signature against this public key, never generates one. This does not introduce a second
+source of Human identity truth: the signing key is itself a field of the one Project Binding
+this whole domain already has exactly one of, resolved through the identical
+never-trust-a-caller-repeated-value discipline (never a caller argument, always independently
+re-resolved from the real, already-committed Project Binding) this section's own §2b four-way
+cross-match already establishes for `human_authority_ref` itself. What changes is not *how many*
+sources of Human provenance exist, but *what kind of evidence* the one source now attaches: a
+declaration's own restated grant content and its own signature over that content, rather than
+mere content-address self-consistency and Store commission. See `PROJECT_BINDING.md` §11's own
+Round 5-R1 addendum, `AUTHORITY_CONTRACT.md` §7.3's Round 5-R1 addendum, and
+`08_VERIFICATION/VERIFICATION_CONTRACT.md` §13 for the full mechanism.

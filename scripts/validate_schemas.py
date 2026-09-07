@@ -64,7 +64,9 @@ def main() -> int:
     # Repair 5's own genesis institution receipt (P9-C5-F1) adds one more, making 47.
     # Phase 13 Structural Review Round 3's own Authority extension (P13-R3-F1,
     # verifier_selection_grant and verifier_selection_decision) adds two more, making 49.
-    if len(paths) != 49 or len(set(ids)) != len(paths) or None in ids:
+    # Phase 13 Structural Review Round 5's own Binding extension (P13-R5,
+    # human_grant_declaration) adds one more, making 50.
+    if len(paths) != 50 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

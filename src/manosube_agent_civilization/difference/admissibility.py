@@ -150,6 +150,18 @@ UNCONSTRAINED_CONTRACT_LOCATIONS: dict[str, str] = {
     "authority/verifier_selection_decision.schema.json#/properties/permitted_boundary": (
         "AUTHORITY_INPUT"
     ),
+    # Opaque by contract (Structural Review Round 5-R1, Issue #51, P13-R5-R1): a Human Grant
+    # Declaration now directly restates the grant's own verifier_identity/permitted_boundary
+    # into the signed payload, rather than binding them only by grant_ref's content address --
+    # the identical opaque convention verifier_selection_grant's own matching properties above
+    # already use, for the identical reason: what these mean is Independent Verification's own
+    # concern, never this schema's to constrain.
+    "binding/human_grant_declaration.schema.json#/properties/verifier_identity": (
+        "AUTHORITY_INPUT"
+    ),
+    "binding/human_grant_declaration.schema.json#/properties/permitted_boundary": (
+        "AUTHORITY_INPUT"
+    ),
     "difference/candidate_completion_record.schema.json#/properties/claim": "EMITTED",
     "difference/difference.schema.json"
     "#/$defs/normalized_target_state/properties/expected_value": "EMITTED",

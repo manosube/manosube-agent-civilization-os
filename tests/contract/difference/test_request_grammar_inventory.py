@@ -219,6 +219,8 @@ def test_every_input_side_unconstrained_location_has_generated_coverage() -> Non
         "authority/verifier_selection_grant.schema.json#/properties/permitted_boundary",
         "authority/verifier_selection_decision.schema.json#/properties/verifier_identity",
         "authority/verifier_selection_decision.schema.json#/properties/permitted_boundary",
+        "binding/human_grant_declaration.schema.json#/properties/verifier_identity",
+        "binding/human_grant_declaration.schema.json#/properties/permitted_boundary",
     }
 
 

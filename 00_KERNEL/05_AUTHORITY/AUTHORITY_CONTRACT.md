@@ -504,6 +504,46 @@ PHASE_13_ACCEPTANCE=false
 PHASE_14_ALLOWED=false
 ```
 
+**Structural Review Round 5-R1（Issue #51, P13-R5-R1, `ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER`）:** Round 5は`human_grant_declaration`の durable Store commission と自己無矛盾な形——`grant_ref`による一意束縛、`declared_by`の実在Project Binding再解決、`status == ACTIVE`——を要求したが、これらすべてを満たす record であっても、それを commit したのが実在の Human であることの証明にはならない。`human_authority_ref`が秘密でない以上、Store 書き込み能力を持つ任意の caller が、この形をした record を自ら組み立てて commit できてしまう。Round 5の直前の一文（本節500行目）が述べた「非暗号学的信頼哲学は変更しない」という判断は、この Round で明示的に覆る——SHUKOUの採択は、Human自身の検証可能な署名だけが、この欠落を閉じる唯一の正当な根拠であると判断した。
+
+Project Binding（`03_BINDING/PROJECT_BINDING.md` §11、`01_SCHEMA/binding/project_binding.schema.json#/$defs/signing_key`）は、`human_authority_signing_key`（`{algorithm: "ed25519", key_id, public_key}`）という公開検証鍵を新たに保持する。この鍵は Human 自身の秘密鍵を一切含まない——秘密鍵はこのシステムのどのコードにも触れず、production コードは検証のみを行う（`manosube_agent_civilization.binding.signature`）。
+
+`human_grant_declaration`はRound 5-R1で、`grant_ref`の content address による間接束縛だけでなく、対象grantの`requirement_id`/`selection_id`/`verifier_identity`/`permitted_boundary`を**直接restate**し、かつ自身の`project_id`/`project_binding_id`/`declared_by`/`status`/`declared_at`とあわせて、この完全な payload 全体に対するHuman自身の署名（`signature: {algorithm, key_id, value}`）を運ぶ。署名が保護する payload と content-addressed identity が保護する payload は同一の派生元（`binding.identity.human_grant_declaration_signing_payload`）を共有する——「何を宣言したか」と「何に署名したか」が別々の投影に分裂することはない。`declared_at`はRound 5の`bound_at`型の除外規約に反し、この Round から identity/署名 payload に**参加する**——時刻を束縛しない署名は、任意の後続時点で無限に再生可能になってしまうためである。
+
+```text
+HUMAN_GRANT_DECLARATION_SIGNATURE_REQUIRED=true
+HUMAN_GRANT_DECLARATION_SIGNATURE_ALGORITHM=ed25519
+HUMAN_GRANT_DECLARATION_SIGNING_KEY_OWNER=PROJECT_BINDING
+HUMAN_GRANT_DECLARATION_PRIVATE_KEY_TOUCHES_PRODUCTION_CODE=false
+HUMAN_GRANT_DECLARATION_RESTATES_GRANT_CONTENT=true
+STORE_COMMISSION_ALONE_AS_HUMAN_PROVENANCE=false
+CALLER_SUPPLIED_BODY_ALONE_AS_HUMAN_PROVENANCE=false
+```
+
+Binding owner自身が、記名前に署名をread-onlyで検証する（`binding.engine.assemble_human_grant_declaration`が`verify_declaration_signature`を呼ぶ）。しかしBindingによる検証は、`evaluate_verifier_selection`自身の**独立した**再検証を代替しない——この評価器は、request自身が新たに運ぶ`human_authority_signing_key`（呼び出し側が実在のProject Bindingから独立に解決した値、Binding自身の以前の検証結果を信頼するのではない）に対して、各候補declarationの署名を自ら再検証する。加えて、declarationが自ら restate した`requirement_id`/`selection_id`/`verifier_identity`/`permitted_boundary`が、束縛対象のgrant自身の同名フィールドと一致することも独立に再確認する（`DECLARATION_CONTENT_MISMATCH`）。署名が無効、または鍵が一致しない場合は`DECLARATION_SIGNATURE_INVALID`で拒否する——いずれも新しい`grant_declarations`束縛段階の理由コードであり、`SELECTED`へ到達する前に評価される。
+
+```text
+GRANT BINDS BUT DECLARATION.declared_by != 実在の human_authority_ref → DECLARATION_AUTHORITY_MISMATCH
+GRANT BINDS AND DECLARATION.declared_by 一致だが status != ACTIVE → DECLARATION_NOT_ACTIVE
+GRANT BINDS AND DECLARATION ACTIVE だが restate 内容が実在grantと不一致 → DECLARATION_CONTENT_MISMATCH
+GRANT BINDS AND DECLARATION 内容一致だが署名が実在の human_authority_signing_key で検証できない → DECLARATION_SIGNATURE_INVALID
+すべてを満たす → 束縛（SELECTEDの候補）
+```
+
+**単一の共有 State-transition commit primitive（R5-R1の第二の要求）:** Round 5が`declare_human_grant`に導入した`store.commit`直接呼び出しは、`topology.py`のK-003/R-001（単一の正準 State-transition committer）静的走査に違反していた——`_SANCTIONED_COMMIT_CALL_MODULES`は`reflow.commit`一箇所のみを許可していたためである。この違反はSHUKOU自身への開示の後、`store/commit.py::commit_state_transition`という、パッケージ内で唯一`.commit(...)`を呼ぶドメイン非依存の pass-through 関数の抽出によって是正された。`reflow.commit.commit_reflow`と`binding.route.declare_human_grant`はいずれも、自身のドメイン意味論（Closure / Human宣言）に従って`next_state`/`transition`/`records`を組み立てた上で、実際の永続化呼び出しだけをこの一つの共有 primitive に委譲する。`topology.py`の`_SANCTIONED_COMMIT_CALL_MODULES`はこの共有 primitive 一箇所のみを指すよう更新され、K-003/R-001はこの唯一の許可された呼び出し箇所を維持する限り引き続きPASSする。
+
+```text
+SHARED_STATE_TRANSITION_COMMIT_PRIMITIVE=store.commit.commit_state_transition
+SANCTIONED_COMMIT_CALL_MODULE_COUNT=1
+BINDING_DIRECT_STORE_COMMIT=false
+REFLOW_DIRECT_STORE_COMMIT=false
+```
+
+```text
+PHASE_13_ACCEPTANCE=false
+PHASE_14_ALLOWED=false
+```
+
 # 8. What Authority Never Does
 
 ```text

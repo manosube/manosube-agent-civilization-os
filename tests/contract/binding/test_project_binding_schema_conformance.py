@@ -18,6 +18,7 @@ from tests.fixtures.product_binding import (
     boundary,
     command_policy,
     human_authority_ref,
+    human_authority_signing_key,
     objective_revision,
     secret_exclusion_policy,
     source_registrations,
@@ -48,6 +49,7 @@ def _assembled() -> dict[str, Any]:
         command_policy=command_policy(),
         secret_exclusion_policy=secret_exclusion_policy(),
         human_authority_ref=human_authority_ref(),
+        human_authority_signing_key=human_authority_signing_key(),
         bound_at=BOUND_AT,
         schema_root=SCHEMA_ROOT,
     )
@@ -99,6 +101,7 @@ def test_a_real_assembled_project_binding_validates_against_its_own_schema() -> 
         "command_policy",
         "secret_exclusion_policy",
         "human_authority_ref",
+        "human_authority_signing_key",
         "bound_at",
         "project_binding_id",
     ],

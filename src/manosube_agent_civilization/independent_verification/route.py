@@ -83,6 +83,17 @@ token, or cache: ``evaluate_verifier_selection`` itself is untouched, and still 
 identical shape/binding checks over whatever content it is given -- only what content this
 route is willing to give it has changed.
 
+Structural Review Round 5-R1 correction (P13-R5-R1, Issue #51,
+``ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER``): a Human Grant
+Declaration's own durable Store commission (P13-R5) still never proved a Human, rather than
+any Store-write-capable caller, actually authored it. This route now also reads the real
+Project Binding's own ``human_authority_signing_key`` directly off the already deep-frozen,
+Boot-verified ``boot_context.project_binding`` mapping -- never a caller-supplied copy -- and
+passes it into ``evaluate_verifier_selection`` alongside the resolved grants/declarations, so
+Authority independently re-verifies each declaration's own Ed25519 ``signature`` against that
+real key before ever answering ``SELECTED``, rather than trusting Binding's own prior
+verification at commit time.
+
 Every requirement/selection/boundary/target/authority admission failure raises
 :class:`~manosube_agent_civilization.independent_verification.errors.
 VerificationRequirementError` before this route ever calls the supplied verifier, and calling
@@ -375,6 +386,15 @@ def run_independent_verification(
     # requirement_id, verifier_identity, permitted_boundary, selection status, and the real
     # selection authority identity together produces one -- and (P13-R4) only a grant this
     # route itself resolved from the Store above is ever offered as a candidate.
+    # P13-R5-R1 (Structural Review Round 5-R1, Issue #51): the real Project Binding's own
+    # public verification key, read directly off the already deep-frozen, Boot-verified
+    # `boot_context.project_binding` mapping -- never a caller-supplied copy -- so Authority
+    # can independently re-verify each declaration's own signature rather than trusting
+    # Binding's prior verification at commit time.
+    real_human_authority_signing_key = dict(
+        boot_context.project_binding["human_authority_signing_key"]
+    )
+
     selection_decision = evaluate_verifier_selection(
         {
             "schema_version": "0.1",
@@ -385,6 +405,7 @@ def run_independent_verification(
             "permitted_boundary": dict(verifier_selection.permitted_boundary),
             "selection_status": verifier_selection.status,
             "human_authority_ref": dict(real_human_authority_ref),
+            "human_authority_signing_key": real_human_authority_signing_key,
             "grants": [dict(grant) for grant in resolved_grants],
             "grant_declarations": [dict(declaration) for declaration in resolved_declarations],
         }

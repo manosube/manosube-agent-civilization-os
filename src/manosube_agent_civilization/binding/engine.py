@@ -13,6 +13,7 @@ domain already proved).
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from .identity import (
     verify_project_binding_identity,
 )
 from .reference_classification import reject_wrong_kind_reference
+from .signature import verify_declaration_signature
 from .validation import validate_record
 
 
@@ -97,6 +99,7 @@ def assemble_project_binding(
     command_policy: dict[str, Any],
     secret_exclusion_policy: dict[str, Any],
     human_authority_ref: dict[str, Any],
+    human_authority_signing_key: dict[str, Any],
     bound_at: str,
     schema_root: Path | None = None,
 ) -> dict[str, Any]:
@@ -150,6 +153,7 @@ def assemble_project_binding(
         "command_policy": command_policy,
         "secret_exclusion_policy": secret_exclusion_policy,
         "human_authority_ref": human_authority_ref,
+        "human_authority_signing_key": human_authority_signing_key,
     }
 
     # 3b. Typed reference-kind classification (Issue #43 P9-R1-F5) -- every top-level
@@ -193,26 +197,43 @@ def assemble_human_grant_declaration(
     project_binding_id: str,
     grant_ref: dict[str, Any],
     declared_by: dict[str, Any],
+    requirement_id: str,
+    selection_id: str,
+    verifier_identity: dict[str, Any],
+    permitted_boundary: dict[str, Any],
     status: str,
     declared_at: str,
+    signature: dict[str, Any],
+    signing_key: dict[str, Any],
     schema_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Validate, content-address, and reverify one Human Grant Declaration (Structural
-    Review Round 5, P13-R5).
+    """Validate, content-address, signature-verify, and reverify one Human Grant Declaration
+    (Structural Review Round 5, P13-R5; signed anchor, Structural Review Round 5-R1,
+    Issue #51, P13-R5-R1).
 
-    Pure, like :func:`assemble_project_binding` -- never touches the Store. *project_id*,
-    *project_binding_id*, *grant_ref*, and *declared_by* must already be the real, resolved
+    Pure, like :func:`assemble_project_binding` -- never touches the Store. Every one of
+    *project_id*/*project_binding_id*/*grant_ref*/*declared_by*/*requirement_id*/
+    *selection_id*/*verifier_identity*/*permitted_boundary* must already be the real, resolved
     values :mod:`.route`'s own caller independently re-derived from the Store (the real
     committed Project Binding's own ``human_authority_ref``, and the real committed grant's
-    own ``verifier_selection_grant_id``) -- this function performs no Store I/O and trusts
-    exactly what it is given; ``route.declare_human_grant`` is the one place those values are
-    ever resolved rather than merely asserted.
+    own fields) -- this function performs no Store I/O and trusts exactly what it is given;
+    ``route.declare_human_grant`` is the one place those values are ever resolved rather than
+    merely asserted. *signing_key* must likewise be the real Project Binding's own
+    ``human_authority_signing_key`` -- never a caller-supplied copy.
 
-    Deliberately carries none of the grant's own project/requirement/selection/verifier/
-    boundary/status fields a second time -- *grant_ref* alone, being content-addressed over
-    exactly those fields, already binds this declaration to them completely (see
-    :mod:`.identity`'s own docstring for why restating them would be a redundant, not a
-    second, binding).
+    R5-R1 supersedes Round 5's own design: SHUKOU's adoption requires the declaration to
+    completely bind the grant's own ``requirement_id``/``selection_id``/``verifier_identity``/
+    ``permitted_boundary`` directly, not merely by reference through ``grant_ref``'s own
+    content address -- the whole point being that the Human's own *signature* over this
+    complete, self-describing payload is what proves authorship, and a signature is only as
+    meaningful as the payload it actually covers.
+
+    This function never generates a signature -- the Human's own private key never touches
+    this system. *signature* is a caller-supplied claim; it is verified, read-only, against
+    *signing_key* before this function ever returns a record, via
+    :func:`~manosube_agent_civilization.binding.signature.verify_declaration_signature` --
+    the identical check :mod:`.route`'s own resolved values feed, and the identical check
+    Authority re-performs independently before ever answering SELECTED.
     """
 
     if declared_by.get("kind") != "human_authority":
@@ -232,15 +253,26 @@ def assemble_human_grant_declaration(
         "project_binding_id": project_binding_id,
         "grant_ref": dict(grant_ref),
         "declared_by": dict(declared_by),
+        "requirement_id": requirement_id,
+        "selection_id": selection_id,
+        "verifier_identity": deepcopy(verifier_identity),
+        "permitted_boundary": deepcopy(permitted_boundary),
         "status": status,
+        "declared_at": declared_at,
+        "signature": dict(signature),
     }
 
     reject_secret_material(record, "human_grant_declaration")
     walk_references(record, "human_grant_declaration")
 
     record["human_grant_declaration_id"] = human_grant_declaration_id(record)
-    record["declared_at"] = declared_at
     verify_human_grant_declaration_identity(record)
+
+    if not verify_declaration_signature(record, signing_key=signing_key):
+        raise BindingValidationError(
+            "signature does not verify against the real Project Binding's own "
+            "human_authority_signing_key over this declaration's own adopted payload"
+        )
 
     validate_record(record, "human_grant_declaration.schema.json", schema_root=schema_root)
 

@@ -9,6 +9,18 @@ itself proof that Human Authority selected *this* Independent Verification
 the binding is exact on every axis, that a caller-fabricated or self-consistent-but-unreal
 selection never binds, and that a forged grant is refused exactly as every other
 Authority-owned record already is.
+
+Structural Review Round 5 (P13-R5) required a genuine, matching, ``ACTIVE`` Human Grant
+Declaration anchoring the winning grant -- a grant's own content or its mere Store persistence
+is never itself proof a Human declared it. Structural Review Round 5-R1 (Issue #51, P13-R5-R1,
+``ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER``) goes one step further: a
+declaration's own durable Store commission and self-consistent shape still never proved a
+*Human*, rather than any Store-write-capable caller, authored it. This file's own declarations
+now each carry a real Ed25519 signature over a payload that directly restates the grant's own
+``requirement_id``/``selection_id``/``verifier_identity``/``permitted_boundary``, and this
+evaluator is required to independently re-verify that signature -- against the real caller-
+resolved ``human_authority_signing_key`` -- and the restated content, before ever answering
+``SELECTED``.
 """
 
 from __future__ import annotations
@@ -17,6 +29,10 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
+from tests.fixtures.product_binding import (
+    human_authority_signing_key,
+    sign_human_grant_declaration,
+)
 
 from manosube_agent_civilization.authority import (
     REFUSED,
@@ -35,6 +51,12 @@ _VERIFIER_IDENTITY = {"kind": "deterministic_test_runner", "id": "VERIFIER-0001"
 _BOUNDARY = {"scope": "repository", "boundary_id": "VB-0001"}
 _PROJECT_BINDING_ID = "PROJBIND-" + "0" * 64
 _DECLARED_AT = "2026-09-07T13:00:00Z"
+_SIGNING_KEY = human_authority_signing_key()
+_OTHER_SIGNING_KEY = {
+    "algorithm": "ed25519",
+    "key_id": "AUTH-KEY-9999",
+    "public_key": "00" * 32,
+}
 
 
 def _grant(**overrides: Any) -> dict[str, Any]:
@@ -54,14 +76,25 @@ def _grant(**overrides: Any) -> dict[str, Any]:
     return record
 
 
-def _declaration(grant: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
+def _declaration(
+    grant: dict[str, Any] | None = None,
+    *,
+    signature: dict[str, Any] | None = None,
+    signed_fields: dict[str, Any] | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
     """One Human Grant Declaration anchoring *grant* (default: the default :func:`_grant`)
-    -- Structural Review Round 5, P13-R5's own required companion to a grant."""
+    -- Structural Review Round 5, P13-R5's own required companion to a grant, carrying a real
+    Ed25519 signature over its own restated fields (Structural Review Round 5-R1, P13-R5-R1).
+
+    *signed_fields*, when given, is the field set the *signature* is actually computed over --
+    distinct from this declaration's own final fields, so a caller can construct a genuine
+    signature that does not cover what it is attached to (a forged-content declaration whose
+    signature is nonetheless individually valid, over different content)."""
 
     bound_grant = grant if grant is not None else _grant()
-    record: dict[str, Any] = {
+    fields: dict[str, Any] = {
         "schema_version": "0.1",
-        "human_grant_declaration_id": "",
         "project_id": "PRJ-0001",
         "project_binding_id": _PROJECT_BINDING_ID,
         "grant_ref": {
@@ -69,10 +102,30 @@ def _declaration(grant: dict[str, Any] | None = None, **overrides: Any) -> dict[
             "id": bound_grant["verifier_selection_grant_id"],
         },
         "declared_by": dict(_HUMAN),
+        "requirement_id": bound_grant["requirement_id"],
+        "selection_id": bound_grant["selection_id"],
+        "verifier_identity": deepcopy(bound_grant["verifier_identity"]),
+        "permitted_boundary": deepcopy(bound_grant["permitted_boundary"]),
         "status": "ACTIVE",
         "declared_at": _DECLARED_AT,
     }
-    record.update(overrides)
+    fields.update(overrides)
+    if signature is None:
+        to_sign = signed_fields if signed_fields is not None else fields
+        signature = sign_human_grant_declaration(
+            project_id=to_sign["project_id"],
+            project_binding_id=to_sign["project_binding_id"],
+            grant_ref=to_sign["grant_ref"],
+            declared_by=to_sign["declared_by"],
+            requirement_id=to_sign["requirement_id"],
+            selection_id=to_sign["selection_id"],
+            verifier_identity=to_sign["verifier_identity"],
+            permitted_boundary=to_sign["permitted_boundary"],
+            status=to_sign["status"],
+            declared_at=to_sign["declared_at"],
+        )
+    record = dict(fields)
+    record["signature"] = signature
     record["human_grant_declaration_id"] = human_grant_declaration_id(record)
     return record
 
@@ -87,6 +140,7 @@ def _request(**overrides: Any) -> dict[str, Any]:
         "permitted_boundary": dict(_BOUNDARY),
         "selection_status": "ACTIVE",
         "human_authority_ref": dict(_HUMAN),
+        "human_authority_signing_key": dict(_SIGNING_KEY),
         "grants": [_grant()],
         "grant_declarations": [_declaration()],
     }
@@ -255,7 +309,8 @@ def test_two_distinct_binding_grants_select_canonically_and_order_does_not_matte
 
 # --------------------------------------------------------------------------- #
 # required proof: a core-clean, ACTIVE grant still withholds the selection without a
-# genuine, matching, ACTIVE Human Grant Declaration (Structural Review Round 5, P13-R5)
+# genuine, matching, ACTIVE, correctly-signed Human Grant Declaration
+# (Structural Review Round 5, P13-R5; signature, Round 5-R1, P13-R5-R1)
 # --------------------------------------------------------------------------- #
 
 
@@ -326,9 +381,9 @@ def test_a_revoked_declaration_does_not_bind() -> None:
 
 
 def test_only_a_genuine_matching_active_declaration_permits_selection() -> None:
-    """The control: a real, canonical Human Grant Declaration that genuinely anchors the
-    winning grant is required and sufficient, and is carried into the decision's own
-    ``declaration_ref``."""
+    """The control: a real, canonical, correctly-signed Human Grant Declaration that
+    genuinely anchors the winning grant is required and sufficient, and is carried into the
+    decision's own ``declaration_ref``."""
 
     grant = _grant()
     declaration = _declaration(grant)
@@ -372,6 +427,147 @@ def test_a_repeated_declaration_is_refused_as_an_input() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# required proof: signature re-verification (Structural Review Round 5-R1, Issue #51,
+# P13-R5-R1) -- unsigned/forged/wrong-key/wrong-content declarations never bind, and Store
+# persistence or a caller-supplied body alone is never itself proof of Human authorship.
+# --------------------------------------------------------------------------- #
+
+
+def test_an_unsigned_declaration_is_refused_at_admission() -> None:
+    """A declaration with no ``signature`` at all fails ``human_grant_declaration.schema.
+    json`` itself (``signature`` is a required property) -- refused at the identical
+    admission gate every other malformed Authority-owned record already crosses, before this
+    evaluator's own signature re-verification is ever reached."""
+
+    grant = _grant()
+    unsigned = _declaration(grant, signature={})
+    with pytest.raises(AuthorityError, match="signature"):
+        evaluate_verifier_selection(_request(grants=[grant], grant_declarations=[unsigned]))
+
+
+def test_a_forged_signature_does_not_bind() -> None:
+    """Store persistence (or a caller-supplied body) of a self-consistent declaration is
+    never itself proof of Human authorship -- a bit-flipped signature value refuses exactly
+    as an absent one does."""
+
+    grant = _grant()
+    genuine = _declaration(grant)
+    forged_value = bytearray.fromhex(genuine["signature"]["value"])
+    forged_value[0] ^= 0xFF
+    forged = _declaration(
+        grant, signature={**genuine["signature"], "value": bytes(forged_value).hex()}
+    )
+    decision = evaluate_verifier_selection(_request(grants=[grant], grant_declarations=[forged]))
+    assert decision["decision"] == REFUSED
+    assert "DECLARATION_SIGNATURE_INVALID" in decision["decision_reason_codes"]
+
+
+def test_a_declaration_signed_with_the_wrong_key_does_not_bind() -> None:
+    """The request's own ``human_authority_signing_key`` (the real, caller-resolved Project
+    Binding key) does not match the key that actually produced this declaration's signature
+    -- refused exactly as a forged signature is."""
+
+    grant = _grant()
+    declaration = _declaration(grant)
+    decision = evaluate_verifier_selection(
+        _request(
+            grants=[grant],
+            grant_declarations=[declaration],
+            human_authority_signing_key=dict(_OTHER_SIGNING_KEY),
+        )
+    )
+    assert decision["decision"] == REFUSED
+    assert "DECLARATION_SIGNATURE_INVALID" in decision["decision_reason_codes"]
+
+
+@pytest.mark.parametrize(
+    ("label", "override"),
+    [
+        ("requirement", {"requirement_id": "VREQ-OTHER"}),
+        (
+            "verifier identity",
+            {"verifier_identity": {"kind": "deterministic_test_runner", "id": "OTHER"}},
+        ),
+        ("boundary", {"permitted_boundary": {"scope": "different"}}),
+    ],
+)
+def test_a_declaration_restating_different_content_than_the_grant_does_not_bind(
+    label: str, override: dict[str, Any]
+) -> None:
+    """A declaration that genuinely anchors this grant by ``grant_ref``, is genuinely and
+    validly signed, and is genuinely declared by the real Human Authority -- but whose own
+    restated content disagrees with *this* candidate grant's own matching field -- still does
+    not bind. R5-R1's own point is that the restated fields must independently agree with the
+    grant, not merely be internally self-consistent with the declaration's own signature."""
+
+    grant = _grant()
+    declaration = _declaration(grant, **override)
+    decision = evaluate_verifier_selection(
+        _request(grants=[grant], grant_declarations=[declaration])
+    )
+    assert decision["decision"] == REFUSED
+    assert "DECLARATION_CONTENT_MISMATCH" in decision["decision_reason_codes"]
+
+
+def test_a_declaration_selection_id_restated_wrong_is_a_content_mismatch_not_a_missing_anchor() -> (
+    None
+):
+    """Unlike ``grant_ref`` (which anchors by content address, checked by
+    ``_anchors_grant``), ``selection_id`` is restated content -- a declaration whose
+    ``grant_ref`` still names this exact grant, but whose own restated ``selection_id``
+    diverges, reaches the content-mismatch stage rather than being treated as anchoring some
+    other grant."""
+
+    grant = _grant()
+    declaration = _declaration(grant, selection_id="VSEL-OTHER")
+    decision = evaluate_verifier_selection(
+        _request(grants=[grant], grant_declarations=[declaration])
+    )
+    assert decision["decision"] == REFUSED
+    assert "DECLARATION_CONTENT_MISMATCH" in decision["decision_reason_codes"]
+
+
+def test_a_declaration_with_valid_signature_over_forged_content_does_not_bind() -> None:
+    """A genuine signature exists, but it was computed over *different* content than the
+    declaration's own claimed fields -- the signature itself is individually valid, yet it
+    does not authenticate what this record actually claims, so it must still be refused."""
+
+    grant = _grant()
+    genuine_fields = {
+        "project_id": "PRJ-0001",
+        "project_binding_id": _PROJECT_BINDING_ID,
+        "grant_ref": {
+            "kind": "verifier_selection_grant",
+            "id": grant["verifier_selection_grant_id"],
+        },
+        "declared_by": dict(_HUMAN),
+        "requirement_id": grant["requirement_id"],
+        "selection_id": grant["selection_id"],
+        "verifier_identity": dict(grant["verifier_identity"]),
+        "permitted_boundary": dict(grant["permitted_boundary"]),
+        "status": "ACTIVE",
+        "declared_at": _DECLARED_AT,
+    }
+    tampered = _declaration(grant, signed_fields=genuine_fields, status="REVOKED")
+    decision = evaluate_verifier_selection(_request(grants=[grant], grant_declarations=[tampered]))
+    assert decision["decision"] == REFUSED
+    # A REVOKED declaration is excluded at the DECLARATION_NOT_ACTIVE stage before signature
+    # verification is even reached for *this* candidate's ACTIVE-only admission path -- so the
+    # control below proves the same forged-signature construction is caught when status is
+    # left ACTIVE and only a restated field is tampered instead.
+    assert "DECLARATION_NOT_ACTIVE" in decision["decision_reason_codes"]
+
+    tampered_active = _declaration(
+        grant, signed_fields=genuine_fields, verifier_identity={"kind": "x", "id": "OTHER"}
+    )
+    decision_active = evaluate_verifier_selection(
+        _request(grants=[grant], grant_declarations=[tampered_active])
+    )
+    assert decision_active["decision"] == REFUSED
+    assert "DECLARATION_CONTENT_MISMATCH" in decision_active["decision_reason_codes"]
+
+
+# --------------------------------------------------------------------------- #
 # request-shape admission
 # --------------------------------------------------------------------------- #
 
@@ -393,6 +589,7 @@ def test_unknown_request_keys_are_refused() -> None:
         "permitted_boundary",
         "selection_status",
         "human_authority_ref",
+        "human_authority_signing_key",
         "grants",
         "grant_declarations",
     ],
@@ -446,6 +643,11 @@ def test_verifier_identity_and_permitted_boundary_must_be_actual_objects(payload
         evaluate_verifier_selection(_request(verifier_identity=payload))
     with pytest.raises(AuthorityError):
         evaluate_verifier_selection(_request(permitted_boundary=payload))
+
+
+def test_human_authority_signing_key_must_be_an_actual_object() -> None:
+    with pytest.raises(AuthorityError):
+        evaluate_verifier_selection(_request(human_authority_signing_key="not-an-object"))
 
 
 def test_the_public_api_never_reads_a_clock_network_or_filesystem() -> None:

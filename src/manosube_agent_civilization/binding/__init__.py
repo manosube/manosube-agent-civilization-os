@@ -16,14 +16,21 @@ from .engine import assemble_human_grant_declaration, assemble_project_binding
 from .errors import BindingError, BindingIdentityError, BindingValidationError
 from .identity import (
     human_grant_declaration_id,
+    human_grant_declaration_signing_payload,
     project_binding_id,
     verify_human_grant_declaration_identity,
     verify_project_binding_identity,
 )
 from .reference_classification import reject_wrong_kind_reference, resolve_binding_references
 from .route import bind_project, declare_human_grant
+from .signature import (
+    SUPPORTED_SIGNATURE_ALGORITHM,
+    verify_declaration_signature,
+    verify_ed25519_signature,
+)
 
 __all__ = [
+    "SUPPORTED_SIGNATURE_ALGORITHM",
     "BindingError",
     "BindingIdentityError",
     "BindingValidationError",
@@ -32,9 +39,12 @@ __all__ = [
     "bind_project",
     "declare_human_grant",
     "human_grant_declaration_id",
+    "human_grant_declaration_signing_payload",
     "project_binding_id",
     "reject_wrong_kind_reference",
     "resolve_binding_references",
+    "verify_declaration_signature",
+    "verify_ed25519_signature",
     "verify_human_grant_declaration_identity",
     "verify_project_binding_identity",
 ]

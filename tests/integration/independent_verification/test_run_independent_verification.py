@@ -41,6 +41,19 @@ fabricated/mismatched/revoked/tampered variants this module's negative tests nee
 and committed directly, the same way the Round 4 grant variants above already are, since
 ``declare_human_grant`` itself always resolves the real Human Authority reference and cannot
 be made to produce a fabricated one.
+
+Structural Review Round 5-R1 (Issue #51, P13-R5-R1,
+``ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER``): a declaration's own
+durable Store commission and self-consistent shape (Round 5) still never proved a *Human*,
+rather than any Store-write-capable caller, authored it. Every declaration this fixture
+commits now carries a real Ed25519 signature (``tests.fixtures.product_binding.sign_human_
+grant_declaration``, the fixed deterministic test key) over a payload that directly restates
+the anchored grant's own ``requirement_id``/``selection_id``/``verifier_identity``/
+``permitted_boundary``, and this route now reads the real Project Binding's own public
+``human_authority_signing_key`` (via ``boot_context.project_binding``) and passes it through
+to the existing Authority owner, which independently re-verifies each candidate declaration's
+signature before ever answering ``SELECTED`` -- proving that end-to-end, over the real Store,
+is this file's own added concern.
 """
 
 from __future__ import annotations
@@ -59,6 +72,7 @@ from tests.fixtures.product_binding import (
     bind_project_kwargs,
     genesis_records,
     human_authority_ref,
+    sign_human_grant_declaration,
 )
 from tests.state_helpers import SCHEMA_ROOT
 
@@ -273,6 +287,20 @@ def _real_route(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         grant_ref=_ref(default_grant),
         status="ACTIVE",
         declared_at=_DECLARED_AT,
+        signature=_sign_declaration(
+            {
+                "project_id": project_id,
+                "project_binding_id": project_binding_id,
+                "grant_ref": _ref(default_grant),
+                "declared_by": grant_fixture_ctx["human_authority_ref"],
+                "requirement_id": default_grant["requirement_id"],
+                "selection_id": default_grant["selection_id"],
+                "verifier_identity": default_grant["verifier_identity"],
+                "permitted_boundary": default_grant["permitted_boundary"],
+                "status": "ACTIVE",
+                "declared_at": _DECLARED_AT,
+            }
+        ),
         schema_root=SCHEMA_ROOT,
     )["human_grant_declaration"]
     revoked_declaration = declare_human_grant(
@@ -282,6 +310,20 @@ def _real_route(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         grant_ref=_ref(default_grant),
         status="REVOKED",
         declared_at=_DECLARED_AT,
+        signature=_sign_declaration(
+            {
+                "project_id": project_id,
+                "project_binding_id": project_binding_id,
+                "grant_ref": _ref(default_grant),
+                "declared_by": grant_fixture_ctx["human_authority_ref"],
+                "requirement_id": default_grant["requirement_id"],
+                "selection_id": default_grant["selection_id"],
+                "verifier_identity": default_grant["verifier_identity"],
+                "permitted_boundary": default_grant["permitted_boundary"],
+                "status": "REVOKED",
+                "declared_at": _DECLARED_AT,
+            }
+        ),
         schema_root=SCHEMA_ROOT,
     )["human_grant_declaration"]
     other_grant_declaration = declare_human_grant(
@@ -291,6 +333,20 @@ def _real_route(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         grant_ref=_ref(variant_grants[0]),
         status="ACTIVE",
         declared_at=_DECLARED_AT,
+        signature=_sign_declaration(
+            {
+                "project_id": project_id,
+                "project_binding_id": project_binding_id,
+                "grant_ref": _ref(variant_grants[0]),
+                "declared_by": grant_fixture_ctx["human_authority_ref"],
+                "requirement_id": variant_grants[0]["requirement_id"],
+                "selection_id": variant_grants[0]["selection_id"],
+                "verifier_identity": variant_grants[0]["verifier_identity"],
+                "permitted_boundary": variant_grants[0]["permitted_boundary"],
+                "status": "ACTIVE",
+                "declared_at": _DECLARED_AT,
+            }
+        ),
         schema_root=SCHEMA_ROOT,
     )["human_grant_declaration"]
 
@@ -381,12 +437,32 @@ def _grant_ref(fx: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     return _ref(_grant(fx, **overrides))
 
 
+def _sign_declaration(fields: dict[str, Any]) -> dict[str, Any]:
+    """The real signature a Human genuinely declaring *fields* would produce -- the fixed,
+    deterministic test key (Structural Review Round 5-R1, P13-R5-R1), over the identical
+    field set the real Project Binding's own ``human_authority_signing_key`` is checked
+    against by ``evaluate_verifier_selection``."""
+
+    return sign_human_grant_declaration(
+        project_id=fields["project_id"],
+        project_binding_id=fields["project_binding_id"],
+        grant_ref=fields["grant_ref"],
+        declared_by=fields["declared_by"],
+        requirement_id=fields["requirement_id"],
+        selection_id=fields["selection_id"],
+        verifier_identity=fields["verifier_identity"],
+        permitted_boundary=fields["permitted_boundary"],
+        status=fields["status"],
+        declared_at=fields["declared_at"],
+    )
+
+
 def _declaration(fx: dict[str, Any], grant: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     """One ``human_grant_declaration`` body, in the identical shape the real
-    ``declare_human_grant`` route itself produces (Structural Review Round 5, P13-R5) --
-    used only to build the fabricated/forged variants that route can never itself produce,
-    since it always resolves the real Human Authority reference rather than trusting a
-    caller-supplied one."""
+    ``declare_human_grant`` route itself produces (Structural Review Round 5, P13-R5;
+    signature widened Round 5-R1, P13-R5-R1) -- used only to build the fabricated/forged
+    variants that route can never itself produce, since it always resolves the real Human
+    Authority reference rather than trusting a caller-supplied one."""
 
     fields: dict[str, Any] = {
         "schema_version": "0.1",
@@ -395,10 +471,15 @@ def _declaration(fx: dict[str, Any], grant: dict[str, Any], **overrides: Any) ->
         "project_binding_id": fx["project_binding_id"],
         "grant_ref": _ref(grant),
         "declared_by": dict(fx["human_authority_ref"]),
+        "requirement_id": grant["requirement_id"],
+        "selection_id": grant["selection_id"],
+        "verifier_identity": deepcopy(grant["verifier_identity"]),
+        "permitted_boundary": deepcopy(grant["permitted_boundary"]),
         "status": "ACTIVE",
         "declared_at": _DECLARED_AT,
     }
     fields.update(overrides)
+    fields["signature"] = _sign_declaration(fields)
     fields["human_grant_declaration_id"] = human_grant_declaration_id(fields)
     return fields
 

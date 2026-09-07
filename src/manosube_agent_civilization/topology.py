@@ -150,9 +150,12 @@ CANONICAL_KERNEL_ENTRY_POINT = (f"{_PACKAGE_NAME}.reflow.route", "reflow")
 _SANCTIONED_DIRECT_WRITE_MODULES = frozenset(
     {f"{_PACKAGE_NAME}.store.file_store", f"{_PACKAGE_NAME}.store.atomic_write"}
 )
-#: R10-F2: the one module sanctioned to call some object's ``.commit(...)`` -- Reflow's own
-#: atomic-commit orchestrator. Any other module doing so is a second transition committer.
-_SANCTIONED_COMMIT_CALL_MODULES = frozenset({f"{_PACKAGE_NAME}.reflow.commit"})
+#: R10-F2, re-pointed R5-R1 (Issue #51, P13-R5-R1: ``SINGLE_COMMITTER_REQUIRED``): the one
+#: module sanctioned to call some object's ``.commit(...)`` -- the shared, domain-agnostic
+#: atomic State-transition primitive both Reflow's own ``commit_reflow`` and Binding's own
+#: ``declare_human_grant`` call rather than reaching ``FileStateStore.commit`` directly.
+#: Any other module doing so is a second transition committer.
+_SANCTIONED_COMMIT_CALL_MODULES = frozenset({f"{_PACKAGE_NAME}.store.commit"})
 
 
 def _iter_installed_modules() -> list[Any]:

@@ -38,6 +38,23 @@ different (or self-fabricated) Human Authority, or a declaration that is not its
 ``ACTIVE``, withholds the selection exactly as a non-``ACTIVE`` grant already does -- never an
 exception, always a total convergence to ``VERIFIER_SELECTION_REFUSED``.
 
+Structural Review Round 5-R1 (P13-R5-R1, Issue #51,
+``ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER``): a declaration's own
+Store persistence and self-consistent shape -- even durably committed through Binding's own
+route -- still never proved a *Human* authored it, only that some Store-write-capable caller
+committed a record shaped like one. This module now additionally requires the caller-supplied
+*human_authority_signing_key* (the real Project Binding's own public verification key, which
+the caller independently resolved through Boot/the Store -- never a caller-supplied copy of
+its own) to verify the candidate declaration's own ``signature`` field, over the declaration's
+own restated ``requirement_id``/``selection_id``/``verifier_identity``/``permitted_boundary``
+-- read independently against *this* candidate grant's own matching fields, not merely
+asserted by the declaration itself -- via
+:func:`~manosube_agent_civilization.binding.signature.verify_declaration_signature`. A
+declaration whose restated fields do not match this grant's own fields, or whose signature
+does not verify, does not bind, exactly as a non-``ACTIVE`` declaration already does not.
+Authority never trusts Binding's own prior verification at commit time as a substitute for its
+own -- a Store write proves nothing about who authored the payload it carries.
+
 Following :mod:`.errors`' own distinction: an unreadable request raises
 :class:`~.errors.AuthorityError` (there is no permission question to answer). A readable
 request that does not bind is not an exception -- it is the decision ``REFUSED``, exactly as
@@ -86,6 +103,7 @@ REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
     "permitted_boundary",
     "selection_status",
     "human_authority_ref",
+    "human_authority_signing_key",
     "grants",
     "grant_declarations",
 )
@@ -168,6 +186,45 @@ def _anchors_grant(declaration: dict[str, Any], *, project_id: str, grant_id: st
     )
 
 
+def _declaration_restates_grant(declaration: dict[str, Any], grant: dict[str, Any]) -> bool:
+    """Whether *declaration*'s own restated ``requirement_id``/``selection_id``/
+    ``verifier_identity``/``permitted_boundary`` equal *grant*'s own matching fields
+    (Structural Review Round 5-R1, Issue #51, P13-R5-R1) -- independently re-checked here,
+    never merely trusted because ``grant_ref`` already names this grant's id: R5-R1's own
+    adopted design has the declaration restate these fields directly (rather than bind them
+    only by ``grant_ref``'s content address) precisely so the Human's signature covers a
+    complete, self-describing payload, and this evaluator re-verifies that restatement
+    independently rather than trusting Binding's own prior assembly of it."""
+
+    return bool(
+        declaration["requirement_id"] == grant["requirement_id"]
+        and declaration["selection_id"] == grant["selection_id"]
+        and declaration["verifier_identity"] == grant["verifier_identity"]
+        and declaration["permitted_boundary"] == grant["permitted_boundary"]
+    )
+
+
+def _verify_declaration_signature(
+    declaration: dict[str, Any], *, signing_key: dict[str, Any]
+) -> bool:
+    """Lazily import and delegate to Binding's own
+    :func:`~manosube_agent_civilization.binding.signature.verify_declaration_signature`
+    (Structural Review Round 5-R1, Issue #51, P13-R5-R1) -- deferred to call time, never
+    module import time, for the identical circular-import reason
+    :mod:`~manosube_agent_civilization.authority.conformance`'s own
+    ``_human_grant_declaration_id`` already documents: importing ``binding`` reaches
+    ``binding.admission`` -> ``reflow`` -> ``evidence`` -> ``change`` -> back to this very
+    package. By the time any declaration is actually verified, every module in the repository
+    has already finished importing; only import-time module construction can observe the
+    cycle."""
+
+    from manosube_agent_civilization.binding.signature import (
+        verify_declaration_signature as _real_verify_declaration_signature,
+    )
+
+    return _real_verify_declaration_signature(declaration, signing_key=signing_key)
+
+
 def evaluate_verifier_selection(request: dict[str, Any]) -> dict[str, Any]:
     """Return one canonical Verifier Selection Decision for one exact request.
 
@@ -217,6 +274,14 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
             "verifier selection request human_authority_ref is not a Human Authority "
             f"reference: {human_authority_ref.get('kind')!r}"
         )
+    # Structural Review Round 5-R1 (Issue #51, P13-R5-R1): the real Project Binding's own
+    # public verification key, independently resolved by the caller (never a caller-supplied
+    # copy asserted without Store backing) -- this evaluator never trusts Binding's own prior
+    # signature check at commit time as a substitute for its own independent re-verification.
+    human_authority_signing_key = require_object(
+        shaped["human_authority_signing_key"],
+        "verifier selection request human_authority_signing_key",
+    )
 
     # Every supplied grant crosses the identical admission gate every other Authority-owned
     # record does: schema, supported version, no unknown property, recomputed content
@@ -277,16 +342,43 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         active_declarations = [
             declaration for declaration in authority_matching if declaration["status"] == "ACTIVE"
         ]
-        if active_declarations:
+        if not active_declarations:
+            excluding.append((candidate, "DECLARATION_NOT_ACTIVE"))
+            continue
+
+        # Structural Review Round 5-R1 (P13-R5-R1): a declaration that anchors this grant by
+        # `grant_ref` and is otherwise ACTIVE still does not bind unless its own restated
+        # requirement/selection/verifier/boundary independently agree with *this* candidate
+        # grant's own matching fields -- never merely trusted because `grant_ref` already
+        # names this grant's id (see `_declaration_restates_grant`'s own docstring).
+        restating_declarations = [
+            declaration
+            for declaration in active_declarations
+            if _declaration_restates_grant(declaration, candidate)
+        ]
+        if not restating_declarations:
+            excluding.append((candidate, "DECLARATION_CONTENT_MISMATCH"))
+            continue
+
+        # And finally, the declaration's own claimed `signature` must independently verify
+        # against the real Project Binding's own `human_authority_signing_key` -- durable
+        # Store commission of a self-consistent, correctly-anchored declaration is still never
+        # itself proof a Human authored it (see the module docstring's own R5-R1 addendum).
+        signature_valid_declarations = [
+            declaration
+            for declaration in restating_declarations
+            if _verify_declaration_signature(declaration, signing_key=human_authority_signing_key)
+        ]
+        if signature_valid_declarations:
             # Chosen by identity, not by input position -- the same determinism already
             # guaranteed for grant selection below.
             chosen_declaration = sorted(
-                active_declarations,
+                signature_valid_declarations,
                 key=lambda declaration: str(declaration["human_grant_declaration_id"]),
             )[0]
             binding.append((candidate, chosen_declaration))
         else:
-            excluding.append((candidate, "DECLARATION_NOT_ACTIVE"))
+            excluding.append((candidate, "DECLARATION_SIGNATURE_INVALID"))
 
     reason_codes: list[str] = []
     used_grant: dict[str, Any] | None = None

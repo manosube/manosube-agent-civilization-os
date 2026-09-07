@@ -4,8 +4,14 @@
 transaction replay, transaction-conflict rejection, staged atomic commit and crash
 recovery. This module builds the two records that ``FileStateStore.commit`` takes --
 the successor ``project_state`` and the ``state_transition`` lineage event that carries
-it -- and calls the Store. It mints nothing the Store does not already validate, and it
-persists nothing outside the Store's own files.
+it -- and hands them to the one shared atomic State-transition primitive
+(:func:`~manosube_agent_civilization.store.commit.commit_state_transition`, Structural
+Review Round 5-R1, Issue #51, P13-R5-R1) rather than calling ``FileStateStore.commit``
+itself. This module owns Closure/Reflow transition-plan assembly only -- Binding's own
+``declare_human_grant`` builds its own, unrelated transition plan and calls the identical
+shared primitive, so exactly one module in the installed package ever calls
+``FileStateStore.commit`` (``topology.py``'s own K-003/R-001 static scan). It mints nothing
+the Store does not already validate, and it persists nothing outside the Store's own files.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from typing import Any
 
 from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.state.fingerprint import fingerprint_semantic_state
+from manosube_agent_civilization.store.commit import commit_state_transition
 
 from .errors import ReflowValidationError, StaleReflowError
 from .invariant_registry import mandatory_bindings_still_match
@@ -143,7 +150,8 @@ def commit_reflow(
         evidence_refs=evidence_refs,
         reflow_instant=reflow_instant,
     )
-    committed = store.commit(
+    committed = commit_state_transition(
+        store,
         project_id,
         before_project_state["state_revision"],
         before_project_state["semantic_fingerprint"],

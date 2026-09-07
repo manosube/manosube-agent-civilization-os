@@ -657,3 +657,87 @@ GITHUB_API_OR_NETWORK_LOOKUP_IN_PHASE_13_RUNTIME=false
 PHASE_13_ACCEPTANCE=false
 PHASE_14_ALLOWED=false
 ```
+
+## 13. Structural Review Round 5-R1 resolution (Issue #51, P13-R5-R1,
+`ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER`)
+
+Round 5's own final paragraph (§12 above) claimed the non-cryptographic trust philosophy
+`00_KERNEL/03_BINDING/TRUST_MODEL.md` already established was unchanged by that round. SHUKOU's
+own follow-on structural review disclosed the gap that claim left open: a `human_grant_
+declaration`'s own durable Store commission and self-consistent shape -- `grant_ref` anchoring
+the exact grant, `declared_by` independently re-resolved from the real Project Binding,
+`status == ACTIVE` -- still never proved a *Human*, rather than any Store-write-capable caller,
+authored it. `human_authority_ref` is not a secret, so any such caller could commit a record in
+exactly this shape.
+
+SHUKOU adopted `ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER`
+(Issue #51, `REVIEWED_HEAD=a392df626d8aec510fcb9d4f6a013cb5ed7ca072`), requiring, in the same
+PR, both: (1) a real Ed25519 signature scheme anchoring `human_grant_declaration` to the
+Project Binding's own public verification key, and (2) extraction of the one shared atomic
+State-transition commit primitive both Reflow and Binding call, replacing Binding's own direct
+`store.commit` (a `topology.py` K-003/R-001 regression Round 5 itself introduced -- see
+`AUTHORITY_CONTRACT.md` §7.3's own Round 5-R1 addendum for the full account). This section
+documents (1); the shared commit primitive is entirely internal to `store`/`reflow`/`binding`
+and has no effect on this contract's own public route surface or request/response shapes.
+
+**The signing key.** Project Binding now canonically holds `human_authority_signing_key`
+(`01_SCHEMA/binding/project_binding.schema.json#/$defs/signing_key`:
+`{algorithm: "ed25519", key_id, public_key}`) -- a public verification key only. The Human's
+own private key never touches this system's code at any point; production code
+(`manosube_agent_civilization.binding.signature`) only ever verifies.
+
+**The signed payload.** `human_grant_declaration` now directly restates the anchored grant's own
+`requirement_id`/`selection_id`/`verifier_identity`/`permitted_boundary`, rather than binding
+them only through `grant_ref`'s content address, and carries a `signature`
+(`{algorithm: "ed25519", key_id, value}`) over the complete payload: `schema_version`,
+`project_id`, `project_binding_id`, `grant_ref`, `declared_by`, `requirement_id`, `selection_id`,
+`verifier_identity`, `permitted_boundary`, `status`, `declared_at`. `declared_at` now
+participates (superseding Round 5's own `bound_at`-modeled exclusion): a signature that never
+bound *when* would validate identically at any later replay instant. The content-addressed
+`human_grant_declaration_id` and the signed message are one shared derivation
+(`binding.identity.human_grant_declaration_signing_payload`), so "what this record adopted" and
+"what the signature authenticates" can never drift apart.
+
+**Two independent verifications, not one.** Binding's own `assemble_human_grant_declaration`
+verifies the signature read-only before ever returning a record a caller could persist. This
+does not substitute for `evaluate_verifier_selection`'s own independent re-verification: the
+evaluator takes a new required request key, `human_authority_signing_key` -- the real Project
+Binding's own key, which the caller (Independent Verification's own route) resolves
+independently from `boot_context.project_binding`, never trusting Binding's prior verification
+at commit time. For each candidate grant, a declaration binds only if, beyond Round 5's own
+three conditions (anchors this grant, `declared_by` matches, `status == ACTIVE`), its own
+restated `requirement_id`/`selection_id`/`verifier_identity`/`permitted_boundary` independently
+agree with *this* candidate grant's own matching fields (`DECLARATION_CONTENT_MISMATCH`
+otherwise), and its own `signature` independently verifies against the request's own
+`human_authority_signing_key` (`DECLARATION_SIGNATURE_INVALID` otherwise).
+
+```text
+GRANT BINDS AND DECLARATION anchors/declared_by/status all satisfied, restated content matches
+  the real grant, signature verifies against the real signing key
+    → declaration binds (SELECTED candidate)
+GRANT BINDS AND DECLARATION restated content diverges from the real grant's own fields
+    → DECLARATION_CONTENT_MISMATCH
+GRANT BINDS AND DECLARATION content matches but signature does not verify (unsigned, forged,
+  wrong key, or computed over different content than the declaration's own claimed fields)
+    → DECLARATION_SIGNATURE_INVALID
+```
+
+Independent Verification's own route (`route.py`) reads `human_authority_signing_key` directly
+off the already deep-frozen `boot_context.project_binding` mapping -- never a caller-supplied
+copy -- and passes it through to `evaluate_verifier_selection` alongside the resolved grants and
+declarations. No GitHub API or network lookup is introduced anywhere in this path.
+
+```text
+HUMAN_GRANT_DECLARATION_SIGNATURE_REQUIRED=true
+HUMAN_GRANT_DECLARATION_SIGNATURE_ALGORITHM=ed25519
+HUMAN_GRANT_DECLARATION_PRIVATE_KEY_TOUCHES_PRODUCTION_CODE=false
+STORE_COMMISSION_ALONE_AS_HUMAN_PROVENANCE=false
+CALLER_SUPPLIED_BODY_ALONE_AS_HUMAN_PROVENANCE=false
+BINDING_VERIFICATION_SUBSTITUTES_FOR_AUTHORITY_VERIFICATION=false
+HIDDEN_REGISTRY=false
+BEARER_OR_SECRET_TOKEN=false
+SECOND_PARALLEL_AUTHORITY_OWNER=false
+GITHUB_API_OR_NETWORK_LOOKUP_IN_PHASE_13_RUNTIME=false
+PHASE_13_ACCEPTANCE=false
+PHASE_14_ALLOWED=false
+```
