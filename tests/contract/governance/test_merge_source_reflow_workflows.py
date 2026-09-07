@@ -1,21 +1,25 @@
 """Static-shape assertions for Issue #57's two GitHub Actions workflows
 (`03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` sections 10-12), hardened by Structural
 Review Round 1 (`ADOPT_MSR_R1_EVENT_BOUND_REVALIDATED_AND_PATH_HARDENED_REFLOW`, Issue
-#57 comment 5567433361).
+#57 comment 5567433361) and Round 2
+(`ADOPT_MSR_R2_PR_INTRODUCED_DIFF_AND_COMPLETE_GENERATED_TREE`, Issue #57 comment
+5567994773).
 
 This session cannot execute a live GitHub Actions run against a real Pull Request or the
 protected `main` branch (contract section 12) -- these tests review the workflow YAML by
 inspection, the identical text-based pattern `test_source_freshness_drift_detection.py`
 already applies to the Issue #54 workflow (no YAML-parsing dependency added), never by a
 live push. They prove: the pre-merge gate workflow makes no write of its own
-(`contents: read`, no merge/approve/comment action); the post-merge workflow triggers only
-on a Pull Request being closed as merged, never on every push to main (MSR-R1-F1);
-candidate-output validation runs before any `git add`/`commit`/`push` (MSR-R1-F2); staging
-is gated by this workflow's own literal, hardcoded path allowlist checked against the
-actual working-tree diff, never by trusting `merge_source_reflow.py`'s own reported file
-list (MSR-R1-F3); and neither workflow can push to anywhere but `main` nor touch any
-Kernel, Schema, Binding, or workflow-definition path itself
-(`WORKFLOW_SELF_MODIFICATION=false`).
+(`contents: read`, no merge/approve/comment action), and computes its changed-path diff
+against the real merge-base commit rather than the base branch's current tip, so a
+base-only change that landed after this Pull Request's branch diverged is never attributed
+to this Pull Request (MSR-R2-F1); the post-merge workflow triggers only on a Pull Request
+being closed as merged, never on every push to main (MSR-R1-F1); candidate-output
+validation runs before any `git add`/`commit`/`push` (MSR-R1-F2); staging is gated by this
+workflow's own literal, hardcoded path allowlist checked against the actual working-tree
+diff, never by trusting `merge_source_reflow.py`'s own reported file list (MSR-R1-F3); and
+neither workflow can push to anywhere but `main` nor touch any Kernel, Schema, Binding, or
+workflow-definition path itself (`WORKFLOW_SELF_MODIFICATION=false`).
 """
 
 from __future__ import annotations
@@ -99,6 +103,23 @@ def test_pre_merge_gate_invokes_source_impact_gate_with_the_diff_of_base_and_hea
     assert "github.event.pull_request.base.sha" in text
     assert "github.event.pull_request.head.sha" in text
     assert "--changed-paths-file" in text
+
+
+def test_pre_merge_gate_diffs_against_the_real_merge_base_not_the_base_tip() -> None:
+    """MSR-R2-F1: `github.event.pull_request.base.sha` is the base branch's tip *at event
+    time*, which can have moved past where this Pull Request's own branch actually
+    diverged. A plain two-way `git diff base_sha head_sha` would incorrectly attribute any
+    base-only change landed after divergence to this Pull Request's own source-impact
+    obligation -- the workflow must resolve the actual merge-base commit first and diff
+    against that instead."""
+
+    text = _body_text(PRE_MERGE_PATH)
+    assert "git merge-base" in text
+    merge_base_index = text.index("git merge-base")
+    diff_index = text.index("git diff --name-only")
+    assert merge_base_index < diff_index
+    # The diff itself must consume the resolved merge-base, not the raw base_sha, directly.
+    assert 'git diff --name-only "$MERGE_BASE"' in text
 
 
 # --------------------------------------------------------------------------- #

@@ -173,7 +173,13 @@ def compute_outputs(inputs: ReflowInputs) -> dict[str, bytes]:
         "observed_at_utc": inputs.observed_at_utc,
         "recorded_current_development_state": recorded_state,
     }
-    tree_txt = "\n".join(sorted(inputs.tracked_paths)) + "\n"
+    # MSR-R2-F2: on the very first reflow run, none of ALLOWLISTED_GENERATED_PATHS is a
+    # git-tracked path yet -- inputs.tracked_paths (git ls-files, gathered before this
+    # same reflow writes anything) would omit every one of them, including this very
+    # tree.txt's own listing. Union with the closed allowlist so the resulting tree is
+    # always complete for the state this bounded commit is about to produce, regardless
+    # of what was tracked before it.
+    tree_txt = "\n".join(sorted(set(inputs.tracked_paths) | ALLOWLISTED_GENERATED_PATHS)) + "\n"
     evidence = {
         "schema_version": SCHEMA_VERSION,
         "candidate": True,

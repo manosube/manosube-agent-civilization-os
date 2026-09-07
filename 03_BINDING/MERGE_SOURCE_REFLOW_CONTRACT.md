@@ -12,6 +12,7 @@ KERNEL_ELEMENT=none
 DECISION_AUTHORITY=SHUKOU
 ADOPTION_ID=ADOPT_MERGE_SOURCE_REFLOW_MACHINE_OWNED_CONVERGENCE
 CORRECTION_ROUND_1_ADOPTION_ID=ADOPT_MSR_R1_EVENT_BOUND_REVALIDATED_AND_PATH_HARDENED_REFLOW
+CORRECTION_ROUND_2_ADOPTION_ID=ADOPT_MSR_R2_PR_INTRODUCED_DIFF_AND_COMPLETE_GENERATED_TREE
 GOVERNING_ISSUE=#57
 RUNTIME_ENFORCEMENT_IMPLEMENTED=partial
 ```
@@ -65,6 +66,27 @@ implemented in place on the same PR:
   from a closed, declared `KERNEL_SURFACE_IMPACT_MAP` rather than "any
   `docs/project_sources/*.md` update" -- an unrelated document no longer satisfies an
   unrelated kernel_surface obligation (§2).
+
+### 0.2 Structural Review Round 2 (MSR-R2)
+
+SHUKOU adopted [`ADOPT_MSR_R2_PR_INTRODUCED_DIFF_AND_COMPLETE_GENERATED_TREE`](https://github.com/manosube/manosube-agent-civilization-os/issues/57#issuecomment-5567994773)
+(Issue #57 comment 5567994773; independently re-verified via the GitHub API, `REVIEWED_HEAD`
+matched this PR's live head, `fdb2226`, exactly before any action). Two corrections, both
+implemented in place on the same PR:
+
+- **MSR-R2-F1**: the pre-merge gate's changed-path diff is now computed against the real
+  merge-base commit, never against the base branch's own tip directly (§1, §10).
+  `github.event.pull_request.base.sha` is the base branch's tip *at event time*, which can
+  have moved past where this Pull Request's branch actually diverged; a plain two-way
+  `git diff base_sha head_sha` would incorrectly attribute any base-only change landed
+  after divergence to this Pull Request's own source-impact obligation. The workflow now
+  resolves `git merge-base base_sha head_sha` first and diffs against that instead.
+- **MSR-R2-F2**: `REPOSITORY_TREE.txt` now enumerates the complete resulting tracked tree
+  -- the union of `git ls-files`'s own report and the full closed
+  `ALLOWLISTED_GENERATED_PATHS` set -- rather than `git ls-files` alone (§3). On the very
+  first reflow run, none of the allowlisted generated paths (including
+  `REPOSITORY_TREE.txt`'s own listing of itself) is git-tracked yet, so `git ls-files`
+  omits every one of them from what would otherwise be an incomplete "resulting tree."
 
 ## 1. The canonical two-stage sequence
 
@@ -189,7 +211,10 @@ docs/project_sources/generated/CURRENT_REPOSITORY_FACTS.json
     ```text block already records -- never a new judgment, the identical extraction
     validate_source_freshness.extract_fields already performs
 docs/project_sources/generated/REPOSITORY_TREE.txt
-    a deterministic, sorted listing of every tracked file path
+    a deterministic, sorted listing of the complete resulting tracked tree -- the union of
+    git ls-files's own report and the full closed ALLOWLISTED_GENERATED_PATHS set, so a
+    first reflow run (where none of the allowlisted generated paths, including this file's
+    own listing of itself, is git-tracked yet) still names every one of them (MSR-R2-F2)
 docs/project_sources/generated/PHASE_EVIDENCE_INDEX.json
     a verbatim re-projection of docs/project_sources/05_PHASE_ACCEPTANCE_LEDGER.md's own
     fenced ```text block fields, labelled a candidate -- never Phase acceptance itself
@@ -325,7 +350,9 @@ MERGE_DECISION_MADE_BY_source_impact_gate=false
 ```
 
 `source_impact_gate.py` only classifies and reports; it never merges, approves, or comments
-on a Pull Request itself, for either of its two independent blocking rules (§2). The GitHub
+on a Pull Request itself, for either of its two independent blocking rules (§2). It also
+never resolves its own changed-path input -- the workflow computes that (against the real
+merge-base commit, MSR-R2-F1) and hands the gate a plain list of paths. The GitHub
 Actions check it powers is what actually blocks a merge, through GitHub's own
 required-status-check mechanism -- the identical boundary `evaluate_adoption_record` and
 `evaluate` (Issue #53) already hold between "this module answers a question" and "GitHub
@@ -394,6 +421,8 @@ MSR_R1_F1_EVENT_BOUND_TRIGGER_IMPLEMENTED=true
 MSR_R1_F2_CANDIDATE_VALIDATION_BEFORE_COMMIT_IMPLEMENTED=true
 MSR_R1_F3_LITERAL_ALLOWLIST_AND_PROTECTED_SURFACES_IMPLEMENTED=true
 MSR_R1_F4_CLOSED_IMPACT_MAPPING_IMPLEMENTED=true
+MSR_R2_F1_MERGE_BASE_DIFF_IMPLEMENTED=true
+MSR_R2_F2_COMPLETE_GENERATED_TREE_IMPLEMENTED=true
 SEMANTIC_AUTHORITY_TRANSFERRED=false
 PR_52_MODIFIED=false
 PHASE_13_SEMANTICS_MODIFIED=false

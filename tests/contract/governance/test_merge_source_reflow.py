@@ -1,15 +1,18 @@
 """Issue #57 (`ADOPT_MERGE_SOURCE_REFLOW_MACHINE_OWNED_CONVERGENCE`, Issue #57 comment
-5566512915), `03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` sections 3-9: the post-merge
+5566512915), hardened by Structural Review Round 2
+(`ADOPT_MSR_R2_PR_INTRODUCED_DIFF_AND_COMPLETE_GENERATED_TREE`, Issue #57 comment
+5567994773), `03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` sections 3-9: the post-merge
 deterministic reflow.
 
 Proves the required-proof bullets of Issue #57's own adoption comment: the updater cannot
 modify bytes outside a generated boundary or write to an unallowlisted path; a partial write
 cannot be reported as convergence; a stale `main_sha` is refused; `SHA256SUMS` never hashes
 itself; recursion is prevented by construction (a second, immediately-successive run over an
-unchanged tree writes nothing); and Phase/Authority/semantic meaning remain untouched --
-this module never reads or writes anything under `00_KERNEL/`, `01_SCHEMA/`, `02_ENGINE/`,
-`04_BOOT/`, `05_CLI/`, `07_AGENT_RUNTIME/`, `03_BINDING/`, or any `docs/project_sources/*.md`
-document's own bytes.
+unchanged tree writes nothing); `REPOSITORY_TREE.txt` names the complete resulting tree
+even on a first run where none of the allowlisted paths is git-tracked yet (MSR-R2-F2); and
+Phase/Authority/semantic meaning remain untouched -- this module never reads or writes
+anything under `00_KERNEL/`, `01_SCHEMA/`, `02_ENGINE/`, `04_BOOT/`, `05_CLI/`,
+`07_AGENT_RUNTIME/`, `03_BINDING/`, or any `docs/project_sources/*.md` document's own bytes.
 """
 
 from __future__ import annotations
@@ -129,6 +132,57 @@ def test_a_source_document_key_that_collides_with_an_allowlisted_path_is_never_s
     )
     assert outputs["HANDOFF.md"] != b"human-forged content, not machine-generated"
     assert reflow.HANDOFF_BEGIN_MARKER.encode() in outputs["HANDOFF.md"]
+
+
+# --------------------------------------------------------------------------- #
+# MSR-R2-F2: REPOSITORY_TREE.txt must enumerate the complete resulting tree,
+# including every allowlisted path newly created by this same reflow run
+# --------------------------------------------------------------------------- #
+
+
+def test_repository_tree_includes_every_allowlisted_path_on_a_first_run() -> None:
+    """On the very first reflow run, none of `ALLOWLISTED_GENERATED_PATHS` is a
+    git-tracked path yet -- `tracked_paths` (gathered via `git ls-files` before this same
+    reflow writes anything) omits every one of them, including REPOSITORY_TREE.txt's own
+    listing of itself. The computed tree must still name the complete resulting set."""
+
+    outputs = reflow.compute_outputs(
+        _inputs(tracked_paths=("README.md", "src/foo.py"))  # no generated/ paths tracked
+    )
+    tree_lines = set(
+        outputs["docs/project_sources/generated/REPOSITORY_TREE.txt"].decode().splitlines()
+    )
+    assert tree_lines >= reflow.ALLOWLISTED_GENERATED_PATHS
+
+
+def test_repository_tree_still_includes_ordinary_tracked_paths() -> None:
+    outputs = reflow.compute_outputs(
+        _inputs(tracked_paths=("README.md", "src/foo.py", "src/bar.py"))
+    )
+    tree_lines = set(
+        outputs["docs/project_sources/generated/REPOSITORY_TREE.txt"].decode().splitlines()
+    )
+    assert "src/foo.py" in tree_lines
+    assert "src/bar.py" in tree_lines
+
+
+def test_repository_tree_does_not_duplicate_a_path_that_is_both_tracked_and_allowlisted() -> None:
+    """A later run, where HANDOFF.md etc. are already git-tracked from a prior reflow
+    commit, must not list any allowlisted path twice."""
+
+    outputs = reflow.compute_outputs(
+        _inputs(tracked_paths=("README.md", "HANDOFF.md", "SHA256SUMS", "src/foo.py"))
+    )
+    tree_text = outputs["docs/project_sources/generated/REPOSITORY_TREE.txt"].decode()
+    tree_lines = tree_text.splitlines()
+    assert len(tree_lines) == len(set(tree_lines))
+    assert tree_lines.count("HANDOFF.md") == 1
+
+
+def test_repository_tree_is_sorted() -> None:
+    outputs = reflow.compute_outputs(_inputs(tracked_paths=("z.py", "a.py")))
+    tree_lines = outputs["docs/project_sources/generated/REPOSITORY_TREE.txt"].decode().splitlines()
+    assert tree_lines == sorted(tree_lines)
 
 
 # --------------------------------------------------------------------------- #
