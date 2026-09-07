@@ -156,6 +156,143 @@ def test_a_malformed_reviewed_sha_is_refused(bad_sha: str) -> None:
     assert "REVIEWED_SHA_NOT_A_COMMIT_SHA" in decision["decision_reason_codes"]
 
 
+# --------------------------------------------------------------------------- #
+# GAR-R1-F1 (Issue #53 comment 5565302174): bind adoption_id and governing_issue
+# to the individually-addressable comment context they claim to authorize.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "bad_adoption_id",
+    ["", "not shaped like an adoption id", "adopt_lowercase_is_wrong", "ADOPTION_MISSING_PREFIX"],
+)
+def test_a_malformed_adoption_id_is_refused(bad_adoption_id: str) -> None:
+    decision = evaluate_adoption_record(_record(adoption_id=bad_adoption_id))
+    assert decision["decision"] == ADOPTION_RECORD_REFUSED
+    assert "ADOPTION_ID_MALFORMED" in decision["decision_reason_codes"]
+
+
+@pytest.mark.parametrize("bad_reference", ["", "53", "Issue 53", "#", "# 53", "issue-53"])
+def test_a_malformed_governing_reference_is_refused(bad_reference: str) -> None:
+    decision = evaluate_adoption_record(_record(governing_issue=bad_reference))
+    assert decision["decision"] == ADOPTION_RECORD_REFUSED
+    assert "GOVERNING_REFERENCE_MALFORMED" in decision["decision_reason_codes"]
+
+
+def test_a_governing_reference_naming_a_different_issue_than_the_comment_url_is_refused() -> None:
+    """A syntactically real, individually addressable comment URL under Issue #53 must not
+    be relabeled as authority for a different governing Issue or Pull Request."""
+
+    decision = evaluate_adoption_record(_record(governing_issue="#54"))
+    assert decision["decision"] == ADOPTION_RECORD_REFUSED
+    assert decision["decision_reason_codes"] == ["GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT"]
+
+
+def test_a_governing_reference_naming_the_comment_urls_own_issue_is_not_a_binding_failure() -> None:
+    decision = evaluate_adoption_record(_record(governing_issue="#53"))
+    assert (
+        "GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT" not in decision["decision_reason_codes"]
+    )
+
+
+def test_the_binding_check_is_not_compounded_onto_an_already_malformed_url_or_reference() -> None:
+    """The binding check runs only once both halves are independently well-formed -- a
+    malformed URL or reference is reported once by its own check, not doubled."""
+
+    malformed_url = evaluate_adoption_record(_record(comment_url=""))
+    assert (
+        "GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT"
+        not in malformed_url["decision_reason_codes"]
+    )
+
+    malformed_reference = evaluate_adoption_record(_record(governing_issue=""))
+    assert (
+        "GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT"
+        not in malformed_reference["decision_reason_codes"]
+    )
+
+
+def test_a_pull_request_governing_reference_binds_against_a_pull_request_comment_url() -> None:
+    """The binding is symmetric across Issue and Pull Request comment URLs -- only the
+    number in the URL's own path is what ``governing_issue`` must match."""
+
+    pr_url = "https://github.com/manosube/manosube-agent-civilization-os/pull/56#issuecomment-1"
+    decision = evaluate_adoption_record(
+        _record(comment_url=pr_url, governing_issue="#56", api_read_back_confirmed=True)
+    )
+    assert (
+        "GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT" not in decision["decision_reason_codes"]
+    )
+
+
+# --------------------------------------------------------------------------- #
+# GAR-R1: every declared reason code is actually reachable
+# --------------------------------------------------------------------------- #
+#
+# One crafted record per reason code, isolated so it is the *only* failure -- proving the
+# allowlist a route-drift guard elsewhere in this suite trusts is neither wider nor narrower
+# than what this evaluator can actually emit.
+
+_REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
+    (
+        "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT",
+        {"comment_url": "", "api_read_back_confirmed": False},
+    ),
+    ("API_READ_BACK_NOT_CONFIRMED", {"api_read_back_confirmed": False}),
+    ("ADOPTION_ID_MALFORMED", {"adoption_id": ""}),
+    ("GOVERNING_REFERENCE_MALFORMED", {"governing_issue": ""}),
+    ("GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT", {"governing_issue": "#54"}),
+    ("DECISION_AUTHORITY_NOT_HUMAN", {"decision_authority": "CHATGPT"}),
+    ("DECISION_STATUS_NOT_RATIFIED", {"decision_status": "DRAFT"}),
+    (
+        "REVIEWED_SHA_NOT_A_COMMIT_SHA",
+        {"reviewed_sha": "not-a-sha", "authorized_target_sha": "not-a-sha"},
+    ),
+    (
+        "AUTHORIZED_TARGET_SHA_NOT_A_COMMIT_SHA",
+        {"reviewed_sha": "not-a-sha", "authorized_target_sha": "not-a-sha"},
+    ),
+    ("REVIEWED_SHA_DOES_NOT_MATCH_AUTHORIZED_TARGET", {"authorized_target_sha": _SHA_B}),
+)
+
+
+@pytest.mark.parametrize(
+    "reason_code,overrides", _REACHABILITY_CASES, ids=[case[0] for case in _REACHABILITY_CASES]
+)
+def test_every_declared_reason_code_is_reachable(
+    reason_code: str, overrides: dict[str, Any]
+) -> None:
+    decision = evaluate_adoption_record(_record(**overrides))
+    assert decision["decision"] == ADOPTION_RECORD_REFUSED
+    assert reason_code in decision["decision_reason_codes"]
+
+
+def test_the_reachability_matrix_covers_every_reason_code_this_module_can_emit() -> None:
+    """The control on the sweep above: every reason code this module's source can name is
+    covered by exactly one crafted case, so the matrix cannot silently go stale.
+
+    Deliberately self-contained rather than importing the AST extraction
+    ``test_active_document_terminal_state._codes_from_source`` uses (GAR-R1-F2) -- this test
+    file has no dependency on that one's private implementation, and this repository's tests
+    are not a package other test modules import from. The two extractions agreeing is what
+    the reachability property actually rests on, so this proves it independently rather than
+    by construction.
+    """
+
+    tree = ast.parse(inspect.getsource(adoption_record_module))
+    emittable: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr != "append":
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                emittable.add(arg.value)
+    covered = {reason_code for reason_code, _ in _REACHABILITY_CASES}
+    assert covered == emittable
+
+
 def test_multiple_failures_are_reported_together() -> None:
     decision = evaluate_adoption_record(
         _record(comment_url="", api_read_back_confirmed=False, decision_authority="CHATGPT")

@@ -37,6 +37,16 @@ there is no admission question to answer. A **readable-but-insufficient** record
 present-but-empty URL, an unverified read-back, a reviewed SHA that does not match the work
 unit it claims to authorize -- is never an exception; it is the decision ``ADOPTION_RECORD_
 REFUSED``, with the specific reason codes this module can name.
+
+Structural Review Round 1 (GAR-R1-F1, Issue #53 comment 5565302174) adopted a further
+binding: a syntactically valid comment URL must not be relabeled as authority for a
+*different* adoption or governing work unit. This module cannot compare a caller's declared
+``adoption_id`` against the comment's own body without the network call it deliberately
+never makes, but it *can* prove -- offline, from the URL's own text -- that the declared
+``governing_issue`` names the same Issue or Pull Request the comment URL itself points at.
+A record naming ``governing_issue="#54"`` while citing a comment URL under
+``/issues/53/...`` is refused for exactly that mismatch, whatever else about the record is
+correct.
 """
 
 from __future__ import annotations
@@ -79,11 +89,25 @@ REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
 #: A GitHub Issue or Pull Request comment URL, anchored to its own ``#issuecomment-<id>``
 #: fragment -- the one part of a GitHub URL that names an individual, immutable comment
 #: rather than a whole, editable, ever-changing Issue or PR body. A URL without this
-#: fragment might be real, but it names a moving target, not a recorded decision.
+#: fragment might be real, but it names a moving target, not a recorded decision. The
+#: ``number`` group is the Issue/PR number the URL itself names -- the one piece of the
+#: comment's own context this module can bind ``governing_issue`` against without a
+#: network call (GAR-R1-F1).
 _COMMENT_URL_PATTERN = re.compile(
     r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
-    r"/(?:issues|pull)/[0-9]+#issuecomment-[0-9]+$"
+    r"/(?:issues|pull)/(?P<number>[0-9]+)#issuecomment-[0-9]+$"
 )
+
+#: A Governance Adoption identifier: non-empty, and shaped like every adoption this
+#: repository has actually recorded (``ADOPT_...``). This module cannot verify offline that
+#: the string names the *correct* adoption -- that is exactly what the comment body itself,
+#: independently re-read, is for -- but an empty or non-``ADOPT_``-shaped identifier is
+#: never that, whatever else about the record is correct.
+_ADOPTION_ID_PATTERN = re.compile(r"^ADOPT_[A-Z0-9_]+$")
+
+#: A governing Issue or Pull Request reference, e.g. ``#53``. Bound against the comment
+#: URL's own ``number`` group below -- see the module docstring.
+_GOVERNING_REFERENCE_PATTERN = re.compile(r"^#[0-9]+$")
 
 
 def _looks_like_git_sha(value: Any) -> bool:
@@ -158,7 +182,8 @@ def evaluate_adoption_record(record: dict[str, Any]) -> dict[str, Any]:
     # Distinguishes a chat draft or an unposted paragraph (no real comment exists at all)
     # from a real, individually addressable GitHub comment. Checked before every other
     # comment_url-dependent reason so a malformed URL is reported once, not compounded.
-    if not _COMMENT_URL_PATTERN.match(comment_url):
+    url_match = _COMMENT_URL_PATTERN.match(comment_url)
+    if not url_match:
         reasons.append("COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT")
 
     # The caller's own structured claim that the URL above was actually read back through
@@ -166,6 +191,25 @@ def evaluate_adoption_record(record: dict[str, Any]) -> dict[str, Any]:
     # exactly what this module can and cannot prove about that claim.
     if not api_read_back_confirmed:
         reasons.append("API_READ_BACK_NOT_CONFIRMED")
+
+    if not _ADOPTION_ID_PATTERN.match(adoption_id):
+        reasons.append("ADOPTION_ID_MALFORMED")
+
+    governing_reference_well_formed = bool(_GOVERNING_REFERENCE_PATTERN.match(governing_issue))
+    if not governing_reference_well_formed:
+        reasons.append("GOVERNING_REFERENCE_MALFORMED")
+
+    # The one binding this module can prove offline (GAR-R1-F1): a syntactically valid,
+    # individually addressable comment URL must not be relabeled as authority for a
+    # *different* Issue or Pull Request than the one it actually points at. Checked only
+    # once both halves are themselves well-formed, so a malformed URL or reference is
+    # reported once by the two checks above rather than compounded into a third.
+    if (
+        url_match
+        and governing_reference_well_formed
+        and governing_issue[1:] != url_match.group("number")
+    ):
+        reasons.append("GOVERNING_REFERENCE_NOT_BOUND_TO_COMMENT_CONTEXT")
 
     if decision_authority != HUMAN_AUTHORITY:
         reasons.append("DECISION_AUTHORITY_NOT_HUMAN")
