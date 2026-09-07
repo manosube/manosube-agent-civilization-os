@@ -741,3 +741,64 @@ GITHUB_API_OR_NETWORK_LOOKUP_IN_PHASE_13_RUNTIME=false
 PHASE_13_ACCEPTANCE=false
 PHASE_14_ALLOWED=false
 ```
+
+## 14. Structural Review Round 6 resolution (Issue #51, P13-R6,
+`ADOPT_P13_R6_PROVENANCE_COMPLETE_EVIDENCE_HANDOFF`)
+
+Round 2 (§9) connected `route_verification_result_to_evidence` to the existing Evidence
+owner's own `derive_evidence`, and re-verified the returned record actually names the same
+project (and, when the requirement named one, the same Difference) the supplied
+`VerificationResult` is about -- but the returned Change-Free Verification Evidence record
+itself never held the `VerificationResult`'s own full provenance. Once persisted, nothing
+in the record itself let a later reader recover *which* verifier, *which* selection, or
+*which* inputs actually produced the outcome it records: `target`/`difference_ref` name
+what the Evidence is *about*, not *by whom or on what basis* Independent Verification
+reached its result.
+
+SHUKOU adopted `ADOPT_P13_R6_PROVENANCE_COMPLETE_EVIDENCE_HANDOFF` (Issue #51,
+`REVIEWED_HEAD=dbb769cde4dc37bf47ef13ed437aea5a3b1bdfb7`), closing this gap by giving the
+Evidence record itself a complete provenance projection of the `VerificationResult` it was
+derived from. `00_KERNEL/07_EVIDENCE/EVIDENCE_CONTRACT.md` §13 is the canonical owner of the
+new field's own shape and semantics (`verification_result_provenance`, one of the fourteen-
+plus-position minimum fields the Evidence record now always carries); this section states
+only what changes on this contract's own public route.
+
+**The handoff, not the engine, is the enforcement point.** `verification_result_provenance`
+is schema-admissible (null or a full ten-field projection) only on the Change-Free
+Verification Evidence position this route already produces, and the Evidence engine itself
+refuses a non-null value on either other position. But the schema leaves it nullable even on
+this position, to avoid breaking the pre-existing, Independent-Verification-unrelated
+`CHANGE_FREE_VERIFICATION_EVIDENCE` callers R6-F1b already established (see
+`EVIDENCE_CONTRACT.md` §13.2 for the full account of this deliberately-disclosed layering
+choice). `route_verification_result_to_evidence` is therefore where "always non-null,
+deterministically constructed, round-trip-verified" is actually enforced for this route's
+own callers:
+
+```text
+CALLER-SUPPLIED verification_result_provenance ON evidence_request
+    → EvidenceHandoffError (never accepted, never silently overwritten)
+HANDOFF constructs verification_result_provenance from *verification_result* itself
+    (its own ten fields, in the schema's own unordered_references shape for
+    target_refs/input_refs) and injects it before the one existing-owner call
+derive_evidence RETURNS a record whose own verification_result_provenance
+    does not exactly equal what the handoff just constructed
+    → EvidenceHandoffError (the record is never returned)
+```
+
+**No new predecessor, no new owner.** The construction reads only fields
+`route_verification_result_to_evidence` already holds on its own *verification_result*
+parameter -- no Store call, no second reproduction of any predecessor, and no new public
+callable (`derive_evidence` is still called exactly once, per this contract's own §9/
+`test_evidence_handoff_calls_derive_evidence_exactly_once_and_only_there`).
+
+```text
+VERIFICATION_RESULT_PROVENANCE_SOURCE=THE_SUPPLIED_VERIFICATION_RESULT_ITSELF
+CALLER_SUPPLIED_PROVENANCE_ACCEPTED=false
+PROVENANCE_CONSTRUCTED_MORE_THAN_ONCE=false
+NEW_STORE_CALL=false
+NEW_PREDECESSOR_REPRODUCTION=false
+SECOND_EVIDENCE_OWNER=false
+DERIVE_EVIDENCE_CALL_SITE_COUNT=1
+PHASE_13_ACCEPTANCE=false
+PHASE_14_ALLOWED=false
+```

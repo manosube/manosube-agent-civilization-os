@@ -65,6 +65,14 @@ bundle) are instead cross-checked directly against ``evidence/engine.py``'s own 
 code (``_lineage``'s own call sites, ``EVIDENCE_REFERENCE_KIND``, the schema's own
 ``const``-pinned ``evidence_reference``/``artifact_reference`` shapes).
 
+Structural Review Round 6 (P13-R6) adds one further field this registry walks:
+``observation_evidence.verification_result_provenance.target_refs`` members, cross-checked
+against :data:`~manosube_agent_civilization.independent_verification.types.TARGET_REF_KINDS`
+-- the one closed kind contract Independent Verification's own types give this field.
+``verification_result_provenance.input_refs`` is deliberately never walked: no closed kind
+contract exists anywhere in this Kernel for a verifier's own freely-chosen input references,
+and this registry's own kind sets are never guessed.
+
 Round 4 completion repair 2's own kind *inventory* stands: :data:`STORE_OWNED_REFERENCE_KINDS`
 is unchanged by this repair, and this repair does not walk any field the prior repair did
 not already walk -- only what counts as a *valid* reference at each already-walked field is
@@ -168,6 +176,19 @@ FIELD_EXPECTED_TARGET_KINDS: dict[tuple[str, str], frozenset[str]] = {
     # (never populated by any producer today, but schema-legal and never silently skipped).
     ("observation_evidence", "artifact_references.members[].source_snapshot_ref"): frozenset(
         {"source_snapshot"}
+    ),
+    # verification_result_provenance.target_refs.members[] (Structural Review Round 6,
+    # P13-R6): the closed set is independent_verification.types.TARGET_REF_KINDS, the one
+    # closed kind contract Independent Verification's own VerificationRequirement/
+    # VerificationResult give this field -- observation_evidence is Store-owned here, exactly
+    # as lineage.derived_from.members[] above mixes one Store-owned kind with several that
+    # are not. verification_result_provenance.input_refs.members[] is deliberately absent
+    # from this table: no closed kind contract exists anywhere for a verifier's own freely-
+    # chosen input references (unlike target_refs, IndependentVerifier.__call__'s own contract
+    # names no closed vocabulary for it), and inventing one here would be exactly the guessed
+    # formula this module's own docstring already refuses to write.
+    ("observation_evidence", "verification_result_provenance.target_refs.members[]"): frozenset(
+        {"difference", "change", "observation_evidence"}
     ),
     # -- closure_evaluation (01_SCHEMA/difference/closure_evaluation.schema.json) ----------
     ("closure_evaluation", "kernel_source_witness_ref"): frozenset({"kernel_source_witness"}),
@@ -380,8 +401,11 @@ def reference_edges(kind: str, body: dict[str, Any]) -> list[TypedReferenceEdge]
 
     - ``observation``: ``source_snapshot_refs``, ``observation_evidence_refs``.
     - ``observation_evidence``: ``observed_result.observation_ref``,
-      ``lineage.derived_from``/``lineage.predecessor_evidence_refs`` members, and each
-      ``artifact_references`` member's own optional ``source_snapshot_ref``.
+      ``lineage.derived_from``/``lineage.predecessor_evidence_refs`` members, each
+      ``artifact_references`` member's own optional ``source_snapshot_ref``, and (Structural
+      Review Round 6, P13-R6) ``verification_result_provenance.target_refs`` members --
+      ``verification_result_provenance.input_refs`` is deliberately never walked (see
+      :data:`FIELD_EXPECTED_TARGET_KINDS`'s own comment for why).
     - ``closure_evaluation``: ``kernel_source_witness_ref``, ``difference_event_head_ref``,
       the embedded ``after_state_candidate``'s own ``source_snapshot_refs`` members,
       ``after_observation_refs``, ``change_result_evidence_refs``,
@@ -465,6 +489,19 @@ def reference_edges(kind: str, body: dict[str, Any]) -> list[TypedReferenceEdge]
                 field_key="artifact_references.members[].source_snapshot_ref",
                 diagnostic_path=f"artifact_references.members[{index}].source_snapshot_ref",
                 ref=artifact_ref.get("source_snapshot_ref"),
+            )
+        verification_result_provenance = body.get("verification_result_provenance")
+        if isinstance(verification_result_provenance, dict):
+            _check_members(
+                edges,
+                source_kind=kind,
+                field_key="verification_result_provenance.target_refs.members[]",
+                collection=verification_result_provenance.get("target_refs"),
+            )
+        elif verification_result_provenance is not None:
+            raise ReflowValidationError(
+                "observation_evidence.verification_result_provenance is not an object: "
+                f"{verification_result_provenance!r}"
             )
     elif kind == "closure_evaluation":
         _check(

@@ -98,6 +98,7 @@ from manosube_agent_civilization.independent_verification import (
     route_verification_result_to_evidence,
     run_independent_verification,
 )
+import manosube_agent_civilization.independent_verification.evidence_handoff as evidence_handoff_module
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
 
@@ -1754,3 +1755,73 @@ def test_handoff_produced_request_is_accepted_by_the_existing_sufficiency_owners
         )
     )
     assert result["evidence_sufficiency_result"]["evidence_sufficiency_id"]
+
+
+# --------------------------------------------------------------------------- #
+# verification_result_provenance (Structural Review Round 6, P13-R6,
+# ADOPT_P13_R6_PROVENANCE_COMPLETE_EVIDENCE_HANDOFF)
+# --------------------------------------------------------------------------- #
+
+
+def test_handoff_derives_evidence_whose_provenance_matches_the_verification_result() -> None:
+    """The record the handoff returns carries the real VerificationResult's own ten fields,
+    constructed by the handoff itself -- never by the caller."""
+
+    verification_result = _handoff_verification_result()
+    evidence_request = change_free_verification_evidence_request()
+
+    evidence = route_verification_result_to_evidence(verification_result, evidence_request)
+
+    provenance = evidence["verification_result_provenance"]
+    assert provenance["status"] == verification_result.status
+    assert provenance["requirement_id"] == verification_result.requirement_id
+    assert provenance["selection_id"] == verification_result.selection_id
+    assert provenance["project_id"] == verification_result.project_id
+    assert provenance["target_refs"]["members"] == [
+        dict(ref) for ref in verification_result.target_refs
+    ]
+    assert provenance["verifier_identity"] == dict(verification_result.verifier_identity)
+    assert provenance["selection_authority_ref"] == dict(
+        verification_result.selection_authority_ref
+    )
+    assert provenance["verification_boundary"] == dict(verification_result.verification_boundary)
+    assert provenance["input_refs"]["members"] == [
+        dict(ref) for ref in verification_result.input_refs
+    ]
+    assert provenance["observations"] == dict(verification_result.observations)
+
+
+def test_handoff_rejects_a_caller_supplied_verification_result_provenance() -> None:
+    """The handoff constructs this field itself and never accepts, nor silently overwrites,
+    one a caller already placed on ``evidence_request``."""
+
+    evidence_request = change_free_verification_evidence_request()
+    evidence_request["verification_result_provenance"] = {"caller": "supplied"}
+
+    with pytest.raises(EvidenceHandoffError, match="verification_result_provenance"):
+        route_verification_result_to_evidence(_handoff_verification_result(), evidence_request)
+
+
+def test_handoff_refuses_to_return_evidence_whose_provenance_does_not_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A defensive check on a predecessor this handoff does not itself control: if
+    ``derive_evidence`` ever returned a record whose own provenance disagreed with what the
+    handoff constructed, the handoff must refuse it rather than return a mismatched record."""
+
+    real_derive_evidence = derive_evidence
+
+    def _tampering_derive_evidence(request: dict[str, Any]) -> dict[str, Any]:
+        record = real_derive_evidence(request)
+        tampered = dict(record)
+        tampered["verification_result_provenance"] = dict(
+            tampered["verification_result_provenance"] or {}, status="FAILED"
+        )
+        return tampered
+
+    monkeypatch.setattr(evidence_handoff_module, "derive_evidence", _tampering_derive_evidence)
+
+    with pytest.raises(EvidenceHandoffError, match="does not exactly equal"):
+        route_verification_result_to_evidence(
+            _handoff_verification_result(), change_free_verification_evidence_request()
+        )

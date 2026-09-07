@@ -13,6 +13,17 @@ and cross-verifies the resulting canonical Evidence record actually names the sa
 (and, when the requirement named one, the same Difference) the supplied
 ``VerificationResult`` is about.
 
+Structural Review Round 6 (P13-R6): the same real ``VerificationResult`` this handoff is
+already given is now also the sole source of the derived Evidence record's own
+``verification_result_provenance``. This module deterministically constructs that projection
+from *verification_result*'s own ten fields -- never accepting one the caller already placed
+on ``evidence_request``, which would let the handoff attach any provenance a caller chose to
+supply rather than the one this call is actually for -- injects it into the request before the
+one existing-owner call, and refuses to return a record whose own, schema-validated
+``verification_result_provenance`` does not exactly equal what was just constructed. This is
+the same "derived, never declared" discipline this module already gave ``target``/
+``difference_ref`` in Round 2, applied to the field Round 6 adds.
+
 ``VerificationResult`` remains what Issue #51 and Structural Review Round 1 already fixed: it
 is never itself an Evidence record, an Authority Decision, a Closure receipt, a State
 transition, or a Merge authorization, and Independent Verification still never persists
@@ -32,13 +43,81 @@ second Evidence, Difference, or Reflow owner (``NEW_EVIDENCE_OWNER=false``).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from manosube_agent_civilization.evidence import derive_evidence
 
 from .errors import EvidenceHandoffError
 from .types import VerificationResult
+
+#: The ten fields Structural Review Round 6 requires the Evidence record's own
+#: ``verification_result_provenance`` to hold -- exactly :class:`VerificationResult`'s own
+#: field set, no more and no fewer, so the projection is a complete capture of what this
+#: verification actually established rather than a partial, caller-chosen subset.
+REQUIRED_PROVENANCE_FIELDS: tuple[str, ...] = (
+    "status",
+    "requirement_id",
+    "selection_id",
+    "project_id",
+    "target_refs",
+    "verifier_identity",
+    "selection_authority_ref",
+    "verification_boundary",
+    "input_refs",
+    "observations",
+)
+
+
+def _thaw(value: Any) -> Any:
+    """Return *value* with every ``MappingProxyType``/``tuple`` the frozen VerificationResult
+    holds converted back to a plain, JSON/schema-shaped ``dict``/``list`` -- the exact inverse
+    of ``types.py``'s own ``_deep_freeze``, applied recursively so a nested frozen structure
+    inside ``verifier_identity``/``selection_authority_ref``/``verification_boundary``/
+    ``observations`` (all opaque to this handoff and to the Evidence schema alike) is thawed
+    just as completely as its top level.
+    """
+
+    if isinstance(value, Mapping):
+        return {key: _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    return value
+
+
+def _provenance_reference_set(references: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Return *references* in the Evidence schema's own ``unordered_references`` shape."""
+
+    members = [_thaw(reference) for reference in references]
+    members.sort(key=lambda reference: (reference.get("kind", ""), reference.get("id", "")))
+    return {"collection_kind": "UNORDERED_SET", "members": members}
+
+
+def _construct_verification_result_provenance(
+    verification_result: VerificationResult,
+) -> dict[str, Any]:
+    """Return the one, deterministic ``verification_result_provenance`` projection of
+    *verification_result* -- built here, from the real value this handoff already holds,
+    and never accepted from a caller (see the module docstring's Round 6 note)."""
+
+    provenance = {
+        "status": verification_result.status,
+        "requirement_id": verification_result.requirement_id,
+        "selection_id": verification_result.selection_id,
+        "project_id": verification_result.project_id,
+        "target_refs": _provenance_reference_set(verification_result.target_refs),
+        "verifier_identity": _thaw(verification_result.verifier_identity),
+        "selection_authority_ref": _thaw(verification_result.selection_authority_ref),
+        "verification_boundary": _thaw(verification_result.verification_boundary),
+        "input_refs": _provenance_reference_set(verification_result.input_refs),
+        "observations": _thaw(verification_result.observations),
+    }
+    if set(provenance) != set(REQUIRED_PROVENANCE_FIELDS):
+        raise EvidenceHandoffError(
+            "constructed verification_result_provenance does not carry exactly the required "
+            f"field set: {sorted(provenance)} != {sorted(REQUIRED_PROVENANCE_FIELDS)}"
+        )
+    return provenance
 
 
 def route_verification_result_to_evidence(
@@ -50,9 +129,19 @@ def route_verification_result_to_evidence(
     *evidence_request* must already be a real, Change-free, ``verification_observation_
     request``-grounded Evidence request -- built by the caller from real Observation/
     Difference data exactly as every other Evidence caller in this codebase already builds
-    one. This function fabricates none of that; it only validates the handoff's own two
-    boundaries (Change-freedom, and that the derived record is actually about
-    *verification_result*) before and after the one existing-owner call.
+    one. This function fabricates none of that; it only validates the handoff's own
+    boundaries (Change-freedom, that the request carries no caller-supplied
+    ``verification_result_provenance`` this handoff would otherwise have to trust, and that
+    the derived record is actually about *verification_result*) before and after the one
+    existing-owner call.
+
+    ``verification_result_provenance`` is this handoff's own addition (Structural Review
+    Round 6): constructed here from *verification_result* itself, injected into the request
+    this function -- never the caller -- controls, and re-verified against the record
+    ``derive_evidence`` actually returns before this function will return it. A caller that
+    already placed a non-``None`` value under that key on *evidence_request* is refused
+    outright, because accepting it would mean this handoff no longer controls which
+    provenance the returned Evidence record carries.
 
     Every :class:`~manosube_agent_civilization.evidence.errors.EvidenceError` the existing
     owner itself raises propagates unchanged -- this function neither catches nor
@@ -84,8 +173,25 @@ def route_verification_result_to_evidence(
             "evidence_request must carry a verification_observation_request -- the one "
             "Evidence position (Change-Free Verification Evidence) this handoff produces"
         )
+    if evidence_request.get("verification_result_provenance") is not None:
+        raise EvidenceHandoffError(
+            "evidence_request must not already carry a verification_result_provenance -- "
+            "this handoff constructs it from verification_result itself and does not accept "
+            "one a caller supplied"
+        )
 
-    evidence = derive_evidence(dict(evidence_request))
+    provenance = _construct_verification_result_provenance(verification_result)
+    request = dict(evidence_request)
+    request["verification_result_provenance"] = provenance
+
+    evidence = derive_evidence(request)
+
+    if evidence["verification_result_provenance"] != provenance:
+        raise EvidenceHandoffError(
+            "the derived Evidence record's own verification_result_provenance does not "
+            "exactly equal the one this handoff constructed from verification_result -- "
+            "refusing to return a record whose provenance this handoff cannot confirm"
+        )
 
     if evidence["target"]["project_id"] != verification_result.project_id:
         raise EvidenceHandoffError(

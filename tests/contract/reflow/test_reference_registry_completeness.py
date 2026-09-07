@@ -139,6 +139,10 @@ _REQUIRED_FIELD_CLASSIFICATION: dict[str, dict[str, str]] = {
         "lineage": "E",  # derived_from (A), predecessor_evidence_refs (A)
         "remaining_differences": "C",  # kind difference -- never Store-persisted
         "evidence_level": "N",
+        "verification_result_provenance": "E",  # target_refs.members[] (A, mixed
+        # Store-owned -- Structural Review Round 6, P13-R6); input_refs.members[]
+        # deliberately unwalked -- no closed kind contract exists for it anywhere in this
+        # Kernel (see reference_registry.py's own comment).
         "evidence_semantic_fingerprint": "N",
     },
     "source_snapshot": {
@@ -359,6 +363,15 @@ _EXPECTED_TARGET_KINDS: dict[tuple[str, str], frozenset[str]] = {
     ("observation_evidence", "artifact_references.members[].source_snapshot_ref"): frozenset(
         {"source_snapshot"}
     ),
+    # verification_result_provenance.target_refs.members[] (Structural Review Round 6,
+    # P13-R6): independently hand-authored against
+    # manosube_agent_civilization.independent_verification.types.TARGET_REF_KINDS -- the one
+    # closed kind contract Independent Verification's own VerificationRequirement/
+    # VerificationResult give this field. input_refs.members[] carries no such contract
+    # anywhere (a verifier's own freely-chosen input references) and is deliberately absent.
+    ("observation_evidence", "verification_result_provenance.target_refs.members[]"): frozenset(
+        {"difference", "change", "observation_evidence"}
+    ),
     ("closure_evaluation", "kernel_source_witness_ref"): frozenset({"kernel_source_witness"}),
     ("closure_evaluation", "difference_event_head_ref"): frozenset({"difference_event"}),
     ("closure_evaluation", "after_state_candidate.source_snapshot_refs.members[]"): frozenset(
@@ -528,6 +541,10 @@ def _place(source_kind: str, field_path: str, ref: Any) -> dict[str, Any]:
             "observation_evidence",
             "artifact_references.members[].source_snapshot_ref",
         ): lambda r: {"artifact_references": {"members": [{"source_snapshot_ref": r}]}},
+        (
+            "observation_evidence",
+            "verification_result_provenance.target_refs.members[]",
+        ): lambda r: {"verification_result_provenance": {"target_refs": {"members": [r]}}},
         ("closure_evaluation", "kernel_source_witness_ref"): lambda r: {
             "kernel_source_witness_ref": r
         },

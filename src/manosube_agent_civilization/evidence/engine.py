@@ -125,6 +125,7 @@ REQUIRED_REQUEST_KEYS: frozenset[str] = frozenset(
         "change_request",
         "post_change_observation_request",
         "verification_observation_request",
+        "verification_result_provenance",
         "artifact_references",
         "predecessor_evidence_refs",
         "remaining_difference_refs",
@@ -479,6 +480,7 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
     change_request = shaped["change_request"]
     post_change_request = shaped["post_change_observation_request"]
     verification_request = shaped["verification_observation_request"]
+    verification_result_provenance = shaped["verification_result_provenance"]
 
     # --- position ------------------------------------------------------------- #
     #
@@ -487,6 +489,13 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
     # Observation Evidence carrying a Change, it cannot be Change Result Evidence carrying no
     # Change, and it cannot carry both a Change and a change-free verification at once (R6-F1b
     # -- CHANGE_BOUND and CHANGE_FREE are CLOSURE_POLICY.md §6's own mutually exclusive rows).
+    #
+    # P13-R6 adds a fourth: ``verification_result_provenance`` may be non-null only on the
+    # position it names, CHANGE_FREE_VERIFICATION_EVIDENCE. It is refused here, in the
+    # engine's own vocabulary, rather than left to surface only as a schema-validation
+    # failure on the finished record -- a caller attaching a Verification Result's provenance
+    # to an Observation Evidence or Change Result Evidence request is a request the engine
+    # itself can see is misdirected, before any record is built.
     if change_request is None:
         if post_change_request is not None:
             raise EvidenceError(
@@ -496,7 +505,17 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
             )
         if verification_request is not None:
             return _change_free_verification_evidence(
-                shaped, observation, difference, verification_request
+                shaped,
+                observation,
+                difference,
+                verification_request,
+                verification_result_provenance,
+            )
+        if verification_result_provenance is not None:
+            raise EvidenceError(
+                "verification_result_provenance was supplied without a change-free "
+                "verification Observation: Observation Evidence carries no Verification "
+                "Result provenance"
             )
         return _observation_evidence(shaped, observation, difference)
 
@@ -505,6 +524,12 @@ def _derive(request: dict[str, Any]) -> dict[str, Any]:
             "a verification Observation was supplied together with a Change: "
             "CHANGE_BOUND and CHANGE_FREE are mutually exclusive resolution modes, so one "
             "Evidence request cannot carry both a Change and a change-free verification"
+        )
+
+    if verification_result_provenance is not None:
+        raise EvidenceError(
+            "verification_result_provenance was supplied together with a Change: Change "
+            "Result Evidence carries no Verification Result provenance"
         )
 
     # Q3-A. This is the refusal, and it comes before anything is built, because the record
@@ -607,6 +632,10 @@ def _common(
         # that ``artifacts`` is not an input: attaching a reference to content nobody
         # verified used to lift E0 to E1, and now lifts nothing.
         "evidence_level": derive_level(grounding),
+        # Overridden only by ``_change_free_verification_evidence``, the one position this
+        # field is admissible on. ``None`` here is not "not yet filled in" -- it is the
+        # correct final value for both other positions (Q1-A + Q1-ii).
+        "verification_result_provenance": None,
         "evidence_semantic_fingerprint": "",
     }
 
@@ -667,6 +696,7 @@ def _change_free_verification_evidence(
     before_observation: dict[str, Any],
     difference: dict[str, Any],
     verification_request: Any,
+    verification_result_provenance: Any,
 ) -> dict[str, Any]:
     """Return Change-Free Verification Evidence: CLOSURE_POLICY.md §6's ``CHANGE_FREE`` row
     (R6-F1b) -- "independent after-state Observation Evidence proves the Target directly",
@@ -677,6 +707,14 @@ def _change_free_verification_evidence(
     not decide whether what was observed satisfies anything -- that is still Difference's
     own Closure Evaluation, reading this record's ``after_state`` the same way it already
     reads Change Result Evidence's.
+
+    ``verification_result_provenance`` is carried through from the request unchanged (P13-R6):
+    this position is the one place it is admissible, but this engine does not construct it --
+    that is Independent Verification's handoff's own responsibility (``evidence_handoff.py``),
+    which is the one caller positioned to know the real ``VerificationResult`` this Evidence is
+    being derived for. A caller outside that handoff may still supply ``None`` here, exactly
+    as the pre-existing, Independent-Verification-unrelated Change-Free Verification Evidence
+    callers do.
     """
 
     _, verification_observation = _minted_observation(
@@ -719,6 +757,9 @@ def _change_free_verification_evidence(
             "authority_used": None,
             "after_state": _state_binding(verification_observation),
             "expected_result": None,
+            "verification_result_provenance": deepcopy(verification_result_provenance)
+            if verification_result_provenance is not None
+            else None,
             "lineage": _lineage(
                 shaped,
                 [

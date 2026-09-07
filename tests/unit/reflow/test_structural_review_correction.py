@@ -2053,6 +2053,7 @@ def test_r7f2_change_free_verification_evidence_for_a_foreign_target_is_refused(
         "change_request": None,
         "post_change_observation_request": None,
         "verification_observation_request": foreign_verification_request,
+        "verification_result_provenance": None,
         "artifact_references": [],
         "predecessor_evidence_refs": [],
         "remaining_difference_refs": [],

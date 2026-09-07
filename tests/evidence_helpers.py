@@ -197,6 +197,7 @@ def observation_evidence_request(
         "change_request": None,
         "post_change_observation_request": None,
         "verification_observation_request": None,
+        "verification_result_provenance": None,
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),
@@ -255,6 +256,7 @@ def change_result_evidence_request(
         if post_change_observation is not None
         else after_observation_request(),
         "verification_observation_request": None,
+        "verification_result_provenance": None,
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),
@@ -286,6 +288,7 @@ def change_free_verification_evidence_request(
         "verification_observation_request": verification_observation
         if verification_observation is not None
         else after_observation_request(),
+        "verification_result_provenance": None,
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),

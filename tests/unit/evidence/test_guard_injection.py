@@ -27,6 +27,7 @@ from tests.evidence_guards import (
 )
 from tests.evidence_helpers import (
     before_observation_request,
+    change_free_verification_evidence_request,
     change_result_evidence_request,
     closure_policy,
     evidence_level_scale_ref,
@@ -312,3 +313,54 @@ def test_the_scale_address_guard_refuses_a_reference_to_another_scale() -> None:
     swapped["evidence_level_scale_ref"]["evidence_level_scale_sha256"] = "0" * 64
     with pytest.raises(EvidenceError):
         evaluate_sufficiency(swapped)
+
+
+# --------------------------------------------------------------------------- #
+# verification_result_provenance (Structural Review Round 6, P13-R6)
+# --------------------------------------------------------------------------- #
+
+_PROVENANCE: dict[str, Any] = {
+    "status": "VERIFIED",
+    "requirement_id": "VREQ-0001",
+    "selection_id": "VSEL-0001",
+    "project_id": "PRJ-0001",
+    "target_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+    "verifier_identity": {"kind": "deterministic_test_runner", "id": "VERIFIER-0001"},
+    "selection_authority_ref": {"kind": "human_authority", "id": "AUTH-0001"},
+    "verification_boundary": {"scope": "repository", "boundary_id": "VB-0001"},
+    "input_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+    "observations": {"summary": "independently reproduced the reported outcome"},
+}
+
+
+def test_the_position_misuse_guard_refuses_provenance_outside_change_free() -> None:
+    """``verification_result_provenance`` is admissible only on Change-Free Verification
+    Evidence (P13-R6). Positive control first: the identical value is accepted there, so
+    the refusals below are the position guard and not a schema defect."""
+
+    accepted = change_free_verification_evidence_request()
+    accepted["verification_result_provenance"] = dict(_PROVENANCE)
+    assert derive_evidence(accepted)["verification_result_provenance"] == _PROVENANCE
+
+    for builder in (observation_evidence_request, change_result_evidence_request):
+        request = builder()
+        request["verification_result_provenance"] = dict(_PROVENANCE)
+        error = _refuses(request, EvidenceError)
+        assert "verification_result_provenance" in error
+
+
+def test_verification_result_provenance_participates_in_evidence_identity() -> None:
+    """Tampering the provenance after the fact must be detectable: two Change-Free
+    Verification Evidence records that agree on everything else but this field must not
+    share an address (``E-003 EVIDENCE_IMMUTABLE`` is only enforceable if the address covers
+    the whole meaning)."""
+
+    without_provenance = change_free_verification_evidence_request()
+    without = derive_evidence(without_provenance)
+
+    with_provenance = dict(without_provenance)
+    with_provenance["verification_result_provenance"] = dict(_PROVENANCE)
+    with_ = derive_evidence(with_provenance)
+
+    assert with_["evidence_id"] != without["evidence_id"]
+    assert with_["evidence_semantic_fingerprint"] != without["evidence_semantic_fingerprint"]
