@@ -443,6 +443,14 @@ EXACTLY ONE GENUINE, FULLY-BOUND, ACTIVE GRANT → VERIFIER_SELECTION_SELECTED
 
 Independent Verificationのroute（`08_VERIFICATION/VERIFICATION_CONTRACT.md`）は、この決定をVerifier呼び出しの前に一度だけ再検証する。既存Authority ownerが読めない入力へ返す typed error は、そのまま伝播する——このroute自身は例外を捕捉も再分類もしない。
 
+**Structural Review Round 4（Issue #51, P13-R4, Authority Provenance Bypass, P13-R3-F2）:** `evaluate_verifier_selection`自身の`admit`/`admit_all`は、grantの*内容*が自己無矛盾であること（宣言identityが再計算値と一致し、`granted_by.kind`がHuman Authorityの形をしている）だけを検証する——それはgrantが実在するHuman Authorityによって著されたことの証明ではない。`human_authority_ref`は秘密ではないため、grant内容そのものを呼び出し側の引数として直接受理すれば、`granted_by`が実在の参照を単に複製しただけの自己ハッシュgrantを、呼び出し側が作り出せてしまう——Round 1が`human_authority_ref`自身について既に閉じたのと同じ種類の欠落が、一段深いところで再発する。この評価器自身のadmission/binding意味論はRound 4で変更しない。変更するのは、Independent Verificationのroute（`route.py`）がこの評価器へ渡す内容そのものである：routeはgrant内容を直接受理せず、`{"kind": "verifier_selection_grant", "id": ...}`参照のみを受理し、既存Storeの`resolve_record`（`observation_evidence`のtarget解決と同一の呼び出し箇所）を通じて解決した後の、実際にdurably committedされた本体だけを、この評価器へ候補として渡す。解決できない参照はVerifierを呼び出す前に拒否する。これにより`CALLER_ASSERTED_GRANT_AS_PROVENANCE`を閉じるが、第二のAuthority owner・registry・token・cacheは一切追加しない——`evaluate_verifier_selection`自身は不変のままである。
+
+```text
+VERIFIER_SELECTION_GRANT_CONTENT_ACCEPTED_AS_CALLER_ARGUMENT=false
+VERIFIER_SELECTION_GRANT_REF_RESOLVED_FROM_STORE=true
+CALLER_ASSERTED_GRANT_AS_PROVENANCE=false
+```
+
 ```text
 INDEPENDENT_VERIFICATION_DIRECT_STORE_WRITE=false
 VERIFIER_SELECTION_DECISION_IMPLIES_CHANGE_EXECUTION=false

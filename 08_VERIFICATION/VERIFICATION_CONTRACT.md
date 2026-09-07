@@ -36,7 +36,7 @@ run_independent_verification(
     project_binding_id: str,
     verification_requirement: VerificationRequirement,
     verifier_selection: VerifierSelection,
-    verifier_selection_grants: Sequence[Mapping[str, Any]],
+    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
     verifier: IndependentVerifier,
 ) -> VerificationResult
 
@@ -51,13 +51,21 @@ owner's own public `boot_project` to independently re-verify the real Human Auth
 reference this project is bound to, rather than trusting a caller-supplied equality check
 alone.
 
-`verifier_selection_grants` (Structural Review Round 3, P13-R3-F1) is the caller's own
-explicit collection of canonical `verifier_selection_grant` records -- real,
-Human-Authority-declared, content-addressed, admitted through the existing Authority owner's
-own admission gate. This route passes them, together with `verifier_selection`'s own fields
-and the real, Boot-verified Human Authority reference, to the existing Authority owner's own
-new, dedicated, read-only `evaluate_verifier_selection` exactly once, and requires it to
-answer `VERIFIER_SELECTION_SELECTED` before the verifier is ever called.
+`verifier_selection_grant_refs` (Structural Review Round 3, P13-R3-F1; resolved from the
+Store since Structural Review Round 4, P13-R4) is the caller's own explicit collection of
+`{"kind": "verifier_selection_grant", "id": ...}` references -- never grant *content*. Round
+3 originally accepted the grant bodies themselves as a caller-supplied argument; Round 4
+(Authority Provenance Bypass, P13-R3-F2) closes the gap that left open: a `human_authority_ref`
+is not a secret, so a caller able to supply arbitrary in-memory content could self-hash a
+grant whose `granted_by` merely repeats the real, Boot-verified reference. Each supplied ref
+is now resolved through the existing Store's own read-only `resolve_record` -- the identical
+call site `observation_evidence` targets already resolve through -- before its body is ever
+considered; an unresolvable ref refuses before the verifier is ever called. Only the
+resulting, genuinely Store-committed, real, Human-Authority-declared, content-addressed
+bodies are passed, together with `verifier_selection`'s own fields and the real,
+Boot-verified Human Authority reference, to the existing Authority owner's own dedicated,
+read-only `evaluate_verifier_selection` exactly once, and this route requires it to answer
+`VERIFIER_SELECTION_SELECTED` before the verifier is ever called.
 
 `route_verification_result_to_evidence` (Structural Review Round 2, P13-R2-F2) hands an
 admissible `VerificationResult` to the existing Evidence owner's own public `derive_evidence`
@@ -131,7 +139,15 @@ IndependentVerifier
    existing Authority owner's own `evaluate_verifier_selection`, re-verifying a real,
    Human-Authority-declared `verifier_selection_grant` that binds every one of project_id,
    requirement_id, verifier_identity, permitted_boundary, selection status, and the real
-   selection authority identity together, can. See §10.
+   selection authority identity together, can. Structural Review Round 4 (P13-R4) resolves
+   the gap Round 3 itself left open: a grant's own content -- `granted_by` included -- is not
+   a secret a caller lacks, so accepting grant *content* directly as an argument let a caller
+   self-hash one that merely repeats known-real values. This route now accepts only
+   `{"kind": "verifier_selection_grant", "id": ...}` references, resolves each through the
+   existing Store's own `resolve_record` before its body is ever considered, and offers only
+   the resulting, genuinely Store-committed bodies to `evaluate_verifier_selection` -- a ref
+   naming a record the Store does not durably resolve refuses before the verifier is ever
+   called, exactly as an unresolvable `observation_evidence` target already does. See §10.
 5. **Independence is provenance plus boundary, for every status alike.** A
    `VerificationResult` carries target refs, frozen boundary, verifier identity, selection
    authority ref, input refs, and result. A verifier whose own `input_refs` cite nothing
@@ -238,18 +254,23 @@ never catches or reclassifies any of them.
    propagates unchanged.
 6. Validate verifier_selection.permitted_boundary canonical-reference-equals
    verification_requirement.verification_boundary.
-7. Call the existing Authority owner's own public evaluate_verifier_selection(...) exactly
+7. Validate each entry of verifier_selection_grant_refs is an explicit {"kind": "verifier_
+   selection_grant", "id": ...} reference and resolve it through store.resolve_record
+   (project_id, "verifier_selection_grant", id) (Structural Review Round 4, P13-R4) -- an
+   unresolvable ref refuses before the Authority owner or the verifier is ever called; grant
+   content is never accepted as a caller-supplied argument.
+8. Call the existing Authority owner's own public evaluate_verifier_selection(...) exactly
    once (Structural Review Round 3, P13-R3-F1), over project_id, verification_requirement.
    requirement_id, verifier_selection.selection_id/verifier_identity/permitted_boundary/
-   status, the real Boot-verified Human Authority reference from step 5, and
-   verifier_selection_grants. Require the returned decision to be VERIFIER_SELECTION_SELECTED;
-   any other decision refuses before the verifier is ever called. Every AuthorityError this
-   call itself raises for an unreadable request propagates unchanged.
-8. Validate verification_requirement.target_refs is non-empty, and each entry is an
+   status, the real Boot-verified Human Authority reference from step 5, and the bodies
+   resolved in step 7. Require the returned decision to be VERIFIER_SELECTION_SELECTED; any
+   other decision refuses before the verifier is ever called. Every AuthorityError this call
+   itself raises for an unreadable request propagates unchanged.
+9. Validate verification_requirement.target_refs is non-empty, and each entry is an
    explicit {"kind", "id"} reference whose kind is difference/change/observation_evidence.
-   Every observation_evidence target is resolved through store.resolve_record(project_id,
-   "observation_evidence", id) -- an unresolvable one refuses before the verifier is called.
-9. Validate the supplied verifier itself declares, on its own verifier_identity attribute,
+   Every observation_evidence target is resolved through the identical store.resolve_record
+   call site step 7 already uses -- an unresolvable one refuses before the verifier is called.
+10. Validate the supplied verifier itself declares, on its own verifier_identity attribute,
    the identical identity canonical-reference-equal to verifier_selection.verifier_identity
    (Structural Review Round 1, P13-R1-F1) -- checked before the verifier is ever called.
 10. Call verifier(requirement=verification_requirement, selection=verifier_selection)
@@ -282,15 +303,22 @@ and no `VerificationResult` produced, and the supplied `verifier` never called, 
   reference (not merely from each other -- Structural Review Round 1, P13-R1-F2)
 - a verifier_selection whose permitted_boundary diverges from the requirement's own
   verification_boundary
-- verifier_selection_grants that name no genuine, Human-Authority-declared grant binding
-  every one of project_id, requirement_id, verifier_identity, permitted_boundary, selection
-  status, and the real, Boot-verified selection authority identity together -- including no
-  grants at all, a grant naming a different selection, and a grant declared by a fabricated
-  or different Human Authority (Structural Review Round 3, P13-R3-F1; the existing Authority
-  owner's own evaluate_verifier_selection answers anything but VERIFIER_SELECTION_SELECTED)
+- a verifier_selection_grant_refs entry that is not an explicit {"kind": "verifier_selection_
+  grant", "id": ...} reference, or whose kind is anything else -- grant content itself is
+  never an accepted argument shape (Structural Review Round 4, P13-R4)
+- a verifier_selection_grant_refs entry naming a record the Store does not durably resolve
+  for this project (Structural Review Round 4, P13-R4 -- the identical failure shape an
+  unresolvable observation_evidence target already produces)
+- verifier_selection_grant_refs that resolve to no genuine, Human-Authority-declared grant
+  binding every one of project_id, requirement_id, verifier_identity, permitted_boundary,
+  selection status, and the real, Boot-verified selection authority identity together --
+  including no refs at all, a resolved grant naming a different selection, and a resolved
+  grant declared by a fabricated or different Human Authority (Structural Review Round 3,
+  P13-R3-F1, refs resolved per Round 4; the existing Authority owner's own
+  evaluate_verifier_selection answers anything but VERIFIER_SELECTION_SELECTED)
 - any AuthorityError the existing Authority owner's own evaluate_verifier_selection itself
-  raises for an unreadable request (propagates unchanged -- Structural Review Round 3,
-  P13-R3-F1)
+  raises for an unreadable resolved-grant body (propagates unchanged -- Structural Review
+  Round 3, P13-R3-F1)
 - an empty target_refs, a target reference missing kind/id, or a target reference whose
   kind is outside {difference, change, observation_evidence}
 - an observation_evidence target reference the Store does not resolve for this project
@@ -342,10 +370,11 @@ imports `difference`, `reflow`, or `binding`; that `evidence` is importable only
 `evidence_handoff.py` (Structural Review Round 2, P13-R2-F2) and only to call
 `derive_evidence` exactly once; that `authority` is importable only from `route.py`
 (Structural Review Round 3, P13-R3-F1) and only to call `evaluate_verifier_selection` exactly
-once; that `store.resolve_record` is the only Store method this package ever calls, and is
-called at most once per Store-owned target reference; and that no module in this package
-imports a model, subprocess, shell, network, GitHub, Observer, Change-execution, scheduler,
-or multi-Agent surface.
+once; that `store.resolve_record` is the only Store method this package ever calls, called
+from exactly one call site (Structural Review Round 4, P13-R4: shared by both
+`observation_evidence` target resolution and `verifier_selection_grant` resolution) and once
+per resolved reference; and that no module in this package imports a model, subprocess,
+shell, network, GitHub, Observer, Change-execution, scheduler, or multi-Agent surface.
 
 ## 7. Explicit non-claims
 
@@ -377,6 +406,8 @@ NEW_SELECTION_CACHE=false
 FAKE_DIFFERENCE_OR_STATE_FOR_AUTHORITY=false
 CALLER_MAPPING_EQUALITY_AS_AUTHORITY=false
 BOOT_HUMAN_AUTHORITY_REF_ALONE_IS_SELECTION_DECISION=false
+CALLER_ASSERTED_GRANT_CONTENT_AS_PROVENANCE=false
+PARALLEL_OR_HIDDEN_AUTHORITY_OWNER=false
 ```
 
 ## 8. Failed verification is now actually connected to existing ownership, not merely representable
@@ -443,11 +474,68 @@ together. A caller-created selection that merely repeats known-real values (incl
 real `human_authority_ref` itself) without a genuine backing grant is refused, with the
 verifier called zero times, exactly as P13-R2-F1's own required proof demanded.
 
-`run_independent_verification` now takes an explicit `verifier_selection_grants` collection
-and calls `evaluate_verifier_selection` exactly once, before the verifier is ever called (§5
-step 7); every `AuthorityError` that call itself raises for an unreadable request propagates
-unchanged (§6). Round 1's own Boot-verified `human_authority_ref` check remains in place,
-unchanged, as the necessary (but, alone, no longer treated as sufficient) precondition this
-new Authority-owned decision itself now consumes as one of its own bound fields
-(`selection_authority_ref` in the resulting Verifier Selection Decision record) -- P13-R2-F1
-is resolved, not narrowed: the gap this section previously disclosed no longer exists.
+`run_independent_verification` took an explicit `verifier_selection_grants` collection (grant
+*content*, as a caller-supplied argument) and calls `evaluate_verifier_selection` exactly
+once, before the verifier is ever called (§5 step 8 since Round 4's renumbering; step 7 at
+the time of Round 3); every `AuthorityError` that call itself
+raises for an unreadable request propagates unchanged (§6). Round 1's own Boot-verified
+`human_authority_ref` check remains in place, unchanged, as the necessary (but, alone, no
+longer treated as sufficient) precondition this new Authority-owned decision itself now
+consumes as one of its own bound fields (`selection_authority_ref` in the resulting Verifier
+Selection Decision record) -- P13-R2-F1 is resolved, not narrowed: the gap this section
+previously disclosed no longer exists. Round 3 itself, however, left one further gap open,
+resolved by Round 4: see §11.
+
+## 11. Structural Review Round 4 resolution (P13-R4, Authority Provenance Bypass, P13-R3-F2)
+
+Round 3 required a genuine, canonical, Human-Authority-declared `verifier_selection_grant`
+before `evaluate_verifier_selection` could answer `VERIFIER_SELECTION_SELECTED` -- but that
+evaluator's own admission gate (`authority.conformance.admit`/`admit_all`, shared with every
+other Authority-owned record kind) proves only that a supplied grant's content is internally
+self-consistent: its own declared identity matches its own recomputed content address, and
+its `granted_by` field is shaped like, and equal to, a `human_authority_ref`. Neither check
+proves the grant was actually authored by the real Human Authority it names. A
+`human_authority_ref` is not a secret -- `boot_project`'s own return value, itself required
+input to this exact route -- so a caller able to supply `verifier_selection_grants` as
+arbitrary in-memory content could self-hash a grant whose every field, `granted_by` included,
+merely repeats known-real values, and reach `VERIFIER_SELECTION_SELECTED` with the verifier
+called on the strength of a grant that exists nowhere but that one function call's own
+arguments. This is the identical class of gap Round 1 (P13-R1-F2) already closed for the
+Human Authority reference itself -- caller-supplied equality is not provenance -- recurring
+one layer deeper, at the grant this exact route added in Round 3 to close it.
+
+SHUKOU adopted `ADOPT_P13_R4_CANONICAL_GRANT_PROVENANCE_BINDING`
+(`https://github.com/manosube/manosube-agent-civilization-os/issues/51#issuecomment-5570217097`),
+requiring grants used to reach `SELECTED` to be resolved/verified against an existing
+canonical Human Authority source rather than accepted as caller-supplied, self-hashed
+objects, and explicitly prohibiting a second, parallel, or hidden Authority owner and
+caller-asserted grant content as provenance. `evaluate_verifier_selection` itself is
+untouched by this round -- it remains the one Authority-owned evaluator this decision belongs
+to, and still performs the identical shape/binding checks over whatever content it is given
+(`00_KERNEL/05_AUTHORITY/AUTHORITY_CONTRACT.md` §7.3, likewise unchanged in its own
+evaluation semantics). What changed is what content `run_independent_verification` is willing
+to give it: the route now takes `verifier_selection_grant_refs` -- `{"kind":
+"verifier_selection_grant", "id": ...}` references, never content -- and resolves each
+through the existing Store's own read-only `resolve_record` (the identical single call site
+`observation_evidence` targets already resolve through) before any resulting body is ever
+considered a grant candidate. A ref naming a record the Store does not durably resolve
+refuses (`VerificationRequirementError`) before the Authority owner or the verifier is ever
+reached, with zero Store mutation and the verifier called zero times -- exactly the same
+failure shape an unresolvable `observation_evidence` target already produces. Only a grant
+that actually reached the same durable, `COMMITTED`-boundary persistence
+(`store/file_store.py`'s `resolve_record`/`_record_committed_by_any_transaction`) every other
+canonical record in this system already relies on can ever bind a selection; a grant that
+exists only as one caller's in-process argument cannot.
+
+This closes `CALLER_ASSERTED_GRANT_AS_PROVENANCE` without adding a second Authority owner,
+registry, token, or cache, and without expanding this route's own Store surface: `store.
+resolve_record` remains the only Store method this package ever calls, from the identical one
+call site, now shared by both `observation_evidence` target resolution and
+`verifier_selection_grant` resolution (§4, static conformance). Requiring durable Store
+commission for a grant does not, by itself, prove *who* wrote that record -- authenticating
+write access to the Store is a stated Binding obligation, out of scope for both the Authority
+and Independent Verification owners today (`AUTHORITY_CONTRACT.md` §4.1's own
+`TRUSTED_STATE_PROVENANCE=BINDING_OBLIGATION` non-claim, unchanged and not newly introduced
+by this round); what Round 4 closes is narrower and concrete: a grant asserted only in one
+function call's own arguments, never durably committed anywhere, can no longer reach
+`SELECTED`.

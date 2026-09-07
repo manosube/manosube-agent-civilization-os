@@ -50,8 +50,7 @@ Structural Review Round 3 correction (P13-R3-F1): the real, Boot-verified
 selected *this* ``verifier_selection`` for *this* ``verification_requirement`` -- two
 self-consistent, caller-fabricated references satisfy a mere mapping-equality check just as
 well as two genuine ones, the identical gap Round 1 already closed for the Human Authority
-reference itself. This route now takes an explicit *verifier_selection_grants* collection and
-calls the existing Authority owner's own dedicated
+reference itself. This route calls the existing Authority owner's own dedicated
 :func:`~manosube_agent_civilization.authority.evaluate_verifier_selection` exactly once,
 requiring it to answer ``SELECTED`` -- a real, canonical, Human-Authority-declared grant
 binding project, requirement, verifier identity, permitted boundary, selection status, and the
@@ -59,6 +58,30 @@ real selection authority identity together -- before the verifier is ever called
 caller-created selection duplicating known-real values without such a grant is refused with
 the verifier called zero times, and every ``AuthorityError`` this call itself raises for an
 unreadable request propagates unchanged.
+
+Structural Review Round 4 correction (P13-R4, Authority Provenance Bypass, P13-R3-F2): Round
+3's own ``evaluate_verifier_selection`` re-verifies a grant's *shape* -- schema-valid,
+content-address self-consistent, ``granted_by.kind == "human_authority"`` -- and that its
+``granted_by`` equals the real, Boot-verified ``human_authority_ref``. None of that proves the
+grant was actually authored by that Human Authority: a ``human_authority_ref`` is not a
+secret, so a caller who can supply arbitrary in-memory ``verifier_selection_grant`` *content*
+can self-hash a grant whose every field, ``granted_by`` included, merely repeats known-real
+values -- the identical class of gap Round 1 already closed for the Human Authority reference
+itself, now recurring one layer deeper. This route no longer accepts grant *content* as a
+caller-supplied argument at all: it takes an explicit *verifier_selection_grant_refs*
+collection of ``{"kind": "verifier_selection_grant", "id": ...}`` references and resolves each
+one through the existing Store's own read-only :meth:`~manosube_agent_civilization.store.
+file_store.FileStateStore.resolve_record` -- the identical surface, and (Round 4) the
+identical single call site, this route already uses to resolve ``observation_evidence``
+targets -- before any of the resulting bodies ever reach ``evaluate_verifier_selection``. A
+ref naming a record the Store does not durably resolve refuses before the verifier is ever
+called, exactly as an unresolvable ``observation_evidence`` target already does; only a grant
+that actually reached the same durable, COMMITTED-boundary persistence every other canonical
+record in this system relies on can ever bind a selection. This closes
+``CALLER_ASSERTED_GRANT_AS_PROVENANCE`` without adding a second Authority owner, registry,
+token, or cache: ``evaluate_verifier_selection`` itself is untouched, and still performs the
+identical shape/binding checks over whatever content it is given -- only what content this
+route is willing to give it has changed.
 
 Every requirement/selection/boundary/target/authority admission failure raises
 :class:`~manosube_agent_civilization.independent_verification.errors.
@@ -94,6 +117,11 @@ from .types import (
 #: (``reflow/reference_registry.py``'s own documented classification), so a ``difference``/
 #: ``change`` target is validated for shape alone, never resolved here.
 _STORE_RESOLVABLE_TARGET_KIND = "observation_evidence"
+
+#: The one reference kind ``verifier_selection_grant_refs`` may ever name (Structural Review
+#: Round 4, P13-R4). A grant is never accepted as caller-supplied content -- only a reference
+#: this route itself resolves through the Store.
+_VERIFIER_SELECTION_GRANT_REF_KIND = "verifier_selection_grant"
 
 
 def _require_canonical_identity(name: str, value: Any) -> str:
@@ -144,6 +172,26 @@ def _require_reference(
     return dict(value)
 
 
+def _resolve_or_refuse(
+    store: Any, project_id: str, *, kind: str, record_id: str, context: str
+) -> dict[str, Any]:
+    """Return the Store's own committed record for *(kind, record_id)*, or fail closed.
+
+    The one place this route ever calls :meth:`~manosube_agent_civilization.store.
+    file_store.FileStateStore.resolve_record` -- shared by ``observation_evidence`` target
+    resolution and, since Structural Review Round 4 (P13-R4), ``verifier_selection_grant``
+    resolution, so this route's own single-Store-read-surface discipline
+    (``VERIFICATION_CONTRACT.md`` §4) is a fact about the source rather than a count that
+    happens to hold today."""
+
+    resolved: dict[str, Any] | None = store.resolve_record(project_id, kind, record_id)
+    if resolved is None:
+        raise VerificationRequirementError(
+            f"{context} does not resolve for project {project_id!r}: {kind}/{record_id}"
+        )
+    return resolved
+
+
 def _canonical_reference_equal(left: Any, right: Any, *, context: str) -> None:
     """Fail closed unless *left* and *right* are the identical canonical reference/boundary
     -- the same exact-equality convention ``boot/route.py`` already uses for its own
@@ -160,7 +208,7 @@ def run_independent_verification(
     project_binding_id: str,
     verification_requirement: VerificationRequirement,
     verifier_selection: VerifierSelection,
-    verifier_selection_grants: Sequence[Mapping[str, Any]],
+    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
     verifier: IndependentVerifier,
 ) -> VerificationResult:
     """Run one explicit Independent Verification and return its one immutable result.
@@ -169,15 +217,18 @@ def run_independent_verification(
     Project whose real Human Authority reference this route re-verifies through the
     existing Boot owner before either selection authority reference is trusted.
 
-    *verifier_selection_grants* (Structural Review Round 3, P13-R3-F1) is the caller's own
-    explicit collection of canonical ``verifier_selection_grant`` records -- the same shape
-    every other Authority-owned record already takes as an explicit request input, never
-    read from a registry this route or the Authority owner hold. This route re-verifies
-    *verifier_selection* against them through the existing Authority owner's own
-    :func:`~manosube_agent_civilization.authority.evaluate_verifier_selection` exactly once,
-    before the verifier is ever called: the real, Boot-verified Human Authority reference
-    alone is a necessary precondition for that decision, never itself the decision that
-    SHUKOU selected *this* ``VerifierSelection`` for *this* ``VerificationRequirement``.
+    *verifier_selection_grant_refs* (Structural Review Round 3, P13-R3-F1; resolved from the
+    Store since Structural Review Round 4, P13-R4) is the caller's own explicit collection of
+    ``{"kind": "verifier_selection_grant", "id": ...}`` references -- never grant *content*.
+    Each is resolved through the existing Store's own read-only ``resolve_record`` (the same
+    single call site ``observation_evidence`` targets already resolve through); an
+    unresolvable ref refuses before the verifier is ever called. Only the resulting,
+    genuinely Store-committed bodies are passed to the existing Authority owner's own
+    :func:`~manosube_agent_civilization.authority.evaluate_verifier_selection`, called exactly
+    once: the real, Boot-verified Human Authority reference alone is a necessary precondition
+    for that decision, never itself the decision that SHUKOU selected *this*
+    ``VerifierSelection`` for *this* ``VerificationRequirement``, and neither is a grant whose
+    only provenance is that a caller supplied it in-process.
 
     See ``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 for the full canonical route this
     function implements, step by step.
@@ -254,6 +305,30 @@ def run_independent_verification(
         context="verifier_selection.permitted_boundary vs verification_requirement.verification_boundary",
     )
 
+    # P13-R4 (Structural Review Round 4, Authority Provenance Bypass, P13-R3-F2): a grant is
+    # never accepted as caller-supplied content -- only a {"kind": "verifier_selection_grant",
+    # "id": ...} reference this route itself resolves through the Store, exactly as an
+    # observation_evidence target already is (via the identical _resolve_or_refuse call
+    # site). A ref naming a record the Store does not durably resolve refuses here, before
+    # the Authority owner or the verifier is ever reached; only genuinely Store-committed
+    # bodies are ever passed to evaluate_verifier_selection below.
+    resolved_grants: list[dict[str, Any]] = []
+    for index, grant_ref in enumerate(verifier_selection_grant_refs):
+        checked_grant_ref = _require_reference(
+            grant_ref,
+            context=f"verifier_selection_grant_refs[{index}]",
+            allowed_kinds=frozenset({_VERIFIER_SELECTION_GRANT_REF_KIND}),
+        )
+        resolved_grants.append(
+            _resolve_or_refuse(
+                store,
+                project_id,
+                kind=checked_grant_ref["kind"],
+                record_id=checked_grant_ref["id"],
+                context=f"verifier_selection_grant_refs[{index}]",
+            )
+        )
+
     # P13-R3-F1: the real, Boot-verified Human Authority reference above is a necessary
     # precondition, not itself the decision that SHUKOU selected *this* VerifierSelection for
     # *this* VerificationRequirement -- that decision belongs to the existing Authority
@@ -262,7 +337,8 @@ def run_independent_verification(
     # (or any other field) is never itself an Authority Decision; only a genuine, canonical,
     # Human-Authority-declared verifier_selection_grant binding every one of project_id,
     # requirement_id, verifier_identity, permitted_boundary, selection status, and the real
-    # selection authority identity together produces one.
+    # selection authority identity together produces one -- and (P13-R4) only a grant this
+    # route itself resolved from the Store above is ever offered as a candidate.
     selection_decision = evaluate_verifier_selection(
         {
             "schema_version": "0.1",
@@ -273,7 +349,7 @@ def run_independent_verification(
             "permitted_boundary": dict(verifier_selection.permitted_boundary),
             "selection_status": verifier_selection.status,
             "human_authority_ref": dict(real_human_authority_ref),
-            "grants": [dict(grant) for grant in verifier_selection_grants],
+            "grants": [dict(grant) for grant in resolved_grants],
         }
     )
     if selection_decision["decision"] != SELECTED:
@@ -293,12 +369,13 @@ def run_independent_verification(
             allowed_kinds=TARGET_REF_KINDS,
         )
         if checked["kind"] == _STORE_RESOLVABLE_TARGET_KIND:
-            resolved = store.resolve_record(project_id, checked["kind"], checked["id"])
-            if resolved is None:
-                raise VerificationRequirementError(
-                    f"target_refs[{index}] does not resolve for project {project_id!r}: "
-                    f"{checked['kind']}/{checked['id']}"
-                )
+            _resolve_or_refuse(
+                store,
+                project_id,
+                kind=checked["kind"],
+                record_id=checked["id"],
+                context=f"target_refs[{index}]",
+            )
 
     # P13-R1-F1: the callable actually invoked must declare, on itself, the identical
     # identity SHUKOU selected -- checked before this route ever calls it, so a mismatched,
