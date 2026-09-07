@@ -2046,7 +2046,7 @@ def test_r7f2_change_free_verification_evidence_for_a_foreign_target_is_refused(
         state_fingerprint(),
         BEFORE_REVISION,
     )
-    request = {
+    request: dict[str, Any] = {
         "schema_version": "0.1",
         "recorded_at": "2026-08-30T09:00:00Z",
         "observation_request": before_observation_request(),

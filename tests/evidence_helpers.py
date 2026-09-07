@@ -319,6 +319,13 @@ def verification_result_provenance(
     }
 
 
+#: Distinguishes "the caller did not pass ``provenance``" from "the caller explicitly passed
+#: ``provenance=None``" -- a caller that wants the handoff to construct the field itself
+#: (rather than this fixture defaulting it) must be able to say so, and a default value of
+#: ``None`` cannot tell those two calls apart.
+_NOT_GIVEN: Any = object()
+
+
 def change_free_verification_evidence_request(
     *,
     recorded_at: str = RECORDED_AT,
@@ -326,14 +333,17 @@ def change_free_verification_evidence_request(
     difference: dict[str, Any] | None = None,
     verification_observation: dict[str, Any] | None = None,
     artifact_references: list[dict[str, Any]] | None = None,
-    provenance: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = _NOT_GIVEN,
 ) -> dict[str, Any]:
     """An Evidence request in CLOSURE_POLICY.md §6's ``CHANGE_FREE`` row (R6-F1b): no
     Change, an independent verification Observation grounds the after-state directly.
 
     ``verification_result_provenance`` (P13-R6, mandatory since P13-R6-R1) defaults to a
     real, complete, fixture-owned projection -- ``derive_evidence`` itself now refuses
-    null here, so this default can no longer be null the way it was before P13-R6-R1."""
+    null here, so this default can no longer be null the way it was before P13-R6-R1.
+    Pass ``provenance=None`` explicitly for the one legitimate exception: a caller (such as
+    the Independent Verification handoff's own tests) that needs the position's provenance
+    left unset so a downstream owner can construct and inject its own value."""
 
     return {
         "schema_version": "0.1",
@@ -347,9 +357,9 @@ def change_free_verification_evidence_request(
         "verification_observation_request": verification_observation
         if verification_observation is not None
         else after_observation_request(),
-        "verification_result_provenance": provenance
-        if provenance is not None
-        else verification_result_provenance(),
+        "verification_result_provenance": verification_result_provenance()
+        if provenance is _NOT_GIVEN
+        else provenance,
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),

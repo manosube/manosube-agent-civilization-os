@@ -1653,7 +1653,7 @@ def _handoff_verification_result(
 
 def test_handoff_derives_a_genuine_evidence_record_matching_the_verification_result() -> None:
     verification_result = _handoff_verification_result()
-    evidence_request = change_free_verification_evidence_request()
+    evidence_request = change_free_verification_evidence_request(provenance=None)
 
     evidence = route_verification_result_to_evidence(verification_result, evidence_request)
 
@@ -1708,7 +1708,7 @@ def test_handoff_rejects_a_derived_evidence_record_naming_a_different_project() 
 
     with pytest.raises(EvidenceHandoffError, match="different project"):
         route_verification_result_to_evidence(
-            mismatched_result, change_free_verification_evidence_request()
+            mismatched_result, change_free_verification_evidence_request(provenance=None)
         )
 
 
@@ -1719,7 +1719,7 @@ def test_handoff_rejects_a_derived_evidence_record_bound_to_an_unnamed_differenc
 
     with pytest.raises(EvidenceHandoffError, match="never named"):
         route_verification_result_to_evidence(
-            verification_result, change_free_verification_evidence_request()
+            verification_result, change_free_verification_evidence_request(provenance=None)
         )
 
 
@@ -1727,7 +1727,7 @@ def test_existing_evidence_owner_admission_failures_propagate_unchanged() -> Non
     """``EvidenceError`` is the existing Evidence owner's own failure mode -- this handoff
     neither catches nor reclassifies it (Structural Review Round 2, P13-R2-F2)."""
 
-    evidence_request = change_free_verification_evidence_request()
+    evidence_request = change_free_verification_evidence_request(provenance=None)
     evidence_request["artifact_references"] = "not-a-list"
 
     with pytest.raises(EvidenceError):
@@ -1744,9 +1744,15 @@ def test_handoff_produced_request_is_accepted_by_the_existing_sufficiency_owners
     (which would make this package a second sufficiency owner)."""
 
     verification_result = _handoff_verification_result()
-    evidence_request = change_free_verification_evidence_request()
+    evidence_request = change_free_verification_evidence_request(provenance=None)
 
     evidence = route_verification_result_to_evidence(verification_result, evidence_request)
+
+    # The handoff injects the provenance it constructs into its own internal copy of the
+    # request (never mutating the caller's) -- so the request this test hands onward must
+    # carry the identical, already-verified value the returned Evidence record itself holds,
+    # not the None this test's own copy still carries after the call returns.
+    evidence_request["verification_result_provenance"] = evidence["verification_result_provenance"]
 
     result = evaluate_sufficiency(
         sufficiency_request(
@@ -1768,7 +1774,7 @@ def test_handoff_derives_evidence_whose_provenance_matches_the_verification_resu
     constructed by the handoff itself -- never by the caller."""
 
     verification_result = _handoff_verification_result()
-    evidence_request = change_free_verification_evidence_request()
+    evidence_request = change_free_verification_evidence_request(provenance=None)
 
     evidence = route_verification_result_to_evidence(verification_result, evidence_request)
 
@@ -1823,5 +1829,6 @@ def test_handoff_refuses_to_return_evidence_whose_provenance_does_not_round_trip
 
     with pytest.raises(EvidenceHandoffError, match="does not exactly equal"):
         route_verification_result_to_evidence(
-            _handoff_verification_result(), change_free_verification_evidence_request()
+            _handoff_verification_result(),
+            change_free_verification_evidence_request(provenance=None),
         )

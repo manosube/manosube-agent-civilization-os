@@ -413,7 +413,8 @@ def test_a_wrong_typed_provenance_on_change_free_is_refused_by_the_engine_itself
     """P13-R6-R1: a ``verification_result_provenance`` that is not an object at all is
     refused the same as one that is missing entirely."""
 
-    for value in (True, 0, "PROVENANCE", [], "verification_result_provenance"):
+    values: tuple[object, ...] = (True, 0, "PROVENANCE", [], "verification_result_provenance")
+    for value in values:
         wrong_typed = change_free_verification_evidence_request()
         wrong_typed["verification_result_provenance"] = value
         _refuses(wrong_typed, EvidenceError)
