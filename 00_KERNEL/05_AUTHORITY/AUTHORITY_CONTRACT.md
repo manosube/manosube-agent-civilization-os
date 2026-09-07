@@ -457,6 +457,53 @@ VERIFIER_SELECTION_DECISION_IMPLIES_CHANGE_EXECUTION=false
 VERIFIER_SELECTION_DECISION_IMPLIES_CLOSURE=false
 ```
 
+**Structural Review Round 5（Issue #51, P13-R5, Canonical Human Grant Declaration Anchor）:** Round 4は grant を Store 解決参照へ限定したが、それでも証明できるのは「この内容が実際に durably committed された」ことだけである——`granted_by`が実在の`human_authority_ref`を複製し、identityが自己無矛盾で、実際に Store へ commit されている grant であっても、それを commit したのが Store 書き込み能力を持つ任意の caller であり、実在する Human ではない可能性は排除されない。`human_authority_ref`は秘密ではないため、Store への durable commission という事実だけでは、その grant を**Humanが宣言した**ことの証明にならない。
+
+この欠落を閉じるのは、第二のAuthority ownerではなく、既存のBinding owner が公開する新しい第二のroute、`declare_human_grant`（`binding/route.py`）が生成する新しい正準record種別、`human_grant_declaration`（`01_SCHEMA/binding/human_grant_declaration.schema.json`）である。この record は特定の`verifier_selection_grant`を`grant_ref`（content-addressed参照）で一意に束縛し、`declared_by`には呼び出し側が供給する値ではなく、`declare_human_grant`自身が実在のProject Bindingから再解決した`human_authority_ref`だけが入る——grant自身の`granted_by`と同型の、しかし独立した第二の束縛である。
+
+```text
+CANONICAL_AUTHORITY_OWNER_COUNT=1
+NEW_AUTHORITY_OWNER=false
+HUMAN_GRANT_DECLARATION_OWNER=BINDING
+HUMAN_GRANT_DECLARATION_DECLARED_BY_CALLER_SUPPLIED=false
+HUMAN_GRANT_DECLARATION_DECLARED_BY_RESOLVED_FROM_REAL_PROJECT_BINDING=true
+```
+
+`evaluate_verifier_selection`は、この Round で`grant_declarations`という新しい必須request keyを受理する——Round 4の`grants`と対になる、`human_grant_declaration`のadmit済み集合である。SELECTEDへ到達する各grantは、この集合の中に、次のすべてを満たすdeclarationを少なくとも一つ持たなければならない。
+
+```text
+DECLARATION ANCHORS THIS EXACT GRANT（project_id + grant_ref が一致） → 一致しなければ DECLARATION_MISSING
+DECLARATION.declared_by == 実在の human_authority_ref → 不一致なら DECLARATION_AUTHORITY_MISMATCH
+DECLARATION.status == ACTIVE → 不一致（REVOKEDなど）なら DECLARATION_NOT_ACTIVE
+```
+
+`declaration_ref`（束縛に使われたdeclaration自身への content-addressed参照）は、Round 3が`grant_ref`について確立したのと同じ理由で、決定自身のsemantic identityへ参加する——どのdeclarationが束縛したかも、決定が何であるかの一部である。
+
+```text
+VERIFIER SELECTION DECISION IDENTITY INPUT（Round 5で更新）
+= project_id + requirement_id + selection_id
++ verifier_identity + permitted_boundary + selection_status
++ selection_authority_ref
++ grant_ref + sorted excluding_grant_refs
++ declaration_ref
++ decision + decision_reason_codes
+```
+
+Independent Verificationのroute（`route.py`）は、`human_grant_declaration_refs`という新しい引数を受理し、`verifier_selection_grant_refs`と同一のStore call site（`resolve_record`）を通じて解決する——grant contentがRound 4で直接引数として受理されなくなったのと同じ理由で、declaration contentもこのroute自身の直接引数として受理されない。
+
+```text
+HUMAN_GRANT_DECLARATION_CONTENT_ACCEPTED_AS_CALLER_ARGUMENT=false
+HUMAN_GRANT_DECLARATION_REF_RESOLVED_FROM_STORE=true
+STORE_COMMISSION_ALONE_AS_HUMAN_PROVENANCE=false
+```
+
+TRUST_MODEL.mdが既に確立している非暗号学的信頼哲学（`HUMAN_AUTHORITY_STORE_RECORD_REQUIRED=false`、Human Authorityはこのシステムの外部constitutional identityであり、Store recordそのものではない）は、この Round で変更しない。`declare_human_grant`は署名・秘密トークン・隠しregistryのいずれも導入しない——信頼の根拠は、closed admission gate同士の独立したcross-reference一致という、既存の構造的規律のままである。
+
+```text
+PHASE_13_ACCEPTANCE=false
+PHASE_14_ALLOWED=false
+```
+
 # 8. What Authority Never Does
 
 ```text

@@ -70,3 +70,49 @@ def verify_project_binding_identity(record: dict[str, Any]) -> None:
             f"project_binding_id does not reproduce from its own declared fields: "
             f"claimed {claimed!r}, recomputed {recomputed!r}"
         )
+
+
+#: The closed payload fields ``human_grant_declaration_id`` is computed over, in this exact
+#: order (Structural Review Round 5, P13-R5). ``human_grant_declaration_id`` itself and
+#: ``declared_at`` are excluded -- the identical convention :data:`_IDENTITY_PAYLOAD_FIELDS`
+#: already applies to ``bound_at`` above: the instant a declaration was made is not part of
+#: what was declared. Deliberately does *not* restate the grant's own project_id/
+#: requirement_id/selection_id/verifier_identity/permitted_boundary/status: those are already
+#: bound, completely, by ``grant_ref`` -- a content-addressed reference to
+#: ``verifier_selection_grant_id``, itself computed over exactly those fields (P13-R3-F1's own
+#: identity function). Restating them here would only ever restate a value ``grant_ref``
+#: already pins; a second, redundant copy is not a second binding.
+_HUMAN_GRANT_DECLARATION_IDENTITY_PAYLOAD_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_id",
+    "grant_ref",
+    "declared_by",
+    "status",
+)
+
+
+def human_grant_declaration_id(record: dict[str, Any]) -> str:
+    """Return the ``HGD-`` content address of *record*'s own adopted semantic fields
+    (Structural Review Round 5, P13-R5) -- the identical content-addressing convention
+    :func:`project_binding_id` already uses, over :data:`_HUMAN_GRANT_DECLARATION_IDENTITY_
+    PAYLOAD_FIELDS`."""
+
+    payload = {key: record[key] for key in _HUMAN_GRANT_DECLARATION_IDENTITY_PAYLOAD_FIELDS}
+    digest = hashlib.sha256(canonical_bytes(payload)).hexdigest()
+    return "HGD-" + digest.upper()
+
+
+def verify_human_grant_declaration_identity(record: dict[str, Any]) -> None:
+    """Recompute ``human_grant_declaration_id`` from *record*'s own semantic fields and
+    require it to equal the id the record itself claims -- the identical self-consistency
+    check :func:`verify_project_binding_identity` already applies, over
+    :func:`human_grant_declaration_id`."""
+
+    claimed = record.get("human_grant_declaration_id")
+    recomputed = human_grant_declaration_id(record)
+    if claimed != recomputed:
+        raise BindingIdentityError(
+            f"human_grant_declaration_id does not reproduce from its own declared fields: "
+            f"claimed {claimed!r}, recomputed {recomputed!r}"
+        )

@@ -130,6 +130,9 @@ def approval_id(approval: dict[str, Any]) -> str:
 #: decisions and not one. ``grant_ref``/``excluding_grant_refs`` participate for the identical
 #: reason ``approval_ref``/``excluding_approval_refs`` do above -- which grant was used, and
 #: which grant *withheld* the selection, are both part of what the decision means.
+#: ``declaration_ref`` (Structural Review Round 5, P13-R5) participates for the same reason:
+#: which Human Grant Declaration anchored the used grant is itself part of what the decision
+#: means, not merely a detail of how it was reached.
 VERIFIER_SELECTION_DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "project_id",
     "requirement_id",
@@ -140,6 +143,7 @@ VERIFIER_SELECTION_DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "selection_authority_ref",
     "grant_ref",
     "excluding_grant_refs",
+    "declaration_ref",
     "decision",
     "decision_reason_codes",
 )

@@ -9,7 +9,7 @@ STATUS=CANONICAL_DESIGN
 KERNEL_ELEMENT=NONE_PRODUCT_BINDING_LAYER
 CANONICAL_KERNEL_COUNT=1
 PRODUCT_BINDING_OWNER_COUNT=1
-PUBLIC_PRODUCT_BINDING_ENTRY_POINT_COUNT=1
+PUBLIC_PRODUCT_BINDING_ENTRY_POINT_COUNT=2
 ```
 
 ---
@@ -80,7 +80,9 @@ PHASE_9_BINDING=true`). Neither fixture world imports the other.
 src/manosube_agent_civilization/binding/
 ├── __init__.py                    public exports
 ├── errors.py                      BindingError / BindingValidationError / BindingIdentityError
-├── identity.py                    project_binding_id, verify_project_binding_identity
+├── identity.py                    project_binding_id, verify_project_binding_identity,
+│                                   human_grant_declaration_id,
+│                                   verify_human_grant_declaration_identity (P13-R5)
 ├── validation.py                  schema-registry validation (the same registry every
                                     domain reads)
 ├── reference_classification.py    typed reference-edge classification over every accepted
@@ -91,9 +93,12 @@ src/manosube_agent_civilization/binding/
                                     duplicate detection, whole-graph secret scan, reference
                                     closure scoped to the candidate manifest only; Round 2
                                     P9-R2-F1/F2/F3/F5, extended Round 3 P9-R3-F1/F3/F5)
-├── engine.py                      assemble_project_binding -- the one validation+identity
-                                    engine
-└── route.py                       bind_project -- the one public entry point
+├── engine.py                      assemble_project_binding, assemble_human_grant_declaration
+│                                   (Phase 13, Issue #51, P13-R5) -- the validation+identity
+│                                   engines
+└── route.py                       bind_project -- the one public genesis entry point;
+                                    declare_human_grant (P13-R5) -- a second, post-genesis
+                                    public entry point, never a second genesis route
 ```
 
 No second State, Store, Lineage, Recovery, Objective, Boundary, or Authority owner is

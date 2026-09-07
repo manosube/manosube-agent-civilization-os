@@ -123,6 +123,13 @@ _STORE_RESOLVABLE_TARGET_KIND = "observation_evidence"
 #: this route itself resolves through the Store.
 _VERIFIER_SELECTION_GRANT_REF_KIND = "verifier_selection_grant"
 
+#: The one reference kind ``human_grant_declaration_refs`` may ever name (Structural Review
+#: Round 5, P13-R5). A Human Grant Declaration -- the Binding owner's own canonical, read-
+#: only-reverifiable anchor proving a Human, not merely a caller, declared a specific grant --
+#: is never accepted as caller-supplied content either, for the identical reason grant content
+#: itself no longer is (P13-R4).
+_HUMAN_GRANT_DECLARATION_REF_KIND = "human_grant_declaration"
+
 
 def _require_canonical_identity(name: str, value: Any) -> str:
     """Fail closed unless *value* is a plain, non-empty canonical identity string -- never a
@@ -209,6 +216,7 @@ def run_independent_verification(
     verification_requirement: VerificationRequirement,
     verifier_selection: VerifierSelection,
     verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
+    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
     verifier: IndependentVerifier,
 ) -> VerificationResult:
     """Run one explicit Independent Verification and return its one immutable result.
@@ -220,15 +228,21 @@ def run_independent_verification(
     *verifier_selection_grant_refs* (Structural Review Round 3, P13-R3-F1; resolved from the
     Store since Structural Review Round 4, P13-R4) is the caller's own explicit collection of
     ``{"kind": "verifier_selection_grant", "id": ...}`` references -- never grant *content*.
-    Each is resolved through the existing Store's own read-only ``resolve_record`` (the same
-    single call site ``observation_evidence`` targets already resolve through); an
-    unresolvable ref refuses before the verifier is ever called. Only the resulting,
+    *human_grant_declaration_refs* (Structural Review Round 5, P13-R5) is the identical shape
+    of collection over ``{"kind": "human_grant_declaration", "id": ...}`` references -- the
+    Binding owner's own canonical, read-only-reverifiable Human declaration anchors, never
+    accepted as content either, for the identical reason. Each ref in both collections is
+    resolved through the existing Store's own read-only ``resolve_record`` (the same single
+    call site ``observation_evidence`` targets already resolve through); an unresolvable ref
+    in either collection refuses before the verifier is ever called. Only the resulting,
     genuinely Store-committed bodies are passed to the existing Authority owner's own
     :func:`~manosube_agent_civilization.authority.evaluate_verifier_selection`, called exactly
     once: the real, Boot-verified Human Authority reference alone is a necessary precondition
     for that decision, never itself the decision that SHUKOU selected *this*
-    ``VerifierSelection`` for *this* ``VerificationRequirement``, and neither is a grant whose
-    only provenance is that a caller supplied it in-process.
+    ``VerifierSelection`` for *this* ``VerificationRequirement``; neither is a grant whose only
+    provenance is that a caller supplied it in-process (P13-R4); and neither is a grant whose
+    only provenance is that it was, by itself, durably Store-committed, absent a real, matching
+    Human Grant Declaration anchoring it (P13-R5).
 
     See ``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 for the full canonical route this
     function implements, step by step.
@@ -329,6 +343,28 @@ def run_independent_verification(
             )
         )
 
+    # P13-R5 (Structural Review Round 5, canonical Human declaration anchor): a Human Grant
+    # Declaration is never accepted as caller-supplied content either -- only a {"kind":
+    # "human_grant_declaration", "id": ...} reference this route resolves through the
+    # identical Store call site above. An unresolvable ref refuses here, before the Authority
+    # owner or the verifier is ever reached, exactly as an unresolvable grant ref already does.
+    resolved_declarations: list[dict[str, Any]] = []
+    for index, declaration_ref in enumerate(human_grant_declaration_refs):
+        checked_declaration_ref = _require_reference(
+            declaration_ref,
+            context=f"human_grant_declaration_refs[{index}]",
+            allowed_kinds=frozenset({_HUMAN_GRANT_DECLARATION_REF_KIND}),
+        )
+        resolved_declarations.append(
+            _resolve_or_refuse(
+                store,
+                project_id,
+                kind=checked_declaration_ref["kind"],
+                record_id=checked_declaration_ref["id"],
+                context=f"human_grant_declaration_refs[{index}]",
+            )
+        )
+
     # P13-R3-F1: the real, Boot-verified Human Authority reference above is a necessary
     # precondition, not itself the decision that SHUKOU selected *this* VerifierSelection for
     # *this* VerificationRequirement -- that decision belongs to the existing Authority
@@ -350,6 +386,7 @@ def run_independent_verification(
             "selection_status": verifier_selection.status,
             "human_authority_ref": dict(real_human_authority_ref),
             "grants": [dict(grant) for grant in resolved_grants],
+            "grant_declarations": [dict(declaration) for declaration in resolved_declarations],
         }
     )
     if selection_decision["decision"] != SELECTED:

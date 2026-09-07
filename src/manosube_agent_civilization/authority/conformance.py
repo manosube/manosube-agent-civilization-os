@@ -46,6 +46,33 @@ from .identity import approval_id, prohibition_id, rule_id, verifier_selection_g
 AUTHORITY_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "authority/"
 SUPPORTED_SCHEMA_VERSION = "0.1"
 
+#: Product Binding's own schema base (Structural Review Round 5, P13-R5) -- computed from the
+#: identical shared root ``AUTHORITY_SCHEMA_BASE`` above already uses, never a second literal.
+#: Deliberately not imported from ``manosube_agent_civilization.binding.validation``: Binding
+#: imports from Authority already (``binding/route.py`` reuses ``authority.identity.rule_id``),
+#: and importing the ``binding`` *package* here (even for one leaf submodule) would execute
+#: ``binding/__init__.py``, which reaches ``binding.admission`` -> ``reflow`` -> ``evidence`` ->
+#: ``change`` -> back to this very package -- a real circular import, not merely a theoretical
+#: one (confirmed by attempting it). Computing the same URL string independently, from the one
+#: shared root both modules already derive their own base from, avoids the cycle without
+#: restating a value neither module actually owns.
+_BINDING_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "binding/"
+
+
+def _human_grant_declaration_id(record: dict[str, Any]) -> str:
+    """Lazily import and delegate to Binding's own
+    :func:`~manosube_agent_civilization.binding.identity.human_grant_declaration_id`
+    (Structural Review Round 5, P13-R5) -- deferred to call time, never module import time,
+    for the identical circular-import reason :data:`_BINDING_SCHEMA_BASE` above documents.
+    By the time any record is actually admitted, every module in the repository has already
+    finished importing; only import-time module construction can observe the cycle."""
+
+    from manosube_agent_civilization.binding.identity import (
+        human_grant_declaration_id as _real_human_grant_declaration_id,
+    )
+
+    return _real_human_grant_declaration_id(record)
+
 
 @dataclass(frozen=True)
 class RecordType:
@@ -58,6 +85,14 @@ class RecordType:
     #: supplied record is declared by a Human Authority: none of these three may be authored
     #: by an Agent, an Adapter or the Kernel (``CAPABILITY_AUTHORITY_SEPARATION.md`` §2).
     provenance_field: str
+    #: The schema base this record kind's own schema lives under -- ``AUTHORITY_SCHEMA_BASE``
+    #: for every Authority-owned schema; a different owner's base (``BINDING_SCHEMA_BASE`` for
+    #: ``human_grant_declaration``, Structural Review Round 5, P13-R5) for a record kind
+    #: Authority admits into a decision but does not itself define. Reusing this one shared
+    #: admission gate across owners is deliberate: the gate's four questions (readable,
+    #: schema-valid, identity-self-consistent, Human-Authority-shaped provenance) are the same
+    #: regardless of which owner's schema a record kind belongs to.
+    schema_base: str = AUTHORITY_SCHEMA_BASE
 
 
 #: Every record kind a caller may supply. Adding one without adding it here means it has no
@@ -75,6 +110,13 @@ RECORD_TYPES: dict[str, RecordType] = {
         "verifier_selection_grant_id",
         verifier_selection_grant_id,
         "granted_by",
+    ),
+    "human_grant_declaration": RecordType(
+        "human_grant_declaration.schema.json",
+        "human_grant_declaration_id",
+        _human_grant_declaration_id,
+        "declared_by",
+        schema_base=_BINDING_SCHEMA_BASE,
     ),
 }
 
@@ -456,7 +498,7 @@ def admit(value: Any, type_name: str, context: str) -> dict[str, Any]:
     # The schema closes the key set, the enums and the reference shapes, so unknown
     # properties and malformed provenance references are refused here rather than by a
     # second hand-written copy of the same rules.
-    validate(record, canonical.schema_name, context)
+    validate(record, canonical.schema_name, context, base=canonical.schema_base)
 
     # The identity is a claim about content. Recompute it: every check above passes on a
     # record whose fields were edited after it was addressed, and this one does not.

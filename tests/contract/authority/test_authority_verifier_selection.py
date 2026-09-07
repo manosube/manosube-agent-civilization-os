@@ -25,6 +25,7 @@ from manosube_agent_civilization.authority import (
     evaluate_verifier_selection,
 )
 from manosube_agent_civilization.authority.identity import verifier_selection_grant_id
+from manosube_agent_civilization.binding.identity import human_grant_declaration_id
 
 pytestmark = pytest.mark.contract
 
@@ -32,6 +33,8 @@ _HUMAN = {"kind": "human_authority", "id": "AUTH-0001"}
 _OTHER_HUMAN = {"kind": "human_authority", "id": "AUTH-OTHER"}
 _VERIFIER_IDENTITY = {"kind": "deterministic_test_runner", "id": "VERIFIER-0001"}
 _BOUNDARY = {"scope": "repository", "boundary_id": "VB-0001"}
+_PROJECT_BINDING_ID = "PROJBIND-" + "0" * 64
+_DECLARED_AT = "2026-09-07T13:00:00Z"
 
 
 def _grant(**overrides: Any) -> dict[str, Any]:
@@ -51,6 +54,29 @@ def _grant(**overrides: Any) -> dict[str, Any]:
     return record
 
 
+def _declaration(grant: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
+    """One Human Grant Declaration anchoring *grant* (default: the default :func:`_grant`)
+    -- Structural Review Round 5, P13-R5's own required companion to a grant."""
+
+    bound_grant = grant if grant is not None else _grant()
+    record: dict[str, Any] = {
+        "schema_version": "0.1",
+        "human_grant_declaration_id": "",
+        "project_id": "PRJ-0001",
+        "project_binding_id": _PROJECT_BINDING_ID,
+        "grant_ref": {
+            "kind": "verifier_selection_grant",
+            "id": bound_grant["verifier_selection_grant_id"],
+        },
+        "declared_by": dict(_HUMAN),
+        "status": "ACTIVE",
+        "declared_at": _DECLARED_AT,
+    }
+    record.update(overrides)
+    record["human_grant_declaration_id"] = human_grant_declaration_id(record)
+    return record
+
+
 def _request(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "schema_version": "0.1",
@@ -62,6 +88,7 @@ def _request(**overrides: Any) -> dict[str, Any]:
         "selection_status": "ACTIVE",
         "human_authority_ref": dict(_HUMAN),
         "grants": [_grant()],
+        "grant_declarations": [_declaration()],
     }
     base.update(overrides)
     return base
@@ -227,6 +254,124 @@ def test_two_distinct_binding_grants_select_canonically_and_order_does_not_matte
 
 
 # --------------------------------------------------------------------------- #
+# required proof: a core-clean, ACTIVE grant still withholds the selection without a
+# genuine, matching, ACTIVE Human Grant Declaration (Structural Review Round 5, P13-R5)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_grant_with_no_matching_declaration_does_not_bind() -> None:
+    """The finding's own central case: a grant's own content or its mere Store persistence
+    (both already required by Rounds 3/4) is never itself proof a Human declared it."""
+
+    decision = evaluate_verifier_selection(_request(grant_declarations=[]))
+    assert decision["decision"] == REFUSED
+    assert decision["declaration_ref"] is None
+    assert "DECLARATION_MISSING" in decision["decision_reason_codes"]
+
+
+def test_a_declaration_naming_a_different_grant_does_not_bind() -> None:
+    """A declaration that exists, and is otherwise genuine, but anchors some other grant
+    entirely is not a weaker anchor for this one -- it is not a candidate for it at all, and
+    this grant is refused exactly as if no declaration had been supplied."""
+
+    grant = _grant()
+    other_grant = _grant(selection_id="VSEL-OTHER")
+    decision = evaluate_verifier_selection(
+        _request(grants=[grant], grant_declarations=[_declaration(other_grant)])
+    )
+    assert decision["decision"] == REFUSED
+    assert "DECLARATION_MISSING" in decision["decision_reason_codes"]
+
+
+def test_a_declaration_declared_by_a_different_human_authority_does_not_bind() -> None:
+    """A declaration that genuinely anchors this exact grant, but whose own ``declared_by``
+    does not canonical-reference-equal the real Human Authority, does not substitute for a
+    genuine one -- the identical class of check already applied to a grant's own
+    ``granted_by``, now applied one layer deeper."""
+
+    grant = _grant()
+    decision = evaluate_verifier_selection(
+        _request(
+            grants=[grant],
+            grant_declarations=[_declaration(grant, declared_by=dict(_OTHER_HUMAN))],
+        )
+    )
+    assert decision["decision"] == REFUSED
+    assert "DECLARATION_AUTHORITY_MISMATCH" in decision["decision_reason_codes"]
+
+
+def test_a_declaration_naming_a_different_project_does_not_bind() -> None:
+    grant = _grant()
+    decision = evaluate_verifier_selection(
+        _request(
+            grants=[grant],
+            grant_declarations=[_declaration(grant, project_id="OTHER-PROJECT")],
+        )
+    )
+    assert decision["decision"] == REFUSED
+    assert "DECLARATION_MISSING" in decision["decision_reason_codes"]
+
+
+def test_a_revoked_declaration_does_not_bind() -> None:
+    """Explicit revocation handling: a declaration that genuinely anchors this exact grant,
+    by the real Human Authority, but is itself no longer ``ACTIVE``, withholds the selection
+    exactly as a non-``ACTIVE`` grant already does -- never an exception."""
+
+    grant = _grant()
+    decision = evaluate_verifier_selection(
+        _request(grants=[grant], grant_declarations=[_declaration(grant, status="REVOKED")])
+    )
+    assert decision["decision"] == REFUSED
+    assert "DECLARATION_NOT_ACTIVE" in decision["decision_reason_codes"]
+
+
+def test_only_a_genuine_matching_active_declaration_permits_selection() -> None:
+    """The control: a real, canonical Human Grant Declaration that genuinely anchors the
+    winning grant is required and sufficient, and is carried into the decision's own
+    ``declaration_ref``."""
+
+    grant = _grant()
+    declaration = _declaration(grant)
+    decision = evaluate_verifier_selection(
+        _request(grants=[grant], grant_declarations=[declaration])
+    )
+    assert decision["decision"] == SELECTED
+    assert decision["declaration_ref"] == {
+        "kind": "human_grant_declaration",
+        "id": declaration["human_grant_declaration_id"],
+    }
+
+
+def test_a_declaration_edited_after_its_identity_was_computed_is_refused() -> None:
+    """The forgery case, applied to a declaration exactly as it already applies to a grant."""
+
+    grant = _grant()
+    forged = _declaration(grant)
+    forged["status"] = "REVOKED"  # payload changed, identity left behind
+    with pytest.raises(AuthorityError, match="identity does not match its content"):
+        evaluate_verifier_selection(_request(grants=[grant], grant_declarations=[forged]))
+
+
+def test_a_declaration_not_declared_by_a_human_authority_is_refused() -> None:
+    grant = _grant()
+    forged = _declaration(grant)
+    forged["declared_by"] = {"kind": "agent", "id": "AGENT-0001"}
+    with pytest.raises(AuthorityError):
+        evaluate_verifier_selection(_request(grants=[grant], grant_declarations=[forged]))
+
+
+def test_a_repeated_declaration_is_refused_as_an_input() -> None:
+    grant = _grant()
+    declaration = _declaration(grant)
+    with pytest.raises(
+        AuthorityError, match=r"grant_declarations\[1\] repeats grant_declarations\[0\]"
+    ):
+        evaluate_verifier_selection(
+            _request(grants=[grant], grant_declarations=[declaration, deepcopy(declaration)])
+        )
+
+
+# --------------------------------------------------------------------------- #
 # request-shape admission
 # --------------------------------------------------------------------------- #
 
@@ -249,6 +394,7 @@ def test_unknown_request_keys_are_refused() -> None:
         "selection_status",
         "human_authority_ref",
         "grants",
+        "grant_declarations",
     ],
 )
 def test_a_missing_required_request_key_is_refused(missing: str) -> None:
@@ -276,10 +422,12 @@ def test_verifier_identity_is_carried_opaque_for_every_object_shape(
     :func:`~manosube_agent_civilization.independent_verification.types.VerifierSelection`
     itself never constrains it beyond being a mapping."""
 
+    grant = _grant(verifier_identity=payload)
     decision = evaluate_verifier_selection(
         _request(
             verifier_identity=payload,
-            grants=[_grant(verifier_identity=payload)],
+            grants=[grant],
+            grant_declarations=[_declaration(grant)],
         )
     )
     assert decision["decision"] == SELECTED

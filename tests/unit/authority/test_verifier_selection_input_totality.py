@@ -31,12 +31,15 @@ from manosube_agent_civilization.authority.verifier_selection import (
     DECISIONS,
     REQUIRED_REQUEST_KEYS,
 )
+from manosube_agent_civilization.binding.identity import human_grant_declaration_id
 
 pytestmark = pytest.mark.contract
 
 _HUMAN = {"kind": "human_authority", "id": "AUTH-0001"}
 _VERIFIER_IDENTITY = {"kind": "deterministic_test_runner", "id": "VERIFIER-0001"}
 _BOUNDARY = {"scope": "repository", "boundary_id": "VB-0001"}
+_PROJECT_BINDING_ID = "PROJBIND-" + "0" * 64
+_DECLARED_AT = "2026-09-07T13:00:00Z"
 
 #: Ill-typed values, one per JSON type -- the same substitution set
 #: ``test_authority_input_totality.py`` uses for the same reason: every case they generate is
@@ -68,6 +71,26 @@ def _grant(**overrides: Any) -> dict[str, Any]:
     return record
 
 
+def _declaration(grant: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
+    bound_grant = grant if grant is not None else _grant()
+    record: dict[str, Any] = {
+        "schema_version": "0.1",
+        "human_grant_declaration_id": "",
+        "project_id": "PRJ-0001",
+        "project_binding_id": _PROJECT_BINDING_ID,
+        "grant_ref": {
+            "kind": "verifier_selection_grant",
+            "id": bound_grant["verifier_selection_grant_id"],
+        },
+        "declared_by": dict(_HUMAN),
+        "status": "ACTIVE",
+        "declared_at": _DECLARED_AT,
+    }
+    record.update(overrides)
+    record["human_grant_declaration_id"] = human_grant_declaration_id(record)
+    return record
+
+
 def _request() -> dict[str, Any]:
     return {
         "schema_version": "0.1",
@@ -79,6 +102,7 @@ def _request() -> dict[str, Any]:
         "selection_status": "ACTIVE",
         "human_authority_ref": dict(_HUMAN),
         "grants": [_grant()],
+        "grant_declarations": [_declaration()],
     }
 
 

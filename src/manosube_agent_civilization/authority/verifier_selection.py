@@ -22,6 +22,22 @@ withholds the selection exactly as an excluding Approval withholds a Change (fro
 decision analogous to ``AUTHORITY_CONTRACT.md`` §4's approval-exclusion stage); a request
 naming no grant at all, or naming only grants that do not bind, is refused.
 
+Structural Review Round 5 (P13-R5, Authority Provenance Bypass follow-on, P13-R3-F2's own
+remaining gap): a grant's own shape/binding/provenance being self-consistent -- even once
+Structural Review Round 4 (P13-R4) required it to be a genuinely Store-resolved record rather
+than caller-supplied content -- still never proved a Human, rather than any caller who could
+commit a Store record, actually *declared* that grant. A binding grant now additionally
+requires at least one matching, real, canonical
+:data:`~.conformance.RECORD_TYPES` ``"human_grant_declaration"`` record -- the Binding
+owner's own canonical, read-only-reverifiable Human declaration anchor
+(:func:`~manosube_agent_civilization.binding.route.declare_human_grant`) -- whose
+``grant_ref`` names exactly this grant, whose ``project_id`` matches, whose ``declared_by``
+canonical-reference-equals the real, Boot-verified ``human_authority_ref``, and whose own
+``status`` is ``ACTIVE``. A grant with no matching declaration, a declaration naming a
+different (or self-fabricated) Human Authority, or a declaration that is not itself
+``ACTIVE``, withholds the selection exactly as a non-``ACTIVE`` grant already does -- never an
+exception, always a total convergence to ``VERIFIER_SELECTION_REFUSED``.
+
 Following :mod:`.errors`' own distinction: an unreadable request raises
 :class:`~.errors.AuthorityError` (there is no permission question to answer). A readable
 request that does not bind is not an exception -- it is the decision ``REFUSED``, exactly as
@@ -71,6 +87,7 @@ REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
     "selection_status",
     "human_authority_ref",
     "grants",
+    "grant_declarations",
 )
 
 
@@ -138,6 +155,19 @@ def _core_mismatches(
     return sorted(reasons)
 
 
+def _anchors_grant(declaration: dict[str, Any], *, project_id: str, grant_id: str) -> bool:
+    """Whether *declaration* names exactly this project and this grant -- distinctness
+    before activeness, the identical convention :func:`_core_mismatches` already uses.
+    A declaration that does not even anchor this grant is not a weaker version of one that
+    does; it is simply not a candidate for it at all, exactly as a grant naming a different
+    selection is not a weaker grant for this one (Structural Review Round 5, P13-R5)."""
+
+    return bool(
+        declaration["project_id"] == project_id
+        and declaration["grant_ref"] == {"kind": "verifier_selection_grant", "id": grant_id}
+    )
+
+
 def evaluate_verifier_selection(request: dict[str, Any]) -> dict[str, Any]:
     """Return one canonical Verifier Selection Decision for one exact request.
 
@@ -191,11 +221,16 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
     # Every supplied grant crosses the identical admission gate every other Authority-owned
     # record does: schema, supported version, no unknown property, recomputed content
     # address, and Human Authority provenance (`.conformance.admit`). A grant failing any of
-    # those does not bind, is not consulted, and does not quietly become an absence.
+    # those does not bind, is not consulted, and does not quietly become an absence. Every
+    # supplied declaration (Structural Review Round 5, P13-R5) crosses the identical gate too,
+    # over Binding's own `human_grant_declaration.schema.json` and identity function.
     grants = admit_all(shaped["grants"], "verifier_selection_grant", "grants")
+    declarations = admit_all(
+        shaped["grant_declarations"], "human_grant_declaration", "grant_declarations"
+    )
 
-    binding: list[dict[str, Any]] = []
-    excluding: list[dict[str, Any]] = []
+    binding: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    excluding: list[tuple[dict[str, Any], str]] = []
     failures: list[str] = []
     for candidate in grants:
         mismatches = _core_mismatches(
@@ -210,25 +245,69 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         )
         if mismatches:
             failures.extend(mismatches)
-        elif candidate["status"] == "ACTIVE":
-            binding.append(candidate)
+            continue
+        if candidate["status"] != "ACTIVE":
+            excluding.append((candidate, f"GRANT_{candidate['status']}"))
+            continue
+
+        # P13-R5: a core-clean, ACTIVE grant still withholds the selection unless a real,
+        # matching, ACTIVE Human Grant Declaration anchors it -- the grant's own content or
+        # its mere Store persistence (both already required by P13-R3/P13-R4) is never
+        # itself proof a Human declared it. Staged, not a flat mismatch list, because each
+        # stage answers a different question: does any declaration even name this grant at
+        # all; among those, does one agree with the real Human Authority; among those, is one
+        # still ACTIVE.
+        grant_id = candidate["verifier_selection_grant_id"]
+        anchored = [
+            declaration
+            for declaration in declarations
+            if _anchors_grant(declaration, project_id=project_id, grant_id=grant_id)
+        ]
+        if not anchored:
+            excluding.append((candidate, "DECLARATION_MISSING"))
+            continue
+        authority_matching = [
+            declaration
+            for declaration in anchored
+            if declaration["declared_by"] == human_authority_ref
+        ]
+        if not authority_matching:
+            excluding.append((candidate, "DECLARATION_AUTHORITY_MISMATCH"))
+            continue
+        active_declarations = [
+            declaration for declaration in authority_matching if declaration["status"] == "ACTIVE"
+        ]
+        if active_declarations:
+            # Chosen by identity, not by input position -- the same determinism already
+            # guaranteed for grant selection below.
+            chosen_declaration = sorted(
+                active_declarations,
+                key=lambda declaration: str(declaration["human_grant_declaration_id"]),
+            )[0]
+            binding.append((candidate, chosen_declaration))
         else:
-            excluding.append(candidate)
+            excluding.append((candidate, "DECLARATION_NOT_ACTIVE"))
 
     reason_codes: list[str] = []
     used_grant: dict[str, Any] | None = None
+    used_declaration: dict[str, Any] | None = None
     if not grants:
         reason_codes.append("GRANT_MISSING")
     elif binding:
         # Chosen by identity, not by input position -- the same determinism
         # `evaluate_authority` already guarantees for its own approval selection.
-        used_grant = sorted(binding, key=lambda grant: str(grant["verifier_selection_grant_id"]))[0]
+        used_grant, used_declaration = sorted(
+            binding, key=lambda pair: str(pair[0]["verifier_selection_grant_id"])
+        )[0]
         reason_codes.append("GRANT_EXACT")
     elif excluding:
-        # A grant that binds every other field but is not ACTIVE withholds the selection --
-        # it does not fall through to "no grant named this selection at all".
-        first = sorted(excluding, key=lambda grant: str(grant["verifier_selection_grant_id"]))[0]
-        reason_codes.append(f"GRANT_{first['status']}")
+        # A grant that binds every other field but is not ACTIVE, or that lacks a genuine,
+        # matching, ACTIVE Human Grant Declaration, withholds the selection -- it does not
+        # fall through to "no grant named this selection at all".
+        _first_grant, first_reason = sorted(
+            excluding, key=lambda pair: str(pair[0]["verifier_selection_grant_id"])
+        )[0]
+        reason_codes.append(first_reason)
     else:
         reason_codes.extend(sorted(set(failures)))
 
@@ -242,7 +321,8 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         selection_status=selection_status,
         human_authority_ref=human_authority_ref,
         used_grant=used_grant,
-        excluding_grants=excluding,
+        used_declaration=used_declaration,
+        excluding_grants=[grant for grant, _reason in excluding],
         decision=decision,
         reason_codes=reason_codes,
     )
@@ -258,6 +338,7 @@ def _decision(
     selection_status: str,
     human_authority_ref: dict[str, Any],
     used_grant: dict[str, Any] | None,
+    used_declaration: dict[str, Any] | None,
     excluding_grants: list[dict[str, Any]],
     decision: str,
     reason_codes: list[str],
@@ -286,6 +367,14 @@ def _decision(
             {"kind": "verifier_selection_grant", "id": grant["verifier_selection_grant_id"]}
             for grant in excluding_grants
         ],
+        "declaration_ref": (
+            None
+            if used_declaration is None
+            else {
+                "kind": "human_grant_declaration",
+                "id": used_declaration["human_grant_declaration_id"],
+            }
+        ),
         "decision": decision,
         "decision_reason_codes": sorted(set(reason_codes)),
         "decision_semantic_fingerprint": "",

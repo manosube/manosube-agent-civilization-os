@@ -30,6 +30,17 @@ need directly into the Store (alongside the one ``observation_evidence`` record 
 already committed), and ``_grant_ref`` recomputes the matching ``{"kind": ..., "id": ...}``
 reference for a test body to pass -- content-addressing is deterministic, so the same
 override arguments always name the same committed record.
+
+Structural Review Round 5 (P13-R5, canonical Human declaration anchor): a genuinely
+Store-resolved grant is still not, by itself, proof that a Human declared it -- any
+Store-write-capable caller could commit a self-hashed grant. ``run_independent_verification``
+now also takes ``human_grant_declaration_refs``, resolved through the identical Store call
+site. The fixture below commits a real, genuine default declaration through the existing
+Binding owner's own ``declare_human_grant`` (proving that route end-to-end), plus the
+fabricated/mismatched/revoked/tampered variants this module's negative tests need -- built
+and committed directly, the same way the Round 4 grant variants above already are, since
+``declare_human_grant`` itself always resolves the real Human Authority reference and cannot
+be made to produce a fabricated one.
 """
 
 from __future__ import annotations
@@ -53,7 +64,8 @@ from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.authority import AuthorityError
 from manosube_agent_civilization.authority.identity import verifier_selection_grant_id
-from manosube_agent_civilization.binding import bind_project
+from manosube_agent_civilization.binding import bind_project, declare_human_grant
+from manosube_agent_civilization.binding.identity import human_grant_declaration_id
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.boot.errors import BootNotFoundError
 from manosube_agent_civilization.evidence import (
@@ -150,6 +162,8 @@ _GRANT_OVERRIDE_VARIANTS: tuple[dict[str, Any], ...] = (
     {"status": "REVOKED"},
 )
 
+_DECLARED_AT = "2026-09-07T13:00:00Z"
+
 
 @pytest.fixture(scope="module")
 def _real_route(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
@@ -190,6 +204,44 @@ def _real_route(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         )
     ]
 
+    declaration_ctx = {
+        "project_id": project_id,
+        "project_binding_id": project_binding_id,
+        "human_authority_ref": grant_fixture_ctx["human_authority_ref"],
+    }
+    # P13-R5: the one fabricated-authority and one forged declaration variant this module's
+    # tests need cannot be produced by `declare_human_grant` at all -- it always resolves the
+    # real Human Authority reference from the real committed Project Binding, exactly as it
+    # must -- so they are built and committed directly here, the identical shape
+    # `declare_human_grant` itself produces, the same way the Round 4 `tampered_grant` above
+    # already is.
+    fabricated_authority_declaration = _declaration(
+        declaration_ctx,
+        default_grant,
+        declared_by={"kind": "human_authority", "id": "AUTH-FABRICATED-BY-CALLER"},
+    )
+    # Anchored to a distinct already-committed grant (not `default_grant`) so this record's
+    # own pre-tamper content -- and therefore its own computed id -- never collides with the
+    # genuine `default_declaration` the real `declare_human_grant` route commits below.
+    tampered_declaration_source = _declaration(declaration_ctx, variant_grants[1])
+    tampered_declaration = dict(tampered_declaration_source)
+    tampered_declaration["status"] = "REVOKED"  # edited after the identity above was computed
+
+    declaration_records = [
+        (
+            "human_grant_declaration",
+            declaration["human_grant_declaration_id"],
+            declaration,
+        )
+        for declaration in (fabricated_authority_declaration,)
+    ] + [
+        (
+            "human_grant_declaration",
+            tampered_declaration_source["human_grant_declaration_id"],
+            tampered_declaration,
+        )
+    ]
+
     store.commit(
         project_id,
         genesis_state["state_revision"],
@@ -203,11 +255,44 @@ def _real_route(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
                 {"kind": "observation_evidence", "note": "Phase 13 test fixture record"},
             ),
             *grant_records,
+            *declaration_records,
         ],
     )
 
     boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
     assert dict(boot_context.human_authority_ref) == grant_fixture_ctx["human_authority_ref"]
+
+    # P13-R5: the genuine declaration variants -- through the real Binding owner's own
+    # `declare_human_grant` route, proving it end-to-end -- committed only now, since it
+    # independently re-resolves the real, just-committed Project Binding and grants from the
+    # Store rather than trusting any in-memory copy this fixture already built.
+    default_declaration = declare_human_grant(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref=_ref(default_grant),
+        status="ACTIVE",
+        declared_at=_DECLARED_AT,
+        schema_root=SCHEMA_ROOT,
+    )["human_grant_declaration"]
+    revoked_declaration = declare_human_grant(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref=_ref(default_grant),
+        status="REVOKED",
+        declared_at=_DECLARED_AT,
+        schema_root=SCHEMA_ROOT,
+    )["human_grant_declaration"]
+    other_grant_declaration = declare_human_grant(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref=_ref(variant_grants[0]),
+        status="ACTIVE",
+        declared_at=_DECLARED_AT,
+        schema_root=SCHEMA_ROOT,
+    )["human_grant_declaration"]
 
     return {
         "store": store,
@@ -217,6 +302,11 @@ def _real_route(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         "difference_id": "D-INDEPENDENT-VERIFICATION-TEST-0001",
         "human_authority_ref": dict(boot_context.human_authority_ref),
         "default_grant_ref": _ref(default_grant),
+        "default_declaration_ref": _decl_ref(default_declaration),
+        "revoked_declaration_ref": _decl_ref(revoked_declaration),
+        "other_grant_declaration_ref": _decl_ref(other_grant_declaration),
+        "fabricated_authority_declaration_ref": _decl_ref(fabricated_authority_declaration),
+        "tampered_declaration_source": tampered_declaration_source,
     }
 
 
@@ -291,6 +381,36 @@ def _grant_ref(fx: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     return _ref(_grant(fx, **overrides))
 
 
+def _declaration(fx: dict[str, Any], grant: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    """One ``human_grant_declaration`` body, in the identical shape the real
+    ``declare_human_grant`` route itself produces (Structural Review Round 5, P13-R5) --
+    used only to build the fabricated/forged variants that route can never itself produce,
+    since it always resolves the real Human Authority reference rather than trusting a
+    caller-supplied one."""
+
+    fields: dict[str, Any] = {
+        "schema_version": "0.1",
+        "human_grant_declaration_id": "",
+        "project_id": fx["project_id"],
+        "project_binding_id": fx["project_binding_id"],
+        "grant_ref": _ref(grant),
+        "declared_by": dict(fx["human_authority_ref"]),
+        "status": "ACTIVE",
+        "declared_at": _DECLARED_AT,
+    }
+    fields.update(overrides)
+    fields["human_grant_declaration_id"] = human_grant_declaration_id(fields)
+    return fields
+
+
+def _decl_ref(declaration: dict[str, Any]) -> dict[str, Any]:
+    """The ``{"kind": "human_grant_declaration", "id": ...}`` reference a real, committed
+    declaration resolves through -- never the declaration's own content, which
+    ``run_independent_verification`` no longer accepts as an argument either."""
+
+    return {"kind": "human_grant_declaration", "id": declaration["human_grant_declaration_id"]}
+
+
 def _identified(func: Any, identity: dict[str, Any] | None = None) -> Any:
     """Attach the ``verifier_identity`` attribute Round 1's route now requires (P13-R1-F1)
     before invocation -- a plain function is a real Python object and may carry one."""
@@ -319,6 +439,7 @@ def _run(
     *,
     project_id: str | None = None,
     grant_refs: list[dict[str, Any]] | None = None,
+    declaration_refs: list[dict[str, Any]] | None = None,
 ) -> VerificationResult:
     return run_independent_verification(
         fx["store"],
@@ -328,6 +449,9 @@ def _run(
         verifier_selection=selection,
         verifier_selection_grant_refs=(
             grant_refs if grant_refs is not None else [fx["default_grant_ref"]]
+        ),
+        human_grant_declaration_refs=(
+            declaration_refs if declaration_refs is not None else [fx["default_declaration_ref"]]
         ),
         verifier=verifier,
     )
@@ -1117,6 +1241,236 @@ def test_only_a_genuine_grant_permits_exactly_one_verifier_call(
     assert result.status == "VERIFIED"
 
 
+# --- required rejection proofs: the Human Grant Declaration anchor is Store-resolved, ------ #
+# --- never caller-supplied content (Structural Review Round 5, P13-R5) --------------------- #
+
+
+def test_no_declaration_refs_is_rejected_and_never_calls_the_verifier(
+    _real_route: dict[str, Any],
+) -> None:
+    """The finding's own central case: a genuinely Store-resolved, self-consistent grant is
+    still not, by itself, proof that a Human declared it. With no declaration ref supplied at
+    all, ``evaluate_verifier_selection`` cannot answer ``SELECTED``, and the verifier is
+    never called."""
+
+    store: FileStateStore = _real_route["store"]
+    project_id = _real_route["project_id"]
+    before = _snapshot(store.root, project_id)
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+
+    with pytest.raises(VerificationRequirementError, match="DECLARATION_MISSING"):
+        _run(_real_route, requirement, selection, verifier, declaration_refs=[])
+    assert calls == []
+    assert _snapshot(store.root, project_id) == before
+
+
+def test_a_declaration_ref_naming_an_uncommitted_record_is_rejected_and_never_calls_the_verifier(
+    _real_route: dict[str, Any],
+) -> None:
+    """A ref naming a declaration that was never durably committed to the Store refuses
+    before the Authority owner or the verifier is ever reached, exactly as an unresolvable
+    grant ref already does."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+    never_committed = {"kind": "human_grant_declaration", "id": "HGD-" + "0" * 64}
+
+    with pytest.raises(VerificationRequirementError, match="does not resolve"):
+        _run(_real_route, requirement, selection, verifier, declaration_refs=[never_committed])
+    assert calls == []
+
+
+def test_declaration_content_supplied_directly_instead_of_a_reference_is_rejected(
+    _real_route: dict[str, Any],
+) -> None:
+    """Declaration *content* is never an accepted argument shape either -- a caller who
+    supplies the whole ``human_grant_declaration`` body where a ``{"kind", "id"}`` reference
+    belongs is rejected as a malformed reference, never treated as a declaration."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+    raw_content = _real_route["tampered_declaration_source"]
+
+    with pytest.raises(VerificationRequirementError, match="no readable kind"):
+        _run(_real_route, requirement, selection, verifier, declaration_refs=[raw_content])
+    assert calls == []
+
+
+def test_a_declaration_ref_naming_the_wrong_kind_is_rejected(_real_route: dict[str, Any]) -> None:
+    """A syntactically well-formed {"kind", "id"} reference whose kind is not
+    ``human_grant_declaration`` -- e.g. the default grant this same fixture also committed --
+    is rejected before any Store resolution is even attempted."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+    wrong_kind_ref = _real_route["default_grant_ref"]
+
+    with pytest.raises(VerificationRequirementError, match="permitted set"):
+        _run(_real_route, requirement, selection, verifier, declaration_refs=[wrong_kind_ref])
+    assert calls == []
+
+
+def test_a_declaration_anchoring_a_different_grant_does_not_bind(
+    _real_route: dict[str, Any],
+) -> None:
+    """A declaration that exists, and is otherwise genuine, but anchors some other grant
+    entirely is not a weaker anchor for the winning grant -- it is not a candidate for it at
+    all, and the winning grant is refused exactly as if no declaration had been supplied."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+
+    with pytest.raises(VerificationRequirementError, match="DECLARATION_MISSING"):
+        _run(
+            _real_route,
+            requirement,
+            selection,
+            verifier,
+            declaration_refs=[_real_route["other_grant_declaration_ref"]],
+        )
+    assert calls == []
+
+
+def test_a_declaration_declared_by_a_fabricated_human_authority_is_rejected(
+    _real_route: dict[str, Any],
+) -> None:
+    """A declaration may anchor the winning grant exactly and still not bind, if its own
+    ``declared_by`` does not canonical-reference-equal the real, Boot-verified Human
+    Authority reference -- self-fabricated provenance never substitutes for the genuine one,
+    the identical class of check already applied to a grant's own ``granted_by``, now applied
+    one layer deeper."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+
+    with pytest.raises(VerificationRequirementError, match="DECLARATION_AUTHORITY_MISMATCH"):
+        _run(
+            _real_route,
+            requirement,
+            selection,
+            verifier,
+            declaration_refs=[_real_route["fabricated_authority_declaration_ref"]],
+        )
+    assert calls == []
+
+
+def test_a_declaration_whose_real_status_is_not_active_does_not_bind(
+    _real_route: dict[str, Any],
+) -> None:
+    """A declaration that genuinely anchors the winning grant, by the real Human Authority,
+    but is itself no longer ``ACTIVE`` withholds the selection exactly as a non-``ACTIVE``
+    grant already does -- explicit revocation handling, never an exception."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+
+    with pytest.raises(VerificationRequirementError, match="DECLARATION_NOT_ACTIVE"):
+        _run(
+            _real_route,
+            requirement,
+            selection,
+            verifier,
+            declaration_refs=[_real_route["revoked_declaration_ref"]],
+        )
+    assert calls == []
+
+
+def test_a_tampered_declaration_propagates_the_existing_authority_owners_own_typed_error(
+    _real_route: dict[str, Any],
+) -> None:
+    """A declaration edited after its own content address was computed is a forged record,
+    exactly the case ``authority.conformance.admit`` already refuses for every other
+    Authority-owned record kind -- the resulting ``AuthorityError`` propagates unchanged,
+    never caught or reclassified by this route."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {"status": "VERIFIED", "input_refs": [], "observations": {}}
+    )
+    # The pre-tamper content whose id the fixture committed a post-tamper body under.
+    tampered_source = _real_route["tampered_declaration_source"]
+
+    with pytest.raises(AuthorityError, match="identity does not match"):
+        _run(
+            _real_route,
+            requirement,
+            selection,
+            verifier,
+            declaration_refs=[_decl_ref(tampered_source)],
+        )
+    assert calls == []
+
+
+def test_only_a_genuine_declaration_permits_exactly_one_verifier_call(
+    _real_route: dict[str, Any],
+) -> None:
+    """The control: a real, canonical Human Grant Declaration genuinely anchoring the winning
+    grant is required and sufficient for the existing Authority owner to answer ``SELECTED``
+    -- and only then is the verifier ever invoked, exactly once."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+    calls, verifier = _counting_verifier(
+        {
+            "status": "VERIFIED",
+            "input_refs": [{"kind": "source_snapshot", "id": "SS-1"}],
+            "observations": {},
+        }
+    )
+
+    result = _run(
+        _real_route,
+        requirement,
+        selection,
+        verifier,
+        declaration_refs=[_real_route["default_declaration_ref"]],
+    )
+    assert calls == [1]
+    assert result.status == "VERIFIED"
+
+
 # --- construction-time input type checks ----------------------------------------------- #
 
 
@@ -1134,6 +1488,7 @@ def test_non_instance_requirement_or_selection_is_rejected(_real_route: dict[str
             verification_requirement={"not": "a requirement instance"},  # type: ignore[arg-type]
             verifier_selection=selection,
             verifier_selection_grant_refs=[_grant_ref(_real_route)],
+            human_grant_declaration_refs=[_real_route["default_declaration_ref"]],
             verifier=verifier,
         )
     assert calls == []
@@ -1176,6 +1531,7 @@ def test_boot_project_failure_propagates_unchanged_and_never_calls_the_verifier(
             verification_requirement=requirement,
             verifier_selection=selection,
             verifier_selection_grant_refs=[_grant_ref(_real_route)],
+            human_grant_declaration_refs=[_real_route["default_declaration_ref"]],
             verifier=verifier,
         )
     assert calls == []
