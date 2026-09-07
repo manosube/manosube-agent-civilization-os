@@ -145,8 +145,8 @@ INDEPENDENT_VERIFICATION_ACCEPTED=true
 | Repository | [`manosube/manosube-agent-civilization-os`](https://github.com/manosube/manosube-agent-civilization-os) |
 | Visibility | Public |
 | Default branch | `main` |
-| Current accepted base | `36b06d88cf779d9f04b79e41022b42d1f3d47510` |
-| Base meaning | Merge commit of PR #50; Phase 12 Temporary Agent lifecycle |
+| Current accepted base | `1d41f7d1e79441249382be07e8d8dbed618331c8` |
+| Base meaning | Merge commit of PR #58; Merge Source Reflow governance (Issue #57) |
 | Commit statuses observed | None registered |
 
 ```text
