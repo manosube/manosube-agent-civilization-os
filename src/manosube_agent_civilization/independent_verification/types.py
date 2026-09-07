@@ -145,10 +145,12 @@ class VerificationResult:
 
     ``VerificationResult != Evidence record != Authority Decision != Closure receipt !=
     State transition != Merge authorization`` (Issue #51's own canonical-flow line). Nothing
-    on this type writes anywhere; carrying an admissible verification result into existing
-    Evidence-sufficiency semantics remains entirely the existing Evidence owner's own,
-    separate concern (frozen semantic decision 6) -- this type is not itself that path, and
-    this package implements no such path."""
+    on this type writes anywhere -- it is never itself persisted. Structural Review Round 2
+    (P13-R2-F2): :func:`~manosube_agent_civilization.independent_verification.
+    evidence_handoff.route_verification_result_to_evidence` is the real, one-call connection
+    from an admissible instance of this type into the existing Evidence owner's own public
+    ``derive_evidence``, superseding Round 0's "the caller's own, separate concern" stance;
+    this type itself still never mints, writes, or otherwise becomes canonical Evidence."""
 
     status: str
     requirement_id: str
@@ -214,7 +216,10 @@ class IndependentVerifier(Protocol):
         The returned mapping must carry ``status`` (one of :data:`VERIFICATION_STATUSES`),
         ``input_refs`` (a list of explicit ``{"kind": ..., "id": ...}`` references naming
         what this verifier actually examined -- at least one, and not merely a repetition of
-        *requirement*'s own ``target_refs``, unless *status* is ``UNAVAILABLE``), and
-        ``observations`` (an explicit, JSON-shaped attestation candidate payload; never
-        interpreted by the route that calls this protocol)."""
+        *requirement*'s own ``target_refs``, for every status alike including
+        ``UNAVAILABLE`` -- Structural Review Round 2, P13-R2-F3 supersedes Round 0's disclosed
+        ``UNAVAILABLE`` exemption; an ``UNAVAILABLE`` result must still cite the explicit
+        input that grounds why evaluation was not possible), and ``observations`` (an
+        explicit, JSON-shaped attestation candidate payload; never interpreted by the route
+        that calls this protocol)."""
         ...

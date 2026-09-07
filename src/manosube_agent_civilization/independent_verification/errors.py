@@ -1,11 +1,14 @@
 """Fail-closed Independent Verification errors (Phase 13, Issue #51).
 
 This layer owns typed errors only for its own boundary -- requirement/selection/boundary
-admission, and the shape of what an explicit verifier returns. Every Boot/Binding/Store/
-Authority/Evidence/Difference/Reflow failure remains that owning domain's own typed error;
-this module never catches or reclassifies one, because it never calls into any of them
-beyond the one read-only ``store.resolve_record`` provenance check
-(``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 documents that one call site).
+admission, the shape of what an explicit verifier returns, and (Structural Review Round 2,
+P13-R2-F2) the linkage between one :class:`~manosube_agent_civilization.
+independent_verification.types.VerificationResult` and the existing Evidence request handed
+off with it. Every Boot/Binding/Store/Authority/Evidence/Difference/Reflow failure remains
+that owning domain's own typed error; this module never catches or reclassifies one, because
+this package never calls into any of them beyond the one read-only ``store.resolve_record``
+provenance check and the one ``evidence.derive_evidence`` handoff call
+(``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 documents both call sites).
 """
 
 from __future__ import annotations
@@ -48,3 +51,17 @@ class VerificationValueError(IndependentVerificationError):
     ``None``) -- a ``set`` or any other mutable object is refused rather than silently
     admitted unfrozen, so a value this layer reports as ``frozen`` is always either
     recursively immutable or was never accepted in the first place."""
+
+
+class EvidenceHandoffError(IndependentVerificationError):
+    """The supplied Evidence request cannot be handed off for *this*
+    :class:`~manosube_agent_civilization.independent_verification.types.VerificationResult`
+    (Structural Review Round 2, P13-R2-F2).
+
+    Raised for: a Change-bound Evidence request (Independent Verification never executes or
+    grounds a Change), a request with no ``verification_observation_request`` (the one
+    Evidence position this handoff produces), or a derived Evidence record whose own
+    ``target.project_id`` or bound Difference does not match the supplied
+    ``VerificationResult``. Never raised for the existing Evidence owner's own admission
+    failures -- those propagate as :class:`~manosube_agent_civilization.evidence.errors.
+    EvidenceError` unchanged."""

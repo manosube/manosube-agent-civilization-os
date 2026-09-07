@@ -277,27 +277,28 @@ def run_independent_verification(
     if not isinstance(observations, Mapping):
         raise VerifierOutputError("verifier's own observations must be an explicit mapping")
 
-    # Frozen semantic decision 5: indistinguishable implementation and verification
-    # provenance does not satisfy independent verification. A verifier that examined nothing
-    # beyond the exact target references it was asked to verify has produced no independent
-    # input at all -- it has merely echoed the implementation lineage back. UNAVAILABLE is
-    # the one exempt status: it asserts the verifier could not evaluate at all, so it is
-    # never expected to have examined anything (disclosed interpretation, not a silent
-    # narrowing -- see the completion report for this round).
-    if status != "UNAVAILABLE":
-        target_keys = {(ref["kind"], ref["id"]) for ref in verification_requirement.target_refs}
-        input_keys = {(ref["kind"], ref["id"]) for ref in input_refs}
-        if not input_keys:
-            raise VerifierOutputError(
-                "verifier returned no input_refs at all -- a non-UNAVAILABLE result must cite "
-                "what it actually examined"
-            )
-        if input_keys <= target_keys:
-            raise VerifierOutputError(
-                "verifier cited no input beyond the target references it was asked to verify "
-                "-- implementation-indistinguishable provenance does not satisfy an "
-                "independent verification requirement"
-            )
+    # Frozen semantic decision 5, sharpened by Structural Review Round 2 (P13-R2-F3):
+    # indistinguishable implementation and verification provenance does not satisfy
+    # independent verification, for every status alike -- UNAVAILABLE is fail-closed, not
+    # an exemption from the provenance obligation. A verifier that examined nothing beyond
+    # the exact target references it was asked to verify has produced no independent input
+    # at all -- it has merely echoed the implementation lineage back; and a verifier that
+    # asserts UNAVAILABLE must still cite the explicit boundary/capability/observation/
+    # Evidence input that actually grounds why it could not evaluate. Round 0/1's own
+    # UNAVAILABLE exemption is superseded here, not merely narrowed.
+    target_keys = {(ref["kind"], ref["id"]) for ref in verification_requirement.target_refs}
+    input_keys = {(ref["kind"], ref["id"]) for ref in input_refs}
+    if not input_keys:
+        raise VerifierOutputError(
+            "verifier returned no input_refs at all -- every result, including UNAVAILABLE, "
+            "must cite what it actually examined"
+        )
+    if input_keys <= target_keys:
+        raise VerifierOutputError(
+            "verifier cited no input beyond the target references it was asked to verify "
+            "-- implementation-indistinguishable provenance does not satisfy an "
+            "independent verification requirement, for any status including UNAVAILABLE"
+        )
 
     return VerificationResult(
         status=status,

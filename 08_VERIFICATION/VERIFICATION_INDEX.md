@@ -47,15 +47,21 @@ CANONICAL_KERNEL_COUNT=1
 
 ## 2. This is not a second Evidence, Difference, Authority, Reflow, or Store owner
 
-`run_independent_verification` never mints canonical Evidence, never evaluates Evidence
-Sufficiency, never evaluates a Closure Policy, never emits a Difference Lifecycle Event or a
-Closure Evaluation, never evaluates an Authority Decision, and never mutates the Store. It
-resolves exactly one Store-owned reference kind (`observation_evidence`) through the existing
-Store's own read-only `resolve_record` -- the identical, already-established surface Boot
-itself calls -- and calls its one explicit `IndependentVerifier` exactly once. Carrying an
-admissible verification result into existing Evidence-sufficiency semantics remains entirely
-the existing Evidence owner's own, separate concern; this package implements no such path and
-therefore cannot bypass it.
+`run_independent_verification` never mints canonical Evidence itself, never evaluates
+Evidence Sufficiency, never evaluates a Closure Policy, never emits a Difference Lifecycle
+Event or a Closure Evaluation, never evaluates an Authority Decision, and never mutates the
+Store. It resolves exactly one Store-owned reference kind (`observation_evidence`) through
+the existing Store's own read-only `resolve_record` -- the identical, already-established
+surface Boot itself calls -- calls the existing Boot owner's own `boot_project` exactly once
+to independently re-verify the real Human Authority reference (Structural Review Round 1,
+P13-R1-F2), and calls its one explicit `IndependentVerifier` exactly once. Structural Review
+Round 2 (P13-R2-F2) adds the one real connection into existing Evidence ownership:
+`route_verification_result_to_evidence` calls the existing Evidence owner's own public
+`derive_evidence` exactly once, over a caller-supplied, already-real, Change-free request --
+superseding the earlier "the existing Evidence owner's own, separate concern" stance. This
+package still mints no canonical Evidence itself (the existing Evidence owner alone decides
+the derived record's identity and schema validation), evaluates no sufficiency or closure
+itself, and creates no second Evidence, Difference, Authority, Reflow, or Store owner.
 
 ```text
 VERIFICATION_IS_A_SECOND_EVIDENCE_OWNER=false
@@ -90,22 +96,32 @@ CODEX_AS_VERIFIER_DEFAULT=false
 
 ```text
 src/manosube_agent_civilization/independent_verification/
-├── __init__.py     public exports
-├── errors.py        IndependentVerificationError / VerificationRequirementError /
-│                     VerifierOutputError
-├── types.py          VerificationRequirement / VerifierSelection / VerificationResult /
-│                     IndependentVerifier -- immutable, non-persisted value types
-└── route.py          run_independent_verification -- the one public verification route
+├── __init__.py         public exports
+├── errors.py            IndependentVerificationError / VerificationRequirementError /
+│                         VerifierOutputError / VerificationValueError /
+│                         EvidenceHandoffError
+├── types.py              VerificationRequirement / VerifierSelection / VerificationResult /
+│                         IndependentVerifier -- immutable, non-persisted value types
+├── route.py              run_independent_verification -- the one public verification route
+└── evidence_handoff.py   route_verification_result_to_evidence -- the one public
+                          VerificationResult-to-Evidence handoff (Structural Review Round 2)
 ```
 
 No second Boot, Store, Binding, Evidence, Difference, Authority, or Reflow owner is created
-anywhere in this package. This package never imports `manosube_agent_civilization.evidence`,
-`manosube_agent_civilization.difference`, `manosube_agent_civilization.authority`,
-`manosube_agent_civilization.reflow`, `manosube_agent_civilization.boot`, or
-`manosube_agent_civilization.binding` -- static conformance proves it. Its only interaction
-with an existing owner is one call to the caller-supplied `store`'s own already-public
-`resolve_record` method, to confirm a Store-owned target reference (`observation_evidence`)
-is real before the verifier this route calls could otherwise be pointed at a fabricated one.
+anywhere in this package. `route.py`, `types.py`, and `errors.py` never import
+`manosube_agent_civilization.evidence`, `manosube_agent_civilization.difference`,
+`manosube_agent_civilization.authority`, `manosube_agent_civilization.reflow`, or
+`manosube_agent_civilization.binding` -- static conformance proves it. Only
+`evidence_handoff.py` imports `manosube_agent_civilization.evidence`, and only to call its
+one public `derive_evidence` exactly once. This package's interaction with existing owners is:
+one call to the caller-supplied `store`'s own already-public `resolve_record` method (to
+confirm a Store-owned target reference is real before the verifier this route calls could
+otherwise be pointed at a fabricated one), one call to the existing Boot owner's own
+`boot_project` (Structural Review Round 1, P13-R1-F2, to independently re-verify the real
+Human Authority reference), and one call to the existing Evidence owner's own
+`derive_evidence` (Structural Review Round 2, P13-R2-F2, the real handoff). Binding a
+`VerifierSelection` to a real per-Requirement Authority Decision (P13-R2-F1) remains a
+disclosed, unresolved gap -- see `VERIFICATION_CONTRACT.md` §10.
 
 ## 5. Explicit non-claims
 
@@ -127,6 +143,7 @@ NEW_STATE_OWNER=false
 NEW_EVIDENCE_OWNER=false
 NEW_AUTHORITY_OWNER=false
 NEW_STORE_OWNER=false
+EXISTING_EVIDENCE_OWNER_HANDOFF_REQUIRED=true
 PHASE_13_COMPLETE=false
 PHASE_14_ALLOWED=false
 ```

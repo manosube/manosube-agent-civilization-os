@@ -1,10 +1,13 @@
 """Phase 13 (Issue #51) Independent Verification: static conformance proofs.
 
 A real AST walk over the ``independent_verification`` package's own module source -- never a
-grep, never a hardcoded name list -- proving ``PUBLIC_VERIFICATION_ENTRY_POINT_COUNT=1``,
-that ``store.resolve_record`` is the only Store method this package ever calls, that no
-existing owner (Evidence, Difference, Authority, Reflow, Boot, Binding) is ever imported, and
-that no module in this package imports a model, subprocess, shell, network, GitHub, Observer,
+grep, never a hardcoded name list -- proving exactly two public callables
+(``run_independent_verification``, and Structural Review Round 2's
+``route_verification_result_to_evidence``), that ``store.resolve_record`` is the only Store
+method this package ever calls, that no existing owner (Difference, Authority, Reflow,
+Binding) is ever imported anywhere, that ``evidence`` is imported only from
+``evidence_handoff.py`` and only to call ``derive_evidence`` exactly once, and that no module
+in this package imports a model, subprocess, shell, network, GitHub, Observer,
 Change-execution, scheduler, or multi-Agent surface. The identical AST-walk technique
 ``tests/contract/agent_runtime/test_agent_runtime_static_conformance.py`` and
 ``tests/contract/boot/test_boot_route_static_conformance.py`` already use for their own static
@@ -19,10 +22,19 @@ from types import ModuleType
 
 import manosube_agent_civilization.independent_verification as verification_module
 import manosube_agent_civilization.independent_verification.errors as errors_module
+import manosube_agent_civilization.independent_verification.evidence_handoff as evidence_handoff_module
 import manosube_agent_civilization.independent_verification.route as route_module
 import manosube_agent_civilization.independent_verification.types as types_module
 
+#: Modules that must never import the existing Evidence owner -- ``evidence_handoff.py`` is
+#: deliberately excluded (Structural Review Round 2, P13-R2-F2): it alone calls the existing
+#: Evidence owner's own public ``derive_evidence``, and is checked separately below.
 _VERIFICATION_MODULES = (route_module, types_module, errors_module)
+
+#: Every module in the package, including ``evidence_handoff.py`` -- used only for checks
+#: that apply regardless of the Evidence exemption (no subprocess/network/scheduler/model
+#: surface, no Store method beyond ``resolve_record``, no development-binding fixture).
+_ALL_PACKAGE_MODULES = (route_module, types_module, errors_module, evidence_handoff_module)
 
 #: Existing canonical owners this package must never import -- Issue #51's own delivery
 #: constraint ("reuse existing public owners; do not copy canonical Evidence, Difference,
@@ -32,13 +44,24 @@ _VERIFICATION_MODULES = (route_module, types_module, errors_module)
 #: ``boot_project`` exactly once, to independently re-verify the real Human Authority
 #: reference rather than trusting a caller-supplied equality check -- reuse by call, not a
 #: second Boot owner. ``test_route_calls_boot_project_exactly_once`` below is the positive
-#: proof that pairs with this negative one.
+#: proof that pairs with this negative one. ``evidence`` is likewise absent from this list
+#: (Structural Review Round 2, P13-R2-F2): the identical reuse-by-call pattern now applies
+#: to ``evidence_handoff.py`` calling the existing Evidence owner's own public
+#: ``derive_evidence`` -- checked by ``_FORBIDDEN_OWNER_MODULE_PREFIXES_STRICT`` below, which
+#: still forbids ``evidence`` for every *other* module in this package.
 _FORBIDDEN_OWNER_MODULE_PREFIXES = (
-    "manosube_agent_civilization.evidence",
     "manosube_agent_civilization.difference",
     "manosube_agent_civilization.authority",
     "manosube_agent_civilization.reflow",
     "manosube_agent_civilization.binding",
+)
+
+#: The stricter list applied to ``_VERIFICATION_MODULES`` only (never to
+#: ``evidence_handoff.py``): ``evidence`` is forbidden everywhere except the one module whose
+#: entire purpose is the real handoff into it.
+_FORBIDDEN_OWNER_MODULE_PREFIXES_STRICT = (
+    *_FORBIDDEN_OWNER_MODULE_PREFIXES,
+    "manosube_agent_civilization.evidence",
 )
 
 
@@ -78,15 +101,23 @@ def _call_site_count(module: ModuleType, name: str) -> int:
     return count
 
 
-def test_independent_verification_package_exports_exactly_one_public_route() -> None:
+def test_independent_verification_package_exports_exactly_two_public_routes() -> None:
+    """Structural Review Round 2 (P13-R2-F2) adds one public callable --
+    ``route_verification_result_to_evidence`` -- alongside ``run_independent_verification``;
+    no third public callable exists."""
+
     assert verification_module.__all__.count("run_independent_verification") == 1
-    public_callables = [
+    assert verification_module.__all__.count("route_verification_result_to_evidence") == 1
+    public_callables = {
         name
         for name in verification_module.__all__
         if callable(getattr(verification_module, name))
         and not isinstance(getattr(verification_module, name), type)
-    ]
-    assert public_callables == ["run_independent_verification"]
+    }
+    assert public_callables == {
+        "run_independent_verification",
+        "route_verification_result_to_evidence",
+    }
 
 
 def test_independent_verification_exports_exactly_the_three_value_types_and_protocol() -> None:
@@ -105,14 +136,40 @@ def test_independent_verification_exports_exactly_the_three_value_types_and_prot
 
 
 def test_independent_verification_never_imports_an_existing_kernel_owner() -> None:
-    """Issue #51: reuse existing owners by call, never by importing their implementation."""
+    """Issue #51: reuse existing owners by call, never by importing their implementation.
+
+    ``route.py``/``types.py``/``errors.py``/``__init__.py`` may never import ``evidence``
+    either -- only ``evidence_handoff.py`` may, and only to call ``derive_evidence``
+    (Structural Review Round 2, P13-R2-F2); checked separately below."""
 
     for module in (verification_module, *_VERIFICATION_MODULES):
         imported = _imported_module_names(module)
         for name in imported:
             assert not any(
-                name.startswith(prefix) for prefix in _FORBIDDEN_OWNER_MODULE_PREFIXES
+                name.startswith(prefix) for prefix in _FORBIDDEN_OWNER_MODULE_PREFIXES_STRICT
             ), f"{module.__name__} imports a forbidden existing-owner module: {name}"
+
+
+def test_evidence_handoff_never_imports_a_non_evidence_existing_owner() -> None:
+    """``evidence_handoff.py`` may import ``evidence`` (to call ``derive_evidence``), but
+    never ``difference``, ``authority``, ``reflow``, or ``binding`` -- it stays a thin,
+    single-purpose handoff, not a second owner of any of those."""
+
+    imported = _imported_module_names(evidence_handoff_module)
+    for name in imported:
+        assert not any(name.startswith(prefix) for prefix in _FORBIDDEN_OWNER_MODULE_PREFIXES), (
+            f"{evidence_handoff_module.__name__} imports a forbidden existing-owner module: {name}"
+        )
+
+
+def test_evidence_handoff_calls_derive_evidence_exactly_once_and_only_there() -> None:
+    """Structural Review Round 2 (P13-R2-F2): the existing Evidence owner's own public
+    ``derive_evidence`` is the surface this handoff reuses -- called exactly once, and only
+    from ``evidence_handoff.py``."""
+
+    assert _call_site_count(evidence_handoff_module, "derive_evidence") == 1
+    for module in _VERIFICATION_MODULES:
+        assert _call_site_count(module, "derive_evidence") == 0
 
 
 def test_route_calls_resolve_record_and_no_other_store_method() -> None:
@@ -130,7 +187,7 @@ def test_route_calls_resolve_record_and_no_other_store_method() -> None:
         "bind_project",
         "boot_project",
     }
-    for module in _VERIFICATION_MODULES:
+    for module in _ALL_PACKAGE_MODULES:
         called = _attribute_calls(module)
         assert not (called & forbidden), f"{module.__name__} must never call: {called & forbidden}"
     assert _call_site_count(route_module, "resolve_record") == 1
@@ -145,7 +202,7 @@ def test_independent_verification_never_imports_a_command_execution_or_network_s
         "http.client",
         "os.system",
     )
-    for module in _VERIFICATION_MODULES:
+    for module in _ALL_PACKAGE_MODULES:
         imported = _imported_module_names(module)
         for name in imported:
             assert not any(bad in name for bad in forbidden_substrings), (
@@ -157,7 +214,7 @@ def test_independent_verification_never_imports_a_scheduler_or_background_execut
     None
 ):
     forbidden_substrings = ("threading", "asyncio", "sched", "multiprocessing")
-    for module in _VERIFICATION_MODULES:
+    for module in _ALL_PACKAGE_MODULES:
         imported = _imported_module_names(module)
         for name in imported:
             assert not any(bad in name for bad in forbidden_substrings), (
@@ -167,7 +224,7 @@ def test_independent_verification_never_imports_a_scheduler_or_background_execut
 
 def test_independent_verification_never_imports_a_model_github_or_observer_surface() -> None:
     forbidden_substrings = ("github", "openai", "anthropic", "observer")
-    for module in _VERIFICATION_MODULES:
+    for module in _ALL_PACKAGE_MODULES:
         imported = _imported_module_names(module)
         for name in imported:
             assert not any(bad in name for bad in forbidden_substrings), (
@@ -176,14 +233,14 @@ def test_independent_verification_never_imports_a_model_github_or_observer_surfa
 
 
 def test_independent_verification_never_imports_os_module_directly() -> None:
-    for module in _VERIFICATION_MODULES:
+    for module in _ALL_PACKAGE_MODULES:
         assert "os" not in _imported_module_names(module)
 
 
 def test_independent_verification_never_imports_development_binding_or_the_phase_8_fixture() -> (
     None
 ):
-    for module in _VERIFICATION_MODULES:
+    for module in _ALL_PACKAGE_MODULES:
         imported = _imported_module_names(module)
         assert not any("development_binding" in name for name in imported)
         assert not any("vertical_proof" in name for name in imported)
@@ -220,12 +277,16 @@ def test_verification_value_error_is_a_distinct_independent_verification_error()
     assert issubclass(
         errors_module.VerificationValueError, errors_module.IndependentVerificationError
     )
+    assert issubclass(
+        errors_module.EvidenceHandoffError, errors_module.IndependentVerificationError
+    )
     error_types: set[type] = {
         errors_module.VerificationValueError,
         errors_module.VerificationRequirementError,
         errors_module.VerifierOutputError,
+        errors_module.EvidenceHandoffError,
     }
-    assert len(error_types) == 3
+    assert len(error_types) == 4
 
 
 def test_independent_verifier_protocol_declares_a_verifier_identity_attribute() -> None:

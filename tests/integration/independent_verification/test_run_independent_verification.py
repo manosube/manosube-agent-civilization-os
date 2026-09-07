@@ -25,19 +25,28 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.difference_helpers import PROJECT_ID as DIFFERENCE_FIXTURE_PROJECT_ID
+from tests.evidence_helpers import change_free_verification_evidence_request, sufficiency_request
 from tests.fixtures.product_binding import PROJECT_ID, bind_project_kwargs, genesis_records
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.binding import bind_project
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.boot.errors import BootNotFoundError
+from manosube_agent_civilization.evidence import (
+    EvidenceError,
+    derive_evidence,
+    evaluate_sufficiency,
+)
 from manosube_agent_civilization.independent_verification import (
+    EvidenceHandoffError,
     VerificationRequirement,
     VerificationRequirementError,
     VerificationResult,
     VerificationValueError,
     VerifierOutputError,
     VerifierSelection,
+    route_verification_result_to_evidence,
     run_independent_verification,
 )
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
@@ -636,7 +645,7 @@ def test_malformed_verifier_output_is_rejected(_real_route: dict[str, Any], payl
     assert _snapshot(store.root, project_id) == before
 
 
-def test_verifier_citing_no_input_at_all_is_rejected_unless_unavailable(
+def test_verifier_citing_no_input_at_all_is_rejected(
     _real_route: dict[str, Any],
 ) -> None:
     requirement = _requirement(
@@ -686,12 +695,13 @@ def test_a_non_unavailable_negative_result_still_requires_distinguishable_input(
         _run(_real_route, requirement, selection, verifier)
 
 
-def test_unavailable_status_is_exempt_from_the_independence_check(
+def test_unavailable_status_with_empty_input_refs_is_rejected(
     _real_route: dict[str, Any],
 ) -> None:
-    """Disclosed interpretation (VERIFICATION_CONTRACT.md §9): UNAVAILABLE asserts the
-    verifier could not evaluate at all, so it is not required to cite distinguishable
-    input -- unlike VERIFIED/FAILED/INSUFFICIENT, which are all real evaluations."""
+    """Structural Review Round 2 (P13-R2-F3): Round 0's disclosed ``UNAVAILABLE`` exemption
+    from the independence check is superseded -- an ``UNAVAILABLE`` result with no
+    ``input_refs`` at all is rejected exactly like any other status would be, not silently
+    accepted as an unconstructible truthful report."""
 
     requirement = _requirement(
         _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
@@ -701,9 +711,36 @@ def test_unavailable_status_is_exempt_from_the_independence_check(
         {"status": "UNAVAILABLE", "input_refs": [], "observations": {"reason": "offline"}}
     )
 
-    result = _run(_real_route, requirement, selection, unavailable_verifier)
-    assert result.status == "UNAVAILABLE"
-    assert result.input_refs == ()
+    with pytest.raises(VerifierOutputError, match="no input_refs"):
+        _run(_real_route, requirement, selection, unavailable_verifier)
+
+
+def test_unavailable_status_citing_only_target_refs_is_rejected(
+    _real_route: dict[str, Any],
+) -> None:
+    """Structural Review Round 2 (P13-R2-F3): an ``UNAVAILABLE`` result that echoes only the
+    requirement's own ``target_refs`` is implementation-indistinguishable provenance, exactly
+    as for any other status -- it must still cite the explicit boundary/capability/
+    observation/Evidence input that actually grounds why evaluation was not possible."""
+
+    requirement = _requirement(
+        _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
+    )
+    selection = _selection(_real_route["human_authority_ref"])
+
+    def echo_unavailable_verifier(
+        *, requirement: VerificationRequirement, selection: VerifierSelection
+    ) -> Any:
+        return {
+            "status": "UNAVAILABLE",
+            "input_refs": [dict(ref) for ref in requirement.target_refs],
+            "observations": {"reason": "offline"},
+        }
+
+    _identified(echo_unavailable_verifier)
+
+    with pytest.raises(VerifierOutputError, match="implementation-indistinguishable"):
+        _run(_real_route, requirement, selection, echo_unavailable_verifier)
 
 
 @pytest.mark.parametrize("status", ["FAILED", "INSUFFICIENT", "UNAVAILABLE"])
@@ -790,3 +827,141 @@ def test_boot_project_failure_propagates_unchanged_and_never_calls_the_verifier(
             verifier=verifier,
         )
     assert calls == []
+
+
+# --- route_verification_result_to_evidence: the real handoff (Structural Review Round 2, ---
+# --- P13-R2-F2) ------------------------------------------------------------------------ #
+
+
+def _handoff_verification_result(
+    *, target_refs: tuple[dict[str, Any], ...] | None = None
+) -> VerificationResult:
+    """A minimal, real ``VerificationResult`` about the Difference
+    ``change_free_verification_evidence_request()``'s own default request derives against --
+    computed, never assumed, exactly as ``tests.evidence_helpers.sufficiency_request`` derives
+    its own default identity the same way."""
+
+    difference_id = str(
+        derive_evidence(change_free_verification_evidence_request())["difference_ref"]["id"]
+    )
+    refs = (
+        target_refs if target_refs is not None else ({"kind": "difference", "id": difference_id},)
+    )
+    return VerificationResult(
+        status="VERIFIED",
+        requirement_id="VREQ-HANDOFF-0001",
+        selection_id="VSEL-HANDOFF-0001",
+        project_id=DIFFERENCE_FIXTURE_PROJECT_ID,
+        target_refs=refs,
+        verifier_identity=dict(_DEFAULT_VERIFIER_IDENTITY),
+        selection_authority_ref={"kind": "human_authority", "id": "AUTH-0001"},
+        verification_boundary={"scope": "repository", "boundary_id": "VB-0001"},
+        input_refs=({"kind": "source_snapshot", "id": "SS-HANDOFF-0001"},),
+        observations={"summary": "independently reproduced the reported outcome"},
+    )
+
+
+def test_handoff_derives_a_genuine_evidence_record_matching_the_verification_result() -> None:
+    verification_result = _handoff_verification_result()
+    evidence_request = change_free_verification_evidence_request()
+
+    evidence = route_verification_result_to_evidence(verification_result, evidence_request)
+
+    assert evidence["target"]["project_id"] == verification_result.project_id
+    named_difference_id = verification_result.target_refs[0]["id"]
+    assert evidence["difference_ref"]["id"] == named_difference_id
+
+
+def test_handoff_rejects_a_non_verification_result_instance() -> None:
+    with pytest.raises(EvidenceHandoffError):
+        route_verification_result_to_evidence(
+            {"not": "a VerificationResult"},  # type: ignore[arg-type]
+            change_free_verification_evidence_request(),
+        )
+
+
+def test_handoff_rejects_a_non_mapping_evidence_request() -> None:
+    with pytest.raises(EvidenceHandoffError):
+        route_verification_result_to_evidence(
+            _handoff_verification_result(),
+            "not-a-mapping",  # type: ignore[arg-type]
+        )
+
+
+def test_handoff_rejects_a_change_bound_evidence_request() -> None:
+    evidence_request = change_free_verification_evidence_request()
+    evidence_request["change_request"] = {"not": "None"}
+
+    with pytest.raises(EvidenceHandoffError, match="Change-free"):
+        route_verification_result_to_evidence(_handoff_verification_result(), evidence_request)
+
+
+def test_handoff_rejects_a_post_change_observation_request() -> None:
+    evidence_request = change_free_verification_evidence_request()
+    evidence_request["post_change_observation_request"] = {"not": "None"}
+
+    with pytest.raises(EvidenceHandoffError, match="post_change_observation_request"):
+        route_verification_result_to_evidence(_handoff_verification_result(), evidence_request)
+
+
+def test_handoff_rejects_a_request_with_no_verification_observation_request() -> None:
+    evidence_request = change_free_verification_evidence_request()
+    evidence_request["verification_observation_request"] = None
+
+    with pytest.raises(EvidenceHandoffError, match="verification_observation_request"):
+        route_verification_result_to_evidence(_handoff_verification_result(), evidence_request)
+
+
+def test_handoff_rejects_a_derived_evidence_record_naming_a_different_project() -> None:
+    verification_result = _handoff_verification_result()
+    mismatched_result = replace(verification_result, project_id="A-DIFFERENT-PROJECT")
+
+    with pytest.raises(EvidenceHandoffError, match="different project"):
+        route_verification_result_to_evidence(
+            mismatched_result, change_free_verification_evidence_request()
+        )
+
+
+def test_handoff_rejects_a_derived_evidence_record_bound_to_an_unnamed_difference() -> None:
+    verification_result = _handoff_verification_result(
+        target_refs=({"kind": "difference", "id": "D-VERIFICATION-RESULT-NEVER-NAMED"},)
+    )
+
+    with pytest.raises(EvidenceHandoffError, match="never named"):
+        route_verification_result_to_evidence(
+            verification_result, change_free_verification_evidence_request()
+        )
+
+
+def test_existing_evidence_owner_admission_failures_propagate_unchanged() -> None:
+    """``EvidenceError`` is the existing Evidence owner's own failure mode -- this handoff
+    neither catches nor reclassifies it (Structural Review Round 2, P13-R2-F2)."""
+
+    evidence_request = change_free_verification_evidence_request()
+    evidence_request["artifact_references"] = "not-a-list"
+
+    with pytest.raises(EvidenceError):
+        route_verification_result_to_evidence(_handoff_verification_result(), evidence_request)
+
+
+def test_handoff_produced_request_is_accepted_by_the_existing_sufficiency_owners_own_request_shape() -> (
+    None
+):
+    """Structural Review Round 2 (P13-R2-F2): once the handoff returns a genuine canonical
+    Evidence record, the *request* that produced it is already exactly the shape the existing
+    evidence-sufficiency owner's own public ``evaluate_sufficiency`` accepts -- this test
+    proves connectability without production code calling ``evaluate_sufficiency`` itself
+    (which would make this package a second sufficiency owner)."""
+
+    verification_result = _handoff_verification_result()
+    evidence_request = change_free_verification_evidence_request()
+
+    evidence = route_verification_result_to_evidence(verification_result, evidence_request)
+
+    result = evaluate_sufficiency(
+        sufficiency_request(
+            difference_id=str(evidence["difference_ref"]["id"]),
+            evidence_requests=[evidence_request],
+        )
+    )
+    assert result["evidence_sufficiency_result"]["evidence_sufficiency_id"]
