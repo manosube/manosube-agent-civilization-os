@@ -10,11 +10,11 @@ STATUS=CANONICAL_DEFERRED_WORK_REGISTER
 SOURCE_AUTHORITY_CLASS=HUMAN_GOVERNED_DIFFERENCE_REGISTER
 HUMAN_AUTHORITY=SHUKOU
 REPOSITORY=manosube/manosube-agent-civilization-os
-OBSERVED_AT_UTC=2026-09-07T01:47:45Z
+OBSERVED_AT_UTC=2026-09-08T00:20:57Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
 ACTIVE_DEFERRED_RECORD_COUNT=2
 DEFERRED_DESIGN_CANDIDATE_COUNT=1
-FOLLOW_ON_DIFFERENCE_COUNT=2
+FOLLOW_ON_DIFFERENCE_COUNT=3
 CURRENT_PHASE_BLOCKER_STORED_HERE=false
 ```
 
@@ -412,7 +412,115 @@ Closure requires a README change on accepted main, explicit synchronization with
 
 ---
 
-# 8. Current Phase 13 exclusion
+# 8. Follow-on Difference FD-0003
+
+## Objective/Mechanism separation and Objective Return Gate
+
+```text
+DIFFERENCE_ID=FD-0003
+TITLE=OBJECTIVE_MECHANISM_SEPARATION_AND_OBJECTIVE_RETURN_GATE
+CLASSIFICATION=FOLLOW_ON_DIFFERENCE
+CURRENT_STATUS=GOVERNANCE_RULE_RECORDED_AWAITING_STRUCTURAL_REVIEW_AND_SHUKOU_ACCEPTANCE
+GOVERNING_ISSUE=60
+ORIGINATING_EVENT=ISSUE_57_MERGE_SOURCE_REFLOW_OBJECTIVE_DRIFT
+IMPLEMENT_AFTER_PHASE_13_ACCEPTANCE=true
+MUST_CLOSE_BEFORE_PHASE_14_IMPLEMENTATION_START=true
+ROADMAP_PHASE_ADDED=false
+PHASE_ORDER_CHANGED=false
+PHASE_13_REOPENED=false
+PHASE_14_STARTED=false
+```
+
+Source: [Issue #60](https://github.com/manosube/manosube-agent-civilization-os/issues/60), implementation adoption [`ADOPT_FD0003_OBJECTIVE_MECHANISM_SEPARATION_IMPLEMENTATION`](https://github.com/manosube/manosube-agent-civilization-os/issues/60#issuecomment-5577117250) (`REVIEWED_MAIN_SHA=657f8b40d4790b624c9af62113c7575b24b6077a`).
+
+## Originating expectation
+
+Issue #57 (`ISSUE_57_MERGE_SOURCE_REFLOW_OBJECTIVE_DRIFT`) observed that, after a manual merge, the Human Objective was to re-observe and re-synchronize `main` with the ChatGPT canonical source set. In pursuing that Objective, GitHub Actions' automatic reflow and its runtime execution proof effectively became a de facto completion condition rather than remaining one candidate Mechanism among others. As a result, confirming that this one Mechanism had not succeeded delayed judgment on the Objective's own achievement path.
+
+## Expected state
+
+A recorded operating rule exists, separating the following as distinct identities during development work:
+
+```text
+HUMAN_OBJECTIVE
+MINIMUM_ACCEPTABLE_AFTER_STATE
+IMPLEMENTATION_MECHANISM
+VERIFICATION_MECHANISM
+CLOSURE_CONDITION
+```
+
+together with the standing principle:
+
+```text
+MECHANISM_FAILURE != OBJECTIVE_FAILURE
+MECHANISM_SUCCESS != OBJECTIVE_COMPLETION
+```
+
+and a recorded Objective Return Gate, required whenever any of the following holds:
+
+```text
+MECHANISM_FAILED
+CORRECTION_ROUND_COUNT >= 2
+NEW_EXCEPTION_AUTHORITY_REQUIRED
+EVIDENCE_REQUEST_REPEATED
+ORIGINAL_AFTER_STATE_NOT_ADVANCING
+USER_REPORTS_OBJECTIVE_MISMATCH
+```
+
+## Observed state
+
+`07_DEVELOPMENT_GOVERNANCE.md` §9, "Objective/Mechanism separation and the Objective Return Gate", now records the separation rule above, the Objective Return Gate's five-step procedure, and the same list as this Difference's correction-loop stop conditions. That section names Issue #57 explicitly as the recurrence-prevention fixture this rule exists to guard against.
+
+```text
+GOVERNANCE_RULE_TEXT_EXISTS=true
+KERNEL_RUNTIME_ENFORCEMENT=false
+CHATGPT_ALWAYS_OBEYS_RULE=false
+AUTOMATIC_OBJECTIVE_DRIFT_PREVENTION=false
+STRUCTURAL_REVIEW_PASS=UNKNOWN_PENDING
+SHUKOU_ACCEPTED=false
+MERGE_RECEIPT_CONFIRMED=false
+AFTER_STATE_REOBSERVED=false
+```
+
+## Scheduling and authority
+
+```text
+CURRENT_PHASE_BLOCKING_EFFECT=NONE_FOR_PHASE_13
+PLACEMENT_DECISION_DEADLINE=RECORDED_BY_ISSUE_60_ADOPTION
+IMPLEMENTATION_DEADLINE=BEFORE_PHASE_14_IMPLEMENTATION_START
+PLACEMENT_AUTHORITY=SHUKOU
+IMPLEMENTATION_AUTHORITY=ADOPT_FD0003_OBJECTIVE_MECHANISM_SEPARATION_IMPLEMENTATION
+DEFAULT_PLACEMENT_INFERENCE_ALLOWED=false
+```
+
+Phase 14 must not start before this Difference closes.
+
+## Closure evidence requirement
+
+```text
+SEPARATION_RULE_RECORDED_IN_GOVERNANCE=true
+OBJECTIVE_RETURN_GATE_RECORDED=true
+CORRECTION_LOOP_STOP_CONDITIONS_RECORDED=true
+ISSUE_57_RECORDED_AS_FIXTURE=true
+PHASE_14_GATE_STATED=true
+STRUCTURAL_REVIEW_PASS=true
+SHUKOU_ACCEPTED=true
+MERGE_RECEIPT_CONFIRMED=true
+AFTER_STATE_REOBSERVED=true
+```
+
+## Phase reopening effect
+
+```text
+PHASE_13_REOPENED=false
+PHASE_14_STARTED=false
+ROADMAP_PHASE_ADDED=false
+PHASE_ORDER_CHANGED=false
+```
+
+---
+
+# 9. Current Phase 13 exclusion
 
 The following is not Deferred:
 
@@ -434,7 +542,7 @@ PHASE_14_ALLOWED=false
 
 ---
 
-# 9. Roadmap item exclusion
+# 10. Roadmap item exclusion
 
 The following are normal, ordered future Phases, not Deferred Differences merely because they are not yet implemented:
 
@@ -459,7 +567,7 @@ Only a gap between a ratified expectation and an accepted narrower capability, o
 
 ---
 
-# 10. Blocking matrix
+# 11. Blocking matrix
 
 | Record | Blocks Phase 13 implementation now | Blocks Phase 13 acceptance | Blocks later work |
 |---|---:|---:|---|
@@ -468,12 +576,13 @@ Only a gap between a ratified expectation and an accepted narrower capability, o
 | `DC-0001` PR handoff prototype | No | No | No; re-evaluate only after prerequisites |
 | `FD-0001` governance rule | No, because Round 3 adoption is recorded | No automatic block | Blocks claim that adoption-recording governance is repository-enforced |
 | `FD-0002` README status | No | No | Must close before v1.0 release |
+| `FD-0003` Objective/Mechanism separation | No, implemented as an inter-phase supporting governance correction after Phase 13 acceptance | No | Must close before Phase 14 implementation start |
 
 The matrix may be changed only by new observation or SHUKOU decision, not by convenience.
 
 ---
 
-# 11. Phase reopening rule
+# 12. Phase reopening rule
 
 For every record in this file:
 
@@ -499,7 +608,7 @@ Scheduling a Deferred Difference in a later Phase is not reopening its originati
 
 ---
 
-# 12. Closure and cancellation rules
+# 13. Closure and cancellation rules
 
 ## 12.1 Closure
 
@@ -531,7 +640,7 @@ The register preserves the old record with its final status and links the Human 
 
 ---
 
-# 13. Update triggers
+# 14. Update triggers
 
 Update this file when:
 
@@ -550,10 +659,10 @@ Do not change current status without live re-observation where GitHub facts are 
 
 ---
 
-# 14. Register receipt
+# 15. Register receipt
 
 ```text
-OBSERVED_AT_UTC=2026-09-07T01:47:45Z
+OBSERVED_AT_UTC=2026-09-08T00:20:57Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
 
 ACTIVE_DEFERRED_RECORDS=
@@ -566,6 +675,7 @@ DEFERRED_DESIGN_CANDIDATES=
 FOLLOW_ON_DIFFERENCES=
   FD-0001 STRUCTURAL_ADVISOR_ADOPTION_RECORDING_GOVERNANCE
   FD-0002 README_CURRENT_STATUS_STALENESS
+  FD-0003 OBJECTIVE_MECHANISM_SEPARATION_AND_OBJECTIVE_RETURN_GATE
 
 CLOSED_DEFERRED_RECORD_COUNT=0
 CANCELLED_DEFERRED_RECORD_COUNT=0

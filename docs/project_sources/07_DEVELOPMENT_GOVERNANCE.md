@@ -502,7 +502,107 @@ AFTER_STATE_REOBSERVATION_REQUIRED=true
 
 ---
 
-# 9. Work-unit contract
+# 9. Objective/Mechanism separation and the Objective Return Gate
+
+Issue #57 (`ISSUE_57_MERGE_SOURCE_REFLOW_OBJECTIVE_DRIFT`)の観測により、手動merge後にmainとChatGPT正規情報源を再観測・同期するというHuman Objectiveに対し、GitHub Actionsの自動reflowとruntime execution proofという一つのMechanismが、実質的な完了条件へ昇格した事実が記録された。結果として、そのMechanismの不成立確認がObjective達成経路の判断を遅延させた。本節は、SHUKOUが`ADOPT_FD0003_OBJECTIVE_MECHANISM_SEPARATION_IMPLEMENTATION`(Issue #60)で採択した再発防止規則を定める。
+
+## 9.1 Five separate identities
+
+開発作業中、次の5つを別々のidentityとして保持しなければならない。
+
+```text
+HUMAN_OBJECTIVE
+MINIMUM_ACCEPTABLE_AFTER_STATE
+IMPLEMENTATION_MECHANISM
+VERIFICATION_MECHANISM
+CLOSURE_CONDITION
+```
+
+いずれか一つの不成立、変更または反復修正は、他の四つを自動的に再定義しない。
+
+```text
+IMPLEMENTATION_MECHANISM_CHANGED
+≠ HUMAN_OBJECTIVE_CHANGED
+
+VERIFICATION_MECHANISM_UNAVAILABLE
+≠ CLOSURE_CONDITION_UNSATISFIABLE
+```
+
+## 9.2 Mechanism outcome is not Objective outcome
+
+```text
+MECHANISM_FAILURE != OBJECTIVE_FAILURE
+MECHANISM_SUCCESS != OBJECTIVE_COMPLETION
+```
+
+一つの実装Mechanismまたは検証Mechanismが失敗、不可用または反復的に不成立であっても、それ自体はHuman Objectiveの失敗を意味しない。同様に、一つのMechanismが成功しても、それ自体はObjectiveの完了を意味しない。ObjectiveのCompletionは、Closure Conditionに対する判断としてのみ成立する。
+
+## 9.3 Objective Return Gate — trigger conditions and correction-loop stop conditions
+
+次のいずれかが観測された場合、作業ownerはObjective Return Gateを要求しなければならない。同じ条件は、correction-loopを無制限に継続してはならないという停止条件でもある。いずれかが真になった時点で、単純な再試行または追加のexceptionでMechanismを押し通すことは許されない。
+
+```text
+MECHANISM_FAILED
+CORRECTION_ROUND_COUNT >= 2
+NEW_EXCEPTION_AUTHORITY_REQUIRED
+EVIDENCE_REQUEST_REPEATED
+ORIGINAL_AFTER_STATE_NOT_ADVANCING
+USER_REPORTS_OBJECTIVE_MISMATCH
+```
+
+## 9.4 Objective Return Gate — procedure
+
+Gateが要求された場合、作業ownerは次の5ステップを実行する。
+
+```text
+1. Human Objectiveを再掲する
+2. 現在のMechanismを再掲する
+3. Mechanismなしで、または別のMechanismでObjectiveを閉じられるか評価する
+4. 最小経路 (minimal path) を提示する
+5. 意味決定をSHUKOUへ返す
+```
+
+Gateの出力は、SHUKOUへ返される意味決定であって、実装者自身による再解釈ではない。
+
+```text
+GATE_OUTPUT=RETURNED_MEANING_DECISION
+GATE_OUTPUT_IS_IMPLEMENTER_REINTERPRETED_OBJECTIVE=false
+```
+
+## 9.5 Issue #57 as recurrence-prevention fixture
+
+Issue #57は、この規則が防止しようとする具体的なdrift patternの再発防止fixtureとして扱う。
+
+```text
+FIXTURE_ISSUE=57
+FIXTURE_PATTERN=MECHANISM_NON_SUCCESS_DELAYED_OBJECTIVE_JUDGMENT
+FIXTURE_MECHANISM=GITHUB_ACTIONS_AUTOMATIC_REFLOW_AND_RUNTIME_EXECUTION_PROOF
+FIXTURE_OBJECTIVE=MAIN_AND_CHATGPT_SOURCE_REOBSERVATION_AND_SYNCHRONIZATION
+```
+
+将来、同型のdrift（一つのMechanismの不成立確認がObjective判断を遅延させる状況）を観測した場合、Issue #57をその再発の具体例として参照する。
+
+## 9.6 Relationship to Phase gates and non-claims
+
+```text
+GITHUB_ACTIONS_REQUIRED_FOR_CLOSURE=false
+KERNEL_RUNTIME_ENFORCEMENT=false
+CHATGPT_ALWAYS_OBEYS_RULE=false
+AUTOMATIC_OBJECTIVE_DRIFT_PREVENTION=false
+```
+
+本節はGovernance文書上の運用規則を定めるものであり、Kernelのruntime enforcementを実装するものではない。構造参謀および実装者がこの規則に常に従うことを、本節自体が機械的に保証するとは主張しない。
+
+Follow-on Difference `FD-0003`(`06_DEFERRED_DIFFERENCES.md` §8)は、この規則がここに記録されたことをもってしても、未closedのままである。次を明示する。
+
+```text
+PHASE_14_IMPLEMENTATION_START_BEFORE_FD_0003_CLOSURE=PROHIBITED
+PHASE_14_ALLOWED=false
+```
+
+---
+
+# 10. Work-unit contract
 
 一つのimplementation handoffは最低限、次を固定する。
 
@@ -540,7 +640,7 @@ NEXT_OWNER
 
 ---
 
-# 10. Review contract
+# 11. Review contract
 
 構造reviewは、code styleだけを確認するものではない。最低限、次を判定する。
 
@@ -572,7 +672,7 @@ BLOCKED_STATE_CHANGED
 
 ---
 
-# 11. Phase acceptance and merge gate
+# 12. Phase acceptance and merge gate
 
 Phase completionには、少なくとも次の連鎖が必要である。
 
@@ -605,7 +705,7 @@ AGENT_REPORTS_DONE
 
 ---
 
-# 12. Change of scope and changed world
+# 13. Change of scope and changed world
 
 実装中にbase、HEAD、Issue、PR、契約またはHuman Decisionが変わった場合、以前のreviewまたはAuthorityを自動再利用しない。
 
@@ -626,7 +726,7 @@ AUTHORITY_MISMATCH
 
 ---
 
-# 13. Communication and time protocol
+# 14. Communication and time protocol
 
 作業ownerは、作業開始時に次を短く報告する。
 
@@ -653,7 +753,7 @@ SILENT_OVERRUN_ALLOWED=false
 
 ---
 
-# 14. Failure and blocker handling
+# 15. Failure and blocker handling
 
 次の場合、各ownerはfail closedで停止する。
 
@@ -683,7 +783,7 @@ permission failure、承認要求、protected workflowまたはmeaning conflict�
 
 ---
 
-# 15. Information-source maintenance
+# 16. Information-source maintenance
 
 Phase移行またはmaterial state changeの後、次のowner境界で情報源を更新する。
 
@@ -700,7 +800,7 @@ Phase移行またはmaterial state changeの後、次のowner境界で情報源�
 
 ---
 
-# 16. Current repository-enforcement status
+# 17. Current repository-enforcement status
 
 本書の役割分離は、既存のHuman–Agent communication、vertical work-unit delivery、vertical progression supremacyおよびCurrent Repository Development Bindingのlineageを統合する。
 
@@ -720,7 +820,7 @@ FD_0001_CLOSED=false
 
 ---
 
-# 17. Governance change rule
+# 18. Governance change rule
 
 本書のrole、authorityまたはworkflowを変更できるのはSHUKOUだけである。
 
@@ -750,7 +850,7 @@ SILENT_GOVERNANCE_DRIFT=PROHIBITED
 
 ---
 
-# 18. Canonical governance invariants
+# 19. Canonical governance invariants
 
 ```text
 HUMAN_SEMANTIC_AUTHORITY_COUNT=1
@@ -787,7 +887,7 @@ PARALLEL_SEMANTIC_AUTHORITY=0
 
 ---
 
-# 19. Operational summary
+# 20. Operational summary
 
 ```text
 SHUKOU
@@ -813,7 +913,7 @@ Structural Advisor
 
 ---
 
-# 20. Terminal declaration
+# 21. Terminal declaration
 
 ```text
 DEVELOPMENT_GOVERNANCE_DEFINED=true
