@@ -15,6 +15,7 @@ CORRECTION_ADOPTION_ID_ROUND_5=ADOPT_P14_R5_TERMINAL_CLAIM_INTEGRITY_AND_BOUND_V
 CORRECTION_ADOPTION_ID_ROUND_6=ADOPT_P14_R6_AUTHORITY_BOUND_V3_AND_OBSERVED_CLEANUP
 CORRECTION_ADOPTION_ID_ROUND_7=ADOPT_P14_R7_EXTERNAL_TRUST_ANCHOR_FOR_V3_AUTHORITY
 CORRECTION_ADOPTION_ID_ROUND_8=ADOPT_P14_R8_CANONICAL_ISSUABLE_V3_AUTHORITY
+CORRECTION_ADOPTION_ID_ROUND_9=ADOPT_P14_R9_STORE_RESOLVED_AUTHORITY_TO_EXECUTION
 GOVERNING_ISSUE=#62
 REVIEWED_MAIN_SHA=7fc597356330a0d1da7a334ef20cd913b74154d
 ```
@@ -1301,4 +1302,72 @@ correction (§14, `P14_R6_F1`) remains intact and untouched by this round's diff
 
 ```text
 P14_R8_F1_CLOSED=true
+```
+
+## 17. Structural Review Round 9 corrections (`ADOPT_P14_R9_STORE_RESOLVED_AUTHORITY_TO_EXECUTION`)
+
+**F1: the V3 Live Write Authority gate now resolves the real Project Binding, grants, and
+declarations from the real canonical Store via the identical Boot route a production GitHub
+projection call already uses -- and threads that same resolved, verified authority context
+unchanged into the exact execution function that reaches the adapter.** §16's own F1 replaced
+Round 7's un-issuable trust anchor with a genuine issuance path through the canonical
+Authority/Binding route -- but still let a caller hand the live gate a JSON-encoded blob
+embedding the complete `project_binding`/`grants`/`grant_declarations` record **bodies**
+directly. A caller able to fabricate a fully self-consistent, correctly-signed set of bodies --
+without ever actually committing any of it to the real canonical Store -- could still mint
+material the gate would accept. Worse, the one live-gated integration test
+(`test_v3_authorized_full_three_projection_run_against_the_live_target`) checked that embedded
+material against nothing at all, then executed against an entirely disconnected, freshly-bound
+throwaway Store its own `_bound()` helper built from scratch each run: the "detached pre-check
+followed by separately fixture-authorized projection" this finding names.
+
+`tests/fixtures/v3_live_write_authority.py` now consumes only project-scoped **references**
+(`V3LiveWriteAuthorityReferences`: a Store root, `project_id`, `project_binding_id`, and lists
+of `{"kind", "id"}` grant/declaration references) -- never authoritative record bodies.
+`resolve_v3_live_write_authority(store, config, references)` resolves the Project Binding
+through `manosube_agent_civilization.boot.boot_project` (the identical canonical Boot route
+`project_to_github` itself already uses to independently re-verify `human_authority_ref`),
+resolves each referenced grant/declaration through the Store's own `resolve_record` surface,
+and only then asks `evaluate_projection_authorization` whether the resolved bodies authorize
+`MATERIALIZE_PROJECTION` for the V3-configuration subject, independently for each of
+`V3_PROJECTION_KINDS`. A fully self-consistent, correctly-signed, but never-committed set of
+bodies therefore authorizes nothing: `store.resolve_record` returns `None` for any reference
+nothing ever committed, refused before `evaluate_projection_authorization` is ever reached.
+
+On success, `resolve_v3_live_write_authority` returns one immutable
+`V3AuthorizedExecutionContext` -- the Store, the exact resolved references, the verified Human
+Authority reference, the Store's own `state_revision`/`semantic_fingerprint` at authorization
+time, and the preserved per-kind Authority Decisions. `v3_execution_context_still_current(
+context)` re-Boots the identical project/binding and requires the Store's own current
+revision/fingerprint to be byte-identical to what authorization itself observed, failing closed
+on any Store mutation between authorization and the moment the context is actually used --
+proven by `test_context_no_longer_current_after_an_unrelated_store_mutation` and by two
+`dataclasses.replace`-substituted-field controls. `_run_v3_authorized_execution` (integration
+test file) now accepts an optional `context` parameter: when supplied, every projection kind in
+the run calls the new `_run_v3_authorized_vertical_proof(context, ...)`, which sources its
+Store, project, Project Binding, and Human Authority reference entirely from `context` -- never
+a disconnected throwaway Store of its own -- and mints one fresh, subject-scoped grant/
+declaration per projection kind into that same Store (the project-scoped Difference/Change/
+Evidence subject input this finding explicitly permits a caller to carry, distinct from the
+V3-configuration-scoped grants/declarations `context` itself already carries, which remain the
+meta-authorization proving a live V3 run against this exact configuration/target/boundary is
+SHUKOU-authorized at all). The gated live test and the required offline positive control
+(`test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_network_calls`,
+now built on a genuinely committed Store via `genuine_v3_authority_store_and_references`) both
+thread this one resolved context through, closing the detached-execution gap outright.
+
+The full required negative-control matrix is retained and extended: wrong project, wrong/
+never-committed Project Binding id, unresolved never-committed grant/declaration references (a
+dedicated `genuine_project_binding()`-fabricated-but-uncommitted control, plus an integration-
+level zero-network-calls proof), wrong signer, wrong decision, wrong configuration, wrong
+target repository, wrong kinds/count, revoked grant status, revoked declaration status, stale
+Store revision, and manually substituted context fields. Round 6's own cleanup correction (§14,
+`P14_R6_F1`) remains intact and untouched by this round's diff. The `v3_target_configuration`
+subject-kind schema extension (§16, disclosed as Round 8's own one deliberate design decision)
+remains unchanged and, per this round's own adoption, provisional until this canonical
+admission path passes structural review. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` remains this
+delivery's own state throughout.
+
+```text
+P14_R9_F1_CLOSED=true
 ```

@@ -48,11 +48,17 @@ from tests.fixtures.product_binding import (
     genesis_records,
     sign_github_projection_grant_declaration,
 )
-from tests.fixtures.v3_authority_test_material import genuine_v3_authority_material
+from tests.fixtures.v3_authority_test_material import (
+    genuine_project_binding,
+    genuine_v3_authority_store_and_references,
+)
 from tests.fixtures.v3_live_write_authority import (
-    V3_LIVE_WRITE_AUTHORITY_MATERIAL_ENV,
-    load_v3_live_write_authority_material,
-    v3_live_write_authorized,
+    V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV,
+    V3AuthorizedExecutionContext,
+    load_v3_live_write_authority_references,
+    open_v3_live_write_store,
+    resolve_v3_live_write_authority,
+    v3_execution_context_still_current,
 )
 from tests.fixtures.v3_target_configuration import (
     ALL_V3_ENV_VARS,
@@ -97,8 +103,8 @@ _SKIP_REASON = (
     "IMPLEMENTATION (Issue #62) authorizes preparing this harness, not executing it against "
     "a live target, until the exact repository/artifact/cleanup/no-merge boundary is "
     "separately frozen and re-confirmed, and load_v3_target_configuration()/"
-    "load_v3_live_write_authority_material()/v3_live_write_authorized() are all re-checked at "
-    "collection time on every run."
+    "load_v3_live_write_authority_references()/resolve_v3_live_write_authority() are all "
+    "re-checked at collection time on every run."
 )
 
 #: Which single ``artifact_kind`` :class:`~manosube_agent_civilization.projection.
@@ -137,29 +143,40 @@ def _v3_authorized() -> bool:
     return load_v3_target_configuration() is not None
 
 
-def _v3_live_authorized() -> bool:
-    """Return whether the V3 harness's own real-adapter tests may actually run live
+def _v3_live_authorized_context() -> V3AuthorizedExecutionContext | None:
+    """Resolve the one authority context the V3 harness's own real-adapter tests are gated on
     (Structural Review Round 4, Issue #62, P14-R4-F3; genuine signed Human Authority, Round 6,
     P14-R6-F2; external trust anchor, Round 7, P14-R7-F1; canonical issuable authority,
-    Round 8, P14-R8-F1): a fail-closed runtime gate requiring a fully validated, fully bound
-    :class:`V3TargetConfiguration` and a genuine V3 live-write authority material read from
-    the environment
-    (:func:`~tests.fixtures.v3_live_write_authority.load_v3_live_write_authority_material`),
-    verified through the identical canonical Authority/Binding route
+    Round 8, P14-R8-F1; Store/Boot-resolved authority routed to execution, Round 9, P14-R9-F1):
+    a fail-closed runtime gate requiring a fully validated, fully bound
+    :class:`V3TargetConfiguration` and project-scoped V3 live-write authority **references**
+    read from the environment
+    (:func:`~tests.fixtures.v3_live_write_authority.load_v3_live_write_authority_references`),
+    resolved against the real canonical Store those references name and verified through the
+    identical canonical Authority/Binding/Boot route
     (:func:`~manosube_agent_civilization.authority.projection_authorization.
-    evaluate_projection_authorization`) a real GitHub projection call already uses -- never a
-    V3-specific verification mechanism or trust anchor of this module's own (Structural Review
-    Round 8 replaces Round 7's own fixed, orphan trust anchor, which had no possible
-    legitimate issuer, with this reused canonical route) -- always ``False`` in this delivery.
-    This function, not a hardcoded ``pytest.mark.skip``, is what the real-adapter tests below
-    are gated on, so a later round that supplies a genuinely signed authority material via the
-    environment (issued entirely outside this repository, by whoever genuinely holds the real
-    Project Binding's Human Authority private key) activates them *without any source edit* to
-    this file."""
+    evaluate_projection_authorization`, :func:`~manosube_agent_civilization.boot.boot_project`)
+    a real GitHub projection call already uses -- always ``None`` in this delivery. This
+    function, not a hardcoded ``pytest.mark.skip``, is what the real-adapter tests below are
+    gated on, so a later round that supplies genuine references to a real, committed Store via
+    the environment (issued entirely outside this repository, by whoever genuinely holds the
+    real Project Binding's Human Authority private key, committed by whatever process SHUKOU
+    authorizes) activates them *without any source edit* to this file. The returned context,
+    when not ``None``, is the exact object every real-adapter test below must thread unchanged
+    into the execution call that reaches the adapter -- never a separately built Store/
+    project/refs of its own."""
 
     config = load_v3_target_configuration()
-    material = load_v3_live_write_authority_material()
-    return v3_live_write_authorized(config, material)
+    references = load_v3_live_write_authority_references()
+    store = open_v3_live_write_store(references)
+    return resolve_v3_live_write_authority(store, config, references)
+
+
+def _v3_live_authorized() -> bool:
+    """Boolean convenience over :func:`_v3_live_authorized_context`, for the module-level
+    ``pytest.mark.skipif`` gate, which cannot itself hold onto a resolved Store/context."""
+
+    return _v3_live_authorized_context() is not None
 
 
 def _bound(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any]]:
@@ -299,6 +316,62 @@ def _commit_declaration(
     }
 
 
+def _build_v3_subject(
+    store: FileStateStore,
+    project_id: str,
+    current_state: dict[str, Any],
+    subject_kind: str,
+    *,
+    transaction_id: str = "TX-V3-EVIDENCE-0001",
+) -> tuple[dict[str, Any], str, dict[str, Any], dict[str, Any]]:
+    """Build (and, for ``observation_evidence``, commit) one real canonical subject of
+    *subject_kind* -- the identical subject-construction logic every projection-kind proof in
+    this file shares, factored out so both :func:`_run_vertical_proof` (its own throwaway
+    Store/Binding) and :func:`_run_v3_authorized_vertical_proof` (a genuinely resolved,
+    authorized :class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext`'s
+    own Store) build the identical subject shape. Returns ``(subject_ref,
+    subject_fingerprint, kwargs, current_state)`` -- *current_state* only advances for
+    ``observation_evidence``, which must commit its own subject record before it can be
+    referenced."""
+
+    kwargs: dict[str, Any] = {}
+    if subject_kind == "difference":
+        difference = dict(derived_difference())
+        difference["project_id"] = project_id
+        difference["difference_id"] = compute_difference_id(difference)
+        subject_ref = {"kind": "difference", "id": difference["difference_id"]}
+        import hashlib
+
+        subject_fingerprint = (
+            "sha256:" + hashlib.sha256(difference["difference_id"].encode("utf-8")).hexdigest()
+        )
+        kwargs["subject_record"] = difference
+    elif subject_kind == "change":
+        difference = dict(derived_difference())
+        difference["project_id"] = project_id
+        difference["difference_id"] = compute_difference_id(difference)
+        _authority_input, _decision, change_request = change_route(
+            difference, action(), scope(), rules=[rule(project_id)]
+        )
+        change = derive_change(change_request)
+        subject_ref = {"kind": "change", "id": compute_change_id(change)}
+        subject_fingerprint = change_semantic_fingerprint(change)
+        kwargs["subject_record"] = change
+    else:
+        evidence = derive_evidence(observation_evidence_request())
+        current_state = _commit(
+            store,
+            project_id,
+            current_state,
+            transaction_id,
+            [("observation_evidence", evidence["evidence_id"], evidence)],
+        )
+        subject_ref = {"kind": "observation_evidence", "id": evidence["evidence_id"]}
+        subject_fingerprint = evidence_semantic_fingerprint(evidence)
+
+    return subject_ref, subject_fingerprint, kwargs, current_state
+
+
 def _run_vertical_proof(
     tmp_path: Path,
     *,
@@ -320,40 +393,9 @@ def _run_vertical_proof(
     human_authority_ref = dict(boot_context.human_authority_ref)
     current_state = ctx["genesis_state"]
 
-    kwargs: dict[str, Any] = {}
-    if subject_kind == "difference":
-        difference = dict(derived_difference())
-        difference["project_id"] = ctx["project_id"]
-        difference["difference_id"] = compute_difference_id(difference)
-        subject_ref = {"kind": "difference", "id": difference["difference_id"]}
-        import hashlib
-
-        subject_fingerprint = (
-            "sha256:" + hashlib.sha256(difference["difference_id"].encode("utf-8")).hexdigest()
-        )
-        kwargs["subject_record"] = difference
-    elif subject_kind == "change":
-        difference = dict(derived_difference())
-        difference["project_id"] = ctx["project_id"]
-        difference["difference_id"] = compute_difference_id(difference)
-        _authority_input, _decision, change_request = change_route(
-            difference, action(), scope(), rules=[rule(ctx["project_id"])]
-        )
-        change = derive_change(change_request)
-        subject_ref = {"kind": "change", "id": compute_change_id(change)}
-        subject_fingerprint = change_semantic_fingerprint(change)
-        kwargs["subject_record"] = change
-    else:
-        evidence = derive_evidence(observation_evidence_request())
-        current_state = _commit(
-            store,
-            ctx["project_id"],
-            current_state,
-            "TX-V3-EVIDENCE-0001",
-            [("observation_evidence", evidence["evidence_id"], evidence)],
-        )
-        subject_ref = {"kind": "observation_evidence", "id": evidence["evidence_id"]}
-        subject_fingerprint = evidence_semantic_fingerprint(evidence)
+    subject_ref, subject_fingerprint, kwargs, current_state = _build_v3_subject(
+        store, ctx["project_id"], current_state, subject_kind
+    )
 
     grant_ref, current_state, grant = _commit_grant(
         store,
@@ -387,6 +429,84 @@ def _run_vertical_proof(
         github_projection_grant_refs=[grant_ref],
         github_projection_grant_declaration_refs=[declaration_ref],
         attempt_claim_token=f"PROJECTION-ATTEMPT-V3-{projection_kind.replace('_', '-')}",
+        **kwargs,
+    )
+
+
+def _run_v3_authorized_vertical_proof(
+    context: V3AuthorizedExecutionContext,
+    *,
+    subject_kind: str,
+    projection_kind: str,
+    target_repository: dict[str, Any],
+    projection_payload: dict[str, Any],
+    adapter: Any,
+) -> dict[str, Any]:
+    """The identical projection call :func:`_run_vertical_proof` makes -- but its Store,
+    project, Project Binding, and Human Authority reference are sourced entirely from
+    *context*, the one already-resolved, already-authorized
+    :class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext`
+    :func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority` returned
+    (Structural Review Round 9, P14-R9-F1) -- never a separately built, unrelated throwaway
+    Store/Binding of this function's own the way Round 8's own ``_run_v3_authorized_execution``
+    still did. *context*'s own ``github_projection_grant_refs``/``github_projection_grant_
+    declaration_refs`` are bound to the V3-configuration subject (the meta-authorization
+    proving a live V3 run against this exact configuration/target/boundary is SHUKOU-
+    authorized at all, verified once by :func:`~tests.fixtures.v3_live_write_authority.
+    resolve_v3_live_write_authority` before this function is ever called) -- never to *this*
+    call's own Difference/Change/Evidence subject, so this function mints a fresh,
+    subject-scoped grant/declaration into *context.store*, the identical production-shaped
+    per-subject authorization :func:`~manosube_agent_civilization.projection.route.
+    project_to_github` always independently requires of every caller, V3 or not. The subject
+    itself (a fresh Difference/Change/Evidence, the project-scoped input this finding
+    explicitly permits a caller to carry) is likewise built fresh, but committed into
+    *context.store* -- the same real, already-Boot-verified Store the meta-authorization
+    itself resolved, never a disconnected one."""
+
+    store = context.store
+    project_id = context.project_id
+    human_authority_ref = dict(context.github_authority_ref)
+    current_state = dict(store.load_current(project_id))
+    projection_kind_token = projection_kind.replace("_", "-")
+
+    subject_ref, subject_fingerprint, kwargs, current_state = _build_v3_subject(
+        store,
+        project_id,
+        current_state,
+        subject_kind,
+        transaction_id=f"TX-V3-AUTHORIZED-EVIDENCE-{projection_kind_token}",
+    )
+
+    grant_ref, current_state, grant = _commit_grant(
+        store,
+        project_id,
+        human_authority_ref,
+        current_state,
+        f"TX-V3-AUTHORIZED-GRANT-{projection_kind_token}",
+        subject_ref=subject_ref,
+        subject_fingerprint=subject_fingerprint,
+        projection_kind=projection_kind,
+        target_repository=target_repository,
+        payload_fingerprint=projection_payload_fingerprint(dict(projection_payload)),
+    )
+    declaration_ref = _commit_declaration(
+        store, project_id, context.project_binding_id, human_authority_ref, grant
+    )
+
+    return project_to_github(
+        store,
+        project_id=project_id,
+        project_binding_id=context.project_binding_id,
+        subject_ref=subject_ref,
+        projection_kind=projection_kind,
+        target_repository=target_repository,
+        projection_payload=projection_payload,
+        github_authority_ref=human_authority_ref,
+        materialized_at="2026-09-08T00:00:01Z",
+        adapter=adapter,
+        github_projection_grant_refs=[grant_ref],
+        github_projection_grant_declaration_refs=[declaration_ref],
+        attempt_claim_token=f"PROJECTION-ATTEMPT-V3-AUTHORIZED-{projection_kind.replace('_', '-')}",
         **kwargs,
     )
 
@@ -599,6 +719,7 @@ def _run_v3_authorized_execution(
     adapter_factory: Callable[[str], GitHubAdapter],
     *,
     cleanup_receipt_sink: list[V3CleanupReceipt] | None = None,
+    context: V3AuthorizedExecutionContext | None = None,
 ) -> dict[str, Any]:
     """Run the complete, three-projection V3 execution as ONE cohesive run (Structural Review
     Round 5, Issue #62, P14-R5-F2), sharing a single artifact budget enforced against
@@ -618,7 +739,28 @@ def _run_v3_authorized_execution(
     supplied, receives the :class:`V3CleanupReceipt` even when this function itself raises --
     the ``finally`` block always appends to it before the original exception propagates, so a
     caller proving a failed run's own cleanup outcome does not need this function to return
-    normally to inspect it."""
+    normally to inspect it.
+
+    *context*, when supplied (Structural Review Round 9, P14-R9-F1), is the one already-
+    resolved, already-authorized :class:`~tests.fixtures.v3_live_write_authority.
+    V3AuthorizedExecutionContext` this run threads unchanged into
+    :func:`_run_v3_authorized_vertical_proof` for every projection kind, instead of each kind
+    building its own disconnected throwaway Store/Binding via :func:`_run_vertical_proof` --
+    never a detached authorization check followed by execution against an unrelated Store.
+    This function fails closed, before materializing anything, if *context* is no longer
+    current (:func:`~tests.fixtures.v3_live_write_authority.
+    v3_execution_context_still_current`) -- a Store mutation between authorization and this
+    call must refuse the whole run rather than execute against a possibly-stale context. Left
+    ``None`` (the default), every projection kind instead binds its own fresh, disconnected
+    Project via :func:`_run_vertical_proof`, exactly as this function has always done for the
+    offline budget/cleanup/failure-injection proofs that have nothing to do with V3 live-write
+    authority at all."""
+
+    if context is not None and not v3_execution_context_still_current(context):
+        raise AssertionError(
+            "V3 live-write authority context no longer reflects the current Store state -- "
+            "refusing the entire authorized run before materializing anything"
+        )
 
     counter = [0]
     materialized: list[tuple[str, str, dict[str, Any]]] = []
@@ -642,17 +784,27 @@ def _run_v3_authorized_execution(
                 counter,
                 on_materialized=_register,
             )
-            # Each projection kind binds its own genesis Project State under a distinct
-            # sub-path -- ``_bound``'s own fixed ``PROJECT_ID`` would otherwise collide the
-            # second time this loop calls it against the identical *tmp_path*.
-            outcome = _run_vertical_proof(
-                tmp_path / projection_kind,
-                subject_kind=subject_kind,
-                projection_kind=projection_kind,
-                target_repository=config.target_repository,
-                projection_payload=_v3_run_payload(config, projection_kind),
-                adapter=adapter,
-            )
+            if context is not None:
+                outcome = _run_v3_authorized_vertical_proof(
+                    context,
+                    subject_kind=subject_kind,
+                    projection_kind=projection_kind,
+                    target_repository=config.target_repository,
+                    projection_payload=_v3_run_payload(config, projection_kind),
+                    adapter=adapter,
+                )
+            else:
+                # Each projection kind binds its own genesis Project State under a distinct
+                # sub-path -- ``_bound``'s own fixed ``PROJECT_ID`` would otherwise collide
+                # the second time this loop calls it against the identical *tmp_path*.
+                outcome = _run_vertical_proof(
+                    tmp_path / projection_kind,
+                    subject_kind=subject_kind,
+                    projection_kind=projection_kind,
+                    target_repository=config.target_repository,
+                    projection_payload=_v3_run_payload(config, projection_kind),
+                    adapter=adapter,
+                )
             assert outcome["receipt"].status == "VERIFIED"
             outcomes.append(outcome)
     finally:
@@ -702,21 +854,23 @@ def test_v3_authorization_is_not_yet_configured_in_this_environment() -> None:
 
     assert _v3_authorized() is False
     assert load_v3_target_configuration() is None
-    assert load_v3_live_write_authority_material() is None
-    assert v3_live_write_authorized(None, None) is False
+    assert load_v3_live_write_authority_references() is None
+    assert resolve_v3_live_write_authority(None, None, None) is None
     assert _v3_live_authorized() is False
+    assert _v3_live_authorized_context() is None
 
 
 def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Structural Review Round 6 (Issue #62, P14-R6-F2), reused verbatim by Round 8
-    (P14-R8-F1): a fully valid, fully bound :class:`V3TargetConfiguration` *plus* a
-    genuinely-issued but mismatched (wrong configuration) V3 live-write authority material
-    must still refuse -- and, since ``_v3_live_authorized()`` is what every real-adapter
-    test's own ``pytest.mark.skipif`` gates on, that refusal happens entirely offline, before
-    any adapter is ever constructed and therefore before ``urllib.request.urlopen`` could ever
-    be called even once."""
+    (P14-R8-F1) and Round 9 (P14-R9-F1): a fully valid, fully bound
+    :class:`V3TargetConfiguration` *plus* genuinely-issued, genuinely Store-committed, but
+    mismatched (wrong configuration) V3 live-write authority references must still refuse --
+    and, since ``_v3_live_authorized()`` is what every real-adapter test's own ``pytest.mark.
+    skipif`` gates on, that refusal happens entirely offline, before any adapter is ever
+    constructed and therefore before ``urllib.request.urlopen`` could ever be called even
+    once."""
 
     valid_env = {
         TARGET_REPOSITORY_ENV: "acme/widget",
@@ -737,14 +891,26 @@ def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
     config = load_v3_target_configuration()
     assert config is not None
 
-    # A genuinely issued (real project_binding, real signed grant/declaration pair) material
-    # blob -- but built for a *different* configuration (a different repository), so its own
-    # subject_fingerprint/target_repository never match this environment's real config. Real
-    # cryptographic material, real canonical shape, still refused (Structural Review Round 8,
-    # P14-R8-F1).
+    # A genuinely issued (real Store-committed project_binding, real signed grant/declaration
+    # pair per projection kind) set of references -- but built for a *different* configuration
+    # (a different repository), so the resolved grants' own subject_fingerprint/
+    # target_repository never match this environment's real config. Real cryptographic
+    # material, genuinely committed to a real Store, still refused (Structural Review Round 9,
+    # P14-R9-F1).
     wrong_config = replace(config, repo="a-different-widget")
-    mismatched_material = genuine_v3_authority_material(wrong_config)
-    monkeypatch.setenv(V3_LIVE_WRITE_AUTHORITY_MATERIAL_ENV, json.dumps(mismatched_material))
+    _store, mismatched_references = genuine_v3_authority_store_and_references(
+        tmp_path, wrong_config
+    )
+    payload = {
+        "store_root": mismatched_references.store_root,
+        "project_id": mismatched_references.project_id,
+        "project_binding_id": mismatched_references.project_binding_id,
+        "github_projection_grant_refs": list(mismatched_references.github_projection_grant_refs),
+        "github_projection_grant_declaration_refs": list(
+            mismatched_references.github_projection_grant_declaration_refs
+        ),
+    }
+    monkeypatch.setenv(V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV, json.dumps(payload))
 
     def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
         raise AssertionError(
@@ -755,8 +921,81 @@ def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
     monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
 
     assert _v3_authorized() is True
-    assert load_v3_live_write_authority_material() == mismatched_material
+    assert load_v3_live_write_authority_references() == mismatched_references
     assert _v3_live_authorized() is False
+    assert _v3_live_authorized_context() is None
+
+
+def test_never_committed_fabricated_material_causes_zero_network_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Structural Review Round 9's own required control: a fully self-consistent,
+    correctly-signed Project Binding and grant/declaration -- built entirely offline via
+    :func:`~tests.fixtures.v3_authority_test_material.genuine_project_binding` and never
+    committed to the real, genuinely-bound Store this environment's own references name --
+    must cause zero network calls. ``store.resolve_record`` returns ``None`` for a reference
+    nothing ever committed, refused before ``evaluate_projection_authorization`` is ever
+    reached and therefore before any adapter could ever be constructed."""
+
+    valid_env = {
+        TARGET_REPOSITORY_ENV: "acme/widget",
+        TOKEN_ENV: "test-token-not-a-real-secret",
+        CHANGE_HEAD_REF_ENV: "agent/frozen-v3-branch",
+        CHANGE_BASE_REF_ENV: "main",
+        EVIDENCE_HEAD_SHA_ENV: "0123456789abcdef0123456789abcdef01234567",
+        ARTIFACT_NAMING_PREFIX_ENV: "MANOSUBE V3 proof (do not merge)",
+        CLEANUP_CONFIRMED_ENV: "true",
+        NO_MERGE_CONFIRMED_ENV: "true",
+        AUTHORIZED_ARTIFACT_KINDS_ENV: "issue,pull_request,check_run",
+        AUTHORIZED_ARTIFACT_COUNT_ENV: "3",
+    }
+    for key, value in valid_env.items():
+        monkeypatch.setenv(key, value)
+    config = load_v3_target_configuration()
+    assert config is not None
+
+    # A real, genuinely bound and committed Store -- but the grant/declaration references
+    # this environment names point at a fabricated Project Binding's own never-committed
+    # ids, never anything this real Store actually contains.
+    _store, real_references = genuine_v3_authority_store_and_references(tmp_path, config)
+    fabricated_binding = genuine_project_binding()
+    fabricated_payload = {
+        "store_root": real_references.store_root,
+        "project_id": real_references.project_id,
+        "project_binding_id": real_references.project_binding_id,
+        "github_projection_grant_refs": [
+            {
+                "kind": "github_projection_grant",
+                "id": f"GH-PROJ-GRANT-NEVER-COMMITTED-{fabricated_binding['project_binding_id']}",
+            }
+        ],
+        "github_projection_grant_declaration_refs": [
+            {
+                "kind": "github_projection_grant_declaration",
+                "id": (
+                    f"GH-PROJ-GRANT-DECL-NEVER-COMMITTED-{fabricated_binding['project_binding_id']}"
+                ),
+            }
+        ],
+    }
+    monkeypatch.setenv(V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV, json.dumps(fabricated_payload))
+
+    def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
+        raise AssertionError(
+            "urllib.request.urlopen was called despite unresolved, never-committed V3 "
+            "live-write authority references -- this must never happen"
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
+
+    assert _v3_live_authorized() is False
+    assert _v3_live_authorized_context() is None
+    # The real Store, for its part, genuinely does authorize its own real references --
+    # proving the refusal above is specific to the fabricated, never-committed ids, not to
+    # this Store/configuration pairing being unauthorizable in general.
+    real_store = open_v3_live_write_store(real_references)
+    assert real_store is not None
+    assert resolve_v3_live_write_authority(real_store, config, real_references) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -881,10 +1120,13 @@ def test_v3_authorized_full_three_projection_run_against_the_live_target(tmp_pat
 
     config = load_v3_target_configuration()
     assert config is not None
-    material = load_v3_live_write_authority_material()
-    assert v3_live_write_authorized(config, material)
+    context = _v3_live_authorized_context()
+    assert context is not None
     result = _run_v3_authorized_execution(
-        tmp_path, config, lambda projection_kind: RealGitHubAdapter(token=config.token)
+        tmp_path,
+        config,
+        lambda projection_kind: RealGitHubAdapter(token=config.token),
+        context=context,
     )
     assert result["materialized_count"] == config.authorized_artifact_count
     assert result["cleanup_receipt"].all_closed
@@ -915,14 +1157,18 @@ _MOCK_CONFIG = V3TargetConfiguration(
 
 
 # ---------------------------------------------------------------------------
-# Structural Review Round 8 (P14-R8-F1)'s own required positive control: a genuinely issued V3
-# live-write authority material -- verified through the identical canonical Authority/Binding
-# route the live gate itself consumes -- reaches the controlled adapter boundary for every
-# projection kind, entirely offline, with zero network calls of any kind. Deliberately drives
-# ``_run_vertical_proof`` directly (the identical body the module-level controlled-adapter
-# tests above already use), never ``_run_v3_authorized_execution`` -- whose own cleanup step
-# always issues a real PATCH regardless of which adapter materialized the artifact, which
-# would defeat the "zero network calls" proof this positive control specifically makes.
+# Structural Review Round 8 (P14-R8-F1)'s own required positive control, updated for Round 9
+# (P14-R9-F1): a genuinely issued, genuinely Store-committed V3 live-write authority --
+# resolved through the identical canonical Authority/Binding/Boot route the live gate itself
+# consumes -- reaches the controlled adapter boundary for every projection kind, entirely
+# offline, with zero network calls of any kind. Deliberately drives
+# ``_run_v3_authorized_vertical_proof`` directly (never ``_run_v3_authorized_execution``,
+# whose own cleanup step always issues a real PATCH regardless of which adapter materialized
+# the artifact, which would defeat the "zero network calls" proof this positive control
+# specifically makes) -- but now threads the *same* resolved
+# :class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext` the live gate
+# itself would produce, rather than a detached ``_run_vertical_proof`` call against an
+# unrelated throwaway Store.
 # ---------------------------------------------------------------------------
 
 
@@ -964,8 +1210,10 @@ def test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_n
     projection_kind: str,
     projection_payload: dict[str, Any],
 ) -> None:
-    material = genuine_v3_authority_material(_MOCK_CONFIG)
-    assert v3_live_write_authorized(_MOCK_CONFIG, material) is True
+    store, references = genuine_v3_authority_store_and_references(tmp_path, _MOCK_CONFIG)
+    context = resolve_v3_live_write_authority(store, _MOCK_CONFIG, references)
+    assert context is not None
+    assert v3_execution_context_still_current(context) is True
 
     def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
         raise AssertionError(
@@ -975,8 +1223,8 @@ def test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_n
 
     monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
 
-    outcome = _run_vertical_proof(
-        tmp_path,
+    outcome = _run_v3_authorized_vertical_proof(
+        context,
         subject_kind=subject_kind,
         projection_kind=projection_kind,
         target_repository={

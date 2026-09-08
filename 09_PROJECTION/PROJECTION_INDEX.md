@@ -203,6 +203,10 @@ V3_LIVE_WRITE_AUTHORITY_ROUTED_THROUGH_CANONICAL_PROJECTION_AUTHORIZATION=true
 V3_LIVE_WRITE_AUTHORITY_ISSUABLE_VIA_REAL_PROJECT_BINDING_AND_SIGNED_GRANT_DECLARATION=true
 V3_TARGET_CONFIGURATION_SUBJECT_KIND_ADDED_TO_AUTHORITY_AND_BINDING_SCHEMAS=true
 ORPHAN_V3_TEST_SIGNER_AND_TRUST_ANCHOR_REMOVED=true
+V3_LIVE_WRITE_AUTHORITY_RESOLVED_FROM_REAL_STORE_VIA_BOOT=true
+V3_LIVE_WRITE_AUTHORITY_ACCEPTS_REFERENCES_NEVER_BODIES=true
+V3_AUTHORIZED_CONTEXT_THREADED_UNCHANGED_INTO_EXECUTION=true
+V3_STALE_STORE_REVISION_DETECTED_AND_REFUSED=true
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
@@ -296,6 +300,24 @@ owner's own vocabulary, never a second owner. Round 7's now-superseded orphan te
 material builder (`tests/fixtures/v3_authority_test_material.py`) reuses this repository's own
 established Product Binding fixtures rather than inventing a second signing convention.
 `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
+The four lines immediately above `PHASE_14_COMPLETE` record Structural Review Round 9's own
+correction (`ADOPT_P14_R9_STORE_RESOLVED_AUTHORITY_TO_EXECUTION`) -- see
+`PROJECTION_CONTRACT.md` §17 for the full detail: the V3 live gate no longer accepts
+caller-supplied `project_binding`/`grants`/`grant_declarations` **bodies** at all -- only
+project-scoped **references** (a Store root, `project_id`, `project_binding_id`, grant/
+declaration ids), resolved against the real canonical Store through the identical Boot route
+(`boot.boot_project`) a real GitHub projection call already uses. A fully self-consistent,
+correctly-signed, but never-committed set of bodies now authorizes nothing, since
+`store.resolve_record` never resolves a reference nothing ever committed. The resolved,
+verified authority context (`V3AuthorizedExecutionContext`) is threaded unchanged into the
+exact execution function that reaches the adapter -- closing the "detached pre-check followed
+by separately fixture-authorized projection" gap Round 8's own design still had, where the
+live-gated test checked embedded material against nothing, then executed against an entirely
+disconnected throwaway Store. `v3_execution_context_still_current` fails the whole run closed
+if the Store mutates between authorization and execution. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=
+false` still holds, unchanged by any of this; the Round 8 `v3_target_configuration` schema
+extension remains unchanged and, per this round's own adoption, provisional until this
+canonical admission path passes structural review.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.

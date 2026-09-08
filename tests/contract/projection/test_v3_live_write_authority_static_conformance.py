@@ -1,6 +1,7 @@
-"""Phase 14 (Issue #62), Structural Review Round 8 (P14-R8-F1): static proof that the V3
-live-write gate consumes the canonical Authority/Binding owners -- never a parallel, test-only
-signing mechanism -- and holds no private key of its own.
+"""Phase 14 (Issue #62), Structural Review Round 8 (P14-R8-F1) and Round 9 (P14-R9-F1): static
+proof that the V3 live-write gate consumes the canonical Authority/Binding/Boot/Store owners --
+never a parallel, test-only signing mechanism or a caller-supplied authoritative record body --
+and holds no private key of its own.
 
 A real AST walk over module source -- never a grep, never a hand-maintained assumption -- the
 identical technique
@@ -10,8 +11,8 @@ already establish, applied here to prove:
 
 1. The live gate module (:mod:`tests.fixtures.v3_live_write_authority`) imports and consumes
    the real canonical owners -- ``authority.projection_authorization.
-   evaluate_projection_authorization`` and ``binding.identity.
-   verify_project_binding_identity`` -- and never imports the test-only material builder
+   evaluate_projection_authorization``, ``boot.boot_project``, and the Store's own
+   ``resolve_record`` surface -- and never imports the test-only material builder
    (:mod:`tests.fixtures.v3_authority_test_material`) or ``Ed25519PrivateKey``.
 2. That live gate module defines no private-key-producing or signature-producing callable of
    its own.
@@ -19,6 +20,14 @@ already establish, applied here to prove:
    reference to any V3-specific authority module, constant, or literal, and imports no
    ``Ed25519PrivateKey`` -- the V3 harness never ships.
 4. The test-only material builder is never imported by the live gate module.
+5. Structural Review Round 9 (P14-R9-F1): the live gate's own authorization entry points
+   (:func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority`,
+   :func:`~tests.fixtures.v3_live_write_authority.v3_execution_context_still_current`) accept
+   no parameter that could carry an authoritative Project Binding, grant, declaration, or
+   Authority Decision **body** -- only a Store instance, a configuration, and project-scoped
+   **references** (:class:`~tests.fixtures.v3_live_write_authority.
+   V3LiveWriteAuthorityReferences`) or an already-resolved
+   :class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext`.
 """
 
 from __future__ import annotations
@@ -44,6 +53,17 @@ _FORBIDDEN_SHIPPED_LITERALS = (
     "v3_authority_test_material",
     "V3_CONFIGURATION_SUBJECT_KIND",
     "Ed25519PrivateKey",
+)
+
+#: Parameter names that would signal a caller-supplied authoritative record **body**, rather
+#: than a reference to one already resolved from the real Store -- forbidden on every one of
+#: the live gate's own authorization entry points (Structural Review Round 9, P14-R9-F1).
+_FORBIDDEN_BODY_PARAMETER_NAMES = (
+    "material",
+    "project_binding",
+    "grants",
+    "grant_declarations",
+    "grant_declaration",
 )
 
 
@@ -83,8 +103,11 @@ def test_live_gate_module_imports_the_real_canonical_owners() -> None:
         for name in imported
     )
     assert any(
-        name.endswith("verify_project_binding_identity")
-        or name == "manosube_agent_civilization.binding.identity"
+        name.endswith("boot_project") or name == "manosube_agent_civilization.boot"
+        for name in imported
+    )
+    assert any(
+        name == "manosube_agent_civilization.store" or name.endswith("FileStateStore")
         for name in imported
     )
 
@@ -96,6 +119,8 @@ def test_live_gate_module_defines_no_private_key_or_signing_capability() -> None
         "assemble_v3_live_write_authority",
         "v3_authority_signing_key",
         "V3_LIVE_TRUST_ANCHOR",
+        "_verified_project_binding",
+        "load_v3_live_write_authority_material",
     ):
         assert not hasattr(live_gate_module, removed_name)
 
@@ -124,3 +149,40 @@ def test_test_material_builder_is_never_imported_by_the_live_gate_module() -> No
     assert test_material_module.genuine_project_binding is not None
     imported = _imported_module_names(live_gate_module)
     assert not any("v3_authority_test_material" in name for name in imported)
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 9 (P14-R9-F1): the live gate accepts only references, never bodies.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_v3_live_write_authority_accepts_no_authoritative_body_parameter() -> None:
+    signature = inspect.signature(live_gate_module.resolve_v3_live_write_authority)
+    forbidden = set(_FORBIDDEN_BODY_PARAMETER_NAMES) & set(signature.parameters)
+    assert forbidden == set()
+
+
+def test_resolve_v3_live_write_authority_takes_a_store_and_references_not_a_material_blob() -> None:
+    signature = inspect.signature(live_gate_module.resolve_v3_live_write_authority)
+    parameter_names = list(signature.parameters)
+    assert parameter_names == ["store", "config", "references"]
+
+
+def test_v3_execution_context_still_current_accepts_only_the_opaque_context() -> None:
+    signature = inspect.signature(live_gate_module.v3_execution_context_still_current)
+    assert list(signature.parameters) == ["context"]
+
+
+def test_v3_live_write_authority_references_dataclass_carries_no_body_field() -> None:
+    import dataclasses
+
+    field_names = {
+        field.name for field in dataclasses.fields(live_gate_module.V3LiveWriteAuthorityReferences)
+    }
+    assert field_names == {
+        "store_root",
+        "project_id",
+        "project_binding_id",
+        "github_projection_grant_refs",
+        "github_projection_grant_declaration_refs",
+    }
