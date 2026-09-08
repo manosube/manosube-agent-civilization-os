@@ -20,14 +20,12 @@ from tests.fixtures.v3_target_configuration import (
     CHANGE_HEAD_REF_ENV,
     CLEANUP_CONFIRMED_ENV,
     EVIDENCE_HEAD_SHA_ENV,
-    LIVE_WRITE_AUTHORIZED_ENV,
     NO_MERGE_CONFIRMED_ENV,
     TARGET_REPOSITORY_ENV,
     TOKEN_ENV,
     V3ConfigurationError,
     V3TargetConfiguration,
     load_v3_target_configuration,
-    v3_live_write_authorized,
 )
 
 _VALID_ENV = {
@@ -214,56 +212,6 @@ def test_cleanup_and_no_merge_confirmed_are_bound_fields_not_discarded() -> None
     assert config.no_merge_confirmed is True
 
 
-def test_v3_live_write_authorized_defaults_false_when_config_is_none() -> None:
-    assert v3_live_write_authorized(None, env={}) is False
-
-
-def test_v3_live_write_authorized_defaults_false_when_env_var_unset() -> None:
-    config = load_v3_target_configuration(env=_VALID_ENV)
-    assert config is not None
-    assert v3_live_write_authorized(config, env={}) is False
-
-
-@pytest.mark.parametrize("bad_value", ["True", "true", "1", "", "false", "not-a-fingerprint"])
-def test_v3_live_write_authorized_rejects_anything_but_the_exact_configuration_fingerprint(
-    bad_value: str,
-) -> None:
-    """Structural Review Round 5 (Issue #62, P14-R5-F2): the unscoped literal ``"true"`` Round
-    4 accepted is no longer sufficient -- only the exact ``configuration_fingerprint`` of
-    *this* configuration authorizes it."""
-
-    config = load_v3_target_configuration(env=_VALID_ENV)
-    assert config is not None
-    assert v3_live_write_authorized(config, env={LIVE_WRITE_AUTHORIZED_ENV: bad_value}) is False
-
-
-def test_v3_live_write_authorized_true_with_the_exact_configuration_fingerprint() -> None:
-    config = load_v3_target_configuration(env=_VALID_ENV)
-    assert config is not None
-    env = {LIVE_WRITE_AUTHORIZED_ENV: config.configuration_fingerprint}
-    assert v3_live_write_authorized(config, env=env) is True
-
-
-def test_v3_live_write_authorized_default_env_source_is_os_environ(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config = load_v3_target_configuration(env=_VALID_ENV)
-    assert config is not None
-    monkeypatch.setenv(LIVE_WRITE_AUTHORIZED_ENV, config.configuration_fingerprint)
-    assert v3_live_write_authorized(config) is True
-
-
-def test_live_write_authority_is_independent_of_configuration_validity() -> None:
-    """A fully valid, fully bound configuration alone never authorizes a live write -- the two
-    gates are deliberately decoupled (Structural Review Round 4, P14-R4-F3): this delivery's
-    own environment carries neither, but the independence must hold even when configuration
-    alone is present."""
-
-    config = load_v3_target_configuration(env=_VALID_ENV)
-    assert config is not None
-    assert v3_live_write_authorized(config, env=_VALID_ENV) is False
-
-
 # ---------------------------------------------------------------------------
 # Structural Review Round 5 (Issue #62, P14-R5-F2): authority bound to the exact
 # configuration identity -- changing any one bound field, under an otherwise genuine
@@ -306,19 +254,13 @@ def test_changing_any_one_bound_field_changes_the_configuration_fingerprint(
     assert base.configuration_fingerprint != changed.configuration_fingerprint
 
 
-def test_authorization_value_computed_for_one_configuration_refuses_a_changed_one() -> None:
-    """The mechanical proof this finding requires: an authorization value that is genuine for
-    one exact configuration -- copied unchanged onto a configuration that later had even one
-    bound field (here, the target repository) changed -- refuses, entirely offline, before any
-    network access this refusal precedes could ever occur."""
+def test_configuration_fingerprint_is_deterministic_and_key_order_insensitive() -> None:
+    """The same logical configuration, loaded twice, must recompute the identical fingerprint
+    -- this is the value :mod:`tests.fixtures.v3_live_write_authority`'s own signed authority
+    record binds itself to, so its own determinism is required, not merely convenient."""
 
-    original = load_v3_target_configuration(env=_VALID_ENV)
-    assert original is not None
-    authorized_env = {LIVE_WRITE_AUTHORIZED_ENV: original.configuration_fingerprint}
-    assert v3_live_write_authorized(original, env=authorized_env) is True
-
-    changed = load_v3_target_configuration(
-        env={**_VALID_ENV, TARGET_REPOSITORY_ENV: "acme/a-different-widget"}
-    )
-    assert changed is not None
-    assert v3_live_write_authorized(changed, env=authorized_env) is False
+    first = load_v3_target_configuration(env=_VALID_ENV)
+    second = load_v3_target_configuration(env=dict(_VALID_ENV))
+    assert first is not None
+    assert second is not None
+    assert first.configuration_fingerprint == second.configuration_fingerprint

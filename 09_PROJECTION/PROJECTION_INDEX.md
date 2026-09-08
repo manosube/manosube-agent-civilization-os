@@ -192,6 +192,10 @@ RESOLVED_ENVELOPE_INTEGRITY_INDEPENDENTLY_RE_VERIFIED_BEFORE_REUSE_CLASSIFICATIO
 V3_LIVE_WRITE_AUTHORITY_BOUND_TO_EXACT_CONFIGURATION_FINGERPRINT=true
 V3_WHOLE_RUN_ARTIFACT_COUNT_ENFORCED_ACROSS_ALL_THREE_PROJECTION_KINDS=true
 V3_CLEANUP_TERMINAL_IMPLEMENTED_INCLUDING_PARTIAL_RUN_FAILURE=true
+CLEANUP_REGISTERED_AT_EXTERNAL_WRITE_BOUNDARY_NOT_AFTER_ROUTE_RETURN=true
+CLEANUP_TERMINAL_STATE_INDEPENDENTLY_VERIFIED_NOT_HTTP_SUCCESS_ALONE=true
+V3_LIVE_WRITE_AUTHORITY_IS_A_GENUINE_SIGNED_HUMAN_AUTHORITY_RECORD=true
+UNAUTHORIZED_OR_MISMATCHED_V3_AUTHORITY_CAUSES_ZERO_NETWORK_CALLS=true
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
@@ -231,6 +235,24 @@ reuse classification is ever reached, V3 live-write authority is now bound to th
 the complete three-projection run, and a cleanup terminal closes every artifact a run actually
 materializes, including under partial-run failure. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false`
 still holds, unchanged by any of this.
+The four lines immediately above `PHASE_14_COMPLETE` record Structural Review Round 6's own
+corrections (`ADOPT_P14_R6_AUTHORITY_BOUND_V3_AND_OBSERVED_CLEANUP`) -- see
+`PROJECTION_CONTRACT.md` §14 for the full detail each one fixes: cleanup is now registered at
+the true external-write boundary itself (inside the adapter wrapper's own `materialize()` call,
+via an `on_materialized` callback), not after the whole enclosing route call has already
+returned, so a later route step (`observe`, Envelope derivation, Store commit) failing after a
+genuine external write already succeeded no longer leaves that artifact untracked; a cleanup
+result is reported closed only after the returned response body is independently parsed and
+found to actually reflect the closed/cancelled terminal state, never on a non-error HTTP status
+alone. V3 live-write authority is now a genuine Ed25519-signed SHUKOU/Human Authority record
+(`tests/fixtures/v3_live_write_authority.py`), verified with the identical primitive this
+repository's own signed Human Grant Declarations already use, replacing Round 5's own
+caller-computable-digest mechanism (`LIVE_WRITE_AUTHORIZED_ENV` equal to the configuration's
+own `configuration_fingerprint`) outright -- a value any caller could compute unaided was never
+itself Authority. A fabricated, stale, wrong-fingerprint, wrong-target, wrong-action, or
+widened-boundary authority record refuses before any network call this harness would have made
+on its strength, proved by a monkeypatched `urllib.request.urlopen` that raises if ever
+invoked. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.

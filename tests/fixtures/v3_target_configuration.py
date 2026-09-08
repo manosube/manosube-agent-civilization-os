@@ -29,32 +29,26 @@ verify *which* artifact kinds, or how many artifacts, this authorization actuall
 ``authorized_artifact_kinds``, and ``authorized_artifact_count`` as real fields of the
 returned, bound configuration -- never checked-then-thrown-away.
 
-**Live-write authority is separate from configuration validity.** A fully valid, fully bound
-:class:`V3TargetConfiguration` still never itself authorizes a live network call --
-:func:`v3_live_write_authorized` is the one additional, independently-gated input a caller
-must also supply (via :data:`LIVE_WRITE_AUTHORIZED_ENV`) before the V3 harness's own
-real-adapter tests may run live. The two gates are deliberately decoupled: configuration can
-be fully frozen and validated with live-write authority still withheld (this delivery's own
-state), but never the reverse -- an incomplete or invalid configuration can never be worked
-around merely by supplying live-write authority. ``V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false``
-remains this delivery's own state: the harness's own real-adapter tests gate on both functions
-together (see ``test_v3_real_github_vertical_proof.py``'s own ``_v3_live_authorized``), so
-activating them later needs only the right environment variables set -- no source edit to
-either this module or the harness itself.
-
-**Authority is bound to the exact configuration identity, not a bare boolean (Structural
-Review Round 5, Issue #62, P14-R5-F2).** Round 4's own ``LIVE_WRITE_AUTHORIZED_ENV`` accepted
-the unscoped literal ``"true"`` -- genuine authority once granted stayed valid even after any
-bound configuration field (repository, refs, SHA, artifact kinds/count, naming, cleanup,
-no-merge) was later changed, because nothing tied the grant to *which* configuration it was
-actually granted for. :attr:`V3TargetConfiguration.configuration_fingerprint` is now the
-canonical, deterministic digest of every bound field except the secret ``token`` (a secret
-must never enter a value a caller compares or logs), and :func:`v3_live_write_authorized` now
-requires :data:`LIVE_WRITE_AUTHORIZED_ENV` to equal *that exact fingerprint* for *the exact
-configuration :func:`load_v3_target_configuration` just returned* -- never a bare ``"true"``.
-Changing any one bound field (a different repository, a different SHA, a widened artifact
-count) recomputes a different fingerprint, so a stale authorization value refuses before this
-function ever returns ``True``, and therefore before the caller could reach any network call.
+**Live-write authority is separate from configuration validity, and is owned by a dedicated
+module.** A fully valid, fully bound :class:`V3TargetConfiguration` still never itself
+authorizes a live network call. Through Structural Review Round 5 (Issue #62, P14-R5-F2),
+that authority was an unscoped-then-fingerprint-bound boolean owned by this module
+(``v3_live_write_authorized``/``LIVE_WRITE_AUTHORIZED_ENV``) -- but a caller-computable
+configuration digest is still not itself a Human Authority, only a shape a genuine one could
+also satisfy. Structural Review Round 6 (Issue #62, P14-R6-F2) replaces it with a genuine,
+Ed25519-signed V3 Live Write Authority record, verified against one fixed, non-caller-
+controlled public key: see :mod:`tests.fixtures.v3_live_write_authority`, whose own
+``v3_live_write_authorized(config, authority_record, evaluation_time=...)`` is what the V3
+harness's own real-adapter tests now gate on (see
+``test_v3_real_github_vertical_proof.py``'s own ``_v3_live_authorized``).
+:attr:`V3TargetConfiguration.configuration_fingerprint` (below) remains this module's own
+contribution to that binding -- the canonical, deterministic digest of every bound field
+except the secret ``token`` -- now one of several fields a genuine authority record must
+itself carry and be signed over, rather than the caller-supplied comparison value itself. The
+two gates (configuration validity, live-write authority) remain deliberately decoupled:
+configuration can be fully frozen and validated with live-write authority still withheld
+(this delivery's own state), but never the reverse. ``V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false``
+remains this delivery's own state throughout.
 """
 
 from __future__ import annotations
@@ -113,15 +107,6 @@ ALL_V3_ENV_VARS: tuple[str, ...] = (
     AUTHORIZED_ARTIFACT_KINDS_ENV,
     AUTHORIZED_ARTIFACT_COUNT_ENV,
 )
-
-#: A dedicated, independently-gated input (Structural Review Round 4, P14-R4-F3) --
-#: deliberately *not* one of :data:`ALL_V3_ENV_VARS`, so configuration validity and live-write
-#: authority remain two separate gates: a fully valid, fully bound configuration alone never
-#: authorizes a live network call. Structural Review Round 5 (P14-R5-F2): this variable's own
-#: required value changed from the unscoped literal ``"true"`` to the exact
-#: ``configuration_fingerprint`` of the one :class:`V3TargetConfiguration` it authorizes --
-#: authority is now bound to *which* configuration was granted for, not a bare boolean.
-LIVE_WRITE_AUTHORIZED_ENV = "MANOSUBE_P14_V3_LIVE_WRITE_AUTHORIZED"
 
 #: The one literal value that counts as an explicit confirmation -- anything else (unset,
 #: empty, ``"false"``, ``"yes"``, mixed case) fails closed rather than being coerced.
@@ -312,29 +297,3 @@ def load_v3_target_configuration(
         authorized_artifact_kinds=authorized_artifact_kinds,
         authorized_artifact_count=authorized_artifact_count,
     )
-
-
-def v3_live_write_authorized(
-    config: V3TargetConfiguration | None, env: Mapping[str, str] | None = None
-) -> bool:
-    """Return whether *config* -- the exact :class:`V3TargetConfiguration`
-    :func:`load_v3_target_configuration` returned -- is live-write authorized (Structural
-    Review Round 4, Issue #62, P14-R4-F3; bound to configuration identity, Structural Review
-    Round 5, P14-R5-F2): :data:`LIVE_WRITE_AUTHORIZED_ENV` must equal *config*'s own
-    :attr:`~V3TargetConfiguration.configuration_fingerprint` exactly. ``config=None`` (the
-    unconfigured case) and a missing or mismatched authorization value both return ``False``
-    rather than raising -- this function is a pure boolean gate, never itself a source of a
-    network call. Performs no I/O of its own beyond a single environment-variable read; *env*
-    defaults to :data:`os.environ`, identically to :func:`load_v3_target_configuration`.
-
-    Binding to the exact fingerprint (rather than the unscoped literal ``"true"`` Round 4
-    used) is what makes changing any one bound configuration field -- a different repository,
-    a different SHA, a widened artifact count, a renamed naming prefix, a flipped cleanup/
-    no-merge confirmation -- refuse before any network access: an authorization value copied
-    for a prior configuration no longer equals a changed configuration's own recomputed
-    fingerprint."""
-
-    if config is None:
-        return False
-    source = env if env is not None else os.environ
-    return source.get(LIVE_WRITE_AUTHORIZED_ENV) == config.configuration_fingerprint

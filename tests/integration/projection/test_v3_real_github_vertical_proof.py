@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 from typing import Any
@@ -48,10 +49,26 @@ from tests.fixtures.product_binding import (
     genesis_records,
     sign_github_projection_grant_declaration,
 )
+from tests.fixtures.v3_live_write_authority import (
+    V3_LIVE_WRITE_AUTHORITY_RECORD_ENV,
+    assemble_v3_live_write_authority,
+    load_v3_live_write_authority_record,
+    v3_live_write_authorized,
+)
 from tests.fixtures.v3_target_configuration import (
+    ALL_V3_ENV_VARS,
+    ARTIFACT_NAMING_PREFIX_ENV,
+    AUTHORIZED_ARTIFACT_COUNT_ENV,
+    AUTHORIZED_ARTIFACT_KINDS_ENV,
+    CHANGE_BASE_REF_ENV,
+    CHANGE_HEAD_REF_ENV,
+    CLEANUP_CONFIRMED_ENV,
+    EVIDENCE_HEAD_SHA_ENV,
+    NO_MERGE_CONFIRMED_ENV,
+    TARGET_REPOSITORY_ENV,
+    TOKEN_ENV,
     V3TargetConfiguration,
     load_v3_target_configuration,
-    v3_live_write_authorized,
 )
 from tests.state_helpers import SCHEMA_ROOT
 
@@ -81,7 +98,8 @@ _SKIP_REASON = (
     "IMPLEMENTATION (Issue #62) authorizes preparing this harness, not executing it against "
     "a live target, until the exact repository/artifact/cleanup/no-merge boundary is "
     "separately frozen and re-confirmed, and load_v3_target_configuration()/"
-    "v3_live_write_authorized() are both re-checked at collection time on every run."
+    "load_v3_live_write_authority_record()/v3_live_write_authorized() are all re-checked at "
+    "collection time on every run."
 )
 
 #: Which single ``artifact_kind`` :class:`~manosube_agent_civilization.projection.
@@ -122,18 +140,24 @@ def _v3_authorized() -> bool:
 
 def _v3_live_authorized() -> bool:
     """Return whether the V3 harness's own real-adapter tests may actually run live
-    (Structural Review Round 4, Issue #62, P14-R4-F3; bound to configuration identity,
-    Structural Review Round 5, P14-R5-F2): a fail-closed runtime gate requiring *both* a fully
-    validated, fully bound :class:`V3TargetConfiguration` *and* the wholly separate,
-    independently-gated ``v3_live_write_authorized()`` check -- which now requires the
-    authorization value to equal *this exact configuration's own*
-    ``configuration_fingerprint``, not a bare boolean -- always ``False`` in this delivery.
-    This function, not a hardcoded ``pytest.mark.skip``, is what the real-adapter tests below
-    are gated on, so a later round that supplies both inputs via the environment activates
-    them *without any source edit* to this file."""
+    (Structural Review Round 4, Issue #62, P14-R4-F3; genuine signed Human Authority,
+    Structural Review Round 6, P14-R6-F2): a fail-closed runtime gate requiring *all three* of
+    a fully validated, fully bound :class:`V3TargetConfiguration`, a genuine Ed25519-signed
+    V3 Live Write Authority record read from the environment
+    (:func:`~tests.fixtures.v3_live_write_authority.load_v3_live_write_authority_record`), and
+    that record's own verification against the fixed, non-caller-controlled public key
+    (:func:`~tests.fixtures.v3_live_write_authority.v3_live_write_authorized`) -- always
+    ``False`` in this delivery. This function, not a hardcoded ``pytest.mark.skip``, is what
+    the real-adapter tests below are gated on, so a later round that supplies a genuinely
+    signed authority record via the environment activates them *without any source edit* to
+    this file. *evaluation_time* is read from the real clock here, at this one call site,
+    and passed explicitly into the pure ``v3_live_write_authorized`` -- never read inside that
+    function itself."""
 
     config = load_v3_target_configuration()
-    return config is not None and v3_live_write_authorized(config)
+    authority_record = load_v3_live_write_authority_record()
+    evaluation_time = datetime.now(UTC).isoformat()
+    return v3_live_write_authorized(config, authority_record, evaluation_time=evaluation_time)
 
 
 def _bound(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any]]:
@@ -388,12 +412,29 @@ class _BudgetEnforcingAdapter:
     ``adapter_identity``) passes straight through unchanged -- this wrapper exists only to
     enforce the one authorized count, never to reinterpret materialization/observation
     semantics :class:`~manosube_agent_civilization.projection.types.GitHubAdapter` already
-    owns."""
+    owns.
 
-    def __init__(self, adapter: GitHubAdapter, budget: int, counter: list[int]) -> None:
+    Structural Review Round 6 (Issue #62, P14-R6-F1): *on_materialized* is called with the
+    real ``external_artifact_ref`` the instant ``adapter.materialize`` itself returns
+    successfully -- at the external-write boundary itself, before ``materialize`` even
+    returns to ``project_to_github``'s own caller, and therefore before observation, receipt
+    construction, the Envelope's own Store commit, or any later route step has any chance to
+    fail. Round 5's own cleanup tracking only recorded an artifact once the *entire*
+    ``project_to_github`` call returned a success outcome -- so a real external creation
+    followed by any later failure in that same call left nothing registered for cleanup at
+    all, a genuine leak this callback closes."""
+
+    def __init__(
+        self,
+        adapter: GitHubAdapter,
+        budget: int,
+        counter: list[int],
+        on_materialized: Callable[[Mapping[str, Any]], None],
+    ) -> None:
         self._adapter = adapter
         self._budget = budget
         self._counter = counter
+        self._on_materialized = on_materialized
 
     @property
     def adapter_identity(self) -> Mapping[str, Any]:
@@ -408,6 +449,10 @@ class _BudgetEnforcingAdapter:
             )
         result = self._adapter.materialize(**kwargs)
         self._counter[0] += 1
+        # The external artifact now genuinely exists -- register it for cleanup before this
+        # method even returns, so nothing downstream (observe, Envelope commit, or any other
+        # later route step) can fail without this artifact still being tracked.
+        self._on_materialized(result)
         return result
 
     def find_by_correlation_key(self, **kwargs: Any) -> Mapping[str, Any] | None:
@@ -444,6 +489,14 @@ class V3CleanupReceipt:
         return all(outcome.closed for outcome in self.outcomes)
 
 
+class V3CleanupNotConfirmedError(RuntimeError):
+    """Raised by :func:`_close_artifact` when the PATCH call itself completed without a
+    transport error, but the response's own returned state does not actually reflect closure
+    (Structural Review Round 6, Issue #62, P14-R6-F1) -- a non-error HTTP response alone is
+    never itself proof of a confirmed terminal state; a tampered, stale, or wrong-shaped
+    response body is treated identically to an unavailable transport, never as success."""
+
+
 def _close_artifact(
     *,
     token: str,
@@ -459,7 +512,14 @@ def _close_artifact(
     ``RealGitHubAdapter`` already enforces for its own ``materialize``/``observe`` methods
     extends to never closing or deleting on the adapter's own behalf either). This is test-only
     transport, exactly as ``RealGitHubAdapter``'s own module already reserves the transport
-    surface to itself in production code -- this function exists only in this test harness."""
+    surface to itself in production code -- this function exists only in this test harness.
+
+    Structural Review Round 6 (P14-R6-F1): a cleanup result may only be called successful
+    after the *returned* GitHub state is actually validated -- this function now parses the
+    PATCH response body and requires it to genuinely reflect the closed/cancelled terminal
+    state, raising :class:`V3CleanupNotConfirmedError` otherwise. A non-error HTTP status by
+    itself (e.g. a stale cache, a tampered or wrong-shaped body) is never treated as
+    confirmation."""
 
     external_id = external_artifact_ref["external_id"]
     if artifact_kind == "issue":
@@ -485,7 +545,21 @@ def _close_artifact(
         },
     )
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-        response.read()
+        body = json.loads(response.read().decode("utf-8"))
+
+    if artifact_kind in ("issue", "pull_request"):
+        confirmed = isinstance(body, dict) and body.get("state") == "closed"
+    else:
+        confirmed = (
+            isinstance(body, dict)
+            and body.get("status") == "completed"
+            and body.get("conclusion") == "cancelled"
+        )
+    if not confirmed:
+        raise V3CleanupNotConfirmedError(
+            f"PATCH to close/cancel {artifact_kind} {external_id!r} returned without a "
+            f"transport error, but its own returned state does not confirm closure: {body!r}"
+        )
 
 
 #: The three projection kinds a complete, authorized V3 run covers, and the fixed
@@ -518,7 +592,11 @@ def _v3_run_payload(config: V3TargetConfiguration, projection_kind: str) -> dict
 
 
 def _run_v3_authorized_execution(
-    tmp_path: Path, config: V3TargetConfiguration, adapter_factory: Callable[[], GitHubAdapter]
+    tmp_path: Path,
+    config: V3TargetConfiguration,
+    adapter_factory: Callable[[str], GitHubAdapter],
+    *,
+    cleanup_receipt_sink: list[V3CleanupReceipt] | None = None,
 ) -> dict[str, Any]:
     """Run the complete, three-projection V3 execution as ONE cohesive run (Structural Review
     Round 5, Issue #62, P14-R5-F2), sharing a single artifact budget enforced against
@@ -529,7 +607,16 @@ def _run_v3_authorized_execution(
     propagating -- the required partial-run/failure handling, so a mid-run refusal never
     leaves an already-materialized artifact uncleaned. Never merges a Pull Request or any
     other artifact -- no method this function or :class:`_BudgetEnforcingAdapter` calls is
-    capable of one."""
+    capable of one.
+
+    *adapter_factory* is called once per projection kind, with that kind's own name, so a
+    caller may inject a kind-specific failing adapter (Structural Review Round 6, P14-R6-F1)
+    to prove cleanup still covers an artifact whose own later route step -- observation,
+    Envelope commit, or anything after materialize -- fails. *cleanup_receipt_sink*, when
+    supplied, receives the :class:`V3CleanupReceipt` even when this function itself raises --
+    the ``finally`` block always appends to it before the original exception propagates, so a
+    caller proving a failed run's own cleanup outcome does not need this function to return
+    normally to inspect it."""
 
     counter = [0]
     materialized: list[tuple[str, str, dict[str, Any]]] = []
@@ -537,8 +624,21 @@ def _run_v3_authorized_execution(
     try:
         for projection_kind, subject_kind in _V3_RUN_PROJECTIONS:
             _require_authorized_artifact_kind(config, projection_kind)
+            artifact_kind = _PROJECTION_KIND_TO_ARTIFACT_KIND[projection_kind]
+
+            def _register(
+                ref: Mapping[str, Any],
+                *,
+                _projection_kind: str = projection_kind,
+                _artifact_kind: str = artifact_kind,
+            ) -> None:
+                materialized.append((_projection_kind, _artifact_kind, dict(ref)))
+
             adapter = _BudgetEnforcingAdapter(
-                adapter_factory(), config.authorized_artifact_count, counter
+                adapter_factory(projection_kind),
+                config.authorized_artifact_count,
+                counter,
+                on_materialized=_register,
             )
             # Each projection kind binds its own genesis Project State under a distinct
             # sub-path -- ``_bound``'s own fixed ``PROJECT_ID`` would otherwise collide the
@@ -553,13 +653,6 @@ def _run_v3_authorized_execution(
             )
             assert outcome["receipt"].status == "VERIFIED"
             outcomes.append(outcome)
-            materialized.append(
-                (
-                    projection_kind,
-                    _PROJECTION_KIND_TO_ARTIFACT_KIND[projection_kind],
-                    dict(outcome["envelope"]["external_artifact_ref"]),
-                )
-            )
     finally:
         cleanup_outcomes: list[V3ArtifactCleanupOutcome] = []
         for projection_kind, artifact_kind, external_artifact_ref in materialized:
@@ -587,6 +680,8 @@ def _run_v3_authorized_execution(
                     )
                 )
         cleanup_receipt = V3CleanupReceipt(tuple(cleanup_outcomes))
+        if cleanup_receipt_sink is not None:
+            cleanup_receipt_sink.append(cleanup_receipt)
 
     return {
         "outcomes": outcomes,
@@ -605,7 +700,62 @@ def test_v3_authorization_is_not_yet_configured_in_this_environment() -> None:
 
     assert _v3_authorized() is False
     assert load_v3_target_configuration() is None
-    assert v3_live_write_authorized(None) is False
+    assert load_v3_live_write_authority_record() is None
+    assert v3_live_write_authorized(None, None, evaluation_time="2026-09-08T00:00:00Z") is False
+    assert _v3_live_authorized() is False
+
+
+def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structural Review Round 6 (Issue #62, P14-R6-F2): a fully valid, fully bound
+    :class:`V3TargetConfiguration` *plus* a genuinely well-formed but mismatched (wrong
+    fingerprint) V3 Live Write Authority record must still refuse -- and, since
+    ``_v3_live_authorized()`` is what every real-adapter test's own ``pytest.mark.skipif``
+    gates on, that refusal happens entirely offline, before any adapter is ever constructed
+    and therefore before ``urllib.request.urlopen`` could ever be called even once."""
+
+    valid_env = {
+        TARGET_REPOSITORY_ENV: "acme/widget",
+        TOKEN_ENV: "test-token-not-a-real-secret",
+        CHANGE_HEAD_REF_ENV: "agent/frozen-v3-branch",
+        CHANGE_BASE_REF_ENV: "main",
+        EVIDENCE_HEAD_SHA_ENV: "0123456789abcdef0123456789abcdef01234567",
+        ARTIFACT_NAMING_PREFIX_ENV: "MANOSUBE V3 proof (do not merge)",
+        CLEANUP_CONFIRMED_ENV: "true",
+        NO_MERGE_CONFIRMED_ENV: "true",
+        AUTHORIZED_ARTIFACT_KINDS_ENV: "issue,pull_request,check_run",
+        AUTHORIZED_ARTIFACT_COUNT_ENV: "3",
+    }
+    assert set(valid_env) == set(ALL_V3_ENV_VARS)
+    for key, value in valid_env.items():
+        monkeypatch.setenv(key, value)
+
+    config = load_v3_target_configuration()
+    assert config is not None
+
+    # A genuinely well-formed, genuinely *signed* record -- but for a different (wrong)
+    # configuration fingerprint. Real cryptographic material, real shape, still refused.
+    mismatched_record = assemble_v3_live_write_authority(
+        configuration_fingerprint="sha256:" + "0" * 64,
+        target_repository=config.target_repository,
+        authorized_artifact_kinds=config.authorized_artifact_kinds,
+        authorized_artifact_count=config.authorized_artifact_count,
+        valid_from="2026-01-01T00:00:00Z",
+        valid_until="2030-01-01T00:00:00Z",
+    )
+    monkeypatch.setenv(V3_LIVE_WRITE_AUTHORITY_RECORD_ENV, json.dumps(mismatched_record))
+
+    def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
+        raise AssertionError(
+            "urllib.request.urlopen was called despite unauthorized/mismatched V3 live-write "
+            "authority -- this must never happen"
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
+
+    assert _v3_authorized() is True
+    assert load_v3_live_write_authority_record() == mismatched_record
     assert _v3_live_authorized() is False
 
 
@@ -731,9 +881,11 @@ def test_v3_authorized_full_three_projection_run_against_the_live_target(tmp_pat
 
     config = load_v3_target_configuration()
     assert config is not None
-    assert v3_live_write_authorized(config)
+    authority_record = load_v3_live_write_authority_record()
+    evaluation_time = datetime.now(UTC).isoformat()
+    assert v3_live_write_authorized(config, authority_record, evaluation_time=evaluation_time)
     result = _run_v3_authorized_execution(
-        tmp_path, config, lambda: RealGitHubAdapter(token=config.token)
+        tmp_path, config, lambda projection_kind: RealGitHubAdapter(token=config.token)
     )
     assert result["materialized_count"] == config.authorized_artifact_count
     assert result["cleanup_receipt"].all_closed
@@ -1023,7 +1175,9 @@ def test_v3_authorized_full_three_projection_run_enforces_the_authorized_artifac
 
     _install_transport(monkeypatch, handler)
     result = _run_v3_authorized_execution(
-        tmp_path, _MOCK_CONFIG, lambda: RealGitHubAdapter(token=_MOCK_CONFIG.token)
+        tmp_path,
+        _MOCK_CONFIG,
+        lambda projection_kind: RealGitHubAdapter(token=_MOCK_CONFIG.token),
     )
 
     assert _MOCK_CONFIG.authorized_artifact_count == 3
@@ -1102,7 +1256,9 @@ def test_v3_authorized_execution_refuses_beyond_the_authorized_count_and_still_c
     _install_transport(monkeypatch, handler)
     with pytest.raises(V3ArtifactBudgetExceededError):
         _run_v3_authorized_execution(
-            tmp_path, narrow_config, lambda: RealGitHubAdapter(token=narrow_config.token)
+            tmp_path,
+            narrow_config,
+            lambda projection_kind: RealGitHubAdapter(token=narrow_config.token),
         )
 
     # The third projection's own artifact-creating call never happens -- the budget refusal
@@ -1111,3 +1267,249 @@ def test_v3_authorized_execution_refuses_beyond_the_authorized_count_and_still_c
         method == "POST" and path == f"/repos/{owner}/{repo}/check-runs" for method, path in calls
     )
     assert sum(1 for method, _ in calls if method == "PATCH") == 2
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 6 (Issue #62, P14-R6-F1): post-write/pre-return failure controls --
+# a genuine external write followed by a failure in any later route step (here, observation)
+# must still leave the artifact registered for cleanup, since registration now happens at the
+# external-write boundary itself (inside ``_BudgetEnforcingAdapter.materialize``), never after
+# the whole ``project_to_github`` call has already returned success.
+# ---------------------------------------------------------------------------
+
+
+class _ObserveFailingAdapter:
+    """Wrap *adapter*, passing ``materialize``/``find_by_correlation_key`` straight through
+    but unconditionally raising on ``observe`` -- simulates any failure that happens after a
+    genuine external write already succeeded (observation itself, receipt construction, the
+    Envelope's own Store commit, or any later route step), proving cleanup still covers the
+    artifact the external write already created."""
+
+    def __init__(self, adapter: GitHubAdapter) -> None:
+        self._adapter = adapter
+        self.adapter_identity = adapter.adapter_identity
+
+    def materialize(self, **kwargs: Any) -> Mapping[str, Any]:
+        return self._adapter.materialize(**kwargs)
+
+    def find_by_correlation_key(self, **kwargs: Any) -> Mapping[str, Any] | None:
+        return self._adapter.find_by_correlation_key(**kwargs)
+
+    def observe(self, **kwargs: Any) -> Mapping[str, Any]:
+        raise RuntimeError("simulated failure after a genuine external write already succeeded")
+
+
+def _post_write_failure_transport_handler(
+    config: V3TargetConfiguration, calls: list[tuple[str, str]]
+) -> Callable[[str, str, dict[str, Any] | None], dict[str, Any]]:
+    """Build a transport handler covering the calls a run reaches when zero, one, or two
+    leading projection kinds complete their entire route normally (materialize, then a real
+    GET-by-id re-observe) before the one *failing* kind's own materialize succeeds but its
+    ``observe`` is never actually invoked through the real transport at all
+    (:class:`_ObserveFailingAdapter` raises before that call) -- search/creation endpoints for
+    all three kinds, their own GET-by-id read-back, and their own PATCH close/cancel
+    endpoints."""
+
+    owner, repo = config.owner, config.repo
+    head_sha = config.evidence_head_sha
+
+    def handler(method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        calls.append((method, path))
+        if method == "GET" and path.startswith("/search/issues"):
+            return {"items": []}
+        if method == "GET" and path == f"/repos/{owner}/{repo}/commits/{head_sha}/check-runs":
+            return {"check_runs": []}
+        if method == "POST" and path == f"/repos/{owner}/{repo}/issues":
+            assert body is not None
+            return {
+                "number": 801,
+                "html_url": f"https://github.com/{owner}/{repo}/issue/801",
+                "title": body["title"],
+                "body": body["body"],
+                "updated_at": "2026-09-08T00:00:01Z",
+            }
+        if method == "GET" and path == f"/repos/{owner}/{repo}/issues/801":
+            return {
+                "title": f"{config.artifact_naming_prefix} -- Difference",
+                "body": "harness\n\n<!-- manosube-projection-correlation-key: ignored -->",
+                "updated_at": "2026-09-08T00:00:02Z",
+            }
+        if method == "PATCH" and path == f"/repos/{owner}/{repo}/issues/801":
+            assert body == {"state": "closed"}
+            return {"number": 801, "state": "closed"}
+        if method == "POST" and path == f"/repos/{owner}/{repo}/pulls":
+            assert body is not None
+            return {
+                "number": 802,
+                "html_url": f"https://github.com/{owner}/{repo}/pull_request/802",
+                "title": body["title"],
+                "body": body["body"],
+                "head": {"ref": body["head"]},
+                "base": {"ref": body["base"]},
+                "updated_at": "2026-09-08T00:00:01Z",
+            }
+        if method == "GET" and path == f"/repos/{owner}/{repo}/pulls/802":
+            return {
+                "title": f"{config.artifact_naming_prefix} -- Change",
+                "body": "harness\n\n<!-- manosube-projection-correlation-key: ignored -->",
+                "head": {"ref": config.change_head_ref},
+                "base": {"ref": config.change_base_ref},
+                "updated_at": "2026-09-08T00:00:02Z",
+            }
+        if method == "PATCH" and path == f"/repos/{owner}/{repo}/pulls/802":
+            assert body == {"state": "closed"}
+            return {"number": 802, "state": "closed"}
+        if method == "POST" and path == f"/repos/{owner}/{repo}/check-runs":
+            assert body is not None
+            return {
+                "id": 803,
+                "html_url": f"https://github.com/{owner}/{repo}/check_run/803",
+                "name": body["name"],
+                "head_sha": body["head_sha"],
+                "status": body["status"],
+                "conclusion": body["conclusion"],
+                "output": body["output"],
+                "updated_at": "2026-09-08T00:00:01Z",
+            }
+        if method == "PATCH" and path == f"/repos/{owner}/{repo}/check-runs/803":
+            assert body == {"status": "completed", "conclusion": "cancelled"}
+            return {"id": 803, "status": "completed", "conclusion": "cancelled"}
+        raise AssertionError(f"unexpected call: {method} {path}")
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    ("failing_kind", "expected_patch_count"),
+    [
+        ("DIFFERENCE_ISSUE", 1),
+        ("CHANGE_PULL_REQUEST", 2),
+        ("EVIDENCE_ARTIFACT", 3),
+    ],
+)
+def test_cleanup_still_covers_an_artifact_when_a_later_route_step_fails_after_materialize(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_kind: str, expected_patch_count: int
+) -> None:
+    """One control per projection kind (Structural Review Round 6, Issue #62, P14-R6-F1): the
+    named kind's own external write genuinely succeeds, then the run fails in a later route
+    step (here, observation) -- every artifact materialized up to and including that failing
+    kind is still represented in the cleanup terminal, proving registration happens at the
+    external-write boundary itself, not after ``project_to_github`` has already returned."""
+
+    calls: list[tuple[str, str]] = []
+    handler = _post_write_failure_transport_handler(_MOCK_CONFIG, calls)
+    _install_transport(monkeypatch, handler)
+
+    def adapter_factory(projection_kind: str) -> GitHubAdapter:
+        real = RealGitHubAdapter(token=_MOCK_CONFIG.token)
+        if projection_kind == failing_kind:
+            return _ObserveFailingAdapter(real)
+        return real
+
+    with pytest.raises(RuntimeError, match="simulated failure"):
+        _run_v3_authorized_execution(tmp_path, _MOCK_CONFIG, adapter_factory)
+
+    assert sum(1 for method, _ in calls if method == "PATCH") == expected_patch_count
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 6 (P14-R6-F1): a non-error HTTP response alone is never itself
+# proof of a confirmed terminal state -- a cleanup PATCH whose own returned body does not
+# actually reflect closure, and a cleanup PATCH the transport itself never completes, must
+# both report ``closed=False``, never a false success.
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_response_not_reflecting_closure_is_not_reported_as_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, repo = _MOCK_CONFIG.owner, _MOCK_CONFIG.repo
+
+    def handler(method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if method == "GET" and path.startswith("/search/issues"):
+            return {"items": []}
+        if method == "POST" and path == f"/repos/{owner}/{repo}/issues":
+            assert body is not None
+            return {
+                "number": 901,
+                "html_url": f"https://github.com/{owner}/{repo}/issue/901",
+                "title": body["title"],
+                "body": body["body"],
+                "updated_at": "2026-09-08T00:00:01Z",
+            }
+        if method == "GET" and path == f"/repos/{owner}/{repo}/issues/901":
+            return {
+                "title": f"{_MOCK_CONFIG.artifact_naming_prefix} -- Difference",
+                "body": "harness\n\n<!-- manosube-projection-correlation-key: ignored -->",
+                "updated_at": "2026-09-08T00:00:02Z",
+            }
+        if method == "PATCH" and path == f"/repos/{owner}/{repo}/issues/901":
+            # A non-error HTTP response whose own body does *not* actually confirm closure
+            # (a stale/tampered/wrong-shaped state) -- must never be trusted as success.
+            return {"number": 901, "state": "open"}
+        raise AssertionError(f"unexpected call: {method} {path}")
+
+    _install_transport(monkeypatch, handler)
+    sink: list[V3CleanupReceipt] = []
+    # A budget of 1 stops the run right after the Difference/Issue kind's own materialize --
+    # the identical, already-proven budget-refusal mechanism, used here only to isolate
+    # exactly one materialized artifact for this cleanup-tamper control.
+    with pytest.raises(V3ArtifactBudgetExceededError):
+        _run_v3_authorized_execution(
+            tmp_path,
+            replace(_MOCK_CONFIG, authorized_artifact_count=1),
+            lambda projection_kind: RealGitHubAdapter(token=_MOCK_CONFIG.token),
+            cleanup_receipt_sink=sink,
+        )
+
+    assert len(sink) == 1
+    cleanup_receipt = sink[0]
+    assert len(cleanup_receipt.outcomes) == 1
+    assert cleanup_receipt.all_closed is False
+    assert cleanup_receipt.outcomes[0].closed is False
+    assert "does not confirm closure" in (cleanup_receipt.outcomes[0].error or "")
+
+
+def test_cleanup_transport_unavailable_is_not_reported_as_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, repo = _MOCK_CONFIG.owner, _MOCK_CONFIG.repo
+
+    def handler(method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if method == "GET" and path.startswith("/search/issues"):
+            return {"items": []}
+        if method == "POST" and path == f"/repos/{owner}/{repo}/issues":
+            assert body is not None
+            return {
+                "number": 902,
+                "html_url": f"https://github.com/{owner}/{repo}/issue/902",
+                "title": body["title"],
+                "body": body["body"],
+                "updated_at": "2026-09-08T00:00:01Z",
+            }
+        if method == "GET" and path == f"/repos/{owner}/{repo}/issues/902":
+            return {
+                "title": f"{_MOCK_CONFIG.artifact_naming_prefix} -- Difference",
+                "body": "harness\n\n<!-- manosube-projection-correlation-key: ignored -->",
+                "updated_at": "2026-09-08T00:00:02Z",
+            }
+        if method == "PATCH" and path == f"/repos/{owner}/{repo}/issues/902":
+            raise TimeoutError("simulated transport unavailability")
+        raise AssertionError(f"unexpected call: {method} {path}")
+
+    _install_transport(monkeypatch, handler)
+    sink: list[V3CleanupReceipt] = []
+    with pytest.raises(V3ArtifactBudgetExceededError):
+        _run_v3_authorized_execution(
+            tmp_path,
+            replace(_MOCK_CONFIG, authorized_artifact_count=1),
+            lambda projection_kind: RealGitHubAdapter(token=_MOCK_CONFIG.token),
+            cleanup_receipt_sink=sink,
+        )
+
+    assert len(sink) == 1
+    cleanup_receipt = sink[0]
+    assert len(cleanup_receipt.outcomes) == 1
+    assert cleanup_receipt.all_closed is False
+    assert cleanup_receipt.outcomes[0].closed is False
+    assert "simulated transport unavailability" in (cleanup_receipt.outcomes[0].error or "")

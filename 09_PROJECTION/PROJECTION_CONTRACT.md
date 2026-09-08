@@ -12,6 +12,7 @@ CORRECTION_ADOPTION_ID_ROUND_2=ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_A
 CORRECTION_ADOPTION_ID_ROUND_3=ADOPT_P14_R3_UNIQUE_CLAIM_ATTESTED_RECEIPT_AND_CONFIGURABLE_V3
 CORRECTION_ADOPTION_ID_ROUND_4=ADOPT_P14_R4_TERMINAL_CLAIM_ATTESTED_RECEIPT_AND_SOURCE_EDIT_FREE_V3
 CORRECTION_ADOPTION_ID_ROUND_5=ADOPT_P14_R5_TERMINAL_CLAIM_INTEGRITY_AND_BOUND_V3_EXECUTION
+CORRECTION_ADOPTION_ID_ROUND_6=ADOPT_P14_R6_AUTHORITY_BOUND_V3_AND_OBSERVED_CLEANUP
 GOVERNING_ISSUE=#62
 REVIEWED_MAIN_SHA=7fc597356330a0d1da7a334ef20cd913b74154d
 ```
@@ -1080,4 +1081,84 @@ own state throughout.
 ```text
 P14_R5_F1_CLOSED=true
 P14_R5_F2_CLOSED=true
+```
+
+## 14. Structural Review Round 6 corrections (`ADOPT_P14_R6_AUTHORITY_BOUND_V3_AND_OBSERVED_CLEANUP`)
+
+**F1: cleanup now registers every successful external creation at the external-write boundary
+itself, before observation, receipt construction, Store commit, or any later route step can
+fail -- and a cleanup result is reported closed only after the returned state is actually
+verified, never on HTTP success alone.** §13's own F2 unconditionally attempted cleanup, in a
+`finally`, of every artifact `_run_v3_authorized_execution` recorded as materialized -- but
+that recording happened only after each iteration's full `project_to_github` call returned, so
+a failure in that same call's own later steps (`observe`, Envelope derivation, Store commit)
+after the underlying external write had already genuinely succeeded left the created artifact
+entirely untracked and therefore never cleaned up: a real leak this correction closes.
+`_BudgetEnforcingAdapter.materialize` now takes an `on_materialized` callback and invokes it
+immediately once the wrapped adapter's own `materialize()` call returns -- inside the adapter
+wrapper itself, at the true external-write boundary, before control ever returns to
+`project_to_github` or to any later step of the enclosing route. A new
+`_ObserveFailingAdapter` (wrapping a real adapter, passing `materialize`/
+`find_by_correlation_key` through unchanged, raising from `observe()`) proves the boundary is
+real: three parametrized cases (`test_cleanup_still_covers_an_artifact_when_a_later_route_
+step_fails_after_materialize`, one per projection kind) each drive a genuine external creation
+through to a real external write, force the immediately-following `observe()` to fail, and
+assert the artifact is still covered by exactly one cleanup `PATCH` call despite the enclosing
+route call itself raising. Separately, `_close_artifact` no longer reports `closed=True` on a
+non-error HTTP response alone: it now parses the PATCH response body and requires it to
+actually reflect the closed/cancelled terminal state (`state == "closed"` for `issue`/
+`pull_request`; `status == "completed" and conclusion == "cancelled"` for `check_run`), raising
+the new `V3CleanupNotConfirmedError` otherwise. Two new tests --
+`test_cleanup_response_not_reflecting_closure_is_not_reported_as_closed` and
+`test_cleanup_transport_unavailable_is_not_reported_as_closed` -- narrow
+`authorized_artifact_count=1` (via `dataclasses.replace`, keeping the full `authorized_
+artifact_kinds` so `V3ArtifactBudgetExceededError` alone stops the run rather than the
+unrelated `_require_authorized_artifact_kind` check) and prove, via the new `cleanup_receipt_
+sink` parameter to `_run_v3_authorized_execution`, that a tampered or unavailable cleanup
+response is reported as `closed=False` rather than silently accepted.
+
+**F2: the live V3 gate now consumes and verifies a genuine, Ed25519-signed SHUKOU/Human
+Authority record -- never a caller-computable digest -- bound to the exact configuration
+fingerprint, target repository, permitted action, artifact kinds/count, cleanup/no-merge
+boundary, and validity window.** §13's own F2 required only that `LIVE_WRITE_AUTHORIZED_ENV`
+equal `config.configuration_fingerprint` -- a value any caller can compute unaided from the
+frozen configuration alone, with no Human Authority behind it at all; this is exactly the kind
+of caller-computable-digest grant this finding identifies as never itself constituting
+Authority. `tests/fixtures/v3_live_write_authority.py` (new) defines a dedicated **V3 Live
+Write Authority** record shape and `v3_live_write_authority_signing_payload` covering every
+bound field, signed and verified with the identical, already-canonical Ed25519 primitive this
+repository's own signed Human Grant Declarations use
+(`manosube_agent_civilization.binding.signature.verify_ed25519_signature`), applied here
+against one fixed, non-caller-controlled test-only public key
+(`v3_authority_signing_key`) distinct from the Project Binding's own signing key. `v3_live_
+write_authorized(config, authority_record, *, evaluation_time)` performs pure comparison plus
+one signature verification -- no I/O, no network access of its own -- and requires, together:
+the exact `configuration_fingerprint`, `target_repository`, the one closed `permitted_action`
+literal, `authorized_artifact_kinds`/`authorized_artifact_count` matching the configuration
+exactly, `cleanup_confirmed`/`no_merge_confirmed` both `True`, `status == "ACTIVE"`,
+`evaluation_time` inside `[valid_from, valid_until]`, and a valid signature over the record's
+own canonical payload -- refusing (`False`) if `config` or `authority_record` is `None`, or if
+`authority_record` is not even a mapping (a bare digest string a caller computed themselves,
+the exact regression this correction proves closed). `evaluation_time` is always an explicit
+caller-supplied input, never a wall-clock read inside this pure function, matching `authority/
+engine.py`'s own `evaluate_authority` discipline; the one real clock read happens at
+`test_v3_real_github_vertical_proof.py`'s own `_v3_live_authorized()` call site.
+`LIVE_WRITE_AUTHORIZED_ENV` and the old unscoped `v3_live_write_authorized(config, env)` are
+removed entirely from `tests/fixtures/v3_target_configuration.py` rather than left superseded
+in place. `tests/unit/projection/test_v3_live_write_authority.py` (new, 37 tests) proves the
+positive route and every required negative control: fabricated/unsigned, tampered-after-
+signing, stale, not-yet-valid, wrong-fingerprint, wrong-target, wrong-action, widened artifact
+count, widened artifact kinds, unconfirmed cleanup, unconfirmed no-merge, revoked status, wrong
+key id, wrong algorithm, and malformed signature shapes -- each refusing before any
+`verify_ed25519_signature` call could ever be reached where the mismatch is structural, and
+via a genuine failed verification where the record is otherwise well-formed but wrongly signed.
+A new `test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls` monkeypatches
+`urllib.request.urlopen` to raise if ever invoked, constructs a genuinely-signed but wrong-
+fingerprint authority record under an otherwise fully valid V3 environment, and proves the live
+gate refuses with zero network calls ever attempted on its strength.
+`V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` remains this delivery's own state throughout.
+
+```text
+P14_R6_F1_CLOSED=true
+P14_R6_F2_CLOSED=true
 ```
