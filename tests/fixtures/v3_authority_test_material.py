@@ -1,19 +1,30 @@
 """Test-only V3 live-write authority material builder (Structural Review Round 8, Issue #62,
 P14-R8-F1; Store-committed material for Store/Boot-resolved authority, Round 9, P14-R9-F1;
-trusted-Boot-root and pre-issued subject-specific authority, Round 10, P14-R10-F1).
+trusted-Boot-root and pre-issued subject-specific authority, Round 10, P14-R10-F1; frozen
+trusted runtime context to adapter chain, Round 11, P14-R11-F1).
 
 Round 9 built a genuinely committed Store plus a signed ``github_projection_grant``/
 ``github_projection_grant_declaration`` pair per projection kind, each bound to a
 V3-configuration-shaped subject -- but the live-authorized *execution* path still minted a
 fresh, *subject*-specific grant/declaration for the actual Difference/Change/Evidence being
 projected, using this repository's own test-only signing helper
-(:mod:`tests.fixtures.product_binding`). Round 10 forbids exactly that: every subject-specific
+(:mod:`tests.fixtures.product_binding`). Round 10 forbade exactly that: every subject-specific
 grant, signed declaration, and Authority Decision ``project_to_github`` actually consumes must
 already be externally issued, committed, Store-resolved, and identity-recomputed *before* the
-live execution path is ever asked to project anything.
+live execution path is ever asked to project anything -- but the *subject* itself (the actual
+Difference/Change record body) still had to be threaded into the harness through a separate
+``subjects`` mapping this module returned, since nothing yet made it Store-resolvable by
+reference the way ``observation_evidence`` already was. Round 11 closes that too: every subject
+this module builds is now committed to the Store as a plain, generic record under its own
+canonical kind (``difference``/``change``/``observation_evidence``) -- the identical Store
+commit mechanism :func:`commit_v3_test_records` already used for ``observation_evidence`` --
+so it is Store-resolvable by exact reference alone. This module has no ``subjects`` mapping to
+return any more; :func:`~tests.fixtures.v3_live_write_authority.
+resolve_v3_live_write_authority` resolves every subject itself, directly from the Store, and
+preserves it inside the immutable execution context it returns.
 
-This module now builds, in one place, the real canonical subject (Difference/Change/Evidence)
-*and* its own pre-issued, genuinely Ed25519-signed grant/declaration pair together
+This module builds, in one place, the real canonical subject (Difference/Change/Evidence) *and*
+its own pre-issued, genuinely Ed25519-signed grant/declaration pair together
 (:func:`commit_pre_issued_v3_authorities`) -- so the two can never drift apart -- committed
 into a real, genuinely bound Store (:func:`bind_v3_test_project`, via the real genesis route
 :func:`~manosube_agent_civilization.binding.route.bind_project`, never the offline-only
@@ -249,15 +260,19 @@ def commit_pre_issued_v3_authorities(
     store: FileStateStore,
     ctx: dict[str, Any],
     config: V3TargetConfiguration,
-) -> tuple[V3LiveWriteAuthorityReferences, dict[str, dict[str, Any]]]:
-    """For every projection kind, build the real canonical subject and pre-issue + commit one
-    genuinely Ed25519-signed ``github_projection_grant``/``github_projection_grant_declaration``
-    pair bound *exactly* to that subject and to *config*'s own ``target_repository`` --
-    externally issued, committed, and Store-resolvable before the live execution path is ever
-    invoked (Structural Review Round 10, P14-R10-F1). Returns the project-scoped **references**
-    naming them (never the record bodies themselves) plus, per projection kind, the exact
-    ``subject_ref``/``subject_record`` execution must thread into ``project_to_github`` --
-    the harness never re-derives a subject independently of what was actually pre-issued for."""
+) -> V3LiveWriteAuthorityReferences:
+    """For every projection kind, build and Store-commit the real canonical subject (under its
+    own canonical record kind -- ``difference``/``change``/``observation_evidence`` -- so it is
+    Store-resolvable by exact reference alone, Structural Review Round 11, P14-R11-F1), then
+    pre-issue + commit one genuinely Ed25519-signed ``github_projection_grant``/
+    ``github_projection_grant_declaration`` pair bound *exactly* to that subject and to
+    *config*'s own ``target_repository`` -- externally issued, committed, and Store-resolvable
+    before the live execution path is ever invoked (Structural Review Round 10, P14-R10-F1).
+    Returns only the project-scoped **references** naming the grant/declaration pairs -- never
+    the record bodies themselves, and no separate subject mapping of any kind: every subject is
+    Store-resolvable by reference alone, exactly like the grants and declarations that name it,
+    and :func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority` is the
+    one place that ever resolves one."""
 
     project_id = ctx["project_id"]
     project_binding_id = ctx["project_binding_id"]
@@ -266,7 +281,6 @@ def commit_pre_issued_v3_authorities(
 
     grant_refs: list[dict[str, str]] = []
     declaration_refs: list[dict[str, str]] = []
-    subjects: dict[str, dict[str, Any]] = {}
 
     for projection_kind, subject_kind in V3_RUN_PROJECTIONS:
         kind_token = projection_kind.replace("_", "-")
@@ -277,6 +291,18 @@ def commit_pre_issued_v3_authorities(
             subject_kind,
             transaction_id=f"TX-V3-PREISSUE-SUBJECT-{kind_token}",
         )
+        if subject_record is not None:
+            # difference/change: build_v3_subject only builds the body in memory --
+            # Store-commit it too, under its own real canonical record kind, so it becomes
+            # resolvable by exact reference alone (Round 11, P14-R11-F1 §3). observation_evidence
+            # is already committed inside build_v3_subject itself (subject_record is None here).
+            current_state = commit_v3_test_records(
+                store,
+                project_id,
+                current_state,
+                f"TX-V3-PREISSUE-SUBJECT-COMMIT-{kind_token}",
+                [(subject_kind, subject_ref["id"], subject_record)],
+            )
         payload_fingerprint = projection_payload_fingerprint(
             v3_run_payload(config, projection_kind)
         )
@@ -338,31 +364,27 @@ def commit_pre_issued_v3_authorities(
                 "id": declaration["github_projection_grant_declaration_id"],
             }
         )
-        subjects[projection_kind] = {"subject_ref": subject_ref, "subject_record": subject_record}
 
     ctx["genesis_state"] = current_state
-    references = V3LiveWriteAuthorityReferences(
+    return V3LiveWriteAuthorityReferences(
         github_projection_grant_refs=tuple(grant_refs),
         github_projection_grant_declaration_refs=tuple(declaration_refs),
     )
-    return references, subjects
 
 
 def genuine_v3_authority_store_and_material(
     tmp_path: Path, config: V3TargetConfiguration
-) -> tuple[
-    FileStateStore, dict[str, Any], V3LiveWriteAuthorityReferences, dict[str, dict[str, Any]]
-]:
-    """One real, committed Store, its ``ctx`` (``project_id``/``project_binding_id``), the
+) -> tuple[FileStateStore, dict[str, Any], V3LiveWriteAuthorityReferences]:
+    """One real, committed Store, its ``ctx`` (``project_id``/``project_binding_id``), and the
     project-scoped references naming a genuinely pre-issued, Store-resolvable grant/declaration
-    pair per projection kind, and the exact subject each one is bound to -- the complete
-    positive-route material :func:`~tests.fixtures.v3_live_write_authority.
-    resolve_v3_live_write_authority` accepts, plus what execution needs to thread into
-    ``project_to_github`` unchanged."""
+    pair per projection kind -- the complete positive-route material
+    :func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority` accepts.
+    Every subject each grant names is itself Store-resolvable by reference alone (Structural
+    Review Round 11, P14-R11-F1) -- there is no separate subject value to return here."""
 
     store, ctx = bind_v3_test_project(tmp_path)
-    references, subjects = commit_pre_issued_v3_authorities(store, ctx, config)
-    return store, ctx, references, subjects
+    references = commit_pre_issued_v3_authorities(store, ctx, config)
+    return store, ctx, references
 
 
 def _wrong_signing_private_key() -> Ed25519PrivateKey:
@@ -404,13 +426,21 @@ def commit_v3_grant_with_declaration_signed_by_the_wrong_key(
     human_authority_ref = ctx["human_authority_ref"]
     current_state = ctx["genesis_state"]
 
-    subject_ref, subject_fingerprint, _subject_record, current_state = build_v3_subject(
+    subject_ref, subject_fingerprint, subject_record, current_state = build_v3_subject(
         store,
         project_id,
         current_state,
         subject_kind,
         transaction_id="TX-V3-WRONG-SIGNER-SUBJECT-0001",
     )
+    if subject_record is not None:
+        current_state = commit_v3_test_records(
+            store,
+            project_id,
+            current_state,
+            "TX-V3-WRONG-SIGNER-SUBJECT-COMMIT-0001",
+            [(subject_kind, subject_ref["id"], subject_record)],
+        )
     payload_fingerprint = projection_payload_fingerprint(v3_run_payload(config, projection_kind))
 
     grant: dict[str, Any] = {

@@ -48,17 +48,13 @@ from tests.fixtures.product_binding import (
 from tests.fixtures.v3_authority_test_material import (
     V3_RUN_PROJECTIONS,
     build_v3_subject,
-    genuine_project_binding,
     genuine_v3_authority_store_and_material,
     v3_run_payload,
 )
 from tests.fixtures.v3_live_write_authority import (
-    V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV,
-    V3_TRUSTED_BOOT_ROOT_ENV,
     V3AuthorizedExecutionContext,
-    V3TrustedBootRoot,
+    V3LiveWriteAuthorityReferences,
     load_v3_live_write_authority_references,
-    load_v3_trusted_boot_root,
     resolve_v3_live_write_authority,
     v3_execution_context_still_current,
 )
@@ -142,31 +138,44 @@ def _v3_live_authorized_context() -> V3AuthorizedExecutionContext | None:
     (Structural Review Round 4, Issue #62, P14-R4-F3; genuine signed Human Authority, Round 6,
     P14-R6-F2; external trust anchor, Round 7, P14-R7-F1; canonical issuable authority,
     Round 8, P14-R8-F1; Store/Boot-resolved authority routed to execution, Round 9, P14-R9-F1;
-    trusted Boot root and pre-issued subject-specific authority, Round 10, P14-R10-F1): a
-    fail-closed runtime gate requiring a fully validated, fully bound
-    :class:`V3TargetConfiguration`, an independently supplied trusted Boot root
-    (:func:`~tests.fixtures.v3_live_write_authority.load_v3_trusted_boot_root`, read from its
-    own environment variable -- never selectable via the untrusted references below), and
-    project-scoped V3 live-write authority **references** (grant/declaration references only,
-    carrying no Store-selecting field of their own) read from the environment
-    (:func:`~tests.fixtures.v3_live_write_authority.load_v3_live_write_authority_references`),
-    resolved *within* the trusted root and verified through the identical canonical
-    Authority/Binding/Boot route (:func:`~manosube_agent_civilization.authority.
-    projection_authorization.evaluate_projection_authorization`,
-    :func:`~manosube_agent_civilization.boot.boot_project`) a real GitHub projection call
-    already uses -- always ``None`` in this delivery. This function, not a hardcoded
-    ``pytest.mark.skip``, is what the real-adapter tests below are gated on, so a later round
-    that supplies a genuine trusted root and genuine references via the environment (issued
-    entirely outside this repository, by whoever genuinely holds the real Project Binding's
-    Human Authority private key, committed by whatever process SHUKOU authorizes) activates
-    them *without any source edit* to this file. The returned context, when not ``None``, is
-    the exact object every real-adapter test below must thread unchanged into the execution
-    call that reaches the adapter -- never a separately built Store/project/refs of its own."""
+    trusted Boot root and pre-issued subject-specific authority, Round 10, P14-R10-F1; frozen
+    trusted runtime context to adapter chain, Round 11, P14-R11-F1).
 
-    trusted_root = load_v3_trusted_boot_root()
-    config = load_v3_target_configuration()
-    references = load_v3_live_write_authority_references()
-    return resolve_v3_live_write_authority(trusted_root, config, references)
+    Round 10 read an independently supplied trusted Store/Boot root from its own environment
+    variable. Round 11 (P14-R11-F1 §1) forbids that outright: *any* environment variable a
+    caller-controlling entity can set is still caller input, however narrowly scoped its own
+    JSON shape is. :func:`~tests.fixtures.v3_live_write_authority.
+    resolve_v3_live_write_authority` now takes the already-open Store object, and the project
+    identity to Boot-restore within it, as plain, caller-injected parameters -- capability
+    injected by whichever code legitimately calls it, never read from any environment variable
+    by this module itself.
+
+    This repository's own test-only environment has no real external process capable of
+    legitimately performing that injection: doing so requires literally holding a real,
+    already-open Store object naming a real, committed Project Binding whose Human Authority
+    private key some real external holder has genuinely signed real grant/declaration records
+    with -- material this delivery's own test suite can only ever *simulate* inside a single
+    test's own body (as the required positive control below does, directly, entirely offline),
+    never something `pytest` collection itself could construct or receive from outside. This
+    function therefore always returns ``None`` in this delivery -- not an acknowledged gap in
+    this function's own code shape (Structural Review Round 11, P14-R11-F1 §9), but an honest
+    reflection of "no genuine external caller exists yet to inject anything." The moment a real
+    runtime bootstrap begins calling :func:`~tests.fixtures.v3_live_write_authority.
+    resolve_v3_live_write_authority` with a real Store object and real project identity
+    (through whatever process SHUKOU separately authorizes), this exact function -- and every
+    real-adapter test gated on it -- activates *without any source edit* to this file: nothing
+    about this module's own shape needs to change for that future activation, only who calls
+    it and with what."""
+
+    # config/references remain legitimately environment-sourced (Structural Review Round 11,
+    # P14-R11-F1 §1: GitHub credentials and non-authoritative configuration/reference values
+    # are still permitted from the environment) -- but neither one, nor anything else this
+    # module could read from the environment, can ever supply the Store/project identity
+    # injection resolve_v3_live_write_authority now requires, so this function has nothing
+    # left it could pass as that injection and always returns None.
+    load_v3_target_configuration()
+    load_v3_live_write_authority_references()
+    return None
 
 
 def _v3_live_authorized() -> bool:
@@ -380,28 +389,23 @@ def _run_v3_authorized_vertical_proof(
     projection_kind: str,
     target_repository: dict[str, Any],
     projection_payload: dict[str, Any],
-    subject_record: dict[str, Any] | None,
     adapter: Any,
 ) -> dict[str, Any]:
     """The identical projection call :func:`_run_vertical_proof` makes -- but its Store,
     project, Project Binding, Human Authority reference, and *entire* per-subject
-    authorization (subject reference, grant reference, declaration reference) are sourced
-    entirely from *context*, the one already-resolved, already-authorized
+    authorization (subject reference, subject body, grant reference, declaration reference)
+    are sourced entirely from *context*, the one already-resolved, already-authorized
     :class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext`
     :func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority` returned
     (Structural Review Round 9, P14-R9-F1; trusted Boot root and pre-issued subject-specific
-    authority, Round 10, P14-R10-F1). Unlike Round 9's own version of this function, this
-    function mints **nothing**: ``context.authorities[projection_kind]`` already names the
-    exact, externally pre-issued, Store-resolved, identity-recomputed grant/declaration pair
-    :func:`~manosube_agent_civilization.projection.route.project_to_github` actually consumes
-    -- carried through unchanged, never rebuilt, never re-signed, and never routed through
-    :mod:`tests.fixtures.product_binding` (the repository-held test signer) at this call site.
-    *subject_record* is the exact pre-issued subject body
-    (:func:`~tests.fixtures.v3_authority_test_material.commit_pre_issued_v3_authorities`'s own
-    ``subjects`` mapping) the consumed grant was issued for -- required for a
-    difference/change subject (``project_to_github`` never Store-resolves those kinds), and
-    ``None`` for an observation_evidence subject (Store-resolved instead, through the
-    identical ``subject_ref`` the grant itself already names)."""
+    authority, Round 10, P14-R10-F1; frozen trusted runtime context to adapter chain, Round 11,
+    P14-R11-F1). This function mints **nothing** and accepts no caller-supplied subject body or
+    separate subject mapping of any kind: ``context.authorities[projection_kind]`` already
+    carries the exact, externally pre-issued, Store-resolved, identity-recomputed
+    subject/grant/declaration ``project_to_github`` actually consumes -- carried through
+    unchanged, never rebuilt, never re-derived, and never routed through
+    :mod:`tests.fixtures.product_binding` (the repository-held test signer) at this call
+    site."""
 
     authority = context.authorities[projection_kind]
     return project_to_github(
@@ -420,7 +424,7 @@ def _run_v3_authorized_vertical_proof(
             authority.github_projection_grant_declaration_ref
         ],
         attempt_claim_token=f"PROJECTION-ATTEMPT-V3-AUTHORIZED-{projection_kind.replace('_', '-')}",
-        subject_record=subject_record,
+        subject_record=authority.subject_record,
     )
 
 
@@ -604,7 +608,6 @@ def _run_v3_authorized_execution(
     *,
     cleanup_receipt_sink: list[V3CleanupReceipt] | None = None,
     context: V3AuthorizedExecutionContext | None = None,
-    subjects: Mapping[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the complete, three-projection V3 execution as ONE cohesive run (Structural Review
     Round 5, Issue #62, P14-R5-F2), sharing a single artifact budget enforced against
@@ -627,34 +630,26 @@ def _run_v3_authorized_execution(
     normally to inspect it.
 
     *context*, when supplied (Structural Review Round 9, P14-R9-F1; trusted Boot root and
-    pre-issued subject-specific authority, Round 10, P14-R10-F1), is the one already-
-    resolved, already-authorized :class:`~tests.fixtures.v3_live_write_authority.
+    pre-issued subject-specific authority, Round 10, P14-R10-F1; frozen trusted runtime
+    context to adapter chain, Round 11, P14-R11-F1), is the one already-resolved,
+    already-authorized :class:`~tests.fixtures.v3_live_write_authority.
     V3AuthorizedExecutionContext` this run threads unchanged into
     :func:`_run_v3_authorized_vertical_proof` for every projection kind, instead of each kind
     building its own disconnected throwaway Store/Binding via :func:`_run_vertical_proof` --
-    never a detached authorization check followed by execution against an unrelated Store, and
-    never a fresh grant/declaration minted at execution time. *subjects*, required whenever
-    *context* is supplied, is the exact pre-issued subject-body mapping
-    :func:`~tests.fixtures.v3_authority_test_material.commit_pre_issued_v3_authorities`
-    returned alongside *context*'s own references -- the difference/change body each
-    projection kind's own pre-issued grant was issued for (``project_to_github`` never
-    Store-resolves those two kinds). This function fails closed, immediately before *each*
-    adapter-reaching call (Structural Review Round 10, P14-R10-F1 -- not merely once at the
-    top of the run, as Round 9's own version of this check did), if *context* is no longer
-    current (:func:`~tests.fixtures.v3_live_write_authority.
+    never a detached authorization check followed by execution against an unrelated Store,
+    never a fresh grant/declaration minted at execution time, and never a caller-supplied
+    subject body or separate subject mapping of any kind: every projection kind's own resolved
+    subject already lives inside *context* itself
+    (``context.authorities[projection_kind].subject_record``). This function fails closed,
+    immediately before *each* adapter-reaching call (Structural Review Round 10, P14-R10-F1 --
+    not merely once at the top of the run, as Round 9's own version of this check did), if
+    *context* is no longer current (:func:`~tests.fixtures.v3_live_write_authority.
     v3_execution_context_still_current`) -- a Store mutation between authorization and any one
     of the three calls must refuse the remainder of the run rather than execute against a
     possibly-stale context. Left ``None`` (the default), every projection kind instead binds
     its own fresh, disconnected Project via :func:`_run_vertical_proof`, exactly as this
     function has always done for the offline budget/cleanup/failure-injection proofs that have
     nothing to do with V3 live-write authority at all."""
-
-    if context is not None and subjects is None:
-        raise AssertionError(
-            "an authorized execution context was supplied without its own pre-issued subject "
-            "bodies -- refusing rather than guessing at what project_to_github should be given "
-            "for a difference/change subject"
-        )
 
     counter = [0]
     materialized: list[tuple[str, str, dict[str, Any]]] = []
@@ -685,13 +680,11 @@ def _run_v3_authorized_execution(
                         "state -- refusing this projection, and the remainder of the run, "
                         "before materializing anything further"
                     )
-                assert subjects is not None
                 outcome = _run_v3_authorized_vertical_proof(
                     context,
                     projection_kind=projection_kind,
                     target_repository=config.target_repository,
                     projection_payload=v3_run_payload(config, projection_kind),
-                    subject_record=subjects[projection_kind]["subject_record"],
                     adapter=adapter,
                 )
             else:
@@ -755,24 +748,25 @@ def test_v3_authorization_is_not_yet_configured_in_this_environment() -> None:
 
     assert _v3_authorized() is False
     assert load_v3_target_configuration() is None
-    assert load_v3_trusted_boot_root() is None
     assert load_v3_live_write_authority_references() is None
-    assert resolve_v3_live_write_authority(None, None, None) is None
+    assert resolve_v3_live_write_authority(None, None, None, None, None) is None
     assert _v3_live_authorized() is False
     assert _v3_live_authorized_context() is None
 
 
-def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
+def test_unauthorized_or_mismatched_configuration_causes_zero_network_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Structural Review Round 6 (Issue #62, P14-R6-F2), reused verbatim by Round 8
-    (P14-R8-F1), Round 9 (P14-R9-F1), and Round 10 (P14-R10-F1): a fully valid, fully bound
-    :class:`V3TargetConfiguration` *plus* a genuine trusted Boot root *plus* genuinely-issued,
-    genuinely Store-committed, but mismatched (wrong configuration) V3 live-write authority
-    references must still refuse -- and, since ``_v3_live_authorized()`` is what every
-    real-adapter test's own ``pytest.mark.skipif`` gates on, that refusal happens entirely
-    offline, before any adapter is ever constructed and therefore before ``urllib.request.
-    urlopen`` could ever be called even once."""
+    (P14-R8-F1), Round 9 (P14-R9-F1), Round 10 (P14-R10-F1), and Round 11 (P14-R11-F1): a
+    fully valid, fully bound :class:`V3TargetConfiguration` *plus* a genuine, caller-injected
+    Store *plus* genuinely-issued, genuinely Store-committed, but mismatched (wrong
+    configuration) V3 live-write authority references must still refuse -- before any adapter
+    is ever constructed and therefore before ``urllib.request.urlopen`` could ever be called
+    even once. Round 11 removes the environment-sourced trusted root
+    :func:`resolve_v3_live_write_authority` used to accept -- the Store and project identity
+    below are supplied directly, as plain Python values, exactly as the one legitimate real
+    caller (a genuine runtime bootstrap) would."""
 
     valid_env = {
         TARGET_REPOSITORY_ENV: "acme/widget",
@@ -794,28 +788,16 @@ def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
     assert config is not None
 
     # A genuinely issued (real Store-committed project_binding, real signed grant/declaration
-    # pair per projection kind) set of references, resolved *within* a genuine trusted Boot
-    # root -- but built for a *different* configuration (a different repository), so the
-    # resolved grants' own subject_fingerprint/target_repository never match this
-    # environment's real config. Real cryptographic material, genuinely committed to a real
-    # Store, still refused (Structural Review Round 9, P14-R9-F1; Round 10, P14-R10-F1).
+    # pair per projection kind, real Store-committed subjects) set of references, resolved
+    # *within* a genuine, directly-injected Store -- but built for a *different* configuration
+    # (a different repository), so the resolved grants' own subject_fingerprint/
+    # target_repository never match this environment's real config. Real cryptographic
+    # material, genuinely committed to a real Store, still refused (Structural Review Round 9,
+    # P14-R9-F1; Round 10, P14-R10-F1; Round 11, P14-R11-F1).
     wrong_config = replace(config, repo="a-different-widget")
-    store, ctx, mismatched_references, _subjects = genuine_v3_authority_store_and_material(
+    store, ctx, mismatched_references = genuine_v3_authority_store_and_material(
         tmp_path, wrong_config
     )
-    trusted_root_payload = {
-        "store_root": str(store.root),
-        "project_id": ctx["project_id"],
-        "project_binding_id": ctx["project_binding_id"],
-    }
-    monkeypatch.setenv(V3_TRUSTED_BOOT_ROOT_ENV, json.dumps(trusted_root_payload))
-    references_payload = {
-        "github_projection_grant_refs": list(mismatched_references.github_projection_grant_refs),
-        "github_projection_grant_declaration_refs": list(
-            mismatched_references.github_projection_grant_declaration_refs
-        ),
-    }
-    monkeypatch.setenv(V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV, json.dumps(references_payload))
 
     def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
         raise AssertionError(
@@ -826,8 +808,15 @@ def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
     monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
 
     assert _v3_authorized() is True
-    assert load_v3_trusted_boot_root() == V3TrustedBootRoot(**trusted_root_payload)
-    assert load_v3_live_write_authority_references() == mismatched_references
+    assert (
+        resolve_v3_live_write_authority(
+            store, ctx["project_id"], ctx["project_binding_id"], config, mismatched_references
+        )
+        is None
+    )
+    # No environment variable can substitute for this refusal -- this module's own live-gate
+    # entry point remains None regardless, since it never reads Store/project identity from
+    # the environment at all any more.
     assert _v3_live_authorized() is False
     assert _v3_live_authorized_context() is None
 
@@ -835,14 +824,16 @@ def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
 def test_never_committed_fabricated_material_causes_zero_network_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Structural Review Round 9's own required control, adapted for Round 10 (P14-R10-F1): a
-    fully self-consistent, correctly-signed Project Binding and grant/declaration -- built
-    entirely offline via :func:`~tests.fixtures.v3_authority_test_material.
-    genuine_project_binding` and never committed to the real, genuinely-bound Store this
-    environment's own trusted Boot root names -- must cause zero network calls.
-    ``store.resolve_record`` returns ``None`` for a reference nothing ever committed, refused
-    before ``evaluate_projection_authorization`` is ever reached and therefore before any
-    adapter could ever be constructed."""
+    """Structural Review Round 9's own required control, adapted for Round 10 (P14-R10-F1) and
+    Round 11 (P14-R11-F1): fabricated grant/declaration references, naming ids nothing ever
+    committed, must cause zero network calls -- even when resolved within a real, genuinely
+    bound and committed, directly caller-injected Store. ``store.resolve_record`` returns
+    ``None`` for a reference nothing ever committed, refused before
+    ``evaluate_projection_authorization`` is ever reached and therefore before any adapter
+    could ever be constructed. Round 11 removes the environment-sourced trusted root and the
+    environment-sourced references alike: both the genuine and the fabricated references below
+    are passed directly, as plain Python values, to
+    :func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority`."""
 
     valid_env = {
         TARGET_REPOSITORY_ENV: "acme/widget",
@@ -861,37 +852,26 @@ def test_never_committed_fabricated_material_causes_zero_network_calls(
     config = load_v3_target_configuration()
     assert config is not None
 
-    # A real, genuinely bound and committed Store, named by a genuine trusted Boot root -- but
-    # the grant/declaration references this environment names point at a fabricated Project
-    # Binding's own never-committed ids, never anything this real Store actually contains.
-    store, ctx, real_references, _subjects = genuine_v3_authority_store_and_material(
-        tmp_path, config
-    )
-    trusted_root_payload = {
-        "store_root": str(store.root),
-        "project_id": ctx["project_id"],
-        "project_binding_id": ctx["project_binding_id"],
-    }
-    monkeypatch.setenv(V3_TRUSTED_BOOT_ROOT_ENV, json.dumps(trusted_root_payload))
+    # A real, genuinely bound and committed, directly caller-injected Store -- but the
+    # fabricated references below point at a never-committed Project Binding's own ids, never
+    # anything this real Store actually contains.
+    store, ctx, real_references = genuine_v3_authority_store_and_material(tmp_path, config)
 
-    fabricated_binding = genuine_project_binding()
-    fabricated_payload = {
-        "github_projection_grant_refs": [
+    fabricated_binding = ctx["project_binding_id"]
+    fabricated_references = V3LiveWriteAuthorityReferences(
+        github_projection_grant_refs=(
             {
                 "kind": "github_projection_grant",
-                "id": f"GH-PROJ-GRANT-NEVER-COMMITTED-{fabricated_binding['project_binding_id']}",
-            }
-        ],
-        "github_projection_grant_declaration_refs": [
+                "id": f"GH-PROJ-GRANT-NEVER-COMMITTED-{fabricated_binding}",
+            },
+        ),
+        github_projection_grant_declaration_refs=(
             {
                 "kind": "github_projection_grant_declaration",
-                "id": (
-                    f"GH-PROJ-GRANT-DECL-NEVER-COMMITTED-{fabricated_binding['project_binding_id']}"
-                ),
-            }
-        ],
-    }
-    monkeypatch.setenv(V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV, json.dumps(fabricated_payload))
+                "id": f"GH-PROJ-GRANT-DECL-NEVER-COMMITTED-{fabricated_binding}",
+            },
+        ),
+    )
 
     def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
         raise AssertionError(
@@ -901,13 +881,27 @@ def test_never_committed_fabricated_material_causes_zero_network_calls(
 
     monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
 
+    assert (
+        resolve_v3_live_write_authority(
+            store,
+            ctx["project_id"],
+            ctx["project_binding_id"],
+            config,
+            fabricated_references,
+        )
+        is None
+    )
     assert _v3_live_authorized() is False
     assert _v3_live_authorized_context() is None
-    # The real trusted root, for its part, genuinely does authorize its own real references --
-    # proving the refusal above is specific to the fabricated, never-committed ids, not to
-    # this Store/configuration pairing being unauthorizable in general.
-    trusted_root = V3TrustedBootRoot(**trusted_root_payload)
-    assert resolve_v3_live_write_authority(trusted_root, config, real_references) is not None
+    # The real references, for their part, genuinely do authorize within the identical Store --
+    # proving the refusal above is specific to the fabricated, never-committed ids, not to this
+    # Store/configuration pairing being unauthorizable in general.
+    assert (
+        resolve_v3_live_write_authority(
+            store, ctx["project_id"], ctx["project_binding_id"], config, real_references
+        )
+        is not None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1034,20 +1028,17 @@ def test_v3_authorized_full_three_projection_run_against_the_live_target(tmp_pat
     assert config is not None
     context = _v3_live_authorized_context()
     assert context is not None
-    # Structural Review Round 10 (P14-R10-F1): the live execution path consumes only
-    # pre-issued, Store-resolved subject-specific authority -- it must never mint a
-    # difference/change subject body of its own. This delivery's own environment never
-    # reaches this line (the module-level ``skipif`` above always holds), and a later round
-    # that supplies genuine live-write authority via the environment must also supply the
-    # pre-issued subject bodies its own grants were issued for through whatever channel that
-    # round establishes -- ``subjects`` is left unset here as a deliberate, honest gap rather
-    # than a fabricated placeholder.
+    # Structural Review Round 10 (P14-R10-F1), unchanged by Round 11 (P14-R11-F1): the live
+    # execution path consumes only pre-issued, Store-resolved subject-specific authority -- it
+    # must never mint a difference/change subject body of its own. Round 11 removes the
+    # ``subjects`` parameter entirely: every projection kind's own resolved subject body
+    # already lives inside *context* itself (``context.authorities[projection_kind].
+    # subject_record``), so there is no longer a separate channel to leave unset here at all.
     result = _run_v3_authorized_execution(
         tmp_path,
         config,
         lambda projection_kind: RealGitHubAdapter(token=config.token),
         context=context,
-        subjects=None,
     )
     assert result["materialized_count"] == config.authorized_artifact_count
     assert result["cleanup_receipt"].all_closed
@@ -1110,15 +1101,10 @@ def test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_n
     it chose."""
 
     projection_payload = v3_run_payload(_MOCK_CONFIG, projection_kind)
-    store, ctx, references, subjects = genuine_v3_authority_store_and_material(
-        tmp_path, _MOCK_CONFIG
+    store, ctx, references = genuine_v3_authority_store_and_material(tmp_path, _MOCK_CONFIG)
+    context = resolve_v3_live_write_authority(
+        store, ctx["project_id"], ctx["project_binding_id"], _MOCK_CONFIG, references
     )
-    trusted_root = V3TrustedBootRoot(
-        store_root=str(store.root),
-        project_id=ctx["project_id"],
-        project_binding_id=ctx["project_binding_id"],
-    )
-    context = resolve_v3_live_write_authority(trusted_root, _MOCK_CONFIG, references)
     assert context is not None
     assert v3_execution_context_still_current(context) is True
 
@@ -1135,7 +1121,6 @@ def test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_n
         projection_kind=projection_kind,
         target_repository=dict(_MOCK_CONFIG.target_repository),
         projection_payload=projection_payload,
-        subject_record=subjects[projection_kind]["subject_record"],
         adapter=FakeGitHubAdapter(),
     )
     assert outcome["receipt"].status == "VERIFIED"

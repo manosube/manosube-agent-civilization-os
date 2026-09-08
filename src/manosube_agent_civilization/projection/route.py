@@ -2,12 +2,14 @@
 
 ``PROJECTION_OWNER_COUNT=1``, ``PUBLIC_PROJECTION_ENTRY_POINT_COUNT=1``.
 
-``project_to_github`` resolves an already-real canonical subject (an ``observation_evidence``
-record through the existing Store's own read-only
-:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.resolve_record`, or a
-caller-supplied ``difference``/``change`` record body independently schema-validated and
-fingerprint-recomputed through the existing Difference/Change owners' own identity functions --
-Structural Review Round 1, P14-R1-F2), re-verifies the caller's explicit ``github_authority_ref``
+``project_to_github`` resolves an already-real canonical subject -- an ``observation_evidence``,
+``difference``, or ``change`` record, each resolvable through the existing Store's own
+read-only :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.resolve_record`
+by reference alone, or (for ``difference``/``change`` only) a caller-supplied record body
+instead -- independently schema-validated and fingerprint-recomputed through the existing
+Difference/Change owners' own identity functions either way (Structural Review Round 1,
+P14-R1-F2; Store-resolution extended to Difference/Change, Structural Review Round 11,
+P14-R11-F1), re-verifies the caller's explicit ``github_authority_ref``
 against the existing Boot owner's own real, re-verified ``human_authority_ref`` (the identical
 pattern Independent Verification's own Structural Review Round 1, P13-R1-F2, already
 established), requires a genuine, exact-binding, Store-resolved ``github_projection_grant``
@@ -391,17 +393,25 @@ def _require_project_id_match(body: dict[str, Any], project_id: str, *, context:
 
 
 def _require_difference_subject(
+    store: Any,
+    project_id: str,
     subject_ref: dict[str, Any],
     subject_record: Mapping[str, Any] | None,
     subject_fingerprint: str | None,
-    project_id: str,
 ) -> str:
     """Return the real, recomputed fingerprint of a ``difference`` subject (Structural Review
-    Round 1, P14-R1-F2) -- never a bare caller-declared string. *subject_record* must be the
-    real, canonical Difference record body; it is schema-validated, required to name
-    *project_id* as its own, and its own content address
+    Round 1, P14-R1-F2; Store-resolvable by reference, Structural Review Round 11,
+    P14-R11-F1). *subject_record*, when supplied directly, must be the real, canonical
+    Difference record body. When left ``None``, the real body is instead resolved from
+    *store* by *subject_ref* alone (:meth:`~manosube_agent_civilization.store.file_store.
+    FileStateStore.resolve_record`) -- the identical Store-resolution discipline this route
+    already applies to an ``observation_evidence`` subject, extended to Difference rather than
+    adding a second, V3-only subject registry. Either way the resulting body is
+    schema-validated, required to name *project_id* as its own, and its own content address
     (:func:`~manosube_agent_civilization.difference.identity.difference_id`) is recomputed and
-    required to equal *subject_ref*'s own declared id.
+    required to equal *subject_ref*'s own declared id -- a caller-supplied body is never
+    trusted merely because it was supplied, and a Store-resolved body is never trusted merely
+    because it resolved.
 
     A Difference has no separate broader semantic fingerprint in this Kernel encoded in the
     ``sha256:`` form the Projection Envelope schema's own ``subject_fingerprint`` requires
@@ -413,11 +423,13 @@ def _require_difference_subject(
     the real ``difference_id`` directly, not this derived encoding of it."""
 
     if subject_record is None:
-        raise ProjectionRequirementError(
-            "subject_record is required for a 'difference' subject -- this route does not "
-            "resolve or reconstruct a Difference record itself (see the module docstring's "
-            "disclosed scope boundary)"
-        )
+        resolved = store.resolve_record(project_id, "difference", subject_ref["id"])
+        if resolved is None:
+            raise ProjectionRequirementError(
+                f"subject_ref does not resolve for project {project_id!r}: "
+                f"difference/{subject_ref['id']}"
+            )
+        subject_record = resolved
     body = dict(subject_record)
     _validate_canonical_record(body, "difference.schema.json", base=_DIFFERENCE_SCHEMA_BASE)
     _require_project_id_match(body, project_id, context="subject_record")
@@ -437,21 +449,25 @@ def _require_difference_subject(
 
 
 def _require_change_subject(
+    store: Any,
+    project_id: str,
     subject_ref: dict[str, Any],
     subject_record: Mapping[str, Any] | None,
     subject_fingerprint: str | None,
-    project_id: str,
 ) -> str:
     """Return the real, recomputed semantic fingerprint of a ``change`` subject (Structural
-    Review Round 1, P14-R1-F2), by the identical discipline
-    :func:`_require_difference_subject` applies to a Difference subject."""
+    Review Round 1, P14-R1-F2; Store-resolvable by reference, Structural Review Round 11,
+    P14-R11-F1), by the identical discipline :func:`_require_difference_subject` applies to a
+    Difference subject."""
 
     if subject_record is None:
-        raise ProjectionRequirementError(
-            "subject_record is required for a 'change' subject -- this route does not "
-            "resolve or reconstruct a Change record itself (see the module docstring's "
-            "disclosed scope boundary)"
-        )
+        resolved = store.resolve_record(project_id, "change", subject_ref["id"])
+        if resolved is None:
+            raise ProjectionRequirementError(
+                f"subject_ref does not resolve for project {project_id!r}: "
+                f"change/{subject_ref['id']}"
+            )
+        subject_record = resolved
     body = dict(subject_record)
     _validate_canonical_record(body, "change.schema.json", base=_CHANGE_SCHEMA_BASE)
     _require_project_id_match(body, project_id, context="subject_record")
@@ -670,11 +686,15 @@ def project_to_github(
     ``{"envelope": ..., "receipt": GitHubObservationReceipt, "reused": bool, "same_attempt":
     bool}``.
 
-    *subject_record* is required for a ``difference``/``change`` subject -- the real,
-    canonical record body, independently schema-validated and fingerprint-recomputed here
-    (Structural Review Round 1, P14-R1-F2) -- and ignored for an ``observation_evidence``
-    subject (Store-resolved instead). *subject_fingerprint*, if supplied, is always
-    cross-checked against the real, recomputed fingerprint, never trusted alone.
+    *subject_record*, for a ``difference``/``change`` subject, is either the real, canonical
+    record body directly (independently schema-validated and fingerprint-recomputed here --
+    Structural Review Round 1, P14-R1-F2) or ``None``, in which case the real body is instead
+    Store-resolved by *subject_ref* alone, through the identical
+    :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.resolve_record` surface
+    an ``observation_evidence`` subject already uses (Structural Review Round 11, P14-R11-F1) --
+    and is always ignored (Store-resolved unconditionally) for an ``observation_evidence``
+    subject. *subject_fingerprint*, if supplied, is always cross-checked against the real,
+    recomputed fingerprint, never trusted alone.
     *github_projection_grant_refs* is the caller's own explicit collection of
     ``{"kind": "github_projection_grant", "id": ...}`` references, resolved through the Store
     before being offered to the existing Authority owner (Structural Review Round 1,
@@ -770,11 +790,11 @@ def project_to_github(
             )
     elif checked_subject_ref["kind"] == "difference":
         real_subject_fingerprint = _require_difference_subject(
-            checked_subject_ref, subject_record, subject_fingerprint, project_id
+            store, project_id, checked_subject_ref, subject_record, subject_fingerprint
         )
     else:
         real_subject_fingerprint = _require_change_subject(
-            checked_subject_ref, subject_record, subject_fingerprint, project_id
+            store, project_id, checked_subject_ref, subject_record, subject_fingerprint
         )
 
     real_target_repository = {

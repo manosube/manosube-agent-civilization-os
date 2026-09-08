@@ -332,6 +332,20 @@ static conformance test. The Round 8 `v3_target_configuration` schema extension,
 since Round 9's own adoption, is reverted outright: the pre-issued, subject-specific grant model
 replaces the meta-grant model it was built for. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still
 holds, unchanged by any of this.
+The four lines immediately above `PHASE_14_COMPLETE` also record Structural Review Round 11's
+own correction (`ADOPT_P14_R11_FROZEN_TRUSTED_RUNTIME_CONTEXT_TO_ADAPTER_CHAIN`) -- see
+`PROJECTION_CONTRACT.md` §19 for the full detail: the environment variable Round 10 still read
+for the Store/Project/Binding root is removed outright -- any environment variable a
+caller-controlling entity can set is, structurally, still caller input. The live route now
+receives the already-open Store object and the Project/Binding identity as plain, caller-injected
+parameters, the identical shape `boot_project`/`project_to_github` themselves already accept;
+possessing the Store object, never a string, is now the trust boundary. The Difference/Change
+subject each pre-issued grant names is resolved by exact reference from that same trusted Store,
+through a backward-compatible extension of the existing canonical `project_to_github`
+Store-resolution branch -- never a second, V3-only subject registry -- so the live execution path
+no longer accepts a caller-supplied subject body or a separate `subjects` mapping of any kind;
+the resolved subject lives inside the one frozen `V3AuthorizedExecutionContext` this route alone
+produces. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.

@@ -1474,3 +1474,100 @@ environment, rather than a fabricated placeholder.
 ```text
 P14_R10_F1_CLOSED=true
 ```
+
+## 19. Structural Review Round 11 corrections (`ADOPT_P14_R11_FROZEN_TRUSTED_RUNTIME_CONTEXT_TO_ADAPTER_CHAIN`)
+
+**F1: the live V3 route now receives its Store, Project, and Binding identity as a
+caller-injected capability -- never selected from any environment variable, however narrowly
+scoped -- and the Difference/Change subject each pre-issued grant names is now resolved by
+exact reference from that same trusted Store, never accepted as a caller-supplied body or a
+side-channel mapping.** §18's own F1 removed the Store root from the untrusted references
+channel, but still read it from a *separate* environment variable
+(`MANOSUBE_P14_V3_TRUSTED_BOOT_ROOT`, `V3TrustedBootRoot`) -- any environment variable a
+caller-controlling entity can set is, structurally, still caller input, regardless of how
+narrow its own JSON shape is. Separately, `_run_v3_authorized_vertical_proof` still threaded a
+caller-supplied `subject_record` (or the test harness's own separate `subjects` mapping) into
+`project_to_github` for a Difference/Change subject -- Round 10 required every grant/
+declaration to be pre-issued and Store-resolved, but the *subject itself* still arrived from
+outside the frozen context.
+
+`tests/fixtures/v3_live_write_authority.py` removes `V3TrustedBootRoot`,
+`load_v3_trusted_boot_root`, `open_v3_trusted_store`, and `V3_TRUSTED_BOOT_ROOT_ENV` outright,
+and no longer imports `FileStateStore` at all (proven by
+`test_live_gate_module_never_imports_file_state_store`, an AST-import check, not a source-text
+substring match, so the module's own docstring prose mentioning `FileStateStore` is never a
+false failure). `resolve_v3_live_write_authority(store, project_id, project_binding_id, config,
+references)` now takes the already-open Store object and the Project/Binding identity to
+Boot-restore within it as plain parameters -- the identical shape
+`boot_project`/`project_to_github` themselves already accept -- rather than any environment- or
+string-selected root. The Store object itself, never a string, is what a caller could redirect;
+possessing it is now the trust boundary, proven negatively by
+`test_attacker_controlled_but_fully_committed_substitute_store_produces_zero_calls` (a fully
+genuine, fully self-consistent attacker Store authorizes only against itself, never against the
+real injected Store) and positively by every genuine-material test in
+`tests/unit/projection/test_v3_live_write_authority.py` (33 tests, fully rewritten).
+
+`src/manosube_agent_civilization/projection/route.py` is extended -- per this finding's own
+explicit instruction ("extend that route through the existing Store/Difference/Change owners;
+do not create a V3-only subject registry or second owner") -- so `_require_difference_subject`
+and `_require_change_subject` now Store-resolve their subject by reference
+(`store.resolve_record(project_id, "difference"|"change", subject_ref["id"])`) whenever
+`subject_record is None`, mirroring the pre-existing `observation_evidence` Store-resolution
+branch exactly, then falling through to the unchanged schema-validate/`project_id`-match/
+identity-recompute/fingerprint-recompute logic already established for a caller-supplied body.
+This is a backward-compatible extension of the one existing canonical owner, not a new one:
+`project_to_github`'s own public signature is unchanged, and every prior round's caller-supplied-
+body test path continues to pass unmodified (211 tests across `tests/unit/projection/` and
+`tests/contract/projection/`, excluding the two V3-specific files, re-verified with zero
+regressions).
+
+`tests/fixtures/v3_live_write_authority.py` adds `_resolve_subject(store, project_id,
+subject_ref)`, using the identical canonical identity/schema-validation owners
+`project_to_github` itself now also uses for this same Store-resolution
+(`difference.identity.difference_id`, `change.identity.change_id`/
+`change_semantic_fingerprint`, `evidence.identity.evidence_semantic_fingerprint`,
+`difference.validation.validate_record`) -- proven by
+`test_live_gate_module_imports_the_real_canonical_owners`, extended this round for all four. The
+resolved, identity-verified subject body is preserved as a new field,
+`V3PreIssuedProjectionAuthority.subject_record`, inside the frozen
+`V3AuthorizedExecutionContext` `resolve_v3_live_write_authority` returns -- resolved exactly
+once, at authorization time, from the trusted Store alone, never independently re-derived or
+caller-supplied again at execution time. `_run_v3_authorized_vertical_proof`
+(`tests/integration/projection/test_v3_real_github_vertical_proof.py`) now reads
+`context.authorities[projection_kind].subject_record` directly and threads it into
+`project_to_github`; the function's own `subject_record` parameter, and
+`_run_v3_authorized_execution`'s own `subjects` parameter, are removed entirely -- proven by
+static conformance's extended `_FORBIDDEN_BODY_PARAMETER_NAMES` (now including `"subjects"`,
+`"subject_record"`, `"subject_records"`) that the live gate module itself accepts no such
+parameter anywhere in its own public surface.
+
+The one V3TrustedBootRoot-shaped question this finding leaves genuinely open --
+`_v3_live_authorized_context()` (a no-argument, collection-time function) has no real external
+process in this repository capable of legitimately injecting a real Store object and real
+Project/Binding identity -- is resolved, and disclosed here explicitly, by having that function
+always return `None` in this delivery: an honest reflection of "no genuine external caller
+exists yet to inject anything," not an acknowledged gap in the function's own code shape (this
+finding's own §9 forbids exactly that). `resolve_v3_live_write_authority`'s own shape requires
+no further source edit once a real runtime bootstrap begins calling it with a real Store and
+real identity; only who calls it, and with what, changes. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false`
+remains this delivery's own state throughout; the live-gated integration test
+(`test_v3_authorized_full_three_projection_run_against_the_live_target`) still never executes
+in this delivery.
+
+The full required negative-control matrix is retained and extended for the new shapes: `store`/
+`project_id`/`project_binding_id`/`config`/`references` each independently `None`, wrong
+project/binding identity, the attacker-controlled-but-fully-committed substitute Store control
+above, unresolved never-committed grant/declaration references (rewritten this round around
+direct object injection rather than an environment-sourced trusted root), wrong signer, wrong
+configuration (rewritten the same way), wrong target repository, wrong kinds/count, ambiguous-
+grant, revoked grant/declaration status, stale Store revision, substituted context fields, and
+four new Round 11 subject-resolution controls: a subject reference naming a record nothing ever
+committed, a subject kind that does not match the projection kind's own required subject kind, a
+grant claiming a `subject_fingerprint` that does not equal the subject's own independently
+recomputed fingerprint, and a subject committed under an id that does not equal its own
+recomputed identity (a corrupted or tampered Store). Round 6's own cleanup correction (§14,
+`P14_R6_F1`) remains intact and untouched by this round's diff.
+
+```text
+P14_R11_F1_CLOSED=true
+```
