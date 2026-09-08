@@ -178,7 +178,10 @@ RECEIPT_HANDOFF_INDEPENDENTLY_RESOLVED_AGAINST_COMMITTED_ENVELOPE=true
 EXTERNAL_ARTIFACT_LOCATOR_GRAMMAR_VALIDATED=true
 CORRELATION_MARKER_ROUND_TRIP_FIXED=true
 TRANSPORT_LEVEL_GITHUB_CONTRACT_FIXTURES_IMPLEMENTED=true
-V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED=false
+V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED=true
+EXPLICIT_CLAIM_TOKEN_INDEPENDENT_OF_TIMESTAMP_IMPLEMENTED=true
+RECEIPT_HANDOFF_INDEPENDENTLY_RE_OBSERVED_NEVER_TRUSTED_FROM_RECEIPT=true
+V3_CONFIGURATION_CONTRACT_VALIDATED_ZERO_NETWORK_ACCESS=true
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
@@ -186,13 +189,18 @@ PHASE_15_ALLOWED=false
 The last five lines before the Round 2 additions above record Structural Review Round 1's own
 corrections (Issue #62, `ADOPT_P14_R1_CANONICAL_AUTHORITY_SUBJECT_AND_RECOVERABLE_PROJECTION`)
 -- see `PROJECTION_CONTRACT.md` §3 items 13-17 for the full frozen semantics each one fixes.
-The seven `..._IMPLEMENTED`/`..._FIXED`/`..._VALIDATED` lines immediately above record
-Structural Review Round 2's own corrections (`ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_
-AND_REAL_V3`) -- see `PROJECTION_CONTRACT.md` §10 for the full detail each one fixes.
-`V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED=false` is a disclosed, deliberately-unclosed item:
-`test_v3_real_github_vertical_proof.py` still carries placeholder `head_ref`/`head_sha` values,
-which this round did not replace, since no exact target repository has yet been separately
-frozen and re-confirmed for that harness (`V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds).
+The seven `..._IMPLEMENTED`/`..._FIXED`/`..._VALIDATED` lines after those record Structural
+Review Round 2's own corrections (`ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_AND_REAL_
+V3`) -- see `PROJECTION_CONTRACT.md` §10 for the full detail each one fixes.
+`V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED` was `false` at the end of Round 2, disclosed as a
+deliberately-unclosed item; it is now `true`. The three lines immediately above it record
+Structural Review Round 3's own corrections
+(`ADOPT_P14_R3_UNIQUE_CLAIM_ATTESTED_RECEIPT_AND_CONFIGURABLE_V3`) -- see
+`PROJECTION_CONTRACT.md` §11 for the full detail each one fixes, including a correction to
+Round 2's own mistaken belief that its F2 (atomic claims) and F3 (receipt corroboration) were
+already fully closed. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any
+of this: `V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED=true` closes the *configuration*
+requirement only, never live-write authorization.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.

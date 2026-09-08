@@ -211,16 +211,24 @@ def _project(world: dict[str, Any], adapter: Any, **overrides: Any) -> dict[str,
         "adapter": adapter,
         "github_projection_grant_refs": [world["grant_ref"]],
         "github_projection_grant_declaration_refs": [world["declaration_ref"]],
+        "attempt_claim_token": "PROJECTION-ATTEMPT-TEST-A",
     }
     kwargs.update(overrides)
     return project_to_github(**kwargs)
 
 
-def _commit_competing_intent(world: dict[str, Any], materialized_at: str) -> None:
+def _commit_competing_intent(
+    world: dict[str, Any],
+    materialized_at: str,
+    claim_token: str = "PROJECTION-ATTEMPT-TEST-B",  # noqa: S107
+) -> None:
     """Directly commit a ``projection_intent`` at *world*'s own mapping key, with a
-    *different* ``materialized_at`` than any call under test will use -- simulating a
-    genuinely distinct, already-durable competing attempt (Structural Review Round 2,
-    P14-R2-F2's own concurrency-barrier stage)."""
+    *different* ``claim_token`` (Structural Review Round 3, P14-R3-F1) than any call under
+    test will use by default -- simulating a genuinely distinct, already-durable competing
+    attempt (Structural Review Round 2, P14-R2-F2's own concurrency-barrier stage). Callers
+    proving the timestamp-independence requirement specifically pass the identical
+    ``materialized_at`` the call under test will also use, relying on the differing
+    ``claim_token`` alone to make this a genuinely distinct attempt."""
 
     from manosube_agent_civilization.projection.engine import derive_projection_intent
 
@@ -233,6 +241,7 @@ def _commit_competing_intent(world: dict[str, Any], materialized_at: str) -> Non
         target_repository=_TARGET_REPOSITORY,
         project_id=project_id,
         materialized_at=materialized_at,
+        claim_token=claim_token,
     )
     current_state = store.load_current(project_id)
     _commit_records(
@@ -244,11 +253,17 @@ def _commit_competing_intent(world: dict[str, Any], materialized_at: str) -> Non
     )
 
 
-def _commit_intent_and_attempt(world: dict[str, Any], materialized_at: str) -> None:
+def _commit_intent_and_attempt(
+    world: dict[str, Any],
+    materialized_at: str,
+    claim_token: str = "PROJECTION-ATTEMPT-TEST-A",  # noqa: S107
+) -> None:
     """Directly commit both durable claim records at *world*'s own mapping key, for the
-    *same* ``materialized_at`` a subsequent call under test will use -- simulating a prior
-    attempt that reserved the slot and recorded it was about to call ``materialize``, then
-    crashed (or genuinely failed) before anything discoverable existed."""
+    *same* ``materialized_at``/``claim_token`` a subsequent call under test will use --
+    simulating a prior attempt that reserved the slot and recorded it was about to call
+    ``materialize``, then crashed (or genuinely failed) before anything discoverable
+    existed. Defaults to :func:`_project`'s own default ``attempt_claim_token``, so a
+    subsequent ``_project(...)`` call is genuinely the *same* caller's own retry."""
 
     from manosube_agent_civilization.projection.engine import (
         derive_projection_intent,
@@ -264,6 +279,7 @@ def _commit_intent_and_attempt(world: dict[str, Any], materialized_at: str) -> N
         target_repository=_TARGET_REPOSITORY,
         project_id=project_id,
         materialized_at=materialized_at,
+        claim_token=claim_token,
     )
     current_state = store.load_current(project_id)
     current_state = _commit_records(
@@ -280,6 +296,7 @@ def _commit_intent_and_attempt(world: dict[str, Any], materialized_at: str) -> N
         target_repository=_TARGET_REPOSITORY,
         project_id=project_id,
         materialized_at=materialized_at,
+        claim_token=claim_token,
     )
     _commit_records(
         store,
@@ -342,6 +359,7 @@ def test_identical_retry_after_intent_alone_proceeds_to_materialize(
         target_repository=_TARGET_REPOSITORY,
         project_id=project_id,
         materialized_at=materialized_at,
+        claim_token="PROJECTION-ATTEMPT-TEST-A",  # noqa: S106
     )
     current_state = store.load_current(project_id)
     _commit_records(
@@ -465,3 +483,90 @@ def test_correlation_lookup_failure_blocks_materialize(_world: dict[str, Any]) -
     with pytest.raises(ProjectionAdapterError):
         _project(_world, adapter)
     assert adapter.materialize_call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 3 (P14-R3-F1): explicit claim ownership independent of
+# a caller-controlled timestamp
+# ---------------------------------------------------------------------------
+
+
+def test_competing_intent_with_identical_timestamp_but_different_claim_token_refuses(
+    _world: dict[str, Any],
+) -> None:
+    """``materialized_at`` alone is never a uniqueness primitive: a genuinely distinct
+    competing attempt, already durably holding the claim under a *different*
+    ``claim_token``, must refuse this caller even though this caller supplies the exact same
+    caller-controlled ``materialized_at`` the competing attempt used."""
+
+    shared_timestamp = "2026-09-08T00:00:01Z"
+    _commit_competing_intent(_world, materialized_at=shared_timestamp)
+    adapter = FakeGitHubAdapter()
+    with pytest.raises(ProjectionConcurrentClaimError):
+        _project(_world, adapter, materialized_at=shared_timestamp)
+    assert adapter.materialize_call_count == 0
+    assert adapter.find_by_correlation_key_call_count == 0
+
+
+def test_two_distinct_claim_tokens_sharing_a_timestamp_at_most_one_materializes(
+    _world: dict[str, Any],
+) -> None:
+    """Barrier proof, sequenced across the full public route (never a direct Store commit):
+    caller A's own genuine call fully succeeds and commits the Envelope; caller B then
+    arrives with a *different* ``claim_token`` but the exact same caller-controlled
+    ``materialized_at``. Once the Envelope exists, every subsequent caller -- distinct token
+    included -- converges on it via the ordinary reuse path rather than re-claiming or
+    re-materializing: ``materialize_call_count`` stays at 1 across both callers, never 2, and
+    caller B never raises merely for arriving under a different token after the fact (the
+    claim/token barrier guards the race to *create* the artifact, proven directly at the
+    Store layer by ``test_competing_intent_with_identical_timestamp_but_different_claim_
+    token_refuses`` above; it was never meant to make a *later* honest caller error out
+    against an artifact that genuinely already exists)."""
+
+    shared_timestamp = "2026-09-08T00:00:01Z"
+    adapter = FakeGitHubAdapter()
+    first = _project(
+        _world,
+        adapter,
+        materialized_at=shared_timestamp,
+        attempt_claim_token="PROJECTION-ATTEMPT-TEST-A",  # noqa: S106
+    )
+    assert first["reused"] is False
+    assert adapter.materialize_call_count == 1
+
+    second = _project(
+        _world,
+        adapter,
+        materialized_at=shared_timestamp,
+        attempt_claim_token="PROJECTION-ATTEMPT-TEST-B",  # noqa: S106
+    )
+    assert second["reused"] is True
+    assert second["envelope"] == first["envelope"]
+    assert adapter.materialize_call_count == 1
+
+
+def test_retry_with_the_identical_claim_token_and_timestamp_proceeds_identically(
+    _world: dict[str, Any],
+) -> None:
+    """The genuine same-caller retry this whole mechanism must still allow: identical
+    ``claim_token`` and identical ``materialized_at`` is an idempotent replay, not a
+    competing claim, and converges on the identical Envelope without a second
+    ``materialize`` call."""
+
+    shared_timestamp = "2026-09-08T00:00:01Z"
+    adapter = FakeGitHubAdapter()
+    first = _project(
+        _world,
+        adapter,
+        materialized_at=shared_timestamp,
+        attempt_claim_token="PROJECTION-ATTEMPT-TEST-A",  # noqa: S106
+    )
+    second = _project(
+        _world,
+        adapter,
+        materialized_at=shared_timestamp,
+        attempt_claim_token="PROJECTION-ATTEMPT-TEST-A",  # noqa: S106
+    )
+    assert first["envelope"] == second["envelope"]
+    assert second["reused"] is True
+    assert adapter.materialize_call_count == 1

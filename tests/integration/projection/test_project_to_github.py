@@ -322,6 +322,7 @@ def _project(world: dict[str, Any], adapter: Any, **overrides: Any) -> dict[str,
         "adapter": adapter,
         "github_projection_grant_refs": [world["grant_ref"]],
         "github_projection_grant_declaration_refs": [world["declaration_ref"]],
+        "attempt_claim_token": "PROJECTION-ATTEMPT-TEST-0001",
     }
     kwargs.update(overrides)
     return project_to_github(**kwargs)
@@ -1384,7 +1385,11 @@ def test_cross_project_receipt_relabeling_refuses(_world: dict[str, Any]) -> Non
     request = change_free_verification_evidence_request(provenance=None)
     with pytest.raises(ProjectionRequirementError):
         route_observation_receipt_to_evidence(
-            _world["store"], outcome["receipt"], "PRJ-SOME-OTHER-PROJECT", request
+            _world["store"],
+            outcome["receipt"],
+            "PRJ-SOME-OTHER-PROJECT",
+            request,
+            adapter=adapter,
         )
 
 
@@ -1666,7 +1671,7 @@ def test_receipt_routes_to_a_real_change_free_verification_evidence_record(
         _world["project_id"],
     )
     evidence = route_observation_receipt_to_evidence(
-        _world["store"], outcome["receipt"], _world["project_id"], request
+        _world["store"], outcome["receipt"], _world["project_id"], request, adapter=adapter
     )
     assert evidence["evidence_position"] == "CHANGE_FREE_VERIFICATION_EVIDENCE"
     assert evidence["verification_result_provenance"]["status"] == "VERIFIED"

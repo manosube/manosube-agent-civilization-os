@@ -9,6 +9,7 @@ KERNEL_ELEMENT=NONE_PROJECTION_ADAPTER
 ADOPTION_ID=ADOPT_P14_D001_PROJECTION_ENVELOPE_IMPLEMENTATION
 CORRECTION_ADOPTION_ID=ADOPT_P14_R1_CANONICAL_AUTHORITY_SUBJECT_AND_RECOVERABLE_PROJECTION
 CORRECTION_ADOPTION_ID_ROUND_2=ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_AND_REAL_V3
+CORRECTION_ADOPTION_ID_ROUND_3=ADOPT_P14_R3_UNIQUE_CLAIM_ATTESTED_RECEIPT_AND_CONFIGURABLE_V3
 GOVERNING_ISSUE=#62
 REVIEWED_MAIN_SHA=7fc597356330a0d1da7a334ef20cd913b74154d
 ```
@@ -40,6 +41,20 @@ field, together with an exact per-artifact-kind GitHub locator grammar (never a 
 self-defeat (F4), plus transport-level `RealGitHubAdapter` contract fixtures (F4b) -- F4b's own
 exact target-bound V3 configuration (replacing the harness's remaining hardcoded `head_ref`/
 `head_sha` placeholders) is disclosed as not yet closed this round; see §10's own F4 note.
+
+It is further corrected by Structural Review Round 3
+(`ADOPT_P14_R3_UNIQUE_CLAIM_ATTESTED_RECEIPT_AND_CONFIGURABLE_V3`, Issue #62), which found and
+required correction of three further findings (P14-R3-F1 through F3, §11): an explicit,
+canonical attempt/claim token binding claim ownership independently of any caller-controlled
+timestamp, closing a same-timestamp/distinct-attempt race Round 2's own F2 did not yet guard
+(F1); an independently, freshly re-observed receipt at Evidence hand-off -- never any of
+`receipt.status`/`observations`/`adapter_identity`/`input_refs` -- closing a
+forged-attestation gap Round 2's own F3 did not yet catch (F2); and a validated, offline,
+zero-network V3 target configuration contract closing Round 2's own disclosed F4b gap for
+real, replacing every hardcoded placeholder ref/SHA with values sourced from one
+configuration object (F3). This round's own structural review found that Round 2's own
+self-reported closure of F2 and F3 was premature -- both are corrected for real here, not
+merely re-asserted.
 
 Every section below reflects the corrected design; where a frozen decision from the original
 delivery or from Round 1 was superseded rather than merely extended, this is stated explicitly
@@ -77,6 +92,7 @@ project_to_github(
     adapter: GitHubAdapter,
     github_projection_grant_refs: list[Mapping[str, Any]],
     github_projection_grant_declaration_refs: list[Mapping[str, Any]],
+    attempt_claim_token: str,
     subject_record: Mapping[str, Any] | None = None,
     subject_fingerprint: str | None = None,
 ) -> dict[str, Any]   # {"envelope": ..., "receipt": GitHubObservationReceipt, "reused": bool}
@@ -86,6 +102,8 @@ route_observation_receipt_to_evidence(
     receipt: GitHubObservationReceipt,
     project_id: str,
     evidence_request: Mapping[str, Any],
+    *,
+    adapter: GitHubAdapter,
 ) -> dict[str, Any]
 ```
 
@@ -114,6 +132,11 @@ is required for a
 `difference`/`change` subject -- the real, canonical record body, independently
 schema-validated and fingerprint-recomputed by this route -- and ignored for an
 `observation_evidence` subject, which remains Store-resolved instead.
+`attempt_claim_token` (Structural Review Round 3, P14-R3-F1) is a required, caller-supplied,
+canonical-identity-shaped attempt token -- never `materialized_at`, which two genuinely
+distinct callers may legitimately share -- included in both the `projection_intent` and
+`projection_materialize_attempt` record content the Store's own same-key/different-content
+rejection keys its concurrency barrier on (§10, F1).
 
 `subject_fingerprint` is accepted but never trusted alone, for any subject kind: this route
 always independently resolves or admits the real record (`store.resolve_record` for
@@ -776,3 +799,85 @@ P14_R1_F7_CLOSED=true
 own locator-grammar sub-requirement; `P14_R1_F4`, re-addressed as F2; `P14_R1_F5`, re-addressed
 as F4 -- all now closed at the head this correction lands at. `P14_R1_F2`/`P14_R1_F6` remain
 materially improved, not regressed. `P14_R1_F7` remains closed.)
+
+## 11. Structural Review Round 3 corrections (`ADOPT_P14_R3_UNIQUE_CLAIM_ATTESTED_RECEIPT_AND_CONFIGURABLE_V3`)
+
+**F1: claim ownership is now an explicit token, never inferred from a caller-controlled
+timestamp.** §10's own F2 closed the search-then-create race using `materialized_at` as (part
+of) the durable claim record's own content -- but `materialized_at` is a caller-supplied
+instant, never a uniqueness primitive, and two genuinely distinct concurrent callers could
+legitimately supply the identical value, making both look like the same caller's own
+idempotent retry and letting both reach `materialize`. `project_to_github` now requires a
+second, explicit `attempt_claim_token` (§2) on every call, included in both the
+`projection_intent` and `projection_materialize_attempt` record content the same
+same-key/different-content rejection already keys its concurrency barrier on: two attempts
+sharing a timestamp but carrying distinct tokens now produce genuinely different record
+content, so only whichever commit the Store's single per-project lock admits first ever
+proceeds, and the other refuses via `ProjectionConcurrentClaimError` before any adapter call.
+A genuine retry of the identical attempt must present the identical token again. Both new
+schemas (`projection_intent.schema.json`, `projection_materialize_attempt.schema.json`) gain
+a required `claim_token` field.
+
+**F2: the observation receipt handed to Evidence is now independently, freshly
+re-observed -- never trusted from the receipt object itself.** §10's own F3 resolved the
+receipt's claimed Envelope and cross-checked `subject_ref`/`external_artifact_ref`/
+`github_authority_ref` against it, closing cross-project relabeling -- but
+`GitHubObservationReceipt` remains a publicly constructible dataclass, so a caller could copy
+every one of those Envelope-bound fields from a genuine receipt while forging its own
+`status`, `observations`, `adapter_identity`, or `input_refs`, and `route_observation_
+receipt_to_evidence` would still copy the forged `status` straight into Evidence's own
+`verification_result_provenance`. `route_observation_receipt_to_evidence` now takes a
+required `adapter` parameter (§2) and, once the real Envelope resolves, independently
+re-observes through it -- via the identical `observe_and_classify` body
+(`projection/observable.py`) `route.py`'s own materialization-time `_observe` now also calls,
+so both call sites share one classification owner rather than two that could drift. Every
+field of `verification_result_provenance` this handoff constructs comes from the real,
+resolved Envelope and this fresh re-observation alone; none of `receipt.status`,
+`receipt.observations`, `receipt.adapter_identity`, or `receipt.input_refs` is ever read.
+A forged claim in any of those four fields therefore has no path to affect the outcome at
+all, closing every variant of the finding at once rather than patching each field
+individually.
+
+**F3: the V3 harness now sources every real-adapter value from one validated, offline
+configuration contract -- never a hardcoded, impossible placeholder.** §10's own F4b left
+`test_v3_real_github_vertical_proof.py`'s `head_ref="agent/v3-harness"`, `base_ref="main"`,
+and `head_sha="a" * 40` hardcoded, disclosed as not yet closed. A new module,
+`tests/fixtures/v3_target_configuration.py`, defines `V3TargetConfiguration` and
+`load_v3_target_configuration` -- reading eight environment variables (exact target
+repository, GitHub token, the Change projection's own existing head/base refs, the Evidence
+projection's own real commit SHA, an artifact naming prefix, and explicit `"true"`-literal
+cleanup/no-merge confirmations), validating every one of them with plain string/regex
+grammar checks and zero network access, and returning `None` only when every variable is
+unset (the genuinely safe default every CI/local environment in this delivery has) -- any
+*partial* configuration, or any single malformed value, raises `V3ConfigurationError` before
+any network call could ever occur. The three real-adapter tests now build every payload field
+from this one validated configuration object instead of a literal; `V3_LIVE_EXTERNAL_WRITE_
+AUTHORITY=false` still gates all three behind an unconditional `pytest.mark.skip`, unchanged
+by this correction -- only the *configuration*, never the live-write authorization, is what
+this finding required closed. Three additional tests
+(`test_v3_configured_real_adapter_projects_*`) prove the identical `_run_vertical_proof`
+harness body executes to completion, for all three projection kinds, over a real
+`RealGitHubAdapter` and a synthetic-but-validated `V3TargetConfiguration`, with
+`urllib.request.urlopen` monkeypatched to canned GitHub-shaped responses -- mechanically
+executable, with zero live network access, never merely asserted.
+
+```text
+P14_R3_F1_CLOSED=true
+P14_R3_F2_CLOSED=true
+P14_R3_F3_CLOSED=true
+```
+
+```text
+P14_R2_F2_CLOSED=true
+P14_R2_F3_CLOSED=true
+P14_R2_F4b_V3_TARGET_CONFIG_CLOSED=true
+```
+
+(§10's own status block above records `P14_R2_F2_CLOSED=true`/`P14_R2_F3_CLOSED=true` -- that
+self-assessment was mistaken: Structural Review Round 3 found genuine, reproduced
+counterexamples in both (the identical-timestamp/distinct-token race F2's own implementation
+did not yet guard, and the forged-status/forged-observations receipt F3's own Envelope-only
+corroboration did not yet catch), corrected here as this section's own F1/F2, and the record
+above is left unedited as an honest account of what Round 2 believed at the time rather than
+silently rewritten to agree with this correction. `P14_R2_F4b_V3_TARGET_CONFIG_CLOSED=false`,
+disclosed open at the end of §10, is closed for real by this section's own F3.)

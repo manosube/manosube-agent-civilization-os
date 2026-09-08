@@ -28,8 +28,9 @@ from typing import Any
 
 from manosube_agent_civilization.evidence import derive_evidence
 
-from .errors import ProjectionRequirementError
-from .types import GitHubObservationReceipt
+from .errors import ProjectionAdapterError, ProjectionRequirementError
+from .observable import observe_and_classify
+from .types import GitHubAdapter, GitHubObservationReceipt
 
 _ENVELOPE_RECORD_KIND = "projection_envelope"
 
@@ -56,24 +57,32 @@ def _reference_set(refs: tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
     return {"collection_kind": "UNORDERED_SET", "members": members}
 
 
-def _construct_provenance(receipt: GitHubObservationReceipt, project_id: str) -> dict[str, Any]:
-    """Return the one, deterministic ``verification_result_provenance`` projection of
-    *receipt* -- built here, from the real receipt this handoff already holds, and never
-    accepted from a caller (the identical "derived, never declared" discipline Independent
-    Verification's own R6-R6 handoff already applies)."""
+def _construct_provenance(
+    envelope: Mapping[str, Any],
+    project_id: str,
+    adapter_identity: Mapping[str, Any],
+    status: str,
+    observations: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the one, deterministic ``verification_result_provenance`` projection this
+    handoff derives -- from the real, committed Envelope and a freshly, independently
+    recomputed re-observation (Structural Review Round 3, Issue #62, P14-R3-F2), never from
+    any field a caller-constructed :class:`~.types.GitHubObservationReceipt` merely claims.
+    The identical "derived, never declared" discipline Independent Verification's own R6-R6
+    handoff already applies."""
 
-    target_refs = (dict(receipt.subject_ref),)
+    target_refs = (dict(envelope["subject_ref"]),)
     provenance = {
-        "status": receipt.status,
-        "requirement_id": receipt.projection_envelope_id,
-        "selection_id": receipt.projection_envelope_id,
+        "status": status,
+        "requirement_id": envelope["projection_envelope_id"],
+        "selection_id": envelope["projection_envelope_id"],
         "project_id": project_id,
         "target_refs": _reference_set(target_refs),
-        "verifier_identity": dict(receipt.adapter_identity),
-        "selection_authority_ref": dict(receipt.github_authority_ref),
-        "verification_boundary": {"external_artifact_ref": dict(receipt.external_artifact_ref)},
-        "input_refs": _reference_set(receipt.input_refs or target_refs),
-        "observations": dict(receipt.observations),
+        "verifier_identity": dict(adapter_identity),
+        "selection_authority_ref": dict(envelope["github_authority_ref"]),
+        "verification_boundary": {"external_artifact_ref": dict(envelope["external_artifact_ref"])},
+        "input_refs": _reference_set(target_refs),
+        "observations": dict(observations),
     }
     if set(provenance) != set(REQUIRED_PROVENANCE_FIELDS):
         raise ProjectionRequirementError(
@@ -88,6 +97,8 @@ def route_observation_receipt_to_evidence(
     receipt: GitHubObservationReceipt,
     project_id: str,
     evidence_request: Mapping[str, Any],
+    *,
+    adapter: GitHubAdapter,
 ) -> dict[str, Any]:
     """Hand *receipt* off to the existing Evidence owner and return the one canonical
     Evidence record it derives from *evidence_request*.
@@ -96,8 +107,26 @@ def route_observation_receipt_to_evidence(
     ``verification_observation_request``-grounded Evidence request -- built by the caller
     from real Observation/Difference data, exactly as every other Evidence caller in this
     codebase already builds one. This function fabricates none of that; it only constructs
-    and injects ``verification_result_provenance`` from *receipt* itself, and re-verifies the
-    derived record actually carries exactly that provenance before returning it.
+    and injects ``verification_result_provenance``, and re-verifies the derived record
+    actually carries exactly that provenance before returning it.
+
+    **Independent re-observation, never a trusted receipt (Structural Review Round 3, Issue
+    #62, P14-R3-F2).** Resolving only the real, committed Envelope's own ``subject_ref``/
+    ``external_artifact_ref``/``github_authority_ref`` (Structural Review Round 2, P14-R2-F3)
+    proves *what* was projected, never that *this receipt's own claimed re-observation
+    genuinely happened or had the asserted result* -- ``GitHubObservationReceipt`` remains a
+    publicly constructible dataclass, so a caller could copy every Envelope-bound field from
+    a genuine receipt while forging its own ``status``, ``observations``, ``adapter_identity``,
+    or ``input_refs``. This function therefore never reads any of those four fields from
+    *receipt* at all: once the real Envelope is resolved, it independently calls *adapter*'s
+    own ``observe`` itself -- through the identical
+    :func:`~manosube_agent_civilization.projection.observable.observe_and_classify` body
+    :mod:`~manosube_agent_civilization.projection.route` uses at materialization time -- and
+    builds ``verification_result_provenance`` entirely from that fresh result and the real
+    Envelope, so no caller-supplied claim about the observation's own outcome can ever reach
+    Evidence unverified. *receipt* itself is used only to locate the claimed Envelope
+    (``projection_envelope_id``) and as a courtesy consistency check against it; it is never
+    itself the source of any provenance field.
 
     Every :class:`~manosube_agent_civilization.evidence.errors.EvidenceError` the existing
     owner itself raises propagates unchanged.
@@ -179,7 +208,32 @@ def route_observation_receipt_to_evidence(
             "this handoff constructs it from receipt itself"
         )
 
-    provenance = _construct_provenance(receipt, project_id)
+    declared_identity = getattr(adapter, "adapter_identity", None)
+    if not isinstance(declared_identity, Mapping):
+        raise ProjectionAdapterError(
+            "adapter does not declare a readable adapter_identity attribute -- an unstated "
+            "or unverifiable identity may never re-observe or ground Evidence on this "
+            "handoff's behalf"
+        )
+    # Structural Review Round 3 (P14-R3-F2): independently re-observe through the exact
+    # authorized adapter, never trust receipt.status/observations/adapter_identity/
+    # input_refs -- see this function's own docstring.
+    classified = observe_and_classify(
+        adapter,
+        external_artifact_ref=envelope["external_artifact_ref"],
+        projection_kind=envelope["projection_kind"],
+        committed_payload=envelope["projection_payload"],
+    )
+    fresh_observations = {
+        "observation_outcome": classified["observation_outcome"],
+        "exists": classified["exists"],
+        "observed_content_fingerprint": classified["observed_content_fingerprint"],
+        "observed_at": classified["observed_at"],
+    }
+
+    provenance = _construct_provenance(
+        envelope, project_id, declared_identity, classified["status"], fresh_observations
+    )
     request = dict(evidence_request)
     request["verification_result_provenance"] = provenance
 

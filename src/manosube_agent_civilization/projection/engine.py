@@ -115,6 +115,7 @@ def _derive_claim_record(
     target_repository: dict[str, Any],
     project_id: str,
     materialized_at: str,
+    claim_token: str,
 ) -> dict[str, Any]:
     """Shared body for :func:`derive_projection_intent` and
     :func:`derive_projection_materialize_attempt` (Structural Review Round 2, Issue #62,
@@ -124,8 +125,17 @@ def _derive_claim_record(
     always exactly :func:`~manosube_agent_civilization.projection.identity.
     projection_mapping_key`, the *slot* this record claims, so a second attempt at the
     identical slot commits at the identical (kind, id) and is caught by the Store's own
-    ``RecordConflictError`` the moment its content (here, ``materialized_at``) differs --
-    that collision *is* the concurrency barrier this pair of record kinds exists to provide.
+    ``RecordConflictError`` the moment its content differs -- that collision *is* the
+    concurrency barrier this pair of record kinds exists to provide.
+
+    *claim_token* (Structural Review Round 3, Issue #62, P14-R3-F1) is the explicit attempt
+    identity that content -- never ``materialized_at`` alone, which two genuinely distinct
+    callers may legitimately share (a caller-supplied instant, not a uniqueness primitive).
+    Two attempts sharing an identical ``materialized_at`` but carrying *different*
+    ``claim_token`` values now produce genuinely different record content at the identical
+    (kind, id) slot, so the Store's own same-key/different-content rejection distinguishes
+    them correctly; two attempts sharing both fields are, and only then are, treated as the
+    identical caller's own idempotent retry.
     """
 
     if projection_kind not in PROJECTION_KINDS:
@@ -147,6 +157,7 @@ def _derive_claim_record(
         "projection_kind": projection_kind,
         "target_repository": dict(target_repository),
         "materialized_at": materialized_at,
+        "claim_token": claim_token,
     }
     _validate_canonical_record(record, schema_name, base=PROJECTION_SCHEMA_BASE)
     return record
@@ -160,12 +171,15 @@ def derive_projection_intent(
     target_repository: dict[str, Any],
     project_id: str,
     materialized_at: str,
+    claim_token: str,
 ) -> dict[str, Any]:
     """Return one canonical, schema-valid Projection Intent record -- the durable claim a
     route commits *before* ever calling ``adapter.find_by_correlation_key``/``materialize``
     for a given (subject, kind, target) slot (Structural Review Round 2, P14-R2-F2). Its id
     equals that slot's own :func:`~manosube_agent_civilization.projection.identity.
-    projection_mapping_key`, never a hash of the full record."""
+    projection_mapping_key`, never a hash of the full record. *claim_token* is the explicit
+    attempt identity Structural Review Round 3 (P14-R3-F1) requires -- see
+    :func:`_derive_claim_record`."""
 
     return _derive_claim_record(
         id_field="projection_intent_id",
@@ -176,6 +190,7 @@ def derive_projection_intent(
         target_repository=target_repository,
         project_id=project_id,
         materialized_at=materialized_at,
+        claim_token=claim_token,
     )
 
 
@@ -187,6 +202,7 @@ def derive_projection_materialize_attempt(
     target_repository: dict[str, Any],
     project_id: str,
     materialized_at: str,
+    claim_token: str,
 ) -> dict[str, Any]:
     """Return one canonical, schema-valid Projection Materialize Attempt record -- the
     durable marker a route commits *before* ever calling ``adapter.materialize`` itself
@@ -194,7 +210,8 @@ def derive_projection_materialize_attempt(
     :func:`derive_projection_intent` claim. Its presence with no discoverable external
     artifact and no committed Envelope is the genuinely ambiguous state a route must refuse
     to resolve by blindly re-calling ``materialize`` (see :class:`~.errors.
-    ProjectionReconciliationRequiredError`)."""
+    ProjectionReconciliationRequiredError`). *claim_token* is the explicit attempt identity
+    Structural Review Round 3 (P14-R3-F1) requires -- see :func:`_derive_claim_record`."""
 
     return _derive_claim_record(
         id_field="projection_materialize_attempt_id",
@@ -205,4 +222,5 @@ def derive_projection_materialize_attempt(
         target_repository=target_repository,
         project_id=project_id,
         materialized_at=materialized_at,
+        claim_token=claim_token,
     )

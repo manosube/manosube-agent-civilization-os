@@ -23,13 +23,14 @@ result = project_to_github(
     github_authority_ref=human_authority_ref,
     materialized_at="2026-01-01T00:00:00Z",
     adapter=my_adapter,
+    attempt_claim_token="PROJECTION-ATTEMPT-0001",
 )
 result["envelope"]  # the canonical, committed Projection Envelope
 result["receipt"]   # GitHubObservationReceipt
 result["reused"]    # bool
 
 evidence = route_observation_receipt_to_evidence(
-    store, result["receipt"], project_id, evidence_request
+    store, result["receipt"], project_id, evidence_request, adapter=my_adapter
 )
 ```
 

@@ -32,10 +32,11 @@ call the exact same function; only the adapter and the skip differ.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-import os
+from collections.abc import Callable, Mapping
+import json
 from pathlib import Path
 from typing import Any
+import urllib.request
 
 import pytest
 from tests.authority_helpers import action, derived_difference, rule, scope
@@ -45,6 +46,10 @@ from tests.fixtures.product_binding import (
     bind_project_kwargs,
     genesis_records,
     sign_github_projection_grant_declaration,
+)
+from tests.fixtures.v3_target_configuration import (
+    V3TargetConfiguration,
+    load_v3_target_configuration,
 )
 from tests.state_helpers import SCHEMA_ROOT
 
@@ -75,22 +80,15 @@ _SKIP_REASON = (
     "separately frozen and re-confirmed."
 )
 
-#: The bounded test target this harness would use, once frozen -- read from the environment
-#: so this file can never accidentally default to a real repository. Unset in every CI and
-#: local environment this delivery runs in; its absence is itself part of why every
-#: ``RealGitHubAdapter`` test below is skipped, not only the explicit ``pytest.mark.skip``
-#: marker.
-_V3_TARGET_REPOSITORY_ENV = "MANOSUBE_P14_V3_TARGET_REPOSITORY"
-_V3_TOKEN_ENV = "MANOSUBE_P14_V3_GITHUB_TOKEN"  # noqa: S105 -- an env var *name*, not a secret
-
 
 def _v3_authorized() -> bool:
-    """Return whether a later, separate authorization has actually configured a bounded V3
-    target -- always ``False`` in this delivery, checked explicitly rather than assumed, so a
-    future round that *does* receive that authorization only needs to remove the
-    ``pytest.mark.skip`` markers below, not rewrite this file's own gating logic."""
+    """Return whether a later, separate authorization has actually configured a bounded,
+    fully validated V3 target (Structural Review Round 3, P14-R3-F3) -- always ``False`` in
+    this delivery, checked explicitly rather than assumed, so a future round that *does*
+    receive that authorization only needs to remove the ``pytest.mark.skip`` markers below,
+    not rewrite this file's own gating logic or supply any new source-level configuration."""
 
-    return bool(os.environ.get(_V3_TARGET_REPOSITORY_ENV)) and bool(os.environ.get(_V3_TOKEN_ENV))
+    return load_v3_target_configuration() is not None
 
 
 def _bound(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any]]:
@@ -317,6 +315,7 @@ def _run_vertical_proof(
         adapter=adapter,
         github_projection_grant_refs=[grant_ref],
         github_projection_grant_declaration_refs=[declaration_ref],
+        attempt_claim_token=f"PROJECTION-ATTEMPT-V3-{projection_kind.replace('_', '-')}",
         **kwargs,
     )
 
@@ -324,10 +323,12 @@ def _run_vertical_proof(
 def test_v3_authorization_is_not_yet_configured_in_this_environment() -> None:
     """The one assertion this file makes without being skipped for the *live* target: proves
     the gate itself is real, not merely a comment -- this delivery's own environment
-    genuinely has no V3 target configured, so the ``RealGitHubAdapter`` tests below genuinely
-    cannot run live here even if their skip markers were removed by mistake."""
+    genuinely has no fully validated V3 target configured, so the ``RealGitHubAdapter`` tests
+    below genuinely cannot run live here even if their skip markers were removed by
+    mistake."""
 
     assert _v3_authorized() is False
+    assert load_v3_target_configuration() is None
 
 
 # ---------------------------------------------------------------------------
@@ -399,19 +400,25 @@ def test_v3_project_a_real_difference_to_a_github_issue(tmp_path: Path) -> None:
     """Would project one canonical Difference to a GitHub Issue projection -- Issue #62's own
     V3 requirement, item 1. See the module-level controlled-adapter test above for proof this
     exact harness body is mechanically complete and runs today; only the live network call
-    (``RealGitHubAdapter``) is gated."""
+    (``RealGitHubAdapter``) is gated.
 
-    target_owner, target_repo = os.environ[_V3_TARGET_REPOSITORY_ENV].split("/")
+    Structural Review Round 3 (P14-R3-F3): every value below now comes from the one
+    validated :class:`~tests.fixtures.v3_target_configuration.V3TargetConfiguration` --
+    removing this ``pytest.mark.skip`` marker in a later round is the *only* source edit a
+    genuinely authorized, fully configured environment needs to make this test executable."""
+
+    config = load_v3_target_configuration()
+    assert config is not None
     outcome = _run_vertical_proof(
         tmp_path,
         subject_kind="difference",
         projection_kind="DIFFERENCE_ISSUE",
-        target_repository={"host": "github", "owner": target_owner, "repo": target_repo},
+        target_repository=config.target_repository,
         projection_payload={
-            "title": "MANOSUBE V3 proof -- Difference (do not merge)",
+            "title": f"{config.artifact_naming_prefix} -- Difference",
             "body": "harness",
         },
-        adapter=RealGitHubAdapter(token=os.environ[_V3_TOKEN_ENV]),
+        adapter=RealGitHubAdapter(token=config.token),
     )
     assert outcome["receipt"].status == "VERIFIED"
 
@@ -420,21 +427,27 @@ def test_v3_project_a_real_difference_to_a_github_issue(tmp_path: Path) -> None:
 def test_v3_project_a_real_change_to_a_github_pull_request(tmp_path: Path) -> None:
     """Would project one canonical Change to a Pull Request projection -- Issue #62's own V3
     requirement, item 2. See the controlled-adapter test above for the identical, mechanically
-    complete harness body."""
+    complete harness body.
 
-    target_owner, target_repo = os.environ[_V3_TARGET_REPOSITORY_ENV].split("/")
+    Structural Review Round 3 (P14-R3-F3): ``head_ref``/``base_ref`` are the configured
+    target's own existing refs, never the impossible hardcoded ``"agent/v3-harness"``/
+    ``"main"`` pair Round 2's structural review flagged -- a real Pull Request can only be
+    opened against refs that already exist on the frozen target."""
+
+    config = load_v3_target_configuration()
+    assert config is not None
     outcome = _run_vertical_proof(
         tmp_path,
         subject_kind="change",
         projection_kind="CHANGE_PULL_REQUEST",
-        target_repository={"host": "github", "owner": target_owner, "repo": target_repo},
+        target_repository=config.target_repository,
         projection_payload={
-            "title": "MANOSUBE V3 proof -- Change (do not merge)",
+            "title": f"{config.artifact_naming_prefix} -- Change",
             "body": "harness",
-            "head_ref": "agent/v3-harness",
-            "base_ref": "main",
+            "head_ref": config.change_head_ref,
+            "base_ref": config.change_base_ref,
         },
-        adapter=RealGitHubAdapter(token=os.environ[_V3_TOKEN_ENV]),
+        adapter=RealGitHubAdapter(token=config.token),
     )
     assert outcome["receipt"].status == "VERIFIED"
 
@@ -444,21 +457,215 @@ def test_v3_project_a_real_evidence_item_to_a_github_artifact(tmp_path: Path) ->
     """Would project one canonical Evidence item to a check-run projection -- Issue #62's own
     V3 requirement, item 3. ``RealGitHubAdapter.materialize`` now implements the
     ``EVIDENCE_ARTIFACT`` path completely (Structural Review Round 1, P14-R1-F5) -- disclosed
-    as implemented, not merely as a remaining gap."""
+    as implemented, not merely as a remaining gap.
 
-    target_owner, target_repo = os.environ[_V3_TARGET_REPOSITORY_ENV].split("/")
+    Structural Review Round 3 (P14-R3-F3): ``head_sha`` is the configured target's own real
+    commit SHA, never the synthetic ``"a" * 40`` placeholder Round 2's structural review
+    flagged as certain to be rejected by the real Checks API."""
+
+    config = load_v3_target_configuration()
+    assert config is not None
     outcome = _run_vertical_proof(
         tmp_path,
         subject_kind="observation_evidence",
         projection_kind="EVIDENCE_ARTIFACT",
-        target_repository={"host": "github", "owner": target_owner, "repo": target_repo},
+        target_repository=config.target_repository,
         projection_payload={
-            "name": "MANOSUBE V3 proof (do not merge)",
-            "head_sha": "a" * 40,
+            "name": config.artifact_naming_prefix,
+            "head_sha": config.evidence_head_sha,
             "status": "completed",
             "conclusion": "neutral",
-            "output": {"title": "MANOSUBE V3 proof", "summary": "harness"},
+            "output": {"title": config.artifact_naming_prefix, "summary": "harness"},
         },
-        adapter=RealGitHubAdapter(token=os.environ[_V3_TOKEN_ENV]),
+        adapter=RealGitHubAdapter(token=config.token),
+    )
+    assert outcome["receipt"].status == "VERIFIED"
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 3 (P14-R3-F3): transport fixtures proving all three
+# *configured* real-adapter routes are mechanically executable -- the identical
+# ``_run_vertical_proof`` harness body, over a real ``RealGitHubAdapter``, driven by a
+# synthetic but fully validated ``V3TargetConfiguration``, with ``urllib.request.urlopen``
+# monkeypatched to canned GitHub-shaped responses. No live network access occurs -- none of
+# these three tests carry ``pytest.mark.skip``.
+# ---------------------------------------------------------------------------
+
+_MOCK_CONFIG = V3TargetConfiguration(
+    owner="acme",
+    repo="widget",
+    token="test-token-not-a-real-secret",  # noqa: S106
+    change_head_ref="agent/frozen-v3-branch",
+    change_base_ref="main",
+    evidence_head_sha="0123456789abcdef0123456789abcdef01234567",
+    artifact_naming_prefix="MANOSUBE V3 proof (do not merge)",
+)
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
+def _install_transport(
+    monkeypatch: pytest.MonkeyPatch, handler: Callable[[str, str, dict[str, Any] | None], Any]
+) -> None:
+    """Route every ``urlopen`` call ``RealGitHubAdapter`` makes through *handler* -- the
+    identical monkeypatching pattern ``test_real_github_adapter_transport.py`` already
+    establishes, duplicated here (never imported) per this package's own per-file fixture
+    convention, since this file's own purpose (proving the full harness end to end) is
+    genuinely distinct from that file's own (proving the adapter alone)."""
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int = 30) -> _FakeResponse:
+        method = request.get_method()
+        path = request.full_url[len("https://api.github.com") :]
+        raw_data = request.data
+        body = json.loads(raw_data.decode("utf-8")) if isinstance(raw_data, bytes) else None
+        return _FakeResponse(handler(method, path, body))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+
+def test_v3_configured_real_adapter_projects_a_difference_to_an_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, repo = _MOCK_CONFIG.owner, _MOCK_CONFIG.repo
+
+    def handler(method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if method == "GET" and path.startswith("/search/issues"):
+            return {"items": []}
+        if method == "POST" and path == f"/repos/{owner}/{repo}/issues":
+            assert body is not None
+            return {
+                "number": 501,
+                "html_url": f"https://github.com/{owner}/{repo}/issue/501",
+                "title": body["title"],
+                "body": body["body"],
+                "updated_at": "2026-09-08T00:00:01Z",
+            }
+        if method == "GET" and path == f"/repos/{owner}/{repo}/issues/501":
+            return {
+                "title": f"{_MOCK_CONFIG.artifact_naming_prefix} -- Difference",
+                "body": "harness\n\n<!-- manosube-projection-correlation-key: ignored -->",
+                "updated_at": "2026-09-08T00:00:02Z",
+            }
+        raise AssertionError(f"unexpected call: {method} {path}")
+
+    _install_transport(monkeypatch, handler)
+    outcome = _run_vertical_proof(
+        tmp_path,
+        subject_kind="difference",
+        projection_kind="DIFFERENCE_ISSUE",
+        target_repository=_MOCK_CONFIG.target_repository,
+        projection_payload={
+            "title": f"{_MOCK_CONFIG.artifact_naming_prefix} -- Difference",
+            "body": "harness",
+        },
+        adapter=RealGitHubAdapter(token=_MOCK_CONFIG.token),
+    )
+    assert outcome["receipt"].status == "VERIFIED"
+
+
+def test_v3_configured_real_adapter_projects_a_change_to_a_pull_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, repo = _MOCK_CONFIG.owner, _MOCK_CONFIG.repo
+
+    def handler(method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if method == "GET" and path.startswith("/search/issues"):
+            return {"items": []}
+        if method == "POST" and path == f"/repos/{owner}/{repo}/pulls":
+            assert body is not None
+            return {
+                "number": 502,
+                "html_url": f"https://github.com/{owner}/{repo}/pull_request/502",
+                "title": body["title"],
+                "body": body["body"],
+                "head": {"ref": body["head"]},
+                "base": {"ref": body["base"]},
+                "updated_at": "2026-09-08T00:00:01Z",
+            }
+        if method == "GET" and path == f"/repos/{owner}/{repo}/pulls/502":
+            return {
+                "title": f"{_MOCK_CONFIG.artifact_naming_prefix} -- Change",
+                "body": "harness\n\n<!-- manosube-projection-correlation-key: ignored -->",
+                "head": {"ref": _MOCK_CONFIG.change_head_ref},
+                "base": {"ref": _MOCK_CONFIG.change_base_ref},
+                "updated_at": "2026-09-08T00:00:02Z",
+            }
+        raise AssertionError(f"unexpected call: {method} {path}")
+
+    _install_transport(monkeypatch, handler)
+    outcome = _run_vertical_proof(
+        tmp_path,
+        subject_kind="change",
+        projection_kind="CHANGE_PULL_REQUEST",
+        target_repository=_MOCK_CONFIG.target_repository,
+        projection_payload={
+            "title": f"{_MOCK_CONFIG.artifact_naming_prefix} -- Change",
+            "body": "harness",
+            "head_ref": _MOCK_CONFIG.change_head_ref,
+            "base_ref": _MOCK_CONFIG.change_base_ref,
+        },
+        adapter=RealGitHubAdapter(token=_MOCK_CONFIG.token),
+    )
+    assert outcome["receipt"].status == "VERIFIED"
+
+
+def test_v3_configured_real_adapter_projects_an_evidence_item_to_a_check_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, repo = _MOCK_CONFIG.owner, _MOCK_CONFIG.repo
+    head_sha = _MOCK_CONFIG.evidence_head_sha
+
+    def handler(method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if method == "GET" and path == f"/repos/{owner}/{repo}/commits/{head_sha}/check-runs":
+            return {"check_runs": []}
+        if method == "POST" and path == f"/repos/{owner}/{repo}/check-runs":
+            assert body is not None
+            return {
+                "id": 503,
+                "html_url": f"https://github.com/{owner}/{repo}/check_run/503",
+                "name": body["name"],
+                "head_sha": body["head_sha"],
+                "status": body["status"],
+                "conclusion": body["conclusion"],
+                "output": body["output"],
+                "updated_at": "2026-09-08T00:00:01Z",
+            }
+        if method == "GET" and path == f"/repos/{owner}/{repo}/check-runs/503":
+            return {
+                "name": _MOCK_CONFIG.artifact_naming_prefix,
+                "head_sha": head_sha,
+                "status": "completed",
+                "conclusion": "neutral",
+                "output": {"title": _MOCK_CONFIG.artifact_naming_prefix, "summary": "harness"},
+                "updated_at": "2026-09-08T00:00:02Z",
+            }
+        raise AssertionError(f"unexpected call: {method} {path}")
+
+    _install_transport(monkeypatch, handler)
+    outcome = _run_vertical_proof(
+        tmp_path,
+        subject_kind="observation_evidence",
+        projection_kind="EVIDENCE_ARTIFACT",
+        target_repository=_MOCK_CONFIG.target_repository,
+        projection_payload={
+            "name": _MOCK_CONFIG.artifact_naming_prefix,
+            "head_sha": head_sha,
+            "status": "completed",
+            "conclusion": "neutral",
+            "output": {"title": _MOCK_CONFIG.artifact_naming_prefix, "summary": "harness"},
+        },
+        adapter=RealGitHubAdapter(token=_MOCK_CONFIG.token),
     )
     assert outcome["receipt"].status == "VERIFIED"

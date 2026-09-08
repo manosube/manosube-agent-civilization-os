@@ -20,10 +20,15 @@ that can make the two disagree.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
-from .errors import ProjectionRequirementError
+from .errors import ProjectionAdapterError, ProjectionRequirementError
 from .identity import projection_payload_fingerprint
+from .types import OBSERVATION_OUTCOME_KINDS
+
+if TYPE_CHECKING:
+    from .types import GitHubAdapter
 
 #: The closed, per-projection-kind subset of ``projection_payload`` an external GitHub
 #: artifact's own read API can actually attest to. Adding a projection kind without adding it
@@ -75,3 +80,70 @@ def expected_observable_fingerprint(projection_kind: str, payload: dict[str, Any
     """
 
     return projection_payload_fingerprint(expected_observable_projection(projection_kind, payload))
+
+
+def observe_and_classify(
+    adapter: GitHubAdapter,
+    *,
+    external_artifact_ref: Mapping[str, Any],
+    projection_kind: str,
+    committed_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Call *adapter*'s own ``observe`` exactly once and classify the result into one of
+    ``VERIFIED``/``FAILED``/``UNAVAILABLE`` -- the one shared observation-and-classification
+    body :mod:`~manosube_agent_civilization.projection.route` (materialize-time observation)
+    and :mod:`~manosube_agent_civilization.projection.receipt_handoff` (Structural Review
+    Round 3, P14-R3-F2's own independent re-observation at handoff) both call, so a real
+    content mismatch is the only thing that can ever produce a different classification
+    between the two call sites.
+
+    Structural Review Round 1 (P14-R1-F3): the adapter's own reported status is never
+    trusted for a ``FOUND`` outcome -- this function independently recomputes the expected
+    observable fingerprint from *committed_payload* and compares it against what the adapter
+    reports, forcing a non-``VERIFIED`` result on any mismatch. Structural Review Round 1
+    (P14-R1-F6): the adapter's own ``observation_outcome`` is required to be one of
+    :data:`~manosube_agent_civilization.projection.types.OBSERVATION_OUTCOME_KINDS`; only
+    ``NOT_FOUND`` establishes absence, and ``PERMISSION_DENIED``/``UNAVAILABLE`` both leave
+    existence undetermined rather than being folded into a false absence or a false
+    confirmation.
+
+    Returns a mapping carrying ``observation_outcome``, ``exists``,
+    ``observed_content_fingerprint``, ``observed_at``, and the derived ``status``.
+    """
+
+    result = adapter.observe(external_artifact_ref=external_artifact_ref)
+    if not isinstance(result, Mapping):
+        raise ProjectionAdapterError(f"adapter.observe() returned {result!r}, not a mapping")
+    outcome = result.get("observation_outcome")
+    if outcome not in OBSERVATION_OUTCOME_KINDS:
+        raise ProjectionAdapterError(
+            f"adapter.observe()'s own 'observation_outcome' is not recognized: {outcome!r}"
+        )
+    observed_content_fingerprint = result.get("observed_content_fingerprint")
+    observed_at = result.get("observed_at")
+
+    if outcome == "FOUND":
+        if not isinstance(observed_content_fingerprint, str) or not observed_content_fingerprint:
+            raise ProjectionAdapterError(
+                "adapter.observe() reported FOUND with no observed_content_fingerprint: "
+                f"{observed_content_fingerprint!r}"
+            )
+        expected_fingerprint = expected_observable_fingerprint(
+            projection_kind, dict(committed_payload)
+        )
+        exists: bool | None = True
+        status = "VERIFIED" if observed_content_fingerprint == expected_fingerprint else "FAILED"
+    elif outcome == "NOT_FOUND":
+        exists = False
+        status = "FAILED"
+    else:  # PERMISSION_DENIED / UNAVAILABLE -- existence itself is undetermined
+        exists = None
+        status = "UNAVAILABLE"
+
+    return {
+        "observation_outcome": outcome,
+        "exists": exists,
+        "observed_content_fingerprint": observed_content_fingerprint,
+        "observed_at": observed_at,
+        "status": status,
+    }

@@ -50,15 +50,18 @@ class ProjectionValueError(ProjectionError):
 
 class ProjectionConcurrentClaimError(ProjectionError):
     """This attempt does not own the durable claim on this projection identity's mapping
-    slot -- a distinct attempt (a genuinely different caller, or the same caller supplying a
-    different ``materialized_at``) already claimed it and has not yet resolved to a
-    committed Envelope (Structural Review Round 2, Issue #62, P14-R2-F2).
+    slot -- a distinct attempt (a different ``attempt_claim_token``, whether or not
+    ``materialized_at`` also differs) already claimed it and has not yet resolved to a
+    committed Envelope (Structural Review Round 2, Issue #62, P14-R2-F2; explicit claim
+    tokens, Structural Review Round 3, P14-R3-F1).
 
     Raised before ``adapter.materialize`` is ever called: two concurrent callers for the
-    identical semantic projection must never both receive permission to POST. The route
-    reads no clock and makes no timing assumption about which attempt "wins" -- ownership is
-    decided entirely by which attempt's own ``projection_intent`` commit the Store's single
-    per-project commit lock admits first."""
+    identical semantic projection must never both receive permission to POST, even when they
+    happen to supply the identical caller-controlled ``materialized_at`` -- ``materialized_at``
+    alone is never a uniqueness primitive. The route reads no clock and makes no timing
+    assumption about which attempt "wins" -- ownership is decided entirely by which
+    attempt's own ``projection_intent`` commit, distinguished by its own explicit
+    ``claim_token``, the Store's single per-project commit lock admits first."""
 
 
 class ProjectionReconciliationRequiredError(ProjectionError):

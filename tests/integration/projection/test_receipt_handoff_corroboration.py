@@ -205,6 +205,7 @@ def _bind_and_project(
         adapter=adapter,
         github_projection_grant_refs=[grant_ref],
         github_projection_grant_declaration_refs=[declaration_ref],
+        attempt_claim_token=f"PROJECTION-ATTEMPT-{tmp_path_segment.upper()}",
     )
 
     return {
@@ -212,6 +213,7 @@ def _bind_and_project(
         "project_id": project_id,
         "receipt": outcome["receipt"],
         "envelope": outcome["envelope"],
+        "adapter": adapter,
     }
 
 
@@ -261,7 +263,11 @@ def test_genuine_receipt_against_its_own_store_and_project_succeeds(
     _worldA: dict[str, Any],
 ) -> None:
     evidence = route_observation_receipt_to_evidence(
-        _worldA["store"], _worldA["receipt"], _worldA["project_id"], _request(_worldA["project_id"])
+        _worldA["store"],
+        _worldA["receipt"],
+        _worldA["project_id"],
+        _request(_worldA["project_id"]),
+        adapter=_worldA["adapter"],
     )
     assert evidence["target"]["project_id"] == _worldA["project_id"]
 
@@ -286,7 +292,11 @@ def test_receipt_naming_an_envelope_id_never_committed_under_this_store_refuses(
     )
     with pytest.raises(ProjectionRequirementError):
         route_observation_receipt_to_evidence(
-            _worldA["store"], forged, _worldA["project_id"], _request(_worldA["project_id"])
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
         )
 
 
@@ -301,7 +311,11 @@ def test_receipt_genuinely_from_a_different_projects_own_store_refuses(
     copied_receipt = _worldA["receipt"]
     with pytest.raises(ProjectionRequirementError):
         route_observation_receipt_to_evidence(
-            _worldB["store"], copied_receipt, _worldB["project_id"], _request(_worldB["project_id"])
+            _worldB["store"],
+            copied_receipt,
+            _worldB["project_id"],
+            _request(_worldB["project_id"]),
+            adapter=_worldB["adapter"],
         )
 
 
@@ -320,7 +334,11 @@ def test_receipt_with_forged_subject_ref_refuses_even_with_a_real_envelope_id(
     )
     with pytest.raises(ProjectionRequirementError):
         route_observation_receipt_to_evidence(
-            _worldA["store"], forged, _worldA["project_id"], _request(_worldA["project_id"])
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
         )
 
 
@@ -346,7 +364,11 @@ def test_receipt_with_forged_external_artifact_ref_refuses(
     )
     with pytest.raises(ProjectionRequirementError):
         route_observation_receipt_to_evidence(
-            _worldA["store"], forged, _worldA["project_id"], _request(_worldA["project_id"])
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
         )
 
 
@@ -363,7 +385,11 @@ def test_receipt_with_forged_github_authority_ref_refuses(_worldA: dict[str, Any
     )
     with pytest.raises(ProjectionRequirementError):
         route_observation_receipt_to_evidence(
-            _worldA["store"], forged, _worldA["project_id"], _request(_worldA["project_id"])
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
         )
 
 
@@ -380,4 +406,94 @@ def test_receipt_with_mismatched_project_id_argument_still_refuses(
             _worldA["receipt"],
             "PRJ-SOME-OTHER-PROJECT",
             _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
         )
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 3 (P14-R3-F2): independent re-observation at handoff --
+# a copied receipt's own forged status/observations/adapter_identity/input_refs
+# never reach Evidence, because none of them are ever read from the receipt at all.
+# ---------------------------------------------------------------------------
+
+
+def test_receipt_with_forged_verified_status_over_genuinely_tampered_content_does_not_verify(
+    _worldA: dict[str, Any],
+) -> None:
+    """The literal Structural Review Round 3 counterexample: copy every Envelope-bound field
+    from a genuine receipt, forge ``status="VERIFIED"`` (plus fabricated ``observations``),
+    but genuinely tamper the adapter's own underlying content first -- a real re-observation
+    would report ``FAILED``. If this handoff ever trusted the receipt's own claimed status,
+    Evidence would come back ``VERIFIED``; because it independently re-observes instead, it
+    must not."""
+
+    real = _worldA["receipt"]
+    _worldA["adapter"].tamper(
+        external_artifact_ref=dict(real.external_artifact_ref),
+        new_payload={**_PAYLOAD, "output": {"title": "TAMPERED", "summary": "not the original"}},
+    )
+    forged = GitHubObservationReceipt(
+        status="VERIFIED",
+        projection_envelope_id=real.projection_envelope_id,
+        project_id=real.project_id,
+        subject_ref=real.subject_ref,
+        external_artifact_ref=real.external_artifact_ref,
+        adapter_identity={"adapter": "forged_adapter", "version": "9.9"},
+        github_authority_ref=real.github_authority_ref,
+        input_refs=({"kind": "forged_kind", "id": "FORGED-INPUT"},),
+        observations={
+            "observation_outcome": "FOUND",
+            "exists": True,
+            "observed_content_fingerprint": "sha256:" + "0" * 64,
+            "observed_at": "1970-01-01T00:00:00Z",
+        },
+    )
+    evidence = route_observation_receipt_to_evidence(
+        _worldA["store"],
+        forged,
+        _worldA["project_id"],
+        _request(_worldA["project_id"]),
+        adapter=_worldA["adapter"],
+    )
+    assert evidence["verification_result_provenance"]["status"] != "VERIFIED"
+    assert evidence["verification_result_provenance"]["verifier_identity"] == dict(
+        _worldA["adapter"].adapter_identity
+    )
+    assert evidence["verification_result_provenance"]["input_refs"] != {
+        "collection_kind": "UNORDERED_SET",
+        "members": [{"kind": "forged_kind", "id": "FORGED-INPUT"}],
+    }
+
+
+def test_receipt_with_forged_observed_fingerprint_over_genuine_content_still_verifies_honestly(
+    _worldA: dict[str, Any],
+) -> None:
+    """The positive-side mirror: a copied receipt forging a *wrong* ``observed_content_
+    fingerprint``/``status=FAILED`` over content that is genuinely untampered must still
+    yield ``VERIFIED`` Evidence -- the fresh re-observation reports the truth regardless of
+    which direction the receipt's own claim was forged in."""
+
+    real = _worldA["receipt"]
+    forged = GitHubObservationReceipt(
+        status="FAILED",
+        projection_envelope_id=real.projection_envelope_id,
+        project_id=real.project_id,
+        subject_ref=real.subject_ref,
+        external_artifact_ref=real.external_artifact_ref,
+        adapter_identity=real.adapter_identity,
+        github_authority_ref=real.github_authority_ref,
+        observations={
+            "observation_outcome": "NOT_FOUND",
+            "exists": False,
+            "observed_content_fingerprint": None,
+            "observed_at": "1970-01-01T00:00:00Z",
+        },
+    )
+    evidence = route_observation_receipt_to_evidence(
+        _worldA["store"],
+        forged,
+        _worldA["project_id"],
+        _request(_worldA["project_id"]),
+        adapter=_worldA["adapter"],
+    )
+    assert evidence["verification_result_provenance"]["status"] == "VERIFIED"

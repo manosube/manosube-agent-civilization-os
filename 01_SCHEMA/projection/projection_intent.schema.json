@@ -11,7 +11,8 @@
     "subject_fingerprint",
     "projection_kind",
     "target_repository",
-    "materialized_at"
+    "materialized_at",
+    "claim_token"
   ],
   "properties": {
     "schema_version": {"const": "0.1"},
@@ -40,7 +41,8 @@
       },
       "additionalProperties": false
     },
-    "materialized_at": {"$ref": "../common/timestamp.schema.json"}
+    "materialized_at": {"$ref": "../common/timestamp.schema.json"},
+    "claim_token": {"$ref": "../common/identity.schema.json"}
   },
   "additionalProperties": false
 }

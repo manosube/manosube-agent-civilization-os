@@ -83,6 +83,18 @@ materialize-attempt marker is in a genuinely ambiguous state (materialize may ha
 cleanly, or may have succeeded with its response lost) and refuses with
 :class:`~.errors.ProjectionReconciliationRequiredError` rather than risk a real, untracked
 external duplicate by calling ``materialize`` a second time.
+
+**Explicit claim ownership (Structural Review Round 3, P14-R3-F1).** ``materialized_at``
+alone is a caller-supplied instant, never a uniqueness primitive -- two genuinely distinct
+concurrent callers can legitimately supply the identical value, which would otherwise make
+both look like the same caller's own idempotent retry and let both reach ``materialize``.
+This route therefore requires a second, explicit ``attempt_claim_token`` on every call,
+included in both the ``projection_intent`` and ``projection_materialize_attempt`` record
+content the Store's own same-key/different-content rejection already keys its concurrency
+barrier on: two attempts sharing a timestamp but carrying distinct tokens now produce
+genuinely different record content, so only whichever commit the Store admits first ever
+proceeds, and the other refuses via ``ProjectionConcurrentClaimError`` before any adapter
+call. A genuine retry of the identical attempt must present the identical token again.
 """
 
 from __future__ import annotations
@@ -127,10 +139,9 @@ from .errors import (
     ProjectionRequirementError,
 )
 from .identity import projection_mapping_key, projection_payload_fingerprint
-from .observable import expected_observable_fingerprint
+from .observable import observe_and_classify
 from .types import (
     ARTIFACT_KINDS,
-    OBSERVATION_OUTCOME_KINDS,
     PROJECTION_KINDS,
     SUBJECT_REF_KINDS,
     GitHubAdapter,
@@ -534,11 +545,16 @@ def _claim_slot(
     Returns normally, with zero further meaning to the caller beyond "this call now owns
     this claim", in exactly two cases: a fresh commit (nobody has claimed this slot before),
     or an idempotent replay of the *identical* claim content this exact caller already
-    committed (a genuine retry with the same ``materialized_at``). Raises
+    committed (a genuine retry presenting the identical ``claim_token`` -- Structural Review
+    Round 3, P14-R3-F1 -- and the identical ``materialized_at``). Raises
     :class:`~.errors.ProjectionConcurrentClaimError` the moment the Store's own
     ``RecordConflictError`` proves a *different* attempt already durably holds this slot --
     the Store never lets two different record bodies coexist at one (kind, id), and that
-    guarantee is the entire mechanism this function relies on.
+    guarantee is the entire mechanism this function relies on. Two attempts sharing an
+    identical ``materialized_at`` but carrying distinct ``claim_token`` values are exactly
+    such a "different attempt": their record content differs, so only whichever one's own
+    commit the Store admits first ever proceeds -- a caller-controlled timestamp alone can no
+    longer let two genuinely distinct callers both look like the same idempotent retry.
 
     A :class:`~manosube_agent_civilization.store.errors.StaleStateError` means only that some
     *unrelated* commit landed on this project between this function's own ``load_current``
@@ -595,8 +611,9 @@ def _claim_slot(
         except RecordConflictError as error:
             raise ProjectionConcurrentClaimError(
                 f"a different attempt already holds the claim on {record_kind}/{record_id} -- "
-                "this attempt's own materialized_at does not match the durably committed "
-                "claim, so this request refuses rather than risk a duplicate external write"
+                "this attempt's own claim_token/materialized_at does not match the durably "
+                "committed claim, so this request refuses rather than risk a duplicate "
+                "external write"
             ) from error
         except StaleStateError:
             continue
@@ -621,6 +638,7 @@ def project_to_github(
     adapter: GitHubAdapter,
     github_projection_grant_refs: list[Mapping[str, Any]],
     github_projection_grant_declaration_refs: list[Mapping[str, Any]],
+    attempt_claim_token: str,
     subject_record: Mapping[str, Any] | None = None,
     subject_fingerprint: str | None = None,
 ) -> dict[str, Any]:
@@ -643,7 +661,12 @@ def project_to_github(
     authorizes zero adapter calls.
     *materialized_at* is a required, caller-supplied instant (this route reads no clock, the
     identical discipline Evidence's own ``derive_evidence`` already requires of its own
-    "recording instant").
+    "recording instant"). *attempt_claim_token* (Structural Review Round 3, P14-R3-F1) is a
+    required, caller-supplied, canonical-identity-shaped attempt token -- never a timestamp,
+    which two genuinely distinct callers may legitimately share. A genuine retry of the exact
+    same attempt must present the exact same ``attempt_claim_token`` again; a different
+    caller, even one that happens to supply the identical ``materialized_at``, must supply a
+    different one, and loses the durable claim race the moment its own commit lands second.
 
     See ``09_PROJECTION/PROJECTION_CONTRACT.md`` §5 for the full canonical route this function
     implements, step by step.
@@ -651,6 +674,7 @@ def project_to_github(
 
     _require_canonical_identity("project_id", project_id)
     _require_canonical_identity("project_binding_id", project_binding_id)
+    _require_canonical_identity("attempt_claim_token", attempt_claim_token)
 
     checked_subject_ref = _require_reference(
         subject_ref, context="subject_ref", allowed_kinds=SUBJECT_REF_KINDS
@@ -786,6 +810,7 @@ def project_to_github(
         target_repository=real_target_repository,
         project_id=project_id,
         materialized_at=materialized_at,
+        claim_token=attempt_claim_token,
     )
     _claim_slot(
         store,
@@ -841,6 +866,7 @@ def project_to_github(
             target_repository=real_target_repository,
             project_id=project_id,
             materialized_at=materialized_at,
+            claim_token=attempt_claim_token,
         )
         _claim_slot(
             store,
@@ -935,55 +961,33 @@ def _observe(
     projection_kind: str,
     committed_payload: dict[str, Any],
 ) -> GitHubObservationReceipt:
-    """Call the adapter's own ``observe`` exactly once and return one immutable
-    :class:`~manosube_agent_civilization.projection.types.GitHubObservationReceipt`.
+    """Call the adapter's own ``observe`` exactly once, via the shared
+    :func:`~manosube_agent_civilization.projection.observable.observe_and_classify` body, and
+    return one immutable :class:`~manosube_agent_civilization.projection.types.
+    GitHubObservationReceipt`.
 
-    Structural Review Round 1 (P14-R1-F3): the adapter's own reported status is never
-    trusted for a ``FOUND`` outcome -- this function independently recomputes the expected
-    observable fingerprint from *committed_payload* and compares it against what the adapter
-    reports, forcing a non-``VERIFIED`` result on any mismatch. Structural Review Round 1
-    (P14-R1-F6): the adapter's own ``observation_outcome`` is required to be one of
-    :data:`~manosube_agent_civilization.projection.types.OBSERVATION_OUTCOME_KINDS`; only
-    ``NOT_FOUND`` establishes absence, and ``PERMISSION_DENIED``/``UNAVAILABLE`` both leave
-    existence undetermined rather than being folded into a false absence or a false
-    confirmation.
+    Structural Review Round 1 (P14-R1-F3/F6) and Structural Review Round 3 (P14-R3-F2):
+    :func:`~manosube_agent_civilization.projection.observable.observe_and_classify` is the
+    single owner of the adapter-report-to-status classification, shared with
+    :mod:`~manosube_agent_civilization.projection.receipt_handoff`'s own independent
+    re-observation at handoff, so both call sites can only ever disagree over a genuine
+    content mismatch, never over classification logic drift between the two.
     """
 
-    result = adapter.observe(external_artifact_ref=external_artifact_ref)
-    if not isinstance(result, Mapping):
-        raise ProjectionAdapterError(f"adapter.observe() returned {result!r}, not a mapping")
-    outcome = result.get("observation_outcome")
-    if outcome not in OBSERVATION_OUTCOME_KINDS:
-        raise ProjectionAdapterError(
-            f"adapter.observe()'s own 'observation_outcome' is not recognized: {outcome!r}"
-        )
-    observed_content_fingerprint = result.get("observed_content_fingerprint")
-    observed_at = result.get("observed_at")
-
-    if outcome == "FOUND":
-        if not isinstance(observed_content_fingerprint, str) or not observed_content_fingerprint:
-            raise ProjectionAdapterError(
-                "adapter.observe() reported FOUND with no observed_content_fingerprint: "
-                f"{observed_content_fingerprint!r}"
-            )
-        expected_fingerprint = expected_observable_fingerprint(projection_kind, committed_payload)
-        exists: bool | None = True
-        status = "VERIFIED" if observed_content_fingerprint == expected_fingerprint else "FAILED"
-    elif outcome == "NOT_FOUND":
-        exists = False
-        status = "FAILED"
-    else:  # PERMISSION_DENIED / UNAVAILABLE -- existence itself is undetermined
-        exists = None
-        status = "UNAVAILABLE"
-
+    classified = observe_and_classify(
+        adapter,
+        external_artifact_ref=external_artifact_ref,
+        projection_kind=projection_kind,
+        committed_payload=committed_payload,
+    )
     observations = {
-        "observation_outcome": outcome,
-        "exists": exists,
-        "observed_content_fingerprint": observed_content_fingerprint,
-        "observed_at": observed_at,
+        "observation_outcome": classified["observation_outcome"],
+        "exists": classified["exists"],
+        "observed_content_fingerprint": classified["observed_content_fingerprint"],
+        "observed_at": classified["observed_at"],
     }
     return GitHubObservationReceipt(
-        status=status,
+        status=classified["status"],
         projection_envelope_id=envelope_id,
         project_id=project_id,
         subject_ref=subject_ref,
