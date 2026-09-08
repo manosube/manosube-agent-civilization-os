@@ -25,9 +25,10 @@ result = project_to_github(
     adapter=my_adapter,
     attempt_claim_token="PROJECTION-ATTEMPT-0001",
 )
-result["envelope"]  # the canonical, committed Projection Envelope
-result["receipt"]   # GitHubObservationReceipt
-result["reused"]    # bool
+result["envelope"]      # the canonical, committed Projection Envelope
+result["receipt"]       # GitHubObservationReceipt
+result["reused"]        # bool
+result["same_attempt"]  # bool -- was this call the attempt that won the mapping slot?
 
 evidence = route_observation_receipt_to_evidence(
     store, result["receipt"], project_id, evidence_request, adapter=my_adapter
@@ -44,6 +45,7 @@ from .errors import (
     ProjectionError,
     ProjectionReconciliationRequiredError,
     ProjectionRequirementError,
+    ProjectionTerminalClaimMismatchError,
     ProjectionValueError,
 )
 from .github_adapter import FakeGitHubAdapter, RealGitHubAdapter
@@ -72,6 +74,7 @@ __all__ = [
     "ProjectionError",
     "ProjectionReconciliationRequiredError",
     "ProjectionRequirementError",
+    "ProjectionTerminalClaimMismatchError",
     "ProjectionValueError",
     "RealGitHubAdapter",
     "project_to_github",

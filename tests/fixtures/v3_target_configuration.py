@@ -20,9 +20,27 @@ case: if every one of these variables is unset, :func:`load_v3_target_configurat
 this delivery runs in. A *partially* configured environment (some variables set, others not,
 or one malformed) is never silently treated as "unconfigured": it fails closed instead.
 
-``V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false`` remains unchanged by this module -- it validates a
-*configuration shape*, never grants execution authority. The V3 harness's own real-adapter
-tests keep their unconditional ``pytest.mark.skip`` regardless of what this module returns.
+**Full frozen boundary, not merely a shape (Structural Review Round 4, Issue #62,
+P14-R4-F3).** Round 3's own configuration validated repository/refs/SHA/naming but silently
+discarded its own ``cleanup``/``no-merge`` confirmation booleans after checking them once, and
+bound no ``artifact_kinds``/``artifact_count`` boundary at all -- so nothing downstream could
+verify *which* artifact kinds, or how many artifacts, this authorization actually covers.
+:class:`V3TargetConfiguration` now carries ``cleanup_confirmed``, ``no_merge_confirmed``,
+``authorized_artifact_kinds``, and ``authorized_artifact_count`` as real fields of the
+returned, bound configuration -- never checked-then-thrown-away.
+
+**Live-write authority is separate from configuration validity.** A fully valid, fully bound
+:class:`V3TargetConfiguration` still never itself authorizes a live network call --
+:func:`v3_live_write_authorized` is the one additional, independently-gated boolean input a
+caller must also supply (via :data:`LIVE_WRITE_AUTHORIZED_ENV`) before the V3 harness's own
+real-adapter tests may run live. The two gates are deliberately decoupled: configuration can
+be fully frozen and validated with live-write authority still withheld (this delivery's own
+state), but never the reverse -- an incomplete or invalid configuration can never be worked
+around merely by supplying live-write authority. ``V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false``
+remains this delivery's own state: the harness's own real-adapter tests gate on both functions
+together (see ``test_v3_real_github_vertical_proof.py``'s own ``_v3_live_authorized``), so
+activating them later needs only the right environment variables set -- no source edit to
+either this module or the harness itself.
 """
 
 from __future__ import annotations
@@ -31,6 +49,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 import re
+
+from manosube_agent_civilization.projection.types import ARTIFACT_KINDS
 
 #: One repository-relative identifier segment (an owner or a repo name) -- GitHub's own
 #: allowed character set for both, conservatively: alphanumerics, hyphens, underscores, dots,
@@ -54,6 +74,13 @@ EVIDENCE_HEAD_SHA_ENV = "MANOSUBE_P14_V3_EVIDENCE_HEAD_SHA"
 ARTIFACT_NAMING_PREFIX_ENV = "MANOSUBE_P14_V3_ARTIFACT_NAMING_PREFIX"
 CLEANUP_CONFIRMED_ENV = "MANOSUBE_P14_V3_CLEANUP_CONFIRMED"
 NO_MERGE_CONFIRMED_ENV = "MANOSUBE_P14_V3_NO_MERGE_CONFIRMED"
+#: Comma-separated ``artifact_kind`` values (Structural Review Round 4, P14-R4-F3) this
+#: authorization actually permits materializing -- binds the frozen boundary's own artifact
+#: *kinds*, never left to whatever the harness happens to attempt.
+AUTHORIZED_ARTIFACT_KINDS_ENV = "MANOSUBE_P14_V3_AUTHORIZED_ARTIFACT_KINDS"
+#: The maximum total artifact count this authorization permits across the entire V3 run --
+#: binds the frozen boundary's own artifact *count*, never left unbounded.
+AUTHORIZED_ARTIFACT_COUNT_ENV = "MANOSUBE_P14_V3_AUTHORIZED_ARTIFACT_COUNT"
 
 #: Every environment variable this configuration contract reads -- used both to detect the
 #: fully-unconfigured case and to enumerate what a partially-configured environment is
@@ -67,7 +94,15 @@ ALL_V3_ENV_VARS: tuple[str, ...] = (
     ARTIFACT_NAMING_PREFIX_ENV,
     CLEANUP_CONFIRMED_ENV,
     NO_MERGE_CONFIRMED_ENV,
+    AUTHORIZED_ARTIFACT_KINDS_ENV,
+    AUTHORIZED_ARTIFACT_COUNT_ENV,
 )
+
+#: A dedicated, independently-gated boolean input (Structural Review Round 4, P14-R4-F3) --
+#: deliberately *not* one of :data:`ALL_V3_ENV_VARS`, so configuration validity and live-write
+#: authority remain two separate gates: a fully valid, fully bound configuration alone never
+#: authorizes a live network call.
+LIVE_WRITE_AUTHORIZED_ENV = "MANOSUBE_P14_V3_LIVE_WRITE_AUTHORIZED"
 
 #: The one literal value that counts as an explicit confirmation -- anything else (unset,
 #: empty, ``"false"``, ``"yes"``, mixed case) fails closed rather than being coerced.
@@ -83,7 +118,13 @@ class V3ConfigurationError(RuntimeError):
 class V3TargetConfiguration:
     """One fully validated, target-bound V3 configuration -- every value a real
     ``RealGitHubAdapter`` call against the frozen target boundary needs, and nothing this
-    module did not itself validate."""
+    module did not itself validate.
+
+    ``cleanup_confirmed``/``no_merge_confirmed`` and ``authorized_artifact_kinds``/
+    ``authorized_artifact_count`` (Structural Review Round 4, Issue #62, P14-R4-F3) are real,
+    bound fields of the returned configuration -- never validated once and then discarded, so
+    a later caller can re-verify exactly what this frozen boundary actually authorizes rather
+    than trusting that the check happened."""
 
     owner: str
     repo: str
@@ -92,6 +133,10 @@ class V3TargetConfiguration:
     change_base_ref: str
     evidence_head_sha: str
     artifact_naming_prefix: str
+    cleanup_confirmed: bool
+    no_merge_confirmed: bool
+    authorized_artifact_kinds: frozenset[str]
+    authorized_artifact_count: int
 
     @property
     def target_repository(self) -> dict[str, str]:
@@ -187,6 +232,29 @@ def load_v3_target_configuration(
             f"ambiguous value: {no_merge_confirmed!r}"
         )
 
+    # Structural Review Round 4 (P14-R4-F3): bind exactly which artifact kinds, and how many
+    # artifacts total, this authorization actually permits -- never left implicit.
+    raw_artifact_kinds = _require_nonempty(
+        AUTHORIZED_ARTIFACT_KINDS_ENV, values[AUTHORIZED_ARTIFACT_KINDS_ENV]
+    )
+    authorized_artifact_kinds = frozenset(
+        kind.strip() for kind in raw_artifact_kinds.split(",") if kind.strip()
+    )
+    if not authorized_artifact_kinds or not authorized_artifact_kinds <= ARTIFACT_KINDS:
+        raise V3ConfigurationError(
+            f"{AUTHORIZED_ARTIFACT_KINDS_ENV} must be a non-empty, comma-separated list drawn "
+            f"only from {sorted(ARTIFACT_KINDS)}: {raw_artifact_kinds!r}"
+        )
+
+    raw_artifact_count = _require_nonempty(
+        AUTHORIZED_ARTIFACT_COUNT_ENV, values[AUTHORIZED_ARTIFACT_COUNT_ENV]
+    )
+    if not raw_artifact_count.isdigit() or int(raw_artifact_count) < 1:
+        raise V3ConfigurationError(
+            f"{AUTHORIZED_ARTIFACT_COUNT_ENV} must be a positive integer: {raw_artifact_count!r}"
+        )
+    authorized_artifact_count = int(raw_artifact_count)
+
     return V3TargetConfiguration(
         owner=owner,
         repo=repo,
@@ -195,4 +263,21 @@ def load_v3_target_configuration(
         change_base_ref=change_base_ref,
         evidence_head_sha=evidence_head_sha,
         artifact_naming_prefix=artifact_naming_prefix,
+        cleanup_confirmed=True,
+        no_merge_confirmed=True,
+        authorized_artifact_kinds=authorized_artifact_kinds,
+        authorized_artifact_count=authorized_artifact_count,
     )
+
+
+def v3_live_write_authorized(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether :data:`LIVE_WRITE_AUTHORIZED_ENV` is set to the exact confirmation
+    literal (Structural Review Round 4, Issue #62, P14-R4-F3) -- the one additional,
+    independently-gated boolean input a caller must supply, separately from
+    :func:`load_v3_target_configuration`'s own configuration-shape validation, before the V3
+    harness's own real-adapter tests may execute live. Performs no I/O of its own beyond a
+    single environment-variable read; *env* defaults to :data:`os.environ`, identically to
+    :func:`load_v3_target_configuration`."""
+
+    source = env if env is not None else os.environ
+    return source.get(LIVE_WRITE_AUTHORIZED_ENV) == _CONFIRMED_LITERAL

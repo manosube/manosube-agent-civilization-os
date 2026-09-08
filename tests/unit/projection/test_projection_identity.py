@@ -47,6 +47,7 @@ def _envelope(**overrides: object) -> dict:
         "external_artifact_ref": _EXTERNAL_ARTIFACT_REF,
         "github_authority_ref": _AUTHORITY_REF,
         "materialized_at": "2026-01-01T00:00:00Z",
+        "claim_token": "PROJECTION-ATTEMPT-IDENTITY-0001",
     }
     kwargs.update(overrides)
     return derive_projection_envelope(**kwargs)  # type: ignore[arg-type]

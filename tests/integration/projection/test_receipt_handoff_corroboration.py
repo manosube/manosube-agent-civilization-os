@@ -411,21 +411,44 @@ def test_receipt_with_mismatched_project_id_argument_still_refuses(
 
 
 # ---------------------------------------------------------------------------
-# Structural Review Round 3 (P14-R3-F2): independent re-observation at handoff --
-# a copied receipt's own forged status/observations/adapter_identity/input_refs
-# never reach Evidence, because none of them are ever read from the receipt at all.
+# Structural Review Round 3 (P14-R3-F2) and Round 4 (P14-R4-F2): independent
+# re-observation at handoff is not itself an attestation of *receipt* -- every one of
+# receipt's own Evidence-relevant fields (status, observations, adapter_identity, input_refs)
+# must now exactly equal the freshly, independently recomputed candidate before any Evidence
+# is derived. A single forged field, even with every other field genuine, refuses.
 # ---------------------------------------------------------------------------
 
 
-def test_receipt_with_forged_verified_status_over_genuinely_tampered_content_does_not_verify(
+def _forged_receipt(real: GitHubObservationReceipt, **overrides: Any) -> GitHubObservationReceipt:
+    """Copy every field of *real* verbatim except whichever ones *overrides* names -- the
+    shared body every one-field-at-a-time forgery test below uses, so each test's own intent
+    (which single field is forged) is visible in its own call, not buried in repetition."""
+
+    fields: dict[str, Any] = {
+        "status": real.status,
+        "projection_envelope_id": real.projection_envelope_id,
+        "project_id": real.project_id,
+        "subject_ref": real.subject_ref,
+        "external_artifact_ref": real.external_artifact_ref,
+        "adapter_identity": real.adapter_identity,
+        "github_authority_ref": real.github_authority_ref,
+        "input_refs": real.input_refs,
+        "observations": dict(real.observations),
+    }
+    fields.update(overrides)
+    return GitHubObservationReceipt(**fields)
+
+
+def test_receipt_with_forged_verified_status_over_genuinely_tampered_content_refuses(
     _worldA: dict[str, Any],
 ) -> None:
-    """The literal Structural Review Round 3 counterexample: copy every Envelope-bound field
-    from a genuine receipt, forge ``status="VERIFIED"`` (plus fabricated ``observations``),
-    but genuinely tamper the adapter's own underlying content first -- a real re-observation
-    would report ``FAILED``. If this handoff ever trusted the receipt's own claimed status,
-    Evidence would come back ``VERIFIED``; because it independently re-observes instead, it
-    must not."""
+    """The literal Structural Review Round 3 counterexample, now refused outright rather than
+    merely yielding non-VERIFIED Evidence (Structural Review Round 4, P14-R4-F2): copy every
+    Envelope-bound field from a genuine receipt, forge ``status="VERIFIED"`` (plus fabricated
+    ``observations``/``adapter_identity``/``input_refs``), but genuinely tamper the adapter's
+    own underlying content first -- a real re-observation would report ``FAILED``. Because
+    every one of those forged fields is now required to exactly equal the freshly recomputed
+    candidate, this receipt is refused before any Evidence is derived at all."""
 
     real = _worldA["receipt"]
     _worldA["adapter"].tamper(
@@ -448,50 +471,130 @@ def test_receipt_with_forged_verified_status_over_genuinely_tampered_content_doe
             "observed_at": "1970-01-01T00:00:00Z",
         },
     )
-    evidence = route_observation_receipt_to_evidence(
-        _worldA["store"],
-        forged,
-        _worldA["project_id"],
-        _request(_worldA["project_id"]),
-        adapter=_worldA["adapter"],
-    )
-    assert evidence["verification_result_provenance"]["status"] != "VERIFIED"
-    assert evidence["verification_result_provenance"]["verifier_identity"] == dict(
-        _worldA["adapter"].adapter_identity
-    )
-    assert evidence["verification_result_provenance"]["input_refs"] != {
-        "collection_kind": "UNORDERED_SET",
-        "members": [{"kind": "forged_kind", "id": "FORGED-INPUT"}],
-    }
+    with pytest.raises(ProjectionRequirementError):
+        route_observation_receipt_to_evidence(
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
+        )
 
 
-def test_receipt_with_forged_observed_fingerprint_over_genuine_content_still_verifies_honestly(
-    _worldA: dict[str, Any],
-) -> None:
-    """The positive-side mirror: a copied receipt forging a *wrong* ``observed_content_
-    fingerprint``/``status=FAILED`` over content that is genuinely untampered must still
-    yield ``VERIFIED`` Evidence -- the fresh re-observation reports the truth regardless of
-    which direction the receipt's own claim was forged in."""
+def test_receipt_with_forged_status_over_genuine_content_refuses(_worldA: dict[str, Any]) -> None:
+    """Structural Review Round 4 (P14-R4-F2), one-field-at-a-time: content is genuinely
+    untampered (a real re-observation would report ``VERIFIED``, exactly what ``real`` itself
+    already carries), but the receipt's own ``status`` is forged to ``FAILED``. A prior,
+    mistaken version of this handoff would have let the fresh, honest re-observation simply
+    override the forgery and still yield ``VERIFIED`` Evidence; this receipt must instead be
+    refused outright, because its own claimed status disagrees with the truth."""
 
     real = _worldA["receipt"]
-    forged = GitHubObservationReceipt(
-        status="FAILED",
-        projection_envelope_id=real.projection_envelope_id,
-        project_id=real.project_id,
-        subject_ref=real.subject_ref,
-        external_artifact_ref=real.external_artifact_ref,
-        adapter_identity=real.adapter_identity,
-        github_authority_ref=real.github_authority_ref,
-        observations={
-            "observation_outcome": "NOT_FOUND",
-            "exists": False,
-            "observed_content_fingerprint": None,
-            "observed_at": "1970-01-01T00:00:00Z",
-        },
-    )
+    forged = _forged_receipt(real, status="FAILED")
+    with pytest.raises(ProjectionRequirementError):
+        route_observation_receipt_to_evidence(
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
+        )
+
+
+def test_receipt_with_forged_observation_outcome_over_genuine_content_refuses(
+    _worldA: dict[str, Any],
+) -> None:
+    real = _worldA["receipt"]
+    observations = dict(real.observations)
+    observations["observation_outcome"] = "NOT_FOUND"
+    forged = _forged_receipt(real, observations=observations)
+    with pytest.raises(ProjectionRequirementError):
+        route_observation_receipt_to_evidence(
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
+        )
+
+
+def test_receipt_with_forged_observed_fingerprint_over_genuine_content_refuses(
+    _worldA: dict[str, Any],
+) -> None:
+    real = _worldA["receipt"]
+    observations = dict(real.observations)
+    observations["observed_content_fingerprint"] = "sha256:" + "0" * 64
+    forged = _forged_receipt(real, observations=observations)
+    with pytest.raises(ProjectionRequirementError):
+        route_observation_receipt_to_evidence(
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
+        )
+
+
+def test_receipt_with_forged_observed_timestamp_over_genuine_content_refuses(
+    _worldA: dict[str, Any],
+) -> None:
+    real = _worldA["receipt"]
+    observations = dict(real.observations)
+    observations["observed_at"] = "1970-01-01T00:00:00Z"
+    forged = _forged_receipt(real, observations=observations)
+    with pytest.raises(ProjectionRequirementError):
+        route_observation_receipt_to_evidence(
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
+        )
+
+
+def test_receipt_with_forged_adapter_identity_over_genuine_content_refuses(
+    _worldA: dict[str, Any],
+) -> None:
+    real = _worldA["receipt"]
+    forged = _forged_receipt(real, adapter_identity={"adapter": "forged_adapter", "version": "9.9"})
+    with pytest.raises(ProjectionRequirementError):
+        route_observation_receipt_to_evidence(
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
+        )
+
+
+def test_receipt_with_forged_input_refs_over_genuine_content_refuses(
+    _worldA: dict[str, Any],
+) -> None:
+    real = _worldA["receipt"]
+    forged = _forged_receipt(real, input_refs=({"kind": "forged_kind", "id": "FORGED-INPUT"},))
+    with pytest.raises(ProjectionRequirementError):
+        route_observation_receipt_to_evidence(
+            _worldA["store"],
+            forged,
+            _worldA["project_id"],
+            _request(_worldA["project_id"]),
+            adapter=_worldA["adapter"],
+        )
+
+
+def test_receipt_with_every_field_exactly_matching_the_fresh_reobservation_verifies(
+    _worldA: dict[str, Any],
+) -> None:
+    """The positive control every forgery test above needs: a receipt built from ``real``'s
+    own exact fields, copied through :func:`_forged_receipt` with *no* overrides at all, must
+    still verify -- proving the exact-equality requirement itself, not merely absence of a
+    particular forged field, is what the six tests above exercise."""
+
+    real = _worldA["receipt"]
+    unforged = _forged_receipt(real)
     evidence = route_observation_receipt_to_evidence(
         _worldA["store"],
-        forged,
+        unforged,
         _worldA["project_id"],
         _request(_worldA["project_id"]),
         adapter=_worldA["adapter"],

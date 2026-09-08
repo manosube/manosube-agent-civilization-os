@@ -48,6 +48,7 @@ def derive_projection_envelope(
     external_artifact_ref: dict[str, Any],
     github_authority_ref: dict[str, Any],
     materialized_at: str,
+    claim_token: str,
 ) -> dict[str, Any]:
     """Return one canonical, schema-valid Projection Envelope record.
 
@@ -58,6 +59,15 @@ def derive_projection_envelope(
     already be what a real :class:`~manosube_agent_civilization.projection.types.
     GitHubAdapter.materialize` call returned. This function mints no external artifact and
     performs no Store I/O of any kind.
+
+    *claim_token* (Structural Review Round 4, Issue #62, P14-R4-F1) is the winning attempt's
+    own ``attempt_claim_token`` -- carried on the terminal Envelope itself so a route can later
+    tell a genuine same-attempt retry (an identical ``claim_token`` presented again) apart from
+    a distinct caller reaching an already-terminal mapping slot. It is deliberately excluded
+    from :data:`~manosube_agent_civilization.projection.identity.MAPPING_KEY_FIELDS` and
+    :data:`~manosube_agent_civilization.projection.identity.SEMANTIC_FIELDS` -- which attempt
+    happened to win is metadata about the Envelope, never part of *what* was projected, so it
+    never changes ``projection_envelope_id`` or ``projection_envelope_semantic_fingerprint``.
     """
 
     if projection_kind not in PROJECTION_KINDS:
@@ -84,6 +94,7 @@ def derive_projection_envelope(
         "external_artifact_ref": dict(external_artifact_ref),
         "github_authority_ref": dict(github_authority_ref),
         "materialized_at": materialized_at,
+        "claim_token": claim_token,
     }
     envelope["projection_envelope_id"] = projection_envelope_id(envelope)
     envelope["projection_envelope_semantic_fingerprint"] = projection_envelope_semantic_fingerprint(

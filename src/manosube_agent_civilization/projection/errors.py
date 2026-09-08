@@ -83,6 +83,23 @@ class ProjectionReconciliationRequiredError(ProjectionError):
     silently re-create)."""
 
 
+class ProjectionTerminalClaimMismatchError(ProjectionError):
+    """A caller reached an already-terminally-committed Projection Envelope with an
+    ``attempt_claim_token`` that does not equal the winning attempt's own ``claim_token``
+    carried on that Envelope (Structural Review Round 4, Issue #62, P14-R4-F1).
+
+    A same-attempt retry must present the identical ``claim_token`` again -- that is the only
+    case this route treats as an implicit, automatic idempotent replay. A distinct claim token
+    reaching the same mapping slot after terminal commit is never silently folded into that
+    replay path merely because a matching Envelope already exists: doing so would let any
+    caller who merely guesses or reconstructs the deterministic mapping key masquerade as the
+    attempt that actually won the race, with no record of which attempt that was. Later,
+    genuinely intended semantic reuse of an already-completed projection (an unrelated caller
+    that only wants to observe/reuse what already exists, not claim to have been the winning
+    attempt) is retained as an explicitly separate, disclosed operation -- pass
+    ``permit_semantic_reuse=True`` to request it -- never conflated with same-attempt retry."""
+
+
 class ProjectionAdapterError(ProjectionError):
     """The supplied :class:`~manosube_agent_civilization.projection.types.GitHubAdapter`
     could not materialize or observe the requested external artifact, or its own return value

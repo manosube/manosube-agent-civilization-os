@@ -14,16 +14,20 @@ from __future__ import annotations
 import pytest
 from tests.fixtures.v3_target_configuration import (
     ARTIFACT_NAMING_PREFIX_ENV,
+    AUTHORIZED_ARTIFACT_COUNT_ENV,
+    AUTHORIZED_ARTIFACT_KINDS_ENV,
     CHANGE_BASE_REF_ENV,
     CHANGE_HEAD_REF_ENV,
     CLEANUP_CONFIRMED_ENV,
     EVIDENCE_HEAD_SHA_ENV,
+    LIVE_WRITE_AUTHORIZED_ENV,
     NO_MERGE_CONFIRMED_ENV,
     TARGET_REPOSITORY_ENV,
     TOKEN_ENV,
     V3ConfigurationError,
     V3TargetConfiguration,
     load_v3_target_configuration,
+    v3_live_write_authorized,
 )
 
 _VALID_ENV = {
@@ -35,6 +39,8 @@ _VALID_ENV = {
     ARTIFACT_NAMING_PREFIX_ENV: "MANOSUBE V3 proof (do not merge)",
     CLEANUP_CONFIRMED_ENV: "true",
     NO_MERGE_CONFIRMED_ENV: "true",
+    AUTHORIZED_ARTIFACT_KINDS_ENV: "issue,pull_request,check_run",
+    AUTHORIZED_ARTIFACT_COUNT_ENV: "3",
 }
 
 
@@ -52,6 +58,10 @@ def test_fully_valid_environment_returns_complete_configuration() -> None:
         change_base_ref="main",
         evidence_head_sha="0123456789abcdef0123456789abcdef01234567",
         artifact_naming_prefix="MANOSUBE V3 proof (do not merge)",
+        cleanup_confirmed=True,
+        no_merge_confirmed=True,
+        authorized_artifact_kinds=frozenset({"issue", "pull_request", "check_run"}),
+        authorized_artifact_count=3,
     )
     assert config is not None
     assert config.target_repository == {"host": "github", "owner": "acme", "repo": "widget"}
@@ -154,3 +164,82 @@ def test_default_env_source_is_os_environ(monkeypatch: pytest.MonkeyPatch) -> No
     config = load_v3_target_configuration()
     assert config is not None
     assert config.owner == "acme"
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 4 (P14-R4-F3): the full frozen boundary -- artifact kinds/count
+# bound as real fields, and live-write authority as a wholly separate gate.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    ["", "   ", "not_a_real_kind", "issue,not_a_real_kind", ",,", "issue,issue,bogus"],
+)
+def test_malformed_authorized_artifact_kinds_fails_closed(bad_value: str) -> None:
+    env = {**_VALID_ENV, AUTHORIZED_ARTIFACT_KINDS_ENV: bad_value}
+    with pytest.raises(V3ConfigurationError):
+        load_v3_target_configuration(env=env)
+
+
+def test_authorized_artifact_kinds_accepts_a_single_kind() -> None:
+    env = {**_VALID_ENV, AUTHORIZED_ARTIFACT_KINDS_ENV: "check_run"}
+    config = load_v3_target_configuration(env=env)
+    assert config is not None
+    assert config.authorized_artifact_kinds == frozenset({"check_run"})
+
+
+@pytest.mark.parametrize("bad_value", ["0", "-1", "not_a_number", "", "1.5"])
+def test_malformed_authorized_artifact_count_fails_closed(bad_value: str) -> None:
+    env = {**_VALID_ENV, AUTHORIZED_ARTIFACT_COUNT_ENV: bad_value}
+    with pytest.raises(V3ConfigurationError):
+        load_v3_target_configuration(env=env)
+
+
+def test_authorized_artifact_count_accepts_a_positive_integer() -> None:
+    env = {**_VALID_ENV, AUTHORIZED_ARTIFACT_COUNT_ENV: "1"}
+    config = load_v3_target_configuration(env=env)
+    assert config is not None
+    assert config.authorized_artifact_count == 1
+
+
+def test_cleanup_and_no_merge_confirmed_are_bound_fields_not_discarded() -> None:
+    """A fully valid configuration carries its own confirmations as real fields (Structural
+    Review Round 4, P14-R4-F3) -- a caller can re-verify them, rather than trusting that the
+    one-time check at load time happened and was never silently dropped."""
+
+    config = load_v3_target_configuration(env=_VALID_ENV)
+    assert config is not None
+    assert config.cleanup_confirmed is True
+    assert config.no_merge_confirmed is True
+
+
+def test_v3_live_write_authorized_defaults_false_when_unset() -> None:
+    assert v3_live_write_authorized(env={}) is False
+
+
+@pytest.mark.parametrize("bad_value", ["True", "TRUE", "yes", "1", "", "false"])
+def test_v3_live_write_authorized_requires_the_exact_literal(bad_value: str) -> None:
+    assert v3_live_write_authorized(env={LIVE_WRITE_AUTHORIZED_ENV: bad_value}) is False
+
+
+def test_v3_live_write_authorized_true_with_the_exact_literal() -> None:
+    assert v3_live_write_authorized(env={LIVE_WRITE_AUTHORIZED_ENV: "true"}) is True
+
+
+def test_v3_live_write_authorized_default_env_source_is_os_environ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(LIVE_WRITE_AUTHORIZED_ENV, "true")
+    assert v3_live_write_authorized() is True
+
+
+def test_live_write_authority_is_independent_of_configuration_validity() -> None:
+    """A fully valid, fully bound configuration alone never authorizes a live write -- the two
+    gates are deliberately decoupled (Structural Review Round 4, P14-R4-F3): this delivery's
+    own environment carries neither, but the independence must hold even when configuration
+    alone is present."""
+
+    config = load_v3_target_configuration(env=_VALID_ENV)
+    assert config is not None
+    assert v3_live_write_authorized(env=_VALID_ENV) is False

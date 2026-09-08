@@ -10,6 +10,7 @@ ADOPTION_ID=ADOPT_P14_D001_PROJECTION_ENVELOPE_IMPLEMENTATION
 CORRECTION_ADOPTION_ID=ADOPT_P14_R1_CANONICAL_AUTHORITY_SUBJECT_AND_RECOVERABLE_PROJECTION
 CORRECTION_ADOPTION_ID_ROUND_2=ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_AND_REAL_V3
 CORRECTION_ADOPTION_ID_ROUND_3=ADOPT_P14_R3_UNIQUE_CLAIM_ATTESTED_RECEIPT_AND_CONFIGURABLE_V3
+CORRECTION_ADOPTION_ID_ROUND_4=ADOPT_P14_R4_TERMINAL_CLAIM_ATTESTED_RECEIPT_AND_SOURCE_EDIT_FREE_V3
 GOVERNING_ISSUE=#62
 REVIEWED_MAIN_SHA=7fc597356330a0d1da7a334ef20cd913b74154d
 ```
@@ -56,6 +57,26 @@ configuration object (F3). This round's own structural review found that Round 2
 self-reported closure of F2 and F3 was premature -- both are corrected for real here, not
 merely re-asserted.
 
+It is further corrected by Structural Review Round 4
+(`ADOPT_P14_R4_TERMINAL_CLAIM_ATTESTED_RECEIPT_AND_SOURCE_EDIT_FREE_V3`, Issue #62), which
+found and required correction of three further findings (P14-R4-F1 through F3, §12): the
+winning attempt's own `claim_token` is now carried on the terminal Projection Envelope itself
+and checked on every subsequent reuse, so a distinct claim token reaching an already-terminal
+mapping can no longer silently masquerade as the winning attempt merely because a matching
+Envelope exists -- later, genuinely intended semantic reuse remains possible only as an
+explicitly separate, disclosed operation (F1); Evidence hand-off now requires every one of a
+receipt's own Evidence-relevant fields (`status`, `observations`, `adapter_identity`,
+`input_refs`) to exactly equal the freshly, independently recomputed candidate, closing a gap
+where Round 3's own fresh re-observation was correct but the receipt's own claimed fields were
+never actually checked against it (F2); and the V3 harness's own real-adapter tests are now
+gated by a fail-closed runtime check (`_v3_live_authorized`) requiring both a fully validated,
+fully bound `V3TargetConfiguration` -- now itself binding `authorized_artifact_kinds`/
+`authorized_artifact_count`/`cleanup_confirmed`/`no_merge_confirmed` as real fields, never
+checked once and discarded -- and a wholly separate, independently-gated live-write-authority
+input, replacing the unconditional `pytest.mark.skip` markers Round 3 left in place (F3). This
+round's own structural review found that Round 3's own self-reported closure of F1 through F3
+was again premature -- all three are corrected for real here.
+
 Every section below reflects the corrected design; where a frozen decision from the original
 delivery or from Round 1 was superseded rather than merely extended, this is stated explicitly
 at the point of change.
@@ -95,7 +116,9 @@ project_to_github(
     attempt_claim_token: str,
     subject_record: Mapping[str, Any] | None = None,
     subject_fingerprint: str | None = None,
-) -> dict[str, Any]   # {"envelope": ..., "receipt": GitHubObservationReceipt, "reused": bool}
+    permit_semantic_reuse: bool = False,
+) -> dict[str, Any]
+    # {"envelope": ..., "receipt": GitHubObservationReceipt, "reused": bool, "same_attempt": bool}
 
 route_observation_receipt_to_evidence(
     store,
@@ -136,7 +159,15 @@ schema-validated and fingerprint-recomputed by this route -- and ignored for an
 canonical-identity-shaped attempt token -- never `materialized_at`, which two genuinely
 distinct callers may legitimately share -- included in both the `projection_intent` and
 `projection_materialize_attempt` record content the Store's own same-key/different-content
-rejection keys its concurrency barrier on (§10, F1).
+rejection keys its concurrency barrier on (§10, F1), and now also carried on the terminal
+Projection Envelope itself as `claim_token` (Structural Review Round 4, P14-R4-F1, §12).
+`permit_semantic_reuse` (Structural Review Round 4, P14-R4-F1) governs only the case where the
+mapping key already resolves to a terminally committed Envelope whose own `claim_token`
+differs from this call's `attempt_claim_token`: left `False` (the default), such a call
+refuses with `ProjectionTerminalClaimMismatchError` rather than silently masquerading as the
+winning attempt; passing `True` explicitly requests the separate, disclosed "later semantic
+reuse" operation instead, and the returned `"same_attempt"` key records whether this call was
+the attempt that won the mapping slot.
 
 `subject_fingerprint` is accepted but never trusted alone, for any subject kind: this route
 always independently resolves or admits the real record (`store.resolve_record` for
@@ -196,7 +227,12 @@ Projection Envelope (persisted record)
   schema_version, projection_envelope_id, projection_envelope_semantic_fingerprint,
   subject_ref, subject_fingerprint, projection_kind, target_repository,
   projection_payload, projection_payload_fingerprint, external_artifact_ref,
-  github_authority_ref, materialized_at
+  github_authority_ref, materialized_at, claim_token
+                                  claim_token (Structural Review Round 4, P14-R4-F1) is the
+                                  winning attempt's own attempt_claim_token -- deliberately
+                                  excluded from projection_envelope_id/projection_envelope_
+                                  semantic_fingerprint, since which attempt won is metadata
+                                  about the Envelope, never part of what was projected
 ```
 
 ## 3. Frozen semantic decisions
@@ -881,3 +917,91 @@ corroboration did not yet catch), corrected here as this section's own F1/F2, an
 above is left unedited as an honest account of what Round 2 believed at the time rather than
 silently rewritten to agree with this correction. `P14_R2_F4b_V3_TARGET_CONFIG_CLOSED=false`,
 disclosed open at the end of §10, is closed for real by this section's own F3.)
+
+## 12. Structural Review Round 4 corrections (`ADOPT_P14_R4_TERMINAL_CLAIM_ATTESTED_RECEIPT_AND_SOURCE_EDIT_FREE_V3`)
+
+**F1: the winning attempt's own claim token is now carried on the terminal Envelope and
+checked on every reuse -- a distinct token can no longer masquerade as the winning attempt.**
+§11's own F1 bound `claim_token` into the `projection_intent`/`projection_materialize_attempt`
+records, but not into the terminal Envelope itself: a request whose mapping key already
+resolved to a committed Envelope returned it unconditionally, regardless of which
+`attempt_claim_token` the caller presented, so a distinct caller reaching an already-terminal
+projection was treated identically to the attempt that actually won it -- the terminal record
+could not attest which attempt owned it. `projection_envelope.schema.json` gains a required
+`claim_token` field; `derive_projection_envelope` (`engine.py`) takes and includes it,
+deliberately excluded from `MAPPING_KEY_FIELDS`/`SEMANTIC_FIELDS` (`identity.py`) since which
+attempt won is metadata about the Envelope, never part of what was projected. `project_to_
+github`'s own existing-Envelope reuse path now compares the committed Envelope's own
+`claim_token` against the caller's `attempt_claim_token`: an exact match is a genuine
+same-attempt retry, proceeding exactly as before with `"same_attempt": True`; a mismatch
+refuses with the new `ProjectionTerminalClaimMismatchError` unless the caller explicitly
+passes the new `permit_semantic_reuse=True` keyword (§2), in which case the existing Envelope
+is still returned and freshly re-observed, but `"same_attempt": False` discloses that this
+call was not the winning attempt. Later, genuinely intended semantic reuse of an
+already-completed projection remains possible -- but only as this explicitly separate,
+disclosed operation, never silently conflated with same-attempt retry.
+
+**F2: Evidence hand-off now requires every one of a receipt's own claimed fields to exactly
+equal the freshly, independently recomputed candidate -- a fresh re-observation alone is not
+itself an attestation of the receipt.** §11's own F2 made `route_observation_receipt_to_
+evidence` independently re-observe through the exact authorized adapter, but it then
+constructed `verification_result_provenance` entirely from that fresh result, never reading
+`receipt.status`/`observations`/`adapter_identity`/`input_refs` at all -- so a publicly
+constructed receipt with any one of those fields forged could still yield `VERIFIED` Evidence
+whenever the artifact currently happened to match, using the receipt only as an unverified
+locator. `route_observation_receipt_to_evidence` now additionally requires, before deriving
+any Evidence: `receipt.status == classified["status"]`; `dict(receipt.observations) ==` the
+freshly recomputed `{observation_outcome, exists, observed_content_fingerprint, observed_at}`
+(covering outcome, fingerprint, and timestamp together); `dict(receipt.adapter_identity) ==
+dict(adapter.adapter_identity)`; and `receipt.input_refs ==` the expected `(subject_ref,)`
+tuple derived from the real Envelope. A single forged field, even with every other field
+(including the fresh re-observation itself) genuine, refuses with `ProjectionRequirementError`
+before `derive_evidence` is ever called.
+
+**F3: the V3 harness's own real-adapter tests are now gated by a fail-closed runtime check
+requiring both a fully bound configuration and a wholly separate live-write-authority input --
+no source edit activates them.** §11's own F3 built `V3TargetConfiguration`/`load_v3_target_
+configuration`, but the three real-adapter tests remained decorated with an unconditional
+`pytest.mark.skip`, and the configuration itself validated `cleanup`/`no-merge` confirmations
+and discarded them rather than binding them as real fields, with no `artifact_kinds`/
+`artifact_count` boundary at all. `tests/fixtures/v3_target_configuration.py` now: (a) binds
+`cleanup_confirmed`, `no_merge_confirmed`, `authorized_artifact_kinds` (a non-empty subset of
+the real `ARTIFACT_KINDS` vocabulary, from a new comma-separated `MANOSUBE_P14_V3_AUTHORIZED_
+ARTIFACT_KINDS` variable), and `authorized_artifact_count` (a positive integer, from `MANOSUBE_
+P14_V3_AUTHORIZED_ARTIFACT_COUNT`) as real `V3TargetConfiguration` fields, never checked-then-
+discarded; (b) adds `v3_live_write_authorized`, reading one dedicated, deliberately separate
+environment variable (`MANOSUBE_P14_V3_LIVE_WRITE_AUTHORIZED`) not among `ALL_V3_ENV_VARS`, so
+configuration validity and live-write authority remain two independently-gated inputs -- a
+fully valid, fully bound configuration alone still never authorizes a live call. The three
+real-adapter tests in `test_v3_real_github_vertical_proof.py` now carry `@pytest.mark.skipif
+(not _v3_live_authorized(), ...)` in place of the unconditional skip, where `_v3_live_
+authorized()` requires both `load_v3_target_configuration() is not None` and `v3_live_write_
+authorized()`; each also calls a new `_require_authorized_artifact_kind` binding its own
+`projection_kind`'s real `artifact_kind` against the frozen configuration's own `authorized_
+artifact_kinds` before ever constructing a `RealGitHubAdapter` call. Once a later round
+supplies both inputs via the environment, these tests activate with no edit to this file or
+the configuration module. All of this remains entirely offline (no `urllib` import, no
+network access in either module) and, in this delivery's own environment, both gates evaluate
+`False` -- `test_v3_authorization_is_not_yet_configured_in_this_environment` asserts all four
+combinations (`_v3_authorized()`, `load_v3_target_configuration()`, `v3_live_write_
+authorized()`, `_v3_live_authorized()`) explicitly.
+
+```text
+P14_R4_F1_CLOSED=true
+P14_R4_F2_CLOSED=true
+P14_R4_F3_CLOSED=true
+```
+
+```text
+P14_R3_F1_CLOSED=true
+P14_R3_F2_CLOSED=true
+P14_R3_F3_CLOSED=true
+```
+
+(§11's own status block above records all three as `true` -- that self-assessment was again
+mistaken: Structural Review Round 4 found genuine, reproduced counterexamples in all three
+(the terminal Envelope's own missing claim-token binding for F1; the never-read receipt fields
+for F2; the unconditional skip and the discarded cleanup/no-merge/artifact-kind/count fields
+for F3), corrected here as this section's own F1/F2/F3, and the record above is left unedited
+as an honest account of what Round 3 believed at the time rather than silently rewritten to
+agree with this correction.)

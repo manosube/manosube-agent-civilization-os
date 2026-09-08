@@ -50,6 +50,7 @@ from tests.fixtures.product_binding import (
 from tests.fixtures.v3_target_configuration import (
     V3TargetConfiguration,
     load_v3_target_configuration,
+    v3_live_write_authorized,
 )
 from tests.state_helpers import SCHEMA_ROOT
 
@@ -77,18 +78,56 @@ _SKIP_REASON = (
     "V3_EXTERNAL_WRITE_ALLOWED_BY_THIS_COMMENT=false -- ADOPT_P14_D001_PROJECTION_ENVELOPE_"
     "IMPLEMENTATION (Issue #62) authorizes preparing this harness, not executing it against "
     "a live target, until the exact repository/artifact/cleanup/no-merge boundary is "
-    "separately frozen and re-confirmed."
+    "separately frozen and re-confirmed, and load_v3_target_configuration()/"
+    "v3_live_write_authorized() are both re-checked at collection time on every run."
 )
+
+#: Which single ``artifact_kind`` :class:`~manosube_agent_civilization.projection.
+#: github_adapter.RealGitHubAdapter` actually materializes for each ``projection_kind`` --
+#: the identical mapping ``github_adapter.py``'s own ``materialize`` uses. Bound here so the
+#: three real-adapter tests below can require their own artifact_kind be a member of the
+#: frozen configuration's own ``authorized_artifact_kinds`` (Structural Review Round 4,
+#: P14-R4-F3) before ever constructing a ``RealGitHubAdapter`` call.
+_PROJECTION_KIND_TO_ARTIFACT_KIND: dict[str, str] = {
+    "DIFFERENCE_ISSUE": "issue",
+    "CHANGE_PULL_REQUEST": "pull_request",
+    "EVIDENCE_ARTIFACT": "check_run",
+}
+
+
+def _require_authorized_artifact_kind(config: V3TargetConfiguration, projection_kind: str) -> None:
+    """Refuse to proceed unless *projection_kind*'s own real artifact_kind is a member of
+    *config*'s own ``authorized_artifact_kinds`` (Structural Review Round 4, P14-R4-F3) --
+    binding the frozen boundary's own artifact-kind authorization into the harness itself,
+    never left as a configuration-module-only check nothing downstream re-verifies."""
+
+    artifact_kind = _PROJECTION_KIND_TO_ARTIFACT_KIND[projection_kind]
+    if artifact_kind not in config.authorized_artifact_kinds:
+        raise AssertionError(
+            f"projection_kind {projection_kind!r} requires artifact_kind {artifact_kind!r}, "
+            f"which is not among this frozen configuration's own authorized_artifact_kinds: "
+            f"{sorted(config.authorized_artifact_kinds)}"
+        )
 
 
 def _v3_authorized() -> bool:
     """Return whether a later, separate authorization has actually configured a bounded,
     fully validated V3 target (Structural Review Round 3, P14-R3-F3) -- always ``False`` in
-    this delivery, checked explicitly rather than assumed, so a future round that *does*
-    receive that authorization only needs to remove the ``pytest.mark.skip`` markers below,
-    not rewrite this file's own gating logic or supply any new source-level configuration."""
+    this delivery, checked explicitly rather than assumed."""
 
     return load_v3_target_configuration() is not None
+
+
+def _v3_live_authorized() -> bool:
+    """Return whether the V3 harness's own real-adapter tests may actually run live
+    (Structural Review Round 4, Issue #62, P14-R4-F3): a fail-closed runtime gate requiring
+    *both* a fully validated, fully bound :class:`V3TargetConfiguration` *and* the wholly
+    separate, independently-gated ``v3_live_write_authorized()`` boolean -- always ``False``
+    in this delivery. This function, not a hardcoded ``pytest.mark.skip``, is what the three
+    real-adapter tests below are gated on, so a later round that supplies both inputs via the
+    environment activates them *without any source edit* to this file."""
+
+    return _v3_authorized() and v3_live_write_authorized()
 
 
 def _bound(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any]]:
@@ -323,12 +362,56 @@ def _run_vertical_proof(
 def test_v3_authorization_is_not_yet_configured_in_this_environment() -> None:
     """The one assertion this file makes without being skipped for the *live* target: proves
     the gate itself is real, not merely a comment -- this delivery's own environment
-    genuinely has no fully validated V3 target configured, so the ``RealGitHubAdapter`` tests
-    below genuinely cannot run live here even if their skip markers were removed by
-    mistake."""
+    genuinely has no fully validated V3 target configured and no live-write authority granted
+    (Structural Review Round 4, P14-R4-F3: the two are independently checked), so the
+    ``RealGitHubAdapter`` tests below genuinely cannot run live here even if their
+    ``skipif`` markers were somehow bypassed by mistake."""
 
     assert _v3_authorized() is False
     assert load_v3_target_configuration() is None
+    assert v3_live_write_authorized() is False
+    assert _v3_live_authorized() is False
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 4 (P14-R4-F3): the harness's own artifact-kind binding, exercised
+# directly and entirely offline -- no Store, no adapter, no network.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("projection_kind", "excluded_kind"),
+    [
+        ("DIFFERENCE_ISSUE", "issue"),
+        ("CHANGE_PULL_REQUEST", "pull_request"),
+        ("EVIDENCE_ARTIFACT", "check_run"),
+    ],
+)
+def test_require_authorized_artifact_kind_refuses_an_unauthorized_kind(
+    projection_kind: str, excluded_kind: str
+) -> None:
+    narrow_config = V3TargetConfiguration(
+        owner=_MOCK_CONFIG.owner,
+        repo=_MOCK_CONFIG.repo,
+        token=_MOCK_CONFIG.token,
+        change_head_ref=_MOCK_CONFIG.change_head_ref,
+        change_base_ref=_MOCK_CONFIG.change_base_ref,
+        evidence_head_sha=_MOCK_CONFIG.evidence_head_sha,
+        artifact_naming_prefix=_MOCK_CONFIG.artifact_naming_prefix,
+        cleanup_confirmed=True,
+        no_merge_confirmed=True,
+        authorized_artifact_kinds=frozenset(
+            {"issue", "pull_request", "check_run"} - {excluded_kind}
+        ),
+        authorized_artifact_count=_MOCK_CONFIG.authorized_artifact_count,
+    )
+    with pytest.raises(AssertionError):
+        _require_authorized_artifact_kind(narrow_config, projection_kind)
+
+
+def test_require_authorized_artifact_kind_accepts_the_authorized_kind() -> None:
+    for projection_kind in ("DIFFERENCE_ISSUE", "CHANGE_PULL_REQUEST", "EVIDENCE_ARTIFACT"):
+        _require_authorized_artifact_kind(_MOCK_CONFIG, projection_kind)
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +478,7 @@ def test_v3_harness_projects_a_real_evidence_item_to_an_artifact_with_the_contro
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason=_SKIP_REASON)
+@pytest.mark.skipif(not _v3_live_authorized(), reason=_SKIP_REASON)
 def test_v3_project_a_real_difference_to_a_github_issue(tmp_path: Path) -> None:
     """Would project one canonical Difference to a GitHub Issue projection -- Issue #62's own
     V3 requirement, item 1. See the module-level controlled-adapter test above for proof this
@@ -403,12 +486,16 @@ def test_v3_project_a_real_difference_to_a_github_issue(tmp_path: Path) -> None:
     (``RealGitHubAdapter``) is gated.
 
     Structural Review Round 3 (P14-R3-F3): every value below now comes from the one
-    validated :class:`~tests.fixtures.v3_target_configuration.V3TargetConfiguration` --
-    removing this ``pytest.mark.skip`` marker in a later round is the *only* source edit a
-    genuinely authorized, fully configured environment needs to make this test executable."""
+    validated :class:`~tests.fixtures.v3_target_configuration.V3TargetConfiguration`.
+    Structural Review Round 4 (P14-R4-F3): the gate is now the fail-closed
+    ``_v3_live_authorized()`` runtime check above, not a hardcoded ``pytest.mark.skip`` --
+    setting the required environment variables in a later, genuinely authorized round
+    activates this test with *no source edit* to this file at all."""
 
     config = load_v3_target_configuration()
     assert config is not None
+    assert v3_live_write_authorized()
+    _require_authorized_artifact_kind(config, "DIFFERENCE_ISSUE")
     outcome = _run_vertical_proof(
         tmp_path,
         subject_kind="difference",
@@ -423,7 +510,7 @@ def test_v3_project_a_real_difference_to_a_github_issue(tmp_path: Path) -> None:
     assert outcome["receipt"].status == "VERIFIED"
 
 
-@pytest.mark.skip(reason=_SKIP_REASON)
+@pytest.mark.skipif(not _v3_live_authorized(), reason=_SKIP_REASON)
 def test_v3_project_a_real_change_to_a_github_pull_request(tmp_path: Path) -> None:
     """Would project one canonical Change to a Pull Request projection -- Issue #62's own V3
     requirement, item 2. See the controlled-adapter test above for the identical, mechanically
@@ -432,10 +519,13 @@ def test_v3_project_a_real_change_to_a_github_pull_request(tmp_path: Path) -> No
     Structural Review Round 3 (P14-R3-F3): ``head_ref``/``base_ref`` are the configured
     target's own existing refs, never the impossible hardcoded ``"agent/v3-harness"``/
     ``"main"`` pair Round 2's structural review flagged -- a real Pull Request can only be
-    opened against refs that already exist on the frozen target."""
+    opened against refs that already exist on the frozen target. Structural Review Round 4
+    (P14-R4-F3): gated by ``_v3_live_authorized()``, activatable with no source edit."""
 
     config = load_v3_target_configuration()
     assert config is not None
+    assert v3_live_write_authorized()
+    _require_authorized_artifact_kind(config, "CHANGE_PULL_REQUEST")
     outcome = _run_vertical_proof(
         tmp_path,
         subject_kind="change",
@@ -452,7 +542,7 @@ def test_v3_project_a_real_change_to_a_github_pull_request(tmp_path: Path) -> No
     assert outcome["receipt"].status == "VERIFIED"
 
 
-@pytest.mark.skip(reason=_SKIP_REASON)
+@pytest.mark.skipif(not _v3_live_authorized(), reason=_SKIP_REASON)
 def test_v3_project_a_real_evidence_item_to_a_github_artifact(tmp_path: Path) -> None:
     """Would project one canonical Evidence item to a check-run projection -- Issue #62's own
     V3 requirement, item 3. ``RealGitHubAdapter.materialize`` now implements the
@@ -461,10 +551,13 @@ def test_v3_project_a_real_evidence_item_to_a_github_artifact(tmp_path: Path) ->
 
     Structural Review Round 3 (P14-R3-F3): ``head_sha`` is the configured target's own real
     commit SHA, never the synthetic ``"a" * 40`` placeholder Round 2's structural review
-    flagged as certain to be rejected by the real Checks API."""
+    flagged as certain to be rejected by the real Checks API. Structural Review Round 4
+    (P14-R4-F3): gated by ``_v3_live_authorized()``, activatable with no source edit."""
 
     config = load_v3_target_configuration()
     assert config is not None
+    assert v3_live_write_authorized()
+    _require_authorized_artifact_kind(config, "EVIDENCE_ARTIFACT")
     outcome = _run_vertical_proof(
         tmp_path,
         subject_kind="observation_evidence",
@@ -499,6 +592,10 @@ _MOCK_CONFIG = V3TargetConfiguration(
     change_base_ref="main",
     evidence_head_sha="0123456789abcdef0123456789abcdef01234567",
     artifact_naming_prefix="MANOSUBE V3 proof (do not merge)",
+    cleanup_confirmed=True,
+    no_merge_confirmed=True,
+    authorized_artifact_kinds=frozenset({"issue", "pull_request", "check_run"}),
+    authorized_artifact_count=3,
 )
 
 

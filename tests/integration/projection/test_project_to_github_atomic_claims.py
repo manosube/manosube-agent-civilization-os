@@ -40,6 +40,7 @@ from manosube_agent_civilization.projection import (
     ProjectionAdapterError,
     ProjectionConcurrentClaimError,
     ProjectionReconciliationRequiredError,
+    ProjectionTerminalClaimMismatchError,
     project_to_github,
 )
 from manosube_agent_civilization.projection.identity import (
@@ -508,20 +509,53 @@ def test_competing_intent_with_identical_timestamp_but_different_claim_token_ref
     assert adapter.find_by_correlation_key_call_count == 0
 
 
-def test_two_distinct_claim_tokens_sharing_a_timestamp_at_most_one_materializes(
+def test_distinct_claim_token_terminal_replay_refuses_by_default(
     _world: dict[str, Any],
 ) -> None:
-    """Barrier proof, sequenced across the full public route (never a direct Store commit):
-    caller A's own genuine call fully succeeds and commits the Envelope; caller B then
-    arrives with a *different* ``claim_token`` but the exact same caller-controlled
-    ``materialized_at``. Once the Envelope exists, every subsequent caller -- distinct token
-    included -- converges on it via the ordinary reuse path rather than re-claiming or
-    re-materializing: ``materialize_call_count`` stays at 1 across both callers, never 2, and
-    caller B never raises merely for arriving under a different token after the fact (the
-    claim/token barrier guards the race to *create* the artifact, proven directly at the
-    Store layer by ``test_competing_intent_with_identical_timestamp_but_different_claim_
-    token_refuses`` above; it was never meant to make a *later* honest caller error out
-    against an artifact that genuinely already exists)."""
+    """Structural Review Round 4 (Issue #62, P14-R4-F1): a distinct ``claim_token`` reaching
+    an already-terminally-committed Envelope must never silently masquerade as the winning
+    attempt merely because a matching Envelope exists. Caller A's own genuine call fully
+    succeeds and commits the Envelope (its own ``claim_token`` is carried on that Envelope);
+    caller B then arrives with a *different* ``claim_token`` but the exact same
+    caller-controlled ``materialized_at``, and -- left at the default
+    ``permit_semantic_reuse=False`` -- refuses with
+    :class:`~manosube_agent_civilization.projection.errors.
+    ProjectionTerminalClaimMismatchError` before calling the adapter again. This corrects a
+    prior, mistaken assumption (Structural Review Round 3's own version of this test) that any
+    caller reaching an already-terminal mapping key could be treated as an ordinary reuse."""
+
+    shared_timestamp = "2026-09-08T00:00:01Z"
+    adapter = FakeGitHubAdapter()
+    first = _project(
+        _world,
+        adapter,
+        materialized_at=shared_timestamp,
+        attempt_claim_token="PROJECTION-ATTEMPT-TEST-A",  # noqa: S106
+    )
+    assert first["reused"] is False
+    assert first["same_attempt"] is True
+    assert adapter.materialize_call_count == 1
+
+    with pytest.raises(ProjectionTerminalClaimMismatchError):
+        _project(
+            _world,
+            adapter,
+            materialized_at=shared_timestamp,
+            attempt_claim_token="PROJECTION-ATTEMPT-TEST-B",  # noqa: S106
+        )
+    assert adapter.materialize_call_count == 1
+
+
+def test_distinct_claim_token_with_explicit_permit_semantic_reuse_succeeds_as_separate_operation(
+    _world: dict[str, Any],
+) -> None:
+    """The retained, genuinely-intended capability Structural Review Round 4 (P14-R4-F1)
+    requires be kept as an explicitly separate operation: caller B, presenting a distinct
+    ``claim_token`` against an already-terminal Envelope, may still observe/reuse it -- but
+    only by explicitly passing ``permit_semantic_reuse=True``, and the returned
+    ``"same_attempt"`` key discloses that caller B was not the attempt that won the mapping
+    slot. ``materialize_call_count`` still never exceeds 1 -- no second external artifact is
+    ever created."""
 
     shared_timestamp = "2026-09-08T00:00:01Z"
     adapter = FakeGitHubAdapter()
@@ -539,8 +573,10 @@ def test_two_distinct_claim_tokens_sharing_a_timestamp_at_most_one_materializes(
         adapter,
         materialized_at=shared_timestamp,
         attempt_claim_token="PROJECTION-ATTEMPT-TEST-B",  # noqa: S106
+        permit_semantic_reuse=True,
     )
     assert second["reused"] is True
+    assert second["same_attempt"] is False
     assert second["envelope"] == first["envelope"]
     assert adapter.materialize_call_count == 1
 

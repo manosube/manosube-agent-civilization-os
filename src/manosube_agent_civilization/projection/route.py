@@ -95,6 +95,23 @@ barrier on: two attempts sharing a timestamp but carrying distinct tokens now pr
 genuinely different record content, so only whichever commit the Store admits first ever
 proceeds, and the other refuses via ``ProjectionConcurrentClaimError`` before any adapter
 call. A genuine retry of the identical attempt must present the identical token again.
+
+**Terminal claim binding (Structural Review Round 4, P14-R4-F1).** Round 3's own claim token
+guarded the ``projection_intent``/``projection_materialize_attempt`` records, but not the
+terminal Envelope itself: a request whose mapping key already resolved to a committed
+Envelope returned that Envelope unconditionally, regardless of which ``attempt_claim_token``
+the caller presented, so a distinct caller could reach an already-terminal projection and be
+treated identically to the attempt that actually won it. The terminal Envelope now itself
+carries the winning attempt's own ``claim_token`` (:func:`~manosube_agent_civilization.
+projection.engine.derive_projection_envelope`'s new required field, excluded from the
+Envelope's own content-addressed identity and semantic fingerprint -- see that function's own
+docstring). A request whose ``attempt_claim_token`` equals the committed Envelope's own
+``claim_token`` is a genuine same-attempt retry and proceeds exactly as before. A request
+whose ``attempt_claim_token`` differs refuses with :class:`~.errors.
+ProjectionTerminalClaimMismatchError` unless the caller explicitly passes
+``permit_semantic_reuse=True`` -- later, genuinely intended reuse of an already-completed
+projection by an unrelated caller remains possible, but only as an explicitly separate,
+disclosed operation, never silently conflated with "this call was the winning attempt."
 """
 
 from __future__ import annotations
@@ -137,6 +154,7 @@ from .errors import (
     ProjectionConcurrentClaimError,
     ProjectionReconciliationRequiredError,
     ProjectionRequirementError,
+    ProjectionTerminalClaimMismatchError,
 )
 from .identity import projection_mapping_key, projection_payload_fingerprint
 from .observable import observe_and_classify
@@ -641,9 +659,11 @@ def project_to_github(
     attempt_claim_token: str,
     subject_record: Mapping[str, Any] | None = None,
     subject_fingerprint: str | None = None,
+    permit_semantic_reuse: bool = False,
 ) -> dict[str, Any]:
     """Project one canonical subject to GitHub and return
-    ``{"envelope": ..., "receipt": GitHubObservationReceipt, "reused": bool}``.
+    ``{"envelope": ..., "receipt": GitHubObservationReceipt, "reused": bool, "same_attempt":
+    bool}``.
 
     *subject_record* is required for a ``difference``/``change`` subject -- the real,
     canonical record body, independently schema-validated and fingerprint-recomputed here
@@ -667,6 +687,17 @@ def project_to_github(
     same attempt must present the exact same ``attempt_claim_token`` again; a different
     caller, even one that happens to supply the identical ``materialized_at``, must supply a
     different one, and loses the durable claim race the moment its own commit lands second.
+    *permit_semantic_reuse* (Structural Review Round 4, P14-R4-F1) governs only the case where
+    the mapping key already resolves to a *terminally committed* Envelope whose own
+    ``claim_token`` differs from this call's ``attempt_claim_token`` -- a distinct caller
+    reaching an already-completed projection. Left ``False`` (the default), such a call
+    refuses with :class:`~.errors.ProjectionTerminalClaimMismatchError` rather than silently
+    masquerading as the winning attempt. Passing ``True`` explicitly requests the separate,
+    disclosed "later semantic reuse" operation instead: the existing Envelope is still
+    returned and freshly re-observed, but the returned ``"same_attempt"`` key is ``False``,
+    recording that this call was not the attempt that won the mapping slot. A genuine
+    same-attempt retry (identical ``attempt_claim_token``) always proceeds regardless of this
+    flag, with ``"same_attempt": True``.
 
     See ``09_PROJECTION/PROJECTION_CONTRACT.md`` §5 for the full canonical route this function
     implements, step by step.
@@ -776,6 +807,19 @@ def project_to_github(
                 "Envelope with a different projection_payload_fingerprint: "
                 f"{existing['projection_payload_fingerprint']!r} != {real_payload_fingerprint!r}"
             )
+        # Structural Review Round 4 (P14-R4-F1): the committed Envelope's own claim_token
+        # names the attempt that actually won this mapping slot. A request whose own
+        # attempt_claim_token differs is not that attempt -- it must not be silently folded
+        # into the same-attempt retry path merely because a matching Envelope exists.
+        same_attempt = existing.get("claim_token") == attempt_claim_token
+        if not same_attempt and not permit_semantic_reuse:
+            raise ProjectionTerminalClaimMismatchError(
+                f"projection identity {mapping_key!r} is already terminally committed under "
+                f"a different attempt's own claim_token ({existing.get('claim_token')!r} != "
+                f"{attempt_claim_token!r}) -- pass permit_semantic_reuse=True to explicitly "
+                "request later semantic reuse of this already-completed projection as a "
+                "distinct, disclosed operation"
+            )
         receipt = _observe(
             adapter,
             envelope_id=mapping_key,
@@ -786,7 +830,12 @@ def project_to_github(
             projection_kind=projection_kind,
             committed_payload=dict(existing["projection_payload"]),
         )
-        return {"envelope": existing, "receipt": receipt, "reused": True}
+        return {
+            "envelope": existing,
+            "receipt": receipt,
+            "reused": True,
+            "same_attempt": same_attempt,
+        }
 
     declared_identity = getattr(adapter, "adapter_identity", None)
     if not isinstance(declared_identity, Mapping):
@@ -900,6 +949,7 @@ def project_to_github(
         external_artifact_ref=checked_artifact_ref,
         github_authority_ref=real_human_authority_ref,
         materialized_at=materialized_at,
+        claim_token=attempt_claim_token,
     )
     if envelope["projection_envelope_id"] != mapping_key:
         raise ProjectionRequirementError(
@@ -947,7 +997,7 @@ def project_to_github(
         projection_kind=projection_kind,
         committed_payload=dict(projection_payload),
     )
-    return {"envelope": envelope, "receipt": receipt, "reused": False}
+    return {"envelope": envelope, "receipt": receipt, "reused": False, "same_attempt": True}
 
 
 def _observe(

@@ -109,6 +109,7 @@ def _envelope_answer(payload: dict[str, Any]) -> str:
             external_artifact_ref=_EXTERNAL_ARTIFACT_REF,
             github_authority_ref=_AUTHORITY_REF,
             materialized_at="2026-01-01T00:00:00Z",
+            claim_token="PROJECTION-ATTEMPT-TOTALITY-0001",  # noqa: S106
         )
     except (ProjectionError, CanonicalizationError):
         return "REJECTED"

@@ -15,7 +15,8 @@
     "projection_payload_fingerprint",
     "external_artifact_ref",
     "github_authority_ref",
-    "materialized_at"
+    "materialized_at",
+    "claim_token"
   ],
   "properties": {
     "schema_version": {"const": "0.1"},
@@ -68,7 +69,8 @@
       "additionalProperties": false
     },
     "github_authority_ref": {"$ref": "../common/reference.schema.json"},
-    "materialized_at": {"$ref": "../common/timestamp.schema.json"}
+    "materialized_at": {"$ref": "../common/timestamp.schema.json"},
+    "claim_token": {"$ref": "../common/identity.schema.json"}
   },
   "additionalProperties": false
 }

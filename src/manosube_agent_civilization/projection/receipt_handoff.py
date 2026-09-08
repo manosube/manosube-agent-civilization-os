@@ -117,16 +117,30 @@ def route_observation_receipt_to_evidence(
     genuinely happened or had the asserted result* -- ``GitHubObservationReceipt`` remains a
     publicly constructible dataclass, so a caller could copy every Envelope-bound field from
     a genuine receipt while forging its own ``status``, ``observations``, ``adapter_identity``,
-    or ``input_refs``. This function therefore never reads any of those four fields from
-    *receipt* at all: once the real Envelope is resolved, it independently calls *adapter*'s
-    own ``observe`` itself -- through the identical
+    or ``input_refs``. Once the real Envelope is resolved, this function independently calls
+    *adapter*'s own ``observe`` itself -- through the identical
     :func:`~manosube_agent_civilization.projection.observable.observe_and_classify` body
     :mod:`~manosube_agent_civilization.projection.route` uses at materialization time -- and
     builds ``verification_result_provenance`` entirely from that fresh result and the real
-    Envelope, so no caller-supplied claim about the observation's own outcome can ever reach
-    Evidence unverified. *receipt* itself is used only to locate the claimed Envelope
-    (``projection_envelope_id``) and as a courtesy consistency check against it; it is never
-    itself the source of any provenance field.
+    Envelope, never from any receipt field directly.
+
+    **Complete receipt attestation required (Structural Review Round 4, Issue #62,
+    P14-R4-F2).** A fresh re-observation alone is not itself an attestation of *receipt*: an
+    earlier version of this function used the fresh result only, silently discarding whatever
+    *receipt* itself claimed, which let a receipt forged with a false ``status``,
+    ``observations``, ``adapter_identity``, or ``input_refs`` still yield ``VERIFIED`` Evidence
+    whenever the artifact happened to currently match -- the forged fields were simply never
+    checked at all. This function now additionally requires *receipt*'s own ``status``,
+    ``observations`` (``observation_outcome``, ``observed_content_fingerprint``,
+    ``observed_at`` together), ``adapter_identity``, and ``input_refs`` to each exactly equal
+    the freshly, independently recomputed candidate value before any Evidence is derived --
+    the identical "recompute a complete candidate and require exact equality" discipline this
+    package's own content-addressed identities already apply elsewhere. A receipt forged in
+    any single one of those fields, even when every other field (including the fresh
+    re-observation itself) is genuine, is refused before ``derive_evidence`` is ever called.
+    *receipt* is therefore never used merely to locate the claimed Envelope: it is itself
+    required to be the true, complete, independently-corroborated attestation of what was
+    observed, not just an untrusted locator alongside a separately-trusted fresh observation.
 
     Every :class:`~manosube_agent_civilization.evidence.errors.EvidenceError` the existing
     owner itself raises propagates unchanged.
@@ -216,8 +230,9 @@ def route_observation_receipt_to_evidence(
             "handoff's behalf"
         )
     # Structural Review Round 3 (P14-R3-F2): independently re-observe through the exact
-    # authorized adapter, never trust receipt.status/observations/adapter_identity/
-    # input_refs -- see this function's own docstring.
+    # authorized adapter -- the fresh candidate every one of receipt's own claimed fields is
+    # now checked against below (Structural Review Round 4, P14-R4-F2), never trusted merely
+    # because it was supplied.
     classified = observe_and_classify(
         adapter,
         external_artifact_ref=envelope["external_artifact_ref"],
@@ -230,6 +245,34 @@ def route_observation_receipt_to_evidence(
         "observed_content_fingerprint": classified["observed_content_fingerprint"],
         "observed_at": classified["observed_at"],
     }
+
+    # Structural Review Round 4 (P14-R4-F2): a fresh re-observation alone is not itself an
+    # attestation of *receipt* -- require every one of receipt's own Evidence-relevant fields
+    # to exactly equal the freshly, independently recomputed candidate before any Evidence is
+    # derived. A single forged field (status, any part of observations, adapter_identity, or
+    # input_refs), even with every other field genuine, refuses here.
+    if receipt.status != classified["status"]:
+        raise ProjectionRequirementError(
+            "receipt's own status does not equal the freshly, independently recomputed "
+            f"observation status: {receipt.status!r} != {classified['status']!r}"
+        )
+    if dict(receipt.observations) != fresh_observations:
+        raise ProjectionRequirementError(
+            "receipt's own observations do not equal the freshly, independently recomputed "
+            f"observation result: {dict(receipt.observations)!r} != {fresh_observations!r}"
+        )
+    if dict(receipt.adapter_identity) != dict(declared_identity):
+        raise ProjectionRequirementError(
+            "receipt's own adapter_identity does not equal the supplied adapter's declared "
+            f"identity: {dict(receipt.adapter_identity)!r} != {dict(declared_identity)!r}"
+        )
+    expected_input_refs = (dict(envelope["subject_ref"]),)
+    actual_input_refs = tuple(dict(ref) for ref in receipt.input_refs)
+    if actual_input_refs != expected_input_refs:
+        raise ProjectionRequirementError(
+            "receipt's own input_refs do not equal the expected input refs derived from the "
+            f"real, committed Envelope: {actual_input_refs!r} != {expected_input_refs!r}"
+        )
 
     provenance = _construct_provenance(
         envelope, project_id, declared_identity, classified["status"], fresh_observations

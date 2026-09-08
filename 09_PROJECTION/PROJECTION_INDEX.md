@@ -182,6 +182,11 @@ V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED=true
 EXPLICIT_CLAIM_TOKEN_INDEPENDENT_OF_TIMESTAMP_IMPLEMENTED=true
 RECEIPT_HANDOFF_INDEPENDENTLY_RE_OBSERVED_NEVER_TRUSTED_FROM_RECEIPT=true
 V3_CONFIGURATION_CONTRACT_VALIDATED_ZERO_NETWORK_ACCESS=true
+TERMINAL_CLAIM_TOKEN_BOUND_TO_ENVELOPE_IMPLEMENTED=true
+SAME_ATTEMPT_RETRY_SEPARATED_FROM_SEMANTIC_REUSE_IMPLEMENTED=true
+RECEIPT_ATTESTATION_EXACT_MATCH_REQUIRED_BEFORE_VERIFIED_EVIDENCE=true
+V3_LIVE_ADAPTER_TESTS_GATED_BY_RUNTIME_CHECK_NOT_UNCONDITIONAL_SKIP=true
+V3_ARTIFACT_KINDS_AND_COUNT_AND_CLEANUP_AND_NO_MERGE_BOUND_AS_CONFIGURATION_FIELDS=true
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
@@ -201,6 +206,15 @@ Round 2's own mistaken belief that its F2 (atomic claims) and F3 (receipt corrob
 already fully closed. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any
 of this: `V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED=true` closes the *configuration*
 requirement only, never live-write authorization.
+The five lines immediately above `PHASE_14_COMPLETE` record Structural Review Round 4's own
+corrections (`ADOPT_P14_R4_TERMINAL_CLAIM_ATTESTED_RECEIPT_AND_SOURCE_EDIT_FREE_V3`) -- see
+`PROJECTION_CONTRACT.md` §12 for the full detail each one fixes, including a correction to
+Round 3's own mistaken belief that its F1 (claim ownership), F2 (receipt corroboration), and
+F3 (V3 configuration) were already fully closed. `V3_LIVE_ADAPTER_TESTS_GATED_BY_RUNTIME_
+CHECK_NOT_UNCONDITIONAL_SKIP=true` and `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` both hold
+together, unchanged by any of this: the real-adapter tests are now gated by a fail-closed
+runtime check reading the environment rather than a hardcoded skip, but that gate still
+evaluates `False` in this delivery -- no live write occurs.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.
