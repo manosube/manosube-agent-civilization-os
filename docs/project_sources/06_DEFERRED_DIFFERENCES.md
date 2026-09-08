@@ -610,7 +610,7 @@ Scheduling a Deferred Difference in a later Phase is not reopening its originati
 
 # 13. Closure and cancellation rules
 
-## 12.1 Closure
+## 13.1 Closure
 
 A Deferred Difference closes only when:
 
@@ -625,7 +625,7 @@ AND
 AFTER_STATE_REOBSERVED
 ```
 
-## 12.2 Cancellation or supersession
+## 13.2 Cancellation or supersession
 
 Only SHUKOU may cancel, redefine or declare a Deferred Difference superseded.
 
