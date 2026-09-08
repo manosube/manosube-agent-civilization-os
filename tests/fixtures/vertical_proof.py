@@ -151,6 +151,26 @@ ARTIFACT: dict[str, Any] = {
 EVIDENCE_REF: dict[str, str] = {"kind": "observation_evidence", "id": "EVID-VP8-0001"}
 NEGATIVE_EVIDENCE_REF: dict[str, str] = {"kind": "negative_evidence", "id": "NEG-EVID-VP8-0001"}
 
+#: The ten-field ``verification_result_provenance`` projection Change-Free Verification
+#: Evidence now requires (P13-R6, mandatory since P13-R6-R1). This vertical's own Change-
+#: Free Verification Evidence is never Independent Verification's -- Reflow is never this
+#: position's producer (R6-F1b) and no real ``VerificationResult`` exists anywhere in this
+#: fixture world -- so this is a synthetic, schema-shaped, fixed value, used identically by
+#: both derivations :func:`~tests.natural_cycle.proof.observe_verification` makes so its own
+#: two-pass fixed point (P8-R2-F1) still converges to one ``evidence_id``.
+VERIFICATION_RESULT_PROVENANCE: dict[str, Any] = {
+    "status": "VERIFIED",
+    "requirement_id": "VREQ-VP8-0001",
+    "selection_id": "VSEL-VP8-0001",
+    "project_id": PROJECT_ID,
+    "target_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+    "verifier_identity": {"kind": "deterministic_test_runner", "id": "VERIFIER-VP8-0001"},
+    "selection_authority_ref": {"kind": "human_authority", "id": "AUTH-VP8-0001"},
+    "verification_boundary": {"scope": "repository", "boundary_id": "VB-VP8-0001"},
+    "input_refs": {"collection_kind": "UNORDERED_SET", "members": []},
+    "observations": {"summary": "vertical-proof fixture provenance"},
+}
+
 
 def target_predicate() -> dict[str, Any]:
     """This proof's one Target Predicate: the readiness marker reads ``"READY"``."""

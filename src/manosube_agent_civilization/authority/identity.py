@@ -75,7 +75,9 @@ def action_fingerprint(action: dict[str, Any]) -> str:
     from canonical bytes rather than trusting any digest the caller supplied.
     """
 
-    return _digest({key: value for key, value in action.items() if key != "action_semantic_fingerprint"})
+    return _digest(
+        {key: value for key, value in action.items() if key != "action_semantic_fingerprint"}
+    )
 
 
 def change_intent_fingerprint(action: dict[str, Any], scope: dict[str, Any]) -> str:
@@ -120,4 +122,52 @@ def prohibition_id(prohibition: dict[str, Any]) -> str:
 def approval_id(approval: dict[str, Any]) -> str:
     return _address(
         "APPROVAL-", {key: value for key, value in approval.items() if key != "approval_id"}
+    )
+
+
+#: What one Verifier Selection Decision *is* (Structural Review Round 3, P13-R3-F1): every
+#: field this decision binds together, so two decisions differing in any one of them are two
+#: decisions and not one. ``grant_ref``/``excluding_grant_refs`` participate for the identical
+#: reason ``approval_ref``/``excluding_approval_refs`` do above -- which grant was used, and
+#: which grant *withheld* the selection, are both part of what the decision means.
+#: ``declaration_ref`` (Structural Review Round 5, P13-R5) participates for the same reason:
+#: which Human Grant Declaration anchored the used grant is itself part of what the decision
+#: means, not merely a detail of how it was reached.
+VERIFIER_SELECTION_DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "project_id",
+    "requirement_id",
+    "selection_id",
+    "verifier_identity",
+    "permitted_boundary",
+    "selection_status",
+    "selection_authority_ref",
+    "grant_ref",
+    "excluding_grant_refs",
+    "declaration_ref",
+    "decision",
+    "decision_reason_codes",
+)
+
+
+def verifier_selection_grant_id(grant: dict[str, Any]) -> str:
+    return _address(
+        "VSEL-GRANT-",
+        {key: value for key, value in grant.items() if key != "verifier_selection_grant_id"},
+    )
+
+
+def verifier_selection_decision_semantic_fingerprint(decision: dict[str, Any]) -> str:
+    """The digest of a Verifier Selection Decision's meaning."""
+
+    return _digest(
+        {field: decision[field] for field in VERIFIER_SELECTION_DECISION_SEMANTIC_FIELDS}
+    )
+
+
+def verifier_selection_decision_id(decision: dict[str, Any]) -> str:
+    """The content address of a Verifier Selection Decision."""
+
+    return _address(
+        "VSEL-DEC-",
+        {field: decision[field] for field in VERIFIER_SELECTION_DECISION_SEMANTIC_FIELDS},
     )

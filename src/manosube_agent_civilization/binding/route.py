@@ -1,6 +1,7 @@
-"""The one public Product Binding entry point (Phase 9, Issue #43).
+"""The two public Product Binding entry points (Phase 9, Issue #43; second entry point added
+Phase 13, Issue #51, Structural Review Round 5, P13-R5).
 
-``bind_project`` is the sole public route: it validates a Human-declared Project Binding
+``bind_project`` is the one genesis route: it validates a Human-declared Project Binding
 (:mod:`.engine`), accepts and schema-validates the real Objective Revision body the Binding
 names (Objective's own schema, never restated here), accepts and schema-validates the real
 Authority Rule body the Binding's ``authority_policy_ref`` names (Authority's own schema and
@@ -9,9 +10,17 @@ Phase 9 Round 1 P9-R1-F1), produces genesis State through the existing State own
 (:func:`~manosube_agent_civilization.state.fingerprint.fingerprint_project_state`), and
 atomically adopts all four -- Objective Revision, Authority Rule, Project Binding, genesis
 State -- through the existing, generic
-:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.initialize`.
+:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.initialize`. It remains
+the only route this module ever calls ``.initialize`` from
+(``PUBLIC_COMMITTING_ROUTE_COUNT=1`` for genesis, unaffected by the second entry point below).
 
-``PRODUCT_BINDING_OWNER_COUNT=1``, ``PUBLIC_PRODUCT_BINDING_ENTRY_POINT_COUNT=1``:
+``declare_human_grant`` (P13-R5) is a second, independent public route, committing a new
+post-genesis record kind (``human_grant_declaration``) through the Store's ordinary
+``.commit`` -- never ``.initialize`` -- into an already-bound project, arbitrarily long after
+genesis. See ``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §12 and ``03_BINDING/
+PROJECT_BINDING.md`` §11 for what it exists to prove.
+
+``PRODUCT_BINDING_OWNER_COUNT=1``, ``PUBLIC_PRODUCT_BINDING_ENTRY_POINT_COUNT=2``:
 no second State, Store, Lineage, Recovery, Objective, Boundary, or Authority owner is
 created anywhere in this module.
 """
@@ -23,10 +32,11 @@ from typing import Any
 
 from manosube_agent_civilization.authority.identity import rule_id
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import AlreadyInitializedError
 
 from .admission import admit_genesis_transaction
-from .engine import assemble_project_binding
+from .engine import assemble_human_grant_declaration, assemble_project_binding
 from .errors import BindingIdentityError, BindingValidationError
 from .reference_classification import reject_wrong_kind_reference
 from .validation import validate_against_schema_id
@@ -113,6 +123,7 @@ def bind_project(
     command_policy: dict[str, Any],
     secret_exclusion_policy: dict[str, Any],
     human_authority_ref: dict[str, Any],
+    human_authority_signing_key: dict[str, Any],
     bound_at: str,
     genesis_state: dict[str, Any],
     additional_genesis_records: list[tuple[str, str, dict[str, Any]]] | None = None,
@@ -260,6 +271,7 @@ def bind_project(
         command_policy=command_policy,
         secret_exclusion_policy=secret_exclusion_policy,
         human_authority_ref=human_authority_ref,
+        human_authority_signing_key=human_authority_signing_key,
         bound_at=bound_at,
         schema_root=schema_root,
     )
@@ -333,5 +345,138 @@ def bind_project(
         "project_binding_id": project_binding["project_binding_id"],
         "objective_revision": objective_revision,
         "authority_rule": authority_rule,
+        "committed_state": committed_state,
+    }
+
+
+def declare_human_grant(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    grant_ref: dict[str, Any],
+    status: str,
+    declared_at: str,
+    signature: dict[str, Any],
+    schema_root: Path | None = None,
+    fault: Any | None = None,
+) -> dict[str, Any]:
+    """Declare and atomically adopt one Human Grant Declaration (Structural Review Round 5,
+    Issue #51, P13-R5) -- the canonical, read-only-reverifiable anchor SHUKOU's own adoption
+    (``ADOPT_P13_R5_CANONICAL_HUMAN_GRANT_DECLARATION_ANCHOR``) requires before a
+    ``verifier_selection_grant`` may ever reach ``VERIFIER_SELECTION_SELECTED``: proof that a
+    Human -- not merely a caller who wrote a self-consistent record -- declared *this exact*
+    grant, independent of that grant's own self-asserted ``granted_by`` field.
+
+    This is the *second* public Product Binding entry point (:func:`bind_project` is the
+    first, and remains the only route ever calling
+    :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.initialize` --
+    ``PUBLIC_COMMITTING_ROUTE_COUNT`` for genesis is unaffected). Unlike genesis, an already-
+    bound project's declaration is adopted through the Store's ordinary, generic
+    :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.commit` -- a real,
+    minimal State transition (the identical "advance the revision to add records" shape every
+    other post-genesis record-adding caller in this repository already uses) that changes no
+    semantic State content, only the lineage head and the one new record.
+
+    The declaring Human identity is never a caller-supplied argument here at all -- unlike a
+    ``verifier_selection_grant``'s own caller-asserted ``granted_by`` field, this function
+    independently resolves the real, already-committed ``project_binding`` (fail closed if
+    unresolvable) and reads its own ``human_authority_ref`` directly; a caller cannot declare
+    a grant on behalf of a Human identity other than the one this project is genuinely bound
+    to. Likewise, *grant_ref* is resolved against the real, already-committed
+    ``verifier_selection_grant`` (fail closed if unresolvable, or if *grant_ref* does not
+    itself name that kind) -- this function never accepts grant content, only a reference,
+    the identical caller-asserted-content-is-not-provenance discipline Structural Review
+    Round 4 (P13-R4) already established for the grant's own resolution in
+    ``independent_verification/route.py``.
+
+    R5-R1 (Issue #51, ``ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER``)
+    supersedes Round 5's own ``grant_ref``-only design: durable Store commission of a
+    self-consistent, correctly-``granted_by``-shaped grant is not, by itself, proof a Human
+    declared it -- it proves only that *some* Store-write-capable caller committed it. A real
+    cryptographic signature, checked against the real Project Binding's own
+    ``human_authority_signing_key`` (never a caller-supplied copy), is what proves authorship.
+    *signature* is *this* function's own caller-supplied claim -- this route never generates
+    one -- verified read-only, before persisting anything, via
+    :func:`~manosube_agent_civilization.binding.signature.verify_declaration_signature`. The
+    grant's own ``requirement_id``/``selection_id``/``verifier_identity``/``permitted_
+    boundary`` are read directly off the real, already-resolved *grant* record above -- never
+    a caller-supplied copy either -- and restated into the signed payload, per R5-R1's own
+    adopted decision that ``grant_ref``'s content address alone is not sufficient; the
+    signature must cover a complete, self-describing payload.
+    """
+
+    real_project_binding = store.resolve_record(project_id, "project_binding", project_binding_id)
+    if real_project_binding is None:
+        raise BindingValidationError(
+            f"project_binding does not resolve for project {project_id!r}: {project_binding_id!r}"
+        )
+    if grant_ref.get("kind") != "verifier_selection_grant":
+        raise BindingValidationError(
+            f"grant_ref does not name a verifier_selection_grant: {grant_ref.get('kind')!r}"
+        )
+    grant_id = grant_ref.get("id")
+    if not isinstance(grant_id, str) or not grant_id:
+        raise BindingValidationError(f"grant_ref carries no readable id: {grant_ref!r}")
+    real_grant = store.resolve_record(project_id, "verifier_selection_grant", grant_id)
+    if real_grant is None:
+        raise BindingValidationError(
+            f"verifier_selection_grant does not resolve for project {project_id!r}: {grant_id!r}"
+        )
+
+    declaration = assemble_human_grant_declaration(
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref={"kind": "verifier_selection_grant", "id": grant_id},
+        declared_by=real_project_binding["human_authority_ref"],
+        requirement_id=real_grant["requirement_id"],
+        selection_id=real_grant["selection_id"],
+        verifier_identity=real_grant["verifier_identity"],
+        permitted_boundary=real_grant["permitted_boundary"],
+        status=status,
+        declared_at=declared_at,
+        signature=signature,
+        signing_key=real_project_binding["human_authority_signing_key"],
+        schema_root=schema_root,
+    )
+    declaration_id = declaration["human_grant_declaration_id"]
+
+    current_state = store.load_current(project_id)
+    transaction_id = f"TX-GRANT-DECLARATION-{declaration_id}"
+    next_state = dict(current_state)
+    next_state["state_revision"] = current_state["state_revision"] + 1
+    next_state["previous_state_fingerprint"] = current_state["semantic_fingerprint"]
+    next_state["lineage_head_ref"] = {"kind": "state_transition", "id": transaction_id}
+    next_state["semantic_fingerprint"] = fingerprint_project_state(
+        next_state, schema_root=schema_root
+    ).as_dict()
+    transition = {
+        "schema_version": "0.1",
+        "transaction_id": transaction_id,
+        "event_type": "TRANSITION",
+        "project_id": project_id,
+        "from_revision": current_state["state_revision"],
+        "to_revision": next_state["state_revision"],
+        "before_fingerprint": current_state["semantic_fingerprint"],
+        "after_fingerprint": next_state["semantic_fingerprint"],
+        "after_state": next_state,
+        "evidence_refs": [],
+        "committed_at": declared_at,
+    }
+
+    committed_state = commit_state_transition(
+        store,
+        project_id,
+        current_state["state_revision"],
+        current_state["semantic_fingerprint"],
+        next_state,
+        transition,
+        records=[("human_grant_declaration", declaration_id, declaration)],
+        fault=fault,
+    )
+
+    return {
+        "human_grant_declaration": declaration,
+        "human_grant_declaration_id": declaration_id,
         "committed_state": committed_state,
     }

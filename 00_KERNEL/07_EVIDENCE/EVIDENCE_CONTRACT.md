@@ -401,6 +401,20 @@ Observationのcontractを書き換えることになる。
 
 ---
 
+# 11A. 開示済みの欠落 — 第三の位置は本Contractに未記載
+
+R6-F1b（Structural Review Round 6 以前のCompletion Repair）は`evidence_position`へ
+`CHANGE_FREE_VERIFICATION_EVIDENCE`（`CLOSURE_POLICY.md` §6の`CHANGE_FREE`行）を追加した。
+これは`evidence/engine.py`にも`01_SCHEMA/evidence/evidence.schema.json`にも実装済みであり、
+§14が前提とする位置だが、本Contract自身の§1は依然「二位置」としてOBSERVATION_EVIDENCEと
+CHANGE_RESULT_EVIDENCEのみを記述している。この節番号（11A）は、その記述漏れをこの
+Work Unit（P13-R6）が偶然発見したことを示すためのものであり、§1を書き換えて解消する
+ことは今回のadoptionの範囲外である——今回書き換えれば、Round 6自身の変更に紛れて
+先行するR6-F1bの記述漏れが静かに埋められたことになり、いつ・どのroundが実際にそれを
+直したかが不明瞭になる。したがって解消せず、ここに明示する。
+
+---
+
 # 12. FAILED Observation — 批准済みamendment（ADR-0030）
 
 Evidenceは§1AによりDifference producerの受理性を継承する。`2730fab`時点では、そのproducerが
@@ -462,3 +476,128 @@ projection   _NEGATIVE_STATUS_MAP が REJECT_OR_QUARANTINE へ写像して raise
 
 `tests/integration/evidence/test_failed_observation_route.py`が全項目を実行し、誤kindの
 注入で往復gateが実際に落ちることをcontrolで示す。
+
+---
+
+# 13. verification_result_provenance — Structural Review Round 6（P13-R6, Issue #51）
+
+Issue #51 Structural Review Round 2/3/5-R1が開示を繰り越していた「Evidence handoff
+provenance completeness」の欠落は、SHUKOU adoption `ADOPT_P13_R6_PROVENANCE_COMPLETE_
+EVIDENCE_HANDOFF`によりここで解決する。
+
+```text
+以前: independent_verification が本物の VerificationResult を Change-Free Verification
+      Evidence へ引き渡すが、その VerificationResult 自身の provenance は Evidence record
+      本体のどこにも保持されない。
+今回: Evidence record 自身が VerificationResult の完全な provenance projection を保持する。
+```
+
+## 13.1 新field — `verification_result_provenance`
+
+第28条の最低fieldに、本Contractが追加する五番目のfieldとして加わる（既存の
+`evidence_position`・`difference_ref`・`evidence_level`に続く）。
+
+```text
+verification_result_provenance
+  = null                                          （OBSERVATION_EVIDENCE / CHANGE_RESULT_EVIDENCE）
+  = { status, requirement_id, selection_id, project_id,
+      target_refs, verifier_identity, selection_authority_ref,
+      verification_boundary, input_refs, observations }
+                                                    （CHANGE_FREE_VERIFICATION_EVIDENCE、必須。
+                                                      null は許容されない — P13-R6-R1）
+```
+
+十fieldは`independent_verification.types.VerificationResult`自身のfield集合と完全に
+一致する。これは意図的である——projectionが元recordの部分集合ではなく全体を捉えることを、
+field名を並べて確認できるようにするためである。
+
+## 13.2 schemaはpermissive、handoffがmandatory（開示済みの解釈、P13-R6-R1により覆された）
+
+**この節はP13-R6時点の記録であり、SHUKOUが`ADOPT_P13_R6_R1_EVIDENCE_OWNER_GLOBAL_
+PROVENANCE_ENFORCEMENT`（Issue #51 comment 5573559225）で明示的に覆した。以下、原文を
+保持したまま、覆された事実をこの節自身に記す——沈黙して書き換えることは本protocolが
+禁じる。**
+
+（P13-R6時点の原文）
+
+adoptionの文言は字義通りに読めば「Change-Free Verification Evidenceとして引き渡す場合、
+provenanceを必須保持する」とも解釈できる。これをschema層で
+`CHANGE_FREE_VERIFICATION_EVIDENCE`位置全体の必須非null制約として実装すると、
+`tests/evidence_helpers.py::change_free_verification_evidence_request()`という、
+Independent Verificationと無関係にR6-F1b以来この位置を使い続けている既存fixtureを破壊する
+（Reflow/sufficiency側のテストが広く依拠している）。
+
+そこで本Round は次の層分けを採る。
+
+```text
+SCHEMA LAYER    :  null-or-object を許容する（この位置に限り）。既存の非-Independent-
+                    Verification callerを破壊しない。
+HANDOFF LAYER   :  route_verification_result_to_evidence は常に real VerificationResult
+                    から provenance を構築し、caller供給のprovenanceは受理しない。
+                    derive_evidence が返した record 自身の provenance が、構築した値と
+                    厳密に一致することを再検査し、不一致なら record を返さない。
+```
+
+これは字義通りの解釈をschema層でも強制する方向より弱いが、既存の合法的callerを破壊しない
+唯一の道である。「重大に曖昧な決定は沈黙して狭めず開示する」という本protocolの標準義務に
+従い、ここに明示する。
+
+（P13-R6-R1による訂正）
+
+SHUKOUは上記の層分けを既存fixtureを理由とした縮小として明示的に禁止し、
+`derive_evidence`全体——handoffだけではなく——がこの位置の`verification_result_provenance`
+を必須・非null・完全十fieldとして拒否・強制することを命じた。
+
+```text
+SCHEMA LAYER    :  CHANGE_FREE_VERIFICATION_EVIDENCE位置では type: object のみを許容する
+                    （null は許容されない）。
+ENGINE LAYER    :  _derive() が、CHANGE_FREE_VERIFICATION_EVIDENCE位置全体に対して、
+                    verification_result_provenance が None のとき無条件に EvidenceError を
+                    送出する——handoffを経由するcallerに限らない。
+HANDOFF LAYER   :  §13.4の記述は変わらず有効（handoffは自ら構築し、caller供給を受理しない）。
+                    ただし今やこれはengine自身の要求の上に立つ、追加の防御である。
+```
+
+「既存fixtureを破壊する」という上記の懸念は実際に生じた——
+`tests/evidence_helpers.py::change_free_verification_evidence_request()`と
+`tests/fixtures/vertical_proof.py`・`tests/natural_cycle/proof.py`の関連呼び出しは、
+`None`の代わりに実在する十field projectionを既定値として構築するよう書き換えられた
+（`tests/evidence_helpers.py::verification_result_provenance()`）。これは既存fixtureの
+互換性維持よりSHUKOUの命令を優先した結果であり、本節が「唯一の道」と述べていた選択そのもの
+が、非互換な変更を受け入れることで置き換えられたことを意味する。
+
+## 13.3 position誤用の防止
+
+`verification_result_provenance`は、この位置（CHANGE_FREE_VERIFICATION_EVIDENCE）専用
+である。engine自身が——schema検証の失敗としてではなく、engineの語彙による明示的な
+`EvidenceError`として——OBSERVATION_EVIDENCE・CHANGE_RESULT_EVIDENCEへの非null値を拒否
+する。
+
+## 13.4 handoffは常に自ら構築し、caller供給を受理しない
+
+`evidence_handoff.py::route_verification_result_to_evidence`は、*verification_result*
+自身の十fieldから決定的にprovenanceを構築する。*evidence_request*が既に非null値を
+`verification_result_provenance`へ置いていた場合、その値を上書きするのではなく——
+`EvidenceHandoffError`で拒否する。これは、handoffが「どのprovenanceを返すか」を
+制御し続けるための決定であり、上書きは沈黙した代入（callerが供給した値がいつの間にか
+別の値に変わる）になり、拒否より弱い。
+
+`derive_evidence`が返したrecordの`verification_result_provenance`が、構築した値と
+厳密に一致しない場合、handoffはrecordを返さず`EvidenceHandoffError`を送出する。
+
+## 13.5 identityへの参加
+
+`verification_result_provenance`は`evidence/identity.py::EVIDENCE_SEMANTIC_FIELDS`へ
+追加され、`evidence_id`/`evidence_semantic_fingerprint`の一部になる。永続化後に
+provenanceだけを差し替えることは、addressを保ったままEvidenceを上書きすることになり、
+§9が禁じる代入である。
+
+## 13.6 opaque fieldの権威
+
+`verifier_identity`・`selection_authority_ref`・`verification_boundary`・`observations`
+はこのschemaが何も制約しない——`authority/verifier_selection_grant.schema.json`の同名
+fieldが既に使う不透明契約と同じ理由による。これらが何を意味するかはIndependent
+Verification自身の関心であり、このschemaが決めることではない。
+`difference/admissibility.py::UNCONSTRAINED_CONTRACT_LOCATIONS`が`VERIFICATION_INPUT`
+としてこの四箇所を登録し、`tests/unit/evidence/test_request_totality.py`がその
+generated coverageを持つ。

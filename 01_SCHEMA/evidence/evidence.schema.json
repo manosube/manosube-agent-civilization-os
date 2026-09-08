@@ -3,7 +3,7 @@
   "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/evidence/evidence.schema.json",
   "title": "Canonical Evidence",
   "type": "object",
-  "required": ["schema_version", "evidence_id", "evidence_position", "timestamp", "target", "difference_ref", "before_state", "observation_method", "change_identity", "authority_used", "after_state", "expected_result", "observed_result", "status", "artifact_references", "lineage", "remaining_differences", "evidence_level", "evidence_semantic_fingerprint"],
+  "required": ["schema_version", "evidence_id", "evidence_position", "timestamp", "target", "difference_ref", "before_state", "observation_method", "change_identity", "authority_used", "after_state", "expected_result", "observed_result", "status", "artifact_references", "lineage", "remaining_differences", "evidence_level", "verification_result_provenance", "evidence_semantic_fingerprint"],
   "properties": {
     "schema_version": {"const": "0.1"},
     "evidence_id": {"type": "string", "pattern": "^EVIDENCE-[0-9A-F]{64}(?![\\s\\S])"},
@@ -23,20 +23,21 @@
     "lineage": {"$ref": "#/$defs/lineage"},
     "remaining_differences": {"$ref": "#/$defs/unordered_references"},
     "evidence_level": {"enum": ["E0", "E1", "E2", "E3", "E4", "E5", "E6"]},
+    "verification_result_provenance": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/verification_result_provenance"}]},
     "evidence_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
   },
   "allOf": [
     {
       "if": {"properties": {"evidence_position": {"const": "OBSERVATION_EVIDENCE"}}, "required": ["evidence_position"]},
-      "then": {"properties": {"change_identity": {"type": "null"}, "authority_used": {"type": "null"}, "after_state": {"type": "null"}, "expected_result": {"type": "null"}}}
+      "then": {"properties": {"change_identity": {"type": "null"}, "authority_used": {"type": "null"}, "after_state": {"type": "null"}, "expected_result": {"type": "null"}, "verification_result_provenance": {"type": "null"}}}
     },
     {
       "if": {"properties": {"evidence_position": {"const": "CHANGE_RESULT_EVIDENCE"}}, "required": ["evidence_position"]},
-      "then": {"properties": {"change_identity": {"type": "object"}, "authority_used": {"type": "object"}, "after_state": {"type": "object"}, "expected_result": {"type": "object"}}}
+      "then": {"properties": {"change_identity": {"type": "object"}, "authority_used": {"type": "object"}, "after_state": {"type": "object"}, "expected_result": {"type": "object"}, "verification_result_provenance": {"type": "null"}}}
     },
     {
       "if": {"properties": {"evidence_position": {"const": "CHANGE_FREE_VERIFICATION_EVIDENCE"}}, "required": ["evidence_position"]},
-      "then": {"properties": {"change_identity": {"type": "null"}, "authority_used": {"type": "null"}, "after_state": {"type": "object"}, "expected_result": {"type": "null"}}}
+      "then": {"properties": {"change_identity": {"type": "null"}, "authority_used": {"type": "null"}, "after_state": {"type": "object"}, "expected_result": {"type": "null"}, "verification_result_provenance": {"type": "object"}}}
     }
   ],
   "$defs": {
@@ -179,6 +180,23 @@
       "properties": {
         "collection_kind": {"const": "ORDERED_LIST"},
         "members": {"type": "array", "items": {"enum": ["COMPLETE", "EMPTY", "PARTIAL", "BLOCKED", "FAILED"]}}
+      },
+      "additionalProperties": false
+    },
+    "verification_result_provenance": {
+      "type": "object",
+      "required": ["status", "requirement_id", "selection_id", "project_id", "target_refs", "verifier_identity", "selection_authority_ref", "verification_boundary", "input_refs", "observations"],
+      "properties": {
+        "status": {"enum": ["VERIFIED", "FAILED", "INSUFFICIENT", "UNAVAILABLE"]},
+        "requirement_id": {"$ref": "../common/identity.schema.json"},
+        "selection_id": {"$ref": "../common/identity.schema.json"},
+        "project_id": {"$ref": "../common/identity.schema.json"},
+        "target_refs": {"$ref": "#/$defs/unordered_references"},
+        "verifier_identity": {},
+        "selection_authority_ref": {},
+        "verification_boundary": {},
+        "input_refs": {"$ref": "#/$defs/unordered_references"},
+        "observations": {}
       },
       "additionalProperties": false
     }

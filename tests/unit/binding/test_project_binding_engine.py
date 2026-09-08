@@ -13,6 +13,7 @@ from tests.fixtures.product_binding import (
     boundary,
     command_policy,
     human_authority_ref,
+    human_authority_signing_key,
     objective_revision,
     secret_exclusion_policy,
     source_registrations,
@@ -39,6 +40,7 @@ def _kwargs(**overrides: object) -> dict:
         "command_policy": command_policy(),
         "secret_exclusion_policy": secret_exclusion_policy(),
         "human_authority_ref": human_authority_ref(),
+        "human_authority_signing_key": human_authority_signing_key(),
         "bound_at": BOUND_AT,
         "schema_root": SCHEMA_ROOT,
     }

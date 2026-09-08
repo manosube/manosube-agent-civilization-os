@@ -192,6 +192,7 @@ def test_the_declared_unconstrained_locations_match_the_schemas_in_both_directio
         "INPUT",
         "EMITTED",
         "AUTHORITY_INPUT",
+        "VERIFICATION_INPUT",
     }
 
 
@@ -199,8 +200,10 @@ def test_every_input_side_unconstrained_location_has_generated_coverage() -> Non
     """The classification is not decoration: each ``INPUT`` location is generated against.
 
     ``AUTHORITY_INPUT`` locations belong to a different owner and are generated against in
-    ``tests/unit/authority``. Naming the owner in the tag is what keeps an unconstrained
-    location from being added with no suite responsible for it.
+    ``tests/unit/authority``. ``VERIFICATION_INPUT`` locations (Structural Review Round 6,
+    P13-R6) belong to Independent Verification's own Evidence handoff and are generated
+    against in ``tests/unit/evidence/test_request_totality.py``. Naming the owner in the tag
+    is what keeps an unconstrained location from being added with no suite responsible for it.
     """
 
     inputs = {
@@ -213,7 +216,34 @@ def test_every_input_side_unconstrained_location_has_generated_coverage() -> Non
         location
         for location, side in admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS.items()
         if side == "AUTHORITY_INPUT"
-    } == {"authority/authority.schema.json#/$defs/action/properties/operation"}
+    } == {
+        "authority/authority.schema.json#/$defs/action/properties/operation",
+        "authority/verifier_selection_grant.schema.json#/properties/verifier_identity",
+        "authority/verifier_selection_grant.schema.json#/properties/permitted_boundary",
+        "authority/verifier_selection_decision.schema.json#/properties/verifier_identity",
+        "authority/verifier_selection_decision.schema.json#/properties/permitted_boundary",
+        "binding/human_grant_declaration.schema.json#/properties/verifier_identity",
+        "binding/human_grant_declaration.schema.json#/properties/permitted_boundary",
+    }
+    # Structural Review Round 6 (P13-R6): the Change-Free Verification Evidence position's
+    # own verification_result_provenance carries four opaque fields straight from the real
+    # VerificationResult Independent Verification's own handoff constructed it from --
+    # generated against in ``tests/unit/evidence/test_request_totality.py``, never in this
+    # suite's own Difference-producer route.
+    assert {
+        location
+        for location, side in admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS.items()
+        if side == "VERIFICATION_INPUT"
+    } == {
+        "evidence/evidence.schema.json"
+        "#/$defs/verification_result_provenance/properties/verifier_identity",
+        "evidence/evidence.schema.json"
+        "#/$defs/verification_result_provenance/properties/selection_authority_ref",
+        "evidence/evidence.schema.json"
+        "#/$defs/verification_result_provenance/properties/verification_boundary",
+        "evidence/evidence.schema.json"
+        "#/$defs/verification_result_provenance/properties/observations",
+    }
 
 
 # --------------------------------------------------------------------------- #

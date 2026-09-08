@@ -15,7 +15,11 @@ re-deriving a second genesis State shape here would itself be the duplication.
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 from typing import Any
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 PROJECT_ID = "PRJ-BIND-0001"
 BOUND_AT = "2026-09-06T09:00:00Z"
@@ -110,6 +114,81 @@ def human_authority_ref() -> dict[str, Any]:
     return {"kind": "human_authority", "id": "AUTH-BIND-0001"}
 
 
+def _signing_private_key() -> Ed25519PrivateKey:
+    """A fixed, deterministic Ed25519 test-only private key -- never a real Human's private
+    key, which never touches this system's production code at all (see the module docstring
+    of ``manosube_agent_civilization.binding.signature``, which only ever verifies). Fixed and
+    deterministic so every test run signs and verifies against the identical key pair, exactly
+    as every other fixture in this module is itself fully deterministic."""
+
+    seed = hashlib.sha256(b"tests.fixtures.product_binding human_authority_signing_key").digest()
+    return Ed25519PrivateKey.from_private_bytes(seed)
+
+
+def human_authority_signing_key() -> dict[str, Any]:
+    """The real Project Binding's own Ed25519 public verification key (Structural Review
+    Round 5-R1, Issue #51, P13-R5-R1) -- the public half of :func:`_signing_private_key`,
+    never the private key itself."""
+
+    public_bytes = (
+        _signing_private_key()
+        .public_key()
+        .public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
+    )
+    return {
+        "algorithm": "ed25519",
+        "key_id": "AUTH-KEY-0001",
+        "public_key": public_bytes.hex(),
+    }
+
+
+def sign_human_grant_declaration(
+    *,
+    project_id: str,
+    project_binding_id: str,
+    grant_ref: dict[str, Any],
+    declared_by: dict[str, Any],
+    requirement_id: str,
+    selection_id: str,
+    verifier_identity: dict[str, Any],
+    permitted_boundary: dict[str, Any],
+    status: str,
+    declared_at: str,
+) -> dict[str, Any]:
+    """Sign the exact canonical payload
+    :func:`~manosube_agent_civilization.binding.identity.human_grant_declaration_signing_
+    payload` recomputes once ``assemble_human_grant_declaration`` assembles the real record
+    from these same fields -- the one shared signing helper every test that calls
+    ``declare_human_grant``/``assemble_human_grant_declaration`` uses, rather than each
+    reimplementing its own copy of the identical payload-construction logic
+    :mod:`manosube_agent_civilization.binding.identity` already owns."""
+
+    from manosube_agent_civilization.binding.identity import (
+        human_grant_declaration_signing_payload,
+    )
+
+    payload_record = {
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "project_binding_id": project_binding_id,
+        "grant_ref": grant_ref,
+        "declared_by": declared_by,
+        "requirement_id": requirement_id,
+        "selection_id": selection_id,
+        "verifier_identity": verifier_identity,
+        "permitted_boundary": permitted_boundary,
+        "status": status,
+        "declared_at": declared_at,
+    }
+    message = human_grant_declaration_signing_payload(payload_record)
+    signature_bytes = _signing_private_key().sign(message)
+    return {
+        "algorithm": "ed25519",
+        "key_id": human_authority_signing_key()["key_id"],
+        "value": signature_bytes.hex(),
+    }
+
+
 def authority_rule() -> dict[str, Any]:
     """A real, schema-valid Authority Rule body -- the Human-declared input Product Binding
     accepts, validates against Authority's own schema, identity-reverifies via Authority's
@@ -185,6 +264,7 @@ def bind_project_kwargs() -> dict[str, Any]:
         "command_policy": command_policy(),
         "secret_exclusion_policy": secret_exclusion_policy(),
         "human_authority_ref": human_authority_ref(),
+        "human_authority_signing_key": human_authority_signing_key(),
         "bound_at": BOUND_AT,
         "genesis_state": genesis_state(),
     }

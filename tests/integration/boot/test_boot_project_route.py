@@ -480,6 +480,7 @@ def test_a_project_with_only_an_interrupted_genesis_is_rejected(tmp_path: Path) 
         command_policy=kwargs["command_policy"],
         secret_exclusion_policy=kwargs["secret_exclusion_policy"],
         human_authority_ref=kwargs["human_authority_ref"],
+        human_authority_signing_key=kwargs["human_authority_signing_key"],
         bound_at=kwargs["bound_at"],
         schema_root=SCHEMA_ROOT,
     )["project_binding_id"]
@@ -528,6 +529,7 @@ def test_boot_project_never_completes_an_interrupted_transaction_via_recover(
         command_policy=kwargs["command_policy"],
         secret_exclusion_policy=kwargs["secret_exclusion_policy"],
         human_authority_ref=kwargs["human_authority_ref"],
+        human_authority_signing_key=kwargs["human_authority_signing_key"],
         bound_at=kwargs["bound_at"],
         schema_root=SCHEMA_ROOT,
     )["project_binding_id"]

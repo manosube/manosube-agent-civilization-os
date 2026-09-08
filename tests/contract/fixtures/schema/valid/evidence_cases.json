@@ -63,6 +63,7 @@
         "members": []
       },
       "evidence_level": "E1",
+      "verification_result_provenance": null,
       "evidence_semantic_fingerprint": "sha256:8a1af967cce7819cef68a2d7bdbf8b7377b5786dfde5d39ac3ca94546f842aa9",
       "evidence_position": "OBSERVATION_EVIDENCE",
       "before_state": {
@@ -161,6 +162,7 @@
         "members": []
       },
       "evidence_level": "E1",
+      "verification_result_provenance": null,
       "evidence_semantic_fingerprint": "sha256:b92f374568eef35679b99335ba5bc937d024b058a1c961611b7c4657d1f6103e",
       "evidence_position": "CHANGE_RESULT_EVIDENCE",
       "before_state": {

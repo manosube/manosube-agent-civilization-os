@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 from tests.evidence_helpers import (
+    change_free_verification_evidence_request,
     change_result_evidence_request,
     observation_evidence_request,
     sufficiency_request,
@@ -131,6 +132,22 @@ def test_every_change_result_request_mutation_is_refused_or_produces_a_valid_rec
     assert admitted > 0
 
 
+def test_every_change_free_verification_evidence_request_mutation_is_refused_or_produces_a_valid_record() -> (
+    None
+):
+    """The third position (R6-F1b), swept the identical way -- including its own
+    ``verification_result_provenance``, which is admissible only here."""
+
+    refused, admitted = _sweep(
+        derive_evidence,
+        change_free_verification_evidence_request(),
+        EVIDENCE_SCHEMA,
+        lambda record: record,
+    )
+    assert refused > 0
+    assert admitted > 0
+
+
 def test_every_sufficiency_request_mutation_is_refused_or_produces_a_valid_result() -> None:
     refused, admitted = _sweep(
         evaluate_sufficiency,
@@ -186,3 +203,110 @@ def test_the_request_is_not_an_object_at_all() -> None:
             derive_evidence(value)
         with pytest.raises(EvidenceError):
             evaluate_sufficiency(value)
+
+
+# --------------------------------------------------------------------------- #
+# verification_result_provenance's own opaque fields (Structural Review Round 6, P13-R6):
+# the suite ``difference.admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS`` names when it
+# tags ``verifier_identity``/``selection_authority_ref``/``verification_boundary``/
+# ``observations`` (on ``evidence.schema.json#/$defs/verification_result_provenance``)
+# ``VERIFICATION_INPUT``. The identical declaration-and-sweep pattern
+# ``tests/unit/authority/test_verifier_selection_input_totality.py`` already uses for its own
+# ``AUTHORITY_INPUT`` locations, applied here: a real, schema-shaped provenance payload is
+# built once, every reachable location inside it (not only its four opaque leaves -- the
+# generic recursive sweep reaches every nested path, including target_refs/input_refs'
+# members) is deleted and retyped, and the engine must always answer: an ``EvidenceError``
+# refusal or a schema-valid Evidence record. Never a raw ``TypeError`` or ``KeyError``.
+# --------------------------------------------------------------------------- #
+
+_PROVENANCE: dict[str, Any] = {
+    "status": "VERIFIED",
+    "requirement_id": "VREQ-0001",
+    "selection_id": "VSEL-0001",
+    "project_id": "PRJ-0001",
+    "target_refs": {
+        "collection_kind": "UNORDERED_SET",
+        "members": [{"kind": "difference", "id": "D-" + "0" * 64}],
+    },
+    "verifier_identity": {"kind": "deterministic_test_runner", "id": "VERIFIER-0001"},
+    "selection_authority_ref": {"kind": "human_authority", "id": "AUTH-0001"},
+    "verification_boundary": {"scope": "repository", "boundary_id": "VB-0001"},
+    "input_refs": {
+        "collection_kind": "UNORDERED_SET",
+        "members": [{"kind": "source_snapshot", "id": "SS-0001"}],
+    },
+    "observations": {"summary": "independently reproduced the reported outcome"},
+}
+
+
+def _locations(value: Any, path: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
+    found = [path] if path else []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            found.extend(_locations(child, (*path, key)))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            found.extend(_locations(child, (*path, index)))
+    return found
+
+
+_PROVENANCE_LOCATIONS: list[tuple[Any, ...]] = [
+    ("verification_result_provenance", *path) for path in _locations(_PROVENANCE)
+]
+
+
+def _provenance_request() -> dict[str, Any]:
+    request = change_free_verification_evidence_request()
+    request["verification_result_provenance"] = deepcopy(_PROVENANCE)
+    return request
+
+
+def _provenance_at(request: dict[str, Any], path: tuple[Any, ...]) -> Any:
+    target: Any = request
+    for step in path[:-1]:
+        target = target[step]
+    return target
+
+
+def _provenance_answer(request: dict[str, Any]) -> str:
+    """Return how the engine answered. A raw exception is not an answer and propagates."""
+
+    try:
+        derive_evidence(request)
+    except EvidenceError:
+        return "REJECTED"
+    return "DERIVED"
+
+
+def test_the_verification_result_provenance_inventory_is_neither_empty_nor_shrunk() -> None:
+    assert len(_PROVENANCE_LOCATIONS) >= 8, len(_PROVENANCE_LOCATIONS)
+
+
+def test_the_base_provenance_request_derives() -> None:
+    assert _provenance_answer(_provenance_request()) == "DERIVED"
+
+
+@pytest.mark.parametrize(
+    "path", _PROVENANCE_LOCATIONS, ids=lambda path: ".".join(str(step) for step in path)
+)
+def test_every_verification_result_provenance_location_answers_when_deleted(
+    path: tuple[Any, ...],
+) -> None:
+    request = _provenance_request()
+    target = _provenance_at(request, path)
+    before = deepcopy(target)
+    del target[path[-1]]
+    assert target != before, path
+    assert _provenance_answer(request) in ("REJECTED", "DERIVED")
+
+
+@pytest.mark.parametrize("value", SUBSTITUTIONS)
+@pytest.mark.parametrize(
+    "path", _PROVENANCE_LOCATIONS, ids=lambda path: ".".join(str(step) for step in path)
+)
+def test_every_verification_result_provenance_location_answers_when_retyped(
+    path: tuple[Any, ...], value: Any
+) -> None:
+    request = _provenance_request()
+    _provenance_at(request, path)[path[-1]] = deepcopy(value)
+    assert _provenance_answer(request) in ("REJECTED", "DERIVED")

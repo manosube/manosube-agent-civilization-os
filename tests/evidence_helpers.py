@@ -67,6 +67,7 @@ __all__ = [
     "observation_with_status",
     "real_change_request",
     "sufficiency_request",
+    "verification_result_provenance",
 ]
 
 #: The revision the fixture Difference observed, which is therefore the revision every
@@ -197,6 +198,7 @@ def observation_evidence_request(
         "change_request": None,
         "post_change_observation_request": None,
         "verification_observation_request": None,
+        "verification_result_provenance": None,
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),
@@ -255,12 +257,73 @@ def change_result_evidence_request(
         if post_change_observation is not None
         else after_observation_request(),
         "verification_observation_request": None,
+        "verification_result_provenance": None,
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),
         "predecessor_evidence_refs": [],
         "remaining_difference_refs": [],
     }
+
+
+def verification_result_provenance(
+    *,
+    status: str = "VERIFIED",
+    requirement_id: str = "VREQ-FIXTURE-0001",
+    selection_id: str = "VSEL-FIXTURE-0001",
+    project_id: str = "PRJ-FIXTURE-0001",
+    target_refs: list[dict[str, Any]] | None = None,
+    verifier_identity: dict[str, Any] | None = None,
+    selection_authority_ref: dict[str, Any] | None = None,
+    verification_boundary: dict[str, Any] | None = None,
+    input_refs: list[dict[str, Any]] | None = None,
+    observations: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The ten-field ``verification_result_provenance`` projection every Change-Free
+    Verification Evidence record now carries (P13-R6, mandatory since P13-R6-R1).
+
+    This is a fixture-owned, synthetic instance -- schema-shaped and complete, never
+    claiming to be a real ``VerificationResult``'s own projection (that construction is
+    ``evidence_handoff.py``'s own responsibility). It exists because ``derive_evidence``
+    itself now refuses a null or incomplete value on this position, and every caller of
+    this position -- Independent Verification's handoff or otherwise -- must supply a
+    complete one; there is no compatibility exception for a caller that predates this
+    field.
+    """
+
+    return {
+        "status": status,
+        "requirement_id": requirement_id,
+        "selection_id": selection_id,
+        "project_id": project_id,
+        "target_refs": {
+            "collection_kind": "UNORDERED_SET",
+            "members": list(target_refs) if target_refs is not None else [],
+        },
+        "verifier_identity": dict(verifier_identity)
+        if verifier_identity is not None
+        else {"kind": "deterministic_test_runner", "id": "VERIFIER-FIXTURE-0001"},
+        "selection_authority_ref": dict(selection_authority_ref)
+        if selection_authority_ref is not None
+        else {"kind": "human_authority", "id": "AUTH-FIXTURE-0001"},
+        "verification_boundary": dict(verification_boundary)
+        if verification_boundary is not None
+        else {"scope": "repository", "boundary_id": "VB-FIXTURE-0001"},
+        "input_refs": {
+            "collection_kind": "UNORDERED_SET",
+            "members": list(input_refs) if input_refs is not None else [],
+        },
+        "observations": dict(observations)
+        if observations is not None
+        else {"summary": "fixture-provided provenance"},
+    }
+
+
+#: Distinguishes "the caller did not pass ``provenance``" from "the caller explicitly passed
+#: ``provenance=None``" -- a caller that wants the handoff to construct the field itself
+#: (rather than this fixture defaulting it) must be able to say so, and a default value of
+#: ``None`` cannot tell those two calls apart.
+_NOT_GIVEN: Any = object()
 
 
 def change_free_verification_evidence_request(
@@ -270,9 +333,17 @@ def change_free_verification_evidence_request(
     difference: dict[str, Any] | None = None,
     verification_observation: dict[str, Any] | None = None,
     artifact_references: list[dict[str, Any]] | None = None,
+    provenance: dict[str, Any] | None = _NOT_GIVEN,
 ) -> dict[str, Any]:
     """An Evidence request in CLOSURE_POLICY.md §6's ``CHANGE_FREE`` row (R6-F1b): no
-    Change, an independent verification Observation grounds the after-state directly."""
+    Change, an independent verification Observation grounds the after-state directly.
+
+    ``verification_result_provenance`` (P13-R6, mandatory since P13-R6-R1) defaults to a
+    real, complete, fixture-owned projection -- ``derive_evidence`` itself now refuses
+    null here, so this default can no longer be null the way it was before P13-R6-R1.
+    Pass ``provenance=None`` explicitly for the one legitimate exception: a caller (such as
+    the Independent Verification handoff's own tests) that needs the position's provenance
+    left unset so a downstream owner can construct and inject its own value."""
 
     return {
         "schema_version": "0.1",
@@ -286,6 +357,9 @@ def change_free_verification_evidence_request(
         "verification_observation_request": verification_observation
         if verification_observation is not None
         else after_observation_request(),
+        "verification_result_provenance": verification_result_provenance()
+        if provenance is _NOT_GIVEN
+        else provenance,
         "artifact_references": list(
             artifact_references if artifact_references is not None else [dict(ARTIFACT)]
         ),

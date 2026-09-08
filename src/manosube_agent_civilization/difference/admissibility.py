@@ -125,8 +125,10 @@ BINDING_KEYS: frozenset[str] = frozenset(REQUIRED_BINDING_KEYS) | OPTIONAL_BINDI
 #: ``INPUT`` marks a location the *Difference* producer's callers supply; ``EMITTED`` marks
 #: one the Engine writes, where the payload is whatever the input location already admitted;
 #: ``AUTHORITY_INPUT`` marks one supplied to a different owner, which generates against it in
-#: its own suite. The tag says which suite must cover a location, so a new one cannot be
-#: added without some suite claiming it.
+#: its own suite; ``VERIFICATION_INPUT`` marks one supplied to Independent Verification's own
+#: Evidence handoff (Structural Review Round 6, P13-R6), generated against in
+#: ``tests/unit/evidence/test_request_totality.py``. The tag says which suite must cover a
+#: location, so a new one cannot be added without some suite claiming it.
 UNCONSTRAINED_CONTRACT_LOCATIONS: dict[str, str] = {
     "objective/target_predicate.schema.json#/properties/expected_value": "INPUT",
     "observation/normalized_fact.schema.json#/properties/value": "INPUT",
@@ -134,6 +136,34 @@ UNCONSTRAINED_CONTRACT_LOCATIONS: dict[str, str] = {
     # and never interprets it. Constraining it here would be this schema deciding what a
     # Change may do, which is a later phase's to say.
     "authority/authority.schema.json#/$defs/action/properties/operation": "AUTHORITY_INPUT",
+    # Opaque by contract (Structural Review Round 3, P13-R3-F1): Authority binds
+    # verifier_identity/permitted_boundary into a Verifier Selection Decision's identity and
+    # never interprets them -- what a verifier identity or a boundary means is Independent
+    # Verification's own concern, not this schema's to constrain.
+    "authority/verifier_selection_grant.schema.json#/properties/verifier_identity": (
+        "AUTHORITY_INPUT"
+    ),
+    "authority/verifier_selection_grant.schema.json#/properties/permitted_boundary": (
+        "AUTHORITY_INPUT"
+    ),
+    "authority/verifier_selection_decision.schema.json#/properties/verifier_identity": (
+        "AUTHORITY_INPUT"
+    ),
+    "authority/verifier_selection_decision.schema.json#/properties/permitted_boundary": (
+        "AUTHORITY_INPUT"
+    ),
+    # Opaque by contract (Structural Review Round 5-R1, Issue #51, P13-R5-R1): a Human Grant
+    # Declaration now directly restates the grant's own verifier_identity/permitted_boundary
+    # into the signed payload, rather than binding them only by grant_ref's content address --
+    # the identical opaque convention verifier_selection_grant's own matching properties above
+    # already use, for the identical reason: what these mean is Independent Verification's own
+    # concern, never this schema's to constrain.
+    "binding/human_grant_declaration.schema.json#/properties/verifier_identity": (
+        "AUTHORITY_INPUT"
+    ),
+    "binding/human_grant_declaration.schema.json#/properties/permitted_boundary": (
+        "AUTHORITY_INPUT"
+    ),
     "difference/candidate_completion_record.schema.json#/properties/claim": "EMITTED",
     "difference/difference.schema.json"
     "#/$defs/normalized_target_state/properties/expected_value": "EMITTED",
@@ -142,6 +172,26 @@ UNCONSTRAINED_CONTRACT_LOCATIONS: dict[str, str] = {
     "#/$defs/structural_difference/properties/target_value": "EMITTED",
     "difference/invariant_evaluation.schema.json#/properties/expected": "EMITTED",
     "difference/invariant_evaluation.schema.json#/properties/observed": "EMITTED",
+    # Opaque by contract (Structural Review Round 6, P13-R6): a Change-Free Verification
+    # Evidence record's verification_result_provenance carries these four fields straight
+    # from the real VerificationResult Independent Verification's own handoff constructed
+    # it from -- what a verifier identity, a selection authority reference, a verification
+    # boundary, or an observations payload means is Independent Verification's own concern,
+    # never this schema's to constrain. The identical opaque convention
+    # verifier_selection_grant's own matching properties already use, for the identical
+    # reason.
+    "evidence/evidence.schema.json"
+    "#/$defs/verification_result_provenance/properties/verifier_identity": "VERIFICATION_INPUT",
+    "evidence/evidence.schema.json"
+    "#/$defs/verification_result_provenance/properties/selection_authority_ref": (
+        "VERIFICATION_INPUT"
+    ),
+    "evidence/evidence.schema.json"
+    "#/$defs/verification_result_provenance/properties/verification_boundary": (
+        "VERIFICATION_INPUT"
+    ),
+    "evidence/evidence.schema.json"
+    "#/$defs/verification_result_provenance/properties/observations": "VERIFICATION_INPUT",
 }
 
 

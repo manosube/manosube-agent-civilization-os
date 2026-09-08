@@ -2034,6 +2034,7 @@ def test_r7f2_change_free_verification_evidence_for_a_foreign_target_is_refused(
         BEFORE_REVISION,
         before_observation_request,
         difference_request,
+        verification_result_provenance,
     )
 
     from manosube_agent_civilization.evidence.engine import derive_evidence
@@ -2045,7 +2046,7 @@ def test_r7f2_change_free_verification_evidence_for_a_foreign_target_is_refused(
         state_fingerprint(),
         BEFORE_REVISION,
     )
-    request = {
+    request: dict[str, Any] = {
         "schema_version": "0.1",
         "recorded_at": "2026-08-30T09:00:00Z",
         "observation_request": before_observation_request(),
@@ -2053,6 +2054,7 @@ def test_r7f2_change_free_verification_evidence_for_a_foreign_target_is_refused(
         "change_request": None,
         "post_change_observation_request": None,
         "verification_observation_request": foreign_verification_request,
+        "verification_result_provenance": verification_result_provenance(),
         "artifact_references": [],
         "predecessor_evidence_refs": [],
         "remaining_difference_refs": [],

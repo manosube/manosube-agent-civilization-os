@@ -762,6 +762,7 @@ def test_crash_at_every_initialize_stage_never_exposes_partial_binding_visibilit
         command_policy=kwargs["command_policy"],
         secret_exclusion_policy=kwargs["secret_exclusion_policy"],
         human_authority_ref=kwargs["human_authority_ref"],
+        human_authority_signing_key=kwargs["human_authority_signing_key"],
         bound_at=kwargs["bound_at"],
         schema_root=SCHEMA_ROOT,
     )

@@ -1,12 +1,19 @@
-"""Authority has exactly one evaluator, and the vocabulary it uses is the documented one.
+"""Authority has exactly one Change-permission evaluator, and one further, narrowly-scoped
+evaluator (Structural Review Round 3, P13-R3-F1) answering a distinct question -- and the
+vocabulary each uses is the documented one.
 
 Two properties are pinned here, both in both directions.
 
-**One owner.** ``PARALLEL_CANONICAL_AUTHORITY=0`` is a Kernel invariant (K-003), and the way
-it fails is never a second module announcing itself as an evaluator -- it is a helper, an
-auditor, an adapter or a test quietly deciding the same question its own way. So the second
-direction is a source scan: the three decision values may not be produced anywhere outside
-the owner, whether or not anyone remembered to add an assertion for it.
+**One owner per question.** ``PARALLEL_CANONICAL_AUTHORITY=0`` is a Kernel invariant (K-003),
+and the way it fails is never a second module answering the *same* question its own way -- it
+is a helper, an auditor, an adapter or a test quietly deciding it independently. Two distinct
+questions may each have their one dedicated evaluator within this one owning package (that is
+exactly what Round 3 adds: :func:`~manosube_agent_civilization.authority.
+verifier_selection.evaluate_verifier_selection` beside ``evaluate_authority``, sharing this
+package's admission grammar and error vocabulary, never a second package). So the source scan
+below is per decision vocabulary: neither the three Change-permission values nor the two
+Verifier Selection Decision values may be produced anywhere outside this one owning package,
+whether or not anyone remembered to add a call-site assertion for it.
 
 **One vocabulary.** ``AUTHORITY_LEVELS.md`` declares the levels and the Human-only action
 kinds; ``levels.py`` is the executable copy. A copy that drifts is worse than no copy, so the
@@ -22,7 +29,14 @@ import re
 import pytest
 
 from manosube_agent_civilization import authority
-from manosube_agent_civilization.authority import approval, engine, levels, prohibition, scope
+from manosube_agent_civilization.authority import (
+    approval,
+    engine,
+    levels,
+    prohibition,
+    scope,
+    verifier_selection,
+)
 from manosube_agent_civilization.difference import admissibility
 
 pytestmark = pytest.mark.contract
@@ -45,6 +59,8 @@ REQUIRED_SCHEMAS = (
     "authority_rule.schema.json",
     "approval.schema.json",
     "prohibition.schema.json",
+    "verifier_selection_grant.schema.json",
+    "verifier_selection_decision.schema.json",
 )
 
 
@@ -53,30 +69,33 @@ REQUIRED_SCHEMAS = (
 # --------------------------------------------------------------------------- #
 
 
-def test_the_five_contracts_and_four_schemas_exist_and_are_exactly_those() -> None:
+def test_the_five_contracts_and_six_schemas_exist_and_are_exactly_those() -> None:
     assert {path.name for path in CONTRACTS.glob("*.md")} == set(REQUIRED_CONTRACTS)
     assert {path.name for path in SCHEMAS.glob("*.schema.json")} == set(REQUIRED_SCHEMAS)
 
 
-def test_the_public_api_is_one_evaluator() -> None:
-    """``evaluate_authority`` and nothing else answers the permission question."""
+def test_the_public_api_is_exactly_the_two_evaluators() -> None:
+    """``evaluate_authority`` and ``evaluate_verifier_selection`` (Structural Review Round 3,
+    P13-R3-F1) -- and nothing else -- answer either owned question."""
 
     exported = {name for name in authority.__all__ if not name.isupper()}
     callables = {name for name in exported if callable(getattr(authority, name))}
-    assert callables == {"evaluate_authority"} | {
+    assert callables == {"evaluate_authority", "evaluate_verifier_selection"} | {
         name for name in callables if name.endswith("Error")
     }
     assert authority.evaluate_authority is engine.evaluate_authority
+    assert authority.evaluate_verifier_selection is verifier_selection.evaluate_verifier_selection
 
 
 def test_no_module_outside_the_owner_produces_a_decision() -> None:
-    """The coarse direction: the three values may not be returned from anywhere else.
+    """The coarse direction: neither decision vocabulary may be returned from anywhere else.
 
     Deliberately coarse. A second evaluator does not need to be called an evaluator to be
     one, and a rule that reappears anywhere in the tree fails here whether or not a call-site
     assertion was ever written for it.
     """
 
+    watched_values = set(levels.DECISIONS) | set(verifier_selection.DECISIONS)
     produced: dict[str, list[int]] = {}
     for path in sorted(SRC.rglob("*.py")):
         if AUTHORITY_SRC in path.parents or path.parent == AUTHORITY_SRC:
@@ -86,21 +105,28 @@ def test_no_module_outside_the_owner_produces_a_decision() -> None:
             if (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
-                and node.value in levels.DECISIONS
+                and node.value in watched_values
             ):
                 produced.setdefault(str(path.relative_to(SRC)), []).append(node.lineno)
     assert not produced, produced
 
 
-def test_only_the_engine_holds_the_evaluation_itself() -> None:
-    """Within the package, the parts are parts. One module assembles the decision."""
+def test_only_one_module_per_decision_vocabulary_assembles_it() -> None:
+    """Within the package, the parts are parts. One module assembles each decision kind."""
 
-    assemblers = [
+    authority_assemblers = [
         path.name
         for path in sorted(AUTHORITY_SRC.glob("*.py"))
         if "authority_decision_id" in path.read_text(encoding="utf-8")
     ]
-    assert assemblers == ["engine.py"], assemblers
+    assert authority_assemblers == ["engine.py"], authority_assemblers
+
+    selection_assemblers = [
+        path.name
+        for path in sorted(AUTHORITY_SRC.glob("*.py"))
+        if "verifier_selection_decision_id" in path.read_text(encoding="utf-8")
+    ]
+    assert selection_assemblers == ["identity.py", "verifier_selection.py"], selection_assemblers
 
 
 # --------------------------------------------------------------------------- #

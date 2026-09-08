@@ -17,11 +17,14 @@ from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 #: what was observed, how it ended, what backs it, where it came from, and what it leaves
 #: open.
 #:
-#: Every field of 第28条 is here, and so are the three this repository adds. That is not
+#: Every field of 第28条 is here, and so are the four this repository adds. That is not
 #: incidental. ``E-003 EVIDENCE_IMMUTABLE`` requires accepted Evidence to be immutable, and
 #: immutability is only enforceable if the address covers the whole meaning: a projection
 #: that omitted ``status`` or ``observed_result`` would let a record be rewritten into a
 #: different claim while keeping its address, which is overwriting Evidence with extra steps.
+#: ``verification_result_provenance`` is one of the four: omitting it would let a
+#: Change-Free Verification Evidence record's provenance be swapped for another Verification
+#: Result's while keeping the same address (Phase 13 Structural Review Round 6).
 #:
 #: Contrast ``CHANGE_SEMANTIC_FIELDS``, which deliberately excludes ``status``. A Change that
 #: is later executed is the same Change. An Evidence record that later says something else is
@@ -43,6 +46,7 @@ EVIDENCE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "lineage",
     "remaining_differences",
     "evidence_level",
+    "verification_result_provenance",
 )
 
 

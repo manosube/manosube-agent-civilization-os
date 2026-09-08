@@ -17,11 +17,15 @@ Human-declared project to its Objective Revision, Boundary, Authority policy ref
 Source Registrations, Command Policy, and secret-exclusion policy. It is produced,
 validated, and identified by exactly one owner
 (`manosube_agent_civilization.binding.engine.assemble_project_binding`) and adopted by
-exactly one public entry point (`manosube_agent_civilization.binding.route.bind_project`).
+exactly one public genesis entry point (`manosube_agent_civilization.binding.route.
+bind_project`). A second public entry point, `declare_human_grant` (§11, Phase 13, Issue
+#51, Structural Review Round 5), commits a distinct, post-genesis record kind through the
+Store's ordinary `.commit` -- never `.initialize` -- and is not a second genesis route.
 
 ```text
 PRODUCT_BINDING_OWNER_COUNT=1
-PUBLIC_PRODUCT_BINDING_ENTRY_POINT_COUNT=1
+PUBLIC_PRODUCT_BINDING_ENTRY_POINT_COUNT=2
+PUBLIC_GENESIS_ENTRY_POINT_COUNT=1
 ```
 
 ## 2. Shape
@@ -456,3 +460,94 @@ COMMAND_POLICY_GRANTS_AUTHORITY=false
 COMMAND_EXECUTION_PERFORMED=false
 SECRET_VALUE_PERSISTED=false
 ```
+
+## 11. Human Grant Declaration (Phase 13, Issue #51, Structural Review Round 5, P13-R5)
+
+`bind_project` is not the only public route this domain exposes. `declare_human_grant`
+(`binding/route.py`) is a second, independent public entry point, committing a new record
+kind -- `human_grant_declaration` (`01_SCHEMA/binding/human_grant_declaration.schema.json`)
+-- into an already-bound project, arbitrarily long after genesis. It is not a second genesis
+route: it calls the Store's ordinary `store.commit`, never `store.initialize`, so §8's own
+one-shot-genesis discipline (`AlreadyInitializedError`,
+`PUBLIC_COMMITTING_ROUTE_COUNT=1` -- the count of routes reaching `store.initialize`) is
+unaffected -- `declare_human_grant` is simply outside that invariant's own scope, exactly as
+`reflow()`'s own post-genesis commits already are for the Reflow vertical.
+
+`declare_human_grant` exists to answer a question Authority's own Independent Verification
+layer (`08_VERIFICATION/VERIFICATION_CONTRACT.md` §12) cannot answer by itself: a
+`verifier_selection_grant` that is genuinely, durably Store-committed, self-consistent, and
+correctly `granted_by`-shaped is still not, by itself, proof that a **Human** (as opposed to
+any Store-write-capable caller) declared *that specific grant*. `human_grant_declaration`
+closes this by anchoring one grant (via `grant_ref`, a content-addressed reference to the
+grant's own `verifier_selection_grant_id`) to a Human identity this Binding owner itself
+re-resolves, never accepts as a caller argument:
+
+```text
+BINDING_OWNER:
+  declare_human_grant independently re-resolves the real, already-committed Project Binding
+  from the Store (never a caller-supplied copy) and derives the declaration's own
+  declared_by from that Project Binding's own human_authority_ref -- the identical
+  never-trust-a-caller-repeated-reference discipline §7's own cross-consistency checks
+  already apply to every other Binding-accepted input.
+AUTHORITY_OWNER:
+  evaluate_verifier_selection (AUTHORITY_CONTRACT.md §7.3's Round 5 addendum) reads
+  human_grant_declaration records read-only, cross-checking a candidate grant's own
+  project_id/grant_ref against each declaration's anchor, its declared_by against the real
+  Human Authority reference, and its status against ACTIVE -- Authority never writes a
+  human_grant_declaration record, and Binding never evaluates a Verifier Selection Decision.
+```
+
+**Superseded by Structural Review Round 5-R1 (Issue #51, P13-R5-R1,
+`ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER`).** Round 5's own original
+design (immediately above, as originally written) held that `grant_ref` alone anchors every one
+of the grant's own semantic fields completely, so restating them would be a redundant copy, not
+a second binding. SHUKOU's own follow-on structural review explicitly overruled this: a
+declaration's own durable Store commission and self-consistent, correctly-anchored shape still
+never proved a **Human**, rather than any Store-write-capable caller, authored it --
+`human_authority_ref` is not a secret. The only thing that closes this is a Human's own
+verifiable signature, and a signature is only as meaningful as the payload it actually covers --
+a signature over a payload that names another record only by hash is a weaker attestation than
+one that directly covers the semantic content itself. `human_grant_declaration` therefore now
+directly restates the anchored grant's own `requirement_id`/`selection_id`/`verifier_identity`/
+`permitted_boundary` (never `project_id` a second time under a different name -- the top-level
+`project_id` field already serves that role), and Authority independently re-verifies that this
+restatement agrees with the real, resolved grant's own matching fields
+(`AUTHORITY_CONTRACT.md` §7.3's Round 5-R1 addendum) -- never merely trusting `grant_ref`'s
+content address as sufficient. This does not reopen the opaque-payload-location concern Round
+3's own totality-sweep discipline exists to keep closed: the restated `verifier_identity`/
+`permitted_boundary` locations are registered in `difference.admissibility.
+UNCONSTRAINED_CONTRACT_LOCATIONS` exactly as their `verifier_selection_grant`-owned
+counterparts already are.
+
+Project Binding itself now canonically holds a public verification key,
+`human_authority_signing_key` (`01_SCHEMA/binding/project_binding.schema.json#/$defs/
+signing_key`: `{algorithm: "ed25519", key_id, public_key}`) -- never a secret; the Human's own
+private key never touches this system's code. `human_grant_declaration` carries a `signature`
+(`{algorithm: "ed25519", key_id, value}`) over its own complete adopted payload -- every field
+`human_grant_declaration_id` itself addresses, `declared_at` included (see below) -- verified
+read-only against the real Project Binding's own signing key, both here
+(`binding/engine.py::assemble_human_grant_declaration`, via `binding/signature.py::
+verify_declaration_signature`) and, independently, by Authority
+(`AUTHORITY_CONTRACT.md` §7.3's Round 5-R1 addendum) before a grant may ever reach `SELECTED`.
+
+```text
+HUMAN_GRANT_DECLARATION_DECLARED_BY_CALLER_SUPPLIED=false
+HUMAN_GRANT_DECLARATION_GRANT_FIELDS_RESTATED=true
+HUMAN_GRANT_DECLARATION_SIGNATURE_REQUIRED=true
+HUMAN_GRANT_DECLARATION_SIGNATURE_ALGORITHM=ed25519
+HUMAN_GRANT_DECLARATION_PRIVATE_KEY_TOUCHES_PRODUCTION_CODE=false
+HUMAN_GRANT_DECLARATION_STATUS=ACTIVE | REVOKED
+```
+
+This record, like every other canonical record this domain persists, is content-addressed
+(`HGD-` + sha256 of its own adopted payload, excluding its own id and `signature` --
+`binding/identity.py::human_grant_declaration_id`) and reverified against that same address
+before it is ever validated against its own schema (`binding/engine.py::assemble_human_grant_
+declaration`) -- the identical self-consistency discipline §3 already establishes for
+`project_binding_id` itself. Unlike `project_binding_id` (which excludes `bound_at`) and Round
+5's own original design (which excluded `declared_at`), the identity payload now **includes**
+`declared_at` (Round 5-R1): the signature is what proves *who* declared this, and a signature
+that never bound *when* would validate identically at any later replay instant. The identity
+payload and the signed message are one shared derivation
+(`binding/identity.py::human_grant_declaration_signing_payload`), so "what this record adopted"
+and "what the signature authenticates" can never drift apart.

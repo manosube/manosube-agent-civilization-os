@@ -10,6 +10,7 @@ from tests.fixtures.product_binding import (
     boundary,
     command_policy,
     human_authority_ref,
+    human_authority_signing_key,
     objective_revision,
     secret_exclusion_policy,
     source_registrations,
@@ -39,6 +40,7 @@ def _assembled() -> dict:
         command_policy=command_policy(),
         secret_exclusion_policy=secret_exclusion_policy(),
         human_authority_ref=human_authority_ref(),
+        human_authority_signing_key=human_authority_signing_key(),
         bound_at=BOUND_AT,
         schema_root=SCHEMA_ROOT,
     )
@@ -64,6 +66,7 @@ def test_project_binding_id_changes_when_any_semantic_field_changes() -> None:
         command_policy={**command_policy(), "max_commands_per_change": 999},
         secret_exclusion_policy=secret_exclusion_policy(),
         human_authority_ref=human_authority_ref(),
+        human_authority_signing_key=human_authority_signing_key(),
         bound_at=BOUND_AT,
         schema_root=SCHEMA_ROOT,
     )
@@ -87,6 +90,7 @@ def test_project_binding_id_excludes_bound_at_from_identity() -> None:
         command_policy=command_policy(),
         secret_exclusion_policy=secret_exclusion_policy(),
         human_authority_ref=human_authority_ref(),
+        human_authority_signing_key=human_authority_signing_key(),
         bound_at="2026-09-06T09:00:00Z",
         schema_root=SCHEMA_ROOT,
     )
@@ -102,6 +106,7 @@ def test_project_binding_id_excludes_bound_at_from_identity() -> None:
         command_policy=command_policy(),
         secret_exclusion_policy=secret_exclusion_policy(),
         human_authority_ref=human_authority_ref(),
+        human_authority_signing_key=human_authority_signing_key(),
         bound_at="2026-09-06T11:00:00Z",
         schema_root=SCHEMA_ROOT,
     )
@@ -150,6 +155,7 @@ def test_project_binding_id_is_computable_directly_without_the_full_engine() -> 
             "command_policy",
             "secret_exclusion_policy",
             "human_authority_ref",
+            "human_authority_signing_key",
         )
     }
     assert project_binding_id(payload) == record["project_binding_id"]

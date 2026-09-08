@@ -401,6 +401,149 @@ OPERATION_FINGERPRINT_OBLIGATION_RECORDED=true
 OPERATION_FINGERPRINT_OBLIGATION_DISCHARGED=true
 ```
 
+# 7.3 Verifier Selection Decision (Structural Review Round 3, Issue #51, P13-R3-F1)
+
+`evaluate_authority`が答えるのは「このexact StateとDifferenceに対して、このactionをいま実行してよいか」である。Independent Verification（Phase 13）は別の問いを持つ——「特定の`VerificationRequirement`に対して、特定の`VerifierSelection`（verifier identity・permitted boundary・selection status）をSHUKOUが選んだと、既存Authority ownerは再検証できるか」。
+
+`boot_project(...).human_authority_ref`は、Project Bindingの正規Human Authorityを再検証する参照であり、この問いへの答えではない。project全体が正しいHuman Authorityへ束縛されていることは、その中の**特定のVerifierSelection**をそのHuman Authorityが選んだことを意味しない。二つの問いを混同すれば、`human_authority_ref`を単に複製したcaller-created selectionが、実在するAuthority Decisionであるかのように扱われる。
+
+`evaluate_verifier_selection`は、この一つの owner の中の、**第二の、狭く限定された評価器**である。
+
+```text
+CANONICAL_AUTHORITY_OWNER_COUNT=1
+VERIFIER_SELECTION_EVALUATOR_COUNT=1
+NEW_AUTHORITY_OWNER=false
+NEW_AUTHORITY_REGISTRY=false
+NEW_SELECTION_TOKEN=false
+NEW_SELECTION_CACHE=false
+CALLER_MAPPING_EQUALITY_AS_AUTHORITY=false
+BOOT_HUMAN_AUTHORITY_REF_ALONE_IS_SELECTION_DECISION=false
+```
+
+Verifier Selection Decisionは、少なくとも次のすべてを一つのimmutable・content-addressedな決定へ束縛する。
+
+```text
+VERIFIER SELECTION DECISION IDENTITY INPUT
+= project_id + requirement_id + selection_id
++ verifier_identity + permitted_boundary + selection_status
++ selection_authority_ref（Boot-verified human_authority_ref、caller供給の等価claimではない）
++ grant_ref + sorted excluding_grant_refs
++ decision + decision_reason_codes
+```
+
+決定が有効になるのは、既存Authority ownerが公開する`admit`/`admit_all`——`authority_rule`・`approval`・`prohibition`と同じ admission gate——を通過した、実在する`verifier_selection_grant`（Human Authorityにより宣言され、content addressが再計算され一致する）が、上記の全フィールドへ完全一致で束縛するときだけである。一つも束縛しなければ`VERIFIER_SELECTION_REFUSED`であり、束縛するが`status`が`ACTIVE`でないgrantは、approvalのexclusionと同じ理由で選択を無効にする。caller が偽造した、または単に既知の値を複製しただけのgrantは、`grants`自体の欠如と同じく決定を`SELECTED`にしない。
+
+```text
+GRANT_MISSING → VERIFIER_SELECTION_REFUSED
+GRANT NAMES A DIFFERENT project/requirement/selection/verifier/boundary/status → does not bind
+GRANT NOT DECLARED BY THE REAL human_authority_ref → GRANT_AUTHORITY_MISMATCH
+GRANT BINDS BUT status != ACTIVE → withholds, VERIFIER_SELECTION_REFUSED
+EXACTLY ONE GENUINE, FULLY-BOUND, ACTIVE GRANT → VERIFIER_SELECTION_SELECTED
+```
+
+Independent Verificationのroute（`08_VERIFICATION/VERIFICATION_CONTRACT.md`）は、この決定をVerifier呼び出しの前に一度だけ再検証する。既存Authority ownerが読めない入力へ返す typed error は、そのまま伝播する——このroute自身は例外を捕捉も再分類もしない。
+
+**Structural Review Round 4（Issue #51, P13-R4, Authority Provenance Bypass, P13-R3-F2）:** `evaluate_verifier_selection`自身の`admit`/`admit_all`は、grantの*内容*が自己無矛盾であること（宣言identityが再計算値と一致し、`granted_by.kind`がHuman Authorityの形をしている）だけを検証する——それはgrantが実在するHuman Authorityによって著されたことの証明ではない。`human_authority_ref`は秘密ではないため、grant内容そのものを呼び出し側の引数として直接受理すれば、`granted_by`が実在の参照を単に複製しただけの自己ハッシュgrantを、呼び出し側が作り出せてしまう——Round 1が`human_authority_ref`自身について既に閉じたのと同じ種類の欠落が、一段深いところで再発する。この評価器自身のadmission/binding意味論はRound 4で変更しない。変更するのは、Independent Verificationのroute（`route.py`）がこの評価器へ渡す内容そのものである：routeはgrant内容を直接受理せず、`{"kind": "verifier_selection_grant", "id": ...}`参照のみを受理し、既存Storeの`resolve_record`（`observation_evidence`のtarget解決と同一の呼び出し箇所）を通じて解決した後の、実際にdurably committedされた本体だけを、この評価器へ候補として渡す。解決できない参照はVerifierを呼び出す前に拒否する。これにより`CALLER_ASSERTED_GRANT_AS_PROVENANCE`を閉じるが、第二のAuthority owner・registry・token・cacheは一切追加しない——`evaluate_verifier_selection`自身は不変のままである。
+
+```text
+VERIFIER_SELECTION_GRANT_CONTENT_ACCEPTED_AS_CALLER_ARGUMENT=false
+VERIFIER_SELECTION_GRANT_REF_RESOLVED_FROM_STORE=true
+CALLER_ASSERTED_GRANT_AS_PROVENANCE=false
+```
+
+```text
+INDEPENDENT_VERIFICATION_DIRECT_STORE_WRITE=false
+VERIFIER_SELECTION_DECISION_IMPLIES_CHANGE_EXECUTION=false
+VERIFIER_SELECTION_DECISION_IMPLIES_CLOSURE=false
+```
+
+**Structural Review Round 5（Issue #51, P13-R5, Canonical Human Grant Declaration Anchor）:** Round 4は grant を Store 解決参照へ限定したが、それでも証明できるのは「この内容が実際に durably committed された」ことだけである——`granted_by`が実在の`human_authority_ref`を複製し、identityが自己無矛盾で、実際に Store へ commit されている grant であっても、それを commit したのが Store 書き込み能力を持つ任意の caller であり、実在する Human ではない可能性は排除されない。`human_authority_ref`は秘密ではないため、Store への durable commission という事実だけでは、その grant を**Humanが宣言した**ことの証明にならない。
+
+この欠落を閉じるのは、第二のAuthority ownerではなく、既存のBinding owner が公開する新しい第二のroute、`declare_human_grant`（`binding/route.py`）が生成する新しい正準record種別、`human_grant_declaration`（`01_SCHEMA/binding/human_grant_declaration.schema.json`）である。この record は特定の`verifier_selection_grant`を`grant_ref`（content-addressed参照）で一意に束縛し、`declared_by`には呼び出し側が供給する値ではなく、`declare_human_grant`自身が実在のProject Bindingから再解決した`human_authority_ref`だけが入る——grant自身の`granted_by`と同型の、しかし独立した第二の束縛である。
+
+```text
+CANONICAL_AUTHORITY_OWNER_COUNT=1
+NEW_AUTHORITY_OWNER=false
+HUMAN_GRANT_DECLARATION_OWNER=BINDING
+HUMAN_GRANT_DECLARATION_DECLARED_BY_CALLER_SUPPLIED=false
+HUMAN_GRANT_DECLARATION_DECLARED_BY_RESOLVED_FROM_REAL_PROJECT_BINDING=true
+```
+
+`evaluate_verifier_selection`は、この Round で`grant_declarations`という新しい必須request keyを受理する——Round 4の`grants`と対になる、`human_grant_declaration`のadmit済み集合である。SELECTEDへ到達する各grantは、この集合の中に、次のすべてを満たすdeclarationを少なくとも一つ持たなければならない。
+
+```text
+DECLARATION ANCHORS THIS EXACT GRANT（project_id + grant_ref が一致） → 一致しなければ DECLARATION_MISSING
+DECLARATION.declared_by == 実在の human_authority_ref → 不一致なら DECLARATION_AUTHORITY_MISMATCH
+DECLARATION.status == ACTIVE → 不一致（REVOKEDなど）なら DECLARATION_NOT_ACTIVE
+```
+
+`declaration_ref`（束縛に使われたdeclaration自身への content-addressed参照）は、Round 3が`grant_ref`について確立したのと同じ理由で、決定自身のsemantic identityへ参加する——どのdeclarationが束縛したかも、決定が何であるかの一部である。
+
+```text
+VERIFIER SELECTION DECISION IDENTITY INPUT（Round 5で更新）
+= project_id + requirement_id + selection_id
++ verifier_identity + permitted_boundary + selection_status
++ selection_authority_ref
++ grant_ref + sorted excluding_grant_refs
++ declaration_ref
++ decision + decision_reason_codes
+```
+
+Independent Verificationのroute（`route.py`）は、`human_grant_declaration_refs`という新しい引数を受理し、`verifier_selection_grant_refs`と同一のStore call site（`resolve_record`）を通じて解決する——grant contentがRound 4で直接引数として受理されなくなったのと同じ理由で、declaration contentもこのroute自身の直接引数として受理されない。
+
+```text
+HUMAN_GRANT_DECLARATION_CONTENT_ACCEPTED_AS_CALLER_ARGUMENT=false
+HUMAN_GRANT_DECLARATION_REF_RESOLVED_FROM_STORE=true
+STORE_COMMISSION_ALONE_AS_HUMAN_PROVENANCE=false
+```
+
+TRUST_MODEL.mdが既に確立している非暗号学的信頼哲学（`HUMAN_AUTHORITY_STORE_RECORD_REQUIRED=false`、Human Authorityはこのシステムの外部constitutional identityであり、Store recordそのものではない）は、この Round で変更しない。`declare_human_grant`は署名・秘密トークン・隠しregistryのいずれも導入しない——信頼の根拠は、closed admission gate同士の独立したcross-reference一致という、既存の構造的規律のままである。
+
+```text
+PHASE_13_ACCEPTANCE=false
+PHASE_14_ALLOWED=false
+```
+
+**Structural Review Round 5-R1（Issue #51, P13-R5-R1, `ADOPT_P13_R5_R1_SIGNED_HUMAN_DECLARATION_AND_SINGLE_COMMITTER`）:** Round 5は`human_grant_declaration`の durable Store commission と自己無矛盾な形——`grant_ref`による一意束縛、`declared_by`の実在Project Binding再解決、`status == ACTIVE`——を要求したが、これらすべてを満たす record であっても、それを commit したのが実在の Human であることの証明にはならない。`human_authority_ref`が秘密でない以上、Store 書き込み能力を持つ任意の caller が、この形をした record を自ら組み立てて commit できてしまう。Round 5の直前の一文（本節500行目）が述べた「非暗号学的信頼哲学は変更しない」という判断は、この Round で明示的に覆る——SHUKOUの採択は、Human自身の検証可能な署名だけが、この欠落を閉じる唯一の正当な根拠であると判断した。
+
+Project Binding（`03_BINDING/PROJECT_BINDING.md` §11、`01_SCHEMA/binding/project_binding.schema.json#/$defs/signing_key`）は、`human_authority_signing_key`（`{algorithm: "ed25519", key_id, public_key}`）という公開検証鍵を新たに保持する。この鍵は Human 自身の秘密鍵を一切含まない——秘密鍵はこのシステムのどのコードにも触れず、production コードは検証のみを行う（`manosube_agent_civilization.binding.signature`）。
+
+`human_grant_declaration`はRound 5-R1で、`grant_ref`の content address による間接束縛だけでなく、対象grantの`requirement_id`/`selection_id`/`verifier_identity`/`permitted_boundary`を**直接restate**し、かつ自身の`project_id`/`project_binding_id`/`declared_by`/`status`/`declared_at`とあわせて、この完全な payload 全体に対するHuman自身の署名（`signature: {algorithm, key_id, value}`）を運ぶ。署名が保護する payload と content-addressed identity が保護する payload は同一の派生元（`binding.identity.human_grant_declaration_signing_payload`）を共有する——「何を宣言したか」と「何に署名したか」が別々の投影に分裂することはない。`declared_at`はRound 5の`bound_at`型の除外規約に反し、この Round から identity/署名 payload に**参加する**——時刻を束縛しない署名は、任意の後続時点で無限に再生可能になってしまうためである。
+
+```text
+HUMAN_GRANT_DECLARATION_SIGNATURE_REQUIRED=true
+HUMAN_GRANT_DECLARATION_SIGNATURE_ALGORITHM=ed25519
+HUMAN_GRANT_DECLARATION_SIGNING_KEY_OWNER=PROJECT_BINDING
+HUMAN_GRANT_DECLARATION_PRIVATE_KEY_TOUCHES_PRODUCTION_CODE=false
+HUMAN_GRANT_DECLARATION_RESTATES_GRANT_CONTENT=true
+STORE_COMMISSION_ALONE_AS_HUMAN_PROVENANCE=false
+CALLER_SUPPLIED_BODY_ALONE_AS_HUMAN_PROVENANCE=false
+```
+
+Binding owner自身が、記名前に署名をread-onlyで検証する（`binding.engine.assemble_human_grant_declaration`が`verify_declaration_signature`を呼ぶ）。しかしBindingによる検証は、`evaluate_verifier_selection`自身の**独立した**再検証を代替しない——この評価器は、request自身が新たに運ぶ`human_authority_signing_key`（呼び出し側が実在のProject Bindingから独立に解決した値、Binding自身の以前の検証結果を信頼するのではない）に対して、各候補declarationの署名を自ら再検証する。加えて、declarationが自ら restate した`requirement_id`/`selection_id`/`verifier_identity`/`permitted_boundary`が、束縛対象のgrant自身の同名フィールドと一致することも独立に再確認する（`DECLARATION_CONTENT_MISMATCH`）。署名が無効、または鍵が一致しない場合は`DECLARATION_SIGNATURE_INVALID`で拒否する——いずれも新しい`grant_declarations`束縛段階の理由コードであり、`SELECTED`へ到達する前に評価される。
+
+```text
+GRANT BINDS BUT DECLARATION.declared_by != 実在の human_authority_ref → DECLARATION_AUTHORITY_MISMATCH
+GRANT BINDS AND DECLARATION.declared_by 一致だが status != ACTIVE → DECLARATION_NOT_ACTIVE
+GRANT BINDS AND DECLARATION ACTIVE だが restate 内容が実在grantと不一致 → DECLARATION_CONTENT_MISMATCH
+GRANT BINDS AND DECLARATION 内容一致だが署名が実在の human_authority_signing_key で検証できない → DECLARATION_SIGNATURE_INVALID
+すべてを満たす → 束縛（SELECTEDの候補）
+```
+
+**単一の共有 State-transition commit primitive（R5-R1の第二の要求）:** Round 5が`declare_human_grant`に導入した`store.commit`直接呼び出しは、`topology.py`のK-003/R-001（単一の正準 State-transition committer）静的走査に違反していた——`_SANCTIONED_COMMIT_CALL_MODULES`は`reflow.commit`一箇所のみを許可していたためである。この違反はSHUKOU自身への開示の後、`store/commit.py::commit_state_transition`という、パッケージ内で唯一`.commit(...)`を呼ぶドメイン非依存の pass-through 関数の抽出によって是正された。`reflow.commit.commit_reflow`と`binding.route.declare_human_grant`はいずれも、自身のドメイン意味論（Closure / Human宣言）に従って`next_state`/`transition`/`records`を組み立てた上で、実際の永続化呼び出しだけをこの一つの共有 primitive に委譲する。`topology.py`の`_SANCTIONED_COMMIT_CALL_MODULES`はこの共有 primitive 一箇所のみを指すよう更新され、K-003/R-001はこの唯一の許可された呼び出し箇所を維持する限り引き続きPASSする。
+
+```text
+SHARED_STATE_TRANSITION_COMMIT_PRIMITIVE=store.commit.commit_state_transition
+SANCTIONED_COMMIT_CALL_MODULE_COUNT=1
+BINDING_DIRECT_STORE_COMMIT=false
+REFLOW_DIRECT_STORE_COMMIT=false
+```
+
+```text
+PHASE_13_ACCEPTANCE=false
+PHASE_14_ALLOWED=false
+```
+
 # 8. What Authority Never Does
 
 ```text
@@ -463,6 +606,9 @@ APPROVAL_EXCLUSION_INDEPENDENT_OF_RULE_LEVEL=true
 CITED_RULE_SUPPORTS_THE_DECISION=true
 EVALUATION_TIME_ADMITTED_BEFORE_RESOLUTION=true
 NONCANONICAL_PAYLOAD_FAILS_THROUGH_THE_PUBLIC_BOUNDARY=true
+VERIFIER_SELECTION_DECISION_IMPLEMENTED=true
+VERIFIER_SELECTION_DECISION_IDENTITY_INCLUDES_PROVENANCE=true
+VERIFIER_SELECTION_GRANT_SAME_ADMISSION_GATE_AS_EXISTING_RECORDS=true
 ```
 
 ```text
