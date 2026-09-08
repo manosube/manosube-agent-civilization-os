@@ -68,8 +68,11 @@ def main() -> int:
     # human_grant_declaration) adds one more, making 50. Phase 14's own Projection Envelope
     # (Issue #62, projection_envelope) adds one more, making 51. Phase 14 Structural Review
     # Round 1's own Authority extension (P14-R1-F1, github_projection_grant and
-    # github_projection_decision) adds two more, making 53.
-    if len(paths) != 53 or len(set(ids)) != len(paths) or None in ids:
+    # github_projection_decision) adds two more, making 53. Phase 14 Structural Review
+    # Round 2's own signed-declaration and atomic-claim extensions (P14-R2-F1's
+    # github_projection_grant_declaration, and P14-R2-F2's projection_intent and
+    # projection_materialize_attempt) add three more, making 56.
+    if len(paths) != 56 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
