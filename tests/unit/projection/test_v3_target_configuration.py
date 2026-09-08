@@ -214,24 +214,43 @@ def test_cleanup_and_no_merge_confirmed_are_bound_fields_not_discarded() -> None
     assert config.no_merge_confirmed is True
 
 
-def test_v3_live_write_authorized_defaults_false_when_unset() -> None:
-    assert v3_live_write_authorized(env={}) is False
+def test_v3_live_write_authorized_defaults_false_when_config_is_none() -> None:
+    assert v3_live_write_authorized(None, env={}) is False
 
 
-@pytest.mark.parametrize("bad_value", ["True", "TRUE", "yes", "1", "", "false"])
-def test_v3_live_write_authorized_requires_the_exact_literal(bad_value: str) -> None:
-    assert v3_live_write_authorized(env={LIVE_WRITE_AUTHORIZED_ENV: bad_value}) is False
+def test_v3_live_write_authorized_defaults_false_when_env_var_unset() -> None:
+    config = load_v3_target_configuration(env=_VALID_ENV)
+    assert config is not None
+    assert v3_live_write_authorized(config, env={}) is False
 
 
-def test_v3_live_write_authorized_true_with_the_exact_literal() -> None:
-    assert v3_live_write_authorized(env={LIVE_WRITE_AUTHORIZED_ENV: "true"}) is True
+@pytest.mark.parametrize("bad_value", ["True", "true", "1", "", "false", "not-a-fingerprint"])
+def test_v3_live_write_authorized_rejects_anything_but_the_exact_configuration_fingerprint(
+    bad_value: str,
+) -> None:
+    """Structural Review Round 5 (Issue #62, P14-R5-F2): the unscoped literal ``"true"`` Round
+    4 accepted is no longer sufficient -- only the exact ``configuration_fingerprint`` of
+    *this* configuration authorizes it."""
+
+    config = load_v3_target_configuration(env=_VALID_ENV)
+    assert config is not None
+    assert v3_live_write_authorized(config, env={LIVE_WRITE_AUTHORIZED_ENV: bad_value}) is False
+
+
+def test_v3_live_write_authorized_true_with_the_exact_configuration_fingerprint() -> None:
+    config = load_v3_target_configuration(env=_VALID_ENV)
+    assert config is not None
+    env = {LIVE_WRITE_AUTHORIZED_ENV: config.configuration_fingerprint}
+    assert v3_live_write_authorized(config, env=env) is True
 
 
 def test_v3_live_write_authorized_default_env_source_is_os_environ(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(LIVE_WRITE_AUTHORIZED_ENV, "true")
-    assert v3_live_write_authorized() is True
+    config = load_v3_target_configuration(env=_VALID_ENV)
+    assert config is not None
+    monkeypatch.setenv(LIVE_WRITE_AUTHORIZED_ENV, config.configuration_fingerprint)
+    assert v3_live_write_authorized(config) is True
 
 
 def test_live_write_authority_is_independent_of_configuration_validity() -> None:
@@ -242,4 +261,64 @@ def test_live_write_authority_is_independent_of_configuration_validity() -> None
 
     config = load_v3_target_configuration(env=_VALID_ENV)
     assert config is not None
-    assert v3_live_write_authorized(env=_VALID_ENV) is False
+    assert v3_live_write_authorized(config, env=_VALID_ENV) is False
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 5 (Issue #62, P14-R5-F2): authority bound to the exact
+# configuration identity -- changing any one bound field, under an otherwise genuine
+# authorization value, refuses.
+# ---------------------------------------------------------------------------
+
+
+def test_configuration_fingerprint_excludes_the_secret_token() -> None:
+    """The secret ``token`` must never enter a value a caller compares, logs, or stores as an
+    authorization credential."""
+
+    base = load_v3_target_configuration(env=_VALID_ENV)
+    assert base is not None
+    other_token = load_v3_target_configuration(
+        env={**_VALID_ENV, TOKEN_ENV: "a-completely-different-token"}
+    )
+    assert other_token is not None
+    assert base.configuration_fingerprint == other_token.configuration_fingerprint
+
+
+@pytest.mark.parametrize(
+    ("env_key", "changed_value"),
+    [
+        (TARGET_REPOSITORY_ENV, "acme/a-different-widget"),
+        (CHANGE_HEAD_REF_ENV, "agent/a-different-branch"),
+        (CHANGE_BASE_REF_ENV, "develop"),
+        (EVIDENCE_HEAD_SHA_ENV, "f" * 40),
+        (ARTIFACT_NAMING_PREFIX_ENV, "a completely different prefix"),
+        (AUTHORIZED_ARTIFACT_KINDS_ENV, "check_run"),
+        (AUTHORIZED_ARTIFACT_COUNT_ENV, "1"),
+    ],
+)
+def test_changing_any_one_bound_field_changes_the_configuration_fingerprint(
+    env_key: str, changed_value: str
+) -> None:
+    base = load_v3_target_configuration(env=_VALID_ENV)
+    assert base is not None
+    changed = load_v3_target_configuration(env={**_VALID_ENV, env_key: changed_value})
+    assert changed is not None
+    assert base.configuration_fingerprint != changed.configuration_fingerprint
+
+
+def test_authorization_value_computed_for_one_configuration_refuses_a_changed_one() -> None:
+    """The mechanical proof this finding requires: an authorization value that is genuine for
+    one exact configuration -- copied unchanged onto a configuration that later had even one
+    bound field (here, the target repository) changed -- refuses, entirely offline, before any
+    network access this refusal precedes could ever occur."""
+
+    original = load_v3_target_configuration(env=_VALID_ENV)
+    assert original is not None
+    authorized_env = {LIVE_WRITE_AUTHORIZED_ENV: original.configuration_fingerprint}
+    assert v3_live_write_authorized(original, env=authorized_env) is True
+
+    changed = load_v3_target_configuration(
+        env={**_VALID_ENV, TARGET_REPOSITORY_ENV: "acme/a-different-widget"}
+    )
+    assert changed is not None
+    assert v3_live_write_authorized(changed, env=authorized_env) is False

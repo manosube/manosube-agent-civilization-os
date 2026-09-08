@@ -43,12 +43,21 @@ MAPPING_KEY_FIELDS: tuple[str, ...] = (
 )
 
 #: What a Projection Envelope's own semantic fingerprint additionally covers, beyond the
-#: mapping key: the payload actually materialized under that identity. Tampering the
-#: payload of an already-committed Envelope (impossible through this package's own public
-#: route, since Envelopes are immutable and never rewritten in place) would still be
+#: mapping key: the payload actually materialized under that identity, and (Structural Review
+#: Round 5, Issue #62, P14-R5-F1) the winning attempt's own ``claim_token`` -- the terminal
+#: fact ``project_to_github``'s own reuse path trusts to classify a later call as the
+#: identical winning attempt (``same_attempt=True``) versus a distinct caller's explicitly
+#: separate semantic reuse (``same_attempt=False``). Tampering the payload, or the winning
+#: claim identity, of an already-committed Envelope (impossible through this package's own
+#: public route, since Envelopes are immutable and never rewritten in place) would still be
 #: detectable through this digest, exactly as every other record's own semantic fingerprint
-#: detects tampering of its own body.
-SEMANTIC_FIELDS: tuple[str, ...] = (*MAPPING_KEY_FIELDS, "projection_payload_fingerprint")
+#: detects tampering of its own body -- unlike ``MAPPING_KEY_FIELDS``, which stays a function
+#: of *which projection slot* is addressed alone, deliberately never of which attempt won it.
+SEMANTIC_FIELDS: tuple[str, ...] = (
+    *MAPPING_KEY_FIELDS,
+    "projection_payload_fingerprint",
+    "claim_token",
+)
 
 
 def _projection(envelope: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:

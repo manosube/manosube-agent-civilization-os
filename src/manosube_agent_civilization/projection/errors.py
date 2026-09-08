@@ -100,6 +100,24 @@ class ProjectionTerminalClaimMismatchError(ProjectionError):
     ``permit_semantic_reuse=True`` to request it -- never conflated with same-attempt retry."""
 
 
+class ProjectionEnvelopeIntegrityError(ProjectionError):
+    """A committed Projection Envelope resolved from the Store does not recompute the
+    ``projection_envelope_semantic_fingerprint`` it itself declares (Structural Review Round
+    5, Issue #62, P14-R5-F1).
+
+    This is the domain-owned counterpart to the Store's own generic, byte-comparison tamper
+    detection (:class:`~manosube_agent_civilization.store.errors.CorruptStoreError`, raised
+    when a permanent record file diverges from what its own committing transaction staged):
+    it never trusts that lower-level mechanism alone, and instead independently recomputes
+    :func:`~manosube_agent_civilization.projection.identity.projection_envelope_semantic_
+    fingerprint` from the resolved record's own content and requires it to equal the record's
+    own declared value -- the identical "resolve, never trust, always recompute and compare"
+    discipline every other check in this route already applies. Since ``claim_token`` is one
+    of :data:`~manosube_agent_civilization.projection.identity.SEMANTIC_FIELDS`, a record
+    whose ``claim_token`` alone was altered after commit raises this before any reuse/retry
+    classification is ever attempted."""
+
+
 class ProjectionAdapterError(ProjectionError):
     """The supplied :class:`~manosube_agent_civilization.projection.types.GitHubAdapter`
     could not materialize or observe the requested external artifact, or its own return value

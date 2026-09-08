@@ -11,6 +11,7 @@ CORRECTION_ADOPTION_ID=ADOPT_P14_R1_CANONICAL_AUTHORITY_SUBJECT_AND_RECOVERABLE_
 CORRECTION_ADOPTION_ID_ROUND_2=ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_AND_REAL_V3
 CORRECTION_ADOPTION_ID_ROUND_3=ADOPT_P14_R3_UNIQUE_CLAIM_ATTESTED_RECEIPT_AND_CONFIGURABLE_V3
 CORRECTION_ADOPTION_ID_ROUND_4=ADOPT_P14_R4_TERMINAL_CLAIM_ATTESTED_RECEIPT_AND_SOURCE_EDIT_FREE_V3
+CORRECTION_ADOPTION_ID_ROUND_5=ADOPT_P14_R5_TERMINAL_CLAIM_INTEGRITY_AND_BOUND_V3_EXECUTION
 GOVERNING_ISSUE=#62
 REVIEWED_MAIN_SHA=7fc597356330a0d1da7a334ef20cd913b74154d
 ```
@@ -1005,3 +1006,78 @@ for F2; the unconditional skip and the discarded cleanup/no-merge/artifact-kind/
 for F3), corrected here as this section's own F1/F2/F3, and the record above is left unedited
 as an honest account of what Round 3 believed at the time rather than silently rewritten to
 agree with this correction.)
+
+## 13. Structural Review Round 5 corrections (`ADOPT_P14_R5_TERMINAL_CLAIM_INTEGRITY_AND_BOUND_V3_EXECUTION`)
+
+**F1: `claim_token` is now covered by the Envelope's own semantic fingerprint, and a
+resolved Envelope's own recomputed fingerprint is independently re-verified before any
+reuse/retry classification.** §12's own F1 bound the winning attempt's `claim_token` onto the
+terminal Envelope and compared it against `attempt_claim_token`, but `claim_token` was
+deliberately excluded from both `MAPPING_KEY_FIELDS` *and* `SEMANTIC_FIELDS` (`identity.py`)
+-- so a `claim_token` altered on an already-committed Envelope's own persisted record (a
+tamper the Store's own generic byte-comparison mechanism, `FileStateStore`'s
+`CorruptStoreError`, independently also catches, but which this package's own domain layer
+never itself re-verified) would still recompute the identical `projection_envelope_semantic_
+fingerprint`, so nothing in this package's own reuse path would ever notice the claim identity
+had changed. `SEMANTIC_FIELDS` now includes `claim_token` (still never `MAPPING_KEY_FIELDS`,
+preserving the frozen mapping-key/semantic-fingerprint split §3 already establishes: a change
+to only the winning attempt's identity must never change *which* projection slot a request
+addresses, only whether that slot's own recorded content can be trusted). `project_to_
+github`'s own existing-Envelope reuse path (`route.py`) now recomputes `projection_envelope_
+semantic_fingerprint` from the resolved record and requires it to equal the record's own
+declared value *before* the `same_attempt`/`permit_semantic_reuse` classification is ever
+reached, raising the new `ProjectionEnvelopeIntegrityError` otherwise -- a domain-owned check,
+deliberately never merely inherited from the Store's own lower-level mechanism, matching the
+"resolve, never trust, always recompute and compare" discipline every other check in this
+route already applies (`reflow/closure.py`'s own `objective_semantic_fingerprint` check,
+`difference/invariant_verifiers.py`'s own `recomputed == candidate["semantic_fingerprint"]`).
+The explicit separation between same-attempt retry and later, disclosed semantic reuse (§12's
+own F1) is entirely retained -- this correction only closes the one path by which a
+`claim_token`-only tamper could reach that classification undetected.
+
+**F2: V3 live-write authority is now bound to the exact configuration it authorizes, the
+authorized artifact count is enforced across the complete three-projection run, and a cleanup
+terminal closes every artifact a run actually materializes.** §12's own F3 gated the V3
+harness's real-adapter tests on `v3_live_write_authorized()`, an unscoped boolean requiring
+only the literal `"true"` -- once granted, that value stayed valid even after any bound
+configuration field (repository, refs, SHA, artifact kinds/count, naming, cleanup, no-merge)
+was later changed, since nothing tied the grant to *which* configuration it was granted for;
+`authorized_artifact_count` was itself a real, bound field (§12), but nothing downstream
+enforced it as a shared ceiling across all three projection kinds together, and no cleanup
+mechanism existed at all. `V3TargetConfiguration` (`tests/fixtures/v3_target_configuration.py`)
+gains a `configuration_fingerprint` property -- the deterministic digest of every bound field
+except the secret `token` -- and `v3_live_write_authorized` now takes the exact configuration
+it is checking authority for, requiring `LIVE_WRITE_AUTHORIZED_ENV` to equal that exact
+`configuration_fingerprint`: changing any one bound field recomputes a different fingerprint,
+so an authorization value copied for a prior configuration refuses before this function ever
+returns `True`, and therefore before any network access the caller would have made on its
+strength. `test_v3_real_github_vertical_proof.py` collapses the three previously-separate
+real-adapter tests (Difference/Issue, Change/Pull-Request, Evidence/check-run) into one
+`_run_v3_authorized_execution` covering the complete run: a new `_BudgetEnforcingAdapter`
+wraps whichever adapter each projection kind uses, sharing one mutable counter across all
+three, and refuses (`V3ArtifactBudgetExceededError`) a further `materialize` call once that
+shared counter reaches `authorized_artifact_count` -- a whole-run ceiling, not three
+independently budget-blind tests each free to materialize regardless of what the other two
+already spent. The same function unconditionally attempts cleanup, in a `finally`, of every
+artifact the run actually materialized before returning or propagating: `_close_artifact`
+(test-harness-owned, using `urllib.request` directly -- deliberately never added to
+`GitHubAdapter`'s own Protocol, extending the existing "an adapter must never merge a Pull
+Request" boundary to "must never close or delete" either) issues one direct PATCH per artifact
+(`state: closed` for `issue`/`pull_request`; `status: completed, conclusion: cancelled` for
+`check_run`), and each outcome is captured in a `V3CleanupReceipt` of per-artifact
+`V3ArtifactCleanupOutcome`s -- covering exactly what the run materialized, never more and
+never fewer, so a mid-run budget refusal still yields a receipt for the artifacts already
+created rather than a false claim of full-run completion or a silent leak. A new offline
+transport-fixture test (`test_v3_authorized_full_three_projection_run_enforces_the_authorized_
+artifact_count_and_completes_cleanup`) drives the complete authorized run through the
+identical monkeypatched-transport harness §11 already established, proving the exact
+authorized count, zero merge calls, and cleanup completion entirely offline; a companion test
+(`test_v3_authorized_execution_refuses_beyond_the_authorized_count_and_still_cleans_up_what_
+it_materialized`) proves the required partial-run/failure handling with a narrowed
+`authorized_artifact_count`. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` remains this delivery's
+own state throughout.
+
+```text
+P14_R5_F1_CLOSED=true
+P14_R5_F2_CLOSED=true
+```

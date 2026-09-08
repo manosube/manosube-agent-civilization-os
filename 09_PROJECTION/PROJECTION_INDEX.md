@@ -187,6 +187,11 @@ SAME_ATTEMPT_RETRY_SEPARATED_FROM_SEMANTIC_REUSE_IMPLEMENTED=true
 RECEIPT_ATTESTATION_EXACT_MATCH_REQUIRED_BEFORE_VERIFIED_EVIDENCE=true
 V3_LIVE_ADAPTER_TESTS_GATED_BY_RUNTIME_CHECK_NOT_UNCONDITIONAL_SKIP=true
 V3_ARTIFACT_KINDS_AND_COUNT_AND_CLEANUP_AND_NO_MERGE_BOUND_AS_CONFIGURATION_FIELDS=true
+CLAIM_TOKEN_COVERED_BY_ENVELOPE_SEMANTIC_FINGERPRINT=true
+RESOLVED_ENVELOPE_INTEGRITY_INDEPENDENTLY_RE_VERIFIED_BEFORE_REUSE_CLASSIFICATION=true
+V3_LIVE_WRITE_AUTHORITY_BOUND_TO_EXACT_CONFIGURATION_FINGERPRINT=true
+V3_WHOLE_RUN_ARTIFACT_COUNT_ENFORCED_ACROSS_ALL_THREE_PROJECTION_KINDS=true
+V3_CLEANUP_TERMINAL_IMPLEMENTED_INCLUDING_PARTIAL_RUN_FAILURE=true
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
@@ -215,6 +220,17 @@ CHECK_NOT_UNCONDITIONAL_SKIP=true` and `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` 
 together, unchanged by any of this: the real-adapter tests are now gated by a fail-closed
 runtime check reading the environment rather than a hardcoded skip, but that gate still
 evaluates `False` in this delivery -- no live write occurs.
+The five lines immediately above `PHASE_14_COMPLETE` record Structural Review Round 5's own
+corrections (`ADOPT_P14_R5_TERMINAL_CLAIM_INTEGRITY_AND_BOUND_V3_EXECUTION`) -- see
+`PROJECTION_CONTRACT.md` §13 for the full detail each one fixes: `claim_token` is now part of
+`projection_envelope_semantic_fingerprint`, a resolved Envelope's own fingerprint is
+independently re-verified (`ProjectionEnvelopeIntegrityError`) before same-attempt/semantic-
+reuse classification is ever reached, V3 live-write authority is now bound to the exact
+`configuration_fingerprint` of the configuration it authorizes (not the unscoped literal
+`"true"` Round 4 used), the authorized artifact count is enforced as one shared budget across
+the complete three-projection run, and a cleanup terminal closes every artifact a run actually
+materializes, including under partial-run failure. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false`
+still holds, unchanged by any of this.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.

@@ -18,8 +18,10 @@ response lost); and a genuine same-caller process retry (identical ``materialize
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from tests.evidence_helpers import observation_evidence_request
@@ -39,6 +41,7 @@ from manosube_agent_civilization.projection import (
     FakeGitHubAdapter,
     ProjectionAdapterError,
     ProjectionConcurrentClaimError,
+    ProjectionEnvelopeIntegrityError,
     ProjectionReconciliationRequiredError,
     ProjectionTerminalClaimMismatchError,
     project_to_github,
@@ -49,6 +52,7 @@ from manosube_agent_civilization.projection.identity import (
 )
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
+from manosube_agent_civilization.store.errors import CorruptStoreError
 
 _TARGET_REPOSITORY = {"host": "github", "owner": "acme", "repo": "atomic-claims"}
 _PAYLOAD = {
@@ -606,3 +610,76 @@ def test_retry_with_the_identical_claim_token_and_timestamp_proceeds_identically
     assert first["envelope"] == second["envelope"]
     assert second["reused"] is True
     assert adapter.materialize_call_count == 1
+
+
+def test_tampering_only_claim_token_on_the_permanent_record_file_is_caught_on_resolution(
+    _world: dict[str, Any],
+) -> None:
+    """Structural Review Round 5 (Issue #62, P14-R5-F1): a committed Envelope's own
+    ``claim_token`` is a terminal fact ``project_to_github``'s own reuse path trusts to
+    classify same-attempt retry versus semantic reuse -- altering only that field on the
+    permanent record file, after commit, must be caught rather than silently trusted, both
+    by the Store's own generic byte-comparison tamper detection on a fresh resolution, and by
+    this route's own subsequent attempt to reuse that (now corrupt-on-disk) mapping slot."""
+
+    adapter = FakeGitHubAdapter()
+    first = _project(_world, adapter)
+    envelope_id = first["envelope"]["projection_envelope_id"]
+
+    record_path = (
+        _world["store"].root
+        / "projects"
+        / _world["project_id"]
+        / "records"
+        / "projection_envelope"
+        / f"{envelope_id}.json"
+    )
+    on_disk = json.loads(record_path.read_text())
+    assert on_disk["claim_token"] == "PROJECTION-ATTEMPT-TEST-A"  # noqa: S105
+    on_disk["claim_token"] = "PROJECTION-ATTEMPT-TAMPERED"  # noqa: S105
+    record_path.write_text(json.dumps(on_disk))
+
+    fresh_store = FileStateStore(_world["store"].root, schema_root=SCHEMA_ROOT)
+    with pytest.raises(CorruptStoreError):
+        fresh_store.resolve_record(_world["project_id"], "projection_envelope", envelope_id)
+
+    with pytest.raises(CorruptStoreError):
+        _project(_world, adapter)
+
+
+def test_domain_level_check_refuses_a_claim_token_tampered_resolved_envelope(
+    _world: dict[str, Any],
+) -> None:
+    """The Projection package's own domain-level check
+    (:class:`~manosube_agent_civilization.projection.ProjectionEnvelopeIntegrityError`) is a
+    genuinely independent safeguard, not merely an artifact of the Store's own lower-level
+    tamper detection: proven here by mocking ``store.resolve_record`` to return an Envelope
+    whose ``claim_token`` was altered *after* its own semantic fingerprint was computed --
+    something the Store's byte-comparison mechanism never even sees -- and confirming this
+    route still refuses rather than trusting it."""
+
+    adapter = FakeGitHubAdapter()
+    first = _project(_world, adapter)
+    envelope_id = first["envelope"]["projection_envelope_id"]
+    tampered_envelope = dict(first["envelope"])
+    tampered_envelope["claim_token"] = "PROJECTION-ATTEMPT-TAMPERED"  # noqa: S105
+
+    store = _world["store"]
+    real_resolve_record = store.resolve_record
+
+    def _resolve_record_returning_tampered_envelope_only_for_the_real_mapping_key(
+        project_id: str, kind: str, record_id: str
+    ) -> Any:
+        if kind == "projection_envelope" and record_id == envelope_id:
+            return tampered_envelope
+        return real_resolve_record(project_id, kind, record_id)
+
+    with (
+        patch.object(
+            store,
+            "resolve_record",
+            side_effect=_resolve_record_returning_tampered_envelope_only_for_the_real_mapping_key,
+        ),
+        pytest.raises(ProjectionEnvelopeIntegrityError),
+    ):
+        _project(_world, adapter, attempt_claim_token="PROJECTION-ATTEMPT-TAMPERED")  # noqa: S106

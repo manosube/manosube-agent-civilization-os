@@ -64,10 +64,15 @@ def derive_projection_envelope(
     own ``attempt_claim_token`` -- carried on the terminal Envelope itself so a route can later
     tell a genuine same-attempt retry (an identical ``claim_token`` presented again) apart from
     a distinct caller reaching an already-terminal mapping slot. It is deliberately excluded
-    from :data:`~manosube_agent_civilization.projection.identity.MAPPING_KEY_FIELDS` and
-    :data:`~manosube_agent_civilization.projection.identity.SEMANTIC_FIELDS` -- which attempt
-    happened to win is metadata about the Envelope, never part of *what* was projected, so it
-    never changes ``projection_envelope_id`` or ``projection_envelope_semantic_fingerprint``.
+    from :data:`~manosube_agent_civilization.projection.identity.MAPPING_KEY_FIELDS` -- which
+    attempt happened to win never changes *which projection slot* is addressed, so
+    ``projection_envelope_id`` stays a pure function of subject/kind/target alone. It is,
+    however, deliberately **included** in :data:`~manosube_agent_civilization.projection.
+    identity.SEMANTIC_FIELDS` (Structural Review Round 5, Issue #62, P14-R5-F1): the winning
+    claim is exactly the terminal fact ``project_to_github``'s own reuse path later trusts to
+    classify a caller as the same attempt versus a distinct, explicitly separate semantic
+    reuse, so tampering it alone -- leaving every mapping-key field and the payload untouched
+    -- must still change ``projection_envelope_semantic_fingerprint`` and so be detectable.
     """
 
     if projection_kind not in PROJECTION_KINDS:

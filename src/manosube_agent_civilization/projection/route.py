@@ -152,11 +152,16 @@ from .errors import (
     ConflictingProjectionPayloadError,
     ProjectionAdapterError,
     ProjectionConcurrentClaimError,
+    ProjectionEnvelopeIntegrityError,
     ProjectionReconciliationRequiredError,
     ProjectionRequirementError,
     ProjectionTerminalClaimMismatchError,
 )
-from .identity import projection_mapping_key, projection_payload_fingerprint
+from .identity import (
+    projection_envelope_semantic_fingerprint,
+    projection_mapping_key,
+    projection_payload_fingerprint,
+)
 from .observable import observe_and_classify
 from .types import (
     ARTIFACT_KINDS,
@@ -801,6 +806,19 @@ def project_to_github(
 
     existing = store.resolve_record(project_id, _ENVELOPE_RECORD_KIND, mapping_key)
     if existing is not None:
+        # Structural Review Round 5 (Issue #62, P14-R5-F1): never trust a resolved Envelope's
+        # own fields -- including claim_token, now that it is part of SEMANTIC_FIELDS -- until
+        # this route has independently recomputed and compared its own semantic fingerprint.
+        # This is a domain-owned check, never merely inherited as a side effect of the Store's
+        # own lower-level byte-comparison tamper detection; see ProjectionEnvelopeIntegrityError.
+        if projection_envelope_semantic_fingerprint(existing) != existing.get(
+            "projection_envelope_semantic_fingerprint"
+        ):
+            raise ProjectionEnvelopeIntegrityError(
+                f"projection identity {mapping_key!r} resolved a committed Envelope whose own "
+                "recomputed projection_envelope_semantic_fingerprint does not equal its own "
+                "declared value -- refusing to trust any of its fields, claim_token included"
+            )
         if existing["projection_payload_fingerprint"] != real_payload_fingerprint:
             raise ConflictingProjectionPayloadError(
                 f"projection identity {mapping_key!r} already resolves to a committed "

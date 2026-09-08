@@ -125,6 +125,25 @@ def test_different_payload_keeps_the_identical_mapping_key_but_changes_the_seman
     )
 
 
+def test_tampering_claim_token_alone_changes_the_semantic_fingerprint_but_not_the_mapping_key() -> (
+    None
+):
+    """Structural Review Round 5 (Issue #62, P14-R5-F1): the winning attempt's own
+    ``claim_token`` is the terminal fact ``project_to_github``'s own reuse path trusts to
+    classify a later call as the same attempt versus a distinct, explicitly separate semantic
+    reuse -- it must therefore be covered by ``projection_envelope_semantic_fingerprint``,
+    even though it must *not* change which projection slot ``projection_envelope_id`` (the
+    stable mapping key) addresses."""
+
+    base = _envelope(claim_token="PROJECTION-ATTEMPT-A")  # noqa: S106
+    other = _envelope(claim_token="PROJECTION-ATTEMPT-B")  # noqa: S106
+    assert base["projection_envelope_id"] == other["projection_envelope_id"]
+    assert (
+        base["projection_envelope_semantic_fingerprint"]
+        != other["projection_envelope_semantic_fingerprint"]
+    )
+
+
 def test_projection_payload_fingerprint_is_deterministic_and_key_order_insensitive() -> None:
     fingerprint_a = projection_payload_fingerprint({"title": "t", "body": "b"})
     fingerprint_b = projection_payload_fingerprint({"body": "b", "title": "t"})
