@@ -2,7 +2,24 @@
 (Structural Review Round 6, Issue #62, P14-R6-F2; external trust anchor, Round 7, P14-R7-F1;
 canonical issuable authority, Round 8, P14-R8-F1; Store/Boot-resolved authority routed to
 execution, Round 9, P14-R9-F1; trusted Boot root and pre-issued execution authority, Round 10,
-P14-R10-F1; frozen trusted runtime context to adapter chain, Round 11, P14-R11-F1).
+P14-R10-F1; frozen trusted runtime context to adapter chain, Round 11, P14-R11-F1; runtime
+injection interface and the Phase 15 provisioning boundary, Round 12, P14-R12-F1).
+
+Round 12 (P14-R12-F1, ``ADOPT_P14_R12_RUNTIME_INJECTION_INTERFACE_AND_PHASE15_PROVISIONING_
+BOUNDARY``) redraws the Phase 14/Phase 15 boundary: Phase 14 owns and must prove complete the
+*interface* that consumes an already-resolved, opaque :class:`V3AuthorizedExecutionContext` and
+carries it through to the controlled adapter; Phase 14 does not own selecting/opening the real
+Store, producing the real runtime Boot Context, or injecting it -- that provisioning is Phase
+15's own explicitly deferred responsibility. :func:`execute_v3_authorized_projection` is that
+interface: the sole, formal, public boundary through which *context* ever reaches
+``project_to_github``. It requires *context* as an argument (never builds, selects, or opens
+one of its own), revalidates its own freshness immediately before the adapter-reaching call
+*inside itself* -- never left to a caller's own discipline -- and threads only *context*'s own
+fields into ``project_to_github``. A prior round's collection-time, no-argument live-authorized-
+context gate (``_v3_live_authorized_context()``) claimed a future runtime caller could activate
+it without source edits while it had no actual injection point and always returned ``None`` --
+a permanently-false claim this round removes outright, along with the one pytest assertion that
+depended on it, rather than leaving a dead entry point a later reader could mistake for real.
 
 Round 10 (P14-R10-F1) split trust into a Store/Project/Binding root, supplied through its own
 environment variable, and a narrower set of grant/declaration references resolved only within
@@ -68,7 +85,7 @@ therefore detected and refused, never silently accepted.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -97,6 +114,8 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.evidence.identity import (
     evidence_semantic_fingerprint as _evidence_semantic_fingerprint,
 )
+from manosube_agent_civilization.projection import project_to_github
+from manosube_agent_civilization.projection.errors import ProjectionRequirementError
 from manosube_agent_civilization.store.errors import StoreError
 
 from .v3_target_configuration import V3TargetConfiguration
@@ -571,3 +590,100 @@ def v3_execution_context_still_current(context: V3AuthorizedExecutionContext | N
         current_state.get("state_revision") == context.state_revision
         and current_state.get("semantic_fingerprint") == context.semantic_fingerprint
     )
+
+
+def execute_v3_authorized_projection(
+    context: V3AuthorizedExecutionContext | None,
+    *,
+    projection_kind: str,
+    target_repository: Mapping[str, Any],
+    projection_payload: Mapping[str, Any],
+    adapter: Any,
+    materialized_at: str,
+    attempt_claim_token: str,
+) -> dict[str, Any]:
+    """The one formal, source-edit-free Phase 14 projection execution interface (Structural
+    Review Round 12, P14-R12-F1) -- the sole boundary through which any caller, present or
+    future, may thread V3 live-write authority into ``project_to_github`` and, through it, the
+    adapter. Requires *context*, an already-resolved, opaque :class:`V3AuthorizedExecutionContext`
+    (:func:`resolve_v3_live_write_authority`'s own return value) -- this function never builds,
+    selects, or opens one of its own. It accepts no Store path, no environment-selected
+    Project/Binding, no embedded authoritative record body, no caller-supplied subject body, no
+    separate ``subjects`` mapping, no signing key, and no Authority assembler: every value it
+    threads into ``project_to_github`` comes from *context* itself (``context.store``,
+    ``context.project_id``, ``context.project_binding_id``,
+    ``context.authorities[projection_kind]``) or from this call's own ordinary per-invocation
+    parameters (*projection_kind*, *target_repository*, *projection_payload*, *adapter*,
+    *materialized_at*, *attempt_claim_token*) -- never a Store selector of any kind.
+
+    Revalidates *context*'s own freshness (:func:`v3_execution_context_still_current`)
+    immediately before this call reaches ``project_to_github``, *inside this function itself* --
+    never left to a caller's own discipline to remember -- so any Store mutation, revision,
+    fingerprint, Binding, subject, grant, declaration, decision, target, payload, or action
+    substitution since *context* was authorized refuses here, before the adapter is ever
+    reached. Raises :class:`~manosube_agent_civilization.projection.errors.
+    ProjectionRequirementError` for ``context=None``, a *context* that is no longer current, or
+    a *projection_kind* not among ``context.authorities`` -- never silently proceeds.
+
+    On success, the returned mapping's own ``"context"`` key carries a refreshed
+    :class:`V3AuthorizedExecutionContext` -- byte-identical to *context* except for
+    ``state_revision``/``semantic_fingerprint``, re-observed from the same Store immediately
+    after this call's own commit. A caller chaining multiple calls against the *same* run (this
+    function's own successful commit necessarily advances the Store's ``state_revision``) must
+    thread ``outcome["context"]`` into the next call rather than reusing the original *context*
+    unchanged -- otherwise the next call's own freshness check would refuse on this call's own
+    legitimate commit, indistinguishable from an external mutation. This is the one genuinely
+    new field this interface adds to the shape ``project_to_github`` itself returns; every other
+    key is unchanged.
+
+    This is Phase 14's own owned interface; it does not select, open, or provision the Store,
+    Project, or Binding *context* itself names -- that is Phase 15's own explicitly deferred
+    responsibility (Structural Review Round 12, P14-R12,
+    ``ADOPT_P14_R12_RUNTIME_INJECTION_INTERFACE_AND_PHASE15_PROVISIONING_BOUNDARY``). Phase 14
+    proves this exact function complete and correct against a genuinely resolved context this
+    repository's own trusted bootstrap fixture supplies; a real deployment's own runtime
+    bootstrap, once Phase 15 exists, calls this exact function unchanged -- no further source
+    edit to this function is required for that later activation."""
+
+    if context is None or not v3_execution_context_still_current(context):
+        raise ProjectionRequirementError(
+            "V3 live-write execution context is missing or no longer reflects the current "
+            "Store state -- refusing before the controlled adapter is ever reached"
+        )
+    if projection_kind not in context.authorities:
+        raise ProjectionRequirementError(
+            f"projection_kind {projection_kind!r} has no pre-issued authority within this "
+            "context -- refusing before the controlled adapter is ever reached"
+        )
+
+    authority = context.authorities[projection_kind]
+    result = dict(
+        project_to_github(
+            context.store,
+            project_id=context.project_id,
+            project_binding_id=context.project_binding_id,
+            subject_ref=authority.subject_ref,
+            projection_kind=projection_kind,
+            target_repository=target_repository,
+            projection_payload=projection_payload,
+            github_authority_ref=dict(context.github_authority_ref),
+            materialized_at=materialized_at,
+            adapter=adapter,
+            github_projection_grant_refs=[authority.github_projection_grant_ref],
+            github_projection_grant_declaration_refs=[
+                authority.github_projection_grant_declaration_ref
+            ],
+            attempt_claim_token=attempt_claim_token,
+            subject_record=authority.subject_record,
+        )
+    )
+    refreshed_boot_context = boot_project(
+        context.store, project_id=context.project_id, project_binding_id=context.project_binding_id
+    )
+    refreshed_state = refreshed_boot_context.current_state
+    result["context"] = replace(
+        context,
+        state_revision=refreshed_state["state_revision"],
+        semantic_fingerprint=refreshed_state["semantic_fingerprint"],
+    )
+    return result

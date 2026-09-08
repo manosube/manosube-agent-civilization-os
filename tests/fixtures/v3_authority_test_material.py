@@ -42,9 +42,8 @@ of it to the real canonical Store, must still authorize zero adapter calls, beca
 ``store.resolve_record`` never resolves a reference nothing ever committed.
 
 **This module is never imported by** :mod:`tests.fixtures.v3_live_write_authority` **or by
-the one live call site** (``_v3_live_authorized()`` in
-``tests/integration/projection/test_v3_real_github_vertical_proof.py``) -- a static
-conformance test
+the one formal execution interface it defines** (``execute_v3_authorized_projection``,
+Structural Review Round 12, P14-R12-F1) -- a static conformance test
 (``tests/contract/projection/test_v3_live_write_authority_static_conformance.py``) proves
 this by AST-walking both modules' own import statements. The live gate consumes only
 already-resolved Store records; nothing in it can construct or sign a new record.

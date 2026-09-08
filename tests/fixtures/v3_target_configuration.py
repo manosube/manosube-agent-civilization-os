@@ -38,9 +38,8 @@ configuration digest is still not itself a Human Authority, only a shape a genui
 also satisfy. Structural Review Round 6 (Issue #62, P14-R6-F2) replaces it with a genuine,
 Ed25519-signed V3 Live Write Authority record, verified against one fixed, non-caller-
 controlled public key: see :mod:`tests.fixtures.v3_live_write_authority`, whose own
-``v3_live_write_authorized(config, authority_record, evaluation_time=...)`` is what the V3
-harness's own real-adapter tests now gate on (see
-``test_v3_real_github_vertical_proof.py``'s own ``_v3_live_authorized``).
+``resolve_v3_live_write_authority``/``execute_v3_authorized_projection`` pair (Structural
+Review Round 12, P14-R12-F1) is what the V3 harness's own real-adapter tests now consume.
 :attr:`V3TargetConfiguration.configuration_fingerprint` (below) remains this module's own
 contribution to that binding -- the canonical, deterministic digest of every bound field
 except the secret ``token`` -- now one of several fields a genuine authority record must

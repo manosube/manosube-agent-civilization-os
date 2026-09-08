@@ -35,6 +35,12 @@ already establish, applied here to prove:
    type/loader/opener no longer exist. ``resolve_v3_live_write_authority`` accepts no
    ``subjects``/``subject_record``/``subject_records`` parameter of any kind -- every subject
    it consumes is resolved from the Store by reference alone.
+7. Structural Review Round 12 (P14-R12-F1): the formal Phase 14 execution interface,
+   ``execute_v3_authorized_projection``, requires the opaque context as its own first argument
+   and accepts no Store-selecting field, no authoritative body parameter, and no separate
+   subject mapping either -- the identical closed shape this file already proves for
+   ``resolve_v3_live_write_authority``, now proved for the interface that actually reaches the
+   adapter.
 """
 
 from __future__ import annotations
@@ -262,6 +268,30 @@ def test_v3_authorized_execution_context_carries_the_caller_injected_store_and_r
         field.name for field in dataclasses.fields(live_gate_module.V3PreIssuedProjectionAuthority)
     }
     assert {"subject_ref", "subject_record"}.issubset(authority_fields)
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 12 (P14-R12-F1): the formal execution interface itself,
+# execute_v3_authorized_projection, requires the opaque context and accepts none of the
+# forbidden shapes -- the identical closed-parameter discipline this file already proves for
+# resolve_v3_live_write_authority, extended to the function that actually reaches the adapter.
+# ---------------------------------------------------------------------------
+
+
+def test_execute_v3_authorized_projection_requires_the_opaque_context_first() -> None:
+    signature = inspect.signature(live_gate_module.execute_v3_authorized_projection)
+    parameters = list(signature.parameters)
+    assert parameters[0] == "context"
+    assert signature.parameters["context"].default is inspect.Parameter.empty
+
+
+def test_execute_v3_authorized_projection_accepts_no_authoritative_or_store_selecting_parameter() -> (
+    None
+):
+    signature = inspect.signature(live_gate_module.execute_v3_authorized_projection)
+    parameter_names = set(signature.parameters)
+    assert parameter_names.isdisjoint(_FORBIDDEN_BODY_PARAMETER_NAMES)
+    assert parameter_names.isdisjoint(_FORBIDDEN_STORE_SELECTING_NAMES)
 
 
 def test_load_v3_live_write_authority_references_refuses_smuggled_store_selecting_keys() -> None:

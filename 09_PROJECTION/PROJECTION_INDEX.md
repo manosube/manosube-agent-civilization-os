@@ -346,6 +346,30 @@ Store-resolution branch -- never a second, V3-only subject registry -- so the li
 no longer accepts a caller-supplied subject body or a separate `subjects` mapping of any kind;
 the resolved subject lives inside the one frozen `V3AuthorizedExecutionContext` this route alone
 produces. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
+The four lines immediately above `PHASE_14_COMPLETE` also record Structural Review Round 12's
+own correction (`ADOPT_P14_R12_RUNTIME_INJECTION_INTERFACE_AND_PHASE15_PROVISIONING_BOUNDARY`)
+-- see `PROJECTION_CONTRACT.md` §20 for the full detail: this round corrects the Phase 14/
+Phase 15 acceptance boundary itself, not merely a route or fixture defect. Phase 14 now owns
+and proves complete a formal, source-edit-free execution interface
+(`execute_v3_authorized_projection`) accepting an opaque, already-resolved trusted context and
+carrying it through Store-resolved subjects, pre-issued Authority, freshness checks,
+`project_to_github`, and the controlled adapter -- proven by a non-skipped positive control
+invoking that exact interface for all three projection kinds, and an attacker-world
+substitution control at the interface's own boundary. The prior no-argument, permanently-
+`None` live-authorized-context gate and the one pytest assertion depending on it are removed
+outright, never renamed or reclassified into a differently-skipped placeholder. Selecting/
+opening the real Store, producing the real runtime Boot Context, and injecting it into this
+interface for a genuine live GitHub write are Phase 15's own explicitly deferred
+responsibility, never a Phase 14 Closure Condition:
+
+```text
+RUNTIME_INJECTION_INTERFACE_PROVED=true
+REAL_RUNTIME_CONTEXT_PROVISIONED=false
+LIVE_GITHUB_WRITE_EXECUTED=false
+PHASE_15_RUNTIME_PROVISIONING_REQUIRED=true
+```
+
+`V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.

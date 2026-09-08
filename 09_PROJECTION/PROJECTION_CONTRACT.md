@@ -1571,3 +1571,105 @@ recomputed identity (a corrupted or tampered Store). Round 6's own cleanup corre
 ```text
 P14_R11_F1_CLOSED=true
 ```
+
+## 20. Structural Review Round 12 corrections (`ADOPT_P14_R12_RUNTIME_INJECTION_INTERFACE_AND_PHASE15_PROVISIONING_BOUNDARY`)
+
+**F1: Phase 14 now owns and proves complete a formal, source-edit-free execution interface
+accepting an opaque, already-resolved trusted context; selecting/opening the real Store,
+producing the real runtime Boot Context, and injecting it into that interface for a genuine
+live GitHub write are Phase 15's own explicitly deferred responsibility, never a Phase 14
+Closure Condition.** Round 11's own `_v3_live_authorized_context()` (a no-argument,
+collection-time function gating the one live-target pytest assertion) permanently returned
+`None` and was documented as "no genuine external caller exists yet" -- but structural review
+found this framing itself mistaken: a no-argument function has no injection point at all, so
+its own docstring claim that a future runtime caller could "activate it without source edits"
+was false, not merely an honest disclosed gap. SHUKOU resolved the resulting phase-boundary
+ambiguity by selecting Option A: Phase 14's own Closure Condition is redefined to be the
+*interface* itself -- proven against a genuinely resolved context this repository's own test
+suite constructs directly -- while real Store provisioning and any live write are recorded as
+Phase 15 responsibilities.
+
+`tests/fixtures/v3_live_write_authority.py` adds `execute_v3_authorized_projection(context, *,
+projection_kind, target_repository, projection_payload, adapter, materialized_at,
+attempt_claim_token)` -- the one formal boundary through which any caller, present or future,
+threads V3 live-write authority into `project_to_github`. `context` is the function's own first,
+required, un-defaulted parameter; the function accepts no Store path, no environment-selected
+Project/Binding, no embedded authoritative record body, no caller-supplied subject body or
+separate `subjects` mapping, no signing key, and no Authority assembler -- proven by two new
+static conformance tests (`test_execute_v3_authorized_projection_requires_the_opaque_context_
+first`, `test_execute_v3_authorized_projection_accepts_no_authoritative_or_store_selecting_
+parameter`) applying the identical closed-parameter discipline already proved for
+`resolve_v3_live_write_authority`. The function revalidates `context`'s own freshness
+(`v3_execution_context_still_current`) *inside itself*, immediately before the
+`project_to_github` call -- never left to a caller's own discipline to remember, closing the gap
+where a caller-orchestrated loop could, in principle, forget to recheck between calls.
+
+Making a genuinely reusable multi-call interface out of an immutable, frozen
+`V3AuthorizedExecutionContext` surfaced a real design gap the finding's own required positive
+control (three genuine materializations against one context, in one run) is what actually
+exercised for the first time: every prior round's own "call the same context repeatedly" code
+path was reachable only through the permanently-`None`-gated live test, so a successful call's
+own legitimate Envelope commit -- which necessarily advances the Store's `state_revision` --
+had never been distinguished from an external mutation. `execute_v3_authorized_projection` now
+returns a refreshed `V3AuthorizedExecutionContext` (byte-identical to the input except for
+`state_revision`/`semantic_fingerprint`, re-observed from the same Store immediately after the
+call's own commit) under the outcome mapping's own `"context"` key; a caller chaining multiple
+calls within the same run threads `outcome["context"]` forward, exactly as a real multi-
+projection runtime caller would. This is disclosed here explicitly as a genuine correction
+found and fixed during this round's own implementation, not merely a documentation update.
+
+The prior no-argument live-authorized-context gate (`_v3_live_authorized_context()`,
+`_v3_live_authorized()`) and the one pytest assertion depending on it
+(`test_v3_authorized_full_three_projection_run_against_the_live_target`) are removed outright
+from `tests/integration/projection/test_v3_real_github_vertical_proof.py` -- never renamed or
+reclassified into a differently-skipped placeholder, per this finding's own explicit
+instruction. `_run_v3_authorized_execution` (the offline budget/cleanup/failure-injection test
+harness) drops the `context`-carrying branch this dead code path previously also offered: every
+projection kind it drives always binds its own fresh, disconnected Project via
+`_run_vertical_proof`, which has nothing to do with V3 live-write authority.
+
+Two new integration tests satisfy this finding's own required positive and attacker-world
+controls at the interface's own boundary, rather than at `resolve_v3_live_write_authority`'s:
+
+- `test_v3_authorized_interface_reaches_the_controlled_adapter_for_all_three_projection_kinds`
+  invokes `execute_v3_authorized_projection` directly -- never a lower helper -- for all three
+  projection kinds against one genuinely resolved, preconstructed context a trusted bootstrap
+  fixture supplies, threading the refreshed context forward between calls, over the controlled
+  `FakeGitHubAdapter`, with `urllib.request.urlopen` monkeypatched to raise: zero network calls
+  of any kind, three verified materializations/observations, no Authority issuance, no
+  alternate Store selection. Cleanup semantics are deliberately *not* re-exercised here --
+  disclosed explicitly: `FakeGitHubAdapter`'s own cleanup step would require
+  `urllib.request.urlopen` even when mocked, which this control's own "zero network calls of
+  any kind" requirement (inherited unchanged from Round 8's own positive control) forbids --
+  the accepted Round 6 cleanup correction remains covered, unchanged, by the retained offline
+  mocked-transport suite (`test_v3_authorized_full_three_projection_run_enforces_the_
+  authorized_artifact_count_and_completes_cleanup`).
+- `test_attacker_context_cannot_be_substituted_for_the_trusted_bootstrap_context_at_the_
+  interface_boundary` resolves a second, fully self-consistent `V3AuthorizedExecutionContext`
+  from an attacker's own separate Store and material (a different `target_repository`), then
+  calls `execute_v3_authorized_projection` with that attacker context but the *genuine* run's
+  own intended `target_repository`/`projection_payload` -- proving `ProjectionRequirementError`
+  before any adapter call: the attacker's own pre-issued grant is bound to the attacker's own
+  `target_repository` at resolve time, so the exact-binding Authority Decision check inside
+  `project_to_github` itself refuses the mismatch. A `_ForbiddenCallAdapter` wraps the adapter,
+  raising immediately if `materialize`/`find_by_correlation_key`/`observe` is ever actually
+  invoked -- a trip-wire proving zero adapter calls, not merely that the final outcome happens
+  to be a refusal.
+
+`09_PROJECTION/PROJECTION_INDEX.md` is updated to record the corrected Phase 14/Phase 15
+boundary and the required distinction:
+
+```text
+RUNTIME_INJECTION_INTERFACE_PROVED=true
+REAL_RUNTIME_CONTEXT_PROVISIONED=false
+LIVE_GITHUB_WRITE_EXECUTED=false
+PHASE_15_RUNTIME_PROVISIONING_REQUIRED=true
+```
+
+All previously closed Phase 14 findings remain closed and untouched by this round's diff
+except where explicitly extended above (the freshness-refresh mechanism). Round 6's own
+cleanup correction (§14, `P14_R6_F1`) remains intact.
+
+```text
+P14_R12_F1_CLOSED=true
+```
