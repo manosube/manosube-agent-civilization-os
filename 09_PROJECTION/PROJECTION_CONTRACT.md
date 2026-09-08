@@ -13,6 +13,7 @@ CORRECTION_ADOPTION_ID_ROUND_3=ADOPT_P14_R3_UNIQUE_CLAIM_ATTESTED_RECEIPT_AND_CO
 CORRECTION_ADOPTION_ID_ROUND_4=ADOPT_P14_R4_TERMINAL_CLAIM_ATTESTED_RECEIPT_AND_SOURCE_EDIT_FREE_V3
 CORRECTION_ADOPTION_ID_ROUND_5=ADOPT_P14_R5_TERMINAL_CLAIM_INTEGRITY_AND_BOUND_V3_EXECUTION
 CORRECTION_ADOPTION_ID_ROUND_6=ADOPT_P14_R6_AUTHORITY_BOUND_V3_AND_OBSERVED_CLEANUP
+CORRECTION_ADOPTION_ID_ROUND_7=ADOPT_P14_R7_EXTERNAL_TRUST_ANCHOR_FOR_V3_AUTHORITY
 GOVERNING_ISSUE=#62
 REVIEWED_MAIN_SHA=7fc597356330a0d1da7a334ef20cd913b74154d
 ```
@@ -1161,4 +1162,59 @@ gate refuses with zero network calls ever attempted on its strength.
 ```text
 P14_R6_F1_CLOSED=true
 P14_R6_F2_CLOSED=true
+```
+
+## 15. Structural Review Round 7 corrections (`ADOPT_P14_R7_EXTERNAL_TRUST_ANCHOR_FOR_V3_AUTHORITY`)
+
+**F1: the V3 Live Write Authority's live trust anchor now has no matching private key
+anywhere in this repository, its runtime package, its live harness, or any importable
+module.** §14's own F2 replaced Round 5's caller-computable-digest gate with a genuinely
+signed record -- but kept the matching **private** signing key in the same importable module
+(`tests/fixtures/v3_live_write_authority.py`) as the verifier, and exposed a public
+`assemble_v3_live_write_authority` capable of minting a fully `ACTIVE` record for any
+caller-selected configuration, target, or boundary. Any caller able to import that one module
+could therefore mint a signature the live gate would accept for whatever V3 execution it
+wanted -- a caller-computable *signature* in place of Round 5's caller-computable *digest*,
+without changing who actually controls authorization. `tests/fixtures/v3_live_write_
+authority.py` is now a pure verifier: it exports `V3_LIVE_TRUST_ANCHOR`, a fixed,
+non-caller-controlled public key (generated once, outside any persisted process, with the
+matching private key discarded and never written to this repository), and
+`v3_live_write_authorized(config, authority_record, *, evaluation_time, trust_anchor)` --
+`trust_anchor` is now a required keyword-only argument with no default, so nothing in this
+module can silently fall back to a caller-reachable value. The module defines no private key,
+no signing helper, and no authority-issuance capability of any kind; `Ed25519PrivateKey` is
+never imported by it. A dedicated, clearly test-only signer
+(`tests/fixtures/v3_live_write_authority_test_signer.py`, new) holds a distinct keypair
+(`key_id="V3-TEST-TRUST-ROOT-0001"`, structurally different from the live anchor's
+`key_id="V3-LIVE-TRUST-ANCHOR-0001"`) so offline tests can still exercise the pure
+verification logic under an explicitly injected test trust anchor -- this module is never
+imported by the live gate module or by the one live call site
+(`_v3_live_authorized()` in `test_v3_real_github_vertical_proof.py`), which always and only
+passes `trust_anchor=V3_LIVE_TRUST_ANCHOR`, hardcoded in its own source, with no environment
+variable, record field, or other caller-reachable input able to substitute a different trust
+anchor. A genuinely signed V3 Live Write Authority artifact must therefore be issued entirely
+outside this repository, through the existing canonical Authority/Binding route, exactly as
+`manosube_agent_civilization.binding.signature`'s own docstring already states for Project
+Binding's Human Authority key ("the Human's own private key never touches this system at all,
+only the public verification key"). A new static conformance test
+(`tests/contract/projection/test_v3_live_write_authority_static_conformance.py`) proves, by
+AST-walking module source rather than by convention: the live gate module never imports the
+test signer or `Ed25519PrivateKey`; it defines none of Round 6's own removed signing helpers;
+the entire shipped Kernel package (`src/manosube_agent_civilization`) names no V3 authority
+module, constant, or literal and imports no `Ed25519PrivateKey`; the live call site's own
+function body textually hardcodes `trust_anchor=V3_LIVE_TRUST_ANCHOR` and nothing else; and
+the test and live trust anchors are structurally distinct by both `key_id` and `public_key`.
+`tests/unit/projection/test_v3_live_write_authority.py` retains every required negative
+control from §14 (fabricated, stale, wrong-fingerprint, wrong-target, wrong-action,
+widened-boundary), now run against the explicitly injected test trust anchor, and adds the
+exact regression this finding corrects: a byte-for-byte genuine record signed by the test
+signer is refused when verified against the live trust anchor, since no signature the test
+signer ever produces can validate against a public key it holds no matching private key for.
+`test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls` (integration file,
+retained from §14) continues to prove zero network calls on a mismatched authority, now using
+the test signer to construct its genuinely-signed-but-wrong-fingerprint record.
+`V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` remains this delivery's own state throughout.
+
+```text
+P14_R7_F1_CLOSED=true
 ```

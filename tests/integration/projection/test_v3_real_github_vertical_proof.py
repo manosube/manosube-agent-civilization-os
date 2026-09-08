@@ -50,10 +50,13 @@ from tests.fixtures.product_binding import (
     sign_github_projection_grant_declaration,
 )
 from tests.fixtures.v3_live_write_authority import (
+    V3_LIVE_TRUST_ANCHOR,
     V3_LIVE_WRITE_AUTHORITY_RECORD_ENV,
-    assemble_v3_live_write_authority,
     load_v3_live_write_authority_record,
     v3_live_write_authorized,
+)
+from tests.fixtures.v3_live_write_authority_test_signer import (
+    assemble_v3_live_write_authority_for_test,
 )
 from tests.fixtures.v3_target_configuration import (
     ALL_V3_ENV_VARS,
@@ -141,23 +144,31 @@ def _v3_authorized() -> bool:
 def _v3_live_authorized() -> bool:
     """Return whether the V3 harness's own real-adapter tests may actually run live
     (Structural Review Round 4, Issue #62, P14-R4-F3; genuine signed Human Authority,
-    Structural Review Round 6, P14-R6-F2): a fail-closed runtime gate requiring *all three* of
-    a fully validated, fully bound :class:`V3TargetConfiguration`, a genuine Ed25519-signed
-    V3 Live Write Authority record read from the environment
+    Structural Review Round 6, P14-R6-F2; external trust anchor, Structural Review Round 7,
+    P14-R7-F1): a fail-closed runtime gate requiring *all three* of a fully validated, fully
+    bound :class:`V3TargetConfiguration`, a genuine Ed25519-signed V3 Live Write Authority
+    record read from the environment
     (:func:`~tests.fixtures.v3_live_write_authority.load_v3_live_write_authority_record`), and
-    that record's own verification against the fixed, non-caller-controlled public key
-    (:func:`~tests.fixtures.v3_live_write_authority.v3_live_write_authorized`) -- always
-    ``False`` in this delivery. This function, not a hardcoded ``pytest.mark.skip``, is what
-    the real-adapter tests below are gated on, so a later round that supplies a genuinely
-    signed authority record via the environment activates them *without any source edit* to
-    this file. *evaluation_time* is read from the real clock here, at this one call site,
-    and passed explicitly into the pure ``v3_live_write_authorized`` -- never read inside that
-    function itself."""
+    that record's own verification against :data:`~tests.fixtures.v3_live_write_authority.
+    V3_LIVE_TRUST_ANCHOR` -- the fixed, non-caller-controlled public trust anchor this one call
+    site always and only supplies, with no matching private key existing anywhere in this
+    repository (Structural Review Round 7 closes the prior round's own caller-computable-
+    signature gap: a genuinely signed *test* record could never be mistaken for a live-accepted
+    one, since :func:`v3_live_write_authorized` never falls back to any trust anchor other than
+    the one explicitly passed here) -- always ``False`` in this delivery. This function, not a
+    hardcoded ``pytest.mark.skip``, is what the real-adapter tests below are gated on, so a
+    later round that supplies a genuinely signed authority record via the environment (issued
+    entirely outside this repository, through the existing canonical Authority/Binding route)
+    activates them *without any source edit* to this file. *evaluation_time* is read from the
+    real clock here, at this one call site, and passed explicitly into the pure
+    ``v3_live_write_authorized`` -- never read inside that function itself."""
 
     config = load_v3_target_configuration()
     authority_record = load_v3_live_write_authority_record()
     evaluation_time = datetime.now(UTC).isoformat()
-    return v3_live_write_authorized(config, authority_record, evaluation_time=evaluation_time)
+    return v3_live_write_authorized(
+        config, authority_record, evaluation_time=evaluation_time, trust_anchor=V3_LIVE_TRUST_ANCHOR
+    )
 
 
 def _bound(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any]]:
@@ -701,7 +712,15 @@ def test_v3_authorization_is_not_yet_configured_in_this_environment() -> None:
     assert _v3_authorized() is False
     assert load_v3_target_configuration() is None
     assert load_v3_live_write_authority_record() is None
-    assert v3_live_write_authorized(None, None, evaluation_time="2026-09-08T00:00:00Z") is False
+    assert (
+        v3_live_write_authorized(
+            None,
+            None,
+            evaluation_time="2026-09-08T00:00:00Z",
+            trust_anchor=V3_LIVE_TRUST_ANCHOR,
+        )
+        is False
+    )
     assert _v3_live_authorized() is False
 
 
@@ -734,9 +753,12 @@ def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
     config = load_v3_target_configuration()
     assert config is not None
 
-    # A genuinely well-formed, genuinely *signed* record -- but for a different (wrong)
-    # configuration fingerprint. Real cryptographic material, real shape, still refused.
-    mismatched_record = assemble_v3_live_write_authority(
+    # A genuinely well-formed, genuinely *signed* (by the test-only signer, never the live
+    # trust anchor) record -- but for a different (wrong) configuration fingerprint. Real
+    # cryptographic material, real shape, still refused: both because the fingerprint is wrong
+    # and because it is signed by a key that could never verify under V3_LIVE_TRUST_ANCHOR in
+    # the first place (Structural Review Round 7, P14-R7-F1).
+    mismatched_record = assemble_v3_live_write_authority_for_test(
         configuration_fingerprint="sha256:" + "0" * 64,
         target_repository=config.target_repository,
         authorized_artifact_kinds=config.authorized_artifact_kinds,
@@ -883,7 +905,9 @@ def test_v3_authorized_full_three_projection_run_against_the_live_target(tmp_pat
     assert config is not None
     authority_record = load_v3_live_write_authority_record()
     evaluation_time = datetime.now(UTC).isoformat()
-    assert v3_live_write_authorized(config, authority_record, evaluation_time=evaluation_time)
+    assert v3_live_write_authorized(
+        config, authority_record, evaluation_time=evaluation_time, trust_anchor=V3_LIVE_TRUST_ANCHOR
+    )
     result = _run_v3_authorized_execution(
         tmp_path, config, lambda projection_kind: RealGitHubAdapter(token=config.token)
     )

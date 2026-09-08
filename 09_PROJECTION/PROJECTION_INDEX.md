@@ -196,6 +196,9 @@ CLEANUP_REGISTERED_AT_EXTERNAL_WRITE_BOUNDARY_NOT_AFTER_ROUTE_RETURN=true
 CLEANUP_TERMINAL_STATE_INDEPENDENTLY_VERIFIED_NOT_HTTP_SUCCESS_ALONE=true
 V3_LIVE_WRITE_AUTHORITY_IS_A_GENUINE_SIGNED_HUMAN_AUTHORITY_RECORD=true
 UNAUTHORIZED_OR_MISMATCHED_V3_AUTHORITY_CAUSES_ZERO_NETWORK_CALLS=true
+V3_LIVE_TRUST_ANCHOR_HAS_NO_MATCHING_PRIVATE_KEY_IN_SHIPPED_OR_LIVE_CODE=true
+V3_LIVE_CALL_SITE_HARDCODES_ITS_OWN_TRUST_ANCHOR_NO_CALLER_INJECTION=true
+TEST_ONLY_SIGNER_STRUCTURALLY_UNREACHABLE_FROM_THE_LIVE_GATE=true
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
@@ -253,6 +256,22 @@ itself Authority. A fabricated, stale, wrong-fingerprint, wrong-target, wrong-ac
 widened-boundary authority record refuses before any network call this harness would have made
 on its strength, proved by a monkeypatched `urllib.request.urlopen` that raises if ever
 invoked. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
+The three lines immediately above `PHASE_14_COMPLETE` record Structural Review Round 7's own
+correction (`ADOPT_P14_R7_EXTERNAL_TRUST_ANCHOR_FOR_V3_AUTHORITY`) -- see
+`PROJECTION_CONTRACT.md` §15 for the full detail: the V3 Live Write Authority's live trust
+anchor (`tests/fixtures/v3_live_write_authority.py`) is now a fixed public key with no matching
+private key anywhere in this repository, its runtime package, or its live harness --
+Round 6's own signing helpers (`assemble_v3_live_write_authority` and the private key behind
+it) are removed from that module entirely, replaced by `V3_LIVE_TRUST_ANCHOR` and a
+`v3_live_write_authorized` that now requires its `trust_anchor` as an explicit, required
+keyword argument. The one live call site hardcodes that exact anchor in its own source, with
+no environment variable, record field, or other caller-reachable input able to substitute a
+different one. A dedicated, structurally separate test-only signer
+(`tests/fixtures/v3_live_write_authority_test_signer.py`) lets offline tests still exercise the
+verification logic under an explicitly injected, distinct test trust anchor that can never be
+mistaken for, and can never verify against, the live one -- proven by a new AST-based static
+conformance test rather than by convention. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still
+holds, unchanged by any of this.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.
