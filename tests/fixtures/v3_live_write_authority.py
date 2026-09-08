@@ -1,63 +1,50 @@
 """Genuine, canonically-issuable SHUKOU/Human Authority for V3 live-write execution
 (Structural Review Round 6, Issue #62, P14-R6-F2; external trust anchor, Round 7, P14-R7-F1;
 canonical issuable authority, Round 8, P14-R8-F1; Store/Boot-resolved authority routed to
-execution, Round 9, P14-R9-F1).
+execution, Round 9, P14-R9-F1; trusted Boot root and pre-issued execution authority,
+Round 10, P14-R10-F1).
 
-Round 6 replaced a caller-computable digest with a genuinely Ed25519-signed record, but kept
-the matching private key in the same importable module as the verifier. Round 7 removed that
-private key entirely, replacing it with a fixed public trust anchor that could never actually
-be issued. Round 8 corrected both defects by reusing the existing canonical Project Binding /
-Human Authority / signed Grant Declaration / Authority Decision route
-(:func:`~manosube_agent_civilization.authority.projection_authorization.
-evaluate_projection_authorization`) -- but still let a caller hand this module the complete
-``project_binding``/``grants``/``grant_declarations`` record **bodies** directly, as one
-JSON-encoded blob. A caller who could fabricate a self-consistent, correctly-signed set of
-bodies -- without ever actually committing any of it to the real canonical Store -- could
-still mint material this module would accept.
+Round 9 replaced caller-supplied Project Binding/grant/declaration record **bodies** with
+project-scoped **references** resolved against a real canonical Store -- but the *Store
+itself* (its root path, ``project_id``, and ``project_binding_id``) still came from the same
+caller-supplied ``references`` blob. A caller who fully and genuinely commits their own
+self-consistent, attacker-controlled Store -- their own Project Binding, their own signing
+key, their own genuinely-signed grants -- could simply point ``store_root`` at it and pass
+Round 9's own checks: every record would genuinely resolve, every signature would genuinely
+verify, because the whole universe of records was internally self-consistent by construction.
+Round 9 never fixed *which* Store was trustworthy in the first place.
 
-Structural Review Round 9 (P14-R9-F1) closes that gap: this module now consumes only
-project-scoped **references** (:class:`V3LiveWriteAuthorityReferences` -- a Store root, a
-``project_id``, a ``project_binding_id``, and lists of ``{"kind", "id"}`` grant/declaration
-references), never authoritative record bodies. :func:`resolve_v3_live_write_authority`
-resolves the Project Binding through the identical canonical Boot route a real GitHub
-projection call already uses (:func:`~manosube_agent_civilization.boot.boot_project`),
-resolves each referenced grant/declaration through the Store's own ``resolve_record`` surface,
-and only then asks :func:`~manosube_agent_civilization.authority.projection_authorization.
-evaluate_projection_authorization` whether the resolved bodies authorize ``MATERIALIZE_
-PROJECTION`` for a V3-configuration-shaped subject, independently for each of the three
-projection kinds the V3 harness exercises. A fully self-consistent, correctly-signed but never
--committed set of bodies therefore authorizes nothing: ``store.resolve_record`` returns
-``None`` for any reference that was never actually committed, and this module refuses before
-ever reaching ``evaluate_projection_authorization``.
+Round 10 (P14-R10-F1) closes that gap by splitting trust into two independently supplied
+inputs this module never lets a caller conflate:
 
-On success, :func:`resolve_v3_live_write_authority` returns one immutable
-:class:`V3AuthorizedExecutionContext` -- the Store, the exact resolved references, the
-verified Human Authority reference, and the Store's own ``state_revision``/
-``semantic_fingerprint`` at the moment of authorization -- which the caller must thread
-unchanged into the exact execution function that reaches the GitHub adapter. There is no
-detached boolean gate: a caller cannot authorize against one set of Store-resolved references
-and then execute against a different one, because the execution function accepts only this one
-opaque context, never a separately assembled project_id/refs tuple of its own.
-:func:`v3_execution_context_still_current` re-Boots the identical project/binding a context
-already verified and requires the Store's own revision/fingerprint to be byte-identical to what
-authorization itself observed, so a Store mutation between authorization and the moment
-execution actually reaches the adapter is detected and refused rather than silently ignored.
+1. :class:`V3TrustedBootRoot` -- the Store root, ``project_id``, and ``project_binding_id``,
+   supplied through its own environment variable
+   (:data:`V3_TRUSTED_BOOT_ROOT_ENV`), entirely independent of the untrusted authority
+   references below. :func:`resolve_v3_live_write_authority` never selects a Store, Project,
+   or Project Binding from anything a caller's authority references carry -- there is nowhere
+   in :class:`V3LiveWriteAuthorityReferences` even capable of naming one.
+2. :class:`V3LiveWriteAuthorityReferences` -- now *only* grant/declaration reference lists,
+   resolved exclusively **within** the trusted Store the first input already fixed.
 
-No new Authority owner, private-key registry, signing service, token owner, or hidden
-persistence surface is created here: the only concept this module still owns is *what subject*
-is being authorized (the V3 target configuration itself, addressed by its own
-``configuration_fingerprint``), never *how* that authorization is verified, and never *where*
-its Project Binding, grants, or declarations are resolved from -- that remains the real
-canonical Store and Boot, exactly as a production GitHub projection call already uses
-(:func:`~manosube_agent_civilization.projection.route.project_to_github`, whose own
-``_authorize_projection`` resolves caller-supplied grant/declaration **references** through the
-Store in the identical shape this module now mirrors).
+Round 9 also let the live *execution* path mint a fresh, subject-scoped grant/declaration per
+run using this repository's own test-only signing key
+(:mod:`tests.fixtures.product_binding`) -- a detour Round 8's own docstring already named as
+the exact defect the whole canonical-Authority-route design exists to close. Round 10 requires
+every subject-specific grant, signed declaration, and Authority Decision that
+``project_to_github`` actually consumes to already be externally issued, committed,
+Store-resolved, and identity-recomputed from the trusted Store *before* this module is ever
+asked to authorize anything -- :func:`resolve_v3_live_write_authority` resolves exactly one
+pre-issued grant/declaration pair per :data:`V3_PROJECTION_KINDS`, carries them unchanged in
+:class:`V3AuthorizedExecutionContext`, and never mints, signs, or commits anything itself.
+This module holds no private key, imports no signing helper (repository-held or otherwise),
+and opens no Store from caller-supplied data -- proven by
+``tests/contract/projection/test_v3_live_write_authority_static_conformance.py``.
 
-This module is deliberately test/harness-only, exactly as :mod:`tests.fixtures.
-v3_target_configuration` already is for the configuration it binds -- a genuine live grant
-must still be issued entirely outside this repository, by whoever genuinely holds the real
-Project Binding's Human Authority private key, committed to the real canonical Store by
-whatever process SHUKOU authorizes for that Store.
+:func:`v3_execution_context_still_current` re-Boots the trusted Store immediately before every
+adapter-reaching call and requires its ``state_revision``/``semantic_fingerprint`` to be
+byte-identical to what authorization itself observed, so a Store mutation -- or any
+substitution of the resolved context's own fields -- between authorization and execution is
+detected and refused rather than silently accepted.
 """
 
 from __future__ import annotations
@@ -70,10 +57,14 @@ from pathlib import Path
 from typing import Any
 
 from manosube_agent_civilization.authority.errors import AuthorityError
+from manosube_agent_civilization.authority.identity import github_projection_grant_id
 from manosube_agent_civilization.authority.projection_authorization import (
     evaluate_projection_authorization,
 )
 from manosube_agent_civilization.binding.errors import BindingError
+from manosube_agent_civilization.binding.identity import (
+    verify_github_projection_grant_declaration_identity,
+)
 from manosube_agent_civilization.boot import BootError, boot_project
 from manosube_agent_civilization.store import FileStateStore
 from manosube_agent_civilization.store.errors import StoreError
@@ -86,15 +77,8 @@ from .v3_target_configuration import V3TargetConfiguration
 #: does. No V3-specific action literal exists, and none is introduced here.
 V3_PERMITTED_ACTION = "MATERIALIZE_PROJECTION"
 
-#: The subject kind this module's own V3-configuration-shaped ``subject_ref`` names --
-#: distinct from ``"difference"``/``"change"``/``"observation_evidence"``, the subject kinds a
-#: *production* projection's own ``subject_ref`` names, so a V3 harness's own grant/
-#: declaration/decision can never be mistaken for -- or substituted into -- a production
-#: projection's own authorization, and vice versa.
-V3_CONFIGURATION_SUBJECT_KIND = "v3_target_configuration"
-
 #: Every projection kind the V3 harness exercises. An authorized V3 execution requires an
-#: independent ``evaluate_projection_authorization`` ``PROJECTION_AUTHORIZED`` decision for
+#: independent, pre-issued grant/declaration pair and ``PROJECTION_AUTHORIZED`` decision for
 #: *each* of these -- one grant standing in for all three is never sufficient.
 V3_PROJECTION_KINDS: tuple[str, ...] = (
     "DIFFERENCE_ISSUE",
@@ -102,11 +86,16 @@ V3_PROJECTION_KINDS: tuple[str, ...] = (
     "EVIDENCE_ARTIFACT",
 )
 
+#: The environment variable carrying the independently supplied trusted runtime Store/Boot
+#: root (Structural Review Round 10, P14-R10-F1) -- a Store root, ``project_id``, and
+#: ``project_binding_id``, fixed entirely outside caller-controlled authority references.
+V3_TRUSTED_BOOT_ROOT_ENV = "MANOSUBE_P14_V3_TRUSTED_BOOT_ROOT"
+
 #: The environment variable carrying the complete, JSON-encoded V3 live-write authority
-#: **references** -- a Store root plus a ``project_id``/``project_binding_id``/grant and
-#: declaration reference list, never record bodies (Structural Review Round 9, P14-R9-F1,
-#: superseding Round 8's own now-removed ``V3_LIVE_WRITE_AUTHORITY_MATERIAL_ENV``, which
-#: carried embedded bodies directly).
+#: **references** -- grant/declaration reference lists only (Structural Review Round 10,
+#: P14-R10-F1 narrows this further: Round 9's own shape additionally carried a Store root and
+#: project/binding identity, which let a caller select an arbitrary, if fully self-consistent,
+#: Store -- neither field exists in this shape at all any more).
 V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV = "MANOSUBE_P14_V3_LIVE_WRITE_AUTHORITY_REFERENCES"
 
 _GRANT_REF_KIND = "github_projection_grant"
@@ -119,57 +108,85 @@ _DECLARATION_REF_KIND = "github_projection_grant_declaration"
 _BOOT_FAILURE_ERRORS: tuple[type[Exception], ...] = (BootError, StoreError, BindingError)
 
 
-def v3_configuration_subject_ref(config: V3TargetConfiguration) -> dict[str, str]:
-    """The V3-configuration-shaped ``subject_ref`` every grant/declaration/decision this
-    module consumes must name -- content-addressed by the configuration's own
-    ``configuration_fingerprint`` (already covering every bound field: repository, refs, SHA,
-    artifact kinds/count, naming, cleanup, no-merge -- see ``v3_target_configuration.py``)."""
+def _schema_root() -> Path:
+    from tests.state_helpers import SCHEMA_ROOT
 
-    return {"kind": V3_CONFIGURATION_SUBJECT_KIND, "id": config.configuration_fingerprint}
-
-
-def v3_projection_authorization_request(
-    config: V3TargetConfiguration,
-    *,
-    projection_kind: str,
-    project_id: str,
-    human_authority_ref: Mapping[str, Any],
-    human_authority_signing_key: Mapping[str, Any],
-    grants: list[Any],
-    grant_declarations: list[Any],
-) -> dict[str, Any]:
-    """One exact ``evaluate_projection_authorization`` request binding *config* and
-    *projection_kind* -- the identical request shape a production projection call builds,
-    applied here to the V3-configuration subject instead of a Difference/Change/Evidence one.
-    *grants*/*grant_declarations* are already Store-resolved bodies by the time this is called
-    -- this function itself never resolves or trusts anything, it only shapes the request."""
-
-    return {
-        "schema_version": "0.1",
-        "project_id": project_id,
-        "subject_ref": v3_configuration_subject_ref(config),
-        "subject_fingerprint": config.configuration_fingerprint,
-        "projection_kind": projection_kind,
-        "target_repository": dict(config.target_repository),
-        "payload_fingerprint": config.configuration_fingerprint,
-        "permitted_action": V3_PERMITTED_ACTION,
-        "human_authority_ref": dict(human_authority_ref),
-        "human_authority_signing_key": dict(human_authority_signing_key),
-        "grants": list(grants),
-        "grant_declarations": list(grant_declarations),
-    }
+    return SCHEMA_ROOT
 
 
 @dataclass(frozen=True, slots=True)
-class V3LiveWriteAuthorityReferences:
-    """Project-scoped **references** only -- never an authoritative Project Binding, grant,
-    declaration, or Authority Decision body (Structural Review Round 9, P14-R9-F1). Every
-    field here names *where* to resolve a canonical record from the real Store; none of them
-    *is* a record."""
+class V3TrustedBootRoot:
+    """The independently supplied trusted runtime Store/Boot root (Structural Review
+    Round 10, P14-R10-F1): a Store root, ``project_id``, and ``project_binding_id``, fixed
+    entirely outside any caller-supplied authority reference. Every grant/declaration
+    reference :class:`V3LiveWriteAuthorityReferences` names is resolved within, and only
+    within, the Store this root identifies."""
 
     store_root: str
     project_id: str
     project_binding_id: str
+
+
+def load_v3_trusted_boot_root(env: Mapping[str, str] | None = None) -> V3TrustedBootRoot | None:
+    """Read and JSON-decode :data:`V3_TRUSTED_BOOT_ROOT_ENV`, or return ``None`` if unset,
+    unparseable, not a JSON object, or missing/malformed any required field -- the identical
+    "malformed input is simply no authority, never an exception" discipline every other check
+    here applies. *env* defaults to :data:`os.environ`; performs no filesystem or network
+    access of its own."""
+
+    source = env if env is not None else os.environ
+    raw = source.get(V3_TRUSTED_BOOT_ROOT_ENV)
+    if raw is None:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    store_root = payload.get("store_root")
+    project_id = payload.get("project_id")
+    project_binding_id = payload.get("project_binding_id")
+    if not (
+        isinstance(store_root, str)
+        and store_root
+        and isinstance(project_id, str)
+        and project_id
+        and isinstance(project_binding_id, str)
+        and project_binding_id
+    ):
+        return None
+
+    return V3TrustedBootRoot(
+        store_root=store_root, project_id=project_id, project_binding_id=project_binding_id
+    )
+
+
+def open_v3_trusted_store(trusted_root: V3TrustedBootRoot | None) -> FileStateStore | None:
+    """Open the real canonical Store *trusted_root* names, or return ``None`` on any failure --
+    a local filesystem open, never network access. This is the *only* function in this module
+    capable of opening a Store, and it accepts only a :class:`V3TrustedBootRoot` -- never a
+    :class:`V3LiveWriteAuthorityReferences`, which carries no Store-selecting field of any kind
+    (Structural Review Round 10, P14-R10-F1)."""
+
+    if trusted_root is None:
+        return None
+    try:
+        return FileStateStore(Path(trusted_root.store_root), schema_root=_schema_root())
+    except (OSError, ValueError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class V3LiveWriteAuthorityReferences:
+    """Project-scoped grant/declaration **references** only -- never a Store root, a
+    ``project_id``, a ``project_binding_id``, or an authoritative record body (Structural
+    Review Round 9, P14-R9-F1; narrowed further by Round 10, P14-R10-F1, which removes the
+    Store-selecting fields Round 9's own shape still carried). Every reference here names
+    *where*, within the independently trusted Store, to resolve a canonical record; none of
+    them *is* a record, and none of them can select which Store to resolve from."""
+
     github_projection_grant_refs: tuple[Mapping[str, str], ...]
     github_projection_grant_declaration_refs: tuple[Mapping[str, str], ...]
 
@@ -194,15 +211,23 @@ def _parse_ref_list(raw: Any, *, kind: str) -> tuple[dict[str, str], ...] | None
     return tuple(refs)
 
 
+#: Keys that would signal a caller attempting to smuggle a Store-selecting field into the
+#: authority-references channel -- refused outright, never silently ignored (Structural Review
+#: Round 10, P14-R10-F1).
+_FORBIDDEN_REFERENCE_KEYS = ("store_root", "project_id", "project_binding_id")
+
+
 def load_v3_live_write_authority_references(
     env: Mapping[str, str] | None = None,
 ) -> V3LiveWriteAuthorityReferences | None:
     """Read and JSON-decode :data:`V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV`, or return ``None``
-    if unset, unparseable, not a JSON object, or missing/malformed any required field --
-    identical "malformed input is simply no authority, never an exception" discipline every
-    other check here applies. *env* defaults to :data:`os.environ`; performs no filesystem or
-    network access of its own -- only :func:`open_v3_live_write_store` and
-    :func:`resolve_v3_live_write_authority` touch the Store."""
+    if unset, unparseable, not a JSON object, missing/malformed any required field, or
+    attempting to carry a Store-selecting field (``store_root``/``project_id``/
+    ``project_binding_id``) at all -- fail closed on the exact smuggling attempt Round 10's own
+    finding names, never silently drop the extra keys and proceed. *env* defaults to
+    :data:`os.environ`; performs no filesystem or network access of its own -- only
+    :func:`open_v3_trusted_store` and :func:`resolve_v3_live_write_authority` touch the
+    Store, and only through :class:`V3TrustedBootRoot`."""
 
     source = env if env is not None else os.environ
     raw = source.get(V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV)
@@ -214,18 +239,7 @@ def load_v3_live_write_authority_references(
         return None
     if not isinstance(payload, dict):
         return None
-
-    store_root = payload.get("store_root")
-    project_id = payload.get("project_id")
-    project_binding_id = payload.get("project_binding_id")
-    if not (
-        isinstance(store_root, str)
-        and store_root
-        and isinstance(project_id, str)
-        and project_id
-        and isinstance(project_binding_id, str)
-        and project_binding_id
-    ):
+    if any(key in payload for key in _FORBIDDEN_REFERENCE_KEYS):
         return None
 
     grant_refs = _parse_ref_list(payload.get("github_projection_grant_refs"), kind=_GRANT_REF_KIND)
@@ -236,115 +250,147 @@ def load_v3_live_write_authority_references(
         return None
 
     return V3LiveWriteAuthorityReferences(
-        store_root=store_root,
-        project_id=project_id,
-        project_binding_id=project_binding_id,
         github_projection_grant_refs=grant_refs,
         github_projection_grant_declaration_refs=declaration_refs,
     )
 
 
-def _schema_root() -> Path:
-    from tests.state_helpers import SCHEMA_ROOT
+@dataclass(frozen=True, slots=True)
+class V3PreIssuedProjectionAuthority:
+    """One pre-issued, Store-resolved, identity-recomputed grant/declaration pair for exactly
+    one projection kind, bound to whatever real subject the trusted Store's own pre-issued
+    material already names -- never minted, signed, or committed by this module or by the live
+    execution path (Structural Review Round 10, P14-R10-F1). ``subject_ref`` is read only from
+    the resolved, identity-verified grant itself, never independently guessed or constructed
+    here."""
 
-    return SCHEMA_ROOT
-
-
-def open_v3_live_write_store(
-    references: V3LiveWriteAuthorityReferences | None,
-) -> FileStateStore | None:
-    """Open the real canonical Store *references* names, or return ``None`` on any failure --
-    a local filesystem open, never network access. This is the one additional I/O boundary
-    this module has beyond reading the environment (Structural Review Round 9, P14-R9-F1):
-    this module resolves records FROM a Store, it never accepts one constructed from
-    caller-supplied bodies."""
-
-    if references is None:
-        return None
-    try:
-        return FileStateStore(Path(references.store_root), schema_root=_schema_root())
-    except (OSError, ValueError):
-        return None
+    projection_kind: str
+    subject_ref: Mapping[str, str]
+    github_projection_grant_ref: Mapping[str, str]
+    github_projection_grant_declaration_ref: Mapping[str, str]
 
 
 @dataclass(frozen=True, slots=True)
 class V3AuthorizedExecutionContext:
     """The one resolved, verified authority context a genuinely authorized V3 run threads
-    unchanged into the exact execution function that reaches the GitHub adapter (Structural
-    Review Round 9, P14-R9-F1) -- never a detached boolean gate followed by a separately
-    fixture-authorized projection. Every field here was independently resolved and reverified
-    from the real canonical Store at the moment of authorization; nothing here was ever
-    accepted as a caller-supplied body. ``decisions`` preserves the exact
-    ``evaluate_projection_authorization`` result for each projection kind this context
-    authorized, keyed by projection kind."""
+    unchanged into the exact execution function that reaches the GitHub adapter -- never a
+    detached boolean gate followed by a separately fixture-authorized projection, and never a
+    live path capable of minting the subject-specific authority it consumes (Structural Review
+    Round 9, P14-R9-F1; Round 10, P14-R10-F1). Every field here was independently resolved and
+    reverified from the trusted Store at the moment of authorization; nothing here was ever
+    accepted as a caller-supplied body. ``authorities`` carries, for each of
+    :data:`V3_PROJECTION_KINDS`, the exact pre-issued grant/declaration/subject reference the
+    matching ``project_to_github`` call must use -- and no other. ``decisions`` preserves the
+    exact ``evaluate_projection_authorization`` result for each kind."""
 
     store: FileStateStore
     project_id: str
     project_binding_id: str
     github_authority_ref: Mapping[str, Any]
-    github_projection_grant_refs: tuple[Mapping[str, str], ...]
-    github_projection_grant_declaration_refs: tuple[Mapping[str, str], ...]
+    authorities: Mapping[str, V3PreIssuedProjectionAuthority]
     state_revision: int
     semantic_fingerprint: Mapping[str, Any]
     decisions: Mapping[str, Mapping[str, Any]]
 
 
-def _resolve_ref(
-    store: FileStateStore, project_id: str, ref: Mapping[str, str], *, kind: str
+def _resolve_grant(
+    store: FileStateStore, project_id: str, ref: Mapping[str, str]
 ) -> Mapping[str, Any] | None:
-    """Resolve exactly the record *ref* names, through the Store's own single by-(kind, id)
-    lookup surface -- never a caller-supplied body, and refused outright if *ref* does not even
-    name the expected kind."""
+    """Resolve exactly the ``github_projection_grant`` *ref* names, then independently
+    recompute its own content-addressed id and require it to reproduce -- "identity-recomputed"
+    (Structural Review Round 10, P14-R10-F1), never a resolved body trusted on Store lookup
+    alone."""
 
-    if ref.get("kind") != kind:
+    if ref.get("kind") != _GRANT_REF_KIND:
         return None
     record_id = ref.get("id")
     if not isinstance(record_id, str) or not record_id:
         return None
     try:
-        return store.resolve_record(project_id, kind, record_id)
+        body = store.resolve_record(project_id, _GRANT_REF_KIND, record_id)
     except _BOOT_FAILURE_ERRORS:
         return None
+    if body is None:
+        return None
+    try:
+        if github_projection_grant_id(dict(body)) != body.get("github_projection_grant_id"):
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return body
+
+
+def _resolve_declaration(
+    store: FileStateStore, project_id: str, ref: Mapping[str, str]
+) -> Mapping[str, Any] | None:
+    """Resolve exactly the ``github_projection_grant_declaration`` *ref* names, then
+    independently reverify its own content-addressed identity via the existing canonical
+    verifier -- "identity-recomputed" (Structural Review Round 10, P14-R10-F1)."""
+
+    if ref.get("kind") != _DECLARATION_REF_KIND:
+        return None
+    record_id = ref.get("id")
+    if not isinstance(record_id, str) or not record_id:
+        return None
+    try:
+        body = store.resolve_record(project_id, _DECLARATION_REF_KIND, record_id)
+    except _BOOT_FAILURE_ERRORS:
+        return None
+    if body is None:
+        return None
+    try:
+        verify_github_projection_grant_declaration_identity(dict(body))
+    except _BOOT_FAILURE_ERRORS:
+        return None
+    return body
 
 
 def resolve_v3_live_write_authority(
-    store: FileStateStore | None,
+    trusted_root: V3TrustedBootRoot | None,
     config: V3TargetConfiguration | None,
     references: V3LiveWriteAuthorityReferences | None,
 ) -> V3AuthorizedExecutionContext | None:
-    """Resolve *references* against *store* -- the real canonical Store, via the identical
-    canonical Boot route a real GitHub projection call already uses
-    (:func:`~manosube_agent_civilization.boot.boot_project`) -- and return one
-    :class:`V3AuthorizedExecutionContext` if, and only if, every resolved grant/declaration
-    genuinely authorizes ``MATERIALIZE_PROJECTION`` for *config*'s own V3-configuration
-    subject, independently for *every* projection kind in :data:`V3_PROJECTION_KINDS`, through
+    """Resolve *references* -- grant/declaration reference lists only -- exclusively within the
+    Store *trusted_root* independently identifies (Structural Review Round 10, P14-R10-F1),
+    Boot-restore the exact Project/Binding *trusted_root* names
+    (:func:`~manosube_agent_civilization.boot.boot_project`), and return one
+    :class:`V3AuthorizedExecutionContext` if, and only if, exactly one resolved grant and
+    exactly one anchoring declaration exist for *every* projection kind in
+    :data:`V3_PROJECTION_KINDS`, each bound to *config*'s own ``target_repository``, and each
+    genuinely authorizes ``MATERIALIZE_PROJECTION`` through
     :func:`~manosube_agent_civilization.authority.projection_authorization.
     evaluate_projection_authorization` -- the same function a production projection call
-    already trusts. Returns ``None`` on any failure: *store*/*config*/*references* missing,
-    the Project Binding failing to Boot-restore, any referenced grant or declaration failing
-    to resolve from the Store (Structural Review Round 9, P14-R9-F1's own required control: a
-    fully self-consistent, correctly-signed, but never-committed record must never authorize),
-    or any resolved projection kind's own authorization request refusing. Performs Store reads
-    only -- no network access of any kind, and never raises; a malformed grant, declaration, or
-    request that raises inside ``evaluate_projection_authorization`` is caught here as
-    :class:`~manosube_agent_civilization.authority.errors.AuthorityError` and treated as
-    refusal, since a live-write gate must never raise."""
+    already trusts. Returns ``None`` on any failure: *trusted_root*/*config*/*references*
+    missing, the Store failing to open, the Project Binding failing to Boot-restore, any
+    referenced grant or declaration failing to resolve or reproduce its own claimed identity,
+    zero or more than one grant/declaration per kind, a grant bound to a different
+    ``target_repository``, or any resolved kind's own authorization request refusing. Performs
+    Store reads only -- no network access of any kind, and never raises; a malformed grant,
+    declaration, or request that raises inside ``evaluate_projection_authorization`` is caught
+    here as :class:`~manosube_agent_civilization.authority.errors.AuthorityError` and treated
+    as refusal, since a live-write gate must never raise. Never mints, signs, or commits
+    anything -- every record consumed here was already externally issued and committed before
+    this call."""
 
-    if store is None or config is None or references is None:
+    if trusted_root is None or config is None or references is None:
+        return None
+
+    store = open_v3_trusted_store(trusted_root)
+    if store is None:
         return None
 
     try:
         boot_context = boot_project(
             store,
-            project_id=references.project_id,
-            project_binding_id=references.project_binding_id,
+            project_id=trusted_root.project_id,
+            project_binding_id=trusted_root.project_binding_id,
         )
     except _BOOT_FAILURE_ERRORS:
         return None
 
-    if boot_context.project_id != references.project_id:
+    if boot_context.project_id != trusted_root.project_id:
         return None
-    if boot_context.project_binding_id != references.project_binding_id:
+    if boot_context.project_binding_id != trusted_root.project_binding_id:
         return None
 
     human_authority_ref = boot_context.human_authority_ref
@@ -354,47 +400,89 @@ def resolve_v3_live_write_authority(
 
     grants: list[Mapping[str, Any]] = []
     for ref in references.github_projection_grant_refs:
-        body = _resolve_ref(store, references.project_id, ref, kind=_GRANT_REF_KIND)
+        body = _resolve_grant(store, trusted_root.project_id, ref)
         if body is None:
             return None
         grants.append(body)
 
     declarations: list[Mapping[str, Any]] = []
     for ref in references.github_projection_grant_declaration_refs:
-        body = _resolve_ref(store, references.project_id, ref, kind=_DECLARATION_REF_KIND)
+        body = _resolve_declaration(store, trusted_root.project_id, ref)
         if body is None:
             return None
         declarations.append(body)
 
     decisions: dict[str, Mapping[str, Any]] = {}
+    authorities: dict[str, V3PreIssuedProjectionAuthority] = {}
     for projection_kind in V3_PROJECTION_KINDS:
-        request = v3_projection_authorization_request(
-            config,
-            projection_kind=projection_kind,
-            project_id=references.project_id,
-            human_authority_ref=human_authority_ref,
-            human_authority_signing_key=human_authority_signing_key,
-            grants=grants,
-            grant_declarations=declarations,
-        )
+        matching_grants = [g for g in grants if g.get("projection_kind") == projection_kind]
+        if len(matching_grants) != 1:
+            return None
+        grant = matching_grants[0]
+
+        subject_ref = grant.get("subject_ref")
+        subject_fingerprint = grant.get("subject_fingerprint")
+        target_repository = grant.get("target_repository")
+        payload_fingerprint = grant.get("payload_fingerprint")
+        grant_id = grant.get("github_projection_grant_id")
+        if not isinstance(subject_ref, Mapping) or not isinstance(target_repository, Mapping):
+            return None
+        if not isinstance(grant_id, str) or not grant_id:
+            return None
+        if dict(target_repository) != dict(config.target_repository):
+            return None
+
+        matching_declarations = [
+            d
+            for d in declarations
+            if isinstance(d.get("grant_ref"), Mapping) and d["grant_ref"].get("id") == grant_id
+        ]
+        if len(matching_declarations) != 1:
+            return None
+        declaration = matching_declarations[0]
+        declaration_id = declaration.get("github_projection_grant_declaration_id")
+        if not isinstance(declaration_id, str) or not declaration_id:
+            return None
+
+        request = {
+            "schema_version": "0.1",
+            "project_id": trusted_root.project_id,
+            "subject_ref": dict(subject_ref),
+            "subject_fingerprint": subject_fingerprint,
+            "projection_kind": projection_kind,
+            "target_repository": dict(target_repository),
+            "payload_fingerprint": payload_fingerprint,
+            "permitted_action": V3_PERMITTED_ACTION,
+            "human_authority_ref": dict(human_authority_ref),
+            "human_authority_signing_key": dict(human_authority_signing_key),
+            "grants": [grant],
+            "grant_declarations": [declaration],
+        }
         try:
             decision = evaluate_projection_authorization(request)
         except AuthorityError:
             return None
         if decision.get("decision") != "PROJECTION_AUTHORIZED":
             return None
+
         decisions[projection_kind] = decision
+        authorities[projection_kind] = V3PreIssuedProjectionAuthority(
+            projection_kind=projection_kind,
+            subject_ref=dict(subject_ref),
+            github_projection_grant_ref={"kind": _GRANT_REF_KIND, "id": grant_id},
+            github_projection_grant_declaration_ref={
+                "kind": _DECLARATION_REF_KIND,
+                "id": declaration_id,
+            },
+        )
 
     current_state = boot_context.current_state
     return V3AuthorizedExecutionContext(
         store=store,
-        project_id=references.project_id,
-        project_binding_id=references.project_binding_id,
+        project_id=trusted_root.project_id,
+        project_binding_id=trusted_root.project_binding_id,
         github_authority_ref=human_authority_ref,
-        github_projection_grant_refs=references.github_projection_grant_refs,
-        github_projection_grant_declaration_refs=(
-            references.github_projection_grant_declaration_refs
-        ),
+        authorities=authorities,
         state_revision=current_state["state_revision"],
         semantic_fingerprint=current_state["semantic_fingerprint"],
         decisions=decisions,
@@ -405,8 +493,9 @@ def v3_execution_context_still_current(context: V3AuthorizedExecutionContext | N
     """Re-Boot the identical project/binding *context* already verified and require the
     Store's own ``state_revision``/``semantic_fingerprint`` to be byte-identical to what
     authorization itself observed -- refusing on any Store mutation between authorization and
-    the moment *context* is actually handed to the adapter-reaching execution call
-    (Structural Review Round 9, P14-R9-F1: fail closed on Store revision drift). Returns
+    the moment *context* is actually handed to the adapter-reaching execution call. Intended to
+    be called immediately before *every* adapter-reaching ``project_to_github`` call this run
+    makes, not merely once at the start (Structural Review Round 10, P14-R10-F1). Returns
     ``False`` for ``context=None`` and never raises."""
 
     if context is None:

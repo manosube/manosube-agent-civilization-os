@@ -12,7 +12,7 @@
       "type": "object",
       "required": ["kind", "id"],
       "properties": {
-        "kind": {"enum": ["difference", "change", "observation_evidence", "v3_target_configuration"]},
+        "kind": {"enum": ["difference", "change", "observation_evidence"]},
         "id": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false

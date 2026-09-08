@@ -318,6 +318,20 @@ if the Store mutates between authorization and execution. `V3_LIVE_EXTERNAL_WRIT
 false` still holds, unchanged by any of this; the Round 8 `v3_target_configuration` schema
 extension remains unchanged and, per this round's own adoption, provisional until this
 canonical admission path passes structural review.
+The four lines immediately above `PHASE_14_COMPLETE` also record Structural Review Round 10's
+own correction (`ADOPT_P14_R10_TRUSTED_BOOT_ROOT_AND_PREISSUED_EXECUTION_AUTHORITY`) -- see
+`PROJECTION_CONTRACT.md` §18 for the full detail: the Store/Project/Binding those references
+are resolved *within* is no longer itself part of the untrusted references Round 9 still let a
+caller select -- it now comes from an independently supplied `V3TrustedBootRoot`, read from its
+own environment variable, so a caller-built, fully genuine, fully committed, but wrong Store is
+never even opened. Every subject-specific grant/declaration `project_to_github` actually
+consumes is now pre-issued, committed, Store-resolved, and identity-recomputed before live
+execution is ever asked to project anything -- the live execution path mints nothing and can no
+longer import this repository's own test signing helper at all, proven by a new AST-based
+static conformance test. The Round 8 `v3_target_configuration` schema extension, provisional
+since Round 9's own adoption, is reverted outright: the pre-issued, subject-specific grant model
+replaces the meta-grant model it was built for. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still
+holds, unchanged by any of this.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.

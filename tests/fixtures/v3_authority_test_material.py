@@ -1,32 +1,34 @@
 """Test-only V3 live-write authority material builder (Structural Review Round 8, Issue #62,
-P14-R8-F1; Store-committed material for Store/Boot-resolved authority, Round 9, P14-R9-F1).
+P14-R8-F1; Store-committed material for Store/Boot-resolved authority, Round 9, P14-R9-F1;
+trusted-Boot-root and pre-issued subject-specific authority, Round 10, P14-R10-F1).
 
-Round 8 built a genuinely content-address-verifiable ``project_binding`` plus signed
-``github_projection_grant``/``github_projection_grant_declaration`` records entirely offline
-(:func:`genuine_project_binding`, via :func:`~manosube_agent_civilization.binding.engine.
-assemble_project_binding` -- never touching the Store) and handed the raw bodies directly to
-the live gate. Round 9's own live gate (:mod:`tests.fixtures.v3_live_write_authority`) no
-longer accepts bodies at all: it resolves everything from the real canonical Store via Boot.
-This module now additionally builds a REAL, committed Store -- genuinely bound via
-:func:`~manosube_agent_civilization.binding.route.bind_project` (the real genesis route, never
-the offline-only :func:`~manosube_agent_civilization.binding.engine.assemble_project_binding`)
--- with one genuinely Ed25519-signed ``github_projection_grant``/``github_projection_grant_
-declaration`` pair committed per :data:`~tests.fixtures.v3_live_write_authority.
-V3_PROJECTION_KINDS`, and returns the project-scoped **references** naming them
-(:class:`~tests.fixtures.v3_live_write_authority.V3LiveWriteAuthorityReferences`) -- never the
-record bodies themselves. This is the identical route the V3 integration harness's own
-``_commit_grant``/``_commit_declaration`` helpers already use, reused here rather than
-duplicated (:func:`~manosube_agent_civilization.binding.route.declare_github_projection_grant`
-commits the declaration; the grant itself is a plain Store-committed record, exactly as a
-``github_projection_grant`` is everywhere else in this repository -- there is no second,
-grant-specific committing route to reuse).
+Round 9 built a genuinely committed Store plus a signed ``github_projection_grant``/
+``github_projection_grant_declaration`` pair per projection kind, each bound to a
+V3-configuration-shaped subject -- but the live-authorized *execution* path still minted a
+fresh, *subject*-specific grant/declaration for the actual Difference/Change/Evidence being
+projected, using this repository's own test-only signing helper
+(:mod:`tests.fixtures.product_binding`). Round 10 forbids exactly that: every subject-specific
+grant, signed declaration, and Authority Decision ``project_to_github`` actually consumes must
+already be externally issued, committed, Store-resolved, and identity-recomputed *before* the
+live execution path is ever asked to project anything.
+
+This module now builds, in one place, the real canonical subject (Difference/Change/Evidence)
+*and* its own pre-issued, genuinely Ed25519-signed grant/declaration pair together
+(:func:`commit_pre_issued_v3_authorities`) -- so the two can never drift apart -- committed
+into a real, genuinely bound Store (:func:`bind_v3_test_project`, via the real genesis route
+:func:`~manosube_agent_civilization.binding.route.bind_project`, never the offline-only
+:func:`~manosube_agent_civilization.binding.engine.assemble_project_binding`). The live
+execution path itself never calls any function in this module, never signs anything, and never
+invokes :mod:`tests.fixtures.product_binding` -- it only consumes the already-resolved
+:class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext`
+:func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority` returns.
 
 :func:`genuine_project_binding` (offline-only, never committed to any Store) is retained
 specifically for the required "fully self-consistent, correctly-signed, but never-committed
-record must never authorize" negative control this round adds: a caller able to fabricate a
-byte-for-byte genuine Project Binding and matching signed declarations, without ever actually
-committing any of it to the real canonical Store, must still authorize zero adapter calls,
-because ``store.resolve_record`` never resolves a reference nothing ever committed.
+record must never authorize" negative control: a caller able to fabricate a byte-for-byte
+genuine Project Binding and matching signed declarations, without ever actually committing any
+of it to the real canonical Store, must still authorize zero adapter calls, because
+``store.resolve_record`` never resolves a reference nothing ever committed.
 
 **This module is never imported by** :mod:`tests.fixtures.v3_live_write_authority` **or by
 the one live call site** (``_v3_live_authorized()`` in
@@ -34,8 +36,7 @@ the one live call site** (``_v3_live_authorized()`` in
 conformance test
 (``tests/contract/projection/test_v3_live_write_authority_static_conformance.py``) proves
 this by AST-walking both modules' own import statements. The live gate consumes only
-already-resolved Store records (via :func:`~tests.fixtures.v3_live_write_authority.
-resolve_v3_live_write_authority`); nothing in it can construct or sign a new record.
+already-resolved Store records; nothing in it can construct or sign a new record.
 """
 
 from __future__ import annotations
@@ -46,6 +47,9 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from tests.authority_helpers import action, derived_difference, rule, scope
+from tests.change_helpers import route as change_route
+from tests.evidence_helpers import observation_evidence_request
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.authority.identity import github_projection_grant_id
@@ -54,17 +58,56 @@ from manosube_agent_civilization.binding import (
     bind_project,
     declare_github_projection_grant,
 )
+from manosube_agent_civilization.change import derive_change
+from manosube_agent_civilization.change.identity import (
+    change_id as compute_change_id,
+    change_semantic_fingerprint,
+)
+from manosube_agent_civilization.difference.identity import difference_id as compute_difference_id
+from manosube_agent_civilization.evidence import derive_evidence
+from manosube_agent_civilization.evidence.identity import evidence_semantic_fingerprint
+from manosube_agent_civilization.projection.identity import projection_payload_fingerprint
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
 
 from . import product_binding
 from .v3_live_write_authority import (
     V3_PERMITTED_ACTION,
-    V3_PROJECTION_KINDS,
     V3LiveWriteAuthorityReferences,
-    v3_configuration_subject_ref,
 )
 from .v3_target_configuration import V3TargetConfiguration
+
+#: Which real canonical subject kind each projection kind's own pre-issued grant is bound to --
+#: the identical pairing the V3 harness's own controlled-adapter proofs already use.
+V3_RUN_PROJECTIONS: tuple[tuple[str, str], ...] = (
+    ("DIFFERENCE_ISSUE", "difference"),
+    ("CHANGE_PULL_REQUEST", "change"),
+    ("EVIDENCE_ARTIFACT", "observation_evidence"),
+)
+
+
+def v3_run_payload(config: V3TargetConfiguration, projection_kind: str) -> dict[str, Any]:
+    """The deterministic projection payload one full V3 run projects for *projection_kind* --
+    shared by pre-issuance (so a pre-issued grant's own ``payload_fingerprint`` matches what
+    execution actually projects) and by the harness's own execution-time payload
+    construction."""
+
+    if projection_kind == "DIFFERENCE_ISSUE":
+        return {"title": f"{config.artifact_naming_prefix} -- Difference", "body": "harness"}
+    if projection_kind == "CHANGE_PULL_REQUEST":
+        return {
+            "title": f"{config.artifact_naming_prefix} -- Change",
+            "body": "harness",
+            "head_ref": config.change_head_ref,
+            "base_ref": config.change_base_ref,
+        }
+    return {
+        "name": config.artifact_naming_prefix,
+        "head_sha": config.evidence_head_sha,
+        "status": "completed",
+        "conclusion": "neutral",
+        "output": {"title": config.artifact_naming_prefix, "summary": "harness"},
+    }
 
 
 def genuine_project_binding() -> dict[str, Any]:
@@ -151,16 +194,70 @@ def commit_v3_test_records(
     return successor
 
 
-def commit_genuine_v3_grants_and_declarations(
+def build_v3_subject(
+    store: FileStateStore,
+    project_id: str,
+    current_state: dict[str, Any],
+    subject_kind: str,
+    *,
+    transaction_id: str = "TX-V3-EVIDENCE-0001",
+) -> tuple[dict[str, Any], str, dict[str, Any] | None, dict[str, Any]]:
+    """Build (and, for ``observation_evidence``, commit) one real canonical subject of
+    *subject_kind* -- the identical subject-construction logic every projection-kind proof in
+    this repository shares. Returns ``(subject_ref, subject_fingerprint, subject_record,
+    current_state)`` -- *subject_record* is the full body for ``difference``/``change``
+    (``project_to_github`` never Store-resolves those kinds) and ``None`` for
+    ``observation_evidence`` (Store-resolved instead); *current_state* only advances for
+    ``observation_evidence``, which must commit its own subject record before it can be
+    referenced."""
+
+    if subject_kind == "difference":
+        difference = dict(derived_difference())
+        difference["project_id"] = project_id
+        difference["difference_id"] = compute_difference_id(difference)
+        subject_ref = {"kind": "difference", "id": difference["difference_id"]}
+        subject_fingerprint = (
+            "sha256:" + hashlib.sha256(difference["difference_id"].encode("utf-8")).hexdigest()
+        )
+        return subject_ref, subject_fingerprint, difference, current_state
+    if subject_kind == "change":
+        difference = dict(derived_difference())
+        difference["project_id"] = project_id
+        difference["difference_id"] = compute_difference_id(difference)
+        _authority_input, _decision, change_request = change_route(
+            difference, action(), scope(), rules=[rule(project_id)]
+        )
+        change = derive_change(change_request)
+        subject_ref = {"kind": "change", "id": compute_change_id(change)}
+        subject_fingerprint = change_semantic_fingerprint(change)
+        return subject_ref, subject_fingerprint, change, current_state
+
+    evidence = derive_evidence(observation_evidence_request())
+    current_state = commit_v3_test_records(
+        store,
+        project_id,
+        current_state,
+        transaction_id,
+        [("observation_evidence", evidence["evidence_id"], evidence)],
+    )
+    subject_ref = {"kind": "observation_evidence", "id": evidence["evidence_id"]}
+    subject_fingerprint = evidence_semantic_fingerprint(evidence)
+    return subject_ref, subject_fingerprint, None, current_state
+
+
+def commit_pre_issued_v3_authorities(
     store: FileStateStore,
     ctx: dict[str, Any],
     config: V3TargetConfiguration,
-) -> V3LiveWriteAuthorityReferences:
-    """Commit one genuinely Ed25519-signed ``github_projection_grant``/``github_projection_
-    grant_declaration`` pair per :data:`~tests.fixtures.v3_live_write_authority.
-    V3_PROJECTION_KINDS`, each naming *config*'s own V3-configuration-shaped subject, into
-    *store* -- and return the project-scoped **references** naming them (Structural Review
-    Round 9, P14-R9-F1): never the record bodies themselves."""
+) -> tuple[V3LiveWriteAuthorityReferences, dict[str, dict[str, Any]]]:
+    """For every projection kind, build the real canonical subject and pre-issue + commit one
+    genuinely Ed25519-signed ``github_projection_grant``/``github_projection_grant_declaration``
+    pair bound *exactly* to that subject and to *config*'s own ``target_repository`` --
+    externally issued, committed, and Store-resolvable before the live execution path is ever
+    invoked (Structural Review Round 10, P14-R10-F1). Returns the project-scoped **references**
+    naming them (never the record bodies themselves) plus, per projection kind, the exact
+    ``subject_ref``/``subject_record`` execution must thread into ``project_to_github`` --
+    the harness never re-derives a subject independently of what was actually pre-issued for."""
 
     project_id = ctx["project_id"]
     project_binding_id = ctx["project_binding_id"]
@@ -169,18 +266,30 @@ def commit_genuine_v3_grants_and_declarations(
 
     grant_refs: list[dict[str, str]] = []
     declaration_refs: list[dict[str, str]] = []
-    subject_ref = v3_configuration_subject_ref(config)
+    subjects: dict[str, dict[str, Any]] = {}
 
-    for index, projection_kind in enumerate(V3_PROJECTION_KINDS):
+    for projection_kind, subject_kind in V3_RUN_PROJECTIONS:
+        kind_token = projection_kind.replace("_", "-")
+        subject_ref, subject_fingerprint, subject_record, current_state = build_v3_subject(
+            store,
+            project_id,
+            current_state,
+            subject_kind,
+            transaction_id=f"TX-V3-PREISSUE-SUBJECT-{kind_token}",
+        )
+        payload_fingerprint = projection_payload_fingerprint(
+            v3_run_payload(config, projection_kind)
+        )
+
         grant: dict[str, Any] = {
             "schema_version": "0.1",
             "github_projection_grant_id": "",
             "project_id": project_id,
             "subject_ref": dict(subject_ref),
-            "subject_fingerprint": config.configuration_fingerprint,
+            "subject_fingerprint": subject_fingerprint,
             "projection_kind": projection_kind,
             "target_repository": dict(config.target_repository),
-            "payload_fingerprint": config.configuration_fingerprint,
+            "payload_fingerprint": payload_fingerprint,
             "permitted_action": V3_PERMITTED_ACTION,
             "status": "ACTIVE",
             "granted_by": dict(human_authority_ref),
@@ -190,7 +299,7 @@ def commit_genuine_v3_grants_and_declarations(
             store,
             project_id,
             current_state,
-            f"TX-V3-GRANT-{index:04d}",
+            f"TX-V3-PREISSUE-GRANT-{kind_token}",
             [("github_projection_grant", grant["github_projection_grant_id"], grant)],
         )
         grant_ref = {"kind": "github_projection_grant", "id": grant["github_projection_grant_id"]}
@@ -229,28 +338,31 @@ def commit_genuine_v3_grants_and_declarations(
                 "id": declaration["github_projection_grant_declaration_id"],
             }
         )
+        subjects[projection_kind] = {"subject_ref": subject_ref, "subject_record": subject_record}
 
     ctx["genesis_state"] = current_state
-    return V3LiveWriteAuthorityReferences(
-        store_root=str(store.root),
-        project_id=project_id,
-        project_binding_id=project_binding_id,
+    references = V3LiveWriteAuthorityReferences(
         github_projection_grant_refs=tuple(grant_refs),
         github_projection_grant_declaration_refs=tuple(declaration_refs),
     )
+    return references, subjects
 
 
-def genuine_v3_authority_store_and_references(
+def genuine_v3_authority_store_and_material(
     tmp_path: Path, config: V3TargetConfiguration
-) -> tuple[FileStateStore, V3LiveWriteAuthorityReferences]:
-    """One real, committed Store plus the project-scoped references naming a genuinely
-    Ed25519-signed grant/declaration pair per projection kind, all bound to *config*'s own
-    V3-configuration subject -- the complete positive-route material
-    :func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority` accepts."""
+) -> tuple[
+    FileStateStore, dict[str, Any], V3LiveWriteAuthorityReferences, dict[str, dict[str, Any]]
+]:
+    """One real, committed Store, its ``ctx`` (``project_id``/``project_binding_id``), the
+    project-scoped references naming a genuinely pre-issued, Store-resolvable grant/declaration
+    pair per projection kind, and the exact subject each one is bound to -- the complete
+    positive-route material :func:`~tests.fixtures.v3_live_write_authority.
+    resolve_v3_live_write_authority` accepts, plus what execution needs to thread into
+    ``project_to_github`` unchanged."""
 
     store, ctx = bind_v3_test_project(tmp_path)
-    references = commit_genuine_v3_grants_and_declarations(store, ctx, config)
-    return store, references
+    references, subjects = commit_pre_issued_v3_authorities(store, ctx, config)
+    return store, ctx, references, subjects
 
 
 def _wrong_signing_private_key() -> Ed25519PrivateKey:
@@ -272,13 +384,15 @@ def commit_v3_grant_with_declaration_signed_by_the_wrong_key(
     config: V3TargetConfiguration,
     *,
     projection_kind: str,
+    subject_kind: str,
 ) -> V3LiveWriteAuthorityReferences:
     """Commit one real, Store-resolvable ``github_projection_grant`` for *projection_kind*,
-    anchored by a declaration that is genuinely signed -- but not by the real project_binding's
-    own registered key. Both records genuinely resolve from the Store; only the signature
-    itself is wrong, proving :func:`~manosube_agent_civilization.authority.
-    projection_authorization.evaluate_projection_authorization`'s own signature check, not mere
-    Store-resolvability, is what gates authorization."""
+    bound to a real *subject_kind* subject, anchored by a declaration that is genuinely signed
+    -- but not by the real project_binding's own registered key. Both records genuinely resolve
+    from the Store; only the signature itself is wrong, proving
+    :func:`~manosube_agent_civilization.authority.projection_authorization.
+    evaluate_projection_authorization`'s own signature check, not mere Store-resolvability, is
+    what gates authorization."""
 
     from manosube_agent_civilization.binding.identity import (
         github_projection_grant_declaration_id,
@@ -289,17 +403,25 @@ def commit_v3_grant_with_declaration_signed_by_the_wrong_key(
     project_binding_id = ctx["project_binding_id"]
     human_authority_ref = ctx["human_authority_ref"]
     current_state = ctx["genesis_state"]
-    subject_ref = v3_configuration_subject_ref(config)
+
+    subject_ref, subject_fingerprint, _subject_record, current_state = build_v3_subject(
+        store,
+        project_id,
+        current_state,
+        subject_kind,
+        transaction_id="TX-V3-WRONG-SIGNER-SUBJECT-0001",
+    )
+    payload_fingerprint = projection_payload_fingerprint(v3_run_payload(config, projection_kind))
 
     grant: dict[str, Any] = {
         "schema_version": "0.1",
         "github_projection_grant_id": "",
         "project_id": project_id,
         "subject_ref": dict(subject_ref),
-        "subject_fingerprint": config.configuration_fingerprint,
+        "subject_fingerprint": subject_fingerprint,
         "projection_kind": projection_kind,
         "target_repository": dict(config.target_repository),
-        "payload_fingerprint": config.configuration_fingerprint,
+        "payload_fingerprint": payload_fingerprint,
         "permitted_action": V3_PERMITTED_ACTION,
         "status": "ACTIVE",
         "granted_by": dict(human_authority_ref),
@@ -358,9 +480,6 @@ def commit_v3_grant_with_declaration_signed_by_the_wrong_key(
     ctx["genesis_state"] = current_state
 
     return V3LiveWriteAuthorityReferences(
-        store_root=str(store.root),
-        project_id=project_id,
-        project_binding_id=project_binding_id,
         github_projection_grant_refs=(grant_ref,),
         github_projection_grant_declaration_refs=(
             {

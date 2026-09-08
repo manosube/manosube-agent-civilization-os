@@ -1,7 +1,8 @@
-"""Phase 14 (Issue #62), Structural Review Round 8 (P14-R8-F1) and Round 9 (P14-R9-F1): static
-proof that the V3 live-write gate consumes the canonical Authority/Binding/Boot/Store owners --
-never a parallel, test-only signing mechanism or a caller-supplied authoritative record body --
-and holds no private key of its own.
+"""Phase 14 (Issue #62), Structural Review Round 8 (P14-R8-F1), Round 9 (P14-R9-F1), and
+Round 10 (P14-R10-F1): static proof that the V3 live-write gate consumes the canonical
+Authority/Binding/Boot/Store owners -- never a parallel, test-only signing mechanism, a
+caller-supplied authoritative record body, or a caller-selected Store -- and holds no private
+key of its own.
 
 A real AST walk over module source -- never a grep, never a hand-maintained assumption -- the
 identical technique
@@ -13,7 +14,8 @@ already establish, applied here to prove:
    the real canonical owners -- ``authority.projection_authorization.
    evaluate_projection_authorization``, ``boot.boot_project``, and the Store's own
    ``resolve_record`` surface -- and never imports the test-only material builder
-   (:mod:`tests.fixtures.v3_authority_test_material`) or ``Ed25519PrivateKey``.
+   (:mod:`tests.fixtures.v3_authority_test_material`), ``tests.fixtures.product_binding`` (the
+   repository-held test signer), or ``Ed25519PrivateKey``.
 2. That live gate module defines no private-key-producing or signature-producing callable of
    its own.
 3. The entire shipped Kernel package (``src/manosube_agent_civilization``) contains no
@@ -21,18 +23,21 @@ already establish, applied here to prove:
    ``Ed25519PrivateKey`` -- the V3 harness never ships.
 4. The test-only material builder is never imported by the live gate module.
 5. Structural Review Round 9 (P14-R9-F1): the live gate's own authorization entry points
-   (:func:`~tests.fixtures.v3_live_write_authority.resolve_v3_live_write_authority`,
-   :func:`~tests.fixtures.v3_live_write_authority.v3_execution_context_still_current`) accept
-   no parameter that could carry an authoritative Project Binding, grant, declaration, or
-   Authority Decision **body** -- only a Store instance, a configuration, and project-scoped
-   **references** (:class:`~tests.fixtures.v3_live_write_authority.
-   V3LiveWriteAuthorityReferences`) or an already-resolved
-   :class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext`.
+   accept no parameter that could carry an authoritative Project Binding, grant, declaration,
+   or Authority Decision **body** -- only a Store instance, a configuration, and project-scoped
+   **references**.
+6. Structural Review Round 10 (P14-R10-F1): the live gate's Store-opening function
+   (:func:`~tests.fixtures.v3_live_write_authority.open_v3_trusted_store`) accepts only a
+   :class:`~tests.fixtures.v3_live_write_authority.V3TrustedBootRoot` -- never the untrusted
+   :class:`~tests.fixtures.v3_live_write_authority.V3LiveWriteAuthorityReferences`, which
+   carries no Store-selecting field (``store_root``/``project_id``/``project_binding_id``) at
+   all -- and it is the *only* Store-opening function this module defines.
 """
 
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 import pathlib
 from types import ModuleType
@@ -51,7 +56,6 @@ _SHIPPED_PACKAGE_ROOT = pathlib.Path(manosube_agent_civilization.__file__).resol
 _FORBIDDEN_SHIPPED_LITERALS = (
     "v3_live_write_authority",
     "v3_authority_test_material",
-    "V3_CONFIGURATION_SUBJECT_KIND",
     "Ed25519PrivateKey",
 )
 
@@ -65,6 +69,11 @@ _FORBIDDEN_BODY_PARAMETER_NAMES = (
     "grant_declarations",
     "grant_declaration",
 )
+
+#: Field/parameter names that would signal a caller could select which Store to open --
+#: forbidden anywhere in the untrusted references shape or its own loader (Structural Review
+#: Round 10, P14-R10-F1).
+_FORBIDDEN_STORE_SELECTING_NAMES = ("store_root", "project_id", "project_binding_id")
 
 
 def _imported_module_names(module: ModuleType) -> set[str]:
@@ -87,6 +96,16 @@ def _imported_module_names(module: ModuleType) -> set[str]:
 def test_live_gate_module_never_imports_the_test_material_builder() -> None:
     imported = _imported_module_names(live_gate_module)
     assert not any("v3_authority_test_material" in name for name in imported)
+
+
+def test_live_gate_module_never_imports_the_repository_test_signer() -> None:
+    """Structural Review Round 10 (P14-R10-F1): the live gate cannot import
+    :mod:`tests.fixtures.product_binding`, this repository's own test-only signing helper --
+    the live execution path must never be capable of minting a grant/declaration itself, even
+    indirectly."""
+
+    imported = _imported_module_names(live_gate_module)
+    assert not any("product_binding" in name for name in imported)
 
 
 def test_live_gate_module_never_imports_ed25519_private_key() -> None:
@@ -121,6 +140,8 @@ def test_live_gate_module_defines_no_private_key_or_signing_capability() -> None
         "V3_LIVE_TRUST_ANCHOR",
         "_verified_project_binding",
         "load_v3_live_write_authority_material",
+        "v3_configuration_subject_ref",
+        "V3_CONFIGURATION_SUBJECT_KIND",
     ):
         assert not hasattr(live_gate_module, removed_name)
 
@@ -162,27 +183,86 @@ def test_resolve_v3_live_write_authority_accepts_no_authoritative_body_parameter
     assert forbidden == set()
 
 
-def test_resolve_v3_live_write_authority_takes_a_store_and_references_not_a_material_blob() -> None:
-    signature = inspect.signature(live_gate_module.resolve_v3_live_write_authority)
-    parameter_names = list(signature.parameters)
-    assert parameter_names == ["store", "config", "references"]
-
-
 def test_v3_execution_context_still_current_accepts_only_the_opaque_context() -> None:
     signature = inspect.signature(live_gate_module.v3_execution_context_still_current)
     assert list(signature.parameters) == ["context"]
 
 
-def test_v3_live_write_authority_references_dataclass_carries_no_body_field() -> None:
-    import dataclasses
+# ---------------------------------------------------------------------------
+# Structural Review Round 10 (P14-R10-F1): the trusted Boot root and the untrusted authority
+# references are two structurally distinct types, read from two distinct environment
+# variables, and only the trusted root can ever open a Store.
+# ---------------------------------------------------------------------------
 
+
+def test_resolve_v3_live_write_authority_takes_a_trusted_root_config_and_references() -> None:
+    signature = inspect.signature(live_gate_module.resolve_v3_live_write_authority)
+    assert list(signature.parameters) == ["trusted_root", "config", "references"]
+
+
+def test_v3_live_write_authority_references_carries_no_store_selecting_field() -> None:
     field_names = {
         field.name for field in dataclasses.fields(live_gate_module.V3LiveWriteAuthorityReferences)
     }
+    assert field_names.isdisjoint(_FORBIDDEN_STORE_SELECTING_NAMES)
     assert field_names == {
-        "store_root",
-        "project_id",
-        "project_binding_id",
         "github_projection_grant_refs",
         "github_projection_grant_declaration_refs",
     }
+
+
+def test_v3_trusted_boot_root_is_the_only_store_selecting_type() -> None:
+    field_names = {field.name for field in dataclasses.fields(live_gate_module.V3TrustedBootRoot)}
+    assert field_names == {"store_root", "project_id", "project_binding_id"}
+
+
+def test_open_v3_trusted_store_accepts_only_a_trusted_boot_root() -> None:
+    signature = inspect.signature(live_gate_module.open_v3_trusted_store)
+    assert list(signature.parameters) == ["trusted_root"]
+    annotation = signature.parameters["trusted_root"].annotation
+    assert "V3TrustedBootRoot" in str(annotation)
+    assert "V3LiveWriteAuthorityReferences" not in str(annotation)
+
+
+def test_module_defines_exactly_one_store_opening_function() -> None:
+    """Only one function in this module may construct a ``FileStateStore`` at all -- proven by
+    AST-walking every function definition's own body for a ``FileStateStore(`` call."""
+
+    tree = ast.parse(inspect.getsource(live_gate_module))
+    opening_functions = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for call in ast.walk(node):
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "FileStateStore"
+            ):
+                opening_functions.append(node.name)
+                break
+    assert opening_functions == ["open_v3_trusted_store"]
+
+
+def test_trusted_boot_root_and_references_are_loaded_from_distinct_environment_variables() -> None:
+    assert (
+        live_gate_module.V3_TRUSTED_BOOT_ROOT_ENV
+        != live_gate_module.V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV
+    )
+
+
+def test_load_v3_live_write_authority_references_refuses_smuggled_store_selecting_keys() -> None:
+    import json
+
+    for key in _FORBIDDEN_STORE_SELECTING_NAMES:
+        payload = {
+            "github_projection_grant_refs": [{"kind": "github_projection_grant", "id": "X"}],
+            "github_projection_grant_declaration_refs": [
+                {"kind": "github_projection_grant_declaration", "id": "Y"}
+            ],
+            key: "attacker-supplied-value",
+        }
+        env = {
+            live_gate_module.V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV: json.dumps(payload),
+        }
+        assert live_gate_module.load_v3_live_write_authority_references(env=env) is None

@@ -1371,3 +1371,106 @@ delivery's own state throughout.
 ```text
 P14_R9_F1_CLOSED=true
 ```
+
+## 18. Structural Review Round 10 corrections (`ADOPT_P14_R10_TRUSTED_BOOT_ROOT_AND_PREISSUED_EXECUTION_AUTHORITY`)
+
+**F1: the V3 live-write gate now begins from an independently supplied trusted Boot root the
+untrusted references can never select, and consumes only pre-issued, subject-specific grants/
+declarations the live execution path never mints itself.** §17's own F1 required every grant/
+declaration `resolve_v3_live_write_authority` reads to be Store-resolved rather than a
+caller-supplied body -- but the *Store itself* remained one of the fields inside
+`V3LiveWriteAuthorityReferences`, the same untrusted-reference bundle a caller supplies. A
+caller able to build their own fully genuine, fully committed, fully self-consistent Store
+(the identical routes and shapes this repository's own fixtures use) could point
+`references.store_root` at it and pass every one of §17's own checks -- Round 9's own design
+never distinguished "a genuinely committed record" from "a genuinely committed record in the
+*right* Store". Separately, the live-authorized *execution* path (`_run_v3_authorized_
+vertical_proof`) still minted one fresh, subject-scoped `github_projection_grant`/
+`github_projection_grant_declaration` pair per projection kind at execution time, using this
+repository's own test-only signing helper (`tests.fixtures.product_binding`) -- exactly the
+capability this finding withdraws from the live path.
+
+`tests/fixtures/v3_live_write_authority.py` now splits trust into two structurally distinct,
+independently supplied inputs the module can never conflate. `V3TrustedBootRoot` (`store_root`,
+`project_id`, `project_binding_id`) is read from its own environment variable
+(`MANOSUBE_P14_V3_TRUSTED_BOOT_ROOT`, `V3_TRUSTED_BOOT_ROOT_ENV`) via `load_v3_trusted_boot_
+root()`. `V3LiveWriteAuthorityReferences` is narrowed to carry **only** grant/declaration
+reference lists -- no Store-selecting field of any kind -- and `load_v3_live_write_authority_
+references()` now explicitly refuses (returns `None`, never silently drops) any JSON payload
+that attempts to smuggle `store_root`/`project_id`/`project_binding_id` into that channel.
+`open_v3_trusted_store(trusted_root: V3TrustedBootRoot | None)` is the *only* function in the
+module that constructs a `FileStateStore` at all -- proven by
+`test_module_defines_exactly_one_store_opening_function`, an AST walk of every function
+definition's own body for a `FileStateStore(` call -- and it accepts nothing but the trusted
+root. `resolve_v3_live_write_authority(trusted_root, config, references)` opens the Store from
+`trusted_root` alone, Boots through it, and only then resolves every grant/declaration
+`references` names *within* that already-trusted Store -- so a caller-supplied, fully genuine,
+fully committed, but wrong Store is never even opened, proven by
+`test_attacker_controlled_but_fully_committed_substitute_store_produces_zero_calls`: an
+attacker's own genuinely self-consistent Store, built with this repository's own fixture
+routes under a *different* `V3TargetConfiguration`, authorizes fine against its own trusted
+root, but its references never resolve against the real trusted root's own Store.
+
+The `v3_target_configuration` meta-grant model (§16's own F1, extended by §17) is replaced
+outright, not merely supplemented: `project_to_github`'s own `_authorize_projection` requires
+`subject_ref.kind` to match the real Difference/Change/Evidence subject kind for each
+projection kind, so a grant scoped to the synthetic `v3_target_configuration` subject could
+never be the one `project_to_github` itself consumes for a real projection -- which is exactly
+why Round 9's own execution path still had to mint a second, subject-specific grant at
+execution time. `tests/fixtures/v3_authority_test_material.py`'s new
+`commit_pre_issued_v3_authorities(store, ctx, config)` now builds, in one place, the real
+canonical subject (via the shared `build_v3_subject`, also newly exported for the harness's own
+use) *and* its own pre-issued, genuinely Ed25519-signed grant/declaration pair together, bound
+to `config`'s own `target_repository`, for each of `V3_RUN_PROJECTIONS` -- so the two can never
+drift apart -- committed into the same real, genuinely bound Store `bind_v3_test_project`
+produces. Because `v3_target_configuration` is consequently unused anywhere else in the
+codebase, the schema enum extension §16 disclosed as provisional is reverted: `subject_ref.kind`
+in both `01_SCHEMA/authority/github_projection_grant.schema.json` and
+`01_SCHEMA/binding/github_projection_grant_declaration.schema.json` returns to its original
+three-member form (`"difference"`, `"change"`, `"observation_evidence"`).
+
+`resolve_v3_live_write_authority` independently re-verifies identity for every record it
+resolves -- recomputing `github_projection_grant_id` for each grant and calling the existing
+canonical `binding.identity.verify_github_projection_grant_declaration_identity` for each
+declaration -- requires *exactly one* resolved grant per member of `V3_PROJECTION_KINDS` (zero
+or more than one refuses, a new `test_ambiguous_two_grants_for_the_same_kind_refuses` control),
+and requires the one declaration whose own `grant_ref.id` names that exact grant. Each per-kind
+`evaluate_projection_authorization` request is built entirely from the resolved grant's own
+declared fields (`subject_ref`, `subject_fingerprint`, `target_repository`,
+`payload_fingerprint`) -- never independently re-derived by the harness -- and passes singleton
+`grants=[grant]`/`grant_declarations=[declaration]` lists, eliminating any risk of matching the
+wrong grant among several. On success, `V3AuthorizedExecutionContext.authorities` now carries
+one `V3PreIssuedProjectionAuthority` (`subject_ref`, `github_projection_grant_ref`,
+`github_projection_grant_declaration_ref`) per projection kind, replacing §17's own flat
+grant/declaration-ref tuple fields.
+
+`_run_v3_authorized_vertical_proof` (integration test file) mints **nothing**: it reads
+`context.authorities[projection_kind]` and threads its `subject_ref`/grant ref/declaration ref
+directly into `project_to_github`, alongside the exact pre-issued subject body
+`commit_pre_issued_v3_authorities` returned for that projection kind (required for a
+difference/change subject; `None`, Store-resolved instead, for observation_evidence). Static
+conformance now also proves the live gate module never imports `tests.fixtures.product_binding`
+at all (`test_live_gate_module_never_imports_the_repository_test_signer`) -- the live execution
+path is therefore structurally incapable of signing anything, not merely disciplined not to.
+`_run_v3_authorized_execution` now checks `v3_execution_context_still_current(context)`
+immediately before *each* of the three projection calls in a run, not merely once at the top
+(Round 9's own check), so a Store mutation between any two projections in the same run still
+fails closed before the next adapter-reaching call.
+
+The full required negative-control matrix is retained and extended for the new shapes: wrong
+trusted `project_id`/`project_binding_id`, the attacker-controlled-but-fully-committed
+substitute Store control above, unresolved never-committed grant/declaration references, wrong
+signer, wrong configuration, wrong target repository, wrong kinds/count, the new ambiguous-
+grant control, revoked grant/declaration status, stale Store revision, and substituted context
+fields. Round 6's own cleanup correction (§14, `P14_R6_F1`) remains intact and untouched by
+this round's diff. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` remains this delivery's own state
+throughout; the live-gated integration test
+(`test_v3_authorized_full_three_projection_run_against_the_live_target`) still never executes
+in this delivery, and its own pre-issued subject bodies for a genuinely live run (an input this
+finding's own scope does not require the live gate itself to source) remain a deliberately
+disclosed gap for whatever later round supplies genuine live-write authority via the
+environment, rather than a fabricated placeholder.
+
+```text
+P14_R10_F1_CLOSED=true
+```
