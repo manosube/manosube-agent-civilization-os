@@ -103,9 +103,7 @@ def _require_request_shape(request: Any) -> dict[str, Any]:
             raise AuthorityError(f"github projection request omits a required key: {key}")
     version = require_scalar_tag(shaped["schema_version"], "github projection request version")
     if version != SCHEMA_VERSION:
-        raise AuthorityError(
-            f"unsupported schema_version {version!r} at github projection request"
-        )
+        raise AuthorityError(f"unsupported schema_version {version!r} at github projection request")
     return shaped
 
 
@@ -177,7 +175,9 @@ def _declaration_restates_grant(declaration: dict[str, Any], grant: dict[str, An
     )
 
 
-def _verify_declaration_signature(declaration: dict[str, Any], *, signing_key: dict[str, Any]) -> bool:
+def _verify_declaration_signature(
+    declaration: dict[str, Any], *, signing_key: dict[str, Any]
+) -> bool:
     """Lazily import and delegate to Binding's own
     :func:`~manosube_agent_civilization.binding.signature.
     verify_github_projection_grant_declaration_signature` (Phase 14 Structural Review Round 2,
@@ -336,9 +336,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
             # guaranteed for grant selection below.
             chosen_declaration = sorted(
                 signature_valid_declarations,
-                key=lambda declaration: str(
-                    declaration["github_projection_grant_declaration_id"]
-                ),
+                key=lambda declaration: str(declaration["github_projection_grant_declaration_id"]),
             )[0]
             binding.append((candidate, chosen_declaration))
         else:

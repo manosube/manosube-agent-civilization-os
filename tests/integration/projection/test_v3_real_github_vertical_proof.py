@@ -157,7 +157,7 @@ def _commit_grant(
     projection_kind: str,
     target_repository: dict[str, Any],
     payload_fingerprint: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     grant: dict[str, Any] = {
         "schema_version": "0.1",
         "github_projection_grant_id": "",

@@ -205,9 +205,7 @@ def github_projection_grant_id(grant: dict[str, Any]) -> str:
 def github_projection_decision_semantic_fingerprint(decision: dict[str, Any]) -> str:
     """The digest of a GitHub Projection Decision's meaning."""
 
-    return _digest(
-        {field: decision[field] for field in GITHUB_PROJECTION_DECISION_SEMANTIC_FIELDS}
-    )
+    return _digest({field: decision[field] for field in GITHUB_PROJECTION_DECISION_SEMANTIC_FIELDS})
 
 
 def github_projection_decision_id(decision: dict[str, Any]) -> str:

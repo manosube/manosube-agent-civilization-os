@@ -32,7 +32,10 @@ from .identity import (
     verify_project_binding_identity,
 )
 from .reference_classification import reject_wrong_kind_reference
-from .signature import verify_declaration_signature, verify_github_projection_grant_declaration_signature
+from .signature import (
+    verify_declaration_signature,
+    verify_github_projection_grant_declaration_signature,
+)
 from .validation import validate_record
 
 

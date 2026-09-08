@@ -324,7 +324,7 @@ def _project(world: dict[str, Any], adapter: Any, **overrides: Any) -> dict[str,
         "github_projection_grant_declaration_refs": [world["declaration_ref"]],
     }
     kwargs.update(overrides)
-    return project_to_github(**kwargs)  # type: ignore[arg-type]
+    return project_to_github(**kwargs)
 
 
 # ---------------------------------------------------------------------------
