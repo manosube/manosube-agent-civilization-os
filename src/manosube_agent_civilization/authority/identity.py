@@ -189,6 +189,7 @@ GITHUB_PROJECTION_DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "selection_authority_ref",
     "grant_ref",
     "excluding_grant_refs",
+    "declaration_ref",
     "decision",
     "decision_reason_codes",
 )

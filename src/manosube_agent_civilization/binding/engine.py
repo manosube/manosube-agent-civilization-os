@@ -24,13 +24,15 @@ from manosube_agent_civilization.difference.canonical import (
 
 from .errors import BindingValidationError
 from .identity import (
+    github_projection_grant_declaration_id,
     human_grant_declaration_id,
     project_binding_id,
+    verify_github_projection_grant_declaration_identity,
     verify_human_grant_declaration_identity,
     verify_project_binding_identity,
 )
 from .reference_classification import reject_wrong_kind_reference
-from .signature import verify_declaration_signature
+from .signature import verify_declaration_signature, verify_github_projection_grant_declaration_signature
 from .validation import validate_record
 
 
@@ -275,5 +277,95 @@ def assemble_human_grant_declaration(
         )
 
     validate_record(record, "human_grant_declaration.schema.json", schema_root=schema_root)
+
+    return record
+
+
+def assemble_github_projection_grant_declaration(
+    *,
+    project_id: str,
+    project_binding_id: str,
+    grant_ref: dict[str, Any],
+    declared_by: dict[str, Any],
+    subject_ref: dict[str, Any],
+    subject_fingerprint: str,
+    projection_kind: str,
+    target_repository: dict[str, Any],
+    payload_fingerprint: str,
+    permitted_action: str,
+    status: str,
+    declared_at: str,
+    signature: dict[str, Any],
+    signing_key: dict[str, Any],
+    schema_root: Path | None = None,
+) -> dict[str, Any]:
+    """Validate, content-address, signature-verify, and reverify one GitHub Projection Grant
+    Declaration (Phase 14 Structural Review Round 2, Issue #62, P14-R2-F1) -- the identical
+    signed-anchor discipline :func:`assemble_human_grant_declaration` already establishes for
+    a Verifier Selection Grant, applied here to a GitHub Projection Grant's own semantic
+    fields instead.
+
+    Pure, like :func:`assemble_human_grant_declaration` -- never touches the Store. Every one
+    of *project_id*/*project_binding_id*/*grant_ref*/*declared_by*/*subject_ref*/
+    *subject_fingerprint*/*projection_kind*/*target_repository*/*payload_fingerprint*/
+    *permitted_action* must already be the real, resolved values :mod:`.route`'s own caller
+    independently re-derived from the Store (the real committed Project Binding's own
+    ``human_authority_ref``, and the real committed grant's own fields) -- this function
+    performs no Store I/O and trusts exactly what it is given. *signing_key* must likewise be
+    the real Project Binding's own ``human_authority_signing_key`` -- never a caller-supplied
+    copy.
+
+    This function never generates a signature -- the Human's own private key never touches
+    this system. *signature* is a caller-supplied claim; it is verified, read-only, against
+    *signing_key* before this function ever returns a record, via
+    :func:`~manosube_agent_civilization.binding.signature.
+    verify_github_projection_grant_declaration_signature`.
+    """
+
+    if declared_by.get("kind") != "human_authority":
+        raise BindingValidationError(
+            f"declared_by is not a Human Authority reference: {declared_by.get('kind')!r}"
+        )
+    if grant_ref.get("kind") != "github_projection_grant":
+        raise BindingValidationError(
+            f"grant_ref is not a github_projection_grant reference: {grant_ref.get('kind')!r}"
+        )
+    if status not in ("ACTIVE", "REVOKED"):
+        raise BindingValidationError(f"status is not a recognized declaration status: {status!r}")
+
+    record: dict[str, Any] = {
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "project_binding_id": project_binding_id,
+        "grant_ref": dict(grant_ref),
+        "declared_by": dict(declared_by),
+        "subject_ref": deepcopy(subject_ref),
+        "subject_fingerprint": subject_fingerprint,
+        "projection_kind": projection_kind,
+        "target_repository": deepcopy(target_repository),
+        "payload_fingerprint": payload_fingerprint,
+        "permitted_action": permitted_action,
+        "status": status,
+        "declared_at": declared_at,
+        "signature": dict(signature),
+    }
+
+    reject_secret_material(record, "github_projection_grant_declaration")
+    walk_references(record, "github_projection_grant_declaration")
+
+    record["github_projection_grant_declaration_id"] = github_projection_grant_declaration_id(
+        record
+    )
+    verify_github_projection_grant_declaration_identity(record)
+
+    if not verify_github_projection_grant_declaration_signature(record, signing_key=signing_key):
+        raise BindingValidationError(
+            "signature does not verify against the real Project Binding's own "
+            "human_authority_signing_key over this declaration's own adopted payload"
+        )
+
+    validate_record(
+        record, "github_projection_grant_declaration.schema.json", schema_root=schema_root
+    )
 
     return record

@@ -31,6 +31,8 @@ from manosube_agent_civilization.evidence import derive_evidence
 from .errors import ProjectionRequirementError
 from .types import GitHubObservationReceipt
 
+_ENVELOPE_RECORD_KIND = "projection_envelope"
+
 #: The identical ten fields ``evidence.schema.json``'s own ``verification_result_provenance``
 #: requires -- see ``evidence/identity.py``'s ``EVIDENCE_SEMANTIC_FIELDS`` and
 #: ``independent_verification/evidence_handoff.py``'s own ``REQUIRED_PROVENANCE_FIELDS``.
@@ -82,7 +84,10 @@ def _construct_provenance(receipt: GitHubObservationReceipt, project_id: str) ->
 
 
 def route_observation_receipt_to_evidence(
-    receipt: GitHubObservationReceipt, project_id: str, evidence_request: Mapping[str, Any]
+    store: Any,
+    receipt: GitHubObservationReceipt,
+    project_id: str,
+    evidence_request: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Hand *receipt* off to the existing Evidence owner and return the one canonical
     Evidence record it derives from *evidence_request*.
@@ -102,13 +107,47 @@ def route_observation_receipt_to_evidence(
         raise ProjectionRequirementError(
             f"receipt must be a GitHubObservationReceipt instance, not {type(receipt)!r}"
         )
-    # Structural Review Round 1 (Issue #62, P14-R1-F3): the receipt carries its own
-    # originating project identity, set by route.py from the exact project_id it already
-    # independently verified. Checking it here -- rather than trusting the caller's own
-    # project_id argument alone -- is what makes a receipt genuinely produced for project A
-    # unable to be relabelled as Evidence for project B: a caller who supplies a real receipt
-    # from one project alongside a different project_id is refused here, before derive_evidence
-    # is ever called.
+    # Structural Review Round 1 (Issue #62, P14-R1-F3) checked only ``receipt.project_id ==
+    # project_id`` -- both of them plain fields on a publicly constructible dataclass, so a
+    # caller could copy a genuine receipt, overwrite ``project_id`` to name a different
+    # project, and pass that same (matching) value here: the check above always passes
+    # because it only ever compares the receipt against itself.
+    #
+    # Structural Review Round 2 (P14-R2-F3) replaces that self-comparison with an
+    # independent resolution: *project_id*'s own Store is asked whether it ever actually
+    # committed the exact Projection Envelope this receipt claims to be about. Store
+    # partitions every record by project (``FileStateStore.resolve_record`` looks only
+    # inside *project_id*'s own directory), so a receipt copied from a different project's
+    # envelope resolves to nothing here and is refused before ``derive_evidence`` is ever
+    # called -- there is no separate "receipt identity" to forge, because nothing about the
+    # receipt itself is trusted until it is corroborated against the real, committed record.
+    envelope = store.resolve_record(
+        project_id, _ENVELOPE_RECORD_KIND, receipt.projection_envelope_id
+    )
+    if envelope is None:
+        raise ProjectionRequirementError(
+            "receipt names a projection_envelope_id that does not resolve under the "
+            f"requested project {project_id!r} -- a receipt genuinely produced for a "
+            "different project cannot be relabelled as Evidence for this one: "
+            f"{receipt.projection_envelope_id!r}"
+        )
+    if envelope["subject_ref"] != dict(receipt.subject_ref):
+        raise ProjectionRequirementError(
+            "receipt's own subject_ref does not match the real, committed Envelope's "
+            f"subject_ref: {dict(receipt.subject_ref)!r} != {envelope['subject_ref']!r}"
+        )
+    if envelope["external_artifact_ref"] != dict(receipt.external_artifact_ref):
+        raise ProjectionRequirementError(
+            "receipt's own external_artifact_ref does not match the real, committed "
+            f"Envelope's external_artifact_ref: {dict(receipt.external_artifact_ref)!r} != "
+            f"{envelope['external_artifact_ref']!r}"
+        )
+    if envelope["github_authority_ref"] != dict(receipt.github_authority_ref):
+        raise ProjectionRequirementError(
+            "receipt's own github_authority_ref does not match the real, committed "
+            f"Envelope's github_authority_ref: {dict(receipt.github_authority_ref)!r} != "
+            f"{envelope['github_authority_ref']!r}"
+        )
     if receipt.project_id != project_id:
         raise ProjectionRequirementError(
             "receipt's own originating project_id does not match the requested project_id -- "

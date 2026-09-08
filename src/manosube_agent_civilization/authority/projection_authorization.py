@@ -23,17 +23,17 @@ binds on every field but is not itself ``ACTIVE`` withholds authorization exactl
 excluding Approval withholds a Change; a request naming no grant at all, or naming only
 grants that do not bind, is refused.
 
-**Disclosed scope boundary.** Unlike Independent Verification's own ``verifier_selection_grant``
-(Structural Review Rounds 4-5-R1), this module does not yet require the supplied grant to be
-independently Store-resolved by the caller, nor anchored by a separate, signed Human Grant
-Declaration -- Projection's own route resolves ``github_projection_grant`` records through the
-identical Store surface every other Projection reference already resolves through
-(``store.resolve_record``), which gives the identical Round-4-level protection (a grant must
-be genuinely, durably committed, never merely asserted as this function's own caller
-argument), but this correction round does not extend that to Round 5/5-R1's own deeper
-Human-declaration-and-signature layer. That is a disclosed, bounded scope decision -- not a
-silent narrowing -- left as a candidate future Difference, exactly as Independent
-Verification's own Round 3 disclosed the identical next gap before Round 4 closed it.
+**Signed Human declaration anchor (Phase 14 Structural Review Round 2, Issue #62, P14-R2-F1).**
+A core-clean, ``ACTIVE`` ``github_projection_grant`` still does not bind unless a real,
+matching, ``ACTIVE`` :data:`~.conformance.RECORD_TYPES` ``"github_projection_grant_declaration"``
+record anchors it -- the identical signed-declaration discipline Independent Verification's own
+``verifier_selection_grant`` already requires (Structural Review Rounds 5/5-R1), applied here
+to a GitHub Projection Grant instead. A grant's own durable Store commitment (already required)
+is never itself proof a Human declared it: a grant inserted directly into Store, self-consistent
+and correctly ``granted_by``-shaped, still authorizes zero adapter calls unless a genuinely
+Human-declared, Ed25519-signed declaration -- resolved and independently re-verified against
+the real Project Binding's own ``human_authority_signing_key`` -- anchors it, restates its exact
+semantic fields, and is itself ``ACTIVE``.
 
 Following :mod:`.errors`' own distinction: an unreadable request raises
 :class:`~.errors.AuthorityError`. A readable request that does not bind is not an exception --
@@ -78,7 +78,9 @@ REQUIRED_REQUEST_KEYS: tuple[str, ...] = (
     "payload_fingerprint",
     "permitted_action",
     "human_authority_ref",
+    "human_authority_signing_key",
     "grants",
+    "grant_declarations",
 )
 
 _PERMITTED_ACTIONS: frozenset[str] = frozenset({"MATERIALIZE_PROJECTION"})
@@ -146,6 +148,50 @@ def _core_mismatches(
     return sorted(reasons)
 
 
+def _anchors_grant(declaration: dict[str, Any], *, project_id: str, grant_id: str) -> bool:
+    """Whether *declaration* names exactly this project and this grant -- distinctness before
+    activeness, the identical convention :func:`~.verifier_selection._anchors_grant` already
+    uses for a Verifier Selection Grant's own declaration (Phase 14 Structural Review Round 2,
+    P14-R2-F1)."""
+
+    return bool(
+        declaration["project_id"] == project_id
+        and declaration["grant_ref"] == {"kind": "github_projection_grant", "id": grant_id}
+    )
+
+
+def _declaration_restates_grant(declaration: dict[str, Any], grant: dict[str, Any]) -> bool:
+    """Whether *declaration*'s own restated ``subject_ref``/``subject_fingerprint``/
+    ``projection_kind``/``target_repository``/``payload_fingerprint``/``permitted_action``
+    equal *grant*'s own matching fields -- independently re-checked here, never merely trusted
+    because ``grant_ref`` already names this grant's id (the identical
+    :func:`~.verifier_selection._declaration_restates_grant` discipline)."""
+
+    return bool(
+        declaration["subject_ref"] == grant["subject_ref"]
+        and declaration["subject_fingerprint"] == grant["subject_fingerprint"]
+        and declaration["projection_kind"] == grant["projection_kind"]
+        and declaration["target_repository"] == grant["target_repository"]
+        and declaration["payload_fingerprint"] == grant["payload_fingerprint"]
+        and declaration["permitted_action"] == grant["permitted_action"]
+    )
+
+
+def _verify_declaration_signature(declaration: dict[str, Any], *, signing_key: dict[str, Any]) -> bool:
+    """Lazily import and delegate to Binding's own
+    :func:`~manosube_agent_civilization.binding.signature.
+    verify_github_projection_grant_declaration_signature` (Phase 14 Structural Review Round 2,
+    P14-R2-F1) -- deferred to call time, never module import time, for the identical
+    circular-import reason :mod:`.conformance`'s own ``_human_grant_declaration_id`` already
+    documents."""
+
+    from manosube_agent_civilization.binding.signature import (
+        verify_github_projection_grant_declaration_signature as _real_verify_signature,
+    )
+
+    return _real_verify_signature(declaration, signing_key=signing_key)
+
+
 def evaluate_projection_authorization(request: dict[str, Any]) -> dict[str, Any]:
     """Return one canonical GitHub Projection Decision for one exact request.
 
@@ -199,13 +245,29 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
             "github projection request human_authority_ref is not a Human Authority "
             f"reference: {human_authority_ref.get('kind')!r}"
         )
+    # Phase 14 Structural Review Round 2 (P14-R2-F1): the real Project Binding's own public
+    # verification key, independently resolved by the caller -- this evaluator never trusts
+    # Binding's own prior signature check at commit time as a substitute for its own
+    # independent re-verification, the identical discipline `evaluate_verifier_selection`
+    # already establishes for `human_authority_signing_key`.
+    human_authority_signing_key = require_object(
+        shaped["human_authority_signing_key"],
+        "github projection request human_authority_signing_key",
+    )
 
     # Every supplied grant crosses the identical admission gate every other Authority-owned
     # record does: schema, supported version, no unknown property, recomputed content
-    # address, and Human Authority provenance (`.conformance.admit`).
+    # address, and Human Authority provenance (`.conformance.admit`). Every supplied
+    # declaration (P14-R2-F1) crosses the identical gate too, over Binding's own
+    # `github_projection_grant_declaration.schema.json` and identity function.
     grants = admit_all(shaped["grants"], "github_projection_grant", "grants")
+    declarations = admit_all(
+        shaped["grant_declarations"],
+        "github_projection_grant_declaration",
+        "grant_declarations",
+    )
 
-    binding: list[dict[str, Any]] = []
+    binding: list[tuple[dict[str, Any], dict[str, Any]]] = []
     excluding: list[tuple[dict[str, Any], str]] = []
     failures: list[str] = []
     for candidate in grants:
@@ -226,18 +288,73 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         if candidate["status"] != "ACTIVE":
             excluding.append((candidate, f"GRANT_{candidate['status']}"))
             continue
-        binding.append(candidate)
+
+        # P14-R2-F1: a core-clean, ACTIVE grant still withholds authorization unless a real,
+        # matching, ACTIVE GitHub Projection Grant Declaration anchors it, signed by the real
+        # Project Binding's own Human Authority -- the grant's own content or its mere Store
+        # persistence is never itself proof a Human declared it. Staged, not a flat mismatch
+        # list, exactly as `evaluate_verifier_selection` already stages its own declaration
+        # checks: each stage answers a different question.
+        grant_id = candidate["github_projection_grant_id"]
+        anchored = [
+            declaration
+            for declaration in declarations
+            if _anchors_grant(declaration, project_id=project_id, grant_id=grant_id)
+        ]
+        if not anchored:
+            excluding.append((candidate, "DECLARATION_MISSING"))
+            continue
+        authority_matching = [
+            declaration
+            for declaration in anchored
+            if declaration["declared_by"] == human_authority_ref
+        ]
+        if not authority_matching:
+            excluding.append((candidate, "DECLARATION_AUTHORITY_MISMATCH"))
+            continue
+        active_declarations = [
+            declaration for declaration in authority_matching if declaration["status"] == "ACTIVE"
+        ]
+        if not active_declarations:
+            excluding.append((candidate, "DECLARATION_NOT_ACTIVE"))
+            continue
+        restating_declarations = [
+            declaration
+            for declaration in active_declarations
+            if _declaration_restates_grant(declaration, candidate)
+        ]
+        if not restating_declarations:
+            excluding.append((candidate, "DECLARATION_CONTENT_MISMATCH"))
+            continue
+        signature_valid_declarations = [
+            declaration
+            for declaration in restating_declarations
+            if _verify_declaration_signature(declaration, signing_key=human_authority_signing_key)
+        ]
+        if signature_valid_declarations:
+            # Chosen by identity, not by input position -- the same determinism already
+            # guaranteed for grant selection below.
+            chosen_declaration = sorted(
+                signature_valid_declarations,
+                key=lambda declaration: str(
+                    declaration["github_projection_grant_declaration_id"]
+                ),
+            )[0]
+            binding.append((candidate, chosen_declaration))
+        else:
+            excluding.append((candidate, "DECLARATION_SIGNATURE_INVALID"))
 
     reason_codes: list[str] = []
     used_grant: dict[str, Any] | None = None
+    used_declaration: dict[str, Any] | None = None
     if not grants:
         reason_codes.append("GRANT_MISSING")
     elif binding:
         # Chosen by identity, not by input position -- the same determinism
         # `evaluate_verifier_selection` already guarantees for its own grant selection.
-        used_grant = sorted(binding, key=lambda grant: str(grant["github_projection_grant_id"]))[
-            0
-        ]
+        used_grant, used_declaration = sorted(
+            binding, key=lambda pair: str(pair[0]["github_projection_grant_id"])
+        )[0]
         reason_codes.append("GRANT_EXACT")
     elif excluding:
         _first_grant, first_reason = sorted(
@@ -258,6 +375,7 @@ def _evaluate(request: dict[str, Any]) -> dict[str, Any]:
         permitted_action=permitted_action,
         human_authority_ref=human_authority_ref,
         used_grant=used_grant,
+        used_declaration=used_declaration,
         excluding_grants=[grant for grant, _reason in excluding],
         decision=decision,
         reason_codes=reason_codes,
@@ -275,6 +393,7 @@ def _decision(
     permitted_action: str,
     human_authority_ref: dict[str, Any],
     used_grant: dict[str, Any] | None,
+    used_declaration: dict[str, Any] | None,
     excluding_grants: list[dict[str, Any]],
     decision: str,
     reason_codes: list[str],
@@ -304,6 +423,14 @@ def _decision(
             {"kind": "github_projection_grant", "id": grant["github_projection_grant_id"]}
             for grant in excluding_grants
         ],
+        "declaration_ref": (
+            None
+            if used_declaration is None
+            else {
+                "kind": "github_projection_grant_declaration",
+                "id": used_declaration["github_projection_grant_declaration_id"],
+            }
+        ),
         "decision": decision,
         "decision_reason_codes": sorted(set(reason_codes)),
         "decision_semantic_fingerprint": "",

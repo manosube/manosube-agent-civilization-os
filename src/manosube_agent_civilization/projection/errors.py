@@ -48,6 +48,38 @@ class ProjectionValueError(ProjectionError):
     ``set`` or any other mutable object is refused rather than silently admitted unfrozen."""
 
 
+class ProjectionConcurrentClaimError(ProjectionError):
+    """This attempt does not own the durable claim on this projection identity's mapping
+    slot -- a distinct attempt (a genuinely different caller, or the same caller supplying a
+    different ``materialized_at``) already claimed it and has not yet resolved to a
+    committed Envelope (Structural Review Round 2, Issue #62, P14-R2-F2).
+
+    Raised before ``adapter.materialize`` is ever called: two concurrent callers for the
+    identical semantic projection must never both receive permission to POST. The route
+    reads no clock and makes no timing assumption about which attempt "wins" -- ownership is
+    decided entirely by which attempt's own ``projection_intent`` commit the Store's single
+    per-project commit lock admits first."""
+
+
+class ProjectionReconciliationRequiredError(ProjectionError):
+    """This attempt owns the claim on this projection identity's mapping slot, and a prior
+    attempt under the identical claim already recorded that it was about to call
+    ``adapter.materialize``, but neither a committed Envelope nor a discoverable external
+    artifact (via ``adapter.find_by_correlation_key``) exists for it (Structural Review
+    Round 2, Issue #62, P14-R2-F2).
+
+    This is genuinely ambiguous: the prior ``materialize`` call may have failed cleanly (safe
+    to retry), or it may have succeeded externally while its response was lost before this
+    route ever saw it (a blind retry would then create a real, untracked duplicate artifact).
+    This route never guesses -- it refuses outright rather than calling ``materialize`` a
+    second time under the same claim, and leaves both the claim and the external state as
+    they are for an operator to reconcile. A disclosed simplification: this route does not
+    itself distinguish "materialize never actually ran" from "materialize ran and failed"
+    from "materialize ran and the external system is not yet consistent" -- all three collapse
+    to this one fail-closed refusal, which is the correct behavior for all three (never
+    silently re-create)."""
+
+
 class ProjectionAdapterError(ProjectionError):
     """The supplied :class:`~manosube_agent_civilization.projection.types.GitHubAdapter`
     could not materialize or observe the requested external artifact, or its own return value

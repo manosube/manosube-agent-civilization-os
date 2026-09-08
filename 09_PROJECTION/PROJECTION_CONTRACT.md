@@ -8,6 +8,7 @@ STATUS=CANONICAL_DESIGN
 KERNEL_ELEMENT=NONE_PROJECTION_ADAPTER
 ADOPTION_ID=ADOPT_P14_D001_PROJECTION_ENVELOPE_IMPLEMENTATION
 CORRECTION_ADOPTION_ID=ADOPT_P14_R1_CANONICAL_AUTHORITY_SUBJECT_AND_RECOVERABLE_PROJECTION
+CORRECTION_ADOPTION_ID_ROUND_2=ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_AND_REAL_V3
 GOVERNING_ISSUE=#62
 REVIEWED_MAIN_SHA=7fc597356330a0d1da7a334ef20cd913b74154d
 ```
@@ -24,9 +25,23 @@ cross-project relabeling (F3); recoverable idempotency across the external-write
 durable correlation key (F4); an executable V3 harness for all three projection kinds and a
 complete `RealGitHubAdapter` (F5); distinct typed GitHub observation outcomes in place of a
 collapsed `FAILED`/`exists=False` (F6); and a genuine SHA-256 content fingerprint in place of a
-truncated raw-byte prefix (F7). Every section below reflects the corrected design; where a
-frozen decision from the original delivery was superseded rather than merely extended, this is
-stated explicitly at the point of change.
+truncated raw-byte prefix (F7).
+
+It is further corrected by Structural Review Round 2
+(`ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_AND_REAL_V3`, Issue #62), which found and
+required correction of four further findings (P14-R2-F1 through F4, §10): a genuine, signed
+Human declaration anchoring every `github_projection_grant`, never a Store-resolved grant's own
+self-consistency alone (F1); an atomic, recoverable claim/attempt state machine closing the
+remaining search-then-create race between two genuinely concurrent callers (F2); an
+independently-resolved, Store-corroborated Projection Envelope binding for every
+`GitHubObservationReceipt` at hand-off, replacing an unchecked, publicly-settable `project_id`
+field, together with an exact per-artifact-kind GitHub locator grammar (never a bare URL prefix)
+(F3); and a corrected write/read observable transformation removing the correlation marker
+self-defeat, plus real, executable V3 target-bound configuration (F4).
+
+Every section below reflects the corrected design; where a frozen decision from the original
+delivery or from Round 1 was superseded rather than merely extended, this is stated explicitly
+at the point of change.
 
 ## 1. Position
 
@@ -59,11 +74,13 @@ project_to_github(
     materialized_at: str,
     adapter: GitHubAdapter,
     github_projection_grant_refs: list[Mapping[str, Any]],
+    github_projection_grant_declaration_refs: list[Mapping[str, Any]],
     subject_record: Mapping[str, Any] | None = None,
     subject_fingerprint: str | None = None,
 ) -> dict[str, Any]   # {"envelope": ..., "receipt": GitHubObservationReceipt, "reused": bool}
 
 route_observation_receipt_to_evidence(
+    store,
     receipt: GitHubObservationReceipt,
     project_id: str,
     evidence_request: Mapping[str, Any],
@@ -85,7 +102,13 @@ explicit collection of `{"kind": "github_projection_grant", "id": ...}` referenc
 resolved through the Store and offered to the existing Authority owner's own
 `evaluate_projection_authorization`; grant *content* is never an accepted argument shape, the
 identical discipline Independent Verification's own `verifier_selection_grant_refs` already
-established. `subject_record` (Structural Review Round 1, P14-R1-F2) is required for a
+established. `github_projection_grant_declaration_refs` (Structural Review Round 2, P14-R2-F1)
+is the caller's own explicit collection of `{"kind": "github_projection_grant_declaration",
+"id": ...}` references, resolved the identical way -- a Store-resolved, self-consistent grant
+alone no longer authorizes anything; it must additionally be anchored by a genuine,
+Ed25519-signed declaration, independently re-verified against the real Project Binding's own
+`human_authority_signing_key` (§10, F1). `subject_record` (Structural Review Round 1, P14-R1-F2)
+is required for a
 `difference`/`change` subject -- the real, canonical record body, independently
 schema-validated and fingerprint-recomputed by this route -- and ignored for an
 `observation_evidence` subject, which remains Store-resolved instead.
@@ -637,3 +660,97 @@ V3_NO_MERGE_BOUNDARY_FROZEN=true
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
+
+## 10. Structural Review Round 2 corrections (`ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_AND_REAL_V3`)
+
+**F1: a signed Human declaration now anchors every `github_projection_grant`.** §3 item 13's
+own disclosed scope boundary -- `HUMAN_GRANT_DECLARATION_SIGNATURE_LAYER_FOR_GITHUB_PROJECTION_
+GRANT=false` -- is now closed. A new Binding-owned record kind,
+`github_projection_grant_declaration` (mirroring `human_grant_declaration`'s own shape, never
+literally reusing it -- that schema's `grant_ref.kind` is hard-pinned to
+`"verifier_selection_grant"`), carries an Ed25519 signature over its own restated fields
+(`subject_ref`, `subject_fingerprint`, `projection_kind`, `target_repository`,
+`payload_fingerprint`, `permitted_action`) plus `grant_ref`/`declared_by`/`status`/
+`declared_at`. `evaluate_projection_authorization` now requires two new request keys,
+`human_authority_signing_key` and `grant_declarations`, and stages five checks per candidate
+grant before it can bind: the declaration must anchor this exact grant (`project_id` +
+`grant_ref` match), be declared by the request's own `human_authority_ref`, be `ACTIVE`,
+restate the grant's own semantic fields exactly, and carry a signature that independently
+re-verifies against the real Project Binding's own `human_authority_signing_key` -- resolved
+by the caller from `boot_context.project_binding["human_authority_signing_key"]`, never a
+caller-supplied copy. A grant inserted directly into Store, self-consistent and correctly
+`granted_by`-shaped, now authorizes zero adapter calls without a matching declaration. The
+`github_projection_decision` record gains a `declaration_ref` field (mirroring `grant_ref`'s
+null/non-null pattern), and `project_to_github` gains the required
+`github_projection_grant_declaration_refs` parameter (§2).
+
+**F2: an atomic, recoverable claim/attempt state machine closes the remaining
+search-then-create race.** P14-R1-F4's own `find_by_correlation_key`-before-`materialize`
+discipline still let two genuinely concurrent callers both observe "nothing found" and both
+fall through to `materialize`. Two new Store record kinds, both keyed by the mapping key
+itself and both committed through the identical `commit_state_transition` primitive the
+Envelope itself uses -- `projection_intent` (committed before `find_by_correlation_key`) and
+`projection_materialize_attempt` (committed before `materialize`) -- turn the Store's own
+per-project commit serialization and same-key/different-content rejection
+(`RecordConflictError`) into the entire concurrency barrier; this route adds no lock, queue,
+or timeout of its own beyond a bounded Compare-And-Swap retry loop for genuinely unrelated
+contention. A caller whose own claim collides with a different, already-durable claim refuses
+immediately, before any adapter call, with `ProjectionConcurrentClaimError`. A caller that
+already owns the claim but finds neither a discoverable external artifact nor an Envelope,
+with an already-durable `projection_materialize_attempt` marker present, is in a genuinely
+ambiguous state (materialize may have failed cleanly, or succeeded with its response lost) and
+refuses with `ProjectionReconciliationRequiredError` rather than call `materialize` a second
+time under the same claim. Separately, `RealGitHubAdapter.find_by_correlation_key` no longer
+collapses every lookup failure (permission, rate limit, transport, outage) into `None`; it now
+raises `ProjectionAdapterError`, so a failed lookup blocks new creation instead of being
+silently treated as "not found."
+
+**F3: `GitHubObservationReceipt` hand-off is now independently resolved against the real,
+committed Envelope, and the external-artifact locator is now grammar-checked, not
+prefix-checked.** P14-R1-F3's own `receipt.project_id == project_id` check compared a publicly
+constructible dataclass's own field against itself -- a caller could copy a genuine receipt,
+overwrite `project_id`, and pass the same value both places. `route_observation_receipt_to_
+evidence` now takes a required `store` parameter (§2) and resolves `receipt.projection_envelope_
+id` under the *requested* `project_id`'s own Store partition before trusting anything else on
+the receipt; a receipt naming an envelope that was never actually committed under that project
+resolves to nothing and refuses. `subject_ref`, `external_artifact_ref`, and
+`github_authority_ref` are then cross-checked against the resolved Envelope's own real values,
+never trusted as the receipt's own self-reported copies. Separately, `_require_external_
+artifact_ref`'s own URL check previously verified only a literal string prefix
+(`url.startswith("https://github.com/{owner}/{repo}/")`), which a URL naming a different
+artifact id, a different artifact kind, or hiding its real target behind a query string,
+fragment, or embedded userinfo could still satisfy. A new `_require_consistent_locator` (hand-
+parsed with plain string operations -- never `urllib`, which this package's own static
+conformance test reserves to `github_adapter.py` alone) now requires the URL's own host, path
+owner/repo, kind segment (checked against a closed, per-`artifact_kind` set of real-GitHub and
+this package's own fixture-adapter conventions), and id segment to all name the identical
+artifact `artifact_kind`/`external_id` already claim, with zero query string, fragment, or
+userinfo left unaccounted for.
+
+**F4: the correlation-marker round-trip self-defeat is fixed, and V3 no longer hardcodes
+impossible refs.** `RealGitHubAdapter.materialize` embeds a hidden correlation marker in an
+Issue/PR's own `body`; `observe` previously fingerprinted the *marker-carrying* body it read
+back, while `route.py`'s own `_observe` always computes the *expected* fingerprint from the
+caller's committed payload, which never carries the marker -- a successful, untampered real
+materialization was guaranteed to observe as a mismatch. `RealGitHubAdapter._strip_correlation_
+marker` now removes the adapter's own trailing marker block (matched by template shape, not by
+a specific key, since `observe` is never told which key a given artifact carries) from the
+observed `body` before computing `observed_content_fingerprint`, restoring the one canonical
+write/read observable transformation both sides must agree on -- genuine content tampering in
+`title`/`body` prose remains fully detectable, since only the marker block itself is ever
+stripped.
+
+```text
+P14_R1_F1_CLOSED=false
+P14_R1_F2_MATERIALLY_IMPROVED=true
+P14_R1_F3_CLOSED=false
+P14_R1_F4_CLOSED=false
+P14_R1_F5_CLOSED=false
+P14_R1_F6_MATERIALLY_IMPROVED=true
+P14_R1_F7_CLOSED=true
+```
+
+(`P14_R1_F1`, re-addressed as this section's own F1; `P14_R1_F3`, re-addressed as F3 plus its
+own locator-grammar sub-requirement; `P14_R1_F4`, re-addressed as F2; `P14_R1_F5`, re-addressed
+as F4 -- all now closed at the head this correction lands at. `P14_R1_F2`/`P14_R1_F6` remain
+materially improved, not regressed. `P14_R1_F7` remains closed.)

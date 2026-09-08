@@ -103,3 +103,106 @@ def derive_projection_envelope(
         envelope, "projection_envelope.schema.json", base=PROJECTION_SCHEMA_BASE
     )
     return envelope
+
+
+def _derive_claim_record(
+    *,
+    id_field: str,
+    schema_name: str,
+    subject_ref: dict[str, Any],
+    subject_fingerprint: str,
+    projection_kind: str,
+    target_repository: dict[str, Any],
+    project_id: str,
+    materialized_at: str,
+) -> dict[str, Any]:
+    """Shared body for :func:`derive_projection_intent` and
+    :func:`derive_projection_materialize_attempt` (Structural Review Round 2, Issue #62,
+    P14-R2-F2) -- both are the identical shape, differing only in which durable fact they
+    record and therefore which record kind/id field/schema they use. Each record's own id is
+    *not* a hash of its full content the way every other Kernel record's own id is -- it is
+    always exactly :func:`~manosube_agent_civilization.projection.identity.
+    projection_mapping_key`, the *slot* this record claims, so a second attempt at the
+    identical slot commits at the identical (kind, id) and is caught by the Store's own
+    ``RecordConflictError`` the moment its content (here, ``materialized_at``) differs --
+    that collision *is* the concurrency barrier this pair of record kinds exists to provide.
+    """
+
+    if projection_kind not in PROJECTION_KINDS:
+        raise ProjectionRequirementError(
+            f"projection_kind is not a recognized kind: {projection_kind!r}"
+        )
+    if not isinstance(subject_ref, dict) or subject_ref.get("kind") not in SUBJECT_REF_KINDS:
+        raise ProjectionRequirementError(f"subject_ref names an unrecognized kind: {subject_ref!r}")
+
+    mapping_key = projection_mapping_key(
+        subject_ref, subject_fingerprint, projection_kind, target_repository
+    )
+    record = {
+        "schema_version": SCHEMA_VERSION,
+        id_field: mapping_key,
+        "project_id": project_id,
+        "subject_ref": dict(subject_ref),
+        "subject_fingerprint": subject_fingerprint,
+        "projection_kind": projection_kind,
+        "target_repository": dict(target_repository),
+        "materialized_at": materialized_at,
+    }
+    _validate_canonical_record(record, schema_name, base=PROJECTION_SCHEMA_BASE)
+    return record
+
+
+def derive_projection_intent(
+    *,
+    subject_ref: dict[str, Any],
+    subject_fingerprint: str,
+    projection_kind: str,
+    target_repository: dict[str, Any],
+    project_id: str,
+    materialized_at: str,
+) -> dict[str, Any]:
+    """Return one canonical, schema-valid Projection Intent record -- the durable claim a
+    route commits *before* ever calling ``adapter.find_by_correlation_key``/``materialize``
+    for a given (subject, kind, target) slot (Structural Review Round 2, P14-R2-F2). Its id
+    equals that slot's own :func:`~manosube_agent_civilization.projection.identity.
+    projection_mapping_key`, never a hash of the full record."""
+
+    return _derive_claim_record(
+        id_field="projection_intent_id",
+        schema_name="projection_intent.schema.json",
+        subject_ref=subject_ref,
+        subject_fingerprint=subject_fingerprint,
+        projection_kind=projection_kind,
+        target_repository=target_repository,
+        project_id=project_id,
+        materialized_at=materialized_at,
+    )
+
+
+def derive_projection_materialize_attempt(
+    *,
+    subject_ref: dict[str, Any],
+    subject_fingerprint: str,
+    projection_kind: str,
+    target_repository: dict[str, Any],
+    project_id: str,
+    materialized_at: str,
+) -> dict[str, Any]:
+    """Return one canonical, schema-valid Projection Materialize Attempt record -- the
+    durable marker a route commits *before* ever calling ``adapter.materialize`` itself
+    (Structural Review Round 2, P14-R2-F2), once it already owns the slot's
+    :func:`derive_projection_intent` claim. Its presence with no discoverable external
+    artifact and no committed Envelope is the genuinely ambiguous state a route must refuse
+    to resolve by blindly re-calling ``materialize`` (see :class:`~.errors.
+    ProjectionReconciliationRequiredError`)."""
+
+    return _derive_claim_record(
+        id_field="projection_materialize_attempt_id",
+        schema_name="projection_materialize_attempt.schema.json",
+        subject_ref=subject_ref,
+        subject_fingerprint=subject_fingerprint,
+        projection_kind=projection_kind,
+        target_repository=target_repository,
+        project_id=project_id,
+        materialized_at=materialized_at,
+    )

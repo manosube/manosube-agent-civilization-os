@@ -63,8 +63,26 @@ before ever calling ``materialize`` -- on every attempt, including the very firs
 attempt whose own response was lost or invalid, or whose Store commit failed after a genuine
 external success, therefore converges on retry to the identical external artifact instead of
 creating a duplicate: the deterministic mapping key *is* the correlation key, durable and
-recomputable with no I/O, so it survives any crash before, during, or after the external write
-without this route needing a separate persisted intent record of its own.
+recomputable with no I/O.
+
+**Atomic recoverable state machine (Structural Review Round 2, P14-R2-F2).** Search-then-
+create alone is still a check-then-act race between two genuinely concurrent callers: both
+can observe "nothing found" and both fall through to ``materialize``, producing two external
+artifacts for the identical semantic projection. This route closes that race with two durable
+Store records, both keyed by the mapping key itself and both committed through the identical
+single sanctioned committer as the eventual Envelope (never a second persistence mechanism):
+a ``projection_intent`` claim, committed before ``find_by_correlation_key``, and a
+``projection_materialize_attempt`` marker, committed before ``materialize`` itself. The
+Store's own per-project commit serialization and same-key/different-content rejection
+(:class:`~manosube_agent_civilization.store.errors.RecordConflictError`) is the entire
+concurrency barrier -- this route adds no lock, queue, or timeout of its own. A caller whose
+own claim attempt collides with a different, already-durable claim refuses immediately, before
+any adapter call, with :class:`~.errors.ProjectionConcurrentClaimError`. A caller that already
+owns the claim but finds both no discoverable external artifact and an already-durable
+materialize-attempt marker is in a genuinely ambiguous state (materialize may have failed
+cleanly, or may have succeeded with its response lost) and refuses with
+:class:`~.errors.ProjectionReconciliationRequiredError` rather than risk a real, untracked
+external duplicate by calling ``materialize`` a second time.
 """
 
 from __future__ import annotations
@@ -93,11 +111,19 @@ from manosube_agent_civilization.evidence.identity import (
 )
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.commit import commit_state_transition
+from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
 
-from .engine import PROJECTION_SCHEMA_BASE, derive_projection_envelope
+from .engine import (
+    PROJECTION_SCHEMA_BASE,
+    derive_projection_envelope,
+    derive_projection_intent,
+    derive_projection_materialize_attempt,
+)
 from .errors import (
     ConflictingProjectionPayloadError,
     ProjectionAdapterError,
+    ProjectionConcurrentClaimError,
+    ProjectionReconciliationRequiredError,
     ProjectionRequirementError,
 )
 from .identity import projection_mapping_key, projection_payload_fingerprint
@@ -114,7 +140,17 @@ from .types import (
 _STORE_RESOLVABLE_SUBJECT_KIND = "observation_evidence"
 _ENVELOPE_RECORD_KIND = "projection_envelope"
 _GRANT_RECORD_KIND = "github_projection_grant"
+_GRANT_DECLARATION_RECORD_KIND = "github_projection_grant_declaration"
+_INTENT_RECORD_KIND = "projection_intent"
+_MATERIALIZE_ATTEMPT_RECORD_KIND = "projection_materialize_attempt"
 _PERMITTED_ACTION = "MATERIALIZE_PROJECTION"
+#: Bounds the Compare-And-Swap retry loop :func:`_claim_slot` runs under genuine, ordinary
+#: contention (another commit to the *same* project landing between this route's own
+#: ``load_current`` and its own ``commit`` -- unrelated to this claim entirely, and resolved
+#: by simply reloading and retrying). Not a timeout and not a backoff -- the Store's own
+#: per-project ``fcntl`` lock (Structural Review Round 2, P14-R2-F2's own reused primitive)
+#: already fully serializes the retries themselves.
+_MAX_CLAIM_RETRIES = 8
 _DIFFERENCE_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "difference/"
 _CHANGE_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "change/"
 
@@ -204,13 +240,89 @@ def _require_external_artifact_ref(
             f"{context}.artifact_kind {value['artifact_kind']!r} is not valid for "
             f"projection_kind {projection_kind!r} (expected one of {sorted(expected_artifact_kinds)})"
         )
-    if not value["url"].startswith(
-        f"https://github.com/{target_repository['owner']}/{target_repository['repo']}/"
-    ):
-        raise ProjectionAdapterError(
-            f"{context}.url does not name the requested repository: {value['url']!r}"
-        )
+    # Structural Review Round 2 (P14-R2-F3b): a bare prefix check only proved *some*
+    # artifact under the requested repository -- never that the URL's own path identifies
+    # the *same* artifact as ``artifact_kind``/``external_id`` already do. A URL whose path
+    # names a different id, a different artifact kind, or that hides its real target behind
+    # a query string, fragment, or embedded userinfo, previously passed unnoticed as long as
+    # the literal string prefix matched.
+    _require_consistent_locator(
+        value["url"],
+        owner=target_repository["owner"],
+        repo=target_repository["repo"],
+        artifact_kind=value["artifact_kind"],
+        external_id=value["external_id"],
+        context=f"{context}.url",
+    )
     return dict(value)
+
+
+#: The canonical GitHub URL path segment(s) each ``artifact_kind`` may legitimately appear
+#: under (Structural Review Round 2, P14-R2-F3b). Real GitHub itself uses the plural/short
+#: form (``issues``, ``pull``); this package's own controlled fake adapter (and any other
+#: adapter following its documented convention) uses the literal ``artifact_kind`` value
+#: instead -- both are accepted here, but nothing *outside* this closed, per-kind set is.
+_ARTIFACT_KIND_LOCATOR_SEGMENTS: dict[str, frozenset[str]] = {
+    "issue": frozenset({"issue", "issues"}),
+    "pull_request": frozenset({"pull_request", "pull", "pulls"}),
+    "check_run": frozenset({"check_run", "runs", "check-runs"}),
+    "review": frozenset({"review", "reviews"}),
+    "artifact": frozenset({"artifact", "artifacts"}),
+}
+
+
+def _require_consistent_locator(
+    url: str, *, owner: str, repo: str, artifact_kind: str, external_id: str, context: str
+) -> None:
+    """Parse *url* against the canonical GitHub locator grammar and require every one of
+    its own parts -- host, owner, repo, artifact-kind segment, and id segment -- to name the
+    identical artifact ``artifact_kind``/``external_id`` already claim, with no query string,
+    fragment, or embedded userinfo left unaccounted for (Structural Review Round 2, Issue
+    #62, P14-R2-F3b). A URL that merely starts with the right prefix but resolves to a
+    *different* artifact once actually parsed is refused here, before it is ever committed
+    into a Projection Envelope."""
+
+    # Deliberately hand-parsed with plain string operations, never ``urllib`` -- this
+    # package's own static conformance test reserves every network/transport-surface import,
+    # ``urllib`` included, to ``github_adapter.py`` alone
+    # (``test_only_github_adapter_module_imports_a_network_or_transport_surface``), and this
+    # is genuinely just locator-grammar validation, not a transport call.
+    _SCHEME_PREFIX = "https://"
+    if not url.startswith(_SCHEME_PREFIX):
+        raise ProjectionAdapterError(f"{context} is not an https URL: {url!r}")
+    remainder = url[len(_SCHEME_PREFIX) :]
+    authority, _, path_and_rest = remainder.partition("/")
+    if "@" in authority:
+        raise ProjectionAdapterError(f"{context} carries embedded userinfo, refused: {url!r}")
+    if authority != "github.com":
+        raise ProjectionAdapterError(f"{context} does not name host github.com exactly: {url!r}")
+    path_and_query, has_fragment, _fragment = path_and_rest.partition("#")
+    if has_fragment:
+        raise ProjectionAdapterError(f"{context} carries a fragment, refused: {url!r}")
+    path, has_query, _query = path_and_query.partition("?")
+    if has_query:
+        raise ProjectionAdapterError(f"{context} carries a query string, refused: {url!r}")
+    segments = [segment for segment in path.split("/") if segment]
+    if len(segments) != 4:
+        raise ProjectionAdapterError(
+            f"{context} does not have the canonical owner/repo/kind/id path shape: {url!r}"
+        )
+    path_owner, path_repo, path_kind, path_id = segments
+    if path_owner != owner or path_repo != repo:
+        raise ProjectionAdapterError(
+            f"{context} path does not name the requested repository {owner}/{repo}: {url!r}"
+        )
+    allowed_segments = _ARTIFACT_KIND_LOCATOR_SEGMENTS.get(artifact_kind, frozenset())
+    if path_kind not in allowed_segments:
+        raise ProjectionAdapterError(
+            f"{context} path names a kind segment {path_kind!r} inconsistent with "
+            f"artifact_kind {artifact_kind!r} (expected one of {sorted(allowed_segments)}): {url!r}"
+        )
+    if path_id != external_id:
+        raise ProjectionAdapterError(
+            f"{context} path names a different id than external_id: {path_id!r} != "
+            f"{external_id!r} ({url!r})"
+        )
 
 
 def _resolve_or_refuse(
@@ -334,18 +446,29 @@ def _authorize_projection(
     target_repository: dict[str, Any],
     payload_fingerprint: str,
     human_authority_ref: dict[str, Any],
+    human_authority_signing_key: dict[str, Any],
     grant_refs: Any,
+    grant_declaration_refs: Any,
 ) -> None:
     """Require a real, exact-binding, Store-resolved ``github_projection_grant`` Authority
-    Decision before any adapter call (Structural Review Round 1, P14-R1-F1) -- never merely
-    equality between ``github_authority_ref`` and the real Human Authority reference, which
-    proves only who owns Human Authority for the Project, not that this exact projection was
-    authorized. Every :class:`~manosube_agent_civilization.authority.errors.AuthorityError`
-    the evaluator itself raises for an unreadable request propagates unchanged."""
+    Decision, anchored by a genuine, signed ``github_projection_grant_declaration``
+    (Structural Review Round 1, P14-R1-F1; signed anchor, Structural Review Round 2,
+    P14-R2-F1), before any adapter call -- never merely equality between
+    ``github_authority_ref`` and the real Human Authority reference, which proves only who
+    owns Human Authority for the Project, not that this exact projection was authorized, and
+    never a grant's own Store persistence alone, which proves only that some Store-write-
+    capable caller committed a self-consistent record, not that a Human declared it. Every
+    :class:`~manosube_agent_civilization.authority.errors.AuthorityError` the evaluator itself
+    raises for an unreadable request propagates unchanged."""
 
     if not isinstance(grant_refs, list | tuple):
         raise ProjectionRequirementError(
             f"github_projection_grant_refs must be an explicit list: {grant_refs!r}"
+        )
+    if not isinstance(grant_declaration_refs, list | tuple):
+        raise ProjectionRequirementError(
+            "github_projection_grant_declaration_refs must be an explicit list: "
+            f"{grant_declaration_refs!r}"
         )
     resolved_grants = [
         _resolve_or_refuse(
@@ -357,6 +480,16 @@ def _authorize_projection(
         )
         for position, ref in enumerate(grant_refs)
     ]
+    resolved_declarations = [
+        _resolve_or_refuse(
+            store,
+            project_id,
+            _GRANT_DECLARATION_RECORD_KIND,
+            ref,
+            context=f"github_projection_grant_declaration_refs[{position}]",
+        )
+        for position, ref in enumerate(grant_declaration_refs)
+    ]
     request = {
         "schema_version": "0.1",
         "project_id": project_id,
@@ -367,7 +500,9 @@ def _authorize_projection(
         "payload_fingerprint": payload_fingerprint,
         "permitted_action": _PERMITTED_ACTION,
         "human_authority_ref": human_authority_ref,
+        "human_authority_signing_key": human_authority_signing_key,
         "grants": resolved_grants,
+        "grant_declarations": resolved_declarations,
     }
     try:
         decision = evaluate_projection_authorization(request)
@@ -380,6 +515,96 @@ def _authorize_projection(
             f"target={target_repository!r}); decision reason codes: "
             f"{decision['decision_reason_codes']}"
         )
+
+
+def _claim_slot(
+    store: Any,
+    project_id: str,
+    record_kind: str,
+    record_id: str,
+    record: dict[str, Any],
+    transaction_id_prefix: str,
+    committed_at: str,
+) -> None:
+    """Durably claim (kind=*record_kind*, id=*record_id*) as one atomic Compare-And-Swap
+    commit through the Store's own single sanctioned committer (Structural Review Round 2,
+    Issue #62, P14-R2-F2) -- the concurrency barrier :func:`project_to_github` needs before
+    ever calling ``adapter.find_by_correlation_key``/``materialize``.
+
+    Returns normally, with zero further meaning to the caller beyond "this call now owns
+    this claim", in exactly two cases: a fresh commit (nobody has claimed this slot before),
+    or an idempotent replay of the *identical* claim content this exact caller already
+    committed (a genuine retry with the same ``materialized_at``). Raises
+    :class:`~.errors.ProjectionConcurrentClaimError` the moment the Store's own
+    ``RecordConflictError`` proves a *different* attempt already durably holds this slot --
+    the Store never lets two different record bodies coexist at one (kind, id), and that
+    guarantee is the entire mechanism this function relies on.
+
+    A :class:`~manosube_agent_civilization.store.errors.StaleStateError` means only that some
+    *unrelated* commit landed on this project between this function's own ``load_current``
+    and its own ``commit`` -- reloading and retrying resolves it without deciding anything
+    about slot ownership one way or the other, bounded by :data:`_MAX_CLAIM_RETRIES` so
+    genuine, sustained contention still surfaces as a real error rather than looping forever.
+
+    *transaction_id_prefix* is never used verbatim as the transaction id: this function's own
+    idempotency guarantee lives entirely at the (kind, id) record-content level
+    (:func:`FileStateStore._stage_records`'s own same-key/different-content rejection), never
+    at the transaction-id-replay level (identical *event* bytes at an identical
+    ``transaction_id`` -- a much narrower guarantee than "identical record content", since the
+    transition event also carries the base/target revision numbers, which genuinely differ
+    between a first attempt and a later identical-content retry once *anything else* has
+    since committed against this project). Reusing one fixed ``transaction_id`` across retries
+    would make the Store's own transaction-replay check compare two transition events with
+    different revision numbers and raise ``TransactionConflictError`` -- a real bug this
+    function avoids by suffixing the *current* base revision onto the prefix on every retry,
+    which is always fresh (a given project revision is used as a *base* at most once, ever).
+    """
+
+    for _ in range(_MAX_CLAIM_RETRIES):
+        current_state = store.load_current(project_id)
+        transaction_id = f"{transaction_id_prefix}-{current_state['state_revision']}"
+        next_state = dict(current_state)
+        next_state["state_revision"] = current_state["state_revision"] + 1
+        next_state["previous_state_fingerprint"] = current_state["semantic_fingerprint"]
+        next_state["lineage_head_ref"] = {"kind": "state_transition", "id": transaction_id}
+        next_state["semantic_fingerprint"] = fingerprint_project_state(next_state).as_dict()
+        transition = {
+            "schema_version": "0.1",
+            "transaction_id": transaction_id,
+            "event_type": "TRANSITION",
+            "project_id": project_id,
+            "from_revision": current_state["state_revision"],
+            "to_revision": next_state["state_revision"],
+            "before_fingerprint": current_state["semantic_fingerprint"],
+            "after_fingerprint": next_state["semantic_fingerprint"],
+            "after_state": next_state,
+            "evidence_refs": [],
+            "committed_at": committed_at,
+        }
+        try:
+            commit_state_transition(
+                store,
+                project_id,
+                current_state["state_revision"],
+                current_state["semantic_fingerprint"],
+                next_state,
+                transition,
+                records=[(record_kind, record_id, record)],
+            )
+            return
+        except RecordConflictError as error:
+            raise ProjectionConcurrentClaimError(
+                f"a different attempt already holds the claim on {record_kind}/{record_id} -- "
+                "this attempt's own materialized_at does not match the durably committed "
+                "claim, so this request refuses rather than risk a duplicate external write"
+            ) from error
+        except StaleStateError:
+            continue
+    raise ProjectionConcurrentClaimError(
+        f"could not durably claim {record_kind}/{record_id} after {_MAX_CLAIM_RETRIES} "
+        "Compare-And-Swap retries -- sustained unrelated contention on this project's own "
+        "State; this request refuses rather than materialize without a durable claim"
+    )
 
 
 def project_to_github(
@@ -395,6 +620,7 @@ def project_to_github(
     materialized_at: str,
     adapter: GitHubAdapter,
     github_projection_grant_refs: list[Mapping[str, Any]],
+    github_projection_grant_declaration_refs: list[Mapping[str, Any]],
     subject_record: Mapping[str, Any] | None = None,
     subject_fingerprint: str | None = None,
 ) -> dict[str, Any]:
@@ -410,6 +636,11 @@ def project_to_github(
     ``{"kind": "github_projection_grant", "id": ...}`` references, resolved through the Store
     before being offered to the existing Authority owner (Structural Review Round 1,
     P14-R1-F1) -- grant content itself is never an accepted argument shape.
+    *github_projection_grant_declaration_refs* is the caller's own explicit collection of
+    ``{"kind": "github_projection_grant_declaration", "id": ...}`` references, resolved
+    through the Store the identical way (Structural Review Round 2, P14-R2-F1) -- a
+    Store-resolved grant alone, with no matching signed Human declaration anchoring it,
+    authorizes zero adapter calls.
     *materialized_at* is a required, caller-supplied instant (this route reads no clock, the
     identical discipline Evidence's own ``derive_evidence`` already requires of its own
     "recording instant").
@@ -453,6 +684,9 @@ def project_to_github(
     # any such rejection.
     boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
     real_human_authority_ref = dict(boot_context.human_authority_ref)
+    real_human_authority_signing_key = dict(
+        boot_context.project_binding["human_authority_signing_key"]
+    )
     _canonical_reference_equal(
         github_authority_ref,
         real_human_authority_ref,
@@ -506,6 +740,8 @@ def project_to_github(
         payload_fingerprint=real_payload_fingerprint,
         human_authority_ref=real_human_authority_ref,
         grant_refs=github_projection_grant_refs,
+        human_authority_signing_key=real_human_authority_signing_key,
+        grant_declaration_refs=github_projection_grant_declaration_refs,
     )
 
     existing = store.resolve_record(project_id, _ENVELOPE_RECORD_KIND, mapping_key)
@@ -535,9 +771,38 @@ def project_to_github(
             "or unverifiable identity may never materialize or observe on this route's behalf"
         )
 
+    # Structural Review Round 2 (Issue #62, P14-R2-F2): a durable claim on this exact mapping
+    # slot, committed *before* either adapter call, closes the race a bare "search, then
+    # create if not found" leaves open -- two concurrent callers reaching this point with the
+    # identical mapping_key but different materialized_at can no longer both fall through to
+    # materialize; only the one whose own claim the Store's single per-project commit lock
+    # admits first proceeds, and the other refuses via ProjectionConcurrentClaimError before
+    # calling the adapter at all. Same caller, same materialized_at (a genuine process retry)
+    # commits idempotently and proceeds identically to the first attempt.
+    intent = derive_projection_intent(
+        subject_ref=checked_subject_ref,
+        subject_fingerprint=real_subject_fingerprint,
+        projection_kind=projection_kind,
+        target_repository=real_target_repository,
+        project_id=project_id,
+        materialized_at=materialized_at,
+    )
+    _claim_slot(
+        store,
+        project_id,
+        _INTENT_RECORD_KIND,
+        mapping_key,
+        intent,
+        f"TX-PROJECTION-INTENT-{mapping_key}",
+        materialized_at,
+    )
+
     # Structural Review Round 1 (P14-R1-F4): search before create, on every attempt --
     # recovers an artifact a prior attempt genuinely materialized but never committed an
     # Envelope for (a lost/invalid response, or a failed Store commit after a real success).
+    # Every caller reaches this lookup regardless of who owns the intent claim above: a
+    # caller that lost the claim race may still legitimately *observe* an artifact the claim
+    # owner already created, it simply may never *materialize* one of its own.
     found_ref = adapter.find_by_correlation_key(
         correlation_key=mapping_key,
         target_repository=real_target_repository,
@@ -552,6 +817,40 @@ def project_to_github(
             projection_kind=projection_kind,
         )
     else:
+        # Structural Review Round 2 (P14-R2-F2): a second durable claim, committed before
+        # ``materialize`` itself -- its presence with no discoverable artifact and no
+        # committed Envelope is the genuinely ambiguous "did a prior materialize call under
+        # this identical claim actually reach GitHub or not" state that must never resolve
+        # itself by blindly calling materialize a second time (see
+        # ProjectionReconciliationRequiredError).
+        attempt_already_claimed = (
+            store.resolve_record(project_id, _MATERIALIZE_ATTEMPT_RECORD_KIND, mapping_key)
+            is not None
+        )
+        if attempt_already_claimed:
+            raise ProjectionReconciliationRequiredError(
+                f"projection identity {mapping_key!r} already recorded a materialize attempt "
+                "under this identical claim, and no external artifact is discoverable and no "
+                "Envelope is committed -- refusing to call materialize again rather than risk "
+                "an untracked duplicate; this requires operator reconciliation"
+            )
+        attempt = derive_projection_materialize_attempt(
+            subject_ref=checked_subject_ref,
+            subject_fingerprint=real_subject_fingerprint,
+            projection_kind=projection_kind,
+            target_repository=real_target_repository,
+            project_id=project_id,
+            materialized_at=materialized_at,
+        )
+        _claim_slot(
+            store,
+            project_id,
+            _MATERIALIZE_ATTEMPT_RECORD_KIND,
+            mapping_key,
+            attempt,
+            f"TX-PROJECTION-ATTEMPT-{mapping_key}",
+            materialized_at,
+        )
         external_artifact_ref = adapter.materialize(
             projection_kind=projection_kind,
             target_repository=real_target_repository,

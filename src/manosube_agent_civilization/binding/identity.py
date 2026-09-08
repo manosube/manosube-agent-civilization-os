@@ -137,3 +137,68 @@ def verify_human_grant_declaration_identity(record: dict[str, Any]) -> None:
             f"human_grant_declaration_id does not reproduce from its own declared fields: "
             f"claimed {claimed!r}, recomputed {recomputed!r}"
         )
+
+
+#: The identical shape of anchor Phase 14 Structural Review Round 2 (Issue #62, P14-R2-F1)
+#: requires for ``github_projection_grant``: a Human Grant Declaration sibling record kind
+#: whose own restated fields are the projection grant's own semantic fields
+#: (``subject_ref``/``subject_fingerprint``/``projection_kind``/``target_repository``/
+#: ``payload_fingerprint``/``permitted_action``) rather than a verifier selection's. A separate
+#: record kind, not a reuse of ``human_grant_declaration`` itself, because that schema's own
+#: ``grant_ref.kind`` is ``const``-pinned to ``"verifier_selection_grant"`` and its restated
+#: fields are shaped for a different question entirely -- exactly the identical
+#: ``verifier_selection_grant``/``github_projection_grant`` sibling-not-shared-owner relationship
+#: this repository already has one layer up, in ``authority/conformance.py``'s own
+#: ``RECORD_TYPES``.
+_GITHUB_PROJECTION_GRANT_DECLARATION_IDENTITY_PAYLOAD_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_id",
+    "grant_ref",
+    "declared_by",
+    "subject_ref",
+    "subject_fingerprint",
+    "projection_kind",
+    "target_repository",
+    "payload_fingerprint",
+    "permitted_action",
+    "status",
+    "declared_at",
+)
+
+
+def github_projection_grant_declaration_signing_payload(record: dict[str, Any]) -> bytes:
+    """Return the exact canonical bytes a genuine Human signature over *record* must cover --
+    the identical payload :func:`github_projection_grant_declaration_id` itself hashes, over
+    :data:`_GITHUB_PROJECTION_GRANT_DECLARATION_IDENTITY_PAYLOAD_FIELDS`. The identical
+    shared-derivation discipline :func:`human_grant_declaration_signing_payload` already
+    establishes: the content address and the signed message are never allowed to drift apart."""
+
+    payload = {
+        key: record[key] for key in _GITHUB_PROJECTION_GRANT_DECLARATION_IDENTITY_PAYLOAD_FIELDS
+    }
+    return canonical_bytes(payload)
+
+
+def github_projection_grant_declaration_id(record: dict[str, Any]) -> str:
+    """Return the ``GH-PROJ-DECL-`` content address of *record*'s own adopted semantic fields
+    (Phase 14 Structural Review Round 2, P14-R2-F1) -- the identical content-addressing
+    convention :func:`human_grant_declaration_id` already uses, over
+    :func:`github_projection_grant_declaration_signing_payload`'s own bytes."""
+
+    digest = hashlib.sha256(github_projection_grant_declaration_signing_payload(record)).hexdigest()
+    return "GH-PROJ-DECL-" + digest.upper()
+
+
+def verify_github_projection_grant_declaration_identity(record: dict[str, Any]) -> None:
+    """Recompute ``github_projection_grant_declaration_id`` from *record*'s own semantic
+    fields and require it to equal the id the record itself claims -- the identical
+    self-consistency check :func:`verify_human_grant_declaration_identity` already applies."""
+
+    claimed = record.get("github_projection_grant_declaration_id")
+    recomputed = github_projection_grant_declaration_id(record)
+    if claimed != recomputed:
+        raise BindingIdentityError(
+            "github_projection_grant_declaration_id does not reproduce from its own declared "
+            f"fields: claimed {claimed!r}, recomputed {recomputed!r}"
+        )

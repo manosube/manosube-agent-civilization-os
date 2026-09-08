@@ -28,7 +28,9 @@ result["envelope"]  # the canonical, committed Projection Envelope
 result["receipt"]   # GitHubObservationReceipt
 result["reused"]    # bool
 
-evidence = route_observation_receipt_to_evidence(result["receipt"], project_id, evidence_request)
+evidence = route_observation_receipt_to_evidence(
+    store, result["receipt"], project_id, evidence_request
+)
 ```
 
 See ``09_PROJECTION/PROJECTION_INDEX.md`` for the full contract set.
@@ -37,7 +39,9 @@ See ``09_PROJECTION/PROJECTION_INDEX.md`` for the full contract set.
 from .errors import (
     ConflictingProjectionPayloadError,
     ProjectionAdapterError,
+    ProjectionConcurrentClaimError,
     ProjectionError,
+    ProjectionReconciliationRequiredError,
     ProjectionRequirementError,
     ProjectionValueError,
 )
@@ -63,7 +67,9 @@ __all__ = [
     "GitHubAdapter",
     "GitHubObservationReceipt",
     "ProjectionAdapterError",
+    "ProjectionConcurrentClaimError",
     "ProjectionError",
+    "ProjectionReconciliationRequiredError",
     "ProjectionRequirementError",
     "ProjectionValueError",
     "RealGitHubAdapter",

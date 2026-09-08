@@ -46,6 +46,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 import json
+import re
 from typing import Any
 import urllib.error
 import urllib.parse
@@ -70,6 +71,7 @@ class FakeGitHubAdapter:
         adapter_identity: Mapping[str, Any] | None = None,
         fail_materialize: BaseException | None = None,
         fail_observe: BaseException | None = None,
+        fail_find_by_correlation_key: BaseException | None = None,
         observation_outcome_override: str | None = None,
         observed_content_fingerprint_override: str | None = None,
     ) -> None:
@@ -81,6 +83,11 @@ class FakeGitHubAdapter:
         self._next_sequence = 1
         self._fail_materialize = fail_materialize
         self._fail_observe = fail_observe
+        # P14-R2-F2: lets a test simulate a genuine lookup failure (permission, rate limit,
+        # transport, outage) distinctly from a confirmed-empty search -- the exact
+        # distinction ``RealGitHubAdapter.find_by_correlation_key`` now itself makes rather
+        # than collapsing both into ``None``.
+        self._fail_find_by_correlation_key = fail_find_by_correlation_key
         self._observation_outcome_override = observation_outcome_override
         self._observed_content_fingerprint_override = observed_content_fingerprint_override
         self.materialize_call_count = 0
@@ -136,6 +143,8 @@ class FakeGitHubAdapter:
         payload: Mapping[str, Any],
     ) -> Mapping[str, Any] | None:
         self.find_by_correlation_key_call_count += 1
+        if self._fail_find_by_correlation_key is not None:
+            raise self._fail_find_by_correlation_key
         key = self._by_correlation_key.get(correlation_key)
         if key is None:
             return None
@@ -239,6 +248,17 @@ class RealGitHubAdapter:
 
     _API_BASE = "https://api.github.com"
     _CORRELATION_MARKER = "<!-- manosube-projection-correlation-key: {key} -->"
+    #: Matches the exact trailing block :meth:`materialize` appends to a caller's own
+    #: ``body`` (``"\n\n" + marker``), for *any* embedded key -- never a fixed key, since
+    #: :meth:`observe` is never told which correlation key a given artifact actually carries
+    #: (Structural Review Round 2, Issue #62, P14-R2-F4). Stripping by template shape rather
+    #: than by exact key still leaves genuine content tampering fully detectable: only the
+    #: marker block this adapter itself appends is ever removed, never any of the caller's
+    #: own ``title``/``body`` prose, which is exactly what the observable-fingerprint
+    #: comparison must still catch a difference in.
+    _CORRELATION_MARKER_PATTERN = re.compile(
+        r"\n\n<!-- manosube-projection-correlation-key: [^>]*? -->\Z"
+    )
 
     def __init__(self, *, token: str, adapter_identity: Mapping[str, Any] | None = None) -> None:
         self._token = token
@@ -275,7 +295,9 @@ class RealGitHubAdapter:
         try:
             return self._request(method, path, body=body)
         except urllib.error.URLError as error:
-            raise ProjectionAdapterError(f"GitHub write failed: {method} {path}: {error}") from error
+            raise ProjectionAdapterError(
+                f"GitHub write failed: {method} {path}: {error}"
+            ) from error
 
     def _classify_error(self, error: urllib.error.URLError) -> str:
         """Return one of ``NOT_FOUND``/``PERMISSION_DENIED``/``UNAVAILABLE`` for *error*
@@ -292,6 +314,24 @@ class RealGitHubAdapter:
                 return "PERMISSION_DENIED"
             return "UNAVAILABLE"
         return "UNAVAILABLE"
+
+    @classmethod
+    def _strip_correlation_marker(cls, body: str | None) -> str | None:
+        """Return *body* with this adapter's own trailing correlation-key marker removed,
+        if present -- the one canonical write/read observable transformation both sides of
+        the round-trip must agree on (Structural Review Round 2, P14-R2-F4).
+
+        :meth:`materialize` appends the marker to a caller's own ``body`` before writing it
+        to GitHub; :meth:`observe` reads that same, marker-carrying ``body`` back. Without
+        this inverse transformation, ``route.py``'s own independent recomputation of the
+        *expected* fingerprint -- always over the caller's real, committed payload, which
+        never carries the marker -- could never agree with the *observed* fingerprint, even
+        for a genuinely untampered, successfully round-tripped artifact.
+        """
+
+        if body is None:
+            return None
+        return cls._CORRELATION_MARKER_PATTERN.sub("", body)
 
     def materialize(
         self,
@@ -382,8 +422,16 @@ class RealGitHubAdapter:
             query = f"repo:{owner}/{repo} {type_qualifier} {marker}"
             try:
                 response = self._request("GET", f"/search/issues?q={urllib.parse.quote(query)}")
-            except urllib.error.URLError:
-                return None
+            except urllib.error.URLError as error:
+                # Structural Review Round 2 (P14-R2-F2): a lookup that never reached GitHub
+                # (permission, rate limit, transport, outage) is never "not found" -- a
+                # caller that swallowed this into ``None`` here would then believe it is
+                # safe to ``materialize`` a fresh artifact, when a genuine prior artifact may
+                # already exist and this search simply could not see it. This route always
+                # propagates such a failure so ``project_to_github`` blocks new creation.
+                raise ProjectionAdapterError(
+                    f"GitHub correlation lookup failed: GET /search/issues: {error}"
+                ) from error
             items = response.get("items", [])
             if not items:
                 return None
@@ -403,8 +451,13 @@ class RealGitHubAdapter:
                 response = self._request(
                     "GET", f"/repos/{owner}/{repo}/commits/{head_sha}/check-runs"
                 )
-            except urllib.error.URLError:
-                return None
+            except urllib.error.URLError as error:
+                # P14-R2-F2: the identical fail-closed distinction as the issue/PR branch
+                # above -- a failed lookup is never treated as a confirmed absence.
+                raise ProjectionAdapterError(
+                    f"GitHub correlation lookup failed: GET "
+                    f"/repos/{owner}/{repo}/commits/{head_sha}/check-runs: {error}"
+                ) from error
             for run in response.get("check_runs", []):
                 if run.get("external_id") == correlation_key:
                     return {
@@ -459,7 +512,7 @@ class RealGitHubAdapter:
         else:
             observed_payload = {
                 "title": response.get("title"),
-                "body": response.get("body"),
+                "body": self._strip_correlation_marker(response.get("body")),
                 "head_ref": (response.get("head") or {}).get("ref"),
                 "base_ref": (response.get("base") or {}).get("ref"),
             }
