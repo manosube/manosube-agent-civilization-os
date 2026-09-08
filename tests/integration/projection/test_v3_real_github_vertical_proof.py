@@ -41,11 +41,15 @@ import pytest
 from tests.authority_helpers import action, derived_difference, rule, scope
 from tests.change_helpers import route as change_route
 from tests.evidence_helpers import observation_evidence_request
-from tests.fixtures.product_binding import bind_project_kwargs, genesis_records
+from tests.fixtures.product_binding import (
+    bind_project_kwargs,
+    genesis_records,
+    sign_github_projection_grant_declaration,
+)
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.authority.identity import github_projection_grant_id
-from manosube_agent_civilization.binding import bind_project
+from manosube_agent_civilization.binding import bind_project, declare_github_projection_grant
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.change import derive_change
 from manosube_agent_civilization.change.identity import (
@@ -175,7 +179,55 @@ def _commit_grant(
         transaction_id,
         [("github_projection_grant", grant["github_projection_grant_id"], grant)],
     )
-    return {"kind": "github_projection_grant", "id": grant["github_projection_grant_id"]}, next_state
+    return (
+        {"kind": "github_projection_grant", "id": grant["github_projection_grant_id"]},
+        next_state,
+        grant,
+    )
+
+
+def _commit_declaration(
+    store: FileStateStore,
+    project_id: str,
+    project_binding_id: str,
+    human_authority_ref: dict[str, Any],
+    grant: dict[str, Any],
+) -> dict[str, Any]:
+    """Declare and commit one real, genuinely Ed25519-signed ``github_projection_grant_
+    declaration`` anchoring *grant*, through the real committing route (Structural Review
+    Round 2, Issue #62, P14-R2-F1) -- a Store-resolved grant alone, with no matching signed
+    Human declaration anchoring it, authorizes zero adapter calls."""
+
+    grant_ref = {"kind": "github_projection_grant", "id": grant["github_projection_grant_id"]}
+    signature = sign_github_projection_grant_declaration(
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref=grant_ref,
+        declared_by=human_authority_ref,
+        subject_ref=grant["subject_ref"],
+        subject_fingerprint=grant["subject_fingerprint"],
+        projection_kind=grant["projection_kind"],
+        target_repository=grant["target_repository"],
+        payload_fingerprint=grant["payload_fingerprint"],
+        permitted_action=grant["permitted_action"],
+        status="ACTIVE",
+        declared_at="2026-09-08T00:00:00Z",
+    )
+    result = declare_github_projection_grant(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref=grant_ref,
+        status="ACTIVE",
+        declared_at="2026-09-08T00:00:00Z",
+        signature=signature,
+        schema_root=SCHEMA_ROOT,
+    )
+    declaration = result["github_projection_grant_declaration"]
+    return {
+        "kind": "github_projection_grant_declaration",
+        "id": declaration["github_projection_grant_declaration_id"],
+    }
 
 
 def _run_vertical_proof(
@@ -234,7 +286,7 @@ def _run_vertical_proof(
         subject_ref = {"kind": "observation_evidence", "id": evidence["evidence_id"]}
         subject_fingerprint = evidence_semantic_fingerprint(evidence)
 
-    grant_ref, current_state = _commit_grant(
+    grant_ref, current_state, grant = _commit_grant(
         store,
         ctx["project_id"],
         human_authority_ref,
@@ -245,6 +297,11 @@ def _run_vertical_proof(
         projection_kind=projection_kind,
         target_repository=target_repository,
         payload_fingerprint=projection_payload_fingerprint(dict(projection_payload)),
+    )
+    # Structural Review Round 2 (P14-R2-F1): the grant's own Store persistence is never itself
+    # proof a Human declared it -- a real, genuinely signed declaration anchors it too.
+    declaration_ref = _commit_declaration(
+        store, ctx["project_id"], ctx["project_binding_id"], human_authority_ref, grant
     )
 
     return project_to_github(
@@ -259,6 +316,7 @@ def _run_vertical_proof(
         materialized_at="2026-09-08T00:00:01Z",
         adapter=adapter,
         github_projection_grant_refs=[grant_ref],
+        github_projection_grant_declaration_refs=[declaration_ref],
         **kwargs,
     )
 
@@ -349,7 +407,10 @@ def test_v3_project_a_real_difference_to_a_github_issue(tmp_path: Path) -> None:
         subject_kind="difference",
         projection_kind="DIFFERENCE_ISSUE",
         target_repository={"host": "github", "owner": target_owner, "repo": target_repo},
-        projection_payload={"title": "MANOSUBE V3 proof -- Difference (do not merge)", "body": "harness"},
+        projection_payload={
+            "title": "MANOSUBE V3 proof -- Difference (do not merge)",
+            "body": "harness",
+        },
         adapter=RealGitHubAdapter(token=os.environ[_V3_TOKEN_ENV]),
     )
     assert outcome["receipt"].status == "VERIFIED"

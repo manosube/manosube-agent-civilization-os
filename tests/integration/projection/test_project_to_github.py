@@ -716,7 +716,10 @@ def test_declaration_signed_by_the_wrong_key_refuses(_world: dict[str, Any]) -> 
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    from manosube_agent_civilization.authority import PROJECTION_REFUSED, evaluate_projection_authorization
+    from manosube_agent_civilization.authority import (
+        PROJECTION_REFUSED,
+        evaluate_projection_authorization,
+    )
     from manosube_agent_civilization.binding.identity import (
         github_projection_grant_declaration_id,
         github_projection_grant_declaration_signing_payload,
@@ -831,7 +834,10 @@ def test_declaration_declared_by_a_different_authority_refuses(_world: dict[str,
     verification: the signature here is a genuine Ed25519 signature, over exactly this
     fabricated ``declared_by``, produced by the fixture's own real signing key)."""
 
-    from manosube_agent_civilization.authority import PROJECTION_REFUSED, evaluate_projection_authorization
+    from manosube_agent_civilization.authority import (
+        PROJECTION_REFUSED,
+        evaluate_projection_authorization,
+    )
     from manosube_agent_civilization.binding.engine import (
         assemble_github_projection_grant_declaration,
     )
@@ -912,7 +918,10 @@ def test_declaration_content_mismatch_refuses(_world: dict[str, Any]) -> None:
     declared_by_a_different_authority_refuses` uses, with a genuine signature covering exactly
     this (mismatched) restated payload."""
 
-    from manosube_agent_civilization.authority import PROJECTION_REFUSED, evaluate_projection_authorization
+    from manosube_agent_civilization.authority import (
+        PROJECTION_REFUSED,
+        evaluate_projection_authorization,
+    )
     from manosube_agent_civilization.binding.engine import (
         assemble_github_projection_grant_declaration,
     )
@@ -1586,7 +1595,9 @@ def test_fake_adapter_observed_content_fingerprint_is_a_real_independently_repro
     outcome = _project(_world, adapter)
     fingerprint = outcome["receipt"].observations["observed_content_fingerprint"]
     expected = expected_observable_projection("EVIDENCE_ARTIFACT", dict(_PAYLOAD))
-    independently_recomputed = "sha256:" + hashlib.sha256(canonical_json_bytes(expected)).hexdigest()
+    independently_recomputed = (
+        "sha256:" + hashlib.sha256(canonical_json_bytes(expected)).hexdigest()
+    )
     assert fingerprint == independently_recomputed
 
 
@@ -1607,9 +1618,7 @@ def test_fake_adapter_fingerprint_is_collision_sensitive_to_a_single_field_chang
         new_payload=tampered_payload,
     )
     second = _project(_world, adapter, materialized_at="2026-09-08T00:00:08Z")
-    assert (
-        second["receipt"].observations["observed_content_fingerprint"] != original_fingerprint
-    )
+    assert second["receipt"].observations["observed_content_fingerprint"] != original_fingerprint
     assert second["receipt"].status == "FAILED"
 
 

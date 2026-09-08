@@ -214,10 +214,22 @@ def test_route_imports_only_the_read_only_difference_and_change_identity_functio
 
 
 def test_only_route_calls_commit_state_transition() -> None:
+    """The sanctioned single committer is still reached from exactly two literal call sites in
+    ``route.py``, never a third, and never from any other module in this package (Structural
+    Review Round 2, Issue #62, P14-R2-F2 raised this from one call site to two: the shared
+    ``_claim_slot`` helper -- reused, at runtime, for both the intent claim and the
+    materialize-attempt claim, but written once, as one call site -- and ``project_to_github``'s
+    own final Envelope commit). Both still funnel through the identical single sanctioned
+    committer this package shares with Reflow and Binding; this proof is about call-site
+    *count*, never about introducing a second committer."""
+
     for module in _ALL_PACKAGE_MODULES:
         count = _call_site_count(module, "commit_state_transition")
         if module is route_module:
-            assert count == 1, "route.py must call commit_state_transition exactly once"
+            assert count == 2, (
+                "route.py must call commit_state_transition from exactly two literal call "
+                "sites -- the shared _claim_slot helper and the final Envelope commit"
+            )
         else:
             assert count == 0, f"{module.__name__} must never call commit_state_transition"
 
