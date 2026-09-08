@@ -53,6 +53,16 @@ ARTIFACT_KINDS: frozenset[str] = frozenset(
 #: without widening what that position's own schema-enforced ``status`` enum admits.
 RECEIPT_STATUSES: frozenset[str] = frozenset({"VERIFIED", "FAILED", "INSUFFICIENT", "UNAVAILABLE"})
 
+#: The closed vocabulary a :class:`GitHubAdapter`'s own ``observe`` call must classify its own
+#: result into (Phase 14, Structural Review Round 1, P14-R1-F6): only ``FOUND`` may carry a
+#: content fingerprint for comparison, only ``NOT_FOUND`` is an authoritative absence, and
+#: ``PERMISSION_DENIED``/``UNAVAILABLE`` both mean existence itself could not be determined --
+#: never collapsed into a claim of absence or of verified content, which would let a
+#: permission failure or a transient outage masquerade as either.
+OBSERVATION_OUTCOME_KINDS: frozenset[str] = frozenset(
+    {"FOUND", "NOT_FOUND", "PERMISSION_DENIED", "UNAVAILABLE"}
+)
+
 
 def _deep_freeze(value: Any) -> Any:
     """Recursively rebuild *value* into an immutable, alias-free equivalent, refusing
@@ -96,23 +106,57 @@ class GitHubAdapter(Protocol):
         projection_kind: str,
         target_repository: Mapping[str, Any],
         payload: Mapping[str, Any],
+        correlation_key: str,
     ) -> Mapping[str, Any]:
         """Create one external GitHub artifact and return its ``external_artifact_ref``.
 
         Called at most once per genuinely new projection identity -- a replay against an
         already-committed Envelope calls :meth:`observe` instead, never this method again
         (``PROJECTION_CONTRACT.md`` §3: "Replay must observe/reuse the recorded mapping
-        rather than blindly creating another artifact")."""
+        rather than blindly creating another artifact").
+
+        *correlation_key* (Phase 14, Structural Review Round 1, P14-R1-F4) is the
+        deterministic projection identity (the mapping key) this call is for -- an
+        implementation must durably associate it with the artifact it creates (embedded in
+        the artifact's own content, or in a provider-native idempotency field) so that
+        :meth:`find_by_correlation_key` can recover the same artifact on a later retry,
+        without ever creating a second one for the identical key."""
+
+    def find_by_correlation_key(
+        self,
+        *,
+        correlation_key: str,
+        target_repository: Mapping[str, Any],
+        projection_kind: str,
+        payload: Mapping[str, Any],
+    ) -> Mapping[str, Any] | None:
+        """Return the ``external_artifact_ref`` of an artifact already materialized under
+        *correlation_key*, or ``None`` if none exists yet.
+
+        Phase 14, Structural Review Round 1 (P14-R1-F4): called before every
+        :meth:`materialize` call for a projection identity with no committed Envelope yet --
+        including the very first attempt -- so that a prior :meth:`materialize` whose own
+        response was lost, or whose Store commit failed after a genuine external success,
+        converges on retry instead of creating a duplicate artifact. *payload* is supplied
+        only because one artifact kind (``check_run``) needs the commit it would attach to
+        (``payload["head_sha"]``) to look itself up; an implementation for a kind that does
+        not need it may ignore the argument."""
 
     def observe(self, *, external_artifact_ref: Mapping[str, Any]) -> Mapping[str, Any]:
         """Re-observe one already-materialized external artifact and report what is
         actually there now -- never what was recorded at materialization time.
 
-        Must return a mapping carrying at least ``status`` (one of :data:`RECEIPT_STATUSES`),
-        ``exists`` (``bool``), ``observed_content_fingerprint`` (``str | None``, ``None`` only
-        when ``exists`` is ``False``) and ``observed_at`` (an ISO-8601 UTC timestamp string).
-        A missing, deleted, or tampered artifact is reported here, as a negative or mismatched
-        receipt -- never silently recreated or promoted to a new canonical identity."""
+        Must return a mapping carrying ``observation_outcome`` (one of
+        :data:`OBSERVATION_OUTCOME_KINDS`), ``observed_content_fingerprint`` (``str | None`` --
+        required, non-empty, only when ``observation_outcome`` is ``"FOUND"``; ``None``
+        otherwise), and ``observed_at`` (an ISO-8601 UTC timestamp string). Structural Review
+        Round 1 (P14-R1-F6) requires ``NOT_FOUND`` to mean only an authoritative absence (a
+        real 404 for a real, reachable repository) -- a permission failure, rate limit,
+        transport error, or unavailable upstream must be reported as ``PERMISSION_DENIED`` or
+        ``UNAVAILABLE`` instead, never folded into ``NOT_FOUND`` or into a fabricated
+        ``FOUND``. A missing, deleted, or tampered artifact is reported here, as a negative or
+        mismatched receipt -- never silently recreated or promoted to a new canonical
+        identity."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,10 +168,20 @@ class GitHubObservationReceipt:
     for Phase 13) -- the caller's own explicit input to
     :func:`~manosube_agent_civilization.projection.receipt_handoff.
     route_observation_receipt_to_evidence`.
+
+    ``project_id`` (Phase 14, Structural Review Round 1, P14-R1-F3) is the real project this
+    receipt's own projection belongs to, set by :mod:`~manosube_agent_civilization.projection.
+    route` from the exact ``project_id`` it already independently verified -- never a
+    caller-supplied value at handoff time. Carrying it on the receipt itself, rather than
+    trusting a project identity supplied separately to the handoff, is what makes a receipt
+    genuinely projected under project A unable to be relabelled as Evidence for project B: the
+    handoff can check the receipt's own claim against what the caller actually asked for,
+    instead of the caller's claim being the only thing on either side of that comparison.
     """
 
     status: str
     projection_envelope_id: str
+    project_id: str
     subject_ref: Mapping[str, Any]
     external_artifact_ref: Mapping[str, Any]
     adapter_identity: Mapping[str, Any]
@@ -139,6 +193,10 @@ class GitHubObservationReceipt:
         if self.status not in RECEIPT_STATUSES:
             raise ProjectionValueError(
                 f"status is not a recognized receipt status: {self.status!r}"
+            )
+        if not isinstance(self.project_id, str) or not self.project_id:
+            raise ProjectionValueError(
+                f"project_id must be a non-empty string identity: {self.project_id!r}"
             )
         object.__setattr__(self, "subject_ref", _deep_freeze(self.subject_ref))
         object.__setattr__(self, "external_artifact_ref", _deep_freeze(self.external_artifact_ref))

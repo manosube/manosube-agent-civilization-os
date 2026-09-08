@@ -66,8 +66,10 @@ def main() -> int:
     # verifier_selection_grant and verifier_selection_decision) adds two more, making 49.
     # Phase 13 Structural Review Round 5's own Binding extension (P13-R5,
     # human_grant_declaration) adds one more, making 50. Phase 14's own Projection Envelope
-    # (Issue #62, projection_envelope) adds one more, making 51.
-    if len(paths) != 51 or len(set(ids)) != len(paths) or None in ids:
+    # (Issue #62, projection_envelope) adds one more, making 51. Phase 14 Structural Review
+    # Round 1's own Authority extension (P14-R1-F1, github_projection_grant and
+    # github_projection_decision) adds two more, making 53.
+    if len(paths) != 53 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

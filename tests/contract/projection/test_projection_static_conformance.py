@@ -2,15 +2,20 @@
 
 A real AST walk over the ``projection`` package's own module source -- never a grep, never a
 hardcoded name list -- proving exactly two public routes (``project_to_github``,
-``route_observation_receipt_to_evidence``), that no existing canonical owner (Difference,
-Reflow, Binding, Authority, Independent Verification) is ever imported anywhere in this
-package, that ``evidence`` is imported only where this package's own design requires it
-(``route.py``, read-only identity recomputation; ``receipt_handoff.py``, the one
-``derive_evidence`` call), that ``boot`` is imported only from ``route.py`` and only to call
-``boot_project`` exactly once, that ``store.commit`` is never called directly anywhere in this
-package (the sanctioned single committer is ``store.commit.commit_state_transition``, and only
-``route.py`` calls it), and that no module besides ``github_adapter.py`` imports a network,
-subprocess, or GitHub transport surface -- the identical AST-walk technique
+``route_observation_receipt_to_evidence``), that no existing canonical owner (Reflow, Binding,
+Independent Verification) is ever imported anywhere in this package, that ``evidence`` is
+imported only where this package's own design requires it (``route.py``, read-only identity
+recomputation; ``receipt_handoff.py``, the one ``derive_evidence`` call), that ``boot`` is
+imported only from ``route.py`` and only to call ``boot_project`` exactly once, that
+``authority`` is imported only from ``route.py`` and only to call
+``evaluate_projection_authorization`` exactly once (Structural Review Round 1, P14-R1-F1),
+that ``difference.identity``/``change.identity`` are imported only from ``route.py`` for their
+own read-only fingerprint functions -- never ``difference.engine``, ``difference.graph``, or
+``change.engine`` (Structural Review Round 1, P14-R1-F2) -- that ``store.commit`` is never
+called directly anywhere in this package (the sanctioned single committer is
+``store.commit.commit_state_transition``, and only ``route.py`` calls it), and that no module
+besides ``github_adapter.py`` imports a network, subprocess, or GitHub transport surface -- the
+identical AST-walk technique
 ``tests/contract/independent_verification/test_independent_verification_static_conformance.py``
 already uses for its own static proofs.
 """
@@ -26,6 +31,7 @@ import manosube_agent_civilization.projection.engine as engine_module
 import manosube_agent_civilization.projection.errors as errors_module
 import manosube_agent_civilization.projection.github_adapter as github_adapter_module
 import manosube_agent_civilization.projection.identity as identity_module
+import manosube_agent_civilization.projection.observable as observable_module
 import manosube_agent_civilization.projection.receipt_handoff as receipt_handoff_module
 import manosube_agent_civilization.projection.route as route_module
 import manosube_agent_civilization.projection.types as types_module
@@ -39,6 +45,7 @@ _ALL_PACKAGE_MODULES = (
     errors_module,
     github_adapter_module,
     receipt_handoff_module,
+    observable_module,
 )
 
 #: Modules other than ``receipt_handoff.py`` (the one module permitted to call into
@@ -51,24 +58,33 @@ _NON_EVIDENCE_MODULES = (
     types_module,
     errors_module,
     github_adapter_module,
+    observable_module,
 )
 
-#: Existing canonical owners no module in this package may ever import. ``difference`` as a
-#: whole is included, but ``difference.validation`` is deliberately exempted below (in
-#: ``_ALLOWED_SHARED_UTILITY_IMPORTS``) -- it is the shared canonical-schema-validator
-#: registry every owner module in this repository already reuses (``evidence/engine.py``
-#: imports the identical utility), not a reuse of the Difference owner's own semantic engine.
+#: Existing canonical owners no module in this package may ever import, in whole or in part.
+#: ``difference``, ``change`` and ``authority`` are deliberately absent from this closed set --
+#: each is legitimately reused in a narrow, separately-checked way (``difference.validation``/
+#: ``difference.identity``/``change.identity`` as read-only shared utilities;
+#: ``authority.evaluate_projection_authorization`` from ``route.py`` only, Structural Review
+#: Round 1, P14-R1-F1) -- so a blanket forbid on those three package names would contradict the
+#: dedicated checks below rather than reinforce them.
 _FORBIDDEN_OWNER_MODULE_PREFIXES = (
-    "manosube_agent_civilization.difference",
     "manosube_agent_civilization.reflow",
     "manosube_agent_civilization.binding",
-    "manosube_agent_civilization.authority",
     "manosube_agent_civilization.independent_verification",
 )
 
-#: The one Difference-owned submodule this package's ``engine.py`` legitimately imports --
-#: the shared schema-validator registry, not Difference's own semantic engine.
-_ALLOWED_SHARED_UTILITY_IMPORTS = frozenset({"manosube_agent_civilization.difference.validation"})
+#: The Difference/Change-owned submodules this package's own modules legitimately import --
+#: shared canonical-schema-validation and read-only identity/fingerprint utilities, never
+#: either owner's own semantic engine (``difference.engine``/``difference.graph``/
+#: ``change.engine``, none of which any module in this package ever imports).
+_ALLOWED_SHARED_UTILITY_IMPORTS = frozenset(
+    {
+        "manosube_agent_civilization.difference.validation",
+        "manosube_agent_civilization.difference.identity",
+        "manosube_agent_civilization.change.identity",
+    }
+)
 
 
 def _imported_module_names(module: ModuleType) -> set[str]:
@@ -150,6 +166,51 @@ def test_boot_is_imported_only_by_route() -> None:
             or name.startswith("manosube_agent_civilization.boot.")
             for name in imported
         ), f"{module.__name__} imports manosube_agent_civilization.boot: {imported}"
+
+
+def test_authority_is_imported_only_by_route() -> None:
+    """Structural Review Round 1 (Issue #62, P14-R1-F1): ``authority`` is reused, narrowly,
+    from exactly one call site -- never imported by any other module in this package."""
+
+    for module in _ALL_PACKAGE_MODULES:
+        if module is route_module:
+            continue
+        imported = _imported_module_names(module)
+        assert not any(
+            name == "manosube_agent_civilization.authority"
+            or name.startswith("manosube_agent_civilization.authority.")
+            for name in imported
+        ), f"{module.__name__} imports manosube_agent_civilization.authority: {imported}"
+
+
+def test_route_calls_evaluate_projection_authorization_exactly_once() -> None:
+    assert _call_site_count(route_module, "evaluate_projection_authorization") == 1
+
+
+def test_route_imports_only_the_read_only_difference_and_change_identity_functions() -> None:
+    """Structural Review Round 1 (Issue #62, P14-R1-F2): ``route.py`` may import
+    ``difference.identity``/``change.identity`` (read-only fingerprint recomputation) but
+    never ``difference.engine``, ``difference.graph``, or ``change.engine`` -- and no other
+    module in this package imports ``difference``/``change`` at all, beyond the shared
+    ``difference.validation`` schema-validator utility ``engine.py`` already uses."""
+
+    imported = _imported_module_names(route_module)
+    assert "manosube_agent_civilization.difference.identity" in imported
+    assert "manosube_agent_civilization.change.identity" in imported
+    assert "manosube_agent_civilization.difference.engine" not in imported
+    assert "manosube_agent_civilization.difference.graph" not in imported
+    assert "manosube_agent_civilization.change.engine" not in imported
+    assert "manosube_agent_civilization.change" not in imported
+
+    for module in _ALL_PACKAGE_MODULES:
+        if module is route_module:
+            continue
+        other_imported = _imported_module_names(module)
+        assert not any(
+            name == "manosube_agent_civilization.change"
+            or name.startswith("manosube_agent_civilization.change.")
+            for name in other_imported
+        ), f"{module.__name__} imports manosube_agent_civilization.change: {other_imported}"
 
 
 def test_only_route_calls_commit_state_transition() -> None:

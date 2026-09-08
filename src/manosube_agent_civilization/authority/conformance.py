@@ -41,7 +41,13 @@ from manosube_agent_civilization.difference.validation import (
 )
 
 from .errors import AuthorityError, AuthorityValidationError
-from .identity import approval_id, prohibition_id, rule_id, verifier_selection_grant_id
+from .identity import (
+    approval_id,
+    github_projection_grant_id,
+    prohibition_id,
+    rule_id,
+    verifier_selection_grant_id,
+)
 
 AUTHORITY_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "authority/"
 SUPPORTED_SCHEMA_VERSION = "0.1"
@@ -118,6 +124,12 @@ RECORD_TYPES: dict[str, RecordType] = {
         "declared_by",
         schema_base=_BINDING_SCHEMA_BASE,
     ),
+    "github_projection_grant": RecordType(
+        "github_projection_grant.schema.json",
+        "github_projection_grant_id",
+        github_projection_grant_id,
+        "granted_by",
+    ),
 }
 
 HUMAN_AUTHORITY_KIND = "human_authority"
@@ -171,6 +183,8 @@ AUTHORITY_SCHEMA_SEEDS: tuple[str, ...] = (
     AUTHORITY_SCHEMA_BASE + "approval.schema.json",
     AUTHORITY_SCHEMA_BASE + "verifier_selection_grant.schema.json",
     AUTHORITY_SCHEMA_BASE + "verifier_selection_decision.schema.json",
+    AUTHORITY_SCHEMA_BASE + "github_projection_grant.schema.json",
+    AUTHORITY_SCHEMA_BASE + "github_projection_decision.schema.json",
     CANONICAL_SCHEMA_BASE + "difference/difference.schema.json",
 )
 

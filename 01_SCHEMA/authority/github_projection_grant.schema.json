@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/github_projection_grant.schema.json",
+  "title": "GitHub Projection Grant",
+  "type": "object",
+  "required": ["schema_version", "github_projection_grant_id", "project_id", "subject_ref", "subject_fingerprint", "projection_kind", "target_repository", "payload_fingerprint", "permitted_action", "status", "granted_by"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "github_projection_grant_id": {"type": "string", "pattern": "^GH-PROJ-GRANT-[0-9A-F]{64}(?![\\s\\S])"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "subject_ref": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"enum": ["difference", "change", "observation_evidence"]},
+        "id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "subject_fingerprint": {"type": "string", "minLength": 1},
+    "projection_kind": {"enum": ["DIFFERENCE_ISSUE", "CHANGE_PULL_REQUEST", "EVIDENCE_ARTIFACT"]},
+    "target_repository": {
+      "type": "object",
+      "required": ["host", "owner", "repo"],
+      "properties": {
+        "host": {"const": "github"},
+        "owner": {"type": "string", "minLength": 1},
+        "repo": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "payload_fingerprint": {"type": "string", "minLength": 1},
+    "permitted_action": {"const": "MATERIALIZE_PROJECTION"},
+    "status": {"enum": ["ACTIVE", "REVOKED", "EXPIRED"]},
+    "granted_by": {"$ref": "authority.schema.json#/$defs/human_authority_ref"}
+  },
+  "additionalProperties": false
+}

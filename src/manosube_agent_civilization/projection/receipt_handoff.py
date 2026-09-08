@@ -102,6 +102,19 @@ def route_observation_receipt_to_evidence(
         raise ProjectionRequirementError(
             f"receipt must be a GitHubObservationReceipt instance, not {type(receipt)!r}"
         )
+    # Structural Review Round 1 (Issue #62, P14-R1-F3): the receipt carries its own
+    # originating project identity, set by route.py from the exact project_id it already
+    # independently verified. Checking it here -- rather than trusting the caller's own
+    # project_id argument alone -- is what makes a receipt genuinely produced for project A
+    # unable to be relabelled as Evidence for project B: a caller who supplies a real receipt
+    # from one project alongside a different project_id is refused here, before derive_evidence
+    # is ever called.
+    if receipt.project_id != project_id:
+        raise ProjectionRequirementError(
+            "receipt's own originating project_id does not match the requested project_id -- "
+            f"a receipt cannot be relabelled across projects: {receipt.project_id!r} != "
+            f"{project_id!r}"
+        )
     if not isinstance(evidence_request, Mapping):
         raise ProjectionRequirementError(
             f"evidence_request must be an explicit mapping, not {type(evidence_request)!r}"
