@@ -37,7 +37,9 @@ independently-resolved, Store-corroborated Projection Envelope binding for every
 `GitHubObservationReceipt` at hand-off, replacing an unchecked, publicly-settable `project_id`
 field, together with an exact per-artifact-kind GitHub locator grammar (never a bare URL prefix)
 (F3); and a corrected write/read observable transformation removing the correlation marker
-self-defeat, plus real, executable V3 target-bound configuration (F4).
+self-defeat (F4), plus transport-level `RealGitHubAdapter` contract fixtures (F4b) -- F4b's own
+exact target-bound V3 configuration (replacing the harness's remaining hardcoded `head_ref`/
+`head_sha` placeholders) is disclosed as not yet closed this round; see §10's own F4 note.
 
 Every section below reflects the corrected design; where a frozen decision from the original
 delivery or from Round 1 was superseded rather than merely extended, this is stated explicitly
@@ -727,18 +729,38 @@ this package's own fixture-adapter conventions), and id segment to all name the 
 artifact `artifact_kind`/`external_id` already claim, with zero query string, fragment, or
 userinfo left unaccounted for.
 
-**F4: the correlation-marker round-trip self-defeat is fixed, and V3 no longer hardcodes
-impossible refs.** `RealGitHubAdapter.materialize` embeds a hidden correlation marker in an
-Issue/PR's own `body`; `observe` previously fingerprinted the *marker-carrying* body it read
-back, while `route.py`'s own `_observe` always computes the *expected* fingerprint from the
-caller's committed payload, which never carries the marker -- a successful, untampered real
-materialization was guaranteed to observe as a mismatch. `RealGitHubAdapter._strip_correlation_
-marker` now removes the adapter's own trailing marker block (matched by template shape, not by
-a specific key, since `observe` is never told which key a given artifact carries) from the
-observed `body` before computing `observed_content_fingerprint`, restoring the one canonical
-write/read observable transformation both sides must agree on -- genuine content tampering in
-`title`/`body` prose remains fully detectable, since only the marker block itself is ever
-stripped.
+**F4: the correlation-marker round-trip self-defeat is fixed; F4b's transport-level contract
+fixtures are in place, but its V3 target-bound configuration is disclosed as not yet closed.**
+`RealGitHubAdapter.materialize` embeds a hidden correlation marker in an Issue/PR's own `body`;
+`observe` previously fingerprinted the *marker-carrying* body it read back, while `route.py`'s
+own `_observe` always computes the *expected* fingerprint from the caller's committed payload,
+which never carries the marker -- a successful, untampered real materialization was guaranteed
+to observe as a mismatch. `RealGitHubAdapter._strip_correlation_marker` now removes the
+adapter's own trailing marker block (matched by template shape, not by a specific key, since
+`observe` is never told which key a given artifact carries) from the observed `body` before
+computing `observed_content_fingerprint`, restoring the one canonical write/read observable
+transformation both sides must agree on -- genuine content tampering in `title`/`body` prose
+remains fully detectable, since only the marker block itself is ever stripped. Separately, a new
+`tests/unit/projection/test_real_github_adapter_transport.py` proves this same round-trip, the
+`_classify_error` mapping across the full real GitHub HTTP status space, and
+`find_by_correlation_key`'s fail-closed behavior, entirely against offline transport fixtures
+that reproduce real GitHub API response shapes (F4b's own transport-fixture half). F4b's other
+half -- replacing `test_v3_real_github_vertical_proof.py`'s own placeholder `head_ref=
+"agent/v3-harness"` / `head_sha="a"*40` with real target-bound inputs -- is **not** addressed by
+this round: `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, no exact target repository has
+been separately frozen and re-confirmed for this harness, and no such ref can be genuine without
+one. This is disclosed as an open item rather than silently narrowed; closing it is contingent on
+that boundary being frozen in a future adoption, not on any remaining code change here.
+
+```text
+P14_R2_F1_CLOSED=true
+P14_R2_F2_CLOSED=true
+P14_R2_F3_CLOSED=true
+P14_R2_F3b_CLOSED=true
+P14_R2_F4_CLOSED=true
+P14_R2_F4b_TRANSPORT_FIXTURES_CLOSED=true
+P14_R2_F4b_V3_TARGET_CONFIG_CLOSED=false
+```
 
 ```text
 P14_R1_F1_CLOSED=false

@@ -177,6 +177,8 @@ ATOMIC_RECOVERABLE_PROJECTION_CLAIM_STATE_MACHINE_IMPLEMENTED=true
 RECEIPT_HANDOFF_INDEPENDENTLY_RESOLVED_AGAINST_COMMITTED_ENVELOPE=true
 EXTERNAL_ARTIFACT_LOCATOR_GRAMMAR_VALIDATED=true
 CORRELATION_MARKER_ROUND_TRIP_FIXED=true
+TRANSPORT_LEVEL_GITHUB_CONTRACT_FIXTURES_IMPLEMENTED=true
+V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED=false
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
@@ -184,9 +186,13 @@ PHASE_15_ALLOWED=false
 The last five lines before the Round 2 additions above record Structural Review Round 1's own
 corrections (Issue #62, `ADOPT_P14_R1_CANONICAL_AUTHORITY_SUBJECT_AND_RECOVERABLE_PROJECTION`)
 -- see `PROJECTION_CONTRACT.md` §3 items 13-17 for the full frozen semantics each one fixes.
-The five `..._IMPLEMENTED`/`..._FIXED`/`..._VALIDATED` lines immediately above record
+The seven `..._IMPLEMENTED`/`..._FIXED`/`..._VALIDATED` lines immediately above record
 Structural Review Round 2's own corrections (`ADOPT_P14_R2_SIGNED_AUTHORITY_ATOMIC_PROJECTION_
 AND_REAL_V3`) -- see `PROJECTION_CONTRACT.md` §10 for the full detail each one fixes.
+`V3_TARGET_BOUND_CONFIGURATION_IMPLEMENTED=false` is a disclosed, deliberately-unclosed item:
+`test_v3_real_github_vertical_proof.py` still carries placeholder `head_ref`/`head_sha` values,
+which this round did not replace, since no exact target repository has yet been separately
+frozen and re-confirmed for that harness (`V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds).
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.
