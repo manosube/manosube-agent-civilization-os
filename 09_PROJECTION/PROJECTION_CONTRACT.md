@@ -14,6 +14,7 @@ CORRECTION_ADOPTION_ID_ROUND_4=ADOPT_P14_R4_TERMINAL_CLAIM_ATTESTED_RECEIPT_AND_
 CORRECTION_ADOPTION_ID_ROUND_5=ADOPT_P14_R5_TERMINAL_CLAIM_INTEGRITY_AND_BOUND_V3_EXECUTION
 CORRECTION_ADOPTION_ID_ROUND_6=ADOPT_P14_R6_AUTHORITY_BOUND_V3_AND_OBSERVED_CLEANUP
 CORRECTION_ADOPTION_ID_ROUND_7=ADOPT_P14_R7_EXTERNAL_TRUST_ANCHOR_FOR_V3_AUTHORITY
+CORRECTION_ADOPTION_ID_ROUND_8=ADOPT_P14_R8_CANONICAL_ISSUABLE_V3_AUTHORITY
 GOVERNING_ISSUE=#62
 REVIEWED_MAIN_SHA=7fc597356330a0d1da7a334ef20cd913b74154d
 ```
@@ -1217,4 +1218,87 @@ the test signer to construct its genuinely-signed-but-wrong-fingerprint record.
 
 ```text
 P14_R7_F1_CLOSED=true
+```
+
+## 16. Structural Review Round 8 corrections (`ADOPT_P14_R8_CANONICAL_ISSUABLE_V3_AUTHORITY`)
+
+**F1: the V3 Live Write Authority is now genuinely issuable through the existing canonical
+Authority/Binding owner -- never a V3-specific trust anchor, private-key registry, or signing
+mechanism of this repository's own.** §15's own F1 removed the matching private key from the
+verifying module, but the artifact it verified (`V3_LIVE_TRUST_ANCHOR` plus a record signed by
+a dedicated test-only signer) remained a closed, self-contained V3 construction: nothing
+outside `tests/fixtures/` could ever produce a record the live gate would accept, because
+nothing routed through the project's real Human Authority, real Project Binding, or real
+Authority Decision machinery at all. A trust anchor with no issuance path is not a correction
+of a caller-computable trust root -- it is simply un-issuable, which is its own structural
+defect. `tests/fixtures/v3_live_write_authority.py` is now a pure verifier over the identical
+canonical route a real GitHub projection operation already uses:
+`manosube_agent_civilization.authority.projection_authorization.
+evaluate_projection_authorization` (pure, no Store, no network), fed a genuinely
+content-address-verified `project_binding` record (`binding.identity.
+verify_project_binding_identity`) plus signed `github_projection_grant`/
+`github_projection_grant_declaration` records. `v3_live_write_authorized(config, material)`
+reads `human_authority_ref`/`human_authority_signing_key` only from the verified
+`project_binding` record itself -- never independently caller-supplied -- and evaluates one
+authorization request per member of `V3_PROJECTION_KINDS` (`DIFFERENCE_ISSUE`,
+`CHANGE_PULL_REQUEST`, `EVIDENCE_ARTIFACT`), requiring `PROJECTION_AUTHORIZED` on all three
+before returning `True`. The module defines no private key, no signing helper, and no
+authority-issuance capability of any kind; `Ed25519PrivateKey` is never imported by it, proven
+by the same AST-based static conformance technique as prior rounds
+(`tests/contract/projection/test_v3_live_write_authority_static_conformance.py`, fully
+rewritten this round), which also proves the live gate module never imports the new test-only
+material builder (`tests/fixtures/v3_authority_test_material.py`, new) and that the entire
+shipped Kernel package continues to name no V3-specific module, constant, or literal.
+
+Because the V3 harness's own live-write boundary must bind to the frozen configuration itself
+(the repository, refs, target SHA, artifact kinds/count, naming, cleanup, and no-merge
+boundary already captured in `configuration_fingerprint` -- established Round 5), rather than
+to any Difference/Change/Evidence subject that does not yet exist at authorization-collection
+time, this round adds one new closed subject kind, `"v3_target_configuration"`, to the
+previously three-member `subject_ref.kind` enum (`"difference"`, `"change"`,
+`"observation_evidence"`) in both `01_SCHEMA/authority/github_projection_grant.schema.json`
+and `01_SCHEMA/binding/github_projection_grant_declaration.schema.json`. This is the one
+deliberate, judgment-call design decision this round makes, and is disclosed here explicitly:
+it is an additive extension of the existing, single canonical Authority owner's own closed
+vocabulary -- never a second owner, private-key registry, signing service, token owner, or
+hidden persistence surface, and never a reuse of an unrelated existing kind (e.g. mislabeling
+the V3 configuration as a `"change"`) that would itself be a fabricated-subject substitution.
+`v3_configuration_subject_ref(config)` derives `{"kind": "v3_target_configuration", "id":
+config.configuration_fingerprint}` deterministically from the bound configuration alone.
+
+The test-only material builder (`tests/fixtures/v3_authority_test_material.py`, new) reuses
+this repository's own established Product Binding fixtures
+(`tests/fixtures/product_binding.py`: `bind_project_kwargs()`, `human_authority_signing_key()`,
+`sign_github_projection_grant_declaration(...)`) rather than inventing a second signing
+convention, exactly as this finding requires ("the existing canonical Project Binding,
+externally controlled Human signing key, signed declaration, and Authority Decision route").
+`genuine_project_binding()` assembles a real, content-address-verifiable `project_binding` via
+`binding.engine.assemble_project_binding` -- validating, identifying, and returning the full
+record without ever touching the Store (the real genesis route, `binding.route.bind_project`,
+persists separately; V3's own offline material-building has no need to persist anything to
+construct a genuinely verifiable record). Round 7's now-superseded orphan test signer
+(`tests/fixtures/v3_live_write_authority_test_signer.py`) is deleted outright.
+
+`tests/unit/projection/test_v3_live_write_authority.py` (fully rewritten, 27 tests) retains and
+extends every required negative control this finding names explicitly: wrong project, wrong
+binding (tampered post-assembly, fails content-address self-verification), wrong signer (a
+declaration genuinely signed, but not by the real project_binding's own registered key -- the
+exact regression this finding corrects), wrong decision (a declaration whose `grant_ref` names
+a non-existent grant), wrong configuration, wrong target repository, wrong permitted action,
+wrong kinds/count (fewer than all three required projection kinds present), and both
+revoked-grant and revoked-declaration status -- every one proven to refuse, never raise, before
+any adapter construction or network access could occur. A new static conformance test file and
+a new parametrized integration test
+(`test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_network_calls` in
+`tests/integration/projection/test_v3_real_github_vertical_proof.py`) prove a genuinely
+authorized positive control reaches the controlled `FakeGitHubAdapter` boundary with zero
+network calls, calling `_run_vertical_proof` directly rather than the full
+`_run_v3_authorized_execution` path (whose own cleanup step always issues a real
+`urllib.request.urlopen` PATCH regardless of adapter kind, and is therefore deliberately
+bypassed by this specific proof to keep it genuinely zero-network). Round 6's own cleanup
+correction (§14, `P14_R6_F1`) remains intact and untouched by this round's diff.
+`V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` remains this delivery's own state throughout.
+
+```text
+P14_R8_F1_CLOSED=true
 ```

@@ -1,48 +1,44 @@
-"""Genuine, verified SHUKOU/Human Authority for V3 live-write execution (Structural Review
-Round 6, Issue #62, P14-R6-F2; external trust anchor, Structural Review Round 7, P14-R7-F1).
+"""Genuine, canonically-issuable SHUKOU/Human Authority for V3 live-write execution
+(Structural Review Round 6, Issue #62, P14-R6-F2; external trust anchor, Round 7, P14-R7-F1;
+canonical issuable authority, Round 8, P14-R8-F1).
 
-Round 5's own ``v3_live_write_authorized`` required only that a caller-supplied environment
-variable equal :attr:`~tests.fixtures.v3_target_configuration.V3TargetConfiguration.
-configuration_fingerprint` -- a value any caller can itself compute from the frozen
-configuration alone, with no Human Authority behind it at all. Structural Review Round 6
-replaced that with a genuine Ed25519-signed record, verified with the identical
-:func:`~manosube_agent_civilization.binding.signature.verify_ed25519_signature` primitive this
-repository's own signed Human Grant Declarations already use.
+Round 6 replaced a caller-computable digest with a genuinely Ed25519-signed record, but kept
+the matching private key in the same importable module as the verifier. Round 7 removed that
+private key entirely, replacing it with a fixed public trust anchor whose matching private key
+was deliberately generated once and discarded -- closing self-issuance, but in the wrong
+direction: with no possible legitimate issuer either, the gate could never be activated even by
+a genuine future SHUKOU decision, and the "genuine record" it verified was never itself routed
+through any canonical Authority/Binding owner.
 
-Round 6's own implementation, however, kept the matching **private** signing key in the same
-importable module as the verifier (:func:`v3_live_write_authorized`) and exposed a public
-``assemble_v3_live_write_authority`` capable of minting a fully ``ACTIVE`` record for any
-caller-selected configuration/target/boundary -- a caller-computable *signature* in place of
-Round 5's caller-computable *digest*, without changing who actually controls authorization.
-Structural Review Round 7 (P14-R7-F1) corrects this: **this module now contains only
-verification** -- a fixed, non-caller-controlled public trust anchor
-(:data:`V3_LIVE_TRUST_ANCHOR`) and the pure comparison/signature-check logic
-(:func:`v3_live_write_authorized`) -- and defines no private key, no signing helper, and no
-authority-issuance capability of any kind. Nothing this module exports, and nothing any shipped
-module (``src/manosube_agent_civilization``) exports, can mint a record this module's own live
-call site (``_v3_live_authorized()`` in
-``tests/integration/projection/test_v3_real_github_vertical_proof.py``) would ever accept.
+Structural Review Round 8 corrects both defects at once by **reusing the existing canonical
+Project Binding / Human Authority / signed Grant Declaration / Authority Decision route
+verbatim** -- the identical mechanism :func:`~manosube_agent_civilization.authority.
+projection_authorization.evaluate_projection_authorization` already provides for every real
+GitHub projection operation (Structural Review Round 1, P14-R1-F1; signed declaration anchor,
+Round 2, P14-R2-F1) -- rather than inventing any V3-specific verification mechanism, schema, or
+trust anchor of its own.
 
-The genuinely signed article a live V3 gate would consume must therefore be issued entirely
-outside this repository, through the existing canonical Authority/Binding route SHUKOU already
-uses for real Human declarations -- exactly as :mod:`manosube_agent_civilization.binding.
-signature`'s own docstring already states for Project Binding's Human Authority key: "the
-Human's own private key never touches this system at all, only the public verification key."
-This module applies the identical discipline to the V3 harness's own bounded execution
-permission.
+This module holds no private key, no signing helper, and no V3-specific action literal: it
+consumes a real, content-address-verifiable ``project_binding`` record (whose own
+``human_authority_signing_key`` names the one public key ever consulted -- exactly the
+discipline :mod:`manosube_agent_civilization.binding.signature`'s own docstring already states:
+"the Human's own private key never touches this system at all, only the public verification
+key") plus ``github_projection_grant``/``github_projection_grant_declaration`` records SHUKOU
+externally signs against that same key, and asks the real Authority owner
+(:func:`~manosube_agent_civilization.authority.projection_authorization.
+evaluate_projection_authorization`) whether they authorize ``MATERIALIZE_PROJECTION`` -- the
+one closed action literal every real projection call already uses -- for a V3-configuration-
+shaped subject, independently for each of the three projection kinds the V3 harness exercises.
 
-A dedicated, clearly test-only signer
-(:mod:`tests.fixtures.v3_live_write_authority_test_signer`) exists purely so this module's own
-verification logic can be exercised offline, under an explicitly injected *test* trust anchor
-distinct from :data:`V3_LIVE_TRUST_ANCHOR` -- this module never imports that signer, and
-:func:`v3_live_write_authorized` never falls back to any trust anchor other than the one its
-caller explicitly supplies, so a test-signed record can never be silently accepted by the one
-live call site, which always supplies :data:`V3_LIVE_TRUST_ANCHOR` and nothing else.
+No new Authority owner, private-key registry, signing service, or persistence surface is
+created here: the only new concept is *what subject* is being authorized (the V3 target
+configuration itself, addressed by its own ``configuration_fingerprint``), never *how* that
+authorization is verified.
 
-This record is a harness-execution permission, never a canonical Kernel record: it is never
-persisted through the Store, never a Difference/Change/Evidence/Authority Decision, and this
-module is deliberately test-only, exactly as :mod:`tests.fixtures.v3_target_configuration`
-already is for the configuration it binds.
+This module is deliberately test/harness-only, exactly as :mod:`tests.fixtures.
+v3_target_configuration` already is for the configuration it binds -- a genuine live grant
+must still be issued entirely outside this repository, by whoever genuinely holds the real
+Project Binding's Human Authority private key.
 """
 
 from __future__ import annotations
@@ -52,191 +48,191 @@ import json
 import os
 from typing import Any
 
-from manosube_agent_civilization.binding.signature import verify_ed25519_signature
-from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
+from manosube_agent_civilization.authority.errors import AuthorityError
+from manosube_agent_civilization.authority.projection_authorization import (
+    evaluate_projection_authorization,
+)
+from manosube_agent_civilization.binding.errors import BindingIdentityError
+from manosube_agent_civilization.binding.identity import verify_project_binding_identity
 
 from .v3_target_configuration import V3TargetConfiguration
 
-#: The one closed permitted-action literal a genuine V3 Live Write Authority record may name
-#: -- never left open-ended, so a record naming any other action can never be silently
-#: accepted as authorizing this harness's own live execution.
-V3_LIVE_WRITE_PERMITTED_ACTION = "MATERIALIZE_V3_PROOF_RUN"
+#: The one closed permitted-action literal every real GitHub projection operation already uses
+#: (``authority/projection_authorization.py``'s own ``_PERMITTED_ACTIONS``) -- V3's own live
+#: execution authorizes ``MATERIALIZE_PROJECTION`` exactly as a production projection call
+#: does. No V3-specific action literal exists, and none is introduced here.
+V3_PERMITTED_ACTION = "MATERIALIZE_PROJECTION"
 
-#: The one status literal that counts as a currently-granted authority -- anything else
-#: (``"REVOKED"``, a typo, an absent field) refuses.
-_ACTIVE_STATUS = "ACTIVE"
+#: The subject kind this module's own V3-configuration-shaped ``subject_ref`` names --
+#: distinct from ``"difference"``/``"change"``/``"observation_evidence"``, the subject kinds a
+#: *production* projection's own ``subject_ref`` names, so a V3 harness's own grant/
+#: declaration/decision can never be mistaken for -- or substituted into -- a production
+#: projection's own authorization, and vice versa.
+V3_CONFIGURATION_SUBJECT_KIND = "v3_target_configuration"
 
-#: The environment variable carrying the complete, JSON-encoded V3 Live Write Authority
-#: record -- deliberately distinct from every :data:`~tests.fixtures.v3_target_configuration.
-#: ALL_V3_ENV_VARS` name, so configuration validity and this authority remain two
-#: independently-gated inputs, exactly as Structural Review Round 4 (P14-R4-F3) already
-#: established for the (now superseded) unscoped boolean.
-V3_LIVE_WRITE_AUTHORITY_RECORD_ENV = "MANOSUBE_P14_V3_LIVE_WRITE_AUTHORITY_RECORD"
-
-#: The fixed, non-caller-controlled public verification key the one live call site
-#: (``_v3_live_authorized()``) always and only consults (Structural Review Round 7,
-#: P14-R7-F1). No private key matching this public key exists anywhere in this repository,
-#: its runtime package, or any importable module -- it was generated once, outside any
-#: persisted process, and the private key was discarded; nothing in this codebase can produce
-#: a signature this trust anchor would accept. A genuine V3 Live Write Authority artifact must
-#: be issued entirely outside this repository, through the existing canonical Authority/
-#: Binding route, and handed to this harness only via :data:`V3_LIVE_WRITE_AUTHORITY_RECORD_
-#: ENV` -- this constant is never itself sufficient to construct one.
-V3_LIVE_TRUST_ANCHOR: Mapping[str, str] = {
-    "algorithm": "ed25519",
-    "key_id": "V3-LIVE-TRUST-ANCHOR-0001",
-    "public_key": "bc9c2ae0d18920def2125379f70ce6d99eeeaece5d7940a21b0e30d1858016bd",
-}
-
-#: Every field a V3 Live Write Authority record's own signature covers, in the exact order
-#: the canonical signing payload restates them -- one dedicated signing-payload function per
-#: signed record shape, the identical convention
-#: ``binding/identity.py``'s own ``github_projection_grant_declaration_signing_payload`` and
-#: ``human_grant_declaration_signing_payload`` already establish (never one shared generic
-#: function two differently-shaped records both feed). Shared, read-only, and used identically
-#: by both this module's verifier and the test-only signer -- constructing this payload never
-#: requires possessing any private key.
-_SIGNED_FIELDS: tuple[str, ...] = (
-    "schema_version",
-    "configuration_fingerprint",
-    "target_repository",
-    "permitted_action",
-    "authorized_artifact_kinds",
-    "authorized_artifact_count",
-    "cleanup_confirmed",
-    "no_merge_confirmed",
-    "status",
-    "valid_from",
-    "valid_until",
+#: Every projection kind the V3 harness exercises. An authorized V3 execution requires an
+#: independent ``evaluate_projection_authorization`` ``PROJECTION_AUTHORIZED`` decision for
+#: *each* of these -- one grant standing in for all three is never sufficient.
+V3_PROJECTION_KINDS: tuple[str, ...] = (
+    "DIFFERENCE_ISSUE",
+    "CHANGE_PULL_REQUEST",
+    "EVIDENCE_ARTIFACT",
 )
 
-
-class V3LiveWriteAuthorityError(RuntimeError):
-    """Raised only by :func:`v3_live_write_authority_signing_payload` on a malformed input --
-    never by :func:`v3_live_write_authorized` itself, which always fails closed as a plain
-    ``False`` rather than raising (the identical "fail closed as a value" convention this
-    Kernel's own verifier functions already use, so a caller can compose it into a total
-    decision without a try/except of its own)."""
-
-
-def v3_live_write_authority_signing_payload(record: Mapping[str, Any]) -> bytes:
-    """The exact canonical bytes a V3 Live Write Authority record's own signature covers --
-    every bound field, canonically serialized, deliberately excluding ``signature`` itself (a
-    signature can never cover its own bytes). Pure and read-only: constructing this payload
-    requires no private key and grants no authority by itself -- both the live verifier here
-    and the dedicated test-only signer (:mod:`tests.fixtures.v3_live_write_authority_test_
-    signer`) call this identical function so the two sides can never silently diverge on what
-    a signature actually covers."""
-
-    payload: dict[str, Any] = {}
-    for field in _SIGNED_FIELDS:
-        if field not in record:
-            raise V3LiveWriteAuthorityError(f"record is missing required field {field!r}")
-        payload[field] = record[field]
-    kinds = payload["authorized_artifact_kinds"]
-    if isinstance(kinds, frozenset | set):
-        payload["authorized_artifact_kinds"] = sorted(kinds)
-    return canonical_json_bytes(payload)
+#: The environment variable carrying the complete, JSON-encoded V3 live-write authority
+#: material: a real, content-address-verifiable ``project_binding`` record, plus the
+#: ``github_projection_grant``/``github_projection_grant_declaration`` records SHUKOU
+#: externally signed against that project_binding's own ``human_authority_signing_key`` --
+#: never a parallel, ad-hoc record shape (Structural Review Round 8, P14-R8-F1, superseding
+#: Round 6/7's own now-removed ``V3_LIVE_WRITE_AUTHORITY_RECORD_ENV``/``V3_LIVE_TRUST_ANCHOR``).
+V3_LIVE_WRITE_AUTHORITY_MATERIAL_ENV = "MANOSUBE_P14_V3_LIVE_WRITE_AUTHORITY_MATERIAL"
 
 
-def load_v3_live_write_authority_record(
+def v3_configuration_subject_ref(config: V3TargetConfiguration) -> dict[str, str]:
+    """The V3-configuration-shaped ``subject_ref`` every grant/declaration/decision this
+    module consumes must name -- content-addressed by the configuration's own
+    ``configuration_fingerprint`` (already covering every bound field: repository, refs, SHA,
+    artifact kinds/count, naming, cleanup, no-merge -- see ``v3_target_configuration.py``)."""
+
+    return {"kind": V3_CONFIGURATION_SUBJECT_KIND, "id": config.configuration_fingerprint}
+
+
+def v3_projection_authorization_request(
+    config: V3TargetConfiguration,
+    *,
+    projection_kind: str,
+    project_id: str,
+    human_authority_ref: Mapping[str, Any],
+    human_authority_signing_key: Mapping[str, Any],
+    grants: list[Any],
+    grant_declarations: list[Any],
+) -> dict[str, Any]:
+    """One exact ``evaluate_projection_authorization`` request binding *config* and
+    *projection_kind* -- the identical request shape a production projection call builds,
+    applied here to the V3-configuration subject instead of a Difference/Change/Evidence one."""
+
+    return {
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "subject_ref": v3_configuration_subject_ref(config),
+        "subject_fingerprint": config.configuration_fingerprint,
+        "projection_kind": projection_kind,
+        "target_repository": dict(config.target_repository),
+        "payload_fingerprint": config.configuration_fingerprint,
+        "permitted_action": V3_PERMITTED_ACTION,
+        "human_authority_ref": dict(human_authority_ref),
+        "human_authority_signing_key": dict(human_authority_signing_key),
+        "grants": list(grants),
+        "grant_declarations": list(grant_declarations),
+    }
+
+
+def load_v3_live_write_authority_material(
     env: Mapping[str, str] | None = None,
 ) -> Mapping[str, Any] | None:
-    """Read and JSON-decode :data:`V3_LIVE_WRITE_AUTHORITY_RECORD_ENV`, or return ``None`` if
-    unset, unparseable, or not a JSON object -- the identical "malformed input is simply no
+    """Read and JSON-decode :data:`V3_LIVE_WRITE_AUTHORITY_MATERIAL_ENV`, or return ``None``
+    if unset, unparseable, or not a JSON object -- the identical "malformed input is simply no
     authority, never an exception" discipline every other check here applies. *env* defaults
     to :data:`os.environ`; performs no network access, identically to
-    :mod:`tests.fixtures.v3_target_configuration`."""
+    :mod:`tests.fixtures.v3_target_configuration`. The one I/O boundary this module has."""
 
     source = env if env is not None else os.environ
-    raw = source.get(V3_LIVE_WRITE_AUTHORITY_RECORD_ENV)
+    raw = source.get(V3_LIVE_WRITE_AUTHORITY_MATERIAL_ENV)
     if raw is None:
         return None
     try:
-        record = json.loads(raw)
+        material = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    return record if isinstance(record, dict) else None
+    return material if isinstance(material, dict) else None
+
+
+def _verified_project_binding(material: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Independently recompute *material*'s own ``project_binding``'s content address --
+    never trust a caller-supplied ``human_authority_ref``/``human_authority_signing_key``
+    directly; both are read only from a project_binding that reproduces its own claimed
+    identity from its own declared fields."""
+
+    project_binding = material.get("project_binding")
+    if not isinstance(project_binding, Mapping):
+        return None
+    try:
+        verify_project_binding_identity(dict(project_binding))
+    except (BindingIdentityError, KeyError, TypeError):
+        return None
+    return project_binding
 
 
 def v3_live_write_authorized(
     config: V3TargetConfiguration | None,
-    authority_record: Mapping[str, Any] | None,
-    *,
-    evaluation_time: str,
-    trust_anchor: Mapping[str, str],
+    material: Mapping[str, Any] | None,
 ) -> bool:
-    """Return whether *authority_record* is a genuine, currently-valid SHUKOU/Human Authority
-    grant of live-write execution for *config*, verified against *trust_anchor* (Structural
-    Review Round 6, Issue #62, P14-R6-F2; external trust anchor, Structural Review Round 7,
-    P14-R7-F1) -- the complete configuration-fingerprint, target-repository, permitted-action,
-    artifact-kinds/count, cleanup/no-merge, and validity binding this finding requires, never
-    a caller-computable digest or a bare environment-variable's presence.
+    """Whether *material* genuinely authorizes live V3 execution of *config*, through the
+    identical canonical Authority/Binding route
+    (:func:`~manosube_agent_civilization.authority.projection_authorization.
+    evaluate_projection_authorization`) a real GitHub projection call already uses -- never a
+    parallel, V3-only verification mechanism (Structural Review Round 8, P14-R8-F1).
 
-    *trust_anchor* is a required, explicit keyword-only argument, never a module-level default
-    silently consulted -- this is the one structural property that makes "caller-selected
-    trust roots on the live path" impossible: the one live call site
-    (``_v3_live_authorized()``) always and only passes :data:`V3_LIVE_TRUST_ANCHOR`, hardcoded,
-    with no environment variable, record field, or other caller-reachable input able to
-    substitute a different value for it. A test explicitly passing its own test-only trust
-    anchor (:data:`~tests.fixtures.v3_live_write_authority_test_signer.V3_TEST_TRUST_ANCHOR`)
-    is exercising this same pure function with different, legitimately injected inputs --
-    exactly how any pure verifier is unit tested -- never a change to what the live path itself
-    consults.
+    Requires, independently for *every* projection kind in :data:`V3_PROJECTION_KINDS`:
 
-    Performs no I/O of its own -- pure comparison plus one Ed25519 signature verification
-    (:func:`~manosube_agent_civilization.binding.signature.verify_ed25519_signature`) against
-    *trust_anchor*. ``config=None``, ``authority_record=None``, or *authority_record* not even
-    being a mapping (e.g. a bare digest string a caller computed themselves) all return
-    ``False`` immediately, with zero further comparison and zero signature verification.
-    *evaluation_time* is always an explicit caller-supplied input, never a wall-clock read
-    inside this function -- the identical discipline ``authority/engine.py``'s own
-    ``evaluate_authority`` already applies for its own ``evaluation_time``."""
+    - *material*'s own ``project_binding`` reproduces its own claimed ``project_binding_id``
+      from its own declared fields
+      (:func:`~manosube_agent_civilization.binding.identity.verify_project_binding_identity`)
+      -- its ``human_authority_ref``/``human_authority_signing_key`` are read only from this
+      verified record, never independently caller-supplied;
+    - a ``github_projection_grant`` among *material*'s own ``grants`` binds exactly this
+      V3-configuration subject/target/payload/action for this kind, is ``ACTIVE``, and is
+      anchored by a matching, ``ACTIVE``, genuinely Ed25519-signed
+      ``github_projection_grant_declaration`` -- verified by
+      :func:`~manosube_agent_civilization.authority.projection_authorization.
+      evaluate_projection_authorization` itself, the same function a production projection
+      call already trusts.
 
-    if config is None or authority_record is None or not isinstance(authority_record, Mapping):
-        return False
+    Performs no I/O and no network access of its own -- pure recomputation and delegation.
+    ``config=None`` or *material* not even a mapping refuse immediately. A malformed grant,
+    declaration, or request raises inside ``evaluate_projection_authorization`` as
+    :class:`~manosube_agent_civilization.authority.errors.AuthorityError`; caught here and
+    treated as refusal, since a live-write gate must never raise."""
 
-    if authority_record.get("permitted_action") != V3_LIVE_WRITE_PERMITTED_ACTION:
-        return False
-    if authority_record.get("status") != _ACTIVE_STATUS:
-        return False
-    valid_from = authority_record.get("valid_from")
-    valid_until = authority_record.get("valid_until")
-    if not isinstance(valid_from, str) or not isinstance(valid_until, str):
-        return False
-    if not (valid_from <= evaluation_time <= valid_until):
+    if config is None or not isinstance(material, Mapping):
         return False
 
-    if authority_record.get("configuration_fingerprint") != config.configuration_fingerprint:
-        return False
-    if authority_record.get("target_repository") != config.target_repository:
-        return False
-    record_kinds = authority_record.get("authorized_artifact_kinds")
-    if not isinstance(record_kinds, list):
-        return False
-    if frozenset(record_kinds) != config.authorized_artifact_kinds:
-        return False
-    if authority_record.get("authorized_artifact_count") != config.authorized_artifact_count:
-        return False
-    if authority_record.get("cleanup_confirmed") is not True:
-        return False
-    if authority_record.get("no_merge_confirmed") is not True:
+    project_binding = _verified_project_binding(material)
+    if project_binding is None:
         return False
 
-    signature = authority_record.get("signature")
-    if not isinstance(signature, dict):
+    project_id = material.get("project_id")
+    if not isinstance(project_id, str) or not project_id:
         return False
-    if signature.get("algorithm") != trust_anchor["algorithm"]:
+    if project_binding.get("project_id") != project_id:
         return False
-    if signature.get("key_id") != trust_anchor["key_id"]:
+
+    grants = material.get("grants")
+    grant_declarations = material.get("grant_declarations")
+    if not isinstance(grants, list) or not isinstance(grant_declarations, list):
         return False
-    signature_hex = signature.get("value")
-    if not isinstance(signature_hex, str):
+
+    human_authority_ref = project_binding.get("human_authority_ref")
+    human_authority_signing_key = project_binding.get("human_authority_signing_key")
+    if not isinstance(human_authority_ref, Mapping) or not isinstance(
+        human_authority_signing_key, Mapping
+    ):
         return False
-    try:
-        message = v3_live_write_authority_signing_payload(authority_record)
-    except V3LiveWriteAuthorityError:
-        return False
-    return verify_ed25519_signature(
-        public_key_hex=trust_anchor["public_key"], message=message, signature_hex=signature_hex
-    )
+
+    for projection_kind in V3_PROJECTION_KINDS:
+        request = v3_projection_authorization_request(
+            config,
+            projection_kind=projection_kind,
+            project_id=project_id,
+            human_authority_ref=human_authority_ref,
+            human_authority_signing_key=human_authority_signing_key,
+            grants=grants,
+            grant_declarations=grant_declarations,
+        )
+        try:
+            decision = evaluate_projection_authorization(request)
+        except AuthorityError:
+            return False
+        if decision["decision"] != "PROJECTION_AUTHORIZED":
+            return False
+    return True

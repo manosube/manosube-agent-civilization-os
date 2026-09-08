@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 import json
 from pathlib import Path
 from typing import Any
@@ -49,14 +48,11 @@ from tests.fixtures.product_binding import (
     genesis_records,
     sign_github_projection_grant_declaration,
 )
+from tests.fixtures.v3_authority_test_material import genuine_v3_authority_material
 from tests.fixtures.v3_live_write_authority import (
-    V3_LIVE_TRUST_ANCHOR,
-    V3_LIVE_WRITE_AUTHORITY_RECORD_ENV,
-    load_v3_live_write_authority_record,
+    V3_LIVE_WRITE_AUTHORITY_MATERIAL_ENV,
+    load_v3_live_write_authority_material,
     v3_live_write_authorized,
-)
-from tests.fixtures.v3_live_write_authority_test_signer import (
-    assemble_v3_live_write_authority_for_test,
 )
 from tests.fixtures.v3_target_configuration import (
     ALL_V3_ENV_VARS,
@@ -101,7 +97,7 @@ _SKIP_REASON = (
     "IMPLEMENTATION (Issue #62) authorizes preparing this harness, not executing it against "
     "a live target, until the exact repository/artifact/cleanup/no-merge boundary is "
     "separately frozen and re-confirmed, and load_v3_target_configuration()/"
-    "load_v3_live_write_authority_record()/v3_live_write_authorized() are all re-checked at "
+    "load_v3_live_write_authority_material()/v3_live_write_authorized() are all re-checked at "
     "collection time on every run."
 )
 
@@ -143,32 +139,27 @@ def _v3_authorized() -> bool:
 
 def _v3_live_authorized() -> bool:
     """Return whether the V3 harness's own real-adapter tests may actually run live
-    (Structural Review Round 4, Issue #62, P14-R4-F3; genuine signed Human Authority,
-    Structural Review Round 6, P14-R6-F2; external trust anchor, Structural Review Round 7,
-    P14-R7-F1): a fail-closed runtime gate requiring *all three* of a fully validated, fully
-    bound :class:`V3TargetConfiguration`, a genuine Ed25519-signed V3 Live Write Authority
-    record read from the environment
-    (:func:`~tests.fixtures.v3_live_write_authority.load_v3_live_write_authority_record`), and
-    that record's own verification against :data:`~tests.fixtures.v3_live_write_authority.
-    V3_LIVE_TRUST_ANCHOR` -- the fixed, non-caller-controlled public trust anchor this one call
-    site always and only supplies, with no matching private key existing anywhere in this
-    repository (Structural Review Round 7 closes the prior round's own caller-computable-
-    signature gap: a genuinely signed *test* record could never be mistaken for a live-accepted
-    one, since :func:`v3_live_write_authorized` never falls back to any trust anchor other than
-    the one explicitly passed here) -- always ``False`` in this delivery. This function, not a
-    hardcoded ``pytest.mark.skip``, is what the real-adapter tests below are gated on, so a
-    later round that supplies a genuinely signed authority record via the environment (issued
-    entirely outside this repository, through the existing canonical Authority/Binding route)
-    activates them *without any source edit* to this file. *evaluation_time* is read from the
-    real clock here, at this one call site, and passed explicitly into the pure
-    ``v3_live_write_authorized`` -- never read inside that function itself."""
+    (Structural Review Round 4, Issue #62, P14-R4-F3; genuine signed Human Authority, Round 6,
+    P14-R6-F2; external trust anchor, Round 7, P14-R7-F1; canonical issuable authority,
+    Round 8, P14-R8-F1): a fail-closed runtime gate requiring a fully validated, fully bound
+    :class:`V3TargetConfiguration` and a genuine V3 live-write authority material read from
+    the environment
+    (:func:`~tests.fixtures.v3_live_write_authority.load_v3_live_write_authority_material`),
+    verified through the identical canonical Authority/Binding route
+    (:func:`~manosube_agent_civilization.authority.projection_authorization.
+    evaluate_projection_authorization`) a real GitHub projection call already uses -- never a
+    V3-specific verification mechanism or trust anchor of this module's own (Structural Review
+    Round 8 replaces Round 7's own fixed, orphan trust anchor, which had no possible
+    legitimate issuer, with this reused canonical route) -- always ``False`` in this delivery.
+    This function, not a hardcoded ``pytest.mark.skip``, is what the real-adapter tests below
+    are gated on, so a later round that supplies a genuinely signed authority material via the
+    environment (issued entirely outside this repository, by whoever genuinely holds the real
+    Project Binding's Human Authority private key) activates them *without any source edit* to
+    this file."""
 
     config = load_v3_target_configuration()
-    authority_record = load_v3_live_write_authority_record()
-    evaluation_time = datetime.now(UTC).isoformat()
-    return v3_live_write_authorized(
-        config, authority_record, evaluation_time=evaluation_time, trust_anchor=V3_LIVE_TRUST_ANCHOR
-    )
+    material = load_v3_live_write_authority_material()
+    return v3_live_write_authorized(config, material)
 
 
 def _bound(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any]]:
@@ -711,28 +702,21 @@ def test_v3_authorization_is_not_yet_configured_in_this_environment() -> None:
 
     assert _v3_authorized() is False
     assert load_v3_target_configuration() is None
-    assert load_v3_live_write_authority_record() is None
-    assert (
-        v3_live_write_authorized(
-            None,
-            None,
-            evaluation_time="2026-09-08T00:00:00Z",
-            trust_anchor=V3_LIVE_TRUST_ANCHOR,
-        )
-        is False
-    )
+    assert load_v3_live_write_authority_material() is None
+    assert v3_live_write_authorized(None, None) is False
     assert _v3_live_authorized() is False
 
 
 def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Structural Review Round 6 (Issue #62, P14-R6-F2): a fully valid, fully bound
-    :class:`V3TargetConfiguration` *plus* a genuinely well-formed but mismatched (wrong
-    fingerprint) V3 Live Write Authority record must still refuse -- and, since
-    ``_v3_live_authorized()`` is what every real-adapter test's own ``pytest.mark.skipif``
-    gates on, that refusal happens entirely offline, before any adapter is ever constructed
-    and therefore before ``urllib.request.urlopen`` could ever be called even once."""
+    """Structural Review Round 6 (Issue #62, P14-R6-F2), reused verbatim by Round 8
+    (P14-R8-F1): a fully valid, fully bound :class:`V3TargetConfiguration` *plus* a
+    genuinely-issued but mismatched (wrong configuration) V3 live-write authority material
+    must still refuse -- and, since ``_v3_live_authorized()`` is what every real-adapter
+    test's own ``pytest.mark.skipif`` gates on, that refusal happens entirely offline, before
+    any adapter is ever constructed and therefore before ``urllib.request.urlopen`` could ever
+    be called even once."""
 
     valid_env = {
         TARGET_REPOSITORY_ENV: "acme/widget",
@@ -753,20 +737,14 @@ def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
     config = load_v3_target_configuration()
     assert config is not None
 
-    # A genuinely well-formed, genuinely *signed* (by the test-only signer, never the live
-    # trust anchor) record -- but for a different (wrong) configuration fingerprint. Real
-    # cryptographic material, real shape, still refused: both because the fingerprint is wrong
-    # and because it is signed by a key that could never verify under V3_LIVE_TRUST_ANCHOR in
-    # the first place (Structural Review Round 7, P14-R7-F1).
-    mismatched_record = assemble_v3_live_write_authority_for_test(
-        configuration_fingerprint="sha256:" + "0" * 64,
-        target_repository=config.target_repository,
-        authorized_artifact_kinds=config.authorized_artifact_kinds,
-        authorized_artifact_count=config.authorized_artifact_count,
-        valid_from="2026-01-01T00:00:00Z",
-        valid_until="2030-01-01T00:00:00Z",
-    )
-    monkeypatch.setenv(V3_LIVE_WRITE_AUTHORITY_RECORD_ENV, json.dumps(mismatched_record))
+    # A genuinely issued (real project_binding, real signed grant/declaration pair) material
+    # blob -- but built for a *different* configuration (a different repository), so its own
+    # subject_fingerprint/target_repository never match this environment's real config. Real
+    # cryptographic material, real canonical shape, still refused (Structural Review Round 8,
+    # P14-R8-F1).
+    wrong_config = replace(config, repo="a-different-widget")
+    mismatched_material = genuine_v3_authority_material(wrong_config)
+    monkeypatch.setenv(V3_LIVE_WRITE_AUTHORITY_MATERIAL_ENV, json.dumps(mismatched_material))
 
     def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
         raise AssertionError(
@@ -777,7 +755,7 @@ def test_unauthorized_or_mismatched_human_authority_causes_zero_network_calls(
     monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
 
     assert _v3_authorized() is True
-    assert load_v3_live_write_authority_record() == mismatched_record
+    assert load_v3_live_write_authority_material() == mismatched_material
     assert _v3_live_authorized() is False
 
 
@@ -903,11 +881,8 @@ def test_v3_authorized_full_three_projection_run_against_the_live_target(tmp_pat
 
     config = load_v3_target_configuration()
     assert config is not None
-    authority_record = load_v3_live_write_authority_record()
-    evaluation_time = datetime.now(UTC).isoformat()
-    assert v3_live_write_authorized(
-        config, authority_record, evaluation_time=evaluation_time, trust_anchor=V3_LIVE_TRUST_ANCHOR
-    )
+    material = load_v3_live_write_authority_material()
+    assert v3_live_write_authorized(config, material)
     result = _run_v3_authorized_execution(
         tmp_path, config, lambda projection_kind: RealGitHubAdapter(token=config.token)
     )
@@ -937,6 +912,82 @@ _MOCK_CONFIG = V3TargetConfiguration(
     authorized_artifact_kinds=frozenset({"issue", "pull_request", "check_run"}),
     authorized_artifact_count=3,
 )
+
+
+# ---------------------------------------------------------------------------
+# Structural Review Round 8 (P14-R8-F1)'s own required positive control: a genuinely issued V3
+# live-write authority material -- verified through the identical canonical Authority/Binding
+# route the live gate itself consumes -- reaches the controlled adapter boundary for every
+# projection kind, entirely offline, with zero network calls of any kind. Deliberately drives
+# ``_run_vertical_proof`` directly (the identical body the module-level controlled-adapter
+# tests above already use), never ``_run_v3_authorized_execution`` -- whose own cleanup step
+# always issues a real PATCH regardless of which adapter materialized the artifact, which
+# would defeat the "zero network calls" proof this positive control specifically makes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("subject_kind", "projection_kind", "projection_payload"),
+    [
+        (
+            "difference",
+            "DIFFERENCE_ISSUE",
+            {"title": "V3 authorized proof (Difference)", "body": "harness"},
+        ),
+        (
+            "change",
+            "CHANGE_PULL_REQUEST",
+            {
+                "title": "V3 authorized proof (Change)",
+                "body": "harness",
+                "head_ref": "agent/v3-harness",
+                "base_ref": "main",
+            },
+        ),
+        (
+            "observation_evidence",
+            "EVIDENCE_ARTIFACT",
+            {
+                "name": "V3 authorized proof (Evidence)",
+                "head_sha": "a" * 40,
+                "status": "completed",
+                "conclusion": "neutral",
+                "output": {"title": "V3 authorized proof", "summary": "harness"},
+            },
+        ),
+    ],
+)
+def test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_network_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    subject_kind: str,
+    projection_kind: str,
+    projection_payload: dict[str, Any],
+) -> None:
+    material = genuine_v3_authority_material(_MOCK_CONFIG)
+    assert v3_live_write_authorized(_MOCK_CONFIG, material) is True
+
+    def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
+        raise AssertionError(
+            "urllib.request.urlopen was called during a controlled-adapter run -- this must "
+            "never happen"
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
+
+    outcome = _run_vertical_proof(
+        tmp_path,
+        subject_kind=subject_kind,
+        projection_kind=projection_kind,
+        target_repository={
+            "host": "github",
+            "owner": _MOCK_CONFIG.owner,
+            "repo": _MOCK_CONFIG.repo,
+        },
+        projection_payload=projection_payload,
+        adapter=FakeGitHubAdapter(),
+    )
+    assert outcome["receipt"].status == "VERIFIED"
 
 
 class _FakeResponse:

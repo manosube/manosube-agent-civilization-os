@@ -199,6 +199,10 @@ UNAUTHORIZED_OR_MISMATCHED_V3_AUTHORITY_CAUSES_ZERO_NETWORK_CALLS=true
 V3_LIVE_TRUST_ANCHOR_HAS_NO_MATCHING_PRIVATE_KEY_IN_SHIPPED_OR_LIVE_CODE=true
 V3_LIVE_CALL_SITE_HARDCODES_ITS_OWN_TRUST_ANCHOR_NO_CALLER_INJECTION=true
 TEST_ONLY_SIGNER_STRUCTURALLY_UNREACHABLE_FROM_THE_LIVE_GATE=true
+V3_LIVE_WRITE_AUTHORITY_ROUTED_THROUGH_CANONICAL_PROJECTION_AUTHORIZATION=true
+V3_LIVE_WRITE_AUTHORITY_ISSUABLE_VIA_REAL_PROJECT_BINDING_AND_SIGNED_GRANT_DECLARATION=true
+V3_TARGET_CONFIGURATION_SUBJECT_KIND_ADDED_TO_AUTHORITY_AND_BINDING_SCHEMAS=true
+ORPHAN_V3_TEST_SIGNER_AND_TRUST_ANCHOR_REMOVED=true
 PHASE_14_COMPLETE=false
 PHASE_15_ALLOWED=false
 ```
@@ -272,6 +276,26 @@ verification logic under an explicitly injected, distinct test trust anchor that
 mistaken for, and can never verify against, the live one -- proven by a new AST-based static
 conformance test rather than by convention. `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still
 holds, unchanged by any of this.
+The four lines immediately above `PHASE_14_COMPLETE` record Structural Review Round 8's own
+correction (`ADOPT_P14_R8_CANONICAL_ISSUABLE_V3_AUTHORITY`) -- see `PROJECTION_CONTRACT.md`
+§16 for the full detail: Round 7's own fixed, un-issuable trust anchor is replaced outright by
+direct reuse of the same canonical Authority/Binding route a real GitHub projection operation
+already uses (`authority.projection_authorization.evaluate_projection_authorization`, fed a
+genuinely content-address-verified `project_binding` plus signed
+`github_projection_grant`/`github_projection_grant_declaration` records), so a genuine V3 Live
+Write Authority record can now actually be issued by the project's real canonical Human
+Authority -- something no prior round's construction made possible. `human_authority_ref`/
+`human_authority_signing_key` are read only from the verified `project_binding` record itself,
+never independently caller-supplied. One new closed subject kind,
+`"v3_target_configuration"`, was added to the previously three-member `subject_ref.kind` enum
+in both `01_SCHEMA/authority/github_projection_grant.schema.json` and
+`01_SCHEMA/binding/github_projection_grant_declaration.schema.json` -- disclosed here as this
+round's one deliberate design decision, an additive extension of the existing single canonical
+owner's own vocabulary, never a second owner. Round 7's now-superseded orphan test signer
+(`tests/fixtures/v3_live_write_authority_test_signer.py`) is deleted; the new test-only
+material builder (`tests/fixtures/v3_authority_test_material.py`) reuses this repository's own
+established Product Binding fixtures rather than inventing a second signing convention.
+`V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.
