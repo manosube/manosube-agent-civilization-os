@@ -71,8 +71,27 @@ def main() -> int:
     # github_projection_decision) adds two more, making 53. Phase 14 Structural Review
     # Round 2's own signed-declaration and atomic-claim extensions (P14-R2-F1's
     # github_projection_grant_declaration, and P14-R2-F2's projection_intent and
-    # projection_materialize_attempt) add three more, making 56.
-    if len(paths) != 56 or len(set(ids)) != len(paths) or None in ids:
+    # projection_materialize_attempt) add three more, making 56. Phase 15's own Runtime
+    # Observation Envelope (Issue #64, runtime_observation_envelope) adds one more, making 57.
+    # Phase 15 Structural Review Round 1's own Store-anchored deployment identity
+    # (P15-R1-F6, runtime_deployment_declaration -- the canonical, content-addressed,
+    # Human-Authority-declared record a target's own claimed deployment_fingerprint must now
+    # match, closing the circular "the endpoint echoed the expected string" verification)
+    # adds one more, making 58. Phase 15 Structural Review Round 2 adds no schema file at all
+    # (it added required `status`/`signature` fields to that existing one), so the count stayed
+    # at 58 through that round. Phase 15 Structural Review Round 3's own externally anchored
+    # root admission (P15-R3-F1, runtime_root_admission -- the canonical, content-addressed,
+    # trust-anchor-signed record that admits one specific project/Project Binding, and without
+    # which possessing a TrustedRuntimeRoot grants nothing at all) adds one more, making 59.
+    # Round 3's own second finding (P15-R3-F2) adds required valid_from/valid_until fields to
+    # the existing runtime_deployment_declaration schema, again with no new file. Phase 15
+    # Structural Review Round 4 (P15-R4-F1/F2) likewise adds no schema file: it adds required
+    # generation/predecessor_ref fields to *both* existing Runtime schemas
+    # (runtime_deployment_declaration and runtime_root_admission), so each record kind's own
+    # place in its monotonic transition chain is covered by its content address and its
+    # signature. The count therefore stays at 59, verified against what is on disk rather than
+    # assumed.
+    if len(paths) != 59 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
