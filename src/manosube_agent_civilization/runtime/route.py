@@ -410,15 +410,29 @@ def observe_runtime_target(
     "receipt": RuntimeObservationReceipt}``.
 
     *target_identity* and *boundary* must already be real, explicit, closed shapes -- this
-    function fingerprints them itself (never trusting a caller-declared fingerprint), and
-    requires *target_identity*'s own ``project_binding_ref`` to name *project_binding_id*
-    exactly. *observed_at* is a required, caller-supplied instant (this route reads no clock,
-    the identical discipline every other route in this repository already requires) that must
-    fall within *boundary*'s own declared, closed time window -- an observation whose own
-    instant already falls outside that window refuses before the adapter is ever called.
+    function proves each completely valid against its own canonical schema before Boot or any
+    adapter is reached, fingerprints them itself (never trusting a caller-declared
+    fingerprint), and requires *target_identity*'s own ``project_binding_ref`` to name
+    *project_binding_id* exactly. *observed_at* is a required, caller-supplied instant (this
+    route reads no clock, the identical discipline every other route in this repository
+    already requires) that must fall within *boundary*'s own declared, closed time window,
+    compared as real UTC instants -- an observation whose own instant already falls outside
+    that window refuses before the adapter is ever called.
+
+    Three further refusals also land before the adapter is ever called, each with zero adapter
+    calls and zero commits (Structural Review Round 1):
+
+    - *boundary*'s own declared endpoint must resolve to a host inside its own declared
+      ``network_scope["allowed_hosts"]`` (P15-R1-F1);
+    - *target_identity*'s own ``deployment_declaration_ref`` must resolve to a genuinely
+      committed, independently identity-recomputed ``runtime_deployment_declaration`` that
+      restates this exact target and its exact claimed ``deployment_fingerprint`` (P15-R1-F6);
+    - the Project Binding / Human Authority verified at this call's own initial Boot must
+      still be the ones the Store reports (P15-R1-F5) -- re-proved again on every commit
+      attempt, so an Envelope is never committed under authority that has since changed.
 
     See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §5 for the full canonical route this function
-    implements, step by step.
+    implements, step by step, and §10 for the Round 1 corrections above.
     """
 
     _require_canonical_identity("project_id", project_id)
