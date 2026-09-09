@@ -376,6 +376,10 @@ def test_the_attacker_world_cannot_be_substituted_into_the_request_facing_bootst
 
     authority = _canonical["admitted"]["deployment_authority"]
     authorization_calls = {"count": 0}
+    # The one adapter this whole delivery can reach at all. It is created here and handed to
+    # nothing, so its call count is a direct, literal measurement of "zero adapter calls" -- and,
+    # since it is a controlled fake that opens no socket, of zero network calls too.
+    adapter = FakeGitHubAdapter()
 
     def _counting_evaluate(request: Any) -> Any:
         authorization_calls["count"] += 1
@@ -417,6 +421,11 @@ def test_the_attacker_world_cannot_be_substituted_into_the_request_facing_bootst
             github_projection_grant_declaration_refs=[_canonical["declaration_ref"]],
         )
     assert authorization_calls["count"] == 0
+
+    # Zero adapter calls, stated literally rather than inferred: no capability object was ever
+    # produced by any attempt above, so there is nothing that could have reached an adapter, and
+    # the one adapter in this test was never touched.
+    assert adapter.materialize_call_count == 0
 
 
 # ---------------------------------------------------------------------------
