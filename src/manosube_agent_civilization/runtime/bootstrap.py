@@ -29,9 +29,72 @@ production code rather than a test-only live-write gate:
   ``boot_project``'s/``evaluate_projection_authorization``'s own errors propagate unchanged) on
   any refusal, so a real caller can see *why* provisioning failed.
 
+**Structural Review Round 6 (P15-R6-F1): the per-call admission recheck runs TWICE -- the second
+time immediately before issuance -- and re-establishes the resolved record's *integrity*, not just
+how its own fields read. Read this before reading the diff.**
+
+Round 5 put one admission barrier at the start of every request-facing call. Round 6 found that
+barrier open in two independently reproducible ways, and closes both without changing Round 5's
+closure boundary or its timestamp owner:
+
+```text
+1. POST-CHECK ROTATION/REVOCATION RACE
+   The check ran once, at the start of the request. Grants, declarations and subjects were then
+   resolved and every Authority decision evaluated -- real work, taking real time -- and the
+   capability was finally built from that SAME ORIGINAL Boot snapshot, with no second barrier.
+   A canonical rotation or revocation committing in that window was therefore still followed by a
+   newly issued capability, which directly violates the adopted condition that rotation and
+   revocation prevent NEW capability issuance.
+
+2. RESOLVED-RECORD INTEGRITY WAS NEVER RE-ESTABLISHED
+   The recheck schema-validated the resolved record and then read four of its own self-declared
+   fields (generation, status, project_id, project_binding_ref). It never recomputed
+   `runtime_root_admission_id` or the semantic fingerprint from the resolved body, and never
+   compared that body against the admission admitted at composition. A Store-level substitution
+   under the CURRENT id -- an altered `predecessor_ref`, `declared_at` or `signature`, with those
+   four fields left exactly as they were -- therefore passed the whole gate. Composition proved
+   the ORIGINAL record; the recheck only ever re-proved that certain fields still read a
+   particular way.
+```
+
+The correction is one bounded forward change, entirely inside this module:
+
+```text
+AT COMPOSITION      capture an immutable canonical commitment to the exact anchor-verified
+                    admission: its id, its generation, AND its independently recomputed semantic
+                    fingerprint (`bound_semantic_fingerprint`, beside the two cells Round 5
+                    already held).
+
+ON EVERY REQUEST    _require_bound_admission_still_current now recomputes the currently-resolved
+                    record's identity and semantic fingerprint FROM ITS BODY and requires exact
+                    equality with that captured commitment -- never with the body's own declared
+                    id/fingerprint fields, since a tampered body can declare a forged pair
+                    matching its own tampered content and satisfy a self-comparison trivially.
+                    Six requirements now, not four.
+
+BEFORE ISSUANCE     after ALL grant/declaration/subject resolution and Authority evaluation, and
+                    immediately before the capability is constructed, the operation Boots AGAIN
+                    and repeats the FULL check -- identity, fingerprint, generation, status,
+                    Project/Binding, all of it. The returned ProjectionExecutionContext's
+                    `state_revision`/`semantic_fingerprint` come from that FINAL Boot.
+```
+
+*Disclosed judgment call.* Only the **State snapshot** moves to the final Boot.
+``human_authority_ref``/``human_authority_signing_key`` -- and therefore the ``decisions``,
+``authorities`` and the context's own ``github_authority_ref`` -- remain sourced from the first
+Boot, exactly as before, because they are what the Authority evaluation actually ran against and
+what the returned capability legitimately represents. Re-deriving them from a later Boot would let
+the context claim it was authorized under a Human Authority binding no evaluation ever used, if a
+re-binding landed between the two Boots -- a strictly worse defect than the one being closed.
+
+The request-facing signature is **unchanged**: still exactly ``github_projection_grant_refs`` and
+``github_projection_grant_declaration_refs``, with no Store, Project, Binding, admission, anchor
+or replacement authority object anywhere on it, and no new public request parameter of any kind.
+
 **Structural Review Round 5 (P15-R5-F1, P15-R5-F2): the composition step *returns the bound
 request-facing operation itself*, and every new capability issuance rechecks the bound
-admission's currency. Read this before reading the diff.**
+admission's currency. Read this before reading the diff.** *(Round 6 keeps this entirely and
+extends only what the per-call recheck proves, and how many times it runs.)*
 
 *P15-R5-F1 -- the ownership boundary needed a control that is not a type check.* Round 4 moved
 every trust-deciding value onto a composition step and handed request-facing code an opaque
@@ -392,11 +455,14 @@ def _boot(store: Any, project_id: str, project_binding_id: str) -> Any:
     discipline ``route.py`` already keeps, so no second, drifting way of restoring a project can
     appear beside it).
 
-    Reached from exactly two points: once at composition time, to prove the world a deployment is
-    binding is genuinely restorable and to read the State its admission pointer lives in; and once
-    per request-facing call, freshly, for the same grant/declaration-freshness reasons Rounds 1-3
-    established. The second Boot has nothing to do with the trust decision -- composition made
-    that once, and the anchor is gone by then.
+    Reached from exactly three points: once at composition time, to prove the world a deployment
+    is binding is genuinely restorable and to read the State its admission pointer lives in; once
+    at the start of every request-facing call, freshly, for the same grant/declaration-freshness
+    reasons Rounds 1-3 established; and once more (P15-R6-F1) at the end of that same call,
+    immediately before the capability is constructed, so the pre-issuance admission barrier reads
+    a State that is current *then* rather than one read before all the resolution and
+    authorization work happened. None of the three has anything to do with the trust decision --
+    composition made that once, and the anchor is gone by then.
     """
 
     return boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
@@ -561,34 +627,69 @@ def _require_bound_admission_still_current(
     current_state: Mapping[str, Any],
     bound_admission_id: str,
     bound_generation: int,
+    bound_semantic_fingerprint: str,
 ) -> None:
-    """P15-R5-F2: before issuing any NEW capability from a bound service, freshly prove the root
-    admission that service was composed against is still this Project Binding's own current one
-    -- with no raw trust anchor in this call's own signature. The admission was cryptographically
-    admitted once, at composition (:func:`_require_currently_admitted`); this recheck only asks
-    whether the canonical Store's own current-admission pointer -- moved exclusively by
+    """P15-R5-F2, completed by P15-R6-F1: before issuing any NEW capability from a bound service,
+    freshly prove the root admission that service was composed against is still this Project
+    Binding's own current one -- with no raw trust anchor in this call's own signature. The
+    admission was cryptographically admitted once, at composition
+    (:func:`_require_currently_admitted`); this recheck only asks whether the canonical Store's own
+    current-admission pointer -- moved exclusively by
     :func:`~manosube_agent_civilization.runtime.admission_registry.commit_runtime_root_admission`,
-    itself anchor-signature-gated -- still names that exact record, with that exact generation,
-    still ACTIVE, still naming this exact Project/Binding. Already-issued downstream capabilities
-    are not retroactively revoked by this check; it only gates whether THIS call may mint a new
-    one.
+    itself anchor-signature-gated -- still names that exact record, and whether the record now
+    resolving under that id is still, in every observable respect, the exact record composition
+    proved. Already-issued downstream capabilities are not retroactively revoked by this check; it
+    only gates whether THIS call may mint a new one.
 
-    Four requirements, each stated and checked separately because the adopted contract lists four:
+    **Six requirements**, each stated and checked separately -- the four the Round 5 contract
+    listed, plus the two P15-R6-F1 adds:
 
     1. the pointer still names the exact admission id captured at composition;
     2. the resolved current admission carries the exact captured ``generation``;
     3. the current admission is still ``ACTIVE``;
-    4. it still restates this bound service's own Project and Project Binding.
+    4. it still restates this bound service's own Project and Project Binding;
+    5. its identity, **independently recomputed from the body now resolving**, equals the exact
+       identity captured at composition;
+    6. its semantic fingerprint, likewise independently recomputed from that body, equals the
+       exact fingerprint captured at composition.
 
     They are deliberately *not* collapsed into one another even where an implication is visible
     (a content-addressed record's ``generation``, ``status`` and Binding are all covered by its
-    own id, so requirement 1 arguably implies 2-4 for an untampered Store). Each is what it says,
+    own id, so requirement 5 arguably implies 2-4 for an untampered Store). Each is what it says,
     and each refuses with its own message, so a future edit that changes what "current" resolves
-    through cannot silently take three checks with it.
+    through cannot silently take five checks with it.
 
-    This runs before any grant reference is resolved, before any authorization is evaluated, and
-    therefore before any adapter or network call could exist -- the identical
-    refuse-at-zero-cost ordering :func:`_require_currently_admitted` already keeps at composition.
+    **Why 5 and 6 recompute from the body rather than reading the body's own declared fields, and
+    why that is what closes the substitution gap.** Round 5 checked only requirements 1-4, and
+    every one of them reads *fields the resolved record declares about itself*. A Store-level
+    substitution under the current id -- an altered ``predecessor_ref``, ``declared_at``, or
+    ``signature``, with ``generation``/``status``/``project_id``/``project_binding_ref`` left
+    exactly as they were -- therefore passed the whole gate: composition proved the ORIGINAL
+    record, and the recheck never re-proved that the currently-resolved body is still that same
+    record, only that certain of its fields still read a particular way. Requirements 5 and 6
+    close exactly that, and they anchor to the *composition-time-captured* commitment rather than
+    to the body's own ``runtime_root_admission_id``/
+    ``runtime_root_admission_semantic_fingerprint`` fields, because a tampered body could
+    self-consistently declare a forged id and fingerprint matching its own tampered content and so
+    satisfy a self-comparison trivially. The reference these recomputations are compared against
+    is the one this service closed over before any request boundary existed.
+
+    **Why they are checked last, deliberately.** It is the identical ordering
+    :func:`_require_currently_admitted` already keeps for its own currency check, and for the
+    identical reason: requirements 2-4 each name a specific, independently meaningful way the
+    current admission can have stopped being what this service was composed against, and any body
+    that fails one of them necessarily also fails 5. Recomputing first would collapse every one of
+    those refusals into a single indistinguishable "identity mismatch" message and stop each
+    control proving what it claims to prove; recomputing last leaves requirements 5 and 6 isolated
+    by exactly the case nothing else can see -- a substituted body whose declared
+    generation/status/Project/Binding are untouched.
+
+    Reached twice per request-facing call (P15-R6-F1, item 3): once before any grant reference is
+    resolved -- so a rotated or revoked service refuses before any adapter or network call could
+    exist, the identical refuse-at-zero-cost ordering :func:`_require_currently_admitted` already
+    keeps at composition -- and once again immediately before the capability is constructed, from
+    a second, fresh Boot, so a rotation or revocation committing *between* those two points cannot
+    still be followed by a new issuance.
     """
 
     chain_key = runtime_root_admission_target_key(
@@ -627,6 +728,21 @@ def _require_bound_admission_still_current(
         raise RuntimeRequirementError(
             f"the current runtime_root_admission {current_id!r} no longer restates this bound "
             "service's own Project/Binding -- refusing to issue a new capability"
+        )
+    recomputed_id = runtime_root_admission_id(admission)
+    if recomputed_id != bound_admission_id:
+        raise RuntimeRequirementError(
+            f"the current runtime_root_admission {current_id!r} own recomputed identity "
+            f"({recomputed_id!r}) does not equal the identity this bound service was composed "
+            "against -- refusing to issue a new capability: the resolved record no longer matches "
+            "the exact admission composition proved, however its own self-declared fields read"
+        )
+    recomputed_fingerprint = runtime_root_admission_semantic_fingerprint(admission)
+    if recomputed_fingerprint != bound_semantic_fingerprint:
+        raise RuntimeRequirementError(
+            f"the current runtime_root_admission {current_id!r} own recomputed semantic "
+            f"fingerprint ({recomputed_fingerprint!r}) does not equal the fingerprint this bound "
+            "service was composed against -- refusing to issue a new capability"
         )
 
 
@@ -747,9 +863,11 @@ def compose_trusted_runtime_deployment_authority(
 
     The anchor is used here and **discarded**: it is not stored anywhere on the returned
     operation, is not reachable from it, and is never re-verified per call. What *is* retained,
-    in the returned operation's own closure, is the admitted record's id and generation -- which
-    is exactly what P15-R5-F2's per-call currency recheck needs, and exactly what it may have
-    without reintroducing a raw anchor anywhere downstream of this call.
+    in the returned operation's own closure, is the admitted record's id, generation and
+    independently recomputed semantic fingerprint -- the immutable canonical commitment to the
+    exact anchor-verified admission (P15-R6-F1, item 1). That is exactly what the per-call
+    currency-and-commitment recheck needs, and exactly what it may have without reintroducing a
+    raw anchor anywhere downstream of this call.
 
     Raises :class:`~manosube_agent_civilization.runtime.errors.RuntimeRequirementError` on any
     refusal; every :class:`~manosube_agent_civilization.boot.errors.BootError`/
@@ -770,6 +888,13 @@ def compose_trusted_runtime_deployment_authority(
     )
     bound_admission_id = str(admission["runtime_root_admission_id"])
     bound_generation = int(admission["generation"])
+    # P15-R6-F1, item 1: the immutable canonical commitment to the *exact* anchor-verified
+    # admission. Not only id and generation, but the semantic fingerprint too -- already
+    # independently recomputed from this record's own body, and already proved equal to its own
+    # declared value, by _require_currently_admitted's own checks above. Captured in a closure cell
+    # exactly as the other two are, so every per-call recheck can anchor to a reference chosen
+    # before any request boundary existed rather than to whatever the Store hands back later.
+    bound_semantic_fingerprint = str(admission["runtime_root_admission_semantic_fingerprint"])
 
     def bootstrap_projection_execution_capability(
         *,
@@ -797,9 +922,21 @@ def compose_trusted_runtime_deployment_authority(
         Every call freshly Boots, for exactly the grant/declaration-freshness reasons Rounds 1-3
         established (no authority may ever be carried forward as a stale verdict), and then --
         P15-R5-F2 -- freshly rechecks that the admission this service was composed against is
-        still this Project Binding's own current one, before resolving a single grant. Neither
-        Boot has anything to do with the *trust* decision, which composition made once and whose
-        anchor is, deliberately, no longer reachable from anywhere.
+        still this Project Binding's own current one, before resolving a single grant.
+
+        **Two barriers, not one (P15-R6-F1).** That opening recheck is necessary and was not
+        sufficient: it ran once, at the start of the request, and the capability was then built
+        from that same original snapshot after all the grant/declaration/subject resolution and
+        Authority evaluation in between -- so a canonical rotation or revocation committing during
+        that window was still followed by a newly issued capability. This operation therefore
+        Boots a **second** time and repeats the entire
+        :func:`_require_bound_admission_still_current` check -- identity, fingerprint, generation,
+        status, Project/Binding, all six requirements -- immediately before the
+        :class:`~manosube_agent_civilization.projection.ProjectionExecutionContext` is
+        constructed, and builds that context's ``state_revision``/``semantic_fingerprint`` from
+        the final Boot rather than the initial one. No Boot here has anything to do with the
+        *trust* decision, which composition made once and whose anchor is, deliberately, no longer
+        reachable from anywhere.
 
         Returns one :class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability`
         bound to a freshly constructed :class:`~manosube_agent_civilization.projection.
@@ -832,6 +969,7 @@ def compose_trusted_runtime_deployment_authority(
             current_state=request_boot_context.current_state,
             bound_admission_id=bound_admission_id,
             bound_generation=bound_generation,
+            bound_semantic_fingerprint=bound_semantic_fingerprint,
         )
 
         if not github_projection_grant_refs:
@@ -967,7 +1105,37 @@ def compose_trusted_runtime_deployment_authority(
                 },
             )
 
-        current_state = request_boot_context.current_state
+        # P15-R6-F1, items 3-4: the pre-issuance barrier. Every grant, declaration and subject has
+        # now been resolved and every Authority decision evaluated -- all of it work that takes
+        # real time, during which a canonical rotation or revocation can genuinely commit. Boot
+        # again, freshly, and repeat the FULL commitment check (identity, fingerprint, generation,
+        # status, Project/Binding -- all six requirements, not a subset) immediately before a
+        # capability is constructed, so that "rotation or revocation prevents new capability
+        # issuance" holds at the moment of issuance rather than only at the moment the request
+        # started.
+        final_boot_context = _boot(store, project_id, project_binding_id)
+        _require_bound_admission_still_current(
+            store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            current_state=final_boot_context.current_state,
+            bound_admission_id=bound_admission_id,
+            bound_generation=bound_generation,
+            bound_semantic_fingerprint=bound_semantic_fingerprint,
+        )
+
+        # The returned context's State snapshot comes from THIS final Boot, never the initial one:
+        # a capability must describe the State that was current when it was issued.
+        #
+        # Disclosed judgment call (P15-R6-F1): ``human_authority_ref``/
+        # ``human_authority_signing_key`` -- and therefore ``decisions``/``authorities`` and the
+        # context's own ``github_authority_ref`` -- deliberately remain sourced from the FIRST
+        # Boot. They are what the Authority evaluation above actually ran against, and what the
+        # returned capability legitimately represents. Re-deriving them from a later Boot after
+        # the fact would make the context claim it was authorized under a Human Authority binding
+        # no evaluation ever used, if a re-binding landed between the two Boots -- a strictly
+        # worse defect than the one this barrier closes. Only the STATE SNAPSHOT moves.
+        current_state = final_boot_context.current_state
         context = ProjectionExecutionContext(
             store=store,
             project_id=project_id,
