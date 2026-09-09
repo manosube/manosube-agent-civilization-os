@@ -34,7 +34,7 @@ identity" distinct from the eventual committed fact):
   :func:`runtime_root_admission_semantic_fingerprint` -- the identity of the *canonical,
   Store-committed root admission record* a trusted runtime provisioning call must present, and
   which :func:`~manosube_agent_civilization.runtime.bootstrap.
-  bootstrap_projection_execution_capability` verifies against an **externally supplied** trust
+  compose_trusted_runtime_deployment_authority` verifies against an **externally supplied** trust
   anchor public key rather than against anything resolvable inside the Store being admitted
   (Phase 15 Structural Review Round 3, P15-R3-F1). Follows the identical shared-derivation
   convention the deployment declaration below already uses.

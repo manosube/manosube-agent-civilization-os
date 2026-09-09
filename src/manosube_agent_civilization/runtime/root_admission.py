@@ -45,7 +45,8 @@ the mechanism, not a live invocation of it (``10_RUNTIME/RUNTIME_CONTRACT.md`` Â
 Fail-closed as a *value*, never as an exception (the identical convention the primitive itself
 uses): this module returns ``False`` on any mismatch and lets its one caller decide what a
 ``False`` result means -- which, in
-:func:`~manosube_agent_civilization.runtime.bootstrap.bootstrap_projection_execution_capability`,
+:func:`~manosube_agent_civilization.runtime.bootstrap.
+compose_trusted_runtime_deployment_authority`,
 is always a :class:`~manosube_agent_civilization.runtime.errors.RuntimeRequirementError`
 refusal reached before any grant resolution, before
 ``evaluate_projection_authorization`` is ever called, and therefore with zero adapter calls.

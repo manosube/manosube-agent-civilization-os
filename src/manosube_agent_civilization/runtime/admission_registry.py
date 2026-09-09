@@ -1,9 +1,10 @@
 """The canonical current-root-admission pointer, and the one sanctioned way to move it (Phase 15
 Structural Review Round 4, Issue #64, P15-R4-F1, item 5).
 
-**The defect this module closes.** Round 3 made
-:func:`~manosube_agent_civilization.runtime.bootstrap.
-bootstrap_projection_execution_capability` require a canonical, Store-committed, ACTIVE
+**The defect this module closes.** Round 3 made trusted runtime provisioning
+(:func:`~manosube_agent_civilization.runtime.bootstrap.
+compose_trusted_runtime_deployment_authority`, since Round 4) require a canonical,
+Store-committed, ACTIVE
 ``runtime_root_admission`` genuinely signed by an externally supplied deployment trust anchor --
 a real control, and still required. But it asked only *does a matching ACTIVE admission record
 exist and resolve?*, which is exactly the question Round 3 itself had already rejected one level

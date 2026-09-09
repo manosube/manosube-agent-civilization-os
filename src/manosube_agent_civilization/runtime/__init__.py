@@ -46,14 +46,16 @@ evidence = route_runtime_observation_to_evidence(
 )
 ```
 
-The trusted runtime bootstrap, in two owned halves (Structural Review Round 4, P15-R4-F1):
+The trusted runtime bootstrap, in one owned composition step that *returns* the request-facing
+operation already bound to its world (Structural Review Round 5, P15-R5-F1):
 
 ```python
 # ---- TRUSTED DEPLOYMENT COMPOSITION -- runs once, before any request boundary exists. -------
 # This is the only place a raw trust anchor is ever named, and the only shipped path to a
-# RuntimeDeploymentAuthority. It owns the Store handle, the Project, the Project Binding, the
-# root-admission selection, and the configured anchor.
-authority = compose_trusted_runtime_deployment_authority(
+# working request-facing bootstrap at all. It owns the Store handle, the Project, the Project
+# Binding, the root-admission selection, and the configured anchor -- and closes over every one
+# of them before returning.
+bootstrap = compose_trusted_runtime_deployment_authority(
     store,
     project_id=project_id,
     project_binding_id=project_binding_id,
@@ -68,28 +70,37 @@ authority = compose_trusted_runtime_deployment_authority(
     trust_anchor_public_key_hex=deployment_configured_trust_anchor_public_key_hex,
 )
 
-# ---- REQUEST-FACING BOOTSTRAP -- consumes the already-bound authority. -----------------------
-# No store / project_id / project_binding_id / runtime_root_admission_ref /
-# trust_anchor_public_key_hex parameter exists on this signature at all, so there is no call
-# shape through which an alternate world can be substituted.
-capability = bootstrap_projection_execution_capability(
-    authority,
+# ---- REQUEST-FACING BOOTSTRAP -- the returned callable itself. -------------------------------
+# Its signature carries ONLY these two operation-scoped keyword arguments. There is no
+# deployment_authority / store / project_id / project_binding_id / runtime_root_admission_ref /
+# trust_anchor_public_key_hex parameter, and no object to substitute in place of one either:
+# the world lives in this callable's own closure, written once by the composition call above.
+# Every call additionally rechecks, freshly, that the admission it was composed against is still
+# this Project Binding's own current one (P15-R5-F2).
+capability = bootstrap(
     github_projection_grant_refs=[...],
     github_projection_grant_declaration_refs=[...],
 )
 ```
 
-**Why the split.** Round 1 shipped a public ``provision_trusted_runtime_root`` factory; Round 2
+**Why the shape.** Round 1 shipped a public ``provision_trusted_runtime_root`` factory; Round 2
 (P15-R2-F1) deleted it; Round 3 (P15-R3-F1) made possession of a trust root confer nothing and
 required a canonical, anchor-signed ``runtime_root_admission`` on every call. Round 4 found that
 the same defect had been *moved* rather than closed: the anchor and the admission reference were
 still **parameters of the request-facing call**, so a caller could present a complete, internally
-self-consistent alternate world together with the matching attacker anchor and pass every check.
-The correction is an ownership boundary -- composition owns every trust-deciding value, and the
-request-facing signature can name none of them. ``TrustedRuntimeRoot`` is removed rather than
-kept beside the new type; Round 2's and Round 3's static facts survive in strictly stronger form
-(the deleted factory is still absent by name, and that type's name is now absent from shipped
-code entirely).
+self-consistent alternate world together with the matching attacker anchor and pass every check;
+its correction was an ownership boundary carried by an opaque ``RuntimeDeploymentAuthority``
+value. Round 5 (P15-R5-F1) found *that* still open in one respect: the authority was an ordinary
+public dataclass with an ordinary public constructor, so a caller could build their own over an
+alternate world and hand it to the free request-facing function, which only checked its type.
+An ``isinstance`` check, a sentinel, a leading-underscore field or an opaque ``repr`` are all
+ruled out as trust controls, so the type is **deleted** and the request-facing operation is now a
+genuine closure: it has no public constructor, and the only way to obtain a working one is to
+call the composition step, which is exactly where the anchor-signature and currency gate lives.
+``TrustedRuntimeRoot`` and ``RuntimeDeploymentAuthority`` are both removed rather than kept
+beside their replacements; every earlier round's static facts survive in strictly stronger form
+(the deleted factory is still absent by name, and both removed type names are now absent from
+shipped code entirely).
 
 Issuing, rotating, and revoking either chain goes through one canonical committer each, and both
 parameterize the *same* shared monotonic-chain mechanism
@@ -128,11 +139,7 @@ contract set.
 """
 
 from .admission_registry import commit_runtime_root_admission
-from .bootstrap import (
-    RuntimeDeploymentAuthority,
-    bootstrap_projection_execution_capability,
-    compose_trusted_runtime_deployment_authority,
-)
+from .bootstrap import compose_trusted_runtime_deployment_authority
 from .deployment_registry import commit_runtime_deployment_declaration
 from .errors import (
     RuntimeAdapterError,
@@ -160,12 +167,10 @@ __all__ = [
     "RuntimeAdapter",
     "RuntimeAdapterError",
     "RuntimeAuthorityFreshnessError",
-    "RuntimeDeploymentAuthority",
     "RuntimeEnvelopeIntegrityError",
     "RuntimeObservationError",
     "RuntimeObservationReceipt",
     "RuntimeRequirementError",
-    "bootstrap_projection_execution_capability",
     "commit_runtime_deployment_declaration",
     "commit_runtime_root_admission",
     "compose_trusted_runtime_deployment_authority",

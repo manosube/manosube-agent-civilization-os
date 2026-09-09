@@ -101,7 +101,6 @@ Envelope anchored to a declaration that is no longer current. See
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Any
 
 from manosube_agent_civilization.boot import boot_project
@@ -117,6 +116,7 @@ from .deployment_registry import (
 from .engine import (
     RUNTIME_SCHEMA_BASE,
     derive_runtime_observation_envelope,
+    parse_utc_instant,
     require_valid_boundary,
     require_valid_deployment_declaration,
     require_valid_target_identity,
@@ -237,37 +237,24 @@ def _require_boundary(value: Any) -> dict[str, Any]:
     return checked
 
 
-def _instant(value: str, context: str) -> datetime:
-    """Parse one canonical UTC ``Z``-suffixed timestamp into a real, comparable instant.
-
-    P15-R1-F2: string comparison is *not* sound over this schema's own timestamp grammar
-    (``common/timestamp.schema.json`` admits an optional fractional part), and the failure is
-    not merely cosmetic -- ``"2026-01-01T00:00:00.5Z" < "2026-01-01T00:00:00Z"`` is ``True``
-    lexicographically (``.`` sorts below ``Z``) while being ``False`` chronologically, so a
-    lexicographic window check *accepts* an observation half a second past a whole-second
-    ``expires_at``, and *refuses* one half a second after a whole-second ``issued_at``. Both
-    directions are wrong; only real instants compare correctly.
-    """
-
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as error:
-        raise RuntimeRequirementError(
-            f"{context} is not a readable UTC instant: {value!r}"
-        ) from error
-    if parsed.tzinfo is None:
-        raise RuntimeRequirementError(f"{context} carries no UTC designator: {value!r}")
-    return parsed
-
-
 def _require_within_time_window(boundary: dict[str, Any], observed_at: str) -> None:
     """Refuse before any adapter call unless *observed_at* falls within the Boundary's own
-    declared, genuinely ordered, closed time window -- compared as real UTC instants."""
+    declared, genuinely ordered, closed time window -- compared as real UTC instants.
 
-    issued_at = _instant(boundary["time_window"]["issued_at"], "boundary.time_window.issued_at")
-    expires_at = _instant(boundary["time_window"]["expires_at"], "boundary.time_window.expires_at")
-    observed = _instant(observed_at, "observed_at")
+    P15-R5-F3: the instant parser this reads through moved to
+    :func:`~manosube_agent_civilization.runtime.engine.parse_utc_instant`, unchanged, so this
+    package has exactly one instant-parsing owner and ``deployment_registry.py`` reuses it rather
+    than growing a second timestamp grammar of its own. The reasoning for why real instants are
+    required at all is stated once, there.
+    """
+
+    issued_at = parse_utc_instant(
+        boundary["time_window"]["issued_at"], "boundary.time_window.issued_at"
+    )
+    expires_at = parse_utc_instant(
+        boundary["time_window"]["expires_at"], "boundary.time_window.expires_at"
+    )
+    observed = parse_utc_instant(observed_at, "observed_at")
     if not issued_at < expires_at:
         raise RuntimeRequirementError(
             "boundary.time_window is not a genuinely ordered window "
@@ -466,7 +453,9 @@ def _resolve_deployment_declaration(
     apply, after every check above:
 
     4. ``valid_from <= observed_at <= valid_until``, compared as **real UTC instants** through
-       this module's own :func:`_instant` helper and inclusive at both ends -- the identical
+       this package's one instant-parsing owner
+       (:func:`~manosube_agent_civilization.runtime.engine.parse_utc_instant`, P15-R5-F3) and
+       inclusive at both ends -- the identical
        convention :func:`_require_within_time_window` already applies to the Observation
        Boundary's own window. Both bounds participate in the record's own content address *and*
        in the Human Authority's own signature, so a declaration cannot be re-dated after signing
@@ -558,9 +547,13 @@ def _resolve_deployment_declaration(
 
     # P15-R3-F2, in order: the declaration's own validity window against this observation's own
     # instant, then Project State's own canonical current-declaration pointer.
-    valid_from = _instant(declaration["valid_from"], "runtime_deployment_declaration.valid_from")
-    valid_until = _instant(declaration["valid_until"], "runtime_deployment_declaration.valid_until")
-    observed = _instant(observed_at, "observed_at")
+    valid_from = parse_utc_instant(
+        declaration["valid_from"], "runtime_deployment_declaration.valid_from"
+    )
+    valid_until = parse_utc_instant(
+        declaration["valid_until"], "runtime_deployment_declaration.valid_until"
+    )
+    observed = parse_utc_instant(observed_at, "observed_at")
     if not valid_from <= valid_until:
         raise RuntimeRequirementError(
             f"resolved runtime_deployment_declaration {ref['id']!r} own validity window is not "

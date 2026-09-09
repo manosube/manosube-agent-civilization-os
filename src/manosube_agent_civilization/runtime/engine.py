@@ -25,6 +25,7 @@ has already independently reclassified whatever the adapter reported.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from manosube_agent_civilization.difference.errors import DifferenceValidationError
@@ -92,6 +93,47 @@ def require_valid_timestamp(value: Any, context: str) -> str:
             f"{context} is not a canonical UTC timestamp: {value!r}"
         ) from error
     return str(value)
+
+
+def parse_utc_instant(value: str, context: str) -> datetime:
+    """Parse one canonical UTC ``Z``-suffixed timestamp into a real, comparable instant.
+
+    **The one instant-parsing owner this package has** (Phase 15 Structural Review Round 5,
+    P15-R5-F3). Round 1 (P15-R1-F2) established the reasoning below inside ``route.py``'s own
+    private ``_instant`` helper; Round 5 found the *identical* unsoundness still present in
+    ``deployment_registry.py``, which ordered a declaration's own validity window by comparing
+    two timestamp **strings**. The correction is deliberately not a second helper: the adopted
+    contract's own wording is that "no second timestamp grammar or Runtime-specific time owner
+    may be created", so the existing parser moved here, to the module both the route and the
+    committer already depend on, and every timestamp-window comparison in this package now goes
+    through this one function.
+
+    P15-R1-F2's reasoning, unchanged and now shared: string comparison is *not* sound over this
+    schema's own timestamp grammar (``common/timestamp.schema.json`` admits an optional
+    fractional part), and the failure is not merely cosmetic --
+    ``"2026-01-01T00:00:00.5Z" < "2026-01-01T00:00:00Z"`` is ``True`` lexicographically (``.``
+    sorts below ``Z``) while being ``False`` chronologically, so a lexicographic window check
+    *accepts* an observation half a second past a whole-second ``expires_at``, and *refuses* one
+    half a second after a whole-second ``issued_at``. Both directions are wrong; only real
+    instants compare correctly. The identical inversion made a lexicographic
+    ``valid_from``/``valid_until`` check accept an inverted window and refuse a genuine one.
+
+    This function reads no clock. It converts a declared timestamp into a comparable instant and
+    nothing else; *which* instants a caller then compares -- two declared bounds against each
+    other, or a declared bound against an observation's own ``observed_at`` -- stays that
+    caller's own question.
+    """
+
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise RuntimeRequirementError(
+            f"{context} is not a readable UTC instant: {value!r}"
+        ) from error
+    if parsed.tzinfo is None:
+        raise RuntimeRequirementError(f"{context} carries no UTC designator: {value!r}")
+    return parsed
 
 
 def require_valid_target_identity(target_identity: Any) -> dict[str, Any]:

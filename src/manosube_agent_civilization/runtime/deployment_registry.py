@@ -96,7 +96,7 @@ from typing import Any
 from manosube_agent_civilization.boot import boot_project
 
 from .deployment_declaration import verify_runtime_deployment_declaration_signature
-from .engine import require_valid_deployment_declaration
+from .engine import parse_utc_instant, require_valid_deployment_declaration
 from .errors import RuntimeRequirementError
 from .identity import (
     runtime_deployment_declaration_id,
@@ -167,11 +167,30 @@ def _require_declaration_shape_and_signature(
     3. Its ``signature`` must genuinely verify against the ``human_authority_signing_key`` that
        same Boot restored from the current Project Binding -- never a caller-supplied copy, never
        a key read from the declaration itself.
-    4. Its validity window must be genuinely ordered (``valid_from <= valid_until``). The window
-       is *not* evaluated against a clock here: this module reads none, and whether an
+    4. Its validity window must be genuinely ordered (``valid_from <= valid_until``) as **real
+       UTC instants**, through this package's one instant-parsing owner
+       (:func:`~manosube_agent_civilization.runtime.engine.parse_utc_instant`). The window is
+       *not* evaluated against a clock here: this module reads none, and whether an
        already-committed declaration is in-window at some later instant is
        :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target`'s own question,
        asked against that observation's own ``observed_at``.
+
+    **Structural Review Round 5 (P15-R5-F3): requirement 4 compared *strings*, and that was
+    unsound.** Rounds 3 and 4 wrote this check as ``valid_from > valid_until`` over the two raw
+    timestamp strings. The canonical timestamp grammar admits an optional fractional part, so
+    lexicographic order and chronological order genuinely disagree there -- ``.`` sorts below
+    ``Z`` -- and the check was wrong in *both* directions at once:
+
+    ```text
+    valid_from="...T00:00:00Z"    valid_until="...T00:00:00.5Z"   a real 0.5s window
+                                                                  REFUSED lexicographically
+    valid_from="...T00:00:00.5Z"  valid_until="...T00:00:00Z"     an inverted window
+                                                                  ACCEPTED lexicographically
+    ```
+
+    The correction reuses the parser ``route.py`` has used since Round 1 (P15-R1-F2) rather than
+    adding a second timestamp grammar or a Runtime-specific time owner, which the adopted contract
+    explicitly forbids: that parser now lives in ``engine.py``, and both sites read through it.
     """
 
     binding_ref = declaration.get("project_binding_ref")
@@ -212,10 +231,17 @@ def _require_declaration_shape_and_signature(
             "runtime_deployment_declaration carries no readable validity window: "
             f"{valid_from!r} .. {valid_until!r}"
         )
-    if valid_from > valid_until:
+    # P15-R5-F3: real chronological ordering, never a lexicographic one. This orders the two
+    # declared bounds against each other and against nothing else -- no clock is read here.
+    parsed_valid_from = parse_utc_instant(valid_from, "runtime_deployment_declaration.valid_from")
+    parsed_valid_until = parse_utc_instant(
+        valid_until, "runtime_deployment_declaration.valid_until"
+    )
+    if not parsed_valid_from <= parsed_valid_until:
         raise RuntimeRequirementError(
             f"runtime_deployment_declaration own validity window is not genuinely ordered "
-            f"({valid_from!r} .. {valid_until!r}) -- refusing to commit it"
+            f"({valid_from!r} .. {valid_until!r}) -- compared as real UTC instants, never "
+            "lexicographically -- refusing to commit it"
         )
 
 
