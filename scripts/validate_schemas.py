@@ -77,8 +77,15 @@ def main() -> int:
     # (P15-R1-F6, runtime_deployment_declaration -- the canonical, content-addressed,
     # Human-Authority-declared record a target's own claimed deployment_fingerprint must now
     # match, closing the circular "the endpoint echoed the expected string" verification)
-    # adds one more, making 58.
-    if len(paths) != 58 or len(set(ids)) != len(paths) or None in ids:
+    # adds one more, making 58. Phase 15 Structural Review Round 2 adds no schema file at all
+    # (it added required `status`/`signature` fields to that existing one), so the count stayed
+    # at 58 through that round. Phase 15 Structural Review Round 3's own externally anchored
+    # root admission (P15-R3-F1, runtime_root_admission -- the canonical, content-addressed,
+    # trust-anchor-signed record that admits one specific project/Project Binding, and without
+    # which possessing a TrustedRuntimeRoot grants nothing at all) adds one more, making 59.
+    # Round 3's own second finding (P15-R3-F2) adds required valid_from/valid_until fields to
+    # the existing runtime_deployment_declaration schema, again with no new file.
+    if len(paths) != 59 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

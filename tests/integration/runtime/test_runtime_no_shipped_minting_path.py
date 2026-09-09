@@ -1,50 +1,40 @@
-"""P15-R2-F1: no shipped code path mints a ``TrustedRuntimeRoot`` at all.
+"""P15-R2-F1, as Round 3 (P15-R3-F1) leaves it: the deleted minting factory stays deleted, and
+no shipped callable hands back a ``TrustedRuntimeRoot``.
 
-Structural Review Round 2's finding, restated. Round 1 closed P15-R1-F4 by removing
+**What Round 2 found, and what Round 3 changed.** Round 1 closed P15-R1-F4 by removing
 ``store``/``project_id``/``project_binding_id`` from
 ``bootstrap_projection_execution_capability``'s own signature and introducing a public
 ``provision_trusted_runtime_root(store, project_id, project_binding_id)`` factory in front of
-it. But that factory *was itself* the caller-selected trust anchor: it accepted exactly the
-tuple the correction existed to stop an untrusted surface from choosing, and supplied the
-module-private sentinel on the caller's behalf for whatever Store it was handed. Moving the same
-three arguments one call earlier changed the API's shape, not control of the trust decision --
-and Round 1's own suite demonstrated the bypass rather than closing it, by provisioning a root
-over an independently built alternate Store and receiving a real
-``ProjectionExecutionCapability`` from it.
+it. Round 2 found that factory *was itself* the caller-selected trust anchor -- it accepted
+exactly the tuple the correction existed to stop an untrusted surface from choosing -- deleted
+it, and left construction behind a module-private sentinel, concluding that shipped code
+therefore had no production-legitimate way to obtain a root at all.
 
-**What this file proves, stated exactly and without overstatement.**
+Round 3 rejected that conclusion and the reasoning under it. The sentinel was a naming
+convention rather than a control (any caller able to import ``runtime.bootstrap`` could read it
+and construct a root over an arbitrary Store, which is precisely what the test-only issuer did),
+and Issue #64 assigns this production provisioning boundary to *this* Phase rather than a later
+one. The fix was not a better-hidden constructor but to stop the type from being the boundary:
+possessing a ``TrustedRuntimeRoot`` now grants **nothing**, because every provisioning call must
+additionally present a canonical ``runtime_root_admission`` record verified against an
+externally supplied trust anchor. See ``test_runtime_root_admission.py``, which owns that proof.
 
-This repository genuinely has no live deployment, CLI, or agent-runtime composition boundary
-wired to Runtime yet (Phase 16+ is not authorized; ``RUNTIME_CREDENTIAL_USE_AUTHORITY=false``,
-``LIVE_EXTERNAL_WRITE_AUTHORITY=false``). The correction available at the library level, and the
-one applied, is therefore structural and absolute rather than adversarial: the shipped package
-contains **no function anywhere that takes a caller-supplied store/project/binding and returns a
-legitimately-typed** ``TrustedRuntimeRoot``, and **no shipped module constructs one at all**.
+**Why this file survives Round 3 unchanged in substance.** Every fact it pins is still true and
+still load-bearing, and pinning them is exactly what keeps the Round 3 correction from being
+*read* as a quiet restoration of Round 1's factory:
 
-That is a proof about *what shipped code contains*. It is **not** a proof that a live path
-resists an attacker at runtime -- there is no live path yet for an attacker to attack. When a
-future, separately authorized Phase wires a real deployment composition boundary, that boundary
-will mint roots, and the question "can this boundary be tricked into naming an alternate world?"
-will become a real question requiring its own real control. This round establishes only that the
-decision cannot be made *here*, by a shipped library function, on behalf of whatever Store a
-caller happened to pass. The distinction is stated plainly rather than implied away.
+- the deleted factory is not importable from anywhere shipped, under its own name;
+- no shipped public callable declares ``TrustedRuntimeRoot`` as its return type, so a
+  same-shaped factory under a *different* name would be caught too;
+- the capability call still refuses every non-root first argument, before Boot;
+- ``observe_runtime_target``, the one public observation route, still names neither the type nor
+  the capability bootstrap, so no ambient live path can be steered through either.
 
-**Why the control is not vacuous.** A proof that "nothing can mint a root" would be worthless if
-the alternate world it must exclude were merely broken. So this file, like Round 1's own
-``test_runtime_trusted_root.py``, builds *both* worlds for real -- the canonical one, and a fully
-self-consistent alternate one under its own external Human Authority and its own Ed25519 signing
-key -- and first confirms that the alternate world genuinely IS internally legitimate on its own
-terms, provisioned through the test-only issuer. Only then does it prove that nothing in the
-shipped public surface (``runtime/__init__.py``, ``bootstrap.py``,
-``bootstrap_projection_execution_capability``, ``route.py``) offers any way to reach or mint a
-root over that world -- not because minting over *that particular* world is specially blocked,
-but because shipped minting does not exist at all.
-
-The complementary mechanical proof -- an AST walk over every ``.py`` file in the installed
-``manosube_agent_civilization`` package, asserting no ``TrustedRuntimeRoot(...)`` call site
-exists outside the dataclass's own body and that ``provision_trusted_runtime_root`` is neither
-defined nor importable -- lives in ``tests/contract/runtime/test_runtime_static_conformance.py``,
-beside this package's own other static facts.
+What has changed is only the *reason* the first of these matters. It is no longer "because
+minting must not exist"; it is "because the factory Round 2 removed conferred trust it had no
+basis to confer, and reintroducing it would say something false about where trust now comes
+from". The one test that genuinely could not survive -- Round 2's "the only issuer that exists
+lives in tests" -- is replaced below by its Round 3 successor.
 """
 
 from __future__ import annotations
@@ -58,13 +48,14 @@ import pytest
 from tests.evidence_helpers import observation_evidence_request
 from tests.fixtures.runtime_world import (
     ALTERNATE_HUMAN_AUTHORITY_REF,
+    admitted_root,
     alternate_bound,
     bound,
     commit_declaration,
     commit_grant,
     commit_records,
     sign_alternate_github_projection_grant_declaration,
-    test_only_trusted_runtime_root,
+    trusted_runtime_root,
 )
 
 from manosube_agent_civilization.boot import boot_project
@@ -145,6 +136,11 @@ def _authority_world(
         "human_authority_ref": human_authority_ref,
         "grant_ref": grant_ref,
         "declaration_ref": declaration_ref,
+        "admitted": admitted_root(
+            store,
+            project_id=ctx["project_id"],
+            project_binding_id=ctx["project_binding_id"],
+        ),
     }
 
 
@@ -194,11 +190,9 @@ def test_both_worlds_are_genuinely_distinct_and_the_alternate_one_is_self_consis
     assert alternate["project_binding_id"] != canonical["project_binding_id"]
 
     capability = bootstrap_projection_execution_capability(
-        test_only_trusted_runtime_root(
-            alternate["store"],
-            project_id=alternate["project_id"],
-            project_binding_id=alternate["project_binding_id"],
-        ),
+        alternate["admitted"]["trusted_runtime_root"],
+        runtime_root_admission_ref=alternate["admitted"]["runtime_root_admission_ref"],
+        trust_anchor_public_key_hex=alternate["admitted"]["trust_anchor_public_key_hex"],
         github_projection_grant_refs=[alternate["grant_ref"]],
         github_projection_grant_declaration_refs=[alternate["declaration_ref"]],
     )
@@ -251,19 +245,32 @@ def test_no_shipped_public_callable_returns_a_trusted_runtime_root(
     assert producers == []
 
 
-def test_the_only_root_issuer_that_exists_lives_in_tests(_worlds: dict[str, Any]) -> None:
-    """The honest statement of where the capability actually comes from in this Phase: the sole
-    issuer is a ``tests.fixtures`` function, and the shipped package can never reach it, because
-    shipped code importing any ``tests.*`` module is itself statically forbidden (proved in
-    ``test_runtime_static_conformance.py``)."""
+def test_the_root_type_is_public_shipped_api_and_the_fixture_helper_is_only_a_convenience(
+    _worlds: dict[str, Any],
+) -> None:
+    """Round 3's replacement for Round 2's "the only issuer that exists lives in tests".
 
-    assert test_only_trusted_runtime_root.__module__ == "tests.fixtures.runtime_world"
-    root = test_only_trusted_runtime_root(
+    That claim is no longer true and, more to the point, no longer *means* anything: a
+    ``TrustedRuntimeRoot`` grants nothing, so where it is constructed is not a trust fact. What
+    is worth pinning instead is that ``tests.fixtures.runtime_world.trusted_runtime_root`` is a
+    plain convenience over the public shipped constructor and reaches no private internals at
+    all -- so no reader can mistake it for a privileged test-side issuer, and deleting it would
+    cost the suite nothing but three lines per call site.
+    """
+
+    assert trusted_runtime_root.__module__ == "tests.fixtures.runtime_world"
+    from_helper = trusted_runtime_root(
         _worlds["canonical"]["store"],
         project_id=_worlds["canonical"]["project_id"],
         project_binding_id=_worlds["canonical"]["project_binding_id"],
     )
-    assert isinstance(root, TrustedRuntimeRoot)
+    directly = TrustedRuntimeRoot(
+        _worlds["canonical"]["store"],
+        _worlds["canonical"]["project_id"],
+        _worlds["canonical"]["project_binding_id"],
+    )
+    assert isinstance(from_helper, TrustedRuntimeRoot)
+    assert from_helper == directly
 
 
 def test_the_capability_call_still_refuses_every_non_root_first_argument(
@@ -291,6 +298,8 @@ def test_the_capability_call_still_refuses_every_non_root_first_argument(
         with pytest.raises(RuntimeRequirementError):
             bootstrap_projection_execution_capability(
                 first_argument,  # type: ignore[arg-type]
+                runtime_root_admission_ref=canonical["admitted"]["runtime_root_admission_ref"],
+                trust_anchor_public_key_hex=(canonical["admitted"]["trust_anchor_public_key_hex"]),
                 github_projection_grant_refs=[canonical["grant_ref"]],
                 github_projection_grant_declaration_refs=[canonical["declaration_ref"]],
             )

@@ -1,32 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/runtime/runtime_deployment_declaration.schema.json",
-  "title": "Canonical Runtime Deployment Declaration",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/runtime/runtime_root_admission.schema.json",
+  "title": "Canonical Runtime Root Admission",
   "type": "object",
   "required": [
     "schema_version",
-    "runtime_deployment_declaration_id",
-    "runtime_deployment_declaration_semantic_fingerprint",
+    "runtime_root_admission_id",
+    "runtime_root_admission_semantic_fingerprint",
     "project_id",
     "project_binding_ref",
-    "provider",
-    "deployment_id",
-    "instance_identity",
-    "deployment_fingerprint",
-    "human_authority_ref",
     "status",
     "declared_at",
-    "valid_from",
-    "valid_until",
     "signature"
   ],
   "properties": {
     "schema_version": {"const": "0.1"},
-    "runtime_deployment_declaration_id": {
+    "runtime_root_admission_id": {
       "type": "string",
-      "pattern": "^RUNTIME-DEPLOYMENT-DECLARATION-[0-9A-F]{64}(?![\\s\\S])"
+      "pattern": "^RUNTIME-ROOT-ADMISSION-[0-9A-F]{64}(?![\\s\\S])"
     },
-    "runtime_deployment_declaration_semantic_fingerprint": {
+    "runtime_root_admission_semantic_fingerprint": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
     },
@@ -37,15 +30,8 @@
         {"properties": {"kind": {"const": "project_binding"}}}
       ]
     },
-    "provider": {"type": "string", "minLength": 1, "maxLength": 64},
-    "deployment_id": {"type": "string", "minLength": 1, "maxLength": 256},
-    "instance_identity": {"type": "string", "minLength": 1, "maxLength": 256},
-    "deployment_fingerprint": {"type": "string", "minLength": 1, "maxLength": 256},
-    "human_authority_ref": {"$ref": "../common/reference.schema.json"},
     "status": {"enum": ["ACTIVE", "REVOKED"]},
     "declared_at": {"$ref": "../common/timestamp.schema.json"},
-    "valid_from": {"$ref": "../common/timestamp.schema.json"},
-    "valid_until": {"$ref": "../common/timestamp.schema.json"},
     "signature": {"$ref": "#/$defs/signature"}
   },
   "$defs": {

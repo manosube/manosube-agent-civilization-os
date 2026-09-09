@@ -30,6 +30,14 @@ identity" distinct from the eventual committed fact):
   bytes a genuine Human Authority signature must cover are the exact bytes both digests are
   computed over, so the content address and the signed message can never drift apart into two
   different notions of "what this record declared".
+- :func:`runtime_root_admission_signing_payload` / :func:`runtime_root_admission_id` /
+  :func:`runtime_root_admission_semantic_fingerprint` -- the identity of the *canonical,
+  Store-committed root admission record* a trusted runtime provisioning call must present, and
+  which :func:`~manosube_agent_civilization.runtime.bootstrap.
+  bootstrap_projection_execution_capability` verifies against an **externally supplied** trust
+  anchor public key rather than against anything resolvable inside the Store being admitted
+  (Phase 15 Structural Review Round 3, P15-R3-F1). Follows the identical shared-derivation
+  convention the deployment declaration below already uses.
 - :func:`runtime_observation_envelope_id` / :func:`runtime_observation_envelope_semantic_fingerprint`
   -- the identity of the *committed fact*: unlike Projection's own deliberately split mapping-
   key/semantic-fingerprint pair (see :mod:`manosube_agent_civilization.projection.identity`'s
@@ -87,6 +95,11 @@ ENVELOPE_SEMANTIC_FIELDS: tuple[str, ...] = (
 #: ``signature`` (a signature cannot cover its own value). ``declared_at`` deliberately
 #: *participates*: the signature is what proves *who* declared this deployment identity, and a
 #: signature that never bound *when* would validate identically at any later replay instant.
+#:
+#: ``valid_from``/``valid_until`` were added by Round 3 (P15-R3-F2) and *participate* for the
+#: identical reason ``declared_at`` does: a declaration whose validity window were not covered
+#: by its own content address and its own Human Authority signature could be silently re-dated
+#: after signing, which is exactly what a validity window exists to prevent.
 DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "project_id",
@@ -98,7 +111,78 @@ DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "human_authority_ref",
     "status",
     "declared_at",
+    "valid_from",
+    "valid_until",
 )
+
+
+#: The closed tuple of *adopted semantic fields* a Runtime Root Admission's own identity,
+#: semantic fingerprint, AND deployment-boundary trust-anchor signature are all computed over
+#: (Phase 15 Structural Review Round 3, P15-R3-F1) -- the complete record minus exactly the
+#: same three fields :data:`DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS` excludes, for the identical
+#: reasons: the record's own content address and its own semantic fingerprint (an identity
+#: cannot be computed over itself) and ``signature`` (a signature cannot cover its own value).
+#:
+#: Note what is deliberately **absent**: there is no ``human_authority_ref`` field on this
+#: record at all, and no field naming any key. A Runtime Root Admission's whole purpose is to
+#: be verifiable against a trust anchor that is **not resolvable from within the Store being
+#: admitted** -- an attacker's fully self-consistent alternate world has its own internally
+#: valid Human Authority and its own signing key, so a record whose trust rested on *that* key
+#: could simply be self-signed inside that world and would pass. See
+#: :mod:`~manosube_agent_civilization.runtime.root_admission` and
+#: ``10_RUNTIME/RUNTIME_CONTRACT.md`` §12.1.
+ROOT_ADMISSION_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_ref",
+    "status",
+    "declared_at",
+)
+
+
+#: Exactly the ``target_identity``/``runtime_deployment_declaration`` fields that decide *which
+#: deployment target* a declaration is about, and therefore which canonical current-declaration
+#: pointer it supersedes when it is committed (Phase 15 Structural Review Round 3, P15-R3-F2).
+#:
+#: These are :data:`~manosube_agent_civilization.runtime.route._DECLARATION_ANCHORED_TARGET_FIELDS`
+#: **minus** ``deployment_fingerprint``, deliberately. A declaration's own
+#: ``deployment_fingerprint`` is *what this target currently is*, not *which target this is*: a
+#: legitimate rotation re-declares the identical provider/deployment/instance under a new
+#: fingerprint, and that must **supersede** the previous declaration rather than open a second,
+#: independent current-pointer beside it. Including the fingerprint in this key would make every
+#: rotation fork the pointer space, leaving the superseded declaration permanently "current" for
+#: its own old key -- which is exactly the ineffective-revocation defect P15-R3-F2 names.
+DEPLOYMENT_TARGET_KEY_FIELDS: tuple[str, ...] = (
+    "project_binding_ref",
+    "provider",
+    "deployment_id",
+    "instance_identity",
+)
+
+
+def runtime_deployment_target_key(fields: dict[str, Any]) -> str:
+    """Return the deterministic canonical key naming *which deployment target*
+    :data:`DEPLOYMENT_TARGET_KEY_FIELDS` describes -- the key under which that target's own
+    current ``runtime_deployment_declaration`` id is recorded in Project State
+    (``semantic_state.runtime.claims``; P15-R3-F2).
+
+    A pure function of the real declared fields, computed the identical way every other
+    derivation in this module is: one canonical projection, hashed once, under a stable prefix.
+    *fields* may be a full ``target_identity`` or a full ``runtime_deployment_declaration`` --
+    only the four key fields are read, so both sides of the comparison the route performs derive
+    the identical key from their own independently checked copies.
+    """
+
+    missing = [field for field in DEPLOYMENT_TARGET_KEY_FIELDS if field not in fields]
+    if missing:
+        raise RuntimeRequirementError(
+            f"a runtime deployment target key cannot be derived without {', '.join(missing)}"
+        )
+    projection = {field: fields[field] for field in DEPLOYMENT_TARGET_KEY_FIELDS}
+    return (
+        "RUNTIME-DEPLOYMENT-TARGET-"
+        + hashlib.sha256(canonical_json_bytes(projection)).hexdigest().upper()
+    )
 
 
 def runtime_target_fingerprint(target_identity: dict[str, Any]) -> str:
@@ -193,6 +277,54 @@ def runtime_deployment_declaration_semantic_fingerprint(declaration: dict[str, A
     ``sha256:`` encoding every other owner's own semantic fingerprint already uses."""
 
     digest = hashlib.sha256(runtime_deployment_declaration_signing_payload(declaration))
+    return "sha256:" + digest.hexdigest()
+
+
+def _root_admission_projection(admission: dict[str, Any]) -> dict[str, Any]:
+    missing = [field for field in ROOT_ADMISSION_SEMANTIC_FIELDS if field not in admission]
+    if missing:
+        raise RuntimeRequirementError(
+            "runtime_root_admission carries no readable "
+            f"{', '.join(missing)} -- its own identity cannot be recomputed"
+        )
+    return {field: admission[field] for field in ROOT_ADMISSION_SEMANTIC_FIELDS}
+
+
+def runtime_root_admission_signing_payload(admission: dict[str, Any]) -> bytes:
+    """Return the exact canonical bytes a genuine trust-anchor signature over *admission* must
+    cover -- the identical payload :func:`runtime_root_admission_id` and
+    :func:`runtime_root_admission_semantic_fingerprint` themselves hash, over
+    :data:`ROOT_ADMISSION_SEMANTIC_FIELDS` (Phase 15 Structural Review Round 3, P15-R3-F1).
+
+    One shared derivation for all three purposes -- the identical discipline
+    :func:`runtime_deployment_declaration_signing_payload` already establishes here, and
+    :func:`~manosube_agent_civilization.binding.identity.human_grant_declaration_signing_payload`
+    established before it: the content address and the signed message are never allowed to
+    drift apart into two different notions of "what this record admitted".
+
+    *admission* need not yet carry its own two digest fields or its own ``signature`` -- none of
+    the three is read -- so this same function both mints the payload (before those fields
+    exist) and re-derives it for verification (once they do).
+    """
+
+    return canonical_json_bytes(_root_admission_projection(admission))
+
+
+def runtime_root_admission_id(admission: dict[str, Any]) -> str:
+    """Return the content address of a canonical Runtime Root Admission -- a pure function of
+    the complete, real record content, never of a caller-declared value, computed over
+    :func:`runtime_root_admission_signing_payload`'s own bytes (P15-R3-F1)."""
+
+    digest = hashlib.sha256(runtime_root_admission_signing_payload(admission))
+    return "RUNTIME-ROOT-ADMISSION-" + digest.hexdigest().upper()
+
+
+def runtime_root_admission_semantic_fingerprint(admission: dict[str, Any]) -> str:
+    """Return the digest of a canonical Runtime Root Admission's full meaning -- the identical
+    payload :func:`runtime_root_admission_id` hashes, under the ``sha256:`` encoding every other
+    owner's own semantic fingerprint already uses."""
+
+    digest = hashlib.sha256(runtime_root_admission_signing_payload(admission))
     return "sha256:" + digest.hexdigest()
 
 

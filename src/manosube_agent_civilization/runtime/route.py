@@ -30,11 +30,13 @@ complete schema validation of the declared target identity and closed Observatio
 → network-scope check -- the endpoint's own effective host must be inside allowed_hosts
 → real-instant time-window check -- refuses before any adapter call
 → real Project/Human Authority (Boot re-verification)
-→ Store-anchored, Authority-bound, signed deployment identity (the declared
-  deployment_fingerprint must equal a genuinely committed, independently identity-recomputed,
-  ACTIVE runtime_deployment_declaration that names the Human Authority this call's own Boot
-  just restored and carries that Authority's own genuine Ed25519 signature over its adopted
-  semantic fields)
+→ Store-anchored, Authority-bound, signed, in-window, currently-registered deployment identity
+  (the declared deployment_fingerprint must equal a genuinely committed, independently
+  identity-recomputed, ACTIVE runtime_deployment_declaration that names the Human Authority
+  this call's own Boot just restored, carries that Authority's own genuine Ed25519 signature
+  over its adopted semantic fields, whose own valid_from..valid_until window contains this
+  observation's own instant, and which Project State's own canonical current-declaration
+  pointer presently names for this exact target)
 → explicit runtime target identity, fingerprinted (never trusted from a caller)
 → closed Observation Boundary, fingerprinted (never trusted from a caller)
 → deterministic observation_request_identity (target + Boundary + issued_at)
@@ -47,7 +49,9 @@ complete schema validation of the declared target identity and closed Observatio
   computed here, never accepted from the adapter's own report; redaction applied before any
   fingerprint or persistence)
 → canonical Runtime Observation Envelope
-→ authority-freshness re-check on every commit attempt -- refuses to commit stale authority
+→ authority-freshness AND current-declaration re-check on every commit attempt -- refuses to
+  commit stale authority, or an Envelope anchored to a declaration superseded since it was
+  checked
 → existing canonical persistence boundary (commit_state_transition)
 → bounded Runtime Observation Receipt
 ```
@@ -73,6 +77,25 @@ Ed25519 signature by **the exact ``human_authority_signing_key`` that same Boot 
 the current Project Binding**, over the declaration's own adopted semantic fields. All three
 land as ``RuntimeRequirementError`` before any adapter call, with zero commits. See
 ``10_RUNTIME/RUNTIME_CONTRACT.md`` §11.
+
+**Structural Review Round 3 (P15-R3-F2).** Round 2's declaration still had no validity window
+and no *effective* revocation. Because the record is immutable and content-addressed, minting a
+new record carrying ``status="REVOKED"`` never invalidated the original ``ACTIVE`` one: that
+record keeps its own unchanged id and remains individually resolvable, individually
+signature-valid, and individually accepted forever, so a target already referencing it could
+keep presenting that exact reference indefinitely. Two further requirements now apply, again
+before any adapter call and with zero commits: the declaration's own required
+``valid_from``/``valid_until`` window (both covered by its own content address *and* by the
+Human Authority's own signature) must contain this observation's own ``observed_at``, compared
+as real UTC instants and inclusive at both ends; and Project State's own canonical
+current-declaration pointer for this exact target
+(``semantic_state.runtime.claims[<target_key>]``, moved only by
+:func:`~manosube_agent_civilization.runtime.deployment_registry.
+commit_runtime_deployment_declaration`) must presently name this exact declaration's own id.
+That pointer is re-proved on **every** commit attempt as well, so a supersession landing after
+this route's own resolution but before its own commit refuses rather than persisting an
+Envelope anchored to a declaration that is no longer current. See
+``10_RUNTIME/RUNTIME_CONTRACT.md`` §12.2.
 """
 
 from __future__ import annotations
@@ -87,6 +110,10 @@ from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
 
 from .deployment_declaration import verify_runtime_deployment_declaration_signature
+from .deployment_registry import (
+    DEPLOYMENT_DECLARATION_RECORD_KIND as _DEPLOYMENT_DECLARATION_RECORD_KIND,
+    current_deployment_declaration_id,
+)
 from .engine import (
     RUNTIME_SCHEMA_BASE,
     derive_runtime_observation_envelope,
@@ -104,6 +131,7 @@ from .errors import (
 from .identity import (
     runtime_deployment_declaration_id,
     runtime_deployment_declaration_semantic_fingerprint,
+    runtime_deployment_target_key,
     runtime_observation_boundary_fingerprint,
     runtime_observation_envelope_semantic_fingerprint,
     runtime_observation_request_identity,
@@ -120,7 +148,6 @@ from .types import (
 )
 
 _ENVELOPE_RECORD_KIND = "runtime_observation_envelope"
-_DEPLOYMENT_DECLARATION_RECORD_KIND = "runtime_deployment_declaration"
 #: The one ``status`` a canonical deployment declaration may carry and still anchor a target
 #: (P15-R2-F2). The closed vocabulary itself -- ``ACTIVE``/``REVOKED`` -- is owned by
 #: ``01_SCHEMA/runtime/runtime_deployment_declaration.schema.json``, exactly as
@@ -345,11 +372,52 @@ def _require_unchanged_authority_context(
         )
 
 
+def _require_current_deployment_declaration(
+    current_state: Mapping[str, Any],
+    *,
+    target_key: str,
+    declaration_id: str,
+    stage: str,
+) -> None:
+    """Require Project State's own canonical pointer for *target_key* to currently name
+    *declaration_id* (Phase 15 Structural Review Round 3, P15-R3-F2).
+
+    "Current" is not "whatever the caller happens to reference": it is whatever
+    ``semantic_state.runtime.claims[target_key]``, read fresh from the Store's own State, names
+    right now. A declaration that was superseded -- by a later ``REVOKED`` record revoking it, or
+    by a later ``ACTIVE`` record rotating past it -- keeps its own unchanged content address and
+    stays individually resolvable, individually signature-valid, and individually within its own
+    validity window forever; the pointer is the only thing that can, and does, make it no longer
+    current. See :mod:`~manosube_agent_civilization.runtime.deployment_registry`.
+
+    An absent pointer refuses for the same reason a superseded one does, and is not a lesser
+    case: a declaration that was never made current through the canonical commit path was never
+    admitted as this target's own current deployment identity at all.
+    """
+
+    current = current_deployment_declaration_id(current_state, target_key)
+    if current is None:
+        raise RuntimeRequirementError(
+            f"no runtime_deployment_declaration is currently registered for this target -- "
+            f"refusing {stage}: a declaration that was never made current through the canonical "
+            "commit-and-supersede path anchors nothing, however individually genuine it is"
+        )
+    if current != declaration_id:
+        raise RuntimeRequirementError(
+            f"the presented runtime_deployment_declaration {declaration_id!r} is no longer the "
+            f"current one for this target ({current!r} is) -- refusing {stage}: it has been "
+            "superseded, and its own content, signature, and validity window remaining genuine "
+            "does not make it current again"
+        )
+
+
 def _resolve_deployment_declaration(
     store: Any,
     project_id: str,
     target_identity: Mapping[str, Any],
     *,
+    current_state: Mapping[str, Any],
+    observed_at: str,
     human_authority_ref: Mapping[str, Any],
     human_authority_signing_key: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -388,6 +456,28 @@ def _resolve_deployment_declaration(
        declaration itself -- over
        :func:`~manosube_agent_civilization.runtime.identity.
        runtime_deployment_declaration_signing_payload`'s own bytes.
+
+    **Structural Review Round 3 (P15-R3-F2)** closes what Round 2's own record still left open.
+    A signed, ACTIVE, Authority-bound declaration had no validity window and no effective
+    revocation: because the record is immutable and content-addressed, minting a new record
+    carrying ``status="REVOKED"`` never invalidated the original ``ACTIVE`` one, which keeps its
+    own unchanged id and stays individually resolvable forever, so a target already referencing
+    it could keep presenting that exact reference indefinitely. Two further requirements now
+    apply, after every check above:
+
+    4. ``valid_from <= observed_at <= valid_until``, compared as **real UTC instants** through
+       this module's own :func:`_instant` helper and inclusive at both ends -- the identical
+       convention :func:`_require_within_time_window` already applies to the Observation
+       Boundary's own window. Both bounds participate in the record's own content address *and*
+       in the Human Authority's own signature, so a declaration cannot be re-dated after signing
+       without breaking both.
+    5. Project State's own canonical pointer for this target
+       (``semantic_state.runtime.claims[<target_key>]``, moved only by
+       :func:`~manosube_agent_civilization.runtime.deployment_registry.
+       commit_runtime_deployment_declaration`) must currently name **this exact declaration's
+       own id**. A missing pointer, or one naming a different id, is a refusal -- even though the
+       presented declaration's own content, signature, and validity window are all still
+       individually genuine.
 
     Every refusal here is a :class:`~manosube_agent_civilization.runtime.errors.
     RuntimeRequirementError` reached before any adapter call and with zero commits, never an
@@ -465,6 +555,32 @@ def _resolve_deployment_declaration(
             "Project Binding -- an unsigned, self-authored, wrong-key, or stale-key "
             "declaration anchors nothing"
         )
+
+    # P15-R3-F2, in order: the declaration's own validity window against this observation's own
+    # instant, then Project State's own canonical current-declaration pointer.
+    valid_from = _instant(declaration["valid_from"], "runtime_deployment_declaration.valid_from")
+    valid_until = _instant(declaration["valid_until"], "runtime_deployment_declaration.valid_until")
+    observed = _instant(observed_at, "observed_at")
+    if not valid_from <= valid_until:
+        raise RuntimeRequirementError(
+            f"resolved runtime_deployment_declaration {ref['id']!r} own validity window is not "
+            f"genuinely ordered ({declaration['valid_from']!r} .. "
+            f"{declaration['valid_until']!r}) -- refusing before any adapter call"
+        )
+    if not (valid_from <= observed <= valid_until):
+        raise RuntimeRequirementError(
+            f"observed_at {observed_at!r} falls outside resolved "
+            f"runtime_deployment_declaration {ref['id']!r} own declared validity window "
+            f"[{declaration['valid_from']!r}, {declaration['valid_until']!r}] -- a stale or "
+            "expired deployment declaration anchors nothing, and is refused before any adapter "
+            "call"
+        )
+    _require_current_deployment_declaration(
+        current_state,
+        target_key=runtime_deployment_target_key(dict(target_identity)),
+        declaration_id=str(declaration["runtime_deployment_declaration_id"]),
+        stage="before the adapter is reached",
+    )
     return declaration
 
 
@@ -543,12 +659,20 @@ def observe_runtime_target(
     # itself be a genuinely committed, independently identity-recomputed, ACTIVE canonical fact
     # signed by the exact Human Authority this call's own Boot just restored, rather than a
     # caller string or a self-asserted body.
-    _resolve_deployment_declaration(
+    declaration = _resolve_deployment_declaration(
         store,
         project_id,
         checked_target_identity,
+        current_state=boot_context.current_state,
+        observed_at=observed_at,
         human_authority_ref=real_human_authority_ref,
         human_authority_signing_key=real_human_authority_signing_key,
+    )
+    # P15-R3-F2's own post-check-substitution barrier: what was proved current a moment ago is
+    # re-proved current on every commit attempt, against State loaded fresh at that attempt.
+    declaration_currency = (
+        runtime_deployment_target_key(checked_target_identity),
+        str(declaration["runtime_deployment_declaration_id"]),
     )
 
     target_fingerprint = runtime_target_fingerprint(checked_target_identity)
@@ -661,6 +785,7 @@ def observe_runtime_target(
         observed_at,
         project_binding_id=project_binding_id,
         authority_context=authority_context,
+        declaration_currency=declaration_currency,
     )
 
     receipt = RuntimeObservationReceipt(
@@ -689,6 +814,7 @@ def _commit_envelope(
     *,
     project_binding_id: str,
     authority_context: Mapping[str, Any],
+    declaration_currency: tuple[str, str],
 ) -> None:
     """Durably persist *envelope* through the Store's own single sanctioned committer,
     bounded Compare-And-Swap retry against genuine, unrelated contention only (Issue #64 V4's
@@ -730,6 +856,19 @@ def _commit_envelope(
             stage="to commit this Envelope",
         )
         current_state = store.load_current(project_id)
+        # P15-R3-F2: the declaration proved current at resolution time is re-proved current
+        # here, on **every** attempt, against State loaded fresh at that attempt -- so a
+        # legitimate supersession landing after this route's own resolution but before its own
+        # commit refuses, rather than persisting an Envelope anchored to a declaration that is
+        # no longer this target's own current deployment identity. The identical
+        # per-attempt-rather-than-once-before-the-loop discipline P15-R1-F5 already established
+        # for the authority-defining context immediately above.
+        _require_current_deployment_declaration(
+            current_state,
+            target_key=declaration_currency[0],
+            declaration_id=declaration_currency[1],
+            stage="to commit this Envelope",
+        )
         transaction_id = f"TX-RUNTIME-OBSERVATION-{envelope_id}-{current_state['state_revision']}"
         next_state = dict(current_state)
         next_state["state_revision"] = current_state["state_revision"] + 1

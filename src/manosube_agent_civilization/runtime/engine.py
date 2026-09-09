@@ -46,6 +46,7 @@ SCHEMA_VERSION = "0.1"
 
 ENVELOPE_SCHEMA_NAME = "runtime_observation_envelope.schema.json"
 DEPLOYMENT_DECLARATION_SCHEMA_NAME = "runtime_deployment_declaration.schema.json"
+ROOT_ADMISSION_SCHEMA_NAME = "runtime_root_admission.schema.json"
 
 
 def _require_schema_valid(value: Any, pointer: str, context: str) -> dict[str, Any]:
@@ -132,6 +133,27 @@ def require_valid_deployment_declaration(declaration: Any) -> dict[str, Any]:
     except DifferenceValidationError as error:
         raise RuntimeRequirementError(
             f"resolved runtime_deployment_declaration is not schema-valid: {error}"
+        ) from error
+    return body
+
+
+def require_valid_root_admission(admission: Any) -> dict[str, Any]:
+    """Return *admission* as a plain ``dict``, proved completely valid against the canonical
+    ``runtime_root_admission.schema.json`` (Phase 15 Structural Review Round 3, P15-R3-F1) --
+    a Store-resolved record is never trusted on shape alone, exactly as no caller-supplied
+    record ever is, and exactly as :func:`require_valid_deployment_declaration` already
+    requires for this package's own sibling record kind."""
+
+    if not isinstance(admission, Mapping):
+        raise RuntimeRequirementError(
+            f"runtime_root_admission must be an explicit mapping: {admission!r}"
+        )
+    body = dict(admission)
+    try:
+        _validate_canonical_record(body, ROOT_ADMISSION_SCHEMA_NAME, base=RUNTIME_SCHEMA_BASE)
+    except DifferenceValidationError as error:
+        raise RuntimeRequirementError(
+            f"resolved runtime_root_admission is not schema-valid: {error}"
         ) from error
     return body
 

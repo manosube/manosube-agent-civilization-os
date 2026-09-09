@@ -46,29 +46,70 @@ evidence = route_runtime_observation_to_evidence(
 )
 ```
 
-``bootstrap_projection_execution_capability(trusted_runtime_root, *, github_projection_grant_
-refs, github_projection_grant_declaration_refs)`` is deliberately **not** shown as runnable
-example code here. Structural Review Round 2 (P15-R2-F1) deleted the public
-``provision_trusted_runtime_root`` factory Round 1 had shipped: it accepted exactly the
-caller-controlled Store/Project/Binding tuple the correction existed to stop an untrusted
-surface from selecting, so moving those three arguments one call earlier changed the API's
-shape rather than control of the trust decision. No function anywhere in this shipped package
-now takes a caller-supplied store/project/binding and returns a
-:class:`~manosube_agent_civilization.runtime.bootstrap.TrustedRuntimeRoot`, and no shipped
-module constructs one at all (proved by an AST walk over the installed package in
-``tests/contract/runtime/test_runtime_static_conformance.py``).
+The trusted runtime bootstrap (Structural Review Round 3, P15-R3-F1):
 
-The capability route therefore has, in this Phase, **no production-legitimate way to obtain its
-own first argument**; it is exercised only by tests, through an explicitly test-confined issuer
-(``tests/fixtures/runtime_world.py``'s own ``test_only_trusted_runtime_root``), pending a future,
-separately authorized Phase's real deployment composition boundary. Stated exactly: that proves
-*no shipped minting path exists*, not that a live path resists an attacker at runtime -- there
-is no live path yet to resist one. See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §11.
+```python
+capability = bootstrap_projection_execution_capability(
+    # An ordinary, public, frozen value naming WHICH world is in play. Constructing one is
+    # unrestricted and confers nothing by itself -- see below.
+    TrustedRuntimeRoot(store, project_id, project_binding_id),
+    # The canonical, Store-committed, ACTIVE runtime_root_admission record admitting exactly
+    # this project and this Project Binding.
+    runtime_root_admission_ref={
+        "kind": "runtime_root_admission",
+        "id": runtime_root_admission_id_value,
+    },
+    # Supplied by the DEPLOYMENT/COMPOSITION boundary itself, from its own configuration --
+    # never read from the Store being admitted, never derived from anything on the request
+    # path, and never a constant baked into shipped source.
+    trust_anchor_public_key_hex=deployment_configured_trust_anchor_public_key_hex,
+    github_projection_grant_refs=[...],
+    github_projection_grant_declaration_refs=[...],
+)
+```
 
-See ``10_RUNTIME/RUNTIME_INDEX.md`` for the full contract set.
+**Possessing a ``TrustedRuntimeRoot`` grants nothing.** Round 1 shipped a public
+``provision_trusted_runtime_root`` factory; Round 2 (P15-R2-F1) deleted it, correctly finding
+that it relocated the trust decision rather than removing it, and left construction behind a
+module-private sentinel. Round 3 (P15-R3-F1) found that sentinel to be a naming convention
+rather than a control -- any caller able to import the module could read it -- and found the
+framing itself wrong: while holding a root was *sufficient* to reach an adapter, "who may mint
+one?" was a question no library-level trick could close.
+
+The boundary therefore moved off the type. ``bootstrap_projection_execution_capability`` admits
+a root **only** against a canonical ``runtime_root_admission`` record verified against an
+externally supplied trust anchor, re-checked on every call, before any grant resolution and
+before any authorization evaluation. Since the type is no longer a capability, its construction
+is public again -- and Round 2's own mechanical facts still hold unchanged: the deleted factory
+is not reintroduced under any name, no shipped function returns a ``TrustedRuntimeRoot``, and no
+shipped module constructs one (all three still proved by an AST walk over the installed package
+in ``tests/contract/runtime/test_runtime_static_conformance.py``).
+
+Issuing, rotating, and revoking a deployment declaration (Structural Review Round 3,
+P15-R3-F2) goes through one canonical committer, which commits the immutable record **and**
+moves this target's own current-declaration pointer
+(``semantic_state.runtime.claims[<target_key>]``) in a single atomic State transition:
+
+```python
+result = commit_runtime_deployment_declaration(
+    store, project_id, declaration, committed_at="2026-09-09T00:00:00Z"
+)
+result["runtime_deployment_declaration_ref"]  # what a target_identity then references
+```
+
+Issuing **any** new declaration for the same target through this path -- a rotation
+(``status="ACTIVE"``) or a revocation (``status="REVOKED"``) -- atomically supersedes whatever
+the pointer named before, so a superseded declaration stops anchoring observations even though
+its own record remains immutable, resolvable, signature-valid, and inside its own validity
+window. That is what makes revocation genuinely effective rather than merely declared. This is
+a canonical committer, not a fourth route: ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT`` is still ``3``.
+
+See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §12 and ``10_RUNTIME/RUNTIME_INDEX.md`` for the full
+contract set.
 """
 
 from .bootstrap import TrustedRuntimeRoot, bootstrap_projection_execution_capability
+from .deployment_registry import commit_runtime_deployment_declaration
 from .errors import (
     RuntimeAdapterError,
     RuntimeAuthorityFreshnessError,
@@ -101,6 +142,7 @@ __all__ = [
     "RuntimeRequirementError",
     "TrustedRuntimeRoot",
     "bootstrap_projection_execution_capability",
+    "commit_runtime_deployment_declaration",
     "observe_runtime_target",
     "route_runtime_observation_to_evidence",
 ]

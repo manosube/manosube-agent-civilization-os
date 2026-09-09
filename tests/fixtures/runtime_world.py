@@ -6,17 +6,30 @@ importing them directly (that module is a test module, never a fixture module ot
 modules should import from) -- the identical "self-contained fixture, not cross-test-module
 reuse" discipline every other phase's own fixture layer in this repository already keeps.
 
-Structural Review Round 2 (P15-R2-F1/F2) gives this module two further, deliberately
-test-confined responsibilities:
+Structural Review Round 2 (P15-R2-F2) gave this module a deliberately test-confined signing
+responsibility: :func:`sign_runtime_deployment_declaration` and the test-only Ed25519 key pairs
+(canonical, alternate world, post-re-binding rotation) a ``runtime_deployment_declaration``'s
+own Human Authority signature is produced with. Every one is a *test* signer: a real Human's
+private key never touches this system, and shipped code only ever verifies.
 
-- :func:`test_only_trusted_runtime_root` -- the *only* issuer of a
-  :class:`~manosube_agent_civilization.runtime.bootstrap.TrustedRuntimeRoot` that exists
-  anywhere, now that the shipped public minting factory is deleted (P15-R2-F1).
-- :func:`sign_runtime_deployment_declaration` and the three test-only Ed25519 key pairs
-  (canonical, alternate world, post-re-binding rotation) a
-  ``runtime_deployment_declaration``'s own Human Authority signature is produced with
-  (P15-R2-F2). Every one is a *test* signer: a real Human's private key never touches this
-  system, and shipped code only ever verifies.
+Structural Review Round 3 (P15-R3-F1/F2) changes two things here:
+
+- ``test_only_trusted_runtime_root`` is gone, and so is the module-private sentinel it reached
+  into. Round 3 found that "private" gate to be a naming convention rather than a control (any
+  importer could read it), and -- more decisively -- found the framing wrong: a
+  :class:`~manosube_agent_civilization.runtime.bootstrap.TrustedRuntimeRoot` now grants nothing
+  by itself, so its construction is public, unrestricted shipped API. :func:`trusted_runtime_root`
+  below is a one-line convenience over that public constructor, not an issuer of anything.
+  What actually admits a root is a canonical, Store-committed ``runtime_root_admission`` record
+  verified against an **externally supplied** trust anchor -- :func:`trust_anchor_public_key_hex`
+  and :func:`commit_root_admission` here mint and commit one, test-side, exactly as every other
+  signing helper in this repository's own fixture layer does.
+- :func:`commit_deployment_declaration` now goes through the *shipped* canonical
+  commit-and-supersede path (``runtime.commit_runtime_deployment_declaration``) rather than a
+  raw fixture-side record insert, so the canonical current-declaration pointer
+  (``semantic_state.runtime.claims[<target_key>]``) is genuinely populated for every
+  positive-path test -- without which P15-R3-F2's own currency check could not be tested
+  meaningfully at all.
 """
 
 from __future__ import annotations
@@ -45,14 +58,15 @@ from manosube_agent_civilization.binding import (
     bind_project,
     declare_github_projection_grant,
 )
-from manosube_agent_civilization.runtime.bootstrap import (
-    _PROVISIONING_SENTINEL,
-    TrustedRuntimeRoot,
-)
+from manosube_agent_civilization.runtime import commit_runtime_deployment_declaration
+from manosube_agent_civilization.runtime.bootstrap import TrustedRuntimeRoot
 from manosube_agent_civilization.runtime.identity import (
     runtime_deployment_declaration_id,
     runtime_deployment_declaration_semantic_fingerprint,
     runtime_deployment_declaration_signing_payload,
+    runtime_root_admission_id,
+    runtime_root_admission_semantic_fingerprint,
+    runtime_root_admission_signing_payload,
 )
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
@@ -60,49 +74,184 @@ from manosube_agent_civilization.store import FileStateStore
 TARGET_REPOSITORY: dict[str, str] = {"host": "github", "owner": "acme", "repo": "widget"}
 
 DEPLOYMENT_DECLARATION_RECORD_KIND = "runtime_deployment_declaration"
+ROOT_ADMISSION_RECORD_KIND = "runtime_root_admission"
 DEFAULT_DEPLOYMENT_FINGERPRINT = "sha256:" + "a" * 64
+#: The default validity window every fixture-issued ``runtime_deployment_declaration`` carries
+#: (P15-R3-F2). Deliberately wide enough to contain every ``observed_at`` this repository's own
+#: Runtime suites use, so a test that is not *about* the window never trips over it, and every
+#: stale/expired/boundary control states its own window explicitly.
+DEFAULT_VALID_FROM = "2026-01-01T00:00:00Z"
+DEFAULT_VALID_UNTIL = "2026-12-31T23:59:59Z"
 
 
 # ---------------------------------------------------------------------------
-# The one TrustedRuntimeRoot issuer that exists anywhere -- and it lives in tests
+# A TrustedRuntimeRoot is an ordinary public value again (P15-R3-F1)
 # ---------------------------------------------------------------------------
 #
-# Phase 15 Structural Review Round 2 (P15-R2-F1) deleted the shipped public
-# ``provision_trusted_runtime_root`` factory: it accepted exactly the caller-controlled
-# Store/Project/Binding tuple Round 1's own correction existed to stop an untrusted surface from
-# selecting, so moving those three arguments one call earlier changed the API's shape rather
-# than control of the trust decision. Nothing in the shipped package mints a
-# ``TrustedRuntimeRoot`` any more -- proved mechanically by an AST walk over the installed
-# package in ``tests/contract/runtime/test_runtime_static_conformance.py``.
+# Round 1 shipped a public ``provision_trusted_runtime_root`` factory. Round 2 (P15-R2-F1)
+# deleted it -- correctly: it accepted exactly the caller-controlled Store/Project/Binding tuple
+# the correction existed to stop an untrusted surface from selecting -- and left construction
+# behind a module-private sentinel this fixture module imported directly.
 #
-# ``bootstrap_projection_execution_capability`` still needs one to be exercised at all, so this
-# module holds the issuer, structurally confined to ``tests/``: it reaches into
-# ``runtime.bootstrap``'s own module-private ``_PROVISIONING_SENTINEL``, which Python does not
-# enforce across an import boundary. That is deliberate, named, and honest -- it is exactly the
-# "explicitly injected test issuer that is structurally unavailable to the live path" the
-# Structural Review's own text permits, and the shipped package can never reach it (production
-# code importing any ``tests.*`` module is itself statically forbidden).
+# Round 3 (P15-R3-F1) found that sentinel to be a naming convention rather than a control, and
+# the framing itself wrong: while *holding* a root was sufficient to reach an adapter, "who may
+# mint one?" was unanswerable at the library level. So the boundary moved off the type entirely.
+# ``bootstrap_projection_execution_capability`` now admits a root only against a canonical,
+# Store-committed ``runtime_root_admission`` verified against an externally supplied trust
+# anchor, on every call. The type grants nothing, so its constructor is public shipped API and
+# this helper is a plain convenience over it -- not an issuer, and not test-privileged in any
+# way. Round 2's own mechanical facts are untouched: no shipped function returns this type, no
+# shipped module constructs one, and the deleted factory name is reintroduced nowhere.
 
 
-def test_only_trusted_runtime_root(
+def trusted_runtime_root(
     store: Any, *, project_id: str, project_binding_id: str
 ) -> TrustedRuntimeRoot:
-    """Return a genuine :class:`~manosube_agent_civilization.runtime.bootstrap.
-    TrustedRuntimeRoot` over *store*/*project_id*/*project_binding_id* -- the test-only
-    replacement for the deleted shipped minting factory (P15-R2-F1).
+    """Return a :class:`~manosube_agent_civilization.runtime.bootstrap.TrustedRuntimeRoot` over
+    *store*/*project_id*/*project_binding_id*, through the public shipped constructor.
 
-    Named ``test_only_`` so that no reading of a call site can mistake it for a production
-    entry point, and defined here rather than in ``src/`` precisely so that the shipped package
-    contains no function of this shape at all.
+    Kept as a named helper purely because every call site in this repository passes the same
+    three things in the same shape; it confers nothing a caller could not do inline, which is
+    exactly Round 3's point.
     """
 
-    return TrustedRuntimeRoot(store, project_id, project_binding_id, _PROVISIONING_SENTINEL)
+    return TrustedRuntimeRoot(store, project_id, project_binding_id)
 
 
-#: This is a fixture helper, not a test case: its name starts with ``test_`` deliberately, so no
-#: call site can read as a production entry point, which would otherwise make pytest collect it
-#: as a (zero-assertion, argument-hungry) test wherever a test module imports it.
-test_only_trusted_runtime_root.__test__ = False  # type: ignore[attr-defined]
+# ---------------------------------------------------------------------------
+# The externally controlled trust anchor a Runtime Root Admission is signed by (P15-R3-F1)
+# ---------------------------------------------------------------------------
+#
+# This key pair is deliberately NOT any project's own ``human_authority_signing_key``, and is not
+# resolvable from any Store in this repository. It stands in for what a real deployment supplies
+# from its own composition-time configuration -- the whole point of the admission record being
+# that its trust does not rest on anything the Store being admitted can produce. Only the
+# *public* half ever reaches shipped code; the private half exists here, test-side, for the same
+# reason every other signing helper in this fixture layer does.
+
+
+def _trust_anchor_private_key() -> Ed25519PrivateKey:
+    return Ed25519PrivateKey.from_private_bytes(
+        hashlib.sha256(b"tests.fixtures.runtime_world deployment trust anchor").digest()
+    )
+
+
+def trust_anchor_private_key() -> Ed25519PrivateKey:
+    """The deployment trust anchor's own private signing half -- test-side only."""
+
+    return _trust_anchor_private_key()
+
+
+def trust_anchor_public_key_hex() -> str:
+    """The deployment trust anchor's own public verification half, hex-encoded -- the exact
+    value a real deployment would supply to
+    ``bootstrap_projection_execution_capability(trust_anchor_public_key_hex=...)`` from its own
+    configuration."""
+
+    return (
+        _trust_anchor_private_key()
+        .public_key()
+        .public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
+        .hex()
+    )
+
+
+def foreign_trust_anchor_private_key() -> Ed25519PrivateKey:
+    """A second, genuinely different anchor key pair -- what an attacker who can write Store
+    records, or an alternate world signing its own admission record with its own internally
+    legitimate key, actually holds. Never the anchor a deployment supplies."""
+
+    return Ed25519PrivateKey.from_private_bytes(
+        hashlib.sha256(b"tests.fixtures.runtime_world foreign trust anchor").digest()
+    )
+
+
+def sign_runtime_root_admission(
+    admission: Mapping[str, Any], *, private_key: Ed25519PrivateKey, key_id: str
+) -> dict[str, Any]:
+    """Sign the exact canonical payload
+    :func:`~manosube_agent_civilization.runtime.identity.runtime_root_admission_signing_payload`
+    derives from *admission*'s own adopted semantic fields (P15-R3-F1)."""
+
+    return {
+        "algorithm": "ed25519",
+        "key_id": key_id,
+        "value": private_key.sign(runtime_root_admission_signing_payload(dict(admission))).hex(),
+    }
+
+
+def root_admission_for(
+    project_id: str,
+    project_binding_id: str,
+    *,
+    status: str = "ACTIVE",
+    declared_at: str = "2026-09-08T00:00:00Z",
+    signer: Ed25519PrivateKey | None = None,
+    signing_key_id: str = "TRUST-ANCHOR-0001",
+) -> dict[str, Any]:
+    """Return one real, schema-valid, content-addressed, genuinely signed
+    ``runtime_root_admission`` body admitting exactly *project_id*/*project_binding_id*.
+
+    *signer* defaults to the deployment trust anchor's own private key -- the identical
+    ``signer``-with-a-canonical-default convention :func:`deployment_declaration_for` already
+    uses -- so a test that simply wants a legitimate admission gets one, while every negative
+    control passes an attacker's or an alternate world's key explicitly.
+    """
+
+    admission: dict[str, Any] = {
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "project_binding_ref": {"kind": "project_binding", "id": project_binding_id},
+        "status": status,
+        "declared_at": declared_at,
+    }
+    admission["signature"] = sign_runtime_root_admission(
+        admission,
+        private_key=signer if signer is not None else _trust_anchor_private_key(),
+        key_id=signing_key_id,
+    )
+    admission["runtime_root_admission_id"] = runtime_root_admission_id(admission)
+    admission["runtime_root_admission_semantic_fingerprint"] = (
+        runtime_root_admission_semantic_fingerprint(admission)
+    )
+    return admission
+
+
+def commit_root_admission(
+    store: FileStateStore, project_id: str, admission: Mapping[str, Any]
+) -> dict[str, str]:
+    """Commit *admission* (idempotently -- a content address already resolved is the identical
+    record, never a second one) and return the reference naming it."""
+
+    admission_id = str(admission["runtime_root_admission_id"])
+    if store.resolve_record(project_id, ROOT_ADMISSION_RECORD_KIND, admission_id) is None:
+        commit_records(
+            store,
+            project_id,
+            store.load_current(project_id),
+            f"TX-RUNTIME-ROOT-ADMISSION-{admission_id[-16:]}",
+            [(ROOT_ADMISSION_RECORD_KIND, admission_id, dict(admission))],
+        )
+    return {"kind": ROOT_ADMISSION_RECORD_KIND, "id": admission_id}
+
+
+def admitted_root(
+    store: FileStateStore, *, project_id: str, project_binding_id: str, **admission_fields: Any
+) -> dict[str, Any]:
+    """Commit one genuine ``runtime_root_admission`` for *project_id*/*project_binding_id* and
+    return the complete ``{trusted_runtime_root, runtime_root_admission_ref,
+    trust_anchor_public_key_hex}`` triple every legitimate
+    ``bootstrap_projection_execution_capability`` call now needs (P15-R3-F1)."""
+
+    admission = root_admission_for(project_id, project_binding_id, **admission_fields)
+    return {
+        "trusted_runtime_root": trusted_runtime_root(
+            store, project_id=project_id, project_binding_id=project_binding_id
+        ),
+        "runtime_root_admission_ref": commit_root_admission(store, project_id, admission),
+        "trust_anchor_public_key_hex": trust_anchor_public_key_hex(),
+        "runtime_root_admission": admission,
+    }
 
 
 def bound(tmp_path: Path) -> tuple[FileStateStore, dict[str, Any]]:
@@ -403,6 +552,8 @@ def deployment_declaration_for(
     deployment_fingerprint: str = DEFAULT_DEPLOYMENT_FINGERPRINT,
     status: str = "ACTIVE",
     declared_at: str = "2026-09-08T00:00:00Z",
+    valid_from: str = DEFAULT_VALID_FROM,
+    valid_until: str = DEFAULT_VALID_UNTIL,
     signer: Ed25519PrivateKey | None = None,
     signing_key_id: str | None = None,
 ) -> dict[str, Any]:
@@ -435,6 +586,8 @@ def deployment_declaration_for(
         "human_authority_ref": dict(human_authority_ref),
         "status": status,
         "declared_at": declared_at,
+        "valid_from": valid_from,
+        "valid_until": valid_until,
     }
     declaration["signature"] = sign_runtime_deployment_declaration(
         declaration,
@@ -455,21 +608,34 @@ def deployment_declaration_for(
 
 
 def commit_deployment_declaration(
-    store: FileStateStore, project_id: str, declaration: Mapping[str, Any]
+    store: FileStateStore,
+    project_id: str,
+    declaration: Mapping[str, Any],
+    *,
+    committed_at: str = "2026-09-09T00:00:00Z",
 ) -> dict[str, str]:
-    """Commit *declaration* (idempotently -- a content address already resolved is the
-    identical record, never a second one) and return the reference naming it."""
+    """Commit *declaration* through the **shipped** canonical commit-and-supersede path and
+    return the reference naming it (P15-R3-F2).
 
-    declaration_id = str(declaration["runtime_deployment_declaration_id"])
-    if store.resolve_record(project_id, DEPLOYMENT_DECLARATION_RECORD_KIND, declaration_id) is None:
-        commit_records(
-            store,
-            project_id,
-            store.load_current(project_id),
-            f"TX-RUNTIME-DEPLOY-DECL-{declaration_id[-16:]}",
-            [(DEPLOYMENT_DECLARATION_RECORD_KIND, declaration_id, dict(declaration))],
-        )
-    return {"kind": DEPLOYMENT_DECLARATION_RECORD_KIND, "id": declaration_id}
+    Before Round 3 this helper inserted the record with a raw fixture-side
+    :func:`commit_records`. It now calls
+    :func:`~manosube_agent_civilization.runtime.commit_runtime_deployment_declaration`, which
+    commits the immutable record **and** moves this target's own current-declaration pointer
+    (``semantic_state.runtime.claims[<target_key>]``) in one atomic State transition -- so every
+    positive-path test in this repository genuinely populates the pointer the route now requires,
+    and every negative control that deliberately bypasses this path (a forged, tampered, or
+    never-registered record inserted with :func:`commit_records`) is refused for exactly the
+    reason its own name claims.
+
+    Issuing any *later* declaration for the same target through this same helper supersedes this
+    one, whatever either record's own ``status`` says -- which is the entire mechanism the
+    revoked-after-issuance and superseded controls exercise.
+    """
+
+    result = commit_runtime_deployment_declaration(
+        store, project_id, dict(declaration), committed_at=committed_at
+    )
+    return dict(result["runtime_deployment_declaration_ref"])
 
 
 def target_identity_for(
@@ -503,13 +669,18 @@ def commit_target_identity(
     deployment_fingerprint: str = DEFAULT_DEPLOYMENT_FINGERPRINT,
     status: str = "ACTIVE",
     declared_at: str = "2026-09-08T00:00:00Z",
+    valid_from: str = DEFAULT_VALID_FROM,
+    valid_until: str = DEFAULT_VALID_UNTIL,
     signer: Ed25519PrivateKey | None = None,
     signing_key_id: str | None = None,
 ) -> dict[str, Any]:
-    """Commit the canonical, ACTIVE, genuinely signed ``runtime_deployment_declaration``
-    anchoring this target and return the matching ``target_identity`` referencing it -- the one
-    helper every V1-V5 test uses now that ``deployment_declaration_ref`` is a required,
-    Store-resolved, Authority-bound, signature-verified field (P15-R1-F6, P15-R2-F2)."""
+    """Commit the canonical, ACTIVE, genuinely signed, in-window ``runtime_deployment_declaration``
+    anchoring this target -- through the shipped commit-and-supersede path, so it is also this
+    target's own *current* declaration -- and return the matching ``target_identity``
+    referencing it. The one helper every V1-V5 test uses now that
+    ``deployment_declaration_ref`` is a required, Store-resolved, Authority-bound,
+    signature-verified, in-window, currently-registered field (P15-R1-F6, P15-R2-F2,
+    P15-R3-F2)."""
 
     declaration = deployment_declaration_for(
         project_id,
@@ -521,6 +692,8 @@ def commit_target_identity(
         deployment_fingerprint=deployment_fingerprint,
         status=status,
         declared_at=declared_at,
+        valid_from=valid_from,
+        valid_until=valid_until,
         signer=signer,
         signing_key_id=signing_key_id,
     )
@@ -666,9 +839,13 @@ def commit_declaration(
 __all__ = [
     "ALTERNATE_HUMAN_AUTHORITY_REF",
     "DEFAULT_DEPLOYMENT_FINGERPRINT",
+    "DEFAULT_VALID_FROM",
+    "DEFAULT_VALID_UNTIL",
     "DEPLOYMENT_DECLARATION_RECORD_KIND",
     "REBOUND_SIGNING_KEY_ID",
+    "ROOT_ADMISSION_RECORD_KIND",
     "TARGET_REPOSITORY",
+    "admitted_root",
     "alternate_bound",
     "alternate_human_authority_signing_key",
     "alternate_signing_private_key",
@@ -679,14 +856,20 @@ __all__ = [
     "commit_deployment_declaration",
     "commit_grant",
     "commit_records",
+    "commit_root_admission",
     "commit_target_identity",
     "deployment_declaration_for",
+    "foreign_trust_anchor_private_key",
     "human_authority_signing_key",
     "rebind_with_rotated_signing_key",
     "rebound_human_authority_signing_key",
     "rebound_signing_private_key",
+    "root_admission_for",
     "sign_alternate_github_projection_grant_declaration",
     "sign_runtime_deployment_declaration",
+    "sign_runtime_root_admission",
     "target_identity_for",
-    "test_only_trusted_runtime_root",
+    "trust_anchor_private_key",
+    "trust_anchor_public_key_hex",
+    "trusted_runtime_root",
 ]

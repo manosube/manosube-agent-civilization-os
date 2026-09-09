@@ -41,6 +41,27 @@ Structural Review Round 2 (P15-R2) changes two further facts this file pins:
 - ``deployment_declaration.py`` exists (P15-R2-F2) and is the *second* module in this package
   importing ``binding`` -- admitted here for exactly one import, ``binding.signature``, whose
   shared Ed25519 primitive it composes rather than reimplements.
+
+Structural Review Round 3 (P15-R3) changes four further facts this file pins:
+
+- ``root_admission.py`` exists (P15-R3-F1) and is the *third* module importing ``binding`` --
+  again for exactly one import, ``binding.signature``, again composed rather than reimplemented,
+  and again verification-only. The three Round 2 facts about the deleted minting factory are
+  **unchanged and still asserted**: reintroducing public construction of a ``TrustedRuntimeRoot``
+  is safe precisely because the type stopped being a capability, so none of those assertions had
+  to be weakened, and keeping them is what proves this round is not a quiet restoration of
+  Round 1's factory.
+- ``bootstrap_projection_execution_capability`` takes two further keyword arguments
+  (``runtime_root_admission_ref``, ``trust_anchor_public_key_hex``) and still takes no
+  ``store``/``project_id``/``project_binding_id`` (P15-R3-F1).
+- ``deployment_registry.py`` exists (P15-R3-F2) and is the *second* module in this package
+  calling ``commit_state_transition`` -- admitted here by name, for exactly one call site, for
+  the one atomic commit-the-record-and-move-the-pointer transition that makes revocation
+  genuinely effective. No module in this package calls a ``store`` object's own ``.commit``
+  directly, unchanged.
+- the package exports a fourth public callable, ``commit_runtime_deployment_declaration``
+  (P15-R3-F2) -- a canonical committer, not a fourth route, exactly as
+  ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` continues to say.
 """
 
 from __future__ import annotations
@@ -48,6 +69,7 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
+import re
 from types import ModuleType
 
 import manosube_agent_civilization
@@ -55,11 +77,13 @@ import manosube_agent_civilization.runtime as runtime_module
 import manosube_agent_civilization.runtime.adapter as adapter_module
 import manosube_agent_civilization.runtime.bootstrap as bootstrap_module
 import manosube_agent_civilization.runtime.deployment_declaration as deployment_declaration_module
+import manosube_agent_civilization.runtime.deployment_registry as deployment_registry_module
 import manosube_agent_civilization.runtime.engine as engine_module
 import manosube_agent_civilization.runtime.errors as errors_module
 import manosube_agent_civilization.runtime.evidence_handoff as evidence_handoff_module
 import manosube_agent_civilization.runtime.identity as identity_module
 import manosube_agent_civilization.runtime.network as network_module
+import manosube_agent_civilization.runtime.root_admission as root_admission_module
 import manosube_agent_civilization.runtime.route as route_module
 import manosube_agent_civilization.runtime.types as types_module
 
@@ -74,6 +98,8 @@ _ALL_PACKAGE_MODULES = (
     bootstrap_module,
     network_module,
     deployment_declaration_module,
+    root_admission_module,
+    deployment_registry_module,
 )
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -141,14 +167,22 @@ def _names_the_deleted_factory(node: ast.AST) -> bool:
 
 def test_runtime_package_exports_exactly_three_routes_and_one_capability_bootstrap() -> None:
     """``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` is unchanged: the three *routes* this package owns
-    are exactly the three it always owned, alongside the one capability bootstrap.
+    are exactly the three it always owned, alongside the one capability bootstrap and -- since
+    Round 3 (P15-R3-F2) -- one canonical committer.
 
     Structural Review Round 1 (P15-R1-F4) had added a fourth public callable that was not a
     route -- ``provision_trusted_runtime_root``. Round 2 (P15-R2-F1) removes it: that factory
     accepted exactly the caller-controlled Store/Project/Binding tuple the correction existed to
     stop an untrusted surface from selecting, so it relocated the trust decision rather than
-    removing it. ``TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT`` is now ``0`` in shipped
-    code (``10_RUNTIME/RUNTIME_CONTRACT.md`` §11).
+    removing it, and it is **not** reintroduced by Round 3 (see the three tests below, which
+    Round 3 leaves fully intact).
+
+    Round 3 adds ``commit_runtime_deployment_declaration``: the one sanctioned path that commits
+    a deployment declaration *and* moves this target's own current-declaration pointer in a
+    single atomic State transition. It is a committer, not a route -- it reaches no adapter,
+    observes nothing, and mints no Authority -- so ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT`` stays
+    ``3``, exactly as Round 1 declared ``TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT``
+    separately rather than inflating the route count (``10_RUNTIME/RUNTIME_CONTRACT.md`` §12).
     """
 
     public_callables = {
@@ -159,6 +193,7 @@ def test_runtime_package_exports_exactly_three_routes_and_one_capability_bootstr
     }
     assert public_callables == {
         "bootstrap_projection_execution_capability",
+        "commit_runtime_deployment_declaration",
         "observe_runtime_target",
         "route_runtime_observation_to_evidence",
     }
@@ -259,6 +294,12 @@ def test_bootstrap_accepts_no_store_or_project_selecting_parameter() -> None:
     signature = inspect.signature(bootstrap_module.bootstrap_projection_execution_capability)
     assert set(signature.parameters) == {
         "trusted_runtime_root",
+        # P15-R3-F1: the two arguments that actually gate this call now. Neither names a Store,
+        # a Project, or a Binding -- the admission *reference* is resolved exclusively inside
+        # the root's own Store, and the anchor is a bare public key the deployment boundary
+        # supplies from its own configuration.
+        "runtime_root_admission_ref",
+        "trust_anchor_public_key_hex",
         "github_projection_grant_refs",
         "github_projection_grant_declaration_refs",
     }
@@ -398,26 +439,93 @@ def test_binding_is_imported_only_for_declaration_identity_and_signature_verific
         }
         if module is bootstrap_module:
             assert binding_imports == {"manosube_agent_civilization.binding.identity"}
-        elif module is deployment_declaration_module:
+        elif module in (deployment_declaration_module, root_admission_module):
             assert binding_imports == {"manosube_agent_civilization.binding.signature"}
         else:
             assert not binding_imports, f"{module.__name__} imports binding: {binding_imports}"
 
 
-def test_the_deployment_declaration_verifier_reimplements_no_cryptography() -> None:
-    """P15-R2-F2: ``deployment_declaration.py`` composes the shared primitive and owns no
-    cryptography of its own -- it never imports ``cryptography`` (or an Ed25519 type) directly,
-    never names a private key, and never signs anything. Verification only; a real Human's
-    private key never touches this system at all."""
+def test_the_signature_verifiers_reimplement_no_cryptography() -> None:
+    """P15-R2-F2 and P15-R3-F1: both verification wrappers compose the shared primitive and own
+    no cryptography of their own -- neither imports ``cryptography`` (or an Ed25519 type)
+    directly, neither names a private key, and neither signs anything. Verification only; no
+    private key of any kind -- a Human Authority's or a deployment trust anchor's -- ever touches
+    this system."""
 
-    imported = _imported_module_names(deployment_declaration_module)
-    assert not any("cryptography" in name or "ed25519" in name.lower() for name in imported)
-    source = inspect.getsource(deployment_declaration_module)
-    for forbidden in ("Ed25519PrivateKey", "from_private_bytes", "def sign", ".sign("):
-        assert forbidden not in source, (
-            f"deployment_declaration.py names {forbidden!r} -- it may only ever verify"
+    for module in (deployment_declaration_module, root_admission_module):
+        imported = _imported_module_names(module)
+        assert not any("cryptography" in name or "ed25519" in name.lower() for name in imported)
+        source = inspect.getsource(module)
+        for forbidden in ("Ed25519PrivateKey", "from_private_bytes", "def sign", ".sign("):
+            assert forbidden not in source, (
+                f"{module.__name__} names {forbidden!r} -- it may only ever verify"
+            )
+        assert _call_site_count(module, "verify_ed25519_signature") == 1
+
+
+def test_no_shipped_module_hardcodes_a_trust_anchor_public_key() -> None:
+    """P15-R3-F1: ``trust_anchor_public_key_hex`` is supplied by the deployment/composition
+    boundary, never baked into shipped source. Proved by an AST walk over every ``.py`` file in
+    the installed *runtime* package for any string constant that could *be* a raw Ed25519 public
+    key -- 64 hex characters -- so a "temporary" real key pasted anywhere in this package fails
+    this gate immediately, whatever it is named.
+
+    Scoped to this package deliberately: elsewhere in the installed tree, 64-hex string constants
+    are legitimate and numerous (canonical record digests in Reflow's own invariant registry, for
+    one), so a repository-wide version of this scan would be noise rather than a control. This
+    package is where an anchor key would plausibly be pasted, and this package contains none.
+    """
+
+    offenders: list[tuple[str, int]] = []
+    for path in sorted((_SHIPPED_PACKAGE_ROOT / "runtime").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if re.fullmatch(r"[0-9a-fA-F]{64}", node.value):
+                offenders.append((str(path.relative_to(_REPO_ROOT)), node.lineno))
+    assert offenders == []
+
+
+def test_the_bootstrap_admission_check_precedes_every_grant_and_authority_call() -> None:
+    """P15-R3-F1, proved structurally rather than only dynamically (the zero-call proofs live in
+    ``tests/integration/runtime/test_runtime_root_admission.py``).
+
+    Inside ``bootstrap_projection_execution_capability``'s own body, the literal call to
+    ``_require_admitted_root`` must appear before the first ``_resolve_grant``,
+    ``_resolve_declaration``, or ``evaluate_projection_authorization`` call site -- so no future
+    edit can quietly move grant resolution, or an authorization evaluation, in front of the
+    admission gate.
+    """
+
+    tree = ast.parse(inspect.getsource(bootstrap_module))
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "bootstrap_projection_execution_capability"
+    )
+    admission_lines: list[int] = []
+    gated_lines: list[int] = []
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (
+            func.id
+            if isinstance(func, ast.Name)
+            else (func.attr if isinstance(func, ast.Attribute) else None)
         )
-    assert _call_site_count(deployment_declaration_module, "verify_ed25519_signature") == 1
+        if name == "_require_admitted_root":
+            admission_lines.append(node.lineno)
+        elif name in (
+            "_resolve_grant",
+            "_resolve_declaration",
+            "evaluate_projection_authorization",
+        ):
+            gated_lines.append(node.lineno)
+    assert len(admission_lines) == 1, "exactly one admission call site is expected"
+    assert gated_lines, "expected the gated calls to exist at all"
+    assert admission_lines[0] < min(gated_lines)
 
 
 def test_only_bootstrap_imports_difference_and_change_identity() -> None:
@@ -449,16 +557,25 @@ def test_only_bootstrap_imports_difference_and_change_identity() -> None:
             assert not difference_or_change, f"{module.__name__}: {difference_or_change}"
 
 
-def test_only_route_calls_commit_state_transition() -> None:
+def test_only_route_and_the_deployment_registry_call_commit_state_transition() -> None:
     """Runtime Observation commits exactly once per call (no intent/materialize-attempt
     claim pair -- see ``engine.py``'s own module docstring) -- so ``route.py`` calls
-    ``commit_state_transition`` from exactly one literal call site, and no other module in
-    this package ever calls it."""
+    ``commit_state_transition`` from exactly one literal call site.
+
+    Round 3 (P15-R3-F2) admits exactly one more module by name: ``deployment_registry.py``, also
+    from exactly one call site, for the single atomic transition that commits a
+    ``runtime_deployment_declaration`` **and** moves this target's own current-declaration
+    pointer. Two domain reasons for a commit, two transition plans, still one sanctioned
+    committer -- the identical discipline ``store/commit.py``'s own module docstring states for
+    Reflow and Binding, which are two call sites of it as well. The repository-wide K-003/R-001
+    rule is about ``store.commit`` itself, and the test below still proves no module here calls
+    that directly.
+    """
 
     for module in _ALL_PACKAGE_MODULES:
         count = _call_site_count(module, "commit_state_transition")
-        if module is route_module:
-            assert count == 1, "route.py must call commit_state_transition exactly once"
+        if module in (route_module, deployment_registry_module):
+            assert count == 1, f"{module.__name__} must call commit_state_transition exactly once"
         else:
             assert count == 0, f"{module.__name__} must never call commit_state_transition"
 

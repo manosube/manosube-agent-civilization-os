@@ -8,12 +8,18 @@ Store/Boot state alone, reaches a controlled GitHub adapter through it with zero
 calls, and refuses on every malformed/incomplete/mismatched authority input -- never minting,
 signing, or committing anything of its own.
 
-Since Structural Review Round 2 (P15-R2-F1) the ``TrustedRuntimeRoot`` every call here needs
-comes from ``tests.fixtures.runtime_world.test_only_trusted_runtime_root``: the shipped public
-minting factory Round 1 introduced is deleted, and nothing in the shipped package mints a root
-at all. This suite is therefore, by construction, the only kind of caller that can exercise this
-function in this Phase -- see ``tests/integration/runtime/
-test_runtime_no_shipped_minting_path.py`` for the proof of that fact and its exact scope.
+Since Structural Review Round 3 (P15-R3-F1) every call here does what a real deployment
+composition boundary does, through entirely shipped code: construct a ``TrustedRuntimeRoot``
+(public, unrestricted -- it grants nothing by itself), present a genuinely committed
+``runtime_root_admission`` record for exactly this project and Binding, and supply the
+``trust_anchor_public_key_hex`` that record was actually signed under. The admission record's
+own *signature* is produced test-side, by the fixture layer's own trust-anchor key pair, for the
+identical reason every other signature in this repository's test suite is: shipped code only
+ever verifies, and no private key of any kind lives in ``src/``.
+
+``tests/integration/runtime/test_runtime_root_admission.py`` owns the controls proving that a
+root without a genuine admission -- however it was constructed, and however internally
+self-consistent its own world is -- reaches nothing at all.
 """
 
 from __future__ import annotations
@@ -24,11 +30,11 @@ from typing import Any
 import pytest
 from tests.evidence_helpers import observation_evidence_request
 from tests.fixtures.runtime_world import (
+    admitted_root,
     bound,
     commit_declaration,
     commit_grant,
     commit_records,
-    test_only_trusted_runtime_root,
 )
 
 from manosube_agent_civilization.boot import boot_project
@@ -92,20 +98,36 @@ def _world(tmp_path: Path) -> dict[str, Any]:
         "grant": grant,
         "declaration_ref": declaration_ref,
         "current_state": current_state,
+        # P15-R3-F1: the admission triple every legitimate provisioning call now needs.
+        "admitted": admitted_root(
+            store,
+            project_id=ctx["project_id"],
+            project_binding_id=ctx["project_binding_id"],
+        ),
     }
+
+
+def _bootstrap(world: dict[str, Any], *, grant_refs: list[Any], declaration_refs: list[Any]) -> Any:
+    """One legitimately admitted provisioning call -- the exact shape a real deployment
+    composition boundary makes (P15-R3-F1)."""
+
+    admitted = world["admitted"]
+    return bootstrap_projection_execution_capability(
+        admitted["trusted_runtime_root"],
+        runtime_root_admission_ref=admitted["runtime_root_admission_ref"],
+        trust_anchor_public_key_hex=admitted["trust_anchor_public_key_hex"],
+        github_projection_grant_refs=grant_refs,
+        github_projection_grant_declaration_refs=declaration_refs,
+    )
 
 
 def test_bootstrap_constructs_a_real_capability_that_reaches_the_controlled_adapter(
     _world: dict[str, Any],
 ) -> None:
-    capability = bootstrap_projection_execution_capability(
-        test_only_trusted_runtime_root(
-            _world["store"],
-            project_id=_world["project_id"],
-            project_binding_id=_world["project_binding_id"],
-        ),
-        github_projection_grant_refs=[_world["grant_ref"]],
-        github_projection_grant_declaration_refs=[_world["declaration_ref"]],
+    capability = _bootstrap(
+        _world,
+        grant_refs=[_world["grant_ref"]],
+        declaration_refs=[_world["declaration_ref"]],
     )
     assert isinstance(capability, ProjectionExecutionCapability)
 
@@ -125,43 +147,23 @@ def test_bootstrap_constructs_a_real_capability_that_reaches_the_controlled_adap
 
 def test_bootstrap_refuses_with_no_grant_refs(_world: dict[str, Any]) -> None:
     with pytest.raises(RuntimeRequirementError):
-        bootstrap_projection_execution_capability(
-            test_only_trusted_runtime_root(
-                _world["store"],
-                project_id=_world["project_id"],
-                project_binding_id=_world["project_binding_id"],
-            ),
-            github_projection_grant_refs=[],
-            github_projection_grant_declaration_refs=[],
-        )
+        _bootstrap(_world, grant_refs=[], declaration_refs=[])
 
 
 def test_bootstrap_refuses_an_unresolvable_grant_ref(_world: dict[str, Any]) -> None:
     with pytest.raises(RuntimeRequirementError):
-        bootstrap_projection_execution_capability(
-            test_only_trusted_runtime_root(
-                _world["store"],
-                project_id=_world["project_id"],
-                project_binding_id=_world["project_binding_id"],
-            ),
-            github_projection_grant_refs=[
+        _bootstrap(
+            _world,
+            grant_refs=[
                 {"kind": "github_projection_grant", "id": "GITHUB-PROJECTION-GRANT-NONEXISTENT"}
             ],
-            github_projection_grant_declaration_refs=[_world["declaration_ref"]],
+            declaration_refs=[_world["declaration_ref"]],
         )
 
 
 def test_bootstrap_refuses_a_grant_with_no_anchoring_declaration(_world: dict[str, Any]) -> None:
     with pytest.raises(RuntimeRequirementError):
-        bootstrap_projection_execution_capability(
-            test_only_trusted_runtime_root(
-                _world["store"],
-                project_id=_world["project_id"],
-                project_binding_id=_world["project_binding_id"],
-            ),
-            github_projection_grant_refs=[_world["grant_ref"]],
-            github_projection_grant_declaration_refs=[],
-        )
+        _bootstrap(_world, grant_refs=[_world["grant_ref"]], declaration_refs=[])
 
 
 def test_bootstrap_refuses_two_grants_for_the_identical_projection_kind(
@@ -205,17 +207,10 @@ def test_bootstrap_refuses_two_grants_for_the_identical_projection_kind(
     )
 
     with pytest.raises(RuntimeRequirementError):
-        bootstrap_projection_execution_capability(
-            test_only_trusted_runtime_root(
-                _world["store"],
-                project_id=_world["project_id"],
-                project_binding_id=_world["project_binding_id"],
-            ),
-            github_projection_grant_refs=[_world["grant_ref"], second_grant_ref],
-            github_projection_grant_declaration_refs=[
-                _world["declaration_ref"],
-                second_declaration_ref,
-            ],
+        _bootstrap(
+            _world,
+            grant_refs=[_world["grant_ref"], second_grant_ref],
+            declaration_refs=[_world["declaration_ref"], second_declaration_ref],
         )
 
 

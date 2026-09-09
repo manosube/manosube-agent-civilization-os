@@ -14,6 +14,20 @@ Human-Authority-declared ``runtime_deployment_declaration`` whose own independen
 identity matches, and which independently restates every one of this target's identifying
 fields. Only then does the existing observed-vs-declared comparison run, unchanged.
 
+**Structural Review Round 3 (P15-R3-F2)** found two things still missing after Round 2: the
+declaration had no validity window at all, and -- more fundamentally -- revocation was not
+*effective*. Because the record is immutable and content-addressed, minting a new record with
+``status="REVOKED"`` never invalidated the original ``ACTIVE`` one, which keeps its own unchanged
+id and stays individually resolvable forever, so a target already referencing it could keep
+presenting that exact reference indefinitely. Round 2's own "revoked" test proved only that a
+*separately constructed* REVOKED record is refused. Both bounds of a required
+``valid_from``/``valid_until`` window are now covered by the record's own content address and by
+the Human Authority's own signature and compared against this observation's own instant; and
+"current" now means what Project State's own canonical pointer names
+(``semantic_state.runtime.claims[<target_key>]``, moved atomically by the shipped
+``commit_runtime_deployment_declaration``), never "whatever the caller happens to reference".
+The Round 3 controls are in the last three sections of this file.
+
 **Structural Review Round 2 (P15-R2-F2)** found that anchor still too weak. The declaration
 carried a caller-supplied ``human_authority_ref`` but no signature, no signed payload, no
 Authority Decision, and no ``status``: its identity functions merely content-addressed that
@@ -41,6 +55,7 @@ observation to classify, and none is committed.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 import hashlib
 from pathlib import Path
@@ -70,10 +85,14 @@ from tests.fixtures.runtime_world import (
 
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
+from manosube_agent_civilization.runtime.deployment_registry import (
+    current_deployment_declaration_id,
+)
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.identity import (
     runtime_deployment_declaration_id,
     runtime_deployment_declaration_semantic_fingerprint,
+    runtime_deployment_target_key,
 )
 from manosube_agent_civilization.runtime.route import observe_runtime_target
 
@@ -388,12 +407,7 @@ def _observe_under_binding(
     )
 
 
-def _commit_and_target(world: dict[str, Any], declaration: dict[str, Any]) -> dict[str, Any]:
-    """Commit *declaration* and return the ``target_identity`` that names it and restates it
-    exactly -- so every refusal below is caused by the declaration's own defect, never by an
-    incidental field mismatch the earlier P15-R1-F6 checks would catch first."""
-
-    ref = commit_deployment_declaration(world["store"], world["project_id"], declaration)
+def _target_for(declaration: Mapping[str, Any], ref: Mapping[str, str]) -> dict[str, Any]:
     return target_identity_for(
         str(declaration["project_binding_ref"]["id"]),
         deployment_declaration_ref=ref,
@@ -401,6 +415,51 @@ def _commit_and_target(world: dict[str, Any], declaration: dict[str, Any]) -> di
         deployment_id=str(declaration["deployment_id"]),
         instance_identity=str(declaration["instance_identity"]),
         deployment_fingerprint=str(declaration["deployment_fingerprint"]),
+    )
+
+
+def _commit_and_target(world: dict[str, Any], declaration: dict[str, Any]) -> dict[str, Any]:
+    """Commit *declaration* through the canonical commit-and-supersede path (so it is genuinely
+    this target's own *current* declaration -- P15-R3-F2) and return the ``target_identity`` that
+    names it and restates it exactly -- so every refusal below is caused by the declaration's own
+    defect, never by an incidental field mismatch the earlier P15-R1-F6 checks would catch
+    first, and never by the pointer simply being unset."""
+
+    ref = commit_deployment_declaration(world["store"], world["project_id"], declaration)
+    return _target_for(declaration, ref)
+
+
+def _commit_raw_and_target(
+    world: dict[str, Any], declaration: dict[str, Any], transaction_id: str
+) -> dict[str, Any]:
+    """Insert *declaration* as a raw Store record, deliberately bypassing the canonical
+    commit-and-supersede path, and return the matching ``target_identity``.
+
+    Needed for the controls whose record is *not schema-valid* and therefore cannot go through
+    the canonical committer at all (which validates before it commits, exactly as it should).
+    The route's own schema check fires long before the P15-R3-F2 currency check, so the refusal
+    each such control asserts is still the one its own name claims.
+    """
+
+    commit_records(
+        world["store"],
+        world["project_id"],
+        world["store"].load_current(world["project_id"]),
+        transaction_id,
+        [
+            (
+                DEPLOYMENT_DECLARATION_RECORD_KIND,
+                str(declaration["runtime_deployment_declaration_id"]),
+                declaration,
+            )
+        ],
+    )
+    return _target_for(
+        declaration,
+        {
+            "kind": DEPLOYMENT_DECLARATION_RECORD_KIND,
+            "id": str(declaration["runtime_deployment_declaration_id"]),
+        },
     )
 
 
@@ -415,6 +474,10 @@ _REFUSAL_REASONS = {
     "signature": "carries no genuine Human Authority signature",
     "restatement": "may never anchor a different one",
     "identity": "own recomputed identity does not equal its own declared value",
+    # P15-R3-F2's own two new refusals.
+    "window": "falls outside resolved runtime_deployment_declaration",
+    "currency": "is no longer the current one for this target",
+    "unregistered": "no runtime_deployment_declaration is currently registered for this target",
 }
 
 
@@ -424,10 +487,16 @@ def _refuses_with_nothing_reached(
     *,
     because: str,
     project_binding_id: str | None = None,
+    already_committed_envelopes: int = 0,
 ) -> None:
-    """Every P15-R2-F2 refusal is the identical shape: ``RuntimeRequirementError``, zero adapter
-    calls, zero committed Envelopes -- and, per *because*, raised by the specific check the
-    calling control is about."""
+    """Every P15-R2-F2 (and P15-R3-F2) refusal is the identical shape:
+    ``RuntimeRequirementError``, zero adapter calls, zero *new* committed Envelopes -- and, per
+    *because*, raised by the specific check the calling control is about.
+
+    *already_committed_envelopes* is non-zero only for the Round 3 supersession controls, which
+    deliberately observe successfully **first** (to prove the declaration genuinely worked before
+    it was superseded) and then prove the later refusal adds nothing.
+    """
 
     adapter = _seeded(target_identity)
     with pytest.raises(RuntimeRequirementError) as raised:
@@ -439,7 +508,7 @@ def _refuses_with_nothing_reached(
         )
     assert _REFUSAL_REASONS[because] in str(raised.value), str(raised.value)
     assert adapter.observe_call_count == 0
-    assert _envelope_count(world) == 0
+    assert _envelope_count(world) == already_committed_envelopes
 
 
 def test_an_unsigned_declaration_is_refused(_world: dict[str, Any]) -> None:
@@ -459,7 +528,14 @@ def test_an_unsigned_declaration_is_refused(_world: dict[str, Any]) -> None:
         unsigned["runtime_deployment_declaration_id"]
         == declaration["runtime_deployment_declaration_id"]
     )
-    _refuses_with_nothing_reached(_world, _commit_and_target(_world, unsigned), because="schema")
+    # Inserted raw: since Round 3 the canonical committer schema-validates before it commits, so
+    # an unsigned record cannot go through it at all -- which is itself correct, and is why this
+    # control has to plant the record directly to reach the *route's* own schema refusal.
+    _refuses_with_nothing_reached(
+        _world,
+        _commit_raw_and_target(_world, unsigned, "TX-RUNTIME-UNSIGNED-DEPLOYMENT-DECLARATION"),
+        because="schema",
+    )
 
 
 def test_a_self_authored_declaration_signed_by_an_attackers_own_key_is_refused(
@@ -826,3 +902,453 @@ def test_the_cross_project_declaration_is_itself_genuinely_signed_and_accepted_a
     )
     outcome = _observe(world_b, target_identity, _seeded(target_identity))
     assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+
+
+# ---------------------------------------------------------------------------
+# P15-R3-F2: the declaration's own validity window
+# ---------------------------------------------------------------------------
+#
+# Round 2's declaration had no validity window at all. Both bounds are now required schema
+# fields, both participate in the record's own content address *and* in the Human Authority's
+# own signature (so a declaration cannot be re-dated after signing without breaking either), and
+# the route compares them against this observation's own ``observed_at`` as real UTC instants,
+# inclusive at both ends -- the identical convention ``_require_within_time_window`` already
+# applies to the Observation Boundary's own window.
+#
+# Every ``_observe`` in this file observes at ``2026-01-01T00:30:00Z``.
+
+
+def test_a_declaration_whose_validity_window_has_not_opened_yet_is_refused(
+    _world: dict[str, Any],
+) -> None:
+    """**Stale.** Genuine in every other respect -- ACTIVE, correctly signed, correctly restating
+    its own target, and genuinely the current declaration for it -- but its ``valid_from`` is
+    still in the future at this observation's own instant."""
+
+    declaration = deployment_declaration_for(
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        valid_from="2026-06-01T00:00:00Z",
+        valid_until="2026-12-31T23:59:59Z",
+    )
+    _refuses_with_nothing_reached(_world, _commit_and_target(_world, declaration), because="window")
+
+
+def test_a_declaration_whose_validity_window_has_already_closed_is_refused(
+    _world: dict[str, Any],
+) -> None:
+    """**Expired.** The mirror case: ``valid_until`` is already in the past. A deployment
+    declaration that has simply run out is refused before any adapter call, exactly as an expired
+    Observation Boundary already is."""
+
+    declaration = deployment_declaration_for(
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        valid_from="2025-01-01T00:00:00Z",
+        valid_until="2025-12-31T23:59:59Z",
+    )
+    _refuses_with_nothing_reached(_world, _commit_and_target(_world, declaration), because="window")
+
+
+@pytest.mark.parametrize("bound_field", ["valid_from", "valid_until"])
+def test_an_observation_exactly_on_either_validity_bound_is_observed(
+    _world: dict[str, Any], bound_field: str
+) -> None:
+    """**The inclusive-bound positive controls.** ``observed_at == valid_from`` and
+    ``observed_at == valid_until`` must both succeed: this route's own existing time-window
+    convention is closed at both ends (``issued_at <= observed <= expires_at``), and a
+    declaration window that silently excluded its own stated bounds would mean something
+    different from what the Human Authority signed.
+
+    They also make the two refusals above mean something: the window is enforced, not merely
+    narrowed by an off-by-one.
+    """
+
+    observed_at = "2026-01-01T00:30:00Z"
+    valid_from = observed_at if bound_field == "valid_from" else "2026-01-01T00:00:00Z"
+    valid_until = observed_at if bound_field == "valid_until" else "2026-12-31T23:59:59Z"
+    declaration = deployment_declaration_for(
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    assert declaration[bound_field] == observed_at
+    target_identity = _commit_and_target(_world, declaration)
+    outcome = _observe(_world, target_identity, _seeded(target_identity))
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+
+
+def test_a_declarations_validity_window_cannot_be_re_dated_after_signing(
+    _world: dict[str, Any],
+) -> None:
+    """Both bounds are covered by the single shared derivation, so widening a window after the
+    fact breaks the record's own content address (caught first) and, once re-addressed, its own
+    signature. Proved here at the record level so the window is not merely *checked* but
+    genuinely *declared* by the Human Authority."""
+
+    expired = deployment_declaration_for(
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        valid_from="2025-01-01T00:00:00Z",
+        valid_until="2025-12-31T23:59:59Z",
+    )
+    widened = deepcopy(expired)
+    widened["valid_until"] = "2027-12-31T23:59:59Z"
+    assert (
+        runtime_deployment_declaration_id(widened) != widened["runtime_deployment_declaration_id"]
+    )
+
+    re_addressed = deepcopy(widened)
+    re_addressed["runtime_deployment_declaration_id"] = runtime_deployment_declaration_id(widened)
+    re_addressed["runtime_deployment_declaration_semantic_fingerprint"] = (
+        runtime_deployment_declaration_semantic_fingerprint(widened)
+    )
+    assert re_addressed["signature"] == expired["signature"]
+    _refuses_with_nothing_reached(
+        _world, _commit_and_target(_world, re_addressed), because="signature"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P15-R3-F2: revocation and supersession are genuinely effective
+# ---------------------------------------------------------------------------
+#
+# The defect, restated. A ``runtime_deployment_declaration`` is immutable and content-addressed,
+# so minting a new record with ``status="REVOKED"`` does not invalidate the original ``ACTIVE``
+# one: that record keeps its own unchanged id and stays individually resolvable, individually
+# signature-valid, and individually within its own window forever. Round 2's own "revoked"
+# regression test proved only that a *separately constructed* REVOKED record is refused -- never
+# that an *already-issued* ACTIVE declaration could actually be revoked.
+#
+# "Current" now means what Project State's own pointer names
+# (``semantic_state.runtime.claims[<target_key>]``), moved atomically by the shipped
+# ``commit_runtime_deployment_declaration`` whenever any new declaration is issued for that
+# target. The controls below all present a declaration that is *still perfectly genuine on its
+# own terms* and is refused purely because it is no longer what the pointer names.
+
+
+def _target_key_for(target_identity: Mapping[str, Any]) -> str:
+    return runtime_deployment_target_key(dict(target_identity))
+
+
+def _pointer(world: dict[str, Any], target_identity: Mapping[str, Any]) -> str | None:
+    return current_deployment_declaration_id(
+        world["store"].load_current(world["project_id"]), _target_key_for(target_identity)
+    )
+
+
+def _issue(world: dict[str, Any], *, committed_at: str, **fields: Any) -> dict[str, Any]:
+    """Issue one declaration for the default target through the shipped canonical
+    commit-and-supersede path, and return ``(declaration, target_identity)`` as a dict."""
+
+    declaration = deployment_declaration_for(
+        world["project_id"],
+        world["project_binding_id"],
+        world["human_authority_ref"],
+        **fields,
+    )
+    ref = commit_deployment_declaration(
+        world["store"], world["project_id"], declaration, committed_at=committed_at
+    )
+    return {"declaration": declaration, "target_identity": _target_for(declaration, ref)}
+
+
+def test_an_already_issued_active_declaration_is_genuinely_revoked_by_a_later_revocation(
+    _world: dict[str, Any],
+) -> None:
+    """**Revoked-after-issuance** -- the exact case Round 2 could not close.
+
+    Declaration A is issued ACTIVE for a target and *observed successfully*, so it is
+    unambiguously working. A new declaration B is then issued for the **same target key** with
+    ``status="REVOKED"``, through the canonical path, which atomically moves the pointer to B.
+    Presenting A's own still-individually-valid, still-in-window, still-correctly-signed
+    reference is now refused -- not because anything about A changed (nothing did; it is still
+    byte-identical in the Store) but because A is no longer what the pointer names.
+    """
+
+    issued_a = _issue(
+        _world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z"
+    )
+    target_a = issued_a["target_identity"]
+    a_id = str(issued_a["declaration"]["runtime_deployment_declaration_id"])
+    assert _pointer(_world, target_a) == a_id
+
+    outcome = _observe(_world, target_a, _seeded(target_a))
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+
+    issued_b = _issue(
+        _world,
+        committed_at="2026-09-09T01:00:00Z",
+        declared_at="2026-09-08T02:00:00Z",
+        status="REVOKED",
+    )
+    b_id = str(issued_b["declaration"]["runtime_deployment_declaration_id"])
+    assert b_id != a_id
+    assert _pointer(_world, target_a) == b_id
+
+    # A itself is untouched: still resolvable, still byte-identical, still ACTIVE, still signed.
+    resolved_a = _world["store"].resolve_record(
+        _world["project_id"], DEPLOYMENT_DECLARATION_RECORD_KIND, a_id
+    )
+    assert resolved_a == issued_a["declaration"]
+    assert resolved_a["status"] == "ACTIVE"
+
+    _refuses_with_nothing_reached(
+        _world, target_a, because="currency", already_committed_envelopes=1
+    )
+
+
+def test_the_revoking_declaration_itself_is_refused_on_its_own_status(
+    _world: dict[str, Any],
+) -> None:
+    """The other half of a revocation: presenting B, the REVOKED record the pointer now names,
+    is refused too -- at the ``status`` check Round 2 already established. A revocation therefore
+    closes both doors at once: the old reference is no longer current, and the new one is not
+    ACTIVE."""
+
+    _issue(_world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z")
+    issued_b = _issue(
+        _world,
+        committed_at="2026-09-09T01:00:00Z",
+        declared_at="2026-09-08T02:00:00Z",
+        status="REVOKED",
+    )
+    _refuses_with_nothing_reached(_world, issued_b["target_identity"], because="status")
+
+
+def test_a_superseded_declaration_is_refused_purely_because_it_is_no_longer_current(
+    _world: dict[str, Any],
+) -> None:
+    """**Superseded** -- the same shape as the revocation above, but B is a *rotation*, not a
+    revocation: a new, entirely legitimate ACTIVE declaration for the identical target under a
+    new ``deployment_fingerprint``.
+
+    The distinction from ``revoked-after-issuance`` above matters and is deliberately proved
+    separately: there, one could argue A was refused "because the deployment was revoked". Here
+    nothing was revoked, nothing about A became invalid, and B is as ACTIVE as A ever was. A is
+    refused for exactly one reason -- it is not current -- which is the property that makes
+    supersession genuinely effective rather than merely declared.
+
+    Note the target key deliberately excludes ``deployment_fingerprint``, which is what makes a
+    rotation *supersede* rather than fork into a second, independently-current pointer.
+    """
+
+    issued_a = _issue(
+        _world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z"
+    )
+    target_a = issued_a["target_identity"]
+    a_id = str(issued_a["declaration"]["runtime_deployment_declaration_id"])
+
+    issued_b = _issue(
+        _world,
+        committed_at="2026-09-09T01:00:00Z",
+        declared_at="2026-09-08T02:00:00Z",
+        deployment_fingerprint="sha256:" + "b" * 64,
+    )
+    b_id = str(issued_b["declaration"]["runtime_deployment_declaration_id"])
+    assert issued_b["declaration"]["status"] == "ACTIVE"
+    assert _target_key_for(target_a) == _target_key_for(issued_b["target_identity"])
+    assert _pointer(_world, target_a) == b_id != a_id
+
+    _refuses_with_nothing_reached(_world, target_a, because="currency")
+
+    # And the rotation itself works: B observes normally, so nothing about the mechanism broke.
+    target_b = issued_b["target_identity"]
+    outcome = _observe(_world, target_b, _seeded(target_b))
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+
+
+def test_a_replayed_old_active_declaration_reference_is_refused(_world: dict[str, Any]) -> None:
+    """**Replayed-old-ACTIVE** -- the scenario the review's own disposition names by that phrase,
+    stated in its own terms rather than folded into the test above.
+
+    Overlap, stated explicitly: the *mechanism* is identical to ``superseded`` -- an old ACTIVE
+    declaration, still individually genuine, refused because the pointer has moved on. The
+    difference is what is being demonstrated. ``superseded`` proves the **issuer** side: rotating
+    a declaration invalidates its predecessor for new observations. This proves the **caller**
+    side: a target that recorded A's reference earlier and keeps presenting that exact reference
+    -- indefinitely, across arbitrarily many later observations, exactly as a target legitimately
+    may -- does not thereby keep A alive. Both are proved rather than one standing in for the
+    other, because the review named the replay case specifically.
+    """
+
+    issued_a = _issue(
+        _world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z"
+    )
+    replayed_reference = deepcopy(issued_a["target_identity"])
+
+    # The target observes happily, repeatedly, on the reference it holds.
+    for observed_at in ("2026-01-01T00:30:00Z", "2026-01-01T00:31:00Z"):
+        adapter = _seeded(replayed_reference)
+        result = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=replayed_reference,
+            boundary=boundary_for(),
+            adapter=adapter,
+            observed_at=observed_at,
+        )
+        assert result["envelope"]["observation_outcome"] == "OBSERVED"
+
+    _issue(
+        _world,
+        committed_at="2026-09-09T01:00:00Z",
+        declared_at="2026-09-08T02:00:00Z",
+        deployment_fingerprint="sha256:" + "c" * 64,
+    )
+
+    # The identical reference the target has been replaying all along now anchors nothing.
+    _refuses_with_nothing_reached(
+        _world, replayed_reference, because="currency", already_committed_envelopes=2
+    )
+
+
+def test_a_reference_to_another_targets_own_declaration_is_refused(
+    _world: dict[str, Any],
+) -> None:
+    """**Wrong-current-record.** A target presents a reference to an entirely different,
+    validly-committed, genuinely current declaration -- one belonging to *another target's* own
+    history, and therefore not the record the pointer for this target's own key names.
+
+    Disclosed refusal point, in the same spirit as Round 2's own cross-Binding disclosure
+    (``RUNTIME_CONTRACT.md`` §11.3, item 5): because a declaration restates the very fields the
+    target key is derived from, a record belonging to another target necessarily fails the
+    P15-R1-F6 field-restatement check *before* the P15-R3-F2 currency check is reached. The two
+    checks are genuinely independent -- the currency check catches records that restate this
+    target correctly and are simply no longer current, proved by the three controls above -- and
+    neither stands in for the other.
+    """
+
+    other_target_declaration = deployment_declaration_for(
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        deployment_id="billing-service",
+        instance_identity="billing-service-9",
+    )
+    other_ref = commit_deployment_declaration(
+        _world["store"], _world["project_id"], other_target_declaration
+    )
+    # That declaration really is current -- for its own target.
+    assert _pointer(_world, _target_for(other_target_declaration, other_ref)) == str(
+        other_target_declaration["runtime_deployment_declaration_id"]
+    )
+
+    mine = _issue(_world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z")
+    borrowed = deepcopy(mine["target_identity"])
+    borrowed["deployment_declaration_ref"] = dict(other_ref)
+    _refuses_with_nothing_reached(_world, borrowed, because="restatement")
+
+
+def test_a_declaration_never_registered_through_the_canonical_path_anchors_nothing(
+    _world: dict[str, Any],
+) -> None:
+    """The absent-pointer case, and the reason it is a refusal rather than a pass.
+
+    This record is perfectly genuine in every individual respect -- ACTIVE, correctly signed by
+    the real Human Authority, correctly restating its own target, in window, and its own content
+    address reproduces. It was simply inserted as a raw Store record, never made current through
+    ``commit_runtime_deployment_declaration``. Before Round 3 that was enough to anchor a target;
+    it is exactly the "anyone who can write a record can anchor anything" gap the pointer closes.
+    """
+
+    declaration = deployment_declaration_for(
+        _world["project_id"], _world["project_binding_id"], _world["human_authority_ref"]
+    )
+    target_identity = _commit_raw_and_target(
+        _world, declaration, "TX-RUNTIME-UNREGISTERED-DEPLOYMENT-DECLARATION"
+    )
+    assert _pointer(_world, target_identity) is None
+    _refuses_with_nothing_reached(_world, target_identity, because="unregistered")
+
+
+# ---------------------------------------------------------------------------
+# P15-R3-F2: the post-check-substitution barrier
+# ---------------------------------------------------------------------------
+
+
+class _PointerBarrierStore:
+    """A real ``FileStateStore`` that lands one legitimate superseding declaration commit at a
+    deterministic barrier: immediately before this route's own *first* Envelope commit attempt.
+
+    Deliberately the identical shape as ``test_runtime_authority_freshness.py``'s own
+    ``_UnrelatedContentionStore`` (P15-R1-F5), which lands an *unrelated* commit at exactly the
+    same point and must **not** block anything. The two together are the whole distinction: an
+    unrelated commit bumps ``state_revision`` and is absorbed by the bounded Compare-And-Swap
+    retry; a commit that moves *this target's own current-declaration pointer* must refuse on
+    the retry rather than persist an Envelope anchored to a declaration that was current when
+    checked and is no longer current at commit time.
+    """
+
+    def __init__(self, delegate: Any, world: dict[str, Any]) -> None:
+        self._delegate = delegate
+        self._world = world
+        self.injected = False
+        self.superseding_id: str | None = None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    def commit(self, *args: Any, **kwargs: Any) -> Any:
+        if not self.injected:
+            self.injected = True
+            superseding = deployment_declaration_for(
+                self._world["project_id"],
+                self._world["project_binding_id"],
+                self._world["human_authority_ref"],
+                declared_at="2026-09-08T03:00:00Z",
+                deployment_fingerprint="sha256:" + "d" * 64,
+            )
+            commit_deployment_declaration(
+                self._delegate,
+                self._world["project_id"],
+                superseding,
+                committed_at="2026-09-09T02:00:00Z",
+            )
+            self.superseding_id = str(superseding["runtime_deployment_declaration_id"])
+        return self._delegate.commit(*args, **kwargs)
+
+
+def test_a_supersession_landing_after_the_check_but_before_the_commit_refuses_the_commit(
+    _world: dict[str, Any],
+) -> None:
+    """**Post-check-substituted**, mirroring the Round 1 F5 authority-freshness pattern.
+
+    The declaration is genuinely current when this route resolves it, and the adapter genuinely
+    runs -- that observation really happened. A legitimate new declaration for the same target is
+    then committed at a deterministic barrier that lands *after* resolution and *before* the
+    Envelope is actually persisted. The commit is refused rather than persisting an Envelope
+    anchored to a declaration that is no longer this target's own current deployment identity.
+
+    Mechanically: the injected commit bumps ``state_revision``, so the route's own first commit
+    attempt fails Compare-And-Swap and retries -- and the per-attempt currency re-check (the
+    identical per-attempt discipline P15-R1-F5 established for the authority context, deliberately
+    re-used rather than a second, parallel mechanism) refuses on that retry. Zero Envelopes.
+    """
+
+    issued = _issue(_world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z")
+    target_identity = issued["target_identity"]
+    store = _PointerBarrierStore(_world["store"], _world)
+    adapter = _seeded(target_identity)
+
+    with pytest.raises(RuntimeRequirementError) as raised:
+        observe_runtime_target(
+            store,
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=target_identity,
+            boundary=boundary_for(),
+            adapter=adapter,
+            observed_at="2026-01-01T00:30:00Z",
+        )
+    assert _REFUSAL_REASONS["currency"] in str(raised.value), str(raised.value)
+    assert store.injected
+    assert adapter.observe_call_count == 1, "the observation itself genuinely happened"
+    assert _envelope_count(_world) == 0, "nothing anchored to a superseded declaration persisted"
+    assert _pointer(_world, target_identity) == store.superseding_id

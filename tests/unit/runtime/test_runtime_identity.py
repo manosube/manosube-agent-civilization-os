@@ -9,24 +9,36 @@ Structural Review Round 2 (P15-R2-F2) adds the Runtime Deployment Declaration's 
 payload* to what is proved here: the exact bytes a genuine Human Authority signature must cover
 are the exact bytes both of that record's digests are computed over, and neither the signature
 nor either digest is ever covered by itself.
+
+Structural Review Round 3 adds two more derivations, proved the identical way: the Runtime Root
+Admission's own identity/fingerprint/signing payload (P15-R3-F1) -- including the load-bearing
+*absence* of any Human Authority or key field on that record -- and the deployment target key
+(P15-R3-F2), which both sides of the route's own current-declaration pointer comparison derive
+independently, and which deliberately excludes ``deployment_fingerprint``.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import re
 from typing import Any
 
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.identity import (
+    ROOT_ADMISSION_SEMANTIC_FIELDS,
     runtime_deployment_declaration_id,
     runtime_deployment_declaration_semantic_fingerprint,
     runtime_deployment_declaration_signing_payload,
+    runtime_deployment_target_key,
     runtime_observation_boundary_fingerprint,
     runtime_observation_envelope_id,
     runtime_observation_envelope_semantic_fingerprint,
     runtime_observation_request_identity,
     runtime_observed_content_fingerprint,
+    runtime_root_admission_id,
+    runtime_root_admission_semantic_fingerprint,
+    runtime_root_admission_signing_payload,
     runtime_target_fingerprint,
 )
 
@@ -52,6 +64,18 @@ _DEPLOYMENT_DECLARATION: dict[str, Any] = {
     "human_authority_ref": {"kind": "human_authority", "id": "AUTH-BIND-0001"},
     # P15-R2-F2: ``status`` participates in the signed/addressed payload; ``signature`` never
     # does (a signature cannot cover its own value).
+    "status": "ACTIVE",
+    "declared_at": "2026-09-08T00:00:00Z",
+    # P15-R3-F2: the validity window participates too, for the identical reason ``declared_at``
+    # does -- a window not covered by both digests and by the signature could be silently
+    # re-dated after signing, which is exactly what a validity window exists to prevent.
+    "valid_from": "2026-01-01T00:00:00Z",
+    "valid_until": "2026-12-31T23:59:59Z",
+}
+_ROOT_ADMISSION: dict[str, Any] = {
+    "schema_version": "0.1",
+    "project_id": "PRJ-0001",
+    "project_binding_ref": {"kind": "project_binding", "id": "PROJBIND-0001"},
     "status": "ACTIVE",
     "declared_at": "2026-09-08T00:00:00Z",
 }
@@ -245,6 +269,8 @@ def test_deployment_declaration_identity_is_collision_sensitive_in_every_semanti
         "human_authority_ref": {"kind": "human_authority", "id": "AUTH-OTHER"},
         "status": "REVOKED",
         "declared_at": "2026-09-08T00:00:01Z",
+        "valid_from": "2026-01-02T00:00:00Z",
+        "valid_until": "2026-12-30T23:59:59Z",
     }
     for field, value in mutations.items():
         mutated = deepcopy(_DEPLOYMENT_DECLARATION)
@@ -322,7 +348,146 @@ def test_the_signing_payload_is_sensitive_to_status_and_to_the_declaration_insta
     *when* would validate identically at any later replay instant."""
 
     baseline = runtime_deployment_declaration_signing_payload(deepcopy(_DEPLOYMENT_DECLARATION))
-    for field, value in (("status", "REVOKED"), ("declared_at", "2026-09-08T00:00:01Z")):
+    for field, value in (
+        ("status", "REVOKED"),
+        ("declared_at", "2026-09-08T00:00:01Z"),
+        # P15-R3-F2: both validity bounds are covered by the identical single derivation, so a
+        # declaration cannot be re-dated after signing without breaking its own identity *and*
+        # its own signature.
+        ("valid_from", "2026-01-02T00:00:00Z"),
+        ("valid_until", "2026-12-30T23:59:59Z"),
+    ):
         mutated = deepcopy(_DEPLOYMENT_DECLARATION)
         mutated[field] = value
         assert runtime_deployment_declaration_signing_payload(mutated) != baseline, field
+
+
+# ---------------------------------------------------------------------------
+# Runtime Root Admission identity and signing payload (P15-R3-F1)
+# ---------------------------------------------------------------------------
+
+
+def test_root_admission_identity_is_deterministic_and_correctly_shaped() -> None:
+    admission_id = runtime_root_admission_id(_ROOT_ADMISSION)
+    fingerprint = runtime_root_admission_semantic_fingerprint(_ROOT_ADMISSION)
+    assert admission_id == runtime_root_admission_id(deepcopy(_ROOT_ADMISSION))
+    assert fingerprint == runtime_root_admission_semantic_fingerprint(deepcopy(_ROOT_ADMISSION))
+    assert re.fullmatch(r"RUNTIME-ROOT-ADMISSION-[0-9A-F]{64}", admission_id)
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint)
+
+
+def test_the_root_admission_signing_payload_is_exactly_what_both_digests_cover() -> None:
+    """The identical shared-derivation discipline this module's own deployment declaration
+    already keeps: one payload, hashed twice under two encodings, and signed once."""
+
+    payload = runtime_root_admission_signing_payload(deepcopy(_ROOT_ADMISSION))
+    assert isinstance(payload, bytes)
+    assert payload == runtime_root_admission_signing_payload(deepcopy(_ROOT_ADMISSION))
+    assert (
+        runtime_root_admission_id(_ROOT_ADMISSION)
+        == "RUNTIME-ROOT-ADMISSION-" + hashlib.sha256(payload).hexdigest().upper()
+    )
+    assert (
+        runtime_root_admission_semantic_fingerprint(_ROOT_ADMISSION)
+        == "sha256:" + hashlib.sha256(payload).hexdigest()
+    )
+
+
+def test_the_root_admission_payload_never_covers_the_signature_or_either_digest() -> None:
+    baseline = runtime_root_admission_signing_payload(deepcopy(_ROOT_ADMISSION))
+    restated = deepcopy(_ROOT_ADMISSION)
+    restated["signature"] = {
+        "algorithm": "ed25519",
+        "key_id": "TRUST-ANCHOR-0001",
+        "value": "f" * 128,
+    }
+    restated["runtime_root_admission_id"] = "RUNTIME-ROOT-ADMISSION-" + "0" * 64
+    restated["runtime_root_admission_semantic_fingerprint"] = "sha256:" + "0" * 64
+    assert runtime_root_admission_signing_payload(restated) == baseline
+
+
+def test_root_admission_identity_is_collision_sensitive_in_every_semantic_field() -> None:
+    """Every field this record carries decides *which* world is admitted, so every one must be
+    covered -- an admission whose project or Binding could be changed without changing its own
+    address or signature would be exactly the unbounded trust grant P15-R3-F1 forbids."""
+
+    baseline_id = runtime_root_admission_id(_ROOT_ADMISSION)
+    baseline_fp = runtime_root_admission_semantic_fingerprint(_ROOT_ADMISSION)
+    mutations: dict[str, Any] = {
+        "project_id": "PRJ-OTHER",
+        "project_binding_ref": {"kind": "project_binding", "id": "PROJBIND-OTHER"},
+        "status": "REVOKED",
+        "declared_at": "2026-09-08T00:00:01Z",
+    }
+    for field, value in mutations.items():
+        mutated = deepcopy(_ROOT_ADMISSION)
+        mutated[field] = value
+        assert runtime_root_admission_id(mutated) != baseline_id, field
+        assert runtime_root_admission_semantic_fingerprint(mutated) != baseline_fp, field
+
+
+def test_a_root_admission_missing_a_semantic_field_cannot_be_identified_at_all() -> None:
+    for field in ("project_id", "project_binding_ref", "status", "declared_at"):
+        incomplete = deepcopy(_ROOT_ADMISSION)
+        incomplete.pop(field)
+        try:
+            runtime_root_admission_id(incomplete)
+        except RuntimeRequirementError:
+            continue
+        raise AssertionError(f"an admission missing {field!r} was addressed anyway")
+
+
+def test_the_root_admission_record_carries_no_human_authority_field_at_all() -> None:
+    """The load-bearing *absence* (P15-R3-F1). An admission record must be verifiable against a
+    trust anchor that is not resolvable from inside the Store being admitted -- so it names no
+    Human Authority and no key. If it did, an attacker's fully self-consistent alternate world
+    could simply self-sign a matching record with its own internally legitimate Authority key
+    and pass, which is the self-referential defect this record kind exists to avoid."""
+
+    assert "human_authority_ref" not in ROOT_ADMISSION_SEMANTIC_FIELDS
+    assert not any("key" in field for field in ROOT_ADMISSION_SEMANTIC_FIELDS)
+
+
+# ---------------------------------------------------------------------------
+# Runtime deployment target key (P15-R3-F2)
+# ---------------------------------------------------------------------------
+
+
+def test_the_target_key_is_deterministic_and_derives_identically_from_both_sides() -> None:
+    """The route derives this key twice from two independently checked copies -- once from the
+    ``target_identity`` a caller supplied, once (in the committer) from the declaration's own
+    restated fields. Both must land on the identical key or the pointer could never match."""
+
+    from_target = runtime_deployment_target_key(deepcopy(_TARGET_IDENTITY))
+    from_declaration = runtime_deployment_target_key(deepcopy(_DEPLOYMENT_DECLARATION))
+    assert from_target == from_declaration
+    assert re.fullmatch(r"RUNTIME-DEPLOYMENT-TARGET-[0-9A-F]{64}", from_target)
+
+
+def test_the_target_key_changes_with_every_field_that_names_a_different_target() -> None:
+    baseline = runtime_deployment_target_key(deepcopy(_TARGET_IDENTITY))
+    for field, value in (
+        ("project_binding_ref", {"kind": "project_binding", "id": "PROJBIND-OTHER"}),
+        ("provider", "elsewhere"),
+        ("deployment_id", "billing-service"),
+        ("instance_identity", "widget-service-2"),
+    ):
+        mutated = deepcopy(_TARGET_IDENTITY)
+        mutated[field] = value
+        assert runtime_deployment_target_key(mutated) != baseline, field
+
+
+def test_the_target_key_deliberately_ignores_the_deployment_fingerprint() -> None:
+    """The one field excluded, and the exclusion is the point (P15-R3-F2). A
+    ``deployment_fingerprint`` says *what this target currently is*, not *which target this is*.
+    A legitimate rotation re-declares the identical provider/deployment/instance under a new
+    fingerprint and must **supersede** the previous declaration; if the fingerprint were part of
+    the key, every rotation would fork the pointer space and leave the superseded declaration
+    permanently current for its own old key -- which is precisely the ineffective-revocation
+    defect this round closes."""
+
+    rotated = deepcopy(_TARGET_IDENTITY)
+    rotated["deployment_fingerprint"] = "sha256:" + "b" * 64
+    assert runtime_deployment_target_key(rotated) == runtime_deployment_target_key(
+        deepcopy(_TARGET_IDENTITY)
+    )
