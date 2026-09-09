@@ -4,17 +4,24 @@ Pure-function proof of :mod:`manosube_agent_civilization.runtime.identity` -- no
 Boot, no Adapter. Proves the three distinct identities Issue #64's own minimum-acceptable-
 after-state item 1 requires are genuinely distinct, deterministic, and each collision-
 sensitive to the fields that define it.
+
+Structural Review Round 2 (P15-R2-F2) adds the Runtime Deployment Declaration's own *signing
+payload* to what is proved here: the exact bytes a genuine Human Authority signature must cover
+are the exact bytes both of that record's digests are computed over, and neither the signature
+nor either digest is ever covered by itself.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 from typing import Any
 
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.identity import (
     runtime_deployment_declaration_id,
     runtime_deployment_declaration_semantic_fingerprint,
+    runtime_deployment_declaration_signing_payload,
     runtime_observation_boundary_fingerprint,
     runtime_observation_envelope_id,
     runtime_observation_envelope_semantic_fingerprint,
@@ -43,6 +50,9 @@ _DEPLOYMENT_DECLARATION: dict[str, Any] = {
     "instance_identity": "widget-service-1",
     "deployment_fingerprint": "sha256:" + "a" * 64,
     "human_authority_ref": {"kind": "human_authority", "id": "AUTH-BIND-0001"},
+    # P15-R2-F2: ``status`` participates in the signed/addressed payload; ``signature`` never
+    # does (a signature cannot cover its own value).
+    "status": "ACTIVE",
     "declared_at": "2026-09-08T00:00:00Z",
 }
 _BOUNDARY: dict[str, Any] = {
@@ -233,6 +243,7 @@ def test_deployment_declaration_identity_is_collision_sensitive_in_every_semanti
         "instance_identity": "widget-service-2",
         "deployment_fingerprint": "sha256:" + "b" * 64,
         "human_authority_ref": {"kind": "human_authority", "id": "AUTH-OTHER"},
+        "status": "REVOKED",
         "declared_at": "2026-09-08T00:00:01Z",
     }
     for field, value in mutations.items():
@@ -247,7 +258,13 @@ def test_a_declaration_missing_a_semantic_field_cannot_be_identified_at_all() ->
     "whatever fields happened to be present" would let two different declarations share one
     content address."""
 
-    for field in ("project_id", "provider", "deployment_fingerprint", "human_authority_ref"):
+    for field in (
+        "project_id",
+        "provider",
+        "deployment_fingerprint",
+        "human_authority_ref",
+        "status",
+    ):
         incomplete = deepcopy(_DEPLOYMENT_DECLARATION)
         incomplete.pop(field)
         try:
@@ -255,3 +272,57 @@ def test_a_declaration_missing_a_semantic_field_cannot_be_identified_at_all() ->
         except RuntimeRequirementError:
             continue
         raise AssertionError(f"a declaration missing {field!r} was addressed anyway")
+
+
+# ---------------------------------------------------------------------------
+# Runtime Deployment Declaration signing payload (P15-R2-F2)
+# ---------------------------------------------------------------------------
+
+
+def test_the_signing_payload_is_exactly_what_both_digests_are_computed_over() -> None:
+    """The shared-derivation discipline ``binding/identity.py``'s own declaration payloads
+    already establish: the content address, the semantic fingerprint, and the signed message are
+    one derivation, so no field can ever be covered by one and not the others."""
+
+    payload = runtime_deployment_declaration_signing_payload(deepcopy(_DEPLOYMENT_DECLARATION))
+    assert isinstance(payload, bytes)
+    assert payload == runtime_deployment_declaration_signing_payload(
+        deepcopy(_DEPLOYMENT_DECLARATION)
+    )
+
+    expected_id = "RUNTIME-DEPLOYMENT-DECLARATION-" + hashlib.sha256(payload).hexdigest().upper()
+    expected_fingerprint = "sha256:" + hashlib.sha256(payload).hexdigest()
+    assert runtime_deployment_declaration_id(_DEPLOYMENT_DECLARATION) == expected_id
+    assert (
+        runtime_deployment_declaration_semantic_fingerprint(_DEPLOYMENT_DECLARATION)
+        == expected_fingerprint
+    )
+
+
+def test_the_signing_payload_never_covers_the_signature_or_either_digest() -> None:
+    """A signature cannot cover its own value, and an identity cannot be computed over itself --
+    exactly the three exclusions ``binding/identity.py``'s own payload tuples make. Restating any
+    of the three inside the record must therefore leave the payload byte-identical."""
+
+    baseline = runtime_deployment_declaration_signing_payload(deepcopy(_DEPLOYMENT_DECLARATION))
+    restated = deepcopy(_DEPLOYMENT_DECLARATION)
+    restated["signature"] = {
+        "algorithm": "ed25519",
+        "key_id": "AUTH-KEY-0001",
+        "value": "f" * 128,
+    }
+    restated["runtime_deployment_declaration_id"] = "RUNTIME-DEPLOYMENT-DECLARATION-" + "0" * 64
+    restated["runtime_deployment_declaration_semantic_fingerprint"] = "sha256:" + "0" * 64
+    assert runtime_deployment_declaration_signing_payload(restated) == baseline
+
+
+def test_the_signing_payload_is_sensitive_to_status_and_to_the_declaration_instant() -> None:
+    """``status`` participates because a revocation must not validate under a signature issued
+    for an ACTIVE declaration; ``declared_at`` participates because a signature that never bound
+    *when* would validate identically at any later replay instant."""
+
+    baseline = runtime_deployment_declaration_signing_payload(deepcopy(_DEPLOYMENT_DECLARATION))
+    for field, value in (("status", "REVOKED"), ("declared_at", "2026-09-08T00:00:01Z")):
+        mutated = deepcopy(_DEPLOYMENT_DECLARATION)
+        mutated[field] = value
+        assert runtime_deployment_declaration_signing_payload(mutated) != baseline, field

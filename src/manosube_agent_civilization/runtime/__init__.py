@@ -25,7 +25,9 @@ result = observe_runtime_target(
         "instance_identity": "widget-service-1",
         "project_binding_ref": {"kind": "project_binding", "id": project_binding_id},
         # the canonical, already-committed record this target's own declared
-        # deployment_fingerprint must match (Structural Review Round 1, P15-R1-F6)
+        # deployment_fingerprint must match (Round 1, P15-R1-F6) -- and which must also be
+        # ACTIVE, name the Human Authority this call's own Boot restores, and carry that
+        # Authority's own genuine Ed25519 signature (Round 2, P15-R2-F2)
         "deployment_declaration_ref": {
             "kind": "runtime_deployment_declaration",
             "id": runtime_deployment_declaration_id_value,
@@ -42,28 +44,31 @@ result["receipt"]   # RuntimeObservationReceipt
 evidence = route_runtime_observation_to_evidence(
     store, result["receipt"], project_id, evidence_request
 )
-
-# Trusted runtime provisioning is two steps (Structural Review Round 1, P15-R1-F4): the
-# deployment fixes which Store/Project/Binding are in play exactly once, and every later
-# capability request reads that opaque root rather than re-offering the same choice.
-trusted_runtime_root = provision_trusted_runtime_root(
-    store, project_id=project_id, project_binding_id=project_binding_id
-)
-capability = bootstrap_projection_execution_capability(
-    trusted_runtime_root,
-    github_projection_grant_refs=[...],
-    github_projection_grant_declaration_refs=[...],
-)
 ```
+
+``bootstrap_projection_execution_capability(trusted_runtime_root, *, github_projection_grant_
+refs, github_projection_grant_declaration_refs)`` is deliberately **not** shown as runnable
+example code here. Structural Review Round 2 (P15-R2-F1) deleted the public
+``provision_trusted_runtime_root`` factory Round 1 had shipped: it accepted exactly the
+caller-controlled Store/Project/Binding tuple the correction existed to stop an untrusted
+surface from selecting, so moving those three arguments one call earlier changed the API's
+shape rather than control of the trust decision. No function anywhere in this shipped package
+now takes a caller-supplied store/project/binding and returns a
+:class:`~manosube_agent_civilization.runtime.bootstrap.TrustedRuntimeRoot`, and no shipped
+module constructs one at all (proved by an AST walk over the installed package in
+``tests/contract/runtime/test_runtime_static_conformance.py``).
+
+The capability route therefore has, in this Phase, **no production-legitimate way to obtain its
+own first argument**; it is exercised only by tests, through an explicitly test-confined issuer
+(``tests/fixtures/runtime_world.py``'s own ``test_only_trusted_runtime_root``), pending a future,
+separately authorized Phase's real deployment composition boundary. Stated exactly: that proves
+*no shipped minting path exists*, not that a live path resists an attacker at runtime -- there
+is no live path yet to resist one. See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §11.
 
 See ``10_RUNTIME/RUNTIME_INDEX.md`` for the full contract set.
 """
 
-from .bootstrap import (
-    TrustedRuntimeRoot,
-    bootstrap_projection_execution_capability,
-    provision_trusted_runtime_root,
-)
+from .bootstrap import TrustedRuntimeRoot, bootstrap_projection_execution_capability
 from .errors import (
     RuntimeAdapterError,
     RuntimeAuthorityFreshnessError,
@@ -97,6 +102,5 @@ __all__ = [
     "TrustedRuntimeRoot",
     "bootstrap_projection_execution_capability",
     "observe_runtime_target",
-    "provision_trusted_runtime_root",
     "route_runtime_observation_to_evidence",
 ]

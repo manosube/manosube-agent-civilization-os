@@ -27,19 +27,34 @@ the test that pins it:
   from three points per observation (P15-R1-F5) through one private helper.
 - ``engine.py`` additionally imports ``difference.errors`` (P15-R1-F2), to translate the
   canonical schema validator's own failure into this package's own refusal vocabulary.
-- the package exports a fourth public callable, ``provision_trusted_runtime_root``
-  (P15-R1-F4) -- a provisioning entry point, not a fourth route.
+- the package exported a fourth public callable, ``provision_trusted_runtime_root``
+  (P15-R1-F4) -- a provisioning entry point, not a fourth route. **Round 2 (P15-R2-F1) deletes
+  that callable outright**; see the two facts below.
+
+Structural Review Round 2 (P15-R2) changes two further facts this file pins:
+
+- ``provision_trusted_runtime_root`` no longer exists anywhere in the shipped package, and no
+  shipped file constructs a ``TrustedRuntimeRoot`` at all -- proved by an AST walk over every
+  ``.py`` file in the *installed* package, the identical technique
+  ``tests/contract/projection/test_v3_live_write_authority_static_conformance.py`` already uses
+  for "no shipped file may contain this forbidden material" (P15-R2-F1).
+- ``deployment_declaration.py`` exists (P15-R2-F2) and is the *second* module in this package
+  importing ``binding`` -- admitted here for exactly one import, ``binding.signature``, whose
+  shared Ed25519 primitive it composes rather than reimplements.
 """
 
 from __future__ import annotations
 
 import ast
 import inspect
+import pathlib
 from types import ModuleType
 
+import manosube_agent_civilization
 import manosube_agent_civilization.runtime as runtime_module
 import manosube_agent_civilization.runtime.adapter as adapter_module
 import manosube_agent_civilization.runtime.bootstrap as bootstrap_module
+import manosube_agent_civilization.runtime.deployment_declaration as deployment_declaration_module
 import manosube_agent_civilization.runtime.engine as engine_module
 import manosube_agent_civilization.runtime.errors as errors_module
 import manosube_agent_civilization.runtime.evidence_handoff as evidence_handoff_module
@@ -58,7 +73,17 @@ _ALL_PACKAGE_MODULES = (
     evidence_handoff_module,
     bootstrap_module,
     network_module,
+    deployment_declaration_module,
 )
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+_SHIPPED_PACKAGE_ROOT = pathlib.Path(manosube_agent_civilization.__file__).resolve().parent
+
+#: The trust-root type, and the exact name of the public minting factory Round 1 shipped and
+#: Round 2 (P15-R2-F1) deletes. Both are pinned as literals so that reintroducing a minting call
+#: site -- or the deleted factory itself, under its own name -- fails this gate immediately.
+_TRUSTED_ROOT_TYPE_NAME = "TrustedRuntimeRoot"
+_DELETED_MINTING_FACTORY_NAME = "provision_trusted_runtime_root"
 
 #: Existing canonical owners no module in this package may ever import, in whole or in part --
 #: Runtime is read-only and mints no Authority/Reflow decision of its own, and never reaches
@@ -94,17 +119,36 @@ def _call_site_count(module: ModuleType, name: str) -> int:
     return count
 
 
-def test_runtime_package_exports_exactly_three_routes_and_one_provisioning_entry_point() -> None:
-    """``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` is unchanged: the three *routes* this package
-    owns are exactly the three it always owned.
+def _names_the_deleted_factory(node: ast.AST) -> bool:
+    """Whether *node* names ``provision_trusted_runtime_root`` in a *code* position -- a
+    ``def``, a bare name, an attribute, an import alias, or a string constant equal to it (which
+    is how an ``__all__`` re-export would smuggle it back). Prose inside a docstring is
+    deliberately not matched: this round's own record has to be able to say what was removed and
+    why, and a docstring cannot re-export anything."""
 
-    Structural Review Round 1 (P15-R1-F4) adds one further public callable that is not a route
-    at all -- ``provision_trusted_runtime_root``, the single, explicit boundary at which a
-    deployment fixes which Store/Project/Binding its trusted runtime provisioning operates
-    within. It resolves nothing, Boots nothing, and commits nothing; it exists so that
-    ``bootstrap_projection_execution_capability`` no longer carries a ``store``/``project_id``/
-    ``project_binding_id`` parameter surface a caller could use to name an alternate,
-    internally self-consistent world.
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        return node.name == _DELETED_MINTING_FACTORY_NAME
+    if isinstance(node, ast.Name):
+        return node.id == _DELETED_MINTING_FACTORY_NAME
+    if isinstance(node, ast.Attribute):
+        return node.attr == _DELETED_MINTING_FACTORY_NAME
+    if isinstance(node, ast.alias):
+        return _DELETED_MINTING_FACTORY_NAME in (node.name, node.asname)
+    if isinstance(node, ast.Constant):
+        return bool(node.value == _DELETED_MINTING_FACTORY_NAME)
+    return False
+
+
+def test_runtime_package_exports_exactly_three_routes_and_one_capability_bootstrap() -> None:
+    """``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` is unchanged: the three *routes* this package owns
+    are exactly the three it always owned, alongside the one capability bootstrap.
+
+    Structural Review Round 1 (P15-R1-F4) had added a fourth public callable that was not a
+    route -- ``provision_trusted_runtime_root``. Round 2 (P15-R2-F1) removes it: that factory
+    accepted exactly the caller-controlled Store/Project/Binding tuple the correction existed to
+    stop an untrusted surface from selecting, so it relocated the trust decision rather than
+    removing it. ``TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT`` is now ``0`` in shipped
+    code (``10_RUNTIME/RUNTIME_CONTRACT.md`` §11).
     """
 
     public_callables = {
@@ -116,9 +160,91 @@ def test_runtime_package_exports_exactly_three_routes_and_one_provisioning_entry
     assert public_callables == {
         "bootstrap_projection_execution_capability",
         "observe_runtime_target",
-        "provision_trusted_runtime_root",
         "route_runtime_observation_to_evidence",
     }
+
+
+def test_no_shipped_file_constructs_a_trusted_runtime_root() -> None:
+    """P15-R2-F1's own decisive static fact.
+
+    Every ``.py`` file in the entire *installed* ``manosube_agent_civilization`` package -- what
+    actually ends up in the wheel -- is AST-walked for any ``ast.Call`` whose callee resolves to
+    the name ``TrustedRuntimeRoot``. The single admitted site is inside the dataclass's own class
+    body in ``bootstrap.py`` (its generated ``__init__``/``__post_init__`` -- and in fact there is
+    no literal call there at all, since a frozen dataclass constructs itself). Anywhere else, a
+    call site would mean shipped code mints a trust root over some Store, which is exactly the
+    defect this round closes.
+
+    Scope, stated exactly: this proves *no shipped minting path exists*, not that a live path
+    resists an attacker. There is no live deployment/CLI/agent-runtime composition boundary wired
+    to Runtime in this Phase for an attacker to attack. See
+    ``tests/integration/runtime/test_runtime_no_shipped_minting_path.py``'s own docstring.
+    """
+
+    shipped_files = sorted(_SHIPPED_PACKAGE_ROOT.rglob("*.py"))
+    assert shipped_files, "expected at least one shipped module to scan"
+
+    offenders: list[tuple[str, int]] = []
+    for path in shipped_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        # Every call site that lexically belongs to the TrustedRuntimeRoot class body itself is
+        # exempt; every other call site in the shipped package is an offender.
+        exempt: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == _TRUSTED_ROOT_TYPE_NAME:
+                exempt.update(id(inner) for inner in ast.walk(node) if isinstance(inner, ast.Call))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or id(node) in exempt:
+                continue
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else (func.attr if isinstance(func, ast.Attribute) else None)
+            )
+            if name == _TRUSTED_ROOT_TYPE_NAME:
+                offenders.append((str(path.relative_to(_REPO_ROOT)), node.lineno))
+    assert offenders == []
+
+
+def test_no_shipped_file_defines_imports_or_exports_the_deleted_minting_factory() -> None:
+    """The deleted factory is gone by *name* as well as by shape (P15-R2-F1).
+
+    Every shipped ``.py`` file is AST-walked for that name appearing in any *code* position --
+    see :func:`_names_the_deleted_factory` for exactly which positions count and why prose does
+    not.
+    """
+
+    shipped_files = sorted(_SHIPPED_PACKAGE_ROOT.rglob("*.py"))
+    assert shipped_files, "expected at least one shipped module to scan"
+
+    offenders: list[tuple[str, int]] = []
+    for path in shipped_files:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if _names_the_deleted_factory(node):
+                offenders.append((str(path.relative_to(_REPO_ROOT)), getattr(node, "lineno", -1)))
+    assert offenders == []
+    assert not hasattr(bootstrap_module, _DELETED_MINTING_FACTORY_NAME)
+    assert not hasattr(runtime_module, _DELETED_MINTING_FACTORY_NAME)
+
+
+def test_no_shipped_public_callable_returns_a_trusted_runtime_root() -> None:
+    """The shape half of the same fact, proved by introspection rather than by text: a
+    same-shaped function reintroduced under some *other* name would still be caught, because no
+    public callable this package exports declares ``TrustedRuntimeRoot`` as its return type
+    (P15-R2-F1 -- "do not replace it with a same-shaped function under a new name")."""
+
+    for name in runtime_module.__all__:
+        member = getattr(runtime_module, name)
+        if not callable(member) or isinstance(member, type):
+            continue
+        annotation = inspect.signature(member).return_annotation
+        rendered = (
+            annotation if isinstance(annotation, str) else getattr(annotation, "__name__", "")
+        )
+        assert _TRUSTED_ROOT_TYPE_NAME not in str(rendered), (
+            f"{name} returns a {_TRUSTED_ROOT_TYPE_NAME} -- shipped code must mint none"
+        )
 
 
 def test_bootstrap_accepts_no_store_or_project_selecting_parameter() -> None:
@@ -250,7 +376,18 @@ def test_projection_package_is_imported_only_by_bootstrap() -> None:
         ), f"{module.__name__} imports manosube_agent_civilization.projection: {imported}"
 
 
-def test_binding_is_imported_only_by_bootstrap_for_declaration_identity() -> None:
+def test_binding_is_imported_only_for_declaration_identity_and_signature_verification() -> None:
+    """Two modules, one import each, both read-only reverification of a declaration a Human
+    Authority already issued.
+
+    ``bootstrap.py`` imports ``binding.identity`` (grant-declaration identity reverification).
+    Round 2 (P15-R2-F2) adds ``deployment_declaration.py``, which imports exactly
+    ``binding.signature`` -- the shared, public, fail-closed-as-a-value Ed25519 primitive
+    (``verify_ed25519_signature``) plus the supported-algorithm constant, *composed* here rather
+    than reimplemented. Binding is deliberately not made to import anything from ``runtime/``:
+    Runtime is an adapter layer that depends on the Kernel's Binding element, never the reverse.
+    """
+
     for module in _ALL_PACKAGE_MODULES:
         imported = _imported_module_names(module)
         binding_imports = {
@@ -261,8 +398,26 @@ def test_binding_is_imported_only_by_bootstrap_for_declaration_identity() -> Non
         }
         if module is bootstrap_module:
             assert binding_imports == {"manosube_agent_civilization.binding.identity"}
+        elif module is deployment_declaration_module:
+            assert binding_imports == {"manosube_agent_civilization.binding.signature"}
         else:
             assert not binding_imports, f"{module.__name__} imports binding: {binding_imports}"
+
+
+def test_the_deployment_declaration_verifier_reimplements_no_cryptography() -> None:
+    """P15-R2-F2: ``deployment_declaration.py`` composes the shared primitive and owns no
+    cryptography of its own -- it never imports ``cryptography`` (or an Ed25519 type) directly,
+    never names a private key, and never signs anything. Verification only; a real Human's
+    private key never touches this system at all."""
+
+    imported = _imported_module_names(deployment_declaration_module)
+    assert not any("cryptography" in name or "ed25519" in name.lower() for name in imported)
+    source = inspect.getsource(deployment_declaration_module)
+    for forbidden in ("Ed25519PrivateKey", "from_private_bytes", "def sign", ".sign("):
+        assert forbidden not in source, (
+            f"deployment_declaration.py names {forbidden!r} -- it may only ever verify"
+        )
+    assert _call_site_count(deployment_declaration_module, "verify_ed25519_signature") == 1
 
 
 def test_only_bootstrap_imports_difference_and_change_identity() -> None:

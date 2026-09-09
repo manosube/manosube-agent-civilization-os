@@ -30,8 +30,11 @@ complete schema validation of the declared target identity and closed Observatio
 → network-scope check -- the endpoint's own effective host must be inside allowed_hosts
 → real-instant time-window check -- refuses before any adapter call
 → real Project/Human Authority (Boot re-verification)
-→ Store-anchored deployment identity (the declared deployment_fingerprint must equal a
-  genuinely committed, independently identity-recomputed runtime_deployment_declaration)
+→ Store-anchored, Authority-bound, signed deployment identity (the declared
+  deployment_fingerprint must equal a genuinely committed, independently identity-recomputed,
+  ACTIVE runtime_deployment_declaration that names the Human Authority this call's own Boot
+  just restored and carries that Authority's own genuine Ed25519 signature over its adopted
+  semantic fields)
 → explicit runtime target identity, fingerprinted (never trusted from a caller)
 → closed Observation Boundary, fingerprinted (never trusted from a caller)
 → deterministic observation_request_identity (target + Boundary + issued_at)
@@ -60,6 +63,16 @@ before the adapter call and again on every commit attempt (F5), and the declared
 ``deployment_fingerprint`` must now match a genuinely committed, Store-resolved
 ``runtime_deployment_declaration`` before the observed-vs-declared comparison means anything at
 all (F6).
+
+**Structural Review Round 2 (P15-R2-F2).** Round 1's Store anchor proved only that a
+content-addressed record existed and restated this target -- a self-asserted body any
+Store-writing caller could construct, naming any Human Authority and any deployment
+fingerprint. The resolved declaration must now additionally be ``status="ACTIVE"``, name **the
+exact Human Authority reference this call's own Boot just restored**, and carry a genuine
+Ed25519 signature by **the exact ``human_authority_signing_key`` that same Boot restored from
+the current Project Binding**, over the declaration's own adopted semantic fields. All three
+land as ``RuntimeRequirementError`` before any adapter call, with zero commits. See
+``10_RUNTIME/RUNTIME_CONTRACT.md`` §11.
 """
 
 from __future__ import annotations
@@ -73,6 +86,7 @@ from manosube_agent_civilization.state.fingerprint import fingerprint_project_st
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
 
+from .deployment_declaration import verify_runtime_deployment_declaration_signature
 from .engine import (
     RUNTIME_SCHEMA_BASE,
     derive_runtime_observation_envelope,
@@ -107,6 +121,11 @@ from .types import (
 
 _ENVELOPE_RECORD_KIND = "runtime_observation_envelope"
 _DEPLOYMENT_DECLARATION_RECORD_KIND = "runtime_deployment_declaration"
+#: The one ``status`` a canonical deployment declaration may carry and still anchor a target
+#: (P15-R2-F2). The closed vocabulary itself -- ``ACTIVE``/``REVOKED`` -- is owned by
+#: ``01_SCHEMA/runtime/runtime_deployment_declaration.schema.json``, exactly as
+#: ``github_projection_grant_declaration``'s own already is.
+_DECLARATION_ACTIVE_STATUS = "ACTIVE"
 #: The identical Compare-And-Swap retry bound Projection's own ``_claim_slot`` uses -- not a
 #: timeout, not a backoff, bounded protection against genuine, ordinary contention from an
 #: unrelated commit landing on this project between this route's own ``load_current`` and its
@@ -327,17 +346,22 @@ def _require_unchanged_authority_context(
 
 
 def _resolve_deployment_declaration(
-    store: Any, project_id: str, target_identity: Mapping[str, Any]
+    store: Any,
+    project_id: str,
+    target_identity: Mapping[str, Any],
+    *,
+    human_authority_ref: Mapping[str, Any],
+    human_authority_signing_key: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Resolve, independently identity-recompute, and anchor the canonical deployment
-    declaration *target_identity* names (P15-R1-F6).
+    """Resolve, independently identity-recompute, authority-bind, and cryptographically verify
+    the canonical deployment declaration *target_identity* names (P15-R1-F6, P15-R2-F2).
 
-    Before this correction, ``target_identity["deployment_fingerprint"]`` was an arbitrary
+    Before Round 1's correction, ``target_identity["deployment_fingerprint"]`` was an arbitrary
     caller string and ``observed_deployment_identity`` was read straight out of the target's
     own HTTP response -- comparing the two proved only that *the endpoint echoed the expected
     string*, which anyone controlling both the declaration and the endpoint can arrange. The
     declared side is now anchored to a genuinely pre-committed, content-addressed,
-    Human-Authority-declared record resolved from the Store: the reference must resolve, the
+    Human-Authority-*signed* record resolved from the Store: the reference must resolve, the
     resolved record must be schema-valid, its own recomputed id/semantic fingerprint must equal
     its own declared values (tamper check -- the identical ``_resolve_*``-with-identity-
     reverification pattern ``bootstrap.py`` already applies to grants and declarations), and it
@@ -345,11 +369,32 @@ def _resolve_deployment_declaration(
     (:data:`_DECLARATION_ANCHORED_TARGET_FIELDS`), so a legitimately committed declaration for
     one target can never be replayed as the anchor for a different one.
 
+    **Structural Review Round 2 (P15-R2-F2)** closes what Round 1's own record left open: a
+    content address over a self-asserted body proves only internal self-consistency, so any
+    Store-writing caller could construct a declaration naming any Human Authority and any
+    deployment fingerprint, and an old-authority declaration survived a legitimate Human
+    Authority re-binding silently. Three further requirements now apply, in this order:
+
+    1. ``status`` must be ``"ACTIVE"`` -- a ``"REVOKED"`` declaration anchors nothing.
+    2. ``human_authority_ref`` must equal *human_authority_ref*, the exact Human Authority
+       reference **this call's own Boot just freshly restored** -- so a legitimate re-binding
+       to a new Human Authority invalidates every declaration issued under the old one for new
+       observations, rather than carrying it forward silently.
+    3. ``signature`` must genuinely verify, through
+       :func:`~manosube_agent_civilization.runtime.deployment_declaration.
+       verify_runtime_deployment_declaration_signature`, against *human_authority_signing_key*
+       -- again the exact key **this call's own Boot just freshly restored from the current
+       Project Binding**, never a caller-supplied copy and never a key read from the
+       declaration itself -- over
+       :func:`~manosube_agent_civilization.runtime.identity.
+       runtime_deployment_declaration_signing_payload`'s own bytes.
+
     Every refusal here is a :class:`~manosube_agent_civilization.runtime.errors.
-    RuntimeRequirementError`, never an ``IDENTITY_MISMATCH`` observation outcome: an
-    ``IDENTITY_MISMATCH`` is a statement about what a genuinely reached target reported, and
-    nothing has been reached at all at this point -- the *request itself* is not anchored, so
-    there is no observation to classify and none is committed.
+    RuntimeRequirementError` reached before any adapter call and with zero commits, never an
+    ``IDENTITY_MISMATCH`` observation outcome: an ``IDENTITY_MISMATCH`` is a statement about
+    what a genuinely reached target reported, and nothing has been reached at all at this point
+    -- the *request itself* is not anchored, so there is no observation to classify and none is
+    committed.
     """
 
     ref = _require_reference(
@@ -393,6 +438,33 @@ def _resolve_deployment_declaration(
                 "target may never anchor a different one: "
                 f"{declaration.get(field)!r} != {target_identity.get(field)!r}"
             )
+
+    # P15-R2-F2, in order: status, then the Boot-restored Human Authority binding, then the
+    # cryptographic proof that this declaration was actually issued by that Authority.
+    if declaration.get("status") != _DECLARATION_ACTIVE_STATUS:
+        raise RuntimeRequirementError(
+            f"resolved runtime_deployment_declaration {ref['id']!r} is not ACTIVE "
+            f"({declaration.get('status')!r}) -- a revoked deployment declaration anchors "
+            "nothing, and is refused before any adapter call"
+        )
+    if declaration.get("human_authority_ref") != dict(human_authority_ref):
+        raise RuntimeRequirementError(
+            f"resolved runtime_deployment_declaration {ref['id']!r} own human_authority_ref "
+            "does not name the Human Authority this call's own Boot just restored: "
+            f"{declaration.get('human_authority_ref')!r} != {dict(human_authority_ref)!r} -- a "
+            "declaration issued under a previous Human Authority is never carried forward "
+            "silently across a legitimate re-binding"
+        )
+    if not verify_runtime_deployment_declaration_signature(
+        declaration, signing_key=dict(human_authority_signing_key)
+    ):
+        raise RuntimeRequirementError(
+            f"resolved runtime_deployment_declaration {ref['id']!r} carries no genuine Human "
+            "Authority signature over its own adopted semantic fields, verified against the "
+            "human_authority_signing_key this call's own Boot restored from the current "
+            "Project Binding -- an unsigned, self-authored, wrong-key, or stale-key "
+            "declaration anchors nothing"
+        )
     return declaration
 
 
@@ -426,13 +498,17 @@ def observe_runtime_target(
       ``network_scope["allowed_hosts"]`` (P15-R1-F1);
     - *target_identity*'s own ``deployment_declaration_ref`` must resolve to a genuinely
       committed, independently identity-recomputed ``runtime_deployment_declaration`` that
-      restates this exact target and its exact claimed ``deployment_fingerprint`` (P15-R1-F6);
+      restates this exact target and its exact claimed ``deployment_fingerprint`` (P15-R1-F6),
+      that is ``status="ACTIVE"``, that names the exact Human Authority this call's own Boot
+      just restored, and that carries that Authority's own genuine Ed25519 signature over its
+      adopted semantic fields, verified against the ``human_authority_signing_key`` this same
+      Boot restored from the current Project Binding (Round 2, P15-R2-F2);
     - the Project Binding / Human Authority verified at this call's own initial Boot must
       still be the ones the Store reports (P15-R1-F5) -- re-proved again on every commit
       attempt, so an Envelope is never committed under authority that has since changed.
 
     See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §5 for the full canonical route this function
-    implements, step by step, and §10 for the Round 1 corrections above.
+    implements, step by step, §10 for the Round 1 corrections above, and §11 for Round 2's own.
     """
 
     _require_canonical_identity("project_id", project_id)
@@ -454,11 +530,26 @@ def observe_runtime_target(
     boot_context = _boot_authority_context(store, project_id, project_binding_id)
     real_human_authority_ref = dict(boot_context.human_authority_ref)
     authority_context = _authority_context(boot_context)
+    real_human_authority_signing_key = authority_context["human_authority_signing_key"]
+    if not isinstance(real_human_authority_signing_key, Mapping):
+        raise RuntimeRequirementError(
+            "the Boot-restored project_binding carries no readable human_authority_signing_key "
+            "-- a deployment declaration's own Human Authority signature cannot be verified "
+            "against it, so nothing is observed"
+        )
 
-    # Store-anchored deployment identity (P15-R1-F6) -- before the declared and observed
-    # identities are ever compared, the *declared* one must itself be a genuinely committed,
-    # independently identity-recomputed canonical fact rather than a caller string.
-    _resolve_deployment_declaration(store, project_id, checked_target_identity)
+    # Store-anchored, Authority-bound, signed deployment identity (P15-R1-F6, P15-R2-F2) --
+    # before the declared and observed identities are ever compared, the *declared* one must
+    # itself be a genuinely committed, independently identity-recomputed, ACTIVE canonical fact
+    # signed by the exact Human Authority this call's own Boot just restored, rather than a
+    # caller string or a self-asserted body.
+    _resolve_deployment_declaration(
+        store,
+        project_id,
+        checked_target_identity,
+        human_authority_ref=real_human_authority_ref,
+        human_authority_signing_key=real_human_authority_signing_key,
+    )
 
     target_fingerprint = runtime_target_fingerprint(checked_target_identity)
     boundary_fingerprint = runtime_observation_boundary_fingerprint(checked_boundary)

@@ -16,13 +16,20 @@ identity" distinct from the eventual committed fact):
   target fingerprint, the closed Observation Boundary, and the instant the observation was
   issued -- computable before the adapter is ever called, independent of whatever outcome it
   returns.
-- :func:`runtime_deployment_declaration_id` /
+- :func:`runtime_deployment_declaration_signing_payload` /
+  :func:`runtime_deployment_declaration_id` /
   :func:`runtime_deployment_declaration_semantic_fingerprint` -- the identity of the *canonical,
   Store-committed deployment declaration* a target's own claimed ``deployment_fingerprint`` must
-  match (Phase 15 Structural Review Round 1, P15-R1-F6). Follows the identical single-projection
-  convention the Envelope pair below uses: one canonical projection over the complete record
-  minus its own two digest fields, hashed twice under two different prefixes/encodings, so
-  tampering any field is detectable independently of the record's own id.
+  match (Phase 15 Structural Review Round 1, P15-R1-F6; signed and status-bound by Round 2,
+  P15-R2-F2). Follows the identical single-projection convention the Envelope pair below uses --
+  one canonical projection, hashed twice under two different prefixes/encodings, so tampering
+  any field is detectable independently of the record's own id -- and, since Round 2,
+  additionally the identical *shared-derivation* convention
+  :func:`~manosube_agent_civilization.binding.identity.human_grant_declaration_signing_payload`
+  and its ``github_projection_grant_declaration`` sibling already establish: the exact canonical
+  bytes a genuine Human Authority signature must cover are the exact bytes both digests are
+  computed over, so the content address and the signed message can never drift apart into two
+  different notions of "what this record declared".
 - :func:`runtime_observation_envelope_id` / :func:`runtime_observation_envelope_semantic_fingerprint`
   -- the identity of the *committed fact*: unlike Projection's own deliberately split mapping-
   key/semantic-fingerprint pair (see :mod:`manosube_agent_civilization.projection.identity`'s
@@ -65,11 +72,21 @@ ENVELOPE_SEMANTIC_FIELDS: tuple[str, ...] = (
 )
 
 
-#: Every field a Runtime Deployment Declaration's own identity and semantic fingerprint are
-#: computed over -- deliberately the complete record minus the two digest fields themselves,
-#: exactly as :data:`ENVELOPE_SEMANTIC_FIELDS` is, so tampering *any* other field (the owning
-#: Project Binding, the provider/deployment/instance identity, the declared deployment
-#: fingerprint, the declaring Human Authority, the declaration instant) is detectable.
+#: The closed tuple of *adopted semantic fields* a Runtime Deployment Declaration's own
+#: identity, semantic fingerprint, AND Human Authority signature are all computed over
+#: (Round 1, P15-R1-F6; ``status`` added and the signing role established by Round 2,
+#: P15-R2-F2) -- deliberately the complete record minus exactly three fields, so tampering
+#: *any* other field (the owning Project Binding, the provider/deployment/instance identity,
+#: the declared deployment fingerprint, the declaring Human Authority, the declaration's own
+#: ACTIVE/REVOKED status, the declaration instant) is detectable by either digest and
+#: invalidates the signature.
+#:
+#: The three exclusions are exactly the three ``binding/identity.py``'s own declaration payload
+#: tuples exclude, and for the identical reasons it states: the record's own content address
+#: and its own semantic fingerprint (an identity cannot be computed over itself) and
+#: ``signature`` (a signature cannot cover its own value). ``declared_at`` deliberately
+#: *participates*: the signature is what proves *who* declared this deployment identity, and a
+#: signature that never bound *when* would validate identically at any later replay instant.
 DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "project_id",
@@ -79,6 +96,7 @@ DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "instance_identity",
     "deployment_fingerprint",
     "human_authority_ref",
+    "status",
     "declared_at",
 )
 
@@ -138,25 +156,44 @@ def _deployment_declaration_projection(declaration: dict[str, Any]) -> dict[str,
     return {field: declaration[field] for field in DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS}
 
 
+def runtime_deployment_declaration_signing_payload(declaration: dict[str, Any]) -> bytes:
+    """Return the exact canonical bytes a genuine Human Authority signature over *declaration*
+    must cover -- the identical payload :func:`runtime_deployment_declaration_id` and
+    :func:`runtime_deployment_declaration_semantic_fingerprint` themselves hash, over
+    :data:`DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS` (Phase 15 Structural Review Round 2,
+    P15-R2-F2).
+
+    One shared derivation for all three purposes, the identical discipline
+    :func:`~manosube_agent_civilization.binding.identity.human_grant_declaration_signing_payload`
+    already establishes for a Human Grant Declaration: the content address and the signed
+    message are never allowed to drift apart into two different notions of "what this record
+    declared", so no field can ever be covered by one and not the other.
+
+    *declaration* need not yet carry its own two digest fields or its own ``signature`` -- none
+    of the three is read -- so this same function both mints the payload (before those fields
+    exist) and re-derives it for verification (once they do).
+    """
+
+    return canonical_json_bytes(_deployment_declaration_projection(declaration))
+
+
 def runtime_deployment_declaration_id(declaration: dict[str, Any]) -> str:
     """Return the content address of a canonical Runtime Deployment Declaration -- a pure
     function of the complete, real record content, never of a caller-declared value (Phase 15
-    Structural Review Round 1, P15-R1-F6)."""
+    Structural Review Round 1, P15-R1-F6), computed over
+    :func:`runtime_deployment_declaration_signing_payload`'s own bytes (Round 2, P15-R2-F2)."""
 
-    projection = _deployment_declaration_projection(declaration)
-    return (
-        "RUNTIME-DEPLOYMENT-DECLARATION-"
-        + hashlib.sha256(canonical_json_bytes(projection)).hexdigest().upper()
-    )
+    digest = hashlib.sha256(runtime_deployment_declaration_signing_payload(declaration))
+    return "RUNTIME-DEPLOYMENT-DECLARATION-" + digest.hexdigest().upper()
 
 
 def runtime_deployment_declaration_semantic_fingerprint(declaration: dict[str, Any]) -> str:
     """Return the digest of a canonical Runtime Deployment Declaration's full meaning -- the
-    identical projection :func:`runtime_deployment_declaration_id` hashes, under the
+    identical payload :func:`runtime_deployment_declaration_id` hashes, under the
     ``sha256:`` encoding every other owner's own semantic fingerprint already uses."""
 
-    projection = _deployment_declaration_projection(declaration)
-    return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
+    digest = hashlib.sha256(runtime_deployment_declaration_signing_payload(declaration))
+    return "sha256:" + digest.hexdigest()
 
 
 def _envelope_projection(envelope: dict[str, Any]) -> dict[str, Any]:

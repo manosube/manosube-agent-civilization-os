@@ -20,6 +20,21 @@ This file is the decisive control the review requires. It builds *both* worlds f
   before this correction.
 
 and then proves the three facts (a)/(b)/(c) the correction rests on.
+
+**Structural Review Round 2 (P15-R2-F1) changed what this file may claim.** Round 2 found that
+Round 1's own ``provision_trusted_runtime_root(store, project_id, project_binding_id)`` factory
+*was* the caller-selected trust anchor, merely relocated one call earlier -- and that this very
+file demonstrated the bypass rather than closing it, by provisioning a root over the alternate
+Store and obtaining a real capability from it. The shipped factory is now deleted, and every
+root here is minted by ``tests.fixtures.runtime_world.test_only_trusted_runtime_root``, an
+explicitly named issuer that exists only in ``tests/``.
+
+What this file proves is therefore unchanged in substance and narrower in claim: given a genuine
+root, the *type* is unforgeable, the alternate world's records never resolve inside the canonical
+root, and no argument on the capability call can redirect it. What it does **not** prove -- and
+never did -- is that a *live* deployment path resists an attacker; that is the subject of
+``test_runtime_no_shipped_minting_path.py``, which proves the stronger and simpler fact that no
+such shipped path exists at all in this Phase.
 """
 
 from __future__ import annotations
@@ -37,6 +52,7 @@ from tests.fixtures.runtime_world import (
     commit_grant,
     commit_records,
     sign_alternate_github_projection_grant_declaration,
+    test_only_trusted_runtime_root,
 )
 
 from manosube_agent_civilization.authority import evaluate_projection_authorization
@@ -49,7 +65,6 @@ from manosube_agent_civilization.runtime import bootstrap as bootstrap_module
 from manosube_agent_civilization.runtime.bootstrap import (
     TrustedRuntimeRoot,
     bootstrap_projection_execution_capability,
-    provision_trusted_runtime_root,
 )
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 
@@ -145,7 +160,13 @@ def test_the_alternate_world_is_genuinely_self_consistent_under_its_own_authorit
     _worlds: dict[str, Any],
 ) -> None:
     """Without this, every refusal below would prove nothing: the alternate world must be a
-    world that *would* have been accepted, not merely a broken one."""
+    world that *would* have been accepted, not merely a broken one.
+
+    Note precisely what the capability construction below shows and does not show. It shows the
+    alternate world is internally legitimate -- its own Boot, its own Ed25519-signed grants and
+    declarations, its own subjects all check out on their own terms. It does **not** show that
+    any shipped surface can reach it: the root is minted by the test-only issuer, which exists
+    only in ``tests/`` (P15-R2-F1)."""
 
     alternate = _worlds["alternate"]
     canonical = _worlds["canonical"]
@@ -155,7 +176,7 @@ def test_the_alternate_world_is_genuinely_self_consistent_under_its_own_authorit
 
     # It provisions its own root and bootstraps a real capability entirely within itself.
     capability = bootstrap_projection_execution_capability(
-        provision_trusted_runtime_root(
+        test_only_trusted_runtime_root(
             alternate["store"],
             project_id=alternate["project_id"],
             project_binding_id=alternate["project_binding_id"],
@@ -197,7 +218,7 @@ def test_a_legitimately_provisioned_root_does_not_retain_the_provisioning_capabi
     other Store -- the sentinel is dropped once checked."""
 
     canonical = _worlds["canonical"]
-    root = provision_trusted_runtime_root(
+    root = test_only_trusted_runtime_root(
         canonical["store"],
         project_id=canonical["project_id"],
         project_binding_id=canonical["project_binding_id"],
@@ -214,7 +235,7 @@ def test_a_legitimately_provisioned_root_does_not_retain_the_provisioning_capabi
 
 def test_a_provisioned_root_is_frozen(_worlds: dict[str, Any]) -> None:
     canonical = _worlds["canonical"]
-    root = provision_trusted_runtime_root(
+    root = test_only_trusted_runtime_root(
         canonical["store"],
         project_id=canonical["project_id"],
         project_binding_id=canonical["project_binding_id"],
@@ -237,11 +258,15 @@ def test_a_provisioned_root_is_frozen(_worlds: dict[str, Any]) -> None:
         ("PRJ-A", "https://attacker.test/binding"),
     ],
 )
-def test_provisioning_refuses_a_non_canonical_identity(
+def test_root_construction_refuses_a_non_canonical_identity(
     _worlds: dict[str, Any], project_id: str, project_binding_id: str
 ) -> None:
+    """The canonical-identity check moved onto the type itself in Round 2 (P15-R2-F1), since
+    the factory that used to perform it before construction no longer exists -- a root can still
+    never name a path, URL, or locator instead of a canonical identity."""
+
     with pytest.raises(RuntimeRequirementError):
-        provision_trusted_runtime_root(
+        test_only_trusted_runtime_root(
             _worlds["canonical"]["store"],
             project_id=project_id,
             project_binding_id=project_binding_id,
@@ -276,7 +301,7 @@ def test_the_alternate_worlds_references_never_resolve_within_the_canonical_root
 
     with pytest.raises(RuntimeRequirementError):
         bootstrap_projection_execution_capability(
-            provision_trusted_runtime_root(
+            test_only_trusted_runtime_root(
                 canonical["store"],
                 project_id=canonical["project_id"],
                 project_binding_id=canonical["project_binding_id"],
@@ -296,7 +321,7 @@ def test_the_alternate_worlds_store_can_no_longer_be_named_at_the_capability_cal
 
     canonical = _worlds["canonical"]
     alternate = _worlds["alternate"]
-    canonical_root = provision_trusted_runtime_root(
+    canonical_root = test_only_trusted_runtime_root(
         canonical["store"],
         project_id=canonical["project_id"],
         project_binding_id=canonical["project_binding_id"],
@@ -327,7 +352,7 @@ def test_a_root_provisioned_over_the_alternate_world_cannot_borrow_canonical_ref
     alternate = _worlds["alternate"]
     with pytest.raises(RuntimeRequirementError):
         bootstrap_projection_execution_capability(
-            provision_trusted_runtime_root(
+            test_only_trusted_runtime_root(
                 alternate["store"],
                 project_id=alternate["project_id"],
                 project_binding_id=alternate["project_binding_id"],

@@ -14,7 +14,9 @@
     "instance_identity",
     "deployment_fingerprint",
     "human_authority_ref",
-    "declared_at"
+    "status",
+    "declared_at",
+    "signature"
   ],
   "properties": {
     "schema_version": {"const": "0.1"},
@@ -38,7 +40,21 @@
     "instance_identity": {"type": "string", "minLength": 1, "maxLength": 256},
     "deployment_fingerprint": {"type": "string", "minLength": 1, "maxLength": 256},
     "human_authority_ref": {"$ref": "../common/reference.schema.json"},
-    "declared_at": {"$ref": "../common/timestamp.schema.json"}
+    "status": {"enum": ["ACTIVE", "REVOKED"]},
+    "declared_at": {"$ref": "../common/timestamp.schema.json"},
+    "signature": {"$ref": "#/$defs/signature"}
+  },
+  "$defs": {
+    "signature": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {
+        "algorithm": {"const": "ed25519"},
+        "key_id": {"$ref": "../common/identity.schema.json"},
+        "value": {"type": "string", "pattern": "^[0-9a-f]{128}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }
