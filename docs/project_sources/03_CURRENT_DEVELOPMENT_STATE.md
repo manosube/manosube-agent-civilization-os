@@ -691,7 +691,7 @@ ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AND_PR_65_REVIEW_COMMENT
 | PR #65 reviewed HEAD (Structural Review Round 1 の対象) | `116a25d59130c5e64ced9e665bc2b839182de06a` |
 | Structural Review Round 1 | [PR #65 comment 5594701920](https://github.com/manosube/manosube-agent-civilization-os/pull/65#issuecomment-5594701920) — 6 findings (P15-R1-F1 .. P15-R1-F6) |
 | SHUKOU adoption | 同comment（Human Authority `manosube`）により採択済 |
-| This correction round's own commits | このaddendumを含む、branch `agent/issue-64-phase15-runtime-adapter` 上の後続commit群（reviewed HEAD `116a25d5` の上に積まれた新規commitのみ。history rewriteなし） |
+| This correction round's own commits | branch `agent/issue-64-phase15-runtime-adapter` 上、reviewed HEAD `116a25d5` の直上に積まれた新規commitのみ（history rewriteなし）。`36424c7`（六findingsのcode + regression tests）、`82a4024`（contract/index/development-state記録、本addendumを含む）、[`645acdb`](https://github.com/manosube/manosube-agent-civilization-os/commit/645acdbacea28048ddf6cd956ae719c23172b313)（public docstring記録）、および本行を確定させるcommit自身。 |
 
 採択された6件の構造的findingと、その閉鎖範囲：
 
