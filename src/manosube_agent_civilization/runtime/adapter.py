@@ -12,10 +12,26 @@ HTTP GET (stdlib ``urllib`` only, no new runtime dependency) -- the V3 vertical-
 exercised against one disposable, local target this delivery's own test suite starts and stops
 itself (no VPS, no cloud provider, per Issue #64's own explicit non-target).
 
-This is the one module in the ``runtime`` package permitted to import anything naming a
-network/transport surface -- checked by name, exactly as ``projection/github_adapter.py``
-already is (``PROJECTION_CONTRACT.md`` §3 precedent; see
-``tests/contract/runtime/test_runtime_static_conformance.py``).
+This is the one module in the ``runtime`` package permitted to import a network/transport
+surface that actually *opens* anything -- checked by name, exactly as
+``projection/github_adapter.py`` already is (``PROJECTION_CONTRACT.md`` §3 precedent; see
+``tests/contract/runtime/test_runtime_static_conformance.py``, which additionally admits the
+pure, I/O-free ``urllib.parse`` import in :mod:`~manosube_agent_civilization.runtime.network`
+and nothing else anywhere in this package).
+
+**Structural Review Round 1 (P15-R1-F1).** ``LocalHttpRuntimeAdapter`` previously constructed
+and opened ``boundary["endpoint"]`` without ever consulting
+``boundary["network_scope"]["allowed_hosts"]``, and relied on ``urllib``'s own automatic
+redirect following, so a Boundary could name one allowed host and the request could still end
+up at another -- directly, or via a 3xx. Both halves are closed here: the endpoint is
+re-checked against the allowlist immediately before a socket is opened (defense in depth --
+:mod:`~manosube_agent_civilization.runtime.route` already refuses a wrong-host Boundary before
+any adapter is called at all, and neither site relies on the other being the only one), and
+redirect following is disabled outright. Not following any redirect, rather than validating
+each hop's own host, is a deliberate choice: this is a bounded observation probe against one
+explicit declared endpoint, not a general HTTP client, so a target that answers 3xx has not
+answered the bounded question that was asked -- that is a transport failure (``UNAVAILABLE``),
+never something to silently chase.
 """
 
 from __future__ import annotations
@@ -28,6 +44,7 @@ import urllib.error
 import urllib.request
 
 from .errors import RuntimeAdapterError
+from .network import require_endpoint_within_network_scope
 
 
 class FakeRuntimeAdapter:
@@ -128,13 +145,35 @@ class FakeRuntimeAdapter:
                 "observed_deployment_identity": None,
             }
 
-        permitted_fields = boundary["permitted_fields"]
+        permitted_fields = list(boundary["permitted_fields"])
         observed_fields = {field: record["fields"].get(field) for field in permitted_fields}
         return {
             "transport_outcome": "OBSERVED",
             "observed_fields": deepcopy(observed_fields),
             "observed_deployment_identity": record["observed_deployment_identity"],
         }
+
+
+class _RefuseEveryRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """A redirect handler that follows nothing (P15-R1-F1).
+
+    Returning ``None`` from ``redirect_request`` makes ``urllib``'s own handler chain fall
+    through to its default error handler, which raises the 3xx as an
+    :class:`urllib.error.HTTPError` -- so a redirect becomes an ordinary, honestly reported
+    transport failure (``UNAVAILABLE``) at the one place transport failures are already
+    classified, and no second request is ever issued to anywhere.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
 
 
 class LocalHttpRuntimeAdapter:
@@ -155,17 +194,22 @@ class LocalHttpRuntimeAdapter:
         self.adapter_identity: Mapping[str, Any] = dict(
             adapter_identity or {"adapter": "local_http_runtime_adapter", "version": "0.1"}
         )
+        #: One opener that follows no redirect at all (P15-R1-F1), built once per adapter --
+        #: never ``urllib.request.urlopen``'s process-global opener, whose handler set this
+        #: adapter neither owns nor can vouch for.
+        self._opener = urllib.request.build_opener(_RefuseEveryRedirectHandler)
 
     def observe(
         self, *, target_identity: Mapping[str, Any], boundary: Mapping[str, Any]
     ) -> Mapping[str, Any]:
-        endpoint = boundary["endpoint"]
-        url = endpoint["base_url"].rstrip("/") + "/" + endpoint["path"].lstrip("/")
+        # Independent re-enforcement of the Boundary's own closed network scope, immediately
+        # before a socket exists (P15-R1-F1). ``observe_runtime_target`` already refused a
+        # wrong-host Boundary before ever reaching an adapter; this adapter still never
+        # assumes it was called through that route, and refuses rather than connect.
+        url = require_endpoint_within_network_scope(boundary["endpoint"], boundary["network_scope"])
         request = urllib.request.Request(url, method="GET")  # noqa: S310
         try:
-            with urllib.request.urlopen(  # noqa: S310
-                request, timeout=boundary["timeout_seconds"]
-            ) as response:
+            with self._opener.open(request, timeout=boundary["timeout_seconds"]) as response:
                 status = response.status
                 raw_body = response.read()
         except urllib.error.HTTPError as error:
@@ -220,7 +264,7 @@ class LocalHttpRuntimeAdapter:
                 "observed_deployment_identity": None,
             }
 
-        permitted_fields = boundary["permitted_fields"]
+        permitted_fields = list(boundary["permitted_fields"])
         observed_fields = {field: body.get(field) for field in permitted_fields}
         observed_deployment_identity = body.get("deployment_fingerprint")
         if observed_deployment_identity is not None and not isinstance(

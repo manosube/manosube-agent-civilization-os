@@ -23,7 +23,10 @@ from manosube_agent_civilization.evidence import derive_evidence
 from manosube_agent_civilization.evidence.identity import evidence_semantic_fingerprint
 from manosube_agent_civilization.projection import FakeGitHubAdapter, ProjectionExecutionCapability
 from manosube_agent_civilization.projection.identity import projection_payload_fingerprint
-from manosube_agent_civilization.runtime.bootstrap import bootstrap_projection_execution_capability
+from manosube_agent_civilization.runtime.bootstrap import (
+    bootstrap_projection_execution_capability,
+    provision_trusted_runtime_root,
+)
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 
 _TARGET_REPOSITORY = {"host": "github", "owner": "acme", "repo": "widget"}
@@ -84,9 +87,11 @@ def test_bootstrap_constructs_a_real_capability_that_reaches_the_controlled_adap
     _world: dict[str, Any],
 ) -> None:
     capability = bootstrap_projection_execution_capability(
-        _world["store"],
-        project_id=_world["project_id"],
-        project_binding_id=_world["project_binding_id"],
+        provision_trusted_runtime_root(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+        ),
         github_projection_grant_refs=[_world["grant_ref"]],
         github_projection_grant_declaration_refs=[_world["declaration_ref"]],
     )
@@ -109,9 +114,11 @@ def test_bootstrap_constructs_a_real_capability_that_reaches_the_controlled_adap
 def test_bootstrap_refuses_with_no_grant_refs(_world: dict[str, Any]) -> None:
     with pytest.raises(RuntimeRequirementError):
         bootstrap_projection_execution_capability(
-            _world["store"],
-            project_id=_world["project_id"],
-            project_binding_id=_world["project_binding_id"],
+            provision_trusted_runtime_root(
+                _world["store"],
+                project_id=_world["project_id"],
+                project_binding_id=_world["project_binding_id"],
+            ),
             github_projection_grant_refs=[],
             github_projection_grant_declaration_refs=[],
         )
@@ -120,9 +127,11 @@ def test_bootstrap_refuses_with_no_grant_refs(_world: dict[str, Any]) -> None:
 def test_bootstrap_refuses_an_unresolvable_grant_ref(_world: dict[str, Any]) -> None:
     with pytest.raises(RuntimeRequirementError):
         bootstrap_projection_execution_capability(
-            _world["store"],
-            project_id=_world["project_id"],
-            project_binding_id=_world["project_binding_id"],
+            provision_trusted_runtime_root(
+                _world["store"],
+                project_id=_world["project_id"],
+                project_binding_id=_world["project_binding_id"],
+            ),
             github_projection_grant_refs=[
                 {"kind": "github_projection_grant", "id": "GITHUB-PROJECTION-GRANT-NONEXISTENT"}
             ],
@@ -133,9 +142,11 @@ def test_bootstrap_refuses_an_unresolvable_grant_ref(_world: dict[str, Any]) -> 
 def test_bootstrap_refuses_a_grant_with_no_anchoring_declaration(_world: dict[str, Any]) -> None:
     with pytest.raises(RuntimeRequirementError):
         bootstrap_projection_execution_capability(
-            _world["store"],
-            project_id=_world["project_id"],
-            project_binding_id=_world["project_binding_id"],
+            provision_trusted_runtime_root(
+                _world["store"],
+                project_id=_world["project_id"],
+                project_binding_id=_world["project_binding_id"],
+            ),
             github_projection_grant_refs=[_world["grant_ref"]],
             github_projection_grant_declaration_refs=[],
         )
@@ -183,9 +194,11 @@ def test_bootstrap_refuses_two_grants_for_the_identical_projection_kind(
 
     with pytest.raises(RuntimeRequirementError):
         bootstrap_projection_execution_capability(
-            _world["store"],
-            project_id=_world["project_id"],
-            project_binding_id=_world["project_binding_id"],
+            provision_trusted_runtime_root(
+                _world["store"],
+                project_id=_world["project_id"],
+                project_binding_id=_world["project_binding_id"],
+            ),
             github_projection_grant_refs=[_world["grant_ref"], second_grant_ref],
             github_projection_grant_declaration_refs=[
                 _world["declaration_ref"],

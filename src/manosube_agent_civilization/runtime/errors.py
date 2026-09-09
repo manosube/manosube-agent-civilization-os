@@ -30,3 +30,19 @@ class RuntimeAdapterError(RuntimeObservationError):
     """A :class:`~manosube_agent_civilization.runtime.types.RuntimeAdapter` returned a
     malformed or unreadable outcome -- never itself a transport-level ``MALFORMED``
     observation outcome, which is a legitimate typed result, not a raised error."""
+
+
+class RuntimeAuthorityFreshnessError(RuntimeObservationError):
+    """The authority-defining context (Project Binding identity / Human Authority reference /
+    Human Authority signing key) observed at this call's own initial Boot is no longer the one
+    the Store reports -- refused at the adapter boundary, or at the commit boundary, rather
+    than reaching a target with stale context or committing an Envelope carrying now-stale
+    authority (Phase 15 Structural Review Round 1, P15-R1-F5).
+
+    Deliberately its own class, sibling to :class:`RuntimeRequirementError` and
+    :class:`RuntimeEnvelopeIntegrityError` rather than a subclass of either: a caller's input
+    was not malformed (so it is not a requirement failure), and the derived Envelope's own
+    content is entirely self-consistent (so it is not an integrity failure) -- what changed is
+    the *world underneath an already-valid request*, which a caller may legitimately retry
+    against the new authority and which neither existing class names honestly.
+    """

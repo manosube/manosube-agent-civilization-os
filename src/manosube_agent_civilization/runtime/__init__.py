@@ -24,6 +24,12 @@ result = observe_runtime_target(
         "deployment_id": "widget-service",
         "instance_identity": "widget-service-1",
         "project_binding_ref": {"kind": "project_binding", "id": project_binding_id},
+        # the canonical, already-committed record this target's own declared
+        # deployment_fingerprint must match (Structural Review Round 1, P15-R1-F6)
+        "deployment_declaration_ref": {
+            "kind": "runtime_deployment_declaration",
+            "id": runtime_deployment_declaration_id_value,
+        },
         "deployment_fingerprint": "sha256:...",
     },
     boundary={...},
@@ -37,10 +43,14 @@ evidence = route_runtime_observation_to_evidence(
     store, result["receipt"], project_id, evidence_request
 )
 
+# Trusted runtime provisioning is two steps (Structural Review Round 1, P15-R1-F4): the
+# deployment fixes which Store/Project/Binding are in play exactly once, and every later
+# capability request reads that opaque root rather than re-offering the same choice.
+trusted_runtime_root = provision_trusted_runtime_root(
+    store, project_id=project_id, project_binding_id=project_binding_id
+)
 capability = bootstrap_projection_execution_capability(
-    store,
-    project_id=project_id,
-    project_binding_id=project_binding_id,
+    trusted_runtime_root,
     github_projection_grant_refs=[...],
     github_projection_grant_declaration_refs=[...],
 )
@@ -49,9 +59,14 @@ capability = bootstrap_projection_execution_capability(
 See ``10_RUNTIME/RUNTIME_INDEX.md`` for the full contract set.
 """
 
-from .bootstrap import bootstrap_projection_execution_capability
+from .bootstrap import (
+    TrustedRuntimeRoot,
+    bootstrap_projection_execution_capability,
+    provision_trusted_runtime_root,
+)
 from .errors import (
     RuntimeAdapterError,
+    RuntimeAuthorityFreshnessError,
     RuntimeEnvelopeIntegrityError,
     RuntimeObservationError,
     RuntimeRequirementError,
@@ -74,11 +89,14 @@ __all__ = [
     "RUNTIME_OBSERVATION_OUTCOMES",
     "RuntimeAdapter",
     "RuntimeAdapterError",
+    "RuntimeAuthorityFreshnessError",
     "RuntimeEnvelopeIntegrityError",
     "RuntimeObservationError",
     "RuntimeObservationReceipt",
     "RuntimeRequirementError",
+    "TrustedRuntimeRoot",
     "bootstrap_projection_execution_capability",
     "observe_runtime_target",
+    "provision_trusted_runtime_root",
     "route_runtime_observation_to_evidence",
 ]

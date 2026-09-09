@@ -28,6 +28,43 @@ production code rather than a test-only live-write gate:
   ``boot_project``'s/``evaluate_projection_authorization``'s own errors propagate unchanged) on
   any refusal, so a real caller can see *why* provisioning failed.
 
+**Structural Review Round 1 (P15-R1-F4): the trust root is a type, not a parameter list.**
+As first delivered, :func:`bootstrap_projection_execution_capability` took ``store``,
+``project_id``, and ``project_binding_id`` as its own free parameters and proved only that the
+world *inside* that caller-selected Store was internally self-consistent. That is not a
+control: an attacker can assemble an entirely separate Store -- its own Human Authority signing
+key, its own project_binding, its own grants, declarations, and subjects, every one of them
+genuinely valid on its own terms -- hand it in, and receive a real
+:class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability`, because nothing
+in the function's own signature distinguished "the canonical adopted Store" from "any
+internally consistent Store a caller happens to pass". Adding an environment digest, a
+hardcoded repository key, or any other anchor a caller can also select would only move the
+same problem one level out.
+
+The correction is structural rather than evidential: provisioning is now two steps, and the
+function no longer has *any* parameter through which an alternate Store, Project, or Binding
+could be named at all.
+
+```text
+provision_trusted_runtime_root(store, project_id=..., project_binding_id=...)
+    -> TrustedRuntimeRoot            an opaque, frozen, type-checked handle fixing which
+                                     Store/Project/Binding are in play; constructible only
+                                     through this function (a module-private sentinel is a
+                                     required constructor argument), and deliberately
+                                     performing no Boot of its own -- Boot happens fresh
+                                     inside the bootstrap call, so a root can never carry a
+                                     stale "was verified once, long ago" verdict
+
+bootstrap_projection_execution_capability(trusted_runtime_root, *, grant refs, declaration refs)
+    -> ProjectionExecutionCapability  reads the store/project/binding from the root alone,
+                                      and resolves every reference exclusively within it
+```
+
+Deciding *which* root is the canonical one remains, correctly, the deployment's own
+responsibility -- exactly as choosing which Store to open always was. What changed is that the
+decision now happens once, visibly, at a dedicated provisioning boundary, instead of being
+re-offered as an ordinary keyword argument on every capability request.
+
 This module imports no ``tests.*`` module (proved by static conformance -- the identical
 discipline ``projection/execution.py``'s own static conformance test already establishes),
 constructs no :class:`~manosube_agent_civilization.store.file_store.FileStateStore` of its own
@@ -44,6 +81,7 @@ caller, never by this module.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 import hashlib
 from typing import Any
 
@@ -89,6 +127,80 @@ _SUBJECT_KIND_FOR_PROJECTION_KIND: dict[str, str] = {
     "CHANGE_PULL_REQUEST": "change",
     "EVIDENCE_ARTIFACT": "observation_evidence",
 }
+
+
+#: The one object :class:`TrustedRuntimeRoot` accepts as proof that
+#: :func:`provision_trusted_runtime_root` -- and nothing else -- built it. Module-private and
+#: never exported, so no caller outside this module holds a reference to it; a constructed
+#: root does not retain it either (see :meth:`TrustedRuntimeRoot.__post_init__`), so holding a
+#: legitimate root grants no ability to forge a second one naming a different Store.
+_PROVISIONING_SENTINEL = object()
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedRuntimeRoot:
+    """One opaque, immutable handle naming exactly which Store, Project, and Project Binding a
+    trusted runtime provisioning call operates within (P15-R1-F4).
+
+    Constructible only through :func:`provision_trusted_runtime_root`: *provisioning_sentinel*
+    is a required constructor argument, so direct construction raises ``TypeError`` for
+    omitting it and :class:`~manosube_agent_civilization.runtime.errors.RuntimeRequirementError`
+    for supplying anything that is not the module-private sentinel. This is what makes the type
+    unforgeable *by shape alone* -- a caller cannot satisfy
+    :func:`bootstrap_projection_execution_capability`'s own ``isinstance`` check merely by
+    passing some other object carrying ``store``/``project_id``/``project_binding_id``
+    attributes.
+
+    This type verifies nothing about the world it names, deliberately: it holds no Boot
+    verdict, no resolved record, and no fingerprint, so it can never be a stale attestation
+    that something *was* valid at provisioning time. Every verification happens fresh inside
+    the bootstrap call that consumes it.
+    """
+
+    store: Any
+    project_id: str
+    project_binding_id: str
+    provisioning_sentinel: Any
+
+    def __post_init__(self) -> None:
+        if self.provisioning_sentinel is not _PROVISIONING_SENTINEL:
+            raise RuntimeRequirementError(
+                "TrustedRuntimeRoot may only be constructed through "
+                "provision_trusted_runtime_root -- a directly constructed root would be "
+                "exactly the caller-selected trust anchor this type exists to remove"
+            )
+        # Do not retain the sentinel: a legitimately provisioned root must not become a
+        # capability to mint further roots naming some other Store.
+        object.__setattr__(self, "provisioning_sentinel", None)
+
+
+def _require_canonical_identity(name: str, value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise RuntimeRequirementError(f"{name} must be a non-empty string identity: {value!r}")
+    if "/" in value or "\\" in value or value.startswith("..") or "://" in value:
+        raise RuntimeRequirementError(
+            f"{name} must be a canonical identity, never a path/URL/locator: {value!r}"
+        )
+    return value
+
+
+def provision_trusted_runtime_root(
+    store: Any, *, project_id: str, project_binding_id: str
+) -> TrustedRuntimeRoot:
+    """Return the one :class:`TrustedRuntimeRoot` naming *store*/*project_id*/
+    *project_binding_id* -- the single, explicit place a deployment decides which world its
+    trusted runtime provisioning operates within (P15-R1-F4).
+
+    *store* is always the caller's own already-open object; this function opens, selects, and
+    constructs no Store of its own (the identical discipline Phase 14 Round 11, P14-R11-F1,
+    already established), calls no Boot, resolves no record, and commits nothing. It only
+    fixes, once and opaquely, *which* root is in play, so that every later capability request
+    reads that root instead of re-offering the same choice as an ordinary keyword argument.
+    """
+
+    _require_canonical_identity("project_id", project_id)
+    _require_canonical_identity("project_binding_id", project_binding_id)
+    return TrustedRuntimeRoot(store, project_id, project_binding_id, _PROVISIONING_SENTINEL)
 
 
 def _require_reference(value: Any, *, context: str, kind: str) -> dict[str, str]:
@@ -173,25 +285,34 @@ def _resolve_subject(
 
 
 def bootstrap_projection_execution_capability(
-    store: Any,
+    trusted_runtime_root: TrustedRuntimeRoot,
     *,
-    project_id: str,
-    project_binding_id: str,
     github_projection_grant_refs: list[Mapping[str, str]] | tuple[Mapping[str, str], ...],
     github_projection_grant_declaration_refs: list[Mapping[str, str]]
     | tuple[Mapping[str, str], ...],
 ) -> ProjectionExecutionCapability:
     """Resolve *github_projection_grant_refs*/*github_projection_grant_declaration_refs* --
-    references only, never record bodies -- exclusively within *store*, the already-open,
-    caller-injected trusted Store this function never opens, selects, or constructs itself.
-    Boot-restores the exact Project/Binding *project_id*/*project_binding_id* name within
-    *store* (:func:`~manosube_agent_civilization.boot.boot_project`), and returns one
+    references only, never record bodies -- exclusively within *trusted_runtime_root*'s own
+    Store, the already-open object a deployment fixed once through
+    :func:`provision_trusted_runtime_root` and which this function never opens, selects, or
+    constructs itself.
+
+    **This signature carries no ``store``, ``project_id``, or ``project_binding_id``
+    parameter at all** (P15-R1-F4): there is no call shape through which a caller could name
+    an alternate, internally self-consistent world -- only a pre-vetted opaque root, plus
+    grant/declaration *references* resolved exclusively within it. A first argument that is
+    not a genuine :class:`TrustedRuntimeRoot` is refused at the type check, before Boot is
+    reached at all.
+
+    Boot-restores the exact Project/Binding the root names
+    (:func:`~manosube_agent_civilization.boot.boot_project`, called fresh here rather than at
+    provisioning time, so no root can ever carry a stale verdict), and returns one
     :class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability` bound to a
     freshly constructed :class:`~manosube_agent_civilization.projection.
     ProjectionExecutionContext` -- if, and only if, exactly one resolved grant and exactly one
     anchoring declaration exist for each distinct ``projection_kind`` the resolved grants
     themselves name, each grant's own ``subject_ref`` resolves to a real subject record within
-    *store* whose independently recomputed identity/fingerprint exactly matches both
+    that same root's own Store whose independently recomputed identity/fingerprint matches both
     *subject_ref* and the grant's own claimed ``subject_fingerprint``, and each genuinely
     authorizes ``MATERIALIZE_PROJECTION`` through
     :func:`~manosube_agent_civilization.authority.evaluate_projection_authorization` -- the
@@ -207,6 +328,19 @@ def bootstrap_projection_execution_capability(
     consumed here was already externally issued, committed, and Store-resolved before this
     call.
     """
+
+    # The type check is the whole control (P15-R1-F4) -- it runs before every other check,
+    # including before Boot, so a caller who tried to hand in a bare Store, a look-alike
+    # object, or an alternate world's own handle never reaches any resolution at all.
+    if not isinstance(trusted_runtime_root, TrustedRuntimeRoot):
+        raise RuntimeRequirementError(
+            "bootstrap_projection_execution_capability requires a TrustedRuntimeRoot obtained "
+            "from provision_trusted_runtime_root, never a bare store or a look-alike object: "
+            f"{type(trusted_runtime_root)!r}"
+        )
+    store = trusted_runtime_root.store
+    project_id = trusted_runtime_root.project_id
+    project_binding_id = trusted_runtime_root.project_binding_id
 
     if not github_projection_grant_refs:
         raise RuntimeRequirementError("github_projection_grant_refs must name at least one grant")
@@ -343,4 +477,8 @@ def bootstrap_projection_execution_capability(
     return ProjectionExecutionCapability(context)
 
 
-__all__ = ["bootstrap_projection_execution_capability"]
+__all__ = [
+    "TrustedRuntimeRoot",
+    "bootstrap_projection_execution_capability",
+    "provision_trusted_runtime_root",
+]

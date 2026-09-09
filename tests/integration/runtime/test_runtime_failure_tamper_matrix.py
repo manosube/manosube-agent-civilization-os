@@ -13,7 +13,12 @@ from typing import Any
 
 import pytest
 from tests.evidence_helpers import change_free_verification_evidence_request
-from tests.fixtures.runtime_world import bound, boundary_for, commit_records, target_identity_for
+from tests.fixtures.runtime_world import (
+    bound,
+    boundary_for,
+    commit_records,
+    commit_target_identity,
+)
 
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
@@ -54,7 +59,12 @@ def _world(tmp_path: Path) -> dict[str, Any]:
         "project_id": ctx["project_id"],
         "project_binding_id": ctx["project_binding_id"],
         "human_authority_ref": dict(boot_context.human_authority_ref),
-        "target_identity": target_identity_for(ctx["project_binding_id"]),
+        "target_identity": commit_target_identity(
+            store,
+            ctx["project_id"],
+            ctx["project_binding_id"],
+            dict(boot_context.human_authority_ref),
+        ),
     }
 
 
@@ -165,8 +175,12 @@ def test_an_unrelated_store_mutation_between_calls_does_not_block_a_fresh_observ
     first = _observe(_world, adapter, boundary, "2026-01-01T00:30:00Z")
 
     # An unrelated commit: a second, distinct observation of a different target.
-    other_target = target_identity_for(
-        _world["project_binding_id"], instance_identity="unrelated-instance"
+    other_target = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        instance_identity="unrelated-instance",
     )
     adapter.seed_target(target_identity=other_target, fields={"status": "ok"})
     _observe({**_world, "target_identity": other_target}, adapter, boundary, "2026-01-01T00:30:30Z")
@@ -224,7 +238,13 @@ def test_redaction_changes_the_committed_fingerprint_versus_an_unredacted_field_
     )
 
     adapter_a = FakeRuntimeAdapter()
-    target_a = target_identity_for(_world["project_binding_id"], instance_identity="instance-a")
+    target_a = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        instance_identity="instance-a",
+    )
     adapter_a.seed_target(
         target_identity=target_a, fields={"status": "ok", "api_token": "SECRET-A"}
     )
@@ -239,7 +259,13 @@ def test_redaction_changes_the_committed_fingerprint_versus_an_unredacted_field_
     )
 
     adapter_b = FakeRuntimeAdapter()
-    target_b = target_identity_for(_world["project_binding_id"], instance_identity="instance-b")
+    target_b = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        instance_identity="instance-b",
+    )
     adapter_b.seed_target(
         target_identity=target_b, fields={"status": "ok", "api_token": "SECRET-B"}
     )
@@ -532,7 +558,12 @@ def test_a_receipt_genuinely_produced_under_one_store_cannot_be_handed_off_throu
     boot_a = boot_project(
         store_a, project_id=ctx_a["project_id"], project_binding_id=ctx_a["project_binding_id"]
     )
-    target_identity = target_identity_for(ctx_a["project_binding_id"])
+    target_identity = commit_target_identity(
+        store_a,
+        ctx_a["project_id"],
+        ctx_a["project_binding_id"],
+        dict(boot_a.human_authority_ref),
+    )
     adapter = FakeRuntimeAdapter()
     adapter.seed_target(target_identity=target_identity, fields={"status": "ok"})
     outcome = observe_runtime_target(

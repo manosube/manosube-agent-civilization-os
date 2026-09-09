@@ -24,11 +24,14 @@ has already independently reclassified whatever the adapter reported.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
+from manosube_agent_civilization.difference.errors import DifferenceValidationError
 from manosube_agent_civilization.difference.validation import (
     SCHEMA_BASE as CANONICAL_SCHEMA_BASE,
     validate_record as _validate_canonical_record,
+    validate_subrecord as _validate_canonical_subrecord,
 )
 
 from .errors import RuntimeRequirementError
@@ -40,6 +43,97 @@ from .types import RUNTIME_OBSERVATION_METHODS, RUNTIME_OBSERVATION_OUTCOMES
 
 RUNTIME_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "runtime/"
 SCHEMA_VERSION = "0.1"
+
+ENVELOPE_SCHEMA_NAME = "runtime_observation_envelope.schema.json"
+DEPLOYMENT_DECLARATION_SCHEMA_NAME = "runtime_deployment_declaration.schema.json"
+
+
+def _require_schema_valid(value: Any, pointer: str, context: str) -> dict[str, Any]:
+    """Require *value* to be a mapping that is completely valid against the Runtime
+    Observation Envelope schema's own *pointer* subschema, and return it as a plain ``dict``.
+
+    Phase 15 Structural Review Round 1 (P15-R1-F2): before this correction the route checked
+    only a handful of fields by hand (an observation method, two non-empty timestamp strings,
+    a non-empty ``permitted_fields``) and left every other part of the declared shape --
+    endpoint, network scope, timeout, redaction fields, exact key set, timestamp grammar --
+    to the schema validation that runs inside :func:`derive_runtime_observation_envelope`,
+    which happens *after* ``adapter.observe`` has already run. A malformed Boundary could
+    therefore reach a real transport before anything refused it. The complete declared shape
+    is now proved here, against the identical canonical schema, before Boot or any adapter is
+    reached at all.
+    """
+
+    if not isinstance(value, Mapping):
+        raise RuntimeRequirementError(f"{context} must be an explicit mapping: {value!r}")
+    body = dict(value)
+    try:
+        _validate_canonical_subrecord(body, ENVELOPE_SCHEMA_NAME, pointer, base=RUNTIME_SCHEMA_BASE)
+    except DifferenceValidationError as error:
+        raise RuntimeRequirementError(f"{context} is not schema-valid: {error}") from error
+    return body
+
+
+def require_valid_timestamp(value: Any, context: str) -> str:
+    """Require *value* to be one canonical UTC ``Z``-suffixed timestamp, in exactly the
+    grammar ``common/timestamp.schema.json`` declares.
+
+    P15-R1-F2: ``observed_at`` was previously checked only for being a non-empty,
+    locator-free string here, so a timestamp in a form this repository's own canonical grammar
+    does not admit reached the adapter and was refused afterwards, at Envelope derivation.
+    """
+
+    try:
+        _validate_canonical_subrecord(
+            value, ENVELOPE_SCHEMA_NAME, "#/properties/observed_at", base=RUNTIME_SCHEMA_BASE
+        )
+    except DifferenceValidationError as error:
+        raise RuntimeRequirementError(
+            f"{context} is not a canonical UTC timestamp: {value!r}"
+        ) from error
+    return str(value)
+
+
+def require_valid_target_identity(target_identity: Any) -> dict[str, Any]:
+    """Return *target_identity* as a plain ``dict``, proved completely valid against
+    ``runtime_observation_envelope.schema.json``'s own ``$defs/target_identity`` -- including
+    the ``deployment_declaration_ref`` P15-R1-F6 made required."""
+
+    return _require_schema_valid(target_identity, "#/$defs/target_identity", "target_identity")
+
+
+def require_valid_boundary(boundary: Any) -> dict[str, Any]:
+    """Return *boundary* as a plain ``dict``, proved completely valid against
+    ``runtime_observation_envelope.schema.json``'s own ``$defs/boundary`` -- exact key set,
+    endpoint, permitted fields, time-window timestamp grammar, network scope, timeout, and
+    redaction fields all included."""
+
+    checked = _require_schema_valid(boundary, "#/$defs/boundary", "boundary")
+    if checked.get("observation_method") not in RUNTIME_OBSERVATION_METHODS:
+        raise RuntimeRequirementError(
+            f"boundary.observation_method is not recognized: {checked.get('observation_method')!r}"
+        )
+    return checked
+
+
+def require_valid_deployment_declaration(declaration: Any) -> dict[str, Any]:
+    """Return *declaration* as a plain ``dict``, proved completely valid against the canonical
+    ``runtime_deployment_declaration.schema.json`` (P15-R1-F6) -- a Store-resolved record is
+    never trusted on shape alone, exactly as no caller-supplied record ever is."""
+
+    if not isinstance(declaration, Mapping):
+        raise RuntimeRequirementError(
+            f"runtime_deployment_declaration must be an explicit mapping: {declaration!r}"
+        )
+    body = dict(declaration)
+    try:
+        _validate_canonical_record(
+            body, DEPLOYMENT_DECLARATION_SCHEMA_NAME, base=RUNTIME_SCHEMA_BASE
+        )
+    except DifferenceValidationError as error:
+        raise RuntimeRequirementError(
+            f"resolved runtime_deployment_declaration is not schema-valid: {error}"
+        ) from error
+    return body
 
 
 def derive_runtime_observation_envelope(
@@ -98,7 +192,5 @@ def derive_runtime_observation_envelope(
         runtime_observation_envelope_semantic_fingerprint(envelope)
     )
 
-    _validate_canonical_record(
-        envelope, "runtime_observation_envelope.schema.json", base=RUNTIME_SCHEMA_BASE
-    )
+    _validate_canonical_record(envelope, ENVELOPE_SCHEMA_NAME, base=RUNTIME_SCHEMA_BASE)
     return envelope

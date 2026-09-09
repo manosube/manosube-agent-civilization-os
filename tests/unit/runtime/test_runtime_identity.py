@@ -11,7 +11,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.identity import (
+    runtime_deployment_declaration_id,
+    runtime_deployment_declaration_semantic_fingerprint,
     runtime_observation_boundary_fingerprint,
     runtime_observation_envelope_id,
     runtime_observation_envelope_semantic_fingerprint,
@@ -25,7 +28,22 @@ _TARGET_IDENTITY: dict[str, Any] = {
     "deployment_id": "widget-service",
     "instance_identity": "widget-service-1",
     "project_binding_ref": {"kind": "project_binding", "id": "PROJBIND-0001"},
+    "deployment_declaration_ref": {
+        "kind": "runtime_deployment_declaration",
+        "id": "RUNTIME-DEPLOYMENT-DECLARATION-" + "A" * 64,
+    },
     "deployment_fingerprint": "sha256:" + "a" * 64,
+}
+_DEPLOYMENT_DECLARATION: dict[str, Any] = {
+    "schema_version": "0.1",
+    "project_id": "PRJ-0001",
+    "project_binding_ref": {"kind": "project_binding", "id": "PROJBIND-0001"},
+    "provider": "local",
+    "deployment_id": "widget-service",
+    "instance_identity": "widget-service-1",
+    "deployment_fingerprint": "sha256:" + "a" * 64,
+    "human_authority_ref": {"kind": "human_authority", "id": "AUTH-BIND-0001"},
+    "declared_at": "2026-09-08T00:00:00Z",
 }
 _BOUNDARY: dict[str, Any] = {
     "observation_method": "HTTP_GET_BOUNDED",
@@ -70,6 +88,11 @@ def test_target_fingerprint_is_sensitive_to_every_field() -> None:
         mutated = deepcopy(_TARGET_IDENTITY)
         if field == "project_binding_ref":
             mutated[field] = {"kind": "project_binding", "id": "PROJBIND-OTHER"}
+        elif field == "deployment_declaration_ref":
+            mutated[field] = {
+                "kind": "runtime_deployment_declaration",
+                "id": "RUNTIME-DEPLOYMENT-DECLARATION-" + "B" * 64,
+            }
         else:
             mutated[field] = mutated[field] + "-MUTATED"
         assert runtime_target_fingerprint(mutated) != baseline, field
@@ -167,3 +190,68 @@ def test_observed_content_fingerprint_is_collision_sensitive() -> None:
     second = runtime_observed_content_fingerprint({"status": "ok "})
     assert first != second
     assert first == runtime_observed_content_fingerprint({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# Runtime Deployment Declaration identity (P15-R1-F6)
+# ---------------------------------------------------------------------------
+
+
+def test_deployment_declaration_identity_is_deterministic_and_correctly_shaped() -> None:
+    identity = runtime_deployment_declaration_id(_DEPLOYMENT_DECLARATION)
+    fingerprint = runtime_deployment_declaration_semantic_fingerprint(_DEPLOYMENT_DECLARATION)
+    assert identity == runtime_deployment_declaration_id(deepcopy(_DEPLOYMENT_DECLARATION))
+    assert fingerprint == runtime_deployment_declaration_semantic_fingerprint(
+        deepcopy(_DEPLOYMENT_DECLARATION)
+    )
+    assert identity.startswith("RUNTIME-DEPLOYMENT-DECLARATION-")
+    assert len(identity) == len("RUNTIME-DEPLOYMENT-DECLARATION-") + 64
+    assert fingerprint.startswith("sha256:")
+    assert identity != fingerprint
+
+
+def test_deployment_declaration_identity_ignores_its_own_two_digest_fields() -> None:
+    """The identity is a pure function of the declaration's own meaning -- restating either
+    digest inside the record cannot change what that record's identity is."""
+
+    with_digests = deepcopy(_DEPLOYMENT_DECLARATION)
+    with_digests["runtime_deployment_declaration_id"] = "RUNTIME-DEPLOYMENT-DECLARATION-" + "0" * 64
+    with_digests["runtime_deployment_declaration_semantic_fingerprint"] = "sha256:" + "0" * 64
+    assert runtime_deployment_declaration_id(with_digests) == runtime_deployment_declaration_id(
+        _DEPLOYMENT_DECLARATION
+    )
+
+
+def test_deployment_declaration_identity_is_collision_sensitive_in_every_semantic_field() -> None:
+    baseline_id = runtime_deployment_declaration_id(_DEPLOYMENT_DECLARATION)
+    baseline_fp = runtime_deployment_declaration_semantic_fingerprint(_DEPLOYMENT_DECLARATION)
+    mutations: dict[str, Any] = {
+        "project_id": "PRJ-OTHER",
+        "project_binding_ref": {"kind": "project_binding", "id": "PROJBIND-OTHER"},
+        "provider": "elsewhere",
+        "deployment_id": "billing-service",
+        "instance_identity": "widget-service-2",
+        "deployment_fingerprint": "sha256:" + "b" * 64,
+        "human_authority_ref": {"kind": "human_authority", "id": "AUTH-OTHER"},
+        "declared_at": "2026-09-08T00:00:01Z",
+    }
+    for field, value in mutations.items():
+        mutated = deepcopy(_DEPLOYMENT_DECLARATION)
+        mutated[field] = value
+        assert runtime_deployment_declaration_id(mutated) != baseline_id, field
+        assert runtime_deployment_declaration_semantic_fingerprint(mutated) != baseline_fp, field
+
+
+def test_a_declaration_missing_a_semantic_field_cannot_be_identified_at_all() -> None:
+    """Refuses rather than silently addressing a partial record -- an identity computed over
+    "whatever fields happened to be present" would let two different declarations share one
+    content address."""
+
+    for field in ("project_id", "provider", "deployment_fingerprint", "human_authority_ref"):
+        incomplete = deepcopy(_DEPLOYMENT_DECLARATION)
+        incomplete.pop(field)
+        try:
+            runtime_deployment_declaration_id(incomplete)
+        except RuntimeRequirementError:
+            continue
+        raise AssertionError(f"a declaration missing {field!r} was addressed anyway")

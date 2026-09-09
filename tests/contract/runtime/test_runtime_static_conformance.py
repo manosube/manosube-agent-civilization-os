@@ -16,6 +16,19 @@ disclosed architectural divergences from Projection:
   reverification) -- none of which any other module in this package may import.
 - ``boot_project`` has two legitimate call sites in this package (``route.py`` and
   ``bootstrap.py``), never a single one the way Projection's own package requires.
+
+Structural Review Round 1 (P15-R1) changed four of the facts this file pins, each recorded at
+the test that pins it:
+
+- ``network.py`` exists (P15-R1-F1) and is the *second* module in this package naming
+  ``urllib`` -- admitted here for exactly one import, the pure, parse-only ``urllib.parse``,
+  and additionally proved to open nothing at all.
+- ``route.py`` still has exactly one literal ``boot_project`` call site, but now reaches it
+  from three points per observation (P15-R1-F5) through one private helper.
+- ``engine.py`` additionally imports ``difference.errors`` (P15-R1-F2), to translate the
+  canonical schema validator's own failure into this package's own refusal vocabulary.
+- the package exports a fourth public callable, ``provision_trusted_runtime_root``
+  (P15-R1-F4) -- a provisioning entry point, not a fourth route.
 """
 
 from __future__ import annotations
@@ -31,6 +44,7 @@ import manosube_agent_civilization.runtime.engine as engine_module
 import manosube_agent_civilization.runtime.errors as errors_module
 import manosube_agent_civilization.runtime.evidence_handoff as evidence_handoff_module
 import manosube_agent_civilization.runtime.identity as identity_module
+import manosube_agent_civilization.runtime.network as network_module
 import manosube_agent_civilization.runtime.route as route_module
 import manosube_agent_civilization.runtime.types as types_module
 
@@ -43,6 +57,7 @@ _ALL_PACKAGE_MODULES = (
     adapter_module,
     evidence_handoff_module,
     bootstrap_module,
+    network_module,
 )
 
 #: Existing canonical owners no module in this package may ever import, in whole or in part --
@@ -79,7 +94,19 @@ def _call_site_count(module: ModuleType, name: str) -> int:
     return count
 
 
-def test_runtime_package_exports_exactly_three_public_routes() -> None:
+def test_runtime_package_exports_exactly_three_routes_and_one_provisioning_entry_point() -> None:
+    """``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` is unchanged: the three *routes* this package
+    owns are exactly the three it always owned.
+
+    Structural Review Round 1 (P15-R1-F4) adds one further public callable that is not a route
+    at all -- ``provision_trusted_runtime_root``, the single, explicit boundary at which a
+    deployment fixes which Store/Project/Binding its trusted runtime provisioning operates
+    within. It resolves nothing, Boots nothing, and commits nothing; it exists so that
+    ``bootstrap_projection_execution_capability`` no longer carries a ``store``/``project_id``/
+    ``project_binding_id`` parameter surface a caller could use to name an alternate,
+    internally self-consistent world.
+    """
+
     public_callables = {
         name
         for name in runtime_module.__all__
@@ -89,8 +116,28 @@ def test_runtime_package_exports_exactly_three_public_routes() -> None:
     assert public_callables == {
         "bootstrap_projection_execution_capability",
         "observe_runtime_target",
+        "provision_trusted_runtime_root",
         "route_runtime_observation_to_evidence",
     }
+
+
+def test_bootstrap_accepts_no_store_or_project_selecting_parameter() -> None:
+    """P15-R1-F4's own decisive structural fact, proved by introspection rather than by
+    behaviour: there is no call shape at all -- not one that is refused at runtime, one that
+    does not exist -- through which a caller could hand
+    ``bootstrap_projection_execution_capability`` an alternate Store, Project, or Binding.
+    The identical technique ``tests/contract/projection/
+    test_v3_live_write_authority_static_conformance.py`` already applies to
+    ``ProjectionExecutionCapability.execute``."""
+
+    signature = inspect.signature(bootstrap_module.bootstrap_projection_execution_capability)
+    assert set(signature.parameters) == {
+        "trusted_runtime_root",
+        "github_projection_grant_refs",
+        "github_projection_grant_declaration_refs",
+    }
+    for forbidden in ("store", "project_id", "project_binding_id"):
+        assert forbidden not in signature.parameters
 
 
 def test_no_module_imports_a_forbidden_existing_owner() -> None:
@@ -142,7 +189,16 @@ def test_boot_project_is_imported_only_by_route_and_bootstrap() -> None:
         ), f"{module.__name__} imports manosube_agent_civilization.boot: {imported}"
 
 
-def test_route_calls_boot_project_exactly_once() -> None:
+def test_route_has_exactly_one_boot_project_call_site() -> None:
+    """One literal call site, reached from three points per observation (P15-R1-F5).
+
+    Round 1 required the authority-defining context to be re-proved immediately before the
+    adapter is reached, and again on every commit attempt -- so a single observation now Boots
+    up to three times. All three go through ``route.py``'s own single private helper, so this
+    module still contains exactly one literal ``boot_project`` call site and no second,
+    drifting way of restoring a project can ever appear beside it.
+    """
+
     assert _call_site_count(route_module, "boot_project") == 1
 
 
@@ -226,7 +282,14 @@ def test_only_bootstrap_imports_difference_and_change_identity() -> None:
                 "manosube_agent_civilization.change.identity",
             }
         elif module is engine_module:
-            assert difference_or_change == {"manosube_agent_civilization.difference.validation"}
+            # P15-R1-F2: engine.py now additionally imports ``difference.errors``, solely to
+            # translate the canonical schema validator's own DifferenceValidationError into
+            # this package's own RuntimeRequirementError -- a read of an error type, never a
+            # second validator or a second Difference owner.
+            assert difference_or_change == {
+                "manosube_agent_civilization.difference.validation",
+                "manosube_agent_civilization.difference.errors",
+            }
         else:
             assert not difference_or_change, f"{module.__name__}: {difference_or_change}"
 
@@ -265,6 +328,19 @@ def test_no_module_calls_store_commit_directly() -> None:
 
 
 def test_only_adapter_module_imports_a_network_or_transport_surface() -> None:
+    """``adapter.py`` is the only module that may import a surface which actually *opens*
+    anything; ``network.py`` (P15-R1-F1) may import exactly ``urllib.parse`` and nothing else.
+
+    Round 1 required the Boundary's own declared ``network_scope`` to be enforced *before* any
+    connection exists, structurally, for every adapter implementation -- which means the
+    route's own Boundary validation must be able to parse and canonicalize an endpoint URL.
+    ``urllib.parse`` is a pure string-parsing surface (never ``urllib.request``), so one more
+    file in this package needs a network-surface-*adjacent* but genuinely I/O-free import.
+    That file is ``network.py``, it is admitted here by name for exactly that one import, and
+    the next test additionally proves it opens nothing at all -- ``route.py`` itself still
+    imports no ``urllib`` of any kind.
+    """
+
     forbidden_substrings = ("urllib", "requests", "http.client", "socket", "subprocess")
     for module in _ALL_PACKAGE_MODULES:
         imported = _imported_module_names(module)
@@ -275,8 +351,46 @@ def test_only_adapter_module_imports_a_network_or_transport_surface() -> None:
         }
         if module is adapter_module:
             assert hits, "adapter.py is expected to import a network/transport surface"
+        elif module is network_module:
+            assert hits == {"urllib.parse"}, (
+                "network.py may import exactly urllib.parse -- a parse-only surface -- and "
+                f"nothing else: {hits}"
+            )
         else:
             assert not hits, f"{module.__name__} imports a network/transport surface: {hits}"
+
+
+def test_the_network_scope_module_performs_no_io_of_any_kind() -> None:
+    """P15-R1-F1: ``network.py`` decides, from strings alone, whether a declared endpoint
+    falls inside a declared network scope. It must never resolve a name, open a socket, read a
+    file, or reach anything -- proved by an AST walk for any call to a name that could."""
+
+    tree = ast.parse(inspect.getsource(network_module))
+    forbidden_callables = {
+        "urlopen",
+        "open",
+        "build_opener",
+        "connect",
+        "create_connection",
+        "getaddrinfo",
+        "gethostbyname",
+        "read_text",
+        "read_bytes",
+        "run",
+        "Popen",
+    }
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (
+            func.id
+            if isinstance(func, ast.Name)
+            else (func.attr if isinstance(func, ast.Attribute) else None)
+        )
+        assert name not in forbidden_callables, (
+            f"network.py calls {name!r} -- it must remain entirely I/O-free"
+        )
 
 
 def test_no_module_imports_a_scheduler_or_multi_agent_surface() -> None:

@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 from tests.evidence_helpers import change_free_verification_evidence_request
-from tests.fixtures.runtime_world import bound, boundary_for, target_identity_for
+from tests.fixtures.runtime_world import bound, boundary_for, commit_target_identity
 
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.runtime.adapter import LocalHttpRuntimeAdapter
@@ -83,8 +83,12 @@ def test_real_local_http_positive_observation_reaches_verified_evidence(
     _world: dict[str, Any], _local_http_target: tuple[str, int]
 ) -> None:
     host, port = _local_http_target
-    target_identity = target_identity_for(
-        _world["project_binding_id"], deployment_fingerprint=_DEPLOYMENT_FINGERPRINT
+    target_identity = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        deployment_fingerprint=_DEPLOYMENT_FINGERPRINT,
     )
     boundary = boundary_for(
         base_url=f"http://{host}:{port}",
@@ -140,8 +144,12 @@ def test_real_local_http_bounded_negative_observation_is_a_genuine_not_found(
     _world: dict[str, Any], _local_http_target: tuple[str, int]
 ) -> None:
     host, port = _local_http_target
-    target_identity = target_identity_for(
-        _world["project_binding_id"], deployment_fingerprint=_DEPLOYMENT_FINGERPRINT
+    target_identity = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        deployment_fingerprint=_DEPLOYMENT_FINGERPRINT,
     )
     boundary = boundary_for(
         base_url=f"http://{host}:{port}",
@@ -173,8 +181,12 @@ def test_real_local_http_unreachable_port_is_unavailable_never_not_found(
     ``UNAVAILABLE`` (a transport-level failure), never as the authoritative absence
     ``NOT_FOUND`` means."""
 
-    target_identity = target_identity_for(
-        _world["project_binding_id"], deployment_fingerprint=_DEPLOYMENT_FINGERPRINT
+    target_identity = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        deployment_fingerprint=_DEPLOYMENT_FINGERPRINT,
     )
     boundary = boundary_for(
         base_url="http://127.0.0.1:1",

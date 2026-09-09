@@ -76,16 +76,25 @@ RUNTIME_OUTCOME_TO_RECEIPT_STATUS: dict[str, str] = {
 }
 
 
-def _deep_freeze(value: Any) -> Any:
+def deep_freeze(value: Any) -> Any:
     """Recursively rebuild *value* into an immutable, alias-free equivalent -- deliberately
     duplicated rather than imported from ``boot/context.py`` or ``projection/types.py``, the
     identical decoupling requirement each of those modules' own docstrings already states for
-    one another."""
+    one another.
+
+    Package-public (Phase 15 Structural Review Round 1, P15-R1-F3) rather than module-private:
+    :mod:`~manosube_agent_civilization.runtime.route` now hands the adapter deep-frozen copies
+    of the exact ``target_identity``/``boundary`` it validated, so a replaceable adapter cannot
+    mutate in place what the route goes on to fingerprint, persist, and attest to. That is the
+    same guarantee this function already gave :class:`RuntimeObservationReceipt`, applied at
+    the one other boundary in this package where a foreign implementation touches
+    already-validated structures.
+    """
 
     if isinstance(value, Mapping):
-        return MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
+        return MappingProxyType({key: deep_freeze(item) for key, item in value.items()})
     if isinstance(value, Sequence) and not isinstance(value, str | bytes):
-        return tuple(_deep_freeze(item) for item in value)
+        return tuple(deep_freeze(item) for item in value)
     return value
 
 
@@ -147,9 +156,9 @@ class RuntimeObservationReceipt:
             raise RuntimeRequirementError(
                 f"project_id must be a non-empty string identity: {self.project_id!r}"
             )
-        object.__setattr__(self, "target_identity", _deep_freeze(self.target_identity))
-        object.__setattr__(self, "boundary", _deep_freeze(self.boundary))
-        object.__setattr__(self, "adapter_identity", _deep_freeze(self.adapter_identity))
-        object.__setattr__(self, "human_authority_ref", _deep_freeze(self.human_authority_ref))
-        object.__setattr__(self, "input_refs", _deep_freeze(tuple(self.input_refs)))
-        object.__setattr__(self, "observations", _deep_freeze(self.observations))
+        object.__setattr__(self, "target_identity", deep_freeze(self.target_identity))
+        object.__setattr__(self, "boundary", deep_freeze(self.boundary))
+        object.__setattr__(self, "adapter_identity", deep_freeze(self.adapter_identity))
+        object.__setattr__(self, "human_authority_ref", deep_freeze(self.human_authority_ref))
+        object.__setattr__(self, "input_refs", deep_freeze(tuple(self.input_refs)))
+        object.__setattr__(self, "observations", deep_freeze(self.observations))

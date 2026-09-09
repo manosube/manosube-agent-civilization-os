@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
-from tests.fixtures.runtime_world import bound, boundary_for, target_identity_for
+from tests.fixtures.runtime_world import bound, boundary_for, commit_target_identity
 
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
@@ -40,7 +40,12 @@ def _world(tmp_path: Path) -> dict[str, Any]:
     boot_context = boot_project(
         store, project_id=ctx["project_id"], project_binding_id=ctx["project_binding_id"]
     )
-    target_identity = target_identity_for(ctx["project_binding_id"])
+    target_identity = commit_target_identity(
+        store,
+        ctx["project_id"],
+        ctx["project_binding_id"],
+        dict(boot_context.human_authority_ref),
+    )
     return {
         "store": store,
         "project_id": ctx["project_id"],

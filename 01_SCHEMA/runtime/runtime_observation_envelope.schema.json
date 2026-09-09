@@ -76,6 +76,7 @@
         "deployment_id",
         "instance_identity",
         "project_binding_ref",
+        "deployment_declaration_ref",
         "deployment_fingerprint"
       ],
       "properties": {
@@ -86,6 +87,12 @@
           "allOf": [
             {"$ref": "../common/reference.schema.json"},
             {"properties": {"kind": {"const": "project_binding"}}}
+          ]
+        },
+        "deployment_declaration_ref": {
+          "allOf": [
+            {"$ref": "../common/reference.schema.json"},
+            {"properties": {"kind": {"const": "runtime_deployment_declaration"}}}
           ]
         },
         "deployment_fingerprint": {"type": "string", "minLength": 1, "maxLength": 256}

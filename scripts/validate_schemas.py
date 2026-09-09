@@ -73,7 +73,12 @@ def main() -> int:
     # github_projection_grant_declaration, and P14-R2-F2's projection_intent and
     # projection_materialize_attempt) add three more, making 56. Phase 15's own Runtime
     # Observation Envelope (Issue #64, runtime_observation_envelope) adds one more, making 57.
-    if len(paths) != 57 or len(set(ids)) != len(paths) or None in ids:
+    # Phase 15 Structural Review Round 1's own Store-anchored deployment identity
+    # (P15-R1-F6, runtime_deployment_declaration -- the canonical, content-addressed,
+    # Human-Authority-declared record a target's own claimed deployment_fingerprint must now
+    # match, closing the circular "the endpoint echoed the expected string" verification)
+    # adds one more, making 58.
+    if len(paths) != 58 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

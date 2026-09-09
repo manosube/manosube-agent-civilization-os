@@ -16,6 +16,13 @@ identity" distinct from the eventual committed fact):
   target fingerprint, the closed Observation Boundary, and the instant the observation was
   issued -- computable before the adapter is ever called, independent of whatever outcome it
   returns.
+- :func:`runtime_deployment_declaration_id` /
+  :func:`runtime_deployment_declaration_semantic_fingerprint` -- the identity of the *canonical,
+  Store-committed deployment declaration* a target's own claimed ``deployment_fingerprint`` must
+  match (Phase 15 Structural Review Round 1, P15-R1-F6). Follows the identical single-projection
+  convention the Envelope pair below uses: one canonical projection over the complete record
+  minus its own two digest fields, hashed twice under two different prefixes/encodings, so
+  tampering any field is detectable independently of the record's own id.
 - :func:`runtime_observation_envelope_id` / :func:`runtime_observation_envelope_semantic_fingerprint`
   -- the identity of the *committed fact*: unlike Projection's own deliberately split mapping-
   key/semantic-fingerprint pair (see :mod:`manosube_agent_civilization.projection.identity`'s
@@ -36,6 +43,8 @@ from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
+from .errors import RuntimeRequirementError
+
 #: Every field a Runtime Observation Envelope's own identity and semantic fingerprint are
 #: computed over -- deliberately the complete record minus the two digest fields themselves,
 #: so tampering *any* other field (target, Boundary, outcome, observed content, adapter
@@ -53,6 +62,24 @@ ENVELOPE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "observed_content_fingerprint",
     "adapter_identity",
     "human_authority_ref",
+)
+
+
+#: Every field a Runtime Deployment Declaration's own identity and semantic fingerprint are
+#: computed over -- deliberately the complete record minus the two digest fields themselves,
+#: exactly as :data:`ENVELOPE_SEMANTIC_FIELDS` is, so tampering *any* other field (the owning
+#: Project Binding, the provider/deployment/instance identity, the declared deployment
+#: fingerprint, the declaring Human Authority, the declaration instant) is detectable.
+DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_ref",
+    "provider",
+    "deployment_id",
+    "instance_identity",
+    "deployment_fingerprint",
+    "human_authority_ref",
+    "declared_at",
 )
 
 
@@ -97,6 +124,39 @@ def runtime_observation_request_identity(
         "RUNTIME-OBSERVATION-REQUEST-"
         + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
     )
+
+
+def _deployment_declaration_projection(declaration: dict[str, Any]) -> dict[str, Any]:
+    missing = [
+        field for field in DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS if field not in declaration
+    ]
+    if missing:
+        raise RuntimeRequirementError(
+            "runtime_deployment_declaration carries no readable "
+            f"{', '.join(missing)} -- its own identity cannot be recomputed"
+        )
+    return {field: declaration[field] for field in DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS}
+
+
+def runtime_deployment_declaration_id(declaration: dict[str, Any]) -> str:
+    """Return the content address of a canonical Runtime Deployment Declaration -- a pure
+    function of the complete, real record content, never of a caller-declared value (Phase 15
+    Structural Review Round 1, P15-R1-F6)."""
+
+    projection = _deployment_declaration_projection(declaration)
+    return (
+        "RUNTIME-DEPLOYMENT-DECLARATION-"
+        + hashlib.sha256(canonical_json_bytes(projection)).hexdigest().upper()
+    )
+
+
+def runtime_deployment_declaration_semantic_fingerprint(declaration: dict[str, Any]) -> str:
+    """Return the digest of a canonical Runtime Deployment Declaration's full meaning -- the
+    identical projection :func:`runtime_deployment_declaration_id` hashes, under the
+    ``sha256:`` encoding every other owner's own semantic fingerprint already uses."""
+
+    projection = _deployment_declaration_projection(declaration)
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
 
 
 def _envelope_projection(envelope: dict[str, Any]) -> dict[str, Any]:
