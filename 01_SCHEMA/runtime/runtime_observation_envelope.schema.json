@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/runtime/runtime_observation_envelope.schema.json",
+  "title": "Canonical Runtime Observation Envelope",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "runtime_observation_envelope_id",
+    "runtime_observation_semantic_fingerprint",
+    "project_id",
+    "target_identity",
+    "target_fingerprint",
+    "boundary",
+    "boundary_fingerprint",
+    "observation_request_identity",
+    "observed_at",
+    "observation_outcome",
+    "observed_fields",
+    "observed_content_fingerprint",
+    "adapter_identity",
+    "human_authority_ref"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "runtime_observation_envelope_id": {
+      "type": "string",
+      "pattern": "^RUNTIME-OBSERVATION-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "runtime_observation_semantic_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "target_identity": {"$ref": "#/$defs/target_identity"},
+    "target_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "boundary": {"$ref": "#/$defs/boundary"},
+    "boundary_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "observation_request_identity": {
+      "type": "string",
+      "pattern": "^RUNTIME-OBSERVATION-REQUEST-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "observed_at": {"$ref": "../common/timestamp.schema.json"},
+    "observation_outcome": {
+      "enum": [
+        "OBSERVED",
+        "NEGATIVE",
+        "NOT_FOUND",
+        "PERMISSION_DENIED",
+        "TIMEOUT",
+        "UNAVAILABLE",
+        "MALFORMED",
+        "IDENTITY_MISMATCH"
+      ]
+    },
+    "observed_fields": {"oneOf": [{"type": "null"}, {"type": "object"}]},
+    "observed_content_fingerprint": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+      ]
+    },
+    "adapter_identity": {"type": "object"},
+    "human_authority_ref": {"$ref": "../common/reference.schema.json"}
+  },
+  "$defs": {
+    "target_identity": {
+      "type": "object",
+      "required": [
+        "provider",
+        "deployment_id",
+        "instance_identity",
+        "project_binding_ref",
+        "deployment_fingerprint"
+      ],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1, "maxLength": 64},
+        "deployment_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "instance_identity": {"type": "string", "minLength": 1, "maxLength": 256},
+        "project_binding_ref": {
+          "allOf": [
+            {"$ref": "../common/reference.schema.json"},
+            {"properties": {"kind": {"const": "project_binding"}}}
+          ]
+        },
+        "deployment_fingerprint": {"type": "string", "minLength": 1, "maxLength": 256}
+      },
+      "additionalProperties": false
+    },
+    "boundary": {
+      "type": "object",
+      "required": [
+        "observation_method",
+        "endpoint",
+        "permitted_fields",
+        "time_window",
+        "network_scope",
+        "timeout_seconds",
+        "redaction_fields"
+      ],
+      "properties": {
+        "observation_method": {"enum": ["HTTP_GET_BOUNDED"]},
+        "endpoint": {
+          "type": "object",
+          "required": ["base_url", "path"],
+          "properties": {
+            "base_url": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "path": {"type": "string", "minLength": 1, "maxLength": 2048}
+          },
+          "additionalProperties": false
+        },
+        "permitted_fields": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "time_window": {
+          "type": "object",
+          "required": ["issued_at", "expires_at"],
+          "properties": {
+            "issued_at": {"$ref": "../common/timestamp.schema.json"},
+            "expires_at": {"$ref": "../common/timestamp.schema.json"}
+          },
+          "additionalProperties": false
+        },
+        "network_scope": {
+          "type": "object",
+          "required": ["allowed_hosts"],
+          "properties": {
+            "allowed_hosts": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1, "maxLength": 256},
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 60},
+        "redaction_fields": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
+          "uniqueItems": true
+        },
+        "expected_field": {"type": "string", "minLength": 1, "maxLength": 128},
+        "expected_value": {
+          "type": ["string", "number", "boolean", "null"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

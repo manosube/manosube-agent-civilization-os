@@ -621,3 +621,55 @@ PHASE_15_ALLOWED=false
 ```
 
 本addendumは、`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するPhase 13の恒久的なacceptance receipt（merge SHA、Human acceptance record、after-state re-observation）を代行しない。それは同ledgerの別途更新の対象であり、本書は現在地を示すための最小限の`OBSERVED_GITHUB_FACT`のみを記録する。
+
+---
+
+# 16. Phase 15 bounded addendum (Bounded Runtime Observation and Trusted Runtime Provisioning, Issue #64)
+
+本節は、セクション2-9・14-15が投影する`OBSERVED_AT_UTC`（Phase 14、PR #63）以降にrepositoryへ生じた変化のうち、local `git log`によりorigin/mainへ対して独立再観測できた`OBSERVED_GITHUB_FACT`のみを追記する、bounded addendumである。セクション2-9・14-15自身の全面再投影ではない。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-09
+ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AGAINST_ORIGIN_MAIN
+```
+
+| Field | Observed value |
+|---|---|
+| Current `origin/main` HEAD | [`149492e7fd094a424a40b840dd4dcb564f012461`](https://github.com/manosube/manosube-agent-civilization-os/commit/149492e7fd094a424a40b840dd4dcb564f012461) |
+| PR #63 (Phase 14, Issue #62) | **Merged** — merge commit `149492e` |
+| Governing Issue, current Phase | [#64 — Phase 15: Bounded Runtime Observation and Trusted Runtime Provisioning](https://github.com/manosube/manosube-agent-civilization-os/issues/64) |
+| SHUKOU implementation adoption | [`ADOPT_P15_D001_BOUNDED_RUNTIME_OBSERVATION_AND_TRUSTED_PROVISIONING`](https://github.com/manosube/manosube-agent-civilization-os/issues/64#issuecomment-5593903656) |
+| Adoption's own reviewed main SHA | `149492e7fd094a424a40b840dd4dcb564f012461` (identical to the current `origin/main` HEAD observed above) |
+| Dedicated implementation branch | `agent/issue-64-phase15-runtime-adapter` |
+| Dedicated Pull Request | Not yet opened at the time of this addendum |
+
+```text
+PHASE_14_MERGED=true
+PHASE_14_MERGE_COMMIT=149492e
+PHASE_14_COMPLETE=true
+COMPLETED_THROUGH_PHASE=14
+CURRENT_PHASE=15_BOUNDED_RUNTIME_OBSERVATION_AND_TRUSTED_PROVISIONING
+CURRENT_PHASE_ISSUE=64
+CURRENT_PHASE_STATE=LOCAL_IMPLEMENTATION_IN_PROGRESS_NO_PR_YET
+PHASE_15_ALLOWED=true
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+```
+
+`ADOPT_P15_D001_BOUNDED_RUNTIME_OBSERVATION_AND_TRUSTED_PROVISIONING`が要求する実装範囲は`10_RUNTIME/RUNTIME_INDEX.md`・`10_RUNTIME/RUNTIME_CONTRACT.md`が所有する。SHUKOU自身が固定した終端は次のとおりであり、本addendumもこれを変更しない。
+
+```text
+STATUS=READY_FOR_STRUCTURAL_REVIEW (delivery-terminal, not yet reached at the time of this
+                                     addendum)
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+```
+
+本addendumは、`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するPhase 14の恒久的なacceptance receipt（merge SHA、Human acceptance record、after-state re-observation）を代行しない。それは同ledgerの別途更新の対象であり、本書は現在地を示すための最小限の`OBSERVED_GITHUB_FACT`のみを記録する。
