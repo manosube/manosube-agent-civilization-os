@@ -47,6 +47,11 @@ KERNEL_SURFACE_PREFIXES: tuple[str, ...] = (
     "04_BOOT/",
     "05_CLI/",
     "07_AGENT_RUNTIME/",
+    # Phase 16 (Issue #66): the Model Runtime contract directory. Registered here so a
+    # doc-only change inside it is gated exactly the way a doc-only change inside
+    # `07_AGENT_RUNTIME/` already is. `09_PROJECTION/` and `10_RUNTIME/` remain unregistered,
+    # a pre-existing gap deliberately left alone by this Phase rather than silently widened.
+    "11_MODEL_RUNTIME/",
 )
 KERNEL_SURFACE_EXACT: tuple[str, ...] = ("pyproject.toml",)
 
