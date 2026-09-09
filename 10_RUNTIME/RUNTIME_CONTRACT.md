@@ -9,12 +9,18 @@ STATUS=CANONICAL_DESIGN
 KERNEL_ELEMENT=NONE_RUNTIME_ADAPTER
 RUNTIME_OWNER_COUNT=1
 PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
-TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=1
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
 ```
 
-Section 10 records Structural Review Round 1 (P15-R1-F1..F6) in full. Where that section
-and an earlier section differ, section 10 governs.
+`TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` was `1` after Round 1 and is `0` after
+Round 2: shipped code now mints no `TrustedRuntimeRoot` at all — see section 11.1, including
+that correction's own explicit scope caveat.
+
+Section 10 records Structural Review Round 1 (P15-R1-F1..F6) in full; section 11 records
+Structural Review Round 2 (P15-R2-F1/F2), which reopened and supersedes Round 1's own
+corrections for F4 and F6. Where two sections differ, the **highest-numbered** section
+governs.
 
 ## 1. Position
 
@@ -56,13 +62,6 @@ route_runtime_observation_to_evidence(
     evidence_request: Mapping[str, Any],
 ) -> dict[str, Any]
 
-provision_trusted_runtime_root(
-    store,
-    *,
-    project_id: str,
-    project_binding_id: str,
-) -> TrustedRuntimeRoot
-
 bootstrap_projection_execution_capability(
     trusted_runtime_root: TrustedRuntimeRoot,
     *,
@@ -73,7 +72,9 @@ bootstrap_projection_execution_capability(
 
 `target_identity` is `{provider, deployment_id, instance_identity, project_binding_ref,
 deployment_declaration_ref, deployment_fingerprint}` (`deployment_declaration_ref` added by
-Round 1, P15-R1-F6 -- see §10) -- `project_binding_ref` must name exactly `project_binding_id`;
+Round 1, P15-R1-F6 -- see §10; the record it names became signed, status-bound, and
+Boot-Authority-cross-checked in Round 2, P15-R2-F2 -- see §11.2) --
+`project_binding_ref` must name exactly `project_binding_id`;
 a target declaring a different Project Binding refuses before any adapter call. `boundary` is
 the closed Observation Boundary: `{observation_method, endpoint, permitted_fields,
 time_window, network_scope, timeout_seconds, redaction_fields, expected_field?,
@@ -103,8 +104,12 @@ bootstrap: a production-general adaptation of the Phase 14 V3 test harness's own
 `ProjectionExecutionCapability` (Phase 14's own shipped, bound-once execution interface --
 `manosube_agent_civilization.projection`) bound to a freshly constructed
 `ProjectionExecutionContext`. Since Round 1 (P15-R1-F4) it names that Store only through an
-opaque `TrustedRuntimeRoot` obtained from `provision_trusted_runtime_root`; it carries no
-`store`/`project_id`/`project_binding_id` parameter of its own at all. See §7, V5 and §10.
+opaque `TrustedRuntimeRoot`; it carries no `store`/`project_id`/`project_binding_id` parameter
+of its own at all. **Since Round 2 (P15-R2-F1) there is no shipped way to obtain that root**:
+the public minting factory is deleted, nothing in the shipped package constructs a
+`TrustedRuntimeRoot`, and this route is exercised only by tests through an explicitly
+test-confined issuer, pending a future Phase's real deployment composition boundary. See §7, V5,
+§10.4, and §11.1 (including that correction's own scope caveat).
 
 ```text
 RuntimeAdapter (Protocol)
@@ -218,13 +223,19 @@ src/manosube_agent_civilization/runtime/
 ├── adapter.py              FakeRuntimeAdapter (controlled, in-memory) and
 │                           LocalHttpRuntimeAdapter (stdlib urllib only, no redirect ever
 │                           followed) -- the two RuntimeAdapter implementations
+├── deployment_declaration.py
+│                           verify_runtime_deployment_declaration_signature -- the local
+│                           composition of binding.signature's own shared Ed25519 primitive
+│                           over a deployment declaration's signing payload (Round 2,
+│                           P15-R2-F2); verification only, never signing, never a key of its
+│                           own, and never imported by binding/
 ├── route.py                observe_runtime_target -- the one public Runtime Observation
 │                           route
 ├── evidence_handoff.py     route_runtime_observation_to_evidence -- the one public
 │                           Runtime-Observation-to-Evidence hand-off
-└── bootstrap.py            provision_trusted_runtime_root / TrustedRuntimeRoot and
-                             bootstrap_projection_execution_capability -- the V5 trusted
-                             runtime bootstrap provisioning Phase 14's
+└── bootstrap.py            TrustedRuntimeRoot (a type shipped code never mints -- Round 2,
+                             P15-R2-F1) and bootstrap_projection_execution_capability -- the
+                             V5 trusted runtime bootstrap provisioning Phase 14's
                              ProjectionExecutionCapability
 
 01_SCHEMA/runtime/
@@ -232,7 +243,9 @@ src/manosube_agent_civilization/runtime/
 └── runtime_deployment_declaration.schema.json   the canonical, Human-Authority-declared
                                                   deployment identity a target's own claimed
                                                   deployment_fingerprint must match
-                                                  (Round 1, P15-R1-F6)
+                                                  (Round 1, P15-R1-F6); required `status` and
+                                                  required Ed25519 `signature` added by
+                                                  Round 2, P15-R2-F2
 ```
 
 No second Boot, Store, Binding, Evidence, Difference, Authority, or Reflow owner is created
@@ -247,7 +260,10 @@ Projection's own `route.py` already makes of the same function). `boot` is impor
 `route.py` and `bootstrap.py`, each calling `boot_project` exactly once. `binding.identity`
 and `difference`/`change` identity utilities are importable only from `bootstrap.py`, for the
 identical read-only grant/declaration/subject reverification Phase 14's own V3 test harness
-already performs. `manosube_agent_civilization.projection` (the shipped Phase 14 execution
+already performs; `binding.signature` is importable only from `deployment_declaration.py`
+(Round 2, P15-R2-F2), for the one shared Ed25519 verification primitive it composes rather than
+reimplements. `binding/` imports nothing from this package, in either direction: Runtime is an
+adapter layer that depends on the Kernel's Binding element, never the reverse. `manosube_agent_civilization.projection` (the shipped Phase 14 execution
 interface) is importable only from `bootstrap.py`. A network/transport surface that actually
 *opens* anything (`urllib.request`/`urllib.error`) is importable only from `adapter.py`;
 `network.py` may additionally import exactly `urllib.parse`, a parse-only surface, and is
@@ -337,16 +353,28 @@ caller-injected trusted Store
    reference this Phase can genuinely bind an observation to, and is what
    `route_runtime_observation_to_evidence` uses for `verification_result_provenance`'s own
    `target_refs`/`input_refs`.
-6. **Trusted runtime provisioning is two steps, and the trust root is a type (Round 1,
-   P15-R1-F4).** `provision_trusted_runtime_root` is the single, explicit boundary at which a
-   deployment fixes which Store/Project/Binding its trusted provisioning operates within;
-   `bootstrap_projection_execution_capability` then reads that opaque root and carries no
-   `store`/`project_id`/`project_binding_id` parameter of its own at all. This is a
-   deliberate ergonomic cost (two calls where there was one, and one more type to hold) paid
-   for a structural gain: the parameter through which a caller could name an alternate,
-   internally self-consistent Authority world no longer exists. `TrustedRuntimeRoot` performs
-   no verification of its own -- it holds no Boot verdict that could go stale, only *which*
-   world is in play; every check runs fresh inside the bootstrap call. Full rationale in §10.4.
+6. **The trust root is a type, and in this Phase shipped code mints none (Round 1, P15-R1-F4;
+   superseded by Round 2, P15-R2-F1).** Round 1 made `bootstrap_projection_execution_capability`
+   read an opaque `TrustedRuntimeRoot` instead of `store`/`project_id`/`project_binding_id`, and
+   introduced `provision_trusted_runtime_root` in front of it. Round 2 found that factory *was*
+   the caller-selected trust anchor, merely relocated, and deleted it. `TrustedRuntimeRoot`
+   itself is kept: it is unforgeable by shape (a module-private sentinel is a required
+   constructor argument), it holds no Boot verdict that could go stale (only *which* world is in
+   play; every check runs fresh inside the bootstrap call), and it is the shape a future,
+   separately authorized Phase's real deployment composition boundary will mint. Until then the
+   only issuer is a test-confined one, and the capability route has no production-legitimate way
+   to obtain its own first argument. Full rationale and the exact scope caveat in §11.1.
+
+7. **A deployment declaration is a signed, revocable, Boot-Authority-bound Human Authority
+   statement, not merely a content-addressed body (Round 2, P15-R2-F2).** Round 1's own §10.6
+   explicitly declined to compare a declaration's `human_authority_ref` against the currently
+   Boot-verified Human Authority, on the grounds that no adopted decision established what
+   should happen at a re-binding. Round 2 adopts that decision: a re-binding **does** invalidate
+   previously issued deployment declarations for new observations, and there is no silent
+   carry-forward. `RUNTIME_CREDENTIAL_USE_AUTHORITY` remains `false` -- this package still holds
+   no private key, mints no signature, and reaches no key server; it only *verifies* a signature
+   against the public key a real, Boot-restored Project Binding already carries, exactly as
+   Binding itself already does for its own two declaration kinds. Full rationale in §11.2.
 
 ## 7. Required proof layers
 
@@ -392,9 +420,11 @@ controlled `FakeGitHubAdapter` (zero live network calls) through `.execute(...)`
 no grant references, an unresolvable grant reference, a grant with no anchoring declaration,
 and two grants for the identical `projection_kind`; a static proof that `bootstrap.py` imports
 no `tests.*` module and no network/transport surface of its own. (Since Round 1, every call
-here provisions a `TrustedRuntimeRoot` first -- P15-R1-F4, §10.4.)
+here provisions a `TrustedRuntimeRoot` first -- P15-R1-F4, §10.4; since Round 2 that root comes
+from the test-only issuer, because shipped code mints none -- P15-R2-F1, §11.1.)
 
 **Round 1 proof layers.** Six further suites, one per adopted finding, are listed in §10.9.
+**Round 2 proof layers** are listed in §11.5.
 
 ## 8. Explicit non-claims
 
@@ -428,11 +458,17 @@ OBSERVATION_BOUNDARY_CLOSED=true
 NETWORK_SCOPE_ENFORCED_BEFORE_ANY_CONNECTION=true
 REDIRECT_EVER_FOLLOWED=false
 DEPLOYMENT_IDENTITY_STORE_ANCHORED=true
+DEPLOYMENT_DECLARATION_HUMAN_AUTHORITY_SIGNED=true
+DEPLOYMENT_DECLARATION_STATUS_ENFORCED=true
+DEPLOYMENT_DECLARATION_BOUND_TO_BOOT_RESTORED_AUTHORITY=true
 TRUSTED_RUNTIME_ROOT_REQUIRED_FOR_PROVISIONING=true
+SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
 AUTHORITY_FRESHNESS_RECHECKED_AT_ADAPTER_AND_COMMIT_BOUNDARIES=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+RUNTIME_HOLDS_A_PRIVATE_SIGNING_KEY=false
+RUNTIME_MINTS_A_SIGNATURE=false
 PHASE_15_COMPLETE=false
 PHASE_16_ALLOWED=false
 ```
@@ -452,6 +488,8 @@ V5_PHASE_14_RUNTIME_PROVISIONING_CONTINUITY_PROOF=true
 STATIC_CONFORMANCE_PROOF=true
 STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=6
+STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_APPLIED=true
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=2
 ```
 
 `PHASE_15_COMPLETE`/`PHASE_16_ALLOWED` remain `false`: this delivery closes Issue #64's own
@@ -560,6 +598,11 @@ mutate them in place after validation.
 
 ### 10.4 P15-R1-F4 -- the trusted bootstrap no longer accepts a caller-selected Authority world
 
+> **Superseded in part by §11.1 (P15-R2-F1).** Round 2 reopened this finding: the
+> `provision_trusted_runtime_root` factory this subsection introduces *was itself* the
+> caller-selected trust anchor, relocated one call earlier. It no longer exists. Everything
+> below about the *type* remains accurate; every statement about the *factory* is historical.
+
 *Claimed:* `bootstrap_projection_execution_capability` provisions from *canonical* Store/Boot
 state.
 *True:* it accepted `store`/`project_id`/`project_binding_id` as its own free parameters and
@@ -631,6 +674,14 @@ load-bearing for the case this route must still defend against rather than assum
 all, and this route never assumes the one it was given is a content-addressed `FileStateStore`.
 
 ### 10.6 P15-R1-F6 -- deployed identity is Store-anchored, not echoed
+
+> **Superseded in part by §11.2 (P15-R2-F2).** Round 2 reopened this finding: a content address
+> over a *self-asserted* body proves only internal self-consistency, so any Store-writing caller
+> could still construct a declaration naming any Human Authority and any deployment fingerprint.
+> The record is now signed and status-bound, and the route now cross-checks it against the
+> Human Authority its own Boot restored. In particular, the "Deliberately not added, disclosed"
+> paragraph below is **reversed** by Round 2, which adopts exactly the decision it declined to
+> assume.
 
 *Claimed:* the observed target's own reported identity is checked against the declared one.
 *True:* `target_identity["deployment_fingerprint"]` was an arbitrary caller string and
@@ -737,4 +788,314 @@ tests/integration/runtime/test_runtime_authority_freshness.py  F5 (both barriers
                                                                    harmless-contention control)
 tests/integration/runtime/test_runtime_deployment_identity_anchor.py
                                                                F6 (spoofing, replay, tamper)
+```
+
+## 11. Structural Review Round 2 corrections (P15-R2-F1, P15-R2-F2)
+
+```text
+ROUND=2
+GOVERNING_REVIEW=PR #65 Structural Review Round 2
+FINDINGS_ADOPTED=2
+FINDINGS_CLOSED=2
+REOPENED_FROM_ROUND_1=P15-R1-F4 (now P15-R2-F1), P15-R1-F6 (now P15-R2-F2)
+ROUND_1_FINDINGS_CONFIRMED_CLOSED=P15-R1-F1, P15-R1-F2, P15-R1-F3, P15-R1-F5
+```
+
+Round 2 confirmed four of Round 1's own six corrections closed cleanly and reopened two: the
+trusted-provisioning correction (§10.4) and the deployment-identity anchor (§10.6). Both are
+recorded below in the same *what was claimed / what was true / what the code now does* form,
+with the same rule as Round 1: where this section and an earlier one differ, this section
+governs.
+
+### 11.1 P15-R2-F1 -- shipped code mints no trust root at all
+
+*Claimed (Round 1):* provisioning is two steps, and the capability call "no longer has *any*
+parameter through which an alternate Store, Project, or Binding could be named at all".
+
+*True:* the *capability call* did not — but `provision_trusted_runtime_root(store,
+project_id=..., project_binding_id=...)` was publicly exported and accepted exactly that tuple.
+Its module-private sentinel protected only the `TrustedRuntimeRoot` dataclass's own constructor;
+the public factory supplied that sentinel for whatever Store the caller passed. Any caller could
+simply call the factory. Moving the same three arguments one call earlier changed API shape, not
+control of the trust decision. Round 1's own regression suite *demonstrated* the bypass rather
+than closing it: `test_the_alternate_world_is_genuinely_self_consistent_under_its_own_authority`
+provisioned a root over an independently built alternate Store and obtained a real
+`ProjectionExecutionCapability`; the later "decisive" test proved only that alternate
+*references* do not resolve inside a *canonical* root, never that a caller could not provision
+and use the *alternate* root directly.
+
+*Now:*
+
+- **`provision_trusted_runtime_root` is deleted**, from `bootstrap.py` and from
+  `runtime/__init__.py`'s exports and `__all__`. It is not replaced by a same-shaped function
+  under a new name anywhere in `src/` — that would reproduce the exact defect the review named.
+- **`TrustedRuntimeRoot` is kept**, unchanged in role: a frozen, slotted dataclass whose
+  `__post_init__` still requires the module-private `_PROVISIONING_SENTINEL`, still drops it
+  once checked (so holding a root grants no ability to mint another), and now also carries the
+  canonical-identity check the deleted factory used to perform before construction. The *type*
+  was never the problem; the public *minting function* was.
+- **`bootstrap_projection_execution_capability`'s signature is unchanged** — Round 1 already
+  removed `store`/`project_id`/`project_binding_id` from it, and that was never this finding.
+- **The only issuer that exists anywhere is test-confined.**
+  `tests/fixtures/runtime_world.py::test_only_trusted_runtime_root` imports
+  `_PROVISIONING_SENTINEL` directly from `runtime.bootstrap`. Python does not enforce
+  leading-underscore privacy across an import boundary, and that is used here deliberately and
+  by an honestly named function: it is exactly the "explicitly injected test issuer that is
+  structurally unavailable to the live path" the Structural Review's own text permits. The
+  shipped package cannot reach it, because production code importing any `tests.*` module is
+  itself statically forbidden and proved so.
+- **Static conformance proves it mechanically.** An AST walk over every `.py` file in the
+  *installed* `manosube_agent_civilization` package asserts (a) no `ast.Call` resolving to
+  `TrustedRuntimeRoot` exists outside that dataclass's own class body, (b) the name
+  `provision_trusted_runtime_root` appears in no code position (definition, name, attribute,
+  import alias, or `__all__` string) in any shipped file, and (c) no public callable this
+  package exports declares `TrustedRuntimeRoot` as its return type — so a same-shaped function
+  under a different name is caught too.
+
+**Scope, stated exactly and not implied away.** This repository has genuinely no live
+deployment, CLI, or agent-runtime composition boundary wired to Runtime (Phase 16+ is not
+authorized; `RUNTIME_CREDENTIAL_USE_AUTHORITY=false`, `LIVE_EXTERNAL_WRITE_AUTHORITY=false`).
+What is proved here is therefore:
+
+```text
+NO SHIPPED MINTING PATH EXISTS AT ALL, IN THIS PHASE
+```
+
+and **not**:
+
+```text
+THE LIVE PATH RESISTS AN ATTACKER AT RUNTIME
+```
+
+There is no live path yet to resist one. When a future, separately authorized Phase wires a real
+deployment composition boundary, *that* boundary will mint roots, and "can it be tricked into
+naming an alternate world?" becomes a real question requiring its own real control. This round
+establishes only that the decision cannot be made *here*, by a shipped library function, on
+behalf of whatever Store a caller happened to pass. Deciding which root is canonical remains the
+future deployment's own responsibility, exactly as choosing which Store to open always was.
+
+**The reversed counterexample, proved dynamically rather than asserted.**
+`tests/integration/runtime/test_runtime_no_shipped_minting_path.py` builds both worlds for real
+— the canonical one, and the fully self-consistent alternate one Round 1 already built (its own
+external Human Authority, its own Ed25519 key, its own committed grants, declarations, and
+subjects) — and first confirms the alternate world genuinely *is* internally legitimate, by
+bootstrapping a real capability inside it through the test-only issuer. So the control is not
+vacuous: that world is exactly the kind Round 1's factory would have accepted. It then proves
+that nothing in the shipped surface (`runtime/__init__.py`, `bootstrap.py`,
+`bootstrap_projection_execution_capability`, `route.py`) offers any way to reach or mint a root
+over it — not because that particular world is specially blocked, but because shipped minting
+does not exist — and that `observe_runtime_target`, the one public route a real deployment
+reaches today, names neither `TrustedRuntimeRoot` nor the capability bootstrap at all, so there
+is no ambient live path that could be steered into minting one.
+
+### 11.2 P15-R2-F2 -- the deployment declaration is signed, revocable, and bound to the Boot-restored Human Authority
+
+*Claimed (Round 1):* the declared deployment identity is anchored to "a genuinely pre-committed,
+content-addressed, Human-Authority-declared record".
+
+*True:* it was content-addressed, but the "Human-Authority-declared" half was a *self-assertion*.
+The record carried a caller-supplied `human_authority_ref` and no signature, no signed payload,
+no Authority Decision, and no `status`/validity of any kind; its identity functions merely
+content-addressed that self-asserted body. Any Store-writing caller could construct a
+declaration naming any Human Authority and any deployment fingerprint.
+`route._resolve_deployment_declaration` schema-validated and recomputed the content address but
+— as §10.6's own "Deliberately not added, disclosed" paragraph stated — did not compare the
+declaration's `human_authority_ref` against the Human Authority freshly restored by Boot, and
+performed no cryptographic verification at all. So an old-authority declaration remained
+accepted after a legitimate Human Authority re-binding, and a fabricated-but-internally-
+consistent record could anchor whatever fingerprint an attacker's own endpoint echoed.
+
+*Now:*
+
+```text
+01_SCHEMA/runtime/runtime_deployment_declaration.schema.json
+  ... + status     {"enum": ["ACTIVE", "REVOKED"]}                      required
+      + signature  {"algorithm": const "ed25519",                       required
+                    "key_id": <common/identity.schema.json>,
+                    "value": "^[0-9a-f]{128}$"}
+```
+
+The `signature` `$def` is byte-for-byte the shape
+`01_SCHEMA/binding/github_projection_grant_declaration.schema.json` already uses — a sibling
+record kind's identical convention, reused rather than reinvented. The canonical schema count is
+unchanged at `58`: this adds fields to an existing schema file, never a new one, so
+`scripts/validate_schemas.py`'s asserted inventory is deliberately left alone.
+
+**Identity and signature are one derivation.** `runtime/identity.py` gains
+`runtime_deployment_declaration_signing_payload(record) -> bytes` over a closed tuple of adopted
+semantic fields, and `runtime_deployment_declaration_id` /
+`runtime_deployment_declaration_semantic_fingerprint` are now computed over *that payload's own
+bytes* — exactly how `binding/identity.py`'s `human_grant_declaration_id` is computed over
+`human_grant_declaration_signing_payload`. The content address and the signed message therefore
+cannot drift apart into two different notions of "what this record declared". The payload covers
+every field except three: the record's own two digests (an identity cannot be computed over
+itself) and `signature` (a signature cannot cover its own value) — the identical three
+exclusions, for the identical reasons, that `binding/identity.py`'s own payload tuples make.
+`status` participates, so a revocation cannot validate under a signature issued for an ACTIVE
+declaration; `declared_at` participates, so a signature always bound *when*.
+
+**Verification composes the shared primitive; it does not reimplement it.** A new module,
+`runtime/deployment_declaration.py`, owns
+`verify_runtime_deployment_declaration_signature(record, *, signing_key)`. It imports
+`binding.signature.verify_ed25519_signature` (this repository's one public, fail-closed-as-a-
+value Ed25519 primitive) and `binding.signature.SUPPORTED_SIGNATURE_ALGORITHM`, and restates only
+the three-check composition around them — algorithm match, `key_id` match, then the primitive —
+because `binding/signature.py`'s own equivalent composition is module-private. It holds no
+private key, mints no signature, imports no `cryptography` surface of its own, and reaches no key
+server, environment variable, or network; static conformance proves each of those. It lives in
+`runtime/` rather than `binding/` deliberately: **Binding must never import anything from
+`runtime/`** — Runtime is an adapter layer that depends on the Kernel's Binding element, never the
+reverse, and adding a Phase 15 record kind's verifier to `binding/` would invert that dependency.
+
+**Three new refusals in `route._resolve_deployment_declaration`,** after its existing
+resolve/schema-validate/tamper-check/field-restatement checks and in this order:
+
+```text
+1. status must be "ACTIVE"                          a REVOKED declaration anchors nothing
+2. human_authority_ref must equal the exact          a legitimate Human Authority re-binding
+   reference THIS call's own Boot just restored      invalidates old declarations; there is no
+                                                     silent carry-forward
+3. signature must verify against the exact           never a caller-supplied copy of the key,
+   human_authority_signing_key THAT SAME Boot        never a key read from the declaration
+   restored from the current Project Binding         itself, never a cached one
+```
+
+Each is a `RuntimeRequirementError` raised **before any adapter call, with zero commits** — the
+identical "nothing was reached, so there is nothing to classify as `IDENTITY_MISMATCH`"
+discipline §10.6 already established for this function's earlier checks.
+
+**Round 1's disclosed omission is deliberately reversed.** §10.6 declined to require the
+declaration's `human_authority_ref` to equal the Boot-verified Human Authority, on the stated
+grounds that F6 did not name that constraint and that adding it would "silently invalidate every
+previously declared deployment whenever a project is legitimately re-bound to a new Human
+Authority — an operational semantics no adopted decision establishes". Round 2 adopts exactly
+that operational semantics, explicitly: **a re-binding invalidates previously issued deployment
+declarations for new observations, and a newly issued, newly signed declaration under the new
+Binding is required.** That is now a stated, tested rule rather than an assumed one — the
+invalidation is loud (a refusal with zero adapter calls) rather than silent, and the positive
+control proving re-issuance works is part of the same suite.
+
+**`RUNTIME_CREDENTIAL_USE_AUTHORITY` remains `false`.** This package still holds no secret and
+signs nothing. A real Human's private key never touches this system at all — the only key ever
+consulted is the *public* verification key a real, Store-resolved, Boot-restored Project Binding
+record already carries, which is precisely what `binding/signature.py`'s own module docstring has
+always said about the two declaration kinds Binding owns.
+
+### 11.3 Judgment calls made in this round that the adopted findings did not fully pin down
+
+1. **Placement of the verification wrapper.** A new `runtime/deployment_declaration.py`, rather
+   than folding it into `bootstrap.py` or `route.py`. `route.py` was rejected because static
+   conformance pins "`binding` is imported only by `bootstrap.py`", and widening that to
+   `route.py` would blur the route's own no-Authority-import discipline; `bootstrap.py` was
+   rejected because it is the *provisioning* module and has nothing to do with observation. One
+   small module with one public function keeps both existing facts intact and makes the new
+   import admissible by name.
+
+2. **Which canonical serializer the signing payload uses.** `state.canonicalize.
+   canonical_json_bytes` — the serializer `runtime/identity.py` already uses for every other
+   Runtime digest — rather than `difference.canonical.canonical_bytes`, which
+   `binding/identity.py` uses for its own payloads. Both are canonical serializers this
+   repository already owns; changing Runtime's would have silently changed every existing Runtime
+   identity. The *convention* being reused from Binding is the closed-adopted-field-tuple and the
+   one-derivation-for-address-and-signature discipline, not the specific byte encoder.
+
+3. **The fixture signer has a canonical default.** `deployment_declaration_for` /
+   `commit_target_identity` gained `status` (default `"ACTIVE"`) and `signer`/`signing_key_id`
+   (default: the canonical fixture Human Authority's own key pair), rather than making every
+   existing call site pass them explicitly. This mirrors the `signer: Any = None` default
+   `commit_declaration` already carries in the same fixture module: a test that wants a
+   legitimate declaration gets one, and every negative control passes an attacker's, an
+   alternate world's, or a pre-re-binding key *explicitly*, so the intent is visible exactly
+   where it matters.
+
+4. **What "a re-binding" means here.** This repository has no separate re-bind route:
+   `bind_project` owns genesis and genesis is strictly one-shot. A re-binding is therefore
+   modelled as what it actually is in this Kernel — a genuinely new `project_binding` record,
+   assembled through the *real* Binding producer (`assemble_project_binding`, the identical
+   function `bind_project` itself calls), carrying a rotated `human_authority_signing_key` under
+   the identical Human Authority, committed into the identical project. Because a Project Binding
+   is content-addressed over its own `human_authority_ref`/`human_authority_signing_key`, that
+   rotation necessarily mints a new `project_binding_id`, and Boot restores it exactly as it
+   restores the original.
+
+5. **The cross-Binding control's refusal point, disclosed.** Because Binding identity and signing
+   key are inseparable (item 4), a declaration "genuinely valid under Binding A, presented while
+   Binding B is Boot-restored" is refused at the `project_binding_ref` restatement check, *before*
+   the signature check. The signature check is therefore isolated by a separate test — a
+   declaration restating the new Binding correctly, naming the correct current Human Authority,
+   ACTIVE, and content-address-reproducing, whose signature alone is by the pre-re-binding key.
+   Both cases are proved; neither stands in for the other.
+
+6. **The test-only issuer's name.** `test_only_trusted_runtime_root`, so no call site can read as
+   a production entry point. It carries `__test__ = False` so pytest does not collect it as a test
+   case in the modules that import it.
+
+### 11.4 Round 2 declarations
+
+```text
+TRUSTED_RUNTIME_ROOT_TYPE_RETAINED=true
+TRUSTED_RUNTIME_ROOT_DIRECTLY_CONSTRUCTIBLE=false
+SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
+SHIPPED_FUNCTION_RETURNING_A_TRUSTED_RUNTIME_ROOT_EXISTS=false
+TRUSTED_RUNTIME_ROOT_ISSUER_IS_TEST_ONLY=true
+TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
+NO_SHIPPED_MINTING_PATH_PROVEN_BY_AST_WALK_OVER_INSTALLED_PACKAGE=true
+LIVE_PATH_ADVERSARIAL_RESISTANCE_PROVEN=false
+LIVE_DEPLOYMENT_COMPOSITION_BOUNDARY_EXISTS=false
+DEPLOYMENT_DECLARATION_HUMAN_AUTHORITY_SIGNED=true
+DEPLOYMENT_DECLARATION_STATUS_ENFORCED=true
+DEPLOYMENT_DECLARATION_BOUND_TO_BOOT_RESTORED_AUTHORITY=true
+DEPLOYMENT_DECLARATION_SIGNING_PAYLOAD_EQUALS_CONTENT_ADDRESS_PAYLOAD=true
+DEPLOYMENT_DECLARATION_SURVIVES_A_HUMAN_AUTHORITY_REBINDING=false
+ED25519_VERIFICATION_REIMPLEMENTED_IN_RUNTIME=false
+BINDING_IMPORTS_RUNTIME=false
+RUNTIME_HOLDS_A_PRIVATE_SIGNING_KEY=false
+RUNTIME_MINTS_A_SIGNATURE=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+CANONICAL_SCHEMA_COUNT_CHANGED=false
+NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=0
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+```
+
+### 11.5 Round 2 proof layers
+
+```text
+tests/contract/runtime/test_runtime_static_conformance.py       F1 (no shipped minting call
+                                                                   site; deleted name absent
+                                                                   from every code position; no
+                                                                   public callable returns the
+                                                                   type) and F2 (binding.
+                                                                   signature admitted for
+                                                                   exactly one module; that
+                                                                   module reimplements no
+                                                                   cryptography and signs
+                                                                   nothing)
+tests/integration/runtime/test_runtime_no_shipped_minting_path.py
+                                                                F1 (the reversed counterexample,
+                                                                   both worlds built for real,
+                                                                   with the explicit scope
+                                                                   caveat in its own docstring)
+tests/integration/runtime/test_runtime_trusted_root.py          F1 (Round 1's own controls, now
+                                                                   minted through the test-only
+                                                                   issuer)
+tests/integration/runtime/test_runtime_bootstrap_continuity.py  F1 (V5 continuity, unchanged in
+                                                                   substance, re-rooted on the
+                                                                   test-only issuer)
+tests/unit/runtime/test_runtime_identity.py                     F2 (one derivation for address,
+                                                                   fingerprint, and signed
+                                                                   message; the three exclusions;
+                                                                   status/declared_at sensitivity)
+tests/integration/runtime/test_runtime_deployment_identity_anchor.py
+                                                                F2 (unsigned, self-authored,
+                                                                   wrong-signer, wrong-Authority,
+                                                                   REVOKED, tampered-after-
+                                                                   signing in both directions,
+                                                                   cross-Binding, the full
+                                                                   re-binding scenario, and the
+                                                                   non-vacuity controls for the
+                                                                   preserved replay/cross-project
+                                                                   cases)
 ```

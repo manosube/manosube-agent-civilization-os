@@ -738,3 +738,87 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 ```
 
 本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。
+
+---
+
+# 18. Phase 15 Structural Review Round 2 correction addendum (P15-R2-F1 / P15-R2-F2, Issue #64 / PR #65)
+
+本節は、セクション17のaddendum記録時点（`CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED_PR_OPEN`）以降にrepositoryへ生じた変化のうち、local `git log`とPR #65自身のReview commentにより独立再観測できた`OBSERVED_GITHUB_FACT`のみを追記する、bounded addendumである。セクション16・17の全面再投影ではない。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-09
+ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AND_PR_65_REVIEW_COMMENT
+```
+
+| Field | Observed value |
+|---|---|
+| Dedicated Pull Request | [#65](https://github.com/manosube/manosube-agent-civilization-os/pull/65) — **open**, not merged |
+| PR #65 reviewed HEAD (Structural Review Round 2 の対象) | `e840f0970d1cd7df0f7cbfaf6fe9b809be0ca01e` |
+| Structural Review Round 2 | [PR #65 comment 5595591851](https://github.com/manosube/manosube-agent-civilization-os/pull/65#issuecomment-5595591851) — 2 findings (P15-R2-F1, P15-R2-F2) |
+| SHUKOU adoption | 同comment（Human Authority `manosube`）により採択済 |
+| Round 1 findings の Round 2 自身による処分 | `P15_R1_F1_CLOSED=true`, `P15_R1_F2_CLOSED=true`, `P15_R1_F3_CLOSED=true`, `P15_R1_F5_CLOSED=true`。`P15_R1_F4` と `P15_R1_F6` のみ reopen され、それぞれ `P15-R2-F1` / `P15-R2-F2` として再採番された。 |
+| This correction round's own commits | branch `agent/issue-64-phase15-runtime-adapter` 上、reviewed HEAD `e840f097` の直上に積まれた新規commitのみ。history rewrite（amend / rebase / force-push）は行っていない。新規branchも新規PRも作成していない。 |
+
+採択された2件の構造的findingと、その閉鎖範囲：
+
+```text
+P15-R2-F1  public provisioning factory still turned any caller-selected Store into a
+           "trusted" root（Round 1 の P15-R1-F4 が factory を一段手前へ移しただけであり、
+           trust decision の制御そのものは移っていなかった）
+           → shipped `src/` から provision_trusted_runtime_root を削除。同名・同形の関数を
+             別名で再導入することもしない。TrustedRuntimeRoot 型と module-private sentinel
+             は保持（型自体は問題ではなく、公開 minting 関数のみが問題だった）。
+             唯一の issuer は tests/fixtures/runtime_world.py::test_only_trusted_runtime_root
+             であり、shipped package からは構造的に到達不能。
+             installed package 全 .py への AST walk により、TrustedRuntimeRoot(...) の
+             call site が dataclass 自身の class body 以外に存在しないこと、削除された
+             factory 名がいかなる code position にも現れないこと、TrustedRuntimeRoot を
+             返す public callable が存在しないことを機械的に証明。
+P15-R2-F2  the deployment declaration was unsigned and unbound to the Boot-verified
+           Human Authority
+           → runtime_deployment_declaration.schema.json に必須 status
+             （ACTIVE/REVOKED）と必須 Ed25519 signature を追加（github_projection_grant_
+             declaration.schema.json と同一の $def 形状を再利用）。
+             runtime_deployment_declaration_signing_payload を追加し、content address /
+             semantic fingerprint / 署名対象を単一の導出へ統合。
+             route._resolve_deployment_declaration は、status=ACTIVE、当該呼び出し自身の
+             Boot が復元した Human Authority との一致、および同 Boot が現行 Project Binding
+             から復元した human_authority_signing_key に対する署名検証を要求する。
+             いずれの拒否も adapter 呼び出し前・commit ゼロ。
+```
+
+`P15-R2-F1` が証明する範囲は、以下のとおり明示的に限定される（誇張しない）。
+
+```text
+SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false   （証明済）
+LIVE_PATH_ADVERSARIAL_RESISTANCE_PROVEN=false            （未証明・主張しない）
+LIVE_DEPLOYMENT_COMPOSITION_BOUNDARY_EXISTS=false
+```
+
+本repositoryには Runtime に接続された live deployment / CLI / agent-runtime composition boundary が現時点で存在しない（Phase 16+ は未認可）。したがって本roundが確立したのは「この Phase の shipped code には root を mint する経路が一切存在しない」という事実であり、「live path が実行時に攻撃者へ耐える」という主張ではない。将来のPhaseが実際の deployment composition boundary を接続した時点で、その boundary 自身に対する独立の control が別途必要になる。
+
+`P15-R2-F2` は、`RUNTIME_CONTRACT.md` section 10.6 が「adopted finding F6 が要求していないため意図的に追加しない」として開示していた事項を、明示的に逆転して採択する。すなわち **正当な Human Authority re-binding は、それ以前に発行された deployment declaration を新規observationに対して無効化する**（silent carry-forward は存在しない）。`RUNTIME_CREDENTIAL_USE_AUTHORITY` は `false` のまま：本packageはprivate keyを保持せず、署名を生成せず、key server にも到達しない — 検証のみを行い、参照する鍵は実在のBoot復元済 Project Binding が既に保持する public key に限られる。
+
+実装範囲の所有は変わらず`10_RUNTIME/RUNTIME_INDEX.md`・`10_RUNTIME/RUNTIME_CONTRACT.md`にある（本correction roundは`RUNTIME_CONTRACT.md`にsection 11、`RUNTIME_INDEX.md`にsection 4.2を追加した）。canonical schema総数は`58`のまま変化しない — 本roundは既存schema fileへfieldを追加しただけであり、新規schema fileを追加していないため、`scripts/validate_schemas.py`の宣言済countは意図的に据え置かれている。
+
+SHUKOU自身が固定した終端は変わらず、本addendumもこれを変更しない。
+
+```text
+CURRENT_PHASE=15_BOUNDED_RUNTIME_OBSERVATION_AND_TRUSTED_PROVISIONING
+CURRENT_PHASE_ISSUE=64
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED_PR_OPEN
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=6
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=2
+NEW_BRANCH=false
+NEW_PR=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+```
+
+本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。

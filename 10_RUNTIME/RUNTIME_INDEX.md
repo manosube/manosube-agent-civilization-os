@@ -10,9 +10,13 @@ KERNEL_ELEMENT=NONE_RUNTIME_ADAPTER
 CANONICAL_KERNEL_COUNT=1
 RUNTIME_OWNER_COUNT=1
 PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
-TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=1
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
 ```
+
+`TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` was `1` after Round 1 and is `0` after
+Round 2 (P15-R2-F1): shipped code mints no `TrustedRuntimeRoot` at all. See section 4.2 here and
+`RUNTIME_CONTRACT.md` section 11.1, including that correction's own explicit scope caveat.
 
 ---
 
@@ -27,8 +31,10 @@ deferred trusted runtime bootstrap is provisioned from canonical Store/Boot stat
 ```text
 1. RUNTIME_INDEX.md      (this document)
 2. RUNTIME_CONTRACT.md   the three public routes, their frozen semantics, their negative
-                          controls, and (section 10) the Structural Review Round 1
-                          corrections, P15-R1-F1 .. P15-R1-F6
+                          controls, (section 10) the Structural Review Round 1 corrections,
+                          P15-R1-F1 .. P15-R1-F6, and (section 11) the Structural Review
+                          Round 2 corrections, P15-R2-F1/F2, which reopened and supersede
+                          Round 1's own F4 and F6
 ```
 
 Read `RUNTIME_CONTRACT.md` for the load-bearing design; this document only fixes this layer's
@@ -128,19 +134,25 @@ src/manosube_agent_civilization/runtime/
 ├── adapter.py              FakeRuntimeAdapter (controlled, in-memory) and
 │                           LocalHttpRuntimeAdapter (stdlib urllib only, no redirect ever
 │                           followed) -- the two RuntimeAdapter implementations
+├── deployment_declaration.py
+│                           verify_runtime_deployment_declaration_signature -- verification
+│                           only, composing binding.signature's own shared Ed25519 primitive
+│                           (Round 2, P15-R2-F2)
 ├── route.py                observe_runtime_target -- the one public Runtime Observation
 │                           route
 ├── evidence_handoff.py     route_runtime_observation_to_evidence -- the one public
 │                           Runtime-Observation-to-Evidence hand-off
-└── bootstrap.py            provision_trusted_runtime_root / TrustedRuntimeRoot and
-                             bootstrap_projection_execution_capability -- the V5 trusted
-                             runtime bootstrap provisioning Phase 14's
+└── bootstrap.py            TrustedRuntimeRoot (a type shipped code never mints -- Round 2,
+                             P15-R2-F1) and bootstrap_projection_execution_capability -- the
+                             V5 trusted runtime bootstrap provisioning Phase 14's
                              ProjectionExecutionCapability
 
 01_SCHEMA/runtime/
 ├── runtime_observation_envelope.schema.json     the committed observation fact
 └── runtime_deployment_declaration.schema.json   the canonical, Human-Authority-declared
-                                                  deployment identity (Round 1, P15-R1-F6)
+                                                  deployment identity (Round 1, P15-R1-F6);
+                                                  required status and required Ed25519
+                                                  signature added by Round 2, P15-R2-F2
 ```
 
 No second Boot, Store, Binding, Evidence, Difference, Authority, or Reflow owner is created
@@ -148,8 +160,11 @@ anywhere in this package. `reflow` and `independent_verification` are never impo
 module in this package. `authority` is importable only from `bootstrap.py` (V5's own
 provisioning concern) -- `route.py` never imports it at all. `evidence` is importable only
 from `evidence_handoff.py` (the one `derive_evidence` call) and, narrowly, `bootstrap.py`
-(read-only `evidence.identity.evidence_semantic_fingerprint`). `boot` is importable from
-`route.py` and `bootstrap.py`, each calling `boot_project` exactly once.
+(read-only `evidence.identity.evidence_semantic_fingerprint`). `binding.identity` is importable
+only from `bootstrap.py`, and `binding.signature` only from `deployment_declaration.py` (Round 2,
+P15-R2-F2) -- and `binding/` itself imports nothing from this package, in either direction.
+`boot` is importable from `route.py` and `bootstrap.py`, each calling `boot_project` exactly
+once.
 `manosube_agent_civilization.projection` is importable only from `bootstrap.py`. A network/
 transport surface that actually opens anything (`urllib.request`/`urllib.error`) is importable
 only from `adapter.py`; `network.py` may additionally import exactly `urllib.parse`, a
@@ -158,6 +173,10 @@ P15-R1-F1). `route.py` itself imports no `urllib` of any kind. Static conformanc
 of this by AST walk, `tests/contract/runtime/test_runtime_static_conformance.py`.
 
 ## 4.1 Structural Review Round 1 (P15-R1-F1 .. P15-R1-F6)
+
+> **Item 1 below is superseded by section 4.2 (P15-R2-F1)**: the fourth public callable it
+> describes, `provision_trusted_runtime_root`, no longer exists. Item 2's record kind is extended
+> by section 4.2 (P15-R2-F2).
 
 Round 1 of PR #65 found six ways this layer's own first delivery claimed more than its code
 kept. `10_RUNTIME/RUNTIME_CONTRACT.md` section 10 records each in full -- what was claimed,
@@ -198,6 +217,70 @@ NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=1
 NEW_KERNEL_ELEMENT=false
 ```
 
+## 4.2 Structural Review Round 2 (P15-R2-F1, P15-R2-F2)
+
+Round 2 of PR #65 confirmed four of Round 1's own six corrections closed cleanly (P15-R1-F1/F2/
+F3/F5) and reopened two. `10_RUNTIME/RUNTIME_CONTRACT.md` section 11 records both in full. This
+document records only what the round changed about *this layer's position*, which is three
+things:
+
+1. **The fourth public callable section 4.1 introduced no longer exists.**
+   `provision_trusted_runtime_root` (P15-R1-F4) accepted exactly the caller-controlled
+   Store/Project/Binding tuple that correction existed to stop an untrusted surface from
+   selecting; its module-private sentinel protected only the `TrustedRuntimeRoot` constructor,
+   while the factory itself supplied that sentinel for whatever Store a caller passed. Moving the
+   same three arguments one call earlier changed API shape, not control of the trust decision, so
+   Round 2 deletes it (P15-R2-F1). `PUBLIC_RUNTIME_ENTRY_POINT_COUNT` is still `3` — the three
+   *routes* are unchanged — and `TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` is now
+   `0`. The `TrustedRuntimeRoot` *type* is retained: it is unforgeable by shape, holds no verdict
+   that could go stale, and is the shape a future, separately authorized Phase's real deployment
+   composition boundary will mint. Until then the only issuer anywhere is a test-confined one.
+
+   **Scope, stated exactly:** this establishes that *no shipped minting path exists at all in
+   this Phase*, not that a live path resists an attacker at runtime — there is no live
+   deployment/CLI/agent-runtime composition boundary wired to Runtime yet for an attacker to
+   attack (`RUNTIME_CONTRACT.md` section 11.1).
+
+2. **The second Store-committed record kind became a signed Human Authority statement.**
+   `runtime_deployment_declaration` (P15-R1-F6) gains a required `status`
+   (`ACTIVE`/`REVOKED`) and a required Ed25519 `signature` over its own adopted semantic fields,
+   in the identical `$def` shape `binding/github_projection_grant_declaration.schema.json`
+   already uses; and `observe_runtime_target` now additionally requires the resolved declaration
+   to be `ACTIVE`, to name the exact Human Authority that call's own Boot restored, and to carry
+   that Authority's genuine signature verified against the exact `human_authority_signing_key`
+   the same Boot restored from the current Project Binding (P15-R2-F2). This adopts, explicitly,
+   the operational decision section 10.6 had declined to assume: **a legitimate Human Authority
+   re-binding invalidates previously issued deployment declarations for new observations.**
+
+   The record count is unchanged (`NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=1` for this Phase as
+   a whole; Round 2 adds fields to an existing schema, never a new schema file, so the canonical
+   schema total stays at `58`), and this layer remains the owner of no Authority, State,
+   Evidence, or Closure semantics. `RUNTIME_CREDENTIAL_USE_AUTHORITY` remains `false`: this
+   package holds no private key, mints no signature, and reaches no key server — it only
+   *verifies* against the public key a real, Boot-restored Project Binding already carries.
+
+3. **One new module, and one new admitted import edge.** `runtime/deployment_declaration.py`
+   owns that verification and is the only module in this package permitted to import
+   `binding.signature`, whose shared Ed25519 primitive it *composes* rather than reimplements.
+   The dependency direction is unchanged and load-bearing: **`binding/` imports nothing from
+   `runtime/`** — Runtime is an adapter layer that depends on the Kernel's Binding element, never
+   the reverse.
+
+```text
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
+TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
+SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
+LIVE_PATH_ADVERSARIAL_RESISTANCE_PROVEN=false
+DEPLOYMENT_DECLARATION_HUMAN_AUTHORITY_SIGNED=true
+DEPLOYMENT_DECLARATION_SURVIVES_A_HUMAN_AUTHORITY_REBINDING=false
+BINDING_IMPORTS_RUNTIME=false
+RUNTIME_HOLDS_A_PRIVATE_SIGNING_KEY=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=1
+CANONICAL_SCHEMA_COUNT_CHANGED=false
+NEW_KERNEL_ELEMENT=false
+```
+
 ## 5. Explicit non-claims
 
 ```text
@@ -221,9 +304,14 @@ OBSERVATION_BOUNDARY_CLOSED=true
 NETWORK_SCOPE_ENFORCED_BEFORE_ANY_CONNECTION=true
 REDIRECT_EVER_FOLLOWED=false
 DEPLOYMENT_IDENTITY_STORE_ANCHORED=true
+DEPLOYMENT_DECLARATION_HUMAN_AUTHORITY_SIGNED=true
+DEPLOYMENT_DECLARATION_STATUS_ENFORCED=true
+DEPLOYMENT_DECLARATION_BOUND_TO_BOOT_RESTORED_AUTHORITY=true
 TRUSTED_RUNTIME_ROOT_REQUIRED_FOR_PROVISIONING=true
+SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
 AUTHORITY_FRESHNESS_RECHECKED_AT_ADAPTER_AND_COMMIT_BOUNDARIES=true
 STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_APPLIED=true
+STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_APPLIED=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
