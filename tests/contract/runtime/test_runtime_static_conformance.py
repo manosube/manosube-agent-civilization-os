@@ -916,6 +916,78 @@ def test_the_admission_gate_precedes_every_grant_and_authority_call_by_construct
         assert recheck_line < _first_line(gated_name), gated_name
 
 
+def test_the_admission_barrier_runs_again_immediately_before_the_capability_is_constructed() -> (
+    None
+):
+    """P15-R6-F1, items 3, 4 and 6, proved structurally over the shipped source.
+
+    Round 5's single barrier ran at the start of the request-facing call, and the capability was
+    then constructed from that same original Boot snapshot after every grant, declaration and
+    subject had been resolved and every Authority decision evaluated. A rotation or revocation
+    committing in that window was still followed by a newly issued capability. Round 6 adds a
+    second barrier, and this is its positional half -- the deterministic race controls live in
+    ``tests/integration/runtime/test_runtime_deployment_authority_composition.py``.
+
+    Three facts, over the request-facing operation's own body:
+
+    1. ``_require_bound_admission_still_current`` is called **twice**, and ``_boot`` twice with it,
+       so the second barrier reads a freshly Booted State rather than rechecking the snapshot the
+       first barrier already read;
+    2. the **last** such call comes after every gated call (the pre-issuance barrier is genuinely
+       after all resolution and Authority evaluation) and before the one
+       ``ProjectionExecutionContext`` construction, so no future edit can quietly move issuance in
+       front of it;
+    3. **item 6, the closed request signature**: none of this bought a new request-facing
+       parameter. The operation's own ``def`` still declares exactly the two operation-scoped
+       reference parameters Round 5 closed it at, keyword-only, with nothing positional --
+       restated here rather than left implicit, because "no new public request parameter of any
+       kind" is an adopted condition of this round in its own right and must fail this gate if a
+       later edit relaxes it.
+    """
+
+    functions = _function_defs(bootstrap_module)
+    request_facing_node = functions[_REQUEST_FACING_OPERATION_NAME]
+
+    def _call_lines(name: str) -> list[int]:
+        return sorted(
+            node.lineno
+            for node in ast.walk(request_facing_node)
+            if isinstance(node, ast.Call)
+            and (
+                (isinstance(node.func, ast.Name) and node.func.id == name)
+                or (isinstance(node.func, ast.Attribute) and node.func.attr == name)
+            )
+        )
+
+    barriers = _call_lines("_require_bound_admission_still_current")
+    boots = _call_lines("_boot")
+    assert len(barriers) == 2, barriers
+    assert len(boots) == 2, boots
+    # Each barrier is preceded by its own Boot: the second one never rechecks the first snapshot.
+    assert boots[0] < barriers[0] < boots[1] < barriers[1]
+
+    for gated_name in (
+        "_resolve_grant",
+        "_resolve_declaration",
+        "evaluate_projection_authorization",
+    ):
+        assert max(_call_lines(gated_name)) < barriers[1], gated_name
+
+    context_lines = _call_lines("ProjectionExecutionContext")
+    assert len(context_lines) == 1, context_lines
+    assert barriers[1] < context_lines[0]
+
+    # Item 6: the Round 5 request signature is unchanged, and carries no new parameter at all.
+    assert _parameter_names(request_facing_node) == {
+        "github_projection_grant_refs",
+        "github_projection_grant_declaration_refs",
+    }
+    assert request_facing_node.args.args == []
+    assert request_facing_node.args.posonlyargs == []
+    assert request_facing_node.args.vararg is None
+    assert request_facing_node.args.kwarg is None
+
+
 def test_this_package_has_exactly_one_instant_parsing_owner() -> None:
     """P15-R5-F3: "No second timestamp grammar or Runtime-specific time owner may be created."
 

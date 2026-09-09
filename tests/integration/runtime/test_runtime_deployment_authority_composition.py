@@ -1049,3 +1049,416 @@ def test_an_admission_planted_without_the_committer_is_never_current(
         anchor=trust_anchor_public_key_hex(),
     )
     assert "no longer the current one" in message, message
+
+
+# ---------------------------------------------------------------------------
+# P15-R6-F1: the pre-issuance barrier, and resolved-record integrity
+# ---------------------------------------------------------------------------
+#
+# Round 5's per-call recheck ran ONCE, at the start of the request-facing call, and the capability
+# was then built from that same original Boot snapshot after every grant, declaration and subject
+# had been resolved and every Authority decision evaluated. Round 6 found that open in two
+# independently reproducible ways, and the controls below exercise both as real races and real
+# substitutions rather than asserting an outcome:
+#
+#   1. a canonical rotation or revocation committing AFTER the first check and BEFORE the
+#      capability is returned, which Round 5 still followed with a newly issued capability;
+#   2. a Store-level substitution of the record body under the CURRENT admission id, which the
+#      four Round 5 checks (generation/status/project/binding) could not see at all, because every
+#      one of them reads a field the substituted body itself declares.
+
+_GRANT_RECORD_KIND = "github_projection_grant"
+
+
+def _compose_over(store: Any, world: dict[str, Any]) -> Any:
+    """Compose a genuine, fully admitted service over *store* -- normally a proxy wrapping
+    *world*'s own real Store -- through the identical shipped composition entry point every other
+    control here uses. Nothing about the admission gate is bypassed or weakened: composition runs
+    its full anchor-signature and currency check against the real record, exactly as it does in
+    the fixture."""
+
+    return compose_trusted_runtime_deployment_authority(
+        store,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        runtime_root_admission_ref=world["admitted"]["runtime_root_admission_ref"],
+        trust_anchor_public_key_hex=trust_anchor_public_key_hex(),
+    )
+
+
+class _RequestBarrierStore:
+    """A real Store proxy that lands one genuine canonical commit at a deterministic barrier
+    *inside* one request-facing call: the moment the operation resolves its first
+    ``github_projection_grant`` reference.
+
+    Deliberately the identical shape as this suite's own established barrier stores --
+    ``test_runtime_deployment_identity_anchor.py``'s ``_PointerBarrierStore`` (P15-R3-F2) and
+    ``test_runtime_declaration_transition_chain.py``'s ``_CompetingSuccessorStore`` /
+    ``_UnrelatedContentionStore`` -- rather than a new concurrency-simulation mechanism. Only the
+    hook point differs, and it is chosen precisely: the request-facing operation Boots and runs its
+    **first** admission barrier before resolving a single grant, and Boots again and runs its
+    **second** barrier only after every grant, declaration and subject has been resolved and every
+    Authority decision evaluated. A grant resolution therefore fires strictly between the two, and
+    fires exactly once for a single-grant request.
+
+    ``armed`` exists because composition itself resolves records through this same proxy: the
+    injection must not fire while the service is still being composed, or the barrier would land
+    before the first check rather than between the two. :meth:`arm` also resets the admission
+    resolution counter, so ``admission_resolutions`` counts only what the request-facing call
+    itself did -- which is how the positive control proves both barriers genuinely ran.
+    """
+
+    def __init__(self, delegate: Any, *, inject: Any = None) -> None:
+        self._delegate = delegate
+        self._inject = inject
+        self.armed = False
+        self.injected = False
+        self.admission_resolutions = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    def arm(self) -> None:
+        self.armed = True
+        self.admission_resolutions = 0
+
+    def resolve_record(self, project_id: str, kind: str, record_id: str) -> Any:
+        if kind == ROOT_ADMISSION_RECORD_KIND:
+            self.admission_resolutions += 1
+        if (
+            self.armed
+            and self._inject is not None
+            and not self.injected
+            and kind == _GRANT_RECORD_KIND
+        ):
+            self.injected = True
+            self._inject()
+        return self._delegate.resolve_record(project_id, kind, record_id)
+
+
+def _rotation_barrier(
+    world: dict[str, Any], *, status: str, declared_at: str, at: str
+) -> tuple[_RequestBarrierStore, dict[str, Any]]:
+    """Arrange a real, committed canonical rotation to land strictly between the request-facing
+    operation's two admission barriers, and return the proxy Store and a mutable box the
+    successor's own body is recorded in once it genuinely commits."""
+
+    landed: dict[str, Any] = {}
+
+    def _inject() -> None:
+        landed["successor"] = _rotate(world, status=status, declared_at=declared_at, at=at)
+
+    return _RequestBarrierStore(world["store"], inject=_inject), landed
+
+
+def test_a_rotation_landing_between_the_two_barriers_returns_no_capability(
+    _canonical: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**P15-R6-F1's decisive control, rotation half** (adopted correction item 5, first bullet).
+
+    The service is composed normally, while A is genuinely current, and its first admission
+    barrier genuinely passes. A real canonical rotation to B -- committed through the shipped
+    ``commit_runtime_root_admission``, not simulated -- then lands strictly *after* that first
+    barrier and strictly *before* the second, at the moment the operation resolves its first grant
+    reference. Round 5 issued a capability anyway, because the capability was constructed from the
+    same original Boot snapshot the first barrier had already read.
+
+    Three things are asserted rather than assumed, so this proves a real race was exercised:
+    the injection genuinely fired (``store.injected``); the rotation genuinely committed and the
+    Store's own current-admission pointer now names B; and the Authority evaluation genuinely ran
+    (``calls["count"] == 1``), which is what places the refusal at the *second* barrier -- the
+    first one had already let the request through.
+
+    No ``ProjectionExecutionCapability`` is returned, and the one adapter in this test is handed to
+    nothing, so its call count is a literal measurement of zero adapter and zero network calls.
+    """
+
+    calls = _counting_bootstrap(monkeypatch)
+    adapter = FakeGitHubAdapter()
+    a_id = _canonical["admitted"]["runtime_root_admission_ref"]["id"]
+    assert _admission_pointer(_canonical) == a_id
+
+    store, landed = _rotation_barrier(
+        _canonical, status="ACTIVE", declared_at="2026-09-08T05:00:00Z", at="2026-09-09T05:00:00Z"
+    )
+    bootstrap = _compose_over(store, _canonical)
+    store.arm()
+
+    with pytest.raises(RuntimeRequirementError) as raised:
+        bootstrap(
+            github_projection_grant_refs=[_canonical["grant_ref"]],
+            github_projection_grant_declaration_refs=[_canonical["declaration_ref"]],
+        )
+    assert "no longer the current one" in str(raised.value), raised.value
+
+    # The race was genuinely exercised: a real successor really committed, mid-request.
+    assert store.injected, "the rotation never landed, so no race was exercised at all"
+    b_id = str(landed["successor"]["runtime_root_admission_id"])
+    assert _admission_pointer(_canonical) == b_id != a_id
+    # ...and it landed after the FIRST barrier had already passed: the request got as far as
+    # evaluating Authority, which happens only once every grant and declaration has resolved.
+    assert calls["count"] == 1
+    assert adapter.materialize_call_count == 0
+
+
+def test_a_revocation_landing_between_the_two_barriers_returns_no_capability(
+    _canonical: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**P15-R6-F1's decisive control, revocation half** (adopted correction item 5, second
+    bullet). The identical barrier technique, with the successor committed as ``REVOKED`` instead
+    of ``ACTIVE``.
+
+    Both doors close at once here, exactly as they do at composition: the admission this service
+    was composed against is no longer the one the pointer names, and what the pointer now names is
+    not ``ACTIVE`` either. The refusal is on the first of those, which is the earlier requirement.
+    """
+
+    calls = _counting_bootstrap(monkeypatch)
+    adapter = FakeGitHubAdapter()
+    store, landed = _rotation_barrier(
+        _canonical, status="REVOKED", declared_at="2026-09-08T06:00:00Z", at="2026-09-09T06:00:00Z"
+    )
+    bootstrap = _compose_over(store, _canonical)
+    store.arm()
+
+    with pytest.raises(RuntimeRequirementError) as raised:
+        bootstrap(
+            github_projection_grant_refs=[_canonical["grant_ref"]],
+            github_projection_grant_declaration_refs=[_canonical["declaration_ref"]],
+        )
+    assert "no longer the current one" in str(raised.value), raised.value
+
+    assert store.injected, "the revocation never landed, so no race was exercised at all"
+    assert landed["successor"]["status"] == "REVOKED"
+    assert _admission_pointer(_canonical) == str(landed["successor"]["runtime_root_admission_id"])
+    assert calls["count"] == 1
+    assert adapter.materialize_call_count == 0
+
+
+class _SubstitutedAdmissionBodyStore:
+    """A real Store proxy that substitutes a *different body* under the admission's own **current,
+    unchanged** id -- the Store-level substitution P15-R6-F1's second manifestation names.
+
+    Deliberately bypasses the canonical committer entirely: the pointer is never moved, no
+    successor is ever committed, and no chain rule is exercised. This is what "an attacker who can
+    write the Store's own record storage" looks like from the reading side, which is exactly the
+    threat the recheck has to survive -- and it is arranged as a proxy rather than by overwriting
+    the ``FileStateStore``'s own files, because that store independently detects a permanent file
+    diverging from its transaction's staged copy and would refuse with its own corruption error,
+    proving nothing at all about this recheck.
+
+    ``armed`` exists so that composition itself sees, and proves, the genuine ORIGINAL record. The
+    substitution begins only once a real service has been composed against the real admission.
+    """
+
+    def __init__(self, delegate: Any, *, admission_id: str, substituted: dict[str, Any]) -> None:
+        self._delegate = delegate
+        self._admission_id = admission_id
+        self._substituted = substituted
+        self.armed = False
+        self.substitutions = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    def resolve_record(self, project_id: str, kind: str, record_id: str) -> Any:
+        if self.armed and kind == ROOT_ADMISSION_RECORD_KIND and record_id == self._admission_id:
+            self.substitutions += 1
+            return dict(self._substituted)
+        return self._delegate.resolve_record(project_id, kind, record_id)
+
+
+def test_a_record_body_substituted_under_the_current_id_issues_no_capability(
+    _canonical: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**P15-R6-F1's second manifestation** (adopted correction items 2 and 5, third bullet):
+    resolved-record integrity, not merely how the resolved record's own fields read.
+
+    The substituted body changes exactly one adopted semantic field -- ``declared_at`` -- and
+    changes nothing else. Its ``generation``, ``status``, ``project_id`` and ``project_binding_ref``
+    are byte-identical to the original's, and it keeps the original's own declared
+    ``runtime_root_admission_id`` and ``runtime_root_admission_semantic_fingerprint``, so the
+    chain pointer still names it and it still schema-validates.
+
+    **Why the Round 5 gate could not have caught this.** Its four requirements were: the pointer
+    still names the captured id (it does -- the pointer was never moved); the resolved record
+    carries the captured ``generation`` (it does -- unchanged); it is still ``ACTIVE`` (it is --
+    unchanged); and it still restates this Project and Binding (it does -- unchanged). Every one of
+    those reads a field the substituted body itself declares, and this substitution deliberately
+    leaves all four reading exactly as before. The record's own *signature* is not re-verified by
+    the per-call recheck either -- the anchor is gone by then, by design -- so nothing in Round 5
+    was left that could observe the change. Composition proved the ORIGINAL record; Round 5's
+    recheck never re-proved that the body now resolving is still that record.
+
+    **What catches it now.** The recheck recomputes the resolved body's own identity and semantic
+    fingerprint *from that body's actual content* and requires exact equality with the commitment
+    captured at composition. ``declared_at`` is one of ``ROOT_ADMISSION_SEMANTIC_FIELDS``, so both
+    recomputations move, and neither equals the captured reference. Crucially the comparison is
+    against the composition-time-captured reference, never against the body's own declared
+    id/fingerprint fields -- a tampered body can self-consistently declare a forged pair matching
+    its own tampered content, and a self-comparison would pass it.
+
+    The refusal happens at the FIRST barrier, before a single grant reference is resolved: zero
+    authorization evaluations, and therefore zero adapter and zero network calls, measured
+    literally.
+    """
+
+    calls = _counting_bootstrap(monkeypatch)
+    adapter = FakeGitHubAdapter()
+    original = dict(_canonical["admitted"]["runtime_root_admission"])
+    admission_id = str(original["runtime_root_admission_id"])
+
+    substituted = dict(original)
+    substituted["declared_at"] = "2026-09-08T00:00:01Z"
+    assert substituted != original
+    # The four Round 5 requirements all still read exactly as they did before.
+    for unchanged in ("generation", "status", "project_id", "project_binding_ref"):
+        assert substituted[unchanged] == original[unchanged]
+    # ...and so do the body's own self-declared identity and fingerprint, and its signature.
+    assert substituted["runtime_root_admission_id"] == original["runtime_root_admission_id"]
+    assert (
+        substituted["runtime_root_admission_semantic_fingerprint"]
+        == original["runtime_root_admission_semantic_fingerprint"]
+    )
+    assert substituted["signature"] == original["signature"]
+
+    store = _SubstitutedAdmissionBodyStore(
+        _canonical["store"], admission_id=admission_id, substituted=substituted
+    )
+    bootstrap = _compose_over(store, _canonical)  # composed against the genuine ORIGINAL record
+    store.armed = True
+
+    with pytest.raises(RuntimeRequirementError) as raised:
+        bootstrap(
+            github_projection_grant_refs=[_canonical["grant_ref"]],
+            github_projection_grant_declaration_refs=[_canonical["declaration_ref"]],
+        )
+    message = str(raised.value)
+    assert "own recomputed identity" in message, message
+    assert "composed against" in message, message
+
+    assert store.substitutions == 1, "the substituted body was never actually consulted"
+    assert calls["count"] == 0, "refused before Authority evaluation"
+    assert adapter.materialize_call_count == 0
+    # The chain itself was never touched: this is a substitution, not a rotation.
+    assert _admission_pointer(_canonical) == admission_id
+
+
+def test_an_unchanged_current_admission_still_issues_a_working_capability(
+    _canonical: dict[str, Any],
+) -> None:
+    """**The positive control P15-R6-F1 requires** (adopted correction item 5, fourth bullet):
+    the two new checks are not vacuously always-refusing, and the second barrier does not refuse a
+    request nothing happened during.
+
+    An unmodified, still-current admission composes, issues a real capability through the identical
+    proxy machinery the negative controls above use, and that capability genuinely reaches the
+    controlled ``FakeGitHubAdapter`` boundary -- zero live network calls, since the fake opens
+    nothing.
+
+    Non-vacuity of the barrier itself is measured rather than assumed: the request-facing call
+    resolves the current admission record **twice**, once per barrier. A single resolution would
+    mean the pre-issuance barrier had quietly stopped running, and every rotation control above
+    would then be proving something weaker than it claims.
+    """
+
+    store = _RequestBarrierStore(_canonical["store"])
+    bootstrap = _compose_over(store, _canonical)
+    bound_cells = inspect.getclosurevars(bootstrap).nonlocals
+    assert (
+        bound_cells["bound_semantic_fingerprint"]
+        == _canonical["admitted"]["runtime_root_admission"][
+            "runtime_root_admission_semantic_fingerprint"
+        ]
+    )
+    store.arm()
+
+    capability = bootstrap(
+        github_projection_grant_refs=[_canonical["grant_ref"]],
+        github_projection_grant_declaration_refs=[_canonical["declaration_ref"]],
+    )
+    assert isinstance(capability, ProjectionExecutionCapability)
+    assert store.admission_resolutions == 2, "the pre-issuance barrier did not run"
+
+    adapter = FakeGitHubAdapter()
+    result = capability.execute(
+        projection_kind="EVIDENCE_ARTIFACT",
+        target_repository=_TARGET_REPOSITORY,
+        projection_payload=_PAYLOAD,
+        adapter=adapter,
+        materialized_at="2026-09-09T00:00:00Z",
+        attempt_claim_token="RUNTIME-SECOND-BARRIER-ATTEMPT-0001",  # noqa: S106
+    )
+    assert adapter.materialize_call_count == 1
+    assert result["receipt"].status == "VERIFIED"
+
+
+def test_the_issued_context_snapshots_the_final_boot_not_the_initial_one(
+    _canonical: dict[str, Any],
+) -> None:
+    """**Adopted correction item 4**: the returned context is built from the FINAL Boot's State
+    snapshot, not the one read when the request started.
+
+    A genuinely **unrelated** State-touching commit lands at the same mid-request barrier the
+    rotation controls use -- an ordinary record touching no chain at all, the identical
+    unrelated-contention technique ``test_runtime_declaration_transition_chain.py``'s own
+    ``_UnrelatedContentionStore`` already establishes. It bumps ``state_revision`` and rewrites
+    ``semantic_fingerprint`` while moving no admission pointer whatsoever, so the request is
+    legitimate throughout and a capability must still be issued: this is the distinction between
+    "the world moved" and "this chain's own currency changed", and only the second may refuse.
+
+    Before this round the context recorded the revision that was current when the request *began*,
+    which is a claim about a State that was already superseded by the time the capability existed.
+    It now records what was current at the moment of return.
+
+    *Disclosed, so this control is read for exactly what it proves.* ``semantic_fingerprint`` is a
+    pure function of *semantic* State, and committing a record that participates in no semantic
+    claim does not move it -- so the two snapshots here differ in ``state_revision`` and agree on
+    ``semantic_fingerprint``, and that agreement is asserted rather than glossed over. Both fields
+    are still asserted to equal what is current at the moment of return, which is the property
+    item 4 actually names; ``state_revision`` is what makes the two snapshots distinguishable at
+    all, and is therefore what carries the discrimination.
+    """
+
+    def _inject() -> None:
+        commit_records(
+            _canonical["store"],
+            _canonical["project_id"],
+            _canonical["store"].load_current(_canonical["project_id"]),
+            "TX-RUNTIME-BOOTSTRAP-UNRELATED-CONTENTION",
+            [
+                (
+                    "runtime_deployment_declaration",
+                    "RUNTIME-DEPLOYMENT-DECLARATION-" + "2" * 64,
+                    {"note": "an unrelated record, touching no chain whatsoever"},
+                )
+            ],
+        )
+
+    store = _RequestBarrierStore(_canonical["store"], inject=_inject)
+    bootstrap = _compose_over(store, _canonical)
+    store.arm()
+
+    at_request_start = _canonical["store"].load_current(_canonical["project_id"])
+    capability = bootstrap(
+        github_projection_grant_refs=[_canonical["grant_ref"]],
+        github_projection_grant_declaration_refs=[_canonical["declaration_ref"]],
+    )
+    assert store.injected, "no unrelated State bump landed, so nothing was distinguished"
+
+    at_return = _canonical["store"].load_current(_canonical["project_id"])
+    assert at_return["state_revision"] == at_request_start["state_revision"] + 1
+    # Disclosed above: an unrelated record moves the revision and not the semantic fingerprint.
+    assert at_return["semantic_fingerprint"] == at_request_start["semantic_fingerprint"]
+
+    context = capability._context
+    assert context.state_revision == at_return["state_revision"]
+    assert context.semantic_fingerprint == at_return["semantic_fingerprint"]
+    assert context.state_revision != at_request_start["state_revision"]
+
+    # Unrelated contention is not this chain's own currency: the admission never moved, and the
+    # context still names the Human Authority the Authority evaluation actually ran against.
+    assert (
+        _admission_pointer(_canonical) == _canonical["admitted"]["runtime_root_admission_ref"]["id"]
+    )
+    assert context.github_authority_ref == _canonical["human_authority_ref"]
