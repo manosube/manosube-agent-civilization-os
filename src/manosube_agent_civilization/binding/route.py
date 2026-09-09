@@ -36,7 +36,11 @@ from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import AlreadyInitializedError
 
 from .admission import admit_genesis_transaction
-from .engine import assemble_human_grant_declaration, assemble_project_binding
+from .engine import (
+    assemble_github_projection_grant_declaration,
+    assemble_human_grant_declaration,
+    assemble_project_binding,
+)
 from .errors import BindingIdentityError, BindingValidationError
 from .reference_classification import reject_wrong_kind_reference
 from .validation import validate_against_schema_id
@@ -478,5 +482,120 @@ def declare_human_grant(
     return {
         "human_grant_declaration": declaration,
         "human_grant_declaration_id": declaration_id,
+        "committed_state": committed_state,
+    }
+
+
+def declare_github_projection_grant(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    grant_ref: dict[str, Any],
+    status: str,
+    declared_at: str,
+    signature: dict[str, Any],
+    schema_root: Path | None = None,
+    fault: Any | None = None,
+) -> dict[str, Any]:
+    """Declare and atomically adopt one GitHub Projection Grant Declaration (Phase 14
+    Structural Review Round 2, Issue #62, P14-R2-F1) -- the identical canonical,
+    read-only-reverifiable Human declaration anchor :func:`declare_human_grant` already
+    establishes for a Verifier Selection Grant, applied here to a GitHub Projection Grant
+    before ``evaluate_projection_authorization`` may ever bind it.
+
+    The declaring Human identity is never a caller-supplied argument here at all -- this
+    function independently resolves the real, already-committed ``project_binding`` (fail
+    closed if unresolvable) and reads its own ``human_authority_ref`` directly; a caller
+    cannot declare a grant on behalf of a Human identity other than the one this project is
+    genuinely bound to. Likewise, *grant_ref* is resolved against the real, already-committed
+    ``github_projection_grant`` (fail closed if unresolvable, or if *grant_ref* does not
+    itself name that kind) -- this function never accepts grant content, only a reference.
+
+    *signature* is *this* function's own caller-supplied claim -- this route never generates
+    one -- verified read-only, before persisting anything, via
+    :func:`~manosube_agent_civilization.binding.signature.
+    verify_github_projection_grant_declaration_signature`. The grant's own
+    ``subject_ref``/``subject_fingerprint``/``projection_kind``/``target_repository``/
+    ``payload_fingerprint``/``permitted_action`` are read directly off the real,
+    already-resolved *grant* record above -- never a caller-supplied copy -- and restated into
+    the signed payload, so the Human's own signature covers a complete, self-describing
+    payload rather than merely a content-address reference.
+    """
+
+    real_project_binding = store.resolve_record(project_id, "project_binding", project_binding_id)
+    if real_project_binding is None:
+        raise BindingValidationError(
+            f"project_binding does not resolve for project {project_id!r}: {project_binding_id!r}"
+        )
+    if grant_ref.get("kind") != "github_projection_grant":
+        raise BindingValidationError(
+            f"grant_ref does not name a github_projection_grant: {grant_ref.get('kind')!r}"
+        )
+    grant_id = grant_ref.get("id")
+    if not isinstance(grant_id, str) or not grant_id:
+        raise BindingValidationError(f"grant_ref carries no readable id: {grant_ref!r}")
+    real_grant = store.resolve_record(project_id, "github_projection_grant", grant_id)
+    if real_grant is None:
+        raise BindingValidationError(
+            f"github_projection_grant does not resolve for project {project_id!r}: {grant_id!r}"
+        )
+
+    declaration = assemble_github_projection_grant_declaration(
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref={"kind": "github_projection_grant", "id": grant_id},
+        declared_by=real_project_binding["human_authority_ref"],
+        subject_ref=real_grant["subject_ref"],
+        subject_fingerprint=real_grant["subject_fingerprint"],
+        projection_kind=real_grant["projection_kind"],
+        target_repository=real_grant["target_repository"],
+        payload_fingerprint=real_grant["payload_fingerprint"],
+        permitted_action=real_grant["permitted_action"],
+        status=status,
+        declared_at=declared_at,
+        signature=signature,
+        signing_key=real_project_binding["human_authority_signing_key"],
+        schema_root=schema_root,
+    )
+    declaration_id = declaration["github_projection_grant_declaration_id"]
+
+    current_state = store.load_current(project_id)
+    transaction_id = f"TX-GH-PROJ-DECL-{declaration_id}"
+    next_state = dict(current_state)
+    next_state["state_revision"] = current_state["state_revision"] + 1
+    next_state["previous_state_fingerprint"] = current_state["semantic_fingerprint"]
+    next_state["lineage_head_ref"] = {"kind": "state_transition", "id": transaction_id}
+    next_state["semantic_fingerprint"] = fingerprint_project_state(
+        next_state, schema_root=schema_root
+    ).as_dict()
+    transition = {
+        "schema_version": "0.1",
+        "transaction_id": transaction_id,
+        "event_type": "TRANSITION",
+        "project_id": project_id,
+        "from_revision": current_state["state_revision"],
+        "to_revision": next_state["state_revision"],
+        "before_fingerprint": current_state["semantic_fingerprint"],
+        "after_fingerprint": next_state["semantic_fingerprint"],
+        "after_state": next_state,
+        "evidence_refs": [],
+        "committed_at": declared_at,
+    }
+
+    committed_state = commit_state_transition(
+        store,
+        project_id,
+        current_state["state_revision"],
+        current_state["semantic_fingerprint"],
+        next_state,
+        transition,
+        records=[("github_projection_grant_declaration", declaration_id, declaration)],
+        fault=fault,
+    )
+
+    return {
+        "github_projection_grant_declaration": declaration,
+        "github_projection_grant_declaration_id": declaration_id,
         "committed_state": committed_state,
     }

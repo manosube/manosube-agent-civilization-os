@@ -192,6 +192,15 @@ UNCONSTRAINED_CONTRACT_LOCATIONS: dict[str, str] = {
     ),
     "evidence/evidence.schema.json"
     "#/$defs/verification_result_provenance/properties/observations": "VERIFICATION_INPUT",
+    # Opaque by contract (Phase 14, Issue #62): a Projection Envelope's own
+    # projection_payload is whatever a caller supplies to describe the external GitHub
+    # artifact to materialize (an Issue's title/body, a Pull Request's head/base/title, ...)
+    # -- what it means is the caller's own concern, never this schema's to constrain. Only
+    # its deterministic fingerprint (projection_payload_fingerprint, a plain, constrained
+    # string) participates in the Envelope's own identity and conflict semantics.
+    "projection/projection_envelope.schema.json#/properties/projection_payload": (
+        "PROJECTION_INPUT"
+    ),
 }
 
 

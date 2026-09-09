@@ -24,7 +24,10 @@ from typing import Any
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .identity import human_grant_declaration_signing_payload
+from .identity import (
+    github_projection_grant_declaration_signing_payload,
+    human_grant_declaration_signing_payload,
+)
 
 SUPPORTED_SIGNATURE_ALGORITHM = "ed25519"
 
@@ -52,18 +55,18 @@ def verify_ed25519_signature(*, public_key_hex: str, message: bytes, signature_h
     return True
 
 
-def verify_declaration_signature(record: dict[str, Any], *, signing_key: dict[str, Any]) -> bool:
-    """Whether *record*'s own ``signature`` is a genuine signature, by the holder of
-    *signing_key* (a real Project Binding's own ``human_authority_signing_key`` -- never a
-    caller-supplied copy), over exactly the canonical payload
-    :func:`~manosube_agent_civilization.binding.identity.human_grant_declaration_signing_
-    payload` derives from *record*'s own fields.
+def _verify_signature_over(
+    record: dict[str, Any], *, signing_key: dict[str, Any], message: bytes
+) -> bool:
+    """Shared verification core: whether *record*'s own ``signature`` is a genuine signature,
+    by the holder of *signing_key*, over *message* -- the exact canonical payload bytes a
+    caller has already derived from *record*'s own fields via that declaration kind's own
+    signing-payload function.
 
     ``False`` on any mismatch -- an unsigned/malformed ``signature`` object, an algorithm this
-    module does not support, a ``key_id`` that does not name *signing_key*'s own, a signature
-    that does not verify against *signing_key*'s own ``public_key``, or a payload that has
-    been altered since it was signed -- never an exception; the caller decides what a
-    ``False`` result means for the surrounding decision.
+    module does not support, a ``key_id`` that does not name *signing_key*'s own, or a
+    signature that does not verify against *signing_key*'s own ``public_key`` -- never an
+    exception; the caller decides what a ``False`` result means for the surrounding decision.
     """
 
     signature = record.get("signature")
@@ -78,7 +81,44 @@ def verify_declaration_signature(record: dict[str, Any], *, signing_key: dict[st
     public_key_hex = signing_key.get("public_key")
     if not isinstance(signature_hex, str) or not isinstance(public_key_hex, str):
         return False
-    message = human_grant_declaration_signing_payload(record)
     return verify_ed25519_signature(
         public_key_hex=public_key_hex, message=message, signature_hex=signature_hex
+    )
+
+
+def verify_declaration_signature(record: dict[str, Any], *, signing_key: dict[str, Any]) -> bool:
+    """Whether *record*'s own ``signature`` is a genuine signature, by the holder of
+    *signing_key* (a real Project Binding's own ``human_authority_signing_key`` -- never a
+    caller-supplied copy), over exactly the canonical payload
+    :func:`~manosube_agent_civilization.binding.identity.human_grant_declaration_signing_
+    payload` derives from *record*'s own fields.
+
+    ``False`` on any mismatch -- see :func:`_verify_signature_over`.
+    """
+
+    return _verify_signature_over(
+        record,
+        signing_key=signing_key,
+        message=human_grant_declaration_signing_payload(record),
+    )
+
+
+def verify_github_projection_grant_declaration_signature(
+    record: dict[str, Any], *, signing_key: dict[str, Any]
+) -> bool:
+    """Whether *record*'s own ``signature`` is a genuine signature, by the holder of
+    *signing_key*, over exactly the canonical payload
+    :func:`~manosube_agent_civilization.binding.identity.
+    github_projection_grant_declaration_signing_payload` derives from *record*'s own fields
+    (Phase 14 Structural Review Round 2, P14-R2-F1) -- the identical verification discipline
+    :func:`verify_declaration_signature` already applies for a Verifier Selection Grant
+    declaration, over a GitHub Projection Grant declaration's own restated payload instead.
+
+    ``False`` on any mismatch -- see :func:`_verify_signature_over`.
+    """
+
+    return _verify_signature_over(
+        record,
+        signing_key=signing_key,
+        message=github_projection_grant_declaration_signing_payload(record),
     )

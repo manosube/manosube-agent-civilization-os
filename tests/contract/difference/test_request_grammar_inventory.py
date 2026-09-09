@@ -193,6 +193,7 @@ def test_the_declared_unconstrained_locations_match_the_schemas_in_both_directio
         "EMITTED",
         "AUTHORITY_INPUT",
         "VERIFICATION_INPUT",
+        "PROJECTION_INPUT",
     }
 
 
@@ -202,8 +203,11 @@ def test_every_input_side_unconstrained_location_has_generated_coverage() -> Non
     ``AUTHORITY_INPUT`` locations belong to a different owner and are generated against in
     ``tests/unit/authority``. ``VERIFICATION_INPUT`` locations (Structural Review Round 6,
     P13-R6) belong to Independent Verification's own Evidence handoff and are generated
-    against in ``tests/unit/evidence/test_request_totality.py``. Naming the owner in the tag
-    is what keeps an unconstrained location from being added with no suite responsible for it.
+    against in ``tests/unit/evidence/test_request_totality.py``. ``PROJECTION_INPUT``
+    locations (Phase 14, Issue #62) belong to the Projection Envelope's own
+    ``projection_payload`` and are generated against in
+    ``tests/unit/projection/test_projection_request_totality.py``. Naming the owner in the tag is what
+    keeps an unconstrained location from being added with no suite responsible for it.
     """
 
     inputs = {
@@ -243,6 +247,16 @@ def test_every_input_side_unconstrained_location_has_generated_coverage() -> Non
         "#/$defs/verification_result_provenance/properties/verification_boundary",
         "evidence/evidence.schema.json"
         "#/$defs/verification_result_provenance/properties/observations",
+    }
+    # Phase 14 (Issue #62): the Projection Envelope's own projection_payload -- generated
+    # against in ``tests/unit/projection/test_projection_request_totality.py``, never in this suite's
+    # own Difference-producer route.
+    assert {
+        location
+        for location, side in admissibility.UNCONSTRAINED_CONTRACT_LOCATIONS.items()
+        if side == "PROJECTION_INPUT"
+    } == {
+        "projection/projection_envelope.schema.json#/properties/projection_payload",
     }
 
 

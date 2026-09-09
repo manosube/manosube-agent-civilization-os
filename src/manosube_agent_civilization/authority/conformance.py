@@ -41,7 +41,13 @@ from manosube_agent_civilization.difference.validation import (
 )
 
 from .errors import AuthorityError, AuthorityValidationError
-from .identity import approval_id, prohibition_id, rule_id, verifier_selection_grant_id
+from .identity import (
+    approval_id,
+    github_projection_grant_id,
+    prohibition_id,
+    rule_id,
+    verifier_selection_grant_id,
+)
 
 AUTHORITY_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "authority/"
 SUPPORTED_SCHEMA_VERSION = "0.1"
@@ -72,6 +78,20 @@ def _human_grant_declaration_id(record: dict[str, Any]) -> str:
     )
 
     return _real_human_grant_declaration_id(record)
+
+
+def _github_projection_grant_declaration_id(record: dict[str, Any]) -> str:
+    """Lazily import and delegate to Binding's own
+    :func:`~manosube_agent_civilization.binding.identity.
+    github_projection_grant_declaration_id` (Phase 14 Structural Review Round 2, Issue #62,
+    P14-R2-F1) -- deferred to call time, for the identical circular-import reason
+    :func:`_human_grant_declaration_id` above documents."""
+
+    from manosube_agent_civilization.binding.identity import (
+        github_projection_grant_declaration_id as _real_github_projection_grant_declaration_id,
+    )
+
+    return _real_github_projection_grant_declaration_id(record)
 
 
 @dataclass(frozen=True)
@@ -115,6 +135,19 @@ RECORD_TYPES: dict[str, RecordType] = {
         "human_grant_declaration.schema.json",
         "human_grant_declaration_id",
         _human_grant_declaration_id,
+        "declared_by",
+        schema_base=_BINDING_SCHEMA_BASE,
+    ),
+    "github_projection_grant": RecordType(
+        "github_projection_grant.schema.json",
+        "github_projection_grant_id",
+        github_projection_grant_id,
+        "granted_by",
+    ),
+    "github_projection_grant_declaration": RecordType(
+        "github_projection_grant_declaration.schema.json",
+        "github_projection_grant_declaration_id",
+        _github_projection_grant_declaration_id,
         "declared_by",
         schema_base=_BINDING_SCHEMA_BASE,
     ),
@@ -171,6 +204,9 @@ AUTHORITY_SCHEMA_SEEDS: tuple[str, ...] = (
     AUTHORITY_SCHEMA_BASE + "approval.schema.json",
     AUTHORITY_SCHEMA_BASE + "verifier_selection_grant.schema.json",
     AUTHORITY_SCHEMA_BASE + "verifier_selection_decision.schema.json",
+    AUTHORITY_SCHEMA_BASE + "github_projection_grant.schema.json",
+    AUTHORITY_SCHEMA_BASE + "github_projection_decision.schema.json",
+    _BINDING_SCHEMA_BASE + "github_projection_grant_declaration.schema.json",
     CANONICAL_SCHEMA_BASE + "difference/difference.schema.json",
 )
 

@@ -34,6 +34,7 @@ from manosube_agent_civilization.authority import (
     engine,
     levels,
     prohibition,
+    projection_authorization,
     scope,
     verifier_selection,
 )
@@ -61,6 +62,8 @@ REQUIRED_SCHEMAS = (
     "prohibition.schema.json",
     "verifier_selection_grant.schema.json",
     "verifier_selection_decision.schema.json",
+    "github_projection_grant.schema.json",
+    "github_projection_decision.schema.json",
 )
 
 
@@ -69,33 +72,44 @@ REQUIRED_SCHEMAS = (
 # --------------------------------------------------------------------------- #
 
 
-def test_the_five_contracts_and_six_schemas_exist_and_are_exactly_those() -> None:
+def test_the_five_contracts_and_eight_schemas_exist_and_are_exactly_those() -> None:
     assert {path.name for path in CONTRACTS.glob("*.md")} == set(REQUIRED_CONTRACTS)
     assert {path.name for path in SCHEMAS.glob("*.schema.json")} == set(REQUIRED_SCHEMAS)
 
 
-def test_the_public_api_is_exactly_the_two_evaluators() -> None:
-    """``evaluate_authority`` and ``evaluate_verifier_selection`` (Structural Review Round 3,
-    P13-R3-F1) -- and nothing else -- answer either owned question."""
+def test_the_public_api_is_exactly_the_three_evaluators() -> None:
+    """``evaluate_authority``, ``evaluate_verifier_selection`` (Structural Review Round 3,
+    P13-R3-F1), and ``evaluate_projection_authorization`` (Phase 14 Structural Review Round 1,
+    P14-R1-F1) -- and nothing else -- answer any owned question."""
 
     exported = {name for name in authority.__all__ if not name.isupper()}
     callables = {name for name in exported if callable(getattr(authority, name))}
-    assert callables == {"evaluate_authority", "evaluate_verifier_selection"} | {
-        name for name in callables if name.endswith("Error")
-    }
+    assert callables == {
+        "evaluate_authority",
+        "evaluate_verifier_selection",
+        "evaluate_projection_authorization",
+    } | {name for name in callables if name.endswith("Error")}
     assert authority.evaluate_authority is engine.evaluate_authority
     assert authority.evaluate_verifier_selection is verifier_selection.evaluate_verifier_selection
+    assert (
+        authority.evaluate_projection_authorization
+        is projection_authorization.evaluate_projection_authorization
+    )
 
 
 def test_no_module_outside_the_owner_produces_a_decision() -> None:
-    """The coarse direction: neither decision vocabulary may be returned from anywhere else.
+    """The coarse direction: no decision vocabulary may be returned from anywhere else.
 
     Deliberately coarse. A second evaluator does not need to be called an evaluator to be
     one, and a rule that reappears anywhere in the tree fails here whether or not a call-site
     assertion was ever written for it.
     """
 
-    watched_values = set(levels.DECISIONS) | set(verifier_selection.DECISIONS)
+    watched_values = (
+        set(levels.DECISIONS)
+        | set(verifier_selection.DECISIONS)
+        | set(projection_authorization.DECISIONS)
+    )
     produced: dict[str, list[int]] = {}
     for path in sorted(SRC.rglob("*.py")):
         if AUTHORITY_SRC in path.parents or path.parent == AUTHORITY_SRC:
@@ -127,6 +141,16 @@ def test_only_one_module_per_decision_vocabulary_assembles_it() -> None:
         if "verifier_selection_decision_id" in path.read_text(encoding="utf-8")
     ]
     assert selection_assemblers == ["identity.py", "verifier_selection.py"], selection_assemblers
+
+    projection_assemblers = [
+        path.name
+        for path in sorted(AUTHORITY_SRC.glob("*.py"))
+        if "github_projection_decision_id" in path.read_text(encoding="utf-8")
+    ]
+    assert projection_assemblers == [
+        "identity.py",
+        "projection_authorization.py",
+    ], projection_assemblers
 
 
 # --------------------------------------------------------------------------- #

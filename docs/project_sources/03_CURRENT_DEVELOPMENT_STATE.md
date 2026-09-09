@@ -303,6 +303,21 @@ CURRENT_HEAD_ACCEPTED=false
 CURRENT_HEAD_INDEPENDENTLY_RETESTED_BY_THIS_DOCUMENT=false
 ```
 
+**Bounded addendum (2026-09-08, Phase 14 companion update -- see §15 below):** sections 2-9
+and 14 above still project the repository as of the original `OBSERVED_AT_UTC`
+(Phase 13, Round 3 delivered, PR #52 open). §15 below independently re-observes, via local
+`git log` against `origin/main`, that PR #52 (Phase 13, Issue #51) has since merged and Phase
+13 is complete, that PR #61 (FD-0003, Issue #60) has also since merged, and that Phase 14
+(Identity-Preserving GitHub Projection, Issue #62) is now the current Phase, SHUKOU-adopted
+under `ADOPT_P14_D001_PROJECTION_ENVELOPE_IMPLEMENTATION`. It does not re-run the full
+current-state projection sections 2-9 and 14 otherwise perform (PR head/commit/file counts,
+structural review status, blocker table) for either Phase 13's own closing state or Phase 14's
+own opening state -- that remains a separate, later full re-observation. This addendum exists
+to satisfy `03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` section 2's own requirement: a
+`kernel_surface` change (this delivery's own `src/manosube_agent_civilization/projection/` and
+`01_SCHEMA/projection/` additions) must be paired with a `docs/project_sources/*.md` update in
+the same diff.
+
 ---
 
 # 7. Review and check state
@@ -556,3 +571,53 @@ NEXT_ACCEPTANCE_OWNER=SHUKOU
 ```
 
 本receiptは永続的なPhase acceptanceではない。GitHub状態が変化した時点で再観測対象となる、現在状態のfingerprintである。
+
+---
+
+# 15. Phase 14 bounded addendum (Identity-Preserving GitHub Projection, Issue #62)
+
+本節は、セクション2-9・14が投影する`OBSERVED_AT_UTC`（Phase 13、PR #52 open）以降にrepositoryへ生じた変化のうち、local `git log`によりorigin/mainへ対して独立再観測できた`OBSERVED_GITHUB_FACT`のみを追記する、bounded addendumである。セクション2-9・14自身の全面再投影ではない。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-08
+ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AGAINST_ORIGIN_MAIN
+```
+
+| Field | Observed value |
+|---|---|
+| Current `origin/main` HEAD | [`7fc597356330a0d1da7a334ef20cd913b74154de`](https://github.com/manosube/manosube-agent-civilization-os/commit/7fc597356330a0d1da7a334ef20cd913b74154de) |
+| PR #52 (Phase 13, Issue #51) | **Merged** — merge commit `657f8b4` |
+| PR #61 (FD-0003 Objective/Mechanism separation, Issue #60) | **Merged** — merge commit `7fc5973` |
+| Governing Issue, current Phase | [#62 — Phase 14: Identity-Preserving GitHub Projection](https://github.com/manosube/manosube-agent-civilization-os/issues/62) |
+| SHUKOU implementation adoption | [`ADOPT_P14_D001_PROJECTION_ENVELOPE_IMPLEMENTATION`](https://github.com/manosube/manosube-agent-civilization-os/issues/62#issuecomment-5578028316) |
+| Adoption's own reviewed main SHA | `7fc597356330a0d1da7a334ef20cd913b74154de` (identical to the current `origin/main` HEAD observed above) |
+| Dedicated implementation branch | `agent/issue-62-phase14-github-projection` |
+| Dedicated Pull Request | Not yet opened at the time of this addendum |
+
+```text
+PHASE_13_MERGED=true
+PHASE_13_MERGE_COMMIT=657f8b4
+PHASE_13_COMPLETE=true
+COMPLETED_THROUGH_PHASE=13
+CURRENT_PHASE=14_IDENTITY_PRESERVING_GITHUB_PROJECTION
+CURRENT_PHASE_ISSUE=62
+CURRENT_PHASE_STATE=LOCAL_IMPLEMENTATION_IN_PROGRESS_NO_PR_YET
+PHASE_14_ALLOWED=true
+PHASE_14_COMPLETE=false
+PHASE_15_ALLOWED=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+```
+
+`ADOPT_P14_D001_PROJECTION_ENVELOPE_IMPLEMENTATION`が要求する実装範囲は`09_PROJECTION/PROJECTION_INDEX.md`・`09_PROJECTION/PROJECTION_CONTRACT.md`が所有する。SHUKOU自身が固定した終端は次のとおりであり、本addendumもこれを変更しない。
+
+```text
+STATUS=READY_FOR_STRUCTURAL_REVIEW (delivery-terminal, not yet reached at the time of this
+                                     addendum)
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_14_COMPLETE=false
+PHASE_15_ALLOWED=false
+```
+
+本addendumは、`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するPhase 13の恒久的なacceptance receipt（merge SHA、Human acceptance record、after-state re-observation）を代行しない。それは同ledgerの別途更新の対象であり、本書は現在地を示すための最小限の`OBSERVED_GITHUB_FACT`のみを記録する。

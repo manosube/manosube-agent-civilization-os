@@ -20,6 +20,12 @@ whether a real Human Authority actually selected *this* Independent Verification
 not designed for. It is an extension of this owner, not a second Authority owner: it shares
 this package's admission grammar, error vocabulary, and content-addressing conventions, and
 introduces no registry, token, cache, or persisted artifact of its own.
+
+Phase 14 Structural Review Round 1 (Issue #62, P14-R1-F1) adds one further such extension --
+:func:`evaluate_projection_authorization` -- answering whether a real Human Authority actually
+authorized *this exact* GitHub projection (subject, subject fingerprint, projection kind,
+target repository, payload fingerprint, permitted action), never by reusing Change/Difference/
+State-bound machinery, and never by mere equality with a Human Authority's own owner identity.
 """
 
 from .engine import evaluate_authority
@@ -30,12 +36,19 @@ from .errors import (
     StaleAuthorityInputError,
 )
 from .levels import AUTONOMOUS, HUMAN_APPROVAL_REQUIRED, PROHIBITED
+from .projection_authorization import (
+    AUTHORIZED as PROJECTION_AUTHORIZED,
+    REFUSED as PROJECTION_REFUSED,
+    evaluate_projection_authorization,
+)
 from .verifier_selection import REFUSED, SELECTED, evaluate_verifier_selection
 
 __all__ = [
     "AUTONOMOUS",
     "HUMAN_APPROVAL_REQUIRED",
     "PROHIBITED",
+    "PROJECTION_AUTHORIZED",
+    "PROJECTION_REFUSED",
     "REFUSED",
     "SELECTED",
     "AuthorityError",
@@ -43,5 +56,6 @@ __all__ = [
     "BoundaryViolationError",
     "StaleAuthorityInputError",
     "evaluate_authority",
+    "evaluate_projection_authorization",
     "evaluate_verifier_selection",
 ]

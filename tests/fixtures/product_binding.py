@@ -189,6 +189,57 @@ def sign_human_grant_declaration(
     }
 
 
+def sign_github_projection_grant_declaration(
+    *,
+    project_id: str,
+    project_binding_id: str,
+    grant_ref: dict[str, Any],
+    declared_by: dict[str, Any],
+    subject_ref: dict[str, Any],
+    subject_fingerprint: str,
+    projection_kind: str,
+    target_repository: dict[str, Any],
+    payload_fingerprint: str,
+    permitted_action: str,
+    status: str,
+    declared_at: str,
+) -> dict[str, Any]:
+    """Sign the exact canonical payload
+    :func:`~manosube_agent_civilization.binding.identity.github_projection_grant_declaration_
+    signing_payload` recomputes once ``assemble_github_projection_grant_declaration`` assembles
+    the real record from these same fields (Phase 14 Structural Review Round 2, Issue #62,
+    P14-R2-F1) -- the identical sibling of :func:`sign_human_grant_declaration`, over a
+    GitHub Projection Grant Declaration's own restated fields instead of a Verifier Selection
+    Grant Declaration's."""
+
+    from manosube_agent_civilization.binding.identity import (
+        github_projection_grant_declaration_signing_payload,
+    )
+
+    payload_record = {
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "project_binding_id": project_binding_id,
+        "grant_ref": grant_ref,
+        "declared_by": declared_by,
+        "subject_ref": subject_ref,
+        "subject_fingerprint": subject_fingerprint,
+        "projection_kind": projection_kind,
+        "target_repository": target_repository,
+        "payload_fingerprint": payload_fingerprint,
+        "permitted_action": permitted_action,
+        "status": status,
+        "declared_at": declared_at,
+    }
+    message = github_projection_grant_declaration_signing_payload(payload_record)
+    signature_bytes = _signing_private_key().sign(message)
+    return {
+        "algorithm": "ed25519",
+        "key_id": human_authority_signing_key()["key_id"],
+        "value": signature_bytes.hex(),
+    }
+
+
 def authority_rule() -> dict[str, Any]:
     """A real, schema-valid Authority Rule body -- the Human-declared input Product Binding
     accepts, validates against Authority's own schema, identity-reverifies via Authority's

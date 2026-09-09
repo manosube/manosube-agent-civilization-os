@@ -171,3 +171,47 @@ def verifier_selection_decision_id(decision: dict[str, Any]) -> str:
         "VSEL-DEC-",
         {field: decision[field] for field in VERIFIER_SELECTION_DECISION_SEMANTIC_FIELDS},
     )
+
+
+#: What a GitHub Projection Decision's meaning is bound to (Phase 14, Structural Review
+#: Round 1, P14-R1-F1) -- the identical "bind every field a caller could otherwise vary
+#: independently" discipline :data:`VERIFIER_SELECTION_DECISION_SEMANTIC_FIELDS` already
+#: applies, over Projection's own operation-scoping fields instead of Independent
+#: Verification's.
+GITHUB_PROJECTION_DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "project_id",
+    "subject_ref",
+    "subject_fingerprint",
+    "projection_kind",
+    "target_repository",
+    "payload_fingerprint",
+    "permitted_action",
+    "selection_authority_ref",
+    "grant_ref",
+    "excluding_grant_refs",
+    "declaration_ref",
+    "decision",
+    "decision_reason_codes",
+)
+
+
+def github_projection_grant_id(grant: dict[str, Any]) -> str:
+    return _address(
+        "GH-PROJ-GRANT-",
+        {key: value for key, value in grant.items() if key != "github_projection_grant_id"},
+    )
+
+
+def github_projection_decision_semantic_fingerprint(decision: dict[str, Any]) -> str:
+    """The digest of a GitHub Projection Decision's meaning."""
+
+    return _digest({field: decision[field] for field in GITHUB_PROJECTION_DECISION_SEMANTIC_FIELDS})
+
+
+def github_projection_decision_id(decision: dict[str, Any]) -> str:
+    """The content address of a GitHub Projection Decision."""
+
+    return _address(
+        "GH-PROJ-DEC-",
+        {field: decision[field] for field in GITHUB_PROJECTION_DECISION_SEMANTIC_FIELDS},
+    )
