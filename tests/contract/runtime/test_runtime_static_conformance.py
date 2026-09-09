@@ -115,6 +115,22 @@ Structural Review Round 5 (P15-R5) changes five further facts this file pins:
   private ``_instant`` moved there unchanged and ``deployment_registry.py`` reuses it rather than
   ordering two timestamp *strings*, which is what P15-R5-F3 found unsound. No second timestamp
   grammar and no Runtime-specific time owner exists (P15-R5-F3).
+
+Structural Review Round 6 (P15-R6) changes one further fact this file pins, and restates one it
+already had:
+
+- the request-facing operation calls ``_require_bound_admission_still_current`` **twice**, each
+  time after its own ``_boot``, and the second call comes after every gated
+  grant/declaration/authorization call and before the one ``ProjectionExecutionContext``
+  construction. Round 5's single barrier ran only at the start of the request, so a rotation or
+  revocation committing while grants were still being resolved was followed by a newly issued
+  capability anyway (P15-R6-F1). ``bootstrap.py`` still reaches Boot through exactly one literal
+  ``boot_project`` call site even though it now Boots from three points.
+- the request-facing signature is **unchanged** from Round 5 -- exactly
+  ``github_projection_grant_refs`` and ``github_projection_grant_declaration_refs``, keyword-only,
+  with no ``*args``/``**kwargs`` either. That is an adopted condition of Round 6 in its own right
+  (item 6: no new public request parameter of any kind), so it is asserted again at the Round 6
+  test rather than left resting on the Round 5 one alone (P15-R6-F1).
 """
 
 from __future__ import annotations
