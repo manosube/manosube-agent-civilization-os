@@ -1641,3 +1641,639 @@ tests/fixtures/runtime_world.py                                 F2 (every fixtur
                                                                    this repository genuinely
                                                                    populates the pointer)
 ```
+
+## 13. Structural Review Round 4 corrections (P15-R4-F1, P15-R4-F2)
+
+```text
+ROUND=4
+GOVERNING_REVIEW=PR #65 Structural Review Round 4
+FINDINGS_ADOPTED=2
+FINDINGS_CLOSED=2
+REOPENED_FROM_ROUND_3=P15-R3-F1 (now P15-R4-F1), P15-R3-F2 (now P15-R4-F2)
+ROUND_1_FINDINGS_CONFIRMED_CLOSED=P15-R1-F1, P15-R1-F2, P15-R1-F3, P15-R1-F5, P15-R1-F6
+ROUND_2_FINDINGS_CONFIRMED_CLOSED=P15-R2-F2's own signature/Boot-binding half
+ROUND_3_FINDINGS_CONFIRMED_CLOSED=the validity-window half of P15-R3-F2
+```
+
+Round 4 confirmed every earlier round's remaining corrections closed and reopened both of
+Round 3's, on the review's own explicit observation that **the same trust-boundary semantic class
+has now recurred across Rounds 1-4**. Where this section and an earlier one differ, this section
+governs -- the same rule every earlier round states.
+
+The recurrence is worth naming precisely, because it is what shapes both corrections below:
+
+```text
+ROUND 1   the trust decision was a PARAMETER LIST      -> replaced by a TYPE
+ROUND 2   the trust decision was a PUBLIC FACTORY      -> replaced by a PRIVATE SENTINEL
+ROUND 3   the trust decision was POSSESSION OF A TYPE  -> replaced by a SIGNED ADMISSION RECORD
+                                                          verified against a CALLER-SUPPLIED
+                                                          anchor
+ROUND 4   the trust decision was STILL A PARAMETER --   -> replaced by an OWNERSHIP BOUNDARY: the
+          the caller supplied both the admission and       values that decide are owned by a
+          the anchor it was signed under, so a caller       composition step, and the
+          who brought a matching attacker anchor           request-facing signature has no
+          along with a self-consistent alternate world     parameter for any of them
+          passed every check
+```
+
+Each earlier round moved the decision somewhere a caller could still reach. Round 4's correction
+is the first that is not a check at all: it is about *who owns which value*, and it is enforced
+by the absence of parameters rather than by their validation.
+
+### 13.1 P15-R4-F1 -- the trust anchor is composition-owned, and absent from every request-facing signature
+
+*Claimed (Round 3):* requiring a canonical, Store-committed, ACTIVE `runtime_root_admission`
+verified against an externally supplied `trust_anchor_public_key_hex` made possession of a trust
+root worthless, and therefore closed the finding.
+
+*True:* every one of those checks was real and every one still runs -- but they were performed
+against material **the caller of the request-facing function supplied**:
+
+```python
+bootstrap_projection_execution_capability(
+    TrustedRuntimeRoot(attacker_store, attacker_project, attacker_binding),
+    runtime_root_admission_ref=<the attacker's own ACTIVE, correctly signed admission>,
+    trust_anchor_public_key_hex=<the attacker's own matching public key>,
+    github_projection_grant_refs=[...],
+    github_projection_grant_declaration_refs=[...],
+)   # every check passes -- the attacker supplied both sides of the question
+```
+
+A caller who can name the anchor *is* the trust decision, whatever the record in between proves.
+
+*Now:* provisioning is two owned halves, and the ownership is the correction.
+
+```text
+TRUSTED_DEPLOYMENT_COMPOSITION
+  owns:  canonical Store handle, project_id, project_binding_id, root-admission selection,
+         configured trust-anchor identity/public key
+  runs:  ONCE, at deployment composition, before any request boundary exists
+
+REQUEST_FACING_BOOTSTRAP
+  may supply:      operation/grant/declaration references allowed by the frozen API
+  must not supply: Store, project_id, project_binding_id, trust anchor or its fingerprint,
+                   root-admission reference or body, Human Authority signing key
+```
+
+```python
+# bootstrap.py -- the one shipped trusted-composition entry point
+compose_trusted_runtime_deployment_authority(
+    store, *, project_id, project_binding_id,
+    runtime_root_admission_ref, trust_anchor_public_key_hex,
+) -> RuntimeDeploymentAuthority
+
+# bootstrap.py -- request-facing; five parameters are GONE, not validated
+bootstrap_projection_execution_capability(
+    deployment_authority: RuntimeDeploymentAuthority,
+    *, github_projection_grant_refs, github_projection_grant_declaration_refs,
+) -> ProjectionExecutionCapability
+```
+
+`RuntimeDeploymentAuthority` is an opaque, frozen, slotted capability. It binds the Store, the
+project, the Project Binding, the exact admitted `runtime_root_admission_id`, and that
+admission's own `generation`; it exposes **no** public accessor of any kind (`dir()` over the
+type yields nothing public), its `__repr__` deliberately reveals nothing, and the raw anchor is
+**discarded** at composition rather than retained -- proved by walking everything reachable from a
+composed instance and asserting the anchor hex appears nowhere in it.
+
+Composition performs every Round 3 admission check, in this order, and adds Round 4's own
+currency requirement last:
+
+```text
+1. runtime_root_admission_ref is a well-formed reference of the right kind
+2. it resolves in the bound Store; the record is schema-valid; its own recomputed content
+   address and semantic fingerprint equal its own declared values
+3. status == "ACTIVE"
+4. its project_id / project_binding_ref exactly equal the ones being composed
+5. its signature verifies against the deployment-configured trust anchor
+6. this Project Binding's own admission chain has a CURRENT admission at all
+7. the presented reference names EXACTLY that current admission
+```
+
+**Why currency is last, deliberately.** It is the identical ordering
+`route._resolve_deployment_declaration` already uses for its own sibling pointer, and for the
+identical reason: a forged, foreign-signed, tampered, wrong-project or wrong-Binding admission can
+never *become* current -- the committer that moves the pointer verifies the anchor signature
+first -- so ordering currency ahead of the record-level checks would collapse every one of those
+refusals into an indistinguishable "not current" and stop each control proving what it claims.
+Ordering it last keeps each refusal at its own check, and leaves currency isolated by the rotation
+and revocation controls, where the presented record is perfectly genuine in every other respect.
+
+**`TrustedRuntimeRoot` is removed, not kept beside the new type.** It existed only to *name* a
+world, and naming a world is now composition's own job; an inert value beside the authority would
+leave a future reader two handles with one purpose. Rounds 2 and 3 could assert only that no
+shipped callable returned that type and no shipped module constructed one; the Round 4 assertion
+is strictly stronger -- the name occurs in **no code position anywhere in the shipped tree** --
+and the deleted Round 1 minting factory is still absent by name, unchanged. What replaces those
+assertions on the positive side is the honest fact Round 3 itself established (a mechanism with no
+production-legitimate producer is a defect): **exactly one** shipped callable returns a
+`RuntimeDeploymentAuthority`, exactly one shipped call site constructs one, and it is the trusted
+composition step.
+
+#### 13.1.1 The root-admission lifecycle is the *same* mechanism, one level up
+
+The review required that the root admission "must not repeat the declaration-currency defect
+below". Round 3 asked only *does a matching ACTIVE admission exist and resolve?* -- which is
+literally the ineffective-revocation question Round 3 itself had already rejected one level down:
+
+```text
+admission A committed, ACTIVE, anchor-signed         composition succeeds -- correct
+the deployment revokes the boundary: mints B         A keeps its own unchanged content address,
+                                                     stays resolvable, ACTIVE and signed forever
+composition presented with A again                   ACCEPTED under Round 3 -- and wrong
+```
+
+So a root admission is now a chained record in exactly the sense §13.2 defines for declarations:
+required `generation`/`predecessor_ref` in `runtime_root_admission.schema.json`, both covered by
+`ROOT_ADMISSION_SEMANTIC_FIELDS` and therefore by the record's own content address, its own
+semantic fingerprint, and the **trust anchor's** own signature over it; a current-admission
+pointer in Project State; and one sanctioned committer,
+`commit_runtime_root_admission(store, project_id, admission, *, trust_anchor_public_key_hex,
+committed_at)`, that moves it.
+
+```text
+semantic_state.runtime.claims["ROOT-ADMISSION:<project_binding_id>"] -> runtime_root_admission_id
+```
+
+**The two chains' key spaces are provably disjoint, not observed not to collide.** A declaration
+target key is exactly `RUNTIME-DEPLOYMENT-TARGET-` plus 64 characters from `[0-9A-F]` (a
+`hexdigest().upper()` can emit nothing else), and neither that prefix nor that alphabet contains
+`":"`; every admission chain key contains one, at the fixed offset the literal prefix
+`ROOT-ADMISSION:` puts it at. No string can be a member of both sets, whatever the inputs. The
+proof is over the alphabets themselves, in `tests/unit/runtime/test_runtime_transition_chain.py`,
+with an empirical companion asserting the real derivations really do produce those shapes. Still
+**no State schema change**: `claims` remains the open `{string: scalar}` map Round 3 already used.
+
+#### 13.1.2 What is proved, and what is not
+
+```text
+THE REQUEST-FACING SIGNATURE CAN NAME NO STORE/PROJECT/BINDING/ADMISSION/ANCHOR      proved
+A SELF-CONSISTENT ALTERNATE WORLD PLUS ITS MATCHING ANCHOR CANNOT BE SUBSTITUTED     proved
+   INTO THE REQUEST-FACING BOOTSTRAP, AT ZERO ADAPTER AND ZERO NETWORK CALLS
+EACH OF STORE / PROJECT / BINDING / ADMISSION / ANCHOR IS INDEPENDENTLY REFUSED      proved
+   WHEN SUBSTITUTED ALONE AT THE COMPOSITION BOUNDARY
+A ROTATED OR REVOKED ADMISSION CANNOT BE REPLAYED THROUGH ITS OLD REFERENCE          proved
+THE RAW ANCHOR IS ABSENT FROM THE COMPOSED AUTHORITY'S ENTIRE REACHABLE STATE        proved
+AN ALREADY-COMPOSED AUTHORITY IS REVOKED RETROACTIVELY                               false, and
+                                                                                    not claimed
+A LIVE DEPLOYMENT ENTRYPOINT CALLS THIS COMPOSITION IN THIS REPOSITORY               false, and
+                                                                                    not claimed
+```
+
+The second-to-last line is §13.5 item 1, stated here rather than implied away. The last is
+unchanged from Rounds 2 and 3 and remains a scheduling fact about later Phases.
+
+### 13.2 P15-R4-F2 -- a declaration's lifecycle is a monotonic, signed transition chain
+
+*Claimed (Round 3):* making "current" mean what
+`semantic_state.runtime.claims[<target_key>]` names, and moving that pointer atomically whenever
+any new declaration is issued for a target, made revocation genuinely effective.
+
+*True:* it made revocation effective in one direction only. Nothing required a declaration to say
+*what it replaced*, so the pointer was freely re-pointable in both:
+
+```text
+A(ACTIVE)  -> B(REVOKED)   a genuine revocation                                     intended
+B(REVOKED) -> A(ACTIVE)    replaying the already-issued, still-signed, still-in-     ACCEPTED
+                           window ancestor A moved the pointer straight back and     and wrong
+                           silently un-revoked a revoked deployment target
+```
+
+and two rotations racing each other interleaved into whichever order the Store happened to see
+last, with no way to tell which head either was issued against.
+
+*Now:* every `runtime_deployment_declaration` binds, inside both its content identity and its
+Human Authority signature:
+
+```text
+project_id, project_binding_ref, human_authority_ref, target identity fields,
+deployment_fingerprint, status, declared_at, valid_from, valid_until,
+generation, predecessor_ref
+```
+
+```text
+GENESIS      generation == 0, predecessor_ref == null, and only when the target has no current
+             declaration. A genesis record must be ACTIVE (§13.5, item 6).
+SUCCESSOR    generation == current.generation + 1, and predecessor_ref naming the EXACT id the
+             pointer currently holds.
+ROTATION     an ACTIVE successor replacing an ACTIVE current -- the successor rule, nothing more.
+REVOCATION   a REVOKED successor naming the exact current declaration. TERMINAL for that target.
+TERMINAL     after a REVOKED head, no same-chain successor and no ancestor replay is ever
+             admitted again. Reactivation requires a separately adopted new target epoch/chain,
+             never silent pointer movement -- and that epoch is deliberately not built in this
+             round (§13.5, item 8).
+REPLAY       proposing the record the pointer already names is an idempotent no-op success: it
+             moves nothing, commits nothing, and is not a transition.
+```
+
+Because `generation` and `predecessor_ref` participate in the signed payload, a successor is a
+*signed statement about which record it replaces*. That single fact is what makes §13.3's
+concurrency rule sound rather than merely convenient.
+
+**The mechanism is shared, not duplicated.** Both chains parameterize one module,
+`runtime/transition_chain.py`, through a `MonotonicChainSpec` naming only what genuinely differs
+(record kind, its two digest field names, its validator, its two derivations, its chain key). The
+rules -- genesis, succession, terminality, status legality, pointer movement, and the
+Compare-And-Swap discipline -- live there and are identical for both. Two consequences are worth
+recording:
+
+- `deployment_registry.py` no longer calls `commit_state_transition` at all; `transition_chain.py`
+  owns that single call site for both chains, so adding a second chain kind in this round added
+  **no** second commit site. This package still admits exactly two, by name (`route.py` and
+  `transition_chain.py`), and still calls no `store.commit` directly.
+- static conformance additionally proves neither committer restates a chain rule of its own: each
+  calls `commit_chain_transition` exactly once, evaluates no transition legality itself, and names
+  no `ACTIVE`/`REVOKED` literal in any code position.
+
+**`observe_runtime_target` is unchanged.** Every Round 1-3 check it performs -- pre-adapter
+refusals, per-commit currency and authority-freshness re-checks, the ACTIVE requirement, the
+signature/Boot binding, the validity window -- remains exactly as it was, and every one of those
+controls is still green. The declaration registry likewise remains a Runtime domain route using
+the existing Store's single sanctioned committer; it is not a second Store, State, Authority, or
+Reflow owner.
+
+### 13.3 The committer: dual verification, and why the concurrency loser fails closed
+
+**Boot and signature verification now happen at commit time too, in addition to
+`observe_runtime_target`'s own independent re-check.** Round 3's committer deliberately skipped
+signature verification, arguing that the route re-checks it fresh and that a second copy could
+drift into a different notion of "an acceptable declaration". That argument rested on a premise
+Round 4 removes: Round 3's committer had **no transition legality to gate at all** -- every
+declaration simply overwrote the pointer -- so verifying there would genuinely have bought
+nothing. The committer now decides whether a proposal may *move a chain*, and it cannot decide
+that honestly while unable to tell a genuine Human Authority statement from an unsigned or
+wrongly-signed one.
+
+```text
+AT COMMIT TIME (deployment_registry)   may this proposal move this target's own pointer at all?
+                                       -> fresh Boot; human_authority_ref must equal the restored
+                                          one; signature verified against the Boot-restored key;
+                                          validity window well-ordered -- all BEFORE any
+                                          generation/predecessor legality is considered.
+
+AT OBSERVATION TIME (route.py)         may this declaration be trusted to anchor an observation
+                                       NOW -- possibly much later, possibly after a legitimate
+                                       Human Authority re-binding? -> that call's OWN fresh Boot,
+                                       its own signature check, ACTIVE requirement, validity
+                                       window, and currency check. All unchanged, all required.
+```
+
+Neither subsumes the other: a declaration committed under authority X stays committed, while an
+observation made after a re-binding to authority Y must refuse it. Round 3's drift concern is
+answered by both sites calling the identical
+`verify_runtime_deployment_declaration_signature` over the identical
+`runtime_deployment_declaration_signing_payload` bytes -- one verifier, one payload, two moments
+-- rather than by one of them not looking. The admission committer's own verification is the
+same shape against the deployment anchor instead of a Boot-restored key.
+
+**The commit loop, exactly.**
+
+```text
+loop (bounded retries, the identical bound route.py's own _commit_envelope uses):
+    load State fresh
+    read this chain's own pointer
+    if the pointer already names this exact record -> IDEMPOTENT_REPLAY; return, commit nothing
+    resolve the current record from the bound Store
+    verify(proposed, state)                  fresh Boot + signature, EVERY iteration
+    re-evaluate the ENTIRE transition        genesis / successor / terminality / status legality
+        -> any illegality FAILS CLOSED, immediately, never retried
+    commit_state_transition(...)
+        StaleStateError -> reload and re-evaluate everything from scratch
+```
+
+The distinction Round 3's loop could not draw:
+
+```text
+UNRELATED CONTENTION        this chain's own pointer still names the record the proposal's own
+                            predecessor_ref names   ->  reload and retry (Round 1 F5's own
+                            established tolerance, deliberately preserved and still proved)
+THIS CHAIN'S POINTER MOVED  the pointer already names something else  ->  FAIL CLOSED, no retry
+```
+
+The second is not pessimism about retries; it is the only sound answer. The losing proposal's
+`predecessor_ref` and `generation` were signed against a *specific* prior head. Re-aiming it at
+the new head would mean committing a body whose own signed content no longer describes its true
+predecessor, and producing an honestly re-aimed one requires a **new signature over a new
+payload** -- which only the Human Authority (or, for admissions, the deployment trust anchor) can
+create, never this committer. So "the loser re-evaluates against the new head and fails closed"
+is literally what happens, and the loser's operator must re-issue rather than the committer
+adjusting anything on their behalf.
+
+The concurrency control that proves this uses this package's own established barrier-store
+technique (`test_runtime_authority_freshness.py`'s `_UnrelatedContentionStore`,
+`test_runtime_deployment_identity_anchor.py`'s `_PointerBarrierStore`) rather than a new
+simulation mechanism: a test-only Store wrapper lands a *legitimate competing successor from the
+same predecessor* between the call's own load and its own commit attempt, so the loser's retry
+genuinely re-observes a moved head. The harness never asserts an outcome it did not cause the real
+retry path to produce.
+
+### 13.4 Finding-to-code-to-test matrix
+
+```text
+P15-R4-F1  composition owns the trust anchor
+  src/manosube_agent_civilization/runtime/bootstrap.py
+      RuntimeDeploymentAuthority (opaque, no public accessor, no retained anchor)
+      compose_trusted_runtime_deployment_authority  (the one shipped composition entry point)
+      _require_currently_admitted                   (7 checks, currency last)
+      bootstrap_projection_execution_capability     (3 parameters; 5 removed)
+      _boot                                         (one literal boot_project call site, two uses)
+  src/manosube_agent_civilization/runtime/admission_registry.py   the admission chain + committer
+  src/manosube_agent_civilization/runtime/identity.py             chain fields + chain key
+  01_SCHEMA/runtime/runtime_root_admission.schema.json            generation + predecessor_ref
+
+  tests/contract/runtime/test_runtime_static_conformance.py
+      test_the_request_facing_bootstrap_accepts_no_trust_deciding_parameter
+      test_the_composition_entry_point_owns_every_trust_deciding_parameter
+      test_the_raw_trust_anchor_is_named_only_by_composition_side_functions
+      test_the_removed_trust_root_type_appears_in_no_shipped_code_position
+      test_exactly_one_shipped_module_defines_the_composition_owned_authority
+      test_exactly_one_shipped_public_callable_returns_a_deployment_authority
+      test_the_composed_authority_exposes_no_public_accessor_for_what_it_binds
+      test_the_admission_gate_precedes_every_grant_and_authority_call_by_construction
+      test_no_shipped_runtime_module_reads_configuration_at_all
+      test_the_two_chain_key_spaces_are_structurally_disjoint
+  tests/integration/runtime/test_runtime_deployment_authority_composition.py
+      test_a_canonical_composition_bound_world_reaches_the_controlled_adapter
+      test_the_composed_authority_retains_the_raw_trust_anchor_nowhere
+      test_the_composed_authority_exposes_no_public_accessor_at_all
+      test_the_attacker_world_is_genuinely_self_consistent_and_self_admitted
+      test_the_attacker_world_cannot_be_substituted_into_the_request_facing_bootstrap
+      test_substituting_only_the_anchor_is_independently_refused
+      test_substituting_only_the_admission_is_independently_refused
+      test_substituting_only_the_store_is_independently_refused
+      test_substituting_only_the_project_is_independently_refused
+      test_substituting_only_the_binding_is_independently_refused
+      test_an_admission_rotated_at_the_composition_level_can_no_longer_be_replayed
+      test_a_revoked_admission_chain_admits_no_further_composition_at_all
+      test_a_revoked_admission_chain_is_permanently_terminal
+      test_an_authority_composed_before_a_rotation_remains_usable_by_its_holder
+      test_an_admission_planted_without_the_committer_is_never_current
+  tests/integration/runtime/test_runtime_root_admission.py       every Round 3 record-level
+                                                                 control, re-rooted at composition
+  tests/integration/runtime/test_runtime_trusted_root.py         the two-world (a)/(b)/(c) groups
+  tests/integration/runtime/test_runtime_no_shipped_minting_path.py
+                                                                 no shipped minting path survives
+
+P15-R4-F2  monotonic, signed declaration transition chain
+  src/manosube_agent_civilization/runtime/transition_chain.py    the ONE shared mechanism
+  src/manosube_agent_civilization/runtime/deployment_registry.py the declaration binding + Boot
+                                                                 and signature verification
+  src/manosube_agent_civilization/runtime/identity.py            generation/predecessor_ref in
+                                                                 DEPLOYMENT_DECLARATION_SEMANTIC_
+                                                                 FIELDS
+  01_SCHEMA/runtime/runtime_deployment_declaration.schema.json   generation + predecessor_ref
+
+  tests/unit/runtime/test_runtime_transition_chain.py            every rule, over a synthetic kind
+  tests/integration/runtime/test_runtime_declaration_transition_chain.py
+      test_the_chain_admits_genesis_then_rotation_then_revocation_in_order
+      test_replaying_the_ancestor_after_a_revocation_leaves_the_pointer_at_the_revocation
+      test_replaying_the_ancestor_after_a_rotation_leaves_the_pointer_at_the_rotation
+      test_a_deep_chain_cannot_be_rewound_to_any_earlier_generation
+      test_a_successor_naming_the_wrong_predecessor_refuses_without_state_change
+      test_a_successor_skipping_a_generation_refuses_without_state_change
+      test_a_duplicate_generation_with_a_different_body_refuses_without_state_change
+      test_a_successor_after_a_revocation_refuses_without_state_change
+      test_a_first_declaration_that_is_not_a_genesis_record_refuses_without_state_change
+      test_replaying_the_exact_current_declaration_is_idempotent_and_moves_nothing
+      test_replaying_a_revoked_current_declaration_is_also_idempotent
+      test_the_committer_refuses_an_unsigned_or_wrongly_signed_transition
+      test_the_committer_refuses_a_declaration_naming_an_authority_boot_did_not_restore
+      test_the_committers_boot_is_fresh_so_a_rebinding_invalidates_a_stale_signer
+      test_two_concurrent_successors_from_the_same_head_resolve_to_at_most_one_winner
+      test_an_unrelated_state_bump_during_the_retry_loop_never_blocks_a_legal_transition
+  tests/integration/runtime/test_runtime_deployment_identity_anchor.py
+                                                                 every Round 1-3 observation-side
+                                                                 control, migrated to the chain and
+                                                                 still green (validity boundaries,
+                                                                 stale/not-yet-valid, superseded,
+                                                                 replayed-old-ACTIVE, unregistered,
+                                                                 post-check substitution)
+  tests/unit/runtime/test_runtime_identity.py                    both chain fields participate in
+                                                                 identity, fingerprint and payload
+```
+
+### 13.5 Judgment calls made in this round that the adopted findings did not fully pin down
+
+1. **An already-composed authority is a cached capability, and rotation binds the *next*
+   composition.** Composition Boots and verifies the anchor exactly once and then discards it;
+   there is no per-request re-verification. This is not an oversight -- it is forced by the
+   adopted contract's own wording ("closed over afterward", "absent from every request-facing
+   execution signature"), which rules out re-verifying per call, and it is exactly how a cached
+   credential or capability token behaves in any real system. A holder keeps working until they
+   stop or recompose; a revocation takes effect at the next composition. Stated here, and proved
+   as its own control (`test_an_authority_composed_before_a_rotation_remains_usable_by_its_holder`)
+   rather than left for a reader to infer a retroactive property this design does not have.
+
+2. **The root admission keeps a caller-supplied reference, cross-checked against the pointer,
+   rather than composition resolving "whatever is current".** Both were permitted. The presented-
+   reference form is chosen because it mirrors `_resolve_deployment_declaration` exactly (a
+   presented reference checked against its own pointer), and because it makes the decisive control
+   literally expressible: *compose against A, rotate or revoke to B, then present A's own
+   still-valid, still-resolvable reference and be refused*. With "resolve whatever is current",
+   referencing A would not be expressible at all, and the strongest available control would be a
+   weaker one.
+
+3. **The shared mechanism is a spec object plus free functions, not a base class.**
+   `MonotonicChainSpec` carries only what genuinely differs between record kinds; every rule is a
+   module-level function over it. Inheritance was rejected because a subclass can override a rule,
+   which is precisely the drift the review's "same class has recurred four times" framing warns
+   about. Signature verification is deliberately a per-call `verify` callback rather than a spec
+   field: the two chains ask genuinely different questions of genuinely different keys (a
+   Boot-restored Human Authority key; a deployment-configured anchor not resolvable from inside
+   the Store at all), and one spec field would have to pretend they are the same question.
+
+4. **The admission chain lives in its own module, `admission_registry.py`.** Folding it into
+   `deployment_registry.py` would have made a module named and documented for one record kind own
+   two; folding it into `root_admission.py` would contradict that module's own stated
+   verification-only discipline. The separation costs nothing in duplication, because both
+   registries are thin bindings over one shared mechanism.
+
+5. **`commit_runtime_root_admission` takes the raw trust anchor, and that is not a violation of
+   "the anchor appears only at composition".** Issuing, rotating, or revoking an admission *is*
+   the deployment/composition boundary acting -- it is the act of deciding which world is canonical
+   at all. Static conformance pins the exact set of shipped functions that may name the parameter
+   (the composition entry point, its own private helper, this committer, and the pure verification
+   wrapper) and proves the request-facing operation is not among them.
+
+6. **A genesis record must be ACTIVE.** The adopted rules fix `generation`/`predecessor_ref` for
+   genesis but not its status. A genesis `REVOKED` record would revoke nothing and would open a
+   permanently terminal chain that never admitted anything -- a shape with no meaning rather than a
+   stricter one -- so it is refused, with its own message.
+
+7. **Idempotent replay short-circuits before verification, deliberately.** Proposing the record
+   the pointer already names returns immediately, without a fresh Boot or signature check. It is
+   not a transition, nothing moves, and the record's signature was already verified when it was
+   made current; running the checks anyway would imply a decision is being made when none is.
+   `committed_state` is `None` for that outcome, and the returned `transition` says
+   `IDEMPOTENT_REPLAY` rather than naming a transition that did not happen.
+
+8. **Target-epoch reactivation after a terminal REVOKED is deliberately NOT built.** The adopted
+   contract requires only that terminal REVOKED be permanently terminal for that exact chain key,
+   and says a later reactivation "requires a separately adopted new target epoch/chain, not silent
+   pointer movement" -- it does not require that epoch to exist now. Building a target-identity
+   `epoch` field and a reactivation path would be unrequested scope. The permanent-terminal
+   property is implemented and proved for both chains; no reactivation mechanism exists, and none
+   is claimed.
+
+9. **`TrustedRuntimeRoot` is deleted rather than kept as an inert alias.** See §13.1. The
+   strictly-stronger static assertion that replaces Rounds 2 and 3's own is what makes this a
+   supersession rather than a quiet loss of a proved fact.
+
+10. **Several Round 1-3 negative controls now plant their record with a raw `commit_records`.**
+    The committers verify signature, authority binding, project and Binding before they will move a
+    chain, so a forged, foreign-signed, wrong-project, wrong-Binding, tampered, or genesis-REVOKED
+    record cannot reach the Store through them at all -- correctly. Those controls therefore plant
+    the record directly, and each still refuses at exactly the check its own name claims, because
+    both the route and composition check the record itself before checking currency. Every such
+    site says so at the test.
+
+11. **The configuration-reading prohibition is proved package-wide, not only on the request
+    path.** Contract 1 item 7 forbids request-path code from reading an environment variable, file,
+    or parameter to choose a different trust root. Proving it for the whole shipped `runtime`
+    package -- no `os`/`pathlib` import, no `environ`/`getenv`/`expanduser` in any code position,
+    no bare `open`/`read_text`/`read_bytes` call -- is both stronger and simpler to keep true than
+    trying to delimit "the request path" statically. `adapter.py`'s own `self._opener.open(...)` is
+    the HTTP opener this package's network boundary already owns and bounds, and is excluded by
+    name and by shape rather than by accident.
+
+### 13.6 Round 4 declarations
+
+```text
+TRUST_ANCHOR_OWNED_BY_COMPOSITION=true
+TRUST_ANCHOR_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+ROOT_ADMISSION_REF_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+STORE_PROJECT_OR_BINDING_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+REQUEST_FACING_BOOTSTRAP_PARAMETER_COUNT=3
+COMPOSITION_ENTRY_POINT_COUNT=1
+SHIPPED_CALLABLES_RETURNING_A_DEPLOYMENT_AUTHORITY=1
+SHIPPED_CONSTRUCTION_SITES_OF_A_DEPLOYMENT_AUTHORITY=1
+DEPLOYMENT_AUTHORITY_RETAINS_THE_RAW_TRUST_ANCHOR=false
+DEPLOYMENT_AUTHORITY_EXPOSES_A_PUBLIC_ACCESSOR=false
+DEPLOYMENT_AUTHORITY_BINDS_THE_EXACT_ADMITTED_GENERATION=true
+TRUSTED_RUNTIME_ROOT_TYPE_EXISTS=false
+TRUSTED_RUNTIME_ROOT_NAME_APPEARS_IN_SHIPPED_CODE=false
+DELETED_ROUND_1_MINTING_FACTORY_REINTRODUCED=false
+REQUEST_PATH_READS_ENVIRONMENT_FILE_OR_REGISTRY=false
+ROOT_ADMISSION_IS_A_MONOTONIC_SIGNED_CHAIN=true
+ROOT_ADMISSION_CURRENT_POINTER_IS_STORE_RESOLVED=true
+ROOT_ADMISSION_ROTATION_AND_REVOCATION_ARE_EFFECTIVE=true
+ROOT_ADMISSION_REVOCATION_IS_TERMINAL=true
+DEPLOYMENT_DECLARATION_IS_A_MONOTONIC_SIGNED_CHAIN=true
+DECLARATION_GENERATION_AND_PREDECESSOR_ARE_SIGNED=true
+DECLARATION_ANCESTOR_REPLAY_IS_REFUSED=true
+DECLARATION_REVOCATION_IS_TERMINAL=true
+TARGET_EPOCH_REACTIVATION_MECHANISM_BUILT=false
+IDENTICAL_CURRENT_RECORD_REPLAY_IS_IDEMPOTENT=true
+CONCURRENCY_LOSER_FAILS_CLOSED=true
+UNRELATED_CONTENTION_STILL_RETRIES=true
+COMMITTER_VERIFIES_BOOT_AND_SIGNATURE=true
+OBSERVE_RUNTIME_TARGET_CHECKS_WEAKENED=false
+CHAIN_MECHANISM_MODULE_COUNT=1
+CHAIN_RULE_DUPLICATED_PER_RECORD_KIND=false
+CHAIN_KEY_SPACES_PROVABLY_DISJOINT=true
+COMMIT_STATE_TRANSITION_CALL_SITES_IN_THIS_PACKAGE=2
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+NEW_SCHEMA_FILES_ADDED=0
+CANONICAL_SCHEMA_COUNT=59
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
+RUNTIME_ROOT_ADMISSION_COMMIT_ENTRY_POINT_COUNT=1
+AUTHORITY_COMPOSED_BEFORE_A_ROTATION_IS_RETROACTIVELY_REVOKED=false
+ED25519_VERIFICATION_REIMPLEMENTED_IN_RUNTIME=false
+BINDING_IMPORTS_RUNTIME=false
+RUNTIME_HOLDS_A_PRIVATE_SIGNING_KEY=false
+RUNTIME_MINTS_A_SIGNATURE=false
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+```
+
+### 13.7 Round 4 proof layers
+
+```text
+tests/unit/runtime/test_runtime_transition_chain.py             F1/F2 (every chain rule, over a
+                                                                   synthetic record kind: genesis,
+                                                                   succession, rotation,
+                                                                   revocation, terminality,
+                                                                   malformed chain fields, pointer
+                                                                   reads, and the structural
+                                                                   key-space disjointness proof)
+tests/unit/runtime/test_runtime_identity.py                     F1/F2 (both chain fields
+                                                                   participate in each record
+                                                                   kind's own single derivation,
+                                                                   and a record missing either
+                                                                   cannot be addressed at all)
+tests/contract/runtime/test_runtime_static_conformance.py       F1 (the request-facing signature's
+                                                                   three parameters and five
+                                                                   absences; composition's own
+                                                                   five; the exact set of shipped
+                                                                   functions that may name a raw
+                                                                   anchor; the removed type absent
+                                                                   from every code position; one
+                                                                   authority definition, one
+                                                                   construction site, one producer;
+                                                                   no public accessor; no
+                                                                   configuration read anywhere) and
+                                                                   F2 (still exactly two
+                                                                   commit_state_transition call
+                                                                   sites, now route.py and
+                                                                   transition_chain.py; neither
+                                                                   committer restates a chain rule)
+tests/integration/runtime/test_runtime_deployment_authority_composition.py
+                                                                F1 (the canonical composition-bound
+                                                                   world reaching a controlled
+                                                                   adapter; the anchor absent from
+                                                                   the authority's entire reachable
+                                                                   state; the alternate world with
+                                                                   its own matching attacker anchor,
+                                                                   unsubstitutable at zero adapter
+                                                                   and zero authorization calls;
+                                                                   each of Store/Project/Binding/
+                                                                   admission/anchor refused alone;
+                                                                   admission rotation, revocation,
+                                                                   permanent terminality, and the
+                                                                   disclosed cached-capability
+                                                                   boundary)
+tests/integration/runtime/test_runtime_declaration_transition_chain.py
+                                                                F2 (genesis/rotation/revocation in
+                                                                   order; both ancestor-replay
+                                                                   rollback controls; deep-chain
+                                                                   rewind; wrong predecessor,
+                                                                   skipped and duplicate
+                                                                   generation, successor after
+                                                                   REVOKED, non-genesis first
+                                                                   record -- each without any State
+                                                                   change; idempotent replay; the
+                                                                   committer's Boot and signature
+                                                                   gate; the concurrent-successor
+                                                                   control; and the preserved
+                                                                   unrelated-contention tolerance)
+tests/integration/runtime/test_runtime_root_admission.py        F1 (every Round 3 record-level
+                                                                   admission control, re-rooted at
+                                                                   the composition boundary that now
+                                                                   owns the question)
+tests/integration/runtime/test_runtime_trusted_root.py          F1 (the two-world groups: composition
+                                                                   as the only path to an authority;
+                                                                   no request-facing argument can
+                                                                   redirect a call; bare stores and
+                                                                   look-alikes refused before Boot)
+tests/integration/runtime/test_runtime_no_shipped_minting_path.py
+                                                                F1 (the deleted factory still gone;
+                                                                   the removed type gone everywhere;
+                                                                   exactly one producer, and it
+                                                                   cannot produce without the
+                                                                   deployment's own anchor)
+tests/integration/runtime/test_runtime_deployment_identity_anchor.py
+                                                                F2 (every Round 1-3 observation-side
+                                                                   control, migrated to the chain and
+                                                                   still green)
+tests/fixtures/runtime_world.py                                 F1/F2 (every fixture migrated to the
+                                                                   composed-authority shape and to
+                                                                   signed chain fields; both
+                                                                   admission and declaration commits
+                                                                   now go through the shipped
+                                                                   canonical committers)
+```

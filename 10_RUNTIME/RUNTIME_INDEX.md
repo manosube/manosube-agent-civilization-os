@@ -12,15 +12,21 @@ RUNTIME_OWNER_COUNT=1
 PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
 TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
 RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=3
+RUNTIME_ROOT_ADMISSION_COMMIT_ENTRY_POINT_COUNT=1
+TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
 ```
 
 `TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` was `1` after Round 1 and is `0` from
-Round 2 (P15-R2-F1) onward: shipped code mints no `TrustedRuntimeRoot`, and Round 3 does not
-reintroduce a minting function. Round 3 (P15-R3-F1) instead makes the *type* inert — possessing
-one grants nothing — and gates provisioning on a canonical `runtime_root_admission` record
-verified against an externally supplied trust anchor. See sections 4.2 and 4.3 here, and
-`RUNTIME_CONTRACT.md` sections 11.1 and 12.1 (especially 12.1.1, on why this is not a reversal).
+Round 2 (P15-R2-F1) onward: shipped code mints no `TrustedRuntimeRoot`, and no later round
+reintroduces a minting function. Round 3 (P15-R3-F1) made the *type* inert — possessing one
+granted nothing — and gated provisioning on a canonical `runtime_root_admission` record verified
+against an externally supplied trust anchor. **Round 4 (P15-R4-F1) removes that type entirely**
+and replaces the whole framing with an ownership boundary: a single
+`TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1` composition step owns the Store, project,
+Binding, admission selection and anchor, and the request-facing bootstrap has **no parameter** for
+any of them. See sections 4.2, 4.3 and 4.4 here, and `RUNTIME_CONTRACT.md` sections 11.1, 12.1
+and 13.1.
 
 ---
 
@@ -38,9 +44,11 @@ deferred trusted runtime bootstrap is provisioned from canonical Store/Boot stat
                           controls, (section 10) the Structural Review Round 1 corrections,
                           P15-R1-F1 .. P15-R1-F6, (section 11) the Structural Review
                           Round 2 corrections, P15-R2-F1/F2, which reopened and supersede
-                          Round 1's own F4 and F6, and (section 12) the Structural Review
+                          Round 1's own F4 and F6, (section 12) the Structural Review
                           Round 3 corrections, P15-R3-F1/F2, which reopened and supersede
-                          both of Round 2's
+                          both of Round 2's, and (section 13) the Structural Review Round 4
+                          corrections, P15-R4-F1/F2, which reopened and supersede both of
+                          Round 3's
 ```
 
 Read `RUNTIME_CONTRACT.md` for the load-bearing design; this document only fixes this layer's
@@ -183,7 +191,10 @@ from `evidence_handoff.py` (the one `derive_evidence` call) and, narrowly, `boot
 only from `bootstrap.py`, and `binding.signature` only from `deployment_declaration.py` (Round 2,
 P15-R2-F2) and `root_admission.py` (Round 3, P15-R3-F1) -- and `binding/` itself imports nothing
 from this package, in either direction. `commit_state_transition` is called from exactly two
-modules, each exactly once: `route.py` and `deployment_registry.py` (Round 3, P15-R3-F2).
+modules, each exactly once: `route.py` and -- since Round 4 (P15-R4-F1/F2) -- `transition_chain.py`,
+the one shared monotonic-chain mechanism both the declaration and root-admission chains
+parameterize. Round 3 had admitted `deployment_registry.py` for that second site; Round 4 moved it
+into the shared mechanism, so adding a *second* chain kind added no third call site.
 `boot` is importable from `route.py` and `bootstrap.py`, each calling `boot_project` exactly
 once.
 `manosube_agent_civilization.projection` is importable only from `bootstrap.py`. A network/
@@ -397,6 +408,76 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 NEW_KERNEL_ELEMENT=false
 ```
 
+## 4.4 Structural Review Round 4 (P15-R4-F1, P15-R4-F2)
+
+Round 4 of PR #65 confirmed every earlier round's remaining corrections closed and reopened both
+of Round 3's, on the review's own explicit observation that **the same trust-boundary semantic
+class has recurred across Rounds 1-4**. `10_RUNTIME/RUNTIME_CONTRACT.md` section 13 records both
+findings in full. This document records only what the round changed about *this layer's position*,
+which is five things:
+
+1. **The trust decision stopped being a parameter and became an ownership boundary.** Rounds 1-3
+   each moved the decision somewhere a caller could still reach: a parameter list, a public
+   factory, a private sentinel, then a signed admission record verified against an anchor the
+   *caller of the request-facing function supplied*. That last form still let a caller supply both
+   sides of the question. Round 4 splits provisioning into a **trusted deployment composition**
+   step — which owns the Store handle, `project_id`, `project_binding_id`, the root-admission
+   selection and the configured anchor, and runs once before any request boundary exists — and a
+   **request-facing bootstrap** that consumes only the opaque `RuntimeDeploymentAuthority` that
+   step returns. Five parameters are *gone* from the request-facing signature rather than
+   validated, so there is no call shape through which an alternate world can be substituted.
+   `TrustedRuntimeRoot` is removed outright, and the static assertion that replaces Rounds 2 and
+   3's own is strictly stronger: that name now appears in no code position anywhere shipped.
+
+2. **A fourth Store-committed record-kind lifecycle exists, and it is the *same* lifecycle.** The
+   root admission gains signed `generation`/`predecessor_ref` fields and a current-admission
+   pointer, so a composition-level rotation or revocation genuinely takes effect instead of leaving
+   the superseded admission usable forever. It is deliberately not a second scheme: both chains
+   parameterize one shared mechanism (`runtime/transition_chain.py`), so the
+   genesis/successor/rotation/revocation/terminality/Compare-And-Swap rules exist exactly once.
+
+3. **This layer writes one more `claims` key, and still changes no State schema.** The admission
+   pointer lives in the identical `semantic_state.runtime.claims` map Round 3 established, under a
+   structurally distinct key namespace (`ROOT-ADMISSION:<project_binding_id>`) whose disjointness
+   from declaration target keys is proved over the alphabets themselves, not by sampling. Still no
+   `01_SCHEMA/state/` change of any kind, and still not a second State owner.
+
+4. **No new schema file.** Both Runtime schemas gain required `generation`/`predecessor_ref`
+   fields; the canonical total stays at `59`, verified against what is on disk rather than assumed.
+
+5. **Two further public callables exist, and neither is a route.**
+   `compose_trusted_runtime_deployment_authority` (a composition step) and
+   `commit_runtime_root_admission` (a canonical committer) join
+   `commit_runtime_deployment_declaration`. `PUBLIC_RUNTIME_ENTRY_POINT_COUNT` is still `3`,
+   alongside separately declared counts — the identical convention sections 4.1 and 4.3 already
+   used.
+
+```text
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
+TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
+RUNTIME_ROOT_ADMISSION_COMMIT_ENTRY_POINT_COUNT=1
+REQUEST_FACING_BOOTSTRAP_PARAMETER_COUNT=3
+TRUST_ANCHOR_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+ROOT_ADMISSION_REF_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+DEPLOYMENT_AUTHORITY_RETAINS_THE_RAW_TRUST_ANCHOR=false
+TRUSTED_RUNTIME_ROOT_TYPE_EXISTS=false
+ROOT_ADMISSION_IS_A_MONOTONIC_SIGNED_CHAIN=true
+DEPLOYMENT_DECLARATION_IS_A_MONOTONIC_SIGNED_CHAIN=true
+CHAIN_MECHANISM_MODULE_COUNT=1
+CHAIN_RULE_DUPLICATED_PER_RECORD_KIND=false
+CHAIN_KEY_SPACES_PROVABLY_DISJOINT=true
+COMMIT_STATE_TRANSITION_CALL_SITES_IN_THIS_PACKAGE=2
+CONCURRENCY_LOSER_FAILS_CLOSED=true
+TARGET_EPOCH_REACTIVATION_MECHANISM_BUILT=false
+AUTHORITY_COMPOSED_BEFORE_A_ROTATION_IS_RETROACTIVELY_REVOKED=false
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+NEW_SCHEMA_FILES_ADDED=0
+CANONICAL_SCHEMA_COUNT=59
+RUNTIME_IS_A_SECOND_STATE_OWNER=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+NEW_KERNEL_ELEMENT=false
+```
+
 ## 5. Explicit non-claims
 
 ```text
@@ -427,9 +508,17 @@ DEPLOYMENT_DECLARATION_VALIDITY_WINDOW_REQUIRED=true
 DEPLOYMENT_DECLARATION_REVOCATION_IS_EFFECTIVE=true
 RUNTIME_ROOT_ADMISSION_IMPLEMENTED=true
 RUNTIME_ROOT_ADMISSION_REQUIRED_FOR_PROVISIONING=true
-TRUSTED_RUNTIME_ROOT_REQUIRED_FOR_PROVISIONING=true
+RUNTIME_ROOT_ADMISSION_IS_A_MONOTONIC_SIGNED_CHAIN=true
+RUNTIME_ROOT_ADMISSION_ROTATION_AND_REVOCATION_ARE_EFFECTIVE=true
+TRUSTED_RUNTIME_ROOT_TYPE_EXISTS=false
 SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
-POSSESSING_A_TRUSTED_RUNTIME_ROOT_GRANTS_ADAPTER_ACCESS=false
+TRUSTED_DEPLOYMENT_COMPOSITION_OWNS_THE_TRUST_ANCHOR=true
+TRUST_ANCHOR_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+DEPLOYMENT_DECLARATION_IS_A_MONOTONIC_SIGNED_CHAIN=true
+DECLARATION_ANCESTOR_REPLAY_IS_REFUSED=true
+DECLARATION_REVOCATION_IS_TERMINAL=true
+CONCURRENCY_LOSER_FAILS_CLOSED=true
+TARGET_EPOCH_REACTIVATION_MECHANISM_BUILT=false
 PRODUCTION_LEGITIMATE_PROVISIONING_MECHANISM_SHIPPED=true
 LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
 AUTHORITY_FRESHNESS_RECHECKED_AT_ADAPTER_AND_COMMIT_BOUNDARIES=true
@@ -437,6 +526,7 @@ CURRENT_DECLARATION_POINTER_RECHECKED_ON_EVERY_COMMIT_ATTEMPT=true
 STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_APPLIED=true
+STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_APPLIED=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false

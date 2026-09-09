@@ -961,3 +961,161 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 ```
 
 本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。
+
+# 20. Phase 15 Structural Review Round 4 correction addendum (P15-R4-F1 / P15-R4-F2, Issue #64 / PR #65)
+
+本節は、セクション19のaddendum記録時点（`CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_DELIVERED_PR_OPEN`）以降にrepositoryへ生じた変化のうち、local `git log`とPR #65 / Issue #64自身のReview commentにより独立再観測できた`OBSERVED_GITHUB_FACT`のみを追記する、bounded addendumである。セクション16・17・18・19の全面再投影ではない。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-09
+ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AND_PR_65_ISSUE_64_REVIEW_COMMENTS
+```
+
+| Field | Observed value |
+|---|---|
+| Dedicated Pull Request | [#65](https://github.com/manosube/manosube-agent-civilization-os/pull/65) — **open**, not merged |
+| PR #65 reviewed HEAD (Structural Review Round 4 の対象) | `2c4e0c5ab11b6b9268f356a955c5acd98c47e0df` |
+| Structural Review Round 4 | [PR #65 comment 5597994951](https://github.com/manosube/manosube-agent-civilization-os/pull/65#issuecomment-5597994951) — 2 findings (P15-R4-F1, P15-R4-F2) |
+| SHUKOU adoption | [Issue #64 comment 5598042604](https://github.com/manosube/manosube-agent-civilization-os/issues/64#issuecomment-5598042604)（Human Authority `manosube`）により、契約本文が verbatim で採択済 |
+| Round 1/2/3 findings の Round 4 自身による処分 | `P15_R1_F1_CLOSED=true`, `P15_R1_F2_CLOSED=true`, `P15_R1_F3_CLOSED=true`, `P15_R1_F5_CLOSED=true`, `P15_R1_F6_CLOSED=true`, `P15_R2_F2_SIGNATURE_AND_BOOT_BINDING_CLOSED=true`, `P15_R3_F2_VALIDITY_WINDOW_HALF_CLOSED=true`。`P15-R3-F1` と `P15-R3-F2` の残余のみ reopen され、それぞれ `P15-R4-F1` / `P15-R4-F2` として再採番された。 |
+| This correction round's own commits | branch `agent/issue-64-phase15-runtime-adapter` 上、reviewed HEAD `2c4e0c5a` の直上に積まれた新規commitのみ。history rewrite（amend / rebase / force-push）は行っていない。新規branchも新規PRも作成していない。 |
+
+Round 4 の Review 自身が明示したとおり、**同一のtrust-boundary semantic classがRound 1〜4にわたって再発している**。その再発の系列は次のとおりであり、本roundの補正の形を決定している。
+
+```text
+ROUND 1   trust decision が PARAMETER LIST        -> TYPE へ置換
+ROUND 2   trust decision が PUBLIC FACTORY        -> PRIVATE SENTINEL へ置換
+ROUND 3   trust decision が TYPE の保有           -> 署名付き admission record ＋
+                                                    **caller供給**の anchor へ置換
+ROUND 4   trust decision が依然 PARAMETER のまま   -> OWNERSHIP BOUNDARY へ置換。
+          （caller が admission と anchor の両方を    決定する値は composition step が所有し、
+            供給できたため、matching attacker        request-facing signature には
+            anchor を伴う自己整合的 alternate        それらの parameter が**存在しない**）
+            world が全checkを通過した）
+```
+
+採択された2件の構造的findingと、その閉鎖範囲：
+
+```text
+P15-R4-F1  the trust anchor was still a parameter of the REQUEST-FACING call
+           → provisioning を2つの所有された半分に分割した。
+             compose_trusted_runtime_deployment_authority(store, *, project_id,
+             project_binding_id, runtime_root_admission_ref, trust_anchor_public_key_hex)
+             が唯一の shipped trusted-composition entry point であり、canonical Store handle・
+             project_id・project_binding_id・root-admission selection・configured anchor の
+             すべてを所有する。request boundary が存在するより前に一度だけ実行される。
+             bootstrap_projection_execution_capability(deployment_authority, *,
+             github_projection_grant_refs, github_projection_grant_declaration_refs) は
+             既に束縛済の opaque な RuntimeDeploymentAuthority のみを消費する。
+             store / project_id / project_binding_id / runtime_root_admission_ref /
+             trust_anchor_public_key_hex の5parameterは「検証される」のではなく
+             **存在しない**（inspect.signature による静的証明）。
+           → RuntimeDeploymentAuthority は frozen/slots の opaque capability。Store・
+             admission body・raw anchor のいずれについても public accessor を持たず
+             （dir() の public 名は空）、__repr__ は何も露出せず、raw anchor は composition
+             時点で**破棄**される（composed instance から到達可能な全stringを走査して
+             anchor hex が存在しないことを機械的に証明）。束縛するのは Store・project・
+             Binding・admitted admission id・その generation のみ。
+           → TrustedRuntimeRoot は削除。Round 2/3 が主張し得た静的事実（当該型を返す
+             shipped callable が無い／構築する shipped module が無い）は、より強い形へ
+             置換された：**当該名は shipped tree のいかなる code position にも存在しない**。
+             削除済の Round 1 minting factory も従来どおり名前ごと不在。
+           → root admission 自身にも lifecycle を与えた（Review が明示した
+             "must not repeat the declaration-currency defect below" への対応）。
+             runtime_root_admission.schema.json に必須 generation / predecessor_ref を追加し、
+             ROOT_ADMISSION_SEMANTIC_FIELDS へ含めた（content address・semantic fingerprint・
+             trust anchor 署名のすべてが当該2fieldを覆う）。
+             semantic_state.runtime.claims["ROOT-ADMISSION:<project_binding_id>"] を
+             current-admission pointer とし、新module runtime/admission_registry.py の
+             commit_runtime_root_admission のみがこれを動かす。composition は提示された
+             reference が pointer の現在値と完全一致することを要求するため、rotation /
+             revocation 後の admission は自身の reference で replay できない。
+```
+
+```text
+P15-R4-F2  the declaration pointer was freely re-pointable in BOTH directions
+           （Round 3 は pointer を導入したが、declaration が「何を置換するか」を述べる
+             ことを要求していなかった。したがって A(ACTIVE) -> B(REVOKED) の後に
+             ancestor A を replay すると pointer は A へ戻り、revoke 済 target が
+             静かに un-revoke された。並行する2つの rotation も、Store が最後に見た
+             順序へ任意に畳み込まれた。）
+           → runtime_deployment_declaration.schema.json に必須 generation /
+             predecessor_ref を追加し、DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS へ含めた。
+             successor は「自分がどの head を置換するか」を Human Authority 署名の内側で
+             述べる signed statement となる。
+           → genesis（generation=0 / predecessor_ref=null、chain が空のときのみ、かつ
+             ACTIVE 必須）／successor（generation=current+1 かつ predecessor_ref が
+             pointer の現在値と完全一致）／rotation（ACTIVE successor）／revocation
+             （REVOKED successor、当該chainに対して**終端**）／replay（pointer が既に
+             指す record の再提示は idempotent no-op、transition ではない）。
+             REVOKED 終端後は successor も ancestor replay も永久に不許可。
+           → 規則は runtime/transition_chain.py という**単一の共有機構**に存在し、
+             declaration chain と root-admission chain の双方が MonotonicChainSpec 経由で
+             これを parameterize する。規則の二重実装は行っていない。副次的事実として、
+             deployment_registry.py は commit_state_transition を呼ばなくなり、当該call site
+             は transition_chain.py へ移った。よって chain 種別が2つに増えたにもかかわらず、
+             本package内の commit_state_transition call site は依然として2つ（route.py と
+             transition_chain.py）である。
+           → committer は fresh Boot と Human Authority 署名検証を行うようになった。
+             Round 3 の committer は「route 側が再検証するので二重化は drift を生む」として
+             意図的に省略していたが、その前提（committer には gate すべき transition
+             legality が無い）を本roundが除去したため、前提ごと更新された。
+             observe_runtime_target 側の独立した再検証は一切弱められていない。
+           → 並行 successor の敗者は retry せず fail closed する。敗者の
+             predecessor_ref / generation は特定の先行 head に対して**署名済**であり、
+             新しい head へ向け直すには新しい payload に対する新しい署名が必要で、
+             それは Human Authority（admission の場合は trust anchor）にしか作れない。
+             一方、当該chainの pointer が動いていない無関係な contention は従来どおり
+             bounded CAS retry で吸収される（P15-R1-F5 が確立した許容を非退行で維持）。
+```
+
+`semantic_state` については、Round 3 と同様に**canonical schema の変更を一切行っていない**。root-admission pointer は Round 3 が確立したのと同一の `semantic_state.runtime.claims` map に、構造的に区別された key namespace（`ROOT-ADMISSION:<project_binding_id>`）で置かれる。declaration target key は `RUNTIME-DEPLOYMENT-TARGET-` ＋ 64桁の `[0-9A-F]` であり、その prefix にも alphabet にも `":"` は現れ得ないため、両key空間の非交差は sampling ではなく alphabet 自体に対する証明として与えられている。
+
+canonical schema総数は `59` のまま変化していない（本roundは新規fileを追加せず、既存2fileへ必須fieldを追加しただけである）。`scripts/validate_schemas.py` の宣言済countはdisk上の実数と照合の上、据え置きを明記した。
+
+`P15-R4-F1` が証明する範囲と、しない範囲は、従来どおり明示的に限定される（誇張しない）。
+
+```text
+REQUEST_FACING_SIGNATURE_CAN_NAME_NO_TRUST_DECIDING_VALUE=true          （証明済）
+ALTERNATE_WORLD_WITH_ITS_MATCHING_ANCHOR_IS_UNSUBSTITUTABLE=true        （証明済、
+                                                                         adapter/network 呼び出し
+                                                                         ゼロ・authorization 評価
+                                                                         ゼロ）
+ROTATED_OR_REVOKED_ADMISSION_CANNOT_BE_REPLAYED=true                    （証明済）
+RAW_ANCHOR_ABSENT_FROM_THE_COMPOSED_AUTHORITY=true                      （証明済）
+AUTHORITY_COMPOSED_BEFORE_A_ROTATION_IS_RETROACTIVELY_REVOKED=false     （設計上そうであり、
+                                                                         主張しない）
+TARGET_EPOCH_REACTIVATION_MECHANISM_BUILT=false                         （本round範囲外・
+                                                                         主張しない）
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false                  （未実装・主張しない）
+```
+
+最後から3行目は本roundの開示済 judgment call である。採択契約自身が anchor を "closed over afterward"・"absent from every request-facing execution signature" と規定しており、per-request の再検証を排除している。したがって composition 済 authority は cached credential と同じ振る舞いをし、rotation / revocation は**次回の composition** を拘束する。これは推測に委ねず、専用の control（`test_an_authority_composed_before_a_rotation_remains_usable_by_its_holder`）として証明されている。
+
+実装範囲の所有は変わらず`10_RUNTIME/RUNTIME_INDEX.md`・`10_RUNTIME/RUNTIME_CONTRACT.md`にある（本correction roundは`RUNTIME_CONTRACT.md`にsection 13、`RUNTIME_INDEX.md`にsection 4.4を追加した）。
+
+SHUKOU自身が固定した終端は変わらず、本addendumもこれを変更しない。
+
+```text
+CURRENT_PHASE=15_BOUNDED_RUNTIME_OBSERVATION_AND_TRUSTED_PROVISIONING
+CURRENT_PHASE_ISSUE=64
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_PR_OPEN
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=6
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_3_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_4_FINDINGS_CLOSED=2
+CANONICAL_SCHEMA_COUNT=59
+NEW_SCHEMA_FILES_ADDED_THIS_ROUND=0
+NEW_BRANCH=false
+NEW_PR=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+```
+
+本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。
