@@ -1,8 +1,8 @@
 """V5 (Issue #64): Phase 14 runtime-provisioning continuity proof.
 
-Proves :func:`~manosube_agent_civilization.runtime.bootstrap.
-bootstrap_projection_execution_capability` -- the Phase-14-deferred trusted runtime bootstrap
-this delivery ships -- genuinely constructs one production
+Proves the request-facing bootstrap :func:`~manosube_agent_civilization.runtime.bootstrap.
+compose_trusted_runtime_deployment_authority` returns -- the Phase-14-deferred trusted runtime
+bootstrap this delivery ships -- genuinely constructs one production
 :class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability` from canonical
 Store/Boot state alone, reaches a controlled GitHub adapter through it with zero live network
 calls, and refuses on every malformed/incomplete/mismatched authority input -- never minting,
@@ -12,9 +12,11 @@ Since Structural Review Round 4 (P15-R4-F1) every call here does what a real dep
 the two owned halves that correction introduced, through entirely shipped code. A *composition*
 step binds the Store, project, Project Binding, the ``runtime_root_admission`` this Binding's own
 chain currently points at, and the ``trust_anchor_public_key_hex`` that record was actually
-signed under, into one opaque authority; the *request-facing* bootstrap below then consumes that
-authority and nothing else -- it has no parameter for a Store, a Project, a Binding, an
-admission, or an anchor. The admission record's own *signature* is produced test-side, by the
+signed under -- and, since Round 5 (P15-R5-F1), *returns the request-facing operation itself*,
+already closed over all of them. That returned callable is what every call below uses: its
+signature has no parameter for an authority object, a Store, a Project, a Binding, an admission,
+or an anchor, and there is no public constructor for an equivalent callable at all. The admission
+record's own *signature* is produced test-side, by the
 fixture layer's own trust-anchor key pair, for the identical reason every other signature in this
 repository's test suite is: shipped code only ever verifies, and no private key of any kind lives
 in ``src/``.
@@ -46,9 +48,6 @@ from manosube_agent_civilization.evidence import derive_evidence
 from manosube_agent_civilization.evidence.identity import evidence_semantic_fingerprint
 from manosube_agent_civilization.projection import FakeGitHubAdapter, ProjectionExecutionCapability
 from manosube_agent_civilization.projection.identity import projection_payload_fingerprint
-from manosube_agent_civilization.runtime.bootstrap import (
-    bootstrap_projection_execution_capability,
-)
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 
 _TARGET_REPOSITORY = {"host": "github", "owner": "acme", "repo": "widget"}
@@ -102,8 +101,9 @@ def _world(tmp_path: Path) -> dict[str, Any]:
         "grant": grant,
         "declaration_ref": declaration_ref,
         "current_state": current_state,
-        # P15-R4-F1: the composed deployment authority every legitimate request-facing
-        # provisioning call now consumes, plus the admission material composition bound.
+        # P15-R4-F1 / P15-R5-F1: the composition-bound request-facing bootstrap every
+        # legitimate provisioning call now goes through, plus the admission material composition
+        # bound.
         "admitted": admitted_root(
             store,
             project_id=ctx["project_id"],
@@ -114,12 +114,10 @@ def _world(tmp_path: Path) -> dict[str, Any]:
 
 def _bootstrap(world: dict[str, Any], *, grant_refs: list[Any], declaration_refs: list[Any]) -> Any:
     """One legitimately admitted request-facing provisioning call -- the exact shape request-
-    facing code makes once a deployment composition boundary has handed it an authority
-    (P15-R4-F1)."""
+    facing code makes once a deployment composition boundary has handed it the bound bootstrap
+    (P15-R4-F1, P15-R5-F1)."""
 
-    admitted = world["admitted"]
-    return bootstrap_projection_execution_capability(
-        admitted["deployment_authority"],
+    return world["admitted"]["bootstrap"](
         github_projection_grant_refs=grant_refs,
         github_projection_grant_declaration_refs=declaration_refs,
     )

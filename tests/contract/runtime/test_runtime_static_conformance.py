@@ -89,6 +89,32 @@ Structural Review Round 4 (P15-R4) changes six further facts this file pins:
 - the package exports two further public callables, ``commit_runtime_root_admission`` and
   ``compose_trusted_runtime_deployment_authority`` -- a committer and a composition step, neither
   a route, so ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` still holds.
+
+Structural Review Round 5 (P15-R5) changes five further facts this file pins:
+
+- ``RuntimeDeploymentAuthority`` is **gone**, on exactly the precedent Round 4 set for
+  ``TrustedRuntimeRoot``: it was an ordinary public frozen dataclass with an ordinary public
+  constructor, so "possessing an authority" was reproducible by any caller who could import the
+  module, and an ``isinstance`` check over it was never a trust control. The name now occurs in no
+  code position anywhere in the shipped tree (P15-R5-F1).
+- ``bootstrap_projection_execution_capability`` is no longer a module-level function. It is the
+  **closure** ``compose_trusted_runtime_deployment_authority`` returns, defined inside that
+  function's own body, so exactly one ``def`` anywhere in the shipped tree carries the name and it
+  is nested inside the composition entry point. Its parameter list is now exactly two names, and
+  ruling out ``deployment_authority`` -- the last world-bearing parameter Round 4 itself
+  introduced -- is the Round 5 correction (P15-R5-F1).
+- the package therefore exports one public callable fewer for this mechanism:
+  ``compose_trusted_runtime_deployment_authority`` alone, whose declared return type is a
+  ``Callable[..., ProjectionExecutionCapability]``. ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` is
+  unchanged -- none of these was ever a route (P15-R5-F1).
+- the request-facing operation performs a per-call currency recheck,
+  ``_require_bound_admission_still_current``, which composition itself does not call and which
+  precedes every gated grant/authorization call (P15-R5-F2).
+- ``engine.py`` owns the one instant parser in this package, ``parse_utc_instant``, and is the
+  only module here that imports ``datetime`` or calls ``fromisoformat`` at all: ``route.py``'s own
+  private ``_instant`` moved there unchanged and ``deployment_registry.py`` reuses it rather than
+  ordering two timestamp *strings*, which is what P15-R5-F3 found unsound. No second timestamp
+  grammar and no Runtime-specific time owner exists (P15-R5-F3).
 """
 
 from __future__ import annotations
@@ -143,10 +169,18 @@ _SHIPPED_PACKAGE_ROOT = pathlib.Path(manosube_agent_civilization.__file__).resol
 _TRUSTED_ROOT_TYPE_NAME = "TrustedRuntimeRoot"
 _DELETED_MINTING_FACTORY_NAME = "provision_trusted_runtime_root"
 
-#: The composition-owned capability that replaced it, and the one shipped callable that produces
-#: one (P15-R4-F1).
+#: The composition-owned capability type Round 4 introduced and Round 5 (P15-R5-F1) removes on
+#: the identical precedent -- a public dataclass with a public constructor is not a trust control.
+#: Pinned as a literal so that reintroducing it, anywhere shipped, fails this gate immediately.
 _DEPLOYMENT_AUTHORITY_TYPE_NAME = "RuntimeDeploymentAuthority"
+
+#: The one shipped composition entry point, and the name of the request-facing operation it now
+#: *returns* -- a closure defined inside it, never a module-level function (P15-R5-F1).
 _COMPOSITION_ENTRY_POINT_NAME = "compose_trusted_runtime_deployment_authority"
+_REQUEST_FACING_OPERATION_NAME = "bootstrap_projection_execution_capability"
+
+#: The one instant-parsing owner this package may have (P15-R5-F3).
+_INSTANT_PARSER_NAME = "parse_utc_instant"
 
 #: The raw trust-anchor parameter name. It may appear on exactly three shipped functions, all of
 #: them composition-side or pure verification, and on no request-facing one (P15-R4-F1).
@@ -206,6 +240,57 @@ def _names_identifier(node: ast.AST, identifier: str) -> bool:
     return False
 
 
+def _function_defs(module: ModuleType) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Every ``def`` in *module*, nested ones included, keyed by name.
+
+    P15-R5-F1 makes this necessary: the request-facing operation is no longer a module-level
+    function but a closure defined inside ``compose_trusted_runtime_deployment_authority``. Keying
+    by name is sound here precisely because the tests below also prove the name is unique across
+    the entire shipped tree.
+    """
+
+    tree = ast.parse(inspect.getsource(module))
+    found: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            assert node.name not in found, f"two functions named {node.name!r} in {module.__name__}"
+            found[node.name] = node
+    return found
+
+
+def _called_names_excluding_nested_defs(node: ast.AST) -> set[str]:
+    """Names called *directly* in this function's own body -- deliberately not descending into a
+    nested ``def``, whose calls belong to that function rather than to this one.
+
+    ``ast.walk`` would happily walk into the closure and attribute its calls to the enclosing
+    composition step, which is exactly the distinction the ordering fact below rests on."""
+
+    names: set[str] = set()
+
+    def _visit(current: ast.AST, *, root: bool) -> None:
+        if not root and isinstance(current, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            return
+        if isinstance(current, ast.Call):
+            func = current.func
+            if isinstance(func, ast.Name):
+                names.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                names.add(func.attr)
+        for child in ast.iter_child_nodes(current):
+            _visit(child, root=False)
+
+    _visit(node, root=True)
+    return names
+
+
+def _parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    arguments = node.args
+    return {
+        argument.arg
+        for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+    }
+
+
 def _names_the_deleted_factory(node: ast.AST) -> bool:
     """Whether *node* names ``provision_trusted_runtime_root`` in a *code* position -- one
     binding of :func:`_names_identifier`, kept under its own name because the fact it pins
@@ -232,6 +317,13 @@ def test_runtime_package_exports_exactly_three_routes_and_one_capability_bootstr
     observes nothing, and mints no Authority -- so ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT`` stays
     ``3``, exactly as Round 1 declared ``TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT``
     separately rather than inflating the route count (``10_RUNTIME/RUNTIME_CONTRACT.md`` §12).
+
+    Round 5 (P15-R5-F1) *removes* one: ``bootstrap_projection_execution_capability`` is no longer
+    a module-level callable at all, because the composition step now returns it. The capability
+    bootstrap this test is named for still exists -- it is exactly what
+    ``compose_trusted_runtime_deployment_authority`` hands back -- and
+    ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT`` is unchanged at ``3``, since neither the removed name nor
+    the surviving one was ever a route.
     """
 
     public_callables = {
@@ -241,13 +333,19 @@ def test_runtime_package_exports_exactly_three_routes_and_one_capability_bootstr
         and not isinstance(getattr(runtime_module, name), type)
     }
     assert public_callables == {
-        "bootstrap_projection_execution_capability",
         "commit_runtime_deployment_declaration",
         "commit_runtime_root_admission",
-        "compose_trusted_runtime_deployment_authority",
+        _COMPOSITION_ENTRY_POINT_NAME,
         "observe_runtime_target",
         "route_runtime_observation_to_evidence",
     }
+    # P15-R5-F1: one public callable fewer than Round 4 exported for this mechanism. The
+    # request-facing operation is no longer a module-level name at all -- it is the closure the
+    # composition entry point returns -- so exporting it would be exporting something a caller
+    # could not legitimately obtain any other way than by composing.
+    assert _REQUEST_FACING_OPERATION_NAME not in runtime_module.__all__
+    assert not hasattr(runtime_module, _REQUEST_FACING_OPERATION_NAME)
+    assert not hasattr(bootstrap_module, _REQUEST_FACING_OPERATION_NAME)
 
 
 def test_the_removed_trust_root_type_appears_in_no_shipped_code_position() -> None:
@@ -285,53 +383,88 @@ def test_the_removed_trust_root_type_appears_in_no_shipped_code_position() -> No
     assert not hasattr(runtime_module, _TRUSTED_ROOT_TYPE_NAME)
 
 
-def test_exactly_one_shipped_module_defines_the_composition_owned_authority() -> None:
-    """The Round 4 replacement fact (P15-R4-F1): there is exactly one authority type, defined in
-    exactly one shipped module, and exactly one shipped function constructs it -- the composition
-    entry point.
+def test_the_removed_deployment_authority_type_appears_in_no_shipped_code_position() -> None:
+    """P15-R5-F1's own decisive static fact, in exactly the form Round 4 established for
+    ``TrustedRuntimeRoot`` -- and for the identical reason.
 
-    A second construction site anywhere in the shipped tree would mean some other code path could
-    hand out a bound authority without going through the trust decision, which is precisely the
-    class of defect Rounds 1-4 have each closed one layer at a time.
+    Round 4 carried its ownership boundary on a value: an opaque, frozen, slotted
+    ``RuntimeDeploymentAuthority``, obtainable "only" from the composition step. Round 5 found
+    that "only" was a convention rather than a control -- the type was public, its constructor was
+    public, and the free request-facing function's sole defence was an ``isinstance`` check, so any
+    caller able to import the module could construct their own authority over an alternate
+    Store/Project/Binding and pass. The review rules out a sentinel, a private constructor, a
+    leading-underscore field, an opaque ``repr`` and an ``isinstance`` check as trust controls, so
+    the type is deleted rather than hidden, exactly as Round 2 deleted the minting factory and
+    Round 4 deleted the trust root.
+
+    Prose inside a docstring is deliberately not matched (see :func:`_names_the_deleted_factory`
+    for the identical reasoning): each round's own record has to be able to say what was removed
+    and why, and a docstring re-exports nothing.
     """
 
     shipped_files = sorted(_SHIPPED_PACKAGE_ROOT.rglob("*.py"))
-    definitions: list[str] = []
-    construction_sites: list[tuple[str, int]] = []
-    for path in shipped_files:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == _DEPLOYMENT_AUTHORITY_TYPE_NAME:
-                definitions.append(str(path.relative_to(_REPO_ROOT)))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = (
-                func.id
-                if isinstance(func, ast.Name)
-                else (func.attr if isinstance(func, ast.Attribute) else None)
-            )
-            if name == _DEPLOYMENT_AUTHORITY_TYPE_NAME:
-                construction_sites.append((str(path.relative_to(_REPO_ROOT)), node.lineno))
-    assert definitions == ["src/manosube_agent_civilization/runtime/bootstrap.py"]
-    assert len(construction_sites) == 1, construction_sites
+    assert shipped_files, "expected at least one shipped module to scan"
 
-    # ...and that one call site lexically belongs to the composition entry point.
+    offenders: list[tuple[str, int]] = []
+    for path in shipped_files:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if _names_identifier(node, _DEPLOYMENT_AUTHORITY_TYPE_NAME):
+                offenders.append((str(path.relative_to(_REPO_ROOT)), getattr(node, "lineno", -1)))
+    assert offenders == []
+    assert not hasattr(bootstrap_module, _DEPLOYMENT_AUTHORITY_TYPE_NAME)
+    assert not hasattr(runtime_module, _DEPLOYMENT_AUTHORITY_TYPE_NAME)
+
+
+def test_the_request_facing_operation_is_a_closure_owned_by_the_composition_entry_point() -> None:
+    """The Round 5 replacement for Round 4's "exactly one module defines the authority, exactly
+    one call site constructs it" fact (P15-R5-F1).
+
+    What has to be unique now is not a type but the *operation*: exactly one ``def`` anywhere in
+    the shipped tree carries the request-facing name, it lives in ``bootstrap.py``, and it is
+    **nested inside** ``compose_trusted_runtime_deployment_authority`` rather than being a
+    module-level function. A second definition anywhere -- or the same one hoisted back to module
+    level -- would mean a working request-facing operation could be obtained without passing the
+    composition step's own admission gate, which is precisely the class of defect Rounds 1-5 have
+    each closed one layer at a time.
+    """
+
+    shipped_files = sorted(_SHIPPED_PACKAGE_ROOT.rglob("*.py"))
+    definitions: list[tuple[str, int]] = []
+    for path in shipped_files:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name == _REQUEST_FACING_OPERATION_NAME
+            ):
+                definitions.append((str(path.relative_to(_REPO_ROOT)), node.lineno))
+    assert len(definitions) == 1, definitions
+    assert definitions[0][0] == "src/manosube_agent_civilization/runtime/bootstrap.py"
+
+    # ...and that one definition is lexically inside the composition entry point, not beside it.
     tree = ast.parse(inspect.getsource(bootstrap_module))
+    module_level = {
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    assert _REQUEST_FACING_OPERATION_NAME not in module_level
+    assert _COMPOSITION_ENTRY_POINT_NAME in module_level
     composing = next(
         node
-        for node in ast.walk(tree)
+        for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == _COMPOSITION_ENTRY_POINT_NAME
     )
-    inner = [
-        node.lineno
+    nested = [
+        node
         for node in ast.walk(composing)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == _DEPLOYMENT_AUTHORITY_TYPE_NAME
+        if isinstance(node, ast.FunctionDef) and node.name == _REQUEST_FACING_OPERATION_NAME
     ]
-    assert len(inner) == 1
+    assert len(nested) == 1
+    # ...and composition genuinely hands it back, so the only way to hold one is to compose.
+    assert any(
+        isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == _REQUEST_FACING_OPERATION_NAME
+        for node in ast.walk(composing)
+    )
 
 
 def test_the_raw_trust_anchor_is_named_only_by_composition_side_functions() -> None:
@@ -399,15 +532,17 @@ def test_no_shipped_file_defines_imports_or_exports_the_deleted_minting_factory(
     assert not hasattr(runtime_module, _DELETED_MINTING_FACTORY_NAME)
 
 
-def test_exactly_one_shipped_public_callable_returns_a_deployment_authority() -> None:
+def test_exactly_one_shipped_public_callable_returns_a_bound_request_facing_bootstrap() -> None:
     """The shape half of the same fact, proved by introspection rather than by text.
 
     Rounds 2 and 3 asserted that *no* public callable returned the trust root, because a
     mechanism with no legitimate producer was the position of the day. Round 3 itself rejected
     that position -- a bootstrap with no production-legitimate way to obtain its first argument
-    does not satisfy this Phase's own V5 requirement -- so the honest Round 4 form is that exactly
-    one callable produces the composition-owned authority, and it is the trusted composition step.
-    A same-shaped producer reintroduced under some *other* name would still be caught here.
+    does not satisfy this Phase's own V5 requirement -- so Round 4's honest form was that exactly
+    one callable produced the composition-owned authority. Round 5 removes that type, so the same
+    control is stated over what composition returns instead: a callable producing a
+    ``ProjectionExecutionCapability``. A same-shaped producer reintroduced under some *other* name
+    would still be caught here, and so would a reintroduced authority type.
     """
 
     producers = []
@@ -416,63 +551,51 @@ def test_exactly_one_shipped_public_callable_returns_a_deployment_authority() ->
         if not callable(member) or isinstance(member, type):
             continue
         annotation = inspect.signature(member).return_annotation
-        rendered = (
+        rendered = str(
             annotation if isinstance(annotation, str) else getattr(annotation, "__name__", "")
         )
-        if _DEPLOYMENT_AUTHORITY_TYPE_NAME in str(rendered):
+        assert _DEPLOYMENT_AUTHORITY_TYPE_NAME not in rendered, name
+        if "Callable" in rendered and "ProjectionExecutionCapability" in rendered:
             producers.append(name)
     assert producers == [_COMPOSITION_ENTRY_POINT_NAME]
 
 
-def test_the_composed_authority_exposes_no_public_accessor_for_what_it_binds() -> None:
-    """P15-R4-F1: the authority is opaque. It exposes no public attribute, property, or method
-    handing back the Store, the bound admission body, or -- above all -- a trust anchor.
-
-    Checked over the *class*, so it holds for every instance and does not depend on any particular
-    composition having happened. The anchor's genuine absence from a composed instance's own
-    reachable state is proved dynamically in
-    ``tests/integration/runtime/test_runtime_deployment_authority_composition.py``; this is the
-    structural half.
-    """
-
-    authority_type = getattr(bootstrap_module, _DEPLOYMENT_AUTHORITY_TYPE_NAME)
-    public_names = {name for name in dir(authority_type) if not name.startswith("_")}
-    assert public_names == set(), public_names
-    assert _TRUST_ANCHOR_PARAMETER_NAME not in set(getattr(authority_type, "__slots__", ()))
-
-
 def test_the_request_facing_bootstrap_accepts_no_trust_deciding_parameter() -> None:
-    """P15-R4-F1's own decisive structural fact, proved by introspection rather than by
-    behaviour: there is no call shape at all -- not one that is refused at runtime, one that does
-    not exist -- through which a caller could hand
-    ``bootstrap_projection_execution_capability`` an alternate Store, Project, Binding, root
-    admission, or trust anchor.
+    """P15-R5-F1's own decisive structural fact, proved over the operation's own ``def`` rather
+    than by behaviour: there is no call shape at all -- not one that is refused at runtime, one
+    that does not exist -- through which a caller could hand the request-facing bootstrap an
+    alternate Store, Project, Binding, root admission, trust anchor, **or authority object**.
 
     Round 1 (P15-R1-F4) removed the first three. Round 3 (P15-R3-F1) *added* the last two as
-    required keyword arguments, which is exactly what Round 4 found still open: a caller who
-    supplies both the admission and the anchor it was signed under supplies both sides of the
-    question, and a fully self-consistent alternate world passes. All five are now absent, and
-    the request-facing signature carries exactly three parameters.
+    required keyword arguments, which is exactly what Round 4 found still open. Round 4 removed
+    those but introduced a sixth, ``deployment_authority``, carrying a public dataclass any caller
+    could construct -- which is exactly what Round 5 found still open. All six are now absent, and
+    the request-facing signature carries exactly two parameters, both operation-scoped references.
 
-    The identical technique ``tests/contract/projection/
-    test_v3_live_write_authority_static_conformance.py`` already applies to
-    ``ProjectionExecutionCapability.execute``.
+    Read from the AST rather than through ``inspect.signature`` because the operation is now a
+    closure: obtaining a live one requires composing against a real world, which the integration
+    suite does (``tests/integration/runtime/
+    test_runtime_deployment_authority_composition.py`` introspects the genuinely returned object).
+    This is the static half, over what the shipped source actually declares.
     """
 
-    signature = inspect.signature(bootstrap_module.bootstrap_projection_execution_capability)
-    assert set(signature.parameters) == {
-        "deployment_authority",
+    request_facing = _function_defs(bootstrap_module)[_REQUEST_FACING_OPERATION_NAME]
+    assert _parameter_names(request_facing) == {
         "github_projection_grant_refs",
         "github_projection_grant_declaration_refs",
     }
+    # Keyword-only, so not even a positional world-bearing argument can be attempted.
+    assert request_facing.args.args == []
+    assert request_facing.args.posonlyargs == []
     for forbidden in (
+        "deployment_authority",
         "store",
         "project_id",
         "project_binding_id",
         "runtime_root_admission_ref",
         _TRUST_ANCHOR_PARAMETER_NAME,
     ):
-        assert forbidden not in signature.parameters
+        assert forbidden not in _parameter_names(request_facing)
 
 
 def test_the_composition_entry_point_owns_every_trust_deciding_parameter() -> None:
@@ -740,52 +863,130 @@ def test_no_shipped_module_hardcodes_a_trust_anchor_public_key() -> None:
 
 
 def test_the_admission_gate_precedes_every_grant_and_authority_call_by_construction() -> None:
-    """P15-R3-F1's own structural ordering fact, in the stronger form Round 4 makes available
-    (the zero-call proofs live in ``tests/integration/runtime/test_runtime_root_admission.py``).
+    """P15-R3-F1's own structural ordering fact, in the stronger form Rounds 4 and 5 make
+    available (the zero-call proofs live in ``tests/integration/runtime/``).
 
     Round 3 could only assert an *ordering within one function body*: the literal
     ``_require_admitted_root`` call had to appear before the first ``_resolve_grant``,
     ``_resolve_declaration``, or ``evaluate_projection_authorization`` call site, so that no
     future edit could quietly move grant resolution in front of the admission gate.
 
-    Round 4 makes the ordering structural instead of positional: the admission check lives in a
-    *different function* (``compose_trusted_runtime_deployment_authority``) that must complete
-    before an authority object exists at all, and the request-facing function -- the only one that
-    resolves grants or evaluates authorization -- cannot run without one. So the assertion is now
-    that the two concerns are genuinely separated: the composition function names the admission
-    check and none of the gated calls, and the request-facing function names the gated calls and
-    performs no admission check of its own (it has nothing to perform one *with*).
+    Round 4 made the ordering structural instead of positional: the admission check lives in a
+    *different function* that must complete before a request-facing operation exists at all.
+    Round 5 keeps that and adds the per-call half (P15-R5-F2): the request-facing operation itself
+    now names ``_require_bound_admission_still_current``, and names it before the first gated call
+    in its own body -- so a rotated or revoked composition authority is refused with zero grant
+    resolutions and zero authorization evaluations.
+
+    Calls are collected without descending into nested ``def``s: the request-facing operation is
+    now lexically inside the composition entry point, and attributing its calls to its enclosing
+    function would silently destroy the very separation this test asserts.
     """
 
-    tree = ast.parse(inspect.getsource(bootstrap_module))
-    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    functions = _function_defs(bootstrap_module)
     gated = ("_resolve_grant", "_resolve_declaration", "evaluate_projection_authorization")
 
-    def _called_names(node: ast.AST) -> set[str]:
-        names: set[str] = set()
-        for inner in ast.walk(node):
-            if not isinstance(inner, ast.Call):
-                continue
-            func = inner.func
-            if isinstance(func, ast.Name):
-                names.add(func.id)
-            elif isinstance(func, ast.Attribute):
-                names.add(func.attr)
-        return names
-
-    composing = _called_names(functions[_COMPOSITION_ENTRY_POINT_NAME])
+    composing = _called_names_excluding_nested_defs(functions[_COMPOSITION_ENTRY_POINT_NAME])
     assert "_require_currently_admitted" in composing
     assert not composing & set(gated), composing
+    assert "_require_bound_admission_still_current" not in composing
 
-    request_facing = _called_names(functions["bootstrap_projection_execution_capability"])
+    request_facing_node = functions[_REQUEST_FACING_OPERATION_NAME]
+    request_facing = _called_names_excluding_nested_defs(request_facing_node)
     assert set(gated) <= request_facing, request_facing
     assert "_require_currently_admitted" not in request_facing
-    assert (
-        _TRUST_ANCHOR_PARAMETER_NAME
-        not in inspect.signature(
-            bootstrap_module.bootstrap_projection_execution_capability
-        ).parameters
-    )
+    assert "_require_bound_admission_still_current" in request_facing
+    assert _TRUST_ANCHOR_PARAMETER_NAME not in _parameter_names(request_facing_node)
+
+    # ...and the currency recheck genuinely precedes every gated call in that body, positionally,
+    # so no future edit can move grant resolution in front of it (Round 3's own technique, kept).
+    def _first_line(name: str) -> int:
+        return min(
+            node.lineno
+            for node in ast.walk(request_facing_node)
+            if isinstance(node, ast.Call)
+            and (
+                (isinstance(node.func, ast.Name) and node.func.id == name)
+                or (isinstance(node.func, ast.Attribute) and node.func.attr == name)
+            )
+        )
+
+    recheck_line = _first_line("_require_bound_admission_still_current")
+    for gated_name in gated:
+        assert recheck_line < _first_line(gated_name), gated_name
+
+
+def test_this_package_has_exactly_one_instant_parsing_owner() -> None:
+    """P15-R5-F3: "No second timestamp grammar or Runtime-specific time owner may be created."
+
+    Round 1 (P15-R1-F2) established that lexicographic comparison is unsound over this
+    repository's own canonical timestamp grammar, and put a real parser in ``route.py``. Round 5
+    found ``deployment_registry.py`` still ordering a declaration's own ``valid_from``/
+    ``valid_until`` as **strings**, which accepted an inverted window and refused a genuine
+    fractional-second one. The correction moved the existing parser to ``engine.py`` and made both
+    sites read through it, rather than adding a second one.
+
+    So the honest static fact is a uniqueness one: exactly one module in this package imports
+    ``datetime`` at all, exactly one function anywhere in it calls ``fromisoformat``, and that
+    function is ``engine.parse_utc_instant``.
+    """
+
+    datetime_importers = {
+        module.__name__
+        for module in _ALL_PACKAGE_MODULES
+        if any(
+            name == "datetime" or name.startswith("datetime.")
+            for name in _imported_module_names(module)
+        )
+    }
+    assert datetime_importers == {engine_module.__name__}, datetime_importers
+
+    parsers: list[tuple[str, str]] = []
+    for path in sorted((_SHIPPED_PACKAGE_ROOT / "runtime").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if "fromisoformat" in _called_names_excluding_nested_defs(node):
+                parsers.append((str(path.relative_to(_REPO_ROOT)), node.name))
+    assert parsers == [
+        ("src/manosube_agent_civilization/runtime/engine.py", _INSTANT_PARSER_NAME)
+    ], parsers
+
+    # ...and both windowing sites genuinely reach it, rather than one of them keeping a private
+    # copy under another name.
+    assert _call_site_count(route_module, _INSTANT_PARSER_NAME) >= 1
+    assert _call_site_count(deployment_registry_module, _INSTANT_PARSER_NAME) == 2
+    assert hasattr(engine_module, _INSTANT_PARSER_NAME)
+
+
+def test_the_declaration_committer_orders_its_validity_window_as_instants_not_strings() -> None:
+    """P15-R5-F3, stated over the exact site the review named.
+
+    ``_require_declaration_shape_and_signature`` must compare *parsed instants*, never the two
+    raw ``valid_from``/``valid_until`` strings. Proved structurally: every comparison in that
+    function whose operands are plain names compares names that came out of
+    ``parse_utc_instant``, and the raw string names are never themselves compared with an ordering
+    operator.
+    """
+
+    functions = _function_defs(deployment_registry_module)
+    node = functions["_require_declaration_shape_and_signature"]
+    raw_names = {"valid_from", "valid_until"}
+    for compare in ast.walk(node):
+        if not isinstance(compare, ast.Compare):
+            continue
+        if not all(
+            isinstance(operator, ast.Lt | ast.LtE | ast.Gt | ast.GtE) for operator in compare.ops
+        ):
+            continue
+        operands = [compare.left, *compare.comparators]
+        named = {operand.id for operand in operands if isinstance(operand, ast.Name)}
+        assert not (named & raw_names), (
+            "the declaration committer orders raw timestamp strings -- lexicographic order and "
+            f"chronological order genuinely disagree over this grammar: {sorted(named)}"
+        )
+    assert "parse_utc_instant" in _called_names_excluding_nested_defs(node)
 
 
 def test_only_bootstrap_imports_difference_and_change_identity() -> None:

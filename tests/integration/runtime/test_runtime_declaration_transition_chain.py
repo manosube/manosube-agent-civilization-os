@@ -25,6 +25,14 @@ The rules themselves are proved once, over a synthetic record kind, in
 one mechanism. This file proves the *Store-level* consequences on the real declaration chain: what
 actually happens to the pointer, to the Store, and to an observation made through a superseded
 reference.
+
+**Structural Review Round 5 (P15-R5-F3): the committer's own validity-window ordering compared
+timestamp *strings*.** Rounds 3 and 4 wrote that check as ``valid_from > valid_until`` over the
+two raw strings. The canonical timestamp grammar (``01_SCHEMA/common/timestamp.schema.json``)
+admits an optional fractional part, and ``.`` sorts below ``Z``, so lexicographic and
+chronological order genuinely disagree there -- and the check was wrong in both directions at
+once. The two controls at the end of this file are exactly those two directions, each chosen so
+that the *old* comparison would have given the opposite answer to the right one.
 """
 
 from __future__ import annotations
@@ -53,6 +61,7 @@ from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
 from manosube_agent_civilization.runtime.deployment_registry import (
     current_deployment_declaration_id,
 )
+from manosube_agent_civilization.runtime.engine import parse_utc_instant
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.identity import runtime_deployment_target_key
 from manosube_agent_civilization.runtime.route import observe_runtime_target
@@ -722,3 +731,74 @@ def test_an_unrelated_state_bump_during_the_retry_loop_never_blocks_a_legal_tran
     assert store.injected
     assert result["transition"] == "SUCCESSOR"
     assert _pointer(_world, a) == successor["runtime_deployment_declaration_id"]
+
+
+# ---------------------------------------------------------------------------
+# P15-R5-F3: the validity window is ordered as real UTC instants, never as strings
+# ---------------------------------------------------------------------------
+#
+# Both cases below sit inside the one second where lexicographic and chronological order disagree,
+# and the disagreement is verified here rather than asserted in prose:
+#
+#     "2026-01-01T00:00:00Z"   >  "2026-01-01T00:00:00.5Z"    lexicographically   (True)
+#     2026-01-01T00:00:00Z     <= 2026-01-01T00:00:00.5Z      chronologically     (True)
+#
+# so the whole-second/fractional pair is a genuine window the OLD check refused, and its inverse
+# is an inverted window the OLD check accepted.
+
+_WHOLE_SECOND = "2026-01-01T00:00:00Z"
+_HALF_SECOND_LATER = "2026-01-01T00:00:00.5Z"
+
+
+def test_the_two_orderings_genuinely_disagree_over_this_grammar() -> None:
+    """The premise both controls below rest on, stated as an executable fact rather than as a
+    claim about Python's string comparison a reader would have to take on trust."""
+
+    assert _WHOLE_SECOND > _HALF_SECOND_LATER  # lexicographic: '.' sorts below 'Z'
+    assert parse_utc_instant(_WHOLE_SECOND, "a") < parse_utc_instant(_HALF_SECOND_LATER, "b")
+
+
+def test_a_chronologically_valid_fractional_second_window_commits(_world: dict[str, Any]) -> None:
+    """**The positive control.** A genuine half-second window: ``valid_from`` at a whole second,
+    ``valid_until`` half a second later. It is chronologically ordered and must commit.
+
+    The old lexicographic check computed ``valid_from > valid_until`` as ``True`` here and refused
+    it -- a legitimate, correctly signed, correctly addressed declaration rejected outright -- so
+    this test would have failed before the correction, which is what makes it a control rather
+    than a restatement.
+    """
+
+    declaration = _declaration(
+        _world,
+        declared_at="2026-09-08T00:00:00Z",
+        valid_from=_WHOLE_SECOND,
+        valid_until=_HALF_SECOND_LATER,
+    )
+    result = _commit(_world, declaration, at="2026-09-09T00:00:00Z")
+    assert result["transition"] == "GENESIS"
+    assert _pointer(_world, declaration) == declaration["runtime_deployment_declaration_id"]
+    assert _resolves(_world, declaration) == declaration
+
+
+def test_a_chronologically_inverted_fractional_second_window_refuses_without_state_change(
+    _world: dict[str, Any],
+) -> None:
+    """**The negative control**, and the exact inverse of the one above: ``valid_from`` half a
+    second *after* ``valid_until``.
+
+    The old lexicographic check computed ``valid_from > valid_until`` as ``False`` here and
+    accepted it -- an inverted window committed as though it were ordered. It is now refused as
+    real instants, before any State mutation: the pointer, ``state_revision``, and the Store's own
+    record set are all exactly what they were.
+    """
+
+    declaration = _declaration(
+        _world,
+        declared_at="2026-09-08T00:00:00Z",
+        valid_from=_HALF_SECOND_LATER,
+        valid_until=_WHOLE_SECOND,
+    )
+    message = _refuses_without_state_change(_world, declaration, at="2026-09-09T00:00:00Z")
+    assert "not genuinely ordered" in message, message
+    assert "real UTC instants" in message, message
+    assert _pointer(_world, declaration) is None

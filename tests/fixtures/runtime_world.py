@@ -30,13 +30,21 @@ Structural Review Round 3 (P15-R3-F1/F2) changes two things here:
 
 Structural Review Round 4 (P15-R4-F1/F2) changes three more:
 
-- The trust-root type is gone entirely. What a test now holds is a
-  :class:`~manosube_agent_civilization.runtime.bootstrap.RuntimeDeploymentAuthority`, obtainable
-  **only** from the shipped composition entry point
+- The trust-root type is gone entirely. What a test now holds is the bound request-facing
+  bootstrap itself, obtainable **only** from the shipped composition entry point
   ``compose_trusted_runtime_deployment_authority`` -- so this fixture layer no longer has, and no
   longer needs, any way of naming a world at the request-facing boundary. :func:`admitted_root`
   composes one through that shipped path; every request-facing bootstrap call in this repository
-  now passes exactly that object and nothing else.
+  now goes through exactly that callable and names nothing else.
+
+Structural Review Round 5 (P15-R5-F1) changes one more:
+
+- Round 4's ``RuntimeDeploymentAuthority`` value type is gone too, and
+  ``compose_trusted_runtime_deployment_authority`` now returns the request-facing operation
+  *itself* -- a closure with no public constructor. :func:`admitted_root` therefore returns that
+  callable under the key ``"bootstrap"``, and a request-facing call is written
+  ``world["admitted"]["bootstrap"](github_projection_grant_refs=..., ...)`` rather than as a free
+  function taking an authority object. Nothing else about this layer changes.
 - Both canonical record kinds carry signed ``generation``/``predecessor_ref`` fields, so
   :func:`deployment_declaration_for` and :func:`root_admission_for` mint them, and
   :func:`successor_of` derives the successor pair from whatever record is currently the head.
@@ -77,7 +85,6 @@ from manosube_agent_civilization.binding import (
     declare_github_projection_grant,
 )
 from manosube_agent_civilization.runtime import (
-    RuntimeDeploymentAuthority,
     commit_runtime_deployment_declaration,
     commit_runtime_root_admission,
     compose_trusted_runtime_deployment_authority,
@@ -133,8 +140,8 @@ def trust_anchor_private_key() -> Ed25519PrivateKey:
 def trust_anchor_public_key_hex() -> str:
     """The deployment trust anchor's own public verification half, hex-encoded -- the exact
     value a real deployment would supply to
-    ``bootstrap_projection_execution_capability(trust_anchor_public_key_hex=...)`` from its own
-    configuration."""
+    ``compose_trusted_runtime_deployment_authority(trust_anchor_public_key_hex=...)`` from its
+    own configuration."""
 
     return (
         _trust_anchor_private_key()
@@ -280,20 +287,20 @@ def admitted_root(
     store: FileStateStore, *, project_id: str, project_binding_id: str, **admission_fields: Any
 ) -> dict[str, Any]:
     """Commit one genuine ``runtime_root_admission`` for *project_id*/*project_binding_id*,
-    compose a real :class:`~manosube_agent_civilization.runtime.bootstrap.
-    RuntimeDeploymentAuthority` through the **shipped** composition entry point, and return
-    everything a Round 4 test needs.
+    compose a real bound request-facing bootstrap through the **shipped** composition entry
+    point, and return everything a Round 4/Round 5 test needs.
 
-    Returns ``{deployment_authority, runtime_root_admission_ref, trust_anchor_public_key_hex,
-    runtime_root_admission}``. ``deployment_authority`` is the *only* thing a request-facing
-    ``bootstrap_projection_execution_capability`` call now takes; the other three are here for
-    negative controls and for lifecycle tests that rotate or revoke the admission afterwards.
+    Returns ``{bootstrap, runtime_root_admission_ref, trust_anchor_public_key_hex,
+    runtime_root_admission}``. ``bootstrap`` is the composition-bound request-facing operation
+    itself (P15-R5-F1) -- called with only ``github_projection_grant_refs`` and
+    ``github_projection_grant_declaration_refs`` -- and the other three are here for negative
+    controls and for lifecycle tests that rotate or revoke the admission afterwards.
     """
 
     admission = root_admission_for(project_id, project_binding_id, **admission_fields)
     ref = commit_root_admission(store, project_id, admission)
     return {
-        "deployment_authority": compose_trusted_runtime_deployment_authority(
+        "bootstrap": compose_trusted_runtime_deployment_authority(
             store,
             project_id=project_id,
             project_binding_id=project_binding_id,
@@ -908,7 +915,6 @@ __all__ = [
     "REBOUND_SIGNING_KEY_ID",
     "ROOT_ADMISSION_RECORD_KIND",
     "TARGET_REPOSITORY",
-    "RuntimeDeploymentAuthority",
     "admission_successor_fields",
     "admitted_root",
     "alternate_bound",

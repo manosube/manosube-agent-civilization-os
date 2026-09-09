@@ -80,7 +80,6 @@ from manosube_agent_civilization.projection import FakeGitHubAdapter, Projection
 from manosube_agent_civilization.projection.identity import projection_payload_fingerprint
 from manosube_agent_civilization.runtime import bootstrap as bootstrap_module
 from manosube_agent_civilization.runtime.bootstrap import (
-    bootstrap_projection_execution_capability,
     compose_trusted_runtime_deployment_authority,
 )
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
@@ -108,7 +107,7 @@ def _authority_world(
     transaction_prefix: str,
 ) -> dict[str, Any]:
     """Commit one genuine subject/grant/declaration triple into *store* -- the identical real
-    records ``bootstrap_projection_execution_capability`` resolves, whichever world they live
+    records the composition-bound request-facing bootstrap resolves, whichever world they live
     in."""
 
     evidence = derive_evidence(observation_evidence_request(recorded_at=recorded_at))
@@ -275,8 +274,7 @@ def test_a_genuinely_admitted_composition_reaches_a_real_capability_end_to_end(
     admitted = _canonical["admitted"]
     assert admitted["trust_anchor_public_key_hex"] == trust_anchor_public_key_hex()
 
-    capability = bootstrap_projection_execution_capability(
-        admitted["deployment_authority"],
+    capability = admitted["bootstrap"](
         github_projection_grant_refs=[_canonical["grant_ref"]],
         github_projection_grant_declaration_refs=[_canonical["declaration_ref"]],
     )
@@ -483,8 +481,7 @@ def test_the_alternate_world_is_genuinely_self_consistent_and_admissible_on_its_
         project_id=_alternate["project_id"],
         project_binding_id=_alternate["project_binding_id"],
     )
-    capability = bootstrap_projection_execution_capability(
-        admitted["deployment_authority"],
+    capability = admitted["bootstrap"](
         github_projection_grant_refs=[_alternate["grant_ref"]],
         github_projection_grant_declaration_refs=[_alternate["declaration_ref"]],
     )

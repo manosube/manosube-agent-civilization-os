@@ -27,6 +27,14 @@ world passed every check. Round 4 made the composition boundary the owner of eve
 value, and removed the trust-root type entirely -- there is nothing left for a minting factory to
 mint.
 
+**What Round 5 changed again.** Round 4's own correction was carried by a value type --
+``RuntimeDeploymentAuthority`` -- that was an ordinary public frozen dataclass with an ordinary
+public constructor, and the request-facing function was a free module-level function guarded only
+by an ``isinstance`` check. So a caller could construct their own authority over an alternate
+world and pass that check outright. Round 5 deletes the type and makes the request-facing
+operation a closure returned by composition: a closure has no public constructor, so the only way
+to obtain a working one is to pass the composition step's own admission gate.
+
 **Why this file survives, and in strictly stronger form.** Every fact it pins is still true and
 still load-bearing, and pinning them is exactly what keeps each round's correction from being
 *read* as a quiet restoration of Round 1's factory:
@@ -35,11 +43,13 @@ still load-bearing, and pinning them is exactly what keeps each round's correcti
 - the ``TrustedRuntimeRoot`` name is now absent from every code position in the whole shipped
   package -- strictly stronger than Rounds 2 and 3, which could only say no shipped callable
   returned one and no shipped module constructed one;
-- exactly one shipped public callable hands back a ``RuntimeDeploymentAuthority``, it is the
+- exactly one shipped public callable hands back a bound request-facing bootstrap, it is the
   composition entry point, and it cannot produce one without a deployment-supplied anchor and a
   currently-admitted, anchor-signed admission record;
-- the request-facing capability call still refuses every non-authority first argument, before
-  Boot;
+- the request-facing capability call accepts no world-bearing argument at all -- Round 5
+  (P15-R5-F1) removed the last one, the authority object itself, along with the
+  ``RuntimeDeploymentAuthority`` type that made "possessing an authority" reproducible by any
+  caller who could import the module;
 - ``observe_runtime_target``, the one public observation route, names neither the removed type,
   the new authority type, nor either bootstrap half, so no ambient live path can be steered
   through any of them.
@@ -73,8 +83,6 @@ from manosube_agent_civilization.projection.identity import projection_payload_f
 import manosube_agent_civilization.runtime as runtime_package
 import manosube_agent_civilization.runtime.bootstrap as bootstrap_module
 from manosube_agent_civilization.runtime.bootstrap import (
-    RuntimeDeploymentAuthority,
-    bootstrap_projection_execution_capability,
     compose_trusted_runtime_deployment_authority,
 )
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
@@ -97,6 +105,16 @@ _DELETED_MINTING_FACTORY_NAME = "provision_trusted_runtime_root"
 #: the identical reason: a quiet reintroduction under its own name fails immediately.
 _REMOVED_TRUST_ROOT_TYPE_NAME = "TrustedRuntimeRoot"
 
+#: The composition-owned authority type Round 4 introduced and Round 5 (P15-R5-F1) removes for
+#: exactly the reason Round 2 removed the factory and Round 4 removed the trust root: it was an
+#: ordinary public dataclass with an ordinary public constructor, so "possessing one" was
+#: reproducible by any caller who could import the module. Pinned as a literal too.
+_REMOVED_DEPLOYMENT_AUTHORITY_TYPE_NAME = "RuntimeDeploymentAuthority"
+
+#: The module-level request-facing function Rounds 1-4 shipped. Round 5 makes it a closure
+#: returned by composition, so it is no longer an attribute of any shipped module.
+_REMOVED_MODULE_LEVEL_BOOTSTRAP_NAME = "bootstrap_projection_execution_capability"
+
 
 def _authority_world(
     store: Any,
@@ -107,7 +125,7 @@ def _authority_world(
     transaction_prefix: str,
 ) -> dict[str, Any]:
     """Commit one genuine subject/grant/declaration triple into *store* -- the identical real
-    records ``bootstrap_projection_execution_capability`` resolves, whichever world they live
+    records the composition-bound request-facing bootstrap resolves, whichever world they live
     in."""
 
     evidence = derive_evidence(observation_evidence_request(recorded_at=recorded_at))
@@ -202,8 +220,7 @@ def test_both_worlds_are_genuinely_distinct_and_the_alternate_one_is_self_consis
     assert alternate["human_authority_ref"] != canonical["human_authority_ref"]
     assert alternate["project_binding_id"] != canonical["project_binding_id"]
 
-    capability = bootstrap_projection_execution_capability(
-        alternate["admitted"]["deployment_authority"],
+    capability = alternate["admitted"]["bootstrap"](
         github_projection_grant_refs=[alternate["grant_ref"]],
         github_projection_grant_declaration_refs=[alternate["declaration_ref"]],
     )
@@ -250,23 +267,32 @@ def test_the_removed_trust_root_type_appears_in_no_shipped_code_position(
     """
 
     assert _worlds["canonical"]["project_id"]
-    assert not hasattr(bootstrap_module, _REMOVED_TRUST_ROOT_TYPE_NAME)
-    assert not hasattr(runtime_package, _REMOVED_TRUST_ROOT_TYPE_NAME)
-    assert _REMOVED_TRUST_ROOT_TYPE_NAME not in runtime_package.__all__
-    assert _REMOVED_TRUST_ROOT_TYPE_NAME not in bootstrap_module.__all__
+    for removed in (
+        _REMOVED_TRUST_ROOT_TYPE_NAME,
+        # P15-R5-F1: Round 4's own authority type, removed on the identical precedent and
+        # asserted with the identical strength.
+        _REMOVED_DEPLOYMENT_AUTHORITY_TYPE_NAME,
+        _REMOVED_MODULE_LEVEL_BOOTSTRAP_NAME,
+    ):
+        assert not hasattr(bootstrap_module, removed), removed
+        assert not hasattr(runtime_package, removed), removed
+        assert removed not in runtime_package.__all__, removed
+        assert removed not in bootstrap_module.__all__, removed
 
 
-def test_exactly_one_shipped_callable_hands_back_a_deployment_authority(
+def test_exactly_one_shipped_callable_hands_back_a_bound_request_facing_bootstrap(
     _worlds: dict[str, Any],
 ) -> None:
-    """The Round 4 successor to "no shipped callable returns a trust root", and the fact that
-    actually matters now.
+    """The Round 5 successor to Round 4's "exactly one callable returns a deployment authority",
+    and the fact that actually matters now.
 
     A capability *must* be obtainable somehow -- Round 3 established that a mechanism with no
-    production-legitimate path is itself a defect. So the honest control is not "nothing returns
-    one" but "exactly one thing does, and it is the trusted composition step". Checked by declared
-    return annotation over every public callable the package exports, so a same-shaped factory
-    reintroduced under a different name would be caught immediately.
+    production-legitimate path is itself a defect. Round 4's honest control was "exactly one
+    thing hands back the authority, and it is the trusted composition step"; Round 5 removes the
+    authority type, so the same control is stated over what composition now returns instead: a
+    callable producing a ``ProjectionExecutionCapability``. Checked by declared return annotation
+    over every public callable the package exports, so a same-shaped producer reintroduced under
+    a different name would be caught immediately.
     """
 
     assert _worlds["canonical"]["project_id"]
@@ -276,12 +302,19 @@ def test_exactly_one_shipped_callable_hands_back_a_deployment_authority(
         if not callable(member) or isinstance(member, type):
             continue
         annotation = inspect.signature(member).return_annotation
-        rendered = (
+        rendered = str(
             annotation if isinstance(annotation, str) else getattr(annotation, "__name__", "")
         )
-        if "RuntimeDeploymentAuthority" in str(rendered):
+        if "Callable" in rendered and "ProjectionExecutionCapability" in rendered:
             producers.append(name)
     assert producers == ["compose_trusted_runtime_deployment_authority"]
+    # ...and nothing shipped still declares the removed Round 4 authority type as a return value.
+    for name in runtime_package.__all__:
+        member = getattr(runtime_package, name)
+        if not callable(member) or isinstance(member, type):
+            continue
+        annotation = inspect.signature(member).return_annotation
+        assert _REMOVED_DEPLOYMENT_AUTHORITY_TYPE_NAME not in str(annotation), name
 
 
 def test_the_one_producer_cannot_produce_an_authority_without_the_deployment_anchor(
@@ -317,13 +350,16 @@ def test_the_one_producer_cannot_produce_an_authority_without_the_deployment_anc
         )
 
 
-def test_the_capability_call_still_refuses_every_non_authority_first_argument(
+def test_the_capability_call_accepts_no_world_bearing_argument_at_all(
     _worlds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With no shipped minting path, the remaining question is whether the request-facing
-    capability call can be reached *without* a genuine composed authority at all -- a bare Store,
-    or a look-alike object shaped exactly like one and naming the alternate world. Both are
-    refused at the type check, with Boot never reached."""
+    """With no shipped minting path, the remaining question was whether the request-facing
+    capability call could be reached *without* a genuine composed authority at all. Round 4
+    answered it with an ``isinstance`` refusal; Round 5 (P15-R5-F1) answers it structurally --
+    there is no first positional parameter to fill. A bare Store, a look-alike shaped exactly like
+    Round 4's authority and naming the alternate world, ``None``, a bare identity string, and the
+    attacker's own genuinely composed bootstrap are each a ``TypeError``, with Boot never
+    reached."""
 
     canonical = _worlds["canonical"]
     alternate = _worlds["alternate"]
@@ -336,18 +372,25 @@ def test_the_capability_call_still_refuses_every_non_authority_first_argument(
         _runtime_root_admission_generation = 0
 
     def _boot_must_not_run(*args: Any, **kwargs: Any) -> Any:  # pragma: no cover
-        raise AssertionError("Boot must never be reached without a genuine deployment authority")
+        raise AssertionError("Boot must never be reached for a positional world-bearing argument")
 
     monkeypatch.setattr(bootstrap_module, "boot_project", _boot_must_not_run)
 
-    for first_argument in (canonical["store"], _LookAlikeAuthority(), None, "PROJBIND-ANYTHING"):
-        with pytest.raises(RuntimeRequirementError):
-            bootstrap_projection_execution_capability(
-                first_argument,  # type: ignore[arg-type]
+    bootstrap = canonical["admitted"]["bootstrap"]
+    for first_argument in (
+        canonical["store"],
+        _LookAlikeAuthority(),
+        None,
+        "PROJBIND-ANYTHING",
+        alternate["admitted"]["bootstrap"],
+    ):
+        with pytest.raises(TypeError):
+            bootstrap(
+                first_argument,
                 github_projection_grant_refs=[canonical["grant_ref"]],
                 github_projection_grant_declaration_refs=[canonical["declaration_ref"]],
             )
-    assert isinstance(canonical["admitted"]["deployment_authority"], RuntimeDeploymentAuthority)
+    assert callable(bootstrap)
 
 
 def test_the_public_observation_route_mints_no_root_and_names_no_capability(
@@ -361,7 +404,7 @@ def test_the_public_observation_route_mints_no_root_and_names_no_capability(
     assert _worlds["canonical"]["project_id"]
     source = inspect.getsource(route_module)
     assert _REMOVED_TRUST_ROOT_TYPE_NAME not in source
-    assert "RuntimeDeploymentAuthority" not in source
-    assert "bootstrap_projection_execution_capability" not in source
+    assert _REMOVED_DEPLOYMENT_AUTHORITY_TYPE_NAME not in source
+    assert _REMOVED_MODULE_LEVEL_BOOTSTRAP_NAME not in source
     assert "compose_trusted_runtime_deployment_authority" not in source
     assert _DELETED_MINTING_FACTORY_NAME not in source
