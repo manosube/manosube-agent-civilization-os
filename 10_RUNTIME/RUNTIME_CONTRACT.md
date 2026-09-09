@@ -9,7 +9,12 @@ STATUS=CANONICAL_DESIGN
 KERNEL_ELEMENT=NONE_RUNTIME_ADAPTER
 RUNTIME_OWNER_COUNT=1
 PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
 ```
+
+Section 10 records Structural Review Round 1 (P15-R1-F1..F6) in full. Where that section
+and an earlier section differ, section 10 governs.
 
 ## 1. Position
 
@@ -51,18 +56,24 @@ route_runtime_observation_to_evidence(
     evidence_request: Mapping[str, Any],
 ) -> dict[str, Any]
 
-bootstrap_projection_execution_capability(
+provision_trusted_runtime_root(
     store,
     *,
     project_id: str,
     project_binding_id: str,
+) -> TrustedRuntimeRoot
+
+bootstrap_projection_execution_capability(
+    trusted_runtime_root: TrustedRuntimeRoot,
+    *,
     github_projection_grant_refs: list[Mapping[str, str]],
     github_projection_grant_declaration_refs: list[Mapping[str, str]],
 ) -> ProjectionExecutionCapability
 ```
 
 `target_identity` is `{provider, deployment_id, instance_identity, project_binding_ref,
-deployment_fingerprint}` -- `project_binding_ref` must name exactly `project_binding_id`;
+deployment_declaration_ref, deployment_fingerprint}` (`deployment_declaration_ref` added by
+Round 1, P15-R1-F6 -- see §10) -- `project_binding_ref` must name exactly `project_binding_id`;
 a target declaring a different Project Binding refuses before any adapter call. `boundary` is
 the closed Observation Boundary: `{observation_method, endpoint, permitted_fields,
 time_window, network_scope, timeout_seconds, redaction_fields, expected_field?,
@@ -88,10 +99,12 @@ against every one of the receipt's own fields.
 `bootstrap_projection_execution_capability` (V5) is the Phase-14-deferred trusted runtime
 bootstrap: a production-general adaptation of the Phase 14 V3 test harness's own
 `resolve_v3_live_write_authority`, resolving caller-supplied grant/declaration **references**
-(never bodies) exclusively within the caller-injected trusted `store`, and returning one
+(never bodies) exclusively within the trusted `store`, and returning one
 `ProjectionExecutionCapability` (Phase 14's own shipped, bound-once execution interface --
 `manosube_agent_civilization.projection`) bound to a freshly constructed
-`ProjectionExecutionContext`. See §7, V5.
+`ProjectionExecutionContext`. Since Round 1 (P15-R1-F4) it names that Store only through an
+opaque `TrustedRuntimeRoot` obtained from `provision_trusted_runtime_root`; it carries no
+`store`/`project_id`/`project_binding_id` parameter of its own at all. See §7, V5 and §10.
 
 ```text
 RuntimeAdapter (Protocol)
@@ -198,16 +211,28 @@ src/manosube_agent_civilization/runtime/
 │                           runtime_observation_envelope_semantic_fingerprint
 ├── engine.py               derive_runtime_observation_envelope -- pure, no Store/Boot/
 │                           Adapter I/O
+├── network.py              require_endpoint_within_network_scope / canonical_endpoint_url /
+│                           canonical_endpoint_host -- pure, I/O-free network-scope
+│                           enforcement (Round 1, P15-R1-F1); the only module besides
+│                           adapter.py naming urllib, and only ever urllib.parse
 ├── adapter.py              FakeRuntimeAdapter (controlled, in-memory) and
-│                           LocalHttpRuntimeAdapter (stdlib urllib only) -- the two
-│                           RuntimeAdapter implementations
+│                           LocalHttpRuntimeAdapter (stdlib urllib only, no redirect ever
+│                           followed) -- the two RuntimeAdapter implementations
 ├── route.py                observe_runtime_target -- the one public Runtime Observation
 │                           route
 ├── evidence_handoff.py     route_runtime_observation_to_evidence -- the one public
 │                           Runtime-Observation-to-Evidence hand-off
-└── bootstrap.py            bootstrap_projection_execution_capability -- the V5 trusted
+└── bootstrap.py            provision_trusted_runtime_root / TrustedRuntimeRoot and
+                             bootstrap_projection_execution_capability -- the V5 trusted
                              runtime bootstrap provisioning Phase 14's
                              ProjectionExecutionCapability
+
+01_SCHEMA/runtime/
+├── runtime_observation_envelope.schema.json     the committed observation fact
+└── runtime_deployment_declaration.schema.json   the canonical, Human-Authority-declared
+                                                  deployment identity a target's own claimed
+                                                  deployment_fingerprint must match
+                                                  (Round 1, P15-R1-F6)
 ```
 
 No second Boot, Store, Binding, Evidence, Difference, Authority, or Reflow owner is created
@@ -223,10 +248,15 @@ Projection's own `route.py` already makes of the same function). `boot` is impor
 and `difference`/`change` identity utilities are importable only from `bootstrap.py`, for the
 identical read-only grant/declaration/subject reverification Phase 14's own V3 test harness
 already performs. `manosube_agent_civilization.projection` (the shipped Phase 14 execution
-interface) is importable only from `bootstrap.py`. A network/transport surface (`urllib`) is
-importable only from `adapter.py` -- static conformance proves all of this by AST walk, the
-identical technique `tests/contract/projection/test_projection_static_conformance.py` already
-uses.
+interface) is importable only from `bootstrap.py`. A network/transport surface that actually
+*opens* anything (`urllib.request`/`urllib.error`) is importable only from `adapter.py`;
+`network.py` may additionally import exactly `urllib.parse`, a parse-only surface, and is
+statically proved to call nothing that could open, resolve, or read anything (Round 1,
+P15-R1-F1 -- `route.py` itself still imports no `urllib` of any kind). `engine.py`
+additionally imports `difference.errors`, solely to translate the canonical schema
+validator's own failure into this package's own refusal vocabulary (Round 1, P15-R1-F2).
+Static conformance proves all of this by AST walk, the identical technique
+`tests/contract/projection/test_projection_static_conformance.py` already uses.
 
 ## 5. Canonical route
 
@@ -307,6 +337,16 @@ caller-injected trusted Store
    reference this Phase can genuinely bind an observation to, and is what
    `route_runtime_observation_to_evidence` uses for `verification_result_provenance`'s own
    `target_refs`/`input_refs`.
+6. **Trusted runtime provisioning is two steps, and the trust root is a type (Round 1,
+   P15-R1-F4).** `provision_trusted_runtime_root` is the single, explicit boundary at which a
+   deployment fixes which Store/Project/Binding its trusted provisioning operates within;
+   `bootstrap_projection_execution_capability` then reads that opaque root and carries no
+   `store`/`project_id`/`project_binding_id` parameter of its own at all. This is a
+   deliberate ergonomic cost (two calls where there was one, and one more type to hold) paid
+   for a structural gain: the parameter through which a caller could name an alternate,
+   internally self-consistent Authority world no longer exists. `TrustedRuntimeRoot` performs
+   no verification of its own -- it holds no Boot verdict that could go stale, only *which*
+   world is in play; every check runs fresh inside the bootstrap call. Full rationale in §10.4.
 
 ## 7. Required proof layers
 
@@ -351,7 +391,10 @@ a real `ProjectionExecutionCapability` from canonical Store/Boot state and a gen
 controlled `FakeGitHubAdapter` (zero live network calls) through `.execute(...)`; refuses with
 no grant references, an unresolvable grant reference, a grant with no anchoring declaration,
 and two grants for the identical `projection_kind`; a static proof that `bootstrap.py` imports
-no `tests.*` module and no network/transport surface of its own.
+no `tests.*` module and no network/transport surface of its own. (Since Round 1, every call
+here provisions a `TrustedRuntimeRoot` first -- P15-R1-F4, §10.4.)
+
+**Round 1 proof layers.** Six further suites, one per adopted finding, are listed in §10.9.
 
 ## 8. Explicit non-claims
 
@@ -381,6 +424,12 @@ TRANSPORT_LEVEL_OUTCOME_VOCABULARY_CLOSED=true
 ROUTE_LEVEL_NEGATIVE_AND_IDENTITY_MISMATCH_NEVER_ADAPTER_REPORTED=true
 REDACTION_APPLIED_BEFORE_ANY_FINGERPRINT_OR_PERSISTENCE=true
 TIME_WINDOW_ENFORCED_BEFORE_ANY_ADAPTER_CALL=true
+OBSERVATION_BOUNDARY_CLOSED=true
+NETWORK_SCOPE_ENFORCED_BEFORE_ANY_CONNECTION=true
+REDIRECT_EVER_FOLLOWED=false
+DEPLOYMENT_IDENTITY_STORE_ANCHORED=true
+TRUSTED_RUNTIME_ROOT_REQUIRED_FOR_PROVISIONING=true
+AUTHORITY_FRESHNESS_RECHECKED_AT_ADAPTER_AND_COMMIT_BOUNDARIES=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
@@ -401,8 +450,291 @@ V3_REAL_BOUNDED_RUNTIME_VERTICAL_PROOF=true
 V4_FAILURE_TAMPER_PROVENANCE_PROOF_MATRIX=true
 V5_PHASE_14_RUNTIME_PROVISIONING_CONTINUITY_PROOF=true
 STATIC_CONFORMANCE_PROOF=true
+STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_APPLIED=true
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=6
 ```
 
 `PHASE_15_COMPLETE`/`PHASE_16_ALLOWED` remain `false`: this delivery closes Issue #64's own
 structural findings, not Phase 15 itself, which awaits a separate SHUKOU decision -- the
 identical discipline every prior Phase's own first-delivery contract already states.
+
+## 10. Structural Review Round 1 corrections (P15-R1-F1 .. P15-R1-F6)
+
+```text
+ROUND=1
+GOVERNING_REVIEW=PR #65 Structural Review Round 1
+FINDINGS_ADOPTED=6
+FINDINGS_CLOSED=6
+```
+
+Round 1 found six ways the first delivery's own claims were weaker than the code actually
+kept. Each is recorded below as *what was claimed*, *what was true*, and *what the code now
+does* -- the identical per-round accumulation `09_PROJECTION/PROJECTION_CONTRACT.md` already
+keeps.
+
+### 10.1 P15-R1-F1 -- network scope is now genuinely enforced, and no redirect is followed
+
+*Claimed:* `OBSERVATION_BOUNDARY_CLOSED=true` -- the Boundary closes what may be reached.
+*True:* `LocalHttpRuntimeAdapter.observe` constructed and opened `boundary["endpoint"]` and
+never read `boundary["network_scope"]["allowed_hosts"]` at all, so a Boundary could name one
+allowed host and the GET could go to another; and stdlib `urllib`'s automatic redirect
+following could leave the declared host entirely, with no post-redirect check anywhere.
+
+*Now:*
+
+- A new pure module, `runtime/network.py`, owns the decision. It parses the endpoint with
+  `urllib.parse.urlsplit` (parse-only -- it opens, resolves, and reads nothing, proved by an
+  AST walk in static conformance) and refuses, before any connection could exist: an
+  unsupported scheme (only `http`/`https`), userinfo (`user@host`), an absent or ambiguously
+  encoded host, a port that is present but non-numeric or outside `1..65535`, a malformed
+  network scope, and any host that is not an exact case-insensitive member of `allowed_hosts`.
+- **The check runs in `route.py`'s own Boundary validation**, so a wrong-host Boundary refuses
+  with the adapter **never invoked at all** -- structurally, for every adapter implementation
+  that exists or will exist, rather than depending on each adapter to police itself.
+- `LocalHttpRuntimeAdapter` re-runs the identical check itself immediately before opening a
+  socket (defense in depth; neither site assumes it is the only one).
+- **No redirect is ever followed.** The adapter builds its own opener with a redirect handler
+  that returns `None` for every 3xx, so `urllib` raises it as an ordinary `HTTPError` and it
+  is classified `UNAVAILABLE` at the one place transport failures are already classified.
+  Chosen over per-hop host validation deliberately: this is a bounded observation probe
+  against one explicit declared endpoint, not a general HTTP client, so a target answering
+  3xx has not answered the bounded question that was asked.
+
+Deliberately *not* attempted (`OVER_ENGINEERING_REFUSED=true`): no DNS resolution, and
+therefore no claim that an allowed hostname resolves to an allowed address; no IDN/punycode
+normalization; no per-port scoping. `allowed_hosts` is a closed allowlist of *names*, exactly
+as the Boundary schema declares it.
+
+### 10.2 P15-R1-F2 -- the complete declared shape is proved before Boot or any adapter
+
+*Claimed:* the closed Boundary bounds the observation.
+*True:* `route._require_boundary` checked an observation method, two non-empty timestamp
+strings, and a non-empty `permitted_fields`. Endpoint, network scope, timeout, redaction
+fields, exact key set, and timestamp grammar were validated only inside
+`derive_runtime_observation_envelope` -- *after* `adapter.observe` had already run. And
+`_require_within_time_window` compared timestamps as strings.
+
+*Now:* `target_identity` and `boundary` are validated completely against
+`runtime_observation_envelope.schema.json`'s own `$defs/target_identity`/`$defs/boundary`
+before Boot or any adapter is reached, reusing the canonical registry
+(`difference.validation.subschema_validator`/`validate_subrecord`, factored out of the
+existing loader so no second schema loader exists). `observed_at` is validated against the
+canonical timestamp grammar the same way. The window is then compared as **real UTC instants**
+(`datetime.fromisoformat` after normalizing the `Z` suffix), and `issued_at < expires_at` is
+required rather than assumed.
+
+The string comparison was genuinely unsound, not merely inelegant.
+`common/timestamp.schema.json` admits an optional fractional part, and `.` (0x2E) sorts below
+`Z` (0x5A):
+
+```text
+"2026-01-01T00:10:00.5Z" < "2026-01-01T00:10:00Z"    lexicographically TRUE
+ 00:10:00.5              > 00:10:00                   chronologically LATER
+```
+
+So the old check *accepted* an observation half a second after expiry, and *refused* one half
+a second after a whole-second `issued_at`. Both directions are proved, in both directions, in
+`tests/contract/runtime/test_runtime_boundary_enforcement.py`.
+
+### 10.3 P15-R1-F3 -- an adapter can neither escape the field boundary nor mutate validated inputs
+
+*Claimed:* observed content is bounded to `permitted_fields`, and redaction precedes any
+fingerprint or persistence.
+*True:* for an `OBSERVED` response the route passed the adapter's **entire** `observed_fields`
+mapping into redaction, fingerprinting, and persistence -- it never independently restricted
+it -- so a buggy or hostile adapter could persist a field the Boundary never admitted, a
+credential included. Separately, the route handed the adapter the very same mutable
+`checked_target_identity`/`checked_boundary` dict objects it then reused, so an adapter could
+mutate them in place after validation.
+
+*Now:*
+
+- The adapter receives **deep-frozen, alias-free** copies (`types.deep_freeze`, already this
+  package's own helper), so mutation is impossible rather than merely detectable.
+- After the call, the route **independently projects** `observed_fields` down to exactly
+  `boundary["permitted_fields"]`, and **raises `RuntimeAdapterError`** on any extra key rather
+  than silently dropping it -- a compliant adapter never reports an unpermitted field, so one
+  that does is a defect worth surfacing loudly. Nothing is committed on that path.
+- Everything after the call (fingerprints, Envelope, receipt, `input_refs`) is recomputed from
+  the route's own validated copies alone, never from anything the adapter echoes back.
+
+### 10.4 P15-R1-F4 -- the trusted bootstrap no longer accepts a caller-selected Authority world
+
+*Claimed:* `bootstrap_projection_execution_capability` provisions from *canonical* Store/Boot
+state.
+*True:* it accepted `store`/`project_id`/`project_binding_id` as its own free parameters and
+proved only internal self-consistency inside whatever Store it was handed. A fully
+self-consistent alternate Store -- its own Human Authority signing key, its own Binding,
+grants, declarations and subjects, all internally valid -- produced a real
+`ProjectionExecutionCapability`, because nothing in the signature distinguished "the canonical
+adopted Store" from "any internally consistent Store a caller passes".
+
+*Now (new disclosed judgment call -- see §6, item 6):* provisioning is **two steps**, and the
+capability call has no Store-selecting parameter at all.
+
+```text
+provision_trusted_runtime_root(store, project_id=..., project_binding_id=...)
+    -> TrustedRuntimeRoot      frozen, opaque, constructible ONLY through this function (a
+                               module-private sentinel is a required constructor argument;
+                               a directly constructed root raises). Performs no Boot, resolves
+                               no record, commits nothing -- it holds no verdict that could
+                               ever go stale, only WHICH world is in play.
+
+bootstrap_projection_execution_capability(trusted_runtime_root, *, grant refs, declaration refs)
+    -> ProjectionExecutionCapability
+                               reads store/project/binding from the root alone, checks
+                               isinstance up front (before Boot), and resolves every reference
+                               exclusively within that root's own Store.
+```
+
+This is closed **structurally, not evidentially**: no environment digest, no hardcoded
+repository key, no other caller-selectable anchor is introduced -- the parameter through which
+an alternate world could be named simply does not exist any more. Deciding *which* root is
+canonical remains the deployment's own responsibility, exactly as choosing which Store to open
+always was; what changed is that the decision now happens once, visibly, at a dedicated
+boundary instead of being re-offered on every capability request.
+
+### 10.5 P15-R1-F5 -- authority freshness is re-proved at the adapter and commit boundaries
+
+*Claimed:* each call independently re-verifies Project/Human Authority through Boot.
+*True:* it Boot-verified **once**, at the start, then called the adapter and committed under
+bounded Compare-And-Swap retries without re-proving anything -- so a mutation landing before
+adapter entry reached a live target under stale context, and a later retry could commit an
+Envelope carrying a now-stale `human_authority_ref` into newer State.
+
+*Now:* the authority-defining context is re-proved immediately before `adapter.observe`
+(refusing with **zero adapter calls**) and again on **every** commit attempt inside the retry
+loop (refusing to commit). All three Boots go through one private helper, so `route.py` still
+contains exactly one literal `boot_project` call site.
+
+The comparison is over a closed projection -- `{project_binding_id, human_authority_ref,
+human_authority_signing_key}` -- and deliberately **not** over `state_revision`/
+`semantic_fingerprint` (which is what Phase 14's own `execution_context_still_current`
+correctly compares for a *bound, reused* capability). A Runtime Observation re-verifies Boot
+fresh on every call, so an ordinary unrelated commit is not a reason to refuse anything; it is
+exactly the contention the bounded retry exists to absorb. The existing proof that an
+unrelated Store mutation between calls never blocks a fresh observation therefore still holds,
+and a new proof adds the harder case: an unrelated commit landing *inside* the retry loop.
+
+A new error class, `RuntimeAuthorityFreshnessError`, names this refusal. It is deliberately a
+sibling of `RuntimeRequirementError` and `RuntimeEnvelopeIntegrityError` rather than a subclass
+of either: no caller input was malformed, and the derived Envelope is entirely self-consistent
+-- what changed is the *world underneath an already-valid request*, which a caller may
+legitimately retry against the new authority, and which neither existing class names honestly.
+
+*Disclosed structural note.* Within this Kernel a Project Binding is content-addressed over
+its own `human_authority_ref`/`human_authority_signing_key`, and Boot re-verifies that address
+on every restore -- so a substituted Binding cannot also satisfy Boot for the same
+`project_binding_id`; Boot itself catches it. These re-checks are therefore genuinely
+load-bearing for the case this route must still defend against rather than assume away:
+`observe_runtime_target`'s `store` parameter is `Any`, so a caller may inject any object at
+all, and this route never assumes the one it was given is a content-addressed `FileStateStore`.
+
+### 10.6 P15-R1-F6 -- deployed identity is Store-anchored, not echoed
+
+*Claimed:* the observed target's own reported identity is checked against the declared one.
+*True:* `target_identity["deployment_fingerprint"]` was an arbitrary caller string and
+`observed_deployment_identity` was read straight out of the target's own response, so the
+comparison proved only that *the endpoint echoed the expected string* -- which anyone
+controlling both the declaration and the endpoint can arrange trivially.
+
+*Now:* a new canonical record kind anchors the declared side.
+
+```text
+01_SCHEMA/runtime/runtime_deployment_declaration.schema.json
+  schema_version, runtime_deployment_declaration_id (content-addressed),
+  runtime_deployment_declaration_semantic_fingerprint, project_id, project_binding_ref,
+  provider, deployment_id, instance_identity, deployment_fingerprint, human_authority_ref,
+  declared_at
+```
+
+`target_identity` gains a required `deployment_declaration_ref`. Before comparing declared
+against observed, `route.py` resolves that reference from Store, requires the resolved record
+to be schema-valid, independently recomputes its own id and semantic fingerprint and requires
+both to equal their declared values (the identical `_resolve_*`-with-identity-reverification
+pattern `bootstrap.py` already applies to grants and declarations), requires its `project_id`
+to match, requires it to independently restate this target's own `project_binding_ref`/
+`provider`/`deployment_id`/`instance_identity` (the anti-replay control -- a valid declaration
+for one target can never anchor another), and requires
+`target_identity["deployment_fingerprint"]` to equal the declaration's own. Only then does the
+existing observed-vs-declared comparison run, unchanged.
+
+**Classification, disclosed.** Every refusal on this path is a `RuntimeRequirementError` with
+**zero commits**, never an `IDENTITY_MISMATCH` observation outcome. `IDENTITY_MISMATCH` is a
+statement about what a genuinely reached target reported; on this path nothing has been
+reached, because the *request itself* is not anchored -- so there is no observation to
+classify, and none is committed.
+
+**Deliberately not added, disclosed.** The resolved declaration's own `human_authority_ref` is
+schema-checked as a reference and covered by the record's content address, but is **not**
+required to equal the currently Boot-verified Human Authority. Adopted finding F6 does not
+name that constraint, and adding it would silently invalidate every previously declared
+deployment whenever a project is legitimately re-bound to a new Human Authority -- an
+operational semantics no adopted decision establishes. Named here so the omission is a
+disclosed choice rather than an oversight.
+
+`RUNTIME_CREDENTIAL_USE_AUTHORITY` remains `false`: this anchor introduces no secret, no HMAC,
+and no signing-key material of its own. It is a canonical, content-addressed, Human-Authority-
+declared *record*, resolved through the Store like every other canonical fact in this
+repository.
+
+### 10.7 Reference registry scope (checked, deliberately unchanged)
+
+`reflow/reference_registry.py`'s `STORE_OWNED_REFERENCE_KINDS` gains **no** entry for
+`runtime_deployment_declaration`. That registry enumerates the reference edges the *Reflow*
+vertical's own Store admission path persists and resolves; its own docstring is explicit that
+a kind this Kernel names but gives no Reflow-Store-owned producer of its own is out of scope,
+never silently treated as resolved. `runtime_deployment_declaration` is committed by this
+package through `commit_state_transition`, exactly as `runtime_observation_envelope`,
+`projection_envelope`, and `github_projection_grant` already are -- none of which has an entry
+there either, for the identical reason. Adding one would claim a Reflow producer that does not
+exist.
+
+### 10.8 Round 1 declarations
+
+```text
+NETWORK_SCOPE_ENFORCED_BEFORE_ANY_CONNECTION=true
+NETWORK_SCOPE_ENFORCED_IN_ROUTE_NOT_ONLY_IN_ADAPTER=true
+WRONG_HOST_BOUNDARY_PRODUCES_ZERO_ADAPTER_CALLS=true
+REDIRECT_EVER_FOLLOWED=false
+DNS_RESOLUTION_PERFORMED=false
+COMPLETE_TARGET_AND_BOUNDARY_SCHEMA_VALIDATION_PRECEDES_BOOT_AND_ADAPTER=true
+TIME_WINDOW_COMPARED_AS_REAL_INSTANTS=true
+TIME_WINDOW_ORDERING_REQUIRED=true
+ADAPTER_RECEIVES_DEEP_FROZEN_INPUTS=true
+OBSERVED_FIELDS_INDEPENDENTLY_PROJECTED_TO_PERMITTED_FIELDS=true
+UNPERMITTED_ADAPTER_FIELD_SILENTLY_DROPPED=false
+TRUSTED_RUNTIME_ROOT_REQUIRED_FOR_PROVISIONING=true
+BOOTSTRAP_ACCEPTS_A_CALLER_SELECTED_STORE=false
+TRUSTED_RUNTIME_ROOT_DIRECTLY_CONSTRUCTIBLE=false
+AUTHORITY_FRESHNESS_RECHECKED_BEFORE_ADAPTER=true
+AUTHORITY_FRESHNESS_RECHECKED_ON_EVERY_COMMIT_ATTEMPT=true
+UNRELATED_STORE_MUTATION_BLOCKS_OBSERVATION=false
+DEPLOYMENT_IDENTITY_STORE_ANCHORED=true
+DEPLOYMENT_DECLARATION_REPLAY_ACROSS_TARGETS_ALLOWED=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+```
+
+### 10.9 Round 1 proof layers
+
+```text
+tests/unit/runtime/test_runtime_network_scope.py               F1 (pure decision)
+tests/unit/runtime/test_runtime_identity.py                    F6 (declaration identity)
+tests/contract/runtime/test_runtime_boundary_enforcement.py    F1/F2 (zero-call refusals)
+tests/contract/runtime/test_runtime_static_conformance.py      F1/F2/F4/F5 (static facts)
+tests/integration/runtime/test_runtime_local_http_redirect_control.py
+                                                               F1 (real 3xx, two live servers)
+tests/integration/runtime/test_runtime_adapter_boundary_escape.py
+                                                               F3 (field escape, mutation,
+                                                                   substitution, leakage)
+tests/integration/runtime/test_runtime_trusted_root.py         F4 (decisive control, both
+                                                                   worlds built for real)
+tests/integration/runtime/test_runtime_authority_freshness.py  F5 (both barriers + the
+                                                                   harmless-contention control)
+tests/integration/runtime/test_runtime_deployment_identity_anchor.py
+                                                               F6 (spoofing, replay, tamper)
+```

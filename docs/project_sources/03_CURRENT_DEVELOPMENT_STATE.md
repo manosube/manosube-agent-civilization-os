@@ -673,3 +673,68 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 ```
 
 本addendumは、`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するPhase 14の恒久的なacceptance receipt（merge SHA、Human acceptance record、after-state re-observation）を代行しない。それは同ledgerの別途更新の対象であり、本書は現在地を示すための最小限の`OBSERVED_GITHUB_FACT`のみを記録する。
+
+---
+
+# 17. Phase 15 Structural Review Round 1 correction addendum (P15-R1-F1 .. P15-R1-F6, Issue #64 / PR #65)
+
+本節は、セクション16のaddendum記録時点（`CURRENT_PHASE_STATE=LOCAL_IMPLEMENTATION_IN_PROGRESS_NO_PR_YET`）以降にrepositoryへ生じた変化のうち、local `git log`とPR #65自身のReview commentにより独立再観測できた`OBSERVED_GITHUB_FACT`のみを追記する、bounded addendumである。セクション16自身の全面再投影ではない。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-09
+ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AND_PR_65_REVIEW_COMMENT
+```
+
+| Field | Observed value |
+|---|---|
+| Dedicated Pull Request | [#65](https://github.com/manosube/manosube-agent-civilization-os/pull/65) — **open**, not merged |
+| PR #65 reviewed HEAD (Structural Review Round 1 の対象) | `116a25d59130c5e64ced9e665bc2b839182de06a` |
+| Structural Review Round 1 | [PR #65 comment 5594701920](https://github.com/manosube/manosube-agent-civilization-os/pull/65#issuecomment-5594701920) — 6 findings (P15-R1-F1 .. P15-R1-F6) |
+| SHUKOU adoption | 同comment（Human Authority `manosube`）により採択済 |
+| This correction round's own commits | このaddendumを含む、branch `agent/issue-64-phase15-runtime-adapter` 上の後続commit群（reviewed HEAD `116a25d5` の上に積まれた新規commitのみ。history rewriteなし） |
+
+採択された6件の構造的findingと、その閉鎖範囲：
+
+```text
+P15-R1-F1  network scope not enforced / redirect followed
+           → route.py 側の Boundary 検証で allowed_hosts を強制（zero-call）、
+             adapter.py が独立に再強制、redirect は一切追跡しない
+P15-R1-F2  malformed Boundary reached the adapter / time window compared as strings
+           → target_identity と boundary の完全なschema検証を Boot・adapter 到達前に実施、
+             time window は実UTC instant として比較
+P15-R1-F3  adapter could escape permitted_fields / mutate validated inputs
+           → adapter へは deep-frozen copy を渡し、observed_fields は route 自身が
+             permitted_fields へ独立射影（超過fieldは RuntimeAdapterError）
+P15-R1-F4  bootstrap accepted a caller-selected Authority world
+           → TrustedRuntimeRoot / provision_trusted_runtime_root による二段階provisioning。
+             bootstrap_projection_execution_capability から store/project_id/
+             project_binding_id parameter を完全に除去
+P15-R1-F5  stale Binding/Authority could cross the adapter boundary or be committed
+           → adapter 呼び出し直前と、全commit試行ごとに authority freshness を再証明
+P15-R1-F6  deployed identity verification was circular
+           → 新canonical record kind runtime_deployment_declaration により、
+             declared deployment_fingerprint を Store 解決可能な正準record へ係留
+```
+
+実装範囲の所有は変わらず`10_RUNTIME/RUNTIME_INDEX.md`・`10_RUNTIME/RUNTIME_CONTRACT.md`にある（本correction roundは`RUNTIME_CONTRACT.md`にsection 10、`RUNTIME_INDEX.md`にsection 4.1を追加した）。canonical schema総数は57から58へ増加し、`scripts/validate_schemas.py`の宣言済count もそれに合わせて更新されている。
+
+SHUKOU自身が固定した終端は変わらず、本addendumもこれを変更しない。
+
+```text
+CURRENT_PHASE=15_BOUNDED_RUNTIME_OBSERVATION_AND_TRUSTED_PROVISIONING
+CURRENT_PHASE_ISSUE=64
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED_PR_OPEN
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=6
+NEW_BRANCH=false
+NEW_PR=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+```
+
+本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。

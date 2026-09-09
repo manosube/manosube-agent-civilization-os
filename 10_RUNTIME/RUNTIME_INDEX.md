@@ -10,6 +10,8 @@ KERNEL_ELEMENT=NONE_RUNTIME_ADAPTER
 CANONICAL_KERNEL_COUNT=1
 RUNTIME_OWNER_COUNT=1
 PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
 ```
 
 ---
@@ -24,8 +26,9 @@ deferred trusted runtime bootstrap is provisioned from canonical Store/Boot stat
 
 ```text
 1. RUNTIME_INDEX.md      (this document)
-2. RUNTIME_CONTRACT.md   the three public routes, their frozen semantics, and their
-                          negative controls
+2. RUNTIME_CONTRACT.md   the three public routes, their frozen semantics, their negative
+                          controls, and (section 10) the Structural Review Round 1
+                          corrections, P15-R1-F1 .. P15-R1-F6
 ```
 
 Read `RUNTIME_CONTRACT.md` for the load-bearing design; this document only fixes this layer's
@@ -120,19 +123,24 @@ src/manosube_agent_civilization/runtime/
 │                           runtime_observation_envelope_semantic_fingerprint
 ├── engine.py               derive_runtime_observation_envelope -- pure, no Store/Boot/
 │                           Adapter I/O
+├── network.py              require_endpoint_within_network_scope -- pure, I/O-free
+│                           network-scope enforcement (Round 1, P15-R1-F1)
 ├── adapter.py              FakeRuntimeAdapter (controlled, in-memory) and
-│                           LocalHttpRuntimeAdapter (stdlib urllib only) -- the two
-│                           RuntimeAdapter implementations
+│                           LocalHttpRuntimeAdapter (stdlib urllib only, no redirect ever
+│                           followed) -- the two RuntimeAdapter implementations
 ├── route.py                observe_runtime_target -- the one public Runtime Observation
 │                           route
 ├── evidence_handoff.py     route_runtime_observation_to_evidence -- the one public
 │                           Runtime-Observation-to-Evidence hand-off
-└── bootstrap.py            bootstrap_projection_execution_capability -- the V5 trusted
+└── bootstrap.py            provision_trusted_runtime_root / TrustedRuntimeRoot and
+                             bootstrap_projection_execution_capability -- the V5 trusted
                              runtime bootstrap provisioning Phase 14's
                              ProjectionExecutionCapability
 
 01_SCHEMA/runtime/
-└── runtime_observation_envelope.schema.json   the sole new Store-committed record kind
+├── runtime_observation_envelope.schema.json     the committed observation fact
+└── runtime_deployment_declaration.schema.json   the canonical, Human-Authority-declared
+                                                  deployment identity (Round 1, P15-R1-F6)
 ```
 
 No second Boot, Store, Binding, Evidence, Difference, Authority, or Reflow owner is created
@@ -143,13 +151,58 @@ from `evidence_handoff.py` (the one `derive_evidence` call) and, narrowly, `boot
 (read-only `evidence.identity.evidence_semantic_fingerprint`). `boot` is importable from
 `route.py` and `bootstrap.py`, each calling `boot_project` exactly once.
 `manosube_agent_civilization.projection` is importable only from `bootstrap.py`. A network/
-transport surface (`urllib`) is importable only from `adapter.py` -- static conformance proves
-all of this by AST walk, `tests/contract/runtime/test_runtime_static_conformance.py`.
+transport surface that actually opens anything (`urllib.request`/`urllib.error`) is importable
+only from `adapter.py`; `network.py` may additionally import exactly `urllib.parse`, a
+parse-only surface, and is statically proved to open, resolve, and read nothing (Round 1,
+P15-R1-F1). `route.py` itself imports no `urllib` of any kind. Static conformance proves all
+of this by AST walk, `tests/contract/runtime/test_runtime_static_conformance.py`.
+
+## 4.1 Structural Review Round 1 (P15-R1-F1 .. P15-R1-F6)
+
+Round 1 of PR #65 found six ways this layer's own first delivery claimed more than its code
+kept. `10_RUNTIME/RUNTIME_CONTRACT.md` section 10 records each in full -- what was claimed,
+what was true, and what the code now does. This document records only what the round changed
+about *this layer's position*, which is two things:
+
+1. **A fourth public callable exists, and it is not a fourth route.**
+   `provision_trusted_runtime_root` (P15-R1-F4) is the single, explicit boundary at which a
+   deployment fixes which Store/Project/Binding its trusted provisioning operates within. It
+   resolves nothing, Boots nothing, and commits nothing; it exists so that
+   `bootstrap_projection_execution_capability` no longer carries a `store`/`project_id`/
+   `project_binding_id` parameter surface through which a caller could name an alternate,
+   internally self-consistent Authority world. `PUBLIC_RUNTIME_ENTRY_POINT_COUNT` is therefore
+   still `3` -- the three *routes* are unchanged -- alongside a new, separately declared
+   `TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=1`. This two-step provisioning
+   discipline is a new disclosed judgment call (`RUNTIME_CONTRACT.md` section 6, item 6).
+
+2. **A second Store-committed record kind exists.** `runtime_deployment_declaration`
+   (P15-R1-F6) is the canonical, content-addressed, Human-Authority-declared record a target's
+   own claimed `deployment_fingerprint` must now match. Before it, both sides of the
+   deployed-identity comparison were caller/endpoint-controlled, so the check proved only that
+   the endpoint echoed the expected string. It introduces no secret, no HMAC, and no signing
+   key of its own (`RUNTIME_CREDENTIAL_USE_AUTHORITY=false` is unchanged) -- it is a canonical
+   record resolved through the existing Store, exactly like every other canonical fact here,
+   and this layer remains the owner of no Authority, State, Evidence, or Closure semantics.
+
+   It is deliberately **not** added to `reflow/reference_registry.py`'s
+   `STORE_OWNED_REFERENCE_KINDS`, for the identical reason `runtime_observation_envelope`,
+   `projection_envelope`, and `github_projection_grant` are not: that registry enumerates the
+   reference edges the *Reflow* vertical's own admission path persists and resolves, and this
+   kind has no Reflow-Store-owned producer (`RUNTIME_CONTRACT.md` section 10.7).
+
+```text
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+RUNTIME_IS_A_SECOND_AUTHORITY_OWNER=false
+RUNTIME_IS_A_SECOND_STATE_OWNER=false
+NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=1
+NEW_KERNEL_ELEMENT=false
+```
 
 ## 5. Explicit non-claims
 
 ```text
 RUNTIME_OBSERVATION_ENVELOPE_IMPLEMENTED=true
+RUNTIME_DEPLOYMENT_DECLARATION_IMPLEMENTED=true
 RUNTIME_ADAPTER_BOUNDARY_IMPLEMENTED=true
 LOCAL_HTTP_RUNTIME_ADAPTER_IMPLEMENTED=true
 LOCAL_HTTP_RUNTIME_ADAPTER_EXECUTED_AGAINST_A_REAL_LOCAL_TARGET=true
@@ -164,6 +217,13 @@ TRANSPORT_LEVEL_OUTCOME_VOCABULARY_CLOSED=true
 ROUTE_LEVEL_NEGATIVE_AND_IDENTITY_MISMATCH_NEVER_ADAPTER_REPORTED=true
 REDACTION_APPLIED_BEFORE_ANY_FINGERPRINT_OR_PERSISTENCE=true
 TIME_WINDOW_ENFORCED_BEFORE_ANY_ADAPTER_CALL=true
+OBSERVATION_BOUNDARY_CLOSED=true
+NETWORK_SCOPE_ENFORCED_BEFORE_ANY_CONNECTION=true
+REDIRECT_EVER_FOLLOWED=false
+DEPLOYMENT_IDENTITY_STORE_ANCHORED=true
+TRUSTED_RUNTIME_ROOT_REQUIRED_FOR_PROVISIONING=true
+AUTHORITY_FRESHNESS_RECHECKED_AT_ADAPTER_AND_COMMIT_BOUNDARIES=true
+STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_APPLIED=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
