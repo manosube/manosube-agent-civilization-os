@@ -29,9 +29,60 @@ production code rather than a test-only live-write gate:
   ``boot_project``'s/``evaluate_projection_authorization``'s own errors propagate unchanged) on
   any refusal, so a real caller can see *why* provisioning failed.
 
+**Structural Review Round 7 (P15-R7-F1): the per-call barriers now commit to the EXACT FULL
+RECORD, not only to a projection of it. Read this before reading the diff.** *(Round 7 keeps
+Round 5's closure boundary, Round 6's two-barrier placement and the transition-chain mechanism
+entirely, and changes only what each barrier proves.)*
+
+Round 6 made both barriers recompute the resolved body's identity and semantic fingerprint and
+compare them against a composition-time commitment. Both of those recomputations are hashes of
+``ROOT_ADMISSION_SEMANTIC_FIELDS`` -- and that projection deliberately excludes exactly three of
+the record's own fields, for reasons that are correct where they are made: a record's own declared
+``runtime_root_admission_id`` and its own declared
+``runtime_root_admission_semantic_fingerprint`` (an identity cannot be computed over itself), and
+its entire ``signature`` block (a signature cannot cover its own value). Round 7 found those three
+exclusions to be precisely the surface a Store-level substitution could still aim at:
+
+```text
+change ONLY the declared runtime_root_admission_id to another schema-valid id string
+change ONLY the declared runtime_root_admission_semantic_fingerprint to another schema-valid one
+change ONLY signature.value (or signature.key_id), keeping a schema-valid shape
+
+    -> require_valid_root_admission passes (shape only)
+    -> generation / status / project / binding are untouched, so Round 5's four checks pass
+    -> the RECOMPUTED id and fingerprint read the semantic fields, which are untouched, so they
+       still equal the composition-time commitment and Round 6's two checks pass
+    -> a capability is issued from a record that is no longer, in every observable respect, the
+       exact anchor-verified record admitted at composition
+```
+
+The correction is one narrow addition, entirely inside this module:
+
+```text
+AT COMPOSITION      alongside bound_admission_id / bound_generation /
+                    bound_semantic_fingerprint (all three kept), capture
+                    bound_full_record_commitment -- a deterministic digest of the EXACT full,
+                    schema-valid, anchor-verified record, via this repository's one canonical
+                    serialization owner (`state.canonicalize.canonical_json_bytes`, the same
+                    function `identity.py` reads for every one of its own derivations). It
+                    retains no anchor and reintroduces none.
+
+AT EACH BARRIER     three further requirements, after the existing six and in the established
+                    "recompute-and-compare last" order: the resolved record's DECLARED id must
+                    equal its RECOMPUTED id and both must equal the BOUND id (three-way, where
+                    Round 6 compared only recomputed against bound); the same three-way equality
+                    for the semantic fingerprint; and the full-record commitment -- including
+                    signature.algorithm, signature.key_id and signature.value -- must equal the
+                    composition-time one. NINE requirements now, not six.
+```
+
+The request-facing signature is **unchanged again**: still exactly ``github_projection_grant_refs``
+and ``github_projection_grant_declaration_refs``, and no new public request parameter of any kind.
+
 **Structural Review Round 6 (P15-R6-F1): the per-call admission recheck runs TWICE -- the second
 time immediately before issuance -- and re-establishes the resolved record's *integrity*, not just
-how its own fields read. Read this before reading the diff.**
+how its own fields read. Read this before reading the diff.** *(Round 7 keeps this entirely and
+extends only what each barrier proves.)*
 
 Round 5 put one admission barrier at the start of every request-facing call. Round 6 found that
 barrier open in two independently reproducible ways, and closes both without changing Round 5's
@@ -402,6 +453,7 @@ from manosube_agent_civilization.projection import (
     ProjectionExecutionCapability,
     ProjectionExecutionContext,
 )
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 from .admission_registry import ROOT_ADMISSION_RECORD_KIND, current_root_admission_id
 from .engine import require_valid_root_admission
@@ -477,6 +529,32 @@ def _require_reference(value: Any, *, context: str, kind: str) -> dict[str, str]
     if not isinstance(record_id, str) or not record_id:
         raise RuntimeRequirementError(f"{context} carries no readable id: {value!r}")
     return {"kind": kind, "id": record_id}
+
+
+def _full_admission_record_commitment(admission: Mapping[str, Any]) -> str:
+    """The exact, complete, schema-valid record -- including its own declared
+    ``runtime_root_admission_id``, ``runtime_root_admission_semantic_fingerprint``, and its
+    entire ``signature`` block -- reduced to one deterministic digest, via this repository's one
+    canonical serialization owner (P15-R7-F1). Deliberately broader than
+    :func:`~manosube_agent_civilization.runtime.identity.
+    runtime_root_admission_semantic_fingerprint`, which is a hash of
+    :data:`~manosube_agent_civilization.runtime.identity.ROOT_ADMISSION_SEMANTIC_FIELDS` alone and
+    excludes exactly the three fields a Store-level substitution could otherwise change without
+    moving that narrower hash: the record's own declared id, its own declared semantic fingerprint,
+    and its signature.
+
+    It reuses ``state.canonicalize.canonical_json_bytes`` -- the single serialization owner
+    ``identity.py`` itself reads for every one of its own id/fingerprint derivations -- rather than
+    introducing a second way to turn a canonical record into bytes. Two serialization owners would
+    be two notions of "what this record is", and the whole point of this commitment is that there
+    is exactly one.
+
+    It retains no trust anchor and reintroduces none: the digest is computed over the record alone,
+    which carries a ``signature`` block but never a key. Verifying that signature still requires the
+    anchor, and the anchor is still consumed exactly once, at composition, and discarded there.
+    """
+
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(dict(admission))).hexdigest()
 
 
 def _require_currently_admitted(
@@ -628,8 +706,10 @@ def _require_bound_admission_still_current(
     bound_admission_id: str,
     bound_generation: int,
     bound_semantic_fingerprint: str,
+    bound_full_record_commitment: str,
 ) -> None:
-    """P15-R5-F2, completed by P15-R6-F1: before issuing any NEW capability from a bound service,
+    """P15-R5-F2, completed by P15-R6-F1 and P15-R7-F1: before issuing any NEW capability from a
+    bound service,
     freshly prove the root admission that service was composed against is still this Project
     Binding's own current one -- with no raw trust anchor in this call's own signature. The
     admission was cryptographically admitted once, at composition
@@ -641,8 +721,8 @@ def _require_bound_admission_still_current(
     proved. Already-issued downstream capabilities are not retroactively revoked by this check; it
     only gates whether THIS call may mint a new one.
 
-    **Six requirements**, each stated and checked separately -- the four the Round 5 contract
-    listed, plus the two P15-R6-F1 adds:
+    **Nine requirements**, each stated and checked separately -- the four the Round 5 contract
+    listed, the two P15-R6-F1 added, and the three P15-R7-F1 adds:
 
     1. the pointer still names the exact admission id captured at composition;
     2. the resolved current admission carries the exact captured ``generation``;
@@ -651,13 +731,21 @@ def _require_bound_admission_still_current(
     5. its identity, **independently recomputed from the body now resolving**, equals the exact
        identity captured at composition;
     6. its semantic fingerprint, likewise independently recomputed from that body, equals the
-       exact fingerprint captured at composition.
+       exact fingerprint captured at composition;
+    7. its own **declared** ``runtime_root_admission_id`` equals that recomputed identity -- so
+       declared, recomputed and bound are all one value, not two out of three;
+    8. its own **declared** ``runtime_root_admission_semantic_fingerprint`` equals that recomputed
+       fingerprint -- the same three-way equality, for the same reason;
+    9. the **exact full-record commitment** over the body now resolving -- every field it carries,
+       including ``signature.algorithm``, ``signature.key_id`` and ``signature.value`` -- equals
+       the commitment captured at composition over the exact anchor-verified record.
 
     They are deliberately *not* collapsed into one another even where an implication is visible
     (a content-addressed record's ``generation``, ``status`` and Binding are all covered by its
-    own id, so requirement 5 arguably implies 2-4 for an untampered Store). Each is what it says,
-    and each refuses with its own message, so a future edit that changes what "current" resolves
-    through cannot silently take five checks with it.
+    own id, so requirement 5 arguably implies 2-4 for an untampered Store; and requirement 9
+    arguably implies 5-8 for any body at all). Each is what it says, and each refuses with its own
+    message, so a future edit that changes what "current" resolves through cannot silently take
+    eight checks with it.
 
     **Why 5 and 6 recompute from the body rather than reading the body's own declared fields, and
     why that is what closes the substitution gap.** Round 5 checked only requirements 1-4, and
@@ -674,6 +762,38 @@ def _require_bound_admission_still_current(
     satisfy a self-comparison trivially. The reference these recomputations are compared against
     is the one this service closed over before any request boundary existed.
 
+    **Why requirements 7-9 exist at all, and what each of them alone can see (P15-R7-F1).**
+    Requirements 5 and 6 recompute from
+    :data:`~manosube_agent_civilization.runtime.identity.ROOT_ADMISSION_SEMANTIC_FIELDS`, and that
+    projection deliberately **excludes** three of the record's own fields: its declared
+    ``runtime_root_admission_id``, its declared ``runtime_root_admission_semantic_fingerprint``
+    (an identity cannot be computed over itself), and its entire ``signature`` block (a signature
+    cannot cover its own value). Those exclusions are correct where they are made -- and they are
+    precisely the blind spot a Store-level substitution can aim at, because a body whose *semantic*
+    fields are untouched recomputes to exactly the bound id and the bound fingerprint however those
+    three excluded fields read:
+
+    ```text
+    substitute ONLY the declared runtime_root_admission_id
+        -> requirements 1-6 all pass (the pointer moved nothing, and the recomputation reads
+           different fields entirely)                                  CAUGHT BY 7
+    substitute ONLY the declared runtime_root_admission_semantic_fingerprint
+        -> requirements 1-7 all pass                                   CAUGHT BY 8
+    substitute ONLY signature.value (or signature.key_id)
+        -> requirements 1-8 all pass: the signature block is invisible to every one of them, and
+           it is not reverified here either -- the anchor is gone by then, by design
+                                                                       CAUGHT BY 9
+    ```
+
+    So 7 and 8 close the gap where a substitution changes only the record's own *self-declared*
+    id/fingerprint fields, by demanding a **three-way** equality -- declared == recomputed ==
+    bound -- rather than the recomputed-versus-bound pair alone. That is not the self-comparison
+    5 and 6 rightly refuse to rely on: the bound value is still the anchor of the chain of
+    equalities, and adding the declared field to it can only ever *narrow* what passes. And
+    requirement 9 is the one that actually reaches the signature, because a full-record commitment
+    is the only thing here computed over the complete record rather than over a projection that
+    excludes exactly what a substitution would move.
+
     **Why they are checked last, deliberately.** It is the identical ordering
     :func:`_require_currently_admitted` already keeps for its own currency check, and for the
     identical reason: requirements 2-4 each name a specific, independently meaningful way the
@@ -682,7 +802,14 @@ def _require_bound_admission_still_current(
     those refusals into a single indistinguishable "identity mismatch" message and stop each
     control proving what it claims to prove; recomputing last leaves requirements 5 and 6 isolated
     by exactly the case nothing else can see -- a substituted body whose declared
-    generation/status/Project/Binding are untouched.
+    generation/status/Project/Binding are untouched. P15-R7-F1's own three requirements extend
+    that same ordering rationale one step further and are therefore placed after 5 and 6 rather
+    than before them: requirement 9 is the broadest check in this function -- every body that fails
+    any of 5-8 necessarily also fails 9 -- so putting it first would collapse all of them into one
+    indistinguishable "full-record commitment mismatch", and 7 and 8 would never refuse for their
+    own reason. Checked last, requirement 9 is isolated by exactly the case nothing narrower can
+    see: a body whose every semantic field, whose own declared id and whose own declared
+    fingerprint are all untouched, and whose ``signature`` alone was replaced.
 
     Reached twice per request-facing call (P15-R6-F1, item 3): once before any grant reference is
     resolved -- so a rotated or revoked service refuses before any adapter or network call could
@@ -743,6 +870,35 @@ def _require_bound_admission_still_current(
             f"the current runtime_root_admission {current_id!r} own recomputed semantic "
             f"fingerprint ({recomputed_fingerprint!r}) does not equal the fingerprint this bound "
             "service was composed against -- refusing to issue a new capability"
+        )
+    # P15-R7-F1, requirements 7-9. Everything above reads, or recomputes from, the semantic-fields
+    # projection alone -- which deliberately excludes the record's own declared id, its own
+    # declared semantic fingerprint, and its signature. These three requirements are what reach
+    # exactly those excluded fields.
+    declared_id = admission.get("runtime_root_admission_id")
+    if declared_id != recomputed_id:
+        raise RuntimeRequirementError(
+            f"the current runtime_root_admission {current_id!r} own declared identity "
+            f"({declared_id!r}) does not equal its own recomputed identity ({recomputed_id!r}) -- "
+            "refusing to issue a new capability: the resolved record's declared id has been "
+            "substituted independently of its semantic content"
+        )
+    declared_fingerprint = admission.get("runtime_root_admission_semantic_fingerprint")
+    if declared_fingerprint != recomputed_fingerprint:
+        raise RuntimeRequirementError(
+            f"the current runtime_root_admission {current_id!r} own declared semantic fingerprint "
+            f"({declared_fingerprint!r}) does not equal its own recomputed semantic fingerprint "
+            f"({recomputed_fingerprint!r}) -- refusing to issue a new capability: the resolved "
+            "record's declared fingerprint has been substituted independently of its semantic "
+            "content"
+        )
+    full_record_commitment = _full_admission_record_commitment(admission)
+    if full_record_commitment != bound_full_record_commitment:
+        raise RuntimeRequirementError(
+            f"the current runtime_root_admission {current_id!r} own full-record commitment does "
+            "not equal the exact anchor-verified record commitment captured at composition -- "
+            "refusing to issue a new capability: some field of the resolved record (potentially "
+            "including its signature) no longer matches the exact record composition proved"
         )
 
 
@@ -864,10 +1020,13 @@ def compose_trusted_runtime_deployment_authority(
     The anchor is used here and **discarded**: it is not stored anywhere on the returned
     operation, is not reachable from it, and is never re-verified per call. What *is* retained,
     in the returned operation's own closure, is the admitted record's id, generation and
-    independently recomputed semantic fingerprint -- the immutable canonical commitment to the
-    exact anchor-verified admission (P15-R6-F1, item 1). That is exactly what the per-call
+    independently recomputed semantic fingerprint (P15-R6-F1, item 1) -- and, since Round 7
+    (P15-R7-F1, item 1), a deterministic digest of the **exact full record** those three are a
+    projection of, computed by :func:`_full_admission_record_commitment` over the very object this
+    function's own admission gate proved. Together they are the immutable canonical commitment to
+    the exact anchor-verified admission. That is exactly what the per-call
     currency-and-commitment recheck needs, and exactly what it may have without reintroducing a
-    raw anchor anywhere downstream of this call.
+    raw anchor anywhere downstream of this call: a record carries a signature, never a key.
 
     Raises :class:`~manosube_agent_civilization.runtime.errors.RuntimeRequirementError` on any
     refusal; every :class:`~manosube_agent_civilization.boot.errors.BootError`/
@@ -895,6 +1054,12 @@ def compose_trusted_runtime_deployment_authority(
     # exactly as the other two are, so every per-call recheck can anchor to a reference chosen
     # before any request boundary existed rather than to whatever the Store hands back later.
     bound_semantic_fingerprint = str(admission["runtime_root_admission_semantic_fingerprint"])
+    # P15-R7-F1, item 1: the commitment to the EXACT full record, beside -- never instead of --
+    # the three semantic cells above. It is computed over the very object
+    # ``_require_currently_admitted`` returned, which is the record composition actually proved
+    # (schema-valid, anchor-signature-verified, currently pointed to), rather than over a
+    # re-resolved copy, so composition's own commitment is over the record it saw and no other.
+    bound_full_record_commitment = _full_admission_record_commitment(admission)
 
     def bootstrap_projection_execution_capability(
         *,
@@ -931,7 +1096,8 @@ def compose_trusted_runtime_deployment_authority(
         that window was still followed by a newly issued capability. This operation therefore
         Boots a **second** time and repeats the entire
         :func:`_require_bound_admission_still_current` check -- identity, fingerprint, generation,
-        status, Project/Binding, all six requirements -- immediately before the
+        status, Project/Binding, the declared-versus-recomputed pair and the full-record
+        commitment, all nine requirements (P15-R7-F1) -- immediately before the
         :class:`~manosube_agent_civilization.projection.ProjectionExecutionContext` is
         constructed, and builds that context's ``state_revision``/``semantic_fingerprint`` from
         the final Boot rather than the initial one. No Boot here has anything to do with the
@@ -970,6 +1136,7 @@ def compose_trusted_runtime_deployment_authority(
             bound_admission_id=bound_admission_id,
             bound_generation=bound_generation,
             bound_semantic_fingerprint=bound_semantic_fingerprint,
+            bound_full_record_commitment=bound_full_record_commitment,
         )
 
         if not github_projection_grant_refs:
@@ -1109,7 +1276,8 @@ def compose_trusted_runtime_deployment_authority(
         # now been resolved and every Authority decision evaluated -- all of it work that takes
         # real time, during which a canonical rotation or revocation can genuinely commit. Boot
         # again, freshly, and repeat the FULL commitment check (identity, fingerprint, generation,
-        # status, Project/Binding -- all six requirements, not a subset) immediately before a
+        # status, Project/Binding, declared-versus-recomputed identity and fingerprint, and the
+        # exact full-record commitment -- all nine requirements, not a subset) immediately before a
         # capability is constructed, so that "rotation or revocation prevents new capability
         # issuance" holds at the moment of issuance rather than only at the moment the request
         # started.
@@ -1122,6 +1290,7 @@ def compose_trusted_runtime_deployment_authority(
             bound_admission_id=bound_admission_id,
             bound_generation=bound_generation,
             bound_semantic_fingerprint=bound_semantic_fingerprint,
+            bound_full_record_commitment=bound_full_record_commitment,
         )
 
         # The returned context's State snapshot comes from THIS final Boot, never the initial one:
