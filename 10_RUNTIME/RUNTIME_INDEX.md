@@ -11,12 +11,16 @@ CANONICAL_KERNEL_COUNT=1
 RUNTIME_OWNER_COUNT=1
 PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
 TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
+RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=3
 ```
 
-`TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` was `1` after Round 1 and is `0` after
-Round 2 (P15-R2-F1): shipped code mints no `TrustedRuntimeRoot` at all. See section 4.2 here and
-`RUNTIME_CONTRACT.md` section 11.1, including that correction's own explicit scope caveat.
+`TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` was `1` after Round 1 and is `0` from
+Round 2 (P15-R2-F1) onward: shipped code mints no `TrustedRuntimeRoot`, and Round 3 does not
+reintroduce a minting function. Round 3 (P15-R3-F1) instead makes the *type* inert — possessing
+one grants nothing — and gates provisioning on a canonical `runtime_root_admission` record
+verified against an externally supplied trust anchor. See sections 4.2 and 4.3 here, and
+`RUNTIME_CONTRACT.md` sections 11.1 and 12.1 (especially 12.1.1, on why this is not a reversal).
 
 ---
 
@@ -32,9 +36,11 @@ deferred trusted runtime bootstrap is provisioned from canonical Store/Boot stat
 1. RUNTIME_INDEX.md      (this document)
 2. RUNTIME_CONTRACT.md   the three public routes, their frozen semantics, their negative
                           controls, (section 10) the Structural Review Round 1 corrections,
-                          P15-R1-F1 .. P15-R1-F6, and (section 11) the Structural Review
+                          P15-R1-F1 .. P15-R1-F6, (section 11) the Structural Review
                           Round 2 corrections, P15-R2-F1/F2, which reopened and supersede
-                          Round 1's own F4 and F6
+                          Round 1's own F4 and F6, and (section 12) the Structural Review
+                          Round 3 corrections, P15-R3-F1/F2, which reopened and supersede
+                          both of Round 2's
 ```
 
 Read `RUNTIME_CONTRACT.md` for the load-bearing design; this document only fixes this layer's
@@ -138,21 +144,34 @@ src/manosube_agent_civilization/runtime/
 │                           verify_runtime_deployment_declaration_signature -- verification
 │                           only, composing binding.signature's own shared Ed25519 primitive
 │                           (Round 2, P15-R2-F2)
+├── root_admission.py       verify_runtime_root_admission_signature -- the identical
+│                           composition against a DEPLOYMENT-supplied trust anchor public key
+│                           rather than any Store-resolved signing key (Round 3, P15-R3-F1)
+├── deployment_registry.py  commit_runtime_deployment_declaration /
+│                           current_deployment_declaration_id -- the canonical
+│                           current-declaration pointer and the one atomic
+│                           commit-and-supersede transition (Round 3, P15-R3-F2)
 ├── route.py                observe_runtime_target -- the one public Runtime Observation
 │                           route
 ├── evidence_handoff.py     route_runtime_observation_to_evidence -- the one public
 │                           Runtime-Observation-to-Evidence hand-off
-└── bootstrap.py            TrustedRuntimeRoot (a type shipped code never mints -- Round 2,
-                             P15-R2-F1) and bootstrap_projection_execution_capability -- the
-                             V5 trusted runtime bootstrap provisioning Phase 14's
-                             ProjectionExecutionCapability
+└── bootstrap.py            TrustedRuntimeRoot (an ordinary public value that grants nothing
+                             by itself -- Round 3, P15-R3-F1; shipped code still constructs
+                             none) and bootstrap_projection_execution_capability -- the V5
+                             trusted runtime bootstrap, gated on an externally anchored
+                             runtime_root_admission on every call
 
 01_SCHEMA/runtime/
 ├── runtime_observation_envelope.schema.json     the committed observation fact
-└── runtime_deployment_declaration.schema.json   the canonical, Human-Authority-declared
-                                                  deployment identity (Round 1, P15-R1-F6);
-                                                  required status and required Ed25519
-                                                  signature added by Round 2, P15-R2-F2
+├── runtime_deployment_declaration.schema.json   the canonical, Human-Authority-declared
+│                                                 deployment identity (Round 1, P15-R1-F6);
+│                                                 required status and required Ed25519
+│                                                 signature added by Round 2, P15-R2-F2;
+│                                                 required valid_from/valid_until added by
+│                                                 Round 3, P15-R3-F2
+└── runtime_root_admission.schema.json           the canonical, trust-anchor-signed record
+                                                  admitting exactly one project and one
+                                                  Project Binding (Round 3, P15-R3-F1)
 ```
 
 No second Boot, Store, Binding, Evidence, Difference, Authority, or Reflow owner is created
@@ -162,7 +181,9 @@ provisioning concern) -- `route.py` never imports it at all. `evidence` is impor
 from `evidence_handoff.py` (the one `derive_evidence` call) and, narrowly, `bootstrap.py`
 (read-only `evidence.identity.evidence_semantic_fingerprint`). `binding.identity` is importable
 only from `bootstrap.py`, and `binding.signature` only from `deployment_declaration.py` (Round 2,
-P15-R2-F2) -- and `binding/` itself imports nothing from this package, in either direction.
+P15-R2-F2) and `root_admission.py` (Round 3, P15-R3-F1) -- and `binding/` itself imports nothing
+from this package, in either direction. `commit_state_transition` is called from exactly two
+modules, each exactly once: `route.py` and `deployment_registry.py` (Round 3, P15-R3-F2).
 `boot` is importable from `route.py` and `bootstrap.py`, each calling `boot_project` exactly
 once.
 `manosube_agent_civilization.projection` is importable only from `bootstrap.py`. A network/
@@ -219,6 +240,12 @@ NEW_KERNEL_ELEMENT=false
 
 ## 4.2 Structural Review Round 2 (P15-R2-F1, P15-R2-F2)
 
+> **Item 1 below is superseded by section 4.3 (P15-R3-F1)**: the conclusion that provisioning had
+> to wait for a later Phase is rejected, and `TrustedRuntimeRoot` is publicly constructible again
+> — because the type now grants nothing, not because the deleted factory returned. Item 2's
+> record kind is extended by section 4.3 (P15-R3-F2), and its "the canonical schema total stays at
+> `58`" statement is true of Round 2 only; Round 3 adds one file, making `59`.
+
 Round 2 of PR #65 confirmed four of Round 1's own six corrections closed cleanly (P15-R1-F1/F2/
 F3/F5) and reopened two. `10_RUNTIME/RUNTIME_CONTRACT.md` section 11 records both in full. This
 document records only what the round changed about *this layer's position*, which is three
@@ -254,7 +281,8 @@ things:
 
    The record count is unchanged (`NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=1` for this Phase as
    a whole; Round 2 adds fields to an existing schema, never a new schema file, so the canonical
-   schema total stays at `58`), and this layer remains the owner of no Authority, State,
+   schema total stayed at `58` through *this* round — Round 3 adds one new file, making `59`, and
+   takes this Phase's own new record-kind count to `2`), and this layer remains the owner of no Authority, State,
    Evidence, or Closure semantics. `RUNTIME_CREDENTIAL_USE_AUTHORITY` remains `false`: this
    package holds no private key, mints no signature, and reaches no key server — it only
    *verifies* against the public key a real, Boot-restored Project Binding already carries.
@@ -278,6 +306,94 @@ RUNTIME_HOLDS_A_PRIVATE_SIGNING_KEY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=1
 CANONICAL_SCHEMA_COUNT_CHANGED=false
+NEW_KERNEL_ELEMENT=false
+```
+
+## 4.3 Structural Review Round 3 (P15-R3-F1, P15-R3-F2)
+
+Round 3 of PR #65 confirmed Round 1's F1/F2/F3/F5 closed and Round 2's F2 signature-and-Boot-
+binding half closed, and reopened both of Round 2's corrections.
+`10_RUNTIME/RUNTIME_CONTRACT.md` section 12 records both in full. This document records only what
+the round changed about *this layer's position*, which is four things:
+
+1. **A trust root stopped being a capability, so shipped provisioning became legitimate.**
+   Round 2 concluded that, since no shipped code could mint a `TrustedRuntimeRoot`, real issuance
+   had to wait for a later Phase. Round 3 rejected that: Issue #64 assigns this production
+   provisioning boundary to *this* Phase, and Round 2's module-private sentinel was in any case a
+   naming convention rather than a control (any in-process caller able to import the shipped
+   module could read it and construct a root over an arbitrary Store — which is exactly what the
+   test-only issuer did). The fix moves the boundary off the type: a new canonical record kind,
+   `runtime_root_admission`, is resolved inside the root's own Store, must be ACTIVE and name
+   exactly that project and Project Binding, and must carry a genuine signature verified against
+   a `trust_anchor_public_key_hex` **the deployment/composition boundary supplies** — never a key
+   resolvable from inside the Store being admitted. The check is folded into
+   `bootstrap_projection_execution_capability` itself and runs on every call, before any grant
+   resolution and before any authorization evaluation.
+
+   **This is not a reversal of Round 2, and the diff should not be read as one.** Public
+   construction of `TrustedRuntimeRoot` returns only because the type now grants nothing: all
+   three of Round 2's own mechanical facts remain literally true and remain asserted unchanged
+   (the deleted factory appears in no code position anywhere shipped; no shipped callable returns
+   the type; no shipped module constructs one). `RUNTIME_CONTRACT.md` section 12.1.1 states the
+   before/after precisely.
+
+   **Scope, stated exactly:** what is now proved is that a *production-legitimate mechanism is
+   shipped and is not reproducible by a request-path caller lacking the anchor's private key*.
+   What is still **not** claimed is that any live deployment/CLI/agent-runtime entrypoint in this
+   repository invokes it — none does, and Phase 16+ remains unauthorized. The difference from
+   Round 2's caveat is that the remaining gap is a scheduling fact about later Phases rather than
+   a defect in the mechanism.
+
+2. **A third Store-committed record kind exists, and the canonical schema total moved.**
+   `runtime_root_admission` (P15-R3-F1) is the second new schema file this Phase adds, taking the
+   canonical total from `58` to `59`; `scripts/validate_schemas.py`'s asserted inventory is
+   updated accordingly. Like every other record kind here it introduces no secret, no HMAC, and
+   no signing key of its own — only a *public* verification key a deployment supplies at
+   composition time — so `RUNTIME_CREDENTIAL_USE_AUTHORITY` remains `false` and this layer remains
+   the owner of no Authority, State, Evidence, or Closure semantics. It is deliberately **not**
+   added to `reflow/reference_registry.py`'s `STORE_OWNED_REFERENCE_KINDS`, for the identical
+   reason section 4.1 item 2 already gives for `runtime_deployment_declaration`.
+
+3. **This layer now writes one field of `semantic_state`, and exactly one.** `runtime_deployment_
+   declaration` gains required `valid_from`/`valid_until` (both covered by the record's own
+   content address *and* the Human Authority's own signature), and — because an immutable,
+   content-addressed record cannot be revoked by minting a second one — "current" becomes what
+   Project State's own pointer names: `semantic_state.runtime.claims[<target_key>]`, moved
+   atomically with the record by the new shipped `commit_runtime_deployment_declaration`
+   (P15-R3-F2). That property is already part of the adopted
+   `01_SCHEMA/state/semantic_state.schema.json`, so **no State schema changes**; this layer
+   merges one key into one domain's `claims` and carries every other field of that domain, and
+   every other domain, through byte-identical. It is still not a second State owner: it builds a
+   transition plan and hands it to the Store's own single sanctioned committer, exactly as Reflow
+   and Binding already do.
+
+4. **A fourth public callable exists, and it is not a fourth route.**
+   `commit_runtime_deployment_declaration` is a canonical *committer*: it reaches no adapter,
+   observes nothing, and mints no Authority. `PUBLIC_RUNTIME_ENTRY_POINT_COUNT` is still `3`,
+   alongside a separately declared `RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1` —
+   the identical convention section 4.1 used for
+   `TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT`.
+
+```text
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=3
+TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
+RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
+SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
+POSSESSING_A_TRUSTED_RUNTIME_ROOT_GRANTS_ADAPTER_ACCESS=false
+RUNTIME_ROOT_ADMISSION_REQUIRED_FOR_PROVISIONING=true
+RUNTIME_ROOT_ADMISSION_VERIFIED_AGAINST_AN_EXTERNALLY_SUPPLIED_ANCHOR=true
+TRUST_ANCHOR_HARDCODED_IN_SHIPPED_SOURCE=false
+PRODUCTION_LEGITIMATE_PROVISIONING_MECHANISM_SHIPPED=true
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
+DEPLOYMENT_DECLARATION_VALIDITY_WINDOW_REQUIRED=true
+DEPLOYMENT_DECLARATION_REVOCATION_IS_EFFECTIVE=true
+DEPLOYMENT_DECLARATION_CURRENT_POINTER_IS_STORE_RESOLVED=true
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+RUNTIME_IS_A_SECOND_STATE_OWNER=false
+NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=2
+CANONICAL_SCHEMA_COUNT_CHANGED=true
+CANONICAL_SCHEMA_COUNT=59
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 NEW_KERNEL_ELEMENT=false
 ```
 
@@ -307,11 +423,20 @@ DEPLOYMENT_IDENTITY_STORE_ANCHORED=true
 DEPLOYMENT_DECLARATION_HUMAN_AUTHORITY_SIGNED=true
 DEPLOYMENT_DECLARATION_STATUS_ENFORCED=true
 DEPLOYMENT_DECLARATION_BOUND_TO_BOOT_RESTORED_AUTHORITY=true
+DEPLOYMENT_DECLARATION_VALIDITY_WINDOW_REQUIRED=true
+DEPLOYMENT_DECLARATION_REVOCATION_IS_EFFECTIVE=true
+RUNTIME_ROOT_ADMISSION_IMPLEMENTED=true
+RUNTIME_ROOT_ADMISSION_REQUIRED_FOR_PROVISIONING=true
 TRUSTED_RUNTIME_ROOT_REQUIRED_FOR_PROVISIONING=true
 SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
+POSSESSING_A_TRUSTED_RUNTIME_ROOT_GRANTS_ADAPTER_ACCESS=false
+PRODUCTION_LEGITIMATE_PROVISIONING_MECHANISM_SHIPPED=true
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
 AUTHORITY_FRESHNESS_RECHECKED_AT_ADAPTER_AND_COMMIT_BOUNDARIES=true
+CURRENT_DECLARATION_POINTER_RECHECKED_ON_EVERY_COMMIT_ATTEMPT=true
 STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_APPLIED=true
+STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_APPLIED=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false

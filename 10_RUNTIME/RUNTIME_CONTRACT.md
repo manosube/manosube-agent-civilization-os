@@ -10,17 +10,22 @@ KERNEL_ELEMENT=NONE_RUNTIME_ADAPTER
 RUNTIME_OWNER_COUNT=1
 PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
 TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
+RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=3
 ```
 
-`TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` was `1` after Round 1 and is `0` after
-Round 2: shipped code now mints no `TrustedRuntimeRoot` at all — see section 11.1, including
-that correction's own explicit scope caveat.
+`TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` was `1` after Round 1 and is `0` from
+Round 2 onward: shipped code mints no `TrustedRuntimeRoot`, and Round 3 (§12.1) does **not**
+reintroduce a minting function. It instead makes the type inert — possessing one grants nothing —
+and gates provisioning on a canonical `runtime_root_admission` record verified against an
+externally supplied trust anchor, so the type's own constructor is public again without being a
+trust decision. Read §12.1.1 before reading Round 3's diff.
 
 Section 10 records Structural Review Round 1 (P15-R1-F1..F6) in full; section 11 records
 Structural Review Round 2 (P15-R2-F1/F2), which reopened and supersedes Round 1's own
-corrections for F4 and F6. Where two sections differ, the **highest-numbered** section
-governs.
+corrections for F4 and F6; section 12 records Structural Review Round 3 (P15-R3-F1/F2), which
+reopened and supersedes both of Round 2's. Where two sections differ, the **highest-numbered**
+section governs.
 
 ## 1. Position
 
@@ -65,15 +70,35 @@ route_runtime_observation_to_evidence(
 bootstrap_projection_execution_capability(
     trusted_runtime_root: TrustedRuntimeRoot,
     *,
+    runtime_root_admission_ref: Mapping[str, str],
+    trust_anchor_public_key_hex: str,
     github_projection_grant_refs: list[Mapping[str, str]],
     github_projection_grant_declaration_refs: list[Mapping[str, str]],
 ) -> ProjectionExecutionCapability
+
+commit_runtime_deployment_declaration(
+    store,
+    project_id: str,
+    declaration: Mapping[str, Any],
+    *,
+    committed_at: str,
+) -> dict[str, Any]
+    # {"runtime_deployment_declaration_ref", "runtime_deployment_target_key",
+    #  "committed_state"}
 ```
+
+`commit_runtime_deployment_declaration` (Round 3, P15-R3-F2 — see §12.2) is a canonical
+*committer*, not a fourth route: in one atomic `commit_state_transition` it commits the immutable
+declaration record **and** moves that target's own current-declaration pointer
+(`semantic_state.runtime.claims[<target_key>]`). Issuing any new declaration for a target —
+`ACTIVE` (a rotation) or `REVOKED` (a revocation) — supersedes whatever the pointer named before,
+which is what makes revocation genuinely effective rather than merely declared.
 
 `target_identity` is `{provider, deployment_id, instance_identity, project_binding_ref,
 deployment_declaration_ref, deployment_fingerprint}` (`deployment_declaration_ref` added by
 Round 1, P15-R1-F6 -- see §10; the record it names became signed, status-bound, and
-Boot-Authority-cross-checked in Round 2, P15-R2-F2 -- see §11.2) --
+Boot-Authority-cross-checked in Round 2, P15-R2-F2 -- see §11.2; and validity-windowed and
+supersession-bound in Round 3, P15-R3-F2 -- see §12.2) --
 `project_binding_ref` must name exactly `project_binding_id`;
 a target declaring a different Project Binding refuses before any adapter call. `boundary` is
 the closed Observation Boundary: `{observation_method, endpoint, permitted_fields,
@@ -229,23 +254,44 @@ src/manosube_agent_civilization/runtime/
 │                           over a deployment declaration's signing payload (Round 2,
 │                           P15-R2-F2); verification only, never signing, never a key of its
 │                           own, and never imported by binding/
+├── root_admission.py       verify_runtime_root_admission_signature -- the identical local
+│                           composition over a root admission's signing payload, against a
+│                           trust anchor public key the DEPLOYMENT supplies rather than any
+│                           Store-resolved signing key (Round 3, P15-R3-F1); verification
+│                           only, again never signing and never a key of its own
+├── deployment_registry.py  commit_runtime_deployment_declaration /
+│                           current_deployment_declaration_id -- the canonical
+│                           current-declaration pointer in semantic_state.runtime.claims, and
+│                           the one atomic commit-the-record-and-move-the-pointer transition
+│                           that makes revocation genuinely effective (Round 3, P15-R3-F2)
 ├── route.py                observe_runtime_target -- the one public Runtime Observation
 │                           route
 ├── evidence_handoff.py     route_runtime_observation_to_evidence -- the one public
 │                           Runtime-Observation-to-Evidence hand-off
-└── bootstrap.py            TrustedRuntimeRoot (a type shipped code never mints -- Round 2,
-                             P15-R2-F1) and bootstrap_projection_execution_capability -- the
-                             V5 trusted runtime bootstrap provisioning Phase 14's
-                             ProjectionExecutionCapability
+└── bootstrap.py            TrustedRuntimeRoot (an ordinary public frozen value that grants
+                             nothing by itself -- Round 3, P15-R3-F1; shipped code still
+                             constructs none, and the Round 1 minting factory Round 2 deleted
+                             is not reintroduced) and
+                             bootstrap_projection_execution_capability -- the V5 trusted
+                             runtime bootstrap provisioning Phase 14's
+                             ProjectionExecutionCapability, gated on a canonical, externally
+                             anchored runtime_root_admission on every call
 
 01_SCHEMA/runtime/
 ├── runtime_observation_envelope.schema.json     the committed observation fact
-└── runtime_deployment_declaration.schema.json   the canonical, Human-Authority-declared
-                                                  deployment identity a target's own claimed
-                                                  deployment_fingerprint must match
-                                                  (Round 1, P15-R1-F6); required `status` and
-                                                  required Ed25519 `signature` added by
-                                                  Round 2, P15-R2-F2
+├── runtime_deployment_declaration.schema.json   the canonical, Human-Authority-declared
+│                                                 deployment identity a target's own claimed
+│                                                 deployment_fingerprint must match
+│                                                 (Round 1, P15-R1-F6); required `status` and
+│                                                 required Ed25519 `signature` added by
+│                                                 Round 2, P15-R2-F2; required
+│                                                 `valid_from`/`valid_until` added by Round 3,
+│                                                 P15-R3-F2
+└── runtime_root_admission.schema.json           the canonical, content-addressed,
+                                                  trust-anchor-signed record admitting exactly
+                                                  one project and one Project Binding, without
+                                                  which a TrustedRuntimeRoot provisions
+                                                  nothing (Round 3, P15-R3-F1)
 ```
 
 No second Boot, Store, Binding, Evidence, Difference, Authority, or Reflow owner is created
@@ -261,8 +307,12 @@ Projection's own `route.py` already makes of the same function). `boot` is impor
 and `difference`/`change` identity utilities are importable only from `bootstrap.py`, for the
 identical read-only grant/declaration/subject reverification Phase 14's own V3 test harness
 already performs; `binding.signature` is importable only from `deployment_declaration.py`
-(Round 2, P15-R2-F2), for the one shared Ed25519 verification primitive it composes rather than
-reimplements. `binding/` imports nothing from this package, in either direction: Runtime is an
+(Round 2, P15-R2-F2) and `root_admission.py` (Round 3, P15-R3-F1), each for the one shared
+Ed25519 verification primitive it composes rather than reimplements. `commit_state_transition`
+is called from exactly two modules, each exactly once: `route.py` (one Envelope per observation)
+and `deployment_registry.py` (one atomic record-and-pointer transition per issued declaration,
+Round 3, P15-R3-F2); no module in this package ever calls a `store` object's own `.commit`
+directly. `binding/` imports nothing from this package, in either direction: Runtime is an
 adapter layer that depends on the Kernel's Binding element, never the reverse. `manosube_agent_civilization.projection` (the shipped Phase 14 execution
 interface) is importable only from `bootstrap.py`. A network/transport surface that actually
 *opens* anything (`urllib.request`/`urllib.error`) is importable only from `adapter.py`;
@@ -302,6 +352,12 @@ caller-injected trusted Store
   resolved and identity-recomputed exclusively within the trusted Store
 → each grant's own subject_ref resolved and identity-recomputed the identical way
   project_to_github itself resolves a Store-resolvable subject
+→ canonical, ACTIVE, content-addressed runtime_root_admission naming exactly this project and
+  this Project Binding, resolved inside the trusted Store and verified against the
+  deployment-supplied trust_anchor_public_key_hex -- before any grant is resolved and before any
+  authorization is evaluated (Round 3, P15-R3-F1)
+→ caller-supplied github_projection_grant/github_projection_grant_declaration references,
+  resolved and identity-recomputed exclusively within the trusted Store
 → evaluate_projection_authorization, once per distinct projection_kind the resolved grants
   themselves name (dynamic kind set, never a fixed three-kind requirement)
 → ProjectionExecutionContext
@@ -420,11 +476,12 @@ controlled `FakeGitHubAdapter` (zero live network calls) through `.execute(...)`
 no grant references, an unresolvable grant reference, a grant with no anchoring declaration,
 and two grants for the identical `projection_kind`; a static proof that `bootstrap.py` imports
 no `tests.*` module and no network/transport surface of its own. (Since Round 1, every call
-here provisions a `TrustedRuntimeRoot` first -- P15-R1-F4, §10.4; since Round 2 that root comes
-from the test-only issuer, because shipped code mints none -- P15-R2-F1, §11.1.)
+here names its world through a `TrustedRuntimeRoot` -- P15-R1-F4, §10.4; since Round 3, every
+call additionally presents a genuine, externally anchored `runtime_root_admission`, which is what
+actually admits it -- P15-R3-F1, §12.1.)
 
 **Round 1 proof layers.** Six further suites, one per adopted finding, are listed in §10.9.
-**Round 2 proof layers** are listed in §11.5.
+**Round 2 proof layers** are listed in §11.5. **Round 3 proof layers** are listed in §12.5.
 
 ## 8. Explicit non-claims
 
@@ -461,9 +518,18 @@ DEPLOYMENT_IDENTITY_STORE_ANCHORED=true
 DEPLOYMENT_DECLARATION_HUMAN_AUTHORITY_SIGNED=true
 DEPLOYMENT_DECLARATION_STATUS_ENFORCED=true
 DEPLOYMENT_DECLARATION_BOUND_TO_BOOT_RESTORED_AUTHORITY=true
+DEPLOYMENT_DECLARATION_VALIDITY_WINDOW_REQUIRED=true
+DEPLOYMENT_DECLARATION_REVOCATION_IS_EFFECTIVE=true
+DEPLOYMENT_DECLARATION_CURRENT_POINTER_IS_STORE_RESOLVED=true
 TRUSTED_RUNTIME_ROOT_REQUIRED_FOR_PROVISIONING=true
 SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
+POSSESSING_A_TRUSTED_RUNTIME_ROOT_GRANTS_ADAPTER_ACCESS=false
+RUNTIME_ROOT_ADMISSION_REQUIRED_FOR_PROVISIONING=true
+RUNTIME_ROOT_ADMISSION_VERIFIED_AGAINST_AN_EXTERNALLY_SUPPLIED_ANCHOR=true
+PRODUCTION_LEGITIMATE_PROVISIONING_MECHANISM_SHIPPED=true
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
 AUTHORITY_FRESHNESS_RECHECKED_AT_ADAPTER_AND_COMMIT_BOUNDARIES=true
+CURRENT_DECLARATION_POINTER_RECHECKED_ON_EVERY_COMMIT_ATTEMPT=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
@@ -490,6 +556,8 @@ STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=6
 STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_APPLIED=true
+STRUCTURAL_REVIEW_ROUND_3_FINDINGS_CLOSED=2
 ```
 
 `PHASE_15_COMPLETE`/`PHASE_16_ALLOWED` remain `false`: this delivery closes Issue #64's own
@@ -917,9 +985,10 @@ consistent record could anchor whatever fingerprint an attacker's own endpoint e
 
 The `signature` `$def` is byte-for-byte the shape
 `01_SCHEMA/binding/github_projection_grant_declaration.schema.json` already uses — a sibling
-record kind's identical convention, reused rather than reinvented. The canonical schema count is
-unchanged at `58`: this adds fields to an existing schema file, never a new one, so
-`scripts/validate_schemas.py`'s asserted inventory is deliberately left alone.
+record kind's identical convention, reused rather than reinvented. The canonical schema count was
+unchanged at `58` by *this* round: it adds fields to an existing schema file, never a new one, so
+`scripts/validate_schemas.py`'s asserted inventory was deliberately left alone. (Round 3 adds one
+new file and the asserted count becomes `59` — see §12.1.)
 
 **Identity and signature are one derivation.** `runtime/identity.py` gains
 `runtime_deployment_declaration_signing_payload(record) -> bytes` over a closed tuple of adopted
@@ -1098,4 +1167,477 @@ tests/integration/runtime/test_runtime_deployment_identity_anchor.py
                                                                    non-vacuity controls for the
                                                                    preserved replay/cross-project
                                                                    cases)
+```
+
+## 12. Structural Review Round 3 corrections (P15-R3-F1, P15-R3-F2)
+
+```text
+ROUND=3
+GOVERNING_REVIEW=PR #65 Structural Review Round 3
+FINDINGS_ADOPTED=2
+FINDINGS_CLOSED=2
+REOPENED_FROM_ROUND_2=P15-R2-F1 (now P15-R3-F1), P15-R2-F2 (now P15-R3-F2)
+ROUND_1_FINDINGS_CONFIRMED_CLOSED=P15-R1-F1, P15-R1-F2, P15-R1-F3, P15-R1-F5
+ROUND_2_FINDINGS_CONFIRMED_CLOSED=P15-R2-F2's own signature/Boot-binding half
+```
+
+Round 3 confirmed Round 1's F1/F2/F3/F5 closed and confirmed the signature-and-Boot-binding half
+of Round 2's own F2 closed, then reopened both of Round 2's corrections for what each still left
+open. Both are recorded below in the same *what was claimed / what was true / what the code now
+does* form, with the same rule as every earlier round: **where this section and an earlier one
+differ, this section governs.**
+
+### 12.1 P15-R3-F1 -- the trusted root now has a legitimate shipped issuer, because holding a root no longer grants anything
+
+*Claimed (Round 2):* deleting the public minting factory closed the finding, and real issuance
+could be deferred to "a future Phase" because shipped code minting no root at all is the
+strongest correction available at the library level.
+
+*True:* the correction failed in **both** directions at once.
+
+- **No production-legitimate path existed.** Issue #64 assigns this production
+  runtime-provisioning boundary to *this* Phase. A bootstrap with no supported way for a real
+  deployment to obtain its own required first argument does not satisfy this Phase's own V5
+  requirement, and the deferral is rejected outright.
+- **The "private" sentinel was not actually unreachable.** The test-only issuer's structural
+  unavailability was illusory: it worked by importing `bootstrap._PROVISIONING_SENTINEL` and
+  calling `TrustedRuntimeRoot(..., sentinel)` directly. Python's leading-underscore convention is
+  not access control, so *any* in-process caller able to import the shipped module could do the
+  identical thing over an arbitrary Store.
+
+*Now:* a new canonical record kind, and a mandatory check folded into the capability call itself.
+
+```text
+01_SCHEMA/runtime/runtime_root_admission.schema.json
+  schema_version, runtime_root_admission_id (content-addressed,
+  ^RUNTIME-ROOT-ADMISSION-[0-9A-F]{64}$), runtime_root_admission_semantic_fingerprint,
+  project_id, project_binding_ref (kind project_binding), status {ACTIVE|REVOKED},
+  declared_at, signature {algorithm ed25519, key_id, value}
+```
+
+The `signature` `$def` is byte-for-byte the shape `runtime_deployment_declaration.schema.json`
+already uses, which is itself the shape
+`01_SCHEMA/binding/github_projection_grant_declaration.schema.json` established -- a sibling
+record kind's identical convention, reused rather than reinvented for the third time.
+
+**Identity and signature are one derivation**, exactly as for a deployment declaration.
+`runtime/identity.py` gains `runtime_root_admission_signing_payload(record) -> bytes` over
+`ROOT_ADMISSION_SEMANTIC_FIELDS`, and `runtime_root_admission_id` /
+`runtime_root_admission_semantic_fingerprint` are both computed over that payload's own bytes.
+The payload excludes exactly three fields, the identical three and for the identical reasons:
+the record's own two digests, and `signature`.
+
+**What the record deliberately does *not* carry, and why that absence is the whole design.**
+There is no `human_authority_ref` field on this record, and no field naming any key. Its
+signature is **never** verified against the target project's own Boot-restored
+`human_authority_signing_key`, or against anything else resolvable from inside the Store being
+admitted. That would be self-referential again: an attacker's fully self-consistent alternate
+world -- its own Human Authority, its own Ed25519 signing key, its own Project Binding, every
+record internally valid on its own terms -- would simply self-sign a matching admission record
+with its *own* internally-legitimate key and pass. The entire point of this record kind is that
+the key that decides is one the admitted Store cannot produce.
+
+**The verification wrapper** is a new module, `runtime/root_admission.py`, owning
+`verify_runtime_root_admission_signature(record, *, trust_anchor_public_key_hex)`. It imports
+`binding.signature.verify_ed25519_signature` and `SUPPORTED_SIGNATURE_ALGORITHM` and restates
+only the same short composition around them -- never reimplementing Ed25519 -- exactly as
+`runtime/deployment_declaration.py` already does, and for the identical dependency-direction
+reason (`binding/` must never import anything from `runtime/`). Note the deliberate parameter
+difference from its sibling: this one takes a **caller-supplied public key hex string**, not a
+`signing_key` mapping resolved from a Store.
+
+**The check is folded into `bootstrap_projection_execution_capability` itself**, not offered as a
+separate pre-step whose result a caller could discard or bypass:
+
+```python
+bootstrap_projection_execution_capability(
+    trusted_runtime_root: TrustedRuntimeRoot,
+    *,
+    runtime_root_admission_ref: Mapping[str, str],
+    trust_anchor_public_key_hex: str,
+    github_projection_grant_refs,
+    github_projection_grant_declaration_refs,
+) -> ProjectionExecutionCapability
+```
+
+Immediately after Boot and before any grant or declaration is resolved, it resolves
+`runtime_root_admission_ref` **from the root's own Store**; independently recomputes the resolved
+record's id and semantic fingerprint and refuses on mismatch; requires `status == "ACTIVE"`;
+requires the admission's own `project_id` / `project_binding_ref` to **exactly** equal the root's
+own `project_id` / `project_binding_id` (so one admission artifact anchors exactly one project
+and one Binding, never an unbounded trust grant reusable across arbitrary Stores); and requires
+`verify_runtime_root_admission_signature(..., trust_anchor_public_key_hex=...)` to be true. Every
+refusal is a `RuntimeRequirementError` reached with **zero adapter calls and zero authorization
+evaluations**, regardless of how `trusted_runtime_root` itself was constructed.
+
+**`trust_anchor_public_key_hex`, stated exactly.** It is a required keyword argument sourced
+**exclusively from deployment/composition-time configuration** -- never from the Store being
+admitted, never derived from anything on the request path, and never hardcoded as a specific
+real-world key inside shipped source (proved by an AST walk for any 64-hex string constant
+anywhere in the shipped `runtime` package). Who supplies it and how is a genuine deployment's own
+responsibility. This repository still wires no live CLI/agent-runtime entrypoint that *calls*
+this function for real -- that remains true -- but that is now a statement about invocation,
+not about whether the mechanism itself is production-legitimate and shipped, which is what the
+review requires. The mechanism is complete and correct; its live invocation by some future
+deployment entrypoint is a separate, later concern.
+
+#### 12.1.1 This is not a walk-back of Round 2 -- read this before reading the diff
+
+A superficial read of this round's diff could mistake it for reverting Round 2's own correction.
+It is the opposite, and the distinction is precise:
+
+```text
+BEFORE (Round 1 and Round 2)   POSSESSING A TrustedRuntimeRoot WAS SUFFICIENT to reach an
+                               adapter. Every question therefore became "who may mint one?" --
+                               which no shipped library function could answer, and which the
+                               sentinel only appeared to answer.
+
+AFTER  (Round 3)               POSSESSING A TrustedRuntimeRoot GRANTS NOTHING. The mandatory
+                               admission-record-plus-external-anchor check inside
+                               bootstrap_projection_execution_capability is what gates adapter
+                               access now, and it reruns on EVERY call regardless of the root's
+                               provenance. A directly constructed root -- via the old sentinel
+                               import, via the public constructor, over any Store at all --
+                               gets no benefit unless the caller can ALSO produce a
+                               runtime_root_admission genuinely signed by the private key
+                               matching whatever trust_anchor_public_key_hex the caller of
+                               bootstrap_projection_execution_capability supplies.
+```
+
+Because the type is no longer a capability, restricting its construction protects nothing, and a
+fake-private gate around a value that grants nothing would preserve exactly the illusion this
+round named. The sentinel is therefore **dropped**, and `TrustedRuntimeRoot` becomes an ordinary
+public frozen dataclass -- `TrustedRuntimeRoot(store, project_id, project_binding_id)` -- keeping
+only its canonical-identity shape check on `project_id`/`project_binding_id` (a check on a
+*name*, never a trust decision).
+
+**Round 2's own mechanical facts are all still literally true, and all still asserted unchanged**
+in `tests/contract/runtime/test_runtime_static_conformance.py`:
+
+```text
+provision_trusted_runtime_root appears in NO code position in any shipped file      still true
+no shipped public callable declares TrustedRuntimeRoot as its return type           still true
+no shipped module constructs a TrustedRuntimeRoot                                   still true
+```
+
+That none of those had to be weakened is itself the evidence that this is a different correction
+rather than a reversal: the deleted factory is gone, no same-shaped function replaces it under
+any name, and shipped code still mints nothing. What changed is that the caller constructing the
+value directly is now harmless, because the value is inert.
+
+#### 12.1.2 What is proved, and what is not
+
+```text
+A PRODUCTION-LEGITIMATE, SHIPPED PROVISIONING MECHANISM EXISTS                      proved
+THE MECHANISM IS NOT REPRODUCIBLE BY A REQUEST-PATH CALLER WITHOUT THE ANCHOR KEY   proved
+AN INTERNALLY SELF-CONSISTENT ALTERNATE WORLD CANNOT SELF-ADMIT                     proved
+A LIVE DEPLOYMENT ENTRYPOINT CALLS THIS FUNCTION IN THIS REPOSITORY                 false, and
+                                                                                    not claimed
+```
+
+The last line is unchanged from Round 2 and is stated here rather than implied away. What Round 3
+changes is that it is no longer the *load-bearing* caveat: the earlier rounds' honest limitation
+was "there is no legitimate way to obtain a root at all", which is a defect in the mechanism.
+This round's remaining limitation is "no entrypoint in this repository invokes the mechanism
+yet", which is a scheduling fact about later Phases.
+
+### 12.2 P15-R3-F2 -- a deployment declaration now has a validity window, and revocation is genuinely effective
+
+*Claimed (Round 2):* adding `status` (`ACTIVE`/`REVOKED`), a Human Authority signature, and a
+Boot-restored-Authority cross-check made the deployment anchor sound.
+
+*True:* two things were still missing.
+
+- **No validity window, and no evaluation-instant binding.** The schema had no
+  `valid_from`/`valid_until` at all, so a declaration signed once was signed forever.
+- **Revocation was not actually effective.** Because the record is immutable and
+  content-addressed, minting a *new* record with `status="REVOKED"` does **not** invalidate the
+  original `ACTIVE` record: that record keeps its own unchanged id and remains individually
+  resolvable, individually signature-valid, and individually accepted, forever. A target already
+  referencing the old `ACTIVE` record's id can keep presenting that exact reference
+  indefinitely. Round 2's own "revoked" regression test only proved that a *separately
+  constructed* `REVOKED` record is refused -- it never proved an *already-issued* `ACTIVE`
+  declaration could be revoked at all.
+
+*Now:*
+
+```text
+01_SCHEMA/runtime/runtime_deployment_declaration.schema.json
+  ... + valid_from   <common/timestamp.schema.json>     required
+      + valid_until  <common/timestamp.schema.json>     required
+```
+
+Both participate in `DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS`, and therefore in the record's own
+content address, its own semantic fingerprint, **and** the Human Authority's own signature -- the
+identical single-derivation discipline `declared_at` and `status` already follow. A declaration
+cannot be re-dated after signing without breaking its own identity and its own signature both.
+`route._resolve_deployment_declaration` parses both bounds as real UTC instants through this
+module's own existing `_instant` helper and requires `valid_from <= observed_at <= valid_until`,
+inclusive at both ends -- exactly the convention `_require_within_time_window` already applies to
+the Observation Boundary's own window.
+
+**Effective revocation: a canonical, Store-resolved current-declaration pointer.** "Current"
+stops meaning *whatever the caller happens to reference* and starts meaning *whatever Project
+State's own pointer names*:
+
+```text
+semantic_state.runtime.claims[<target_key>]  ->  runtime_deployment_declaration_id
+```
+
+`<target_key>` is `runtime_deployment_target_key(...)`: a stable `RUNTIME-DEPLOYMENT-TARGET-<64
+hex>` digest over the canonical projection of exactly four fields --
+`project_binding_ref`, `provider`, `deployment_id`, `instance_identity`.
+
+A new shipped module, `runtime/deployment_registry.py`, owns the pointer and the one sanctioned
+way to move it: `commit_runtime_deployment_declaration(store, project_id, declaration, *,
+committed_at)`. In **one** atomic `commit_state_transition` call -- mirroring `route.py`'s own
+`_commit_envelope` pattern exactly, including its bounded Compare-And-Swap retry -- it commits
+the new immutable record *and* sets `semantic_state.runtime.claims[<target_key>]` to that
+record's own id. There is no call shape through which one half happens without the other.
+
+Issuing **any** new declaration for a given target therefore atomically supersedes whatever the
+pointer named before -- whether the new record's own `status` is `ACTIVE` (a rotation) or
+`REVOKED` (a revocation), and regardless of whether the old record is still individually
+resolvable and still inside its own validity window.
+
+**`_resolve_deployment_declaration` gains two further requirements**, after every check Rounds 1
+and 2 established (all still required, unchanged) and in this order:
+
+```text
+4. valid_from <= observed_at <= valid_until          real UTC instants, inclusive both ends
+5. semantic_state.runtime.claims[<target_key>]       read fresh from Store State; a MISSING
+   must exactly equal this declaration's own id      pointer refuses for the same reason a
+                                                     pointer naming a DIFFERENT id does
+```
+
+Both are `RuntimeRequirementError` before any adapter call, with zero commits -- the identical
+"nothing was reached, so there is nothing to classify as `IDENTITY_MISMATCH`" discipline §10.6
+established for this function's earlier checks.
+
+**The post-check-substitution barrier.** The pointer is re-proved on **every** commit attempt
+inside `_commit_envelope`'s existing retry loop, against State loaded fresh at that attempt --
+deliberately reusing the per-attempt-rather-than-once-before-the-loop discipline P15-R1-F5
+already established for the authority-defining context, rather than adding a second, parallel
+freshness mechanism. So a legitimate supersession landing *after* this route's own resolution but
+*before* the Envelope is actually committed refuses, rather than persisting an Envelope anchored
+to a declaration that was current when checked and is no longer current at commit time.
+
+**Why `semantic_state.runtime.claims`, and what it does not disturb.** That property is already
+part of the canonical, adopted `01_SCHEMA/state/semantic_state.schema.json` -- a `$defs/domain`
+whose `claims` is an open `{string: scalar}` map -- and Phase 15 had, until this round, never
+written to the `runtime` domain at all (`route._commit_envelope` bumps
+`state_revision`/`lineage_head_ref`/`semantic_fingerprint` and touches `semantic_state`
+nowhere). Recording a `{target_key: declaration_id}` mapping there requires **no schema change of
+any kind**. `deployment_registry` deep-copies the existing `semantic_state`, sets exactly one
+key inside exactly one domain's `claims`, and carries everything else through byte-identical --
+the `runtime` domain's own `status` (`BLOCKED` at genesis), `identity_refs`, `evidence_refs`, and
+`blind_spots` included, and every other domain untouched. The scope is deliberately as narrow as
+`reflow/bookkeeping.py`'s own single sanctioned `semantic_state` mutation.
+
+### 12.3 Judgment calls made in this round that the adopted findings did not fully pin down
+
+1. **Public root construction: the sentinel is dropped rather than replaced by a constructor
+   function.** The adopted finding permitted either. Dropping it was chosen because reintroducing
+   a named factory -- even under a new name -- is exactly the shape Round 2 deleted, and would
+   read as a restoration whatever its docstring said; whereas making the dataclass ordinary keeps
+   **all three** of Round 2's static assertions literally true and unweakened (§12.1.1), which is
+   itself the clearest available evidence that this is not a reversal. It also states the
+   architectural fact directly: there is nothing to mint, because there is nothing to confer.
+
+2. **Placement of the two new modules.** `root_admission.py` mirrors
+   `deployment_declaration.py`'s own placement decision exactly (§11.3, item 1) and for the same
+   reasons; folding it into that module was rejected because that module is named for, and
+   documents itself as being about, a different record kind. `deployment_registry.py` is separate
+   from both `route.py` (which would then hold two `commit_state_transition` call sites and blur
+   its own "one commit per observation" fact) and `deployment_declaration.py` (whose own
+   docstring states it verifies only and holds no commit path). The static conformance proof was
+   updated to admit exactly one further `commit_state_transition` call site, by name, with that
+   rationale recorded at the test.
+
+3. **`commit_runtime_deployment_declaration` is exported from `runtime/__init__.py`.** The
+   finding requires it to be "genuinely new production code, not test-only", and a canonical
+   committer a real deployment must call to issue, rotate, or revoke a declaration is not
+   production code if it is reachable only through a private submodule. It is a **committer, not
+   a route**: `PUBLIC_RUNTIME_ENTRY_POINT_COUNT` stays `3`, exactly as Round 1 declared
+   `TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` separately rather than inflating the
+   route count, and a separate `RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1` is
+   declared in §12.4.
+
+4. **`committed_at` is a required keyword argument on the committer.** The brief's own sketch
+   signature omitted it. It is required here because every route and committer in this repository
+   reads no clock, and silently defaulting a commit instant would be this package's first
+   exception to that discipline.
+
+5. **The target key excludes `deployment_fingerprint`.** The finding's own enumeration named four
+   fields while `_DECLARATION_ANCHORED_TARGET_FIELDS` restates five. The four-field reading is
+   adopted, and the exclusion is load-bearing rather than incidental: a `deployment_fingerprint`
+   says *what this target currently is*, not *which target this is*. A legitimate rotation
+   re-declares the identical provider/deployment/instance under a new fingerprint and must
+   **supersede** its predecessor; if the fingerprint were part of the key, every rotation would
+   fork the pointer space and leave the superseded declaration permanently current for its own
+   old key -- reintroducing exactly the ineffective-revocation defect this round closes.
+
+6. **A missing pointer refuses, and is not treated as a lesser case than a moved one.** A
+   declaration that was never made current through the canonical path was never admitted as this
+   target's own current deployment identity at all -- which is precisely the "anyone who can
+   write a Store record can anchor anything" gap the pointer exists to close. Both refusals carry
+   distinct messages, and both are proved.
+
+7. **The post-check-substitution barrier extends the existing retry loop rather than adding a new
+   mechanism.** No new error class was introduced: the refusal is a `RuntimeRequirementError`,
+   like every other declaration-anchoring refusal on this route, rather than a sibling of
+   `RuntimeAuthorityFreshnessError`. The distinction Round 1 drew when it *did* add a class still
+   holds -- that one names a change in *whose authority* is in force, which is a different kind of
+   fact from *which declaration is current for this target*, and folding the two into one
+   vocabulary would make both less honest.
+
+8. **The Round 2 "unsigned declaration" control now plants its record raw.** The canonical
+   committer schema-validates before it commits, so an unsigned record cannot pass through it --
+   correctly. That control therefore inserts the record directly, and the route's own schema
+   refusal (which precedes the currency check) is still exactly the refusal it asserts. The same
+   applies to the two tamper controls, unchanged since Round 1.
+
+9. **The `wrong-current-record` control's refusal point, disclosed.** Because a declaration
+   restates the very fields the target key is derived from, a record belonging to *another
+   target's* history necessarily fails the P15-R1-F6 field-restatement check *before* the
+   currency check is reached -- the identical kind of disclosure §11.3 item 5 made for the
+   cross-Binding control. The currency check is isolated instead by the superseded, replayed, and
+   revoked-after-issuance controls, whose declarations restate this target perfectly and are
+   refused for no other reason. Both are proved; neither stands in for the other.
+
+10. **The hardcoded-anchor-key scan is scoped to the `runtime` package.** A repository-wide AST
+    walk for 64-hex string constants would be noise rather than a control: such constants are
+    legitimate and numerous elsewhere (canonical record digests in Reflow's own invariant
+    registry, for one). This package is where an anchor key would plausibly be pasted, and this
+    package contains none.
+
+### 12.4 Round 3 declarations
+
+```text
+TRUSTED_RUNTIME_ROOT_TYPE_RETAINED=true
+TRUSTED_RUNTIME_ROOT_DIRECTLY_CONSTRUCTIBLE=true
+TRUSTED_RUNTIME_ROOT_IS_A_CAPABILITY=false
+POSSESSING_A_TRUSTED_RUNTIME_ROOT_GRANTS_ADAPTER_ACCESS=false
+PROVISIONING_SENTINEL_EXISTS=false
+SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
+SHIPPED_FUNCTION_RETURNING_A_TRUSTED_RUNTIME_ROOT_EXISTS=false
+DELETED_ROUND_1_MINTING_FACTORY_REINTRODUCED=false
+RUNTIME_ROOT_ADMISSION_REQUIRED_FOR_PROVISIONING=true
+RUNTIME_ROOT_ADMISSION_VERIFIED_AGAINST_AN_EXTERNALLY_SUPPLIED_ANCHOR=true
+RUNTIME_ROOT_ADMISSION_VERIFIED_AGAINST_STORE_RESOLVABLE_KEY_MATERIAL=false
+RUNTIME_ROOT_ADMISSION_CARRIES_A_HUMAN_AUTHORITY_REF=false
+RUNTIME_ROOT_ADMISSION_ANCHORS_EXACTLY_ONE_PROJECT_AND_BINDING=true
+TRUST_ANCHOR_HARDCODED_IN_SHIPPED_SOURCE=false
+TRUST_ANCHOR_SOURCED_FROM_DEPLOYMENT_CONFIGURATION=true
+ADMISSION_CHECK_PRECEDES_EVERY_GRANT_RESOLUTION_AND_AUTHORIZATION=true
+PRODUCTION_LEGITIMATE_PROVISIONING_MECHANISM_SHIPPED=true
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
+LIVE_PATH_ADVERSARIAL_RESISTANCE_PROVEN=false
+DEPLOYMENT_DECLARATION_VALIDITY_WINDOW_REQUIRED=true
+DEPLOYMENT_DECLARATION_VALIDITY_WINDOW_SIGNED_AND_CONTENT_ADDRESSED=true
+DEPLOYMENT_DECLARATION_WINDOW_BOUNDS_INCLUSIVE=true
+DEPLOYMENT_DECLARATION_CURRENT_POINTER_IS_STORE_RESOLVED=true
+DEPLOYMENT_DECLARATION_REVOCATION_IS_EFFECTIVE=true
+ALREADY_ISSUED_ACTIVE_DECLARATION_CAN_BE_REVOKED=true
+SUPERSEDED_DECLARATION_STILL_INDIVIDUALLY_RESOLVABLE=true
+SUPERSEDED_DECLARATION_STILL_ANCHORS_AN_OBSERVATION=false
+CURRENT_POINTER_RECHECKED_ON_EVERY_COMMIT_ATTEMPT=true
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+NEW_RUNTIME_STORE_COMMITTED_RECORD_KINDS=2
+CANONICAL_SCHEMA_COUNT_CHANGED=true
+CANONICAL_SCHEMA_COUNT=59
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
+ED25519_VERIFICATION_REIMPLEMENTED_IN_RUNTIME=false
+BINDING_IMPORTS_RUNTIME=false
+RUNTIME_HOLDS_A_PRIVATE_SIGNING_KEY=false
+RUNTIME_MINTS_A_SIGNATURE=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+```
+
+### 12.5 Round 3 proof layers
+
+```text
+tests/unit/runtime/test_runtime_identity.py                     F1 (the admission record's own
+                                                                   one derivation for address,
+                                                                   fingerprint and signed
+                                                                   message; the three exclusions;
+                                                                   collision sensitivity in every
+                                                                   field; the load-bearing
+                                                                   absence of any Human Authority
+                                                                   or key field) and F2 (the
+                                                                   target key derived identically
+                                                                   from both sides, sensitive to
+                                                                   every field that names a
+                                                                   different target, and
+                                                                   deliberately insensitive to
+                                                                   deployment_fingerprint; the
+                                                                   validity window's own payload
+                                                                   sensitivity)
+tests/contract/runtime/test_runtime_static_conformance.py       F1 (the three Round 2 facts, all
+                                                                   still asserted unweakened; the
+                                                                   two new bootstrap keyword
+                                                                   arguments and the still-absent
+                                                                   store/project/binding ones; no
+                                                                   64-hex constant anywhere in
+                                                                   the shipped runtime package;
+                                                                   the admission call site
+                                                                   precedes every grant
+                                                                   resolution and authorization
+                                                                   call inside the function's own
+                                                                   AST) and F2 (exactly two
+                                                                   commit_state_transition call
+                                                                   sites in this package, both
+                                                                   named; still no direct
+                                                                   store.commit anywhere)
+tests/integration/runtime/test_runtime_root_admission.py        F1 (the genuine positive path end
+                                                                   to end under an independent
+                                                                   anchor; a directly constructed
+                                                                   root with no admission and
+                                                                   with a self-signed one, both
+                                                                   zero-authorization; the
+                                                                   alternate world self-signing
+                                                                   with its OWN internally
+                                                                   legitimate Human Authority
+                                                                   key, refused; wrong project;
+                                                                   wrong Binding; revoked;
+                                                                   tampered in both directions;
+                                                                   cross-Store; malformed and
+                                                                   wrong anchors)
+tests/integration/runtime/test_runtime_deployment_identity_anchor.py
+                                                                F2 (stale; expired; both
+                                                                   inclusive-bound positives;
+                                                                   re-dating after signing;
+                                                                   revoked-after-issuance;
+                                                                   the revoking record's own
+                                                                   status refusal; superseded by
+                                                                   rotation; replayed-old-ACTIVE;
+                                                                   wrong-current-record; never
+                                                                   registered at all; and the
+                                                                   post-check-substitution
+                                                                   barrier)
+tests/integration/runtime/test_runtime_trusted_root.py          F1 (Round 2's own (a)-group
+                                                                   inverted deliberately and
+                                                                   visibly: public construction
+                                                                   succeeds, and holding a root
+                                                                   confers nothing)
+tests/integration/runtime/test_runtime_no_shipped_minting_path.py
+                                                                F1 (every Round 2 fact that
+                                                                   survives, still asserted, plus
+                                                                   the Round 3 successor to its
+                                                                   one obsolete test)
+tests/integration/runtime/test_runtime_bootstrap_continuity.py  F1 (V5 continuity, unchanged in
+                                                                   substance, re-rooted on a
+                                                                   genuinely admitted root)
+tests/fixtures/runtime_world.py                                 F2 (every fixture-side
+                                                                   declaration commit migrated to
+                                                                   the shipped canonical
+                                                                   commit-and-supersede path, so
+                                                                   every positive-path test in
+                                                                   this repository genuinely
+                                                                   populates the pointer)
 ```
