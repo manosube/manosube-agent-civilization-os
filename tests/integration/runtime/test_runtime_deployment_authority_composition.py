@@ -58,6 +58,18 @@ from the canonical Store's own pointer plus the retained admission id and genera
 revoked composition authority therefore mints **no new** capability, refusing before any grant
 resolution and at zero adapter, network and authorization cost.
 
+**Round 7 (P15-R7-F1): each barrier now commits to the EXACT FULL RECORD, not only to a projection
+of it.** Round 6's two recomputations are hashes of ``ROOT_ADMISSION_SEMANTIC_FIELDS``, a
+projection that deliberately excludes three of the record's own fields -- its declared
+``runtime_root_admission_id``, its declared ``runtime_root_admission_semantic_fingerprint``, and
+its whole ``signature`` block. A Store-level substitution changing only one of those three left
+every semantic field, and therefore every existing check, exactly as it was. Composition now
+additionally captures a deterministic digest of the exact anchor-verified record, through this
+repository's own single canonical serialization owner, and each barrier requires three further
+things: declared id == recomputed id == bound id, the same three-way equality for the fingerprint,
+and full-record commitment == the composition-time one. Nine requirements, not six; the four
+isolated substitution controls are at the end of this file.
+
 **Still disclosed, and deliberate: capabilities already issued are not retroactively revoked.**
 The adopted boundary is prevention of *new* issuance from a no-longer-current composition
 authority. A ``ProjectionExecutionCapability`` a holder obtained while the admission was still
@@ -67,6 +79,8 @@ infer a retroactive property this design does not have.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+import hashlib
 import inspect
 from pathlib import Path
 import types
@@ -105,10 +119,15 @@ from manosube_agent_civilization.runtime.bootstrap import (
     compose_trusted_runtime_deployment_authority,
 )
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
-from manosube_agent_civilization.runtime.identity import runtime_root_admission_target_key
+from manosube_agent_civilization.runtime.identity import (
+    ROOT_ADMISSION_SEMANTIC_FIELDS,
+    runtime_root_admission_semantic_fingerprint,
+    runtime_root_admission_target_key,
+)
 from manosube_agent_civilization.runtime.root_admission import (
     verify_runtime_root_admission_signature,
 )
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 _TARGET_REPOSITORY = {"host": "github", "owner": "acme", "repo": "widget"}
 _PAYLOAD = {
@@ -1462,3 +1481,344 @@ def test_the_issued_context_snapshots_the_final_boot_not_the_initial_one(
         _admission_pointer(_canonical) == _canonical["admitted"]["runtime_root_admission_ref"]["id"]
     )
     assert context.github_authority_ref == _canonical["human_authority_ref"]
+
+
+# ---------------------------------------------------------------------------
+# P15-R7-F1: the three fields the semantic projection deliberately excludes
+# ---------------------------------------------------------------------------
+#
+# Round 6 made both barriers recompute the resolved body's identity and semantic fingerprint and
+# compare them against a composition-time commitment. Both of those recomputations are hashes of
+# ``ROOT_ADMISSION_SEMANTIC_FIELDS`` -- a projection that deliberately excludes exactly three of
+# the record's own fields, each for a reason that is correct where it is made: the record's own
+# declared ``runtime_root_admission_id`` and its own declared
+# ``runtime_root_admission_semantic_fingerprint`` (an identity cannot be computed over itself),
+# and its entire ``signature`` block (a signature cannot cover its own value).
+#
+# Those three exclusions are precisely the surface a Store-level substitution could still aim at.
+# A body whose every *semantic* field is byte-identical recomputes to exactly the bound id and the
+# bound fingerprint however those three excluded fields read -- so every Round 5 and Round 6 check
+# passes, and a capability is issued from a record that is no longer, in every observable respect,
+# the exact anchor-verified record composition proved.
+#
+# The four controls below are deliberately **isolated**: each changes exactly one of those
+# positions and leaves every other field -- every semantic field, and the other three positions --
+# byte-identical to the genuine original. That isolation is what makes each one prove the new
+# check specifically, rather than some already-existing check firing coincidentally, and it is
+# asserted explicitly in the test body rather than left to the reader, exactly as Round 6's own
+# ``test_a_record_body_substituted_under_the_current_id_issues_no_capability`` asserts it for its
+# own ``declared_at`` substitution.
+
+#: Every position a P15-R7-F1 substitution may aim at -- the three fields
+#: ``ROOT_ADMISSION_SEMANTIC_FIELDS`` excludes, with the ``signature`` block spelled out field by
+#: field so that "the other three are byte-identical" is a claim about real, named values rather
+#: than about one opaque sub-object.
+_EXCLUDED_FROM_THE_SEMANTIC_PROJECTION: tuple[str, ...] = (
+    "runtime_root_admission_id",
+    "runtime_root_admission_semantic_fingerprint",
+    "signature.algorithm",
+    "signature.key_id",
+    "signature.value",
+)
+
+
+def _read(body: Mapping[str, Any], position: str) -> Any:
+    """Read one dotted *position* out of *body* -- ``"signature.value"`` reaches into the
+    signature block, a bare name reads a top-level field."""
+
+    if "." in position:
+        outer, inner = position.split(".", 1)
+        return body[outer][inner]
+    return body[position]
+
+
+def _substituted_body(original: Mapping[str, Any], *, position: str, value: Any) -> dict[str, Any]:
+    """Return a copy of *original* with exactly one *position* replaced by *value* and every other
+    field carried across unchanged -- including the ``signature`` block's own other members, which
+    are copied rather than shared so the original body cannot be mutated by accident."""
+
+    substituted = dict(original)
+    if "." in position:
+        outer, inner = position.split(".", 1)
+        block = dict(substituted[outer])
+        block[inner] = value
+        substituted[outer] = block
+    else:
+        substituted[position] = value
+    return substituted
+
+
+def _assert_isolated_to(
+    substituted: Mapping[str, Any], original: Mapping[str, Any], *, changed: str
+) -> None:
+    """Prove, in the test's own body, that this substitution really is isolated to *changed*.
+
+    Every one of ``ROOT_ADMISSION_SEMANTIC_FIELDS`` is byte-identical to the original's -- which
+    is what makes the recomputed identity and the recomputed semantic fingerprint still equal the
+    composition-time commitment, so Round 5's four checks and Round 6's two both pass -- and every
+    *other* position the semantic projection excludes is byte-identical too, so the refusal that
+    follows can only be attributable to this one field.
+    """
+
+    assert changed in _EXCLUDED_FROM_THE_SEMANTIC_PROJECTION, changed
+    assert substituted != original, "a substitution that changes nothing proves nothing"
+    for field in ROOT_ADMISSION_SEMANTIC_FIELDS:
+        assert substituted[field] == original[field], field
+    for position in _EXCLUDED_FROM_THE_SEMANTIC_PROJECTION:
+        if position == changed:
+            assert _read(substituted, position) != _read(original, position), position
+        else:
+            assert _read(substituted, position) == _read(original, position), position
+
+
+def _refused_isolated_substitution(
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    position: str,
+    value: Any,
+) -> str:
+    """Compose a genuine service against the real ORIGINAL record, then serve an isolated
+    single-field substitution under that record's own **current, unmoved** id, and return the
+    refusal message.
+
+    Reuses Round 6's own ``_SubstitutedAdmissionBodyStore`` unchanged rather than reinventing a
+    substitution mechanism: its constructor already takes the substituted body whole, so an
+    isolated single-field substitution is expressed by *what is handed to it*, not by a new
+    parameter on it. Everything the four controls share is asserted here once -- zero authorization
+    evaluations, zero adapter and therefore zero network calls, the substituted body genuinely
+    consulted, and the chain pointer never touched (this is a substitution, not a rotation).
+    """
+
+    calls = _counting_bootstrap(monkeypatch)
+    adapter = FakeGitHubAdapter()
+    original = dict(world["admitted"]["runtime_root_admission"])
+    admission_id = str(original["runtime_root_admission_id"])
+
+    substituted = _substituted_body(original, position=position, value=value)
+    _assert_isolated_to(substituted, original, changed=position)
+
+    store = _SubstitutedAdmissionBodyStore(
+        world["store"], admission_id=admission_id, substituted=substituted
+    )
+    bootstrap = _compose_over(store, world)  # composed against the genuine ORIGINAL record
+    store.armed = True
+
+    with pytest.raises(RuntimeRequirementError) as raised:
+        bootstrap(
+            github_projection_grant_refs=[world["grant_ref"]],
+            github_projection_grant_declaration_refs=[world["declaration_ref"]],
+        )
+
+    assert store.substitutions == 1, "the substituted body was never actually consulted"
+    assert calls["count"] == 0, "refused before Authority evaluation"
+    assert adapter.materialize_call_count == 0
+    assert _admission_pointer(world) == admission_id
+    return str(raised.value)
+
+
+def test_a_substituted_declared_admission_id_issues_no_capability(
+    _canonical: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**P15-R7-F1, manifestation 1** (adopted correction items 2 and 4, first bullet): only the
+    record's own **declared** ``runtime_root_admission_id`` is changed.
+
+    Disclosed judgment call, since the adopted text says only "some other schema-valid string": the
+    substitute keeps the canonical ``RUNTIME-ROOT-ADMISSION-`` prefix and 64 uppercase hex
+    characters that ``runtime_root_admission.schema.json`` requires, so
+    ``require_valid_root_admission`` genuinely passes and the refusal cannot be a schema refusal in
+    disguise. ``"A" * 64`` is chosen because it is unmistakably not a digest anyone computed, and
+    its inequality with the genuine id is asserted rather than assumed.
+
+    **Why nothing before Round 7 could see this.** The recomputed id reads
+    ``ROOT_ADMISSION_SEMANTIC_FIELDS``, which excludes this very field -- so the recomputation is
+    byte-for-byte the composition-time commitment and Round 6's requirement 5 passes. Requirement 6
+    likewise. Generation, status, Project and Binding are untouched, so Round 5's four pass. The
+    signature is not reverified per call, by design. Every existing check passed a record declaring
+    an identity that is not its own.
+
+    **What catches it now.** Requirement 7: the declared id must equal the recomputed id, and both
+    must equal the bound id -- a three-way equality, where Round 6 compared only recomputed against
+    bound. Adding the declared field to that chain can only ever narrow what passes; it is not the
+    self-comparison requirements 5 and 6 rightly refuse to rely on, because the *bound* value is
+    still the anchor of the chain.
+    """
+
+    original = _canonical["admitted"]["runtime_root_admission"]
+    forged_id = "RUNTIME-ROOT-ADMISSION-" + "A" * 64
+    assert forged_id != original["runtime_root_admission_id"]
+
+    message = _refused_isolated_substitution(
+        _canonical, monkeypatch, position="runtime_root_admission_id", value=forged_id
+    )
+    assert "own declared identity" in message, message
+    assert "does not equal its own recomputed identity" in message, message
+    assert "substituted independently of its semantic content" in message, message
+
+
+def test_a_substituted_declared_semantic_fingerprint_issues_no_capability(
+    _canonical: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**P15-R7-F1, manifestation 2** (adopted correction items 2 and 4, second bullet): only the
+    record's own **declared** ``runtime_root_admission_semantic_fingerprint`` is changed.
+
+    Disclosed judgment call, as above: the substitute keeps the ``sha256:`` prefix and the 64
+    lowercase hex characters the schema requires, so the record still schema-validates and the
+    refusal is the new requirement's, not the validator's. ``"b" * 64`` is again chosen to be
+    obviously not a digest anyone computed, and its inequality with the genuine value is asserted.
+
+    The identical blind spot as manifestation 1, one field over: this field too is excluded from
+    ``ROOT_ADMISSION_SEMANTIC_FIELDS``, so every Round 5 and Round 6 check reads a value it does
+    not affect. Requirement 8 is the three-way declared/recomputed/bound equality for the
+    fingerprint, and it is what refuses here.
+
+    Note the ordering this control also pins: requirement 7 passes first (the declared id is
+    untouched and still equals the recomputed one), so the refusal genuinely comes from
+    requirement 8 and not from its neighbour.
+    """
+
+    original = _canonical["admitted"]["runtime_root_admission"]
+    forged_fingerprint = "sha256:" + "b" * 64
+    assert forged_fingerprint != original["runtime_root_admission_semantic_fingerprint"]
+
+    message = _refused_isolated_substitution(
+        _canonical,
+        monkeypatch,
+        position="runtime_root_admission_semantic_fingerprint",
+        value=forged_fingerprint,
+    )
+    assert "own declared semantic fingerprint" in message, message
+    assert "does not equal its own recomputed semantic fingerprint" in message, message
+    # ...and not its neighbour: the declared id was untouched, so requirement 7 passed first.
+    assert "own declared identity" not in message, message
+
+
+def test_a_substituted_signature_value_issues_no_capability(
+    _canonical: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**P15-R7-F1, manifestation 3** (adopted correction items 2 and 4, third bullet), and **the
+    control that actually proves the full-record commitment does real work**.
+
+    Only ``signature.value`` changes. The signature block is invisible to *every* other check in
+    this function: it is excluded from ``ROOT_ADMISSION_SEMANTIC_FIELDS`` (a signature cannot cover
+    its own value), so neither recomputation moves; it is not one of the four fields Round 5 reads;
+    and it is not reverified per call at all, because the trust anchor is deliberately gone by then
+    -- discarded at composition and absent from every request-facing signature. So requirements 1-8
+    all pass, including both of Round 7's own declared-versus-recomputed checks, and requirement 9
+    is the only thing left that can see the change.
+
+    That is exactly why this control, rather than the two above it, is what establishes the
+    full-record commitment as a genuine addition instead of a restatement of the other two.
+
+    Disclosed judgment call: the substitute is ``"c" * 128``, which satisfies the schema's own
+    ``^[0-9a-f]{128}$`` signature-value pattern -- so the record is still fully schema-valid and
+    still resolves -- while being a value no Ed25519 signing operation would ever produce. The
+    point is precisely that the refusal happens *without* anyone verifying the signature: nothing
+    here asks whether ``"c" * 128`` is a valid signature, only whether the record is still the
+    exact record composition proved.
+    """
+
+    original = _canonical["admitted"]["runtime_root_admission"]
+    forged_value = "c" * 128
+    assert forged_value != original["signature"]["value"]
+    assert len(original["signature"]["value"]) == len(forged_value)
+
+    message = _refused_isolated_substitution(
+        _canonical, monkeypatch, position="signature.value", value=forged_value
+    )
+    assert "own full-record commitment" in message, message
+    assert "captured at composition" in message, message
+    assert "potentially including its signature" in message, message
+    # Decisively not one of the narrower checks: both of those passed on this body.
+    assert "own declared identity" not in message, message
+    assert "own declared semantic fingerprint" not in message, message
+
+
+def test_a_substituted_signature_key_id_issues_no_capability(
+    _canonical: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**P15-R7-F1, manifestation 4** (adopted correction item 4, fourth bullet): the identical
+    shape as manifestation 3, aimed at ``signature.key_id`` instead of ``signature.value``.
+
+    It is kept as its own control rather than folded into the one above because the two say
+    different things about what a substitution could achieve. Replacing the value re-writes *the
+    signature*; replacing the key id re-writes *whose signature this claims to be* -- a record that
+    still carries the anchor's own genuine signature bytes while naming an entirely different
+    signing key. Both are refused by requirement 9, and neither is visible to anything narrower.
+
+    Disclosed judgment call: the substitute is ``"TRUST-ANCHOR-0002"``, which satisfies
+    ``common/identity.schema.json``'s own canonical identity grammar (leading uppercase letter,
+    uppercase alphanumeric segments, at least one hyphen) exactly as the genuine
+    ``"TRUST-ANCHOR-0001"`` does, so the record remains schema-valid and the refusal is
+    requirement 9's alone.
+    """
+
+    original = _canonical["admitted"]["runtime_root_admission"]
+    forged_key_id = "TRUST-ANCHOR-0002"
+    assert forged_key_id != original["signature"]["key_id"]
+
+    message = _refused_isolated_substitution(
+        _canonical, monkeypatch, position="signature.key_id", value=forged_key_id
+    )
+    assert "own full-record commitment" in message, message
+    assert "captured at composition" in message, message
+    assert "own declared identity" not in message, message
+    assert "own declared semantic fingerprint" not in message, message
+
+
+def test_the_composed_service_binds_the_exact_full_record_commitment(
+    _canonical: dict[str, Any],
+) -> None:
+    """**P15-R7-F1, item 1**, and the non-vacuity control for all four substitutions above.
+
+    Composition captures a *fourth* cell beside the three Rounds 5 and 6 established, and it is
+    genuinely a commitment to the **exact full record** rather than to the semantic projection the
+    other three come from. Three things are proved here rather than assumed:
+
+    1. all four cells exist, and the three earlier ones are unchanged -- Round 7 adds, it does not
+       replace;
+    2. the new cell equals a digest recomputed here, independently, over the genuine admission body
+       through the repository's own single canonical serialization owner -- so the value is the
+       record's, not an artefact of how it was captured;
+    3. it is genuinely **broader** than ``bound_semantic_fingerprint``: changing any one of the
+       three fields the semantic projection excludes moves the full-record commitment and leaves
+       the semantic fingerprint exactly where it was. That inequality is the whole finding, stated
+       as an arithmetic fact about the two digests rather than as a claim about the barriers.
+
+    And, still: no raw trust anchor is reachable from the composed service. A record carries a
+    signature, never a key, so committing to the full record reintroduces nothing.
+    """
+
+    admission = dict(_canonical["admitted"]["runtime_root_admission"])
+    bootstrap = _canonical["admitted"]["bootstrap"]
+    cells = inspect.getclosurevars(bootstrap).nonlocals
+
+    expected = "sha256:" + hashlib.sha256(canonical_json_bytes(dict(admission))).hexdigest()
+    assert cells["bound_full_record_commitment"] == expected
+    assert cells["bound_admission_id"] == admission["runtime_root_admission_id"]
+    assert cells["bound_generation"] == int(admission["generation"])
+    assert (
+        cells["bound_semantic_fingerprint"]
+        == admission["runtime_root_admission_semantic_fingerprint"]
+    )
+    assert cells["bound_full_record_commitment"] != cells["bound_semantic_fingerprint"]
+
+    # Broader than the semantic fingerprint, proved field by field over exactly the three positions
+    # ROOT_ADMISSION_SEMANTIC_FIELDS excludes.
+    for position, value in (
+        ("runtime_root_admission_id", "RUNTIME-ROOT-ADMISSION-" + "A" * 64),
+        ("runtime_root_admission_semantic_fingerprint", "sha256:" + "b" * 64),
+        ("signature.value", "c" * 128),
+        ("signature.key_id", "TRUST-ANCHOR-0002"),
+    ):
+        substituted = _substituted_body(admission, position=position, value=value)
+        moved = "sha256:" + hashlib.sha256(canonical_json_bytes(substituted)).hexdigest()
+        assert moved != cells["bound_full_record_commitment"], position
+        # ...while the narrower, semantic-fields-only digest does not move at all.
+        assert (
+            runtime_root_admission_semantic_fingerprint(substituted)
+            == cells["bound_semantic_fingerprint"]
+        ), position
+
+    anchor = trust_anchor_public_key_hex()
+    assert not any(anchor in text for text in _reachable_strings(bootstrap))

@@ -131,6 +131,25 @@ already had:
   with no ``*args``/``**kwargs`` either. That is an adopted condition of Round 6 in its own right
   (item 6: no new public request parameter of any kind), so it is asserted again at the Round 6
   test rather than left resting on the Round 5 one alone (P15-R6-F1).
+
+Structural Review Round 7 (P15-R7) changes one further fact this file pins, and restates the same
+one Round 6 restated:
+
+- ``_require_bound_admission_still_current`` takes a fourth commitment parameter,
+  ``bound_full_record_commitment``, and ``bootstrap.py`` gains one private helper,
+  ``_full_admission_record_commitment``, which reduces the exact full record -- its own declared
+  id, its own declared semantic fingerprint and its whole ``signature`` block included -- to a
+  deterministic digest through this repository's **one** canonical serialization owner,
+  ``state.canonicalize.canonical_json_bytes``. That is the same function ``identity.py`` already
+  reads for every one of its own derivations, so no second serialization mechanism appears beside
+  it (P15-R7-F1).
+- the request-facing signature is **unchanged again** -- still exactly
+  ``github_projection_grant_refs`` and ``github_projection_grant_declaration_refs``, keyword-only,
+  with no ``*args``/``**kwargs``. Adopted correction item 6 forbids any new public request
+  parameter of any kind, so every Round 5 and Round 6 static test that pins it is kept
+  **unweakened and unchanged**, and the Round 7 test below additionally proves that the commitment
+  this round adds lives strictly on the barrier's own private signature and on no request-facing
+  one (P15-R7-F1).
 """
 
 from __future__ import annotations
@@ -197,6 +216,13 @@ _REQUEST_FACING_OPERATION_NAME = "bootstrap_projection_execution_capability"
 
 #: The one instant-parsing owner this package may have (P15-R5-F3).
 _INSTANT_PARSER_NAME = "parse_utc_instant"
+
+#: The exact-full-record commitment Round 7 (P15-R7-F1) adds, and the private helper that computes
+#: it. The parameter must appear on the per-call barrier alone and on **no** request-facing
+#: signature -- adopted correction item 6 forbids any new public request parameter of any kind, and
+#: a commitment a caller could name would be a commitment a caller could choose.
+_FULL_RECORD_COMMITMENT_PARAMETER_NAME = "bound_full_record_commitment"
+_FULL_RECORD_COMMITMENT_HELPER_NAME = "_full_admission_record_commitment"
 
 #: The raw trust-anchor parameter name. It may appear on exactly three shipped functions, all of
 #: them composition-side or pure verification, and on no request-facing one (P15-R4-F1).
@@ -1002,6 +1028,80 @@ def test_the_admission_barrier_runs_again_immediately_before_the_capability_is_c
     assert request_facing_node.args.posonlyargs == []
     assert request_facing_node.args.vararg is None
     assert request_facing_node.args.kwarg is None
+
+
+def test_the_full_record_commitment_is_barrier_side_only_and_reuses_the_one_serializer() -> None:
+    """P15-R7-F1, items 1, 3 and 6, proved statically over the shipped source.
+
+    Round 7 adds a commitment to the **exact full record** -- the record's own declared id, its own
+    declared semantic fingerprint and its whole ``signature`` block included -- because the
+    semantic-fields projection everything else in the barrier reads deliberately excludes exactly
+    those three. Three facts follow, and each is checked here rather than left to prose:
+
+    1. **Item 6, restated, and it is the one that matters most.** None of this bought a new
+       request-facing parameter. The operation's own ``def`` still declares exactly the two
+       operation-scoped reference parameters Round 5 closed it at, keyword-only, with nothing
+       positional and no ``*args``/``**kwargs`` -- and, specifically, ``bound_full_record_commitment``
+       is **not** among them. The commitment is a closure cell and a private barrier parameter, which
+       is precisely where a value a caller must never be able to name belongs. The Round 5 and
+       Round 6 tests that pin the same signature are kept unweakened; this is a confirming
+       addition, not a replacement.
+    2. **The barrier owns it.** ``_require_bound_admission_still_current`` -- and only it -- carries
+       ``bound_full_record_commitment`` as a parameter, and both of its call sites in the
+       request-facing operation genuinely pass it, so neither barrier can silently run the weaker
+       Round 6 check.
+    3. **Item 3: one serialization owner, not two.** The helper computing the digest reaches
+       ``canonical_json_bytes`` -- the single canonical serialization owner ``identity.py`` itself
+       reads for every one of its own id/fingerprint derivations -- and ``bootstrap.py`` imports it
+       from ``state.canonicalize`` rather than restating a second way to turn a canonical record
+       into bytes.
+    """
+
+    functions = _function_defs(bootstrap_module)
+
+    # 1. Item 6: the request-facing signature is untouched, and the new commitment is not on it.
+    request_facing_node = functions[_REQUEST_FACING_OPERATION_NAME]
+    assert _parameter_names(request_facing_node) == {
+        "github_projection_grant_refs",
+        "github_projection_grant_declaration_refs",
+    }
+    assert request_facing_node.args.args == []
+    assert request_facing_node.args.posonlyargs == []
+    assert request_facing_node.args.vararg is None
+    assert request_facing_node.args.kwarg is None
+    assert _FULL_RECORD_COMMITMENT_PARAMETER_NAME not in _parameter_names(request_facing_node)
+
+    # 2. Exactly one shipped ``def`` in this package carries it, and it is the barrier.
+    carriers: set[str] = set()
+    for path in sorted((_SHIPPED_PACKAGE_ROOT / "runtime").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if _FULL_RECORD_COMMITMENT_PARAMETER_NAME in _parameter_names(node):
+                carriers.add(node.name)
+    assert carriers == {"_require_bound_admission_still_current"}, carriers
+
+    # ...and both barrier call sites genuinely pass it, so neither runs the weaker Round 6 check.
+    passing_sites = [
+        node
+        for node in ast.walk(request_facing_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_require_bound_admission_still_current"
+        and any(keyword.arg == _FULL_RECORD_COMMITMENT_PARAMETER_NAME for keyword in node.keywords)
+    ]
+    assert len(passing_sites) == 2, passing_sites
+
+    # 3. Item 3: the digest reaches this repository's one canonical serialization owner.
+    helper = functions[_FULL_RECORD_COMMITMENT_HELPER_NAME]
+    assert "canonical_json_bytes" in _called_names_excluding_nested_defs(helper)
+    assert "manosube_agent_civilization.state.canonicalize" in _imported_module_names(
+        bootstrap_module
+    )
+    # ...the identical owner ``identity.py`` already reads, so there is exactly one of them.
+    assert "manosube_agent_civilization.state.canonicalize" in _imported_module_names(
+        identity_module
+    )
 
 
 def test_this_package_has_exactly_one_instant_parsing_owner() -> None:
