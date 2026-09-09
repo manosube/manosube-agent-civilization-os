@@ -28,8 +28,14 @@ Binding, admission selection and anchor, and the request-facing bootstrap has **
 any of them. **Round 5 (P15-R5-F1)** removes the opaque `RuntimeDeploymentAuthority` value type
 Round 4 carried that boundary on — it was a public dataclass with a public constructor, so any
 importer could build one over an alternate world — and makes composition *return the
-request-facing operation itself*, a closure with no public constructor. See sections 4.2, 4.3,
-4.4 and 4.5 here, and `RUNTIME_CONTRACT.md` sections 11.1, 12.1, 13.1 and 14.1.
+request-facing operation itself*, a closure with no public constructor. **Round 6 (P15-R6-F1)**
+leaves that boundary untouched and closes the per-call half instead: the admission recheck Round 5
+introduced ran once, at the start of the request, and only ever read fields the resolved record
+declared about itself — so it now runs **twice**, the second time immediately before issuance from
+its own fresh Boot, and both times it recomputes the resolved body's identity and semantic
+fingerprint from that body and compares them against a commitment captured at composition. See
+sections 4.2, 4.3, 4.4, 4.5 and 4.6 here, and `RUNTIME_CONTRACT.md` sections 11.1, 12.1, 13.1,
+14.1 and 15.1.
 
 ---
 
@@ -555,6 +561,85 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 NEW_KERNEL_ELEMENT=false
 ```
 
+## 4.6 Structural Review Round 6 (P15-R6-F1)
+
+Round 6 of PR #65 confirmed Round 5's F1 and F3 closed and **reopened Round 5's own F2**.
+`10_RUNTIME/RUNTIME_CONTRACT.md` section 15 records the finding in full. This document records
+only what the round changed about *this layer's position*, which is three things:
+
+1. **Composition now captures an immutable commitment to the exact admission, not just a name for
+   it.** Round 5 retained the admitted record's id and generation. Round 6 additionally retains
+   its **independently recomputed semantic fingerprint** — a value `_require_currently_admitted`
+   had already derived from the record's own body and proved equal to its declared value, so
+   nothing new is computed and no new trust is taken; it is simply kept. All three live in the
+   returned closure's cells, chosen before any request boundary exists, and the raw anchor is
+   still discarded and still absent from every request-facing signature.
+
+2. **The per-call barrier runs twice, and re-establishes integrity rather than reading fields.**
+   Round 5's single barrier ran at the start of the request and checked four fields the resolved
+   record declares about itself — so a rotation or revocation committing *after* it, while grants
+   and Authority decisions were still being evaluated, was still followed by a newly issued
+   capability; and a Store-level substitution of the record body under the **current, unmoved id**
+   passed the gate entirely, because the four fields it checked were exactly the ones such a
+   substitution can leave untouched. The barrier now recomputes the resolved body's own identity
+   and semantic fingerprint **from that body's actual content** and requires exact equality with
+   the composition-captured commitment — six requirements, not four — and it runs a second time,
+   from its own fresh Boot, immediately before the capability is constructed. Recomputing from the
+   body, against the captured reference, is what closes the substitution gap: comparing a
+   record's declared id against its own other declared fields is a self-comparison, and a
+   self-consistent forgery satisfies it trivially.
+
+3. **The issued context snapshots the final Boot's State, not the initial one.**
+   `state_revision`/`semantic_fingerprint` now describe the State that was current at the moment
+   of issuance. Disclosed judgment call: only the *State snapshot* moves. The Human Authority
+   binding — and therefore the decisions, the pre-issued authorities and the context's own
+   `github_authority_ref` — deliberately remains sourced from the first Boot, because that is
+   what the Authority evaluation actually ran against; re-deriving it afterwards would let the
+   context claim an authorization that never happened.
+
+Nothing else moved. Round 5's closure boundary is unchanged, the request-facing signature is
+unchanged at exactly two keyword-only operation-scoped parameters with no new public parameter of
+any kind, the single instant-parsing owner is unchanged, and `admission_registry.py`,
+`transition_chain.py`, `identity.py`, `engine.py`, `route.py` and `deployment_registry.py` are all
+untouched: exactly one shipped file changed this round.
+
+```text
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=6
+ADMISSION_BARRIERS_PER_REQUEST_FACING_CALL=2
+PRE_ISSUANCE_ADMISSION_BARRIER_EXISTS=true
+FINAL_BARRIER_READS_ITS_OWN_FRESH_BOOT=true
+ISSUED_CONTEXT_STATE_SNAPSHOT_SOURCED_FROM_FINAL_BOOT=true
+ISSUED_CONTEXT_AUTHORITY_BINDING_SOURCED_FROM_INITIAL_BOOT=true
+COMPOSITION_CAPTURES_AN_IMMUTABLE_ADMISSION_COMMITMENT=true
+COMMITMENT_INCLUDES_SEMANTIC_FINGERPRINT=true
+PER_CALL_RECHECK_REQUIREMENT_COUNT=6
+PER_CALL_RECHECK_RECOMPUTES_IDENTITY_FROM_THE_RESOLVED_BODY=true
+PER_CALL_RECHECK_TRUSTS_THE_RESOLVED_BODYS_OWN_DECLARED_IDENTITY=false
+ROTATION_LANDING_BETWEEN_THE_TWO_BARRIERS_ISSUES_A_CAPABILITY=false
+REVOCATION_LANDING_BETWEEN_THE_TWO_BARRIERS_ISSUES_A_CAPABILITY=false
+CURRENT_ID_BODY_SUBSTITUTION_ISSUES_A_CAPABILITY=false
+CURRENT_ID_BODY_SUBSTITUTION_REFUSED_BEFORE_AUTHORITY_EVALUATION=true
+UNCHANGED_CURRENT_ADMISSION_STILL_ISSUES_A_WORKING_CAPABILITY=true
+UNRELATED_STATE_CONTENTION_BLOCKS_ISSUANCE=false
+REQUEST_FACING_BOOTSTRAP_PARAMETER_COUNT=2
+NEW_PUBLIC_REQUEST_PARAMETER_ADDED=0
+REQUEST_FACING_SIGNATURE_CHANGED_SINCE_ROUND_5=false
+CURRENCY_RECHECK_REQUIRES_A_RAW_TRUST_ANCHOR=false
+ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false
+ROUND_5_CLOSURE_BOUNDARY_CHANGED=false
+ROUND_5_TIMESTAMP_OWNER_CHANGED=false
+SHIPPED_FILES_CHANGED_THIS_ROUND=1
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
+CLOSED_ROUND_1_TO_5_WORK_REGRESSED=false
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+NEW_SCHEMA_FILES_ADDED=0
+CANONICAL_SCHEMA_COUNT=59
+RUNTIME_IS_A_SECOND_STATE_OWNER=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+NEW_KERNEL_ELEMENT=false
+```
+
 ## 5. Explicit non-claims
 
 ```text
@@ -595,7 +680,12 @@ TRUSTED_DEPLOYMENT_COMPOSITION_RETURNS_THE_BOUND_REQUEST_FACING_SERVICE=true
 REQUEST_FACING_OPERATION_IS_A_CLOSURE=true
 TRUST_ANCHOR_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
 CURRENT_ADMISSION_RECHECKED_ON_EVERY_NEW_CAPABILITY_ISSUANCE=true
+CURRENT_ADMISSION_RECHECKED_AGAIN_IMMEDIATELY_BEFORE_ISSUANCE=true
+ADMISSION_RECHECK_RECOMPUTES_IDENTITY_AND_FINGERPRINT_FROM_THE_RESOLVED_BODY=true
+CURRENT_ID_RECORD_BODY_SUBSTITUTION_IS_DETECTED=true
 ROTATION_OR_REVOCATION_BLOCKS_NEW_ISSUANCE_FROM_AN_OLD_SERVICE=true
+ROTATION_OR_REVOCATION_LANDING_MID_REQUEST_BLOCKS_ISSUANCE=true
+ISSUED_CONTEXT_STATE_SNAPSHOT_SOURCED_FROM_FINAL_BOOT=true
 ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false
 DECLARATION_VALIDITY_WINDOW_ORDERED_AS_REAL_INSTANTS=true
 INSTANT_PARSING_OWNER_COUNT_IN_THIS_PACKAGE=1
@@ -613,6 +703,7 @@ STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_5_CORRECTIONS_APPLIED=true
+STRUCTURAL_REVIEW_ROUND_6_CORRECTIONS_APPLIED=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false

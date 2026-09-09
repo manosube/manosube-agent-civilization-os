@@ -1300,3 +1300,170 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 ```
 
 本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。
+
+# 22. Phase 15 Structural Review Round 6 correction addendum (P15-R6-F1, Issue #64 / PR #65)
+
+本節は、セクション21のaddendum記録時点（`CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_5_CORRECTIONS_DELIVERED_PR_OPEN`）以降にrepositoryへ生じた変化のうち、local `git log`とPR #65 / Issue #64自身のReview commentにより独立再観測できた`OBSERVED_GITHUB_FACT`のみを追記する、bounded addendumである。セクション16〜21の全面再投影ではない。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-09
+ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AND_PR_65_ISSUE_64_REVIEW_COMMENTS
+```
+
+| Field | Observed value |
+|---|---|
+| Dedicated Pull Request | [#65](https://github.com/manosube/manosube-agent-civilization-os/pull/65) — **open**, not merged |
+| PR #65 reviewed HEAD (Structural Review Round 6 の対象) | `2cad6b5de77a6aa56fa34d26b559522c7db53f5e` |
+| SHUKOU adoption | Issue #64 上の `ADOPT_P15_R6_FINAL_ADMISSION_INTEGRITY_AND_PRE_ISSUANCE_BARRIER`（Human Authority `manosube`）により、`ADOPTED_FINDING=P15-R6-F1` が verbatim で採択済 |
+| Round 5 findings の Round 6 自身による処分 | `P15_R5_F1_CLOSED=true`（closure が担う ownership boundary は無変更）、`P15_R5_F3_CLOSED=true`（instant ordering は無変更）。`P15-R5-F2` のみ reopen され `P15-R6-F1` として再採番された。 |
+| This correction round's own commits | branch `agent/issue-64-phase15-runtime-adapter` 上、reviewed HEAD `2cad6b5d` の直上に積まれた新規commitのみ。history rewrite（amend / rebase / force-push）は行っていない。新規branchも新規PRも作成していない。 |
+
+Round 4・Round 5 の Review が名指しした「同一のtrust-boundary semantic classの再発」系列は、Round 6 でもう一段進む。
+
+```text
+ROUND 5   trust decision の boundary は CLOSURE へ置換され、per-call の
+          current-admission recheck が導入されたが、その recheck は request の
+          **先頭で一度だけ**走り、かつ resolved record が**自分自身について申告した
+          field**しか読んでいなかった
+ROUND 6   -> recheck を TWO BARRIERS 化し、composition 時に捕捉した
+             IMMUTABLE COMMITMENT（id / generation / semantic fingerprint）に対して、
+             resolved body から**独立に再計算した** identity と fingerprint の
+             完全一致を要求する
+```
+
+採択された構造的findingと、その閉鎖範囲：
+
+```text
+P15-R6-F1  the per-call admission barrier ran ONCE and never re-established RESOLVED-RECORD
+           INTEGRITY
+           （2つの独立に再現可能な counterexample を持つ。）
+
+           (1) POST-CHECK ROTATION / REVOCATION RACE
+               request-facing closure は先頭で _require_bound_admission_still_current を
+               一度だけ実行し、その後 grant / declaration / subject の解決と Authority
+               評価を行い、最後に**同一の初期 Boot snapshot**から
+               ProjectionExecutionCapability を構築して返していた。第二の admission
+               barrier は存在しなかった。したがって canonical な rotation / revocation が
+               初回 check の後・capability 構築の前に commit された場合、old service は
+               自身の bound admission が current でなくなった後に新規 capability を
+               依然として発行していた。これは「rotation / revocation は *new capability
+               issuance* を阻止する」という採択条件そのものへの違反である。
+
+           (2) RESOLVED-RECORD INTEGRITY IS NOT RE-ESTABLISHED
+               per-call helper は resolved record を schema 検証したうえで
+               generation / status / project_id / project_binding_ref の4点のみを
+               検査していた。runtime_root_admission_id も semantic fingerprint も
+               resolved body から**再計算していない**し、composition 時に admit した
+               record と re-resolve した body を**比較してもいない**。
+               結果として、current id の下での Store-level substitution
+               （predecessor_ref / declared_at / signature を改変しつつ
+                 generation / status / project / binding はそのまま）は
+               per-call gate を通過し得た。composition が証明したのは ORIGINAL record
+               であり、per-call recheck は「現在 resolve される body が依然として同一の
+               record であること」を一度も再証明していなかった。特定 field の読み値が
+               従来どおりであることしか確認していなかった。
+
+           → 採択された forward correction（Round 5 の closure boundary と timestamp
+             owner は無変更）：
+             1. composition 時に、anchor 検証済 admission への immutable canonical
+                commitment を捕捉する。id と generation だけでなく、独立に再計算された
+                semantic fingerprint も含む（bound_semantic_fingerprint）。
+             2. 各 request で、Store 解決後に current admission の identity と semantic
+                fingerprint を独立に再計算し、捕捉済 commitment との**完全一致**を要求
+                する。resolved body 自身の自己申告 field との比較ではない
+                （改ざんされた body は自身の改ざん内容に整合する id / fingerprint を
+                  自己申告でき、自己比較は自明に通過してしまうため）。
+             3. 全ての grant / declaration / subject 解決と Authority 評価の**後**、
+                capability の構築・返却の**直前**に、再度 Boot し、
+                identity + fingerprint + generation + status + project / binding の
+                **全6要件**を再実行する（部分集合ではない）。
+             4. 返却する ProjectionExecutionContext の state_revision /
+                semantic_fingerprint を、初回 Boot ではなくこの FINAL Boot から構築する。
+             5. deterministic control を追加する（rotation / revocation の
+                barrier 間着弾、current-id body substitution、無変更 admission の
+                positive control）。
+             6. Round 5 で閉じた request signature を維持する。Store / Project /
+                Binding / admission / anchor / 代替 authority object の再出現なし、
+                いかなる新規 public request parameter も追加しない。
+
+           → 6要件の検査順序（本round自身の judgment call、開示済）：
+             1. pointer が composition 時に捕捉した admission id を依然として指すこと
+             2. resolved current admission の generation が捕捉値と完全一致すること
+             3. current admission が依然 ACTIVE であること
+             4. 当該 Project / Binding を依然として restate していること
+             5. resolved body から再計算した identity が捕捉値と一致すること      【新規】
+             6. resolved body から再計算した semantic fingerprint が一致すること  【新規】
+             5・6 を最後に置くのは _require_currently_admitted 自身が currency check を
+             最後に置くのと同一の理由による。2〜4 に違反する body は必ず 5 にも違反する
+             ため、5 を先に置くと 2〜4 の全ての拒否が単一の識別不能な「identity
+             mismatch」へ収束し、各 control が主張する内容を証明しなくなる。
+
+           → 開示済 judgment call：FINAL Boot へ移すのは **State snapshot のみ**である。
+             human_authority_ref / human_authority_signing_key、および そこから導かれる
+             decisions / authorities / context 自身の github_authority_ref は、従来どおり
+             **初回 Boot** を source とする。それらは Authority 評価が実際に走った対象で
+             あり、返却される capability が正当に代表する内容そのものである。事後に
+             later Boot から再導出すると、2つの Boot の間に Human Authority の re-binding が
+             発生した場合、「実際に authorize された内容」と「context が authorize されたと
+             主張する内容」が食い違う — 本roundが閉じようとしている defect より厳密に
+             悪い defect になる。採択text の item 4 が名指すのは
+             state_revision / semantic_fingerprint であり、移動するのはそれだけである。
+```
+
+本roundが変更した shipped file は `src/manosube_agent_civilization/runtime/bootstrap.py` **ただ1つ**である。`admission_registry.py`・`transition_chain.py`・`identity.py`・`engine.py`・`route.py`・`deployment_registry.py`・`__init__.py`・`01_SCHEMA/` はいずれも無変更であり、Round 1〜5 が閉じた work は本roundで一切退行していない。monotonic signed generation / predecessor_ref chain、ancestor replay / generation skip / concurrent successor / terminal REVOKED の拒否、closure が担う ownership boundary、closed network allowlist / redirect boundary、single instant-parsing owner、Runtime-to-Evidence provenance、Phase 14 capability continuity は、すべて従来どおり green である。
+
+canonical schema総数は `59` のまま変化していない（本roundは schema file を追加も変更もしていない）。
+
+`P15-R6-F1` が証明する範囲と、しない範囲は、従来どおり明示的に限定される（誇張しない）。
+
+```text
+ROTATION_LANDING_BETWEEN_THE_TWO_BARRIERS_ISSUES_A_CAPABILITY=false     （証明済、実際に
+                                                                         shipped committer で
+                                                                         successor を commit した
+                                                                         real race）
+REVOCATION_LANDING_BETWEEN_THE_TWO_BARRIERS_ISSUES_A_CAPABILITY=false   （証明済）
+CURRENT_ID_BODY_SUBSTITUTION_ISSUES_A_CAPABILITY=false                  （証明済、authorization
+                                                                         評価0・adapter 呼び出し0）
+UNCHANGED_CURRENT_ADMISSION_STILL_ISSUES_A_WORKING_CAPABILITY=true      （証明済、controlled
+                                                                         FakeGitHubAdapter まで到達）
+ISSUED_CONTEXT_STATE_SNAPSHOT_SOURCED_FROM_FINAL_BOOT=true              （証明済）
+ISSUED_CONTEXT_AUTHORITY_BINDING_SOURCED_FROM_INITIAL_BOOT=true         （意図的・開示済）
+ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false                 （採択text自身の限定・
+                                                                         主張しない）
+CLOSURE_CELLS_ARE_UNWRITABLE_BY_IN_PROCESS_CODE=false                   （Pythonでは不可能・
+                                                                         開示済・主張しない）
+TARGET_EPOCH_REACTIVATION_MECHANISM_BUILT=false                         （本round範囲外・
+                                                                         主張しない）
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false                  （未実装・主張しない）
+```
+
+実装範囲の所有は変わらず`10_RUNTIME/RUNTIME_INDEX.md`・`10_RUNTIME/RUNTIME_CONTRACT.md`にある（本correction roundは`RUNTIME_CONTRACT.md`にsection 15、`RUNTIME_INDEX.md`にsection 4.6を追加した）。
+
+SHUKOU自身が固定した終端は変わらず、本addendumもこれを変更しない。
+
+```text
+CURRENT_PHASE=15_BOUNDED_RUNTIME_OBSERVATION_AND_TRUSTED_PROVISIONING
+CURRENT_PHASE_ISSUE=64
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_6_CORRECTIONS_DELIVERED_PR_OPEN
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=6
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=6
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_3_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_4_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_5_FINDINGS_CLOSED=3
+STRUCTURAL_REVIEW_ROUND_6_FINDINGS_CLOSED=1
+SHIPPED_FILES_CHANGED_THIS_ROUND=1
+CANONICAL_SCHEMA_COUNT=59
+NEW_SCHEMA_FILES_ADDED_THIS_ROUND=0
+NEW_BRANCH=false
+NEW_PR=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+```
+
+本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。

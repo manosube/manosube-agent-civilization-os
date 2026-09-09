@@ -26,9 +26,11 @@ Structural Review Round 2 (P15-R2-F1/F2), which reopened and supersedes Round 1'
 corrections for F4 and F6; section 12 records Structural Review Round 3 (P15-R3-F1/F2), which
 reopened and supersedes both of Round 2's; section 13 records Structural Review Round 4
 (P15-R4-F1/F2), which reopened and supersedes both of Round 3's; section 14 records Structural
-Review Round 5 (P15-R5-F1/F2/F3), which reopens and supersedes Round 4's F1 and adds a third,
-independent finding about timestamp ordering at declaration commit. Where two sections differ,
-the **highest-numbered** section governs.
+Review Round 5 (P15-R5-F1/F2/F3), which reopened and supersedes Round 4's F1 and added a third,
+independent finding about timestamp ordering at declaration commit; section 15 records Structural
+Review Round 6 (P15-R6-F1), which reopens and supersedes Round 5's F2 — the per-call admission
+recheck ran once, at the start of the request, and never re-established the resolved record's own
+integrity. Where two sections differ, the **highest-numbered** section governs.
 
 ## 1. Position
 
@@ -2631,6 +2633,299 @@ RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
 RUNTIME_ROOT_ADMISSION_COMMIT_ENTRY_POINT_COUNT=1
 COMMIT_STATE_TRANSITION_CALL_SITES_IN_THIS_PACKAGE=2
 CLOSED_ROUND_1_TO_4_WORK_REGRESSED=false
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+```
+
+## 15. Structural Review Round 6 (P15-R6-F1)
+
+Round 6 of PR #65 confirmed Round 5's F1 (the closure-carried ownership boundary) and F3 (real
+UTC instant ordering) closed, and **reopened Round 5's own F2**: the per-call admission recheck
+existed and ran, but it ran *once*, at the start of the request, and it never re-established that
+the record then resolving was still the record composition had proved. Where this section and an
+earlier one differ, this section governs — the same rule every earlier round states.
+
+The recurrence series continues, and Round 6's entry names the step that was still missing:
+
+```text
+ROUND 4   the trust decision was STILL A PARAMETER     -> replaced by an OWNERSHIP BOUNDARY
+                                                          carried by an opaque VALUE TYPE
+ROUND 5   the OWNERSHIP BOUNDARY was carried by a      -> replaced by a CLOSURE, plus a per-call
+          PUBLIC DATACLASS, and an already-composed       recheck that the bound admission is
+          service minted capabilities from a              still the current one
+          superseded admission forever
+ROUND 6   the per-call recheck ran ONCE, at the start  -> replaced by TWO BARRIERS over an
+          of the request, and only ever read fields       IMMUTABLE COMPOSITION-TIME COMMITMENT:
+          the resolved record declared about itself      the second barrier runs immediately
+                                                          before issuance, from its own fresh
+                                                          Boot, and both recompute identity and
+                                                          fingerprint FROM THE RESOLVED BODY
+```
+
+### 15.1 P15-R6-F1 — the two open halves of the Round 5 barrier
+
+*Claimed (Round 5, §14.2):* every new capability issuance rechecks the bound admission's
+currency, so a rotated or revoked composition authority mints no new capability.
+
+*True, and insufficient in two independently reproducible ways.*
+
+**1. Post-check rotation/revocation race.** The recheck ran at the top of the request-facing
+closure. Grants, declarations and subjects were then resolved and every Authority decision
+evaluated — real work, taking real time — and the capability was finally constructed and returned
+from that **same original Boot snapshot**, with no second barrier anywhere. A canonical rotation
+or revocation committing in that window was therefore still followed by a newly issued capability,
+which directly violates the adopted condition that rotation and revocation prevent *new capability
+issuance*.
+
+```text
+t0  Boot #1, recheck passes                 admission A is current
+t1  resolve grants/declarations/subjects
+t2  evaluate_projection_authorization
+t3  canonical rotation A -> B COMMITS       admission A is no longer current
+t4  construct ProjectionExecutionContext    <- ROUND 5 ISSUED A CAPABILITY HERE
+```
+
+**2. Resolved-record integrity was never re-established.** The recheck schema-validated the
+resolved record and then checked four things — generation, status, project_id,
+project_binding_ref — and every one of them reads a field *the resolved body itself declares*. It
+never recomputed `runtime_root_admission_id` or the semantic fingerprint from that body, and never
+compared the body against the admission admitted at composition. A Store-level substitution under
+the **current, unmoved id** therefore passed the entire gate:
+
+```text
+substituted body        declared_at (or predecessor_ref, or signature) ALTERED
+                        generation / status / project_id / project_binding_ref UNCHANGED
+                        its own declared id and semantic fingerprint UNCHANGED
+
+Round 5 requirement 1   pointer still names the captured id            PASSES (never moved)
+Round 5 requirement 2   generation equals the captured one             PASSES (unchanged)
+Round 5 requirement 3   status is ACTIVE                               PASSES (unchanged)
+Round 5 requirement 4   restates this Project and Binding              PASSES (unchanged)
+signature reverification                                               NOT PERFORMED — the anchor
+                                                                       is gone by then, by design
+```
+
+Composition proved the ORIGINAL record. The per-call recheck only ever re-proved that certain of
+that record's fields still read a particular way.
+
+*Now:* one bounded forward correction, entirely inside `bootstrap.py`. Round 5's closure boundary
+and the Round 5 timestamp owner are unchanged.
+
+```text
+AT COMPOSITION   bound_admission_id          )  an immutable canonical commitment to the EXACT
+                 bound_generation            )  anchor-verified admission, captured in closure
+                 bound_semantic_fingerprint  )  cells before any request boundary exists.
+                                                The fingerprint is the new one: it was already
+                                                independently recomputed and proved equal to its
+                                                own declared value by _require_currently_admitted,
+                                                and is now also retained.
+
+ON EVERY REQUEST _require_bound_admission_still_current recomputes the CURRENTLY RESOLVED body's
+                 own identity and semantic fingerprint FROM THAT BODY, and requires exact equality
+                 with the captured commitment. SIX requirements now, not four.
+
+BEFORE ISSUANCE  after ALL grant/declaration/subject resolution and Authority evaluation, and
+                 immediately before the capability is constructed, the operation Boots AGAIN and
+                 repeats the FULL check — identity, fingerprint, generation, status,
+                 Project/Binding, all of it, not a subset. The returned context's
+                 state_revision/semantic_fingerprint come from that FINAL Boot.
+```
+
+The six requirements, in the order they are checked:
+
+```text
+1. the Store's current-admission pointer still names the exact admission id captured at
+   composition
+2. the resolved current admission carries the exact captured generation
+3. the current admission is still ACTIVE
+4. it still restates this bound service's own Project and Project Binding
+5. its identity, INDEPENDENTLY RECOMPUTED FROM THE BODY NOW RESOLVING, equals the captured
+   identity                                                                          [NEW]
+6. its semantic fingerprint, likewise recomputed from that body, equals the captured
+   fingerprint                                                                       [NEW]
+```
+
+**Why recomputing from the body — rather than reading the body's own declared id and fingerprint —
+is what actually closes the substitution gap.** A substituted body can declare *anything* about
+itself, including an `runtime_root_admission_id` and a
+`runtime_root_admission_semantic_fingerprint` forged to match its own tampered content. Comparing
+a record's declared fields against that same record's other declared fields is a self-comparison,
+and a self-consistent forgery satisfies it trivially. What cannot be forged from the reading side
+is the **reference**: the identity and fingerprint this service captured at composition, from the
+record whose signature it verified against the deployment's own anchor, before any request
+boundary existed. Recomputing the current body's identity from its actual content and comparing
+that against the captured reference is the only form of the check that asks the question the
+finding names — *is this still the same record?* — rather than *does this record agree with
+itself?*
+
+**Why 5 and 6 are checked last.** It is the identical ordering `_require_currently_admitted`
+already keeps for its own currency check, and for the identical reason: requirements 2–4 each name
+a specific, independently meaningful way the current admission can have stopped being what this
+service was composed against, and any body failing one of them necessarily also fails 5.
+Recomputing first would collapse every one of those refusals into a single indistinguishable
+"identity mismatch" message and stop each control proving what it claims. Recomputing last leaves
+5 and 6 isolated by exactly the case nothing else can see — a substituted body whose declared
+generation, status, Project and Binding are untouched.
+
+```text
+compose at A -> rotation to ACTIVE B lands between barrier 1 and barrier 2  -> no capability
+compose at A -> revocation to REVOKED B lands at the same point             -> no capability
+compose at A -> body substituted under A's own unmoved id                   -> no capability,
+                                                                               refused at
+                                                                               barrier 1, with
+                                                                               0 authorization
+                                                                               evaluations and
+                                                                               0 adapter calls
+compose at A -> nothing changes                                             -> working capability,
+                                                                               controlled adapter
+                                                                               reached
+unrelated State bump between the two barriers                               -> capability issued;
+                                                                               its context
+                                                                               snapshots the FINAL
+                                                                               Boot
+```
+
+**Scope, unchanged and still disclosed.** Already-issued downstream capabilities are still not
+retroactively revoked (§14.2); this round moves the boundary from "current at the start of the
+request" to "current at the instant of issuance", and claims nothing beyond that. The closure's
+bound cells remain rewritable by in-process code that already holds the function object (§14.5,
+item 1) — a commitment captured in a cell is a commitment against a *Store*, never against the
+process's own memory.
+
+### 15.2 Finding-to-code-to-test matrix
+
+```text
+P15-R6-F1  manifestation 1 — post-check rotation/revocation race
+  src/manosube_agent_civilization/runtime/bootstrap.py
+      compose_trusted_runtime_deployment_authority  captures bound_semantic_fingerprint beside
+                                                    bound_admission_id/bound_generation
+      bootstrap_projection_execution_capability     second _boot + second
+                                                    _require_bound_admission_still_current,
+                                                    immediately before the
+                                                    ProjectionExecutionContext construction;
+                                                    state_revision/semantic_fingerprint sourced
+                                                    from that final Boot
+      _boot                                         three call points now, one literal call site
+
+  tests/contract/runtime/test_runtime_static_conformance.py
+      test_the_admission_barrier_runs_again_immediately_before_the_capability_is_constructed
+      test_the_admission_gate_precedes_every_grant_and_authority_call_by_construction (unweakened)
+      test_bootstrap_calls_boot_project_exactly_once (unweakened)
+  tests/integration/runtime/test_runtime_deployment_authority_composition.py
+      test_a_rotation_landing_between_the_two_barriers_returns_no_capability
+      test_a_revocation_landing_between_the_two_barriers_returns_no_capability
+      test_the_issued_context_snapshots_the_final_boot_not_the_initial_one
+      test_an_unchanged_current_admission_still_issues_a_working_capability
+
+P15-R6-F1  manifestation 2 — resolved-record integrity never re-established
+  src/manosube_agent_civilization/runtime/bootstrap.py
+      _require_bound_admission_still_current        six requirements; 5 and 6 recompute
+                                                    runtime_root_admission_id and
+                                                    runtime_root_admission_semantic_fingerprint
+                                                    from the resolved body and compare against the
+                                                    composition-time commitment
+                                                    (bound_semantic_fingerprint is its new
+                                                    keyword parameter)
+
+  tests/integration/runtime/test_runtime_deployment_authority_composition.py
+      test_a_record_body_substituted_under_the_current_id_issues_no_capability
+      test_an_unchanged_current_admission_still_issues_a_working_capability
+
+P15-R6-F1  item 6 — the closed request signature is unchanged
+  tests/contract/runtime/test_runtime_static_conformance.py
+      test_the_admission_barrier_runs_again_immediately_before_the_capability_is_constructed
+      test_the_request_facing_bootstrap_accepts_no_trust_deciding_parameter (unweakened)
+      test_the_composition_entry_point_owns_every_trust_deciding_parameter (unweakened)
+```
+
+### 15.3 Judgment calls made in this round that the adopted findings did not fully pin down
+
+1. **Only the State snapshot moves to the final Boot; the Human Authority binding does not.**
+   `human_authority_ref` and `human_authority_signing_key` — and therefore the `decisions`,
+   the `authorities`, and the context's own `github_authority_ref` — remain sourced from the
+   **first** Boot, exactly as before. They are what the Authority evaluation actually ran against
+   and what the returned capability legitimately represents. Re-deriving them from the final Boot
+   would let the context claim it was authorized under a Human Authority binding no evaluation
+   ever used, if a re-binding landed between the two Boots — a strictly worse defect than the one
+   being closed. The adopted text's item 4 names `state_revision`/`semantic_fingerprint`, and only
+   those move.
+
+2. **Requirements 5 and 6 are ordered last, after 2–4.** The adopted text requires all six at both
+   barriers and does not pin their order. Ordering the recomputation last keeps each of the four
+   Round 5 controls refusing for its own distinguishable reason (see §15.1); ordering it first
+   would have made 2–4 unreachable in practice, since any body failing them also fails 5.
+
+3. **The substitution control is arranged as a Store proxy, not by overwriting the
+   `FileStateStore`'s own record files.** That store independently detects a permanent record file
+   diverging from its promoting transaction's staged copy and refuses with its own corruption
+   error (`SAME_ID_DIFFERENT_BODY_MUST_FAIL_CLOSED`). A file-level tamper would therefore be
+   caught by a pre-existing, unrelated mechanism and would prove nothing about this recheck. The
+   proxy returns a substituted body under the unchanged current id, which is precisely the reading
+   side of the threat the finding names.
+
+4. **The barrier for the race controls hooks the first grant resolution.** The request-facing
+   operation Boots and runs barrier 1 before resolving any grant, and Boots and runs barrier 2
+   only after every grant, declaration and subject has resolved and every Authority decision has
+   been evaluated — so a grant resolution fires strictly between the two, exactly once for a
+   single-grant request. The controls assert the injection genuinely fired, that a real successor
+   genuinely committed and now owns the chain pointer, and that the Authority evaluation genuinely
+   ran (which is what places the refusal at the *second* barrier rather than the first).
+
+5. **The unrelated-contention control asserts `semantic_fingerprint` equality, not inequality.**
+   `semantic_fingerprint` is a pure function of *semantic* State, so committing a record that
+   participates in no semantic claim moves `state_revision` and leaves the fingerprint alone. That
+   is disclosed in the control's own docstring rather than papered over by manufacturing a
+   semantic change: both fields are asserted to equal what is current at the moment of return,
+   which is the property item 4 names, and `state_revision` is what makes the two snapshots
+   distinguishable at all.
+
+### 15.4 Round 6 declarations
+
+```text
+ADMISSION_BARRIERS_PER_REQUEST_FACING_CALL=2
+PRE_ISSUANCE_ADMISSION_BARRIER_EXISTS=true
+FINAL_BARRIER_READS_ITS_OWN_FRESH_BOOT=true
+ISSUED_CONTEXT_STATE_SNAPSHOT_SOURCED_FROM_FINAL_BOOT=true
+ISSUED_CONTEXT_AUTHORITY_BINDING_SOURCED_FROM_INITIAL_BOOT=true
+COMPOSITION_CAPTURES_AN_IMMUTABLE_ADMISSION_COMMITMENT=true
+COMMITMENT_INCLUDES_SEMANTIC_FINGERPRINT=true
+PER_CALL_RECHECK_REQUIREMENT_COUNT=6
+PER_CALL_RECHECK_RECOMPUTES_IDENTITY_FROM_THE_RESOLVED_BODY=true
+PER_CALL_RECHECK_RECOMPUTES_FINGERPRINT_FROM_THE_RESOLVED_BODY=true
+PER_CALL_RECHECK_TRUSTS_THE_RESOLVED_BODYS_OWN_DECLARED_IDENTITY=false
+ROTATION_LANDING_BETWEEN_THE_TWO_BARRIERS_ISSUES_A_CAPABILITY=false
+REVOCATION_LANDING_BETWEEN_THE_TWO_BARRIERS_ISSUES_A_CAPABILITY=false
+CURRENT_ID_BODY_SUBSTITUTION_ISSUES_A_CAPABILITY=false
+CURRENT_ID_BODY_SUBSTITUTION_REFUSED_BEFORE_AUTHORITY_EVALUATION=true
+UNCHANGED_CURRENT_ADMISSION_STILL_ISSUES_A_WORKING_CAPABILITY=true
+UNRELATED_STATE_CONTENTION_BLOCKS_ISSUANCE=false
+REQUEST_FACING_BOOTSTRAP_PARAMETER_COUNT=2
+NEW_PUBLIC_REQUEST_PARAMETER_ADDED=0
+REQUEST_FACING_SIGNATURE_CHANGED_SINCE_ROUND_5=false
+CURRENCY_RECHECK_REQUIRES_A_RAW_TRUST_ANCHOR=false
+ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false
+CLOSURE_CELLS_ARE_UNWRITABLE_BY_IN_PROCESS_CODE=false
+ROUND_5_CLOSURE_BOUNDARY_CHANGED=false
+ROUND_5_TIMESTAMP_OWNER_CHANGED=false
+INSTANT_PARSING_OWNER_COUNT_IN_THIS_PACKAGE=1
+ADMISSION_REGISTRY_CHANGED=false
+TRANSITION_CHAIN_CHANGED=false
+RUNTIME_IDENTITY_CHANGED=false
+ENGINE_CHANGED=false
+ROUTE_CHANGED=false
+DEPLOYMENT_REGISTRY_CHANGED=false
+SHIPPED_FILES_CHANGED_THIS_ROUND=1
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+NEW_SCHEMA_FILES_ADDED=0
+CANONICAL_SCHEMA_COUNT=59
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
+COMMIT_STATE_TRANSITION_CALL_SITES_IN_THIS_PACKAGE=2
+CLOSED_ROUND_1_TO_5_WORK_REGRESSED=false
 LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
