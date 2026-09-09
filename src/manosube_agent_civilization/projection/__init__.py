@@ -49,6 +49,11 @@ from .errors import (
     ProjectionTerminalClaimMismatchError,
     ProjectionValueError,
 )
+from .execution import (
+    PreIssuedProjectionAuthority,
+    ProjectionExecutionCapability,
+    ProjectionExecutionContext,
+)
 from .github_adapter import FakeGitHubAdapter, RealGitHubAdapter
 from .receipt_handoff import route_observation_receipt_to_evidence
 from .route import project_to_github
@@ -70,10 +75,13 @@ __all__ = [
     "FakeGitHubAdapter",
     "GitHubAdapter",
     "GitHubObservationReceipt",
+    "PreIssuedProjectionAuthority",
     "ProjectionAdapterError",
     "ProjectionConcurrentClaimError",
     "ProjectionEnvelopeIntegrityError",
     "ProjectionError",
+    "ProjectionExecutionCapability",
+    "ProjectionExecutionContext",
     "ProjectionReconciliationRequiredError",
     "ProjectionRequirementError",
     "ProjectionTerminalClaimMismatchError",

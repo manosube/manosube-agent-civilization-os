@@ -370,6 +370,40 @@ PHASE_15_RUNTIME_PROVISIONING_REQUIRED=true
 ```
 
 `V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
+Structural Review Round 13's own correction
+(`ADOPT_P14_R13_SHIPPED_BOUND_PROJECTION_EXECUTION_CAPABILITY`) -- see `PROJECTION_CONTRACT.md`
+§21 for the full detail: the opaque context types and the formal execution interface Round 12
+proved complete are moved out of `tests/fixtures` into the shipped
+`src/manosube_agent_civilization/projection/execution.py`, importable from the installed Kernel
+wheel without importing `tests` at all (`ProjectionExecutionContext`,
+`PreIssuedProjectionAuthority`, `execution_context_still_current`,
+`ProjectionExecutionCapability`); `tests/fixtures/v3_live_write_authority.py` now imports these
+back under their historical names as plain aliases, proved identical by static conformance.
+Round 12's own plain, stateless execution entry point -- structurally insufficient as a *bound*
+capability, since nothing prevented a caller threading a different context into each call -- is
+replaced by `ProjectionExecutionCapability`, constructed exactly once from one verified context;
+its own single adapter-reaching method accepts no `context`/`store`/`project_id`/
+`project_binding_id`/subject-body/grant-body parameter of any kind, proven absent from its own
+signature by introspection. A decisive attacker control (authorized for the *identical* target
+repository, projection kinds, payloads, and actions as the genuine one -- never a target/payload
+mismatch, unlike Round 12's own retained-but-relabeled control) proves there is no legitimate
+call shape through which a different context could ever be substituted into an already-bound
+capability; a subsequent legitimate call proves the capability still resolves only its own
+genuine, bound Store. A dedicated control proves an unrelated Store mutation between two calls
+on the same capability still refuses before the controlled adapter is ever reached again, while
+the capability's own internally refreshed freshness snapshot lets its own legitimate sequential
+calls survive their own prior commits without the caller manually threading state forward:
+
+```text
+SHIPPED_RUNTIME_INJECTION_INTERFACE_PROVED=true
+TRUSTED_CONTEXT_BOUND_ONCE=true
+ATTACKER_CONTEXT_SUBSTITUTION_REFUSED=true
+REAL_RUNTIME_CONTEXT_PROVISIONED=false
+LIVE_GITHUB_WRITE_EXECUTED=false
+PHASE_15_RUNTIME_PROVISIONING_REQUIRED=true
+```
+
+`V3_LIVE_EXTERNAL_WRITE_AUTHORITY=false` still holds, unchanged by any of this.
 `PHASE_14_COMPLETE` and `PHASE_15_ALLOWED` remain `false`: these correction rounds close their
 own respective structural findings, not Phase 14 itself, which still awaits a separate SHUKOU
 decision.

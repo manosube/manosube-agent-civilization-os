@@ -1673,3 +1673,108 @@ cleanup correction (§14, `P14_R6_F1`) remains intact.
 ```text
 P14_R12_F1_CLOSED=true
 ```
+
+## 21. Structural Review Round 13 corrections (`ADOPT_P14_R13_SHIPPED_BOUND_PROJECTION_EXECUTION_CAPABILITY`)
+
+**F1: the generic opaque execution-context types and the adapter-reaching execution interface
+move out of `tests/fixtures` into the shipped `src/manosube_agent_civilization` ownership
+surface.** Round 12's own formal interface proved a closed parameter shape complete, but it
+still lived only in this repository's own test-fixture module -- a "formal, source-edit-free
+interface" that a real deployment could call unchanged, once Phase 15 exists, cannot itself live
+in `tests`: production code that will one day call it would have to import a test module to do
+so. `src/manosube_agent_civilization/projection/execution.py` now defines
+`ProjectionExecutionContext` (renamed from `V3AuthorizedExecutionContext`),
+`PreIssuedProjectionAuthority` (renamed from `V3PreIssuedProjectionAuthority`),
+`execution_context_still_current` (renamed from `v3_execution_context_still_current`), and the
+new `ProjectionExecutionCapability` class -- all re-exported from
+`manosube_agent_civilization.projection`, importable from the installed Kernel wheel without
+importing `tests` at all. `tests/fixtures/v3_live_write_authority.py` now imports these three
+renamed names back under their historical names as plain aliases (`V3AuthorizedExecutionContext
+= ProjectionExecutionContext`, etc.) -- proved identical by
+`test_v3_context_and_authority_types_are_the_shipped_production_types` -- so every existing
+caller of `resolve_v3_live_write_authority` (which still lives in the test-fixture layer: V3
+target configuration parsing and test-material/signing builders remain test-only, per this
+finding's own explicit boundary) needs no change. Two new static conformance tests prove the
+direction explicitly: `test_shipped_execution_module_imports_no_tests_module` (an AST walk of
+`execution.py`'s own import statements) and, more broadly,
+`test_shipped_kernel_package_imports_no_tests_module_anywhere` (an AST walk of every `.py` file
+under the entire shipped package, proving production code imports no `tests.*` module anywhere,
+not merely the two V3-specific literal names the pre-existing
+`test_shipped_kernel_package_contains_no_v3_authority_material` already scanned for).
+
+**F2: the trusted context is bound once, at construction, never re-accepted on a later call.**
+Round 12's own `execute_v3_authorized_projection` was a plain, stateless function re-accepting
+*context* fresh on every call -- adequate to prove the interface's own parameter shape closed,
+but structurally insufficient as a *bound* capability: nothing in its own shape prevented a
+caller from threading a *different* context object into each call, so "this run is bound to one
+trusted context" was a discipline every caller had to maintain by hand, never something the
+interface itself enforced. `ProjectionExecutionCapability` replaces it: constructed exactly once
+from one verified, currently-fresh `ProjectionExecutionContext` (raising
+`ProjectionRequirementError` at construction for a missing or already-stale context); its own
+single adapter-reaching method, `execute(*, projection_kind, target_repository,
+projection_payload, adapter, materialized_at, attempt_claim_token)`, accepts no `context`,
+`store`, `project_id`, `project_binding_id`, subject body, or grant/declaration body of any kind
+-- not merely refused if supplied, but absent from its own signature entirely, proved by
+`test_projection_execution_capability_execute_accepts_no_context_replacing_parameter` via
+`inspect.signature` directly on the class. Every call threads only the context bound at
+construction; on success, the capability replaces only its own internally held freshness
+snapshot (`state_revision`/`semantic_fingerprint`, re-observed from the same Store immediately
+after that call's own commit) -- never through any parameter or attribute a caller can reach --
+so a run of several sequential calls survives its own prior commits without the caller manually
+threading a refreshed context forward (Round 12's own required discipline), while any *external*
+Store mutation between two calls is still detected and refused, fail-closed, before the
+controlled adapter is ever reached again.
+
+**Required decisive attacker control (not a target/payload mismatch).** Round 12's own attacker
+control relied on the attacker's context being bound to a *different* `target_repository`,
+refused only because `project_to_github`'s own exact-binding check compared the caller-supplied
+target against that binding -- evidence against a target-mismatch attack, but not against context
+substitution itself. Round 13 requires, and
+`test_attacker_context_authorized_for_the_identical_target_cannot_be_substituted_into_a_bound_
+capability` proves, a fully self-consistent attacker context authorized for the *identical*
+target repository, projection kinds, payloads, and actions as the genuine one: `execute`'s own
+signature has no `context`-accepting parameter at all, so attempting to force one in anyway via
+an unrecognized keyword is refused by Python itself -- a `TypeError` before a single line of
+`execute`'s own body ever runs, and therefore before the trip-wire `_ForbiddenCallAdapter` passed
+alongside it could ever be reached either. A subsequent, legitimate call on the same capability
+still succeeds and still returns the genuine context's own subject, proving the capability
+continues to resolve/revalidate only the genuine Store it was actually bound to. Round 12's own
+target-mismatch control is retained, relabeled explicitly as *not* evidence for this
+requirement.
+
+**Required positive controls.**
+`test_v3_authorized_capability_reaches_the_controlled_adapter_for_all_three_projection_kinds`
+constructs one `ProjectionExecutionCapability` from one genuinely resolved context and invokes
+`execute` for Difference, Change, and Evidence in sequence on that *same* capability instance --
+proving the same bound Store/Project/Binding and exact pre-issued records reach
+`project_to_github` for all three kinds, and that legitimate sequential calls survive their own
+commits through the capability's internally refreshed freshness snapshot, with zero network
+calls of any kind.
+`test_capability_refuses_before_the_adapter_after_an_unrelated_store_mutation_between_calls`
+proves the complementary control: a legitimate first call succeeds, an unrelated transaction
+then commits to the identical project through something other than this capability, and a second
+call on the same capability refuses (`ProjectionRequirementError`) before the controlled adapter
+is ever reached, via a `_ForbiddenCallAdapter` trip-wire. All prior projection recovery, receipt
+attestation, claim integrity, and Round 6 cleanup controls are preserved unchanged -- this
+round's diff touches no code any of those tests exercise.
+
+`09_PROJECTION/PROJECTION_INDEX.md` is updated to record the additional required distinction:
+
+```text
+SHIPPED_RUNTIME_INJECTION_INTERFACE_PROVED=true
+TRUSTED_CONTEXT_BOUND_ONCE=true
+ATTACKER_CONTEXT_SUBSTITUTION_REFUSED=true
+REAL_RUNTIME_CONTEXT_PROVISIONED=false
+LIVE_GITHUB_WRITE_EXECUTED=false
+PHASE_15_RUNTIME_PROVISIONING_REQUIRED=true
+```
+
+All previously closed Phase 14 findings remain closed and untouched by this round's diff.
+Round 12's own `RUNTIME_INJECTION_INTERFACE_PROVED=true` distinction (§20) is superseded by the
+more specific `SHIPPED_RUNTIME_INJECTION_INTERFACE_PROVED=true`/`TRUSTED_CONTEXT_BOUND_ONCE=true`
+pair above, reflecting that the interface it names now actually ships.
+
+```text
+P14_R13_F1_CLOSED=true
+P14_R13_F2_CLOSED=true
+```

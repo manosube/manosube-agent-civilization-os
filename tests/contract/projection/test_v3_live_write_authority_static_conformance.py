@@ -35,12 +35,27 @@ already establish, applied here to prove:
    type/loader/opener no longer exist. ``resolve_v3_live_write_authority`` accepts no
    ``subjects``/``subject_record``/``subject_records`` parameter of any kind -- every subject
    it consumes is resolved from the Store by reference alone.
-7. Structural Review Round 12 (P14-R12-F1): the formal Phase 14 execution interface,
-   ``execute_v3_authorized_projection``, requires the opaque context as its own first argument
-   and accepts no Store-selecting field, no authoritative body parameter, and no separate
-   subject mapping either -- the identical closed shape this file already proves for
-   ``resolve_v3_live_write_authority``, now proved for the interface that actually reaches the
-   adapter.
+7. Structural Review Round 12 (P14-R12-F1): the formal Phase 14 execution interface required
+   the opaque context as its own first argument and accepted no Store-selecting field, no
+   authoritative body parameter, and no separate subject mapping either -- the identical closed
+   shape this file already proves for ``resolve_v3_live_write_authority``, now proved for the
+   interface that actually reaches the adapter.
+8. Structural Review Round 13 (P14-R13-F1/F2): the opaque context types and the bound-once
+   execution capability now live in the shipped ``manosube_agent_civilization.projection``
+   package itself -- ``ProjectionExecutionContext``, ``PreIssuedProjectionAuthority``,
+   ``execution_context_still_current``, and ``ProjectionExecutionCapability`` -- importable
+   from the installed Kernel wheel without importing ``tests`` at all; this file's own
+   ``tests.fixtures.v3_live_write_authority`` (the live gate module) names for these types are
+   now proved to be plain aliases for the shipped ones, never separate definitions.
+   ``ProjectionExecutionCapability.execute``, the shipped capability's own single
+   adapter-reaching method, accepts no ``context``, ``store``, ``project_id``, or
+   ``project_binding_id`` parameter of any kind on its own signature -- there is no legitimate
+   call shape through which a caller could ever substitute a different trust root into a
+   capability already bound to one at construction. The entire shipped Kernel package is proved
+   to import no ``tests.*`` module anywhere in its own source (not merely the two V3-specific
+   literals items 1-4 above already covered), and the integration harness that exercises the
+   complete V3 vertical proof is proved to import ``ProjectionExecutionCapability`` from the
+   shipped package directly, never through the test-fixture layer.
 """
 
 from __future__ import annotations
@@ -53,8 +68,10 @@ from types import ModuleType
 
 import tests.fixtures.v3_authority_test_material as test_material_module
 import tests.fixtures.v3_live_write_authority as live_gate_module
+import tests.integration.projection.test_v3_real_github_vertical_proof as integration_harness_module
 
 import manosube_agent_civilization
+import manosube_agent_civilization.projection.execution as shipped_execution_module
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 _SHIPPED_PACKAGE_ROOT = pathlib.Path(manosube_agent_civilization.__file__).resolve().parent
@@ -175,6 +192,12 @@ def test_live_gate_module_defines_no_private_key_or_signing_capability() -> None
         "load_v3_trusted_boot_root",
         "open_v3_trusted_store",
         "V3_TRUSTED_BOOT_ROOT_ENV",
+        # Structural Review Round 13 (P14-R13-F2): the plain, stateless Round 12 execution
+        # entry point is removed outright, replaced by the shipped, bound-once
+        # ProjectionExecutionCapability -- this test-fixture module defines no capability of
+        # its own.
+        "execute_v3_authorized_projection",
+        "ProjectionExecutionCapability",
     ):
         assert not hasattr(live_gate_module, removed_name)
 
@@ -271,27 +294,117 @@ def test_v3_authorized_execution_context_carries_the_caller_injected_store_and_r
 
 
 # ---------------------------------------------------------------------------
-# Structural Review Round 12 (P14-R12-F1): the formal execution interface itself,
-# execute_v3_authorized_projection, requires the opaque context and accepts none of the
-# forbidden shapes -- the identical closed-parameter discipline this file already proves for
-# resolve_v3_live_write_authority, extended to the function that actually reaches the adapter.
+# Structural Review Round 13 (P14-R13-F1/F2): the opaque context types and the bound-once
+# execution capability now live in the shipped manosube_agent_civilization.projection package
+# itself, not in tests.fixtures.v3_live_write_authority -- this file's own live-gate-module names
+# for them are proved to be plain aliases, never separate definitions. The shipped capability's
+# own single adapter-reaching method accepts no context/store/project-identity-replacing
+# parameter of any kind, and the shipped module itself, along with the entire shipped Kernel
+# package, is proved to import no tests.* module anywhere.
 # ---------------------------------------------------------------------------
 
 
-def test_execute_v3_authorized_projection_requires_the_opaque_context_first() -> None:
-    signature = inspect.signature(live_gate_module.execute_v3_authorized_projection)
+def test_v3_context_and_authority_types_are_the_shipped_production_types() -> None:
+    """The live gate module defines no separate ``V3AuthorizedExecutionContext``/
+    ``V3PreIssuedProjectionAuthority``/``v3_execution_context_still_current`` of its own any
+    more -- each is the identical object the shipped
+    ``manosube_agent_civilization.projection.execution`` module defines."""
+
+    assert live_gate_module.V3AuthorizedExecutionContext is (
+        shipped_execution_module.ProjectionExecutionContext
+    )
+    assert live_gate_module.V3PreIssuedProjectionAuthority is (
+        shipped_execution_module.PreIssuedProjectionAuthority
+    )
+    assert live_gate_module.v3_execution_context_still_current is (
+        shipped_execution_module.execution_context_still_current
+    )
+
+
+def test_shipped_execution_module_imports_no_tests_module() -> None:
+    imported = _imported_module_names(shipped_execution_module)
+    assert not any(name == "tests" or name.startswith("tests.") for name in imported)
+
+
+def test_shipped_kernel_package_imports_no_tests_module_anywhere() -> None:
+    """Every ``.py`` file in the entire shipped ``manosube_agent_civilization`` package -- what
+    actually ends up in the wheel -- is AST-walked for its own ``import``/``from ... import``
+    statements; none may name ``tests`` or any ``tests.*`` submodule (Structural Review Round
+    13, P14-R13-F1: production code imports no ``tests.*`` module, proved for the whole shipped
+    package, not merely the V3-specific literal scan
+    ``test_shipped_kernel_package_contains_no_v3_authority_material`` already makes above)."""
+
+    shipped_files = sorted(_SHIPPED_PACKAGE_ROOT.rglob("*.py"))
+    assert shipped_files, "expected at least one shipped module to scan"
+    offenders: list[tuple[str, str]] = []
+    for path in shipped_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "tests" or alias.name.startswith("tests."):
+                        offenders.append((str(path.relative_to(_REPO_ROOT)), alias.name))
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module is not None
+                and (node.module == "tests" or node.module.startswith("tests."))
+            ):
+                offenders.append((str(path.relative_to(_REPO_ROOT)), node.module))
+    assert offenders == []
+
+
+def test_projection_execution_capability_constructor_requires_context_as_first_argument() -> None:
+    signature = inspect.signature(shipped_execution_module.ProjectionExecutionCapability.__init__)
     parameters = list(signature.parameters)
-    assert parameters[0] == "context"
+    assert parameters[:2] == ["self", "context"]
     assert signature.parameters["context"].default is inspect.Parameter.empty
 
 
-def test_execute_v3_authorized_projection_accepts_no_authoritative_or_store_selecting_parameter() -> (
-    None
-):
-    signature = inspect.signature(live_gate_module.execute_v3_authorized_projection)
-    parameter_names = set(signature.parameters)
-    assert parameter_names.isdisjoint(_FORBIDDEN_BODY_PARAMETER_NAMES)
-    assert parameter_names.isdisjoint(_FORBIDDEN_STORE_SELECTING_NAMES)
+def test_projection_execution_capability_execute_accepts_no_context_replacing_parameter() -> None:
+    """Structural Review Round 13 (P14-R13-F2) requirement: the public adapter-reaching method
+    has no context-replacement parameter of any kind -- not merely refused if supplied, but
+    absent from its own signature entirely, provable by introspection alone, independent of any
+    particular constructed instance."""
+
+    signature = inspect.signature(shipped_execution_module.ProjectionExecutionCapability.execute)
+    parameter_names = set(signature.parameters) - {"self"}
+    assert parameter_names.isdisjoint(
+        {"context", "store", "project_id", "project_binding_id"}
+        | set(_FORBIDDEN_BODY_PARAMETER_NAMES)
+    )
+    assert parameter_names == {
+        "projection_kind",
+        "target_repository",
+        "projection_payload",
+        "adapter",
+        "materialized_at",
+        "attempt_claim_token",
+    }
+
+
+def test_integration_harness_imports_the_shipped_capability_directly() -> None:
+    """Structural Review Round 13 (P14-R13-F1) requirement: "The final controlled harness MUST
+    import and exercise the shipped production interface." -- proved here by AST-walking the
+    integration harness module's own import statements for a ``ProjectionExecutionCapability``
+    name imported from the shipped ``manosube_agent_civilization.projection`` package, never
+    from the test-fixture layer (which defines no such name any more)."""
+
+    tree = ast.parse(inspect.getsource(integration_harness_module))
+    found = False
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.module.startswith("manosube_agent_civilization.projection")
+            and any(alias.name == "ProjectionExecutionCapability" for alias in node.names)
+        ):
+            found = True
+    assert found, (
+        "expected the integration harness to import ProjectionExecutionCapability from the "
+        "shipped manosube_agent_civilization.projection package"
+    )
+    assert not hasattr(live_gate_module, "ProjectionExecutionCapability")
+    assert not hasattr(live_gate_module, "execute_v3_authorized_projection")
 
 
 def test_load_v3_live_write_authority_references_refuses_smuggled_store_selecting_keys() -> None:

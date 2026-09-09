@@ -6,20 +6,40 @@ P14-R10-F1; frozen trusted runtime context to adapter chain, Round 11, P14-R11-F
 injection interface and the Phase 15 provisioning boundary, Round 12, P14-R12-F1).
 
 Round 12 (P14-R12-F1, ``ADOPT_P14_R12_RUNTIME_INJECTION_INTERFACE_AND_PHASE15_PROVISIONING_
-BOUNDARY``) redraws the Phase 14/Phase 15 boundary: Phase 14 owns and must prove complete the
-*interface* that consumes an already-resolved, opaque :class:`V3AuthorizedExecutionContext` and
-carries it through to the controlled adapter; Phase 14 does not own selecting/opening the real
-Store, producing the real runtime Boot Context, or injecting it -- that provisioning is Phase
-15's own explicitly deferred responsibility. :func:`execute_v3_authorized_projection` is that
-interface: the sole, formal, public boundary through which *context* ever reaches
-``project_to_github``. It requires *context* as an argument (never builds, selects, or opens
-one of its own), revalidates its own freshness immediately before the adapter-reaching call
-*inside itself* -- never left to a caller's own discipline -- and threads only *context*'s own
-fields into ``project_to_github``. A prior round's collection-time, no-argument live-authorized-
-context gate (``_v3_live_authorized_context()``) claimed a future runtime caller could activate
-it without source edits while it had no actual injection point and always returned ``None`` --
-a permanently-false claim this round removes outright, along with the one pytest assertion that
+BOUNDARY``) redrew the Phase 14/Phase 15 boundary: Phase 14 owns and must prove complete the
+*interface* that consumes an already-resolved, opaque execution context and carries it through
+to the controlled adapter; Phase 14 does not own selecting/opening the real Store, producing the
+real runtime Boot Context, or injecting it -- that provisioning is Phase 15's own explicitly
+deferred responsibility. A prior round's collection-time, no-argument live-authorized-context
+gate (``_v3_live_authorized_context()``) claimed a future runtime caller could activate it
+without source edits while it had no actual injection point and always returned ``None`` -- a
+permanently-false claim Round 12 removed outright, along with the one pytest assertion that
 depended on it, rather than leaving a dead entry point a later reader could mistake for real.
+
+Round 13 (P14-R13-F1/F2, ``ADOPT_P14_R13_SHIPPED_BOUND_PROJECTION_EXECUTION_CAPABILITY``) moves
+the opaque context types and the adapter-reaching execution interface itself out of this
+test-fixture module entirely: :class:`~manosube_agent_civilization.projection.
+ProjectionExecutionContext`, :class:`~manosube_agent_civilization.projection.
+PreIssuedProjectionAuthority`, :func:`~manosube_agent_civilization.projection.
+execution_context_still_current`, and :class:`~manosube_agent_civilization.projection.
+ProjectionExecutionCapability` now live in the shipped ``manosube_agent_civilization.projection``
+package, importable from the installed Kernel wheel without importing ``tests`` at all -- a
+"formal, source-edit-free interface" cannot itself live in ``tests``, since production code that
+will one day call it would otherwise have to import a test module to do so. This module's own
+``V3AuthorizedExecutionContext``/``V3PreIssuedProjectionAuthority``/
+``v3_execution_context_still_current`` names below are now plain aliases for those shipped
+types/function -- retained under their historical names so this module's own callers need not
+change, but no longer separate definitions. :func:`resolve_v3_live_write_authority` still does
+exactly what it always did: resolve untrusted, project-scoped grant/declaration **references**
+and each projection kind's own subject, exclusively within the caller-injected trusted Store,
+into one genuine :class:`~manosube_agent_civilization.projection.ProjectionExecutionContext`.
+Round 12's own module-level ``execute_v3_authorized_projection`` -- a plain, stateless function
+re-accepting *context* fresh on every call -- is removed outright: Round 13 (P14-R13-F2) found it
+structurally insufficient as a *bound* capability, since nothing in its own shape prevented a
+caller from threading a *different* context object into each call. The shipped
+:class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability` replaces it,
+constructed exactly once from a genuine context and exposing no ``context``-accepting parameter
+of any kind on its own adapter-reaching method.
 
 Round 10 (P14-R10-F1) split trust into a Store/Project/Binding root, supplied through its own
 environment variable, and a narrower set of grant/declaration references resolved only within
@@ -85,7 +105,7 @@ therefore detected and refused, never silently accepted.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -114,11 +134,37 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.evidence.identity import (
     evidence_semantic_fingerprint as _evidence_semantic_fingerprint,
 )
-from manosube_agent_civilization.projection import project_to_github
-from manosube_agent_civilization.projection.errors import ProjectionRequirementError
+from manosube_agent_civilization.projection import (
+    PreIssuedProjectionAuthority as V3PreIssuedProjectionAuthority,
+    ProjectionExecutionContext as V3AuthorizedExecutionContext,
+)
+from manosube_agent_civilization.projection.execution import (
+    execution_context_still_current as v3_execution_context_still_current,
+)
 from manosube_agent_civilization.store.errors import StoreError
 
 from .v3_target_configuration import V3TargetConfiguration
+
+#: Structural Review Round 13 (P14-R13-F1): ``V3AuthorizedExecutionContext``,
+#: ``V3PreIssuedProjectionAuthority``, and ``v3_execution_context_still_current`` (imported
+#: above) are now plain aliases for the shipped, production opaque context types and freshness
+#: function -- retained under their historical names so this module's own callers need not
+#: change, but no longer separate definitions of their own. See
+#: ``manosube_agent_civilization.projection.execution`` for the real definitions. Listed
+#: explicitly in ``__all__`` below (required for ``mypy --namespace-packages``'s own
+#: ``no_implicit_reexport`` check to recognize a *renamed* import as a genuine re-export, not an
+#: accidental one) alongside every other name this module intends as public.
+__all__ = [
+    "V3_LIVE_WRITE_AUTHORITY_REFERENCES_ENV",
+    "V3_PERMITTED_ACTION",
+    "V3_PROJECTION_KINDS",
+    "V3AuthorizedExecutionContext",
+    "V3LiveWriteAuthorityReferences",
+    "V3PreIssuedProjectionAuthority",
+    "load_v3_live_write_authority_references",
+    "resolve_v3_live_write_authority",
+    "v3_execution_context_still_current",
+]
 
 #: The one closed permitted-action literal every real GitHub projection operation already uses
 #: (``authority/projection_authorization.py``'s own ``_PERMITTED_ACTIONS``) -- V3's own live
@@ -248,51 +294,6 @@ def load_v3_live_write_authority_references(
         github_projection_grant_refs=grant_refs,
         github_projection_grant_declaration_refs=declaration_refs,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class V3PreIssuedProjectionAuthority:
-    """One pre-issued, Store-resolved, identity-recomputed grant/declaration pair for exactly
-    one projection kind, bound to the real subject the trusted Store's own pre-issued material
-    already names -- never minted, signed, or committed by this module or by the live execution
-    path (Structural Review Round 10, P14-R10-F1). ``subject_ref`` is read only from the
-    resolved, identity-verified grant itself, never independently guessed or constructed here.
-    ``subject_record`` is the real subject's own resolved, identity-verified body (Structural
-    Review Round 11, P14-R11-F1) -- the live execution path threads it straight into
-    ``project_to_github``, so that route never needs, and is never offered, a caller-supplied
-    subject body or a separate subject mapping of any kind."""
-
-    projection_kind: str
-    subject_ref: Mapping[str, str]
-    subject_record: Mapping[str, Any]
-    github_projection_grant_ref: Mapping[str, str]
-    github_projection_grant_declaration_ref: Mapping[str, str]
-
-
-@dataclass(frozen=True, slots=True)
-class V3AuthorizedExecutionContext:
-    """The one resolved, verified authority context a genuinely authorized V3 run threads
-    unchanged into the exact execution function that reaches the GitHub adapter -- never a
-    detached boolean gate followed by a separately fixture-authorized projection, and never a
-    live path capable of minting the subject-specific authority it consumes, or of accepting a
-    caller-supplied subject body (Structural Review Round 9, P14-R9-F1; Round 10, P14-R10-F1;
-    Round 11, P14-R11-F1). Every field here was independently resolved and reverified from the
-    caller-injected trusted Store at the moment of authorization; nothing here was ever
-    accepted as a caller-supplied body. ``store`` is the exact Store object/handle this
-    context's own caller injected -- never one this module opened or selected itself.
-    ``authorities`` carries, for each of :data:`V3_PROJECTION_KINDS`, the exact pre-issued
-    subject/grant/declaration reference (and the resolved subject body itself) the matching
-    ``project_to_github`` call must use -- and no other. ``decisions`` preserves the exact
-    ``evaluate_projection_authorization`` result for each kind."""
-
-    store: Any
-    project_id: str
-    project_binding_id: str
-    github_authority_ref: Mapping[str, Any]
-    authorities: Mapping[str, V3PreIssuedProjectionAuthority]
-    state_revision: int
-    semantic_fingerprint: Mapping[str, Any]
-    decisions: Mapping[str, Mapping[str, Any]]
 
 
 def _resolve_grant(store: Any, project_id: str, ref: Mapping[str, str]) -> Mapping[str, Any] | None:
@@ -565,125 +566,14 @@ def resolve_v3_live_write_authority(
     )
 
 
-def v3_execution_context_still_current(context: V3AuthorizedExecutionContext | None) -> bool:
-    """Re-Boot the identical project/binding *context* already verified, within the identical
-    injected Store *context* itself carries, and require the Store's own
-    ``state_revision``/``semantic_fingerprint`` to be byte-identical to what authorization
-    itself observed -- refusing on any Store mutation between authorization and the moment
-    *context* is actually handed to the adapter-reaching execution call. Intended to be called
-    immediately before *every* adapter-reaching ``project_to_github`` call this run makes, not
-    merely once at the start (Structural Review Round 10, P14-R10-F1). Returns ``False`` for
-    ``context=None`` and never raises."""
-
-    if context is None:
-        return False
-    try:
-        boot_context = boot_project(
-            context.store,
-            project_id=context.project_id,
-            project_binding_id=context.project_binding_id,
-        )
-    except _BOOT_FAILURE_ERRORS:
-        return False
-    current_state = boot_context.current_state
-    return (
-        current_state.get("state_revision") == context.state_revision
-        and current_state.get("semantic_fingerprint") == context.semantic_fingerprint
-    )
-
-
-def execute_v3_authorized_projection(
-    context: V3AuthorizedExecutionContext | None,
-    *,
-    projection_kind: str,
-    target_repository: Mapping[str, Any],
-    projection_payload: Mapping[str, Any],
-    adapter: Any,
-    materialized_at: str,
-    attempt_claim_token: str,
-) -> dict[str, Any]:
-    """The one formal, source-edit-free Phase 14 projection execution interface (Structural
-    Review Round 12, P14-R12-F1) -- the sole boundary through which any caller, present or
-    future, may thread V3 live-write authority into ``project_to_github`` and, through it, the
-    adapter. Requires *context*, an already-resolved, opaque :class:`V3AuthorizedExecutionContext`
-    (:func:`resolve_v3_live_write_authority`'s own return value) -- this function never builds,
-    selects, or opens one of its own. It accepts no Store path, no environment-selected
-    Project/Binding, no embedded authoritative record body, no caller-supplied subject body, no
-    separate ``subjects`` mapping, no signing key, and no Authority assembler: every value it
-    threads into ``project_to_github`` comes from *context* itself (``context.store``,
-    ``context.project_id``, ``context.project_binding_id``,
-    ``context.authorities[projection_kind]``) or from this call's own ordinary per-invocation
-    parameters (*projection_kind*, *target_repository*, *projection_payload*, *adapter*,
-    *materialized_at*, *attempt_claim_token*) -- never a Store selector of any kind.
-
-    Revalidates *context*'s own freshness (:func:`v3_execution_context_still_current`)
-    immediately before this call reaches ``project_to_github``, *inside this function itself* --
-    never left to a caller's own discipline to remember -- so any Store mutation, revision,
-    fingerprint, Binding, subject, grant, declaration, decision, target, payload, or action
-    substitution since *context* was authorized refuses here, before the adapter is ever
-    reached. Raises :class:`~manosube_agent_civilization.projection.errors.
-    ProjectionRequirementError` for ``context=None``, a *context* that is no longer current, or
-    a *projection_kind* not among ``context.authorities`` -- never silently proceeds.
-
-    On success, the returned mapping's own ``"context"`` key carries a refreshed
-    :class:`V3AuthorizedExecutionContext` -- byte-identical to *context* except for
-    ``state_revision``/``semantic_fingerprint``, re-observed from the same Store immediately
-    after this call's own commit. A caller chaining multiple calls against the *same* run (this
-    function's own successful commit necessarily advances the Store's ``state_revision``) must
-    thread ``outcome["context"]`` into the next call rather than reusing the original *context*
-    unchanged -- otherwise the next call's own freshness check would refuse on this call's own
-    legitimate commit, indistinguishable from an external mutation. This is the one genuinely
-    new field this interface adds to the shape ``project_to_github`` itself returns; every other
-    key is unchanged.
-
-    This is Phase 14's own owned interface; it does not select, open, or provision the Store,
-    Project, or Binding *context* itself names -- that is Phase 15's own explicitly deferred
-    responsibility (Structural Review Round 12, P14-R12,
-    ``ADOPT_P14_R12_RUNTIME_INJECTION_INTERFACE_AND_PHASE15_PROVISIONING_BOUNDARY``). Phase 14
-    proves this exact function complete and correct against a genuinely resolved context this
-    repository's own trusted bootstrap fixture supplies; a real deployment's own runtime
-    bootstrap, once Phase 15 exists, calls this exact function unchanged -- no further source
-    edit to this function is required for that later activation."""
-
-    if context is None or not v3_execution_context_still_current(context):
-        raise ProjectionRequirementError(
-            "V3 live-write execution context is missing or no longer reflects the current "
-            "Store state -- refusing before the controlled adapter is ever reached"
-        )
-    if projection_kind not in context.authorities:
-        raise ProjectionRequirementError(
-            f"projection_kind {projection_kind!r} has no pre-issued authority within this "
-            "context -- refusing before the controlled adapter is ever reached"
-        )
-
-    authority = context.authorities[projection_kind]
-    result = dict(
-        project_to_github(
-            context.store,
-            project_id=context.project_id,
-            project_binding_id=context.project_binding_id,
-            subject_ref=authority.subject_ref,
-            projection_kind=projection_kind,
-            target_repository=target_repository,
-            projection_payload=projection_payload,
-            github_authority_ref=dict(context.github_authority_ref),
-            materialized_at=materialized_at,
-            adapter=adapter,
-            github_projection_grant_refs=[authority.github_projection_grant_ref],
-            github_projection_grant_declaration_refs=[
-                authority.github_projection_grant_declaration_ref
-            ],
-            attempt_claim_token=attempt_claim_token,
-            subject_record=authority.subject_record,
-        )
-    )
-    refreshed_boot_context = boot_project(
-        context.store, project_id=context.project_id, project_binding_id=context.project_binding_id
-    )
-    refreshed_state = refreshed_boot_context.current_state
-    result["context"] = replace(
-        context,
-        state_revision=refreshed_state["state_revision"],
-        semantic_fingerprint=refreshed_state["semantic_fingerprint"],
-    )
-    return result
+#: Structural Review Round 13 (P14-R13-F1): the freshness re-validation function is now
+#: ``manosube_agent_civilization.projection.execution_context_still_current``, imported above as
+#: ``v3_execution_context_still_current`` -- a plain alias, not a separate definition. Round 12's
+#: own module-level ``execute_v3_authorized_projection`` (a plain, stateless function
+#: re-accepting *context* fresh on every call) is removed outright: Round 13 (P14-R13-F2) found
+#: it structurally insufficient as a *bound* capability, since nothing in its own shape
+#: prevented a caller from threading a *different* context object into each call. Callers now
+#: construct ``manosube_agent_civilization.projection.ProjectionExecutionCapability`` directly
+#: from the ``ProjectionExecutionContext`` this module's own ``resolve_v3_live_write_authority``
+#: returns -- never through this test-fixture module, which defines no capability-constructing
+#: function of its own.

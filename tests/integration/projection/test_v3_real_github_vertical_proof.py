@@ -28,24 +28,37 @@ against a synthetic but fully validated configuration, with ``urllib.request.url
 monkeypatched to canned GitHub-shaped transport responses -- still no live network access.
 
 Structural Review Round 12 (P14-R12-F1,
-``ADOPT_P14_R12_RUNTIME_INJECTION_INTERFACE_AND_PHASE15_PROVISIONING_BOUNDARY``) redraws the
+``ADOPT_P14_R12_RUNTIME_INJECTION_INTERFACE_AND_PHASE15_PROVISIONING_BOUNDARY``) redrew the
 Phase 14/Phase 15 boundary: Phase 14 owns and must prove complete the formal, source-edit-free
-execution interface (:func:`~tests.fixtures.v3_live_write_authority.
-execute_v3_authorized_projection`) that consumes an already-resolved, opaque
-:class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext` and carries it
-through to the controlled adapter -- proven below by a non-skipped positive control invoking
-that exact interface for all three projection kinds, and by an attacker-world substitution
-control at the interface's own boundary. Selecting/opening the real Store, producing the real
-runtime Boot Context, and injecting it into that interface for a genuine live GitHub write are
-Phase 15's own explicitly deferred responsibility, never a Phase 14 Closure Condition -- this
-file therefore no longer carries a collection-time live-authorized-context gate or any test
-that depends on one.
+execution interface that consumes an already-resolved, opaque execution context and carries it
+through to the controlled adapter. Selecting/opening the real Store, producing the real runtime
+Boot Context, and injecting it into that interface for a genuine live GitHub write are Phase
+15's own explicitly deferred responsibility, never a Phase 14 Closure Condition -- this file
+therefore no longer carries a collection-time live-authorized-context gate or any test that
+depends on one.
+
+Structural Review Round 13 (P14-R13-F1/F2,
+``ADOPT_P14_R13_SHIPPED_BOUND_PROJECTION_EXECUTION_CAPABILITY``) moves that interface, and the
+opaque context types it consumes, into the shipped ``manosube_agent_civilization.projection``
+package, and replaces Round 12's own plain, stateless entry point with
+:class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability` -- constructed
+exactly once from one genuine, resolved context, its own adapter-reaching
+:meth:`~manosube_agent_civilization.projection.ProjectionExecutionCapability.execute` method
+accepting no ``context``, ``store``, ``project_id``, ``project_binding_id``, subject body, or
+grant/declaration body of any kind. Proven below by: a non-skipped positive control constructing
+that exact shipped capability and invoking ``execute`` for all three projection kinds in
+sequence, surviving its own prior commits through the capability's internally refreshed
+freshness snapshot; a decisive attacker-world substitution control at the capability's own
+``execute`` boundary, using an attacker context authorized for the identical target repository
+(never a target/payload mismatch); and a control proving an unrelated Store mutation between two
+calls on the same capability refuses before the adapter is ever reached again.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -60,13 +73,13 @@ from tests.fixtures.product_binding import (
 from tests.fixtures.v3_authority_test_material import (
     V3_RUN_PROJECTIONS,
     build_v3_subject,
+    commit_v3_test_records,
     genuine_v3_authority_store_and_material,
     v3_run_payload,
 )
 from tests.fixtures.v3_live_write_authority import (
     V3_PROJECTION_KINDS,
     V3LiveWriteAuthorityReferences,
-    execute_v3_authorized_projection,
     load_v3_live_write_authority_references,
     resolve_v3_live_write_authority,
     v3_execution_context_still_current,
@@ -93,6 +106,7 @@ from manosube_agent_civilization.binding import bind_project, declare_github_pro
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.projection import (
     FakeGitHubAdapter,
+    ProjectionExecutionCapability,
     RealGitHubAdapter,
     project_to_github,
 )
@@ -921,18 +935,15 @@ _MOCK_CONFIG = V3TargetConfiguration(
 
 # ---------------------------------------------------------------------------
 # Structural Review Round 8 (P14-R8-F1)'s own required positive control, updated for Round 9
-# (P14-R9-F1), and again for Round 12 (P14-R12-F1): a genuinely issued, genuinely
+# (P14-R9-F1), Round 12 (P14-R12-F1), and Round 13 (P14-R13-F1/F2): a genuinely issued, genuinely
 # Store-committed V3 live-write authority -- resolved through the identical canonical
-# Authority/Binding/Boot route the formal execution interface itself consumes -- reaches the
+# Authority/Binding/Boot route the shipped execution capability itself consumes -- reaches the
 # controlled adapter boundary for every projection kind, entirely offline, with zero network
-# calls of any kind. Deliberately drives
-# :func:`~tests.fixtures.v3_live_write_authority.execute_v3_authorized_projection` directly
-# (never ``_run_v3_authorized_execution``, whose own cleanup step always issues a real PATCH
-# regardless of which adapter materialized the artifact, which would defeat the "zero network
-# calls" proof this positive control specifically makes) -- but now threads the *same* resolved
-# :class:`~tests.fixtures.v3_live_write_authority.V3AuthorizedExecutionContext` the live gate
-# itself would produce, rather than a detached ``_run_vertical_proof`` call against an
-# unrelated throwaway Store.
+# calls of any kind. Deliberately constructs the shipped
+# :class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability` directly from
+# one genuinely resolved context (never ``_run_v3_authorized_execution``, whose own cleanup step
+# always issues a real PATCH regardless of which adapter materialized the artifact, which would
+# defeat the "zero network calls" proof this positive control specifically makes).
 # ---------------------------------------------------------------------------
 
 
@@ -968,8 +979,8 @@ def test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_n
 
     monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
 
-    outcome = execute_v3_authorized_projection(
-        context,
+    capability = ProjectionExecutionCapability(context)
+    outcome = capability.execute(
         projection_kind=projection_kind,
         target_repository=dict(_MOCK_CONFIG.target_repository),
         projection_payload=projection_payload,
@@ -981,11 +992,16 @@ def test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_n
 
 
 # ---------------------------------------------------------------------------
-# Structural Review Round 12 (P14-R12-F1) required positive control: the actual formal Phase 14
-# execution interface, execute_v3_authorized_projection -- never a lower helper -- invoked
-# directly for all three projection kinds against one genuinely resolved, preconstructed
-# V3AuthorizedExecutionContext a trusted bootstrap fixture supplies, with the controlled
-# FakeGitHubAdapter and zero network calls of any kind. Cleanup semantics remain covered,
+# Structural Review Round 12 (P14-R12-F1) required positive control, updated for Round 13
+# (P14-R13-F1/F2): the shipped Phase 14 execution capability,
+# manosube_agent_civilization.projection.ProjectionExecutionCapability -- never a lower helper --
+# constructed exactly once from one genuinely resolved, preconstructed
+# ProjectionExecutionContext a trusted bootstrap fixture supplies, then its own ``execute``
+# method invoked directly for all three projection kinds in sequence, with the controlled
+# FakeGitHubAdapter and zero network calls of any kind. Each call's own commit advances the
+# injected Store's own state_revision; the capability's own internally refreshed freshness
+# snapshot (never a value the caller threads by hand, unlike Round 12's own stateless function)
+# is what lets the next call in this same run still succeed. Cleanup semantics remain covered,
 # unchanged, by the retained offline mocked-transport suite below
 # (test_v3_authorized_full_three_projection_run_enforces_the_authorized_artifact_count_and_
 # completes_cleanup) -- disclosed explicitly: exercising FakeGitHubAdapter's own cleanup here
@@ -995,7 +1011,7 @@ def test_authorized_material_reaches_the_controlled_adapter_boundary_with_zero_n
 # ---------------------------------------------------------------------------
 
 
-def test_v3_authorized_interface_reaches_the_controlled_adapter_for_all_three_projection_kinds(
+def test_v3_authorized_capability_reaches_the_controlled_adapter_for_all_three_projection_kinds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, ctx, references = genuine_v3_authority_store_and_material(tmp_path, _MOCK_CONFIG)
@@ -1008,23 +1024,27 @@ def test_v3_authorized_interface_reaches_the_controlled_adapter_for_all_three_pr
     def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
         raise AssertionError(
             "urllib.request.urlopen was called during a controlled-adapter run through the "
-            "formal execution interface -- this must never happen"
+            "shipped execution capability -- this must never happen"
         )
 
     monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
 
+    # Structural Review Round 13 (P14-R13-F2): constructed exactly once, bound to this one
+    # context -- every call below reuses the identical capability object, never a fresh one per
+    # projection kind, proving sequential calls survive their own prior commits through the
+    # capability's own internally refreshed freshness snapshot.
+    capability = ProjectionExecutionCapability(context)
     reached: list[str] = []
     for projection_kind in V3_PROJECTION_KINDS:
         adapter = FakeGitHubAdapter()
-        outcome = execute_v3_authorized_projection(
-            context,
+        outcome = capability.execute(
             projection_kind=projection_kind,
             target_repository=dict(_MOCK_CONFIG.target_repository),
             projection_payload=v3_run_payload(_MOCK_CONFIG, projection_kind),
             adapter=adapter,
             materialized_at="2026-09-08T00:00:01Z",
             attempt_claim_token=(
-                f"PROJECTION-ATTEMPT-V3-INTERFACE-{projection_kind.replace('_', '-')}"
+                f"PROJECTION-ATTEMPT-V3-CAPABILITY-{projection_kind.replace('_', '-')}"
             ),
         )
         assert outcome["receipt"].status == "VERIFIED"
@@ -1032,26 +1052,83 @@ def test_v3_authorized_interface_reaches_the_controlled_adapter_for_all_three_pr
             context.authorities[projection_kind].subject_ref
         )
         reached.append(projection_kind)
-        # This call's own commit advanced the injected Store's own state_revision -- the next
-        # call in this same run must thread the refreshed context forward, exactly as a real
-        # multi-projection runtime caller would, or its own freshness check would refuse on
-        # this call's own legitimate commit (Structural Review Round 12, P14-R12-F1 §4/§5).
-        context = outcome["context"]
 
     assert reached == list(V3_PROJECTION_KINDS)
 
 
+def test_capability_refuses_before_the_adapter_after_an_unrelated_store_mutation_between_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Structural Review Round 13 (P14-R13-F2) required control: a legitimate first call
+    through the bound capability succeeds and advances the injected Store's own
+    ``state_revision``; the capability's own internal freshness snapshot absorbs that -- but an
+    *unrelated* transaction committed to the identical project by something other than this
+    capability (a concurrent Reflow cycle, an unrelated Difference lifecycle event) must still
+    be detected and refused before the controlled adapter is ever reached again, proving the
+    internal refresh only ever absorbs this capability's own prior commits, never masks a real
+    external mutation."""
+
+    store, ctx, references = genuine_v3_authority_store_and_material(tmp_path, _MOCK_CONFIG)
+    context = resolve_v3_live_write_authority(
+        store, ctx["project_id"], ctx["project_binding_id"], _MOCK_CONFIG, references
+    )
+    assert context is not None
+
+    def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
+        raise AssertionError(
+            "urllib.request.urlopen was called during an unrelated-Store-mutation refusal "
+            "control -- this must never happen"
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
+
+    capability = ProjectionExecutionCapability(context)
+    first_outcome = capability.execute(
+        projection_kind="DIFFERENCE_ISSUE",
+        target_repository=dict(_MOCK_CONFIG.target_repository),
+        projection_payload=v3_run_payload(_MOCK_CONFIG, "DIFFERENCE_ISSUE"),
+        adapter=FakeGitHubAdapter(),
+        materialized_at="2026-09-08T00:00:01Z",
+        attempt_claim_token="PROJECTION-ATTEMPT-V3-UNRELATED-MUTATION-FIRST-CALL",  # noqa: S106
+    )
+    assert first_outcome["receipt"].status == "VERIFIED"
+
+    # An unrelated transaction commits to the identical project -- never through this
+    # capability -- after the capability's own legitimate first call.
+    commit_v3_test_records(
+        store,
+        ctx["project_id"],
+        store.load_current(ctx["project_id"]),
+        "TX-V3-CAPABILITY-UNRELATED-MUTATION-0001",
+        [],
+    )
+
+    forbidden_adapter = _ForbiddenCallAdapter(FakeGitHubAdapter())
+    with pytest.raises(ProjectionRequirementError):
+        capability.execute(
+            projection_kind="CHANGE_PULL_REQUEST",
+            target_repository=dict(_MOCK_CONFIG.target_repository),
+            projection_payload=v3_run_payload(_MOCK_CONFIG, "CHANGE_PULL_REQUEST"),
+            adapter=forbidden_adapter,
+            materialized_at="2026-09-08T00:00:02Z",
+            attempt_claim_token="PROJECTION-ATTEMPT-V3-UNRELATED-MUTATION-SECOND-CALL",  # noqa: S106
+        )
+
+
 # ---------------------------------------------------------------------------
 # Structural Review Round 12 (P14-R12-F1) required attacker-world control at the formal
-# interface's own boundary: an attacker's own internally self-consistent, genuinely resolved
-# V3AuthorizedExecutionContext -- built from the attacker's own separate Store and material,
-# exactly like the trusted bootstrap fixture's own genuine context -- cannot be substituted for
-# the trusted bootstrap's own context at execute_v3_authorized_projection's own call boundary
-# and still reach the adapter with this call's own intended (genuine) target repository and
-# payload. The attacker's own pre-issued grant is bound to the attacker's own target_repository
-# at resolve time; supplying the genuine run's own target_repository at execute time therefore
-# fails the exact-binding Authority Decision check inside project_to_github itself, before the
-# adapter is ever reached.
+# interface's own boundary, replaced for Round 13 (P14-R13-F2) by the decisive control the
+# adoption itself requires: the attacker's own context is authorized for the *identical* target
+# repository, projection kinds, payloads, and actions as the genuine one -- this control must
+# never rely on a target or payload mismatch. ``ProjectionExecutionCapability.execute`` has no
+# ``context``/``store``/``project_id``/``project_binding_id`` parameter of any kind on its own
+# signature (proved by :func:`inspect.signature` below, and independently by static
+# conformance) -- there is no legitimate way for any caller to substitute a different context
+# into a capability already bound to one at construction. Attempting to force one in anyway,
+# through a keyword this method's own signature does not accept, is refused by Python itself
+# before a single line of ``execute``'s own body ever runs -- zero adapter/network calls by
+# construction, not merely by outcome -- and the capability continues to resolve only the
+# genuine Store it was actually bound to, proven by a subsequent legitimate call.
 # ---------------------------------------------------------------------------
 
 
@@ -1086,21 +1163,75 @@ class _ForbiddenCallAdapter:
         )
 
 
-def test_attacker_context_cannot_be_substituted_for_the_trusted_bootstrap_context_at_the_interface_boundary(
+def test_execute_signature_carries_no_context_replacing_parameter_of_any_kind(
+    tmp_path: Path,
+) -> None:
+    """Structural Review Round 13 (P14-R13-F2) requirement 4, proved directly: the public
+    adapter-reaching method has no context-replacement parameter -- not merely refused if
+    supplied, but absent from its own signature entirely. (Static conformance proves this
+    identically, independent of construction, via ``inspect.signature`` directly on the class;
+    this control constructs one real, genuinely bound capability first, so the proof is not
+    vacuous against an object that could never legitimately exist.)"""
+
+    store, ctx, references = genuine_v3_authority_store_and_material(tmp_path, _MOCK_CONFIG)
+    context = resolve_v3_live_write_authority(
+        store, ctx["project_id"], ctx["project_binding_id"], _MOCK_CONFIG, references
+    )
+    assert context is not None
+    capability = ProjectionExecutionCapability(context)
+
+    parameter_names = set(inspect.signature(capability.execute).parameters)
+    assert parameter_names.isdisjoint(
+        {"context", "store", "project_id", "project_binding_id", "subject_record", "subject_ref"}
+    )
+
+
+def test_attacker_context_authorized_for_the_identical_target_cannot_be_substituted_into_a_bound_capability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    attacker_config = replace(_MOCK_CONFIG, owner="attacker-org", repo="attacker-widget")
+    """Structural Review Round 13 (P14-R13-F2) required decisive attacker control -- this test
+    must not rely on a target or payload mismatch (unlike Round 12's own version of this
+    control, retained above only as a target-mismatch control that is not itself evidence for
+    this requirement). The attacker's own context is built for the *identical* target
+    repository, projection kinds, payloads, and actions as the genuine one -- a fully
+    self-consistent, genuinely resolved attacker world that would, if it were ever actually
+    threaded into the trusted capability's own execution, authorize exactly the same operation
+    the genuine run intends.
+
+    :class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability` is
+    constructed exactly once, bound to the genuine context; its own ``execute`` method has no
+    ``context``-accepting parameter of any kind (proved directly above and by static
+    conformance), so there is no legitimate call shape through which the attacker's context
+    could ever reach it. Attempting to force one in anyway, via a keyword ``execute``'s own
+    signature does not accept, is refused by Python itself -- a ``TypeError`` before a single
+    line of ``execute``'s own body ever runs, and therefore before the trip-wire
+    :class:`_ForbiddenCallAdapter` passed alongside it could ever be reached either. The
+    capability then still resolves only the genuine Store it was actually bound to -- proved by
+    a subsequent, legitimate call succeeding and returning the genuine context's own subject."""
+
+    store, ctx, references = genuine_v3_authority_store_and_material(tmp_path, _MOCK_CONFIG)
+    context = resolve_v3_live_write_authority(
+        store, ctx["project_id"], ctx["project_binding_id"], _MOCK_CONFIG, references
+    )
+    assert context is not None
+    capability = ProjectionExecutionCapability(context)
+
+    # A fully self-consistent attacker world authorized for the *identical* target repository,
+    # projection kinds, payloads, and actions -- built entirely independently (its own separate
+    # Store, its own separate tmp_path), never derived from or sharing anything with the
+    # genuine world above.
     attacker_store, attacker_ctx, attacker_references = genuine_v3_authority_store_and_material(
-        tmp_path, attacker_config
+        tmp_path / "attacker-controlled-store", _MOCK_CONFIG
     )
     attacker_context = resolve_v3_live_write_authority(
         attacker_store,
         attacker_ctx["project_id"],
         attacker_ctx["project_binding_id"],
-        attacker_config,
+        _MOCK_CONFIG,
         attacker_references,
     )
     assert attacker_context is not None
+    assert attacker_store is not store
 
     def _forbidden_urlopen(*args: object, **kwargs: object) -> None:
         raise AssertionError(
@@ -1111,9 +1242,9 @@ def test_attacker_context_cannot_be_substituted_for_the_trusted_bootstrap_contex
     monkeypatch.setattr(urllib.request, "urlopen", _forbidden_urlopen)
 
     forbidden_adapter = _ForbiddenCallAdapter(FakeGitHubAdapter())
-    with pytest.raises(ProjectionRequirementError):
-        execute_v3_authorized_projection(
-            attacker_context,
+    with pytest.raises(TypeError):
+        capability.execute(  # type: ignore[call-arg]
+            context=attacker_context,
             projection_kind="DIFFERENCE_ISSUE",
             target_repository=dict(_MOCK_CONFIG.target_repository),
             projection_payload=v3_run_payload(_MOCK_CONFIG, "DIFFERENCE_ISSUE"),
@@ -1121,6 +1252,23 @@ def test_attacker_context_cannot_be_substituted_for_the_trusted_bootstrap_contex
             materialized_at="2026-09-08T00:00:01Z",
             attempt_claim_token="PROJECTION-ATTEMPT-V3-ATTACKER-SUBSTITUTION",  # noqa: S106
         )
+
+    # The capability continues to resolve/revalidate only the genuine Store it was actually
+    # bound to -- a subsequent, legitimate call still succeeds and still returns the genuine
+    # context's own subject, proving the rejected substitution attempt left the bound trust
+    # root completely untouched.
+    outcome = capability.execute(
+        projection_kind="DIFFERENCE_ISSUE",
+        target_repository=dict(_MOCK_CONFIG.target_repository),
+        projection_payload=v3_run_payload(_MOCK_CONFIG, "DIFFERENCE_ISSUE"),
+        adapter=FakeGitHubAdapter(),
+        materialized_at="2026-09-08T00:00:02Z",
+        attempt_claim_token="PROJECTION-ATTEMPT-V3-POST-SUBSTITUTION-LEGITIMATE-CALL",  # noqa: S106
+    )
+    assert outcome["receipt"].status == "VERIFIED"
+    assert outcome["envelope"]["subject_ref"] == dict(
+        context.authorities["DIFFERENCE_ISSUE"].subject_ref
+    )
 
 
 class _FakeResponse:
