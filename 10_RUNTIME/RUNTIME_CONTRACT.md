@@ -24,8 +24,11 @@ trust decision. Read §12.1.1 before reading Round 3's diff.
 Section 10 records Structural Review Round 1 (P15-R1-F1..F6) in full; section 11 records
 Structural Review Round 2 (P15-R2-F1/F2), which reopened and supersedes Round 1's own
 corrections for F4 and F6; section 12 records Structural Review Round 3 (P15-R3-F1/F2), which
-reopened and supersedes both of Round 2's. Where two sections differ, the **highest-numbered**
-section governs.
+reopened and supersedes both of Round 2's; section 13 records Structural Review Round 4
+(P15-R4-F1/F2), which reopened and supersedes both of Round 3's; section 14 records Structural
+Review Round 5 (P15-R5-F1/F2/F3), which reopens and supersedes Round 4's F1 and adds a third,
+independent finding about timestamp ordering at declaration commit. Where two sections differ,
+the **highest-numbered** section governs.
 
 ## 1. Position
 
@@ -2276,4 +2279,362 @@ tests/fixtures/runtime_world.py                                 F1/F2 (every fix
                                                                    admission and declaration commits
                                                                    now go through the shipped
                                                                    canonical committers)
+```
+
+---
+
+## 14. Structural Review Round 5 (P15-R5-F1, P15-R5-F2, P15-R5-F3)
+
+Round 5 of PR #65 confirmed Round 4's F2 (the monotonic, signed transition chain) closed and
+**reopened Round 4's own F1**, on the observation that the ownership boundary Round 4 built was
+still carried by an ordinary public value type. It added one further, independent finding about
+timestamp ordering at declaration commit. Where this section and an earlier one differ, this
+section governs — the same rule every earlier round states.
+
+The recurrence series Round 4 named continues, and Round 5's entry names the specific step that
+was still missing:
+
+```text
+ROUND 1   the trust decision was a PARAMETER LIST      -> replaced by a TYPE
+ROUND 2   the trust decision was a PUBLIC FACTORY      -> replaced by a PRIVATE SENTINEL
+ROUND 3   the trust decision was POSSESSION OF A TYPE  -> replaced by a SIGNED ADMISSION RECORD
+                                                          verified against a CALLER-SUPPLIED
+                                                          anchor
+ROUND 4   the trust decision was STILL A PARAMETER     -> replaced by an OWNERSHIP BOUNDARY
+                                                          carried by an opaque VALUE TYPE
+ROUND 5   the OWNERSHIP BOUNDARY was carried by a      -> replaced by a CLOSURE: composition
+          PUBLIC DATACLASS with a PUBLIC CONSTRUCTOR,     RETURNS the request-facing operation,
+          guarded only by an `isinstance` check, so      already bound to its world, and there is
+          any importer could construct their own over    no public constructor for an equivalent
+          an alternate world and hand it in              one at all
+```
+
+### 14.1 P15-R5-F1 — the composition step returns a bound request-facing service
+
+*Claimed (Round 4):* moving every trust-deciding value onto
+`compose_trusted_runtime_deployment_authority` and handing request-facing code an opaque
+`RuntimeDeploymentAuthority` closed the finding, because the request-facing signature had no
+parameter for a Store, Project, Binding, admission or anchor.
+
+*True:* those five parameters were genuinely gone, and remain gone. But Round 4 introduced a
+**sixth** world-bearing parameter in their place — the authority object itself — and the type
+behind it was a plain public frozen dataclass with a plain public constructor. The request-facing
+half was a free module-level function whose only defence was an `isinstance` check:
+
+```python
+bootstrap_projection_execution_capability(
+    RuntimeDeploymentAuthority(attacker_store, attacker_project, attacker_binding, adm_id, gen),
+    github_projection_grant_refs=[...],
+    github_projection_grant_declaration_refs=[...],
+)  # a genuine instance of exactly the right type, over an entirely alternate world
+```
+
+Making that function a *method* on the same public dataclass would not have closed it either: a
+caller can still construct their own instance and call the method on it. The review explicitly
+rules out a sentinel, a leading-underscore field, a private constructor, an opaque `repr`, and an
+`isinstance` check as the trust control, and states the control positively: *deployment
+composition chooses and closes over the authority before the request boundary exists.*
+
+*Now:* the type is **deleted**, and composition returns the request-facing operation itself.
+
+```python
+# bootstrap.py — the one shipped trusted-composition entry point (parameters unchanged)
+compose_trusted_runtime_deployment_authority(
+    store, *, project_id, project_binding_id,
+    runtime_root_admission_ref, trust_anchor_public_key_hex,
+) -> Callable[..., ProjectionExecutionCapability]
+
+# ...that returned callable IS the request-facing operation. Two parameters, both keyword-only,
+# both operation-scoped. It is a closure defined inside the call frame above, holding the
+# canonical Store, Project, Binding and admitted admission id/generation in closure cells.
+<returned callable>(
+    *, github_projection_grant_refs, github_projection_grant_declaration_refs,
+) -> ProjectionExecutionCapability
+```
+
+A closure is not a class: it has **no public constructor**, so there is nothing a caller can call
+to fabricate an equivalent operation over an alternate world. The only way to obtain a working one
+is to call composition, which runs the full anchor-signature/currency admission gate
+(`_require_currently_admitted`, unchanged from Round 4) before the closure exists at all.
+
+```text
+canonical composed service + canonical refs        -> controlled adapter boundary reached
+attacker authority + attacker refs                 -> cannot be supplied to the canonical
+                                                      request operation (TypeError; no such
+                                                      parameter, positional or keyword)
+attacker Store/Project/Binding/admission/anchor    -> absent from the operation's signature
+   kwargs
+adapter/network calls on every substitution        -> 0
+authorization evaluations on every substitution    -> 0
+```
+
+The attacker world used for that control is fully self-consistent and composes a genuinely
+working service **inside itself** — proved, so that every refusal is a statement about ownership
+rather than about a broken world.
+
+**`RuntimeDeploymentAuthority` is deleted, not kept beside the closure.** This is the precedent
+Round 2 set for the minting factory and Round 4 set for `TrustedRuntimeRoot`, applied to Round 4's
+own type: leaving an inert value behind would give a future reader two handles with one purpose.
+The static assertion is the absolute one — the name occurs in **no code position anywhere in the
+shipped tree** — and `bootstrap_projection_execution_capability` is no longer a module-level name
+either: exactly one `def` anywhere shipped carries it, nested inside the composition entry point,
+which genuinely returns it.
+
+**Scope, disclosed.** This is a control over *call shapes and obtainability*, not over in-process
+memory. Nothing in Python stops code that already holds the returned function object from
+rewriting its own closure cells (`__closure__[i].cell_contents`), exactly as nothing stopped
+Round 4's frozen dataclass from being rewritten through `object.__setattr__`. What changed, and
+what the decisive controls measure, is that no *call* can name an alternate world and no *public
+constructor* can fabricate an equivalent service.
+
+### 14.2 P15-R5-F2 — current-admission recheck before every new capability issuance
+
+*Claimed (Round 4, §13.5 item 1):* an already-composed authority is a cached capability, and
+rotation or revocation binds only the *next* composition — forced, it argued, by the adopted
+contract's own "closed over afterward" wording.
+
+*True, but narrower than Round 4 treated it.* That wording constrains the **anchor**, not the
+admission's currency. Those are two different questions, exactly as `deployment_registry.py`'s own
+docstring already distinguishes signature-verification-at-commit from currency-at-observation:
+
+```text
+IS THE ANCHOR STILL THE RIGHT ANCHOR?    asked exactly ONCE, at composition. The raw anchor stays
+                                         absent from every request-facing signature and is never
+                                         re-verified per call. UNCHANGED from Round 4.
+
+IS THE ADMISSION THIS SERVICE WAS        asked FRESHLY ON EVERY CALL, from the canonical Store's
+COMPOSED AGAINST STILL THE CURRENT ONE?  own current-admission pointer plus the retained admission
+                                         id and generation. Needs no anchor: the record is
+                                         immutable and content-addressed, and the pointer is moved
+                                         only by the anchor-signature-gated
+                                         commit_runtime_root_admission.
+```
+
+*Now:* every request-facing call runs `_require_bound_admission_still_current` before resolving a
+single grant. Four requirements, each stated and checked separately because the adopted contract
+lists four — deliberately not collapsed into one another even where an implication is visible, so
+that a future edit changing what "current" resolves through cannot silently take three checks with
+it:
+
+```text
+1. the Store's current-admission pointer still names the exact admission id captured at
+   composition
+2. the resolved current admission carries the exact captured generation
+3. the current admission is still ACTIVE
+4. it still restates this bound service's own Project and Project Binding
+```
+
+```text
+compose at A -> rotate to ACTIVE B -> bootstrap through the A service  -> refuse
+compose at A -> move to REVOKED B  -> bootstrap through the A service  -> refuse
+old A remains resolvable and signature-valid                           -> still refuse, on
+                                                                          currency alone
+grant/authorization/adapter call counts before refusal                 -> 0
+fresh service composed at the current ACTIVE B                         -> succeeds, reaches a
+                                                                          real capability and the
+                                                                          controlled adapter
+```
+
+**Already-issued downstream projection capabilities are not retroactively revoked.** The adopted
+boundary is prevention of *new* issuance from a no-longer-current composition authority, and that
+limit is proved as its own control rather than quietly widened: a capability obtained while A was
+still current is issued, exercised against the controlled adapter, and then — after the rotation —
+shown to be the identical object with the identical bound context, while the same service refuses
+to mint another.
+
+*Disclosed precisely:* whether that already-issued capability would still **execute** after a
+rotation is not this correction's question. Phase 14's own independent context-currency check
+(`projection.execution.execution_context_still_current`) refuses execution after **any** State
+transition, related or not — a pre-existing mechanism with its own separate reasons, which a
+rotation commit trips exactly as an unrelated commit would. This round is responsible for the
+object not being touched, and for new issuance being what stops.
+
+Round 4's §13.5 item 1 is therefore **narrowed, not contradicted**: the anchor is still closed
+over and never re-verified per call; currency of the already-admitted record now is.
+
+### 14.3 P15-R5-F3 — real UTC instant ordering at declaration commit
+
+*Claimed (Rounds 3 and 4):* `_require_declaration_shape_and_signature` required a declaration's
+own validity window to be "genuinely ordered".
+
+*True:* it compared the two raw timestamp **strings** (`if valid_from > valid_until`). Round 1
+(P15-R1-F2) had already established that lexicographic comparison is unsound over this
+repository's own canonical timestamp grammar, which admits an optional fractional part — and the
+committer never got the correction the route did. The failure runs in both directions:
+
+```text
+valid_from="2026-01-01T00:00:00Z"    valid_until="2026-01-01T00:00:00.5Z"
+    a real 0.5s window                                     REFUSED lexicographically, and wrong
+valid_from="2026-01-01T00:00:00.5Z"  valid_until="2026-01-01T00:00:00Z"
+    an inverted window                                     ACCEPTED lexicographically, and wrong
+```
+
+*Now:* both bounds are parsed and compared as real UTC instants, and the parser is **the one this
+package already had** — the adopted contract forbids a second timestamp grammar or a
+Runtime-specific time owner, so `route.py`'s own private `_instant` moved, unchanged, to
+`engine.parse_utc_instant`, and `route.py` and `deployment_registry.py` both read through it. The
+committer still reads **no clock**: it orders the two declared bounds against each other and
+against nothing else; whether an already-committed declaration is in-window at some later instant
+remains `observe_runtime_target`'s own question, unchanged.
+
+Uniqueness is proved statically rather than asserted: exactly one module in this package imports
+`datetime` at all, exactly one function anywhere in it calls `fromisoformat`, and that function is
+`engine.parse_utc_instant`.
+
+### 14.4 Finding-to-code-to-test matrix
+
+```text
+P15-R5-F1  composition returns a bound request-facing service
+  src/manosube_agent_civilization/runtime/bootstrap.py
+      RuntimeDeploymentAuthority                    DELETED (no code position anywhere shipped)
+      compose_trusted_runtime_deployment_authority  -> Callable[..., ProjectionExecutionCapability]
+      bootstrap_projection_execution_capability     the returned CLOSURE; 2 keyword-only
+                                                    parameters; 6 removed
+      _require_currently_admitted                   unchanged (7 checks, currency last)
+  src/manosube_agent_civilization/runtime/__init__.py   one public callable fewer for this
+                                                        mechanism; usage example rewritten
+
+  tests/contract/runtime/test_runtime_static_conformance.py
+      test_runtime_package_exports_exactly_three_routes_and_one_capability_bootstrap
+      test_the_removed_deployment_authority_type_appears_in_no_shipped_code_position
+      test_the_request_facing_operation_is_a_closure_owned_by_the_composition_entry_point
+      test_exactly_one_shipped_public_callable_returns_a_bound_request_facing_bootstrap
+      test_the_request_facing_bootstrap_accepts_no_trust_deciding_parameter
+      test_the_composition_entry_point_owns_every_trust_deciding_parameter
+      test_the_raw_trust_anchor_is_named_only_by_composition_side_functions
+  tests/integration/runtime/test_runtime_deployment_authority_composition.py
+      test_a_canonical_composition_bound_world_reaches_the_controlled_adapter
+      test_the_composed_bootstrap_retains_the_raw_trust_anchor_nowhere
+      test_the_composed_bootstrap_is_a_closure_with_no_public_constructor
+      test_the_attacker_world_is_genuinely_self_consistent_and_self_admitted
+      test_the_attacker_world_cannot_be_substituted_into_the_request_facing_bootstrap
+  tests/integration/runtime/test_runtime_trusted_root.py
+      test_composition_is_the_only_shipped_path_to_a_request_facing_bootstrap
+      test_a_composed_bootstrap_names_its_world_in_no_public_surface
+      test_no_request_facing_argument_can_redirect_a_capability_call_into_another_world
+      test_no_world_bearing_object_can_be_handed_to_the_request_facing_bootstrap
+  tests/integration/runtime/test_runtime_no_shipped_minting_path.py
+      test_the_removed_trust_root_type_appears_in_no_shipped_code_position (extended to the
+          removed authority type and the removed module-level bootstrap name)
+      test_exactly_one_shipped_callable_hands_back_a_bound_request_facing_bootstrap
+      test_the_capability_call_accepts_no_world_bearing_argument_at_all
+
+P15-R5-F2  current-admission recheck before every new capability issuance
+  src/manosube_agent_civilization/runtime/bootstrap.py
+      _require_bound_admission_still_current        the four separate requirements
+      the returned closure                          calls it before any grant resolution
+
+  tests/contract/runtime/test_runtime_static_conformance.py
+      test_the_admission_gate_precedes_every_grant_and_authority_call_by_construction
+  tests/integration/runtime/test_runtime_deployment_authority_composition.py
+      test_a_service_composed_at_a_rotated_away_admission_issues_no_new_capability
+      test_a_service_composed_before_a_revocation_issues_no_new_capability
+      test_the_refusal_is_on_currency_alone_not_because_the_old_admission_became_invalid
+      test_a_service_freshly_composed_at_the_new_current_admission_succeeds
+      test_a_capability_issued_before_a_rotation_is_not_retroactively_revoked
+
+P15-R5-F3  real UTC instant ordering at declaration commit
+  src/manosube_agent_civilization/runtime/engine.py              parse_utc_instant (the one owner)
+  src/manosube_agent_civilization/runtime/route.py               _instant deleted; reads engine's
+  src/manosube_agent_civilization/runtime/deployment_registry.py parsed instants, not strings
+
+  tests/contract/runtime/test_runtime_static_conformance.py
+      test_this_package_has_exactly_one_instant_parsing_owner
+      test_the_declaration_committer_orders_its_validity_window_as_instants_not_strings
+  tests/integration/runtime/test_runtime_declaration_transition_chain.py
+      test_the_two_orderings_genuinely_disagree_over_this_grammar
+      test_a_chronologically_valid_fractional_second_window_commits
+      test_a_chronologically_inverted_fractional_second_window_refuses_without_state_change
+```
+
+### 14.5 Judgment calls made in this round that the adopted findings did not fully pin down
+
+1. **The closure's bound world is reachable through `__closure__` by in-process code, and that is
+   disclosed rather than claimed away.** No Python-level control prevents code that already holds
+   a function object from rewriting its cells, just as none prevented `object.__setattr__` on
+   Round 4's frozen dataclass. The adopted control is about *obtainability and call shape*, and
+   that is exactly what is proved. Stated in `bootstrap.py`'s own module docstring, in §14.1, and
+   at the test that would otherwise be read as claiming more
+   (`test_a_composed_bootstrap_names_its_world_in_no_public_surface`).
+
+2. **The four currency requirements are implemented separately even where one implies another.**
+   For an untampered Store, requirement 1 (the pointer still names the exact content-addressed
+   admission id) arguably implies 2–4, since generation, status and Binding all participate in
+   that id. They are still checked one by one, with their own messages, because the adopted text
+   lists four and this protocol implements what was adopted rather than a logically-equivalent
+   subset.
+
+3. **`admitted_root`'s fixture key is renamed `bootstrap`, not kept as `deployment_authority`.**
+   The value it holds is no longer an authority object but the request-facing operation, and a
+   fixture key that named the old thing would make every call site read as though an authority
+   were still being passed.
+
+4. **The Phase 14 execution-context currency interaction is disclosed, not worked around.** A
+   capability already issued before a rotation cannot be *executed* afterwards — but that is
+   Phase 14's own `execution_context_still_current`, which refuses after any State transition
+   whatsoever, and not a retroactive revocation this round introduces. The control therefore
+   exercises the capability *before* the rotation to prove it genuinely worked, and asserts
+   afterwards only what this round is responsible for: the object and its bound context are
+   untouched, and new issuance is what stops (§14.2).
+
+5. **`parse_utc_instant` is public on `engine.py` rather than private and re-exported.** Two
+   modules in this package now depend on it, so a leading underscore would be a name that lies
+   about its own reach. It is not added to the `runtime` package's own `__all__`: it is an
+   intra-package owner, not a public entry point, so `PUBLIC_RUNTIME_ENTRY_POINT_COUNT` is
+   untouched.
+
+6. **The removed `bootstrap_projection_execution_capability` name is not re-exported from the
+   package.** Exporting a module-level alias for the closure would hand callers a name they could
+   import without composing, which is precisely the shape F1 removes.
+
+### 14.6 Round 5 declarations
+
+```text
+COMPOSITION_RETURNS_A_BOUND_REQUEST_FACING_SERVICE=true
+REQUEST_FACING_OPERATION_IS_A_CLOSURE=true
+REQUEST_FACING_OPERATION_HAS_A_PUBLIC_CONSTRUCTOR=false
+REQUEST_FACING_BOOTSTRAP_PARAMETER_COUNT=2
+DEPLOYMENT_AUTHORITY_PARAMETER_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+TRUST_ANCHOR_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+ROOT_ADMISSION_REF_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+STORE_PROJECT_OR_BINDING_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+RUNTIME_DEPLOYMENT_AUTHORITY_TYPE_EXISTS=false
+RUNTIME_DEPLOYMENT_AUTHORITY_NAME_APPEARS_IN_SHIPPED_CODE=false
+TRUSTED_RUNTIME_ROOT_TYPE_EXISTS=false
+TRUSTED_RUNTIME_ROOT_NAME_APPEARS_IN_SHIPPED_CODE=false
+DELETED_ROUND_1_MINTING_FACTORY_REINTRODUCED=false
+MODULE_LEVEL_REQUEST_FACING_BOOTSTRAP_EXISTS=false
+SENTINEL_PRIVATE_CONSTRUCTOR_OR_ISINSTANCE_USED_AS_THE_TRUST_CONTROL=false
+CURRENT_ADMISSION_RECHECKED_ON_EVERY_NEW_CAPABILITY_ISSUANCE=true
+CURRENCY_RECHECK_REQUIRES_A_RAW_TRUST_ANCHOR=false
+CURRENCY_RECHECK_PRECEDES_GRANT_RESOLUTION=true
+CURRENCY_RECHECK_PRECEDES_ANY_ADAPTER_OR_NETWORK_CALL=true
+ROTATION_OR_REVOCATION_BLOCKS_NEW_ISSUANCE_FROM_AN_OLD_SERVICE=true
+ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false
+FRESH_COMPOSITION_AT_THE_CURRENT_ADMISSION_SUCCEEDS=true
+DECLARATION_VALIDITY_WINDOW_ORDERED_AS_REAL_INSTANTS=true
+DECLARATION_VALIDITY_WINDOW_ORDERED_LEXICOGRAPHICALLY=false
+INSTANT_PARSING_OWNER_COUNT_IN_THIS_PACKAGE=1
+SECOND_TIMESTAMP_GRAMMAR_CREATED=false
+RUNTIME_SPECIFIC_TIME_OWNER_CREATED=false
+DECLARATION_COMMITTER_READS_A_CLOCK=false
+MONOTONIC_TRANSITION_CHAIN_MECHANISM_CHANGED=false
+ADMISSION_REGISTRY_CHANGED=false
+TRANSITION_CHAIN_CHANGED=false
+RUNTIME_IDENTITY_CHANGED=false
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+NEW_SCHEMA_FILES_ADDED=0
+CANONICAL_SCHEMA_COUNT=59
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
+RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
+RUNTIME_ROOT_ADMISSION_COMMIT_ENTRY_POINT_COUNT=1
+COMMIT_STATE_TRANSITION_CALL_SITES_IN_THIS_PACKAGE=2
+CLOSED_ROUND_1_TO_4_WORK_REGRESSED=false
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
 ```

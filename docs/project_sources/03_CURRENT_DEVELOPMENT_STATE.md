@@ -1119,3 +1119,184 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 ```
 
 本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。
+
+# 21. Phase 15 Structural Review Round 5 correction addendum (P15-R5-F1 / P15-R5-F2 / P15-R5-F3, Issue #64 / PR #65)
+
+本節は、セクション20のaddendum記録時点（`CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_PR_OPEN`）以降にrepositoryへ生じた変化のうち、local `git log`とPR #65 / Issue #64自身のReview commentにより独立再観測できた`OBSERVED_GITHUB_FACT`のみを追記する、bounded addendumである。セクション16〜20の全面再投影ではない。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-09
+ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AND_PR_65_ISSUE_64_REVIEW_COMMENTS
+```
+
+| Field | Observed value |
+|---|---|
+| Dedicated Pull Request | [#65](https://github.com/manosube/manosube-agent-civilization-os/pull/65) — **open**, not merged |
+| PR #65 reviewed HEAD (Structural Review Round 5 の対象) | `fd6ec1429443437c0c85e9f29144250506b61051` |
+| SHUKOU adoption | Issue #64 上の `ADOPT_P15_R5_BOUND_BOOTSTRAP_SERVICE_AND_CURRENT_ADMISSION_RECHECK`（Human Authority `manosube`）により、契約本文が verbatim で採択済 |
+| Round 4 findings の Round 5 自身による処分 | `P15_R4_F2_CLOSED=true`（monotonic signed transition chain は変更なし）。`P15-R4-F1` のみ reopen され `P15-R5-F1` として再採番、さらに `P15-R5-F2`（current admission recheck）と `P15-R5-F3`（declaration commit 時の instant 比較）が新規に採択された。 |
+| This correction round's own commits | branch `agent/issue-64-phase15-runtime-adapter` 上、reviewed HEAD `fd6ec142` の直上に積まれた新規commitのみ。history rewrite（amend / rebase / force-push）は行っていない。新規branchも新規PRも作成していない。 |
+
+Round 4 の Review が名指しした「同一のtrust-boundary semantic classの再発」系列は、Round 5 でもう一段進む。
+
+```text
+ROUND 4   trust decision は OWNERSHIP BOUNDARY へ置換されたが、その boundary は
+          public constructor を持つ public dataclass（RuntimeDeploymentAuthority）に
+          担われており、request-facing 側の防御は isinstance check のみだった
+ROUND 5   -> boundary を CLOSURE へ置換。composition が request-facing operation 自身を
+             返し、その operation には public constructor が存在しない
+```
+
+採択された3件の構造的findingと、その閉鎖範囲：
+
+```text
+P15-R5-F1  the ownership boundary was carried by a PUBLIC DATACLASS with a PUBLIC CONSTRUCTOR
+           （Round 4 は store / project_id / project_binding_id /
+             runtime_root_admission_ref / trust_anchor_public_key_hex の5parameterを
+             request-facing signature から除去したが、その代わりに6番目の
+             world-bearing parameter である deployment_authority を導入した。
+             RuntimeDeploymentAuthority は public な frozen dataclass であり、
+             public constructor を持つため、moduleをimportできる任意のcallerが
+             alternate Store/Project/Binding 上で自前のinstanceを構築し、
+             isinstance check を正面から通過させることができた。）
+           → RuntimeDeploymentAuthority を**削除**し、
+             compose_trusted_runtime_deployment_authority(store, *, project_id,
+             project_binding_id, runtime_root_admission_ref, trust_anchor_public_key_hex)
+             が request-facing operation **そのもの**を返すようにした。
+             返される callable は composition の call frame 内で定義された closure であり、
+             canonical Store・project_id・project_binding_id・admitted admission の
+             id / generation を closure cell に保持する。
+             closure は class ではないため public constructor が存在せず、
+             等価な operation を fabricate する手段が無い。working な bootstrap を
+             得る唯一の方法は composition を呼ぶことであり、そこには Round 4 と同一の
+             anchor-signature / currency admission gate（_require_currently_admitted、
+             無変更）が存在する。
+           → request-facing signature の parameter は keyword-only 2個のみ
+             （github_projection_grant_refs / github_projection_grant_declaration_refs）。
+             deployment_authority / store / project_id / project_binding_id /
+             runtime_root_admission_ref / trust_anchor_public_key_hex の6名は
+             「検証される」のではなく**存在しない**（AST と、composition が実際に返した
+             object 自身に対する inspect.signature の双方で証明）。
+           → 削除は Round 2（minting factory）・Round 4（TrustedRuntimeRoot）と同一の
+             precedent に従う。静的事実も同一の強さで置換された：
+             **RuntimeDeploymentAuthority という名は shipped tree のいかなる code position
+             にも存在しない**。加えて bootstrap_projection_execution_capability は
+             module-level 名としても存在せず、shipped tree 全体で当該名の def は
+             ちょうど1つ、composition entry point の内部に nested されている。
+           → 開示済 scope：本 control は *call shape と obtainability* に対するものであり、
+             in-process memory に対するものではない。既に function object を保持している
+             code が自身の __closure__ cell を書き換えることを Python は禁止できない
+             （Round 4 の frozen dataclass に対する object.__setattr__ が禁止できなかったのと
+             同様）。証明されるのは、いかなる *call* も alternate world を名指せないこと、
+             および、いかなる *public constructor* も等価な service を作れないことである。
+```
+
+```text
+P15-R5-F2  an already-composed authority minted NEW capabilities from a superseded admission
+           （Round 4 は「anchor は closed over afterward」という採択契約の文言から、
+             composition 済 authority は cached credential として振る舞い、rotation /
+             revocation は**次回の composition**のみを拘束すると開示していた。
+             しかし当該文言が拘束するのは *anchor* であって、admission の *currency* では
+             ない。両者は異なる問いである。）
+           → request-facing call ごとに _require_bound_admission_still_current を実行し、
+             canonical Store の current-admission pointer を新規に読み直す。
+             採択text が列挙する4要件を、いずれも個別に実装した：
+             (1) pointer が composition 時に捕捉した admission id を依然として指すこと、
+             (2) 解決された current admission の generation が捕捉値と完全一致すること、
+             (3) current admission が依然 ACTIVE であること、
+             (4) 当該 Project / Binding を依然として restate していること。
+             content-addressed record では (1) が (2)〜(4) を含意し得るが、採択text が
+             4件を列挙している以上、論理的に等価な部分集合ではなく列挙どおりに実装した。
+           → 本 recheck は raw trust anchor を必要としない。admission は composition 時点で
+             暗号的に admit 済であり、pointer を動かせるのは anchor-signature-gated な
+             commit_runtime_root_admission のみである。したがって anchor は依然として
+             composition で一度だけ検証され、request-facing signature には現れない
+             （Round 4 の §13.5 item 1 は**否定ではなく限定**された）。
+           → recheck は grant resolution より前・authorization 評価より前に走るため、
+             rotation / revocation 後の old service からの新規発行は
+             adapter 呼び出し0・network 呼び出し0・authorization 評価0で拒否される。
+           → 既発行の downstream capability は**遡及的に失効しない**（採択text 自身の
+             限定）。専用の control が、A が current なうちに capability を発行して
+             controlled adapter で実際に動作させ、その後 rotate し、当該 object と
+             bound context が無変更であること、および同一 service が新規発行を
+             拒否することを証明する。
+             なお、当該 capability が rotation **後に execute できるか**は本 round の
+             問いではない。Phase 14 自身の execution_context_still_current が、関係の
+             有無を問わずあらゆる State transition の後に execution を拒否する
+             既存機構であり、rotation commit も無関係な commit と同様にこれを踏む。
+```
+
+```text
+P15-R5-F3  the declaration committer ordered its validity window LEXICOGRAPHICALLY
+           （_require_declaration_shape_and_signature は valid_from / valid_until を
+             生の文字列として `valid_from > valid_until` で比較していた。canonical
+             timestamp grammar は optional な fractional part を許し、`.` は `Z` より
+             小さくソートされるため、辞書順と時系列順は実際に食い違う。
+             結果として両方向に誤っていた：
+               valid_from="...T00:00:00Z"  valid_until="...T00:00:00.5Z"
+                   実在する0.5秒のwindow            → 辞書順では**拒否**され、誤り
+               valid_from="...T00:00:00.5Z" valid_until="...T00:00:00Z"
+                   反転したwindow                    → 辞書順では**受理**され、誤り）
+           → 既存の parser を再利用した。route.py の private `_instant` を無変更のまま
+             engine.parse_utc_instant へ移し、route.py と deployment_registry.py の
+             双方がこれを読む。採択契約が明示的に禁じる「第二の timestamp grammar」も
+             「Runtime 固有の time owner」も新設していない。
+           → committer は依然として clock を読まない。宣言された2つの bound を互いに
+             順序付けるだけであり、後続の任意の instant に対する in-window 判定は
+             observe_runtime_target 自身の問いのまま変更されていない。
+           → 一意性は静的に証明される：本package で datetime を import する module は
+             ちょうど1つ、fromisoformat を呼ぶ function は shipped tree 全体でちょうど1つ、
+             それが engine.parse_utc_instant である。
+```
+
+Round 4 が閉じた work は本roundで一切退行していない。`transition_chain.py`・`admission_registry.py`・`identity.py`・`01_SCHEMA/` はいずれも無変更であり、monotonic signed generation / predecessor_ref chain、ancestor replay / generation skip / concurrent successor / terminal REVOKED の拒否、root-admission chain と pointer 機構、closed network allowlist / redirect boundary、pre-adapter schema validation、immutable/isolated adapter inputs、Boot / Human Authority freshness、signed deployment declaration と validity-window observation、Runtime-to-Evidence provenance、Phase 14 capability continuity は、すべて従来どおり green である。
+
+canonical schema総数は `59` のまま変化していない（本roundは schema file を追加も変更もしていない）。
+
+`P15-R5-F1`／`P15-R5-F2` が証明する範囲と、しない範囲は、従来どおり明示的に限定される（誇張しない）。
+
+```text
+REQUEST_FACING_OPERATION_HAS_NO_PUBLIC_CONSTRUCTOR=true                （証明済）
+ATTACKER_AUTHORITY_CANNOT_BE_SUPPLIED_TO_THE_CANONICAL_OPERATION=true  （証明済、
+                                                                        adapter / network 呼び出し
+                                                                        ゼロ・authorization 評価
+                                                                        ゼロ）
+ROTATED_OR_REVOKED_SERVICE_ISSUES_NO_NEW_CAPABILITY=true               （証明済）
+FRESH_COMPOSITION_AT_THE_CURRENT_ADMISSION_SUCCEEDS=true               （証明済）
+ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false                （採択text自身の限定・
+                                                                        主張しない）
+CLOSURE_CELLS_ARE_UNWRITABLE_BY_IN_PROCESS_CODE=false                  （Pythonでは不可能・
+                                                                        開示済・主張しない）
+TARGET_EPOCH_REACTIVATION_MECHANISM_BUILT=false                        （本round範囲外・
+                                                                        主張しない）
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false                 （未実装・主張しない）
+```
+
+実装範囲の所有は変わらず`10_RUNTIME/RUNTIME_INDEX.md`・`10_RUNTIME/RUNTIME_CONTRACT.md`にある（本correction roundは`RUNTIME_CONTRACT.md`にsection 14、`RUNTIME_INDEX.md`にsection 4.5を追加した）。
+
+SHUKOU自身が固定した終端は変わらず、本addendumもこれを変更しない。
+
+```text
+CURRENT_PHASE=15_BOUNDED_RUNTIME_OBSERVATION_AND_TRUSTED_PROVISIONING
+CURRENT_PHASE_ISSUE=64
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_5_CORRECTIONS_DELIVERED_PR_OPEN
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=5
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=6
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_3_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_4_FINDINGS_CLOSED=2
+STRUCTURAL_REVIEW_ROUND_5_FINDINGS_CLOSED=3
+CANONICAL_SCHEMA_COUNT=59
+NEW_SCHEMA_FILES_ADDED_THIS_ROUND=0
+NEW_BRANCH=false
+NEW_PR=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+```
+
+本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。

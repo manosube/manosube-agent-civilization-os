@@ -14,7 +14,7 @@ TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT=0
 RUNTIME_DEPLOYMENT_DECLARATION_COMMIT_ENTRY_POINT_COUNT=1
 RUNTIME_ROOT_ADMISSION_COMMIT_ENTRY_POINT_COUNT=1
 TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=5
 ```
 
 `TRUSTED_RUNTIME_ROOT_PROVISIONING_ENTRY_POINT_COUNT` was `1` after Round 1 and is `0` from
@@ -25,8 +25,11 @@ against an externally supplied trust anchor. **Round 4 (P15-R4-F1) removes that 
 and replaces the whole framing with an ownership boundary: a single
 `TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1` composition step owns the Store, project,
 Binding, admission selection and anchor, and the request-facing bootstrap has **no parameter** for
-any of them. See sections 4.2, 4.3 and 4.4 here, and `RUNTIME_CONTRACT.md` sections 11.1, 12.1
-and 13.1.
+any of them. **Round 5 (P15-R5-F1)** removes the opaque `RuntimeDeploymentAuthority` value type
+Round 4 carried that boundary on — it was a public dataclass with a public constructor, so any
+importer could build one over an alternate world — and makes composition *return the
+request-facing operation itself*, a closure with no public constructor. See sections 4.2, 4.3,
+4.4 and 4.5 here, and `RUNTIME_CONTRACT.md` sections 11.1, 12.1, 13.1 and 14.1.
 
 ---
 
@@ -478,6 +481,80 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 NEW_KERNEL_ELEMENT=false
 ```
 
+## 4.5 Structural Review Round 5 (P15-R5-F1, P15-R5-F2, P15-R5-F3)
+
+Round 5 of PR #65 confirmed Round 4's F2 closed, **reopened Round 4's own F1**, and added one
+further independent finding. `10_RUNTIME/RUNTIME_CONTRACT.md` section 14 records all three in
+full. This document records only what the round changed about *this layer's position*, which is
+four things:
+
+1. **The ownership boundary stopped being carried by a value and became a closure.** Round 4 handed
+   request-facing code an opaque `RuntimeDeploymentAuthority`. That type was an ordinary public
+   frozen dataclass with an ordinary public constructor, and the request-facing half was a free
+   module-level function guarded only by an `isinstance` check — so any caller able to import the
+   module could construct their own authority over an alternate Store/Project/Binding and hand it
+   straight in. The adopted correction rules out a sentinel, a private constructor, a
+   leading-underscore field, an opaque `repr` and an `isinstance` check as trust controls, so the
+   type is **deleted** and `compose_trusted_runtime_deployment_authority` now returns the
+   request-facing operation itself, already closed over the canonical Store, Project, Binding and
+   admitted admission id/generation. A closure has no public constructor, so the only way to
+   obtain a working bootstrap is to pass composition's own admission gate. The request-facing
+   signature is down to **two** keyword-only, operation-scoped parameters.
+
+2. **New capability issuance now proves the bound admission is still current, on every call.**
+   Round 4 disclosed that an already-composed authority behaved like a cached credential. Round 5
+   narrows that without contradicting the contract's "closed over afterward" wording, by
+   separating two questions: the *anchor* is still verified exactly once, at composition, and
+   never appears on a request-facing signature; the *currency* of the already-admitted record is
+   now proved freshly per call, from the canonical Store's own pointer plus the retained admission
+   id and generation. A rotated or revoked composition authority mints no new capability, refusing
+   before any grant resolution and at zero adapter, network and authorization cost. Capabilities
+   already issued are deliberately **not** retroactively revoked — the adopted boundary is
+   prevention of new issuance, and that limit is proved as its own control.
+
+3. **The declaration committer's validity window is ordered as real UTC instants.** It compared
+   raw timestamp strings, which is unsound over this repository's own canonical grammar (an
+   optional fractional part, and `.` sorting below `Z`) — accepting an inverted window and
+   refusing a genuine fractional-second one. `route.py`'s existing parser moved, unchanged, to
+   `engine.parse_utc_instant`, and both sites read through it: no second timestamp grammar and no
+   Runtime-specific time owner was created, and the committer still reads no clock.
+
+4. **One public callable fewer, and still no change to the route count.**
+   `bootstrap_projection_execution_capability` is no longer a module-level name at all — exactly
+   one `def` anywhere shipped carries it, nested inside the composition entry point, which returns
+   it. `PUBLIC_RUNTIME_ENTRY_POINT_COUNT` is still `3`: neither the removed name nor the surviving
+   composition step was ever a route.
+
+```text
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=5
+COMPOSITION_RETURNS_A_BOUND_REQUEST_FACING_SERVICE=true
+REQUEST_FACING_OPERATION_IS_A_CLOSURE=true
+REQUEST_FACING_OPERATION_HAS_A_PUBLIC_CONSTRUCTOR=false
+REQUEST_FACING_BOOTSTRAP_PARAMETER_COUNT=2
+MODULE_LEVEL_REQUEST_FACING_BOOTSTRAP_EXISTS=false
+RUNTIME_DEPLOYMENT_AUTHORITY_TYPE_EXISTS=false
+RUNTIME_DEPLOYMENT_AUTHORITY_NAME_APPEARS_IN_SHIPPED_CODE=false
+DEPLOYMENT_AUTHORITY_PARAMETER_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+TRUST_ANCHOR_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+CURRENT_ADMISSION_RECHECKED_ON_EVERY_NEW_CAPABILITY_ISSUANCE=true
+CURRENCY_RECHECK_REQUIRES_A_RAW_TRUST_ANCHOR=false
+ROTATION_OR_REVOCATION_BLOCKS_NEW_ISSUANCE_FROM_AN_OLD_SERVICE=true
+ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false
+DECLARATION_VALIDITY_WINDOW_ORDERED_AS_REAL_INSTANTS=true
+INSTANT_PARSING_OWNER_COUNT_IN_THIS_PACKAGE=1
+SECOND_TIMESTAMP_GRAMMAR_CREATED=false
+DECLARATION_COMMITTER_READS_A_CLOCK=false
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
+CLOSED_ROUND_1_TO_4_WORK_REGRESSED=false
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+NEW_SCHEMA_FILES_ADDED=0
+CANONICAL_SCHEMA_COUNT=59
+RUNTIME_IS_A_SECOND_STATE_OWNER=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+NEW_KERNEL_ELEMENT=false
+```
+
 ## 5. Explicit non-claims
 
 ```text
@@ -511,9 +588,17 @@ RUNTIME_ROOT_ADMISSION_REQUIRED_FOR_PROVISIONING=true
 RUNTIME_ROOT_ADMISSION_IS_A_MONOTONIC_SIGNED_CHAIN=true
 RUNTIME_ROOT_ADMISSION_ROTATION_AND_REVOCATION_ARE_EFFECTIVE=true
 TRUSTED_RUNTIME_ROOT_TYPE_EXISTS=false
+RUNTIME_DEPLOYMENT_AUTHORITY_TYPE_EXISTS=false
 SHIPPED_TRUSTED_RUNTIME_ROOT_MINTING_PATH_EXISTS=false
 TRUSTED_DEPLOYMENT_COMPOSITION_OWNS_THE_TRUST_ANCHOR=true
+TRUSTED_DEPLOYMENT_COMPOSITION_RETURNS_THE_BOUND_REQUEST_FACING_SERVICE=true
+REQUEST_FACING_OPERATION_IS_A_CLOSURE=true
 TRUST_ANCHOR_PRESENT_ON_REQUEST_FACING_SIGNATURE=false
+CURRENT_ADMISSION_RECHECKED_ON_EVERY_NEW_CAPABILITY_ISSUANCE=true
+ROTATION_OR_REVOCATION_BLOCKS_NEW_ISSUANCE_FROM_AN_OLD_SERVICE=true
+ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false
+DECLARATION_VALIDITY_WINDOW_ORDERED_AS_REAL_INSTANTS=true
+INSTANT_PARSING_OWNER_COUNT_IN_THIS_PACKAGE=1
 DEPLOYMENT_DECLARATION_IS_A_MONOTONIC_SIGNED_CHAIN=true
 DECLARATION_ANCESTOR_REPLAY_IS_REFUSED=true
 DECLARATION_REVOCATION_IS_TERMINAL=true
@@ -527,6 +612,7 @@ STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_APPLIED=true
 STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_APPLIED=true
+STRUCTURAL_REVIEW_ROUND_5_CORRECTIONS_APPLIED=true
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
 REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
