@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/model_runtime/model_execution_envelope.schema.json",
+  "title": "Canonical Model Execution Envelope",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model_execution_envelope_id",
+    "model_execution_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "model_work_unit_ref",
+    "model_execution_request_identity",
+    "executed_state_revision",
+    "executed_semantic_fingerprint",
+    "adapter_identity",
+    "executed_at",
+    "execution_outcome",
+    "normalized_candidate_kind",
+    "normalized_candidate",
+    "normalized_candidate_fingerprint",
+    "difference_ref",
+    "required_capability",
+    "authority_ref",
+    "boundary_ref",
+    "evidence_requirements",
+    "human_authority_ref"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "model_execution_envelope_id": {
+      "type": "string",
+      "pattern": "^MODEL-EXECUTION-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "model_execution_semantic_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {"$ref": "model_work_unit.schema.json#/$defs/project_binding_ref"},
+    "model_work_unit_ref": {"$ref": "#/$defs/model_work_unit_ref"},
+    "model_execution_request_identity": {
+      "type": "string",
+      "pattern": "^MODEL-EXECUTION-REQUEST-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "executed_state_revision": {"type": "integer", "minimum": 0},
+    "executed_semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "adapter_identity": {"$ref": "#/$defs/adapter_identity"},
+    "executed_at": {"$ref": "../common/timestamp.schema.json"},
+    "execution_outcome": {
+      "enum": [
+        "CANDIDATE_ACCEPTED",
+        "UNAVAILABLE",
+        "REFUSED",
+        "MALFORMED",
+        "TIMEOUT",
+        "CANCELLED",
+        "INCOMPLETE_EVIDENCE"
+      ]
+    },
+    "normalized_candidate_kind": {
+      "oneOf": [{"type": "null"}, {"enum": ["OBSERVATION_CANDIDATE"]}]
+    },
+    "normalized_candidate": {"oneOf": [{"type": "null"}, {"type": "object"}]},
+    "normalized_candidate_fingerprint": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+      ]
+    },
+    "difference_ref": {"$ref": "model_work_unit.schema.json#/$defs/difference_ref"},
+    "required_capability": {
+      "$ref": "model_execution_boundary.schema.json#/$defs/required_capability"
+    },
+    "authority_ref": {"$ref": "model_work_unit.schema.json#/$defs/authority_ref"},
+    "boundary_ref": {"$ref": "model_work_unit.schema.json#/$defs/boundary_ref"},
+    "evidence_requirements": {
+      "$ref": "model_work_unit.schema.json#/$defs/evidence_requirements"
+    },
+    "human_authority_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "human_authority"}}}
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"execution_outcome": {"const": "CANDIDATE_ACCEPTED"}},
+        "required": ["execution_outcome"]
+      },
+      "then": {
+        "properties": {
+          "normalized_candidate_kind": {"enum": ["OBSERVATION_CANDIDATE"]},
+          "normalized_candidate": {"type": "object"},
+          "normalized_candidate_fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "normalized_candidate_kind": {"const": null},
+          "normalized_candidate": {"const": null},
+          "normalized_candidate_fingerprint": {"const": null}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "model_work_unit_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "model_work_unit"}}}
+      ]
+    },
+    "adapter_identity": {
+      "type": "object",
+      "required": ["adapter", "version"],
+      "properties": {
+        "adapter": {"type": "string", "minLength": 1, "maxLength": 128},
+        "version": {"type": "string", "minLength": 1, "maxLength": 64}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

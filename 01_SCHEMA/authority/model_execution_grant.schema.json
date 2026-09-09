@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/authority/model_execution_grant.schema.json",
+  "title": "Model Execution Grant",
+  "type": "object",
+  "required": ["schema_version", "model_execution_grant_id", "project_id", "difference_ref", "required_capability", "boundary_ref", "permitted_action", "status", "granted_by", "granted_at", "signature"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "model_execution_grant_id": {"type": "string", "pattern": "^MODEL-EXEC-GRANT-[0-9A-F]{64}(?![\\s\\S])"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "difference_ref": {"$ref": "../model_runtime/model_work_unit.schema.json#/$defs/difference_ref"},
+    "required_capability": {"$ref": "../model_runtime/model_execution_boundary.schema.json#/$defs/required_capability"},
+    "boundary_ref": {"$ref": "../model_runtime/model_work_unit.schema.json#/$defs/boundary_ref"},
+    "permitted_action": {"const": "EXECUTE_MODEL_WORK_UNIT"},
+    "status": {"enum": ["ACTIVE", "REVOKED", "EXPIRED"]},
+    "granted_by": {"$ref": "authority.schema.json#/$defs/human_authority_ref"},
+    "granted_at": {"$ref": "../common/timestamp.schema.json"},
+    "signature": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {
+        "algorithm": {"const": "ed25519"},
+        "key_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "value": {"type": "string", "pattern": "^[0-9a-f]{128}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
