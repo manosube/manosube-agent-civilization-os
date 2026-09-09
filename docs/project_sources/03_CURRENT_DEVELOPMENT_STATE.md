@@ -978,7 +978,7 @@ ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AND_PR_65_ISSUE_64_REVIEW_COMMENTS
 | Structural Review Round 4 | [PR #65 comment 5597994951](https://github.com/manosube/manosube-agent-civilization-os/pull/65#issuecomment-5597994951) — 2 findings (P15-R4-F1, P15-R4-F2) |
 | SHUKOU adoption | [Issue #64 comment 5598042604](https://github.com/manosube/manosube-agent-civilization-os/issues/64#issuecomment-5598042604)（Human Authority `manosube`）により、契約本文が verbatim で採択済 |
 | Round 1/2/3 findings の Round 4 自身による処分 | `P15_R1_F1_CLOSED=true`, `P15_R1_F2_CLOSED=true`, `P15_R1_F3_CLOSED=true`, `P15_R1_F5_CLOSED=true`, `P15_R1_F6_CLOSED=true`, `P15_R2_F2_SIGNATURE_AND_BOOT_BINDING_CLOSED=true`, `P15_R3_F2_VALIDITY_WINDOW_HALF_CLOSED=true`。`P15-R3-F1` と `P15-R3-F2` の残余のみ reopen され、それぞれ `P15-R4-F1` / `P15-R4-F2` として再採番された。 |
-| This correction round's own commits | branch `agent/issue-64-phase15-runtime-adapter` 上、reviewed HEAD `2c4e0c5a` の直上に積まれた新規commitのみ。history rewrite（amend / rebase / force-push）は行っていない。新規branchも新規PRも作成していない。 |
+| This correction round's own commits | branch `agent/issue-64-phase15-runtime-adapter` 上、reviewed HEAD `2c4e0c5a` の直上に積まれた新規commitのみ。`116298e`（二findingsのcode + schema + regression tests + schema count comment）、`88c6ef9`（contract section 13 / index section 4.4 / 本addendum）、および本行を確定させるcommit自身。history rewrite（amend / rebase / force-push）は行っていない。新規branchも新規PRも作成していない。 |
 
 Round 4 の Review 自身が明示したとおり、**同一のtrust-boundary semantic classがRound 1〜4にわたって再発している**。その再発の系列は次のとおりであり、本roundの補正の形を決定している。
 
