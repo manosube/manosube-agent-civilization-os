@@ -304,7 +304,13 @@ def test_the_composed_authority_retains_the_raw_trust_anchor_nowhere(
     anchor = trust_anchor_public_key_hex()
     assert len(anchor) == 64
     reachable = _reachable_strings(authority)
-    assert reachable, "the traversal must actually reach something"
+    # Non-vacuity: the traversal must genuinely be able to find a string the authority *does*
+    # hold, or "the anchor is absent" would be an assertion about a traversal that finds nothing.
+    admission_id = _canonical["admitted"]["runtime_root_admission_ref"]["id"]
+    assert any(admission_id in text for text in reachable), (
+        "the traversal cannot see the authority's own bound admission id, so it could not see a "
+        "retained anchor either"
+    )
     assert not any(anchor in text for text in reachable), "the raw trust anchor is retained"
     assert anchor not in repr(authority)
 
