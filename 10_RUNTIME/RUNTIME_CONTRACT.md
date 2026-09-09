@@ -30,7 +30,11 @@ Review Round 5 (P15-R5-F1/F2/F3), which reopened and supersedes Round 4's F1 and
 independent finding about timestamp ordering at declaration commit; section 15 records Structural
 Review Round 6 (P15-R6-F1), which reopens and supersedes Round 5's F2 — the per-call admission
 recheck ran once, at the start of the request, and never re-established the resolved record's own
-integrity. Where two sections differ, the **highest-numbered** section governs.
+integrity; section 16 records Structural Review Round 7 (P15-R7-F1), which confirms Round 6's two
+barriers and their placement closed and widens only what each one *proves* — both of Round 6's
+recomputations read a projection that deliberately excludes the record's own declared id, its own
+declared semantic fingerprint and its whole `signature` block, so a substitution changing only one
+of those three still passed. Where two sections differ, the **highest-numbered** section governs.
 
 ## 1. Position
 
@@ -2926,6 +2930,317 @@ PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
 TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
 COMMIT_STATE_TRANSITION_CALL_SITES_IN_THIS_PACKAGE=2
 CLOSED_ROUND_1_TO_5_WORK_REGRESSED=false
+LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
+RUNTIME_CREDENTIAL_USE_AUTHORITY=false
+LIVE_EXTERNAL_WRITE_AUTHORITY=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+PHASE_15_COMPLETE=false
+PHASE_16_ALLOWED=false
+```
+
+## 16. Structural Review Round 7 (P15-R7-F1)
+
+Round 7 of PR #65 confirmed Round 6's two-barrier placement, its closure boundary and the
+transition-chain mechanism all closed, and found **one remaining gap in what each barrier
+proves**: both of Round 6's recomputations are hashes of `ROOT_ADMISSION_SEMANTIC_FIELDS`, and
+that projection deliberately excludes exactly the three fields a Store-level substitution could
+still change without moving it. Where this section and an earlier one differ, this section
+governs — the same rule every earlier round states.
+
+The recurrence series continues, and Round 7's entry names the last surface left:
+
+```text
+ROUND 5   an already-composed service minted           -> per-call currency recheck
+          capabilities from a superseded admission
+ROUND 6   the recheck ran ONCE and only ever read      -> TWO BARRIERS over an IMMUTABLE
+          fields the resolved record declared             COMPOSITION-TIME COMMITMENT, both
+          about itself                                    recomputing FROM THE RESOLVED BODY
+ROUND 7   what those recomputations read is a          -> the commitment now covers the EXACT
+          PROJECTION, and the projection excludes         FULL RECORD, and the declared id and
+          exactly the fields a substitution could         fingerprint must equal the recomputed
+          still move                                      ones as well as the bound ones
+```
+
+### 16.1 P15-R7-F1 — the semantic projection's three deliberate exclusions
+
+*Claimed (Round 6, §15.1):* each barrier re-establishes the resolved record's integrity, by
+recomputing its identity and semantic fingerprint from the body now resolving and requiring exact
+equality with a commitment captured at composition.
+
+*True, and insufficient in one respect that has three separate manifestations.*
+
+`bound_admission_id` and `bound_semantic_fingerprint` are **both** hashes of
+`ROOT_ADMISSION_SEMANTIC_FIELDS` — one canonical projection, hashed twice under two prefixes. That
+projection excludes three of the record's own fields, and each exclusion is *correct where it is
+made*, for reasons `identity.py` itself states:
+
+```text
+runtime_root_admission_id                       excluded: an identity cannot be computed over
+                                                itself
+runtime_root_admission_semantic_fingerprint     excluded: likewise
+signature (algorithm / key_id / value)          excluded: a signature cannot cover its own value
+```
+
+Each barrier recomputed `recomputed_id`/`recomputed_fingerprint` **from the body's semantic
+fields** and compared them only against the composition-time `bound_admission_id`/
+`bound_semantic_fingerprint`. It never checked that the resolved body's own **declared**
+`runtime_root_admission_id`/`runtime_root_admission_semantic_fingerprint` equalled those recomputed
+values, and it never compared the resolved body's `signature` — or any full-record commitment —
+against anything captured at composition. So a substitution changing **only** one of those three
+things, leaving every semantic field exactly as it was, passed both barriers undetected:
+
+```text
+substitution                                    what each existing check saw
+
+change only the declared                        require_valid_root_admission  PASSES (shape only)
+runtime_root_admission_id                       generation/status/project/binding  PASSES
+                                                recomputed id == bound id  PASSES (reads other
+                                                                                   fields)
+                                                recomputed fingerprint == bound  PASSES
+
+change only the declared                        identical: every check above PASSES
+runtime_root_admission_semantic_fingerprint
+
+change only signature.value                     identical: every check above PASSES — and the
+(or signature.key_id)                           signature is not reverified per call at all, by
+                                                design, because the anchor is gone by then
+```
+
+In all three cases a capability was issued from a record that is no longer, in every observable
+respect, the exact anchor-verified record admitted at composition.
+
+*Now:* one narrow addition, entirely inside `bootstrap.py`. Round 5's closure boundary, Round 6's
+two-barrier placement and the transition-chain mechanism are all unchanged, and nothing existing
+is replaced — the three semantic cells stay exactly as they are and a fourth is added beside them.
+
+```text
+AT COMPOSITION   bound_admission_id            )
+                 bound_generation              )  UNCHANGED — all three kept
+                 bound_semantic_fingerprint    )
+                 bound_full_record_commitment  <- NEW: a deterministic digest of the EXACT full,
+                                                  schema-valid, anchor-verified record, computed
+                                                  over the very object _require_currently_admitted
+                                                  returned rather than a re-resolved copy
+
+AT EACH BARRIER  three further requirements, after the existing six and in the established
+                 "recompute-and-compare last" order. NINE requirements now, not six.
+```
+
+The nine requirements, in the order they are checked:
+
+```text
+1. the Store's current-admission pointer still names the exact admission id captured at
+   composition
+2. the resolved current admission carries the exact captured generation
+3. the current admission is still ACTIVE
+4. it still restates this bound service's own Project and Project Binding
+5. its identity, INDEPENDENTLY RECOMPUTED FROM THE BODY NOW RESOLVING, equals the captured
+   identity
+6. its semantic fingerprint, likewise recomputed from that body, equals the captured fingerprint
+7. its own DECLARED runtime_root_admission_id equals that recomputed identity — so declared,
+   recomputed and bound are one value, not two out of three                          [NEW]
+8. its own DECLARED runtime_root_admission_semantic_fingerprint equals that recomputed
+   fingerprint — the same three-way equality                                         [NEW]
+9. the EXACT FULL-RECORD COMMITMENT over the body now resolving — every field it carries,
+   signature.algorithm, signature.key_id and signature.value included — equals the commitment
+   captured at composition over the exact anchor-verified record                     [NEW]
+```
+
+**Why the projection excludes those three fields, and why that means they need their own
+commitment.** The exclusions are not an oversight to be repaired inside `identity.py` — they are
+load-bearing. A content address computed over a record that contains that content address is not
+computable at all, and a signature that covered its own value could never be produced. So
+`ROOT_ADMISSION_SEMANTIC_FIELDS` is right to exclude them, `identity.py` is right to keep
+excluding them, and this round changes nothing there. What follows is simply that *something else*
+has to commit to them, because a hash of a projection can only ever detect a change inside that
+projection. That something else is one deterministic digest over the complete record — deliberately
+broader than the semantic fingerprint, and deliberately computed somewhere else, in the one place
+that needs a "hash the entire record including its own declared id, fingerprint and signature"
+primitive: this per-call integrity recheck, and nothing else in the package.
+
+**Why it reuses `state.canonicalize.canonical_json_bytes` rather than inventing a second
+serializer.** This repository has exactly one canonical serialization owner, and `identity.py`
+already reads it for every one of its own id/fingerprint derivations. A second way to turn a
+canonical record into bytes would be a second notion of *what this record is* — and the entire
+value of a full-record commitment is that there is exactly one such notion, so that the bytes
+composition hashed and the bytes a barrier hashes can never drift apart. `_full_admission_record_
+commitment` therefore imports and calls that same function, under the same `sha256:` encoding every
+other digest in this repository uses. It retains no trust anchor and reintroduces none: a record
+carries a *signature*, never a key, so committing to the full record adds no anchor-derived value
+to anything downstream of composition, and the anchor is still consumed exactly once and discarded.
+
+**Why the three-way declared/recomputed/bound equality is not the self-comparison Round 6
+rejected.** Round 6 was right that comparing a record's declared id against its own other declared
+fields is a self-comparison a self-consistent forgery satisfies trivially — which is why
+requirements 5 and 6 anchor to the *bound* value and must keep doing so. Requirements 7 and 8 do
+not weaken that: the bound value remains the anchor of the chain of equalities, and adding the
+declared field to it can only ever *narrow* what passes. `declared == recomputed == bound` is
+strictly stronger than `recomputed == bound`, never a substitute for it.
+
+**Why 7, 8 and 9 are checked last.** The same ordering rationale §15.1 already states, extended one
+step. Requirement 9 is the broadest check in the function — every body failing any of 5–8 also
+fails 9 — so putting it first would collapse all of them into one indistinguishable "full-record
+commitment mismatch" and 7 and 8 would never refuse for their own reason. Checked last, 9 is
+isolated by exactly the case nothing narrower can see: a body whose every semantic field, whose own
+declared id and whose own declared fingerprint are all untouched, and whose `signature` alone was
+replaced.
+
+```text
+compose at A -> only the declared id substituted under A's own unmoved id   -> no capability,
+                                                                               refused at barrier
+                                                                               1 by requirement 7
+compose at A -> only the declared fingerprint substituted                   -> refused by 8
+compose at A -> only signature.value substituted                            -> refused by 9
+compose at A -> only signature.key_id substituted                           -> refused by 9
+        each of the four: 0 authorization evaluations, 0 adapter calls, 0 network calls, and the
+        chain pointer never touched — these are substitutions, not rotations
+```
+
+**Scope, unchanged and still disclosed.** Everything §15.1's own scope paragraph states still
+holds without amendment: already-issued downstream capabilities are still not retroactively
+revoked, and the closure's bound cells remain rewritable by in-process code that already holds the
+function object. A commitment captured in a cell is a commitment against a *Store*, never against
+the process's own memory.
+
+### 16.2 Finding-to-code-to-test matrix
+
+```text
+P15-R7-F1  the semantic projection's three deliberate exclusions
+  src/manosube_agent_civilization/runtime/bootstrap.py
+      _full_admission_record_commitment             NEW private helper: the exact full record,
+                                                    including its own declared id, its own declared
+                                                    semantic fingerprint and its whole signature
+                                                    block, reduced to one deterministic digest
+                                                    through state.canonicalize.canonical_json_bytes
+      compose_trusted_runtime_deployment_authority  captures bound_full_record_commitment beside
+                                                    bound_admission_id / bound_generation /
+                                                    bound_semantic_fingerprint (all three kept)
+      _require_bound_admission_still_current        nine requirements; 7 and 8 require declared ==
+                                                    recomputed == bound for id and fingerprint,
+                                                    9 requires the full-record commitment to equal
+                                                    the composition-time one
+                                                    (bound_full_record_commitment is its new
+                                                    keyword parameter; both barrier call sites pass
+                                                    it)
+
+  tests/integration/runtime/test_runtime_deployment_authority_composition.py
+      test_a_substituted_declared_admission_id_issues_no_capability
+      test_a_substituted_declared_semantic_fingerprint_issues_no_capability
+      test_a_substituted_signature_value_issues_no_capability
+      test_a_substituted_signature_key_id_issues_no_capability
+      test_the_composed_service_binds_the_exact_full_record_commitment
+      test_a_record_body_substituted_under_the_current_id_issues_no_capability  (Round 6, kept)
+      test_an_unchanged_current_admission_still_issues_a_working_capability     (Round 6, kept)
+
+P15-R7-F1  item 6 — the closed request signature is unchanged, again
+  tests/contract/runtime/test_runtime_static_conformance.py
+      test_the_full_record_commitment_is_barrier_side_only_and_reuses_the_one_serializer
+      test_the_admission_barrier_runs_again_immediately_before_the_capability_is_constructed
+                                                                               (Round 6, unweakened)
+      test_the_request_facing_bootstrap_accepts_no_trust_deciding_parameter    (unweakened)
+      test_the_composition_entry_point_owns_every_trust_deciding_parameter     (unweakened)
+```
+
+### 16.3 Judgment calls made in this round that the adopted findings did not fully pin down
+
+1. **The helper lives in `bootstrap.py`, not in `identity.py`.** The adopted text left the choice
+   open. Nothing else in the package needs a "hash the entire record including its own declared
+   id/fingerprint/signature" primitive — it exists solely for this per-call integrity recheck — and
+   putting it beside `identity.py`'s three deliberately-projected derivations would invite a future
+   reader to treat it as a fourth identity of the record, which it is not. It is kept local, and it
+   still reads the one canonical serializer rather than restating one.
+
+2. **The substitute values chosen for the four isolated controls.** The adopted text says only
+   "some other schema-valid string", so each is stated here explicitly: the declared id becomes
+   `RUNTIME-ROOT-ADMISSION-` + `A`×64 (the schema's own prefix and 64 uppercase hex characters);
+   the declared semantic fingerprint becomes `sha256:` + `b`×64 (its own `^sha256:[0-9a-f]{64}$`
+   pattern); `signature.value` becomes `c`×128 (its own `^[0-9a-f]{128}$` pattern); and
+   `signature.key_id` becomes `TRUST-ANCHOR-0002` against the genuine `TRUST-ANCHOR-0001` (the
+   canonical identity grammar `common/identity.schema.json` owns). Each is genuinely schema-valid,
+   so `require_valid_root_admission` genuinely passes and no refusal is a schema refusal in
+   disguise; and each is genuinely different from the real value, which the controls assert rather
+   than assume. Every one of them is deliberately *not* a plausible digest or signature: the point
+   is that nothing here verifies the signature, only that the record is still the exact record
+   composition proved.
+
+3. **`signature.key_id` is its own control rather than folded into the `signature.value` one.**
+   The adopted text says "preferably also". They are kept separate because they say different
+   things: replacing the value rewrites *the signature*, while replacing the key id rewrites *whose
+   signature this claims to be* — a record still carrying the anchor's own genuine signature bytes
+   while naming a different signing key. Both are refused by requirement 9, and the two controls
+   assert that separately.
+
+4. **Requirements 7 and 8 are ordered before 9, and all three after 5 and 6.** The adopted text
+   requires all three at both barriers and does not pin their order. The ordering follows §15.1's
+   own stated rationale exactly: narrower checks first, so each refuses for its own distinguishable
+   reason, with the broadest one last where it is isolated by the only case nothing narrower can
+   see.
+
+5. **The four controls reuse Round 6's own `_SubstitutedAdmissionBodyStore` unchanged.** Its
+   constructor already takes the substituted body whole, so an *isolated* single-field substitution
+   is expressed by what is handed to it rather than by a new parameter on it. Extending the class
+   would have made four controls that differ in one field look like four different mechanisms. The
+   isolation itself is asserted in each test body — every semantic field, and the other three
+   excluded positions, proved byte-identical to the genuine original — exactly as Round 6's own
+   `declared_at` control already asserts it.
+
+### 16.4 Round 7 declarations
+
+```text
+ADMISSION_BARRIERS_PER_REQUEST_FACING_CALL=2
+PRE_ISSUANCE_ADMISSION_BARRIER_EXISTS=true
+FINAL_BARRIER_READS_ITS_OWN_FRESH_BOOT=true
+ISSUED_CONTEXT_STATE_SNAPSHOT_SOURCED_FROM_FINAL_BOOT=true
+ISSUED_CONTEXT_AUTHORITY_BINDING_SOURCED_FROM_INITIAL_BOOT=true
+COMPOSITION_CAPTURES_AN_IMMUTABLE_ADMISSION_COMMITMENT=true
+COMMITMENT_INCLUDES_SEMANTIC_FINGERPRINT=true
+COMMITMENT_INCLUDES_THE_EXACT_FULL_RECORD=true
+FULL_RECORD_COMMITMENT_COVERS_THE_DECLARED_ID=true
+FULL_RECORD_COMMITMENT_COVERS_THE_DECLARED_SEMANTIC_FINGERPRINT=true
+FULL_RECORD_COMMITMENT_COVERS_THE_SIGNATURE_BLOCK=true
+FULL_RECORD_COMMITMENT_USES_THE_ONE_CANONICAL_SERIALIZATION_OWNER=true
+SECOND_SERIALIZATION_MECHANISM_INTRODUCED=false
+FULL_RECORD_COMMITMENT_RETAINS_A_RAW_TRUST_ANCHOR=false
+PER_CALL_RECHECK_REQUIREMENT_COUNT=9
+PER_CALL_RECHECK_RECOMPUTES_IDENTITY_FROM_THE_RESOLVED_BODY=true
+PER_CALL_RECHECK_RECOMPUTES_FINGERPRINT_FROM_THE_RESOLVED_BODY=true
+PER_CALL_RECHECK_REQUIRES_DECLARED_EQUALS_RECOMPUTED_EQUALS_BOUND_ID=true
+PER_CALL_RECHECK_REQUIRES_DECLARED_EQUALS_RECOMPUTED_EQUALS_BOUND_FINGERPRINT=true
+PER_CALL_RECHECK_TRUSTS_THE_RESOLVED_BODYS_OWN_DECLARED_IDENTITY=false
+DECLARED_ID_SUBSTITUTION_ISSUES_A_CAPABILITY=false
+DECLARED_SEMANTIC_FINGERPRINT_SUBSTITUTION_ISSUES_A_CAPABILITY=false
+SIGNATURE_VALUE_SUBSTITUTION_ISSUES_A_CAPABILITY=false
+SIGNATURE_KEY_ID_SUBSTITUTION_ISSUES_A_CAPABILITY=false
+ISOLATED_SUBSTITUTIONS_REFUSED_BEFORE_AUTHORITY_EVALUATION=true
+ROTATION_LANDING_BETWEEN_THE_TWO_BARRIERS_ISSUES_A_CAPABILITY=false
+REVOCATION_LANDING_BETWEEN_THE_TWO_BARRIERS_ISSUES_A_CAPABILITY=false
+CURRENT_ID_BODY_SUBSTITUTION_ISSUES_A_CAPABILITY=false
+UNCHANGED_CURRENT_ADMISSION_STILL_ISSUES_A_WORKING_CAPABILITY=true
+UNRELATED_STATE_CONTENTION_BLOCKS_ISSUANCE=false
+REQUEST_FACING_BOOTSTRAP_PARAMETER_COUNT=2
+NEW_PUBLIC_REQUEST_PARAMETER_ADDED=0
+REQUEST_FACING_SIGNATURE_CHANGED_SINCE_ROUND_5=false
+CURRENCY_RECHECK_REQUIRES_A_RAW_TRUST_ANCHOR=false
+ALREADY_ISSUED_CAPABILITIES_RETROACTIVELY_REVOKED=false
+CLOSURE_CELLS_ARE_UNWRITABLE_BY_IN_PROCESS_CODE=false
+ROUND_5_CLOSURE_BOUNDARY_CHANGED=false
+ROUND_6_TWO_BARRIER_PLACEMENT_CHANGED=false
+ROUND_5_TIMESTAMP_OWNER_CHANGED=false
+INSTANT_PARSING_OWNER_COUNT_IN_THIS_PACKAGE=1
+ADMISSION_REGISTRY_CHANGED=false
+TRANSITION_CHAIN_CHANGED=false
+RUNTIME_IDENTITY_CHANGED=false
+ENGINE_CHANGED=false
+ROUTE_CHANGED=false
+DEPLOYMENT_REGISTRY_CHANGED=false
+SHIPPED_FILES_CHANGED_THIS_ROUND=1
+SEMANTIC_STATE_SCHEMA_CHANGED=false
+NEW_SCHEMA_FILES_ADDED=0
+CANONICAL_SCHEMA_COUNT=59
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+TRUSTED_DEPLOYMENT_COMPOSITION_ENTRY_POINT_COUNT=1
+COMMIT_STATE_TRANSITION_CALL_SITES_IN_THIS_PACKAGE=2
+CLOSED_ROUND_1_TO_6_WORK_REGRESSED=false
 LIVE_DEPLOYMENT_ENTRYPOINT_INVOKES_THE_MECHANISM=false
 RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 LIVE_EXTERNAL_WRITE_AUTHORITY=false
