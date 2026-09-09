@@ -44,6 +44,7 @@ from .errors import AuthorityError, AuthorityValidationError
 from .identity import (
     approval_id,
     github_projection_grant_id,
+    model_execution_grant_id,
     prohibition_id,
     rule_id,
     verifier_selection_grant_id,
@@ -151,6 +152,17 @@ RECORD_TYPES: dict[str, RecordType] = {
         "declared_by",
         schema_base=_BINDING_SCHEMA_BASE,
     ),
+    # Phase 16 (Issue #66, P16-C1): the Human-Authority-signed capability grant a
+    # ``model_work_unit``'s own ``authority_ref`` ultimately rests on. Admitted through this
+    # identical four-question gate -- readable, schema-valid at a supported version with no
+    # unknown property, identity self-consistent, and Human-Authority-shaped provenance -- so
+    # no model, adapter, or provider can ever occupy ``granted_by``.
+    "model_execution_grant": RecordType(
+        "model_execution_grant.schema.json",
+        "model_execution_grant_id",
+        model_execution_grant_id,
+        "granted_by",
+    ),
 }
 
 HUMAN_AUTHORITY_KIND = "human_authority"
@@ -207,6 +219,8 @@ AUTHORITY_SCHEMA_SEEDS: tuple[str, ...] = (
     AUTHORITY_SCHEMA_BASE + "github_projection_grant.schema.json",
     AUTHORITY_SCHEMA_BASE + "github_projection_decision.schema.json",
     _BINDING_SCHEMA_BASE + "github_projection_grant_declaration.schema.json",
+    AUTHORITY_SCHEMA_BASE + "model_execution_grant.schema.json",
+    AUTHORITY_SCHEMA_BASE + "model_execution_decision.schema.json",
     CANONICAL_SCHEMA_BASE + "difference/difference.schema.json",
 )
 
