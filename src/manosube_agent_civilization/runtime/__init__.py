@@ -46,69 +46,93 @@ evidence = route_runtime_observation_to_evidence(
 )
 ```
 
-The trusted runtime bootstrap (Structural Review Round 3, P15-R3-F1):
+The trusted runtime bootstrap, in two owned halves (Structural Review Round 4, P15-R4-F1):
 
 ```python
-capability = bootstrap_projection_execution_capability(
-    # An ordinary, public, frozen value naming WHICH world is in play. Constructing one is
-    # unrestricted and confers nothing by itself -- see below.
-    TrustedRuntimeRoot(store, project_id, project_binding_id),
-    # The canonical, Store-committed, ACTIVE runtime_root_admission record admitting exactly
-    # this project and this Project Binding.
+# ---- TRUSTED DEPLOYMENT COMPOSITION -- runs once, before any request boundary exists. -------
+# This is the only place a raw trust anchor is ever named, and the only shipped path to a
+# RuntimeDeploymentAuthority. It owns the Store handle, the Project, the Project Binding, the
+# root-admission selection, and the configured anchor.
+authority = compose_trusted_runtime_deployment_authority(
+    store,
+    project_id=project_id,
+    project_binding_id=project_binding_id,
+    # Must be the admission this Project Binding's own chain pointer CURRENTLY names -- a
+    # rotated or revoked one cannot be replayed through its own still-resolvable reference.
     runtime_root_admission_ref={
         "kind": "runtime_root_admission",
         "id": runtime_root_admission_id_value,
     },
-    # Supplied by the DEPLOYMENT/COMPOSITION boundary itself, from its own configuration --
-    # never read from the Store being admitted, never derived from anything on the request
-    # path, and never a constant baked into shipped source.
+    # Deployment configuration. Never read from the Store being admitted, never derived from
+    # anything on the request path, never a constant baked into shipped source.
     trust_anchor_public_key_hex=deployment_configured_trust_anchor_public_key_hex,
+)
+
+# ---- REQUEST-FACING BOOTSTRAP -- consumes the already-bound authority. -----------------------
+# No store / project_id / project_binding_id / runtime_root_admission_ref /
+# trust_anchor_public_key_hex parameter exists on this signature at all, so there is no call
+# shape through which an alternate world can be substituted.
+capability = bootstrap_projection_execution_capability(
+    authority,
     github_projection_grant_refs=[...],
     github_projection_grant_declaration_refs=[...],
 )
 ```
 
-**Possessing a ``TrustedRuntimeRoot`` grants nothing.** Round 1 shipped a public
-``provision_trusted_runtime_root`` factory; Round 2 (P15-R2-F1) deleted it, correctly finding
-that it relocated the trust decision rather than removing it, and left construction behind a
-module-private sentinel. Round 3 (P15-R3-F1) found that sentinel to be a naming convention
-rather than a control -- any caller able to import the module could read it -- and found the
-framing itself wrong: while holding a root was *sufficient* to reach an adapter, "who may mint
-one?" was a question no library-level trick could close.
+**Why the split.** Round 1 shipped a public ``provision_trusted_runtime_root`` factory; Round 2
+(P15-R2-F1) deleted it; Round 3 (P15-R3-F1) made possession of a trust root confer nothing and
+required a canonical, anchor-signed ``runtime_root_admission`` on every call. Round 4 found that
+the same defect had been *moved* rather than closed: the anchor and the admission reference were
+still **parameters of the request-facing call**, so a caller could present a complete, internally
+self-consistent alternate world together with the matching attacker anchor and pass every check.
+The correction is an ownership boundary -- composition owns every trust-deciding value, and the
+request-facing signature can name none of them. ``TrustedRuntimeRoot`` is removed rather than
+kept beside the new type; Round 2's and Round 3's static facts survive in strictly stronger form
+(the deleted factory is still absent by name, and that type's name is now absent from shipped
+code entirely).
 
-The boundary therefore moved off the type. ``bootstrap_projection_execution_capability`` admits
-a root **only** against a canonical ``runtime_root_admission`` record verified against an
-externally supplied trust anchor, re-checked on every call, before any grant resolution and
-before any authorization evaluation. Since the type is no longer a capability, its construction
-is public again -- and Round 2's own mechanical facts still hold unchanged: the deleted factory
-is not reintroduced under any name, no shipped function returns a ``TrustedRuntimeRoot``, and no
-shipped module constructs one (all three still proved by an AST walk over the installed package
-in ``tests/contract/runtime/test_runtime_static_conformance.py``).
-
-Issuing, rotating, and revoking a deployment declaration (Structural Review Round 3,
-P15-R3-F2) goes through one canonical committer, which commits the immutable record **and**
-moves this target's own current-declaration pointer
-(``semantic_state.runtime.claims[<target_key>]``) in a single atomic State transition:
+Issuing, rotating, and revoking either chain goes through one canonical committer each, and both
+parameterize the *same* shared monotonic-chain mechanism
+(:mod:`~manosube_agent_civilization.runtime.transition_chain`) rather than restating a rule of
+their own. Each commits the immutable record **and** moves that chain's own pointer inside
+``semantic_state.runtime.claims`` in a single atomic State transition:
 
 ```python
 result = commit_runtime_deployment_declaration(
     store, project_id, declaration, committed_at="2026-09-09T00:00:00Z"
 )
 result["runtime_deployment_declaration_ref"]  # what a target_identity then references
+
+admitted = commit_runtime_root_admission(
+    store,
+    project_id,
+    admission,
+    trust_anchor_public_key_hex=deployment_configured_trust_anchor_public_key_hex,
+    committed_at="2026-09-09T00:00:00Z",
+)
+admitted["runtime_root_admission_ref"]  # what a composition then references
 ```
 
-Issuing **any** new declaration for the same target through this path -- a rotation
-(``status="ACTIVE"``) or a revocation (``status="REVOKED"``) -- atomically supersedes whatever
-the pointer named before, so a superseded declaration stops anchoring observations even though
-its own record remains immutable, resolvable, signature-valid, and inside its own validity
-window. That is what makes revocation genuinely effective rather than merely declared. This is
-a canonical committer, not a fourth route: ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT`` is still ``3``.
+Both are **monotonic**: a genesis record declares ``generation=0``/``predecessor_ref=null`` and
+is admitted only into an empty chain, and every later record must declare the exact predecessor
+it replaces and exactly one greater generation -- both signed, so neither can be re-aimed after
+the fact. A ``REVOKED`` head is terminal: no successor and no ancestor replay is ever admitted
+for that chain again. Replaying the already-current record is an idempotent no-op rather than a
+transition, and two successors racing from the same head resolve to at most one winner, with the
+loser failing closed rather than silently re-aiming its own already-signed body.
 
-See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §12 and ``10_RUNTIME/RUNTIME_INDEX.md`` for the full
+These are canonical committers, not routes: ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT`` is still ``3``.
+
+See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §13 and ``10_RUNTIME/RUNTIME_INDEX.md`` for the full
 contract set.
 """
 
-from .bootstrap import TrustedRuntimeRoot, bootstrap_projection_execution_capability
+from .admission_registry import commit_runtime_root_admission
+from .bootstrap import (
+    RuntimeDeploymentAuthority,
+    bootstrap_projection_execution_capability,
+    compose_trusted_runtime_deployment_authority,
+)
 from .deployment_registry import commit_runtime_deployment_declaration
 from .errors import (
     RuntimeAdapterError,
@@ -136,13 +160,15 @@ __all__ = [
     "RuntimeAdapter",
     "RuntimeAdapterError",
     "RuntimeAuthorityFreshnessError",
+    "RuntimeDeploymentAuthority",
     "RuntimeEnvelopeIntegrityError",
     "RuntimeObservationError",
     "RuntimeObservationReceipt",
     "RuntimeRequirementError",
-    "TrustedRuntimeRoot",
     "bootstrap_projection_execution_capability",
     "commit_runtime_deployment_declaration",
+    "commit_runtime_root_admission",
+    "compose_trusted_runtime_deployment_authority",
     "observe_runtime_target",
     "route_runtime_observation_to_evidence",
 ]

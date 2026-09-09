@@ -84,7 +84,13 @@ def main() -> int:
     # trust-anchor-signed record that admits one specific project/Project Binding, and without
     # which possessing a TrustedRuntimeRoot grants nothing at all) adds one more, making 59.
     # Round 3's own second finding (P15-R3-F2) adds required valid_from/valid_until fields to
-    # the existing runtime_deployment_declaration schema, again with no new file.
+    # the existing runtime_deployment_declaration schema, again with no new file. Phase 15
+    # Structural Review Round 4 (P15-R4-F1/F2) likewise adds no schema file: it adds required
+    # generation/predecessor_ref fields to *both* existing Runtime schemas
+    # (runtime_deployment_declaration and runtime_root_admission), so each record kind's own
+    # place in its monotonic transition chain is covered by its content address and its
+    # signature. The count therefore stays at 59, verified against what is on disk rather than
+    # assumed.
     if len(paths) != 59 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 

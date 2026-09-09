@@ -1,69 +1,112 @@
 """The canonical current-deployment-declaration pointer, and the one sanctioned way to move it
-(Phase 15 Structural Review Round 3, Issue #64, P15-R3-F2).
+(Phase 15 Structural Review Round 3, Issue #64, P15-R3-F2; rebuilt onto a monotonic, signed
+transition chain by Round 4, P15-R4-F2).
 
-**The defect this module closes.** Round 2 made a ``runtime_deployment_declaration`` signed,
-status-bound, and cross-checked against the Human Authority the observing call's own Boot
-restored. But the record is immutable and content-addressed, so minting a *new* record carrying
-``status="REVOKED"`` never invalidated the original ``ACTIVE`` one: that record keeps its own
-unchanged id and stays individually resolvable, individually signature-valid, and individually
-schema-valid forever. A target already referencing the old ``ACTIVE`` record's id could keep
-presenting that exact reference indefinitely, and Round 2's own "revoked" regression test proved
-only that a *separately constructed* ``REVOKED`` record is refused -- never that an
-*already-issued* ``ACTIVE`` declaration could actually be revoked at all.
-
-**What replaces it.** "Current" stops meaning *whatever the caller happens to reference* and
-starts meaning *whatever Project State's own pointer currently names*:
+**The Round 3 defect this module closed, restated.** Round 2 made a
+``runtime_deployment_declaration`` signed, status-bound, and cross-checked against the Human
+Authority the observing call's own Boot restored. But the record is immutable and
+content-addressed, so minting a *new* record carrying ``status="REVOKED"`` never invalidated the
+original ``ACTIVE`` one: that record keeps its own unchanged id and stays individually
+resolvable, individually signature-valid, and individually schema-valid forever. "Current"
+therefore stopped meaning *whatever the caller happens to reference* and started meaning
+*whatever Project State's own pointer currently names*:
 
 ```text
 semantic_state.runtime.claims[<target_key>]  ->  runtime_deployment_declaration_id
 ```
 
-``<target_key>`` is :func:`~manosube_agent_civilization.runtime.identity.
-runtime_deployment_target_key` over the four fields that decide *which target* a declaration is
-about. Issuing **any** new declaration for that target through
-:func:`commit_runtime_deployment_declaration` -- whether its own ``status`` is ``ACTIVE``
-(a rotation) or ``REVOKED`` (a revocation) -- atomically moves the pointer, in the identical
-``commit_state_transition`` call that commits the record itself. The superseded record remains
-exactly as resolvable, as signed, and as within-window as it always was; it is simply no longer
-what the pointer names, and :func:`~manosube_agent_civilization.runtime.route.
-observe_runtime_target` refuses it on that basis alone.
+**The Round 4 defect this module now closes.** Round 3's pointer moved on *any* new declaration
+for the target, with no ordering claim of any kind. That left the pointer freely re-pointable in
+both directions:
 
-**Why the pointer lives in ``semantic_state.runtime.claims``.** That property is already part of
-the canonical, adopted ``01_SCHEMA/state/semantic_state.schema.json`` -- a ``$defs/domain`` whose
-``claims`` is an open ``{string: scalar}`` map -- and Phase 15 had, until this round, never
-written to the ``runtime`` domain at all (``route.py``'s own ``_commit_envelope`` bumps
-``state_revision``/``lineage_head_ref``/``semantic_fingerprint`` and touches ``semantic_state``
-nowhere). Recording a ``{target_key: declaration_id}`` mapping there needs **no schema change of
-any kind**, keeps this layer from inventing a second State shape of its own, and leaves every
-other field of that domain (``status``, ``identity_refs``, ``evidence_refs``, ``blind_spots``)
-exactly as whoever owns them last left it -- this module merges into ``claims`` and never
-replaces the domain. See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §12.2.
+```text
+A(ACTIVE) -> B(REVOKED)    a genuine revocation                                     intended
+B(REVOKED) -> A(ACTIVE)    replaying the ancestor A moved the pointer straight back  ACCEPTED,
+                           and un-revoked a revoked deployment target                and wrong
+```
 
-**This module is still not a second State owner.** It builds a transition plan and hands it to
-the Store's own single sanctioned committer
-(:func:`~manosube_agent_civilization.store.commit.commit_state_transition` -- the identical
-primitive Reflow, Binding, Projection, and this package's own ``route.py`` already share),
-exactly as every other domain owner in this repository does. It evaluates no Closure, mints no
-Authority, and derives no Difference/Change/Evidence content; it persists one already-issued,
-already-signed Human Authority statement and the pointer that says which one is current.
+Nothing in Round 3 said a declaration had to name what it replaced, so an already-issued,
+already-signed, still-individually-valid ancestor could be re-committed at any later time and
+would silently become current again -- and two rotations racing each other could interleave into
+whichever order the Store happened to see last. Round 4 makes a declaration's own place in its
+target's history a **signed** claim: ``generation`` and ``predecessor_ref`` are now required
+fields that participate in the record's own content address, its own semantic fingerprint, and
+the Human Authority's own signature over it (see
+:data:`~manosube_agent_civilization.runtime.identity.DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS`), and
+this committer admits only a legal transition:
+
+```text
+genesis      generation=0, predecessor_ref=null, only when the target has no current declaration
+successor    generation=current+1 and predecessor_ref naming the EXACT current declaration id
+rotation     an ACTIVE successor replacing an ACTIVE current, through the successor rule alone
+revocation   a REVOKED successor naming the exact current declaration -- TERMINAL for that target
+replay       proposing the already-current declaration is an idempotent no-op, not a transition
+```
+
+**The rules themselves are not restated here.** They live in
+:mod:`~manosube_agent_civilization.runtime.transition_chain`, the one shared mechanism this
+package owns, which the ``runtime_root_admission`` chain (P15-R4-F1) parameterizes in exactly the
+same way. This module contributes only what is genuinely specific to a deployment declaration:
+its :data:`DEPLOYMENT_DECLARATION_CHAIN`, and the verification below.
+
+**Why this committer now Boots and verifies the Human Authority signature, when Round 3's own
+docstring argued against exactly that.** Round 3's committer deliberately skipped signature
+verification, on the reasoning that
+:func:`~manosube_agent_civilization.runtime.route.observe_runtime_target` re-checks it fresh at
+observation time and a second copy could drift into a different notion of "an acceptable
+declaration". That reasoning rested on a premise Round 4 removes: Round 3's committer had **no
+transition legality to gate at all** -- every declaration simply overwrote the pointer -- so
+verifying a signature there would genuinely have bought nothing. Now the committer decides
+whether a proposed record may *move the chain*, and it cannot make that decision honestly while
+being unable to tell a genuine Human Authority statement from an unsigned or wrongly-signed one.
+So the verification exists at two moments, deliberately, for two different questions:
+
+```text
+AT COMMIT TIME (here)          may this proposal move this target's own pointer at all?
+                               -> fresh Boot, signature verified against the Boot-restored key,
+                                  BEFORE any generation/predecessor legality is even considered.
+
+AT OBSERVATION TIME (route.py) may this declaration be trusted to anchor an observation NOW,
+                               possibly much later, possibly after a legitimate Human Authority
+                               re-binding? -> that call's OWN fresh Boot, its own signature check,
+                               its own ACTIVE requirement, its own validity window, its own
+                               currency check -- all unchanged and all still required.
+```
+
+Neither subsumes the other: a declaration committed under authority X remains committed, while an
+observation made after a re-binding to authority Y must refuse it. Round 3's drift concern is
+answered by both sites calling the identical
+:func:`~manosube_agent_civilization.runtime.deployment_declaration.
+verify_runtime_deployment_declaration_signature` over the identical
+:func:`~manosube_agent_civilization.runtime.identity.
+runtime_deployment_declaration_signing_payload` bytes, rather than by one of them not looking.
+
+**This module is still not a second State owner.** It builds no transition plan of its own and
+never touches the Store's committer directly; the shared mechanism does, exactly once, for both
+chains. It evaluates no Closure, mints no Authority, derives no Difference/Change/Evidence
+content, and holds no key: it persists one already-issued, already-signed Human Authority
+statement and the pointer that says which one is current.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from typing import Any
 
-from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
-from manosube_agent_civilization.store.commit import commit_state_transition
-from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
+from manosube_agent_civilization.boot import boot_project
 
+from .deployment_declaration import verify_runtime_deployment_declaration_signature
 from .engine import require_valid_deployment_declaration
-from .errors import RuntimeEnvelopeIntegrityError, RuntimeRequirementError
+from .errors import RuntimeRequirementError
 from .identity import (
     runtime_deployment_declaration_id,
     runtime_deployment_declaration_semantic_fingerprint,
     runtime_deployment_target_key,
+)
+from .transition_chain import (
+    MonotonicChainSpec,
+    commit_chain_transition,
+    current_chain_record_id,
 )
 
 #: The canonical Store record kind this module commits, and the one
@@ -71,16 +114,23 @@ from .identity import (
 #: sites can never drift.
 DEPLOYMENT_DECLARATION_RECORD_KIND = "runtime_deployment_declaration"
 
-#: Where the current-declaration pointer lives inside Project State. ``semantic_state`` ->
-#: this domain -> ``claims`` -> ``{target_key: declaration_id}``.
+#: Where the current-declaration pointer lives inside Project State. Re-exported unchanged from
+#: the shared mechanism so Round 3's own names keep working and there is still exactly one
+#: definition of where a pointer lives.
 DEPLOYMENT_POINTER_SEMANTIC_DOMAIN = "runtime"
 DEPLOYMENT_POINTER_CLAIMS_FIELD = "claims"
 
-#: The identical bounded Compare-And-Swap retry ``route.py``'s own ``_commit_envelope`` uses --
-#: not a timeout, not a backoff, bounded protection against genuine, ordinary contention from an
-#: unrelated commit landing on this project between this call's own ``load_current`` and its own
-#: ``commit``.
-_MAX_COMMIT_RETRIES = 8
+#: Everything about a ``runtime_deployment_declaration`` the shared monotonic-chain mechanism
+#: needs, and nothing else. The chain *rules* live there; only these bindings live here.
+DEPLOYMENT_DECLARATION_CHAIN = MonotonicChainSpec(
+    record_kind=DEPLOYMENT_DECLARATION_RECORD_KIND,
+    id_field="runtime_deployment_declaration_id",
+    semantic_fingerprint_field="runtime_deployment_declaration_semantic_fingerprint",
+    require_valid=require_valid_deployment_declaration,
+    recompute_id=runtime_deployment_declaration_id,
+    recompute_semantic_fingerprint=runtime_deployment_declaration_semantic_fingerprint,
+    chain_key_of=runtime_deployment_target_key,
+)
 
 
 def current_deployment_declaration_id(
@@ -90,65 +140,83 @@ def current_deployment_declaration_id(
     names for *target_key*, or ``None`` when no declaration has ever been made current for that
     target through :func:`commit_runtime_deployment_declaration`.
 
-    A pure read: no Store I/O, no resolution, no verification. *current_state* is whatever the
-    caller already holds -- Boot's own deep-frozen ``current_state`` at resolution time, and a
-    freshly loaded one at each commit attempt (P15-R3-F2's own post-check-substitution barrier).
-
-    ``None`` is returned for every shape that cannot carry a pointer at all -- an absent or
-    non-mapping ``semantic_state``/domain/``claims``, or a non-string value -- rather than
-    raising: a missing pointer is a perfectly ordinary state of the world (nothing has been made
-    current yet), and it is the *caller's* job to decide that "no current declaration" means a
-    refusal. It always does, in this package's own only caller.
+    A pure read over the shared pointer mechanism -- no Store I/O, no resolution, no verification.
+    Kept as this module's own name because ``route.py`` reads the pointer through it and should
+    not have to know that a second chain kind shares the same map.
     """
 
-    semantic_state = current_state.get("semantic_state")
-    if not isinstance(semantic_state, Mapping):
-        return None
-    domain = semantic_state.get(DEPLOYMENT_POINTER_SEMANTIC_DOMAIN)
-    if not isinstance(domain, Mapping):
-        return None
-    claims = domain.get(DEPLOYMENT_POINTER_CLAIMS_FIELD)
-    if not isinstance(claims, Mapping):
-        return None
-    value = claims.get(target_key)
-    return value if isinstance(value, str) else None
+    return current_chain_record_id(current_state, target_key)
 
 
-def _next_semantic_state(
-    current_state: Mapping[str, Any], target_key: str, declaration_id: str
-) -> dict[str, Any]:
-    """Return a deep copy of *current_state*'s own ``semantic_state`` with exactly one claim
-    added or replaced -- never a rebuilt domain, never a replaced ``semantic_state``.
+def _require_declaration_shape_and_signature(
+    store: Any, project_id: str, declaration: Mapping[str, Any]
+) -> None:
+    """Freshly Boot *project_id* and prove *declaration* was genuinely issued by the Human
+    Authority that Boot restores -- before any transition legality is considered at all.
 
-    The scope is deliberately as narrow as ``reflow/bookkeeping.py``'s own single sanctioned
-    ``semantic_state`` mutation: every other field of the ``runtime`` domain (its ``status``, its
-    ``identity_refs``/``evidence_refs``, its ``blind_spots``) and every other domain is carried
-    through byte-identical, so this Phase's own pointer can never silently redefine a domain
-    whose semantics another owner holds.
+    Called once per commit attempt by the shared mechanism, against the State that attempt
+    actually loaded, so a commit can never land under an authority that changed while this call
+    was contending (the identical per-attempt discipline P15-R1-F5 established for ``route.py``).
+
+    Four requirements, in order:
+
+    1. The declaration's own ``project_binding_ref`` must name a Project Binding that genuinely
+       Boots for this project -- so a declaration cannot be committed against a Binding that does
+       not exist, or that this project never adopted.
+    2. Its ``human_authority_ref`` must equal the one that Boot just restored.
+    3. Its ``signature`` must genuinely verify against the ``human_authority_signing_key`` that
+       same Boot restored from the current Project Binding -- never a caller-supplied copy, never
+       a key read from the declaration itself.
+    4. Its validity window must be genuinely ordered (``valid_from <= valid_until``). The window
+       is *not* evaluated against a clock here: this module reads none, and whether an
+       already-committed declaration is in-window at some later instant is
+       :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target`'s own question,
+       asked against that observation's own ``observed_at``.
     """
 
-    semantic_state = current_state.get("semantic_state")
-    if not isinstance(semantic_state, Mapping):
+    binding_ref = declaration.get("project_binding_ref")
+    binding_id = binding_ref.get("id") if isinstance(binding_ref, Mapping) else None
+    if not isinstance(binding_id, str) or not binding_id:
         raise RuntimeRequirementError(
-            "the current Project State carries no readable semantic_state -- refusing to "
-            "commit a runtime_deployment_declaration into a State this module cannot read"
+            "runtime_deployment_declaration carries no readable project_binding_ref.id -- "
+            f"refusing to commit it: {binding_ref!r}"
         )
-    next_semantic_state = deepcopy(dict(semantic_state))
-    domain = next_semantic_state.get(DEPLOYMENT_POINTER_SEMANTIC_DOMAIN)
-    if not isinstance(domain, dict):
+    boot_context = boot_project(store, project_id=project_id, project_binding_id=binding_id)
+    signing_key = boot_context.project_binding.get("human_authority_signing_key")
+    if not isinstance(signing_key, Mapping):
         raise RuntimeRequirementError(
-            "the current Project State carries no readable "
-            f"semantic_state.{DEPLOYMENT_POINTER_SEMANTIC_DOMAIN} domain"
+            "the Boot-restored project_binding carries no readable human_authority_signing_key"
         )
-    claims = domain.get(DEPLOYMENT_POINTER_CLAIMS_FIELD)
-    if not isinstance(claims, dict):
+    if declaration.get("human_authority_ref") != dict(boot_context.human_authority_ref):
         raise RuntimeRequirementError(
-            "the current Project State carries no readable "
-            f"semantic_state.{DEPLOYMENT_POINTER_SEMANTIC_DOMAIN}."
-            f"{DEPLOYMENT_POINTER_CLAIMS_FIELD} map"
+            "runtime_deployment_declaration own human_authority_ref does not name the Human "
+            "Authority this commit's own Boot just restored: "
+            f"{declaration.get('human_authority_ref')!r} != "
+            f"{dict(boot_context.human_authority_ref)!r} -- refusing to move this target's own "
+            "current-declaration pointer under an authority that is not in force"
         )
-    claims[target_key] = declaration_id
-    return next_semantic_state
+    if not verify_runtime_deployment_declaration_signature(
+        dict(declaration), signing_key=dict(signing_key)
+    ):
+        raise RuntimeRequirementError(
+            "runtime_deployment_declaration carries no genuine Human Authority signature over "
+            "its own adopted semantic fields -- verified against the human_authority_signing_key "
+            "this commit's own Boot restored from the current Project Binding. An unsigned, "
+            "self-authored, wrong-key, or stale-key declaration may never move a chain: its own "
+            "generation and predecessor_ref are part of what that signature covers"
+        )
+    valid_from = declaration.get("valid_from")
+    valid_until = declaration.get("valid_until")
+    if not isinstance(valid_from, str) or not isinstance(valid_until, str):
+        raise RuntimeRequirementError(
+            "runtime_deployment_declaration carries no readable validity window: "
+            f"{valid_from!r} .. {valid_until!r}"
+        )
+    if valid_from > valid_until:
+        raise RuntimeRequirementError(
+            f"runtime_deployment_declaration own validity window is not genuinely ordered "
+            f"({valid_from!r} .. {valid_until!r}) -- refusing to commit it"
+        )
 
 
 def commit_runtime_deployment_declaration(
@@ -159,113 +227,58 @@ def commit_runtime_deployment_declaration(
     committed_at: str,
 ) -> dict[str, Any]:
     """Commit *declaration* **and** make it the current declaration for its own target, in one
-    atomic :func:`~manosube_agent_civilization.store.commit.commit_state_transition` call
-    (P15-R3-F2).
+    atomic :func:`~manosube_agent_civilization.store.commit.commit_state_transition` call --
+    if, and only if, it is a legal monotonic transition from whatever is current right now
+    (P15-R3-F2, P15-R4-F2).
 
-    The two halves are inseparable by construction -- there is no call shape through which a
-    caller could commit the record without moving the pointer, or move the pointer without
-    committing the record:
+    *declaration* must already be a real, complete, Human-Authority-signed record. This function
+    proves it schema-valid, independently recomputes its own content address and semantic
+    fingerprint, freshly Boots the project and verifies its signature against that Boot-restored
+    key, and then requires the transition itself to be legal -- genesis, or a successor whose own
+    signed ``generation``/``predecessor_ref`` name exactly the head this chain currently has. It
+    **never signs, mints, or repairs anything**: it holds no key and adds no field.
 
     ```text
-    records=[(runtime_deployment_declaration, <id>, <the record itself>)]   immutable, as always
-    semantic_state.runtime.claims[<target_key>] = <id>                      the current pointer
+    A(ACTIVE, g=0) -> B(REVOKED, g=1, pred=A)     revocation; TERMINAL for this target
+    replay A afterwards                            refused; the pointer stays at B
+    A(ACTIVE, g=0) -> B(ACTIVE, g=1, pred=A)      rotation
+    replay A afterwards                            refused; the pointer stays at B
+    proposing B again while B is current           idempotent no-op; no transition, no commit
+    two successors racing from the same head       at most one wins; the loser re-evaluates
+                                                   against the new head and FAILS CLOSED
     ```
 
-    *declaration* must already be a real, complete, Human-Authority-signed record: this function
-    proves it schema-valid and independently recomputes its own content address and semantic
-    fingerprint, refusing on any mismatch, but it **never signs, mints, or repairs anything** --
-    it holds no key and adds no field. It also deliberately does **not** re-verify the signature
-    or the Boot-restored Authority binding: those are
-    :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target`'s own checks, run
-    fresh against *that call's own* Boot at the moment an observation is actually made, and
-    duplicating them here would create a second, drifting notion of "an acceptable declaration"
-    that could disagree with the route's.
-
     Returns ``{"runtime_deployment_declaration_ref", "runtime_deployment_target_key",
-    "committed_state"}``.
+    "generation", "transition", "committed_state"}``. ``transition`` is ``"GENESIS"``,
+    ``"SUCCESSOR"``, or ``"IDEMPOTENT_REPLAY"``; ``committed_state`` is ``None`` for the last of
+    those, because nothing was committed.
 
     *committed_at* is required and caller-supplied: this module reads no clock, the identical
     discipline every other route and committer in this repository already keeps.
     """
 
-    checked = require_valid_deployment_declaration(declaration)
-    declaration_id = checked["runtime_deployment_declaration_id"]
-    if runtime_deployment_declaration_id(checked) != declaration_id:
-        raise RuntimeRequirementError(
-            "runtime_deployment_declaration own recomputed identity does not equal its own "
-            "declared value -- refusing to commit it or to make it current"
-        )
-    if runtime_deployment_declaration_semantic_fingerprint(checked) != checked.get(
-        "runtime_deployment_declaration_semantic_fingerprint"
-    ):
-        raise RuntimeRequirementError(
-            "runtime_deployment_declaration own recomputed semantic fingerprint does not equal "
-            "its own declared value -- refusing to commit it or to make it current"
-        )
-    if checked.get("project_id") != project_id:
-        raise RuntimeRequirementError(
-            "runtime_deployment_declaration names a different project than the one being "
-            f"committed into: {checked.get('project_id')!r} != {project_id!r}"
-        )
-    target_key = runtime_deployment_target_key(checked)
+    def verify(checked: dict[str, Any], _current_state: Mapping[str, Any]) -> None:
+        _require_declaration_shape_and_signature(store, project_id, checked)
 
-    for _ in range(_MAX_COMMIT_RETRIES):
-        current_state = store.load_current(project_id)
-        transaction_id = f"TX-{declaration_id}-{current_state['state_revision']}"
-        next_state = dict(current_state)
-        next_state["semantic_state"] = _next_semantic_state(
-            current_state, target_key, declaration_id
-        )
-        next_state["state_revision"] = current_state["state_revision"] + 1
-        next_state["previous_state_fingerprint"] = current_state["semantic_fingerprint"]
-        next_state["lineage_head_ref"] = {"kind": "state_transition", "id": transaction_id}
-        next_state["semantic_fingerprint"] = fingerprint_project_state(next_state).as_dict()
-        transition = {
-            "schema_version": "0.1",
-            "transaction_id": transaction_id,
-            "event_type": "TRANSITION",
-            "project_id": project_id,
-            "from_revision": current_state["state_revision"],
-            "to_revision": next_state["state_revision"],
-            "before_fingerprint": current_state["semantic_fingerprint"],
-            "after_fingerprint": next_state["semantic_fingerprint"],
-            "after_state": next_state,
-            "evidence_refs": [],
-            "committed_at": committed_at,
-        }
-        try:
-            commit_state_transition(
-                store,
-                project_id,
-                current_state["state_revision"],
-                current_state["semantic_fingerprint"],
-                next_state,
-                transition,
-                records=[(DEPLOYMENT_DECLARATION_RECORD_KIND, declaration_id, dict(checked))],
-            )
-        except RecordConflictError as error:
-            raise RuntimeEnvelopeIntegrityError(
-                f"a different record already occupies {DEPLOYMENT_DECLARATION_RECORD_KIND}/"
-                f"{declaration_id} with different content -- refusing rather than trust either"
-            ) from error
-        except StaleStateError:
-            continue
-        return {
-            "runtime_deployment_declaration_ref": {
-                "kind": DEPLOYMENT_DECLARATION_RECORD_KIND,
-                "id": declaration_id,
-            },
-            "runtime_deployment_target_key": target_key,
-            "committed_state": next_state,
-        }
-    raise RuntimeRequirementError(
-        f"could not durably commit {DEPLOYMENT_DECLARATION_RECORD_KIND}/{declaration_id} after "
-        f"{_MAX_COMMIT_RETRIES} Compare-And-Swap retries -- sustained unrelated contention on "
-        "this project's own State"
+    result = commit_chain_transition(
+        store,
+        project_id,
+        declaration,
+        spec=DEPLOYMENT_DECLARATION_CHAIN,
+        committed_at=committed_at,
+        verify=verify,
     )
+    return {
+        "runtime_deployment_declaration_ref": result["record_ref"],
+        "runtime_deployment_target_key": result["chain_key"],
+        "generation": result["generation"],
+        "transition": result["transition"],
+        "committed_state": result["committed_state"],
+    }
 
 
 __all__ = [
+    "DEPLOYMENT_DECLARATION_CHAIN",
     "DEPLOYMENT_DECLARATION_RECORD_KIND",
     "commit_runtime_deployment_declaration",
     "current_deployment_declaration_id",

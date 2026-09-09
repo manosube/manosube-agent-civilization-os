@@ -75,6 +75,7 @@ from tests.fixtures.runtime_world import (
     commit_deployment_declaration,
     commit_records,
     commit_target_identity,
+    declaration_successor_fields,
     deployment_declaration_for,
     human_authority_signing_key,
     rebind_with_rotated_signing_key,
@@ -290,7 +291,12 @@ def test_a_declaration_bound_to_a_different_project_binding_is_refused(
     declaration = deployment_declaration_for(
         _world["project_id"], "PROJBIND-SOMEWHERE-ELSE", _world["human_authority_ref"]
     )
-    ref = commit_deployment_declaration(_world["store"], _world["project_id"], declaration)
+    # Planted rather than committed: since Round 4 the canonical committer freshly Boots the
+    # Project Binding a declaration names before it will move a chain, and this one names a
+    # Binding this project never adopted -- so the record cannot reach the Store through it.
+    # The route's own field-restatement check, which is what this control is about, fires long
+    # before the currency check either way.
+    ref = _plant(_world, declaration, "TX-RUNTIME-OTHER-BINDING-DECLARATION")
     target_identity = target_identity_for(
         _world["project_binding_id"], deployment_declaration_ref=ref
     )
@@ -429,16 +435,50 @@ def _commit_and_target(world: dict[str, Any], declaration: dict[str, Any]) -> di
     return _target_for(declaration, ref)
 
 
+def _plant(
+    world: dict[str, Any], declaration: Mapping[str, Any], transaction_id: str
+) -> dict[str, str]:
+    """Insert *declaration* as a raw Store record and return the reference naming it -- the
+    reference-only half of :func:`_commit_raw_and_target`, for controls that build their own
+    ``target_identity`` rather than deriving it from the declaration."""
+
+    commit_records(
+        world["store"],
+        world["project_id"],
+        world["store"].load_current(world["project_id"]),
+        transaction_id,
+        [
+            (
+                DEPLOYMENT_DECLARATION_RECORD_KIND,
+                str(declaration["runtime_deployment_declaration_id"]),
+                dict(declaration),
+            )
+        ],
+    )
+    return {
+        "kind": DEPLOYMENT_DECLARATION_RECORD_KIND,
+        "id": str(declaration["runtime_deployment_declaration_id"]),
+    }
+
+
 def _commit_raw_and_target(
     world: dict[str, Any], declaration: dict[str, Any], transaction_id: str
 ) -> dict[str, Any]:
     """Insert *declaration* as a raw Store record, deliberately bypassing the canonical
     commit-and-supersede path, and return the matching ``target_identity``.
 
-    Needed for the controls whose record is *not schema-valid* and therefore cannot go through
-    the canonical committer at all (which validates before it commits, exactly as it should).
-    The route's own schema check fires long before the P15-R3-F2 currency check, so the refusal
-    each such control asserts is still the one its own name claims.
+    Needed for every control whose record the canonical committer would (correctly) refuse to
+    make current -- a record that is not schema-valid, and, since Round 4 (P15-R4-F2), one that is
+    unsigned, wrongly-signed, bound to a Project Binding this project never adopted, or a genesis
+    revocation of something that was never admitted. The committer now verifies the Human
+    Authority signature and the Boot-restored authority binding *before* it will move a chain, so
+    those records cannot reach the Store through it at all.
+
+    That is not a weakening of the control: the route checks currency **last**, deliberately (see
+    ``bootstrap._require_currently_admitted``'s own docstring for the identical ordering argument
+    on the admission side), so each such control still refuses at exactly the check its own name
+    claims -- schema, status, authority, or signature -- rather than collapsing into an
+    indistinguishable "not current".
     """
 
     commit_records(
@@ -557,7 +597,9 @@ def test_a_self_authored_declaration_signed_by_an_attackers_own_key_is_refused(
     )
     assert declaration["signature"]["key_id"] == human_authority_signing_key()["key_id"]
     _refuses_with_nothing_reached(
-        _world, _commit_and_target(_world, declaration), because="signature"
+        _world,
+        _commit_raw_and_target(_world, declaration, "TX-RUNTIME-ATTACKER-SIGNED-DECLARATION"),
+        because="signature",
     )
 
 
@@ -577,7 +619,9 @@ def test_a_declaration_signed_by_a_different_legitimate_human_authority_is_refus
     )
     assert declaration["signature"]["key_id"] != human_authority_signing_key()["key_id"]
     _refuses_with_nothing_reached(
-        _world, _commit_and_target(_world, declaration), because="signature"
+        _world,
+        _commit_raw_and_target(_world, declaration, "TX-RUNTIME-OTHER-AUTHORITY-DECLARATION"),
+        because="signature",
     )
 
 
@@ -596,7 +640,9 @@ def test_a_declaration_naming_a_human_authority_boot_did_not_restore_is_refused(
     )
     assert declaration["human_authority_ref"] != _world["human_authority_ref"]
     _refuses_with_nothing_reached(
-        _world, _commit_and_target(_world, declaration), because="authority"
+        _world,
+        _commit_raw_and_target(_world, declaration, "TX-RUNTIME-FOREIGN-AUTHORITY-DECLARATION"),
+        because="authority",
     )
 
 
@@ -611,7 +657,11 @@ def test_a_revoked_declaration_is_refused(_world: dict[str, Any]) -> None:
         _world["human_authority_ref"],
         status="REVOKED",
     )
-    _refuses_with_nothing_reached(_world, _commit_and_target(_world, declaration), because="status")
+    _refuses_with_nothing_reached(
+        _world,
+        _commit_raw_and_target(_world, declaration, "TX-RUNTIME-STANDALONE-REVOKED-DECLARATION"),
+        because="status",
+    )
 
 
 def test_the_identical_declaration_is_observed_when_its_status_is_active(
@@ -697,7 +747,11 @@ def test_a_declaration_tampered_and_re_addressed_still_fails_the_signature(
     assert (
         runtime_deployment_declaration_id(tampered) == tampered["runtime_deployment_declaration_id"]
     )
-    _refuses_with_nothing_reached(_world, _commit_and_target(_world, tampered), because="signature")
+    _refuses_with_nothing_reached(
+        _world,
+        _commit_raw_and_target(_world, tampered, "TX-RUNTIME-READDRESSED-DECLARATION"),
+        because="signature",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -787,7 +841,7 @@ def test_a_declaration_restated_for_the_new_binding_but_signed_by_the_stale_key_
     )
     _refuses_with_nothing_reached(
         _rebound_world,
-        _commit_and_target(_rebound_world, stale_signed),
+        _commit_raw_and_target(_rebound_world, stale_signed, "TX-RUNTIME-STALE-KEY-DECLARATION"),
         because="signature",
         project_binding_id=_rebound_world["rebound_project_binding_id"],
     )
@@ -1010,7 +1064,9 @@ def test_a_declarations_validity_window_cannot_be_re_dated_after_signing(
     )
     assert re_addressed["signature"] == expired["signature"]
     _refuses_with_nothing_reached(
-        _world, _commit_and_target(_world, re_addressed), because="signature"
+        _world,
+        _commit_raw_and_target(_world, re_addressed, "TX-RUNTIME-REDATED-DECLARATION"),
+        because="signature",
     )
 
 
@@ -1042,14 +1098,28 @@ def _pointer(world: dict[str, Any], target_identity: Mapping[str, Any]) -> str |
     )
 
 
-def _issue(world: dict[str, Any], *, committed_at: str, **fields: Any) -> dict[str, Any]:
+def _issue(
+    world: dict[str, Any],
+    *,
+    committed_at: str,
+    predecessor: Mapping[str, Any] | None = None,
+    **fields: Any,
+) -> dict[str, Any]:
     """Issue one declaration for the default target through the shipped canonical
-    commit-and-supersede path, and return ``(declaration, target_identity)`` as a dict."""
+    commit-and-supersede path, and return ``(declaration, target_identity)`` as a dict.
 
+    *predecessor*, when given, is the declaration this one supersedes: since Round 4 (P15-R4-F2)
+    a successor must declare -- inside the payload its own Human Authority signature covers --
+    exactly one greater ``generation`` and a ``predecessor_ref`` naming that exact record. Omit it
+    for a genesis declaration, which is admitted only into a chain that has none.
+    """
+
+    chain_fields = declaration_successor_fields(predecessor) if predecessor is not None else {}
     declaration = deployment_declaration_for(
         world["project_id"],
         world["project_binding_id"],
         world["human_authority_ref"],
+        **chain_fields,
         **fields,
     )
     ref = commit_deployment_declaration(
@@ -1086,9 +1156,16 @@ def test_an_already_issued_active_declaration_is_genuinely_revoked_by_a_later_re
         committed_at="2026-09-09T01:00:00Z",
         declared_at="2026-09-08T02:00:00Z",
         status="REVOKED",
+        predecessor=issued_a["declaration"],
     )
     b_id = str(issued_b["declaration"]["runtime_deployment_declaration_id"])
     assert b_id != a_id
+    # P15-R4-F2: B is a *successor*, and says so under the Human Authority's own signature.
+    assert issued_b["declaration"]["generation"] == 1
+    assert issued_b["declaration"]["predecessor_ref"] == {
+        "kind": DEPLOYMENT_DECLARATION_RECORD_KIND,
+        "id": a_id,
+    }
     assert _pointer(_world, target_a) == b_id
 
     # A itself is untouched: still resolvable, still byte-identical, still ACTIVE, still signed.
@@ -1111,12 +1188,15 @@ def test_the_revoking_declaration_itself_is_refused_on_its_own_status(
     closes both doors at once: the old reference is no longer current, and the new one is not
     ACTIVE."""
 
-    _issue(_world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z")
+    issued_a = _issue(
+        _world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z"
+    )
     issued_b = _issue(
         _world,
         committed_at="2026-09-09T01:00:00Z",
         declared_at="2026-09-08T02:00:00Z",
         status="REVOKED",
+        predecessor=issued_a["declaration"],
     )
     _refuses_with_nothing_reached(_world, issued_b["target_identity"], because="status")
 
@@ -1149,6 +1229,7 @@ def test_a_superseded_declaration_is_refused_purely_because_it_is_no_longer_curr
         committed_at="2026-09-09T01:00:00Z",
         declared_at="2026-09-08T02:00:00Z",
         deployment_fingerprint="sha256:" + "b" * 64,
+        predecessor=issued_a["declaration"],
     )
     b_id = str(issued_b["declaration"]["runtime_deployment_declaration_id"])
     assert issued_b["declaration"]["status"] == "ACTIVE"
@@ -1201,6 +1282,7 @@ def test_a_replayed_old_active_declaration_reference_is_refused(_world: dict[str
         committed_at="2026-09-09T01:00:00Z",
         declared_at="2026-09-08T02:00:00Z",
         deployment_fingerprint="sha256:" + "c" * 64,
+        predecessor=issued_a["declaration"],
     )
 
     # The identical reference the target has been replaying all along now anchors nothing.
@@ -1286,9 +1368,13 @@ class _PointerBarrierStore:
     checked and is no longer current at commit time.
     """
 
-    def __init__(self, delegate: Any, world: dict[str, Any]) -> None:
+    def __init__(self, delegate: Any, world: dict[str, Any], current: Mapping[str, Any]) -> None:
         self._delegate = delegate
         self._world = world
+        # P15-R4-F2: the injected commit must be a *legal* successor of whatever is current when
+        # this test starts -- a genesis record, or one naming the wrong predecessor, would be
+        # refused by the committer itself and the barrier would never fire at all.
+        self._current = current
         self.injected = False
         self.superseding_id: str | None = None
 
@@ -1304,6 +1390,7 @@ class _PointerBarrierStore:
                 self._world["human_authority_ref"],
                 declared_at="2026-09-08T03:00:00Z",
                 deployment_fingerprint="sha256:" + "d" * 64,
+                **declaration_successor_fields(self._current),
             )
             commit_deployment_declaration(
                 self._delegate,
@@ -1334,7 +1421,7 @@ def test_a_supersession_landing_after_the_check_but_before_the_commit_refuses_th
 
     issued = _issue(_world, committed_at="2026-09-09T00:00:00Z", declared_at="2026-09-08T00:00:00Z")
     target_identity = issued["target_identity"]
-    store = _PointerBarrierStore(_world["store"], _world)
+    store = _PointerBarrierStore(_world["store"], _world, issued["declaration"])
     adapter = _seeded(target_identity)
 
     with pytest.raises(RuntimeRequirementError) as raised:

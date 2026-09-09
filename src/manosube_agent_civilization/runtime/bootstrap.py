@@ -28,6 +28,66 @@ production code rather than a test-only live-write gate:
   ``boot_project``'s/``evaluate_projection_authorization``'s own errors propagate unchanged) on
   any refusal, so a real caller can see *why* provisioning failed.
 
+**Structural Review Round 4 (P15-R4-F1): the trust anchor is owned by a composition step, and
+never appears on a request-facing signature at all. Read this before reading the diff.**
+
+Round 4 found that Rounds 1-3 had moved the same defect rather than closed it. Round 3's own
+correction made `bootstrap_projection_execution_capability` require an admission record verified
+against a ``trust_anchor_public_key_hex`` -- but it required that key **as a parameter of the
+request-facing call itself**, and took the admission reference as a parameter too. A caller who
+could reach that function could therefore still present a complete, internally self-consistent
+alternate world *together with the matching attacker anchor*, and every check would pass: the
+alternate Store resolves the alternate admission, the alternate admission is genuinely signed by
+the alternate anchor, and the function had no way to know which anchor the deployment actually
+configured, because the caller supplied that too.
+
+The correction is an ownership boundary, not another check:
+
+```text
+TRUSTED_DEPLOYMENT_COMPOSITION   owns the canonical Store handle, project_id,
+                                 project_binding_id, the root-admission selection, and the
+                                 configured trust-anchor public key. It runs ONCE, before any
+                                 request boundary exists.
+
+REQUEST_FACING_BOOTSTRAP         may supply operation-scoped references only -- grants and grant
+                                 declarations. It MUST NOT be able to supply or replace the
+                                 Store, the Project, the Binding, the anchor, the admission, or
+                                 the Human Authority key, and after this round it structurally
+                                 cannot: no such parameter exists on its signature.
+```
+
+`compose_trusted_runtime_deployment_authority` is that composition step and is the only shipped
+function through which a :class:`RuntimeDeploymentAuthority` can be obtained. It performs every
+one of Round 3's admission checks -- resolve, schema-validate, identity-recompute,
+fingerprint-recompute, require ACTIVE, require the exact project and Binding, verify the
+signature against the deployment-configured anchor -- plus Round 4's own currency requirement
+(§13.2: the presented admission must be the one this Project Binding's own admission chain
+pointer *currently* names, so a rotated or revoked admission cannot be replayed through its own
+still-resolvable reference). It then closes over the result and **discards the raw anchor**: the
+anchor value is not retained on the authority, is not reachable from it, and appears nowhere in
+its state.
+
+`bootstrap_projection_execution_capability` consumes that already-bound authority. Its signature
+carries no ``store``, no ``project_id``, no ``project_binding_id``, no
+``trust_anchor_public_key_hex``, and no ``runtime_root_admission_ref`` -- proved by
+``inspect.signature`` in ``tests/contract/runtime/test_runtime_static_conformance.py``, not by
+eye. There is no call shape through which an alternate world can be substituted into it.
+
+*The disclosed consequence of "closed over afterward".* Because composition Boots and verifies
+the anchor exactly once, an already-composed authority stays usable until whoever holds it stops
+using it or recomposes -- even if the admission is rotated or revoked afterwards. That is exactly
+how a cached credential or capability token behaves in any real system, and it is the direct
+consequence of the adopted contract's own wording: the anchor is "closed over afterward" and
+"absent from every request-facing execution signature", which rules out per-request
+re-verification. Rotation and revocation therefore bind the next composition, not an authority a
+deployment already holds. See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §13.5, item 1.
+
+`TrustedRuntimeRoot` is **removed**, not kept beside the new type. It existed only to name a
+world, and naming a world is now composition's own job; leaving an inert value behind would give
+a future reader two handles with one purpose. Round 2's and Round 3's own static facts survive in
+strictly stronger form: the deleted Round 1 minting factory is still absent by name, and the
+`TrustedRuntimeRoot` name is now absent from shipped code entirely.
+
 **Structural Review Round 1 (P15-R1-F4): the trust root is a type, not a parameter list.**
 As first delivered, :func:`bootstrap_projection_execution_capability` took ``store``,
 ``project_id``, and ``project_binding_id`` as its own free parameters and proved only that the
@@ -192,11 +252,13 @@ from manosube_agent_civilization.projection import (
     ProjectionExecutionContext,
 )
 
+from .admission_registry import ROOT_ADMISSION_RECORD_KIND, current_root_admission_id
 from .engine import require_valid_root_admission
 from .errors import RuntimeRequirementError
 from .identity import (
     runtime_root_admission_id,
     runtime_root_admission_semantic_fingerprint,
+    runtime_root_admission_target_key,
 )
 from .root_admission import verify_runtime_root_admission_signature
 
@@ -215,9 +277,11 @@ _SUBJECT_KIND_FOR_PROJECTION_KIND: dict[str, str] = {
 }
 
 
-#: The canonical record kind whose ACTIVE, externally-anchored, genuinely signed instance is
-#: what actually admits a :class:`TrustedRuntimeRoot` (Round 3, P15-R3-F1).
-_ROOT_ADMISSION_RECORD_KIND = "runtime_root_admission"
+#: The canonical record kind whose ACTIVE, externally-anchored, genuinely signed, *currently
+#: pointed-to* instance is what actually admits a deployment composition (Round 3, P15-R3-F1;
+#: currency added by Round 4, P15-R4-F1). Read from the one module that owns the chain, so this
+#: file and that one can never name two different kinds.
+_ROOT_ADMISSION_RECORD_KIND = ROOT_ADMISSION_RECORD_KIND
 #: The one ``status`` a Runtime Root Admission may carry and still admit a root. The closed
 #: vocabulary itself -- ``ACTIVE``/``REVOKED`` -- is owned by
 #: ``01_SCHEMA/runtime/runtime_root_admission.schema.json``, exactly as this package's own
@@ -235,52 +299,67 @@ def _require_canonical_identity(name: str, value: Any) -> str:
     return value
 
 
-@dataclass(frozen=True, slots=True)
-class TrustedRuntimeRoot:
-    """One immutable handle naming exactly which Store, Project, and Project Binding a trusted
-    runtime provisioning call operates within (P15-R1-F4) -- and, since Round 3 (P15-R3-F1),
-    **nothing more than that name.**
+@dataclass(frozen=True, slots=True, repr=False)
+class RuntimeDeploymentAuthority:
+    """One opaque, composition-bound capability: *this* Store, *this* Project, *this* Project
+    Binding, and the fact that a genuine, currently-admitted root admission was already verified
+    against a deployment-supplied trust anchor (Phase 15 Structural Review Round 4, P15-R4-F1).
 
-    **Constructing one is public, unrestricted, and confers no access whatsoever.** Round 1
-    shipped a public ``provision_trusted_runtime_root`` factory; Round 2 deleted it and left
-    construction behind a module-private sentinel; Round 3 found that sentinel to be a
-    convention rather than a control (any caller able to import this module could read it) and,
-    more importantly, found the whole framing wrong: while *possessing* a root was sufficient to
-    reach an adapter, "who may mint one?" was an unanswerable question no library-level trick
-    could close.
+    **Obtainable only from** :func:`compose_trusted_runtime_deployment_authority`, which is the
+    one shipped trusted-composition entry point and the one place a raw trust anchor is ever
+    admitted. The boundary this type marks is an *operational deployment-composition* boundary --
+    a deployment composes once, at startup, and hands request-facing code the result -- and this
+    round is deliberate about not pretending otherwise: it is not Python name privacy, not a
+    sentinel, not possession of a public dataclass, and not an assertion in prose. What is
+    structural, and what the review's own decisive control names, is that the *request-facing*
+    signature has no parameter through which a Store, Project, Binding, admission, or anchor can
+    be substituted at all (see :func:`bootstrap_projection_execution_capability`).
 
-    So the boundary moved off this type entirely.
-    :func:`bootstrap_projection_execution_capability` now admits a root **only** against a
-    canonical, Store-committed, ACTIVE ``runtime_root_admission`` record naming exactly this
-    project and this Project Binding, genuinely signed by the private key matching a
-    ``trust_anchor_public_key_hex`` **its own caller supplies from deployment-time
-    configuration** -- a key that is deliberately not resolvable from inside the Store being
-    admitted at all. That check reruns on every call, before anything else substantive, whatever
-    the root's provenance. A directly constructed root over an attacker's own fully
-    self-consistent world therefore gets exactly nothing: the attacker can forge every record in
-    that world, including an admission record signed by *their* key, and still cannot produce
-    one that verifies against an anchor they do not hold.
+    **The raw trust anchor is not here.** It was needed once, at composition, to verify the
+    admission's signature, and was discarded immediately afterwards: retaining it would recreate
+    exactly the "raw anchor reachable downstream" problem this whole contract exists to close.
+    What *is* retained is the exact admission generation this authority was composed against, so
+    a bound context can always say precisely which anchor/admission generation it speaks for
+    (Contract 1, item 5).
 
-    Keeping a fake-private constructor around a value that grants nothing would preserve the
-    illusion Round 3 named, so the sentinel is dropped rather than relocated. Round 2's own
-    mechanical facts are untouched and still proved: the deleted factory is not reintroduced
-    under any name, no shipped function returns this type, and no shipped module constructs one.
-
-    This type verifies nothing about the world it names, deliberately: it holds no Boot verdict,
-    no resolved record, and no fingerprint, so it can never be a stale attestation that
-    something *was* valid at construction time. Every verification happens fresh inside the
-    bootstrap call that consumes it. It does still require *project_id*/*project_binding_id* to
-    be plain canonical identities rather than paths, URLs, or locators -- the identical check
-    Boot's own entry point applies.
+    **No public accessor exposes the Store, the anchor, or the admission body.** Every field is
+    internal to this module, ``__repr__`` deliberately reveals nothing that could leak into a log,
+    and ``tests/integration/runtime/test_runtime_deployment_authority_composition.py`` proves --
+    by walking the composed object's own reachable state -- that the anchor hex string appears
+    nowhere inside it.
     """
 
-    store: Any
-    project_id: str
-    project_binding_id: str
+    _store: Any
+    _project_id: str
+    _project_binding_id: str
+    _runtime_root_admission_id: str
+    _runtime_root_admission_generation: int
 
     def __post_init__(self) -> None:
-        _require_canonical_identity("project_id", self.project_id)
-        _require_canonical_identity("project_binding_id", self.project_binding_id)
+        _require_canonical_identity("project_id", self._project_id)
+        _require_canonical_identity("project_binding_id", self._project_binding_id)
+
+    def __repr__(self) -> str:
+        """Deliberately opaque: an authority that printed its own Store handle, project, or bound
+        admission into a log line would hand an operator's console exactly the material this type
+        exists to keep out of reach of everything downstream of composition."""
+
+        return "<RuntimeDeploymentAuthority (composition-bound; contents deliberately opaque)>"
+
+
+def _boot(store: Any, project_id: str, project_binding_id: str) -> Any:
+    """The one literal ``boot_project`` call site in this module (the identical single-site
+    discipline ``route.py`` already keeps, so no second, drifting way of restoring a project can
+    appear beside it).
+
+    Reached from exactly two points: once at composition time, to prove the world a deployment is
+    binding is genuinely restorable and to read the State its admission pointer lives in; and once
+    per request-facing call, freshly, for the same grant/declaration-freshness reasons Rounds 1-3
+    established. The second Boot has nothing to do with the trust decision -- composition made
+    that once, and the anchor is gone by then.
+    """
+
+    return boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
 
 
 def _require_reference(value: Any, *, context: str, kind: str) -> dict[str, str]:
@@ -294,46 +373,66 @@ def _require_reference(value: Any, *, context: str, kind: str) -> dict[str, str]
     return {"kind": kind, "id": record_id}
 
 
-def _require_admitted_root(
-    trusted_runtime_root: TrustedRuntimeRoot,
+def _require_currently_admitted(
+    store: Any,
     *,
+    project_id: str,
+    project_binding_id: str,
+    current_state: Mapping[str, Any],
     runtime_root_admission_ref: Any,
     trust_anchor_public_key_hex: Any,
 ) -> dict[str, Any]:
-    """Admit *trusted_runtime_root* -- or refuse everything (Round 3, P15-R3-F1).
+    """Admit this deployment composition -- or refuse everything (Round 3, P15-R3-F1; currency
+    added by Round 4, P15-R4-F1, item 5).
 
-    This is the control that replaced "possessing a root is sufficient". It is deliberately
-    **inside** :func:`bootstrap_projection_execution_capability` rather than a separate pre-step
-    function a caller could forget, discard, or bypass, and it runs before any grant or
-    declaration is resolved and before
-    :func:`~manosube_agent_civilization.authority.evaluate_projection_authorization` is ever
-    called -- so every refusal here costs zero adapter calls and zero authorization evaluations,
-    however the root itself was constructed.
+    This is the control that replaced "possessing a root is sufficient", and it now runs at
+    *composition* time rather than on every request-facing call, because Round 4 moved the anchor
+    off the request-facing signature entirely. It is deliberately **inside**
+    :func:`compose_trusted_runtime_deployment_authority` rather than a separate pre-step a caller
+    could forget, discard, or bypass, and it runs before a
+    :class:`RuntimeDeploymentAuthority` can exist at all -- so every refusal here costs zero
+    adapter calls, zero grant resolutions, and zero authorization evaluations.
 
-    Five requirements, in order:
+    Seven requirements, in order:
 
     1. *runtime_root_admission_ref* must be a well-formed reference of kind
-       ``runtime_root_admission`` and must **resolve inside the root's own Store**.
-    2. The resolved record must be schema-valid, and its own independently recomputed content
-       address and semantic fingerprint must equal its own declared values (the identical
-       tamper check every other ``_resolve_*`` in this module and in ``route.py`` applies).
+       ``runtime_root_admission``.
+    2. The record must resolve inside the bound Store, be schema-valid, and its own independently
+       recomputed content address and semantic fingerprint must equal its own declared values.
     3. ``status`` must be ``"ACTIVE"``.
-    4. Its ``project_id`` and ``project_binding_ref`` must **exactly** equal the root's own --
-       so one admission artifact anchors exactly one project and one Binding, never an unbounded
-       trust grant reusable across arbitrary Stores.
+    4. Its ``project_id`` and ``project_binding_ref`` must **exactly** equal the ones being
+       composed -- one admission artifact anchors exactly one project and one Binding, never an
+       unbounded trust grant reusable across arbitrary Stores.
     5. Its ``signature`` must genuinely verify against *trust_anchor_public_key_hex*.
+    6. This Project Binding's own admission chain must have a **current** admission at all --
+       ``semantic_state.runtime.claims["ROOT-ADMISSION:<project_binding_id>"]``, moved only by
+       :func:`~manosube_agent_civilization.runtime.admission_registry.
+       commit_runtime_root_admission`. Nothing admitted means nothing is admitted, however many
+       individually valid admission records happen to sit in the Store.
+    7. The presented reference must name **exactly** that current admission. This is Round 4's own
+       addition: an admission that was rotated or revoked at the composition level keeps its own
+       unchanged content address and stays individually resolvable, individually schema-valid, and
+       individually anchor-signed forever, and presenting it again must be refused on currency
+       alone.
 
-    Requirement 5 is what makes the other four mean anything. The anchor key is supplied by
-    *this function's own caller*, from deployment/composition-time configuration -- never read
-    from the Store being admitted, never derived from anything on the request path, and never a
-    constant in shipped source. An attacker holding a complete, internally valid alternate world
-    can mint an admission record inside it and self-sign it with that world's own genuinely
-    legitimate Human Authority key; it fails here, because the key that decides is one that
-    world never had.
+    **Why currency is checked last, deliberately.** It is the identical ordering
+    ``route._resolve_deployment_declaration`` already uses for its own sibling pointer, and for
+    the identical reason: a forged, foreign-signed, tampered, wrong-project, or wrong-Binding
+    admission can never *become* current -- the committer that moves the pointer verifies the
+    anchor signature before it will move anything -- so if currency ran first, every one of those
+    refusals would collapse into a single indistinguishable "not current" message and stop proving
+    what it claims to prove. Ordering it last keeps each control refusing for exactly its own
+    reason, and leaves the currency control isolated by the rotation and revocation cases, where
+    the presented record is perfectly genuine in every other respect.
+
+    Requirement 5 is what makes the record-level checks mean anything. The anchor key is supplied by the
+    deployment/composition boundary itself, from its own configuration -- never read from the
+    Store being admitted, never derived from anything on the request path, and never a constant in
+    shipped source. An attacker holding a complete, internally valid alternate world can mint an
+    admission record inside it and self-sign it with that world's own genuinely legitimate key; it
+    fails here, because the key that decides is one that world never had.
     """
 
-    store = trusted_runtime_root.store
-    project_id = trusted_runtime_root.project_id
     if not isinstance(trust_anchor_public_key_hex, str) or not trust_anchor_public_key_hex:
         raise RuntimeRequirementError(
             "trust_anchor_public_key_hex must be a non-empty hex-encoded Ed25519 public key, "
@@ -349,8 +448,8 @@ def _require_admitted_root(
     if resolved is None:
         raise RuntimeRequirementError(
             "runtime_root_admission_ref does not resolve to a committed runtime_root_admission "
-            f"for project {project_id!r}: {checked_ref['id']!r} -- an unadmitted trusted runtime "
-            "root provisions nothing, however it was constructed"
+            f"for project {project_id!r}: {checked_ref['id']!r} -- an unadmitted deployment "
+            "composition provisions nothing"
         )
     admission = require_valid_root_admission(resolved)
     if runtime_root_admission_id(admission) != admission.get("runtime_root_admission_id"):
@@ -368,21 +467,19 @@ def _require_admitted_root(
     if admission.get("status") != _ADMISSION_ACTIVE_STATUS:
         raise RuntimeRequirementError(
             f"resolved runtime_root_admission {checked_ref['id']!r} is not ACTIVE "
-            f"({admission.get('status')!r}) -- a revoked admission admits nothing"
+            f"({admission.get('status')!r}) -- a revoked admission admits nothing, and a revoked "
+            "head is terminal for its own chain"
         )
     if admission.get("project_id") != project_id:
         raise RuntimeRequirementError(
             f"resolved runtime_root_admission {checked_ref['id']!r} admits a different project "
-            f"than this root names: {admission.get('project_id')!r} != {project_id!r}"
+            f"than this composition names: {admission.get('project_id')!r} != {project_id!r}"
         )
-    expected_binding_ref = {
-        "kind": "project_binding",
-        "id": trusted_runtime_root.project_binding_id,
-    }
+    expected_binding_ref = {"kind": "project_binding", "id": project_binding_id}
     if admission.get("project_binding_ref") != expected_binding_ref:
         raise RuntimeRequirementError(
             f"resolved runtime_root_admission {checked_ref['id']!r} admits a different Project "
-            f"Binding than this root names: {admission.get('project_binding_ref')!r} != "
+            f"Binding than this composition names: {admission.get('project_binding_ref')!r} != "
             f"{expected_binding_ref!r} -- one admission artifact anchors exactly one project and "
             "one Binding, never an unbounded trust grant"
         )
@@ -395,7 +492,101 @@ def _require_admitted_root(
             "unsigned, self-authored, or foreign-world-signed admission admits nothing, and this "
             "is the one check an internally self-consistent alternate world cannot satisfy"
         )
+    chain_key = runtime_root_admission_target_key(
+        {"project_binding_ref": {"kind": "project_binding", "id": project_binding_id}}
+    )
+    current_id = current_root_admission_id(current_state, chain_key)
+    if current_id is None:
+        raise RuntimeRequirementError(
+            "no runtime_root_admission is currently admitted for this Project Binding -- "
+            f"refusing to compose a deployment authority for {project_binding_id!r}: an "
+            "admission record that was never made current through the canonical "
+            "commit-and-supersede path admits nothing, however individually genuine it is"
+        )
+    if current_id != checked_ref["id"]:
+        raise RuntimeRequirementError(
+            f"the presented runtime_root_admission {checked_ref['id']!r} is no longer the current "
+            f"one for this Project Binding ({current_id!r} is) -- refusing to compose a "
+            "deployment authority: it has been rotated or revoked, and its own content, "
+            "signature, and resolvability remaining genuine does not make it current again"
+        )
     return admission
+
+
+def compose_trusted_runtime_deployment_authority(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    runtime_root_admission_ref: Mapping[str, str],
+    trust_anchor_public_key_hex: str,
+) -> RuntimeDeploymentAuthority:
+    """**The** shipped, production, trusted-composition entry point (Round 4, P15-R4-F1, item 1):
+    bind one canonical Store, Project, Project Binding, exact root admission, and configured trust
+    anchor into a single opaque :class:`RuntimeDeploymentAuthority`.
+
+    This is the boundary that decides *which world is canonical at all*, and it is the only place
+    in shipped request-reachable code where a raw trust anchor is ever named. It is called once,
+    by a real deployment's own composition boundary, before any request boundary exists -- never
+    from a request path, and never with configuration read here: this function reads no
+    environment variable, no file, and no registry. Every value it needs is injected by its
+    caller, which is the deployment itself.
+
+    ```python
+    authority = compose_trusted_runtime_deployment_authority(
+        store,  # the canonical, already-open Store handle
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        runtime_root_admission_ref=ref,  # must be the CURRENTLY admitted one
+        trust_anchor_public_key_hex=configured,  # deployment configuration; never from `store`
+    )
+    # ... hand `authority` -- and nothing else -- to request-facing code:
+    capability = bootstrap_projection_execution_capability(
+        authority,
+        github_projection_grant_refs=[...],
+        github_projection_grant_declaration_refs=[...],
+    )
+    ```
+
+    What it proves before returning anything: the Project and Project Binding genuinely Boot; this
+    Project Binding's own admission chain has a current admission; *runtime_root_admission_ref*
+    names exactly that current admission (so a rotated or revoked one cannot be replayed through
+    its own still-valid reference); the resolved record is schema-valid and its own recomputed
+    identity and semantic fingerprint match its own declared values; it is ``ACTIVE``; it restates
+    exactly this project and this Binding; and its signature genuinely verifies against
+    *trust_anchor_public_key_hex*. See :func:`_require_currently_admitted` for the full ordering
+    and the reasoning behind each step.
+
+    The anchor is used here and **discarded**: it is not stored on the returned authority, not
+    reachable from it, and not re-verified per request-facing call. That is a deliberate,
+    disclosed consequence of the adopted contract's own "closed over afterward" wording -- an
+    already-composed authority behaves like a cached capability token, so rotation and revocation
+    bind the *next* composition (``10_RUNTIME/RUNTIME_CONTRACT.md`` §13.5, item 1).
+
+    Raises :class:`~manosube_agent_civilization.runtime.errors.RuntimeRequirementError` on any
+    refusal; every :class:`~manosube_agent_civilization.boot.errors.BootError`/
+    :class:`~manosube_agent_civilization.store.errors.StoreError` a resolved owner itself raises
+    propagates unchanged. Mints nothing, signs nothing, commits nothing, and holds no private key.
+    """
+
+    _require_canonical_identity("project_id", project_id)
+    _require_canonical_identity("project_binding_id", project_binding_id)
+    boot_context = _boot(store, project_id, project_binding_id)
+    admission = _require_currently_admitted(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        current_state=boot_context.current_state,
+        runtime_root_admission_ref=runtime_root_admission_ref,
+        trust_anchor_public_key_hex=trust_anchor_public_key_hex,
+    )
+    return RuntimeDeploymentAuthority(
+        store,
+        project_id,
+        project_binding_id,
+        str(admission["runtime_root_admission_id"]),
+        int(admission["generation"]),
+    )
 
 
 def _resolve_grant(store: Any, project_id: str, ref: Any, *, context: str) -> dict[str, Any]:
@@ -469,60 +660,46 @@ def _resolve_subject(
 
 
 def bootstrap_projection_execution_capability(
-    trusted_runtime_root: TrustedRuntimeRoot,
+    deployment_authority: RuntimeDeploymentAuthority,
     *,
-    runtime_root_admission_ref: Mapping[str, str],
-    trust_anchor_public_key_hex: str,
     github_projection_grant_refs: list[Mapping[str, str]] | tuple[Mapping[str, str], ...],
     github_projection_grant_declaration_refs: list[Mapping[str, str]]
     | tuple[Mapping[str, str], ...],
 ) -> ProjectionExecutionCapability:
-    """Resolve *github_projection_grant_refs*/*github_projection_grant_declaration_refs* --
-    references only, never record bodies -- exclusively within *trusted_runtime_root*'s own
-    Store, an already-open object this function never opens, selects, or constructs itself.
+    """The **request-facing** half of provisioning (Round 4, P15-R4-F1, items 2-3): resolve
+    *github_projection_grant_refs*/*github_projection_grant_declaration_refs* -- references only,
+    never record bodies -- exclusively within the Store *deployment_authority* was composed
+    around, an already-open object this function never opens, selects, or constructs.
 
-    **This signature carries no ``store``, ``project_id``, or ``project_binding_id``
-    parameter at all** (P15-R1-F4): there is no call shape through which a caller could name
-    an alternate, internally self-consistent world -- only an opaque root, plus
-    grant/declaration *references* resolved exclusively within it. A first argument that is
-    not a genuine :class:`TrustedRuntimeRoot` is refused at the type check, before Boot is
-    reached at all.
+    **This signature carries no ``store``, no ``project_id``, no ``project_binding_id``, no
+    ``runtime_root_admission_ref``, and no ``trust_anchor_public_key_hex``.** That is the entire
+    Round 4 correction, and it is a statement about the *shape* of the call rather than about a
+    check inside it: there is no call shape at all -- not one that is refused at runtime, one
+    that does not exist -- through which a caller could name an alternate Store, Project, Binding,
+    admission, or trust anchor. A fully self-consistent attacker world, complete with its own
+    Binding, Authority, grants, subjects, a correctly signed root admission and the matching
+    attacker public key, has nowhere to go: every one of those is owned by
+    :func:`compose_trusted_runtime_deployment_authority`, which runs before any request boundary
+    exists. Proved by ``inspect.signature`` in
+    ``tests/contract/runtime/test_runtime_static_conformance.py``, not by eye.
 
-    **Round 3 (P15-R3-F1): the root by itself grants nothing -- the admission check is what
-    actually gates this function.** Immediately after Boot, and before any grant or declaration
-    is resolved, *runtime_root_admission_ref* must resolve **inside the root's own Store** to a
-    canonical, schema-valid, independently identity-recomputed, ``ACTIVE``
-    ``runtime_root_admission`` record whose own ``project_id``/``project_binding_ref`` exactly
-    equal the root's own, and whose signature genuinely verifies against
-    *trust_anchor_public_key_hex*. Every failure is a
-    :class:`~manosube_agent_civilization.runtime.errors.RuntimeRequirementError` with **zero
-    adapter calls and zero authorization evaluations**, regardless of how *trusted_runtime_root*
-    itself was constructed -- which is precisely why the type is now freely constructible
-    (see :class:`TrustedRuntimeRoot` and this module's own docstring; this is *not* a walk-back
-    of Round 2).
+    Round 3 (P15-R3-F1) had this function take the admission reference *and* the anchor as its
+    own keyword arguments. Every check it ran was real and every one of them still runs -- at
+    composition time now, where the deployment owns the answer, instead of at a boundary whose
+    caller could supply both sides of the question.
 
-    *trust_anchor_public_key_hex* is a raw 32-byte Ed25519 **public** key, hex-encoded, and must
-    always be supplied from **deployment/composition-time configuration**: the boundary that
-    decides which world is canonical at all. It is never read from the Store being admitted,
-    never derived from anything on the request path, and never hardcoded as a specific
-    real-world key inside shipped source. This package holds no private key and mints no
-    signature -- it only verifies.
+    Everything it reads about *which world* -- the Store, the project, the Binding -- comes out of
+    *deployment_authority* and never from an argument. It Boots **fresh** here, for exactly the
+    grant/declaration-freshness reasons Rounds 1-3 established (no authority may ever be carried
+    forward as a stale verdict); that Boot has nothing to do with the trust decision, which
+    composition made once and whose anchor is, deliberately, no longer reachable from anywhere.
 
-    **Round 2 (P15-R2-F1), historical.** The public minting factory Round 1 shipped is deleted
-    and is not reintroduced under any name; no shipped function returns a
-    :class:`TrustedRuntimeRoot`, and no shipped module constructs one. Round 2's conclusion that
-    the capability route therefore had *no production-legitimate first argument at all* is what
-    Round 3 rejected and replaced, by making the first argument stop being the trust decision.
-
-    Boot-restores the exact Project/Binding the root names
-    (:func:`~manosube_agent_civilization.boot.boot_project`, called fresh here rather than at
-    provisioning time, so no root can ever carry a stale verdict), and returns one
-    :class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability` bound to a
-    freshly constructed :class:`~manosube_agent_civilization.projection.
+    Returns one :class:`~manosube_agent_civilization.projection.ProjectionExecutionCapability`
+    bound to a freshly constructed :class:`~manosube_agent_civilization.projection.
     ProjectionExecutionContext` -- if, and only if, exactly one resolved grant and exactly one
     anchoring declaration exist for each distinct ``projection_kind`` the resolved grants
     themselves name, each grant's own ``subject_ref`` resolves to a real subject record within
-    that same root's own Store whose independently recomputed identity/fingerprint matches both
+    that same bound Store whose independently recomputed identity/fingerprint matches both
     *subject_ref* and the grant's own claimed ``subject_fingerprint``, and each genuinely
     authorizes ``MATERIALIZE_PROJECTION`` through
     :func:`~manosube_agent_civilization.authority.evaluate_projection_authorization` -- the
@@ -539,31 +716,23 @@ def bootstrap_projection_execution_capability(
     call.
     """
 
-    # The type check is the whole control (P15-R1-F4) -- it runs before every other check,
-    # including before Boot, so a caller who tried to hand in a bare Store, a look-alike
-    # object, or an alternate world's own handle never reaches any resolution at all.
-    if not isinstance(trusted_runtime_root, TrustedRuntimeRoot):
+    # The type check runs before everything else, including before Boot, so a caller who tried to
+    # hand in a bare Store, a look-alike object, or an alternate world's own handle never reaches
+    # any resolution at all. It is deliberately *not* described as the trust control: the control
+    # is that composition owns every trust-deciding value and this signature can name none of them
+    # (see this function's own docstring and this module's).
+    if not isinstance(deployment_authority, RuntimeDeploymentAuthority):
         raise RuntimeRequirementError(
-            "bootstrap_projection_execution_capability requires a genuine TrustedRuntimeRoot, "
-            "never a bare store or a look-alike object: "
-            f"{type(trusted_runtime_root)!r}"
+            "bootstrap_projection_execution_capability requires a genuine "
+            "RuntimeDeploymentAuthority, obtained from "
+            "compose_trusted_runtime_deployment_authority -- never a bare store, a Project "
+            f"identity, or a look-alike object: {type(deployment_authority)!r}"
         )
-    store = trusted_runtime_root.store
-    project_id = trusted_runtime_root.project_id
-    project_binding_id = trusted_runtime_root.project_binding_id
+    store = deployment_authority._store
+    project_id = deployment_authority._project_id
+    project_binding_id = deployment_authority._project_binding_id
 
-    boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
-
-    # Round 3 (P15-R3-F1): the admission check is the very first substantive thing this function
-    # does after Boot -- before the grant-reference shape check, before any grant or declaration
-    # is resolved, and before evaluate_projection_authorization can be reached at all. It is
-    # folded in here rather than offered as a separate pre-step precisely so no call shape exists
-    # in which it is skipped, discarded, or run against a different root than the one used.
-    _require_admitted_root(
-        trusted_runtime_root,
-        runtime_root_admission_ref=runtime_root_admission_ref,
-        trust_anchor_public_key_hex=trust_anchor_public_key_hex,
-    )
+    boot_context = _boot(store, project_id, project_binding_id)
 
     if not github_projection_grant_refs:
         raise RuntimeRequirementError("github_projection_grant_refs must name at least one grant")
@@ -700,6 +869,7 @@ def bootstrap_projection_execution_capability(
 
 
 __all__ = [
-    "TrustedRuntimeRoot",
+    "RuntimeDeploymentAuthority",
     "bootstrap_projection_execution_capability",
+    "compose_trusted_runtime_deployment_authority",
 ]

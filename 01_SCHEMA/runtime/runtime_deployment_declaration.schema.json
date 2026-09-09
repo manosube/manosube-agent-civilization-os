@@ -18,6 +18,8 @@
     "declared_at",
     "valid_from",
     "valid_until",
+    "generation",
+    "predecessor_ref",
     "signature"
   ],
   "properties": {
@@ -46,9 +48,22 @@
     "declared_at": {"$ref": "../common/timestamp.schema.json"},
     "valid_from": {"$ref": "../common/timestamp.schema.json"},
     "valid_until": {"$ref": "../common/timestamp.schema.json"},
+    "generation": {"type": "integer", "minimum": 0},
+    "predecessor_ref": {"$ref": "#/$defs/predecessor_ref"},
     "signature": {"$ref": "#/$defs/signature"}
   },
   "$defs": {
+    "predecessor_ref": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "allOf": [
+            {"$ref": "../common/reference.schema.json"},
+            {"properties": {"kind": {"const": "runtime_deployment_declaration"}}}
+          ]
+        }
+      ]
+    },
     "signature": {
       "type": "object",
       "required": ["algorithm", "key_id", "value"],

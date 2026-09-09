@@ -71,6 +71,13 @@ _DEPLOYMENT_DECLARATION: dict[str, Any] = {
     # re-dated after signing, which is exactly what a validity window exists to prevent.
     "valid_from": "2026-01-01T00:00:00Z",
     "valid_until": "2026-12-31T23:59:59Z",
+    # P15-R4-F2: a declaration's own place in its target's transition chain is a *signed* claim,
+    # not committer bookkeeping -- so both chain fields participate in the identical single
+    # derivation. A successor whose ``predecessor_ref`` were outside the payload could be re-aimed
+    # at a different head after the Human Authority signed it, and "monotonic" would be a
+    # convention rather than a fact.
+    "generation": 0,
+    "predecessor_ref": None,
 }
 _ROOT_ADMISSION: dict[str, Any] = {
     "schema_version": "0.1",
@@ -78,6 +85,10 @@ _ROOT_ADMISSION: dict[str, Any] = {
     "project_binding_ref": {"kind": "project_binding", "id": "PROJBIND-0001"},
     "status": "ACTIVE",
     "declared_at": "2026-09-08T00:00:00Z",
+    # P15-R4-F1: the identical chain fields, covered by the deployment trust anchor's own
+    # signature instead of a Human Authority's.
+    "generation": 0,
+    "predecessor_ref": None,
 }
 _BOUNDARY: dict[str, Any] = {
     "observation_method": "HTTP_GET_BOUNDED",
@@ -271,6 +282,11 @@ def test_deployment_declaration_identity_is_collision_sensitive_in_every_semanti
         "declared_at": "2026-09-08T00:00:01Z",
         "valid_from": "2026-01-02T00:00:00Z",
         "valid_until": "2026-12-30T23:59:59Z",
+        "generation": 1,
+        "predecessor_ref": {
+            "kind": "runtime_deployment_declaration",
+            "id": "RUNTIME-DEPLOYMENT-DECLARATION-" + "0" * 64,
+        },
     }
     for field, value in mutations.items():
         mutated = deepcopy(_DEPLOYMENT_DECLARATION)
@@ -290,6 +306,8 @@ def test_a_declaration_missing_a_semantic_field_cannot_be_identified_at_all() ->
         "deployment_fingerprint",
         "human_authority_ref",
         "status",
+        "generation",
+        "predecessor_ref",
     ):
         incomplete = deepcopy(_DEPLOYMENT_DECLARATION)
         incomplete.pop(field)
@@ -356,6 +374,17 @@ def test_the_signing_payload_is_sensitive_to_status_and_to_the_declaration_insta
         # its own signature.
         ("valid_from", "2026-01-02T00:00:00Z"),
         ("valid_until", "2026-12-30T23:59:59Z"),
+        # P15-R4-F2: and both chain fields, for the reason above -- an unsigned generation or
+        # predecessor would let a committer, or anyone able to write a Store record, re-point an
+        # already-signed body at a different predecessor.
+        ("generation", 7),
+        (
+            "predecessor_ref",
+            {
+                "kind": "runtime_deployment_declaration",
+                "id": "RUNTIME-DEPLOYMENT-DECLARATION-" + "0" * 64,
+            },
+        ),
     ):
         mutated = deepcopy(_DEPLOYMENT_DECLARATION)
         mutated[field] = value
@@ -418,6 +447,11 @@ def test_root_admission_identity_is_collision_sensitive_in_every_semantic_field(
         "project_binding_ref": {"kind": "project_binding", "id": "PROJBIND-OTHER"},
         "status": "REVOKED",
         "declared_at": "2026-09-08T00:00:01Z",
+        "generation": 1,
+        "predecessor_ref": {
+            "kind": "runtime_root_admission",
+            "id": "RUNTIME-ROOT-ADMISSION-" + "0" * 64,
+        },
     }
     for field, value in mutations.items():
         mutated = deepcopy(_ROOT_ADMISSION)
@@ -427,7 +461,14 @@ def test_root_admission_identity_is_collision_sensitive_in_every_semantic_field(
 
 
 def test_a_root_admission_missing_a_semantic_field_cannot_be_identified_at_all() -> None:
-    for field in ("project_id", "project_binding_ref", "status", "declared_at"):
+    for field in (
+        "project_id",
+        "project_binding_ref",
+        "status",
+        "declared_at",
+        "generation",
+        "predecessor_ref",
+    ):
         incomplete = deepcopy(_ROOT_ADMISSION)
         incomplete.pop(field)
         try:

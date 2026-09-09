@@ -8,18 +8,22 @@ Store/Boot state alone, reaches a controlled GitHub adapter through it with zero
 calls, and refuses on every malformed/incomplete/mismatched authority input -- never minting,
 signing, or committing anything of its own.
 
-Since Structural Review Round 3 (P15-R3-F1) every call here does what a real deployment
-composition boundary does, through entirely shipped code: construct a ``TrustedRuntimeRoot``
-(public, unrestricted -- it grants nothing by itself), present a genuinely committed
-``runtime_root_admission`` record for exactly this project and Binding, and supply the
-``trust_anchor_public_key_hex`` that record was actually signed under. The admission record's
-own *signature* is produced test-side, by the fixture layer's own trust-anchor key pair, for the
-identical reason every other signature in this repository's test suite is: shipped code only
-ever verifies, and no private key of any kind lives in ``src/``.
+Since Structural Review Round 4 (P15-R4-F1) every call here does what a real deployment does, in
+the two owned halves that correction introduced, through entirely shipped code. A *composition*
+step binds the Store, project, Project Binding, the ``runtime_root_admission`` this Binding's own
+chain currently points at, and the ``trust_anchor_public_key_hex`` that record was actually
+signed under, into one opaque authority; the *request-facing* bootstrap below then consumes that
+authority and nothing else -- it has no parameter for a Store, a Project, a Binding, an
+admission, or an anchor. The admission record's own *signature* is produced test-side, by the
+fixture layer's own trust-anchor key pair, for the identical reason every other signature in this
+repository's test suite is: shipped code only ever verifies, and no private key of any kind lives
+in ``src/``.
 
 ``tests/integration/runtime/test_runtime_root_admission.py`` owns the controls proving that a
-root without a genuine admission -- however it was constructed, and however internally
-self-consistent its own world is -- reaches nothing at all.
+composition without a genuine, currently-pointed-to admission -- however internally
+self-consistent its own world is -- reaches nothing at all, and
+``test_runtime_deployment_authority_composition.py`` owns the ownership-boundary controls
+themselves.
 """
 
 from __future__ import annotations
@@ -98,7 +102,8 @@ def _world(tmp_path: Path) -> dict[str, Any]:
         "grant": grant,
         "declaration_ref": declaration_ref,
         "current_state": current_state,
-        # P15-R3-F1: the admission triple every legitimate provisioning call now needs.
+        # P15-R4-F1: the composed deployment authority every legitimate request-facing
+        # provisioning call now consumes, plus the admission material composition bound.
         "admitted": admitted_root(
             store,
             project_id=ctx["project_id"],
@@ -108,14 +113,13 @@ def _world(tmp_path: Path) -> dict[str, Any]:
 
 
 def _bootstrap(world: dict[str, Any], *, grant_refs: list[Any], declaration_refs: list[Any]) -> Any:
-    """One legitimately admitted provisioning call -- the exact shape a real deployment
-    composition boundary makes (P15-R3-F1)."""
+    """One legitimately admitted request-facing provisioning call -- the exact shape request-
+    facing code makes once a deployment composition boundary has handed it an authority
+    (P15-R4-F1)."""
 
     admitted = world["admitted"]
     return bootstrap_projection_execution_capability(
-        admitted["trusted_runtime_root"],
-        runtime_root_admission_ref=admitted["runtime_root_admission_ref"],
-        trust_anchor_public_key_hex=admitted["trust_anchor_public_key_hex"],
+        admitted["deployment_authority"],
         github_projection_grant_refs=grant_refs,
         github_projection_grant_declaration_refs=declaration_refs,
     )

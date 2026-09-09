@@ -100,6 +100,17 @@ ENVELOPE_SEMANTIC_FIELDS: tuple[str, ...] = (
 #: identical reason ``declared_at`` does: a declaration whose validity window were not covered
 #: by its own content address and its own Human Authority signature could be silently re-dated
 #: after signing, which is exactly what a validity window exists to prevent.
+#:
+#: ``generation``/``predecessor_ref`` were added by Round 4 (P15-R4-F2) and *participate* for a
+#: reason the earlier additions only foreshadow: they are what makes a declaration's own place in
+#: its target's transition chain a **signed** claim rather than a committer's bookkeeping. A
+#: successor states, under the Human Authority's own signature, exactly which declaration it
+#: replaces and exactly which generation it occupies; if either were outside the payload, a
+#: committer (or anyone able to write a Store record) could re-point an already-signed body at a
+#: different predecessor, and the "monotonic chain" would be a convention rather than a fact. It
+#: is also precisely why the committer's concurrency loser **fails closed instead of retrying**
+#: (``10_RUNTIME/RUNTIME_CONTRACT.md`` §13.3): adjusting a losing proposal to the new head would
+#: require a new signature over a new payload, which only the Human Authority can produce.
 DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "project_id",
@@ -113,6 +124,8 @@ DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "declared_at",
     "valid_from",
     "valid_until",
+    "generation",
+    "predecessor_ref",
 )
 
 
@@ -131,13 +144,35 @@ DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS: tuple[str, ...] = (
 #: could simply be self-signed inside that world and would pass. See
 #: :mod:`~manosube_agent_civilization.runtime.root_admission` and
 #: ``10_RUNTIME/RUNTIME_CONTRACT.md`` §12.1.
+#: ``generation``/``predecessor_ref`` were added by Round 4 (P15-R4-F1) for the identical reason
+#: :data:`DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS` states, applied to this record kind's own
+#: chain: a root admission's place in its Project Binding's own admission chain is a claim the
+#: **deployment trust anchor itself** signs, so an admission cannot be re-pointed at a different
+#: predecessor after the anchor signed it, and a rotation or revocation cannot be forged by
+#: whoever can write Store records.
 ROOT_ADMISSION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "project_id",
     "project_binding_ref",
     "status",
     "declared_at",
+    "generation",
+    "predecessor_ref",
 )
+
+
+#: The literal, deliberately **non-hex-only** prefix every Runtime Root Admission chain pointer
+#: key carries (Phase 15 Structural Review Round 4, P15-R4-F1).
+#:
+#: Both chains -- root admissions and deployment declarations -- record their own current record
+#: in the identical ``semantic_state.runtime.claims`` map Round 3 established, so the two key
+#: spaces must be provably disjoint rather than merely observed not to collide. They are, by
+#: construction and not by luck: :func:`runtime_deployment_target_key`'s own output alphabet is
+#: exactly ``RUNTIME-DEPLOYMENT-TARGET-`` followed by 64 uppercase hex characters, which contains
+#: no ``":"`` at any position, while every key this prefix produces contains one at a fixed
+#: offset. See ``tests/unit/runtime/test_runtime_transition_chain.py``, which proves the
+#: disjointness structurally (from the alphabets themselves) rather than by sampling.
+ROOT_ADMISSION_TARGET_KEY_PREFIX = "ROOT-ADMISSION:"
 
 
 #: Exactly the ``target_identity``/``runtime_deployment_declaration`` fields that decide *which
@@ -183,6 +218,33 @@ def runtime_deployment_target_key(fields: dict[str, Any]) -> str:
         "RUNTIME-DEPLOYMENT-TARGET-"
         + hashlib.sha256(canonical_json_bytes(projection)).hexdigest().upper()
     )
+
+
+def runtime_root_admission_target_key(admission: dict[str, Any]) -> str:
+    """Return the chain key naming *which Project Binding's own admission chain* *admission*
+    belongs to -- the key under which that Binding's own current ``runtime_root_admission`` id is
+    recorded in Project State (``semantic_state.runtime.claims``; Round 4, P15-R4-F1).
+
+    Deliberately **not** a digest. A root admission chain is per Project Binding, and the Binding
+    id is already a canonical identity, so hashing it would only obscure which chain a pointer
+    belongs to while buying nothing -- the key space is not adversarially chosen here, it is
+    exactly the set of Binding ids this project has ever admitted. What the shape *is* chosen for
+    is provable disjointness from :func:`runtime_deployment_target_key`'s own key space: see
+    :data:`ROOT_ADMISSION_TARGET_KEY_PREFIX`.
+
+    *admission* may be a full ``runtime_root_admission`` or any mapping carrying a
+    ``project_binding_ref`` -- only that one field is read, so a composition boundary and a
+    committer derive the identical key from their own independently checked copies.
+    """
+
+    binding_ref = admission.get("project_binding_ref")
+    binding_id = binding_ref.get("id") if isinstance(binding_ref, dict) else None
+    if not isinstance(binding_id, str) or not binding_id:
+        raise RuntimeRequirementError(
+            "a runtime root admission chain key cannot be derived without a readable "
+            f"project_binding_ref.id: {binding_ref!r}"
+        )
+    return ROOT_ADMISSION_TARGET_KEY_PREFIX + binding_id
 
 
 def runtime_target_fingerprint(target_identity: dict[str, Any]) -> str:

@@ -62,6 +62,33 @@ Structural Review Round 3 (P15-R3) changes four further facts this file pins:
 - the package exports a fourth public callable, ``commit_runtime_deployment_declaration``
   (P15-R3-F2) -- a canonical committer, not a fourth route, exactly as
   ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` continues to say.
+
+Structural Review Round 4 (P15-R4) changes six further facts this file pins:
+
+- ``TrustedRuntimeRoot`` is **gone**. Rounds 2 and 3 could assert only that no shipped callable
+  returned one and no shipped module constructed one; the assertion here is now strictly
+  stronger -- the name occurs in no code position anywhere in the shipped tree. The deleted Round
+  1 minting factory is still absent by name, unchanged (P15-R4-F1).
+- ``bootstrap_projection_execution_capability`` takes exactly three parameters, and **none** of
+  ``store``/``project_id``/``project_binding_id``/``runtime_root_admission_ref``/
+  ``trust_anchor_public_key_hex``. Round 3 could only rule out the first three; ruling out the
+  last two is the whole Round 4 correction (P15-R4-F1).
+- ``compose_trusted_runtime_deployment_authority`` is the one shipped composition entry point,
+  and a raw trust anchor is named as a parameter in exactly three shipped places -- that entry
+  point, the root-admission committer, and the pure verification wrapper -- none of them
+  request-facing (P15-R4-F1).
+- ``transition_chain.py`` exists (P15-R4-F1/F2) and is now the *second* module calling
+  ``commit_state_transition``, taking that role over from ``deployment_registry.py``: both chains
+  share one mechanism, so the package still admits exactly two call sites in total rather than
+  growing one per chain kind.
+- ``admission_registry.py`` exists (P15-R4-F1) and is the *fourth* module importing
+  ``manosube_agent_civilization.boot``, alongside ``route.py``, ``bootstrap.py`` and
+  ``deployment_registry.py`` -- each committer freshly Boots to verify who may move its own
+  chain, and ``bootstrap.py`` still reaches Boot through exactly one literal call site even
+  though it now Boots from two points (composition and the request-facing call).
+- the package exports two further public callables, ``commit_runtime_root_admission`` and
+  ``compose_trusted_runtime_deployment_authority`` -- a committer and a composition step, neither
+  a route, so ``PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3`` still holds.
 """
 
 from __future__ import annotations
@@ -75,6 +102,7 @@ from types import ModuleType
 import manosube_agent_civilization
 import manosube_agent_civilization.runtime as runtime_module
 import manosube_agent_civilization.runtime.adapter as adapter_module
+import manosube_agent_civilization.runtime.admission_registry as admission_registry_module
 import manosube_agent_civilization.runtime.bootstrap as bootstrap_module
 import manosube_agent_civilization.runtime.deployment_declaration as deployment_declaration_module
 import manosube_agent_civilization.runtime.deployment_registry as deployment_registry_module
@@ -85,6 +113,7 @@ import manosube_agent_civilization.runtime.identity as identity_module
 import manosube_agent_civilization.runtime.network as network_module
 import manosube_agent_civilization.runtime.root_admission as root_admission_module
 import manosube_agent_civilization.runtime.route as route_module
+import manosube_agent_civilization.runtime.transition_chain as transition_chain_module
 import manosube_agent_civilization.runtime.types as types_module
 
 _ALL_PACKAGE_MODULES = (
@@ -100,16 +129,28 @@ _ALL_PACKAGE_MODULES = (
     deployment_declaration_module,
     root_admission_module,
     deployment_registry_module,
+    admission_registry_module,
+    transition_chain_module,
 )
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 _SHIPPED_PACKAGE_ROOT = pathlib.Path(manosube_agent_civilization.__file__).resolve().parent
 
-#: The trust-root type, and the exact name of the public minting factory Round 1 shipped and
-#: Round 2 (P15-R2-F1) deletes. Both are pinned as literals so that reintroducing a minting call
-#: site -- or the deleted factory itself, under its own name -- fails this gate immediately.
+#: The trust-root type Rounds 1-3 carried and Round 4 (P15-R4-F1) removes outright, and the exact
+#: name of the public minting factory Round 1 shipped and Round 2 (P15-R2-F1) deletes. Both are
+#: pinned as literals so that reintroducing either -- under its own name, anywhere in the shipped
+#: tree -- fails this gate immediately.
 _TRUSTED_ROOT_TYPE_NAME = "TrustedRuntimeRoot"
 _DELETED_MINTING_FACTORY_NAME = "provision_trusted_runtime_root"
+
+#: The composition-owned capability that replaced it, and the one shipped callable that produces
+#: one (P15-R4-F1).
+_DEPLOYMENT_AUTHORITY_TYPE_NAME = "RuntimeDeploymentAuthority"
+_COMPOSITION_ENTRY_POINT_NAME = "compose_trusted_runtime_deployment_authority"
+
+#: The raw trust-anchor parameter name. It may appear on exactly three shipped functions, all of
+#: them composition-side or pure verification, and on no request-facing one (P15-R4-F1).
+_TRUST_ANCHOR_PARAMETER_NAME = "trust_anchor_public_key_hex"
 
 #: Existing canonical owners no module in this package may ever import, in whole or in part --
 #: Runtime is read-only and mints no Authority/Reflow decision of its own, and never reaches
@@ -145,24 +186,32 @@ def _call_site_count(module: ModuleType, name: str) -> int:
     return count
 
 
-def _names_the_deleted_factory(node: ast.AST) -> bool:
-    """Whether *node* names ``provision_trusted_runtime_root`` in a *code* position -- a
-    ``def``, a bare name, an attribute, an import alias, or a string constant equal to it (which
-    is how an ``__all__`` re-export would smuggle it back). Prose inside a docstring is
-    deliberately not matched: this round's own record has to be able to say what was removed and
-    why, and a docstring cannot re-export anything."""
+def _names_identifier(node: ast.AST, identifier: str) -> bool:
+    """Whether *node* names *identifier* in a *code* position -- a ``def``, a ``class``, a bare
+    name, an attribute, an import alias, or a string constant equal to it (which is how an
+    ``__all__`` re-export would smuggle one back). Prose inside a docstring is deliberately not
+    matched: each round's own record has to be able to say what was removed and why, and a
+    docstring cannot re-export anything."""
 
-    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-        return node.name == _DELETED_MINTING_FACTORY_NAME
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+        return node.name == identifier
     if isinstance(node, ast.Name):
-        return node.id == _DELETED_MINTING_FACTORY_NAME
+        return node.id == identifier
     if isinstance(node, ast.Attribute):
-        return node.attr == _DELETED_MINTING_FACTORY_NAME
+        return node.attr == identifier
     if isinstance(node, ast.alias):
-        return _DELETED_MINTING_FACTORY_NAME in (node.name, node.asname)
+        return identifier in (node.name, node.asname)
     if isinstance(node, ast.Constant):
-        return bool(node.value == _DELETED_MINTING_FACTORY_NAME)
+        return bool(node.value == identifier)
     return False
+
+
+def _names_the_deleted_factory(node: ast.AST) -> bool:
+    """Whether *node* names ``provision_trusted_runtime_root`` in a *code* position -- one
+    binding of :func:`_names_identifier`, kept under its own name because the fact it pins
+    (P15-R2-F1) is cited by name in three rounds' records."""
+
+    return _names_identifier(node, _DELETED_MINTING_FACTORY_NAME)
 
 
 def test_runtime_package_exports_exactly_three_routes_and_one_capability_bootstrap() -> None:
@@ -194,21 +243,28 @@ def test_runtime_package_exports_exactly_three_routes_and_one_capability_bootstr
     assert public_callables == {
         "bootstrap_projection_execution_capability",
         "commit_runtime_deployment_declaration",
+        "commit_runtime_root_admission",
+        "compose_trusted_runtime_deployment_authority",
         "observe_runtime_target",
         "route_runtime_observation_to_evidence",
     }
 
 
-def test_no_shipped_file_constructs_a_trusted_runtime_root() -> None:
-    """P15-R2-F1's own decisive static fact.
+def test_the_removed_trust_root_type_appears_in_no_shipped_code_position() -> None:
+    """P15-R2-F1's own decisive static fact, in the strictly stronger form Round 4 permits.
 
-    Every ``.py`` file in the entire *installed* ``manosube_agent_civilization`` package -- what
-    actually ends up in the wheel -- is AST-walked for any ``ast.Call`` whose callee resolves to
-    the name ``TrustedRuntimeRoot``. The single admitted site is inside the dataclass's own class
-    body in ``bootstrap.py`` (its generated ``__init__``/``__post_init__`` -- and in fact there is
-    no literal call there at all, since a frozen dataclass constructs itself). Anywhere else, a
-    call site would mean shipped code mints a trust root over some Store, which is exactly the
-    defect this round closes.
+    Rounds 2 and 3 could assert only that no shipped ``.py`` file *called* ``TrustedRuntimeRoot``
+    outside its own class body, and that no shipped callable declared it as a return type -- the
+    type still existed, so nothing stronger was available. Round 4 (P15-R4-F1) removes it, because
+    naming a world is now the composition step's own job and an inert value beside the new
+    authority would give a future reader two handles with one purpose. The honest assertion is
+    therefore the absolute one: every ``.py`` file in the entire *installed* package -- what
+    actually ends up in the wheel -- is AST-walked, and the name occurs in no code position at
+    all.
+
+    Prose inside a docstring is deliberately not matched (see :func:`_names_the_deleted_factory`
+    for the identical reasoning): each round's own record has to be able to say what was removed
+    and why, and a docstring re-exports nothing.
 
     Scope, stated exactly: this proves *no shipped minting path exists*, not that a live path
     resists an attacker. There is no live deployment/CLI/agent-runtime composition boundary wired
@@ -221,15 +277,34 @@ def test_no_shipped_file_constructs_a_trusted_runtime_root() -> None:
 
     offenders: list[tuple[str, int]] = []
     for path in shipped_files:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if _names_identifier(node, _TRUSTED_ROOT_TYPE_NAME):
+                offenders.append((str(path.relative_to(_REPO_ROOT)), getattr(node, "lineno", -1)))
+    assert offenders == []
+    assert not hasattr(bootstrap_module, _TRUSTED_ROOT_TYPE_NAME)
+    assert not hasattr(runtime_module, _TRUSTED_ROOT_TYPE_NAME)
+
+
+def test_exactly_one_shipped_module_defines_the_composition_owned_authority() -> None:
+    """The Round 4 replacement fact (P15-R4-F1): there is exactly one authority type, defined in
+    exactly one shipped module, and exactly one shipped function constructs it -- the composition
+    entry point.
+
+    A second construction site anywhere in the shipped tree would mean some other code path could
+    hand out a bound authority without going through the trust decision, which is precisely the
+    class of defect Rounds 1-4 have each closed one layer at a time.
+    """
+
+    shipped_files = sorted(_SHIPPED_PACKAGE_ROOT.rglob("*.py"))
+    definitions: list[str] = []
+    construction_sites: list[tuple[str, int]] = []
+    for path in shipped_files:
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        # Every call site that lexically belongs to the TrustedRuntimeRoot class body itself is
-        # exempt; every other call site in the shipped package is an offender.
-        exempt: set[int] = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == _TRUSTED_ROOT_TYPE_NAME:
-                exempt.update(id(inner) for inner in ast.walk(node) if isinstance(inner, ast.Call))
+            if isinstance(node, ast.ClassDef) and node.name == _DEPLOYMENT_AUTHORITY_TYPE_NAME:
+                definitions.append(str(path.relative_to(_REPO_ROOT)))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or id(node) in exempt:
+            if not isinstance(node, ast.Call):
                 continue
             func = node.func
             name = (
@@ -237,9 +312,70 @@ def test_no_shipped_file_constructs_a_trusted_runtime_root() -> None:
                 if isinstance(func, ast.Name)
                 else (func.attr if isinstance(func, ast.Attribute) else None)
             )
-            if name == _TRUSTED_ROOT_TYPE_NAME:
-                offenders.append((str(path.relative_to(_REPO_ROOT)), node.lineno))
-    assert offenders == []
+            if name == _DEPLOYMENT_AUTHORITY_TYPE_NAME:
+                construction_sites.append((str(path.relative_to(_REPO_ROOT)), node.lineno))
+    assert definitions == ["src/manosube_agent_civilization/runtime/bootstrap.py"]
+    assert len(construction_sites) == 1, construction_sites
+
+    # ...and that one call site lexically belongs to the composition entry point.
+    tree = ast.parse(inspect.getsource(bootstrap_module))
+    composing = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == _COMPOSITION_ENTRY_POINT_NAME
+    )
+    inner = [
+        node.lineno
+        for node in ast.walk(composing)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == _DEPLOYMENT_AUTHORITY_TYPE_NAME
+    ]
+    assert len(inner) == 1
+
+
+def test_the_raw_trust_anchor_is_named_only_by_composition_side_functions() -> None:
+    """P15-R4-F1, item 2, proved structurally: the raw anchor is admitted at the trusted
+    composition step and is absent from every request-facing execution signature.
+
+    Every ``def`` in the shipped ``runtime`` package is AST-walked for a parameter literally named
+    ``trust_anchor_public_key_hex``. Exactly three may carry it, and each is either the
+    composition boundary itself or an act *of* that boundary:
+
+    ```text
+    compose_trusted_runtime_deployment_authority   the one trusted composition entry point
+    commit_runtime_root_admission                  issuing/rotating/revoking an admission IS the
+                                                   deployment boundary acting
+    verify_runtime_root_admission_signature        the pure verification wrapper both call
+    _require_currently_admitted                    composition's own private helper
+    ```
+
+    Anything else -- and in particular anything reachable from a request path -- fails this gate.
+    """
+
+    permitted = {
+        _COMPOSITION_ENTRY_POINT_NAME,
+        "commit_runtime_root_admission",
+        "verify_runtime_root_admission_signature",
+        "_require_currently_admitted",
+    }
+    carriers: set[str] = set()
+    for path in sorted((_SHIPPED_PACKAGE_ROOT / "runtime").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            arguments = node.args
+            names = {
+                argument.arg
+                for argument in (
+                    *arguments.posonlyargs,
+                    *arguments.args,
+                    *arguments.kwonlyargs,
+                )
+            }
+            if _TRUST_ANCHOR_PARAMETER_NAME in names:
+                carriers.add(node.name)
+    assert carriers == permitted, carriers
 
 
 def test_no_shipped_file_defines_imports_or_exports_the_deleted_minting_factory() -> None:
@@ -263,12 +399,18 @@ def test_no_shipped_file_defines_imports_or_exports_the_deleted_minting_factory(
     assert not hasattr(runtime_module, _DELETED_MINTING_FACTORY_NAME)
 
 
-def test_no_shipped_public_callable_returns_a_trusted_runtime_root() -> None:
-    """The shape half of the same fact, proved by introspection rather than by text: a
-    same-shaped function reintroduced under some *other* name would still be caught, because no
-    public callable this package exports declares ``TrustedRuntimeRoot`` as its return type
-    (P15-R2-F1 -- "do not replace it with a same-shaped function under a new name")."""
+def test_exactly_one_shipped_public_callable_returns_a_deployment_authority() -> None:
+    """The shape half of the same fact, proved by introspection rather than by text.
 
+    Rounds 2 and 3 asserted that *no* public callable returned the trust root, because a
+    mechanism with no legitimate producer was the position of the day. Round 3 itself rejected
+    that position -- a bootstrap with no production-legitimate way to obtain its first argument
+    does not satisfy this Phase's own V5 requirement -- so the honest Round 4 form is that exactly
+    one callable produces the composition-owned authority, and it is the trusted composition step.
+    A same-shaped producer reintroduced under some *other* name would still be caught here.
+    """
+
+    producers = []
     for name in runtime_module.__all__:
         member = getattr(runtime_module, name)
         if not callable(member) or isinstance(member, type):
@@ -277,34 +419,115 @@ def test_no_shipped_public_callable_returns_a_trusted_runtime_root() -> None:
         rendered = (
             annotation if isinstance(annotation, str) else getattr(annotation, "__name__", "")
         )
-        assert _TRUSTED_ROOT_TYPE_NAME not in str(rendered), (
-            f"{name} returns a {_TRUSTED_ROOT_TYPE_NAME} -- shipped code must mint none"
-        )
+        if _DEPLOYMENT_AUTHORITY_TYPE_NAME in str(rendered):
+            producers.append(name)
+    assert producers == [_COMPOSITION_ENTRY_POINT_NAME]
 
 
-def test_bootstrap_accepts_no_store_or_project_selecting_parameter() -> None:
-    """P15-R1-F4's own decisive structural fact, proved by introspection rather than by
-    behaviour: there is no call shape at all -- not one that is refused at runtime, one that
-    does not exist -- through which a caller could hand
-    ``bootstrap_projection_execution_capability`` an alternate Store, Project, or Binding.
+def test_the_composed_authority_exposes_no_public_accessor_for_what_it_binds() -> None:
+    """P15-R4-F1: the authority is opaque. It exposes no public attribute, property, or method
+    handing back the Store, the bound admission body, or -- above all -- a trust anchor.
+
+    Checked over the *class*, so it holds for every instance and does not depend on any particular
+    composition having happened. The anchor's genuine absence from a composed instance's own
+    reachable state is proved dynamically in
+    ``tests/integration/runtime/test_runtime_deployment_authority_composition.py``; this is the
+    structural half.
+    """
+
+    authority_type = getattr(bootstrap_module, _DEPLOYMENT_AUTHORITY_TYPE_NAME)
+    public_names = {name for name in dir(authority_type) if not name.startswith("_")}
+    assert public_names == set(), public_names
+    assert _TRUST_ANCHOR_PARAMETER_NAME not in set(getattr(authority_type, "__slots__", ()))
+
+
+def test_the_request_facing_bootstrap_accepts_no_trust_deciding_parameter() -> None:
+    """P15-R4-F1's own decisive structural fact, proved by introspection rather than by
+    behaviour: there is no call shape at all -- not one that is refused at runtime, one that does
+    not exist -- through which a caller could hand
+    ``bootstrap_projection_execution_capability`` an alternate Store, Project, Binding, root
+    admission, or trust anchor.
+
+    Round 1 (P15-R1-F4) removed the first three. Round 3 (P15-R3-F1) *added* the last two as
+    required keyword arguments, which is exactly what Round 4 found still open: a caller who
+    supplies both the admission and the anchor it was signed under supplies both sides of the
+    question, and a fully self-consistent alternate world passes. All five are now absent, and
+    the request-facing signature carries exactly three parameters.
+
     The identical technique ``tests/contract/projection/
     test_v3_live_write_authority_static_conformance.py`` already applies to
-    ``ProjectionExecutionCapability.execute``."""
+    ``ProjectionExecutionCapability.execute``.
+    """
 
     signature = inspect.signature(bootstrap_module.bootstrap_projection_execution_capability)
     assert set(signature.parameters) == {
-        "trusted_runtime_root",
-        # P15-R3-F1: the two arguments that actually gate this call now. Neither names a Store,
-        # a Project, or a Binding -- the admission *reference* is resolved exclusively inside
-        # the root's own Store, and the anchor is a bare public key the deployment boundary
-        # supplies from its own configuration.
-        "runtime_root_admission_ref",
-        "trust_anchor_public_key_hex",
+        "deployment_authority",
         "github_projection_grant_refs",
         "github_projection_grant_declaration_refs",
     }
-    for forbidden in ("store", "project_id", "project_binding_id"):
+    for forbidden in (
+        "store",
+        "project_id",
+        "project_binding_id",
+        "runtime_root_admission_ref",
+        _TRUST_ANCHOR_PARAMETER_NAME,
+    ):
         assert forbidden not in signature.parameters
+
+
+def test_the_composition_entry_point_owns_every_trust_deciding_parameter() -> None:
+    """The other half of the ownership boundary (P15-R4-F1): what the request-facing call may not
+    name, the composition step must -- otherwise the values would have to come from somewhere
+    else, and "somewhere else" is exactly what this correction forbids."""
+
+    signature = inspect.signature(getattr(bootstrap_module, _COMPOSITION_ENTRY_POINT_NAME))
+    assert set(signature.parameters) == {
+        "store",
+        "project_id",
+        "project_binding_id",
+        "runtime_root_admission_ref",
+        _TRUST_ANCHOR_PARAMETER_NAME,
+    }
+
+
+def test_no_shipped_runtime_module_reads_configuration_at_all() -> None:
+    """P15-R4-F1, item 7: no request-path code may read an environment variable, a file, or a
+    registry to choose a different trust root. Deployment configuration is resolved *before* the
+    request boundary and injected only as the already-bound authority.
+
+    Proved for the whole shipped package rather than only the request path, which is stronger and
+    simpler to keep true: no module here imports ``os`` or ``pathlib``, names ``environ`` or
+    ``getenv``, or calls ``open``. Every value any of them uses is passed in by its caller.
+    """
+
+    for module in _ALL_PACKAGE_MODULES:
+        imported = _imported_module_names(module)
+        assert not any(
+            name == "os" or name.startswith("os.") or name in ("pathlib", "configparser")
+            for name in imported
+        ), f"{module.__name__} imports a configuration surface: {imported}"
+        source = inspect.getsource(module)
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Name):
+                assert node.id not in ("environ", "getenv", "expanduser"), (
+                    f"{module.__name__} names {node.id!r} at {node.lineno}"
+                )
+            if isinstance(node, ast.Attribute):
+                assert node.attr not in ("environ", "getenv", "expanduser"), (
+                    f"{module.__name__} names {node.attr!r} at {node.lineno}"
+                )
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            # A bare ``open(...)`` reads a file; ``adapter.py``'s own ``self._opener.open(...)``
+            # is the HTTP opener this package's network boundary already owns and bounds, and is
+            # deliberately not what this control is about.
+            if isinstance(func, ast.Name):
+                assert func.id != "open", f"{module.__name__} reads a file at {node.lineno}"
+            elif isinstance(func, ast.Attribute):
+                assert func.attr not in ("read_text", "read_bytes"), (
+                    f"{module.__name__} reads a file at {node.lineno}"
+                )
 
 
 def test_no_module_imports_a_forbidden_existing_owner() -> None:
@@ -344,9 +567,35 @@ def test_evidence_handoff_calls_derive_evidence_exactly_once() -> None:
     assert _call_site_count(evidence_handoff_module, "derive_evidence") == 1
 
 
-def test_boot_project_is_imported_only_by_route_and_bootstrap() -> None:
+def test_boot_project_is_imported_only_by_the_route_the_bootstrap_and_the_two_committers() -> None:
+    """Four modules, and each for a reason it can state.
+
+    ``route.py`` Boots to decide who may observe; ``bootstrap.py`` Boots at composition (to prove
+    the world being bound is genuinely restorable) and again, freshly, on every request-facing
+    call. Round 4 adds the two chain committers (P15-R4-F1/F2): each must freshly Boot to verify
+    who may *move its own chain* -- the declaration committer against the Boot-restored Human
+    Authority key, the admission committer to prove the Project Binding an admission names is
+    genuinely this project's own.
+    """
+
+    for module in (
+        route_module,
+        bootstrap_module,
+        deployment_registry_module,
+        admission_registry_module,
+    ):
+        assert any(
+            name == "manosube_agent_civilization.boot"
+            or name.startswith("manosube_agent_civilization.boot.")
+            for name in _imported_module_names(module)
+        ), f"{module.__name__} is expected to import boot"
     for module in _ALL_PACKAGE_MODULES:
-        if module in (route_module, bootstrap_module):
+        if module in (
+            route_module,
+            bootstrap_module,
+            deployment_registry_module,
+            admission_registry_module,
+        ):
             continue
         imported = _imported_module_names(module)
         assert not any(
@@ -370,6 +619,10 @@ def test_route_has_exactly_one_boot_project_call_site() -> None:
 
 
 def test_bootstrap_calls_boot_project_exactly_once() -> None:
+    """One literal call site, reached from two points since Round 4 (P15-R4-F1) -- once at
+    composition, once per request-facing call -- through this module's own single private helper,
+    exactly the discipline ``route.py`` already keeps for its own three."""
+
     assert _call_site_count(bootstrap_module, "boot_project") == 1
 
 
@@ -486,46 +739,53 @@ def test_no_shipped_module_hardcodes_a_trust_anchor_public_key() -> None:
     assert offenders == []
 
 
-def test_the_bootstrap_admission_check_precedes_every_grant_and_authority_call() -> None:
-    """P15-R3-F1, proved structurally rather than only dynamically (the zero-call proofs live in
-    ``tests/integration/runtime/test_runtime_root_admission.py``).
+def test_the_admission_gate_precedes_every_grant_and_authority_call_by_construction() -> None:
+    """P15-R3-F1's own structural ordering fact, in the stronger form Round 4 makes available
+    (the zero-call proofs live in ``tests/integration/runtime/test_runtime_root_admission.py``).
 
-    Inside ``bootstrap_projection_execution_capability``'s own body, the literal call to
-    ``_require_admitted_root`` must appear before the first ``_resolve_grant``,
-    ``_resolve_declaration``, or ``evaluate_projection_authorization`` call site -- so no future
-    edit can quietly move grant resolution, or an authorization evaluation, in front of the
-    admission gate.
+    Round 3 could only assert an *ordering within one function body*: the literal
+    ``_require_admitted_root`` call had to appear before the first ``_resolve_grant``,
+    ``_resolve_declaration``, or ``evaluate_projection_authorization`` call site, so that no
+    future edit could quietly move grant resolution in front of the admission gate.
+
+    Round 4 makes the ordering structural instead of positional: the admission check lives in a
+    *different function* (``compose_trusted_runtime_deployment_authority``) that must complete
+    before an authority object exists at all, and the request-facing function -- the only one that
+    resolves grants or evaluates authorization -- cannot run without one. So the assertion is now
+    that the two concerns are genuinely separated: the composition function names the admission
+    check and none of the gated calls, and the request-facing function names the gated calls and
+    performs no admission check of its own (it has nothing to perform one *with*).
     """
 
     tree = ast.parse(inspect.getsource(bootstrap_module))
-    function = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "bootstrap_projection_execution_capability"
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    gated = ("_resolve_grant", "_resolve_declaration", "evaluate_projection_authorization")
+
+    def _called_names(node: ast.AST) -> set[str]:
+        names: set[str] = set()
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            func = inner.func
+            if isinstance(func, ast.Name):
+                names.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                names.add(func.attr)
+        return names
+
+    composing = _called_names(functions[_COMPOSITION_ENTRY_POINT_NAME])
+    assert "_require_currently_admitted" in composing
+    assert not composing & set(gated), composing
+
+    request_facing = _called_names(functions["bootstrap_projection_execution_capability"])
+    assert set(gated) <= request_facing, request_facing
+    assert "_require_currently_admitted" not in request_facing
+    assert (
+        _TRUST_ANCHOR_PARAMETER_NAME
+        not in inspect.signature(
+            bootstrap_module.bootstrap_projection_execution_capability
+        ).parameters
     )
-    admission_lines: list[int] = []
-    gated_lines: list[int] = []
-    for node in ast.walk(function):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = (
-            func.id
-            if isinstance(func, ast.Name)
-            else (func.attr if isinstance(func, ast.Attribute) else None)
-        )
-        if name == "_require_admitted_root":
-            admission_lines.append(node.lineno)
-        elif name in (
-            "_resolve_grant",
-            "_resolve_declaration",
-            "evaluate_projection_authorization",
-        ):
-            gated_lines.append(node.lineno)
-    assert len(admission_lines) == 1, "exactly one admission call site is expected"
-    assert gated_lines, "expected the gated calls to exist at all"
-    assert admission_lines[0] < min(gated_lines)
 
 
 def test_only_bootstrap_imports_difference_and_change_identity() -> None:
@@ -557,27 +817,92 @@ def test_only_bootstrap_imports_difference_and_change_identity() -> None:
             assert not difference_or_change, f"{module.__name__}: {difference_or_change}"
 
 
-def test_only_route_and_the_deployment_registry_call_commit_state_transition() -> None:
+def test_only_route_and_the_shared_transition_chain_call_commit_state_transition() -> None:
     """Runtime Observation commits exactly once per call (no intent/materialize-attempt
     claim pair -- see ``engine.py``'s own module docstring) -- so ``route.py`` calls
     ``commit_state_transition`` from exactly one literal call site.
 
-    Round 3 (P15-R3-F2) admits exactly one more module by name: ``deployment_registry.py``, also
-    from exactly one call site, for the single atomic transition that commits a
-    ``runtime_deployment_declaration`` **and** moves this target's own current-declaration
-    pointer. Two domain reasons for a commit, two transition plans, still one sanctioned
-    committer -- the identical discipline ``store/commit.py``'s own module docstring states for
-    Reflow and Binding, which are two call sites of it as well. The repository-wide K-003/R-001
-    rule is about ``store.commit`` itself, and the test below still proves no module here calls
-    that directly.
+    Round 3 (P15-R3-F2) admitted one more module by name for the declaration chain's own
+    commit-the-record-and-move-the-pointer transition. Round 4 (P15-R4-F1/F2) adds a *second*
+    chain kind -- root admissions -- and yet the admitted count is still two, not three: both
+    chains parameterize one shared mechanism, so ``transition_chain.py`` now owns that single call
+    site and ``deployment_registry.py`` has none of its own. That is exactly the shape the review
+    asked for; a second, independently written committer would have shown up here as a third call
+    site and as two chances to drift apart.
+
+    Two domain reasons for a commit, one shared plan builder, still one sanctioned committer --
+    the identical discipline ``store/commit.py``'s own module docstring states for Reflow and
+    Binding. The repository-wide K-003/R-001 rule is about ``store.commit`` itself, and the test
+    below still proves no module here calls that directly.
     """
 
     for module in _ALL_PACKAGE_MODULES:
         count = _call_site_count(module, "commit_state_transition")
-        if module in (route_module, deployment_registry_module):
+        if module in (route_module, transition_chain_module):
             assert count == 1, f"{module.__name__} must call commit_state_transition exactly once"
         else:
             assert count == 0, f"{module.__name__} must never call commit_state_transition"
+
+
+def test_both_chain_committers_share_one_mechanism_and_restate_no_rule_of_their_own() -> None:
+    """P15-R4: the shared-mechanism requirement, proved rather than asserted in prose.
+
+    Both committers must reach the chain through ``commit_chain_transition``, and neither may
+    contain a genesis/successor/terminality rule of its own -- the words that would give it one
+    (``generation``-arithmetic, a predecessor comparison, a REVOKED-terminality branch) belong to
+    ``transition_chain.py`` alone.
+    """
+
+    for module in (deployment_registry_module, admission_registry_module):
+        assert _call_site_count(module, "commit_chain_transition") == 1, module.__name__
+        tree = ast.parse(inspect.getsource(module))
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+            ):
+                assert node.value not in ("ACTIVE", "REVOKED"), (
+                    f"{module.__name__} names a chain status literal in a code position -- the "
+                    "closed status vocabulary and every rule over it belong to "
+                    "transition_chain.py, so that one mechanism cannot drift into two"
+                )
+        assert _call_site_count(module, "require_legal_transition") == 0, (
+            f"{module.__name__} must not evaluate transition legality itself"
+        )
+
+
+def test_the_two_chain_key_spaces_are_structurally_disjoint() -> None:
+    """P15-R4-F1: both chains record their pointers in the identical
+    ``semantic_state.runtime.claims`` map, so their key spaces must be provably disjoint rather
+    than observed not to collide.
+
+    A deployment target key is ``RUNTIME-DEPLOYMENT-TARGET-`` plus 64 uppercase hex characters --
+    an alphabet that contains no ``":"`` at any position -- while every admission chain key
+    carries one at a fixed offset. This is the structural statement; the exhaustive
+    alphabet-level proof is in ``tests/unit/runtime/test_runtime_transition_chain.py``.
+    """
+
+    assert ":" in identity_module.ROOT_ADMISSION_TARGET_KEY_PREFIX
+    sample = identity_module.runtime_deployment_target_key(
+        {
+            "project_binding_ref": {"kind": "project_binding", "id": "PROJBIND-0001"},
+            "provider": "local",
+            "deployment_id": "widget-service",
+            "instance_identity": "widget-service-1",
+        }
+    )
+    assert ":" not in sample
+    assert not sample.startswith(identity_module.ROOT_ADMISSION_TARGET_KEY_PREFIX)
 
 
 def test_no_module_calls_store_commit_directly() -> None:

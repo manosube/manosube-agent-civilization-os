@@ -11,6 +11,8 @@
     "project_binding_ref",
     "status",
     "declared_at",
+    "generation",
+    "predecessor_ref",
     "signature"
   ],
   "properties": {
@@ -32,9 +34,22 @@
     },
     "status": {"enum": ["ACTIVE", "REVOKED"]},
     "declared_at": {"$ref": "../common/timestamp.schema.json"},
+    "generation": {"type": "integer", "minimum": 0},
+    "predecessor_ref": {"$ref": "#/$defs/predecessor_ref"},
     "signature": {"$ref": "#/$defs/signature"}
   },
   "$defs": {
+    "predecessor_ref": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "allOf": [
+            {"$ref": "../common/reference.schema.json"},
+            {"properties": {"kind": {"const": "runtime_root_admission"}}}
+          ]
+        }
+      ]
+    },
     "signature": {
       "type": "object",
       "required": ["algorithm", "key_id", "value"],

@@ -16,10 +16,7 @@ Structural Review Round 3 (P15-R3-F1/F2) changes two things here:
 
 - ``test_only_trusted_runtime_root`` is gone, and so is the module-private sentinel it reached
   into. Round 3 found that "private" gate to be a naming convention rather than a control (any
-  importer could read it), and -- more decisively -- found the framing wrong: a
-  :class:`~manosube_agent_civilization.runtime.bootstrap.TrustedRuntimeRoot` now grants nothing
-  by itself, so its construction is public, unrestricted shipped API. :func:`trusted_runtime_root`
-  below is a one-line convenience over that public constructor, not an issuer of anything.
+  importer could read it), and -- more decisively -- found the framing wrong.
   What actually admits a root is a canonical, Store-committed ``runtime_root_admission`` record
   verified against an **externally supplied** trust anchor -- :func:`trust_anchor_public_key_hex`
   and :func:`commit_root_admission` here mint and commit one, test-side, exactly as every other
@@ -30,6 +27,27 @@ Structural Review Round 3 (P15-R3-F1/F2) changes two things here:
   (``semantic_state.runtime.claims[<target_key>]``) is genuinely populated for every
   positive-path test -- without which P15-R3-F2's own currency check could not be tested
   meaningfully at all.
+
+Structural Review Round 4 (P15-R4-F1/F2) changes three more:
+
+- The trust-root type is gone entirely. What a test now holds is a
+  :class:`~manosube_agent_civilization.runtime.bootstrap.RuntimeDeploymentAuthority`, obtainable
+  **only** from the shipped composition entry point
+  ``compose_trusted_runtime_deployment_authority`` -- so this fixture layer no longer has, and no
+  longer needs, any way of naming a world at the request-facing boundary. :func:`admitted_root`
+  composes one through that shipped path; every request-facing bootstrap call in this repository
+  now passes exactly that object and nothing else.
+- Both canonical record kinds carry signed ``generation``/``predecessor_ref`` fields, so
+  :func:`deployment_declaration_for` and :func:`root_admission_for` mint them, and
+  :func:`successor_of` derives the successor pair from whatever record is currently the head.
+- :func:`commit_root_admission` goes through the *shipped* canonical committer
+  (``runtime.commit_runtime_root_admission``) for exactly the reason
+  :func:`commit_deployment_declaration` already does: without it the admission chain pointer is
+  never populated and P15-R4-F1's own currency requirement could not be tested meaningfully.
+  Negative controls that deliberately plant an admission the shipped committer would refuse (a
+  foreign-signed one, a tampered one) still use :func:`commit_records` directly, and are refused
+  by composition for exactly their own reason -- composition checks the record itself before it
+  checks currency, precisely so those refusals stay distinguishable.
 """
 
 from __future__ import annotations
@@ -58,8 +76,12 @@ from manosube_agent_civilization.binding import (
     bind_project,
     declare_github_projection_grant,
 )
-from manosube_agent_civilization.runtime import commit_runtime_deployment_declaration
-from manosube_agent_civilization.runtime.bootstrap import TrustedRuntimeRoot
+from manosube_agent_civilization.runtime import (
+    RuntimeDeploymentAuthority,
+    commit_runtime_deployment_declaration,
+    commit_runtime_root_admission,
+    compose_trusted_runtime_deployment_authority,
+)
 from manosube_agent_civilization.runtime.identity import (
     runtime_deployment_declaration_id,
     runtime_deployment_declaration_semantic_fingerprint,
@@ -82,40 +104,6 @@ DEFAULT_DEPLOYMENT_FINGERPRINT = "sha256:" + "a" * 64
 #: stale/expired/boundary control states its own window explicitly.
 DEFAULT_VALID_FROM = "2026-01-01T00:00:00Z"
 DEFAULT_VALID_UNTIL = "2026-12-31T23:59:59Z"
-
-
-# ---------------------------------------------------------------------------
-# A TrustedRuntimeRoot is an ordinary public value again (P15-R3-F1)
-# ---------------------------------------------------------------------------
-#
-# Round 1 shipped a public ``provision_trusted_runtime_root`` factory. Round 2 (P15-R2-F1)
-# deleted it -- correctly: it accepted exactly the caller-controlled Store/Project/Binding tuple
-# the correction existed to stop an untrusted surface from selecting -- and left construction
-# behind a module-private sentinel this fixture module imported directly.
-#
-# Round 3 (P15-R3-F1) found that sentinel to be a naming convention rather than a control, and
-# the framing itself wrong: while *holding* a root was sufficient to reach an adapter, "who may
-# mint one?" was unanswerable at the library level. So the boundary moved off the type entirely.
-# ``bootstrap_projection_execution_capability`` now admits a root only against a canonical,
-# Store-committed ``runtime_root_admission`` verified against an externally supplied trust
-# anchor, on every call. The type grants nothing, so its constructor is public shipped API and
-# this helper is a plain convenience over it -- not an issuer, and not test-privileged in any
-# way. Round 2's own mechanical facts are untouched: no shipped function returns this type, no
-# shipped module constructs one, and the deleted factory name is reintroduced nowhere.
-
-
-def trusted_runtime_root(
-    store: Any, *, project_id: str, project_binding_id: str
-) -> TrustedRuntimeRoot:
-    """Return a :class:`~manosube_agent_civilization.runtime.bootstrap.TrustedRuntimeRoot` over
-    *store*/*project_id*/*project_binding_id*, through the public shipped constructor.
-
-    Kept as a named helper purely because every call site in this repository passes the same
-    three things in the same shape; it confers nothing a caller could not do inline, which is
-    exactly Round 3's point.
-    """
-
-    return TrustedRuntimeRoot(store, project_id, project_binding_id)
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +174,8 @@ def root_admission_for(
     *,
     status: str = "ACTIVE",
     declared_at: str = "2026-09-08T00:00:00Z",
+    generation: int = 0,
+    predecessor_ref: Mapping[str, str] | None = None,
     signer: Ed25519PrivateKey | None = None,
     signing_key_id: str = "TRUST-ANCHOR-0001",
 ) -> dict[str, Any]:
@@ -196,6 +186,11 @@ def root_admission_for(
     ``signer``-with-a-canonical-default convention :func:`deployment_declaration_for` already
     uses -- so a test that simply wants a legitimate admission gets one, while every negative
     control passes an attacker's or an alternate world's key explicitly.
+
+    *generation*/*predecessor_ref* default to a genesis record (P15-R4-F1). Both are covered by
+    the anchor's own signature and by the record's own content address, exactly like every other
+    adopted semantic field, so a successor cannot be re-aimed at a different predecessor after
+    the anchor signed it. Use :func:`successor_of` rather than passing them by hand.
     """
 
     admission: dict[str, Any] = {
@@ -204,6 +199,8 @@ def root_admission_for(
         "project_binding_ref": {"kind": "project_binding", "id": project_binding_id},
         "status": status,
         "declared_at": declared_at,
+        "generation": generation,
+        "predecessor_ref": dict(predecessor_ref) if predecessor_ref is not None else None,
     }
     admission["signature"] = sign_runtime_root_admission(
         admission,
@@ -217,38 +214,93 @@ def root_admission_for(
     return admission
 
 
-def commit_root_admission(
-    store: FileStateStore, project_id: str, admission: Mapping[str, Any]
-) -> dict[str, str]:
-    """Commit *admission* (idempotently -- a content address already resolved is the identical
-    record, never a second one) and return the reference naming it."""
+def successor_of(current: Mapping[str, Any], id_field: str, record_kind: str) -> dict[str, Any]:
+    """Return the ``{"generation", "predecessor_ref"}`` pair a legal successor to *current* must
+    declare -- one greater generation, and a reference naming *current* exactly (P15-R4).
 
-    admission_id = str(admission["runtime_root_admission_id"])
-    if store.resolve_record(project_id, ROOT_ADMISSION_RECORD_KIND, admission_id) is None:
-        commit_records(
-            store,
-            project_id,
-            store.load_current(project_id),
-            f"TX-RUNTIME-ROOT-ADMISSION-{admission_id[-16:]}",
-            [(ROOT_ADMISSION_RECORD_KIND, admission_id, dict(admission))],
-        )
-    return {"kind": ROOT_ADMISSION_RECORD_KIND, "id": admission_id}
+    One helper for both chains, deliberately, mirroring the single shared mechanism the shipped
+    committers themselves parameterize: a fixture that computed a successor two different ways
+    could disagree with itself about what a chain is.
+    """
+
+    return {
+        "generation": int(current["generation"]) + 1,
+        "predecessor_ref": {"kind": record_kind, "id": str(current[id_field])},
+    }
+
+
+def admission_successor_fields(current: Mapping[str, Any]) -> dict[str, Any]:
+    """:func:`successor_of` for a ``runtime_root_admission``."""
+
+    return successor_of(current, "runtime_root_admission_id", ROOT_ADMISSION_RECORD_KIND)
+
+
+def declaration_successor_fields(current: Mapping[str, Any]) -> dict[str, Any]:
+    """:func:`successor_of` for a ``runtime_deployment_declaration``."""
+
+    return successor_of(
+        current, "runtime_deployment_declaration_id", DEPLOYMENT_DECLARATION_RECORD_KIND
+    )
+
+
+def commit_root_admission(
+    store: FileStateStore,
+    project_id: str,
+    admission: Mapping[str, Any],
+    *,
+    committed_at: str = "2026-09-09T00:00:00Z",
+    trust_anchor: str | None = None,
+) -> dict[str, str]:
+    """Commit *admission* through the **shipped** canonical commit-and-supersede path and return
+    the reference naming it (P15-R4-F1).
+
+    Before Round 4 this helper inserted the record with a raw fixture-side
+    :func:`commit_records`, which meant the admission chain pointer never existed at all and
+    "current admission" could not be tested. It now calls
+    :func:`~manosube_agent_civilization.runtime.commit_runtime_root_admission`, which commits the
+    immutable record **and** moves this Project Binding's own current-admission pointer in one
+    atomic State transition -- so every positive-path composition in this repository genuinely
+    populates the pointer the composition entry point now requires, and every negative control
+    that deliberately bypasses this path is refused for exactly the reason its own name claims.
+    """
+
+    result = commit_runtime_root_admission(
+        store,
+        project_id,
+        dict(admission),
+        trust_anchor_public_key_hex=(
+            trust_anchor if trust_anchor is not None else trust_anchor_public_key_hex()
+        ),
+        committed_at=committed_at,
+    )
+    return dict(result["runtime_root_admission_ref"])
 
 
 def admitted_root(
     store: FileStateStore, *, project_id: str, project_binding_id: str, **admission_fields: Any
 ) -> dict[str, Any]:
-    """Commit one genuine ``runtime_root_admission`` for *project_id*/*project_binding_id* and
-    return the complete ``{trusted_runtime_root, runtime_root_admission_ref,
-    trust_anchor_public_key_hex}`` triple every legitimate
-    ``bootstrap_projection_execution_capability`` call now needs (P15-R3-F1)."""
+    """Commit one genuine ``runtime_root_admission`` for *project_id*/*project_binding_id*,
+    compose a real :class:`~manosube_agent_civilization.runtime.bootstrap.
+    RuntimeDeploymentAuthority` through the **shipped** composition entry point, and return
+    everything a Round 4 test needs.
+
+    Returns ``{deployment_authority, runtime_root_admission_ref, trust_anchor_public_key_hex,
+    runtime_root_admission}``. ``deployment_authority`` is the *only* thing a request-facing
+    ``bootstrap_projection_execution_capability`` call now takes; the other three are here for
+    negative controls and for lifecycle tests that rotate or revoke the admission afterwards.
+    """
 
     admission = root_admission_for(project_id, project_binding_id, **admission_fields)
+    ref = commit_root_admission(store, project_id, admission)
     return {
-        "trusted_runtime_root": trusted_runtime_root(
-            store, project_id=project_id, project_binding_id=project_binding_id
+        "deployment_authority": compose_trusted_runtime_deployment_authority(
+            store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            runtime_root_admission_ref=ref,
+            trust_anchor_public_key_hex=trust_anchor_public_key_hex(),
         ),
-        "runtime_root_admission_ref": commit_root_admission(store, project_id, admission),
+        "runtime_root_admission_ref": ref,
         "trust_anchor_public_key_hex": trust_anchor_public_key_hex(),
         "runtime_root_admission": admission,
     }
@@ -554,6 +606,8 @@ def deployment_declaration_for(
     declared_at: str = "2026-09-08T00:00:00Z",
     valid_from: str = DEFAULT_VALID_FROM,
     valid_until: str = DEFAULT_VALID_UNTIL,
+    generation: int = 0,
+    predecessor_ref: Mapping[str, str] | None = None,
     signer: Ed25519PrivateKey | None = None,
     signing_key_id: str | None = None,
 ) -> dict[str, Any]:
@@ -588,6 +642,11 @@ def deployment_declaration_for(
         "declared_at": declared_at,
         "valid_from": valid_from,
         "valid_until": valid_until,
+        # P15-R4-F2: a declaration's own place in its target's chain is a *signed* claim.
+        # Defaults describe a genesis record; use ``declaration_successor_fields`` for a
+        # rotation or a revocation rather than passing these by hand.
+        "generation": generation,
+        "predecessor_ref": dict(predecessor_ref) if predecessor_ref is not None else None,
     }
     declaration["signature"] = sign_runtime_deployment_declaration(
         declaration,
@@ -671,6 +730,8 @@ def commit_target_identity(
     declared_at: str = "2026-09-08T00:00:00Z",
     valid_from: str = DEFAULT_VALID_FROM,
     valid_until: str = DEFAULT_VALID_UNTIL,
+    generation: int = 0,
+    predecessor_ref: Mapping[str, str] | None = None,
     signer: Ed25519PrivateKey | None = None,
     signing_key_id: str | None = None,
 ) -> dict[str, Any]:
@@ -694,6 +755,8 @@ def commit_target_identity(
         declared_at=declared_at,
         valid_from=valid_from,
         valid_until=valid_until,
+        generation=generation,
+        predecessor_ref=predecessor_ref,
         signer=signer,
         signing_key_id=signing_key_id,
     )
@@ -845,6 +908,8 @@ __all__ = [
     "REBOUND_SIGNING_KEY_ID",
     "ROOT_ADMISSION_RECORD_KIND",
     "TARGET_REPOSITORY",
+    "RuntimeDeploymentAuthority",
+    "admission_successor_fields",
     "admitted_root",
     "alternate_bound",
     "alternate_human_authority_signing_key",
@@ -858,6 +923,8 @@ __all__ = [
     "commit_records",
     "commit_root_admission",
     "commit_target_identity",
+    "compose_trusted_runtime_deployment_authority",
+    "declaration_successor_fields",
     "deployment_declaration_for",
     "foreign_trust_anchor_private_key",
     "human_authority_signing_key",
@@ -868,8 +935,8 @@ __all__ = [
     "sign_alternate_github_projection_grant_declaration",
     "sign_runtime_deployment_declaration",
     "sign_runtime_root_admission",
+    "successor_of",
     "target_identity_for",
     "trust_anchor_private_key",
     "trust_anchor_public_key_hex",
-    "trusted_runtime_root",
 ]
