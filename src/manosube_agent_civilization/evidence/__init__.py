@@ -20,6 +20,7 @@ from .engine import (
     EVIDENCE_REFERENCE_KIND,
     OBSERVATION_EVIDENCE,
     derive_evidence,
+    derive_request_difference,
 )
 from .errors import (
     EvidenceError,
@@ -44,5 +45,6 @@ __all__ = [
     "UngroundedChangeResultEvidenceError",
     "UnsupportedEvidenceLevelError",
     "derive_evidence",
+    "derive_request_difference",
     "evaluate_sufficiency",
 ]

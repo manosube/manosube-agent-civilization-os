@@ -1854,3 +1854,54 @@ ISSUE_CLOSE_ALLOWED=false
 PHASE_16_COMPLETE=false
 PHASE_17_ALLOWED=false
 ```
+
+---
+
+# 26. Phase 16 Structural Review Round 2 bounded addendum (Issue #66, PR #67)
+
+本節は、構造参謀によるStructural Review Round 2と、SHUKOUによるその採択を、独立再観測できた事実のみ記録するbounded addendumである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+ADOPTION_ID=ADOPT_P16_R2_CANONICAL_ENVELOPE_AND_PREFLIGHT_DIFFERENCE_HANDOFF
+GOVERNING_ISSUE=#66
+TARGET_PR=#67
+REVIEWED_HEAD=8b5ebcb40bf906c4dbc979e57b791dcd8f6d768e
+ADOPTED_FINDINGS=P16-R2-F1,P16-R2-F2
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_67_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+```
+
+2件の対応内容：
+
+```text
+P16-R2-F1  route_model_execution_to_evidence が Envelope をStore解決する際、
+           execution/swap/recovery route が既に使う正準Envelope受理
+           （schema検証、宣言identityと再計算identityとStore lookup keyの三者一致、
+           semantic fingerprintの再計算一致）を共有するようになった。以前はfingerprint
+           のみ検証していたため、宣言された model_execution_envelope_id 自身（自己参照
+           フィールドとしてfingerprint計算対象から除外されている）が commit 後に
+           差し替えられた記録は、他の全フィールドが本物であれば検出されなかった。
+           model_runtime/route.py の新規 resolve_and_verify_committed_envelope が、
+           execution/swap/recovery とEvidence handoffの双方から共有される唯一の
+           canonical Envelope resolverとなった。
+
+P16-R2-F2  evidence_request 自身の canonical Difference を、既存の Observation/Difference
+           owner経由で derive_evidence 呼び出し前に再現し、Store-resolved Envelope の
+           difference_ref と比較するようになった（preflight）。Round 1の事後チェック
+           （derive_evidence呼び出し後の一致検証）は、defense in depthとしてそのまま
+           保持される。evidence/engine.py の新規 derive_request_difference が、
+           derive_evidence 自身が内部で行う同一の Observation→Difference 再現を
+           一箇所に集約し、Evidence自身とmodel_runtimeの両方から呼ばれる。
+```
+
+`07_AGENT_RUNTIME/`・既存canonical owner・既に受理されたPhase 16およびRound 1の境界・既存の
+positive model-swap/session-loss proofsは、いずれも変更されていない。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_16_COMPLETE=false
+PHASE_17_ALLOWED=false
+```

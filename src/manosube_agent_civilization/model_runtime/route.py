@@ -1132,6 +1132,52 @@ def execute_model_work_unit(
 # --------------------------------------------------------------------------- #
 
 
+def resolve_and_verify_committed_envelope(
+    store: Any, project_id: str, envelope_id: str
+) -> dict[str, Any]:
+    """Resolve the real, committed ``model_execution_envelope`` named by *envelope_id* under
+    *project_id*, and require the identical canonical admission every Envelope consumer in this
+    package applies: schema-valid, same project, and its own identity and semantic fingerprint,
+    independently recomputed from its own content, equal to its own declared values -- **and**
+    equal to the Store lookup key itself.
+
+    Factored here once (Structural Review Round 2, P16-R2-F1) so the Evidence handoff shares
+    this exact canonical admission rather than reimplementing a divergent, partial one (it
+    previously checked only the semantic fingerprint). The three-way equality -- lookup key,
+    declared ``model_execution_envelope_id``, and that identity independently recomputed from
+    the resolved record's own content -- is what a fingerprint check alone cannot catch: both
+    ``model_execution_envelope_id`` and ``model_execution_semantic_fingerprint`` are themselves
+    excluded from the projection each hashes (a self-referential field cannot address itself),
+    so a Store record whose declared identity was substituted after commit, with every other
+    field genuine, still recomputes a matching fingerprint -- and is caught here instead, by the
+    identity three-way check a fingerprint check was never able to make.
+    """
+
+    resolved = _resolve(
+        store, project_id, ENVELOPE_RECORD_KIND, {"kind": ENVELOPE_RECORD_KIND, "id": envelope_id}
+    )
+    envelope = require_valid_model_execution_envelope(resolved)
+    _require_same_project(envelope, project_id, ENVELOPE_RECORD_KIND)
+    declared_id = envelope.get("model_execution_envelope_id")
+    recomputed_id = model_execution_envelope_id(envelope)
+    if envelope_id != declared_id or recomputed_id != declared_id:
+        raise ModelRecordIntegrityError(
+            f"resolved model_execution_envelope's own identity does not agree across the Store "
+            f"lookup key, its own declared value, and its own recomputed value -- "
+            f"lookup={envelope_id!r}, declared={declared_id!r}, recomputed={recomputed_id!r} -- "
+            "refusing to trust a record whose own declared identity was substituted after commit"
+        )
+    if model_execution_envelope_semantic_fingerprint(envelope) != envelope.get(
+        "model_execution_semantic_fingerprint"
+    ):
+        raise ModelRecordIntegrityError(
+            f"resolved model_execution_envelope {envelope_id!r} own recomputed semantic "
+            "fingerprint does not equal its own declared value -- refusing to trust any of its "
+            "fields"
+        )
+    return envelope
+
+
 def _resolve_envelope(
     store: Any,
     project_id: str,
@@ -1141,21 +1187,7 @@ def _resolve_envelope(
     work_unit_ref: Mapping[str, Any],
     role: str,
 ) -> dict[str, Any]:
-    resolved = _resolve(store, project_id, ENVELOPE_RECORD_KIND, reference)
-    envelope = require_valid_model_execution_envelope(resolved)
-    _require_same_project(envelope, project_id, ENVELOPE_RECORD_KIND)
-    if model_execution_envelope_id(envelope) != envelope.get("model_execution_envelope_id"):
-        raise ModelRecordIntegrityError(
-            f"resolved {role} model_execution_envelope {reference['id']!r} own recomputed "
-            "identity does not equal its own declared value -- refusing to trust it"
-        )
-    if model_execution_envelope_semantic_fingerprint(envelope) != envelope.get(
-        "model_execution_semantic_fingerprint"
-    ):
-        raise ModelRecordIntegrityError(
-            f"resolved {role} model_execution_envelope {reference['id']!r} own recomputed "
-            "semantic fingerprint does not equal its own declared value -- refusing to trust it"
-        )
+    envelope = resolve_and_verify_committed_envelope(store, project_id, reference["id"])
     if envelope["model_work_unit_ref"] != dict(work_unit_ref):
         raise ModelRuntimeRequirementError(
             f"resolved {role} model_execution_envelope names a different Work Unit than the one "

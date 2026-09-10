@@ -11,16 +11,20 @@ adding a second Evidence, Observation, Reflow or Closure owner.
 
 **This is where P16-C3's "cannot self-accept its own Evidence" actually lands.** A model's
 output reaches Evidence only as an *Evidence candidate*: this module resolves the real,
-committed ``model_execution_envelope`` from the Store (never trusting the caller-held
+committed ``model_execution_envelope`` from the Store through the identical canonical Envelope
+admission execution/swap/recovery already apply
+(:func:`~manosube_agent_civilization.model_runtime.route.resolve_and_verify_committed_envelope`,
+Structural Review Round 2, P16-R2-F1) -- never trusting the caller-held
 :class:`~manosube_agent_civilization.model_runtime.types.ModelExecutionReceipt`, which remains a
-publicly constructible dataclass), re-verifies that Envelope's own recomputed semantic
-fingerprint against its own declared value, requires every one of the receipt's own fields to
-exactly equal what that real Envelope actually recorded, and then constructs
-``verification_result_provenance`` **itself**, from the resolved Envelope alone. The adapter's
-own identity is recorded as the ``verifier_identity`` -- an honest statement of who produced the
-candidate -- and decides nothing: whether the request is admissible Evidence at all is answered
-by the existing Evidence owner's own Change-free position, unchanged, and this module refuses to
-return a record whose provenance it cannot itself confirm afterwards.
+publicly constructible dataclass -- requires every one of the receipt's own fields to exactly
+equal what that real Envelope actually recorded, preflights the request's own canonical
+Difference through the existing Observation/Difference owners before the existing Evidence owner
+is ever called (P16-R2-F2), and then constructs ``verification_result_provenance`` **itself**,
+from the resolved Envelope alone. The adapter's own identity is recorded as the
+``verifier_identity`` -- an honest statement of who produced the candidate -- and decides
+nothing: whether the request is admissible Evidence at all is answered by the existing Evidence
+owner's own Change-free position, unchanged, and this module refuses to return a record whose
+provenance it cannot itself confirm afterwards.
 
 **No re-execution at handoff (deliberate, disclosed).** Projection's own handoff re-observes the
 live external artifact; this one does not, for the identical reason Runtime's own handoff states
@@ -37,14 +41,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from manosube_agent_civilization.evidence import derive_evidence
+from manosube_agent_civilization.evidence import derive_evidence, derive_request_difference
 
 from .engine import REQUIRED_PROVENANCE_FIELDS
-from .errors import ModelRecordIntegrityError, ModelRuntimeRequirementError
-from .identity import model_execution_envelope_semantic_fingerprint
+from .errors import ModelRuntimeRequirementError
+from .route import DIFFERENCE_RECORD_KIND, resolve_and_verify_committed_envelope
 from .types import MODEL_OUTCOME_TO_RECEIPT_STATUS, ModelExecutionReceipt
-
-_ENVELOPE_RECORD_KIND = "model_execution_envelope"
 
 
 def _plain(value: Any) -> Any:
@@ -139,24 +141,16 @@ def route_model_execution_to_evidence(
         raise ModelRuntimeRequirementError(
             f"receipt must be a ModelExecutionReceipt instance, not {type(receipt)!r}"
         )
-    envelope = store.resolve_record(
-        project_id, _ENVELOPE_RECORD_KIND, receipt.model_execution_envelope_id
+    # Structural Review Round 2, P16-R2-F1: the identical canonical Envelope admission
+    # execution/swap/recovery already apply -- schema-valid, and its own identity and semantic
+    # fingerprint independently recomputed from its own content equal to both its own declared
+    # values and the Store lookup key -- shared here rather than reimplemented as a divergent,
+    # partial check (this route previously verified only the semantic fingerprint, which the
+    # declared identity field is itself excluded from, so a Store record whose declared identity
+    # was substituted after commit, with every other field genuine, passed it undetected).
+    envelope = resolve_and_verify_committed_envelope(
+        store, project_id, receipt.model_execution_envelope_id
     )
-    if envelope is None:
-        raise ModelRuntimeRequirementError(
-            "receipt names a model_execution_envelope_id that does not resolve under the "
-            f"requested project {project_id!r} -- a receipt genuinely produced for a different "
-            f"project cannot be relabelled as Evidence for this one: "
-            f"{receipt.model_execution_envelope_id!r}"
-        )
-    if model_execution_envelope_semantic_fingerprint(envelope) != envelope.get(
-        "model_execution_semantic_fingerprint"
-    ):
-        raise ModelRecordIntegrityError(
-            f"resolved Envelope {receipt.model_execution_envelope_id!r} own recomputed semantic "
-            "fingerprint does not equal its own declared value -- refusing to trust any of its "
-            "fields"
-        )
     if receipt.project_id != project_id or envelope["project_id"] != project_id:
         raise ModelRuntimeRequirementError(
             "receipt's own originating project_id does not match the requested project_id -- a "
@@ -274,6 +268,29 @@ def route_model_execution_to_evidence(
             "output can never supply the provenance that would accept it"
         )
 
+    # Structural Review Round 2, P16-R2-F2: the request's own canonical Difference is
+    # reproduced through the existing Observation/Difference owners -- the identical
+    # reproduction ``derive_evidence`` itself performs internally, factored once as
+    # :func:`~manosube_agent_civilization.evidence.derive_request_difference` -- and compared
+    # against the real, resolved Envelope's own ``difference_ref`` *before* the existing
+    # Evidence owner is ever called. Round 1's own equality check refused a same-project
+    # Difference-A-execution-paired-with-Difference-B request only after ``derive_evidence`` had
+    # already run; this preflight is what makes that refusal a zero-call one, and the Round 1
+    # check itself is kept below, unchanged, as defense in depth.
+    preflight_difference = derive_request_difference(evidence_request)
+    preflight_difference_ref = {
+        "kind": DIFFERENCE_RECORD_KIND,
+        "id": preflight_difference["difference_id"],
+    }
+    if preflight_difference_ref != envelope["difference_ref"]:
+        raise ModelRuntimeRequirementError(
+            "the evidence_request's own canonical Difference, reproduced through the existing "
+            f"Observation/Difference owners before any Evidence is derived, is not the "
+            f"Difference this model execution was actually about: {preflight_difference_ref!r} "
+            f"!= {envelope['difference_ref']!r} -- an evidence_request may not silently rebind "
+            "a model's already-executed work from one Difference to another"
+        )
+
     provenance = _construct_provenance(envelope, project_id)
     request = dict(evidence_request)
     request["verification_result_provenance"] = provenance
@@ -287,7 +304,8 @@ def route_model_execution_to_evidence(
     # otherwise-valid *evidence_request* whose own ``difference_request`` re-derives Difference
     # B in the same project. Requiring exact equality against the real, resolved Envelope's own
     # ``difference_ref`` here is what refuses that silent rebinding before any Evidence record
-    # is ever returned to a caller who could act on it.
+    # is ever returned to a caller who could act on it -- retained as defense in depth alongside
+    # the preflight above (Structural Review Round 2, P16-R2-F2).
     if evidence["difference_ref"] != envelope["difference_ref"]:
         raise ModelRuntimeRequirementError(
             "the derived Evidence record names a different Difference than the one this model "

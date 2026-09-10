@@ -1124,12 +1124,24 @@ def test_a_genuine_accepted_candidate_reaches_the_existing_evidence_owner_honest
 
 
 def test_evidence_cannot_be_rebound_from_the_executed_difference_to_another(
-    world: dict[str, Any],
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The decisive counterexample, Structural Review Round 1, P16-R1-F2. A caller cannot hand
-    this route an ``evidence_request`` whose own ``difference_request`` re-derives a genuinely
-    *different* Difference in the same project and have the result silently bound to that
-    Difference instead of the one this model execution was actually about."""
+    """ZERO-CALL, the decisive counterexample, Structural Review Round 1/2, P16-R1-F2/P16-R2-F2.
+    A caller cannot hand this route an ``evidence_request`` whose own ``difference_request``
+    re-derives a genuinely *different* Difference in the same project and have the result
+    silently bound to that Difference instead of the one this model execution was actually
+    about -- and, since Round 2's own canonical Difference preflight, this is refused before
+    ``derive_evidence`` is ever reached, proved here by counting real calls to the existing
+    Evidence deriver, not merely by observing a raised error."""
+
+    calls = {"count": 0}
+    real_derive_evidence = evidence_handoff_module.derive_evidence
+
+    def _counting(request: dict[str, Any]) -> dict[str, Any]:
+        calls["count"] += 1
+        return real_derive_evidence(request)
+
+    monkeypatch.setattr(evidence_handoff_module, "derive_evidence", _counting)
 
     opened = _open(world)
     result = _execute(
@@ -1142,6 +1154,102 @@ def test_evidence_cannot_be_rebound_from_the_executed_difference_to_another(
         route_model_execution_to_evidence(
             world["store"], result["receipt"], world["project_id"], request
         )
+    assert calls["count"] == 0
+
+
+# =========================================================================== #
+# 6a. Structural Review Round 2 -- canonical Envelope admission at Evidence handoff
+# =========================================================================== #
+
+
+def test_a_substituted_declared_envelope_id_causes_zero_evidence_owner_calls(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ZERO-CALL, Structural Review Round 2, P16-R2-F1's own decisive counterexample. A genuine,
+    accepted Envelope's own body is planted under a fresh Store key with only its own declared
+    ``model_execution_envelope_id`` substituted -- that field, like
+    ``model_execution_semantic_fingerprint``, is deliberately excluded from the projection both
+    hash over (a self-referential field cannot address itself), so the substituted body's own
+    recomputed semantic fingerprint still equals its own declared value: a fingerprint check
+    alone -- this route's own check before this correction -- passes it. Refused here instead by
+    the three-way identity check: the Store lookup key, the record's own declared identity, and
+    that identity independently recomputed from the record's own content must all agree, and for
+    this substituted body they do not (only the lookup key and the forged declared value agree
+    with each other; the recomputed value, which depends on none of the substitutable ID field,
+    still names the original genuine Envelope)."""
+
+    from dataclasses import replace
+
+    calls = {"count": 0}
+    real_derive_evidence = evidence_handoff_module.derive_evidence
+
+    def _counting(request: dict[str, Any]) -> dict[str, Any]:
+        calls["count"] += 1
+        return real_derive_evidence(request)
+
+    monkeypatch.setattr(evidence_handoff_module, "derive_evidence", _counting)
+
+    opened = _open(world)
+    result = _execute(
+        world, opened["model_work_unit_ref"], _seeded_adapter(opened["model_work_unit_ref"])
+    )
+    genuine_envelope = result["envelope"]
+    forged_id = "MODEL-EXECUTION-" + "9" * 64
+    assert forged_id != genuine_envelope["model_execution_envelope_id"]
+    substituted = dict(genuine_envelope)
+    substituted["model_execution_envelope_id"] = forged_id
+    plant_records(
+        world["store"],
+        world["project_id"],
+        [(ENVELOPE_KIND, forged_id, substituted)],
+        transaction_id="TX-MODEL-SUBSTITUTED-ENVELOPE-ID",
+    )
+    receipt = replace(result["receipt"], model_execution_envelope_id=forged_id)
+    request = evidence_request_for(world["project_id"], provenance=None)
+    with pytest.raises(ModelRecordIntegrityError):
+        route_model_execution_to_evidence(world["store"], receipt, world["project_id"], request)
+    assert calls["count"] == 0
+
+
+def test_a_schema_invalid_envelope_causes_zero_evidence_owner_calls(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ZERO-CALL, Structural Review Round 2, P16-R2-F1. A record planted at the Evidence
+    handoff's own lookup key that is not schema-valid at all -- here, missing its own required
+    ``adapter_identity`` -- is refused by the canonical Envelope admission's own schema check,
+    before ``derive_evidence`` is ever reached. Before this correction, the handoff never
+    schema-validated the resolved record at all; it read fields off it directly and would have
+    raised a bare ``KeyError``/``TypeError`` rather than this package's own typed refusal."""
+
+    from dataclasses import replace
+
+    calls = {"count": 0}
+    real_derive_evidence = evidence_handoff_module.derive_evidence
+
+    def _counting(request: dict[str, Any]) -> dict[str, Any]:
+        calls["count"] += 1
+        return real_derive_evidence(request)
+
+    monkeypatch.setattr(evidence_handoff_module, "derive_evidence", _counting)
+
+    opened = _open(world)
+    result = _execute(
+        world, opened["model_work_unit_ref"], _seeded_adapter(opened["model_work_unit_ref"])
+    )
+    malformed = dict(result["envelope"])
+    del malformed["adapter_identity"]
+    malformed_id = "MODEL-EXECUTION-" + "8" * 64
+    plant_records(
+        world["store"],
+        world["project_id"],
+        [(ENVELOPE_KIND, malformed_id, malformed)],
+        transaction_id="TX-MODEL-MALFORMED-SCHEMA-ENVELOPE",
+    )
+    receipt = replace(result["receipt"], model_execution_envelope_id=malformed_id)
+    request = evidence_request_for(world["project_id"], provenance=None)
+    with pytest.raises(ModelRuntimeRequirementError):
+        route_model_execution_to_evidence(world["store"], receipt, world["project_id"], request)
+    assert calls["count"] == 0
 
 
 # =========================================================================== #
