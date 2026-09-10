@@ -1857,6 +1857,44 @@ PHASE_17_ALLOWED=false
 
 ---
 
+# 27. Phase 16 post-merge acceptance observation
+
+本節は、PR #67の手動merge後にGitHub `main`を再観測した現在地である。GitHub Actions
+またはworkflowの成否をPhase acceptanceのAuthorityとして使用しない。受入根拠は、SHUKOUの
+exact-HEAD merge決定、merge receipt、構造レビューで閉じたfinding、および実装者が返した検証
+Evidenceである。
+
+```text
+OBSERVED_AT_UTC=2026-09-10T05:53:55Z
+CURRENT_PHASE=16_MULTI_MODEL_REPLACEABILITY
+GOVERNING_ISSUE=#66
+MERGED_PR=#67
+ACCEPTED_PR_HEAD=c906f8a4b56c5fec03108873814499e363d68948
+PHASE_16_MERGE_SHA=8bc9d0e7a3784b658f8b523361904552f089b3c6
+MERGE_PARENT_MAIN=94f067ba6acb4e4459ef3ecd15d6c8c1332e1db7
+MERGE_PARENT_DELIVERY=c906f8a4b56c5fec03108873814499e363d68948
+
+PR_67_STATE=MERGED
+CURRENT_ROUTE_BLOCKERS=0
+STRUCTURAL_FINDINGS_OPEN=0
+PHASE_16_COMPLETE=true
+ISSUE_66_CLOSE_ALLOWED=true
+PHASE_17_ALLOWED=true
+PHASE_17_IMPLEMENTATION_ALLOWED=false
+NEXT_OWNER=SHUKOU
+```
+
+Phase 16は、Phase 12 Temporary Agent Execution Contractを第二契約で置換せずに、provider-neutral
+Model Adapter、State/Difference/Authority/Boundaryに拘束されたWork Unit、非権威的なEvidence
+candidate、model-swap continuity、Store-only session recovery、およびbounded failureを追加した。
+Round 1・2で発見されたEvidence handoffとadapter boundaryのfindingは、accepted head上で閉鎖済みで
+ある。
+
+Phase 17は開始可能だが、自動開始ではない。`8bc9d0e7...`を明示baseとするPhase 17専用Issueと
+SHUKOUの実装採択が別途必要である。
+
+---
+
 # 26. Phase 16 Structural Review Round 2 bounded addendum (Issue #66, PR #67)
 
 本節は、構造参謀によるStructural Review Round 2と、SHUKOUによるその採択を、独立再観測できた事実のみ記録するbounded addendumである。
