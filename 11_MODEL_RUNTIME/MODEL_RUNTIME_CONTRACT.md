@@ -47,7 +47,7 @@ PUBLIC_MODEL_RUNTIME_ENTRY_POINT_COUNT=5
 ```python
 opened = open_model_work_unit(
     store,
-    agent,                       # a live Phase 12 TemporaryAgent -- the execution contract
+    agent,  # a live Phase 12 TemporaryAgent -- the execution contract
     project_id=project_id,
     project_binding_id=project_binding_id,
     difference_ref={"kind": "difference", "id": difference_id},
@@ -56,8 +56,8 @@ opened = open_model_work_unit(
     model_execution_grant_refs=[{"kind": "model_execution_grant", "id": grant_id}],
     opened_at="2026-01-01T00:00:00Z",
 )
-opened["model_work_unit"]           # the canonical, committed, immutable Work Unit
-opened["model_work_unit_ref"]       # what every later call resolves by
+opened["model_work_unit"]  # the canonical, committed, immutable Work Unit
+opened["model_work_unit_ref"]  # what every later call resolves by
 opened["model_execution_decision"]  # the Authority Decision, committed in the same transition
 
 result = execute_model_work_unit(
@@ -66,27 +66,31 @@ result = execute_model_work_unit(
     project_id=project_id,
     project_binding_id=project_binding_id,
     model_work_unit_ref=opened["model_work_unit_ref"],
-    adapter=my_model_adapter,       # the one replaceable boundary
+    adapter=my_model_adapter,  # the one replaceable boundary
     executed_at="2026-01-01T00:01:00Z",
 )
-result["envelope"]                  # the canonical, committed Model Execution Envelope
-result["receipt"]                   # ModelExecutionReceipt (ephemeral, never committed)
+result["envelope"]  # the canonical, committed Model Execution Envelope
+result["receipt"]  # ModelExecutionReceipt (ephemeral, never committed)
 
 recovered = recover_model_execution_session(
-    store, agent_b,
-    project_id=project_id, project_binding_id=project_binding_id,
+    store,
+    agent_b,
+    project_id=project_id,
+    project_binding_id=project_binding_id,
     model_work_unit_ref=opened["model_work_unit_ref"],
     recovered_at="2026-01-01T00:02:00Z",
 )
-recovered["session_recovery_receipt"]     # the committed proof of recovery
-recovered["model_work_unit"]              # every one of these was resolved by content address,
-recovered["difference"]                   # schema-validated, identity-recomputed,
-recovered["model_execution_boundary"]     # project-bound, Binding-bound and Authority-bound
-recovered["model_execution_decision"]     # inside this one call
+recovered["session_recovery_receipt"]  # the committed proof of recovery
+recovered["model_work_unit"]  # every one of these was resolved by content address,
+recovered["difference"]  # schema-validated, identity-recomputed,
+recovered["model_execution_boundary"]  # project-bound, Binding-bound and Authority-bound
+recovered["model_execution_decision"]  # inside this one call
 
 swap = record_model_swap(
-    store, agent_b,
-    project_id=project_id, project_binding_id=project_binding_id,
+    store,
+    agent_b,
+    project_id=project_id,
+    project_binding_id=project_binding_id,
     model_work_unit_ref=opened["model_work_unit_ref"],
     predecessor_execution_ref={"kind": "model_execution_envelope", "id": first_envelope_id},
     successor_execution_ref={"kind": "model_execution_envelope", "id": second_envelope_id},
