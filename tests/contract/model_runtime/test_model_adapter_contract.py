@@ -133,7 +133,7 @@ def test_the_two_adapters_declare_genuinely_different_identities() -> None:
 
 
 def test_the_two_adapters_share_no_implementation_at_all() -> None:
-    """"Two distinct adapters" (P16-C2) is proved as a fact about the classes, not asserted in
+    """ "Two distinct adapters" (P16-C2) is proved as a fact about the classes, not asserted in
     prose: neither is a subclass of the other, neither shares a base beyond ``object``, and
     they have no method implementation in common."""
 
@@ -141,7 +141,12 @@ def test_the_two_adapters_share_no_implementation_at_all() -> None:
     assert not issubclass(RequestDerivedModelAdapter, FakeModelAdapter)
     assert FakeModelAdapter.__mro__[1:] == (object,)
     assert RequestDerivedModelAdapter.__mro__[1:] == (object,)
-    assert FakeModelAdapter.execute is not RequestDerivedModelAdapter.execute
+    # Compared by qualified name rather than by identity: mypy correctly reports an ``is not``
+    # between two differently-typed bound methods as a non-overlapping identity check, and the
+    # fact being pinned is that the two are distinct implementations, not that two distinct
+    # objects exist.
+    assert FakeModelAdapter.execute.__qualname__ != RequestDerivedModelAdapter.execute.__qualname__
+    assert FakeModelAdapter.execute.__code__ is not RequestDerivedModelAdapter.execute.__code__
 
 
 # --------------------------------------------------------------------------- #
@@ -200,9 +205,8 @@ def test_each_adapter_is_deterministic_over_the_identical_request() -> None:
         assert adapter.execute(request=request) == adapter.execute(request=request)
 
 
-def test_no_adapter_result_carries_a_provider_specific_field(
-) -> None:
-    """"No provider-specific canonical dependency" at the value level: the closed result key
+def test_no_adapter_result_carries_a_provider_specific_field() -> None:
+    """ "No provider-specific canonical dependency" at the value level: the closed result key
     set is exactly three keys, none of which names a provider, a model, a prompt, a transcript,
     or a session."""
 
@@ -252,9 +256,7 @@ def test_the_two_outcome_vocabularies_differ_by_exactly_that_one_member() -> Non
     assert len(MODEL_ADAPTER_OUTCOMES) == len(MODEL_EXECUTION_OUTCOMES) == 7
 
 
-@pytest.mark.parametrize(
-    "outcome", sorted(MODEL_ADAPTER_OUTCOMES - {"CANDIDATE"})
-)
+@pytest.mark.parametrize("outcome", sorted(MODEL_ADAPTER_OUTCOMES - {"CANDIDATE"}))
 def test_every_typed_failure_is_reportable_by_a_controlled_adapter(outcome: str) -> None:
     """P16-C6: adapter unavailability, refusal, malformed output, timeout, cancellation and
     incomplete evidence are *return values*, never exceptions -- so each of the six is
@@ -272,8 +274,7 @@ def test_every_typed_failure_is_reportable_by_a_controlled_adapter(outcome: str)
     assert result["candidate_kind"] is None
 
 
-def test_an_unseeded_fake_adapter_reports_incomplete_evidence_rather_than_a_bare_success(
-) -> None:
+def test_an_unseeded_fake_adapter_reports_incomplete_evidence_rather_than_a_bare_success() -> None:
     """A model that has nothing to report is not a success and is not an authoritative absence
     -- it is ``INCOMPLETE_EVIDENCE``, which maps to ``INSUFFICIENT`` and to nothing else."""
 
@@ -325,12 +326,9 @@ def test_the_adapter_protocol_admits_exactly_one_canonical_request_argument() ->
         signature = inspect.signature(function)
         parameters = [name for name in signature.parameters if name != "self"]
         assert parameters == ["request"], function
-        assert (
-            signature.parameters["request"].kind is inspect.Parameter.KEYWORD_ONLY
-        ), function
+        assert signature.parameters["request"].kind is inspect.Parameter.KEYWORD_ONLY, function
         assert not any(
-            parameter.kind
-            in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+            parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
             for parameter in signature.parameters.values()
         ), function
 

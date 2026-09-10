@@ -191,16 +191,41 @@ def _mutate(value: Any) -> Any:
 #: table -- rather than writing five near-identical test bodies -- is what makes a new semantic
 #: field impossible to add without it being tamper-proved here too.
 _RECORDS = (
-    ("model_execution_boundary", boundary_record, BOUNDARY_SEMANTIC_FIELDS,
-     model_execution_boundary_id, model_execution_boundary_semantic_fingerprint),
-    ("model_work_unit", work_unit_record, WORK_UNIT_SEMANTIC_FIELDS,
-     model_work_unit_id, model_work_unit_semantic_fingerprint),
-    ("model_execution_envelope", envelope_record, ENVELOPE_SEMANTIC_FIELDS,
-     model_execution_envelope_id, model_execution_envelope_semantic_fingerprint),
-    ("model_swap_receipt", swap_receipt_record, SWAP_RECEIPT_SEMANTIC_FIELDS,
-     model_swap_receipt_id, model_swap_receipt_semantic_fingerprint),
-    ("session_recovery_receipt", recovery_receipt_record, RECOVERY_RECEIPT_SEMANTIC_FIELDS,
-     session_recovery_receipt_id, session_recovery_receipt_semantic_fingerprint),
+    (
+        "model_execution_boundary",
+        boundary_record,
+        BOUNDARY_SEMANTIC_FIELDS,
+        model_execution_boundary_id,
+        model_execution_boundary_semantic_fingerprint,
+    ),
+    (
+        "model_work_unit",
+        work_unit_record,
+        WORK_UNIT_SEMANTIC_FIELDS,
+        model_work_unit_id,
+        model_work_unit_semantic_fingerprint,
+    ),
+    (
+        "model_execution_envelope",
+        envelope_record,
+        ENVELOPE_SEMANTIC_FIELDS,
+        model_execution_envelope_id,
+        model_execution_envelope_semantic_fingerprint,
+    ),
+    (
+        "model_swap_receipt",
+        swap_receipt_record,
+        SWAP_RECEIPT_SEMANTIC_FIELDS,
+        model_swap_receipt_id,
+        model_swap_receipt_semantic_fingerprint,
+    ),
+    (
+        "session_recovery_receipt",
+        recovery_receipt_record,
+        RECOVERY_RECEIPT_SEMANTIC_FIELDS,
+        session_recovery_receipt_id,
+        session_recovery_receipt_semantic_fingerprint,
+    ),
 )
 
 _TAMPER_CASES = [
@@ -328,7 +353,10 @@ def test_the_semantic_projection_is_exactly_the_record_minus_its_own_two_digest_
 
 @pytest.mark.parametrize(
     ("kind", "builder", "fields", "identity"),
-    [pytest.param(kind, builder, fields, identity, id=kind) for kind, builder, fields, identity, _f in _RECORDS],
+    [
+        pytest.param(kind, builder, fields, identity, id=kind)
+        for kind, builder, fields, identity, _f in _RECORDS
+    ],
 )
 def test_a_record_missing_any_semantic_field_refuses_rather_than_addressing_a_partial_body(
     kind: str, builder: Any, fields: tuple[str, ...], identity: Any

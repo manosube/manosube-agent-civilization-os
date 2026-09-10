@@ -213,12 +213,14 @@ def test_agent_b_resumes_the_identical_work_unit_through_a_different_adapter(
     # rather than a collision. Both are recorded because P16-C4 asks for State-bound continuity,
     # and the revision is the half that moved.
     assert receipt["predecessor_state_revision"] < receipt["successor_state_revision"]
-    assert receipt["predecessor_semantic_fingerprint"] == swap["predecessor_envelope"][
-        "executed_semantic_fingerprint"
-    ]
-    assert receipt["successor_semantic_fingerprint"] == swap["successor_envelope"][
-        "executed_semantic_fingerprint"
-    ]
+    assert (
+        receipt["predecessor_semantic_fingerprint"]
+        == swap["predecessor_envelope"]["executed_semantic_fingerprint"]
+    )
+    assert (
+        receipt["successor_semantic_fingerprint"]
+        == swap["successor_envelope"]["executed_semantic_fingerprint"]
+    )
 
     # ---- AND IT IS A REAL, RESOLVABLE, SELF-CONSISTENT CANONICAL FACT -------------------
     stored = store.resolve_record(project_id, SWAP_KIND, receipt["model_swap_receipt_id"])
@@ -336,9 +338,9 @@ def test_a_total_session_loss_is_recovered_from_the_canonical_store_alone(
     for field, value in expected.items():
         assert receipt[field] == value, field
         assert recovered["model_work_unit"][field] == value, field
-    assert receipt["recovered_state_revision"] == store.load_current(project_id)[
-        "state_revision"
-    ] - 1, "the receipt records the State it recovered against, before its own commit"
+    assert (
+        receipt["recovered_state_revision"] == store.load_current(project_id)["state_revision"] - 1
+    ), "the receipt records the State it recovered against, before its own commit"
 
     # The complete resumption context is genuinely resolved, not merely referenced.
     assert recovered["difference"]["difference_id"] == expected["difference_ref"]["id"]
@@ -350,13 +352,9 @@ def test_a_total_session_loss_is_recovered_from_the_canonical_store_alone(
         recovered["model_execution_decision"]["model_execution_decision_id"]
         == expected["authority_ref"]["id"]
     )
-    assert (
-        recovered["model_execution_decision"]["decision"] == "MODEL_EXECUTION_AUTHORIZED"
-    )
+    assert recovered["model_execution_decision"]["decision"] == "MODEL_EXECUTION_AUTHORIZED"
 
-    stored = store.resolve_record(
-        project_id, RECOVERY_KIND, receipt["session_recovery_receipt_id"]
-    )
+    stored = store.resolve_record(project_id, RECOVERY_KIND, receipt["session_recovery_receipt_id"])
     assert stored == receipt
     assert session_recovery_receipt_id(receipt) == receipt["session_recovery_receipt_id"]
 
@@ -364,7 +362,7 @@ def test_a_total_session_loss_is_recovered_from_the_canonical_store_alone(
 def test_recovery_needs_no_conversation_handoff_receipt_or_boot_context(
     world: dict[str, Any],
 ) -> None:
-    """"A conversation handoff, model memory, or provider-local session is neither required nor
+    """ "A conversation handoff, model memory, or provider-local session is neither required nor
     accepted as continuity evidence" (P16-C4), proved by signature: every recovery/execution
     route takes only ``(store, agent)`` plus keyword-only canonical identifiers, and there is no
     parameter through which a transcript, a session id or a prior receipt could be supplied."""
