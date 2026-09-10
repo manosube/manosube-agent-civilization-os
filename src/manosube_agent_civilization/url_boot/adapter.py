@@ -9,19 +9,21 @@ exactly the bounded, single-hop transport facts
 explicit hop would honestly report; this adapter never itself decides a redirect, a final
 identity, a hop count, a resolved address's own safety, or any content classification -- every
 redirect/content/identity/boundary decision belongs solely to
-:mod:`~manosube_agent_civilization.url_boot.route` (P17-R1-F2/P17-R2-F1). Its own ``connect_hop``
-method (Structural Review Round 3, P17-R3-F1) is **not** part of the
+:mod:`~manosube_agent_civilization.url_boot.route` (P17-R1-F2/P17-R2-F1). Neither its own
+``resolve_hop`` method (Structural Review Round 4, P17-R4-F1) nor its own ``connect_hop`` method
+(Structural Review Round 3, P17-R3-F1) is part of the
 :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` Protocol any more -- see
-that Protocol's own module-level discussion -- it survives only as this class's own additional,
-deterministic-test-only capability, reachable exclusively through this repository's own internal
+that Protocol's own module-level discussion -- both survive only as this class's own additional,
+deterministic-test-only capabilities, reachable exclusively through this repository's own internal
 test-composition path, never through either genuinely-networked public entry point.
 
-``LocalHttpUrlSourceAdapter`` performs the one genuine DNS resolution for one explicit hop, via
+``LocalHttpUrlSourceAdapter`` is, since Structural Review Round 4 (P17-R4-F1), pure inert
+identity data -- ``adapter_identity`` alone, no method of any kind. It previously performed the
+one genuine DNS resolution for one explicit hop itself; that resolution is now
 :mod:`~manosube_agent_civilization.url_boot.network`'s own :func:`~manosube_agent_civilization.
-url_boot.network.resolve_hop_address` -- the V3 vertical-proof target's DNS-resolution half,
-exercised against one disposable, local HTTP server this delivery's own test suite starts and
-stops itself (``127.0.0.1``, an ephemeral port). It performs no connection of any kind
-(Structural Review Round 3, P17-R3-F1) -- see its own class docstring.
+url_boot.network.perform_resolution`'s job alone, called directly by the route, for the identical
+reason its own ``connect_hop`` method was already removed in Round 3 (see this class's own
+docstring). It performs no resolution and no connection of any kind.
 
 **Structural Review Round 1 (P17-R1-F3) correction, further corrected in Round 2
 (P17-R2-F2).** This delivery's first version read ``permit_loopback_test_hosts`` out of the
@@ -43,11 +45,9 @@ module docstring.
 from __future__ import annotations
 
 from collections.abc import Mapping
-import socket
 from typing import Any
 
 from .errors import UrlBootAdapterError
-from .network import resolve_hop_address
 from .types import URL_HOP_CONNECT_OUTCOMES
 
 
@@ -196,51 +196,54 @@ class FakeUrlSourceAdapter:
 
 
 class LocalHttpUrlSourceAdapter:
-    """A complete :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter`
-    performing the one genuine DNS resolution for one explicit hop -- stdlib ``socket`` only, via
-    :mod:`~manosube_agent_civilization.url_boot.network`'s own :func:`resolve_hop_address`. No
-    redirect following, no content classification, no resolved-address safety classification of
-    any kind (Structural Review Round 2, P17-R2-F1), and (since Structural Review Round 3,
-    P17-R3-F1) **no connection of any kind** -- this class carries no method capable of opening a
-    socket at all any more.
+    """A complete :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` --
+    since Structural Review Round 4 (P17-R4-F1), pure inert identity data, carrying no method of
+    any kind. No redirect following, no content classification, no resolved-address safety
+    classification of any kind (Structural Review Round 2, P17-R2-F1), no connection of any kind
+    (Structural Review Round 3, P17-R3-F1), and (since Structural Review Round 4, P17-R4-F1) no
+    resolution of any kind either -- this class opens no socket, performs no DNS lookup, and
+    carries no executable method at all.
 
     **Structural Review Round 3 (P17-R3-F1) correction.** This class previously also implemented
     ``connect_hop``, performing the real bounded HTTP GET itself and reporting the result back to
     the route, which trusted that report as proof of which address was actually reached (checked
     only for after-the-fact disagreement with the address it was handed). A dishonest or buggy
     ``UrlSourceAdapter`` implementation could therefore connect anywhere it pleased and simply
-    echo the admitted address back. :func:`~manosube_agent_civilization.url_boot.route.
-    observe_url_source` and its disposable-local-test counterpart no longer call any adapter
-    method to perform a connection at all -- the real connect-and-fetch step is now
+    echo the admitted address back. The real connect-and-fetch step became
     :mod:`~manosube_agent_civilization.url_boot.network`'s own :func:`
-    ~manosube_agent_civilization.url_boot.network.perform_admitted_connection`, called *directly*
-    by the route, using only the exact address the route itself already resolved and classified.
-    This class's own ``connect_hop`` method (and the ``UrlSourceAdapter`` Protocol member it used
-    to implement) is therefore removed rather than merely left unused: a replaceable adapter has
-    no call through which to substitute a different destination because there is no method left
-    on either the Protocol or this class through which a connection could ever be requested.
+    ~manosube_agent_civilization.url_boot.network.perform_admitted_connection`'s job alone,
+    called *directly* by the route.
+
+    **Structural Review Round 4 (P17-R4-F1) correction.** This class also previously implemented
+    ``resolve_hop``, performing the one genuine DNS resolution itself and returning the result to
+    the route -- Round 3's own reasoning about ``connect_hop`` applied equally here, and had not
+    yet been applied: a replaceable adapter's own ``resolve_hop`` still ran as arbitrary
+    caller-supplied Python inside the genuine trusted pre-commit network path, with the same
+    ambient socket/network authority as any other code in this process, and nothing checked what
+    it *did* versus what it *reported*. The one genuine DNS lookup is now
+    :func:`~manosube_agent_civilization.url_boot.network.perform_resolution`'s job alone, called
+    *directly* by the route. This class's own ``resolve_hop``/``connect_hop`` methods (and the
+    ``UrlSourceAdapter`` Protocol members they used to implement) are therefore removed rather
+    than merely left unused: a replaceable adapter has no call through which to perform any
+    network I/O at all because there is no method left on either the Protocol or this class
+    through which resolution or connection could ever be requested.
 
     Carries no loopback-related constructor parameter at all (Structural Review Round 2,
     P17-R2-F2) -- see this module's own docstring.
 
-    The V3 vertical-proof target's own DNS-resolution half: exercised in this delivery's own test
+    The V3 vertical-proof target's own adapter identity: exercised in this delivery's own test
     suite against one disposable, local HTTP server the test itself starts and stops
     (``127.0.0.1``, an ephemeral port) -- never a VPS or cloud target, per Issue #69's own
-    explicit non-target. The actual HTTP round trip against that server is performed by
-    :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection` alone.
+    explicit non-target. The actual DNS resolution and HTTP round trip against that server are
+    both performed by the trusted network layer alone
+    (:func:`~manosube_agent_civilization.url_boot.network.perform_resolution`,
+    :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection`).
     """
 
     def __init__(self, *, adapter_identity: Mapping[str, Any] | None = None) -> None:
         self.adapter_identity: Mapping[str, Any] = dict(
             adapter_identity or {"adapter": "local_http_url_source_adapter", "version": "0.1"}
         )
-
-    def resolve_hop(self, *, source_identity: Mapping[str, Any]) -> Mapping[str, Any]:
-        try:
-            address = resolve_hop_address(source_identity["host"], source_identity["port"])
-        except socket.gaierror:
-            return {"outcome": "DNS_FAILURE"}
-        return {"outcome": "RESOLVED", "resolved_address": address}
 
 
 __all__ = ["FakeUrlSourceAdapter", "LocalHttpUrlSourceAdapter"]

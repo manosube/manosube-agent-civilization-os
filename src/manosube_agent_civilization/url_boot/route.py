@@ -3,8 +3,9 @@
 ``URL_BOOT_OWNER_COUNT=1``, ``PUBLIC_URL_BOOT_ENTRY_POINT_COUNT=1`` (this module) ``+1``
 (:mod:`~manosube_agent_civilization.url_boot.evidence_handoff`'s own single hand-off route).
 
-``observe_url_source`` re-verifies Project/Human Authority identity through the existing Boot
-owner (:func:`~manosube_agent_civilization.boot.boot_project`), independently fingerprints an
+The closure :func:`compose_url_source_observer` returns re-verifies Project/Human Authority
+identity through the existing Boot owner (:func:`~manosube_agent_civilization.boot.boot_project`),
+independently fingerprints an
 explicit, fully decomposed source identity and a closed fetch Boundary (never trusting either
 from a caller beyond their declared shape), refuses a source whose own hostname falls outside the
 Boundary's own declared ``network_scope`` before Boot or any adapter is ever reached, owns the
@@ -162,6 +163,51 @@ reopening two of its three closed findings; P17-R2-F3 above is independently con
   Store/adapter/classifier parameter of any kind. See that module's own docstring for the complete
   rationale, including the disclosed limits of what a pure-Python boundary can and cannot enforce.
 
+**Structural Review Round 4 (P17-R4-F1, P17-R4-F2), reviewed at Round 3's own corrected head and
+reopening two of the two findings that head itself created (P17-R3-F1/F2, closed above, each
+found to leave one further gap once acted on).**
+
+- **P17-R4-F1 (route-owned resolution, not merely route-owned connection).** Round 3 removed
+  every connect-capable method from the replaceable adapter, but left ``resolve_hop`` in place --
+  a replaceable adapter's own DNS resolution still ran as arbitrary caller-supplied Python inside
+  the genuine trusted pre-commit network path, with the same ambient socket/network authority as
+  any other code in this process, before this route's own address-safety classification ever saw
+  its result. A malicious ``resolve_hop`` could perform its own alternate-address I/O as a side
+  effect regardless of what it *reported* back. :class:`~manosube_agent_civilization.url_boot.
+  types.UrlSourceAdapter` no longer declares ``resolve_hop`` either -- it now declares no
+  executable method of any kind, only the ``adapter_identity`` attribute. The one genuine DNS
+  lookup is now created and controlled exclusively by :func:`~manosube_agent_civilization.
+  url_boot.network.perform_resolution`, called *directly* by this module's own
+  :func:`_perform_resolution_via_trusted_network`, which both public entry points are permanently
+  bound to -- the exact mirror of P17-R3-F1's own connect-stage correction. A replaceable adapter
+  therefore has no call through which to perform any network I/O at all in either genuinely-
+  networked path: not "the report is checked and refused if it disagrees" but "there is no report
+  to check, because neither resolve- nor connect-capable method exists on the Protocol, and
+  neither public entry point ever asks for one." (This repository's own internal, fully
+  deterministic route-logic test suite still needs *some* way to inject simulated resolve facts;
+  it reaches :func:`_perform_resolution_via_adapter` by calling :func:`_observe_url_source_impl`
+  directly -- a path no production or disposable-local-test caller ever reaches, identically to
+  :func:`_perform_connection_via_adapter`.)
+- **P17-R4-F2 (a genuine production composition boundary, and a non-shipped permissive
+  classifier).** Round 3 required the disposable-local-test path to be a closure composed once,
+  ahead of any request, over the Store/Project/Binding/adapter it is bound to -- but left public
+  ``observe_url_source`` itself taking ``store``/``adapter`` directly on every call, which made
+  production, not a caller who imported private names, the thing actually failing to be "a
+  request-facing closure/capability composed before requests." Public ``observe_url_source`` is
+  removed outright; :func:`compose_url_source_observer` is this module's sole production entry
+  point, and the *only* function in this module callable with a caller-supplied Store/adapter that
+  can ever reach genuine network I/O -- see its own docstring for the complete rationale. Round 4
+  further found that ``route.py`` itself still shipped
+  ``_require_safe_resolved_address_permitting_loopback_only``'s complete implementation, reachable
+  by any caller able to import this module and recombine it with this module's own other private
+  names -- omitting it from this module's own bindings (Round 3's own correction) closed *this*
+  module's own ability to reach it, but not a caller's ability to import it directly and call it
+  themselves. That classifier's entire body is therefore moved out of this shipped module
+  entirely, into ``tests/fixtures/url_boot_local_test_authority.py`` -- this module now ships zero
+  loopback-permitting classifier code of any kind, under any name. See that fixture module's own
+  docstring for its own genuine, externally-held test-harness-authority requirement (never a
+  naming convention, a scoping convention, or an ``isinstance`` check against a shipped class).
+
 Canonical route (``12_URL_BOOT/URL_BOOT_CONTRACT.md`` §5):
 
 ```text
@@ -173,9 +219,11 @@ complete schema validation of the declared source identity and closed fetch Boun
 → closed fetch Boundary, fingerprinted (never trusted from a caller)
 → deterministic source_request_identity (source + Boundary + issued_at)
 → authority-freshness re-check -- refuses before the adapter
-→ route-owned, per-hop-reauthorized redirect loop -- one bounded single-hop adapter call per
-  hop, cross-hop DNS-resolution-drift binding, and every redirect/content/identity
-  classification performed here alone
+→ route-owned, per-hop-reauthorized redirect loop -- one bounded single-hop resolution and one
+  bounded single-hop connection per hop, both created and controlled exclusively by the trusted
+  network layer (never any replaceable-adapter method, P17-R3-F1/P17-R4-F1), cross-hop
+  DNS-resolution-drift binding, and every redirect/content/identity classification performed here
+  alone
 → OBSERVED only: canonical URL Source Observation Envelope, exact Boot-context binding,
   authority-freshness re-check on every commit attempt, existing canonical persistence boundary
   (commit_state_transition)
@@ -221,6 +269,7 @@ from .network import (
     UnsafeResolvedAddressError,
     canonical_source_identity,
     perform_admitted_connection,
+    perform_resolution,
     require_safe_resolved_address,
     require_source_within_network_scope,
     source_url,
@@ -261,26 +310,51 @@ _GENESIS_TRANSACTION_ID = "TX-GENESIS"
 
 
 def _require_safe_resolved_address_production(address: str) -> None:
-    """The one network-address-safety classifier every publicly exported ``observe_url_source``
-    call is permanently, non-overridably bound to: loopback is always refused, with no
+    """The one network-address-safety classifier every closure :func:`compose_url_source_observer`
+    returns is permanently, non-overridably bound to: loopback is always refused, with no
     parameter, field, or adapter substitution anywhere through which any caller could ever change
     that (P17-R2-F2). See this module's own docstring, "Structural Review Round 2 (P17-R2-F2)"."""
 
     require_safe_resolved_address(address, permit_loopback_test_hosts=False)
 
 
-def _require_safe_resolved_address_permitting_loopback_only(address: str) -> None:
-    """The one network-address-safety classifier this repository's own trusted, non-shipped
-    disposable-local-test composition (Structural Review Round 3, P17-R3-F2;
-    ``tests/fixtures/url_boot_local_test_authority.py``) closes over -- loopback is the *only*
-    exception ever admitted; every other unsafe address class (private/link-local/multicast/
-    reserved) is still refused exactly as in production. Never bound to anything in this module
-    itself any more (P17-R3-F2): no function defined here ever calls this one, so importing this
-    module alone yields no usable loopback-permitting capability -- reaching it requires also
-    importing, and correctly re-wiring, :func:`_observe_url_source_impl` and
-    :func:`_perform_connection_via_trusted_network` from a separate, trusted composition point."""
+def _perform_resolution_via_trusted_network(
+    adapter: UrlSourceAdapter, current_identity: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """The one resolve-stage primitive every genuinely-networked observation is permanently bound
+    to -- the closure :func:`compose_url_source_observer` returns and the disposable-local-test
+    composition alike (Structural Review Round 4, P17-R4-F1): *adapter* is accepted only to keep
+    this function's own signature interchangeable with :func:`_perform_resolution_via_adapter`
+    below, and is never
+    consulted -- the real DNS lookup is performed entirely by
+    :func:`~manosube_agent_civilization.url_boot.network.perform_resolution`, the one trusted
+    network-owned primitive. A replaceable adapter therefore has no call through which to perform
+    alternate-address I/O as a resolution side effect: its own resolve-capable method does not
+    exist any more (see :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter`'s
+    own module-level discussion), and even if it did, this function would never reach it."""
 
-    require_safe_resolved_address(address, permit_loopback_test_hosts=True)
+    del adapter
+    return perform_resolution(dict(current_identity))
+
+
+def _perform_resolution_via_adapter(
+    adapter: Any, current_identity: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """The one resolve-stage primitive this repository's own internal, deterministic route-logic
+    test suite closes over (never production, and never the disposable-local-test composition,
+    which both permanently bind :func:`_perform_resolution_via_trusted_network` instead) --
+    delegates to *adapter*'s own ``resolve_hop`` (a capability :class:`
+    ~manosube_agent_civilization.url_boot.adapter.FakeUrlSourceAdapter` still carries beyond the
+    :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` Protocol itself, purely
+    for controlled, fully in-memory, deterministic simulation of a real probe's own bounded
+    per-hop facts). *adapter* is deliberately typed ``Any`` rather than ``UrlSourceAdapter``: the
+    Protocol itself no longer declares ``resolve_hop`` at all (P17-R4-F1), precisely so that type
+    can never be mistaken for one a production caller might satisfy. Reached only by this
+    module's own private :func:`_observe_url_source_impl`, called directly by this repository's
+    own test suite -- never by either public, genuinely-networked entry point."""
+
+    result: Mapping[str, Any] = adapter.resolve_hop(source_identity=deep_freeze(current_identity))
+    return result
 
 
 def _perform_connection_via_trusted_network(
@@ -290,8 +364,9 @@ def _perform_connection_via_trusted_network(
     boundary: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     """The one connect-stage primitive every genuinely-networked observation is permanently bound
-    to -- production ``observe_url_source`` and the disposable-local-test composition alike
-    (Structural Review Round 3, P17-R3-F1): *adapter* is accepted only to keep this function's own
+    to -- the closure :func:`compose_url_source_observer` returns and the disposable-local-test
+    composition alike (Structural Review Round 3, P17-R3-F1): *adapter* is accepted only to keep
+    this function's own
     signature interchangeable with :func:`_perform_connection_via_adapter` below, and is never
     consulted -- the real connection is created and controlled entirely by
     :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection`, the one
@@ -532,6 +607,7 @@ def _fetch_with_route_owned_redirects(
     boundary: Mapping[str, Any],
     *,
     classify_resolved_address: Callable[[str], None],
+    perform_resolution: Callable[[UrlSourceAdapter, Mapping[str, Any]], Mapping[str, Any]],
     perform_connection: Callable[
         [UrlSourceAdapter, Mapping[str, Any], str, Mapping[str, Any]], Mapping[str, Any]
     ],
@@ -550,15 +626,16 @@ def _fetch_with_route_owned_redirects(
     *classify_resolved_address* is a callable of one positional ``str`` argument, raising
     :class:`~manosube_agent_civilization.url_boot.network.UnsafeResolvedAddressError` for an
     unsafe address and returning ``None`` for a safe one -- always one of this module's own two
-    permanently bound classifiers, never a value any caller of :func:`observe_url_source` can
-    supply (P17-R2-F2).
+    permanently bound classifiers, never a value any caller of :func:`compose_url_source_observer`
+    can supply (P17-R2-F2).
 
     *perform_connection* is a callable of ``(adapter, current_identity, admitted_address,
     boundary)``, returning the same shape the adapter's own former ``connect_hop`` used to --
     always one of this module's own two permanently bound connectors
     (:func:`_perform_connection_via_trusted_network` for every genuinely-networked observation, or
     :func:`_perform_connection_via_adapter` for this repository's own internal deterministic
-    testing alone), never a value any caller of :func:`observe_url_source` can supply (P17-R3-F1).
+    testing alone), never a value any caller of :func:`compose_url_source_observer` can supply
+    (P17-R3-F1).
 
     Returns ``{"fetch_outcome", "effective_source_identity", "response_status",
     "redirect_hop_count", "observed_fields", "resolution_provenance"}`` -- the identical shape
@@ -573,23 +650,23 @@ def _fetch_with_route_owned_redirects(
     resolution_provenance: list[dict[str, Any]] = []
 
     for hop in range(max_redirects + 1):
-        resolve_raw = adapter.resolve_hop(source_identity=deep_freeze(current_identity))
+        resolve_raw = perform_resolution(adapter, current_identity)
         if not isinstance(resolve_raw, Mapping):
-            raise UrlBootAdapterError(
-                f"adapter.resolve_hop() returned {resolve_raw!r}, not a mapping"
+            raise UrlBootRequirementError(
+                f"the resolve-stage primitive returned {resolve_raw!r}, not a mapping"
             )
         resolve_outcome = resolve_raw.get("outcome")
         if resolve_outcome not in URL_HOP_RESOLVE_OUTCOMES:
-            raise UrlBootAdapterError(
-                f"adapter.resolve_hop()'s own outcome is not recognized: {resolve_outcome!r}"
+            raise UrlBootRequirementError(
+                f"the resolve-stage primitive's own outcome is not recognized: {resolve_outcome!r}"
             )
         if resolve_outcome == "DNS_FAILURE":
             return _hop_result("DNS_FAILURE", redirect_hop_count=hop)
 
         candidate_address = resolve_raw.get("resolved_address")
         if not isinstance(candidate_address, str) or not candidate_address:
-            raise UrlBootAdapterError(
-                "adapter.resolve_hop() reported RESOLVED with no readable resolved_address"
+            raise UrlBootRequirementError(
+                "the resolve-stage primitive reported RESOLVED with no readable resolved_address"
             )
 
         # P17-R2-F1: the route alone classifies the resolved address's own safety -- never the
@@ -695,22 +772,25 @@ def _observe_url_source_impl(
     adapter: UrlSourceAdapter,
     observed_at: str,
     classify_resolved_address: Callable[[str], None],
+    perform_resolution: Callable[[UrlSourceAdapter, Mapping[str, Any]], Mapping[str, Any]],
     perform_connection: Callable[
         [UrlSourceAdapter, Mapping[str, Any], str, Mapping[str, Any]], Mapping[str, Any]
     ],
 ) -> dict[str, Any]:
-    """The complete ``observe_url_source`` implementation, closed over no network-address-safety
-    policy and no connect-stage mechanism of its own -- *classify_resolved_address* and
-    *perform_connection* are supplied entirely by this function's own callers, never by anything
-    reaching this function from outside this module (P17-R2-F2/P17-R3-F1/F2):
+    """The complete observation implementation, closed over no network-address-safety policy and
+    no resolve- or connect-stage mechanism of its own -- *classify_resolved_address*,
+    *perform_resolution*, and *perform_connection* are supplied entirely by this function's own
+    callers, never by anything reaching this function from outside this module
+    (P17-R2-F2/P17-R3-F1/F2/P17-R4-F1/F2):
 
-    - :func:`observe_url_source`, this package's only publicly exported entry point, permanently
-      bound to the production classifier and the trusted network connector;
+    - :func:`compose_url_source_observer`, this package's own trusted production composition step
+      -- the returned closure it hands back is permanently bound to the production classifier and
+      the trusted network resolver/connector;
     - this repository's own trusted, non-shipped disposable-local-test composition
       (``tests/fixtures/url_boot_local_test_authority.py``), permanently bound to the
-      loopback-permitting classifier and the *same* trusted network connector;
+      loopback-permitting classifier and the *same* trusted network resolver/connector;
     - this repository's own internal deterministic route-logic test suite, calling this function
-      directly with the production classifier and the adapter-delegating connector.
+      directly with the production classifier and the adapter-delegating resolver/connector.
 
     This function itself is never exported from this package's own public surface.
 
@@ -792,6 +872,7 @@ def _observe_url_source_impl(
         checked_source_identity,
         checked_boundary,
         classify_resolved_address=classify_resolved_address,
+        perform_resolution=perform_resolution,
         perform_connection=perform_connection,
     )
     fetch_outcome = fetch_result["fetch_outcome"]
@@ -878,44 +959,65 @@ def _observe_url_source_impl(
     return {"envelope": envelope, "receipt": receipt}
 
 
-def observe_url_source(
+def compose_url_source_observer(
     store: Any,
     *,
     project_id: str,
     project_binding_id: str,
-    source_identity: Mapping[str, Any],
-    boundary: Mapping[str, Any],
     adapter: UrlSourceAdapter,
-    observed_at: str,
-) -> dict[str, Any]:
-    """The one public, request-facing URL Boot entry point -- permanently, non-overridably bound
-    to :func:`_require_safe_resolved_address_production` (loopback always refused, P17-R2-F2) and
-    to :func:`_perform_connection_via_trusted_network` (the real connection is created and
-    controlled entirely by the trusted network layer, never by *adapter*, P17-R3-F1). This
-    function's own complete parameter list -- ``store``, ``project_id``, ``project_binding_id``,
-    ``source_identity``, ``boundary``, ``adapter``, ``observed_at`` -- carries no field, keyword,
-    or positional slot through which any caller could ever change either binding. See
-    :func:`_observe_url_source_impl` for the complete route this delegates to unchanged.
+) -> Callable[[Mapping[str, Any], Mapping[str, Any], str], dict[str, Any]]:
+    """The one public, trusted composition step for a genuinely-networked URL Boot observation
+    (Structural Review Round 4, P17-R4-F2).
 
-    **Structural Review Round 3 (P17-R3-F2) note.** This package no longer ships a second,
-    distinctly-named, loopback-permitting entry point at all -- Round 2's own
-    ``observe_url_source_for_disposable_local_test`` is removed. The one place this repository's
-    own disposable-local-test vertical proof can still observe against ``127.0.0.1`` is a trusted
-    composition boundary that does not live in this shipped package: see
-    ``tests/fixtures/url_boot_local_test_authority.py``'s own module docstring for the full
-    rationale."""
+    **Why this exists, replacing what used to be a single request-facing ``observe_url_source``
+    function.** Round 3 already established that this package's disposable-local-test path must
+    be a closure composed once, ahead of any request, over the Store/Project/Binding/adapter it is
+    bound to -- never a plain function a request-facing caller invokes directly with those values
+    as arguments. Round 4 found that this package's own *production* path had never been held to
+    the identical discipline: public ``observe_url_source`` itself took ``store``/``adapter``
+    (among others) directly, on every call, which made it -- not a caller who imported private
+    names -- the thing actually failing to be "a request-facing closure/capability composed before
+    requests" the adopted contract requires. This function is that composition step. It binds
+    *store*, *project_id*, *project_binding_id*, and *adapter* -- once -- and returns the
+    request-facing observation operation itself, already closed over all four plus the production
+    classifier (:func:`_require_safe_resolved_address_production`, loopback always refused,
+    P17-R2-F2) and the trusted network resolver/connector
+    (:func:`_perform_resolution_via_trusted_network`, :func:`_perform_connection_via_trusted_network`
+    -- real resolution and connection are created and controlled entirely by the trusted network
+    layer, never by *adapter*, P17-R3-F1/P17-R4-F1).
 
-    return _observe_url_source_impl(
-        store,
-        project_id=project_id,
-        project_binding_id=project_binding_id,
-        source_identity=source_identity,
-        boundary=boundary,
-        adapter=adapter,
-        observed_at=observed_at,
-        classify_resolved_address=_require_safe_resolved_address_production,
-        perform_connection=_perform_connection_via_trusted_network,
-    )
+    The returned closure's own call signature is exactly ``(source_identity, boundary,
+    observed_at)`` -- the identical shape :func:`~manosube_agent_civilization.url_boot.
+    route.compose_url_source_observer`'s own disposable-local-test counterpart already returns
+    (see ``tests/fixtures/url_boot_local_test_authority.py``'s own module docstring). No Store, no
+    adapter, no classifier, no resolver, no connector, no policy flag, and no alternate-world
+    substitution input of any kind -- there is no keyword, no positional slot, and no attribute on
+    the returned callable through which a caller could substitute a different Store, adapter, or
+    trusted primitive after the fact. This function's own parameter list -- ``store``,
+    ``project_id``, ``project_binding_id``, ``adapter`` -- likewise carries no field, keyword, or
+    positional slot through which any caller could ever inject an alternate classifier, resolver,
+    or connector at composition time either.
+
+    See :func:`_observe_url_source_impl` for the complete route the returned closure delegates to
+    unchanged."""
+
+    def observe(
+        source_identity: Mapping[str, Any], boundary: Mapping[str, Any], observed_at: str
+    ) -> dict[str, Any]:
+        return _observe_url_source_impl(
+            store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            source_identity=source_identity,
+            boundary=boundary,
+            adapter=adapter,
+            observed_at=observed_at,
+            classify_resolved_address=_require_safe_resolved_address_production,
+            perform_resolution=_perform_resolution_via_trusted_network,
+            perform_connection=_perform_connection_via_trusted_network,
+        )
+
+    return observe
 
 
 def _commit_envelope(
@@ -996,4 +1098,4 @@ def _commit_envelope(
     )
 
 
-__all__ = ["URL_BOOT_SCHEMA_BASE", "observe_url_source"]
+__all__ = ["URL_BOOT_SCHEMA_BASE", "compose_url_source_observer"]

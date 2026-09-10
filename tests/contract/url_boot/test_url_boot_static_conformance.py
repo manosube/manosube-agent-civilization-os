@@ -3,21 +3,30 @@
 A real AST walk over the ``url_boot`` package's own module source -- never a grep, never a
 hardcoded name list -- the identical technique ``tests/contract/runtime/
 test_runtime_static_conformance.py`` already establishes, scaled down to this package's own
-deliberately simpler shape: no deployment declaration, no root admission, no signing, no
-composition step. Two routes only (P17-C8): :func:`observe_url_source` and
+deliberately simpler shape: no deployment declaration, no root admission, no signing. Two routes
+only (P17-C8): :func:`compose_url_source_observer` (a trusted composition step since Structural
+Review Round 4, P17-R4-F2, returning the request-facing observation closure itself) and
 :func:`route_url_observation_to_evidence`.
 
 P17-C5's own network-safety requirement is proved here structurally: ``network.py`` is the one
 and only module in this package permitted to import ``socket``/``http.client``/``ssl``/
-``ipaddress`` -- every other module, ``adapter.py`` included, reaches a real socket only through
-that one owner's own :func:`~manosube_agent_civilization.url_boot.network.
-perform_admitted_connection`.
+``ipaddress`` -- every other module reaches a real socket only through that one owner's own
+:func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection`/
+:func:`~manosube_agent_civilization.url_boot.network.perform_resolution`. Since Structural Review
+Round 4 (P17-R4-F1), ``adapter.py`` itself imports no network-opening surface of any kind --
+its own real-network adapter no longer performs any resolution or connection itself either.
 
-Structural Review Round 3 (P17-R3-F1/F2) adds three further proofs: the
+Structural Review Round 3 (P17-R3-F1/F2) adds two further proofs: the
 :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` Protocol declares no
-connect-capable method at all; ``route.py`` itself never binds the loopback-permitting classifier
-to anything; and this shipped package defines no second, loopback-permitting entry point under
-any name.
+connect-capable method at all; and this shipped package defines no second, loopback-permitting
+entry point under any name.
+
+Structural Review Round 4 (P17-R4-F1/F2) extends both: the Protocol now declares no executable
+method of any kind (resolution joins connection); ``route.py`` no longer defines the
+loopback-permitting classifier at all -- its entire implementation moved out of this shipped
+package into ``tests/fixtures/url_boot_local_test_authority.py``; and this module's own sole
+production entry point is the composition step :func:`~manosube_agent_civilization.url_boot.
+route.compose_url_source_observer`, never a plain function taking Store/adapter directly.
 """
 
 from __future__ import annotations
@@ -105,18 +114,14 @@ def test_url_boot_package_exports_exactly_two_routes() -> None:
         if callable(getattr(url_boot_module, name))
         and not isinstance(getattr(url_boot_module, name), type)
     }
-    assert public_callables == {"observe_url_source", "route_url_observation_to_evidence"}
+    assert public_callables == {"compose_url_source_observer", "route_url_observation_to_evidence"}
 
 
-#: ``adapter.py`` imports ``socket`` for exactly one narrow purpose: classifying the one typed
-#: exception a genuine DNS lookup lets escape (``socket.gaierror``) into
-#: :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_RESOLVE_OUTCOMES`'s own
-#: ``DNS_FAILURE`` -- never to open a socket itself, which stays exclusively ``network.py``'s own
-#: job. Since Structural Review Round 3 (P17-R3-F1), ``adapter.py`` no longer imports ``ssl`` at
-#: all: ``LocalHttpUrlSourceAdapter`` performs no connection of any kind any more, so it has no TLS
-#: exception left to classify. Proved by the accompanying source-level check that no
-#: socket-opening/TLS-wrapping call appears in this module.
-_ADAPTER_ADMITTED_EXCEPTION_CLASSIFICATION_SURFACES = ("socket",)
+#: Since Structural Review Round 4 (P17-R4-F1), ``adapter.py`` performs no resolution and no
+#: connection of any kind -- it therefore imports no network-opening surface at all any more (it
+#: previously imported ``socket`` for exactly one narrow purpose, classifying the one typed
+#: exception a genuine DNS lookup lets escape; that lookup is now exclusively ``network.py``'s own
+#: job, called directly by the route, so ``adapter.py`` has no exception left to classify either).
 _SOCKET_OPENING_CALL_NAMES = (
     "socket",
     "create_connection",
@@ -128,10 +133,9 @@ _SOCKET_OPENING_CALL_NAMES = (
 
 
 def test_network_opening_surfaces_are_confined_to_network_py() -> None:
-    """P17-C5's own structural proof: no module besides ``network.py`` may import ``http.client``
-    or ``ipaddress`` at all, and only ``network.py``/``adapter.py`` may import ``socket``/``ssl``
-    -- ``adapter.py``'s own use is narrowed to exception-type classification alone by the
-    accompanying source-level check, never to opening a socket or wrapping TLS itself."""
+    """P17-C5's own structural proof: ``network.py`` is the sole module in this package permitted
+    to import ``socket``/``http.client``/``ssl``/``ipaddress`` -- every other module, ``adapter.py``
+    included since Structural Review Round 4 (P17-R4-F1), imports none of them at all."""
 
     for module in _ALL_PACKAGE_MODULES:
         imported = _imported_module_names(module)
@@ -145,8 +149,6 @@ def test_network_opening_surfaces_are_confined_to_network_py() -> None:
         }
         if module is network_module:
             assert offending == set(_NETWORK_OPENING_MODULES), offending
-        elif module is adapter_module:
-            assert offending == set(_ADAPTER_ADMITTED_EXCEPTION_CLASSIFICATION_SURFACES), offending
         else:
             assert not offending, (
                 f"{module.__name__} imports a network-opening surface: {offending}"
@@ -154,11 +156,11 @@ def test_network_opening_surfaces_are_confined_to_network_py() -> None:
 
 
 def test_adapter_never_opens_a_socket_or_wraps_tls_itself() -> None:
-    """The narrowing half of the exception above: ``adapter.py`` may name ``socket`` only to catch
-    its exception type -- it must call none of the actual socket-opening or TLS-wrapping
-    primitives that module or ``ssl`` expose. Every real connection is made exclusively through
+    """``adapter.py`` must call none of the actual socket-opening or TLS-wrapping primitives
+    ``socket``/``ssl`` expose. Every real resolution and connection is made exclusively through
+    :func:`~manosube_agent_civilization.url_boot.network.perform_resolution`/
     :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection`, called
-    directly by ``route.py`` (P17-R3-F1) -- never through any adapter method at all."""
+    directly by ``route.py`` (P17-R3-F1/P17-R4-F1) -- never through any adapter method at all."""
 
     source = inspect.getsource(adapter_module)
     tree = ast.parse(source)
@@ -289,12 +291,12 @@ def test_no_shipped_url_boot_module_names_a_dynamic_tool_dispatch_or_subprocess_
                 assert node.func.id not in forbidden_calls, f"{path} calls {node.func.id!r}"
 
 
-def test_the_url_source_adapter_protocol_declares_no_connect_capable_method() -> None:
-    """Structural Review Round 3 (P17-R3-F1): the replaceable
-    :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` Protocol must carry no
-    method through which a caller-supplied adapter implementation could ever be asked to perform a
-    network connection -- ``resolve_hop`` (a bounded DNS lookup, independently safety-classified by
-    the route before its result is ever used) is the only method this Protocol declares."""
+def test_the_url_source_adapter_protocol_declares_no_executable_method_at_all() -> None:
+    """Structural Review Round 3 (P17-R3-F1) removed ``connect_hop``; Structural Review Round 4
+    (P17-R4-F1) removes ``resolve_hop`` too -- the replaceable
+    :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` Protocol now carries no
+    method through which a caller-supplied adapter implementation could ever be asked to perform
+    any network I/O at all: only the inert ``adapter_identity`` attribute."""
 
     from manosube_agent_civilization.url_boot.types import UrlSourceAdapter
 
@@ -303,40 +305,44 @@ def test_the_url_source_adapter_protocol_declares_no_connect_capable_method() ->
         for name, value in vars(UrlSourceAdapter).items()
         if not name.startswith("_") and callable(value)
     }
-    assert declared_methods == {"resolve_hop"}, declared_methods
+    assert declared_methods == set(), declared_methods
     assert not hasattr(UrlSourceAdapter, "connect_hop")
+    assert not hasattr(UrlSourceAdapter, "resolve_hop")
 
 
-def test_local_http_url_source_adapter_declares_no_connect_capable_method() -> None:
-    """The shipped real-network adapter implementation mirrors the narrowed Protocol exactly
-    (P17-R3-F1): it carries no ``connect_hop`` or other connect-capable method of its own -- every
-    real connection is made by ``route.py`` calling
+def test_local_http_url_source_adapter_declares_no_executable_method_at_all() -> None:
+    """The shipped real-network adapter implementation mirrors the emptied Protocol exactly
+    (P17-R3-F1/P17-R4-F1): it carries no ``connect_hop``, ``resolve_hop``, or other executable
+    method of any kind -- every real resolution and connection is made by ``route.py`` calling
+    :func:`~manosube_agent_civilization.url_boot.network.perform_resolution`/
     :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection` directly."""
 
+    declared_methods = {
+        name
+        for name, value in vars(adapter_module.LocalHttpUrlSourceAdapter).items()
+        if not name.startswith("_") and callable(value)
+    }
+    assert declared_methods == set(), declared_methods
     assert not hasattr(adapter_module.LocalHttpUrlSourceAdapter, "connect_hop")
+    assert not hasattr(adapter_module.LocalHttpUrlSourceAdapter, "resolve_hop")
 
 
-def test_route_py_never_binds_the_loopback_permitting_classifier_to_anything() -> None:
-    """Structural Review Round 3 (P17-R3-F2): ``route.py`` still defines
-    ``_require_safe_resolved_address_permitting_loopback_only`` (a raw Python name in an
-    importable module cannot be made truly unreachable), but no function *defined in this module*
-    may reference it anywhere except its own definition -- the one place that classifier is ever
-    bound to a request-facing operation is this repository's own trusted, non-shipped
-    disposable-local-test composition, entirely outside this module and outside the distributed
-    package."""
+def test_route_py_ships_no_loopback_permitting_classifier_of_any_kind() -> None:
+    """Structural Review Round 4 (P17-R4-F2): Round 3 left
+    ``_require_safe_resolved_address_permitting_loopback_only``'s complete implementation defined
+    in this shipped module (merely unbound from any request-facing operation) -- reachable by any
+    caller able to import ``route.py`` directly. That classifier's entire body is now moved out of
+    this shipped module entirely, into this repository's own trusted, non-shipped
+    ``tests/fixtures/url_boot_local_test_authority.py``: ``route.py`` defines no name containing
+    ``permitting_loopback``/``permit_loopback`` anywhere, and references no such name either."""
 
-    classifier_name = "_require_safe_resolved_address_permitting_loopback_only"
+    forbidden_substrings = ("permit_loopback", "permitting_loopback")
+    for name in vars(route_module):
+        assert not any(substring in name for substring in forbidden_substrings), name
     tree = ast.parse(inspect.getsource(route_module))
-    reference_count = 0
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == classifier_name:
-            continue
-        if isinstance(node, ast.Name) and node.id == classifier_name:
-            reference_count += 1
-    assert reference_count == 0, (
-        f"route.py itself references {classifier_name!r} {reference_count} time(s) outside its "
-        "own definition"
-    )
+        if isinstance(node, ast.Name):
+            assert not any(substring in node.id for substring in forbidden_substrings), node.id
 
 
 def test_route_py_defines_no_second_loopback_permitting_entry_point() -> None:
@@ -355,11 +361,11 @@ def test_route_py_defines_no_second_loopback_permitting_entry_point() -> None:
 
 def test_route_py_public_surface_is_exactly_one_entry_point() -> None:
     """``route.py``'s own ``__all__`` names exactly the one schema-base constant and the one
-    public, request-facing entry point -- unchanged in shape since before Round 3, but now the
-    *only* function in this module callable with a caller-supplied Store/adapter/Boundary that
-    can ever reach genuine network I/O with the loopback exception admitted."""
+    public, request-facing composition step (Structural Review Round 4, P17-R4-F2) -- the *only*
+    function in this module callable with a caller-supplied Store/adapter that can ever reach
+    genuine network I/O."""
 
-    assert route_module.__all__ == ["URL_BOOT_SCHEMA_BASE", "observe_url_source"]
+    assert route_module.__all__ == ["URL_BOOT_SCHEMA_BASE", "compose_url_source_observer"]
 
 
 def test_no_shipped_url_boot_module_hardcodes_a_credential_looking_constant() -> None:

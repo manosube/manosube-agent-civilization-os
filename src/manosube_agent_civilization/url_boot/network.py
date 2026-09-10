@@ -33,22 +33,24 @@ Four layers, in the order a fetch actually uses them:
    (:mod:`~manosube_agent_civilization.url_boot.route`), on the resolved address the route
    itself sees *before* any connection is ever attempted, never something a replaceable adapter
    decides on the route's behalf.
-4. **The impure primitives** (:func:`resolve_hop_address`, :func:`connect_and_request_hop`,
-   :func:`perform_admitted_connection`) -- :func:`resolve_hop_address` resolves a hop's host
-   exactly once and returns that address to its own caller without connecting to it;
-   :func:`connect_and_request_hop` connects directly to a caller-supplied, already-admitted
-   address and performs one bounded HTTP GET -- the hostname is used only for the ``Host``
-   header and, over HTTPS, TLS server-name/certificate verification, never for a second
-   resolution. Splitting resolution from connection this way is what lets the route itself see,
-   and independently classify, the resolved address before any connection is ever attempted
-   (P17-R2-F1) -- Round 1's own single ``fetch_one_hop`` resolved and connected in one
-   uninterruptible step, leaving no seam for the route to inspect the address in between.
-   :func:`perform_admitted_connection` is the outcome-classifying wrapper around
-   :func:`connect_and_request_hop` that :mod:`~manosube_agent_civilization.url_boot.route` calls
-   *directly* -- never through a replaceable adapter's own method (Structural Review Round 3,
-   P17-R3-F1): the trusted route/network boundary alone creates the connection to the exact
-   admitted address, so a replaceable adapter is never even invoked for this step and has no call
-   through which to substitute a different destination.
+4. **The impure primitives** (:func:`resolve_hop_address`, :func:`perform_resolution`,
+   :func:`connect_and_request_hop`, :func:`perform_admitted_connection`) --
+   :func:`resolve_hop_address` resolves a hop's host exactly once and returns that address to its
+   own caller without connecting to it; :func:`connect_and_request_hop` connects directly to a
+   caller-supplied, already-admitted address and performs one bounded HTTP GET -- the hostname is
+   used only for the ``Host`` header and, over HTTPS, TLS server-name/certificate verification,
+   never for a second resolution. Splitting resolution from connection this way is what lets the
+   route itself see, and independently classify, the resolved address before any connection is
+   ever attempted (P17-R2-F1) -- Round 1's own single ``fetch_one_hop`` resolved and connected in
+   one uninterruptible step, leaving no seam for the route to inspect the address in between.
+   :func:`perform_resolution` and :func:`perform_admitted_connection` are the outcome-classifying
+   wrappers around :func:`resolve_hop_address`/:func:`connect_and_request_hop` that
+   :mod:`~manosube_agent_civilization.url_boot.route` calls *directly* -- never through a
+   replaceable adapter's own method (Structural Review Round 3, P17-R3-F1, extended to
+   resolution by Structural Review Round 4, P17-R4-F1): the trusted route/network boundary alone
+   performs both resolution and connection to the exact admitted address, so a replaceable
+   adapter is never even invoked for either step and has no call through which to perform
+   alternate-address I/O of any kind, as either a reported outcome or an unreported side effect.
 """
 
 from __future__ import annotations
@@ -176,6 +178,42 @@ def resolve_hop_address(host: str, port: int) -> str:
     if not info:
         raise socket.gaierror(f"no address returned for host {host!r}")
     return info[0][4][0]
+
+
+def perform_resolution(source_identity: dict[str, Any]) -> dict[str, Any]:
+    """The one trusted resolution-stage primitive every genuine URL Boot observation reaches --
+    production and the disposable-local-test vertical alike (Structural Review Round 4,
+    P17-R4-F1).
+
+    Round 3 still handed *source_identity* to a replaceable adapter's own ``resolve_hop`` for
+    every hop -- the adapter no longer decided address *safety* or *connected* to anything, but it
+    still ran, as arbitrary caller-supplied Python, inside the genuine trusted pre-commit network
+    path, with the same ambient socket/network authority as any other code in this process. A
+    conforming-looking ``resolve_hop`` implementation could perform its own, entirely separate
+    network I/O to any address at all as a side effect, then simply return a safe-looking
+    ``RESOLVED`` result naming the real requested host -- nothing checked *what the adapter itself
+    did*, only what it *reported*. This function closes that gap the identical way
+    :func:`perform_admitted_connection` already closed the connect-stage one: it is this module's
+    own :func:`resolve_hop_address` that performs the real DNS lookup, called directly from
+    :mod:`~manosube_agent_civilization.url_boot.route`, never through any method a replaceable
+    :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` implementation supplies.
+    A malicious or buggy adapter conforming to that Protocol is never even invoked for resolution
+    in either genuinely-networked entry point, so it has no call through which to perform
+    alternate-address I/O as a resolution side effect -- not "the report is checked", but "there
+    is no adapter method in this call path to report from at all".
+
+    Returns ``{"outcome": "DNS_FAILURE"}`` or ``{"outcome": "RESOLVED", "resolved_address": str}``
+    -- the identical shape :meth:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter.
+    resolve_hop` itself used to return, classifying :func:`resolve_hop_address`'s own raised
+    :class:`socket.gaierror` exactly as
+    :class:`~manosube_agent_civilization.url_boot.adapter.LocalHttpUrlSourceAdapter` used to
+    (moved here since that adapter no longer performs any resolution of its own at all)."""
+
+    try:
+        address = resolve_hop_address(source_identity["host"], source_identity["port"])
+    except socket.gaierror:
+        return {"outcome": "DNS_FAILURE"}
+    return {"outcome": "RESOLVED", "resolved_address": address}
 
 
 def require_safe_resolved_address(address: str, *, permit_loopback_test_hosts: bool) -> None:
@@ -351,6 +389,7 @@ __all__ = [
     "canonical_source_identity",
     "connect_and_request_hop",
     "perform_admitted_connection",
+    "perform_resolution",
     "require_safe_resolved_address",
     "require_source_within_network_scope",
     "resolve_hop_address",

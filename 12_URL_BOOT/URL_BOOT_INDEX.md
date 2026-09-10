@@ -11,7 +11,7 @@ CANONICAL_KERNEL_COUNT=1
 URL_BOOT_OWNER_COUNT=1
 PUBLIC_URL_BOOT_ENTRY_POINT_COUNT=2
 SIGNED_DEPLOYMENT_DECLARATION_CHAIN=false
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=3
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
 ```
 
 ---
@@ -88,13 +88,13 @@ Store-committed record a target's own claimed identity must match before it is t
 package makes no equivalent claim about a URL. `IDENTITY_MISMATCH` and every other content-level
 classification are route-derived, from bounded, single-hop transport facts alone (Structural
 Review Round 1, P17-R1-F2) -- never accepted as a direct assertion from whatever reported them.
-`BOUNDARY_REFUSED` is, since Structural Review Round 2 (P17-R2-F1), *also* route-derived -- the
-replaceable adapter reports only a genuine DNS resolution result; since Structural Review Round 3
-(P17-R3-F1), the genuine connection outcome is reported by the trusted network layer itself,
-never the adapter, which no longer has any connection capability at all. The route alone
-classifies a resolved address's own safety and detects cross-hop resolution drift, never
-accepting either as an adapter-asserted outcome. See `URL_BOOT_CONTRACT.md`
-§3.4/§6.2/§10.1/§11.1.
+`BOUNDARY_REFUSED` is, since Structural Review Round 2 (P17-R2-F1), *also* route-derived -- since
+Structural Review Round 3 (P17-R3-F1), the genuine connection outcome is reported by the trusted
+network layer itself, never the adapter; since Structural Review Round 4 (P17-R4-F1), the genuine
+resolution outcome is too -- the replaceable adapter has no connection or resolution capability of
+any kind any more, only a declared `adapter_identity`. The route alone classifies a resolved
+address's own safety and detects cross-hop resolution drift, never accepting either as an
+adapter-asserted outcome. See `URL_BOOT_CONTRACT.md` §3.4/§6.2/§10.1/§11.1/§12.1.
 
 This is also not a general-purpose HTTP client: one bounded method
 (`HTTP_GET_BOUNDED`), one closed content-type allowlist, one closed permitted-field projection,
@@ -109,8 +109,11 @@ attempted.
 ### 4.1 The two public entry points
 
 ```text
-observe_url_source                 one bounded, per-hop-reauthorized HTTP GET against an
-                                    explicit source, under an explicit closed fetch Boundary
+compose_url_source_observer        a trusted composition step (Structural Review Round 4,
+                                    P17-R4-F2) binding Store/Project/Binding/adapter once and
+                                    returning the request-facing observation closure itself: one
+                                    bounded, per-hop-reauthorized HTTP GET against an explicit
+                                    source, under an explicit closed fetch Boundary
 route_url_observation_to_evidence  hand the receipt to the existing Evidence owner
 ```
 
@@ -153,18 +156,21 @@ URL_FETCH_METHODS         HTTP_GET_BOUNDED
 URL_FETCH_OUTCOMES        OBSERVED, DNS_FAILURE, CONNECTION_FAILURE, TLS_FAILURE, TIMEOUT,
                           REDIRECT_REFUSED, OVERSIZED_RESPONSE, UNSUPPORTED_MEDIA_TYPE,
                           MALFORMED, IDENTITY_MISMATCH, BOUNDARY_REFUSED
-URL_HOP_RESOLVE_OUTCOMES     DNS_FAILURE, RESOLVED -- what an adapter's own resolve_hop may
-                          ever report (P17-R2-F1); the route alone classifies a RESOLVED
-                          address's own safety, never accepting BOUNDARY_REFUSED as an
-                          adapter-asserted outcome.
+URL_HOP_RESOLVE_OUTCOMES     DNS_FAILURE, RESOLVED -- what the route's own resolve-stage
+                          primitive may ever report (P17-R2-F1). Since Structural Review Round 4
+                          (P17-R4-F1), this primitive is the trusted network layer itself
+                          (network.perform_resolution) in production, never the replaceable
+                          adapter -- an adapter no longer has a resolve_hop method at all. The
+                          route alone classifies a RESOLVED address's own safety, never accepting
+                          BOUNDARY_REFUSED as an adapter-asserted outcome.
 URL_HOP_CONNECT_OUTCOMES     CONNECTION_FAILURE, TLS_FAILURE, TIMEOUT, RESPONSE -- what the
                           route's own connection primitive, given the route's own admitted
                           address, may ever report. Since Structural Review Round 3 (P17-R3-F1),
                           this primitive is the trusted network layer itself
                           (network.perform_admitted_connection) in production, never the
-                          replaceable adapter -- an adapter no longer has a connection
-                          capability of any kind. Every other URL_FETCH_OUTCOMES member is
-                          route-derived from a genuine RESPONSE.
+                          replaceable adapter -- an adapter no longer has a connection or
+                          resolution capability of any kind. Every other URL_FETCH_OUTCOMES
+                          member is route-derived from a genuine RESPONSE.
 RECEIPT_STATUSES          VERIFIED, FAILED, UNAVAILABLE
 ```
 
@@ -201,17 +207,20 @@ list.
   verification -- not that DNS or the CA system are themselves trustworthy inputs.
 - A failed or refused fetch is never recorded anywhere durable; it is bounded, ephemeral,
   in-memory evidence only, and can never be handed off as Evidence (P17-C7/P17-R1-F1).
-- No caller who only supplies `source_identity`/`boundary`/`adapter` to public
-  `observe_url_source` can ever enable a loopback fetch (P17-R1-F3, P17-R2-F2) -- no field, no
-  keyword, no positional argument, and no adapter constructor argument reaches it any more; the
-  one exception lives behind a composition boundary (`compose_disposable_local_test_observer`,
-  P17-R3-F2) that this repository no longer even ships -- it is confirmed absent from the
-  distributed wheel (`tests/fixtures/`, sdist-only), so no production install carries it at all.
-- A replaceable adapter has no capability to create a network connection of any kind, and
-  therefore no way to fabricate a plausible response while claiming to have reached the
-  route-admitted address -- since Structural Review Round 3 (P17-R3-F1), the trusted network
-  layer itself creates every real connection this package ever makes, in both public entry
-  points; an adapter's own `resolve_hop` reports an address, nothing more.
+- No caller of `compose_url_source_observer` or its returned closure can ever enable a loopback
+  fetch (P17-R1-F3, P17-R2-F2, P17-R4-F2) -- no field, no keyword, no positional argument, and no
+  adapter constructor argument reaches it any more; the one exception lives behind a composition
+  boundary (`compose_disposable_local_test_observer`, P17-R3-F2, its own permissive classifier
+  moved entirely out of the shipped package in P17-R4-F2) that this repository no longer even
+  ships -- it is confirmed absent from the distributed wheel (`tests/fixtures/`, sdist-only), so
+  no production install carries it, or its own loopback-permitting classifier's body, at all.
+- A replaceable adapter has no capability to create a network connection or perform a DNS
+  resolution of any kind, and therefore no way to fabricate a plausible response, or a plausible
+  resolved address, while claiming to have reached the route-admitted one -- since Structural
+  Review Round 3 (P17-R3-F1) for connection and Round 4 (P17-R4-F1) for resolution, the trusted
+  network layer itself creates every real connection and performs every real resolution this
+  package ever makes, in both public entry points; an adapter declares only its own
+  `adapter_identity`, nothing more.
 - A genuinely self-consistent, genuinely committed Envelope is not itself sufficient corroboration
   for Evidence -- its referenced Project Binding and historical Boot-observed State are
   independently re-resolved through this Store's own real, canonical history before any Evidence

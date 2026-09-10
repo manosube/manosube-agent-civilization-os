@@ -1,10 +1,10 @@
 """Closed URL Boot vocabularies and the URL Source Adapter Protocol (Phase 17, Issue #69).
 
 Mirrors :mod:`manosube_agent_civilization.runtime.types`'s own discipline exactly: closed
-``frozenset`` vocabularies, a minimal ``Protocol`` a replaceable adapter must satisfy (a
-declared ``adapter_identity`` attribute, checked before the adapter is ever called, plus one
-bounded ``fetch`` method), and one deep-frozen receipt dataclass carrying nothing an adapter
-itself supplied unchecked.
+``frozenset`` vocabularies, a minimal ``Protocol`` a replaceable adapter must satisfy -- since
+Structural Review Round 4 (P17-R4-F1), a declared ``adapter_identity`` attribute alone, no
+executable method of any kind -- and one deep-frozen receipt dataclass carrying nothing an
+adapter itself supplied unchecked.
 """
 
 from __future__ import annotations
@@ -46,15 +46,17 @@ URL_FETCH_OUTCOMES: frozenset[str] = frozenset(
     }
 )
 
-#: The complete, closed *single-hop resolution* outcome vocabulary a replaceable
-#: :class:`UrlSourceAdapter` may ever report from one call to :meth:`UrlSourceAdapter.
-#: resolve_hop` (Structural Review Round 2, P17-R2-F1). An adapter resolves a hop's own host and
-#: reports either a genuine DNS failure or the one address that resolution returned -- it never
-#: classifies that address as safe/unsafe, and it never connects to it: both remain the route's
-#: own job alone, in :mod:`~manosube_agent_civilization.url_boot.route`. ``BOUNDARY_REFUSED`` is
-#: deliberately absent from every adapter-reportable vocabulary below -- it is purely a
-#: route-computed verdict about a resolved address the route itself independently classified,
-#: never something an adapter's own report can assert.
+#: The complete, closed *single-hop resolution* outcome vocabulary the one trusted resolve-stage
+#: primitive, :func:`~manosube_agent_civilization.url_boot.network.perform_resolution`, may ever
+#: report (Structural Review Round 2, P17-R2-F1; **no longer an adapter-reportable vocabulary at
+#: all since Structural Review Round 4, P17-R4-F1** -- see :class:`UrlSourceAdapter`'s own
+#: module-level discussion). A resolution either genuinely fails (``DNS_FAILURE``) or genuinely
+#: returns the one address that lookup returned (``RESOLVED``) -- never classifying that address
+#: as safe/unsafe, and never connecting to it: both remain the route's own job alone, in
+#: :mod:`~manosube_agent_civilization.url_boot.route`. ``BOUNDARY_REFUSED`` is deliberately absent
+#: from every member of either vocabulary below -- it is purely a route-computed verdict about a
+#: resolved address the route itself independently classified, never an outcome either trusted
+#: primitive itself asserts.
 URL_HOP_RESOLVE_OUTCOMES: frozenset[str] = frozenset({"DNS_FAILURE", "RESOLVED"})
 
 #: The complete, closed *single-hop connection* outcome vocabulary the one trusted connect-stage
@@ -114,7 +116,8 @@ def deep_freeze(value: Any) -> Any:
 
 
 class UrlSourceAdapter(Protocol):
-    """The one replaceable transport boundary a URL Source Observation ever reaches through.
+    """The one replaceable identity a URL Source Observation ever carries -- since Structural
+    Review Round 4, inert configuration/data only, no executable transport method of any kind.
 
     **Structural Review Round 1 (P17-R1-F2) correction.** This package's first delivery gave an
     adapter one ``fetch()`` method that followed an entire redirect chain internally and reported
@@ -140,58 +143,55 @@ class UrlSourceAdapter(Protocol):
     perfectly safe target. This delivery split single-hop transport into two bounded
     primitives with two disjoint, strictly smaller outcome vocabularies
     (:data:`URL_HOP_RESOLVE_OUTCOMES`, :data:`URL_HOP_CONNECT_OUTCOMES` -- neither of which
-    contains ``BOUNDARY_REFUSED`` at all): :meth:`resolve_hop` reports only what a genuine DNS
+    contains ``BOUNDARY_REFUSED`` at all): ``resolve_hop`` reported only what a genuine DNS
     lookup returned, never classifying it; the route alone independently classifies that resolved
     address's own safety (loopback/private/link-local/multicast/reserved) and binds it as *this
     hop's one admitted address*, refusing with the route-only outcome ``BOUNDARY_REFUSED`` itself,
     never asking the adapter.
 
-    **Structural Review Round 3 (P17-R3-F1) correction: the second primitive, ``connect_hop``, is
-    removed from this Protocol entirely.** Round 2's own ``connect_hop`` handed a replaceable
-    adapter the exact admitted address and trusted its own report of which address it actually
-    reached -- refusing only when that report *disagreed* with what it was handed. That is an
-    after-the-fact self-attestation, not a structural guarantee: a dishonest or buggy adapter
-    implementation could connect anywhere it pleased and simply echo the admitted address back,
-    and the route would have no way to know. The actual connect-and-fetch step is now performed
-    exclusively by :func:`~manosube_agent_civilization.url_boot.network.
-    perform_admitted_connection`, called *directly* by
-    :mod:`~manosube_agent_civilization.url_boot.route` -- never through any method a replaceable
-    adapter supplies. A replaceable ``UrlSourceAdapter`` implementation therefore has **no call
-    through which to substitute a different destination**, in either genuinely-networked public
-    entry point: not "the report is checked and refused if it disagrees" but "there is no report
-    to check, because the adapter's own connect method does not exist on this Protocol, and
-    neither public entry point ever asks for one".
+    **Structural Review Round 3 (P17-R3-F1) correction: ``connect_hop`` removed from this
+    Protocol entirely.** Round 2's own ``connect_hop`` handed a replaceable adapter the exact
+    admitted address and trusted its own report of which address it actually reached -- refusing
+    only when that report *disagreed* with what it was handed. That is an after-the-fact
+    self-attestation, not a structural guarantee: a dishonest or buggy adapter implementation
+    could connect anywhere it pleased and simply echo the admitted address back, and the route
+    would have no way to know. The actual connect-and-fetch step became
+    :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection`'s own job
+    alone, called *directly* by :mod:`~manosube_agent_civilization.url_boot.route`.
+
+    **Structural Review Round 4 (P17-R4-F1) correction: ``resolve_hop`` removed from this
+    Protocol too.** Round 3's own reasoning applied only to *connection* -- ``resolve_hop``
+    remained a Protocol member, still executed as arbitrary caller-supplied Python inside the
+    genuine trusted pre-commit network path for every hop. Removing only ``connect_hop`` did not
+    make that execution effect-free: a conforming-looking ``resolve_hop`` implementation could
+    perform its own, entirely separate network I/O to any address at all as a side effect, then
+    return a safe-looking ``RESOLVED`` result naming the real requested host -- nothing checked
+    what the adapter's own code *did*, only what it *reported*, and a Protocol method's own name
+    constrains shape, never effects. The real DNS lookup is now exclusively
+    :func:`~manosube_agent_civilization.url_boot.network.perform_resolution`'s own job, called
+    *directly* by the route, the identical structural move Round 3 already made for connection.
+    This Protocol therefore declares no executable method of any kind any more -- only
+    ``adapter_identity``, inert data recorded in every Envelope/receipt this route ever produces.
+    A replaceable ``UrlSourceAdapter`` implementation has **no call through which to perform any
+    network I/O at all**, in either genuinely-networked public entry point: not "the report is
+    checked", "the side effect is sandboxed", or "the method is differently named", but "there is
+    no method on this Protocol, or asked for by either public entry point, through which this
+    Protocol's own conformer could ever execute at all".
 
     An adapter never owns canonical State, decides Authority, determines Evidence sufficiency,
     closes a Difference, mutates Store internals, classifies a resolved address's own safety,
-    connects to any network address at all, or interprets fetched content as meaningful -- it
-    reports one bounded, single-hop DNS-resolution fact, full stop.
+    resolves or connects to any network address at all, or interprets fetched content as
+    meaningful -- it is a declared identity, full stop.
     """
 
     adapter_identity: Mapping[str, Any]
 
-    def resolve_hop(self, *, source_identity: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Resolve *source_identity*'s own host to exactly one address, through exactly one
-        genuine DNS lookup -- never classifying that address's own safety, and never connecting
-        to it: classification is the route's own job, and connection is
-        :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection`'s own
-        job alone (P17-R3-F1) -- this Protocol carries no method through which an adapter could
-        ever be asked to connect to anything.
-
-        Must return a mapping whose ``outcome`` is one of :data:`URL_HOP_RESOLVE_OUTCOMES`:
-
-        - ``DNS_FAILURE`` -- carrying no other field, since no address was ever resolved;
-        - ``RESOLVED`` -- carrying ``resolved_address``, the one real address this genuine lookup
-          returned.
-        """
-        ...
-
 
 @dataclass(frozen=True, slots=True)
 class UrlSourceObservationReceipt:
-    """One immutable URL Source Observation receipt -- the ephemeral, in-memory attestation
-    :func:`~manosube_agent_civilization.url_boot.route.observe_url_source` returns to its own
-    caller, never itself a Store-committed record.
+    """One immutable URL Source Observation receipt -- the ephemeral, in-memory attestation the
+    closure :func:`~manosube_agent_civilization.url_boot.route.compose_url_source_observer`
+    returns produces on every call, never itself a Store-committed record.
 
     **Structural Review Round 1 (P17-R1-F1) correction.** ``url_source_observation_envelope_id``
     is ``None`` whenever ``status`` is not ``"VERIFIED"``: a failed or refused fetch commits

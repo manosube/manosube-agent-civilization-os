@@ -1,8 +1,8 @@
 """V4 (Issue #69): URL Boot failure, tamper, and security-boundary matrix.
 
-Six threat classes, each proved through the real canonical route
-(:func:`~manosube_agent_civilization.url_boot.route.observe_url_source`) or the real Evidence
-hand-off (:func:`~manosube_agent_civilization.url_boot.evidence_handoff.
+Six threat classes, each proved through the real canonical route (the closure
+:func:`~manosube_agent_civilization.url_boot.route.compose_url_source_observer` returns) or the
+real Evidence hand-off (:func:`~manosube_agent_civilization.url_boot.evidence_handoff.
 route_url_observation_to_evidence`), never through a mocked owner:
 
 1. **Authority freshness** (P17-C1's own freshness requirement, the identical discipline
@@ -42,25 +42,31 @@ route_url_observation_to_evidence`), never through a mocked owner:
 A seventh class, required by Structural Review Round 1 (P17-R1-F1), closes this file: a
 zero-canonical-State-mutation proof for every one of the ten non-``OBSERVED`` outcomes.
 
-**Structural Review Round 3 (P17-R3-F1) note.** Since Round 3, public ``observe_url_source`` is
-permanently bound to :func:`~manosube_agent_civilization.url_boot.route._perform_connection_via_trusted_network`
--- the real connection to the admitted address is created and controlled entirely by the trusted
-network layer, never by *adapter*. Most of this file's own subject is the route's *decision
-logic* (redirect re-authorization, hop-count discipline, tamper/integrity refusal, zero-mutation
-proofs) driven by ``FakeUrlSourceAdapter``'s controllable ``connect_hop`` -- exactly the shape
-Round 1/Round 2 already established -- so this file's own ``_observe`` helper calls
-``_observe_url_source_impl`` directly with this repository's own internal deterministic connector
-(:func:`~manosube_agent_civilization.url_boot.route._perform_connection_via_adapter`, never
+**Structural Review Round 3 (P17-R3-F1) note, extended by Round 4 (P17-R4-F1/F2).** Since Round 3,
+production is permanently bound to :func:`~manosube_agent_civilization.url_boot.
+route._perform_connection_via_trusted_network`; since Round 4, to
+:func:`~manosube_agent_civilization.url_boot.route._perform_resolution_via_trusted_network` too --
+both the real resolution and the real connection to the admitted address are created and
+controlled entirely by the trusted network layer, never by *adapter*. Most of this file's own
+subject is the route's *decision logic* (redirect re-authorization, hop-count discipline,
+tamper/integrity refusal, zero-mutation proofs) driven by ``FakeUrlSourceAdapter``'s controllable
+``resolve_hop``/``connect_hop`` -- exactly the shape Round 1/Round 2 already established -- so
+this file's own ``_observe`` helper calls ``_observe_url_source_impl`` directly with this
+repository's own internal deterministic resolver/connector
+(:func:`~manosube_agent_civilization.url_boot.route._perform_resolution_via_adapter`/
+:func:`~manosube_agent_civilization.url_boot.route._perform_connection_via_adapter`, never
 reachable from either genuinely-networked public entry point), the identical pattern
 ``test_url_boot_kernel_continuity.py`` and ``test_url_boot_adapter_contract.py`` already use. The
-distinct claim that public ``observe_url_source`` itself never reaches an adapter's own
-``connect_hop`` at all -- so a malicious adapter's alternate-address I/O is structurally
-impossible, never merely unobserved -- is proved directly in
-``test_url_boot_adapter_contract.py`` (``test_production_observe_url_source_never_reaches_any_adapter_connect_method``);
-that public ``observe_url_source`` genuinely reaches a real network boundary when driven correctly
-is proved in ``test_url_boot_local_http_vertical_proof.py``. This file adds its own decisive
-control that public ``observe_url_source``'s own signature carries no slot through which an
-alternate connector could ever be substituted.
+distinct claim that production's :func:`~manosube_agent_civilization.url_boot.
+route.compose_url_source_observer` never lets its returned closure reach either an adapter's own
+``resolve_hop`` or ``connect_hop`` at all -- so a malicious adapter's alternate-address I/O is
+structurally impossible, never merely unobserved -- is proved directly in
+``test_url_boot_adapter_contract.py`` (``test_production_compose_url_source_observer_never_invokes_any_adapter_resolve_or_connect_method``);
+that production genuinely reaches a real network boundary when driven correctly is proved in
+``test_url_boot_local_http_vertical_proof.py``. This file adds its own decisive control that
+neither :func:`compose_url_source_observer`'s own signature, nor its returned closure's own call
+signature, carries any slot through which an alternate Store, adapter, classifier, resolver, or
+connector could ever be substituted.
 """
 
 from __future__ import annotations
@@ -83,7 +89,6 @@ from manosube_agent_civilization.url_boot.adapter import (
     LocalHttpUrlSourceAdapter,
 )
 from manosube_agent_civilization.url_boot.errors import (
-    UrlBootAdapterError,
     UrlBootAuthorityFreshnessError,
     UrlBootEnvelopeIntegrityError,
     UrlBootRequirementError,
@@ -96,8 +101,9 @@ from manosube_agent_civilization.url_boot.network import canonical_source_identi
 from manosube_agent_civilization.url_boot.route import (
     _observe_url_source_impl,
     _perform_connection_via_adapter,
+    _perform_resolution_via_adapter,
     _require_safe_resolved_address_production,
-    observe_url_source,
+    compose_url_source_observer,
 )
 from manosube_agent_civilization.url_boot.types import URL_FETCH_OUTCOMES
 
@@ -120,12 +126,13 @@ def _world(tmp_path: Path) -> dict[str, Any]:
 def _observe(world: dict[str, Any], store: Any, adapter: Any, **kwargs: Any) -> dict[str, Any]:
     """This file's own subject is the route's decision logic (redirects, hop counting,
     tamper/integrity refusal, zero-mutation proofs), driven by ``FakeUrlSourceAdapter``'s
-    controllable ``connect_hop`` -- so, like ``test_url_boot_kernel_continuity.py`` and
-    ``test_url_boot_adapter_contract.py``, this calls ``_observe_url_source_impl`` directly with
-    this repository's own internal deterministic connector (``_perform_connection_via_adapter``,
-    never reachable from either genuinely-networked public entry point, P17-R3-F1) rather than
-    public ``observe_url_source``, which is permanently bound to the real trusted-network
-    connector instead."""
+    controllable ``resolve_hop``/``connect_hop`` -- so, like ``test_url_boot_kernel_continuity.py``
+    and ``test_url_boot_adapter_contract.py``, this calls ``_observe_url_source_impl`` directly
+    with this repository's own internal deterministic resolver/connector
+    (``_perform_resolution_via_adapter``/``_perform_connection_via_adapter``, never reachable from
+    either genuinely-networked public entry point, P17-R3-F1/P17-R4-F1) rather than production
+    :func:`compose_url_source_observer`, whose returned closure is permanently bound to the real
+    trusted-network resolver/connector instead."""
     kwargs.setdefault("observed_at", "2026-09-10T00:00:01Z")
     return _observe_url_source_impl(
         store,
@@ -135,6 +142,7 @@ def _observe(world: dict[str, Any], store: Any, adapter: Any, **kwargs: Any) -> 
         boundary=world["boundary"],
         adapter=adapter,
         classify_resolved_address=_require_safe_resolved_address_production,
+        perform_resolution=_perform_resolution_via_adapter,
         perform_connection=_perform_connection_via_adapter,
         **kwargs,
     )
@@ -247,55 +255,51 @@ def test_an_unchanged_authority_reaches_the_adapter_and_commits_normally(
 def test_a_hostname_resolving_to_loopback_is_boundary_refused_by_default(
     _world: dict[str, Any],
 ) -> None:
-    """``localhost`` genuinely resolves to a loopback address. Public ``observe_url_source`` is
-    permanently bound to a classifier that always refuses loopback (P17-R2-F2) -- the plain
-    ``LocalHttpUrlSourceAdapter()`` constructor carries no override for this at all -- so this
-    must refuse as a Boundary decision, at the route's own real resolution-classification
-    boundary, never silently reached."""
+    """``localhost`` genuinely resolves to a loopback address. Production
+    :func:`compose_url_source_observer` is permanently bound to a classifier that always refuses
+    loopback (P17-R2-F2) -- the plain ``LocalHttpUrlSourceAdapter()`` constructor carries no
+    override for this at all -- so this must refuse as a Boundary decision, at the route's own
+    real resolution-classification boundary, never silently reached."""
 
     source_identity = canonical_source_identity("http://localhost:1/status")
     boundary = boundary_for(admitted_hosts=["localhost"], admitted_ports=[1])
     adapter = LocalHttpUrlSourceAdapter()
-    outcome = observe_url_source(
+    observe = compose_url_source_observer(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        source_identity=source_identity,
-        boundary=boundary,
         adapter=adapter,
-        observed_at="2026-09-10T00:00:01Z",
     )
+    outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
     assert outcome["envelope"] is None
     assert outcome["receipt"].observations["fetch_outcome"] == "BOUNDARY_REFUSED"
     assert outcome["receipt"].status == "FAILED"
 
 
-def test_public_observe_url_source_cannot_enable_loopback_by_supplying_boundary_data(
+def test_production_observer_cannot_enable_loopback_by_supplying_boundary_data(
     _world: dict[str, Any],
 ) -> None:
     """P17-R1-F3's own decisive control: the closed Boundary schema carries no
     ``permit_loopback_test_hosts`` field at all any more -- a request-facing caller who tries to
     supply one (exactly the shape this package's own first delivery accepted) is refused by
     schema validation itself, before Boot or any adapter is ever reached. Since Round 2
-    (P17-R2-F2), there is no longer any place this allowance can be reached from public
-    ``observe_url_source`` at all -- not this Boundary field, and not any adapter constructor
-    argument either."""
+    (P17-R2-F2) and Round 4 (P17-R4-F2), there is no longer any place this allowance can be
+    reached from :func:`compose_url_source_observer` or its returned closure at all -- not this
+    Boundary field, and not any adapter constructor argument either."""
 
     boundary = boundary_for(admitted_hosts=["localhost"], admitted_ports=[1])
     boundary["network_scope"] = dict(boundary["network_scope"])
     boundary["network_scope"]["permit_loopback_test_hosts"] = True
     source_identity = canonical_source_identity("http://localhost:1/status")
     adapter = LocalHttpUrlSourceAdapter()
+    observe = compose_url_source_observer(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        adapter=adapter,
+    )
     with pytest.raises(UrlBootRequirementError):
-        observe_url_source(
-            _world["store"],
-            project_id=_world["project_id"],
-            project_binding_id=_world["project_binding_id"],
-            source_identity=source_identity,
-            boundary=boundary,
-            adapter=adapter,
-            observed_at="2026-09-10T00:00:01Z",
-        )
+        observe(source_identity, boundary, "2026-09-10T00:00:01Z")
 
 
 def test_cross_hop_dns_resolution_drift_is_refused_never_trusted(_world: dict[str, Any]) -> None:
@@ -337,70 +341,101 @@ def test_cross_hop_dns_resolution_drift_is_refused_never_trusted(_world: dict[st
     assert adapter.connect_call_count == 1
 
 
-def test_public_observe_url_source_refuses_a_loopback_permitting_keyword_argument(
+def test_compose_url_source_observer_refuses_a_loopback_permitting_keyword_argument(
     _world: dict[str, Any],
 ) -> None:
-    """P17-R2-F2's own decisive control: public ``observe_url_source``'s own signature carries
-    no loopback-related parameter at all -- attempting to supply one by keyword fails before any
-    network activity, with a plain ``TypeError`` from the function's own call signature, not a
-    runtime policy check this package could ever get wrong."""
+    """P17-R2-F2's own decisive control, extended to the Round 4 composition boundary:
+    :func:`compose_url_source_observer`'s own signature carries no loopback-related parameter at
+    all -- attempting to supply one by keyword fails before any network activity, with a plain
+    ``TypeError`` from the function's own call signature, not a runtime policy check this package
+    could ever get wrong."""
 
     with pytest.raises(TypeError):
-        observe_url_source(
+        compose_url_source_observer(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            source_identity=_world["source_identity"],
-            boundary=_world["boundary"],
             adapter=_seeded(_world),
-            observed_at="2026-09-10T00:00:01Z",
             permit_loopback_test_hosts=True,  # type: ignore[call-arg]
         )
 
 
-def test_public_observe_url_source_refuses_a_loopback_permitting_positional_argument(
+def test_the_returned_closure_refuses_a_loopback_permitting_keyword_argument(
     _world: dict[str, Any],
 ) -> None:
-    """P17-R2-F2's own decisive control, positional form: ``observe_url_source`` accepts no
-    positional argument beyond ``store`` at all (every other parameter is keyword-only), so no
-    positional slot exists through which a loopback exception could ever be smuggled in."""
+    """The identical control against the *returned closure* rather than the composition step
+    itself: its own call signature is exactly ``(source_identity, boundary, observed_at)``, with
+    no keyword slot through which a loopback exception could ever be smuggled in."""
 
+    observe = compose_url_source_observer(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        adapter=_seeded(_world),
+    )
     with pytest.raises(TypeError):
-        observe_url_source(  # type: ignore[call-arg, misc]
-            _world["store"],
-            _world["project_id"],
-            _world["project_binding_id"],
+        observe(  # type: ignore[call-arg]
             _world["source_identity"],
             _world["boundary"],
-            _seeded(_world),
+            "2026-09-10T00:00:01Z",
+            permit_loopback_test_hosts=True,
+        )
+
+
+def test_the_returned_closure_refuses_a_loopback_permitting_positional_argument(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R2-F2's own decisive control, positional form, against the returned closure: it accepts
+    exactly three positional arguments, so no fourth positional slot exists through which a
+    loopback exception could ever be smuggled in."""
+
+    observe = compose_url_source_observer(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        adapter=_seeded(_world),
+    )
+    with pytest.raises(TypeError):
+        observe(  # type: ignore[call-arg]
+            _world["source_identity"],
+            _world["boundary"],
             "2026-09-10T00:00:01Z",
             True,
         )
 
 
-def test_public_observe_url_source_refuses_a_perform_connection_keyword_argument(
+def test_compose_url_source_observer_refuses_a_perform_connection_or_resolution_keyword_argument(
     _world: dict[str, Any],
 ) -> None:
-    """P17-R3-F1's own decisive control, alternate-world-substitution form: public
-    ``observe_url_source`` carries no ``perform_connection`` parameter at all -- a caller cannot
-    substitute an alternate connector (for example, one that delegates back to
-    ``adapter.connect_hop``) to regain the authority Round 3 removed. This fails with a plain
-    ``TypeError`` from the function's own call signature, before any network activity, not a
-    runtime policy check this package could ever get wrong."""
+    """P17-R3-F1/P17-R4-F1's own decisive control, alternate-world-substitution form:
+    :func:`compose_url_source_observer` carries no ``perform_connection`` or ``perform_resolution``
+    parameter at all -- a caller cannot substitute an alternate connector or resolver (for
+    example, one that delegates back to ``adapter.connect_hop``/``adapter.resolve_hop``) to regain
+    the authority Round 3/Round 4 removed. This fails with a plain ``TypeError`` from the
+    function's own call signature, before any network activity, not a runtime policy check this
+    package could ever get wrong."""
 
     def _malicious_perform_connection(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        raise AssertionError("must never be called: not a parameter of observe_url_source")
+        raise AssertionError("must never be called: not a parameter of compose_url_source_observer")
+
+    def _malicious_perform_resolution(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("must never be called: not a parameter of compose_url_source_observer")
 
     with pytest.raises(TypeError):
-        observe_url_source(
+        compose_url_source_observer(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            source_identity=_world["source_identity"],
-            boundary=_world["boundary"],
             adapter=_seeded(_world),
-            observed_at="2026-09-10T00:00:01Z",
             perform_connection=_malicious_perform_connection,  # type: ignore[call-arg]
+        )
+    with pytest.raises(TypeError):
+        compose_url_source_observer(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            adapter=_seeded(_world),
+            perform_resolution=_malicious_perform_resolution,  # type: ignore[call-arg]
         )
 
 
@@ -453,24 +488,21 @@ def test_a_scheme_outside_scope_is_refused_with_zero_adapter_calls(_world: dict[
         outcome="RESPONSE",
         body=json.dumps({"status": "ok"}).encode(),
     )
+    observe = compose_url_source_observer(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        adapter=adapter,
+    )
     with pytest.raises(UrlBootRequirementError):
-        observe_url_source(
-            _world["store"],
-            project_id=_world["project_id"],
-            project_binding_id=_world["project_binding_id"],
-            source_identity=https_identity,
-            boundary=boundary,
-            adapter=adapter,
-            observed_at="2026-09-10T00:00:01Z",
-        )
+        observe(https_identity, boundary, "2026-09-10T00:00:01Z")
     assert adapter.resolve_call_count == 0
     assert _envelope_count(_world) == 0
 
 
 def test_a_hidden_disallowed_intermediate_hop_is_never_reached(_world: dict[str, Any]) -> None:
     """P17-R1-F2's own decisive control: a redirect chain whose second hop names a host outside
-    ``network_scope`` is refused with that second hop's own
-    :meth:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter.resolve_hop` **never
+    ``network_scope`` is refused with that second hop's own resolve-stage primitive **never
     called at all** -- the route re-authorizes every redirect target against ``network_scope``
     itself, before it is ever reached, so a conforming-looking adapter has no way to follow, or
     hide, a disallowed intermediate hop: it is never even asked to."""
@@ -507,11 +539,14 @@ def test_an_adapter_cannot_assert_a_route_only_classification_or_a_fabricated_ho
     Protocol (P17-R1-F2/P17-R2-F1) carries no field an adapter could use to assert a final
     identity, a hop count, a resolved address's own safety, or a content classification at all --
     there is nothing left to fabricate. An out-of-vocabulary ``outcome`` (naming a route-only
-    classification directly) is refused as a defect, not accepted as a shortcut."""
+    classification directly) is refused as a defect, not accepted as a shortcut -- as
+    ``UrlBootRequirementError`` since Structural Review Round 4 (P17-R4-F1), mirroring Round 3's
+    identical change for the connect stage: production's own resolver is now the trusted network
+    layer, not necessarily an "adapter" fault."""
 
     adapter = FakeUrlSourceAdapter()
     adapter.force_resolve_result({"outcome": "MALFORMED", "resolved_address": "93.184.216.34"})
-    with pytest.raises(UrlBootAdapterError):
+    with pytest.raises(UrlBootRequirementError):
         _observe(_world, _world["store"], adapter)
 
 
@@ -928,6 +963,7 @@ def test_identity_mismatch_mutates_no_canonical_state_at_all(_world: dict[str, A
         adapter=adapter,
         observed_at="2026-09-10T00:00:02Z",
         classify_resolved_address=_require_safe_resolved_address_production,
+        perform_resolution=_perform_resolution_via_adapter,
         perform_connection=_perform_connection_via_adapter,
     )
     assert result["envelope"] is None

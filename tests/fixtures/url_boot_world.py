@@ -66,10 +66,11 @@ def boundary_for(
 
     Carries no ``permit_loopback_test_hosts`` field at all, and never has since Structural
     Review Round 1 (P17-R1-F3) -- that allowance is now reachable only through this
-    repository's own trusted, non-shipped disposable-local-test composition
+    repository's own trusted, non-shipped, authority-gated disposable-local-test composition
     (``tests/fixtures/url_boot_local_test_authority.compose_disposable_local_test_observer``,
-    Structural Review Round 3, P17-R3-F2), never through Boundary data, an adapter constructor,
-    or any parameter of public ``observe_url_source``.
+    Structural Review Round 3 P17-R3-F2, further hardened Round 4 P17-R4-F2), never through
+    Boundary data, an adapter constructor, or any parameter of public
+    ``compose_url_source_observer`` or its returned closure.
     """
 
     boundary: dict[str, Any] = {

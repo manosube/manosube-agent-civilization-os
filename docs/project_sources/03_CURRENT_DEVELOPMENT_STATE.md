@@ -2271,3 +2271,106 @@ PHASE_18_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
 
+# 31. Phase 17 Structural Review Round 4 bounded addendum (Issue #69, PR #71) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション30の記録以降、構造参謀によるStructural Review Round 4
+（`P17-R4-F1`, `P17-R4-F2`）とSHUKOUによるその採択（Issue #69コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/69#issuecomment-5617420900`、
+`ADOPTION_ID=ADOPT_P17_R4_NO_AMBIENT_ADAPTER_NETWORK_AND_TRUE_COMPOSITION_BOUNDARY`）を
+独立GitHub API再観測で確認した上で、この既存PR #71ブランチ上に実装した是正内容を記録する。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション30自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+CURRENT_PHASE=17_READ_ONLY_URL_BOOT_AND_UNTRUSTED_CONTENT_BOUNDARY
+CURRENT_PHASE_ISSUE=69
+CURRENT_PR=71
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#69
+TARGET_PR=#71
+BASE_SHA=aee9b669f8bf15626fe162f196cf12338a4ff0da
+BRANCH=agent/issue-69-phase17-read-only-url-boot
+REVIEWED_HEAD=ca7857d674b7bb7be413793a20eb9a91def162d3
+ADOPTION_ID=ADOPT_P17_R4_NO_AMBIENT_ADAPTER_NETWORK_AND_TRUE_COMPOSITION_BOUNDARY
+ADOPTED_FINDINGS=P17-R4-F1,P17-R4-F2
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_71_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_AWAITING_ROUND_5
+```
+
+2件の是正内容の要約：
+
+```text
+P17-R4-F1  Round 3はconnect_hopをProtocolから削除したが、resolve_hopは残った -- 置換可能な
+           adapter自身のDNS解決が、genuineなtrusted pre-commit network path内で依然として
+           任意のcaller供給Pythonコードとして実行されており、route自身のaddress安全性分類が
+           その結果を見る前に、adapter自身のresolve_hop実装が別アドレスへの独立したI/Oを
+           副作用として行い得た -- 何を"報告した"かだけが検査され、実際に何を"した"かは
+           検査されなかった。UrlSourceAdapter Protocolはもはや一切の実行可能メソッドを
+           宣言しない（adapter_identity属性のみ）。唯一のDNS解決は
+           network.perform_resolution が排他的に作成・制御し、route.py自身の
+           _perform_resolution_via_trusted_network から直接呼び出される -- Round 3の
+           connect段階是正の正確な鏡像。悪意あるadapterのresolve_hopが別アドレスへの
+           I/Oを行い、requestされた本物のhostを騙るもっともらしいRESOLVED結果を返すよう
+           仕込まれていても、productionのcompose_url_source_observerが返すclosureから
+           一度もresolve_hop/connect_hopいずれも呼び出されないことを、両方の呼び出し
+           回数ゼロで証明するdecisive testを追加した
+           （test_production_compose_url_source_observer_never_invokes_any_adapter_
+           resolve_or_connect_method）。resolve段階の検証失敗は、production側の
+           解決主体がもはや"adapter"ではないため、UrlBootAdapterErrorから
+           UrlBootRequirementErrorへ変更した（Round 3のconnect段階と同一の変更）。
+
+P17-R4-F2  Round 3はdisposable-local-test経路をrequest前に一度だけcomposeされるclosureに
+           したが、公開observe_url_source自身は毎回のcall で store/adapter を直接受け取る
+           plain関数のままであり、これはproductionこそが"requestより前にcomposeされた
+           request-facing closure/capability"要件を満たしていない当のものであった --
+           private名をimportする呼び出し元ではなく。公開observe_url_sourceを完全に削除し、
+           compose_url_source_observer(store, *, project_id, project_binding_id, adapter)を
+           この module の唯一のproduction entry pointとした -- Round 3が
+           disposable-local-test経路に既に確立した two-step factory-and-closure 形状を
+           production自身へ適用したもの。さらにRound 4は、route.pyが依然として
+           _require_safe_resolved_address_permitting_loopback_only の完全な実装を
+           出荷しており、route.pyをimportできる呼び出し元なら誰でもこのclassifierを
+           route.pyの他のprivate名（_observe_url_source_impl,
+           _perform_connection_via_trusted_network,
+           _perform_resolution_via_trusted_network）と再結合できることを発見した --
+           Structural Review Round 4自身のdelivery-commentがこれら3つのimportable
+           symbolを名指しして、この再構成攻撃を明示的に実演した。このclassifierの実装
+           全体をshipped moduleから完全に除去し、tests/fixtures/
+           url_boot_local_test_authority.py -- 出荷wheelから確認済みで欠落 -- へ移動
+           した。route.pyはもはや、いかなる名前のloopback許容classifierコードも一切
+           出荷しない。disposable-local-test compositionにはさらに、genuineで外部保持
+           のtest-harness authorityを追加した:
+           compose_disposable_local_test_observerは必須のtest_harness_authority: bytes
+           キーワードを要求するようになり、closureが構築されるより前に
+           hmac.compare_digestで検証される -- そのdigestは、shipされるいかなる
+           moduleにも存在しない秘密鍵から、非出荷fixture module自身のimport時点で
+           一度だけ新たに生成される。欠落・型不一致・偽造されたauthorityは、いかなる
+           DNS解決・network接続よりも前に拒否される（UrlBootRequirementError）。これは
+           完全な暗号学的capability securityでは**なく**、既にtest-suiteのsourceを
+           保持している同一プロセス内の攻撃者からは防御しないことを、そのfixture
+           module自身のdocstringで明示的かつ詳細に開示している -- Round 4が実演した
+           特定のwheel-only再構成攻撃を閉じるものに過ぎない、という誠実な非請求である。
+```
+
+修正はPR #71の唯一のブランチ上、新規PR無しで行われた。既存の`State`・`Difference`・
+`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Model Runtime`のいずれの
+ownerも置換・変更しない。schema変更は無し（`UrlSourceAdapter` Protocol、`route.py`の関数
+surface、および非出荷test fixtureのみの変更であり、`url_source_observation_envelope.schema.json`
+は変更していない）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_17_COMPLETE=false
+PHASE_18_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+

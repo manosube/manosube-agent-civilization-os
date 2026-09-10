@@ -33,6 +33,7 @@ from manosube_agent_civilization.url_boot.network import canonical_source_identi
 from manosube_agent_civilization.url_boot.route import (
     _observe_url_source_impl,
     _perform_connection_via_adapter,
+    _perform_resolution_via_adapter,
     _require_safe_resolved_address_production,
 )
 
@@ -89,8 +90,8 @@ def test_a_model_execution_and_a_url_observation_coexist_without_interference(
     )
     # This test's own subject is Model-Runtime/URL-Boot State-tree coexistence, not URL Boot's
     # own network-admission machinery -- it therefore calls the internal implementation directly
-    # with a deterministic connector (this repository's own internal test-composition path, never
-    # reachable from either genuinely-networked public entry point, P17-R3-F1).
+    # with a deterministic resolver/connector (this repository's own internal test-composition
+    # path, never reachable from either genuinely-networked public entry point, P17-R3-F1/P17-R4-F1).
     url_result = _observe_url_source_impl(
         store,
         project_id=project_id,
@@ -100,6 +101,7 @@ def test_a_model_execution_and_a_url_observation_coexist_without_interference(
         adapter=url_adapter,
         observed_at="2026-09-09T02:00:01Z",
         classify_resolved_address=_require_safe_resolved_address_production,
+        perform_resolution=_perform_resolution_via_adapter,
         perform_connection=_perform_connection_via_adapter,
     )
     url_envelope_id = url_result["envelope"]["url_source_observation_envelope_id"]
