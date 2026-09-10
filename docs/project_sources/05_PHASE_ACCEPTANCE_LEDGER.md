@@ -794,3 +794,54 @@ PHASE_17_IMPLEMENTED=false
 Phase 16 acceptanceは、実model/providerの呼出し、provider credential利用、モデル優劣判定、model
 memoryのState化、model outputのAuthority/Evidence化、自律Change、remote command execution、
 またはPhase 17 URL Bootの実装を主張しない。
+
+---
+
+# 23. Phase 17 acceptance receipt
+
+| Phase | Governing Issue | Merged PR | Accepted merge SHA | Receipt class | Accepted capability |
+|---:|---:|---:|---|---|---|
+| 17 | [#69](https://github.com/manosube/manosube-agent-civilization-os/issues/69) | [#71](https://github.com/manosube/manosube-agent-civilization-os/pull/71) | `faed2e0fc8caa4977cf831f67d2fe0c6d2976427` | `DIRECT_COMPLETION_RECEIPT` | Read-only URL Boot and untrusted-content Boundary |
+
+Phase 17のexact delivery headは
+`727b4649280f74763e88307c20355b3c9626b9a1`であり、merge commitの第二parentと一致する。
+第一parentはPhase 16 source-synchronized main
+`aee9b669f8bf15626fe162f196cf12338a4ff0da`である。Round 6はexact delivery headに対して
+`STRUCTURAL_REVIEW=PASS`、`MERGE_ALLOWED=true`を記録し、その後SHUKOUがPR #71を手動mergeした。
+
+```text
+OBSERVED_AT_UTC=2026-09-10T14:17:21Z
+ACCEPTED_PHASE_RANGE=0..17
+ACCEPTED_PHASE_COUNT=18
+LAST_ACCEPTED_PHASE=17_READ_ONLY_URL_BOOT_AND_UNTRUSTED_CONTENT_BOUNDARY
+LAST_ACCEPTED_MAIN_SHA=faed2e0fc8caa4977cf831f67d2fe0c6d2976427
+
+PHASE_17_DELIVERY_HEAD=727b4649280f74763e88307c20355b3c9626b9a1
+PHASE_17_MERGE_PARENT_MAIN=aee9b669f8bf15626fe162f196cf12338a4ff0da
+PHASE_17_MERGE_PARENT_DELIVERY=727b4649280f74763e88307c20355b3c9626b9a1
+MERGED_EXACT_REVIEWED_HEAD=true
+PHASE_17_STRUCTURAL_REVIEW_ROUND_6=PASS
+PHASE_17_STRUCTURAL_FINDINGS_OPEN=0
+
+INDEPENDENT_URL_BOOT_TARGETED_TESTS=149_PASSED
+SCHEMA_VALIDATION=PASS_67_SCHEMAS
+STATE_ENGINE_CONFORMANCE=PASS
+STATE_STORE_ACCEPTANCE=PASS
+OBSERVATION_CONTRACT_VALIDATOR=PASS
+DIFFERENCE_CONTRACT_VALIDATOR=PASS
+
+PHASE_17_COMPLETE=true
+ISSUE_69_CLOSE_ALLOWED=true
+PHASE_18_ALLOWED=true
+PHASE_18_IMPLEMENTATION_ALLOWED=false
+```
+
+Phase 17 acceptanceは、URL contentをHuman Decision、AuthorityまたはEvidenceそのものとして扱うこと、
+authenticated session、cookie/secret import、JavaScript、browser automation、general crawler、remote
+command、model/tool invocation、自律Change、またはproduction credential利用を主張しない。
+
+マージ直後のsource freshnessおよびpost-merge reflow Actionsはstep開始前にfailureとなり、sourceの
+自動更新は行われなかった。そのActions状態はPhase acceptance Authorityとして使用しない。本節と
+対応する`03_CURRENT_DEVELOPMENT_STATE.md`および`04_REPOSITORY_ARCHITECTURE.md`の同期を、限定された
+Human-reviewed source-syncとして行う。Issue #69のcloseは、このsource-syncのmergeとresulting mainの
+再観測後に行う。
