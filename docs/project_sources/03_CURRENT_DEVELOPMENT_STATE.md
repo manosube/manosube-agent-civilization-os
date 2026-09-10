@@ -2482,3 +2482,53 @@ PHASE_18_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
 
+---
+
+# 33. Phase 17 post-merge acceptance observation
+
+本節は、PR #71のSHUKOU手動merge後にGitHub `main`を再観測した現在地である。GitHub Actions
+またはworkflowの成否をPhase acceptanceのAuthorityとして使用しない。受入根拠は、Round 6で
+exact delivery HEADに対して記録された構造レビューPASS、SHUKOUの手動merge、merge commitの
+両parent、merge後mainの再観測、および同一merged treeに対する独立した限定再検証である。
+
+```text
+OBSERVED_AT_UTC=2026-09-10T14:17:21Z
+CURRENT_PHASE=17_READ_ONLY_URL_BOOT_AND_UNTRUSTED_CONTENT_BOUNDARY
+CURRENT_PHASE_STATE=POST_MERGE_ACCEPTED_AWAITING_ISSUE_CLOSE
+CURRENT_PHASE_ISSUE=69
+CURRENT_PR=NONE
+GOVERNING_ISSUE=#69
+MERGED_PR=#71
+ACCEPTED_PR_HEAD=727b4649280f74763e88307c20355b3c9626b9a1
+PHASE_17_MERGE_SHA=faed2e0fc8caa4977cf831f67d2fe0c6d2976427
+MERGE_PARENT_MAIN=aee9b669f8bf15626fe162f196cf12338a4ff0da
+MERGE_PARENT_DELIVERY=727b4649280f74763e88307c20355b3c9626b9a1
+
+PR_71_STATE=MERGED
+MERGED_EXACT_REVIEWED_HEAD=true
+STRUCTURAL_REVIEW_ROUND_6=PASS
+STRUCTURAL_FINDINGS_OPEN=0
+PHASE_17_COMPLETE=true
+ISSUE_69_CLOSE_ALLOWED=true
+PHASE_18_ALLOWED=true
+PHASE_18_IMPLEMENTATION_ALLOWED=false
+NEXT_OWNER=SHUKOU
+```
+
+Phase 17は、明示されたURL source identityとclosed read-only Boundaryの下で、redirectごとの
+再認可、route-owned DNS/network admission、bounded transport outcome、untrusted-contentの
+非権威性、exact Project/Binding/Boot provenance、および既存Evidence ownerへのhandoffを追加した。
+既存のState、Observation、Difference、Authority、Change、Evidence、Reflow、Binding、Boot、
+Runtime、Model Runtimeのownerは置換されず、URL contentはAuthority、Change、Difference closure、
+model/tool executionまたはState mutationを生成できない。
+
+同一merged treeに対する限定再検証では、URL Boot unit/contract/integration suiteが149件PASSし、
+schema 67件、State Engine、State Store、Observation contract、Difference contractの各validatorが
+PASSした。マージ直後の`Merge source post-merge reflow`と`Source freshness drift detection`は
+いずれもGitHub上でfailureだが、両jobはrunner名が空でstep countが0のまま終了しており、workflow
+内部の検証処理またはsource writeが実行された証拠はない。この失敗はPhase 17実装の不合格証拠には
+使用せず、自動source reflowが成立しなかった観測として保持する。
+
+Phase 18は次のroadmap work unitとして定義可能になったが、自動的な実装Authorityは生じない。
+Issue #69のcloseとPhase 18のObjective/Boundary/Authorityを持つ専用IssueおよびSHUKOU採択は、
+本source-sync PRの手動mergeとその結果mainの再観測後に分離して行う。

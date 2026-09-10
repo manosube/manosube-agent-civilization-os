@@ -736,3 +736,51 @@ Phase 13からPhase 16までに追加されたIndependent Verification、GitHub 
 Runtimeは、State、Observation、Difference、Authority、Change、Evidence、Reflow、Binding、Bootの
 既存ownerを置換しない。各adapterは外部境界であり、Kernelの正準StateまたはHuman Authorityには
 ならない。
+
+---
+
+# 21. Accepted architecture through Phase 17
+
+```text
+OBSERVED_AT_UTC=2026-09-10T14:17:21Z
+AS_BUILT_REF=faed2e0fc8caa4977cf831f67d2fe0c6d2976427
+AS_BUILT_TREE_ENTRY_COUNT=713
+AS_BUILT_BLOB_COUNT=581
+AS_BUILT_DIRECTORY_COUNT=132
+AS_BUILT_TREE_TRUNCATED=false
+
+ACCEPTED_PHASE_RANGE=0..17
+PHASE_17_URL_BOOT_ACCEPTED=true
+PHASE_18_AUTONOMOUS_CHANGE_IMPLEMENTED=false
+```
+
+Phase 17で追加されたas-built surfaceは、`12_URL_BOOT/`、
+`src/manosube_agent_civilization/url_boot/`、
+`01_SCHEMA/url_boot/url_source_observation_envelope.schema.json`、および既存source-impact mappingへの
+限定的な登録である。URL Bootは独立Kernel、browser agent、crawler、一般HTTP clientまたは
+Change executorではない。
+
+```text
+URL_BOOT_ROLE=BOUNDED_READ_ONLY_EXTERNAL_OBSERVATION_ADAPTER
+URL_CONTENT_IS_AUTHORITY=false
+URL_CONTENT_CAN_MUTATE_STATE=false
+URL_CONTENT_CAN_EXECUTE_CHANGE=false
+REDIRECT_REAUTHORIZED_EACH_HOP=true
+NETWORK_ADMISSION_ROUTE_OWNED=true
+FAILED_OR_REFUSED_FETCH_COMMITS_STATE=false
+EXACT_BINDING_BOOT_PROVENANCE_REQUIRED=true
+SEPARATE_URL_KERNEL=false
+SECOND_OBSERVATION_OWNER=false
+SECOND_EVIDENCE_OWNER=false
+SECOND_AUTHORITY_OWNER=false
+CANONICAL_STATE_OWNER_COUNT=1
+PARALLEL_CANONICAL_AUTHORITY=0
+AUTONOMOUS_CHANGE=false
+```
+
+production compositionはcaller-supplied adapter objectまたはclassifier/resolver/connector callableを
+保持しない。adapter identityはcomposition時にexact built-in plain dataとして一度だけ検証・
+再構築・freezeされ、production routeのDNS解決、address分類および接続はfixed shipped pathが所有する。
+loopbackを許すdisposable local verticalは非出荷test fixtureに隔離され、issuerとverifierはEd25519で
+分離される。これらはPhase 17のread-only observation Boundaryを成立させるが、Phase 18の
+Autonomous Change権限または実装を先取りしない。
