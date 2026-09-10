@@ -694,3 +694,45 @@ UNRESOLVED_STRUCTURAL_CONTRADICTION_COUNT=0
 ```
 
 This receipt proves only the observed architecture of the specified refs and the stated target mapping. It does not prove Phase acceptance, runtime behavior, test success, or Objective completion.
+
+---
+
+# 20. Accepted architecture through Phase 16
+
+```text
+OBSERVED_AT_UTC=2026-09-10T05:53:55Z
+AS_BUILT_REF=8bc9d0e7a3784b658f8b523361904552f089b3c6
+AS_BUILT_TREE_ENTRY_COUNT=684
+AS_BUILT_BLOB_COUNT=558
+AS_BUILT_DIRECTORY_COUNT=126
+AS_BUILT_TREE_TRUNCATED=false
+
+ACCEPTED_PHASE_RANGE=0..16
+PHASE_13_INDEPENDENT_VERIFICATION_ACCEPTED=true
+PHASE_14_GITHUB_PROJECTION_ACCEPTED=true
+PHASE_15_RUNTIME_ACCEPTED=true
+PHASE_16_MODEL_RUNTIME_ACCEPTED=true
+PHASE_17_IMPLEMENTED=false
+```
+
+Phase 16で追加されたas-built ownerは `11_MODEL_RUNTIME/`、
+`src/manosube_agent_civilization/model_runtime/`、7件のModel Runtime/Authority schema、および既存
+Authority/Evidence ownerへの限定拡張である。`07_AGENT_RUNTIME/` と
+`src/manosube_agent_civilization/agent_runtime/` はPhase 12のTemporary Agent Execution Contractを
+引き続き所有し、Phase 16は第二のexecution-contract ownerを作らない。
+
+```text
+TEMPORARY_AGENT_EXECUTION_CONTRACT_OWNER=PHASE_12_TEMPORARY_AGENT
+MODEL_RUNTIME_ROLE=CONSUMER_AND_PROVIDER_NEUTRAL_ADAPTER_BINDING
+SECOND_EXECUTION_CONTRACT=false
+MODEL_OUTPUT_IS_AUTHORITY=false
+MODEL_OUTPUT_IS_EVIDENCE=false
+LIVE_PROVIDER_CREDENTIAL_USE=false
+AUTONOMOUS_CHANGE=false
+CANONICAL_STATE_OWNER_COUNT=1
+```
+
+Phase 13からPhase 16までに追加されたIndependent Verification、GitHub Projection、Runtime、Model
+Runtimeは、State、Observation、Difference、Authority、Change、Evidence、Reflow、Binding、Bootの
+既存ownerを置換しない。各adapterは外部境界であり、Kernelの正準StateまたはHuman Authorityには
+ならない。
