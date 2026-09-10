@@ -24,19 +24,23 @@ bounded Compare-And-Swap retry through the Store's own single sanctioned committ
 Canonical route, in the exact order every request-facing call performs it:
 
 ```text
-canonicalize + freeze execution_boundary / adapter_identity                (composition, once)
+canonicalize + freeze execution_boundary / adapter_identity, and bind worktree_root
+                                                                             (composition, once)
 → execution_instant falls within the bound Boundary's own validity_window  (zero-call refusal)
 → kill switch check #1 -- fresh resolve, ACTIVE required, signature re-verified
 → idempotency-slot resolution: an existing receipt (replay/reuse/mismatch), an existing attempt
-  with no receipt (reconciliation required), or neither (proceed) -- deliberately *before* Boot
+  with no receipt (reconciliation required), an existing intent under this exact caller's own
+  claim_token with neither (resuming a crash-interrupted attempt -- see this module's own
+  disclosed judgment call 7 below), or none of the three (proceed) -- deliberately *before* Boot
   and staleness; see this module's own disclosed judgment call 5 below for why
 → fresh Boot                                                  (only reached for a genuinely new
-                                                                 mapping slot)
+                                                                 mapping slot, or a resumed one)
 → resolve the Change, recompute-and-compare its own identity/fingerprint
 → resolve the Authority Decision the Change names, recompute-and-compare, require AUTONOMOUS
 → require action_kind in the bound Boundary's own permitted_action_kinds, and not Human-only
 → require scope.repository/branch/paths are entirely admitted by the bound Boundary
 → staleness: before_state_fingerprint / expected_state_revision must equal the fresh Boot's own
+  -- skipped only when this call is resuming its own prior, crash-interrupted intent (above)
 → commit execution_intent                                    (RecordConflictError -> concurrent
                                                                 claim)
 → commit execution_attempt                                   (RecordConflictError -> concurrent
@@ -76,12 +80,12 @@ Store commit and before the adapter is ever constructed a call to.
    itself in every case, and the distinguishing flag lives one level out instead of inside the
    closed record.
 2. **``execution_started_at``/``execution_ended_at`` both come from the one caller-supplied
-   ``execution_instant``.** The request-facing closure's own call shape -- handed down verbatim
-   from the task description as ``(change_id, claim_token, execution_instant, worktree_root,
-   permit_semantic_reuse)`` -- carries exactly one instant, and this package reads no clock
-   anywhere. Both receipt timestamp fields are therefore set to that one instant; a deployment
-   that genuinely needs the two to differ would need to extend the request shape itself, which
-   this delivery does not do without being asked.
+   ``execution_instant``.** The request-facing closure's own call shape -- ``(change_id,
+   claim_token, execution_instant, permit_semantic_reuse)`` (``worktree_root`` moved to
+   composition time -- see judgment call 6 below) -- carries exactly one instant, and this
+   package reads no clock anywhere. Both receipt timestamp fields are therefore set to that one
+   instant; a deployment that genuinely needs the two to differ would need to extend the request
+   shape itself, which this delivery does not do without being asked.
 3. **A kill-switch refusal at checkpoint #2, and a Boundary-limit violation discovered while
    building the operation, both produce a terminal receipt rather than a raised exception.** By
    that point an ``execution_attempt`` is already durably committed; this package's own
@@ -112,12 +116,80 @@ Store commit and before the adapter is ever constructed a call to.
    Change/Authority resolution, and zero staleness re-check, and the live current State is Booted
    and stale-checked only for a genuinely new mapping slot, for which it is the correct State to
    check against.
+6. **``worktree_root`` is bound once at composition, never carried on the per-request
+   ``execute(...)`` call.** An automated review of this package correctly identified that a
+   request-facing ``worktree_root`` was a genuine Boundary-binding gap: every other trust-
+   sensitive parameter this module ever uses -- the Store, the Execution Boundary, the adapter
+   identity, the adapter itself, the kill-switch trust anchor -- is bound once at composition and
+   carries no per-request override, but ``worktree_root`` alone was left request-facing, so
+   nothing tied it to the bound Boundary's own fixed ``repository``/``branch``. Since the
+   adapter's own confinement is real defense *within* whatever ``worktree_root`` it is handed
+   (never following a symlink out, never traversing above it) but is no defense at all against
+   being handed the *wrong* root entirely, a caller of one composed executor could point every
+   write at an arbitrary existing directory unrelated to the Change it was authorized against.
+   Every Change executed through one composed executor already must share that one composed
+   executor's own bound Boundary's fixed ``repository``/``branch`` (the existing scope check),
+   so binding ``worktree_root`` once at composition -- validated there to be a non-empty string
+   that resolves to a real, existing directory, exactly like every other composition-time input
+   -- is not merely the security fix but the semantically correct model this module's own design
+   already implies elsewhere: one composed executor, one fixed Boundary, one fixed worktree.
+7. **A caller resuming its own crash-interrupted intent skips the staleness check for that one
+   call.** Every commit this route performs unconditionally advances ``state_revision`` by one
+   (judgment call 5 above already establishes this), including the ``execution_intent`` commit
+   alone -- so a process that crashes after that commit succeeds but before the following
+   ``execution_attempt`` commit ever runs leaves a slot with a durably committed intent, no
+   attempt, and no receipt. A bare retry with the identical ``claim_token``/``execution_instant``
+   would previously reach idempotency-slot resolution, find neither an attempt nor a receipt, and
+   proceed through Boot and staleness exactly as a first call would -- except the intent's own
+   prior commit already advanced ``state_revision`` past what the Change's own
+   ``expected_state_revision`` names, so the retry raised ``StaleExecutionInputError``
+   permanently, with no adapter side effect ever having occurred and no path to reconciliation
+   (an automated review identified this real crash-recovery gap). The fix: idempotency-slot
+   resolution additionally resolves any existing ``execution_intent`` for the slot; when one
+   exists and its own declared ``claim_token`` equals this call's own, this call is that exact
+   caller resuming its own interrupted attempt -- not a collision -- and the staleness raise
+   alone is skipped for it. Every other step still runs unchanged: Boot, Change/Authority/scope
+   resolution (Change is immutable, so re-resolving it is harmless and the checks remain
+   meaningful), the intent commit itself (now a no-op replay of the byte-identical existing
+   intent, since nothing about its own content differs), the attempt commit, both kill-switch
+   checkpoints, and the one adapter call. A *different* ``claim_token`` against an existing
+   intent is not a resume at all -- it is not treated specially here, and correctly falls through
+   to collide at the intent-commit step below (``RecordConflictError`` ->
+   ``ExecutionConcurrentClaimError``), exactly as before this fix.
+8. **``execution_attempt`` now carries a fresh, per-call ``attempt_nonce``, closing a genuine
+   duplicate-adapter-call race.** Two callers invoking ``execute()`` truly concurrently with the
+   identical ``change_id``/``claim_token``/``execution_instant`` (through the same composed
+   executor, so necessarily also the identical Boundary/adapter identity) could both pass
+   idempotency-slot resolution before either had committed anything -- both would then build
+   byte-identical ``execution_intent`` and ``execution_attempt`` records, deterministic from
+   their identical inputs, and the Store's own commit correctly treats a second, byte-identical
+   attempt as an idempotent replay of the first rather than a conflict (the exact behavior
+   legitimate sequential crash-retry depends on) -- so the second caller's attempt-commit would
+   also "succeed," and it too would proceed to call ``adapter.execute(...)``, genuinely
+   duplicating the primary mutation this module's own docstring states happens exactly once (an
+   automated review identified this real race). The fix generates a fresh
+   ``secrets.token_hex(16)`` immediately before building a genuinely new
+   ``execution_attempt`` -- never caller-supplied, never derived from any other input -- and
+   embeds it as an ordinary new field on the attempt record's own body (never near the
+   deterministic ``slot_key``/record id, which stays exactly as before: two racing callers must
+   still collide at the identical ``(kind, id)``). This makes two independently-built attempts
+   for the same slot genuinely different byte-for-byte, so the Store's own *existing*
+   conflict-detection (a same-``(kind, id)``-different-body record under a fresh transaction is a
+   real ``RecordConflictError``) now correctly refuses the second one -- ``route.py`` already
+   converts that into ``ExecutionConcurrentClaimError`` at the attempt-commit call site, so no
+   new Store-layer machinery is needed, only a genuinely non-reproducible attempt body. This
+   deliberately does not touch ``execution_intent``'s own body: two racing callers' intent-commits
+   both succeeding is harmless by itself (neither one calls the adapter), so the exclusivity
+   boundary only needs to live at the attempt, the one record whose commit gates the adapter
+   call.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import hashlib
+from pathlib import Path
+import secrets
 from typing import Any
 
 from manosube_agent_civilization.authority import AUTONOMOUS
@@ -163,6 +235,8 @@ from .identity import (
     change_execution_receipt_semantic_fingerprint,
     execution_attempt_id as _execution_attempt_id_of,
     execution_attempt_semantic_fingerprint,
+    execution_intent_id as _execution_intent_id_of,
+    execution_intent_semantic_fingerprint,
     execution_mapping_slot_key,
 )
 from .kill_switch import kill_switch_signing_payload, resolve_current_kill_switch
@@ -192,6 +266,21 @@ def _require_non_empty_string(name: str, value: Any) -> str:
     if not isinstance(value, str) or not value:
         raise ChangeExecutorError(f"{name} must be a non-empty string: {value!r}")
     return value
+
+
+def _require_existing_worktree_root(value: Any) -> str:
+    """Validate *value* the identical way every other trust-sensitive composition-time input in
+    this module is validated (a non-empty string), plus the one check specific to a worktree
+    root: it must resolve to a real, existing directory -- checked here, once, at composition
+    time, so a bad ``worktree_root`` fails fast at composition rather than at first request (this
+    module's own docstring, disclosed judgment call 6)."""
+
+    checked = _require_non_empty_string("worktree_root", value)
+    if not Path(checked).is_dir():
+        raise ChangeExecutorError(
+            f"worktree_root must resolve to a real, existing directory: {checked!r}"
+        )
+    return checked
 
 
 def _commit_records(
@@ -553,19 +642,25 @@ def compose_change_executor(
     execution_boundary: Any,
     adapter_identity: Any,
     adapter: Any,
+    worktree_root: str,
     kill_switch_trust_anchor_public_key_hex: str,
 ) -> Callable[..., dict[str, Any]]:
     """The one public, trusted composition step for Controlled Autonomous Change execution.
 
     Binds *store*, *project_id*, *project_binding_id*, a canonicalized-and-frozen Execution
-    Boundary, a canonicalized-and-frozen adapter identity, the replaceable *adapter* itself, and
-    the kill-switch trust anchor -- once, before any request exists -- and returns the request-
-    facing operation itself, already closed over every one of them. The returned closure's own
-    call signature carries only request-facing data: ``execute(change_id, *, claim_token,
-    execution_instant, worktree_root, permit_semantic_reuse=False)``. There is no keyword,
+    Boundary, a canonicalized-and-frozen adapter identity, the replaceable *adapter* itself,
+    *worktree_root*, and the kill-switch trust anchor -- once, before any request exists -- and
+    returns the request-facing operation itself, already closed over every one of them.
+    *worktree_root* is validated here, once (a non-empty string that resolves to a real, existing
+    directory), rather than accepted per-request: every Change executed through this one composed
+    executor already shares this one composed executor's own bound Boundary's fixed
+    ``repository``/``branch``, so binding one fixed worktree here too is the correct model, not
+    merely a security fix (this module's own docstring, disclosed judgment call 6). The returned
+    closure's own call signature carries only request-facing data: ``execute(change_id, *,
+    claim_token, execution_instant, permit_semantic_reuse=False)``. There is no keyword,
     positional slot, or attribute on the returned callable through which a caller could
-    substitute a different Store, Boundary, adapter identity, adapter, or trust anchor after the
-    fact.
+    substitute a different Store, Boundary, adapter identity, adapter, worktree root, or trust
+    anchor after the fact.
     """
 
     _require_canonical_identity("project_id", project_id)
@@ -575,6 +670,7 @@ def compose_change_executor(
     )
     if not callable(getattr(adapter, "execute", None)):
         raise ChangeExecutorError("adapter must declare a callable execute(...) method")
+    frozen_worktree_root = _require_existing_worktree_root(worktree_root)
 
     canonical_boundary = validate_execution_boundary(execution_boundary)
     frozen_boundary = deep_freeze(canonical_boundary)
@@ -595,12 +691,10 @@ def compose_change_executor(
         *,
         claim_token: str,
         execution_instant: str,
-        worktree_root: str,
         permit_semantic_reuse: bool = False,
     ) -> dict[str, Any]:
         _require_canonical_identity("change_id", change_id)
         _require_non_empty_string("claim_token", claim_token)
-        _require_non_empty_string("worktree_root", worktree_root)
 
         # (2) time-window check -- zero-call, before Boot or any adapter.
         require_within_time_window(frozen_boundary, execution_instant)
@@ -620,7 +714,11 @@ def compose_change_executor(
         # of *change_id* (a caller-supplied parameter) and the two fingerprints already bound at
         # composition time, so resolving it needs neither Boot nor the resolved Change record --
         # a terminal outcome already reflects a fully-vetted prior execution and is returned
-        # unchanged without re-Booting or re-checking staleness against it.
+        # unchanged without re-Booting or re-checking staleness against it. This same step also
+        # resolves any existing execution_intent for the slot (below, after the attempt check) --
+        # a crash between the intent commit and the following attempt commit leaves exactly an
+        # intent with no attempt and no receipt, and this exact caller resuming it (identical
+        # claim_token) must not be spuriously refused as stale either (disclosed judgment call 7).
         slot_key = execution_mapping_slot_key(change_id, boundary_fp, adapter_fp)
         change_ref = {"kind": "change", "id": change_id}
 
@@ -667,9 +765,31 @@ def compose_change_executor(
                 "rather than risk a duplicate real mutation"
             )
 
-        # (5) fresh Boot. Only reached for a genuinely new mapping slot -- no receipt, no
-        # attempt -- so the live current State is the correct one to Boot and stale-check
-        # against below.
+        # (4, continued) resolve any existing execution_intent for the slot -- reached only when
+        # neither a receipt nor an attempt exists yet. When one exists and its own declared
+        # claim_token equals this call's own, this call is that exact caller resuming its own
+        # crash-interrupted attempt (intent committed, attempt never reached) -- not a collision
+        # -- so the staleness check below is skipped for this call alone (disclosed judgment call
+        # 7). A *different* claim_token is not a resume: it is left unflagged here and correctly
+        # falls through to collide at the intent-commit step (RecordConflictError ->
+        # ExecutionConcurrentClaimError), unchanged from before this fix.
+        resuming_from_existing_intent = False
+        resolved_intent_raw = _resolve_slot_record(store, project_id, _INTENT_RECORD_KIND, slot_key)
+        if resolved_intent_raw is not None:
+            verified_intent = _verify_slot_record(
+                resolved_intent_raw,
+                kind=_INTENT_RECORD_KIND,
+                declared_id_field="execution_intent_id",
+                recompute_id=_execution_intent_id_of,
+                recompute_fingerprint=execution_intent_semantic_fingerprint,
+                fingerprint_field="execution_intent_semantic_fingerprint",
+                slot_key=slot_key,
+            )
+            resuming_from_existing_intent = verified_intent["claim_token"] == claim_token
+
+        # (5) fresh Boot. Reached for a genuinely new mapping slot, or one being resumed after a
+        # crash between the intent and attempt commits -- the live current State is the correct
+        # one to Boot and (ordinarily) stale-check against below.
         boot_context = boot_project(
             store, project_id=project_id, project_binding_id=project_binding_id
         )
@@ -714,9 +834,13 @@ def compose_change_executor(
                     f"does not admit: {path!r}"
                 )
 
-        # (10) staleness.
+        # (10) staleness -- skipped only when this call is resuming its own crash-interrupted
+        # intent (resuming_from_existing_intent, set at step 4 above): that intent's own prior
+        # commit already advanced state_revision past what this Change's own
+        # expected_state_revision names, and this exact caller retrying is not staleness, it is
+        # crash recovery (disclosed judgment call 7).
         current_fingerprint = dict(boot_context.current_state["semantic_fingerprint"])
-        if (
+        if not resuming_from_existing_intent and (
             dict(change["before_state_fingerprint"]) != current_fingerprint
             or change["expected_state_revision"] != boot_context.current_state["state_revision"]
         ):
@@ -750,7 +874,14 @@ def compose_change_executor(
                 "silently retried into an attempt"
             ) from error
 
-        # (12) commit execution_attempt.
+        # (12) commit execution_attempt. attempt_nonce is a fresh, cryptographically random
+        # per-call token (never caller-supplied, never derived from any other input), generated
+        # only on this path -- the one that actually builds a genuinely new attempt -- so two
+        # independent callers racing to build a fresh attempt for the identical slot produce two
+        # different, non-reproducible attempt bodies: the Store's own existing conflict-detection
+        # (a same-(kind, id)-different-body record is a real RecordConflictError) then correctly
+        # refuses the second one instead of treating it as an idempotent replay of the first
+        # (disclosed judgment call 8).
         attempt = build_execution_attempt(
             project_id=project_id,
             change_ref=change_ref,
@@ -759,6 +890,7 @@ def compose_change_executor(
             claim_token=claim_token,
             requested_at=execution_instant,
             execution_intent_ref={"kind": _INTENT_RECORD_KIND, "id": slot_key},
+            attempt_nonce=secrets.token_hex(16),
         )
         try:
             _commit_records(
@@ -780,7 +912,7 @@ def compose_change_executor(
         target = {
             "repository": frozen_boundary["repository"],
             "branch": frozen_boundary["branch"],
-            "worktree_root": worktree_root,
+            "worktree_root": frozen_worktree_root,
         }
         # The one canonical scope-normalization owner (`authority.scope.canonical_scope`) is
         # used here rather than a local sort -- re-sorting `scope["paths"]` in this module
@@ -896,7 +1028,7 @@ def compose_change_executor(
         # the *next* call for this same slot correctly reconciliation-requires (this package's
         # own idempotency contract), never a bare exception type leaking a trust distinction.
         try:
-            raw_report = adapter.execute(checked_operation, worktree_root=worktree_root)
+            raw_report = adapter.execute(checked_operation, worktree_root=frozen_worktree_root)
         except Exception as error:
             raise ExecutionAdapterError(
                 f"adapter.execute raised {type(error).__name__}: {error} -- an "
@@ -912,7 +1044,7 @@ def compose_change_executor(
         if outcome in ("PARTIAL_MUTATION", "ADAPTER_FAILURE") and checked_report["files_written"]:
             if frozen_boundary["rollback_policy"] == "BEST_EFFORT_DELETE_WRITTEN_FILES":
                 rollback_outcome = _attempt_rollback(
-                    adapter, worktree_root, checked_report["files_written"]
+                    adapter, frozen_worktree_root, checked_report["files_written"]
                 )
                 if rollback_outcome == "ROLLBACK_SUCCEEDED":
                     outcome = "ROLLBACK_SUCCEEDED"

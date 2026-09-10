@@ -36,6 +36,7 @@ above, so the *rest* of the idempotency machinery can still be verified on its o
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ from tests.fixtures.change_executor_world import (
     execution_boundary_for,
     operation_for,
     plant_terminal_receipt,
+    slot_key_for,
 )
 
 from manosube_agent_civilization.change_executor.errors import (
@@ -73,7 +75,9 @@ _BOUNDARY = execution_boundary_for()
 _ADAPTER_IDENTITY = {"kind": "controlled_filesystem_adapter", "version": "0.1"}
 
 
-def _executor(store: Any, info: dict[str, Any], adapter: Any, **boundary_overrides: Any) -> Any:
+def _executor(
+    store: Any, info: dict[str, Any], adapter: Any, *, worktree_root: str, **boundary_overrides: Any
+) -> Any:
     return compose_change_executor(
         store,
         project_id=info["project_id"],
@@ -83,6 +87,7 @@ def _executor(store: Any, info: dict[str, Any], adapter: Any, **boundary_overrid
         else _BOUNDARY,
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
+        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -128,13 +133,12 @@ def test_exact_replay_is_broken_by_the_staleness_before_idempotency_ordering_def
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     first = execute(
         change["change_id"],
         claim_token="exact-replay-claim",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree),
     )
     assert first["receipt"]["outcome"] == "SUCCEEDED"
     assert adapter.call_count == 1
@@ -143,7 +147,6 @@ def test_exact_replay_is_broken_by_the_staleness_before_idempotency_ordering_def
         change["change_id"],
         claim_token="exact-replay-claim",  # noqa: S106
         execution_instant="2026-09-10T00:00:02Z",
-        worktree_root=str(worktree),
     )
     assert second["replay"] is True
     assert second["semantic_reuse"] is False
@@ -200,13 +203,12 @@ def test_exact_replay_slot_resolution_itself_is_correct_once_staleness_is_not_in
 ) -> None:
     store, info, change, planted, worktree = _planted(tmp_path, claim_token="same-claim")  # noqa: S106
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     result = execute(
         change["change_id"],
         claim_token="same-claim",  # noqa: S106
         execution_instant="2026-09-10T00:00:02Z",
-        worktree_root=str(worktree),
     )
     assert result["replay"] is True
     assert result["semantic_reuse"] is False
@@ -227,14 +229,13 @@ def test_conflicting_claim_token_on_a_terminal_slot_raises_terminal_claim_mismat
         claim_token="original-claim",  # noqa: S106
     )
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionTerminalClaimMismatchError):
         execute(
             change["change_id"],
             claim_token="a-different-claim",  # noqa: S106
             execution_instant="2026-09-10T00:00:02Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0, "a refused mismatch must never reach the adapter"
 
@@ -249,13 +250,12 @@ def test_permit_semantic_reuse_returns_the_same_receipt_without_calling_the_adap
 ) -> None:
     store, info, change, planted, worktree = _planted(tmp_path, claim_token="original-claim")  # noqa: S106
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     result = execute(
         change["change_id"],
         claim_token="a-different-claim",  # noqa: S106
         execution_instant="2026-09-10T00:00:02Z",
-        worktree_root=str(worktree),
         permit_semantic_reuse=True,
     )
     assert result["replay"] is False
@@ -289,14 +289,13 @@ def test_concurrent_execution_intent_on_the_same_slot_raises_concurrent_claim(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionConcurrentClaimError):
         execute(
             change["change_id"],
             claim_token="the-real-claim",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -326,14 +325,13 @@ def test_orphaned_execution_attempt_on_the_same_slot_requires_reconciliation(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionReconciliationRequiredError):
         execute(
             change["change_id"],
             claim_token="a-retry-claim",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -395,13 +393,12 @@ def test_partial_failure_with_rollback_policy_none_stays_partial_mutation(tmp_pa
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = _PartialFailureAdapter(keep=1)
-    execute = _executor(store, info, adapter, rollback_policy="NONE")
+    execute = _executor(store, info, adapter, worktree_root=str(worktree), rollback_policy="NONE")
 
     outcome = execute(
         change["change_id"],
         claim_token="partial-none",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree),
     )
     receipt = outcome["receipt"]
     assert receipt["outcome"] == "PARTIAL_MUTATION"
@@ -421,13 +418,18 @@ def test_partial_failure_with_best_effort_rollback_policy_deletes_written_files(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = _PartialFailureAdapter(keep=1)
-    execute = _executor(store, info, adapter, rollback_policy="BEST_EFFORT_DELETE_WRITTEN_FILES")
+    execute = _executor(
+        store,
+        info,
+        adapter,
+        worktree_root=str(worktree),
+        rollback_policy="BEST_EFFORT_DELETE_WRITTEN_FILES",
+    )
 
     outcome = execute(
         change["change_id"],
         claim_token="partial-rollback",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree),
     )
     receipt = outcome["receipt"]
     assert receipt["outcome"] in ("ROLLBACK_SUCCEEDED", "ROLLBACK_FAILED")
@@ -473,14 +475,214 @@ def test_partial_failure_second_call_is_a_clean_idempotent_replay_not_a_second_a
     )
 
     adapter = _PartialFailureAdapter(keep=1)
-    execute = _executor(store, info, adapter, rollback_policy="NONE")
+    execute = _executor(store, info, adapter, worktree_root=str(worktree), rollback_policy="NONE")
 
     result2 = execute(
         change["change_id"],
         claim_token="partial-replay",  # noqa: S106
         execution_instant="2026-09-10T00:00:02Z",
-        worktree_root=str(worktree),
     )
     assert result2["replay"] is True
     assert result2["receipt"] == planted
     assert adapter.call_count == 0, "a terminal PARTIAL_MUTATION receipt must replay cleanly too"
+
+
+# --------------------------------------------------------------------------------------- #
+# Finding 2 (Codex automated review, PR #74): a crash between the execution_intent commit
+# (step 11) and the execution_attempt commit (step 12) must not permanently strand the slot.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_crash_between_intent_commit_and_attempt_commit_is_recoverable_via_resumed_retry(
+    tmp_path: Path,
+) -> None:
+    """A genuine automated-review finding against ``route.py``: every commit this route performs
+    -- including the ``execution_intent`` commit alone -- unconditionally advances
+    ``state_revision`` by one. A process that crashes after that one commit succeeds but before
+    the following ``execution_attempt`` commit ever runs leaves a slot with a durably committed
+    intent, no attempt, no receipt. This test plants exactly that intent directly (simulating the
+    crash point precisely, the same technique :func:`commit_bare_execution_intent` already
+    provides for V4(d)'s concurrent-claim control) with **no** compensating
+    ``extra_state_revision_headroom`` -- an ordinary caller retrying with the identical
+    ``claim_token``/``execution_instant`` has no way to know, or compensate for, ``route.py``'s
+    own private commit count. Before the fix (route.py's own disclosed judgment call 7) this
+    retry raised ``StaleExecutionInputError`` permanently, with zero adapter calls ever having
+    occurred and no path to reconciliation; after the fix, the identical retry resumes cleanly to
+    a genuine terminal ``SUCCEEDED`` receipt, and the adapter is called exactly once total across
+    both the interrupted attempt and the successful retry."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/resume-after-intent-crash.md")["change"]
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    claim_token = "resume-after-crash-claim"  # noqa: S105
+    execution_instant = "2026-09-10T00:00:01Z"
+
+    # Simulate the crash: an execution_intent is durably committed for this exact slot (this
+    # package's own step 11), but the following execution_attempt commit (step 12) never ran --
+    # this advances state_revision by one all on its own, with no headroom compensating for it.
+    commit_bare_execution_intent(
+        store,
+        info["project_id"],
+        change_id=change["change_id"],
+        boundary=_BOUNDARY,
+        adapter_identity=_ADAPTER_IDENTITY,
+        claim_token=claim_token,
+        requested_at=execution_instant,
+    )
+
+    adapter = CountingAdapter()
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
+
+    # The identical caller, retrying with the identical claim_token/execution_instant -- no
+    # special knowledge of route.py's own private commit count, exactly as a genuine
+    # crash-recovery caller would retry.
+    outcome = execute(
+        change["change_id"],
+        claim_token=claim_token,
+        execution_instant=execution_instant,
+    )
+    assert outcome["receipt"]["outcome"] == "SUCCEEDED"
+    assert outcome["replay"] is False
+    assert outcome["semantic_reuse"] is False
+    assert (worktree / "docs" / "resume-after-intent-crash.md").is_file()
+    assert adapter.call_count == 1, (
+        "the adapter must be called exactly once across both the interrupted attempt and the "
+        "successful retry"
+    )
+
+
+# --------------------------------------------------------------------------------------- #
+# Finding 3 (Codex automated review, PR #74): two genuinely racing callers for the identical
+# slot must never both call adapter.execute -- attempt_nonce closes the gap.
+# --------------------------------------------------------------------------------------- #
+
+
+class _RaceSecondCallerIntoTheAttemptCheck:
+    """A thin, real Store proxy -- forwards every call unchanged except the *first* call to
+    ``resolve_record`` for this exact ``(project_id, "execution_attempt", slot_key)`` triple,
+    which additionally drives a second, genuinely independent ``execute()`` call all the way to
+    completion -- sharing the identical underlying real Store, Boundary, adapter identity, and
+    *adapter instance* -- before returning the pre-race answer (``None``) this caller's own step
+    4 actually observed. This reproduces the genuine race Finding 3 identifies: both callers pass
+    step 4 before *either* has committed anything, because the second caller's own full run
+    happens, in real wall-clock time, entirely inside the first caller's own step-4 check -- yet
+    the first caller's own code path only ever sees the answer its own check actually returned,
+    exactly as a genuinely concurrent caller would."""
+
+    def __init__(
+        self, inner: Any, project_id: str, slot_key: str, second_call: Callable[[], None]
+    ) -> None:
+        self._inner = inner
+        self._project_id = project_id
+        self._slot_key = slot_key
+        self._second_call = second_call
+        self._triggered = False
+
+    def resolve_record(self, project_id: str, kind: str, record_id: str) -> Any:
+        result = self._inner.resolve_record(project_id, kind, record_id)
+        if (
+            not self._triggered
+            and project_id == self._project_id
+            and kind == "execution_attempt"
+            and record_id == self._slot_key
+        ):
+            self._triggered = True
+            self._second_call()
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def test_two_racing_callers_for_the_identical_slot_call_the_adapter_at_most_once(
+    tmp_path: Path,
+) -> None:
+    """Two callers invoking ``execute()`` with the identical ``change_id``/``claim_token``/
+    ``execution_instant`` (so, necessarily, through composed executors sharing the identical
+    Boundary/adapter identity too), racing so that both pass idempotency-slot resolution before
+    either has committed anything, must still call ``adapter.execute`` exactly once combined --
+    never twice. ``attempt_nonce`` (a fresh, per-call ``secrets.token_hex(16)``, never
+    caller-supplied) makes the two independently-built ``execution_attempt`` records genuinely
+    different byte-for-byte, so the Store's own *existing* conflict detection -- not new
+    machinery -- correctly refuses the second one as a real ``RecordConflictError`` ->
+    ``ExecutionConcurrentClaimError``, rather than silently treating it as an idempotent replay of
+    the first."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/race.md")["change"]
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    shared_adapter = CountingAdapter()
+    claim_token = "racing-claim"  # noqa: S105
+    execution_instant = "2026-09-10T00:00:01Z"
+
+    slot_key, _boundary_fp, _adapter_fp = slot_key_for(
+        change["change_id"], _BOUNDARY, _ADAPTER_IDENTITY
+    )
+
+    execute_second = compose_change_executor(
+        store,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=_BOUNDARY,
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=shared_adapter,
+        worktree_root=str(worktree),
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+
+    second_outcome: dict[str, Any] = {}
+    second_error: Exception | None = None
+
+    def _run_second_caller() -> None:
+        nonlocal second_error
+        try:
+            second_outcome["result"] = execute_second(
+                change["change_id"], claim_token=claim_token, execution_instant=execution_instant
+            )
+        except Exception as error:  # captured for the assertions below, not raised
+            second_error = error
+
+    proxy = _RaceSecondCallerIntoTheAttemptCheck(
+        store, info["project_id"], slot_key, _run_second_caller
+    )
+    execute_first = compose_change_executor(
+        proxy,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=_BOUNDARY,
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=shared_adapter,
+        worktree_root=str(worktree),
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+
+    first_error: Exception | None = None
+    first_outcome: dict[str, Any] | None = None
+    try:
+        first_outcome = execute_first(
+            change["change_id"], claim_token=claim_token, execution_instant=execution_instant
+        )
+    except Exception as error:  # captured for the assertions below, not raised
+        first_error = error
+
+    assert second_error is None, (
+        f"the racing caller that commits first must succeed: {second_error!r}"
+    )
+    assert second_outcome["result"]["receipt"]["outcome"] == "SUCCEEDED"
+
+    assert first_outcome is None
+    assert isinstance(first_error, ExecutionConcurrentClaimError), (
+        f"the caller that loses the race must be refused as a concurrent claim, not {first_error!r}"
+    )
+
+    assert shared_adapter.call_count == 1, (
+        "adapter.execute must be called exactly once combined across both racing callers"
+    )

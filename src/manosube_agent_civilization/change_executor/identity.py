@@ -56,11 +56,21 @@ EXECUTION_INTENT_SEMANTIC_FIELDS: tuple[str, ...] = (
 )
 
 #: An ``execution_attempt`` restates everything its own ``execution_intent`` does, plus the
-#: exact reference to that intent record -- a redundant but explicit audit trail, since both
-#: records in fact share the identical id (this module's own docstring).
+#: exact reference to that intent record, plus ``attempt_nonce`` -- a fresh, per-call random
+#: token (never derived from any other field) that makes two independently-built attempts for the
+#: identical mapping slot genuinely different byte-for-byte, so the Store's own existing
+#: same-``(kind, id)``-different-body conflict detection correctly refuses a second, genuinely
+#: concurrent attempt rather than silently treating it as an idempotent replay of the first
+#: (Phase 18 Issue #73 review finding; ``route.py``'s own module docstring, disclosed judgment
+#: call 8). It is an ordinary semantic field like any other here -- fully tamper-checked by this
+#: kind's own fingerprint -- and deliberately never participates in
+#: :func:`execution_mapping_slot_key`/:func:`execution_attempt_id` below, which must stay a pure
+#: function of exactly *change_ref*/*execution_boundary_fingerprint*/*adapter_identity_fingerprint*
+#: for replay/reconciliation detection to keep working at all.
 EXECUTION_ATTEMPT_SEMANTIC_FIELDS: tuple[str, ...] = (
     *EXECUTION_INTENT_SEMANTIC_FIELDS,
     "execution_intent_ref",
+    "attempt_nonce",
 )
 
 #: What a ``change_execution_receipt`` *is*, for tamper-detection purposes -- every field of the

@@ -86,9 +86,22 @@ def build_execution_attempt(
     claim_token: str,
     requested_at: str,
     execution_intent_ref: Mapping[str, str],
+    attempt_nonce: str,
 ) -> dict[str, Any]:
     """Build one canonical ``execution_attempt`` record, under the identical mapping-slot id its
-    own ``execution_intent`` record already carries."""
+    own ``execution_intent`` record already carries.
+
+    *attempt_nonce* is a fresh, cryptographically random per-call token (``route.py``'s own
+    ``secrets.token_hex(16)``, never caller-derivable from any other field) that makes two
+    independently-built attempts for the identical slot genuinely different byte-for-byte, so the
+    Store's own existing conflict-detection correctly refuses a second, genuinely concurrent
+    attempt rather than treating it as an idempotent replay of the first (Phase 18 Issue #73
+    review finding; see ``route.py``'s own module docstring, disclosed judgment call 8). It is an
+    ordinary field of this record's own body, fully covered by
+    ``execution_attempt_semantic_fingerprint`` like every other field -- it deliberately never
+    participates in the deterministic mapping-slot id itself (:func:`execution_mapping_slot_key`,
+    unchanged), which must stay a pure function of *change_ref*/*execution_boundary_fingerprint*/
+    *adapter_identity_fingerprint* alone for replay/reconciliation detection to work at all."""
 
     slot_key = execution_mapping_slot_key(
         change_ref["id"], execution_boundary_fingerprint, adapter_identity_fingerprint
@@ -103,6 +116,7 @@ def build_execution_attempt(
         "claim_token": claim_token,
         "requested_at": requested_at,
         "execution_intent_ref": dict(execution_intent_ref),
+        "attempt_nonce": attempt_nonce,
         "execution_attempt_semantic_fingerprint": "",
     }
     record["execution_attempt_semantic_fingerprint"] = execution_attempt_semantic_fingerprint(

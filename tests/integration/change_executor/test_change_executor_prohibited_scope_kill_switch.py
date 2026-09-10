@@ -49,7 +49,9 @@ from manosube_agent_civilization.change_executor.route import compose_change_exe
 _ADAPTER_IDENTITY = {"kind": "controlled_filesystem_adapter", "version": "0.1"}
 
 
-def _executor(store: Any, info: dict[str, Any], adapter: Any, **boundary_overrides: Any) -> Any:
+def _executor(
+    store: Any, info: dict[str, Any], adapter: Any, *, worktree_root: str, **boundary_overrides: Any
+) -> Any:
     return compose_change_executor(
         store,
         project_id=info["project_id"],
@@ -57,6 +59,7 @@ def _executor(store: Any, info: dict[str, Any], adapter: Any, **boundary_overrid
         execution_boundary=execution_boundary_for(**boundary_overrides),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
+        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -80,7 +83,13 @@ def test_compose_change_executor_refuses_a_boundary_naming_a_human_only_kind(
     store, info = bound(tmp_path)
     adapter = CountingAdapter()
     with pytest.raises(ExecutionBoundaryError):
-        _executor(store, info, adapter, permitted_action_kinds=[human_only_kind])
+        _executor(
+            store,
+            info,
+            adapter,
+            worktree_root=str(tmp_path),
+            permitted_action_kinds=[human_only_kind],
+        )
     assert adapter.call_count == 0
 
 
@@ -112,14 +121,13 @@ def test_sibling_directory_path_is_not_admitted_by_a_narrower_admitted_prefix(
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter, admitted_paths=["docs"])
+    execute = _executor(store, info, adapter, worktree_root=str(worktree), admitted_paths=["docs"])
 
     with pytest.raises(ExecutionAuthorityProvenanceError):
         execute(
             change["change_id"],
             claim_token="sibling",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -154,13 +162,12 @@ def test_operation_naming_a_traversal_path_is_refused_by_routes_own_admission_ch
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     outcome = execute(
         change["change_id"],
         claim_token="traversal",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree),
     )
     assert outcome["receipt"]["outcome"] == "BOUNDARY_VIOLATION"
     assert adapter.call_count == 0, "the adapter must never be reached for a BOUNDARY_VIOLATION"
@@ -263,14 +270,13 @@ def test_no_kill_switch_ever_committed_refuses_with_zero_adapter_calls(tmp_path:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionKillSwitchError):
         execute(
             change["change_id"],
             claim_token="no-switch",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -293,14 +299,13 @@ def test_revoked_kill_switch_refuses_with_zero_adapter_calls(tmp_path: Path) -> 
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionKillSwitchError):
         execute(
             change["change_id"],
             claim_token="revoked",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -369,14 +374,13 @@ def test_pre_start_kill_switch_revocation_refuses_with_zero_adapter_calls(tmp_pa
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionKillSwitchError):
         execute(
             change["change_id"],
             claim_token="pre-start",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -460,6 +464,7 @@ def test_mid_execution_kill_switch_revocation_produces_a_terminal_kill_switch_st
         execution_boundary=execution_boundary_for(),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
+        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -467,7 +472,6 @@ def test_mid_execution_kill_switch_revocation_produces_a_terminal_kill_switch_st
         change["change_id"],
         claim_token="mid-execution",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree),
     )
     assert outcome["receipt"]["outcome"] == "KILL_SWITCH_STOPPED"
     assert adapter.call_count == 0, "the adapter must never be reached once checkpoint #2 refuses"
@@ -482,5 +486,4 @@ def test_mid_execution_kill_switch_revocation_produces_a_terminal_kill_switch_st
             change["change_id"],
             claim_token="mid-execution",  # noqa: S106
             execution_instant="2026-09-10T00:00:02Z",
-            worktree_root=str(worktree),
         )

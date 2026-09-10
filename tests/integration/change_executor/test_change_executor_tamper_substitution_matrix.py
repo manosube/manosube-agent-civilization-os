@@ -39,7 +39,9 @@ from manosube_agent_civilization.change_executor.route import compose_change_exe
 _ADAPTER_IDENTITY = {"kind": "controlled_filesystem_adapter", "version": "0.1"}
 
 
-def _executor(store: Any, info: dict[str, Any], adapter: Any, **boundary_overrides: Any) -> Any:
+def _executor(
+    store: Any, info: dict[str, Any], adapter: Any, *, worktree_root: str, **boundary_overrides: Any
+) -> Any:
     return compose_change_executor(
         store,
         project_id=info["project_id"],
@@ -47,6 +49,7 @@ def _executor(store: Any, info: dict[str, Any], adapter: Any, **boundary_overrid
         execution_boundary=execution_boundary_for(**boundary_overrides),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
+        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -94,6 +97,7 @@ def test_cross_project_change_id_never_resolves_against_a_different_bound_projec
         execution_boundary=execution_boundary_for(),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
+        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -102,7 +106,6 @@ def test_cross_project_change_id_never_resolves_against_a_different_bound_projec
             change_a["change_id"],
             claim_token="cross-project",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -127,14 +130,13 @@ def test_cross_store_change_id_never_resolves_against_a_different_store_instance
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute_via_b = _executor(store_b, info_b, adapter)
+    execute_via_b = _executor(store_b, info_b, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionAuthorityProvenanceError):
         execute_via_b(
             change_a["change_id"],
             claim_token="cross-store",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -163,6 +165,7 @@ def test_stale_project_binding_id_propagates_boots_own_typed_error(tmp_path: Pat
         execution_boundary=execution_boundary_for(),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
+        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -171,7 +174,6 @@ def test_stale_project_binding_id_propagates_boots_own_typed_error(tmp_path: Pat
             change["change_id"],
             claim_token="stale-binding",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -198,14 +200,13 @@ def test_genuine_target_drift_after_change_derivation_is_refused_as_stale(tmp_pa
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(StaleExecutionInputError):
         execute(
             change["change_id"],
             claim_token="drifted",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -227,24 +228,28 @@ def test_a_change_admitted_by_a_wider_boundary_cannot_execute_through_a_narrower
 
     narrow_adapter = CountingAdapter()
     execute_narrow = _executor(
-        store, info, narrow_adapter, admitted_paths=["docs/general/subset-only"]
+        store,
+        info,
+        narrow_adapter,
+        worktree_root=str(worktree),
+        admitted_paths=["docs/general/subset-only"],
     )
     with pytest.raises(ExecutionAuthorityProvenanceError):
         execute_narrow(
             change["change_id"],
             claim_token="narrow",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert narrow_adapter.call_count == 0
 
     wide_adapter = CountingAdapter()
-    execute_wide = _executor(store, info, wide_adapter, admitted_paths=["docs"])
+    execute_wide = _executor(
+        store, info, wide_adapter, worktree_root=str(worktree), admitted_paths=["docs"]
+    )
     outcome = execute_wide(
         change["change_id"],
         claim_token="wide",  # noqa: S106
         execution_instant="2026-09-10T00:00:02Z",
-        worktree_root=str(worktree),
     )
     assert outcome["receipt"]["outcome"] == "SUCCEEDED"
     assert wide_adapter.call_count == 1
@@ -277,12 +282,11 @@ def test_mutated_receipt_copy_is_refused_by_the_evidence_handoff(tmp_path: Path)
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
     outcome = execute(
         change["change_id"],
         claim_token="mutate",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree),
     )
     real_receipt = outcome["receipt"]
     assert (
@@ -369,13 +373,13 @@ def test_two_adapter_identities_produce_two_distinct_slots_for_the_identical_cha
         execution_boundary=boundary,
         adapter_identity=identity_b,
         adapter=adapter_b,
+        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
     outcome_b = execute_b(
         change["change_id"],
         claim_token="slot-b-claim",  # noqa: S106
         execution_instant="2026-09-10T00:00:02Z",
-        worktree_root=str(worktree),
     )
     assert outcome_b["replay"] is False
     assert outcome_b["semantic_reuse"] is False

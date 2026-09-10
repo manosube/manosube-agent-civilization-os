@@ -44,6 +44,7 @@ execute = compose_change_executor(
     execution_boundary={...},  # a closed Execution Boundary -- see boundary.py
     adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
     adapter=ControlledFilesystemAdapter(executor_identity="controlled_filesystem_adapter", executor_version="0.1"),
+    worktree_root="/path/to/an/admitted/disposable/worktree",  # bound once, here -- see route.py
     kill_switch_trust_anchor_public_key_hex=configured_trust_anchor,
 )
 
@@ -51,7 +52,6 @@ result = execute(
     change_id,
     claim_token="...",
     execution_instant="2026-09-10T00:00:01Z",
-    worktree_root="/path/to/an/admitted/disposable/worktree",
 )
 result["receipt"]  # the immutable change_execution_receipt
 ```

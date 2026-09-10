@@ -203,7 +203,7 @@ def test_evidence_handoff_calls_derive_evidence_exactly_once() -> None:
 # --------------------------------------------------------------------------------------- #
 
 
-def _executor(store: Any, info: dict[str, Any], adapter: Any) -> Any:
+def _executor(store: Any, info: dict[str, Any], adapter: Any, *, worktree_root: str) -> Any:
     return compose_change_executor(
         store,
         project_id=info["project_id"],
@@ -211,6 +211,7 @@ def _executor(store: Any, info: dict[str, Any], adapter: Any) -> Any:
         execution_boundary=execution_boundary_for(),
         adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
         adapter=adapter,
+        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -245,12 +246,11 @@ def test_two_real_execution_cycles_advance_revision_by_exactly_this_packages_own
 
     # -- first execution: this package's own three commits (intent, attempt, receipt). --
     adapter_1 = CountingAdapter()
-    execute = _executor(store, info, adapter_1)
+    execute = _executor(store, info, adapter_1, worktree_root=str(worktree))
     outcome_1 = execute(
         first["change"]["change_id"],
         claim_token="cycle-one",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree),
     )
     assert outcome_1["receipt"]["outcome"] == "SUCCEEDED"
     assert adapter_1.call_count == 1
@@ -272,12 +272,11 @@ def test_two_real_execution_cycles_advance_revision_by_exactly_this_packages_own
 
     # -- second execution: this package's own three commits again. --
     adapter_2 = CountingAdapter()
-    execute_2 = _executor(store, info, adapter_2)
+    execute_2 = _executor(store, info, adapter_2, worktree_root=str(worktree))
     outcome_2 = execute_2(
         second["change"]["change_id"],
         claim_token="cycle-two",  # noqa: S106
         execution_instant="2026-09-10T00:00:02Z",
-        worktree_root=str(worktree),
     )
     assert outcome_2["receipt"]["outcome"] == "SUCCEEDED"
     assert adapter_2.call_count == 1

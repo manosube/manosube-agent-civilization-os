@@ -56,6 +56,22 @@ advanced `state_revision` -- was fixed in the shipped code before this delivery 
 own module docstring, disclosed judgment call 5); every citation below is to the test suite as it
 runs against the corrected code, not the defective draft it originally caught.
 
+**Three further findings, from an automated review of PR #74, fixed after this document's first
+draft.** An automated review identified three real defects against `route.py`, all since fixed
+(disclosed judgment calls 6-8 below), and the test suite extended to 167 tests (same 9 files, same
+2 fixture modules -- no new file) to prove each: (1) `worktree_root` was a request-facing
+parameter with nothing tying it to the bound Boundary's own `repository`/`branch`, letting an
+authorized Change be pointed at an unrelated checkout -- moved to composition time; (2) a crash
+between the `execution_intent` commit and the following `execution_attempt` commit permanently
+stranded the slot behind a spurious `StaleExecutionInputError`, with no path to reconciliation --
+idempotency-slot resolution now also resolves an existing intent and skips staleness only when
+this exact caller (identical `claim_token`) is resuming it; (3) two genuinely concurrent callers
+could both pass idempotency-slot resolution before either committed anything and both call
+`adapter.execute` -- `execution_attempt` now carries a fresh `attempt_nonce` per call, so the
+Store's own existing conflict detection (not new machinery) correctly refuses the second one.
+Every citation below, and every count in §12, is to the test suite as it runs against the code
+with all three fixes applied.
+
 ## 2. Public signature
 
 ```python
@@ -72,6 +88,7 @@ execute = compose_change_executor(
     execution_boundary={...},  # a closed Execution Boundary -- see §7
     adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
     adapter=ControlledFilesystemAdapter(executor_identity="controlled_filesystem_adapter", executor_version="0.1"),
+    worktree_root="/path/to/an/admitted/disposable/worktree",  # bound once, here -- see §3 item 6
     kill_switch_trust_anchor_public_key_hex=configured_trust_anchor,
 )
 
@@ -79,7 +96,6 @@ result = execute(
     change_id,
     claim_token="...",
     execution_instant="2026-09-10T00:00:01Z",
-    worktree_root="/path/to/an/admitted/disposable/worktree",
 )
 result["receipt"]         # the immutable change_execution_receipt
 result["replay"]          # True only for an exact claim_token replay of an existing receipt
@@ -93,10 +109,12 @@ evidence = route_change_execution_to_evidence(store, result["receipt"], project_
 
 `compose_change_executor` binds *store*, *project_id*, *project_binding_id*, a
 canonicalized-and-frozen Execution Boundary, a canonicalized-and-frozen adapter identity, the
-replaceable *adapter* itself, and the kill-switch trust anchor -- once, before any request
-exists. The returned closure's own call signature carries only request-facing data: there is no
-keyword, positional slot, or attribute on it through which a caller could substitute a different
-Store, Boundary, adapter identity, adapter, or trust anchor after the fact.
+replaceable *adapter* itself, *worktree_root* (validated at composition to be a non-empty string
+resolving to a real, existing directory -- §3 item 6), and the kill-switch trust anchor -- once,
+before any request exists. The returned closure's own call signature carries only request-facing
+data: there is no keyword, positional slot, or attribute on it through which a caller could
+substitute a different Store, Boundary, adapter identity, adapter, worktree root, or trust anchor
+after the fact.
 
 **Disclosed judgment call: the return shape is a small envelope, not the bare receipt.** The
 seeding task description asks for an idempotent replay to "return the existing receipt unchanged"
@@ -145,6 +163,45 @@ level out instead of inside the closed record.
    writes to, and deliberately not `"runtime"`, which is Runtime's own domain), under one fixed
    claim key, `CHANGE_EXECUTOR_KILL_SWITCH_CURRENT_ID` -- there is exactly one kill switch per
    project, never one per target, so no per-binding key map is needed. See §10.
+6. **`worktree_root` is a composition-time parameter, not a request-facing one.** An automated
+   review of PR #74 correctly identified that a request-facing `worktree_root` was a genuine
+   Boundary-binding gap: every other trust-sensitive parameter this module uses is bound once at
+   composition, but `worktree_root` alone was left request-facing, so nothing tied it to the
+   bound Boundary's own fixed `repository`/`branch` -- a caller of one composed executor could
+   point every write at an arbitrary existing directory unrelated to the Change it was authorized
+   against (the adapter's own confinement is real defense *within* whatever root it is handed,
+   never a defense against being handed the *wrong* root). Every Change executed through one
+   composed executor already shares that one composed executor's own bound Boundary's fixed
+   `repository`/`branch`, so binding `worktree_root` once at composition -- validated there to
+   resolve to a real, existing directory -- is the correct model, not merely the fix.
+7. **A caller resuming its own crash-interrupted intent skips the staleness check for that one
+   call.** Every commit this route performs -- including the `execution_intent` commit alone --
+   unconditionally advances `state_revision` by one (item 4/§9). A crash after that one commit
+   succeeds but before the following `execution_attempt` commit ever runs leaves a slot with a
+   durably committed intent, no attempt, no receipt; a bare retry previously raised
+   `StaleExecutionInputError` permanently (an automated review identified this real crash-recovery
+   gap), with zero adapter side effect ever having occurred and no path to reconciliation.
+   Idempotency-slot resolution now additionally resolves any existing `execution_intent` for the
+   slot; when one exists and its own declared `claim_token` equals this call's own, this call is
+   that exact caller resuming its own interrupted attempt -- not a collision -- and only the
+   staleness raise is skipped for it. A *different* `claim_token` against an existing intent is
+   not a resume: it is left unflagged and correctly falls through to collide at the intent-commit
+   step (`RecordConflictError` -> `ExecutionConcurrentClaimError`), unchanged.
+8. **`execution_attempt` carries a fresh, per-call `attempt_nonce`.** Two callers invoking
+   `execute()` truly concurrently with the identical `change_id`/`claim_token`/`execution_instant`
+   could both pass idempotency-slot resolution before either had committed anything, then both
+   build byte-identical `execution_attempt` records (deterministic from their identical inputs) --
+   and the Store's own commit correctly treats a second, byte-identical attempt as an idempotent
+   replay of the first rather than a conflict (the exact behavior legitimate sequential
+   crash-retry depends on), so the second caller's attempt-commit would also succeed and call
+   `adapter.execute` a second time (an automated review identified this real race). A fresh
+   `secrets.token_hex(16)`, generated only immediately before building a genuinely new attempt
+   (never caller-supplied, never derived from any other input), makes two independently-built
+   attempts for the same slot genuinely different byte-for-byte, so the Store's own *existing*
+   conflict detection -- not new Store-layer machinery -- correctly refuses the second one. It
+   never participates in `execution_mapping_slot_key`/the record id itself (§9), only in the
+   record body; `execution_intent`'s own body is deliberately untouched, since two racing
+   intent-commits both succeeding is harmless by itself.
 
 ## 4. Canonical owner
 
@@ -170,7 +227,8 @@ execution_intent           EXECUTION_INTENT_SEMANTIC_FIELDS: project_id, change_
                             execution_boundary_fingerprint, adapter_identity_fingerprint,
                             claim_token, requested_at
 execution_attempt          EXECUTION_ATTEMPT_SEMANTIC_FIELDS: the above, plus
-                            execution_intent_ref
+                            execution_intent_ref, attempt_nonce (a fresh per-call
+                            secrets.token_hex(16) -- §3 item 8; never part of the record id)
 change_execution_receipt   CHANGE_EXECUTION_RECEIPT_SEMANTIC_FIELDS: change_ref, idempotency_key,
                             authority_ref, project_id, project_binding_ref,
                             boot_state_fingerprint, execution_boundary_fingerprint,
@@ -190,40 +248,48 @@ Every request-facing call performs the following, in this exact order (`route.py
 `compose_change_executor.execute`):
 
 ```text
-canonicalize + freeze execution_boundary / adapter_identity                (composition, once)
+canonicalize + freeze execution_boundary / adapter_identity, and bind worktree_root
+                                                                            (composition, once)
 → execution_instant falls within the bound Boundary's own validity_window  (zero-call refusal)
 → kill switch check #1 -- fresh resolve, ACTIVE required, signature re-verified
-→ fresh Boot (boot_project)
+→ idempotency-slot resolution: an existing receipt (replay/reuse/mismatch), an existing attempt
+  with no receipt (reconciliation required), an existing intent under this exact caller's own
+  claim_token with neither (resuming a crash-interrupted attempt -- §3 item 7), or none of the
+  three (proceed) -- deliberately *before* Boot and staleness (§3 item 4/§9 explain why)
+→ fresh Boot (boot_project)                                 (a genuinely new or resumed slot only)
 → resolve the Change, recompute-and-compare its own identity/fingerprint, require AUTHORIZED
 → resolve the Authority Decision the Change names, recompute-and-compare, require AUTONOMOUS
 → require action_kind in the bound Boundary's own permitted_action_kinds, and not Human-only
 → require scope.repository/branch/paths are entirely admitted by the bound Boundary
 → staleness: before_state_fingerprint / expected_state_revision must equal the fresh Boot's own
-→ idempotency-slot resolution: an existing receipt (replay/reuse/mismatch), an existing attempt
-  with no receipt (reconciliation required), or neither (proceed)
+  -- skipped only when resuming a prior, crash-interrupted intent under this exact claim_token
 → commit execution_intent                                    (RecordConflictError -> concurrent
                                                                 claim)
-→ commit execution_attempt                                   (RecordConflictError -> concurrent
-                                                                claim)
+→ commit execution_attempt, carrying a fresh attempt_nonce    (RecordConflictError -> concurrent
+                                                                claim -- §3 item 8)
 → kill switch check #2 -- fresh resolve again, immediately before the one adapter call; a
   refusal here still produces a terminal receipt (KILL_SWITCH_STOPPED), never a bare exception,
   because an execution_attempt is already committed and idempotency requires a terminal outcome
 → build + validate the closed operation against the bound Boundary's own file-count/byte/path
   limits; a violation here likewise produces a terminal receipt (BOUNDARY_VIOLATION), never a
   bare exception, for the identical reason
-→ call adapter.execute(...) exactly once for the primary requested operation (a distinct,
-  policy-gated best-effort rollback call may follow, only when the primary call partially
-  mutated and rollback_policy == BEST_EFFORT_DELETE_WRITTEN_FILES)
+→ call adapter.execute(...) exactly once for the primary requested operation, against the one
+  worktree_root bound at composition (a distinct, policy-gated best-effort rollback call may
+  follow, only when the primary call partially mutated and rollback_policy ==
+  BEST_EFFORT_DELETE_WRITTEN_FILES)
 → classify the adapter's raw reported facts into one EXECUTION_OUTCOMES member -- never trusted
   from the adapter as an assertion
 → build + commit the terminal change_execution_receipt (with the embedded reobservation_request)
 → return {"receipt": ..., "replay": bool, "semantic_reuse": bool}
 ```
 
-Every exception path up through staleness raises before any Store commit and before the adapter
-is ever constructed a call to (P18-C4). `route.py`'s own docstring states this ordering as the
-canonical route; the numbered comments inline in `compose_change_executor.execute` (steps 2
-through 18) mirror it exactly.
+A terminal replay/semantic-reuse return, and a refusal detected at idempotency-slot resolution
+itself, both leave here with zero Boot, zero Store commit, and zero adapter calls. Every
+exception path from idempotency-slot resolution through staleness likewise raises before any
+Store commit and before the adapter is ever constructed a call to (P18-C4). `route.py`'s own
+docstring states this ordering as the canonical route; the numbered comments inline in
+`compose_change_executor.execute` mirror it exactly (step 4 now also resolves an existing
+`execution_intent`, per §3 item 7, without a new step number).
 
 ## 6. P18-C1 through P18-C10
 
@@ -335,7 +401,13 @@ without re-executing. A resolved `execution_attempt` with no terminal receipt ra
 have called the adapter) is genuinely unknown," refused rather than guessed or silently retried.
 A `RecordConflictError` committing either `execution_intent` or `execution_attempt` (a genuinely
 concurrent claim already holding the slot) raises `ExecutionConcurrentClaimError`, never silently
-retried into an attempt or an adapter call. **Disclosed structural fact:** if `adapter.execute`
+retried into an attempt or an adapter call. A crash between the `execution_intent` commit and the
+following `execution_attempt` commit leaves the identical, non-conflicting caller (matching
+`claim_token`) able to resume rather than be permanently stranded by staleness (§3 item 7/§9), and
+a fresh per-attempt `attempt_nonce` (§3 item 8) ensures two genuinely concurrent callers racing
+for the same slot never both reach `adapter.execute` -- the second one's attempt-commit is a real
+`RecordConflictError` -> `ExecutionConcurrentClaimError`, not an idempotent replay. **Disclosed
+structural fact:** if `adapter.execute`
 itself raises (rather than returning an error fact), `route.py` converts that into a raised
 `ExecutionAdapterError` rather than committing an `UNKNOWN`-outcome receipt -- by that point
 `execution_attempt` is already durably committed, so the *next* call for that identical slot
@@ -565,7 +637,7 @@ content (including `claim_token` and `requested_at`) is still fully tamper-check
 through that kind's own `*_semantic_fingerprint` function -- the coarser slot key is only the
 record *id*, never a substitute for full content tamper-detection.
 
-Per-request resolution, in order (`route.py` step 10):
+Per-request resolution, in order (`route.py` step 4):
 
 ```text
 resolve change_execution_receipt at slot_key
@@ -581,10 +653,20 @@ resolve change_execution_receipt at slot_key
                                        ("the true outcome of a prior attempt ... is genuinely
                                         unknown; refusing rather than risk a duplicate real
                                         mutation")
-    not found                      -> proceed: commit execution_intent, then execution_attempt
-                                       (either commit's RecordConflictError ->
-                                        ExecutionConcurrentClaimError -- a genuinely concurrent
-                                        claim, never silently retried)
+    not found -> resolve execution_intent at slot_key
+      found, claim_token matches   -> resuming_from_existing_intent=True: proceed exactly as
+                                       "not found" below, except the staleness check (§6 P18-C4)
+                                       is skipped for this one call -- a crash between the intent
+                                       commit and the attempt commit, this exact caller retrying
+                                       (§3 item 7)
+      found, claim_token differs   -> not a resume; proceed as "not found" below unchanged --
+                                       correctly collides at the intent-commit step
+                                       (RecordConflictError -> ExecutionConcurrentClaimError)
+      not found                    -> proceed: commit execution_intent, then execution_attempt
+                                       (carrying a fresh attempt_nonce -- §3 item 8; either
+                                       commit's RecordConflictError ->
+                                       ExecutionConcurrentClaimError -- a genuinely concurrent
+                                       claim, never silently retried)
 ```
 
 Every record resolved from the Store at any point in this state machine
@@ -678,6 +760,21 @@ the real code this document was written from.
    traversal/symlink-escape enforcement it performs is real, not decorative: absolute/`.`/`..`
    rejection before any filesystem touch, ancestor-symlink walking, existing-symlink-target
    refusal, and independent `Path.resolve()` containment as defense in depth (`adapter.py`).
+9. **`worktree_root` is bound once at composition, never carried on the per-request
+   `execute(...)` call** -- an automated review of PR #74 identified that a request-facing
+   `worktree_root` was a genuine Boundary-binding gap, since every other trust-sensitive
+   parameter this module uses was already bound once at composition (`route.py`, §3 item 6).
+10. **A caller resuming its own crash-interrupted intent skips the staleness check for that one
+    call** -- closes a real crash-recovery gap an automated review identified: a crash between
+    the `execution_intent` commit and the following `execution_attempt` commit previously
+    stranded the slot behind a spurious, permanent `StaleExecutionInputError` (`route.py`, §3
+    item 7/§9).
+11. **`execution_attempt` carries a fresh, per-call `attempt_nonce`** -- closes a genuine race an
+    automated review identified, where two truly concurrent callers could both pass
+    idempotency-slot resolution before either committed anything and both reach
+    `adapter.execute`; the fix reuses the Store's own existing conflict detection rather than
+    adding new Store-layer machinery, and deliberately leaves `execution_intent`'s own body
+    untouched (`route.py`/`engine.py`/`identity.py`, §3 item 8).
 
 ## 12. Required proof layers
 
@@ -702,16 +799,19 @@ A full test suite now exists (§1): `tests/unit/change_executor/test_change_exec
 `tests/fixtures/change_executor_world.py` and `tests/fixtures/change_executor_kill_switch_issuer.py`
 (the latter a mint-only Ed25519 issuer, deliberately separate from `kill_switch.py`'s own
 verify-only committer -- the identical issuer/verifier split Phase 17 Round 5 established). Final
-run: **161 passed, 0 skipped, 0 failed** (`pytest tests/unit/change_executor/
+run, with all three automated-review findings' own regression tests included (§1): **167
+passed, 0 skipped, 0 failed** (`pytest tests/unit/change_executor/
 tests/contract/change_executor/ tests/integration/change_executor/ -q`).
 
-- **V1** (`test_change_executor_identity.py`, 63 tests) requires every identity this delivery
+- **V1** (`test_change_executor_identity.py`, 65 tests) requires every identity this delivery
   mints -- `execution_intent_id`, `execution_attempt_id`, `change_execution_receipt_id`,
   `execution_boundary_fingerprint`, `kill_switch_id` -- to be deterministic and collision-sensitive
   to every one of its own semantic fields (parametrized field-by-field over every
-  `*_SEMANTIC_FIELDS` tuple in §4.1), `execution_mapping_slot_key` to depend on exactly
-  `(change_id, execution_boundary_fingerprint, adapter_identity_fingerprint)` and nothing else
-  (`claim_token`/`requested_at` proven *not* to move it), and every record kind to schema-validate.
+  `*_SEMANTIC_FIELDS` tuple in §4.1, now including `execution_attempt`'s own `attempt_nonce` --
+  §3 item 8), `execution_mapping_slot_key` to depend on exactly `(change_id,
+  execution_boundary_fingerprint, adapter_identity_fingerprint)` and nothing else
+  (`claim_token`/`requested_at`/`attempt_nonce` proven *not* to move it), and every record kind to
+  schema-validate.
 - **V2** (`test_change_executor_authority_continuity.py`, 21 tests) requires canonical
   Authority/Change evaluator reproduction (never a hand-forged decision -- built through the real
   `evaluate_authority`/`derive_change` route, `tests/change_helpers.route`/`tests/
@@ -726,7 +826,7 @@ tests/contract/change_executor/ tests/integration/change_executor/ -q`).
   `store.resolve_record`, `evidence_handoff.route_change_execution_to_evidence` genuinely derives
   an Evidence record from it with no mocking of the Evidence layer, and no `difference_event`/
   `closure_evaluation` record exists anywhere in the project's own Store.
-- **V4** (`test_change_executor_idempotency_crash_matrix.py`, 9 tests) requires the exact-replay/
+- **V4** (`test_change_executor_idempotency_crash_matrix.py`, 11 tests) requires the exact-replay/
   conflicting-replay/concurrent-duplicate/crash/partial-failure/retry-refusal matrix §9 describes
   in full: exact replay returns the byte-identical receipt with the adapter called exactly once
   total across both calls; a mismatched `claim_token` against a terminal slot raises
@@ -735,6 +835,16 @@ tests/contract/change_executor/ tests/integration/change_executor/ -q`).
   `execution_attempt` with no receipt raises `ExecutionReconciliationRequiredError`; a partial-
   failure adapter produces a terminal `PARTIAL_MUTATION`/`ROLLBACK_SUCCEEDED`/`ROLLBACK_FAILED`
   outcome that a second call then replays cleanly, adapter never called twice for the same slot.
+  Two further tests prove the automated-review fixes directly (§3 items 7-8):
+  `test_crash_between_intent_commit_and_attempt_commit_is_recoverable_via_resumed_retry` plants a
+  bare `execution_intent` (no compensating headroom) and proves the identical retry resumes to a
+  genuine `SUCCEEDED` receipt with the adapter called exactly once total, never
+  `StaleExecutionInputError`; `test_two_racing_callers_for_the_identical_slot_call_the_adapter_at_
+  most_once` drives a second, independent `execute()` call to full completion from inside the
+  first caller's own idempotency-slot resolution (a real Store proxy, the identical technique
+  V5's own `_RevokeOnFirstLoadCurrent` establishes), and proves exactly one of the two callers
+  reaches a terminal `SUCCEEDED` receipt, the other raises `ExecutionConcurrentClaimError`, and
+  one shared adapter instance's own `call_count` is exactly 1.
 - **V5** (`test_change_executor_prohibited_scope_kill_switch.py`, 41 tests) requires the
   prohibited-scope and kill-switch matrix in full, including the two proof obligations P18-C8
   itself names explicitly: `test_pre_start_kill_switch_revocation_refuses_with_zero_adapter_calls`
@@ -768,14 +878,20 @@ tests/contract/change_executor/ tests/integration/change_executor/ -q`).
   Change execution against the same project proves `state_revision` advances by exactly the number
   of State-mutating commits this package made, with every existing resolve-recompute-compare
   contract still holding for both.
-- **Static conformance** (`test_change_executor_static_conformance.py`, 11 tests) requires
+- **Static conformance** (`test_change_executor_static_conformance.py`, 13 tests) requires
   side-effect imports and filesystem mutation confined to the adapter owner, with no arbitrary
   shell/remote-command surface, credential source, GitHub push/merge, deployment, direct
   State/Evidence write, dynamic tool dispatch, or self-approval route: no module in this package
   imports `socket`, `subprocess`, `urllib`, or `requests`, or mutates `os.environ`; the composed
   `execute` closure's own real parameter set (via `inspect.signature`, not AST) is exactly
-  `{change_id, claim_token, execution_instant, worktree_root, permit_semantic_reuse}`, carrying no
-  `store`/`project_id`/`project_binding_id`/Boundary/adapter parameter of any kind; no function
+  `{change_id, claim_token, execution_instant, permit_semantic_reuse}`, carrying no
+  `store`/`project_id`/`project_binding_id`/Boundary/adapter/`worktree_root` parameter of any kind
+  (§3 item 6); two further tests prove `worktree_root` moved to composition genuinely, not merely
+  in the two static-shape checks above --
+  `test_compose_change_executor_requires_worktree_root_to_be_an_existing_directory` proves
+  composition itself refuses a non-existent directory, and
+  `test_composed_execute_closure_rejects_a_worktree_root_keyword_argument` proves passing
+  `worktree_root=` to the returned closure raises a genuine `TypeError`; no function
   anywhere in the shipped package accepts a parameter named `classify_resolved_address`,
   `perform_resolution`, `perform_connection`, `classify`, or any other generic policy-callable
   name; `route.py`'s own `__all__` is pinned to exactly `["compose_change_executor"]`; and
@@ -799,7 +915,12 @@ passing test this delivery itself observed (§1):
   to close. What is proved is the ordinary, real defense every check performs at the moment it
   runs -- absolute/`.`/`..` rejection, ancestor-symlink refusal, existing-symlink-target refusal,
   and independent resolved-path containment -- not immunity to a concurrent, privileged local
-  attacker racing the filesystem itself.
+  attacker racing the *same* worktree's own filesystem underneath it mid-execution. `worktree_root`
+  now being bound once at composition (§3 item 6/§11 item 9) closes a different, genuine gap --
+  a caller of one composed executor can no longer substitute an arbitrary *different* root per
+  request, since every Change executed through it already shares that one composed executor's
+  own bound Boundary's fixed `repository`/`branch` -- but this non-claim about a concurrent local
+  attacker on the one bound root itself is unchanged and still holds in full.
 - that this package's kill-switch mechanism is resistant to a compromised trust-anchor private
   key. `kill_switch.py` verifies a presented Ed25519 signature against whatever public key its
   own caller supplies as `trust_anchor_public_key_hex`; if that private key itself is
@@ -820,10 +941,12 @@ passing test this delivery itself observed (§1):
   rollback` deletes exactly the paths the primary call's own raw facts say it wrote; it performs
   no compensating action for anything else a partially-completed write might have changed (a
   directory it created along the way, for instance) beyond the specific files named.
-- that this delivery's own test suite (161 tests, §12) constitutes Structural Review: every
+- that this delivery's own test suite (167 tests, §12) constitutes Structural Review: every
   citation above is to a test this delivery itself wrote and observed passing against the real
-  shipped code, but none of it is independent review by the adopting Structural Advisor, which
-  `STRUCTURAL_REVIEW_ROUNDS_APPLIED=0` (document header) already discloses.
+  shipped code -- including the regression tests an automated PR review's three findings
+  prompted (§1/§3 items 6-8/§11 items 9-11) -- but none of it is independent review by the
+  adopting Structural Advisor, which `STRUCTURAL_REVIEW_ROUNDS_APPLIED=0` (document header)
+  already discloses.
 
 ## 14. Gate 18
 

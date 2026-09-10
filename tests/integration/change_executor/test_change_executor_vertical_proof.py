@@ -73,6 +73,7 @@ def test_real_vertical_execution_writes_disk_round_trips_and_hands_off_to_eviden
         execution_boundary=execution_boundary_for(),
         adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
         adapter=adapter,
+        worktree_root=str(worktree_root),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -80,7 +81,6 @@ def test_real_vertical_execution_writes_disk_round_trips_and_hands_off_to_eviden
         change["change_id"],
         claim_token="vertical-proof-claim",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree_root),
     )
 
     # -- the file genuinely exists on disk with the exact content requested --

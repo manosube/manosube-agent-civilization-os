@@ -136,12 +136,16 @@ VPS_OR_CLOUD_PROVIDER_REQUIRED=false
 
 ```text
 compose_change_executor              a trusted composition step binding Store/Project/Binding/
-                                      Execution Boundary/adapter identity/adapter/kill-switch
-                                      trust anchor once, and returning the request-facing
-                                      operation itself: execute(change_id, *, claim_token,
-                                      execution_instant, worktree_root,
+                                      Execution Boundary/adapter identity/adapter/worktree_root/
+                                      kill-switch trust anchor once, and returning the
+                                      request-facing operation itself: execute(change_id, *,
+                                      claim_token, execution_instant,
                                       permit_semantic_reuse=False) -> {"receipt": ...,
-                                      "replay": bool, "semantic_reuse": bool}
+                                      "replay": bool, "semantic_reuse": bool}. worktree_root
+                                      moved to composition time (an automated PR review finding,
+                                      CHANGE_EXECUTOR_CONTRACT.md §3 item 6) -- every other
+                                      trust-sensitive parameter here was already bound once at
+                                      composition, and worktree_root now is too.
 route_change_execution_to_evidence   hand a committed change_execution_receipt to the existing
                                       Evidence owner, in the Change-Free Verification Evidence
                                       position
@@ -156,8 +160,12 @@ execution_intent           the first durable fact of an execution attempt -- whi
                             full content address, so two distinct claim_token values for the
                             identical (change, Boundary, adapter) triple always collide.
 execution_attempt          restates execution_intent's own fields plus a reference back to it,
-                            under the identical mapping-slot id -- committed once the concurrency
-                            barrier has already passed.
+                            plus a fresh, per-call attempt_nonce -- under the identical
+                            mapping-slot id -- committed once the concurrency barrier has already
+                            passed. attempt_nonce (never part of the id itself) makes two
+                            independently-built attempts for the identical slot genuinely
+                            different byte-for-byte, closing a genuine race an automated PR
+                            review identified (CHANGE_EXECUTOR_CONTRACT.md §3 item 8).
 change_execution_receipt   the sole durable, immutable fact this package ever commits about one
                             execution attempt's own terminal outcome (P18-C6). Its own id is
                             always exactly its own execution_request_id, the shared mapping-slot
@@ -199,7 +207,12 @@ the full list.
   files, 2 fixture modules, 161 tests, 0 skipped, 0 failed) was written and verified immediately
   afterward and now exists under `tests/unit/change_executor/`, `tests/contract/change_executor/`,
   and `tests/integration/change_executor/`; `CHANGE_EXECUTOR_CONTRACT.md` §12 cites it by real
-  file and test name.
+  file and test name. An automated review of PR #74 subsequently identified three real defects
+  against `route.py` (a request-facing `worktree_root` not bound to the Boundary; a crash between
+  the `execution_intent` and `execution_attempt` commits permanently stranding the slot; two
+  concurrent callers able to both call `adapter.execute`), each fixed and each proven by a new
+  regression test -- the same 9 files and 2 fixture modules, now 167 tests, 0 skipped, 0 failed
+  (`CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 6-8/§11 items 9-11/§12).
 - A model output, URL Boot content, or temporary Agent output is never treated as executable
   authority-bearing instruction here -- this package imports none of `model_runtime`, `url_boot`,
   or `agent_runtime`, and its one replaceable adapter receives only a closed, prevalidated

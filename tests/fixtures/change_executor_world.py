@@ -568,6 +568,12 @@ def commit_bare_execution_attempt(
     from manosube_agent_civilization.change_executor.engine import build_execution_attempt
 
     slot_key, boundary_fp, adapter_fp = slot_key_for(change_id, boundary, adapter_identity)
+    # A deterministic (never `secrets`-random) test-only nonce: this helper plants a *standalone*
+    # attempt directly, never through a live `execute()` call, so there is no genuine concurrent
+    # caller here to distinguish from -- determinism keeps this fixture's own output reproducible.
+    attempt_nonce = hashlib.sha256(
+        f"bare-attempt-nonce:{slot_key}:{claim_token}".encode()
+    ).hexdigest()[:32]
     attempt = build_execution_attempt(
         project_id=project_id,
         change_ref={"kind": "change", "id": change_id},
@@ -576,6 +582,7 @@ def commit_bare_execution_attempt(
         claim_token=claim_token,
         requested_at=requested_at,
         execution_intent_ref={"kind": "execution_intent", "id": slot_key},
+        attempt_nonce=attempt_nonce,
     )
     commit_foreign_record(
         store, project_id, "execution_attempt", slot_key, attempt, committed_at=committed_at

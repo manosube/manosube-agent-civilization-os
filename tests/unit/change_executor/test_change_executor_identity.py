@@ -182,10 +182,12 @@ _OTHER_INTENT_ID = execution_mapping_slot_key(
 BASE_ATTEMPT: dict[str, Any] = {
     **deepcopy(BASE_INTENT),
     "execution_intent_ref": {"kind": "execution_intent", "id": _INTENT_ID},
+    "attempt_nonce": "a" * 32,
 }
 VARIANTS_ATTEMPT: dict[str, Any] = {
     **deepcopy(VARIANTS_INTENT),
     "execution_intent_ref": {"kind": "execution_intent", "id": _OTHER_INTENT_ID},
+    "attempt_nonce": "b" * 32,
 }
 
 assert set(BASE_ATTEMPT) == set(EXECUTION_ATTEMPT_SEMANTIC_FIELDS)
@@ -209,7 +211,9 @@ def test_execution_attempt_id_equals_the_identical_slot_key_execution_intent_id_
     assert execution_attempt_id(BASE_ATTEMPT) == execution_intent_id(BASE_INTENT) == _INTENT_ID
 
 
-@pytest.mark.parametrize("field", ("claim_token", "requested_at", "execution_intent_ref"))
+@pytest.mark.parametrize(
+    "field", ("claim_token", "requested_at", "execution_intent_ref", "attempt_nonce")
+)
 def test_execution_attempt_id_is_insensitive_to_non_slot_fields(field: str) -> None:
     baseline_id = execution_attempt_id(BASE_ATTEMPT)
     mutated = deepcopy(BASE_ATTEMPT)
@@ -408,8 +412,10 @@ def test_build_execution_attempt_round_trips_through_its_own_schema() -> None:
         claim_token="claim-alpha",  # noqa: S106
         requested_at="2026-09-10T00:00:00Z",
         execution_intent_ref={"kind": "execution_intent", "id": slot_key},
+        attempt_nonce="f" * 32,
     )
     validate_record(record, "execution_attempt.schema.json", base=CHANGE_EXECUTOR_SCHEMA_BASE)
+    assert record["attempt_nonce"] == "f" * 32
     assert record["execution_attempt_id"] == slot_key
 
 

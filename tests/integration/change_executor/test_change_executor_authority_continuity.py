@@ -43,7 +43,9 @@ def _world(tmp_path: Path, *, subdir: str = "backend") -> tuple[Any, dict[str, A
     return bound(tmp_path, subdir=subdir)
 
 
-def _executor(store: Any, info: dict[str, Any], adapter: Any, **boundary_overrides: Any) -> Any:
+def _executor(
+    store: Any, info: dict[str, Any], adapter: Any, *, worktree_root: str, **boundary_overrides: Any
+) -> Any:
     return compose_change_executor(
         store,
         project_id=info["project_id"],
@@ -51,6 +53,7 @@ def _executor(store: Any, info: dict[str, Any], adapter: Any, **boundary_overrid
         execution_boundary=execution_boundary_for(**boundary_overrides),
         adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
         adapter=adapter,
+        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -85,13 +88,12 @@ def test_composed_execute_runs_a_genuinely_autonomous_committed_change(tmp_path:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     outcome = execute(
         change["change_id"],
         claim_token="claim-a",  # noqa: S106
         execution_instant="2026-09-10T00:00:01Z",
-        worktree_root=str(worktree),
     )
     assert outcome["receipt"]["outcome"] == "SUCCEEDED"
     assert adapter.call_count == 1
@@ -125,14 +127,13 @@ def test_tampered_authority_decision_is_refused_before_any_adapter_call(tmp_path
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionReceiptIntegrityError):
         execute(
             change["change_id"],
             claim_token="claim-b",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -157,14 +158,13 @@ def test_tampered_change_record_is_refused_before_any_adapter_call(tmp_path: Pat
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionReceiptIntegrityError):
         execute(
             change["change_id"],
             claim_token="claim-c",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -200,14 +200,13 @@ def test_change_declaring_a_different_project_is_refused_before_any_adapter_call
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     adapter = CountingAdapter()
-    execute = _executor(store_a, info_a, adapter)
+    execute = _executor(store_a, info_a, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionAuthorityProvenanceError):
         execute(
             change_b["change_id"],
             claim_token="claim-d",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -236,14 +235,13 @@ def test_action_kind_outside_the_bound_boundarys_permitted_set_is_refused(tmp_pa
     adapter = CountingAdapter()
     # Boundary only permits WRITE_DOCUMENTATION_FILE/DELETE_DOCUMENTATION_FILE (the default) --
     # the Change's own WRITE_ISOLATED_SOURCE_FILE is not among them.
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
     with pytest.raises(ExecutionAuthorityProvenanceError):
         execute(
             change["change_id"],
             claim_token="claim-e",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
     assert adapter.call_count == 0
 
@@ -298,7 +296,13 @@ def test_compose_change_executor_refuses_a_smuggled_human_only_boundary_too(tmp_
     try:
         boundary_module.PERMITTED_ACTION_KINDS = original | {human_only_kind}
         with pytest.raises(ExecutionBoundaryError):
-            _executor(store, info, adapter, permitted_action_kinds=[human_only_kind])
+            _executor(
+                store,
+                info,
+                adapter,
+                worktree_root=str(tmp_path),
+                permitted_action_kinds=[human_only_kind],
+            )
     finally:
         boundary_module.PERMITTED_ACTION_KINDS = original
     assert adapter.call_count == 0
@@ -331,13 +335,12 @@ def test_every_refusal_path_above_never_once_called_the_adapter(tmp_path: Path) 
         ),
         paths=["docs/z.md"],
     )
-    execute = _executor(store, info, adapter)
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
     with pytest.raises(ExecutionAuthorityProvenanceError):
         execute(
             result["change"]["change_id"],
             claim_token="claim-g",  # noqa: S106
             execution_instant="2026-09-10T00:00:01Z",
-            worktree_root=str(worktree),
         )
 
     assert adapter.call_count == 0

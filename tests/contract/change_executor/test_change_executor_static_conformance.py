@@ -15,6 +15,8 @@ import inspect
 import pathlib
 from types import ModuleType
 
+import pytest
+
 import manosube_agent_civilization
 import manosube_agent_civilization.change_executor as change_executor_module
 import manosube_agent_civilization.change_executor.adapter as adapter_module
@@ -151,11 +153,16 @@ def _minimal_boundary() -> dict[str, object]:
     }
 
 
-def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set() -> None:
-    """No ``store``/``project_id``/``project_binding_id``/Boundary/adapter parameter anywhere in
-    the returned closure's own signature -- introspecting a real Python object (``inspect.
-    signature``), never AST, since this proves what a caller of the *closure itself* can pass,
-    not merely what the composing function's own source names."""
+def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set(
+    tmp_path: pathlib.Path,
+) -> None:
+    """No ``store``/``project_id``/``project_binding_id``/Boundary/adapter/``worktree_root``
+    parameter anywhere in the returned closure's own signature -- introspecting a real Python
+    object (``inspect.signature``), never AST, since this proves what a caller of the *closure
+    itself* can pass, not merely what the composing function's own source names.
+    ``worktree_root`` moved to composition time (Phase 18 Issue #73 review finding) -- it is
+    bound below, once, and is asserted absent from the returned closure's own signature exactly
+    like every other trust-sensitive composition-time parameter."""
 
     execute = change_executor_module.compose_change_executor(
         object(),
@@ -164,6 +171,7 @@ def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set()
         execution_boundary=_minimal_boundary(),
         adapter_identity={"kind": "stub", "version": "0.1"},
         adapter=_StubAdapter(),
+        worktree_root=str(tmp_path),
         kill_switch_trust_anchor_public_key_hex="ab" * 32,
     )
     code = execute.__code__
@@ -172,7 +180,6 @@ def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set()
         "change_id",
         "claim_token",
         "execution_instant",
-        "worktree_root",
         "permit_semantic_reuse",
     }
     signature = inspect.signature(execute)
@@ -180,7 +187,6 @@ def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set()
         "change_id",
         "claim_token",
         "execution_instant",
-        "worktree_root",
         "permit_semantic_reuse",
     }
     for forbidden in (
@@ -190,8 +196,59 @@ def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set()
         "execution_boundary",
         "adapter",
         "adapter_identity",
+        "worktree_root",
     ):
         assert forbidden not in signature.parameters, forbidden
+
+
+def test_compose_change_executor_requires_worktree_root_to_be_an_existing_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``worktree_root`` is validated at composition time -- a non-existent directory refuses
+    before any request-facing operation can even be obtained (mirrors how a malformed
+    ``execution_boundary``/``adapter_identity`` already refuses at this same point)."""
+
+    from manosube_agent_civilization.change_executor.errors import ChangeExecutorError
+
+    missing = tmp_path / "does-not-exist"
+    with pytest.raises(ChangeExecutorError):
+        change_executor_module.compose_change_executor(
+            object(),
+            project_id="PRJ-STATIC-0002",
+            project_binding_id="PROJBIND-STATIC-0002",
+            execution_boundary=_minimal_boundary(),
+            adapter_identity={"kind": "stub", "version": "0.1"},
+            adapter=_StubAdapter(),
+            worktree_root=str(missing),
+            kill_switch_trust_anchor_public_key_hex="ab" * 32,
+        )
+
+
+def test_composed_execute_closure_rejects_a_worktree_root_keyword_argument(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A genuine ``TypeError`` -- never a silently-accepted-and-ignored keyword -- confirms
+    ``worktree_root`` really is gone from the returned closure's own call shape, not merely
+    absent from the two static-shape checks above. Calling the closure with a ``worktree_root=``
+    keyword must raise, exactly as passing any other composition-time-only parameter would."""
+
+    execute = change_executor_module.compose_change_executor(
+        object(),
+        project_id="PRJ-STATIC-0003",
+        project_binding_id="PROJBIND-STATIC-0003",
+        execution_boundary=_minimal_boundary(),
+        adapter_identity={"kind": "stub", "version": "0.1"},
+        adapter=_StubAdapter(),
+        worktree_root=str(tmp_path),
+        kill_switch_trust_anchor_public_key_hex="ab" * 32,
+    )
+    with pytest.raises(TypeError):
+        execute(
+            "CHANGE-" + "A" * 64,
+            claim_token="claim",  # noqa: S106
+            execution_instant="2026-09-10T00:00:01Z",
+            worktree_root=str(tmp_path),
+        )
 
 
 # --------------------------------------------------------------------------------------- #
