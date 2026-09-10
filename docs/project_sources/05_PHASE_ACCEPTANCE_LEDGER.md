@@ -757,3 +757,40 @@ PHASE_14_ALLOWED=false
 ```
 
 This ledger proves the recorded acceptance lineage only. It does not prove future Phase completion, runtime reachability, model execution, autonomous Change, long-running superiority, comparative benchmark success or v1.0 acceptance.
+
+---
+
+# 22. Phase 13–16 acceptance receipts
+
+| Phase | Governing Issue | Merged PR | Accepted merge SHA | Receipt class | Accepted capability |
+|---:|---:|---:|---|---|---|
+| 13 | [#51](https://github.com/manosube/manosube-agent-civilization-os/issues/51) | [#52](https://github.com/manosube/manosube-agent-civilization-os/pull/52) | `657f8b4a6e504cc5366a6c85a7d49644d4cf2fc3` | `SUCCESSOR_BOUNDARY_CORROBORATED` | Independent Verification over canonical Evidence |
+| 14 | [#62](https://github.com/manosube/manosube-agent-civilization-os/issues/62) | [#63](https://github.com/manosube/manosube-agent-civilization-os/pull/63) | `149492e7fd094a424a40b840dd4dcb564f012461` | `DIRECT_COMPLETION_RECEIPT` | Identity-preserving GitHub projection with runtime-injected execution capability |
+| 15 | [#64](https://github.com/manosube/manosube-agent-civilization-os/issues/64) | [#65](https://github.com/manosube/manosube-agent-civilization-os/pull/65) | `94f067ba6acb4e4459ef3ecd15d6c8c1332e1db7` | `DIRECT_COMPLETION_RECEIPT` | Bounded Runtime Observation and trusted runtime provisioning |
+| 16 | [#66](https://github.com/manosube/manosube-agent-civilization-os/issues/66) | [#67](https://github.com/manosube/manosube-agent-civilization-os/pull/67) | `8bc9d0e7a3784b658f8b523361904552f089b3c6` | `DIRECT_COMPLETION_RECEIPT` | Multi-model replaceability and Phase 12 execution-contract continuity |
+
+Phase 16のexact delivery headは
+`c906f8a4b56c5fec03108873814499e363d68948`であり、merge commitの第二parentと一致する。
+第一parentはPhase 15 accepted main
+`94f067ba6acb4e4459ef3ecd15d6c8c1332e1db7`である。PR #67はmerged、Issue #66は本観測時点では
+openである。Issueのopen状態はPhase acceptanceを否定しないが、close操作はこのreceipt記録後の
+Human actionとして分離する。
+
+```text
+OBSERVED_AT_UTC=2026-09-10T05:53:55Z
+ACCEPTED_PHASE_RANGE=0..16
+ACCEPTED_PHASE_COUNT=17
+LAST_ACCEPTED_PHASE=16_MULTI_MODEL_REPLACEABILITY
+LAST_ACCEPTED_MAIN_SHA=8bc9d0e7a3784b658f8b523361904552f089b3c6
+
+PHASE_16_CURRENT_ROUTE_BLOCKERS=0
+PHASE_16_STRUCTURAL_FINDINGS_OPEN=0
+PHASE_16_COMPLETE=true
+ISSUE_66_CLOSE_ALLOWED=true
+PHASE_17_ALLOWED=true
+PHASE_17_IMPLEMENTED=false
+```
+
+Phase 16 acceptanceは、実model/providerの呼出し、provider credential利用、モデル優劣判定、model
+memoryのState化、model outputのAuthority/Evidence化、自律Change、remote command execution、
+またはPhase 17 URL Bootの実装を主張しない。
