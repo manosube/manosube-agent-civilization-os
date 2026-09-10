@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/url_boot/url_source_observation_envelope.schema.json",
+  "title": "Canonical URL Source Observation Envelope",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "url_source_observation_envelope_id",
+    "url_source_observation_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "boot_state_fingerprint",
+    "boot_state_transition_ref",
+    "requested_source_identity",
+    "requested_source_fingerprint",
+    "effective_source_identity",
+    "effective_source_fingerprint",
+    "boundary",
+    "boundary_fingerprint",
+    "source_request_identity",
+    "retrieved_at",
+    "fetch_outcome",
+    "response_status",
+    "redirect_hop_count",
+    "resolution_provenance",
+    "observed_fields",
+    "observed_content_fingerprint",
+    "adapter_identity",
+    "human_authority_ref"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "url_source_observation_envelope_id": {
+      "type": "string",
+      "pattern": "^URL-SOURCE-OBSERVATION-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "url_source_observation_semantic_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {"$ref": "../common/reference.schema.json"},
+    "boot_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "boot_state_transition_ref": {"$ref": "../common/reference.schema.json"},
+    "requested_source_identity": {"$ref": "#/$defs/source_identity"},
+    "requested_source_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "effective_source_identity": {"$ref": "#/$defs/source_identity"},
+    "effective_source_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "boundary": {"$ref": "#/$defs/boundary"},
+    "boundary_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "source_request_identity": {
+      "type": "string",
+      "pattern": "^URL-SOURCE-OBSERVATION-REQUEST-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "retrieved_at": {"$ref": "../common/timestamp.schema.json"},
+    "fetch_outcome": {
+      "const": "OBSERVED"
+    },
+    "response_status": {"type": "integer", "minimum": 200, "maximum": 299},
+    "redirect_hop_count": {"type": "integer", "minimum": 0},
+    "resolution_provenance": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/hop_resolution"},
+      "minItems": 1
+    },
+    "observed_fields": {"type": "object"},
+    "observed_content_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "adapter_identity": {"type": "object"},
+    "human_authority_ref": {"$ref": "../common/reference.schema.json"}
+  },
+  "$defs": {
+    "source_identity": {
+      "type": "object",
+      "required": ["scheme", "host", "port", "path", "query", "fragment"],
+      "properties": {
+        "scheme": {"enum": ["http", "https"]},
+        "host": {"type": "string", "minLength": 1, "maxLength": 253},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "path": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "query": {"oneOf": [{"type": "null"}, {"type": "string", "maxLength": 2048}]},
+        "fragment": {"oneOf": [{"type": "null"}, {"type": "string", "maxLength": 2048}]}
+      },
+      "additionalProperties": false
+    },
+    "hop_resolution": {
+      "type": "object",
+      "required": ["host", "port", "resolved_address"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1, "maxLength": 253},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "resolved_address": {"type": "string", "minLength": 1, "maxLength": 45}
+      },
+      "additionalProperties": false
+    },
+    "boundary": {
+      "type": "object",
+      "required": [
+        "fetch_method",
+        "network_scope",
+        "redirect_policy",
+        "timeout_seconds",
+        "max_response_bytes",
+        "admitted_content_types",
+        "permitted_fields",
+        "time_window",
+        "redaction_fields",
+        "credentials_permitted"
+      ],
+      "properties": {
+        "fetch_method": {"enum": ["HTTP_GET_BOUNDED"]},
+        "network_scope": {
+          "type": "object",
+          "required": ["admitted_schemes", "admitted_hosts", "admitted_ports"],
+          "properties": {
+            "admitted_schemes": {
+              "type": "array",
+              "items": {"enum": ["http", "https"]},
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "admitted_hosts": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1, "maxLength": 253},
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "admitted_ports": {
+              "type": "array",
+              "items": {"type": "integer", "minimum": 1, "maximum": 65535},
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "redirect_policy": {
+          "type": "object",
+          "required": ["max_redirects"],
+          "properties": {
+            "max_redirects": {"type": "integer", "minimum": 0, "maximum": 10}
+          },
+          "additionalProperties": false
+        },
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 60},
+        "max_response_bytes": {"type": "integer", "exclusiveMinimum": 0, "maximum": 10485760},
+        "admitted_content_types": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "permitted_fields": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "time_window": {
+          "type": "object",
+          "required": ["issued_at", "expires_at"],
+          "properties": {
+            "issued_at": {"$ref": "../common/timestamp.schema.json"},
+            "expires_at": {"$ref": "../common/timestamp.schema.json"}
+          },
+          "additionalProperties": false
+        },
+        "redaction_fields": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
+          "uniqueItems": true
+        },
+        "credentials_permitted": {"const": false},
+        "expected_field": {"type": "string", "minLength": 1, "maxLength": 128},
+        "expected_value": {"type": ["string", "number", "boolean", "null"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

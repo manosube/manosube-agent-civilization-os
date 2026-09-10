@@ -99,8 +99,10 @@ def main() -> int:
     # and two owned by the existing Authority element (`model_execution_grant`, the
     # Human-Authority-signed capability grant, and `model_execution_decision`, the
     # content-addressed decision `evaluate_model_execution_authorization` mints). No existing
-    # schema file is replaced or removed.
-    if len(paths) != 66 or len(set(ids)) != len(paths) or None in ids:
+    # schema file is replaced or removed. Phase 17's own Read-only URL Boot delivery (Issue #69)
+    # adds one more, `url_boot/url_source_observation_envelope` -- the committed URL Source
+    # Observation Envelope -- making 67.
+    if len(paths) != 67 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
