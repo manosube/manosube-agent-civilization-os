@@ -2532,3 +2532,67 @@ PASSした。マージ直後の`Merge source post-merge reflow`と`Source freshn
 Phase 18は次のroadmap work unitとして定義可能になったが、自動的な実装Authorityは生じない。
 Issue #69のcloseとPhase 18のObjective/Boundary/Authorityを持つ専用IssueおよびSHUKOU採択は、
 本source-sync PRの手動mergeとその結果mainの再観測後に分離して行う。
+
+---
+
+# 34. Phase 18 implementation-delivery bounded addendum (Issue #73)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、`src/`および`01_SCHEMA/`配下の新規kernel_surface変更
+（`src/manosube_agent_civilization/change_executor/`、`01_SCHEMA/change_executor/`）に
+対応付けるためだけの、最小限の事実記録である。
+
+Issue #73「Controlled Autonomous Change」のSHUKOU採択（Issue #73コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/73#issuecomment-5620526355`、
+`ADOPTION_ID=ADOPT_P18_CONTROLLED_AUTONOMOUS_CHANGE`、構造参謀API read-back receipt
+`https://github.com/manosube/manosube-agent-civilization-os/issues/73#issuecomment-5620533870`）
+を独立GitHub API再観測で確認し、`main`の実HEADが採択記録の`AUTHORIZED_TARGET_SHA`と一致する
+ことを確認した上で、新規branch上に実装した内容を記録する。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+GOVERNING_ISSUE=#73
+BASE_SHA=120cddbddd12e86cb8a233b90a69fe60a24b42c5
+BRANCH=agent/issue-73-phase18-controlled-autonomous-change
+IMPLEMENTATION_TARGET=NEW_BRANCH_AND_NEW_PR
+ADOPTION_ID=ADOPT_P18_CONTROLLED_AUTONOMOUS_CHANGE
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+```
+
+追加されたas-built ownerは `13_CHANGE_EXECUTOR/`（`CHANGE_EXECUTOR_INDEX.md`・
+`CHANGE_EXECUTOR_CONTRACT.md`）、`src/manosube_agent_civilization/change_executor/`
+（`route.py`・`boundary.py`・`kill_switch.py`・`adapter.py`・`engine.py`・`identity.py`・
+`types.py`・`errors.py`・`evidence_handoff.py`・`__init__.py`の10モジュール）、
+`01_SCHEMA/change_executor/`（`execution_boundary`・`execution_intent`・`execution_attempt`・
+`execution_receipt`・`change_executor_kill_switch`の5schema、schema総数67→72）である。
+`scripts/validate_schemas.py`自身のasserted schema countも67から72へ更新した。既存の
+State・Difference・Authority・Change・Evidence・Reflow・Binding・Boot・Runtime・Model
+Runtime・URL Bootのいずれのownerも置換・変更しない -- `change_executor`は既にAUTHORIZED
+状態のcanonical Changeを、closed low-risk Execution Boundary内でのみ実行し、immutableな
+`change_execution_receipt`を1件生成した上で停止する adapter layer であり、Authorityを
+生成せず、canonical Stateの意味的内容を自身の新規record kind以外変更せず、causalityを
+証明せず、十分なEvidenceを確立せず、Differenceをcloseせず、completionを宣言しない --
+既存のEvidence/Observation/Reflow ownerへhandoffするのみである。
+
+Human-controlled kill switch（`change_executor_kill_switch`、署名付きmonotonic
+ACTIVE/REVOKED chain）は、実行のたびに2回（Boot前と、唯一のadapter呼び出し直前）fresh
+resolve・signature再検証される。Production adapterは1つのみ（`ControlledFilesystemAdapter`
+-- disposable worktree上のbounded filesystem write/delete）であり、GitHub push/merge、
+deployment、認証情報、任意shell/subprocess/networkのいずれも一切実行しない。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`、9 test files + 2 fixture modules）は161件PASS、0
+skip、0 failで独立に検証済み。実装過程でtest suite自身が発見した1件の genuine defect
+（idempotency-slot resolutionがstalenessチェックより後に実行されていたため、最初の成功
+実行以降、同一claim_tokenでの通常replayがstaleとして誤って拒否されていた）は、
+`route.py`自身のdocstring disclosed judgment call 5として開示の上、この同一commit内で
+修正済みである。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+```

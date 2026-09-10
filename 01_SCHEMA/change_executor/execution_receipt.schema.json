@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/change_executor/execution_receipt.schema.json",
+  "title": "Change Execution Receipt",
+  "type": "object",
+  "required": ["schema_version", "change_execution_receipt_id", "execution_request_id", "change_ref", "idempotency_key", "authority_ref", "project_id", "project_binding_ref", "boot_state_fingerprint", "execution_boundary_fingerprint", "executor_identity", "executor_version", "target", "operation", "execution_started_at", "execution_ended_at", "outcome", "performed_result_fingerprint", "performed_result_summary", "rollback_outcome", "claim_token", "reobservation_request", "change_execution_receipt_semantic_fingerprint"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "change_execution_receipt_id": {"$ref": "#/$defs/slot_id"},
+    "execution_request_id": {"$ref": "#/$defs/slot_id"},
+    "change_ref": {"$ref": "#/$defs/change_ref"},
+    "idempotency_key": {"$ref": "#/$defs/semantic_fingerprint"},
+    "authority_ref": {"$ref": "#/$defs/authority_ref"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {"$ref": "#/$defs/project_binding_ref"},
+    "boot_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "execution_boundary_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"},
+    "executor_identity": {"type": "string", "minLength": 1},
+    "executor_version": {"type": "string", "minLength": 1},
+    "target": {"$ref": "#/$defs/target"},
+    "operation": {"$ref": "#/$defs/operation"},
+    "execution_started_at": {"$ref": "../common/timestamp.schema.json"},
+    "execution_ended_at": {"$ref": "../common/timestamp.schema.json"},
+    "outcome": {"$ref": "#/$defs/outcome"},
+    "performed_result_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"},
+    "performed_result_summary": {"$ref": "#/$defs/performed_result_summary"},
+    "rollback_outcome": {"$ref": "#/$defs/rollback_outcome"},
+    "claim_token": {"type": "string", "minLength": 1, "maxLength": 256},
+    "reobservation_request": {"$ref": "#/$defs/reobservation_request"},
+    "change_execution_receipt_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}
+  },
+  "$defs": {
+    "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
+    "slot_id": {"type": "string", "pattern": "^EXEC-SLOT-[0-9A-F]{64}(?![\\s\\S])"},
+    "change_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "change"}, "id": {"pattern": "^CHANGE-[0-9A-F]{64}(?![\\s\\S])"}}}
+      ]
+    },
+    "authority_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "authority_decision"}, "id": {"pattern": "^AUTH-DEC-[0-9A-F]{64}(?![\\s\\S])"}}}
+      ]
+    },
+    "project_binding_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "project_binding"}, "id": {"pattern": "^PROJBIND-[0-9A-F]{64}(?![\\s\\S])"}}}
+      ]
+    },
+    "target": {
+      "type": "object",
+      "required": ["repository", "branch", "worktree_root"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "branch": {"type": "string", "minLength": 1},
+        "worktree_root": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "operation_kind": {"enum": ["WRITE_DOCUMENTATION_FILE", "WRITE_TEST_FILE", "WRITE_ISOLATED_SOURCE_FILE", "WRITE_LOW_RISK_CONFIGURATION_FILE", "DELETE_DOCUMENTATION_FILE", "DELETE_TEST_FILE", "DELETE_ISOLATED_SOURCE_FILE"]},
+    "file_write": {
+      "type": "object",
+      "required": ["path", "content_utf8"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "content_utf8": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "file_delete": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "required": ["operation_kind", "file_writes", "file_deletes"],
+      "properties": {
+        "operation_kind": {"$ref": "#/$defs/operation_kind"},
+        "file_writes": {"type": "array", "items": {"$ref": "#/$defs/file_write"}},
+        "file_deletes": {"type": "array", "items": {"$ref": "#/$defs/file_delete"}}
+      },
+      "additionalProperties": false
+    },
+    "outcome": {"enum": ["SUCCEEDED", "REFUSED", "BOUNDARY_VIOLATION", "STALE_AUTHORITY", "TARGET_DRIFT", "KILL_SWITCH_STOPPED", "TIMEOUT", "ADAPTER_FAILURE", "PARTIAL_MUTATION", "ROLLBACK_SUCCEEDED", "ROLLBACK_FAILED", "UNKNOWN"]},
+    "performed_result_summary": {
+      "type": "object",
+      "required": ["files_written", "bytes_written", "files_deleted"],
+      "properties": {
+        "files_written": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "bytes_written": {"type": "integer", "minimum": 0},
+        "files_deleted": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      },
+      "additionalProperties": false
+    },
+    "rollback_outcome": {
+      "oneOf": [
+        {"type": "null"},
+        {"enum": ["NOT_ATTEMPTED", "ROLLBACK_SUCCEEDED", "ROLLBACK_FAILED"]}
+      ]
+    },
+    "reobservation_request": {
+      "type": "object",
+      "required": ["kind", "target", "reason_codes", "requested_at"],
+      "properties": {
+        "kind": {"const": "change_execution_reobservation_request"},
+        "target": {
+          "type": "object",
+          "required": ["repository", "branch", "paths"],
+          "properties": {
+            "repository": {"type": "string", "minLength": 1},
+            "branch": {"type": "string", "minLength": 1},
+            "paths": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          },
+          "additionalProperties": false
+        },
+        "reason_codes": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}(?![\\s\\S])"}},
+        "requested_at": {"$ref": "../common/timestamp.schema.json"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

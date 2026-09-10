@@ -147,8 +147,30 @@ CANONICAL_KERNEL_ENTRY_POINT = (f"{_PACKAGE_NAME}.reflow.route", "reflow")
 #: it (and, internally, appends to its own lineage log the identical way). Any other module
 #: in the installed tree performing a direct write of any recognized shape is a second,
 #: unsanctioned write path.
+#:
+#: Phase 18 (Issue #73) adds one further, deliberately distinct sanctioned writer:
+#: ``change_executor.adapter`` (:class:`~manosube_agent_civilization.change_executor.adapter.
+#: ControlledFilesystemAdapter`). K-002's own invariant is "no *parallel canonical State
+#: owner* exists" -- a second module able to read or write ``lineage``/``current``/
+#: ``records``/``recovery`` instead of the one Store implementation. This adapter is not
+#: that: its own writes are confined, by its own code (verified separately by
+#: ``tests/contract/change_executor/test_change_executor_static_conformance.py`` and
+#: :mod:`~manosube_agent_civilization.change_executor.adapter`'s own docstring), to a
+#: caller-supplied, disposable ``worktree_root`` a Change Execution Boundary admits -- never
+#: a Store project directory, never any of the four canonical-State path names above. It
+#: mutates no canonical State, commits no record, and is reachable only through the one
+#: trusted composition boundary (:func:`~manosube_agent_civilization.change_executor.route.
+#: compose_change_executor`) after a full preflight-before-effect admission chain. Sanctioning
+#: it here is therefore not a second State owner; it is disclosing the one bounded,
+#: non-canonical write surface Phase 18's own adopted contract (P18-C3) requires, so this
+#: static scan continues to prove what it actually claims rather than merely staying silent
+#: about a write path it was never asked to admit.
 _SANCTIONED_DIRECT_WRITE_MODULES = frozenset(
-    {f"{_PACKAGE_NAME}.store.file_store", f"{_PACKAGE_NAME}.store.atomic_write"}
+    {
+        f"{_PACKAGE_NAME}.store.file_store",
+        f"{_PACKAGE_NAME}.store.atomic_write",
+        f"{_PACKAGE_NAME}.change_executor.adapter",
+    }
 )
 #: R10-F2, re-pointed R5-R1 (Issue #51, P13-R5-R1: ``SINGLE_COMMITTER_REQUIRED``): the one
 #: module sanctioned to call some object's ``.commit(...)`` -- the shared, domain-agnostic
