@@ -212,24 +212,28 @@ def fetch_one_hop(
     if source_identity["query"]:
         request_target = f"{request_target}?{source_identity['query']}"
 
-    if source_identity["scheme"] == "https":
-        context = ssl.create_default_context()
-        connection: http.client.HTTPConnection = http.client.HTTPSConnection(
-            address, port, timeout=timeout_seconds, context=context
-        )
-        connection.set_tunnel  # noqa: B018 -- not used; explicit no-op to document no proxy tunnel is ever built
-    else:
-        connection = http.client.HTTPConnection(address, port, timeout=timeout_seconds)
+    # Deliberately a plain ``HTTPConnection`` even for https, for *both* schemes: its own
+    # ``connect()`` performs only the raw TCP connect against *address* and never itself touches
+    # TLS. Using the stdlib ``HTTPSConnection`` here instead would be wrong -- its own
+    # ``connect()`` wraps the socket itself, using ``self.host`` (which this function has
+    # deliberately set to the *resolved address*, never the hostname, per this module's own
+    # resolve-once-connect-to-that-address discipline) as the TLS server name, which fails
+    # certificate verification (or is rejected outright as an IP-literal SNI name) before this
+    # function's own hostname-aware wrap below ever runs -- and would then wrap an
+    # already-TLS-wrapped socket a second time. Exactly one TLS wrap happens here, explicitly,
+    # against the real hostname.
+    connection = http.client.HTTPConnection(address, port, timeout=timeout_seconds)
 
     try:
         connection.connect()
         if source_identity["scheme"] == "https":
-            # Re-wrap for SNI/certificate verification against the real hostname, never the
-            # resolved address -- the address is only ever a *transport* destination.
+            context = ssl.create_default_context()
             raw_sock = connection.sock
             connection.sock = context.wrap_socket(raw_sock, server_hostname=host)
         connection.putrequest("GET", request_target, skip_host=True, skip_accept_encoding=True)
-        connection.putheader("Host", host)
+        default_port = _DEFAULT_PORT[source_identity["scheme"]]
+        host_header = host if port == default_port else f"{host}:{port}"
+        connection.putheader("Host", host_header)
         connection.putheader("Accept", "application/json")
         connection.putheader("Connection", "close")
         connection.endheaders()

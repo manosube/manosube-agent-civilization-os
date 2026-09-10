@@ -16,6 +16,7 @@ from __future__ import annotations
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
+import ssl
 import threading
 from typing import Any
 
@@ -23,6 +24,7 @@ import pytest
 from tests.evidence_helpers import change_free_verification_evidence_request
 from tests.fixtures.url_boot_world import bound, boundary_for
 
+from manosube_agent_civilization.url_boot import network as network_module
 from manosube_agent_civilization.url_boot.adapter import LocalHttpUrlSourceAdapter
 from manosube_agent_civilization.url_boot.evidence_handoff import (
     route_url_observation_to_evidence,
@@ -269,3 +271,174 @@ def test_real_local_http_unreachable_port_is_connection_failure(_world: dict[str
     )
     assert outcome["envelope"]["fetch_outcome"] in ("CONNECTION_FAILURE", "TIMEOUT")
     assert outcome["receipt"].status == "UNAVAILABLE"
+
+
+def test_real_local_http_host_header_carries_the_non_default_port(
+    _world: dict[str, Any], _local_http_target: tuple[str, int]
+) -> None:
+    """Regression proof for a real review finding on this delivery's own PR (P1-R1-F2): a
+    manually-built ``Host`` header that omits a non-default port is a real protocol violation an
+    honest virtual-host target could reject or redirect on -- this asserts the header actually
+    reaches the target as ``host:port``, not just ``host``."""
+
+    host, _port = _local_http_target
+    received_host_headers: list[str | None] = []
+
+    class _HostCapturingHandler(BaseHTTPRequestHandler):
+        def log_message(self, *args: Any) -> None:
+            pass
+
+        def do_GET(self) -> None:
+            received_host_headers.append(self.headers.get("Host"))
+            body = json.dumps({"status": "ok"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = HTTPServer((host, 0), _HostCapturingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        capture_host, capture_port = server.server_address
+        source_identity = canonical_source_identity(f"http://{capture_host}:{capture_port}/status")
+        boundary = boundary_for(admitted_hosts=[capture_host], admitted_ports=[capture_port])
+        adapter = LocalHttpUrlSourceAdapter()
+
+        outcome = observe_url_source(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            source_identity=source_identity,
+            boundary=boundary,
+            adapter=adapter,
+            observed_at="2026-09-10T00:00:01Z",
+        )
+        assert outcome["envelope"]["fetch_outcome"] == "OBSERVED"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+    assert received_host_headers == [f"{capture_host}:{capture_port}"]
+
+
+def _self_signed_cert(tmp_path: Path, *, hostname: str) -> tuple[str, str]:
+    """Generate one throwaway self-signed certificate + key, written to *tmp_path*, for
+    *hostname* -- via the stdlib ``cryptography``-free path: a minimal certificate built with
+    Python's own ``ssl``/``secrets`` primitives is not available in the standard library, so this
+    calls out to the local ``openssl`` binary, resolved once via ``shutil.which`` -- the identical
+    fixed-executable discipline ``tests/contract/governance/test_merge_source_reflow.py``'s own
+    ``_git`` helper already establishes for a test-only subprocess call."""
+
+    import shutil
+    import subprocess
+
+    openssl = shutil.which("openssl")
+    assert openssl is not None, "openssl executable not found on PATH"
+    cert_path = str(tmp_path / "url_boot_https_test_cert.pem")
+    key_path = str(tmp_path / "url_boot_https_test_key.pem")
+    subprocess.run(  # noqa: S603 -- fixed openssl executable resolved via shutil.which above
+        [
+            openssl,
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            key_path,
+            "-out",
+            cert_path,
+            "-days",
+            "1",
+            "-nodes",
+            "-subj",
+            f"/CN={hostname}",
+            "-addext",
+            f"subjectAltName=IP:{hostname}",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return cert_path, key_path
+
+
+def test_real_local_https_round_trip_succeeds_with_exactly_one_tls_wrap(
+    tmp_path: Path, _world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression proof for a real review finding on this delivery's own PR (P1-R1-F1): before
+    the fix, ``fetch_one_hop`` opened an ``http.client.HTTPSConnection`` (whose own ``connect()``
+    already performs a TLS handshake, verified against the *resolved address* rather than the
+    real hostname) and then wrapped the result a second time -- so every genuine HTTPS
+    observation failed as ``TLS_FAILURE`` before ever reaching a real target. This starts one
+    real, disposable local HTTPS server (a throwaway self-signed certificate for ``127.0.0.1``)
+    and proves a real TLS handshake plus a real HTTP response now completes successfully.
+
+    Trusting this delivery's own throwaway test certificate (never a real Certificate Authority)
+    is out of scope for what this proves -- the adapter's own ``ssl.create_default_context`` is
+    swapped for a context that skips certificate-chain verification, isolating exactly the one
+    property this test exists to prove: **one** TLS wrap happens, against the real hostname, and
+    a real HTTP response is read back over it -- not that this package trusts an untrusted CA.
+    """
+
+    cert_path, key_path = _self_signed_cert(tmp_path, hostname="127.0.0.1")
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args: Any) -> None:
+            pass
+
+        def do_GET(self) -> None:
+            body = json.dumps({"status": "ok"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+    server.socket = server_context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    real_create_default_context = ssl.create_default_context
+
+    def _permissive_client_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        # Trusting the CA itself is a stdlib/OS concern this package's own contract explicitly
+        # disclaims (URL_BOOT_INDEX.md §5's own non-claim) -- only certificate-chain verification
+        # is relaxed here, never SNI/hostname wiring, which stays exactly what
+        # ``fetch_one_hop`` itself sets.
+        context = real_create_default_context(*args, **kwargs)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        return context
+
+    monkeypatch.setattr(network_module.ssl, "create_default_context", _permissive_client_context)
+
+    try:
+        host, port = server.server_address
+        source_identity = canonical_source_identity(f"https://{host}:{port}/status")
+        boundary = boundary_for(
+            admitted_schemes=["https"], admitted_hosts=[host], admitted_ports=[port]
+        )
+        adapter = LocalHttpUrlSourceAdapter()
+
+        outcome = observe_url_source(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            source_identity=source_identity,
+            boundary=boundary,
+            adapter=adapter,
+            observed_at="2026-09-10T00:00:01Z",
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+    assert outcome["envelope"]["fetch_outcome"] == "OBSERVED"
+    assert outcome["envelope"]["observed_fields"] == {"status": "ok"}
+    assert outcome["receipt"].status == "VERIFIED"

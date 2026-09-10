@@ -67,6 +67,22 @@ def test_url_fetch_outcomes_covers_exactly_eleven_members() -> None:
     assert set(URL_OUTCOME_TO_RECEIPT_STATUS.values()) <= RECEIPT_STATUSES
 
 
+#: The same "no response was ever reached" outcome set
+#: :mod:`~manosube_agent_civilization.url_boot.route` itself now enforces -- these must carry a
+#: null ``response_status``; every other outcome means a response was genuinely reached and
+#: classified, and must carry a real one.
+_NO_RESPONSE_OUTCOMES = frozenset(
+    {
+        "DNS_FAILURE",
+        "CONNECTION_FAILURE",
+        "TLS_FAILURE",
+        "TIMEOUT",
+        "BOUNDARY_REFUSED",
+        "REDIRECT_REFUSED",
+    }
+)
+
+
 @pytest.mark.parametrize("outcome", sorted(URL_FETCH_OUTCOMES))
 def test_every_fetch_outcome_is_reachable_end_to_end_and_commits_correctly(
     _world: dict[str, Any], outcome: str
@@ -76,7 +92,7 @@ def test_every_fetch_outcome_is_reachable_end_to_end_and_commits_correctly(
         source_identity=_world["source_identity"],
         fields={"status": "ok"},
         fetch_outcome=outcome,
-        response_status=200 if outcome == "OBSERVED" else None,
+        response_status=None if outcome in _NO_RESPONSE_OUTCOMES else 200,
     )
     result = _observe(_world, adapter)
     assert result["envelope"]["fetch_outcome"] == outcome
@@ -119,6 +135,123 @@ def test_the_route_refuses_a_field_the_boundary_never_permitted(_world: dict[str
 def test_the_route_refuses_a_malformed_adapter_report(_world: dict[str, Any]) -> None:
     adapter = FakeUrlSourceAdapter()
     adapter.force_result({"fetch_outcome": "NOT-A-REAL-OUTCOME"})
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+# ---------------------------------------------------------------------------
+# Outcome/effective-identity/response-status consistency (P1-R1-F3): a review finding on this
+# delivery's own PR -- the route must never accept an adapter report whose own fetch_outcome
+# contradicts its own effective_source_identity/response_status, even though every field
+# individually passes schema/type validation. Each case below is a genuine, individually
+# schema-valid report a buggy or malicious replaceable adapter could return.
+# ---------------------------------------------------------------------------
+
+
+def test_the_route_refuses_observed_with_no_effective_source_identity(
+    _world: dict[str, Any],
+) -> None:
+    adapter = FakeUrlSourceAdapter()
+    adapter.force_result(
+        {
+            "fetch_outcome": "OBSERVED",
+            "effective_source_identity": None,
+            "response_status": 200,
+            "redirect_hop_count": 0,
+            "observed_fields": {"status": "ok"},
+        }
+    )
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+def test_the_route_refuses_observed_with_no_response_status(_world: dict[str, Any]) -> None:
+    adapter = FakeUrlSourceAdapter()
+    adapter.force_result(
+        {
+            "fetch_outcome": "OBSERVED",
+            "effective_source_identity": _world["source_identity"],
+            "response_status": None,
+            "redirect_hop_count": 0,
+            "observed_fields": {"status": "ok"},
+        }
+    )
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+def test_the_route_refuses_observed_with_a_non_2xx_response_status(
+    _world: dict[str, Any],
+) -> None:
+    adapter = FakeUrlSourceAdapter()
+    adapter.force_result(
+        {
+            "fetch_outcome": "OBSERVED",
+            "effective_source_identity": _world["source_identity"],
+            "response_status": 404,
+            "redirect_hop_count": 0,
+            "observed_fields": {"status": "ok"},
+        }
+    )
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+def test_the_route_refuses_a_no_response_outcome_carrying_a_reached_identity(
+    _world: dict[str, Any],
+) -> None:
+    """A ``DNS_FAILURE`` (or any other never-reached-a-response outcome) claiming a non-null
+    ``effective_source_identity`` would let a route consumer believe a source was genuinely
+    identified when no response was ever received -- refused before commit."""
+
+    adapter = FakeUrlSourceAdapter()
+    adapter.force_result(
+        {
+            "fetch_outcome": "DNS_FAILURE",
+            "effective_source_identity": _world["source_identity"],
+            "response_status": None,
+            "redirect_hop_count": 0,
+            "observed_fields": None,
+        }
+    )
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+def test_the_route_refuses_a_response_reached_failure_with_no_effective_source_identity(
+    _world: dict[str, Any],
+) -> None:
+    """``MALFORMED`` (and the other response-reached failure outcomes) means a real response was
+    received and classified -- an adapter reporting one of these with no effective identity is
+    contradicting its own claim to have reached and classified something."""
+
+    adapter = FakeUrlSourceAdapter()
+    adapter.force_result(
+        {
+            "fetch_outcome": "MALFORMED",
+            "effective_source_identity": None,
+            "response_status": 500,
+            "redirect_hop_count": 0,
+            "observed_fields": None,
+        }
+    )
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+def test_the_route_refuses_a_response_reached_failure_with_no_response_status(
+    _world: dict[str, Any],
+) -> None:
+    adapter = FakeUrlSourceAdapter()
+    adapter.force_result(
+        {
+            "fetch_outcome": "MALFORMED",
+            "effective_source_identity": _world["source_identity"],
+            "response_status": None,
+            "redirect_hop_count": 0,
+            "observed_fields": None,
+        }
+    )
     with pytest.raises(UrlBootAdapterError):
         _observe(_world, adapter)
 

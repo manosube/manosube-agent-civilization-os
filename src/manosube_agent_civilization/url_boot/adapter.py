@@ -55,6 +55,22 @@ from .network import (
 )
 from .types import URL_FETCH_OUTCOMES
 
+#: The same "no response was ever reached" outcome set the route itself now enforces
+#: (:mod:`~manosube_agent_civilization.url_boot.route`'s own ``_NO_IDENTITY_OUTCOMES``) --
+#: duplicated here, deliberately, rather than imported, the identical decoupling requirement
+#: every other owner's own closed vocabulary already keeps between test-fixture and production
+#: code. Used only to pick :meth:`FakeUrlSourceAdapter.seed_source`'s own honest default.
+_NO_RESPONSE_OUTCOMES = frozenset(
+    {
+        "DNS_FAILURE",
+        "CONNECTION_FAILURE",
+        "TLS_FAILURE",
+        "TIMEOUT",
+        "BOUNDARY_REFUSED",
+        "REDIRECT_REFUSED",
+    }
+)
+
 
 class FakeUrlSourceAdapter:
     """A controlled, in-memory, fully deterministic
@@ -98,23 +114,29 @@ class FakeUrlSourceAdapter:
     ) -> None:
         """Declare what a real probe of *source_identity* would honestly report.
 
-        *effective_source_identity*, left ``None``, defaults to *source_identity* itself -- a
-        direct, unredirected reach. Passing an explicit, different identity is exactly how a V2
-        redirect-following proof is built. *fetch_outcome* must be one of
-        :data:`~manosube_agent_civilization.url_boot.types.URL_FETCH_OUTCOMES`; a non-``OBSERVED``
-        outcome carries ``observed_fields=None`` regardless of *fields*.
+        *effective_source_identity*, left ``None``, defaults to *source_identity* itself for
+        every outcome where a real probe would honestly have identified a reached source -- a
+        direct, unredirected reach -- and to ``None`` itself for the outcomes where a real probe
+        never reaches a response at all (mirrors :class:`LocalHttpUrlSourceAdapter`'s own
+        ``_failure``/``_classify_response`` split exactly, so a caller who does not override this
+        argument still cannot seed an outcome-inconsistent report). Passing an explicit, different
+        identity is exactly how a V2 redirect-following proof is built. *fetch_outcome* must be
+        one of :data:`~manosube_agent_civilization.url_boot.types.URL_FETCH_OUTCOMES`; a
+        non-``OBSERVED`` outcome carries ``observed_fields=None`` regardless of *fields*.
         """
 
         if fetch_outcome not in URL_FETCH_OUTCOMES:
             raise UrlBootAdapterError(f"fetch_outcome is not recognized: {fetch_outcome!r}")
+        if effective_source_identity is not None:
+            resolved_effective_identity: dict[str, Any] | None = dict(effective_source_identity)
+        elif fetch_outcome in _NO_RESPONSE_OUTCOMES:
+            resolved_effective_identity = None
+        else:
+            resolved_effective_identity = dict(source_identity)
         self._world[self._key(source_identity)] = {
             "fields": dict(fields),
             "fetch_outcome": fetch_outcome,
-            "effective_source_identity": (
-                dict(effective_source_identity)
-                if effective_source_identity is not None
-                else dict(source_identity)
-            ),
+            "effective_source_identity": resolved_effective_identity,
             "response_status": response_status,
             "redirect_hop_count": redirect_hop_count,
         }

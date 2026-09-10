@@ -107,6 +107,29 @@ _ENVELOPE_RECORD_KIND = "url_source_observation_envelope"
 #: project between this route's own ``load_current`` and its own ``commit``.
 _MAX_COMMIT_RETRIES = 8
 
+#: Outcomes that mean a response was genuinely received and classified (P17 review finding
+#: P17-C-R1-F1) -- an adapter reporting one of these must name the source actually reached and
+#: the response status it reached it under; this route never trusts an adapter's bare say-so that
+#: a response was "OBSERVED" (or a response-shaped failure) while also reporting nothing was ever
+#: identified.
+_RESPONSE_REACHED_OUTCOMES: frozenset[str] = frozenset(
+    {"OBSERVED", "OVERSIZED_RESPONSE", "UNSUPPORTED_MEDIA_TYPE", "MALFORMED", "IDENTITY_MISMATCH"}
+)
+#: Outcomes that mean no response was ever received -- an adapter reporting one of these must
+#: report a null ``effective_source_identity`` (nothing was ever honestly identified as reached).
+#: A null ``response_status`` is not independently required here: ``REDIRECT_REFUSED`` may
+#: honestly carry the refused redirect response's own status alongside it.
+_NO_IDENTITY_OUTCOMES: frozenset[str] = frozenset(
+    {
+        "DNS_FAILURE",
+        "CONNECTION_FAILURE",
+        "TLS_FAILURE",
+        "TIMEOUT",
+        "BOUNDARY_REFUSED",
+        "REDIRECT_REFUSED",
+    }
+)
+
 
 def _require_canonical_identity(name: str, value: Any) -> str:
     if not isinstance(value, str) or not value:
@@ -285,6 +308,19 @@ def observe_url_source(
         )
 
     raw_effective_identity = raw.get("effective_source_identity")
+    if fetch_outcome in _RESPONSE_REACHED_OUTCOMES and raw_effective_identity is None:
+        raise UrlBootAdapterError(
+            f"adapter.fetch() reported fetch_outcome={fetch_outcome!r} with no "
+            "effective_source_identity -- this outcome means a response was genuinely reached "
+            "and classified, so the source actually reached must be named, never left null"
+        )
+    if fetch_outcome in _NO_IDENTITY_OUTCOMES and raw_effective_identity is not None:
+        raise UrlBootAdapterError(
+            f"adapter.fetch() reported fetch_outcome={fetch_outcome!r} together with a non-null "
+            "effective_source_identity -- this outcome means no response was ever reached, so no "
+            "source can honestly be reported as identified"
+        )
+
     effective_source_identity: dict[str, Any] | None = None
     effective_source_fingerprint: str | None = None
     if raw_effective_identity is not None:
@@ -301,6 +337,20 @@ def observe_url_source(
     if response_status is not None and not isinstance(response_status, int):
         raise UrlBootAdapterError(
             f"adapter.fetch()'s own response_status is unreadable: {response_status!r}"
+        )
+    if fetch_outcome in _RESPONSE_REACHED_OUTCOMES and response_status is None:
+        raise UrlBootAdapterError(
+            f"adapter.fetch() reported fetch_outcome={fetch_outcome!r} with no response_status -- "
+            "this outcome means a response was genuinely reached and classified, so its real "
+            "HTTP status must be reported, never left null"
+        )
+    if fetch_outcome == "OBSERVED" and not (
+        isinstance(response_status, int) and 200 <= response_status < 300
+    ):
+        raise UrlBootAdapterError(
+            "adapter.fetch() reported fetch_outcome='OBSERVED' with response_status="
+            f"{response_status!r} -- OBSERVED requires a genuine 2xx response status, never a "
+            "route-trusted success claim over a non-2xx or unreported status"
         )
     redirect_hop_count = raw.get("redirect_hop_count")
     if not isinstance(redirect_hop_count, int) or redirect_hop_count < 0:
