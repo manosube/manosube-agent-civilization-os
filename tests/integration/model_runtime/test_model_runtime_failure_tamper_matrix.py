@@ -11,8 +11,8 @@ unavailable / timeout / cancelled ..... section 5  (with the other three typed o
 attempted model self-authorization ..... section 6
 ```
 
-**Where each check runs, and why the distinction matters.** Every test's own docstring states
-which of the two it proves, exactly as the Phase 15 suite's own docstrings do:
+**Where each check runs, and why the distinction matters.** Every test's own docstring opens by
+naming which of these four it proves, exactly as the Phase 15 suite's own docstrings do:
 
 ```text
 ZERO-CALL   the check runs BEFORE the adapter exists, so `execute_call_count == 0` and the
@@ -24,6 +24,10 @@ TYPED       the check runs AFTER the adapter has honestly reported something, so
 DEFECT      the adapter's own return value is structurally unreadable, claims a classification
             only the route may compute, or exceeds its own Boundary. That is an adapter defect,
             not an outcome: it raises `ModelAdapterError`, and nothing is committed at all.
+INERT       nothing is refused at all -- the execution genuinely succeeds -- and the point is
+            what the adapter's own extra claims did NOT do. Used for the model
+            self-authorization control, where a refusal would be the *weaker* result: the keys
+            those claims arrive under are never read by anyone, so there is nothing to refuse.
 ```
 """
 
@@ -1092,15 +1096,25 @@ def test_a_typed_failure_still_reaches_the_existing_evidence_owner_honestly(
 def test_an_adapter_claiming_authority_evidence_and_closure_changes_nothing(
     world: dict[str, Any],
 ) -> None:
-    """DEFECT-adjacent, and the decisive behavioural half of P16-C3. The adapter returns a
-    perfectly valid CANDIDATE *and* attaches every claim it could possibly make: a forged
-    Authority reference, a forged Evidence record, a declaration that the Difference is closed, a
-    wider Boundary, an escalated capability and a commit instruction.
+    """INERT, and the decisive behavioural half of P16-C3 -- deliberately not a refusal.
 
-    None of it has any effect, and not because the route inspects and refuses it: the route reads
-    exactly three keys, so those keys are never read by anyone. The committed Envelope carries
-    the real Work Unit's own Authority, Boundary and capability, the Work Unit itself is
-    unchanged, and no Authority, Evidence or Closure record of any kind was created."""
+    The adapter returns a perfectly valid CANDIDATE *and* attaches every claim it could possibly
+    make: a forged Authority reference, a forged decision record, a forged Evidence record, a
+    forged accepting provenance, a declaration that the Difference is closed, a wider Boundary,
+    an escalated capability, the route-only accepting classification, and a commit instruction.
+    The execution then **succeeds**, exactly as it would have without any of them.
+
+    That is a stronger result than a refusal would be. A refusal would mean the route read those
+    claims and decided against them, which is a control that can be forgotten, mis-ordered or
+    weakened later. Here the route reads exactly three keys, so every one of those claims arrives
+    under a key that is never read by anyone, at any point -- proved structurally in
+    ``tests/contract/model_runtime/test_model_runtime_static_conformance.py``'s own
+    ``test_the_route_reads_exactly_three_keys_out_of_an_adapter_result``.
+
+    What this test asserts, therefore, is absence of effect: the committed Envelope carries the
+    real Work Unit's own Authority, Boundary, capability, Difference and Evidence requirements
+    and none of the forged keys; the Work Unit itself is byte-identical to what was opened; and
+    no Authority, Evidence or Closure record of any kind came into existence."""
 
     opened = _open(world)
     work_unit = opened["model_work_unit"]
