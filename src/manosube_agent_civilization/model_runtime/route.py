@@ -1170,7 +1170,9 @@ def record_model_swap(
     recorded_at: str,
 ) -> dict[str, Any]:
     """Record one canonical Model Swap Receipt and return ``{"model_swap_receipt": ...,
-    "model_swap_receipt_ref": ...}``.
+    "model_swap_receipt_ref": ..., "predecessor_envelope": ..., "successor_envelope": ...}`` --
+    the two Envelopes being the real, Store-resolved, independently identity-recomputed bodies
+    this route itself verified, never the caller's own copies of them.
 
     Proves, from Store-resolved canonical records alone, that two genuinely different Model
     Adapters executed the **identical** Work Unit while retaining identical Difference,
