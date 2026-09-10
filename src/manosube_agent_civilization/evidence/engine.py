@@ -367,6 +367,46 @@ def derive_evidence(request: dict[str, Any]) -> dict[str, Any]:
         raise EvidenceError(str(error)) from error
 
 
+def derive_request_difference(request: dict[str, Any]) -> dict[str, Any]:
+    """Reproduce the canonical Difference *request* would be about, without deriving Evidence.
+
+    Runs the identical two reproduction steps :func:`derive_evidence` itself performs before
+    constructing any Evidence record: mint the Observation from *request*'s own
+    ``observation_request`` through the real Observation owner, then derive the Difference this
+    Evidence would be about from *request*'s own ``difference_request`` and that minted
+    Observation's bundle, through the real Difference owner. Neither owner is reimplemented or
+    second-guessed here -- this is the same reproduction, reached earlier, for a narrower
+    question ("which Difference would this request bind to?") that a caller sometimes needs
+    answered *before* committing to derive the full record.
+
+    Model Runtime's own Evidence handoff is exactly such a caller (Structural Review Round 2,
+    P16-R2-F2): it must refuse a same-project Difference-A-execution-paired-with-Difference-B
+    Evidence request before ``derive_evidence`` is ever reached, not merely after -- which
+    requires reproducing the request's own Difference on its own, through this one factored
+    preflight, rather than a second, divergent Difference derivation.
+
+    Raises the identical :class:`EvidenceError` vocabulary :func:`derive_evidence` itself raises
+    for a malformed *request* -- this is not a second admission surface, it is the same one.
+    """
+
+    try:
+        shaped = _require_request_shape(deepcopy(request))
+        bundle, _observation = _minted_observation(
+            shaped["observation_request"], "observation_request"
+        )
+        return _derived_difference(shaped["difference_request"], bundle)
+    except EvidenceError:
+        raise
+    except (
+        ObservationError,
+        ChangeError,
+        AuthorityError,
+        DifferenceError,
+        CanonicalizationError,
+    ) as error:
+        raise EvidenceError(str(error)) from error
+
+
 def resolve_terminal_reason_evidence(
     refs: list[Any],
     requests: list[Any],

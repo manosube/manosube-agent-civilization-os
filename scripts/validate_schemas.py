@@ -90,8 +90,17 @@ def main() -> int:
     # (runtime_deployment_declaration and runtime_root_admission), so each record kind's own
     # place in its monotonic transition chain is covered by its content address and its
     # signature. The count therefore stays at 59, verified against what is on disk rather than
-    # assumed.
-    if len(paths) != 59 or len(set(ids)) != len(paths) or None in ids:
+    # assumed. Phase 16's own Multi-Model Replaceability delivery (Issue #66) adds seven more,
+    # making 66: five owned by the new `model_runtime` package (`model_execution_boundary` --
+    # the Human-declared Boundary bounding what a model's output may be used for;
+    # `model_work_unit` -- the immutable, State-bound Work Unit the whole proof hangs from;
+    # `model_execution_envelope` -- the committed model result; `model_swap_receipt` and
+    # `session_recovery_receipt` -- the two committed continuity facts P16-C4/P16-C5 require),
+    # and two owned by the existing Authority element (`model_execution_grant`, the
+    # Human-Authority-signed capability grant, and `model_execution_decision`, the
+    # content-addressed decision `evaluate_model_execution_authorization` mints). No existing
+    # schema file is replaced or removed.
+    if len(paths) != 66 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

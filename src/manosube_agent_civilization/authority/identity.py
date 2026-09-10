@@ -215,3 +215,100 @@ def github_projection_decision_id(decision: dict[str, Any]) -> str:
         "GH-PROJ-DEC-",
         {field: decision[field] for field in GITHUB_PROJECTION_DECISION_SEMANTIC_FIELDS},
     )
+
+
+#: The closed tuple of *adopted semantic fields* a Model Execution Grant's own content address
+#: **and** its Human Authority signature are both computed over (Phase 16, Issue #66, P16-C1).
+#:
+#: Deliberately the complete record minus exactly two fields, and for the two reasons
+#: :data:`~manosube_agent_civilization.runtime.identity.
+#: DEPLOYMENT_DECLARATION_SEMANTIC_FIELDS` already states for its own signed record kind: the
+#: record's own content address (an identity cannot be computed over itself) and ``signature``
+#: (a signature cannot cover its own value).
+#:
+#: This deliberately diverges from :func:`github_projection_grant_id`'s own
+#: "everything except the id field" shape, and the divergence is the point: a
+#: ``github_projection_grant`` carries no signature at all (a separate, signed
+#: ``github_projection_grant_declaration`` anchors it), whereas a ``model_execution_grant``
+#: carries its own Human Authority signature directly -- so the shared-derivation convention
+#: :func:`~manosube_agent_civilization.runtime.identity.
+#: runtime_deployment_declaration_signing_payload` established is the applicable precedent:
+#: the exact canonical bytes a genuine Human Authority signature must cover are the exact bytes
+#: the content address is computed over, so "what this record granted" can never mean two
+#: different things.
+#:
+#: ``granted_at`` *participates*: the signature is what proves *when* this capability was
+#: granted, and a signature that never bound the instant would validate identically at any
+#: later replay instant.
+MODEL_EXECUTION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "difference_ref",
+    "required_capability",
+    "boundary_ref",
+    "permitted_action",
+    "status",
+    "granted_by",
+    "granted_at",
+)
+
+
+#: What a Model Execution Decision's meaning is bound to (Phase 16, Issue #66) -- the identical
+#: "bind every field a caller could otherwise vary independently" discipline
+#: :data:`GITHUB_PROJECTION_DECISION_SEMANTIC_FIELDS` already applies, over the model-execution
+#: question's own scoping fields instead of Projection's.
+MODEL_EXECUTION_DECISION_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "project_id",
+    "difference_ref",
+    "required_capability",
+    "boundary_ref",
+    "selection_authority_ref",
+    "grant_ref",
+    "excluding_grant_refs",
+    "decision",
+    "decision_reason_codes",
+)
+
+
+def _model_execution_grant_projection(grant: dict[str, Any]) -> dict[str, Any]:
+    missing = [field for field in MODEL_EXECUTION_GRANT_SEMANTIC_FIELDS if field not in grant]
+    if missing:
+        raise KeyError(
+            "model_execution_grant carries no readable "
+            f"{', '.join(missing)} -- its own identity cannot be recomputed"
+        )
+    return {field: grant[field] for field in MODEL_EXECUTION_GRANT_SEMANTIC_FIELDS}
+
+
+def model_execution_grant_signing_payload(grant: dict[str, Any]) -> bytes:
+    """The exact canonical bytes a genuine Human Authority signature over *grant* must cover --
+    the identical payload :func:`model_execution_grant_id` itself hashes.
+
+    *grant* need not yet carry its own ``model_execution_grant_id`` or its own ``signature`` --
+    neither is read -- so this one function both mints the payload (before those fields exist)
+    and re-derives it for verification (once they do).
+    """
+
+    return canonical_json_bytes(_model_execution_grant_projection(grant))
+
+
+def model_execution_grant_id(grant: dict[str, Any]) -> str:
+    """The content address of a Model Execution Grant, over
+    :func:`model_execution_grant_signing_payload`'s own bytes."""
+
+    return _address("MODEL-EXEC-GRANT-", _model_execution_grant_projection(grant))
+
+
+def model_execution_decision_semantic_fingerprint(decision: dict[str, Any]) -> str:
+    """The digest of a Model Execution Decision's meaning."""
+
+    return _digest({field: decision[field] for field in MODEL_EXECUTION_DECISION_SEMANTIC_FIELDS})
+
+
+def model_execution_decision_id(decision: dict[str, Any]) -> str:
+    """The content address of a Model Execution Decision."""
+
+    return _address(
+        "MODEL-EXEC-DEC-",
+        {field: decision[field] for field in MODEL_EXECUTION_DECISION_SEMANTIC_FIELDS},
+    )
