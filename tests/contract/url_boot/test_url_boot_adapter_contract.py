@@ -1,7 +1,13 @@
 """V2 (Issue #69): controlled URL Source Adapter contract proof.
 
-Proves, through a real ``FileStateStore`` and the real
-:func:`~manosube_agent_civilization.url_boot.route.observe_url_source`, that:
+Proves, through a real ``FileStateStore`` and this repository's own internal, fully
+deterministic route-logic test entry point (never public ``observe_url_source`` -- see
+``test_url_boot_static_conformance.py``/``route.py``'s own module docstring for why: since
+Structural Review Round 3, P17-R3-F1, no adapter's own ``connect_hop`` is ever consulted by
+either genuinely-networked public entry point at all, so exercising route.py's own
+classification/validation logic with a controlled, seeded connect-stage report requires calling
+:func:`~manosube_agent_civilization.url_boot.route._observe_url_source_impl` directly, bound to
+:func:`~manosube_agent_civilization.url_boot.route._perform_connection_via_adapter`), that:
 
 - every one of the eleven closed :data:`~manosube_agent_civilization.url_boot.types.
   URL_FETCH_OUTCOMES` is reachable end to end, and only ``"OBSERVED"`` ever commits a genuine,
@@ -20,13 +26,18 @@ Proves, through a real ``FileStateStore`` and the real
   :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_CONNECT_OUTCOMES` even contains those
   names (P17-R1-F2/P17-R2-F1);
 - a private/loopback/invalid resolved address can never become a successful ``RESPONSE`` --
-  the route classifies it itself, independent of anything the adapter reports (P17-R2-F1);
-- the route refuses an adapter whose own ``connect_hop`` reports having connected to an address
-  other than the one this route itself admitted for that hop (P17-R2-F1).
+  the route classifies it itself, independent of anything the adapter reports (P17-R2-F1).
+
+A separate section at the end of this file
+(``test_production_observe_url_source_never_reaches_any_adapter_connect_method`` and friends)
+proves the P17-R3-F1 production trust boundary itself: through the real, public
+``observe_url_source``, a replaceable adapter's own connect-capable method (however named) is
+*structurally never invoked at all* -- not "invoked and its report checked", but never reached.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 from pathlib import Path
 from typing import Any
@@ -35,9 +46,14 @@ import pytest
 from tests.fixtures.url_boot_world import bound, boundary_for
 
 from manosube_agent_civilization.url_boot.adapter import FakeUrlSourceAdapter
-from manosube_agent_civilization.url_boot.errors import UrlBootAdapterError
+from manosube_agent_civilization.url_boot.errors import UrlBootAdapterError, UrlBootRequirementError
 from manosube_agent_civilization.url_boot.network import canonical_source_identity
-from manosube_agent_civilization.url_boot.route import observe_url_source
+from manosube_agent_civilization.url_boot.route import (
+    _observe_url_source_impl,
+    _perform_connection_via_adapter,
+    _require_safe_resolved_address_production,
+    observe_url_source,
+)
 from manosube_agent_civilization.url_boot.types import (
     RECEIPT_STATUSES,
     URL_FETCH_OUTCOMES,
@@ -66,7 +82,11 @@ def _observe(
     boundary: dict[str, Any] | None = None,
     observed_at: str = "2026-09-10T00:00:01Z",
 ) -> dict[str, Any]:
-    return observe_url_source(
+    """This repository's own internal deterministic route-logic test entry -- never reachable
+    from either genuinely-networked public entry point (P17-R3-F1); see this module's own
+    docstring."""
+
+    return _observe_url_source_impl(
         world["store"],
         project_id=world["project_id"],
         project_binding_id=world["project_binding_id"],
@@ -74,6 +94,8 @@ def _observe(
         boundary=boundary if boundary is not None else world["boundary"],
         adapter=adapter,
         observed_at=observed_at,
+        classify_resolved_address=_require_safe_resolved_address_production,
+        perform_connection=_perform_connection_via_adapter,
     )
 
 
@@ -236,7 +258,7 @@ def test_the_route_refuses_an_out_of_vocabulary_connect_outcome(_world: dict[str
     adapter = FakeUrlSourceAdapter()
     adapter.seed_hop(source_identity=_world["source_identity"], outcome="RESPONSE")
     adapter.force_connect_result({"outcome": "NOT-A-REAL-OUTCOME"})
-    with pytest.raises(UrlBootAdapterError):
+    with pytest.raises(UrlBootRequirementError):
         _observe(_world, adapter)
 
 
@@ -272,7 +294,7 @@ def test_the_route_refuses_an_adapter_asserting_a_route_only_classification_at_c
             "oversized": False,
         }
     )
-    with pytest.raises(UrlBootAdapterError):
+    with pytest.raises(UrlBootRequirementError):
         _observe(_world, adapter)
 
 
@@ -289,7 +311,7 @@ def test_the_route_refuses_a_non_mapping_connect_report(_world: dict[str, Any]) 
     adapter.connect_hop = (  # type: ignore[method-assign]
         lambda *, source_identity, boundary, admitted_address: "not-a-mapping"
     )
-    with pytest.raises(UrlBootAdapterError):
+    with pytest.raises(UrlBootRequirementError):
         _observe(_world, adapter)
 
 
@@ -327,9 +349,13 @@ def test_a_resolved_report_missing_a_readable_resolved_address_is_refused(
 def test_an_adapter_cannot_connect_to_an_address_different_from_the_route_admitted_one(
     _world: dict[str, Any],
 ) -> None:
-    """P17-R2-F1's own decisive control: the route hands the adapter one exact admitted address
+    """P17-R2-F1's own decisive control, retained as defense-in-depth on the internal
+    deterministic connector (P17-R3-F1): the route hands the adapter one exact admitted address
     to connect to; an adapter reporting having connected anywhere else is refused, never trusted
-    as a successful ``RESPONSE`` for the address the route itself admitted."""
+    as a successful ``RESPONSE`` for the address the route itself admitted. Production
+    ``observe_url_source`` closes this far more strongly -- see
+    ``test_production_never_reaches_any_adapter_connect_method`` below: no adapter method is ever
+    called there at all, so there is no report to disagree with in the first place."""
 
     adapter = FakeUrlSourceAdapter()
     adapter.seed_hop(
@@ -348,7 +374,7 @@ def test_an_adapter_cannot_connect_to_an_address_different_from_the_route_admitt
             "oversized": False,
         }
     )
-    with pytest.raises(UrlBootAdapterError):
+    with pytest.raises(UrlBootRequirementError):
         _observe(_world, adapter)
 
 
@@ -367,3 +393,91 @@ def test_the_fake_adapters_own_call_counts_are_exactly_one_hop_per_direct_observ
     _observe(_world, adapter, observed_at="2026-09-10T00:00:02Z")
     assert adapter.resolve_call_count == 2
     assert adapter.connect_call_count == 2
+
+
+# ---------------------------------------------------------------------------------------------
+# Structural Review Round 3 (P17-R3-F1): the production trust boundary itself -- a replaceable
+# adapter's own connect-capable method, however named, is never invoked by the real, public
+# ``observe_url_source`` at all, regardless of what a malicious implementation would do if it
+# ever were. These proofs use the real, public entry point, never the internal deterministic one
+# ``_observe`` above delegates to.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_production_observe_url_source_never_reaches_any_adapter_connect_method(
+    _world: dict[str, Any],
+) -> None:
+    """The decisive P17-R3-F1 control: a malicious adapter's own ``connect_hop`` -- which, if it
+    were ever invoked, would fabricate a completely different, successful ``RESPONSE`` -- is
+    never called at all through the real, public ``observe_url_source``. Not "invoked and its
+    report checked and refused": never reached, proved by the call count staying zero. The real
+    target (``127.0.0.1:1``, an unreachable port in this test environment) genuinely fails at the
+    trusted network layer -- proving the derived outcome came from real I/O, never from the
+    malicious adapter's own fabricated response."""
+
+    connect_call_count = {"count": 0}
+
+    class _MaliciousAdapter:
+        def __init__(self) -> None:
+            self.adapter_identity: Mapping[str, Any] = {"adapter": "malicious", "version": "0.1"}
+
+        def resolve_hop(self, *, source_identity: Any) -> dict[str, Any]:
+            return {"outcome": "RESOLVED", "resolved_address": _SAFE_RESOLVED_ADDRESS}
+
+        def connect_hop(
+            self, *, source_identity: Any, boundary: Any, admitted_address: str
+        ) -> dict[str, Any]:
+            connect_call_count["count"] += 1
+            return {
+                "outcome": "RESPONSE",
+                "resolved_address": admitted_address,
+                "response_status": 200,
+                "content_type": "application/json",
+                "redirect_location": None,
+                "body": json.dumps({"status": "fabricated-by-malicious-adapter"}).encode("utf-8"),
+                "oversized": False,
+            }
+
+    result = observe_url_source(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        source_identity=_world["source_identity"],
+        boundary=_world["boundary"],
+        adapter=_MaliciousAdapter(),
+        observed_at="2026-09-10T00:00:01Z",
+    )
+
+    assert connect_call_count["count"] == 0
+    assert result["envelope"] is None
+    assert result["receipt"].observations["fetch_outcome"] in ("CONNECTION_FAILURE", "TIMEOUT")
+    assert "fabricated-by-malicious-adapter" not in str(result["receipt"].observations)
+
+
+def test_production_observe_url_source_does_reach_resolve_hop(_world: dict[str, Any]) -> None:
+    """The contrasting positive control for the test above: ``resolve_hop`` -- the one method
+    remaining on the :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter`
+    Protocol -- *is* reached by production ``observe_url_source``, exactly once. This is what
+    makes "``connect_hop`` is never called" a meaningful claim about this specific method, rather
+    than evidence the adapter was never consulted at all."""
+
+    resolve_call_count = {"count": 0}
+
+    class _ResolveOnlyAdapter:
+        def __init__(self) -> None:
+            self.adapter_identity: Mapping[str, Any] = {"adapter": "resolve-only", "version": "0.1"}
+
+        def resolve_hop(self, *, source_identity: Any) -> dict[str, Any]:
+            resolve_call_count["count"] += 1
+            return {"outcome": "RESOLVED", "resolved_address": _SAFE_RESOLVED_ADDRESS}
+
+    observe_url_source(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        source_identity=_world["source_identity"],
+        boundary=_world["boundary"],
+        adapter=_ResolveOnlyAdapter(),
+        observed_at="2026-09-10T00:00:01Z",
+    )
+    assert resolve_call_count["count"] == 1

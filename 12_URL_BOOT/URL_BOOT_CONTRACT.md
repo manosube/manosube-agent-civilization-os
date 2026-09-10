@@ -191,12 +191,15 @@ complete schema validation of the declared source identity and closed fetch Boun
   (network.require_safe_resolved_address) and binds it to its own (host, port) for the lifetime
   of this one fetch, refusing as BOUNDARY_REFUSED before any connection is attempted, either for
   an unsafe address or for a later hop resolving the identical (host, port) to a different
-  address; only once the route has admitted an address does it call the adapter's own
-  connect_hop with that exact admitted_address, and the route itself verifies the adapter's own
-  connect_hop report names that same address back (else UrlBootAdapterError -- the adapter
-  connected somewhere else); before following a redirect the route itself also re-validates the
-  target's hostname against network_scope; every content-type/size/JSON/IDENTITY_MISMATCH
-  classification is performed here, from the adapter's bounded per-hop facts alone (see §10.1)
+  address; only once the route has admitted an address does it invoke its own permanently-bound
+  connection primitive with that exact admitted_address -- since Structural Review Round 3
+  (P17-R3-F1), the trusted network layer itself creates and controls this connection
+  (network.perform_admitted_connection), never the replaceable adapter, and the route itself
+  verifies whatever the connection primitive reports names that same address back (else
+  UrlBootRequirementError -- the connection would otherwise have reached somewhere else, see
+  §11.1); before following a redirect the route itself also re-validates the target's hostname
+  against network_scope; every content-type/size/JSON/IDENTITY_MISMATCH classification is
+  performed here, from the connection primitive's bounded per-hop facts alone (see §10.1, §11.1)
 → fetch_outcome != "OBSERVED": bounded, ephemeral, non-committed URL Source Observation
   Receipt -- zero State mutation, zero commit, zero Evidence-handoff eligibility (P17-C7/
   P17-R1-F1)
@@ -208,41 +211,46 @@ complete schema validation of the declared source identity and closed fetch Boun
   Project Binding and Boot state transition before any Evidence is derived (P17-R2-F3, §10.3)
 ```
 
-### 5.1 The resolve-once-connect-to-that-address technique, route-owned since Structural Review Round 2 (P17-C5, P17-R2-F1)
+### 5.1 The resolve-once-connect-to-that-address technique, route-owned since Structural Review Round 2 (P17-C5, P17-R2-F1), connection itself route-owned since Structural Review Round 3 (P17-R3-F1)
 
-Resolution and connection are two distinct, bounded adapter primitives, never one combined
-adapter call. `network.resolve_hop_address` resolves a hop's host exactly once through a single
+Resolution is a bounded adapter primitive; connection is not an adapter primitive at all any
+more. `network.resolve_hop_address` resolves a hop's host exactly once through a single
 `socket.getaddrinfo` call and returns the address alone -- it classifies nothing.
 `network.require_safe_resolved_address`, called by the route itself (never the adapter) on that
 resolved address, refuses loopback/private/link-local/multicast/reserved/unspecified addresses
-unless the route's own caller is the distinctly-named, never-publicly-exported
-`observe_url_source_for_disposable_local_test` composition entry point (never Boundary data,
-never an adapter constructor argument -- §10.2). Only once the route has admitted an address
-does it call `network.connect_and_request_hop`, which connects a raw `http.client.HTTPConnection`
-**directly to that route-admitted address**, wrapping TLS exactly once, against the real
-hostname, when the scheme is `https` -- never re-resolving the hostname at connection time,
-which is exactly the resolve-then-reconnect race a naive `urllib`-based fetcher would leave
-open. The original hostname is still sent as the `Host` header (including a non-default port)
-and, over HTTPS, as the TLS SNI/certificate verification name. See §10.1 for the full rationale
-for splitting resolution and connection into two adapter-reportable stages.
+unless the route's own caller is the distinctly-named `_require_safe_resolved_address_permitting_loopback_only`
+classifier, bound only by the externally-authorized test composition boundary this package no
+longer ships (§11.2). Only once the route has admitted an address does it invoke
+`network.perform_admitted_connection` (P17-R3-F1) -- the trusted network layer's own connection
+primitive, called by the route itself, never by the replaceable adapter -- which wraps
+`network.connect_and_request_hop` to connect a raw `http.client.HTTPConnection` **directly to
+that route-admitted address**, wrapping TLS exactly once, against the real hostname, when the
+scheme is `https` -- never re-resolving the hostname at connection time, which is exactly the
+resolve-then-reconnect race a naive `urllib`-based fetcher would leave open. The original
+hostname is still sent as the `Host` header (including a non-default port) and, over HTTPS, as
+the TLS SNI/certificate verification name. See §10.1 for the rationale for splitting resolution
+and connection into two stages, and §11.1 for why the connection stage itself is no longer
+adapter-reportable in production.
 
 ### 5.2 Route-owned per-hop redirect reauthorization and cross-hop resolution-drift binding (P17-C5, Structural Review Round 1 P17-R1-F2/F4, Structural Review Round 2 P17-R2-F1)
 
 The route -- never the replaceable adapter -- owns the entire redirect loop. Before calling
-`resolve_hop`/`connect_hop` for a redirect target, the route itself re-validates that target's
-hostname against the Boundary's own `network_scope` (`network.canonical_source_identity` +
-`network.require_source_within_network_scope`), bounded at
-`boundary.redirect_policy.max_redirects` hops; a redirect naming a host outside scope, or one
+`resolve_hop`/its own connection primitive for a redirect target, the route itself re-validates
+that target's hostname against the Boundary's own `network_scope`
+(`network.canonical_source_identity` + `network.require_source_within_network_scope`), bounded
+at `boundary.redirect_policy.max_redirects` hops; a redirect naming a host outside scope, or one
 exceeding the hop bound, refuses as `REDIRECT_REFUSED` -- never silently followed, and the
-disallowed hop's own `resolve_hop`/`connect_hop` are never even called (§6.5). The route
+disallowed hop's own `resolve_hop`/connection call are never even reached (§6.5). The route
 additionally binds each hop's own resolved address to its own `(host, port)` for the lifetime of
-one fetch, checked immediately after `resolve_hop` returns and before `connect_hop` is ever
-called: a same-host redirect whose second hop resolves to a genuinely different public address
+one fetch, checked immediately after `resolve_hop` returns and before any connection is ever
+attempted: a same-host redirect whose second hop resolves to a genuinely different public address
 than its first refuses as `BOUNDARY_REFUSED` (§6.6) -- resolve-once-connect-to-that-address alone
 closes only the single-hop DNS time-of-check/time-of-use window; this closes the cross-hop one.
-The route also verifies, after every `connect_hop` call, that the adapter's own report names
-back the exact `admitted_address` it was handed -- an adapter that connected to a different
-address raises `UrlBootAdapterError` rather than being trusted (§10.1).
+The route also verifies, after every connection attempt, that the report names back the exact
+`admitted_address` it was handed -- since Structural Review Round 3 (P17-R3-F1), this connection
+is created by the trusted network layer itself, so this check now guards against a defect in
+that trusted layer rather than a hostile adapter; a mismatch raises `UrlBootRequirementError`
+rather than being trusted (§11.1).
 
 ## 6. Disclosed judgment calls
 
@@ -253,9 +261,11 @@ resolve DNS at all, and refused every redirect outright rather than validating o
 own adopted contract requires the opposite -- genuine per-hop redirect reauthorization and
 DNS-rebinding protection, which cannot be expressed correctly from outside the socket-opening
 call. `network.py` is therefore the one module in this package permitted to import
-`socket`/`http.client`/`ssl`/`ipaddress`; `adapter.py` additionally imports `socket`/`ssl`, but
-only to classify the exception types `network.resolve_hop_address`/`network.
-connect_and_request_hop` themselves let escape -- it opens no socket and wraps no TLS itself,
+`socket`/`http.client`/`ssl`/`ipaddress`. Since Structural Review Round 3 (P17-R3-F1),
+`adapter.py` imports `socket` only to classify the one exception type
+`network.resolve_hop_address` itself lets escape (`socket.gaierror`) -- it no longer imports
+`ssl` at all, because it no longer connects to anything: `LocalHttpUrlSourceAdapter` implements
+only `resolve_hop`, never a connection primitive. It opens no socket and wraps no TLS itself,
 proved by `tests/contract/url_boot/test_url_boot_static_conformance.py`.
 
 ### 6.2 The closed eleven-member outcome vocabulary (P17-C7), and the two smaller per-hop vocabularies beneath it (P17-R1-F2, Structural Review Round 2 P17-R2-F1)
@@ -274,14 +284,18 @@ itself ever reports. Since Structural Review Round 2, it is also no longer a sin
 vocabulary: `URL_HOP_RESOLVE_OUTCOMES` (`DNS_FAILURE`, `RESOLVED`) is the complete, closed
 vocabulary `UrlSourceAdapter.resolve_hop` may return, and `URL_HOP_CONNECT_OUTCOMES`
 (`CONNECTION_FAILURE`, `TLS_FAILURE`, `TIMEOUT`, `RESPONSE`) is the complete, closed vocabulary
-`UrlSourceAdapter.connect_hop` may return -- `BOUNDARY_REFUSED` is a member of neither: it is
-purely route-derived, from the route's own classification of a `resolve_hop`-reported address
-and its own cross-hop resolution-drift check, never an outcome any adapter may assert (see
-§10.1 for the full rationale). `REDIRECT_REFUSED`, `OVERSIZED_RESPONSE`,
+the route's own connection primitive may return -- `BOUNDARY_REFUSED` is a member of neither: it
+is purely route-derived, from the route's own classification of a `resolve_hop`-reported address
+and its own cross-hop resolution-drift check, never an outcome any adapter or connector may
+assert (see §10.1 and §11.1 for the full rationale). `REDIRECT_REFUSED`, `OVERSIZED_RESPONSE`,
 `UNSUPPORTED_MEDIA_TYPE`, `MALFORMED`, `IDENTITY_MISMATCH`, `BOUNDARY_REFUSED`, and `OBSERVED`
-are all route-*derived* classifications; an adapter naming one of them directly in its own
-`resolve_hop`/`connect_hop` report is a malformed report (`UrlBootAdapterError`), never a
-shortcut.
+are all route-*derived* classifications; a resolve report naming one of them directly is a
+malformed report (`UrlBootAdapterError`); since Structural Review Round 3, a connect-stage
+report that fails these same checks is a `UrlBootRequirementError` instead, because production's
+connection primitive is the trusted network layer itself, not necessarily an "adapter" fault --
+this repository's own internal deterministic test composition (§11.1) still exercises the
+identical checks by delegating to a `connect_hop`-bearing test double, so the checks themselves
+are unchanged, only which exception class reports a production-path failure.
 
 ### 6.3 `project_binding_ref` and `human_authority_ref` are both the Evidence target's identity (superseded, Structural Review Round 1 P17-R1-F5)
 
@@ -312,7 +326,7 @@ identical "bound, then redact, then fingerprint" order Runtime's own P15-R1-F3 c
 established, applied here directly at the one place (the route's own response classification)
 that now builds `observed_fields` at all.
 
-### 6.5 The loopback test allowance is a Python composition-time decision, never Boundary data (Structural Review Round 1 P17-R1-F3, superseded by Structural Review Round 2 P17-R2-F2 -- see §10.2)
+### 6.5 The loopback test allowance is a Python composition-time decision, never Boundary data (Structural Review Round 1 P17-R1-F3, superseded by Structural Review Round 2 P17-R2-F2 -- see §10.2 -- further superseded by Structural Review Round 3 P17-R3-F2 -- see §11.2)
 
 This delivery's first version read `permit_loopback_test_hosts` out of the caller-supplied,
 request-facing `boundary` data itself. That field no longer exists anywhere in the closed
@@ -422,8 +436,8 @@ This delivery does **not** claim, and no test here asserts:
   `eval`, a template engine, or a shell (P17-C4 unchanged).
 - that a redirect chain is ever followed unbounded, or that any redirect target is trusted
   before it is itself re-validated against the identical closed `network_scope` -- now
-  performed by the route itself, before the disallowed hop's own `resolve_hop`/`connect_hop` are
-  ever called (P17-R1-F2).
+  performed by the route itself, before the disallowed hop's own `resolve_hop`/connection
+  attempt are ever reached (P17-R1-F2).
 - that this layer can mint Authority, invoke a model, execute a Change, or bypass Evidence. It
   imports none of `authority`, `change`, `model_runtime`, or `reflow`, and its own Evidence
   hand-off resolves a real, integrity-checked, committed Envelope before constructing any
@@ -546,6 +560,127 @@ corroborate its own claims) is refused here, never merely by re-hashing the Enve
 content again. Because the referenced transition is read from this project's own immutable,
 append-only lineage log, any later, unrelated State advancement never invalidates this
 re-verification.
+
+## 11. Structural Review Round 3 (P17-R3-F1, P17-R3-F2)
+
+Reviewed at Round 2's own corrected head (`91cf57f`). Two findings, both about *authority over
+the network boundary itself*, distinct from Round 2's own subject (which classification vocabulary
+governs an address's own safety): who is trusted to *create* the connection to an admitted
+address at all, and who is trusted to authorize the one loopback exception that exists for this
+repository's own disposable local-HTTP test.
+
+### 11.1 P17-R3-F1 -- route-owned connection, not merely route-owned address admission
+
+Round 2 (P17-R2-F1) moved address-safety classification to the route, but the replaceable
+`UrlSourceAdapter`'s own `connect_hop` method still *created* the connection and reported its own
+outcome -- a conforming-looking adapter could still open a socket to any address of its own
+choosing and simply *claim*, in its own report, that it reached the route-admitted one. The route's
+own post-connect check (§5.2) caught a *truthful* adapter naming a different address, but had no
+way to catch a dishonest one that lied about which address it actually reached while returning a
+fabricated, plausible-looking response.
+
+`UrlSourceAdapter` no longer declares a `connect_hop` method at all -- only `resolve_hop` remains
+(harmless on its own: the route independently classifies whatever address a resolve report names
+*before* ever using it for anything, §10.1). The real connection is now created and controlled
+exclusively by the trusted network layer: `network.perform_admitted_connection(source_identity,
+*, admitted_address, boundary)` wraps `network.connect_and_request_hop`, converting the exception
+types that call already let escape into the same typed `URL_HOP_CONNECT_OUTCOMES` vocabulary a
+`connect_hop` report used to carry, so nothing about the two-stage hop shape (§5.1) changed from
+the route's own point of view -- only *who* produces that report.
+
+`route.py`'s internal `_fetch_with_route_owned_redirects`/`_observe_url_source_impl` now take a
+required `perform_connection` parameter -- a callable of `(adapter, current_identity,
+admitted_address, boundary) -> Mapping`, threaded exactly like §10.2's own `classify_resolved_address`
+parameter: never a value any public-entry-point caller can supply, only a composition-time choice
+made once in this module's own source. Two implementations exist. `_perform_connection_via_trusted_network`
+ignores its own `adapter` argument entirely and calls `network.perform_admitted_connection`
+directly -- this is the one permanently bound into public `observe_url_source`, and also the one
+bound into the externally-authorized disposable-local-test composition (§11.2), so *every*
+genuinely-networked entry point this package exposes, production or test, creates its own
+connection through the identical trusted primitive, never through an adapter. `_perform_connection_via_adapter`
+delegates to `adapter.connect_hop(...)` (a capability `FakeUrlSourceAdapter` still exposes, as a
+non-Protocol extra, purely for this repository's own internal deterministic test suite) and is
+used *only* by test code that calls `_observe_url_source_impl` directly -- never reachable from
+either public entry point.
+
+The required decisive control: a malicious adapter whose own `connect_hop` is seeded to fabricate
+a plausible `RESPONSE` claiming the admitted address is never even called by production
+`observe_url_source` -- its own call count remains exactly zero
+(`tests/contract/url_boot/test_url_boot_adapter_contract.py::test_production_observe_url_source_never_reaches_any_adapter_connect_method`).
+Alternate-address I/O by a hostile adapter is not merely detected after the fact; it is
+structurally impossible, because the adapter is never given the opportunity to open a connection
+of its own at all. A companion positive control confirms `resolve_hop` *is* still reached exactly
+once (`test_production_observe_url_source_does_reach_resolve_hop`), so this is a true removal of
+one specific capability, not an accidental severing of the adapter's whole role. A further
+decisive control (`tests/integration/url_boot/test_url_boot_failure_tamper_matrix.py::test_public_observe_url_source_refuses_a_perform_connection_keyword_argument`)
+confirms public `observe_url_source`'s own signature carries no `perform_connection` slot through
+which an alternate connector could ever be substituted at request time -- the identical
+alternate-world-substitution discipline §10.2 already established for the loopback classifier.
+
+Connect-stage validation failures in the route (a non-mapping report, an out-of-vocabulary
+outcome, a `resolved_address` that disagrees with what was admitted, an unreadable
+`response_status`) now raise `UrlBootRequirementError` rather than `UrlBootAdapterError`: since
+production's connector is the trusted network layer itself, a failure there is no longer
+necessarily an "adapter" fault. This repository's own internal deterministic test suite (calling
+`_observe_url_source_impl` directly with `_perform_connection_via_adapter`) still exercises these
+identical checks against a `connect_hop`-bearing test double, so the checks themselves, and their
+test coverage, are unchanged -- only the exception class a production-path failure now reports.
+
+### 11.2 P17-R3-F2 -- a genuinely non-substitutable disposable-local-test observer
+
+Round 2 (P17-R2-F2) closed the loopback allowance's own *parameter surface* but still exposed it
+through a second, distinctly-named public function, `route.observe_url_source_for_disposable_local_test`
+-- reachable by any caller able to import `manosube_agent_civilization.url_boot.route` and read
+its own source, since a plain Python module attribute is never truly private. Structural Review
+Round 3 found this an incomplete closure: the *composition itself*, not merely the request-facing
+parameter list, needed to be something a hostile or careless caller cannot substitute their way
+into using in a production Boot.
+
+`observe_url_source_for_disposable_local_test` is removed from `route.py` entirely.
+`_require_safe_resolved_address_permitting_loopback_only` still exists as a name in that module
+(Python cannot make a module-level name truly unreachable by import -- disclosed, not concealed)
+but Round 3 leaves nothing defined in `route.py` itself that binds it to anything; the AST-based
+static-conformance proof `test_route_never_binds_the_loopback_classifier_to_anything` confirms
+this by walking `route.py`'s own source, not by grepping for the function's name.
+
+The one place this repository's own disposable local-HTTP vertical proof can still observe
+against `127.0.0.1` is a new file, `tests/fixtures/url_boot_local_test_authority.py` --
+deliberately placed *outside* the shipped package. `pyproject.toml`'s own
+`[tool.hatch.build.targets.wheel] packages = ["src/manosube_agent_civilization"]` confirms this
+file is genuinely absent from the distributed wheel, present only in the sdist's own `/tests`
+inclusion -- a real, checkable packaging fact, not merely an assertion. It exposes one function,
+`compose_disposable_local_test_observer(store, *, project_id, project_binding_id, adapter) ->
+Callable[[source_identity, boundary, observed_at], dict]`: a two-step factory-and-closure
+boundary, mirroring the identical "a closure is not a class" idiom Runtime's own
+`bootstrap.py` already established for Structural Review Round 5 (P15-R5-F1) -- composition
+chooses and closes over the loopback-permitting authority (`_require_safe_resolved_address_permitting_loopback_only`,
+`_perform_connection_via_trusted_network`) before the request boundary ever exists, so the
+returned closure's own call signature carries none of `store`/`project_id`/`project_binding_id`/
+`adapter`/classifier/connector -- only the genuinely request-facing `source_identity`/`boundary`/
+`observed_at` a real fetch call needs. This is not a sentinel, an `isinstance` check, a Python
+private name, or stack/module inspection: none of those defend against a caller who can read
+source and import freely; a closure over values chosen once, at composition time, in code the
+request path never touches, has no such value left in its own signature to inspect at all.
+
+This boundary is explicitly disclosed as **not** the cryptographic capability security Runtime's
+own Ed25519-anchored production authority provides (P15's own execution-authority chain) -- it is
+a deliberate, disclosed, proportionate judgment call given the bounded blast radius: loopback-only
+access to a disposable local server the same test process already has unmediated access to by
+simply calling it directly. Pure Python offers no access-control primitive stronger than "this
+value is not reachable from code that does not import this specific module" for a same-process,
+same-privilege caller, and this package does not claim otherwise.
+
+The required decisive controls: direct import of `route._require_safe_resolved_address_permitting_loopback_only`
+or `route._perform_connection_via_trusted_network` by themselves yields no usable permissive
+authority against public `observe_url_source` (its own binding is fixed at module load, never
+request time -- §10.2, §11.1); a genuine disposable local-HTTP vertical succeeds only through
+`compose_disposable_local_test_observer` (`tests/integration/url_boot/test_url_boot_local_http_vertical_proof.py`,
+all 8 cases green); and every earlier zero-State-mutation, redirect, DNS-drift, provenance,
+tamper, and Evidence preflight proof (§7, §10) remains green under the new API, proved by driving
+this repository's own internal deterministic connector (`_perform_connection_via_adapter`)
+directly through `_observe_url_source_impl`, the identical internal-test-composition pattern
+`test_url_boot_kernel_continuity.py` already established for Round 2's own `classify_resolved_address`
+parameter.
 
 `MERGE_ALLOWED`, `ISSUE_CLOSE_ALLOWED`, `PHASE_17_COMPLETE` and `PHASE_18_ALLOWED` are fixed at
 `false` by the adopting authority and are not this document's to change.

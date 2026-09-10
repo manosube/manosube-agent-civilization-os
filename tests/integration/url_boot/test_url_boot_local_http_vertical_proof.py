@@ -1,23 +1,27 @@
 """V3 (Issue #69): real bounded URL Boot vertical proof.
 
-Runs the complete canonical route -- :func:`~manosube_agent_civilization.url_boot.route.
-observe_url_source_for_disposable_local_test` through :class:`~manosube_agent_civilization.
+Runs the complete canonical route -- this repository's own trusted, non-shipped
+disposable-local-test composition (:func:`~tests.fixtures.url_boot_local_test_authority.
+compose_disposable_local_test_observer`) through :class:`~manosube_agent_civilization.
 url_boot.adapter.LocalHttpUrlSourceAdapter` -- against one real, disposable, local HTTP target
 this test itself starts and stops (``127.0.0.1``, an ephemeral port). No VPS or cloud provider is
 used or required (Issue #69's own explicit non-target). Proves at least one genuine positive
 (``OBSERVED``), one genuine per-hop-reauthorized redirect follow, one genuine bounded negative
 (``UNSUPPORTED_MEDIA_TYPE``), and one genuine unreachable-port failure (``CONNECTION_FAILURE``),
 each a real network round trip over ``localhost`` through this package's own
-``network.resolve_hop_address``/``network.connect_and_request_hop`` -- then hands the positive
-receipt off to the existing Evidence owner.
+``network.resolve_hop_address``/``network.perform_admitted_connection`` -- then hands the
+positive receipt off to the existing Evidence owner.
 
 Every real local target used here is loopback, so every observation in this file goes through
-``observe_url_source_for_disposable_local_test`` -- the one, distinctly-named,
-non-public-surface, trusted-composition-only entry point that allowance can ever be reached
-through (Structural Review Round 1, P17-R1-F3, further corrected in Round 2, P17-R2-F2: no
-adapter constructor argument exists for this any more at all; see ``route.py``'s own module
-docstring). ``LocalHttpUrlSourceAdapter()`` itself now takes no loopback-related argument
-whatsoever.
+this trusted composition -- the one place the loopback exception can ever be reached (Structural
+Review Round 1, P17-R1-F3; Round 2, P17-R2-F2; Round 3, P17-R3-F2: this shipped package no longer
+defines any second, distinctly-named, loopback-permitting entry point at all -- the composition
+lives entirely under ``tests/``, confirmed absent from the distributed wheel; see that module's
+own docstring for the complete rationale). ``LocalHttpUrlSourceAdapter()`` itself now takes no
+loopback-related argument whatsoever, and performs no connection of its own at all (P17-R3-F1) --
+every real connection in this file is made by
+:func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection`, called
+directly by the route, never through the adapter.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from typing import Any
 
 import pytest
 from tests.evidence_helpers import change_free_verification_evidence_request
+from tests.fixtures.url_boot_local_test_authority import compose_disposable_local_test_observer
 from tests.fixtures.url_boot_world import bound, boundary_for
 
 from manosube_agent_civilization.url_boot import network as network_module
@@ -39,7 +44,6 @@ from manosube_agent_civilization.url_boot.evidence_handoff import (
     route_url_observation_to_evidence,
 )
 from manosube_agent_civilization.url_boot.network import canonical_source_identity
-from manosube_agent_civilization.url_boot.route import observe_url_source_for_disposable_local_test
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -116,15 +120,13 @@ def test_real_local_http_positive_observation_reaches_verified_evidence(
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
     adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source_for_disposable_local_test(
+    observe = compose_disposable_local_test_observer(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        source_identity=source_identity,
-        boundary=boundary,
         adapter=adapter,
-        observed_at="2026-09-10T00:00:01Z",
     )
+    outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
 
     assert outcome["envelope"]["fetch_outcome"] == "OBSERVED"
     assert outcome["envelope"]["observed_fields"] == {"status": "ok"}
@@ -170,15 +172,13 @@ def test_real_local_http_redirect_is_followed_and_reauthorized(
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
     adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source_for_disposable_local_test(
+    observe = compose_disposable_local_test_observer(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        source_identity=source_identity,
-        boundary=boundary,
         adapter=adapter,
-        observed_at="2026-09-10T00:00:01Z",
     )
+    outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
 
     assert outcome["envelope"]["fetch_outcome"] == "OBSERVED"
     assert outcome["envelope"]["redirect_hop_count"] == 1
@@ -215,15 +215,13 @@ def test_a_redirect_to_a_host_outside_scope_is_refused_not_followed(
         boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
         adapter = LocalHttpUrlSourceAdapter()
 
-        outcome = observe_url_source_for_disposable_local_test(
+        observe = compose_disposable_local_test_observer(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            source_identity=source_identity,
-            boundary=boundary,
             adapter=adapter,
-            observed_at="2026-09-10T00:00:01Z",
         )
+        outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
         assert outcome["envelope"] is None
         assert outcome["receipt"].observations["fetch_outcome"] == "REDIRECT_REFUSED"
         assert outcome["receipt"].status == "FAILED"
@@ -242,15 +240,13 @@ def test_real_local_http_wrong_content_type_is_a_genuine_unsupported_media_type(
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
     adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source_for_disposable_local_test(
+    observe = compose_disposable_local_test_observer(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        source_identity=source_identity,
-        boundary=boundary,
         adapter=adapter,
-        observed_at="2026-09-10T00:00:01Z",
     )
+    outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
     assert outcome["envelope"] is None
     assert outcome["receipt"].observations["fetch_outcome"] == "UNSUPPORTED_MEDIA_TYPE"
     assert outcome["receipt"].status == "FAILED"
@@ -264,15 +260,13 @@ def test_real_local_http_oversized_response_is_refused_not_truncated_and_kept(
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port], max_response_bytes=64)
     adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source_for_disposable_local_test(
+    observe = compose_disposable_local_test_observer(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        source_identity=source_identity,
-        boundary=boundary,
         adapter=adapter,
-        observed_at="2026-09-10T00:00:01Z",
     )
+    outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
     assert outcome["envelope"] is None
     assert outcome["receipt"].observations["fetch_outcome"] == "OVERSIZED_RESPONSE"
     assert outcome["receipt"].status == "FAILED"
@@ -286,15 +280,13 @@ def test_real_local_http_unreachable_port_is_connection_failure(_world: dict[str
     boundary = boundary_for(admitted_hosts=["127.0.0.1"], admitted_ports=[1], timeout_seconds=2)
     adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source_for_disposable_local_test(
+    observe = compose_disposable_local_test_observer(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        source_identity=source_identity,
-        boundary=boundary,
         adapter=adapter,
-        observed_at="2026-09-10T00:00:01Z",
     )
+    outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
     assert outcome["envelope"] is None
     assert outcome["receipt"].observations["fetch_outcome"] in ("CONNECTION_FAILURE", "TIMEOUT")
     assert outcome["receipt"].status == "UNAVAILABLE"
@@ -333,15 +325,13 @@ def test_real_local_http_host_header_carries_the_non_default_port(
         boundary = boundary_for(admitted_hosts=[capture_host], admitted_ports=[capture_port])
         adapter = LocalHttpUrlSourceAdapter()
 
-        outcome = observe_url_source_for_disposable_local_test(
+        observe = compose_disposable_local_test_observer(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            source_identity=source_identity,
-            boundary=boundary,
             adapter=adapter,
-            observed_at="2026-09-10T00:00:01Z",
         )
+        outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
         assert outcome["envelope"]["fetch_outcome"] == "OBSERVED"
     finally:
         server.shutdown()
@@ -452,15 +442,13 @@ def test_real_local_https_round_trip_succeeds_with_exactly_one_tls_wrap(
         )
         adapter = LocalHttpUrlSourceAdapter()
 
-        outcome = observe_url_source_for_disposable_local_test(
+        observe = compose_disposable_local_test_observer(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            source_identity=source_identity,
-            boundary=boundary,
             adapter=adapter,
-            observed_at="2026-09-10T00:00:01Z",
         )
+        outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
     finally:
         server.shutdown()
         thread.join(timeout=5)

@@ -7,16 +7,21 @@ exactly the bounded, single-hop transport facts
 (:data:`~manosube_agent_civilization.url_boot.types.URL_HOP_RESOLVE_OUTCOMES`/
 :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_CONNECT_OUTCOMES`) a real probe of one
 explicit hop would honestly report; this adapter never itself decides a redirect, a final
-identity, a hop count, a resolved address's own safety, or any content classification -- real
-per-hop transport classification of a genuine probe belongs solely to
-:class:`LocalHttpUrlSourceAdapter`, and every redirect/content/identity/boundary decision belongs
-solely to :mod:`~manosube_agent_civilization.url_boot.route` (P17-R1-F2/P17-R2-F1).
+identity, a hop count, a resolved address's own safety, or any content classification -- every
+redirect/content/identity/boundary decision belongs solely to
+:mod:`~manosube_agent_civilization.url_boot.route` (P17-R1-F2/P17-R2-F1). Its own ``connect_hop``
+method (Structural Review Round 3, P17-R3-F1) is **not** part of the
+:class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` Protocol any more -- see
+that Protocol's own module-level discussion -- it survives only as this class's own additional,
+deterministic-test-only capability, reachable exclusively through this repository's own internal
+test-composition path, never through either genuinely-networked public entry point.
 
-``LocalHttpUrlSourceAdapter`` is a genuine, complete implementation of exactly one bounded HTTP
-GET for one explicit hop, built entirely on
-:mod:`~manosube_agent_civilization.url_boot.network`'s own resolve-then-connect-to-that-exact-
-address primitives -- the V3 vertical-proof target, exercised against one disposable, local HTTP
-server this delivery's own test suite starts and stops itself (``127.0.0.1``, an ephemeral port).
+``LocalHttpUrlSourceAdapter`` performs the one genuine DNS resolution for one explicit hop, via
+:mod:`~manosube_agent_civilization.url_boot.network`'s own :func:`~manosube_agent_civilization.
+url_boot.network.resolve_hop_address` -- the V3 vertical-proof target's DNS-resolution half,
+exercised against one disposable, local HTTP server this delivery's own test suite starts and
+stops itself (``127.0.0.1``, an ephemeral port). It performs no connection of any kind
+(Structural Review Round 3, P17-R3-F1) -- see its own class docstring.
 
 **Structural Review Round 1 (P17-R1-F3) correction, further corrected in Round 2
 (P17-R2-F2).** This delivery's first version read ``permit_loopback_test_hosts`` out of the
@@ -30,19 +35,19 @@ still construct exactly that object with ``permit_loopback_test_hosts=True``. Th
 carries **no loopback-permitting parameter of any kind, anywhere on its public surface** -- it
 never resolves an address's own safety at all (P17-R2-F1 already moved that decision to the
 route alone), so it has nothing left to be told to permit. The loopback decision now lives
-exclusively in :mod:`~manosube_agent_civilization.url_boot.route`'s own closed, non-substitutable
-composition boundary; see that module's own docstring.
+exclusively in this repository's own trusted, non-shipped test-composition boundary (Structural
+Review Round 3, P17-R3-F2) -- see ``tests/fixtures/url_boot_local_test_authority.py``'s own
+module docstring.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 import socket
-import ssl
 from typing import Any
 
 from .errors import UrlBootAdapterError
-from .network import connect_and_request_hop, resolve_hop_address
+from .network import resolve_hop_address
 from .types import URL_HOP_CONNECT_OUTCOMES
 
 
@@ -192,19 +197,37 @@ class FakeUrlSourceAdapter:
 
 class LocalHttpUrlSourceAdapter:
     """A complete :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter`
-    performing exactly one real, bounded HTTP GET for one explicit hop -- stdlib
-    ``socket``/``http.client``/``ssl`` only, via
-    :mod:`~manosube_agent_civilization.url_boot.network`'s own :func:`resolve_hop_address`/
-    :func:`connect_and_request_hop` primitives. No redirect following, no content classification,
-    and (since Structural Review Round 2, P17-R2-F1) no resolved-address safety classification of
-    any kind: all three are the route's own job alone.
+    performing the one genuine DNS resolution for one explicit hop -- stdlib ``socket`` only, via
+    :mod:`~manosube_agent_civilization.url_boot.network`'s own :func:`resolve_hop_address`. No
+    redirect following, no content classification, no resolved-address safety classification of
+    any kind (Structural Review Round 2, P17-R2-F1), and (since Structural Review Round 3,
+    P17-R3-F1) **no connection of any kind** -- this class carries no method capable of opening a
+    socket at all any more.
+
+    **Structural Review Round 3 (P17-R3-F1) correction.** This class previously also implemented
+    ``connect_hop``, performing the real bounded HTTP GET itself and reporting the result back to
+    the route, which trusted that report as proof of which address was actually reached (checked
+    only for after-the-fact disagreement with the address it was handed). A dishonest or buggy
+    ``UrlSourceAdapter`` implementation could therefore connect anywhere it pleased and simply
+    echo the admitted address back. :func:`~manosube_agent_civilization.url_boot.route.
+    observe_url_source` and its disposable-local-test counterpart no longer call any adapter
+    method to perform a connection at all -- the real connect-and-fetch step is now
+    :mod:`~manosube_agent_civilization.url_boot.network`'s own :func:`
+    ~manosube_agent_civilization.url_boot.network.perform_admitted_connection`, called *directly*
+    by the route, using only the exact address the route itself already resolved and classified.
+    This class's own ``connect_hop`` method (and the ``UrlSourceAdapter`` Protocol member it used
+    to implement) is therefore removed rather than merely left unused: a replaceable adapter has
+    no call through which to substitute a different destination because there is no method left
+    on either the Protocol or this class through which a connection could ever be requested.
 
     Carries no loopback-related constructor parameter at all (Structural Review Round 2,
     P17-R2-F2) -- see this module's own docstring.
 
-    The V3 vertical-proof target: exercised in this delivery's own test suite against one
-    disposable, local HTTP server the test itself starts and stops (``127.0.0.1``, an ephemeral
-    port) -- never a VPS or cloud target, per Issue #69's own explicit non-target.
+    The V3 vertical-proof target's own DNS-resolution half: exercised in this delivery's own test
+    suite against one disposable, local HTTP server the test itself starts and stops
+    (``127.0.0.1``, an ephemeral port) -- never a VPS or cloud target, per Issue #69's own
+    explicit non-target. The actual HTTP round trip against that server is performed by
+    :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection` alone.
     """
 
     def __init__(self, *, adapter_identity: Mapping[str, Any] | None = None) -> None:
@@ -218,38 +241,6 @@ class LocalHttpUrlSourceAdapter:
         except socket.gaierror:
             return {"outcome": "DNS_FAILURE"}
         return {"outcome": "RESOLVED", "resolved_address": address}
-
-    def connect_hop(
-        self,
-        *,
-        source_identity: Mapping[str, Any],
-        boundary: Mapping[str, Any],
-        admitted_address: str,
-    ) -> Mapping[str, Any]:
-        try:
-            result = connect_and_request_hop(
-                dict(source_identity),
-                admitted_address=admitted_address,
-                timeout_seconds=boundary["timeout_seconds"],
-                max_response_bytes=boundary["max_response_bytes"],
-            )
-        except TimeoutError:
-            return {"outcome": "TIMEOUT", "resolved_address": None}
-        except ssl.SSLError:
-            return {"outcome": "TLS_FAILURE", "resolved_address": None}
-        except OSError:
-            return {"outcome": "CONNECTION_FAILURE", "resolved_address": None}
-
-        content_type = result["headers"].get("content-type", "").split(";")[0].strip().lower()
-        return {
-            "outcome": "RESPONSE",
-            "resolved_address": result["resolved_address"],
-            "response_status": result["status"],
-            "content_type": content_type or None,
-            "redirect_location": result["redirect_location"],
-            "body": result["body"],
-            "oversized": result["oversized"],
-        }
 
 
 __all__ = ["FakeUrlSourceAdapter", "LocalHttpUrlSourceAdapter"]

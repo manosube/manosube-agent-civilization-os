@@ -30,7 +30,11 @@ from manosube_agent_civilization.model_runtime import (
 )
 from manosube_agent_civilization.url_boot.adapter import FakeUrlSourceAdapter
 from manosube_agent_civilization.url_boot.network import canonical_source_identity
-from manosube_agent_civilization.url_boot.route import observe_url_source
+from manosube_agent_civilization.url_boot.route import (
+    _observe_url_source_impl,
+    _perform_connection_via_adapter,
+    _require_safe_resolved_address_production,
+)
 
 _ENVELOPE_RECORD_KIND = "url_source_observation_envelope"
 
@@ -83,7 +87,11 @@ def test_a_model_execution_and_a_url_observation_coexist_without_interference(
         outcome="RESPONSE",
         body=json.dumps({"status": "ok"}).encode(),
     )
-    url_result = observe_url_source(
+    # This test's own subject is Model-Runtime/URL-Boot State-tree coexistence, not URL Boot's
+    # own network-admission machinery -- it therefore calls the internal implementation directly
+    # with a deterministic connector (this repository's own internal test-composition path, never
+    # reachable from either genuinely-networked public entry point, P17-R3-F1).
+    url_result = _observe_url_source_impl(
         store,
         project_id=project_id,
         project_binding_id=project_binding_id,
@@ -91,6 +99,8 @@ def test_a_model_execution_and_a_url_observation_coexist_without_interference(
         boundary=boundary,
         adapter=url_adapter,
         observed_at="2026-09-09T02:00:01Z",
+        classify_resolved_address=_require_safe_resolved_address_production,
+        perform_connection=_perform_connection_via_adapter,
     )
     url_envelope_id = url_result["envelope"]["url_source_observation_envelope_id"]
 

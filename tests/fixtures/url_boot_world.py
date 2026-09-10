@@ -65,10 +65,11 @@ def boundary_for(
     """One real, schema-valid, closed fetch Boundary.
 
     Carries no ``permit_loopback_test_hosts`` field at all, and never has since Structural
-    Review Round 1 (P17-R1-F3) -- that allowance is now reachable only by importing
-    ``manosube_agent_civilization.url_boot.route.observe_url_source_for_disposable_local_test``
-    directly (Structural Review Round 2, P17-R2-F2), never through Boundary data, an adapter
-    constructor, or any parameter of public ``observe_url_source``.
+    Review Round 1 (P17-R1-F3) -- that allowance is now reachable only through this
+    repository's own trusted, non-shipped disposable-local-test composition
+    (``tests/fixtures/url_boot_local_test_authority.compose_disposable_local_test_observer``,
+    Structural Review Round 3, P17-R3-F2), never through Boundary data, an adapter constructor,
+    or any parameter of public ``observe_url_source``.
     """
 
     boundary: dict[str, Any] = {

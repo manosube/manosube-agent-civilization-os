@@ -33,15 +33,22 @@ Four layers, in the order a fetch actually uses them:
    (:mod:`~manosube_agent_civilization.url_boot.route`), on the resolved address the route
    itself sees *before* any connection is ever attempted, never something a replaceable adapter
    decides on the route's behalf.
-4. **The two impure primitives** (:func:`resolve_hop_address`, :func:`connect_and_request_hop`)
-   -- the first resolves a hop's host exactly once and returns that address to its own caller
-   without connecting to it; the second connects directly to a caller-supplied, already-admitted
+4. **The impure primitives** (:func:`resolve_hop_address`, :func:`connect_and_request_hop`,
+   :func:`perform_admitted_connection`) -- :func:`resolve_hop_address` resolves a hop's host
+   exactly once and returns that address to its own caller without connecting to it;
+   :func:`connect_and_request_hop` connects directly to a caller-supplied, already-admitted
    address and performs one bounded HTTP GET -- the hostname is used only for the ``Host``
    header and, over HTTPS, TLS server-name/certificate verification, never for a second
    resolution. Splitting resolution from connection this way is what lets the route itself see,
    and independently classify, the resolved address before any connection is ever attempted
    (P17-R2-F1) -- Round 1's own single ``fetch_one_hop`` resolved and connected in one
    uninterruptible step, leaving no seam for the route to inspect the address in between.
+   :func:`perform_admitted_connection` is the outcome-classifying wrapper around
+   :func:`connect_and_request_hop` that :mod:`~manosube_agent_civilization.url_boot.route` calls
+   *directly* -- never through a replaceable adapter's own method (Structural Review Round 3,
+   P17-R3-F1): the trusted route/network boundary alone creates the connection to the exact
+   admitted address, so a replaceable adapter is never even invoked for this step and has no call
+   through which to substitute a different destination.
 """
 
 from __future__ import annotations
@@ -214,14 +221,17 @@ def connect_and_request_hop(
     str | None, "oversized": bool, "resolved_address": str}`` on any completed HTTP response
     (including a redirect response, which this function never follows itself -- following is the
     caller's own per-hop-reauthorized decision); ``resolved_address`` echoes back the exact
-    *admitted_address* this call actually connected to, so its own caller can refuse a report
-    that ever disagreed. Raises :class:`TimeoutError` for a timed-out connection/read,
-    :class:`OSError` for a lower-level connection failure, or :class:`ssl.SSLError` for a TLS
-    failure -- the caller classifies each into its own typed
-    :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_CONNECT_OUTCOMES` member; this
-    function itself never returns a partial/oversized body silently -- reading stops the instant
-    *max_response_bytes* would be exceeded and the caller is handed exactly that many bytes plus
-    a marker the caller uses to classify ``OVERSIZED_RESPONSE``.
+    *admitted_address* this call actually connected to. Raises :class:`TimeoutError` for a
+    timed-out connection/read, :class:`OSError` for a lower-level connection failure, or
+    :class:`ssl.SSLError` for a TLS failure; this function itself never returns a
+    partial/oversized body silently -- reading stops the instant *max_response_bytes* would be
+    exceeded and the caller is handed exactly that many bytes plus a marker the caller uses to
+    classify ``OVERSIZED_RESPONSE``.
+
+    **Structural Review Round 3 (P17-R3-F1) note.** This function's own *caller*, since Round 3,
+    is :func:`perform_admitted_connection` alone -- never a replaceable
+    :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` implementation. See
+    that function's own docstring for the full rationale.
     """
 
     host = source_identity["host"]
@@ -276,11 +286,71 @@ def connect_and_request_hop(
         connection.close()
 
 
+def perform_admitted_connection(
+    source_identity: dict[str, Any],
+    *,
+    admitted_address: str,
+    boundary: dict[str, Any],
+) -> dict[str, Any]:
+    """The one trusted connect-stage primitive every genuine URL Boot observation reaches --
+    production and the disposable-local-test vertical alike (Structural Review Round 3,
+    P17-R3-F1).
+
+    Round 2 handed *admitted_address* to a replaceable adapter's own ``connect_hop`` and trusted
+    its own report of which address it actually reached, refusing only when that report
+    *disagreed* with what it was handed -- an after-the-fact self-attestation, not a structural
+    guarantee: a dishonest ``connect_hop`` implementation could connect anywhere it pleased and
+    simply echo ``admitted_address`` back. This function closes that gap by removing the
+    adapter's own connect step from the trusted call path entirely: it is this module's own
+    :func:`connect_and_request_hop` that opens the real socket, called directly from
+    :mod:`~manosube_agent_civilization.url_boot.route`, never through any method a replaceable
+    :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` implementation supplies.
+    A malicious or buggy adapter conforming to that Protocol is never even invoked for this step
+    in either genuinely-networked entry point, so it has no call through which to substitute a
+    different destination -- not "the report is checked and refused if it disagrees", but "there
+    is no report to check, because the adapter's own connect method is never reached at all".
+
+    Returns the same shape :meth:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter.
+    connect_hop` itself used to: ``{"outcome": "CONNECTION_FAILURE" | "TLS_FAILURE" | "TIMEOUT",
+    "resolved_address": None}`` for a failed connection, or ``{"outcome": "RESPONSE",
+    "resolved_address": str, "response_status": int, "content_type": str | None,
+    "redirect_location": str | None, "body": bytes, "oversized": bool}`` for a completed round
+    trip -- classifying :func:`connect_and_request_hop`'s own raised exceptions exactly as
+    :class:`~manosube_agent_civilization.url_boot.adapter.LocalHttpUrlSourceAdapter` used to
+    (moved here since that adapter no longer performs any connection of its own at all)."""
+
+    try:
+        result = connect_and_request_hop(
+            source_identity,
+            admitted_address=admitted_address,
+            timeout_seconds=boundary["timeout_seconds"],
+            max_response_bytes=boundary["max_response_bytes"],
+        )
+    except TimeoutError:
+        return {"outcome": "TIMEOUT", "resolved_address": None}
+    except ssl.SSLError:
+        return {"outcome": "TLS_FAILURE", "resolved_address": None}
+    except OSError:
+        return {"outcome": "CONNECTION_FAILURE", "resolved_address": None}
+
+    content_type = result["headers"].get("content-type", "").split(";")[0].strip().lower()
+    return {
+        "outcome": "RESPONSE",
+        "resolved_address": result["resolved_address"],
+        "response_status": result["status"],
+        "content_type": content_type or None,
+        "redirect_location": result["redirect_location"],
+        "body": result["body"],
+        "oversized": result["oversized"],
+    }
+
+
 __all__ = [
     "PERMITTED_SOURCE_SCHEMES",
     "UnsafeResolvedAddressError",
     "canonical_source_identity",
     "connect_and_request_hop",
+    "perform_admitted_connection",
     "require_safe_resolved_address",
     "require_source_within_network_scope",
     "resolve_hop_address",

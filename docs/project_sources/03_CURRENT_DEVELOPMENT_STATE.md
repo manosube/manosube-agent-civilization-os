@@ -2173,3 +2173,101 @@ PHASE_17_COMPLETE=false
 PHASE_18_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
+
+# 30. Phase 17 Structural Review Round 3 bounded addendum (Issue #69, PR #71) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション29の記録以降、構造参謀によるStructural Review Round 3
+（`P17-R3-F1`, `P17-R3-F2`）とSHUKOUによるその採択（Issue #69コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/69#issuecomment-5616711879`、
+`ADOPTION_ID=ADOPT_P17_R3_ROUTE_OWNED_CONNECTION_AND_NON_SUBSTITUTABLE_LOCAL_TEST_COMPOSITION`）を
+独立GitHub API再観測で確認した上で、この既存PR #71ブランチ上に実装した是正内容を記録する。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション29自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+CURRENT_PHASE=17_READ_ONLY_URL_BOOT_AND_UNTRUSTED_CONTENT_BOUNDARY
+CURRENT_PHASE_ISSUE=69
+CURRENT_PR=71
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#69
+TARGET_PR=#71
+BASE_SHA=aee9b669f8bf15626fe162f196cf12338a4ff0da
+BRANCH=agent/issue-69-phase17-read-only-url-boot
+REVIEWED_HEAD=91cf57fa885f899decf78374ed38e441aca5e135
+ADOPTION_ID=ADOPT_P17_R3_ROUTE_OWNED_CONNECTION_AND_NON_SUBSTITUTABLE_LOCAL_TEST_COMPOSITION
+ADOPTED_FINDINGS=P17-R3-F1,P17-R3-F2
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_71_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_DELIVERED_AWAITING_ROUND_4
+```
+
+2件の是正内容の要約：
+
+```text
+P17-R3-F1  Round 2はaddress安全性分類をrouteへ移したが、置換可能なUrlSourceAdapter自身の
+           connect_hopが依然として接続そのものを作成し、その結果を自ら報告していた --
+           adapterが正直であればroute自身の事後照合（報告されたresolved_addressがroute
+           admittedアドレスと一致するか）で捕捉できたが、悪意あるadapterが実際には別の
+           アドレスへ接続しながら、admittedアドレスへ到達したと偽って報告し、もっともらしい
+           偽のresponseを返すことを妨げる手段が無かった。UrlSourceAdapter Protocolから
+           connect_hopメソッドを完全に削除した（resolve_hopのみが残る -- route自身が
+           resolve結果を利用する前に独立して安全性分類するため、これ単体では無害）。実際の
+           接続はtrusted network layer自身が排他的に作成・制御する:
+           network.perform_admitted_connection(source_identity, *, admitted_address,
+           boundary)がnetwork.connect_and_request_hopをラップし、typedなURL_HOP_
+           CONNECT_OUTCOMES vocabularyへ変換する。route.py内部のperform_connection
+           parameter（既存のclassify_resolved_addressパターンと同一のcomposition時点束縛）
+           経由で、公開observe_url_sourceは_perform_connection_via_trusted_network
+           （adapter引数を完全に無視し、network.perform_admitted_connectionへ直接委譲）
+           へ恒久的に束縛される。悪意あるadapterのconnect_hopが尤もらしいRESPONSEを偽装
+           するよう仕込まれていても、公開observe_url_sourceから一度も呼び出されないことを
+           呼び出し回数ゼロで証明する decisive test を追加した
+           （test_production_observe_url_source_never_reaches_any_adapter_connect_method）。
+           connect段階の検証失敗は、production側の接続主体がもはや"adapter"ではないため、
+           UrlBootAdapterErrorからUrlBootRequirementErrorへ変更した。
+
+P17-R3-F2  Round 2はloopback許容のparameter surfaceを閉じたが、route.observe_url_source_
+           for_disposable_local_testという別名の第二公開関数を通じて、この許容そのものは
+           依然として到達可能だった -- Pythonのモジュール属性は真にprivateにはできないため、
+           route.pyをimportして読める呼び出し元なら誰でも到達できた。この関数をroute.py
+           から完全に削除した。_require_safe_resolved_address_permitting_loopback_only
+           という名前自体はroute.py内に残るが（Pythonはモジュールレベル名を真に到達不能には
+           できないため、これは秘匿ではなく開示された事実である）、route.py自身が定義する
+           どの関数もこれを何にも束縛しない。この repository が出荷する package の外側 --
+           tests/fixtures/url_boot_local_test_authority.py -- に新設した
+           compose_disposable_local_test_observer(store, *, project_id,
+           project_binding_id, adapter)が、唯一残る到達経路である。pyproject.tomlの
+           [tool.hatch.build.targets.wheel] packagesが
+           ["src/manosube_agent_civilization"]のみを列挙していることにより、この
+           ファイルが配布wheelから実際に欠落していることを確認済み（sdistの/tests同梱
+           にのみ存在）。runtime/bootstrap.py自身が確立したStructural Review Round 5
+           （P15-R5-F1）の"closureはclassではない"という idiom と同一の two-step
+           factory-and-closure boundary を採用し、返されるclosureのcall signature自体には
+           store/project_id/project_binding_id/adapter/classifier/connectorのいずれも
+           含まれず、真にrequest-facingなsource_identity/boundary/observed_atのみを持つ。
+           これはRuntimeのEd25519基盤production authorityが提供する暗号学的capability
+           securityでは**ない**ことを明示的に開示する -- disposable local serverへの
+           loopback限定アクセスという限定的blast radiusを踏まえた、意図的で開示された
+           比例的判断である。
+```
+
+修正はPR #71の唯一のブランチ上、新規PR無しで行われた。既存の`State`・`Difference`・
+`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Model Runtime`のいずれの
+ownerも置換・変更しない。schema変更は無し（`UrlSourceAdapter` Protocolと`route.py`の関数surface
+のみの変更であり、`url_source_observation_envelope.schema.json`は変更していない）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_17_COMPLETE=false
+PHASE_18_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+

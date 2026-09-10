@@ -54,13 +54,14 @@ evidence = route_url_observation_to_evidence(
 ```
 
 A local-test-only fetch (``127.0.0.1``, an ephemeral port) requires this repository's own
-disposable-test-only route entry point, ``manosube_agent_civilization.url_boot.route.
-observe_url_source_for_disposable_local_test`` -- imported directly from that module, never from
-this package's own public surface, and never reachable through any field of ``boundary``, any
-constructor argument of ``adapter``, or any parameter of public ``observe_url_source`` itself
-(P17-R1-F3, further corrected in Round 2, P17-R2-F2: the loopback exception is not a parameter
-anywhere in this call graph -- it is decided once, at composition time, by which of the two
-distinctly-named functions a caller imports).
+trusted, non-shipped disposable-local-test composition boundary,
+``tests/fixtures/url_boot_local_test_authority.py`` -- never reachable through any field of
+``boundary``, any constructor argument of ``adapter``, or any parameter of public
+``observe_url_source`` itself (P17-R1-F3, corrected in Round 2, P17-R2-F2, and again in Round 3,
+P17-R3-F2: this package no longer ships a second, distinctly-named, loopback-permitting entry
+point at all -- the disposable-local-test composition lives entirely outside this shipped
+package, and its own request-facing observer is a closure returned from trusted composition,
+never a directly-importable function taking Store/adapter/classifier arguments of its own).
 
 See ``12_URL_BOOT/URL_BOOT_CONTRACT.md`` and ``12_URL_BOOT/URL_BOOT_INDEX.md`` for the full
 contract this package implements, its disclosed judgment calls, and its explicit non-claims.
