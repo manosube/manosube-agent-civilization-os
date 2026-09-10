@@ -17,7 +17,7 @@ package already keeps, just drawn one module earlier here because the safety pro
 resolve once, connect to that exact address -- cannot be expressed correctly from outside the
 socket-opening call).
 
-Three layers, in the order a fetch actually uses them:
+Four layers, in the order a fetch actually uses them:
 
 1. **Pure parsing/decomposition** (:func:`canonical_source_identity`, :func:`source_url`) --
    no I/O, refuses userinfo, unreadable hosts, and out-of-vocabulary schemes/ports before
@@ -26,12 +26,22 @@ Three layers, in the order a fetch actually uses them:
    *hostname* (never mind what it resolves to) inside the Boundary's own closed allowlist. Runs
    once per hop, before that hop's own DNS resolution -- a hop naming a host outside the
    allowlist is refused without ever resolving it.
-3. **The one impure primitive** (:func:`fetch_one_hop`) -- resolves the hop's host exactly once,
-   classifies the resolved address (loopback/private/link-local/multicast/reserved, all refused
-   unless the Boundary's own ``permit_loopback_test_hosts`` explicitly admits loopback for a
-   controlled local test target), and connects directly to that address -- the hostname is used
-   only for the ``Host`` header and, over HTTPS, TLS server-name/certificate verification, never
-   for a second resolution.
+3. **Pure address-safety classification** (:func:`require_safe_resolved_address`) -- is this
+   *already-resolved address* loopback/private/link-local/multicast/reserved. **Structural
+   Review Round 2 (P17-R2-F1) correction:** this is no longer called from within this module's
+   own impure fetch primitive at all -- calling it is now the route's own job alone
+   (:mod:`~manosube_agent_civilization.url_boot.route`), on the resolved address the route
+   itself sees *before* any connection is ever attempted, never something a replaceable adapter
+   decides on the route's behalf.
+4. **The two impure primitives** (:func:`resolve_hop_address`, :func:`connect_and_request_hop`)
+   -- the first resolves a hop's host exactly once and returns that address to its own caller
+   without connecting to it; the second connects directly to a caller-supplied, already-admitted
+   address and performs one bounded HTTP GET -- the hostname is used only for the ``Host``
+   header and, over HTTPS, TLS server-name/certificate verification, never for a second
+   resolution. Splitting resolution from connection this way is what lets the route itself see,
+   and independently classify, the resolved address before any connection is ever attempted
+   (P17-R2-F1) -- Round 1's own single ``fetch_one_hop`` resolved and connected in one
+   uninterruptible step, leaving no seam for the route to inspect the address in between.
 """
 
 from __future__ import annotations
@@ -145,11 +155,12 @@ class UnsafeResolvedAddressError(UrlBootRequirementError):
     target."""
 
 
-def _resolve_once(host: str, port: int) -> str:
+def resolve_hop_address(host: str, port: int) -> str:
     """Resolve *host* to exactly one IP address literal, through exactly one DNS lookup -- the
-    address :func:`fetch_one_hop` goes on to connect to directly. Never called a second time for
-    the identical hop, which is what closes the DNS-rebinding time-of-check/time-of-use window
-    P17-C5 names."""
+    address :func:`connect_and_request_hop` goes on to connect to directly, once its own caller
+    (the route -- P17-R2-F1) has independently classified it as safe. Never called a second time
+    for the identical hop, which is what closes the DNS-rebinding time-of-check/time-of-use
+    window P17-C5 names. Raises :class:`socket.gaierror` for a genuine DNS failure."""
 
     try:
         info = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
@@ -160,7 +171,14 @@ def _resolve_once(host: str, port: int) -> str:
     return info[0][4][0]
 
 
-def _require_safe_resolved_address(address: str, *, permit_loopback_test_hosts: bool) -> None:
+def require_safe_resolved_address(address: str, *, permit_loopback_test_hosts: bool) -> None:
+    """Require *address* to be outside loopback/private/link-local/multicast/reserved --
+    unless *permit_loopback_test_hosts* explicitly admits loopback for a controlled local test
+    target. **Structural Review Round 2 (P17-R2-F1) correction:** this is now called by the
+    route alone, on a resolved address the route itself already has in hand *before* any
+    connection is attempted -- never by a replaceable adapter, and never as part of any impure
+    fetch primitive in this module."""
+
     parsed = ipaddress.ip_address(address)
     if permit_loopback_test_hosts and parsed.is_loopback:
         return
@@ -180,50 +198,50 @@ def _require_safe_resolved_address(address: str, *, permit_loopback_test_hosts: 
         )
 
 
-def fetch_one_hop(
+def connect_and_request_hop(
     source_identity: dict[str, Any],
     *,
+    admitted_address: str,
     timeout_seconds: float,
     max_response_bytes: int,
-    permit_loopback_test_hosts: bool,
 ) -> dict[str, Any]:
-    """Perform exactly one bounded HTTP GET against *source_identity*, resolving its host
-    exactly once and connecting directly to the resolved address.
+    """Connect directly to *admitted_address* -- the one address the route itself already
+    resolved, classified as safe, and admitted for this hop (P17-R2-F1) -- and perform one
+    bounded HTTP GET against *source_identity*. Never resolves *source_identity*'s own host: the
+    caller supplies the exact address to connect to, already admitted.
 
     Returns ``{"status": int, "headers": dict[str, str], "body": bytes, "redirect_location":
-    str | None, "resolved_address": str}`` on any completed HTTP response (including a redirect
-    response, which this
-    function never follows itself -- following is the caller's own per-hop-reauthorized
-    decision). Raises :class:`socket.gaierror` for DNS failure, :class:`TimeoutError` for a
-    timed-out connection/read, :class:`OSError` for a lower-level connection failure,
-    :class:`ssl.SSLError` for a TLS failure, or :class:`UnsafeResolvedAddressError` for a
-    resolved address outside the permitted network scope -- the caller classifies each into its
-    own typed :data:`~manosube_agent_civilization.url_boot.types.URL_FETCH_OUTCOMES` member;
-    this function itself never returns a partial/oversized body silently -- reading stops the
-    instant *max_response_bytes* would be exceeded and the caller is handed exactly that many
-    bytes plus a marker the caller uses to classify ``OVERSIZED_RESPONSE``.
+    str | None, "oversized": bool, "resolved_address": str}`` on any completed HTTP response
+    (including a redirect response, which this function never follows itself -- following is the
+    caller's own per-hop-reauthorized decision); ``resolved_address`` echoes back the exact
+    *admitted_address* this call actually connected to, so its own caller can refuse a report
+    that ever disagreed. Raises :class:`TimeoutError` for a timed-out connection/read,
+    :class:`OSError` for a lower-level connection failure, or :class:`ssl.SSLError` for a TLS
+    failure -- the caller classifies each into its own typed
+    :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_CONNECT_OUTCOMES` member; this
+    function itself never returns a partial/oversized body silently -- reading stops the instant
+    *max_response_bytes* would be exceeded and the caller is handed exactly that many bytes plus
+    a marker the caller uses to classify ``OVERSIZED_RESPONSE``.
     """
 
     host = source_identity["host"]
     port = source_identity["port"]
-    address = _resolve_once(host, port)
-    _require_safe_resolved_address(address, permit_loopback_test_hosts=permit_loopback_test_hosts)
 
     request_target = source_identity["path"]
     if source_identity["query"]:
         request_target = f"{request_target}?{source_identity['query']}"
 
     # Deliberately a plain ``HTTPConnection`` even for https, for *both* schemes: its own
-    # ``connect()`` performs only the raw TCP connect against *address* and never itself touches
-    # TLS. Using the stdlib ``HTTPSConnection`` here instead would be wrong -- its own
-    # ``connect()`` wraps the socket itself, using ``self.host`` (which this function has
-    # deliberately set to the *resolved address*, never the hostname, per this module's own
-    # resolve-once-connect-to-that-address discipline) as the TLS server name, which fails
+    # ``connect()`` performs only the raw TCP connect against *admitted_address* and never
+    # itself touches TLS. Using the stdlib ``HTTPSConnection`` here instead would be wrong --
+    # its own ``connect()`` wraps the socket itself, using ``self.host`` (which this function
+    # has deliberately set to the *admitted address*, never the hostname, per this module's own
+    # resolve-once-connect-to-that-exact-address discipline) as the TLS server name, which fails
     # certificate verification (or is rejected outright as an IP-literal SNI name) before this
     # function's own hostname-aware wrap below ever runs -- and would then wrap an
     # already-TLS-wrapped socket a second time. Exactly one TLS wrap happens here, explicitly,
     # against the real hostname.
-    connection = http.client.HTTPConnection(address, port, timeout=timeout_seconds)
+    connection = http.client.HTTPConnection(admitted_address, port, timeout=timeout_seconds)
 
     try:
         connection.connect()
@@ -252,7 +270,7 @@ def fetch_one_hop(
             "body": body,
             "oversized": oversized,
             "redirect_location": redirect_location,
-            "resolved_address": address,
+            "resolved_address": admitted_address,
         }
     finally:
         connection.close()
@@ -262,7 +280,9 @@ __all__ = [
     "PERMITTED_SOURCE_SCHEMES",
     "UnsafeResolvedAddressError",
     "canonical_source_identity",
-    "fetch_one_hop",
+    "connect_and_request_hop",
+    "require_safe_resolved_address",
     "require_source_within_network_scope",
+    "resolve_hop_address",
     "source_url",
 ]

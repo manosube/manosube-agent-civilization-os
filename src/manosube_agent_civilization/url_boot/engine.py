@@ -132,6 +132,7 @@ def derive_url_source_observation_envelope(
     project_id: str,
     project_binding_ref: dict[str, Any],
     boot_state_fingerprint: dict[str, Any],
+    boot_state_transition_ref: dict[str, Any],
     requested_source_identity: dict[str, Any],
     requested_source_fingerprint: str,
     effective_source_identity: dict[str, Any],
@@ -166,7 +167,12 @@ def derive_url_source_observation_envelope(
     already be the route's own bounded, redacted projection of a genuinely reached response
     (P17-R1-F2: never the adapter's own unclassified report). *project_binding_ref* and
     *boot_state_fingerprint* are the exact Project Binding / Boot-observed State identity this
-    call's own Boot restored (P17-R1-F5); *resolution_provenance* is the ordered, per-(host,
+    call's own Boot restored (P17-R1-F5); *boot_state_transition_ref* is the exact,
+    Store-resolvable ``{"kind": "state_transition", "id": ...}`` reference to the committed
+    transition (or, for a genesis-state Boot, the genesis event) that produced that exact
+    Boot-observed State, letting Evidence handoff independently reconstruct and re-verify it
+    later rather than trust the bare fingerprint alone (P17-R2-F3); *resolution_provenance* is
+    the ordered, per-(host,
     port) DNS resolution this route itself admitted across every hop of this successful fetch
     (P17-R1-F4). This function performs no Store I/O of any kind, opens no socket, and reaches
     no Adapter.
@@ -192,6 +198,7 @@ def derive_url_source_observation_envelope(
         "project_id": project_id,
         "project_binding_ref": dict(project_binding_ref),
         "boot_state_fingerprint": dict(boot_state_fingerprint),
+        "boot_state_transition_ref": dict(boot_state_transition_ref),
         "requested_source_identity": dict(requested_source_identity),
         "requested_source_fingerprint": requested_source_fingerprint,
         "effective_source_identity": dict(effective_source_identity),

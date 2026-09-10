@@ -30,6 +30,14 @@ is ever trusted -- exactly the correction Phase 16's own
 :func:`~manosube_agent_civilization.model_runtime.route.resolve_and_verify_committed_envelope`
 had to be added for after the fact (see ``11_MODEL_RUNTIME/MODEL_RUNTIME_CONTRACT.md``'s own
 Structural Review Round 2 section), applied here from this package's very first delivery instead.
+
+**Structural Review Round 2 (P17-R2-F3).** Self-consistency of the resolved Envelope alone
+(the three-way check above) proves only that the Envelope was not tampered with *after* being
+committed -- it says nothing about whether the ``project_binding_ref``/``boot_state_transition_ref``
+it carries actually corroborate against this Store's own real, canonical history, which a
+self-consistent Envelope copied into a different Store/world could still fail to do.
+:func:`_reresolve_and_verify_boot_context` closes that gap, independently re-resolving both
+through their own canonical owners before any Evidence is ever derived -- see its own docstring.
 """
 
 from __future__ import annotations
@@ -37,7 +45,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from manosube_agent_civilization.binding import verify_project_binding_identity
 from manosube_agent_civilization.evidence import derive_evidence
+from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 
 from .errors import UrlBootEnvelopeIntegrityError, UrlBootRequirementError
 from .identity import (
@@ -47,6 +57,7 @@ from .identity import (
 from .types import URL_OUTCOME_TO_RECEIPT_STATUS, UrlSourceObservationReceipt
 
 _ENVELOPE_RECORD_KIND = "url_source_observation_envelope"
+_PROJECT_BINDING_RECORD_KIND = "project_binding"
 
 #: The identical ten fields ``evidence.schema.json``'s own ``verification_result_provenance``
 #: requires -- see ``runtime/evidence_handoff.py``'s own identical constant.
@@ -121,6 +132,95 @@ def resolve_and_verify_committed_envelope(
             "fields"
         )
     return envelope
+
+
+def _reresolve_and_verify_boot_context(
+    store: Any, project_id: str, envelope: Mapping[str, Any]
+) -> None:
+    """**Structural Review Round 2 (P17-R2-F3) correction.** Independently re-resolve and
+    re-verify the Project Binding and the exact historical Boot-observed State *envelope*
+    claims -- through this project's own real, canonical Store history alone, never merely by
+    recomputing the Envelope's own already-self-consistent content again.
+
+    ``resolve_and_verify_committed_envelope`` already proves *envelope* is exactly what was
+    committed (its own identity and semantic fingerprint reproduce from its own content); it
+    proves nothing about whether the ``project_binding_ref``/``boot_state_transition_ref`` it
+    carries actually corroborate against this Store's own real, resolvable history -- a
+    self-consistent Envelope handed off against a *different* Store/world (one carrying a
+    different, also-genuine ``project_binding``/``state_transition`` under the identical ids)
+    would still pass that check alone. This function closes that gap: it re-resolves the
+    referenced Project Binding through its own canonical identity owner
+    (:func:`~manosube_agent_civilization.binding.verify_project_binding_identity`) and requires
+    its own ``human_authority_ref`` to agree with *envelope*'s; and it resolves the referenced
+    transition through the Store's own existing ``resolve_transaction`` surface, recomputes that
+    transition's own ``after_state``'s semantic fingerprint, and requires it to equal both that
+    transition's own declared ``after_fingerprint`` and *envelope*'s own declared
+    ``boot_state_fingerprint`` -- refusing a genuine-but-wrong revision paired with a real
+    fingerprint, a genuine revision paired with a fabricated fingerprint, and a Binding this
+    Store cannot itself corroborate, before any Evidence is ever derived. Because the referenced
+    transition is read from this project's own immutable, append-only lineage log, any later,
+    unrelated State advancement never invalidates this re-verification.
+    """
+
+    binding_ref = envelope["project_binding_ref"]
+    binding_id = binding_ref["id"]
+    resolved_binding = store.resolve_record(project_id, _PROJECT_BINDING_RECORD_KIND, binding_id)
+    if resolved_binding is None or not isinstance(resolved_binding, dict):
+        raise UrlBootRequirementError(
+            "envelope names a project_binding_ref that does not resolve to a real, readable "
+            f"project_binding record under project {project_id!r}: {binding_id!r} -- refusing "
+            "to derive Evidence from an uncorroborated Boot context"
+        )
+    verify_project_binding_identity(resolved_binding)
+    if resolved_binding.get("project_binding_id") != binding_id:
+        raise UrlBootEnvelopeIntegrityError(
+            "the resolved project_binding's own declared id does not match the Store lookup "
+            f"key: {resolved_binding.get('project_binding_id')!r} != {binding_id!r}"
+        )
+    if resolved_binding.get("project_id") != project_id:
+        raise UrlBootEnvelopeIntegrityError(
+            "the resolved project_binding names a different project than the one being handed "
+            f"off: {resolved_binding.get('project_id')!r} != {project_id!r}"
+        )
+    if resolved_binding.get("human_authority_ref") != envelope["human_authority_ref"]:
+        raise UrlBootEnvelopeIntegrityError(
+            "the resolved project_binding's own human_authority_ref does not agree with the "
+            "envelope's own -- refusing to trust a Boot context this Store cannot itself "
+            "corroborate"
+        )
+
+    transition_ref = envelope["boot_state_transition_ref"]
+    transition = store.resolve_transaction(project_id, transition_ref["id"])
+    if transition is None or not isinstance(transition, dict):
+        raise UrlBootRequirementError(
+            "envelope names a boot_state_transition_ref that does not resolve to a real, "
+            f"committed transition under project {project_id!r}: {transition_ref['id']!r} -- "
+            "refusing to derive Evidence from an unreconstructable Boot context"
+        )
+    if transition.get("project_id") != project_id:
+        raise UrlBootEnvelopeIntegrityError(
+            "the resolved boot_state_transition names a different project than the one being "
+            f"handed off: {transition.get('project_id')!r} != {project_id!r}"
+        )
+    after_state = transition.get("after_state")
+    if not isinstance(after_state, dict):
+        raise UrlBootEnvelopeIntegrityError(
+            "the resolved boot_state_transition carries no readable after_state -- the exact "
+            "historical Boot-observed State cannot be reconstructed"
+        )
+    recomputed_fingerprint = fingerprint_project_state(after_state).as_dict()
+    if recomputed_fingerprint != transition.get("after_fingerprint"):
+        raise UrlBootEnvelopeIntegrityError(
+            "the resolved boot_state_transition's own after_state does not recompute to its own "
+            "declared after_fingerprint -- refusing to trust an internally inconsistent "
+            "historical State"
+        )
+    if recomputed_fingerprint != envelope["boot_state_fingerprint"]:
+        raise UrlBootEnvelopeIntegrityError(
+            "the exact historical Boot-observed State this Store actually committed does not "
+            "reproduce the envelope's own declared boot_state_fingerprint -- refusing a "
+            "self-consistent-but-uncorroborated Boot context"
+        )
 
 
 def _reference_set(refs: tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
@@ -221,6 +321,11 @@ def route_url_observation_to_evidence(
     envelope = resolve_and_verify_committed_envelope(
         store, project_id, receipt.url_source_observation_envelope_id
     )
+
+    # P17-R2-F3: re-resolve and re-verify the Project Binding and the exact historical
+    # Boot-observed State this envelope claims through this Store's own real, canonical history
+    # -- never merely by trusting a self-consistent Envelope's own claims about them.
+    _reresolve_and_verify_boot_context(store, project_id, envelope)
 
     # Complete receipt attestation required, the identical discipline
     # ``runtime/evidence_handoff.py`` already establishes: every one of receipt's own

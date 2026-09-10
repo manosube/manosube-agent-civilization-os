@@ -10,6 +10,7 @@
     "project_id",
     "project_binding_ref",
     "boot_state_fingerprint",
+    "boot_state_transition_ref",
     "requested_source_identity",
     "requested_source_fingerprint",
     "effective_source_identity",
@@ -40,6 +41,7 @@
     "project_id": {"$ref": "../common/identity.schema.json"},
     "project_binding_ref": {"$ref": "../common/reference.schema.json"},
     "boot_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
+    "boot_state_transition_ref": {"$ref": "../common/reference.schema.json"},
     "requested_source_identity": {"$ref": "#/$defs/source_identity"},
     "requested_source_fingerprint": {
       "type": "string",

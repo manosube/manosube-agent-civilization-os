@@ -53,10 +53,14 @@ evidence = route_url_observation_to_evidence(
 )
 ```
 
-A local-test-only fetch (``127.0.0.1``, an ephemeral port) requires
-``LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)`` -- a Python constructor argument
-only test-composition code ever sets (P17-R1-F3); no field of ``boundary`` above can ever enable
-it, and ``observe_url_source`` accepts no such field at all.
+A local-test-only fetch (``127.0.0.1``, an ephemeral port) requires this repository's own
+disposable-test-only route entry point, ``manosube_agent_civilization.url_boot.route.
+observe_url_source_for_disposable_local_test`` -- imported directly from that module, never from
+this package's own public surface, and never reachable through any field of ``boundary``, any
+constructor argument of ``adapter``, or any parameter of public ``observe_url_source`` itself
+(P17-R1-F3, further corrected in Round 2, P17-R2-F2: the loopback exception is not a parameter
+anywhere in this call graph -- it is decided once, at composition time, by which of the two
+distinctly-named functions a caller imports).
 
 See ``12_URL_BOOT/URL_BOOT_CONTRACT.md`` and ``12_URL_BOOT/URL_BOOT_INDEX.md`` for the full
 contract this package implements, its disclosed judgment calls, and its explicit non-claims.
@@ -76,6 +80,8 @@ from .types import (
     RECEIPT_STATUSES,
     URL_FETCH_METHODS,
     URL_FETCH_OUTCOMES,
+    URL_HOP_CONNECT_OUTCOMES,
+    URL_HOP_RESOLVE_OUTCOMES,
     URL_HOP_TRANSPORT_OUTCOMES,
     UrlSourceAdapter,
     UrlSourceObservationReceipt,
@@ -85,6 +91,8 @@ __all__ = [
     "RECEIPT_STATUSES",
     "URL_FETCH_METHODS",
     "URL_FETCH_OUTCOMES",
+    "URL_HOP_CONNECT_OUTCOMES",
+    "URL_HOP_RESOLVE_OUTCOMES",
     "URL_HOP_TRANSPORT_OUTCOMES",
     "FakeUrlSourceAdapter",
     "LocalHttpUrlSourceAdapter",

@@ -66,6 +66,66 @@ already closed at this delivery's initial head.** Six corrections land here, tog
   03_CURRENT_DEVELOPMENT_STATE.md``'s own last-wins restatement) and touches no code in this
   module.
 
+**Structural Review Round 2 (P17-R2-F1 through F3), reviewed at Round 1's own corrected head
+and reopening three of its six closed findings.** Three further corrections land here:
+
+- **P17-R2-F1 (route-owned network admission, not merely route-owned redirects).** Round 1 gave
+  the adapter one ``fetch_one_hop`` that both resolved *and* classified *and* connected in one
+  uninterruptible step -- the route re-authorized the requested *hostname* before calling the
+  adapter, but the adapter's own resolution remained the sole authority for the *resolved
+  address*'s own safety (it alone could assert ``BOUNDARY_REFUSED``), and its own connection
+  step remained the sole authority for *which* address was actually reached. The replaceable
+  :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` now exposes two bounded
+  primitives instead of one: :meth:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter.
+  resolve_hop` reports only a genuine DNS lookup's own result, never a classification; this route
+  alone classifies that resolved address's own safety
+  (:func:`~manosube_agent_civilization.url_boot.network.require_safe_resolved_address`) and binds
+  it as *this hop's one admitted address*, refusing as ``BOUNDARY_REFUSED`` itself when unsafe --
+  an outcome that no longer exists anywhere in either adapter-reportable vocabulary
+  (:data:`~manosube_agent_civilization.url_boot.types.URL_HOP_RESOLVE_OUTCOMES`,
+  :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_CONNECT_OUTCOMES`) at all, so an
+  adapter has no field left through which to assert it. Only once the route has admitted an
+  address does it call :meth:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter.
+  connect_hop`, handing the adapter that *exact* admitted address (never a bare hostname to
+  resolve a second time), and this route refuses (:class:`~manosube_agent_civilization.url_boot.
+  errors.UrlBootAdapterError`) any report whose own ``resolved_address`` disagrees with the
+  address it was handed -- an adapter can neither report a safe-looking address while connecting
+  elsewhere, nor smuggle an unsafe address through as a successful ``RESPONSE``.
+- **P17-R2-F2 (non-substitutable loopback composition boundary).** Round 1 moved
+  ``permit_loopback_test_hosts`` to ``LocalHttpUrlSourceAdapter``'s own constructor, reasoning it
+  was then reachable only by test-composition code -- Round 2 correctly identified that as merely
+  *relocating* the identical caller-reachable switch one level earlier: that adapter is exported
+  from this package's own public surface, so any caller able to supply the ``adapter`` argument
+  to public :func:`observe_url_source` could still construct exactly that permissive object.
+  Because P17-R2-F1 already moved *all* address-safety classification to this module alone, the
+  adapter now carries no loopback-related parameter of any kind -- there is nothing left on it to
+  be told to permit. The loopback decision instead lives exclusively in this module's own two
+  permanently bound classifiers, :func:`_require_safe_resolved_address_production` (which
+  :func:`observe_url_source` -- the only entry point this package's own public ``__init__.py``
+  ever exports -- is unconditionally bound to) and
+  :func:`_require_safe_resolved_address_permitting_loopback_only` (which only the distinctly-
+  named, never-publicly-exported :func:`observe_url_source_for_disposable_local_test` is bound
+  to). Neither public function's own parameter list carries a loopback-related argument at all --
+  a caller cannot reach the exception by keyword, by position, or by substituting any adapter or
+  Boundary value, because no parameter or field anywhere in this call graph decides it; only
+  *which of the two distinctly-named functions you import and call* does, a composition-time
+  choice made once, in this module's own source, never at request time from caller-supplied data.
+- **P17-R2-F3 (resolvable exact Boot context at Evidence handoff).** Round 1's own
+  ``boot_state_fingerprint`` closed *tampering* with the committed field (any recomputation
+  mismatch fails the existing three-way envelope-identity check), but left Evidence handoff with
+  no way to *independently re-derive* that fingerprint from this project's own real, canonical
+  State history -- a bare fingerprint is not itself a reference anything can resolve. A committed
+  Envelope now additionally carries ``boot_state_transition_ref``, the exact, Store-resolvable
+  ``{"kind": "state_transition", "id": ...}`` reference to the committed transition (or, for a
+  genesis-state Boot, the genesis event -- ``binding/route.py``'s own genesis-State enforcement
+  requires ``lineage_head_ref`` to be ``null`` at genesis, so this route falls back to the one
+  fixed, well-known genesis transaction identity in that case) that produced this exact
+  Boot-observed State. :mod:`~manosube_agent_civilization.url_boot.evidence_handoff` now resolves
+  that reference through the Store's own existing ``resolve_transaction`` surface and the
+  referenced Project Binding through its own canonical identity owner *before* deriving any
+  Evidence, refusing a self-consistent-but-uncorroborated Envelope whose claims do not actually
+  reproduce from this project's own real, canonical history.
+
 Canonical route (``12_URL_BOOT/URL_BOOT_CONTRACT.md`` §5):
 
 ```text
@@ -90,7 +150,7 @@ complete schema validation of the declared source identity and closed fetch Boun
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import json
 from typing import Any
 from urllib.parse import urljoin
@@ -121,11 +181,18 @@ from .identity import (
     url_source_observation_envelope_semantic_fingerprint,
     url_source_request_identity,
 )
-from .network import canonical_source_identity, require_source_within_network_scope, source_url
+from .network import (
+    UnsafeResolvedAddressError,
+    canonical_source_identity,
+    require_safe_resolved_address,
+    require_source_within_network_scope,
+    source_url,
+)
 from .types import (
     RECEIPT_STATUSES,
     URL_FETCH_OUTCOMES,
-    URL_HOP_TRANSPORT_OUTCOMES,
+    URL_HOP_CONNECT_OUTCOMES,
+    URL_HOP_RESOLVE_OUTCOMES,
     URL_OUTCOME_TO_RECEIPT_STATUS,
     UrlSourceAdapter,
     UrlSourceObservationReceipt,
@@ -138,11 +205,42 @@ _ENVELOPE_RECORD_KIND = "url_source_observation_envelope"
 #: project between this route's own ``load_current`` and its own ``commit``.
 _MAX_COMMIT_RETRIES = 8
 
-#: A single-hop transport outcome that means no response was ever reached for that hop -- refused
-#: immediately, the whole fetch's own outcome (P17-R1-F2).
-_HOP_FAILURE_OUTCOMES: frozenset[str] = frozenset(
-    {"DNS_FAILURE", "CONNECTION_FAILURE", "TLS_FAILURE", "TIMEOUT", "BOUNDARY_REFUSED"}
+#: A single-hop connect-stage outcome that means no response was ever reached for that hop --
+#: refused immediately, the whole fetch's own outcome (P17-R1-F2). ``BOUNDARY_REFUSED`` is
+#: deliberately absent: it is never an adapter-reportable outcome at either stage (P17-R2-F1), so
+#: it can never appear in a set an adapter's own report is validated against -- it is produced
+#: only by this module's own ``_fetch_with_route_owned_redirects``, directly.
+_HOP_CONNECT_FAILURE_OUTCOMES: frozenset[str] = frozenset(
+    {"CONNECTION_FAILURE", "TLS_FAILURE", "TIMEOUT"}
 )
+
+#: The one genesis transaction identity every ``FileStateStore.initialize`` call stages and
+#: promotes under (mirrors ``binding/route.py``'s own identically-named, identically-reasoned
+#: module constant) -- read-only here, as the ``boot_state_transition_ref`` a Boot restored at
+#: genesis (``state_revision == 0``, whose own ``lineage_head_ref`` is schema-required ``null``,
+#: per ``binding/route.py``'s own genesis-State enforcement) resolves under, since no real
+#: ``TRANSITION`` event exists yet to mint a ``lineage_head_ref`` from (P17-R2-F3).
+_GENESIS_TRANSACTION_ID = "TX-GENESIS"
+
+
+def _require_safe_resolved_address_production(address: str) -> None:
+    """The one network-address-safety classifier every publicly exported ``observe_url_source``
+    call is permanently, non-overridably bound to: loopback is always refused, with no
+    parameter, field, or adapter substitution anywhere through which any caller could ever change
+    that (P17-R2-F2). See this module's own docstring, "Structural Review Round 2 (P17-R2-F2)"."""
+
+    require_safe_resolved_address(address, permit_loopback_test_hosts=False)
+
+
+def _require_safe_resolved_address_permitting_loopback_only(address: str) -> None:
+    """The one network-address-safety classifier :func:`observe_url_source_for_disposable_local_
+    test` is permanently bound to -- loopback is the *only* exception ever admitted; every other
+    unsafe address class (private/link-local/multicast/reserved) is still refused exactly as in
+    production. Reachable only by importing this module's own distinctly-named, non-public-
+    surface test entry point directly -- never through any parameter of public
+    ``observe_url_source`` (P17-R2-F2)."""
+
+    require_safe_resolved_address(address, permit_loopback_test_hosts=True)
 
 
 def _require_canonical_identity(name: str, value: Any) -> str:
@@ -338,18 +436,32 @@ def _classify_terminal_response(
 
 
 def _fetch_with_route_owned_redirects(
-    adapter: UrlSourceAdapter, source_identity: Mapping[str, Any], boundary: Mapping[str, Any]
+    adapter: UrlSourceAdapter,
+    source_identity: Mapping[str, Any],
+    boundary: Mapping[str, Any],
+    *,
+    classify_resolved_address: Callable[[str], None],
 ) -> dict[str, Any]:
-    """Own the entire bounded, per-hop-reauthorized redirect loop (P17-R1-F2/F4): calls the
-    replaceable adapter's own bounded single-hop transport primitive exactly once per hop,
-    re-authorizes every redirect target against *boundary*'s own ``network_scope`` itself before
-    ever reaching the adapter for it, binds each hop's own resolved address to its own
-    ``(host, port)`` for the lifetime of this one fetch and refuses on any later drift, and
-    performs every content-type/size/JSON/``IDENTITY_MISMATCH`` classification itself.
+    """Own the entire bounded, per-hop-reauthorized redirect loop (P17-R1-F2/F4, P17-R2-F1):
+    calls the replaceable adapter's own bounded single-hop resolve/connect primitives exactly
+    once each per hop, re-authorizes every redirect target against *boundary*'s own
+    ``network_scope`` itself before ever reaching the adapter for it, independently classifies
+    every resolved address's own safety itself via *classify_resolved_address* (never asking the
+    adapter, and never accepting an adapter-asserted ``BOUNDARY_REFUSED`` -- P17-R2-F1), binds
+    each hop's own admitted address to its own ``(host, port)`` for the lifetime of this one
+    fetch and refuses on any later drift, requires the adapter's own ``connect_hop`` to report
+    having connected to *exactly* the address this route admitted, and performs every
+    content-type/size/JSON/``IDENTITY_MISMATCH`` classification itself.
+
+    *classify_resolved_address* is a callable of one positional ``str`` argument, raising
+    :class:`~manosube_agent_civilization.url_boot.network.UnsafeResolvedAddressError` for an
+    unsafe address and returning ``None`` for a safe one -- always one of this module's own two
+    permanently bound classifiers (production or the disposable-local-test-only exception),
+    never a value any caller of :func:`observe_url_source` can supply (P17-R2-F2).
 
     Returns ``{"fetch_outcome", "effective_source_identity", "response_status",
     "redirect_hop_count", "observed_fields", "resolution_provenance"}`` -- the identical shape
-    :func:`observe_url_source` itself now derives an Envelope from (``fetch_outcome ==
+    :func:`_observe_url_source_impl` itself now derives an Envelope from (``fetch_outcome ==
     "OBSERVED"``) or returns as a bounded, ephemeral failure receipt (anything else).
     """
 
@@ -360,45 +472,81 @@ def _fetch_with_route_owned_redirects(
     resolution_provenance: list[dict[str, Any]] = []
 
     for hop in range(max_redirects + 1):
-        raw = adapter.fetch_one_hop(
-            source_identity=deep_freeze(current_identity), boundary=deep_freeze(boundary)
-        )
-        if not isinstance(raw, Mapping):
-            raise UrlBootAdapterError(f"adapter.fetch_one_hop() returned {raw!r}, not a mapping")
-        hop_outcome = raw.get("outcome")
-        if hop_outcome not in URL_HOP_TRANSPORT_OUTCOMES:
+        resolve_raw = adapter.resolve_hop(source_identity=deep_freeze(current_identity))
+        if not isinstance(resolve_raw, Mapping):
             raise UrlBootAdapterError(
-                f"adapter.fetch_one_hop()'s own outcome is not recognized: {hop_outcome!r}"
+                f"adapter.resolve_hop() returned {resolve_raw!r}, not a mapping"
             )
-        if hop_outcome in _HOP_FAILURE_OUTCOMES:
-            return _hop_result(hop_outcome, redirect_hop_count=hop)
+        resolve_outcome = resolve_raw.get("outcome")
+        if resolve_outcome not in URL_HOP_RESOLVE_OUTCOMES:
+            raise UrlBootAdapterError(
+                f"adapter.resolve_hop()'s own outcome is not recognized: {resolve_outcome!r}"
+            )
+        if resolve_outcome == "DNS_FAILURE":
+            return _hop_result("DNS_FAILURE", redirect_hop_count=hop)
 
-        resolved_address = raw.get("resolved_address")
-        if not isinstance(resolved_address, str) or not resolved_address:
+        candidate_address = resolve_raw.get("resolved_address")
+        if not isinstance(candidate_address, str) or not candidate_address:
             raise UrlBootAdapterError(
-                "adapter.fetch_one_hop() reported RESPONSE with no readable resolved_address"
+                "adapter.resolve_hop() reported RESOLVED with no readable resolved_address"
             )
+
+        # P17-R2-F1: the route alone classifies the resolved address's own safety -- never the
+        # adapter, and never a route-only outcome an adapter's own report could ever assert.
+        try:
+            classify_resolved_address(candidate_address)
+        except UnsafeResolvedAddressError:
+            return _hop_result("BOUNDARY_REFUSED", redirect_hop_count=hop)
+
         host_port_key = (current_identity["host"], current_identity["port"])
         bound_address = resolution_bindings.get(host_port_key)
         if bound_address is None:
-            resolution_bindings[host_port_key] = resolved_address
+            resolution_bindings[host_port_key] = candidate_address
             resolution_provenance.append(
                 {
                     "host": current_identity["host"],
                     "port": current_identity["port"],
-                    "resolved_address": resolved_address,
+                    "resolved_address": candidate_address,
                 }
             )
-        elif bound_address != resolved_address:
+        elif bound_address != candidate_address:
             # P17-R1-F4: the identical host/port this one fetch already resolved once now
             # resolves to a *different* address -- DNS/resolution drift within one fetch, never
             # trusted, regardless of what this hop's own response otherwise says.
             return _hop_result("BOUNDARY_REFUSED", redirect_hop_count=hop)
 
+        admitted_address = candidate_address
+        connect_raw = adapter.connect_hop(
+            source_identity=deep_freeze(current_identity),
+            boundary=deep_freeze(boundary),
+            admitted_address=admitted_address,
+        )
+        if not isinstance(connect_raw, Mapping):
+            raise UrlBootAdapterError(
+                f"adapter.connect_hop() returned {connect_raw!r}, not a mapping"
+            )
+        connect_outcome = connect_raw.get("outcome")
+        if connect_outcome not in URL_HOP_CONNECT_OUTCOMES:
+            raise UrlBootAdapterError(
+                f"adapter.connect_hop()'s own outcome is not recognized: {connect_outcome!r}"
+            )
+        if connect_outcome in _HOP_CONNECT_FAILURE_OUTCOMES:
+            return _hop_result(connect_outcome, redirect_hop_count=hop)
+
+        # P17-R2-F1: the adapter must have connected to *exactly* the address this route
+        # admitted -- never re-resolved, never substituted, never a different address entirely.
+        if connect_raw.get("resolved_address") != admitted_address:
+            raise UrlBootAdapterError(
+                "adapter.connect_hop() reported a resolved_address that does not equal the "
+                f"exact address this route admitted for this hop: "
+                f"{connect_raw.get('resolved_address')!r} != {admitted_address!r}"
+            )
+
+        raw = connect_raw
         status = raw.get("response_status")
         if not isinstance(status, int):
             raise UrlBootAdapterError(
-                "adapter.fetch_one_hop() reported RESPONSE with an unreadable response_status: "
+                "adapter.connect_hop() reported RESPONSE with an unreadable response_status: "
                 f"{status!r}"
             )
         redirect_location = raw.get("redirect_location")
@@ -434,7 +582,7 @@ def _fetch_with_route_owned_redirects(
     return _hop_result("REDIRECT_REFUSED", redirect_hop_count=max_redirects)
 
 
-def observe_url_source(
+def _observe_url_source_impl(
     store: Any,
     *,
     project_id: str,
@@ -443,9 +591,16 @@ def observe_url_source(
     boundary: Mapping[str, Any],
     adapter: UrlSourceAdapter,
     observed_at: str,
+    classify_resolved_address: Callable[[str], None],
 ) -> dict[str, Any]:
-    """Bounded-observe one explicit URL source and return ``{"envelope": dict | None, "receipt":
-    UrlSourceObservationReceipt}``.
+    """The complete ``observe_url_source`` implementation, closed over no network-address-safety
+    policy of its own -- *classify_resolved_address* is supplied entirely by this function's own
+    two callers (:func:`observe_url_source`, permanently bound to the production classifier, and
+    :func:`observe_url_source_for_disposable_local_test`, permanently bound to the
+    loopback-permitting one), never by anything reaching this function from outside this module
+    (P17-R2-F2). This function itself is never exported from this package's own public surface.
+
+    Returns ``{"envelope": dict | None, "receipt": UrlSourceObservationReceipt}``.
 
     ``envelope`` is ``None`` for every outcome except ``"OBSERVED"`` (P17-C7/P17-R1-F1): a failed
     or refused fetch mutates no canonical State and commits no record at all, and its own
@@ -483,6 +638,17 @@ def observe_url_source(
     # this route commits.
     real_project_binding_ref = {"kind": "project_binding", "id": project_binding_id}
     real_boot_state_fingerprint = dict(boot_context.current_state["semantic_fingerprint"])
+    # P17-R2-F3: the exact, Store-resolvable reference to the transition (or, at genesis, the
+    # genesis event) that produced this exact Boot-observed State -- a bare fingerprint alone
+    # names no revision Evidence handoff could ever reconstruct and re-verify against later,
+    # after further unrelated State transitions have advanced this project's own current State
+    # well past it.
+    real_boot_lineage_head_ref = boot_context.current_state.get("lineage_head_ref")
+    real_boot_state_transition_ref = (
+        dict(real_boot_lineage_head_ref)
+        if real_boot_lineage_head_ref is not None
+        else {"kind": "state_transition", "id": _GENESIS_TRANSACTION_ID}
+    )
 
     requested_source_fingerprint = url_source_fingerprint(checked_source_identity)
     boundary_fingerprint = url_boundary_fingerprint(checked_boundary)
@@ -508,7 +674,10 @@ def observe_url_source(
     )
 
     fetch_result = _fetch_with_route_owned_redirects(
-        adapter, checked_source_identity, checked_boundary
+        adapter,
+        checked_source_identity,
+        checked_boundary,
+        classify_resolved_address=classify_resolved_address,
     )
     fetch_outcome = fetch_result["fetch_outcome"]
     if fetch_outcome not in URL_FETCH_OUTCOMES:
@@ -548,6 +717,7 @@ def observe_url_source(
         project_id=project_id,
         project_binding_ref=real_project_binding_ref,
         boot_state_fingerprint=real_boot_state_fingerprint,
+        boot_state_transition_ref=real_boot_state_transition_ref,
         requested_source_identity=checked_source_identity,
         requested_source_fingerprint=requested_source_fingerprint,
         effective_source_identity=effective_source_identity,
@@ -591,6 +761,80 @@ def observe_url_source(
         },
     )
     return {"envelope": envelope, "receipt": receipt}
+
+
+def observe_url_source(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    source_identity: Mapping[str, Any],
+    boundary: Mapping[str, Any],
+    adapter: UrlSourceAdapter,
+    observed_at: str,
+) -> dict[str, Any]:
+    """The one public, request-facing URL Boot entry point -- permanently, non-overridably bound
+    to :func:`_require_safe_resolved_address_production` (P17-R2-F2): loopback is always
+    refused, and this function's own complete parameter list -- ``store``, ``project_id``,
+    ``project_binding_id``, ``source_identity``, ``boundary``, ``adapter``, ``observed_at`` --
+    carries no field, keyword, or positional slot through which any caller could ever change
+    that. See :func:`_observe_url_source_impl` for the complete route this delegates to
+    unchanged."""
+
+    return _observe_url_source_impl(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        source_identity=source_identity,
+        boundary=boundary,
+        adapter=adapter,
+        observed_at=observed_at,
+        classify_resolved_address=_require_safe_resolved_address_production,
+    )
+
+
+def observe_url_source_for_disposable_local_test(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    source_identity: Mapping[str, Any],
+    boundary: Mapping[str, Any],
+    adapter: UrlSourceAdapter,
+    observed_at: str,
+) -> dict[str, Any]:
+    """The one, distinctly-named, trusted-composition-only entry point this repository's own V3
+    local-HTTP vertical-proof test suite calls to observe a disposable local test target on
+    loopback (Structural Review Round 2, P17-R2-F2).
+
+    Never exported from ``url_boot/__init__.py``'s own public surface -- reachable only by
+    importing this exact name directly from this module's own path
+    (``manosube_agent_civilization.url_boot.route``), never through public ``observe_url_source``
+    or through any value supplied to any of *its* parameters, and never through any field of
+    ``boundary`` or any constructor argument of ``adapter``: neither carries, or has ever carried
+    since Round 1, a loopback-permitting field or parameter of any kind. This function's own
+    identical parameter list carries none either -- the loopback exception is not a parameter
+    anywhere in this call graph; it is the one fact distinguishing *which function you import and
+    call*, decided once, at this module's own definition time, by
+    :func:`_require_safe_resolved_address_permitting_loopback_only` being the literal value
+    closed over here -- never a boolean, a sentinel, a Python-private name relied on as the
+    actual enforcement, or an ``isinstance`` check inspecting anything a caller supplied.
+
+    Still refuses every address class this project's own network-safety contract refuses except
+    the one loopback exception (private/link-local/multicast/reserved all remain refused
+    identically to production), so even a caller who somehow reached this function cannot use it
+    to reach anything beyond a disposable local test target."""
+
+    return _observe_url_source_impl(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        source_identity=source_identity,
+        boundary=boundary,
+        adapter=adapter,
+        observed_at=observed_at,
+        classify_resolved_address=_require_safe_resolved_address_permitting_loopback_only,
+    )
 
 
 def _commit_envelope(

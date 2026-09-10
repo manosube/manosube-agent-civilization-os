@@ -2072,3 +2072,104 @@ PHASE_17_COMPLETE=false
 PHASE_18_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
+
+# 29. Phase 17 Structural Review Round 2 bounded addendum (Issue #69, PR #71) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション28の記録以降、構造参謀によるStructural Review Round 2
+（Round 1の6件中3件を再オープンした`P17-R2-F1`〜`P17-R2-F3`）とSHUKOUによるその採択（Issue #69
+コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/69#issuecomment-5616043346`、
+`ADOPTION_ID=ADOPT_P17_R2_ROUTE_OWNED_NETWORK_ADMISSION_AND_RESOLVABLE_BOOT_CONTEXT`）を独立
+GitHub API再観測で確認した上で、この既存PR #71ブランチ上に実装した是正内容を記録する。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション28自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+CURRENT_PHASE=17_READ_ONLY_URL_BOOT_AND_UNTRUSTED_CONTENT_BOUNDARY
+CURRENT_PHASE_ISSUE=69
+CURRENT_PR=71
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#69
+TARGET_PR=#71
+BASE_SHA=aee9b669f8bf15626fe162f196cf12338a4ff0da
+BRANCH=agent/issue-69-phase17-read-only-url-boot
+REVIEWED_HEAD=fe199718c87da54b6649e12a2f3b439993cf95b9
+ADOPTION_ID=ADOPT_P17_R2_ROUTE_OWNED_NETWORK_ADMISSION_AND_RESOLVABLE_BOOT_CONTEXT
+ADOPTED_FINDINGS=P17-R2-F1,P17-R2-F2,P17-R2-F3
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_71_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED_AWAITING_ROUND_3
+```
+
+3件の是正内容の要約：
+
+```text
+P17-R2-F1  Round 1はredirect/content/identityの分類をrouteへ移したが、adapter自身の単一
+           fetch_one_hopは依然としてresolveと安全性分類と接続を1つの不可分な操作の中で行って
+           おり、resolveされたアドレス自身の安全性と実際に接続された先はadapter自身の申告の
+           ままだった。UrlSourceAdapter Protocolを2つのbounded primitiveへ分割した:
+           resolve_hop（DNS_FAILUREまたはRESOLVED+アドレスのみを報告し、何も分類しない）と
+           connect_hop（route admittedアドレスへ正確に接続し、CONNECTION_FAILURE/
+           TLS_FAILURE/TIMEOUT/RESPONSEのみを報告する）。BOUNDARY_REFUSEDはどちらの
+           vocabulary（URL_HOP_RESOLVE_OUTCOMES/URL_HOP_CONNECT_OUTCOMES）にも存在せず、
+           route自身がnetwork.require_safe_resolved_addressにより、接続を試みる前に
+           resolveされたアドレスを分類する。routeはさらにconnect_hopが報告するresolved_
+           addressがroute自身の渡したadmitted_addressと正確に一致することを要求し、
+           一致しないadapterをUrlBootAdapterErrorとして拒否する。cross-hop DNS解決drift
+           束縛（P17-R1-F4）はresolve段階、接続前へ移動した。
+
+P17-R2-F2  Round 1はpermit_loopback_test_hostsをLocalHttpUrlSourceAdapter自身のconstructor
+           引数へ移したが、そのadapterクラス自体がこのpackageの公開surfaceからexportされて
+           いるため、公開observe_url_sourceへadapter引数を渡せる呼び出し元は誰でも
+           permit_loopback_test_hosts=Trueのまま同じ許容adapterを構築できた -- 単に同じ
+           到達可能なswitchを一段階前へ移しただけだった。P17-R2-F1によりaddress安全性分類が
+           route側へ完全に移ったため、LocalHttpUrlSourceAdapterはもはやloopback関連の
+           constructor引数を一切持たない。loopback判断はroute.py自身の2つの恒久的に束縛
+           された分類関数の内側にのみ存在する:
+           _require_safe_resolved_address_production（loopback常に拒否、唯一の公開
+           observe_url_sourceへ無条件に束縛）と
+           _require_safe_resolved_address_permitting_loopback_only（loopbackのみが例外、
+           url_boot/__init__.pyから一切exportされない、別名の
+           observe_url_source_for_disposable_local_testからのみ到達可能）。どちらの公開
+           関数のsignatureにもloopback関連のkeyword/positional引数は一切存在しない --
+           どちらの関数がimport・呼び出されるかというcomposition時点の選択のみが結果を
+           決める。
+
+P17-R2-F3  Round 1のboot_state_fingerprint（P17-R1-F5）はフィールド自体の改竄検出は
+           閉じたが、Evidence handoffがこのprojectの実canonical State履歴から独立して
+           そのfingerprintを再導出する手段を持たなかった。さらにfingerprint_project_state
+           はsemantic_stateのみをhashし、state_revisionを一切含めないため、URL Boot commit
+           のようにsemantic_stateへ一切触れない2つの異なる正当なrevisionが同一の
+           boot_state_fingerprintを持ちうることが判明した -- fingerprintだけでは
+           revisionを区別できない。Envelopeへboot_state_transition_ref
+           （{"kind": "state_transition", "id": ...}、genesis Bootの場合は
+           binding/route.py自身のgenesis規約に倣うTX-GENESIS）を新たに追加し、
+           evidence_handoff._reresolve_and_verify_boot_contextが既存の三者一致チェック後・
+           derive_evidence呼び出し前に、(a) project_binding_refをStore自身の
+           resolve_record経由で再解決しbinding.verify_project_binding_identityで検証、
+           (b) boot_state_transition_refをStore自身の既存resolve_transaction surface
+           経由で解決し、その遷移のafter_stateから再計算したfingerprintがその遷移自身の
+           after_fingerprintとEnvelope自身のboot_state_fingerprintの両方に一致することを
+           要求する。自己無矛盾だがStore/worldがその主張を裏付けられないEnvelope
+           （コピーされたが改竄されていないEnvelope）はここで拒否される。
+```
+
+修正はPR #71の唯一のブランチ上、新規PR無しで行われた。既存の`State`・`Difference`・
+`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Model Runtime`のいずれの
+ownerも置換・変更しない。schema変更（`boot_state_transition_ref`の追加）は
+`01_SCHEMA/url_boot/url_source_observation_envelope.schema.json` 1件のみ。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_17_COMPLETE=false
+PHASE_18_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```

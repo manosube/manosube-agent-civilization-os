@@ -9,15 +9,20 @@ Proves, through a real ``FileStateStore`` and the real
   non-committed receipt);
 - each outcome maps to the correct :data:`~manosube_agent_civilization.url_boot.types.
   RECEIPT_STATUSES` member;
-- the route fails closed on a malformed/out-of-vocabulary single-hop adapter report, and on an
-  adapter that declares no readable ``adapter_identity``;
+- the route fails closed on a malformed/out-of-vocabulary single-hop adapter report at either
+  stage, and on an adapter that declares no readable ``adapter_identity``;
 - a response body carrying fields beyond the Boundary's own ``permitted_fields`` never leaks one
   into a committed Envelope's own ``observed_fields`` (the route's own bounded projection, never
   trusted from a replaceable adapter -- P17-R1-F2);
-- an adapter cannot assert a route-only classification (``IDENTITY_MISMATCH`` and friends) by
-  simply naming it in its own single-hop report: only the six
-  :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_TRANSPORT_OUTCOMES` are even
-  readable from an adapter at all (P17-R1-F2).
+- an adapter cannot assert a route-only classification (``IDENTITY_MISMATCH``/``BOUNDARY_REFUSED``
+  and friends) by simply naming it in its own single-hop report: neither
+  :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_RESOLVE_OUTCOMES` nor
+  :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_CONNECT_OUTCOMES` even contains those
+  names (P17-R1-F2/P17-R2-F1);
+- a private/loopback/invalid resolved address can never become a successful ``RESPONSE`` --
+  the route classifies it itself, independent of anything the adapter reports (P17-R2-F1);
+- the route refuses an adapter whose own ``connect_hop`` reports having connected to an address
+  other than the one this route itself admitted for that hop (P17-R2-F1).
 """
 
 from __future__ import annotations
@@ -78,11 +83,14 @@ def test_url_fetch_outcomes_covers_exactly_eleven_members() -> None:
     assert set(URL_OUTCOME_TO_RECEIPT_STATUS.values()) <= RECEIPT_STATUSES
 
 
-#: The single-hop transport failures that pass straight through to the overall fetch outcome
-#: (:mod:`~manosube_agent_civilization.url_boot.route`'s own ``_HOP_FAILURE_OUTCOMES``).
-_HOP_FAILURE_OUTCOMES = frozenset(
-    {"DNS_FAILURE", "CONNECTION_FAILURE", "TLS_FAILURE", "TIMEOUT", "BOUNDARY_REFUSED"}
-)
+#: The single-hop connect-stage failures that pass straight through to the overall fetch outcome
+#: (:mod:`~manosube_agent_civilization.url_boot.route`'s own ``_HOP_CONNECT_FAILURE_OUTCOMES``).
+_HOP_CONNECT_FAILURE_OUTCOMES = frozenset({"CONNECTION_FAILURE", "TLS_FAILURE", "TIMEOUT"})
+
+#: A resolved address production ``observe_url_source`` always refuses -- loopback, never
+#: admitted regardless of what hostname the Boundary's own ``network_scope`` names.
+_UNSAFE_RESOLVED_ADDRESS = "127.0.0.1"
+_SAFE_RESOLVED_ADDRESS = "93.184.216.34"
 
 
 def _seed_for_outcome(
@@ -91,8 +99,18 @@ def _seed_for_outcome(
     """Seed *adapter*'s own single-hop world so a real trip through the route derives exactly
     *outcome* -- returns a boundary override, or ``None`` to use ``_world["boundary"]`` as is."""
 
-    if outcome in _HOP_FAILURE_OUTCOMES:
+    if outcome == "DNS_FAILURE" or outcome in _HOP_CONNECT_FAILURE_OUTCOMES:
         adapter.seed_hop(source_identity=source_identity, outcome=outcome)
+        return None
+    if outcome == "BOUNDARY_REFUSED":
+        # P17-R2-F1: never seeded as an adapter-asserted outcome (it no longer exists in either
+        # adapter-reportable vocabulary) -- reached only via a real, unsafe resolved address the
+        # route itself independently classifies.
+        adapter.seed_hop(
+            source_identity=source_identity,
+            outcome="RESPONSE",
+            resolved_address=_UNSAFE_RESOLVED_ADDRESS,
+        )
         return None
     if outcome == "REDIRECT_REFUSED":
         adapter.seed_hop(
@@ -159,13 +177,13 @@ def test_every_fetch_outcome_is_reachable_end_to_end_and_only_observed_commits(
         assert result["receipt"].observations["observed_content_fingerprint"] is None
 
 
-def test_a_source_never_seeded_reports_connection_failure_not_a_silent_absence(
+def test_a_source_never_seeded_reports_dns_failure_not_a_silent_absence(
     _world: dict[str, Any],
 ) -> None:
     adapter = FakeUrlSourceAdapter()
     result = _observe(_world, adapter)
     assert result["envelope"] is None
-    assert result["receipt"].observations["fetch_outcome"] == "CONNECTION_FAILURE"
+    assert result["receipt"].observations["fetch_outcome"] == "DNS_FAILURE"
     assert result["receipt"].status == "UNAVAILABLE"
 
 
@@ -188,27 +206,65 @@ def test_a_field_outside_permitted_fields_never_reaches_a_committed_envelope(
     assert "secret" not in result["envelope"]["observed_fields"]
 
 
-def test_the_route_refuses_an_out_of_vocabulary_single_hop_outcome(_world: dict[str, Any]) -> None:
+def test_a_private_resolved_address_never_becomes_a_successful_response(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R2-F1's own decisive control: a private (non-loopback) resolved address is refused by
+    the route's own independent classification exactly like a loopback one -- never trusted from
+    the adapter's own successful-looking ``RESPONSE`` report."""
+
     adapter = FakeUrlSourceAdapter()
-    adapter.force_result({"outcome": "NOT-A-REAL-OUTCOME"})
+    adapter.seed_hop(
+        source_identity=_world["source_identity"],
+        outcome="RESPONSE",
+        resolved_address="10.0.0.5",
+        body=json.dumps({"status": "ok"}).encode(),
+    )
+    result = _observe(_world, adapter)
+    assert result["envelope"] is None
+    assert result["receipt"].observations["fetch_outcome"] == "BOUNDARY_REFUSED"
+
+
+def test_the_route_refuses_an_out_of_vocabulary_resolve_outcome(_world: dict[str, Any]) -> None:
+    adapter = FakeUrlSourceAdapter()
+    adapter.force_resolve_result({"outcome": "NOT-A-REAL-OUTCOME"})
     with pytest.raises(UrlBootAdapterError):
         _observe(_world, adapter)
 
 
-def test_the_route_refuses_an_adapter_asserting_a_route_only_classification_directly(
-    _world: dict[str, Any],
+def test_the_route_refuses_an_out_of_vocabulary_connect_outcome(_world: dict[str, Any]) -> None:
+    adapter = FakeUrlSourceAdapter()
+    adapter.seed_hop(source_identity=_world["source_identity"], outcome="RESPONSE")
+    adapter.force_connect_result({"outcome": "NOT-A-REAL-OUTCOME"})
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+@pytest.mark.parametrize("stage_outcome", ["BOUNDARY_REFUSED", "IDENTITY_MISMATCH", "MALFORMED"])
+def test_the_route_refuses_an_adapter_asserting_a_route_only_classification_at_resolve_stage(
+    _world: dict[str, Any], stage_outcome: str
 ) -> None:
-    """P17-R1-F2's own decisive control: ``IDENTITY_MISMATCH`` (and every other overall
-    :data:`~manosube_agent_civilization.url_boot.types.URL_FETCH_OUTCOMES` member that is not
-    also a :data:`~manosube_agent_civilization.url_boot.types.URL_HOP_TRANSPORT_OUTCOMES` member)
-    is not even a readable single-hop outcome any more -- an adapter naming it directly is a
-    malformed report, refused before any classification of its own content is ever attempted."""
+    """Neither ``BOUNDARY_REFUSED`` nor any overall :data:`~manosube_agent_civilization.url_boot.
+    types.URL_FETCH_OUTCOMES` member that also is not a genuine resolve-stage outcome is even a
+    readable ``resolve_hop`` report any more -- an adapter naming one directly is a malformed
+    report, refused before any classification of its own is ever attempted (P17-R1-F2/P17-R2-F1)."""
 
     adapter = FakeUrlSourceAdapter()
-    adapter.force_result(
+    adapter.force_resolve_result({"outcome": stage_outcome, "resolved_address": "93.184.216.34"})
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+@pytest.mark.parametrize("stage_outcome", ["BOUNDARY_REFUSED", "IDENTITY_MISMATCH", "DNS_FAILURE"])
+def test_the_route_refuses_an_adapter_asserting_a_route_only_classification_at_connect_stage(
+    _world: dict[str, Any], stage_outcome: str
+) -> None:
+    adapter = FakeUrlSourceAdapter()
+    adapter.seed_hop(source_identity=_world["source_identity"], outcome="RESPONSE")
+    adapter.force_connect_result(
         {
-            "outcome": "IDENTITY_MISMATCH",
-            "resolved_address": "203.0.113.10",
+            "outcome": stage_outcome,
+            "resolved_address": _SAFE_RESOLVED_ADDRESS,
             "response_status": 200,
             "content_type": "application/json",
             "redirect_location": None,
@@ -220,19 +276,34 @@ def test_the_route_refuses_an_adapter_asserting_a_route_only_classification_dire
         _observe(_world, adapter)
 
 
-def test_the_route_refuses_a_non_mapping_adapter_report(_world: dict[str, Any]) -> None:
+def test_the_route_refuses_a_non_mapping_resolve_report(_world: dict[str, Any]) -> None:
     adapter = FakeUrlSourceAdapter()
-    adapter.fetch_one_hop = lambda *, source_identity, boundary: "not-a-mapping"  # type: ignore[method-assign]
+    adapter.resolve_hop = lambda *, source_identity: "not-a-mapping"  # type: ignore[method-assign]
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+def test_the_route_refuses_a_non_mapping_connect_report(_world: dict[str, Any]) -> None:
+    adapter = FakeUrlSourceAdapter()
+    adapter.seed_hop(source_identity=_world["source_identity"], outcome="RESPONSE")
+    adapter.connect_hop = (  # type: ignore[method-assign]
+        lambda *, source_identity, boundary, admitted_address: "not-a-mapping"
+    )
     with pytest.raises(UrlBootAdapterError):
         _observe(_world, adapter)
 
 
 def test_the_route_refuses_an_adapter_with_no_readable_identity(_world: dict[str, Any]) -> None:
     class _NoIdentityAdapter:
-        def fetch_one_hop(self, *, source_identity: Any, boundary: Any) -> dict[str, Any]:
+        def resolve_hop(self, *, source_identity: Any) -> dict[str, Any]:
+            return {"outcome": "RESOLVED", "resolved_address": _SAFE_RESOLVED_ADDRESS}
+
+        def connect_hop(
+            self, *, source_identity: Any, boundary: Any, admitted_address: str
+        ) -> dict[str, Any]:
             return {
                 "outcome": "RESPONSE",
-                "resolved_address": "203.0.113.10",
+                "resolved_address": admitted_address,
                 "response_status": 200,
                 "content_type": "application/json",
                 "redirect_location": None,
@@ -244,16 +315,36 @@ def test_the_route_refuses_an_adapter_with_no_readable_identity(_world: dict[str
         _observe(_world, _NoIdentityAdapter())
 
 
-def test_a_response_missing_a_readable_resolved_address_is_refused(_world: dict[str, Any]) -> None:
+def test_a_resolved_report_missing_a_readable_resolved_address_is_refused(
+    _world: dict[str, Any],
+) -> None:
     adapter = FakeUrlSourceAdapter()
-    adapter.force_result(
+    adapter.force_resolve_result({"outcome": "RESOLVED", "resolved_address": None})
+    with pytest.raises(UrlBootAdapterError):
+        _observe(_world, adapter)
+
+
+def test_an_adapter_cannot_connect_to_an_address_different_from_the_route_admitted_one(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R2-F1's own decisive control: the route hands the adapter one exact admitted address
+    to connect to; an adapter reporting having connected anywhere else is refused, never trusted
+    as a successful ``RESPONSE`` for the address the route itself admitted."""
+
+    adapter = FakeUrlSourceAdapter()
+    adapter.seed_hop(
+        source_identity=_world["source_identity"],
+        outcome="RESPONSE",
+        resolved_address=_SAFE_RESOLVED_ADDRESS,
+    )
+    adapter.force_connect_result(
         {
             "outcome": "RESPONSE",
-            "resolved_address": None,
+            "resolved_address": "198.51.100.7",
             "response_status": 200,
             "content_type": "application/json",
             "redirect_location": None,
-            "body": b"{}",
+            "body": json.dumps({"status": "ok"}).encode("utf-8"),
             "oversized": False,
         }
     )
@@ -261,7 +352,7 @@ def test_a_response_missing_a_readable_resolved_address_is_refused(_world: dict[
         _observe(_world, adapter)
 
 
-def test_the_fake_adapters_own_call_count_is_exactly_one_hop_per_direct_observation(
+def test_the_fake_adapters_own_call_counts_are_exactly_one_hop_per_direct_observation(
     _world: dict[str, Any],
 ) -> None:
     adapter = FakeUrlSourceAdapter()
@@ -271,6 +362,8 @@ def test_the_fake_adapters_own_call_count_is_exactly_one_hop_per_direct_observat
         body=json.dumps({"status": "ok"}).encode(),
     )
     _observe(_world, adapter)
-    assert adapter.fetch_call_count == 1
+    assert adapter.resolve_call_count == 1
+    assert adapter.connect_call_count == 1
     _observe(_world, adapter, observed_at="2026-09-10T00:00:02Z")
-    assert adapter.fetch_call_count == 2
+    assert adapter.resolve_call_count == 2
+    assert adapter.connect_call_count == 2

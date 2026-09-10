@@ -24,9 +24,14 @@ route_url_observation_to_evidence`), never through a mocked owner:
    redirect target itself, before ever calling the adapter for it).
 4. **Envelope integrity** (the P16-R2-F1 lesson, applied to this package from the start;
    extended by P17-R1-F5 to the exact Project Binding / Boot-observed State context a committed
-   Envelope now also carries) -- a resolved ``url_source_observation_envelope`` whose own
+   Envelope now also carries, and by P17-R2-F3 to independently re-resolving that context
+   through this Store's own real, canonical history, never merely re-hashing the Envelope's own
+   already-self-consistent content) -- a resolved ``url_source_observation_envelope`` whose own
    declared identity, semantic fingerprint, ``project_binding_ref``, or ``boot_state_fingerprint``
-   disagrees with what was genuinely committed is refused before any of its fields are trusted.
+   disagrees with what was genuinely committed is refused before any of its fields are trusted;
+   and a genuinely self-consistent Envelope whose referenced Project Binding or historical
+   Boot-observed State this Store cannot itself corroborate is refused before any Evidence is
+   ever derived.
 5. **Cross-project relabeling** -- a genuine receipt from one project can never be handed off as
    Evidence for a different one.
 6. **Prompt-injection inertness** (P17-C4's own explicit non-claim) -- fetched content that looks
@@ -51,6 +56,7 @@ from tests.evidence_helpers import change_free_verification_evidence_request
 from tests.fixtures.url_boot_world import bound, boundary_for
 
 from manosube_agent_civilization.boot import boot_project
+from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.url_boot import route as route_module
 from manosube_agent_civilization.url_boot.adapter import (
     FakeUrlSourceAdapter,
@@ -87,6 +93,7 @@ def _world(tmp_path: Path) -> dict[str, Any]:
 
 
 def _observe(world: dict[str, Any], store: Any, adapter: Any, **kwargs: Any) -> dict[str, Any]:
+    kwargs.setdefault("observed_at", "2026-09-10T00:00:01Z")
     return observe_url_source(
         store,
         project_id=world["project_id"],
@@ -94,7 +101,6 @@ def _observe(world: dict[str, Any], store: Any, adapter: Any, **kwargs: Any) -> 
         source_identity=world["source_identity"],
         boundary=world["boundary"],
         adapter=adapter,
-        observed_at="2026-09-10T00:00:01Z",
         **kwargs,
     )
 
@@ -168,7 +174,7 @@ def test_a_changed_authority_before_the_adapter_call_refuses_with_zero_adapter_c
     with pytest.raises(UrlBootAuthorityFreshnessError):
         _observe(_world, _world["store"], adapter)
     assert calls["count"] == 2
-    assert adapter.fetch_call_count == 0
+    assert adapter.resolve_call_count == 0
     assert _envelope_count(_world) == 0
 
 
@@ -180,7 +186,8 @@ def test_a_changed_authority_after_the_adapter_call_refuses_the_commit(
     with pytest.raises(UrlBootAuthorityFreshnessError):
         _observe(_world, _world["store"], adapter)
     assert calls["count"] == 3
-    assert adapter.fetch_call_count == 1
+    assert adapter.resolve_call_count == 1
+    assert adapter.connect_call_count == 1
     assert _envelope_count(_world) == 0
 
 
@@ -191,7 +198,8 @@ def test_an_unchanged_authority_reaches_the_adapter_and_commits_normally(
     adapter = _seeded(_world)
     outcome = _observe(_world, _world["store"], adapter)
     assert calls["count"] == 3
-    assert adapter.fetch_call_count == 1
+    assert adapter.resolve_call_count == 1
+    assert adapter.connect_call_count == 1
     assert outcome["envelope"]["fetch_outcome"] == "OBSERVED"
     assert _envelope_count(_world) == 1
 
@@ -204,9 +212,11 @@ def test_an_unchanged_authority_reaches_the_adapter_and_commits_normally(
 def test_a_hostname_resolving_to_loopback_is_boundary_refused_by_default(
     _world: dict[str, Any],
 ) -> None:
-    """``localhost`` genuinely resolves to a loopback address. The default, production adapter
-    (``permit_loopback_test_hosts=False``, the constructor default) must refuse as a Boundary
-    decision, at the real resolution/connection boundary -- never silently reached."""
+    """``localhost`` genuinely resolves to a loopback address. Public ``observe_url_source`` is
+    permanently bound to a classifier that always refuses loopback (P17-R2-F2) -- the plain
+    ``LocalHttpUrlSourceAdapter()`` constructor carries no override for this at all -- so this
+    must refuse as a Boundary decision, at the route's own real resolution-classification
+    boundary, never silently reached."""
 
     source_identity = canonical_source_identity("http://localhost:1/status")
     boundary = boundary_for(admitted_hosts=["localhost"], admitted_ports=[1])
@@ -231,9 +241,10 @@ def test_public_observe_url_source_cannot_enable_loopback_by_supplying_boundary_
     """P17-R1-F3's own decisive control: the closed Boundary schema carries no
     ``permit_loopback_test_hosts`` field at all any more -- a request-facing caller who tries to
     supply one (exactly the shape this package's own first delivery accepted) is refused by
-    schema validation itself, before Boot or any adapter is ever reached. The one place this
-    allowance can be set is a concrete adapter's own constructor -- a Python composition-time
-    decision, never something reachable from ``boundary`` data."""
+    schema validation itself, before Boot or any adapter is ever reached. Since Round 2
+    (P17-R2-F2), there is no longer any place this allowance can be reached from public
+    ``observe_url_source`` at all -- not this Boundary field, and not any adapter constructor
+    argument either."""
 
     boundary = boundary_for(admitted_hosts=["localhost"], admitted_ports=[1])
     boundary["network_scope"] = dict(boundary["network_scope"])
@@ -269,7 +280,7 @@ def test_cross_hop_dns_resolution_drift_is_refused_never_trusted(_world: dict[st
     adapter.seed_hop(
         source_identity=world["source_identity"],
         outcome="RESPONSE",
-        resolved_address="203.0.113.10",
+        resolved_address="93.184.216.34",
         response_status=302,
         redirect_location="/status",
     )
@@ -278,14 +289,68 @@ def test_cross_hop_dns_resolution_drift_is_refused_never_trusted(_world: dict[st
         outcome="RESPONSE",
         # The identical (host, port) already resolved once this fetch, now to a different
         # public address -- genuine drift, never a second, independent resolution to trust.
-        resolved_address="203.0.113.99",
+        resolved_address="1.1.1.1",
         body=json.dumps({"status": "ok"}).encode("utf-8"),
     )
     outcome = _observe(world, world["store"], adapter)
     assert outcome["envelope"] is None
     assert outcome["receipt"].observations["fetch_outcome"] == "BOUNDARY_REFUSED"
     assert outcome["receipt"].status == "FAILED"
-    assert adapter.fetch_call_count == 2
+    # P17-R2-F1: both hops resolved (the drift is caught at resolve-stage classification, before
+    # any second connection is ever attempted), only the first hop ever connected.
+    assert adapter.resolve_call_count == 2
+    assert adapter.connect_call_count == 1
+
+
+def test_public_observe_url_source_refuses_a_loopback_permitting_keyword_argument(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R2-F2's own decisive control: public ``observe_url_source``'s own signature carries
+    no loopback-related parameter at all -- attempting to supply one by keyword fails before any
+    network activity, with a plain ``TypeError`` from the function's own call signature, not a
+    runtime policy check this package could ever get wrong."""
+
+    with pytest.raises(TypeError):
+        observe_url_source(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            source_identity=_world["source_identity"],
+            boundary=_world["boundary"],
+            adapter=_seeded(_world),
+            observed_at="2026-09-10T00:00:01Z",
+            permit_loopback_test_hosts=True,  # type: ignore[call-arg]
+        )
+
+
+def test_public_observe_url_source_refuses_a_loopback_permitting_positional_argument(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R2-F2's own decisive control, positional form: ``observe_url_source`` accepts no
+    positional argument beyond ``store`` at all (every other parameter is keyword-only), so no
+    positional slot exists through which a loopback exception could ever be smuggled in."""
+
+    with pytest.raises(TypeError):
+        observe_url_source(  # type: ignore[call-arg, misc]
+            _world["store"],
+            _world["project_id"],
+            _world["project_binding_id"],
+            _world["source_identity"],
+            _world["boundary"],
+            _seeded(_world),
+            "2026-09-10T00:00:01Z",
+            True,
+        )
+
+
+def test_the_local_http_adapters_own_constructor_carries_no_loopback_parameter_at_all() -> None:
+    """P17-R2-F2's own decisive control, alternate-world-substitution form: Round 1's own fix
+    moved the switch to this adapter's constructor; Round 2 removes it from there too -- an
+    attempted substitution through the adapter itself, not just through ``observe_url_source``,
+    fails identically before any network activity."""
+
+    with pytest.raises(TypeError):
+        LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +369,7 @@ def test_a_host_outside_scope_is_refused_with_zero_adapter_calls(_world: dict[st
     adapter = _seeded(_world)
     with pytest.raises(UrlBootRequirementError):
         _observe(world, world["store"], adapter)
-    assert adapter.fetch_call_count == 0
+    assert adapter.resolve_call_count == 0
     assert _envelope_count(_world) == 0
 
 
@@ -314,7 +379,7 @@ def test_a_port_outside_scope_is_refused_with_zero_adapter_calls(_world: dict[st
     adapter = _seeded(_world)
     with pytest.raises(UrlBootRequirementError):
         _observe(world, world["store"], adapter)
-    assert adapter.fetch_call_count == 0
+    assert adapter.resolve_call_count == 0
     assert _envelope_count(_world) == 0
 
 
@@ -337,14 +402,14 @@ def test_a_scheme_outside_scope_is_refused_with_zero_adapter_calls(_world: dict[
             adapter=adapter,
             observed_at="2026-09-10T00:00:01Z",
         )
-    assert adapter.fetch_call_count == 0
+    assert adapter.resolve_call_count == 0
     assert _envelope_count(_world) == 0
 
 
 def test_a_hidden_disallowed_intermediate_hop_is_never_reached(_world: dict[str, Any]) -> None:
     """P17-R1-F2's own decisive control: a redirect chain whose second hop names a host outside
     ``network_scope`` is refused with that second hop's own
-    :meth:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter.fetch_one_hop` **never
+    :meth:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter.resolve_hop` **never
     called at all** -- the route re-authorizes every redirect target against ``network_scope``
     itself, before it is ever reached, so a conforming-looking adapter has no way to follow, or
     hide, a disallowed intermediate hop: it is never even asked to."""
@@ -369,21 +434,22 @@ def test_a_hidden_disallowed_intermediate_hop_is_never_reached(_world: dict[str,
     outcome = _observe(_world, _world["store"], adapter)
     assert outcome["envelope"] is None
     assert outcome["receipt"].observations["fetch_outcome"] == "REDIRECT_REFUSED"
-    # Exactly one call -- the disallowed second hop is never reached at all.
-    assert adapter.fetch_call_count == 1
+    # Exactly one hop resolved and connected -- the disallowed second hop is never reached at all.
+    assert adapter.resolve_call_count == 1
+    assert adapter.connect_call_count == 1
 
 
 def test_an_adapter_cannot_assert_a_route_only_classification_or_a_fabricated_hop_count(
     _world: dict[str, Any],
 ) -> None:
-    """The one-hop :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` Protocol
-    (P17-R1-F2) carries no field an adapter could use to assert a final identity, a hop count, or
-    a content classification at all -- there is nothing left to fabricate. An out-of-vocabulary
-    ``outcome`` (naming a route-only classification directly) is refused as a defect, not
-    accepted as a shortcut."""
+    """The two-stage :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter`
+    Protocol (P17-R1-F2/P17-R2-F1) carries no field an adapter could use to assert a final
+    identity, a hop count, a resolved address's own safety, or a content classification at all --
+    there is nothing left to fabricate. An out-of-vocabulary ``outcome`` (naming a route-only
+    classification directly) is refused as a defect, not accepted as a shortcut."""
 
     adapter = FakeUrlSourceAdapter()
-    adapter.force_result({"outcome": "MALFORMED", "resolved_address": "203.0.113.10"})
+    adapter.force_resolve_result({"outcome": "MALFORMED", "resolved_address": "93.184.216.34"})
     with pytest.raises(UrlBootAdapterError):
         _observe(_world, _world["store"], adapter)
 
@@ -532,6 +598,127 @@ def test_the_resolved_envelope_id_genuinely_recomputes(_world: dict[str, Any]) -
     )
 
 
+def _delegating_store(delegate: Any, **overrides: Any) -> Any:
+    """A store that forwards every attribute to *delegate* except the named *overrides* --
+    the identical, minimal "attacker-world substitution" shape ``_SubstitutedIdentityStore``/
+    ``_tampering_store`` above already establish, generalized to override arbitrary methods
+    (``resolve_record``/``resolve_transaction``) rather than tamper one resolved record's own
+    field."""
+
+    class _DelegatingStore:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(delegate, name)
+
+    store = _DelegatingStore()
+    for method_name, method in overrides.items():
+        setattr(store, method_name, method)
+    return store
+
+
+def test_a_dangling_project_binding_reference_is_refused_before_derive_evidence(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R2-F3's own decisive "wrong Binding" control: a genuinely self-consistent, genuinely
+    committed Envelope (its own hash checks all pass) whose referenced ``project_binding_ref``
+    this Store cannot itself resolve -- exactly what a copy-pasted-from-another-world Envelope
+    would look like -- is refused before ``derive_evidence`` is ever called, never merely
+    because the Envelope's own already-self-consistent content looked right."""
+
+    adapter = _seeded(_world)
+    outcome = _observe(_world, _world["store"], adapter)
+
+    def _resolve_record(project_id: str, kind: str, record_id: str) -> Any:
+        if kind == "project_binding":
+            return None
+        return _world["store"].resolve_record(project_id, kind, record_id)
+
+    store = _delegating_store(_world["store"], resolve_record=_resolve_record)
+    with pytest.raises(UrlBootRequirementError):
+        route_url_observation_to_evidence(
+            store,
+            outcome["receipt"],
+            _world["project_id"],
+            _committed_envelope_evidence_request(_world),
+        )
+
+
+def test_a_self_consistent_envelope_whose_boot_state_transition_the_store_disagrees_with_is_refused(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R2-F3's own decisive "genuine revision, disagreeing fingerprint" control: the
+    Envelope's own ``boot_state_transition_ref`` genuinely resolves in this Store -- but to an
+    internally self-consistent transition (its own ``after_state`` genuinely recomputes to its
+    own ``after_fingerprint``) that nonetheless disagrees with what the Envelope itself declared
+    as its own ``boot_state_fingerprint``. (A URL Boot commit's own ``semantic_state`` is
+    untouched by design -- P17-C4's own "no shipped path to mint Authority, invoke a model,
+    execute a Change" -- so ``fingerprint_project_state``, which hashes only ``semantic_state``,
+    is not itself revision-sensitive across two genuine URL Boot commits; this is exactly why
+    ``boot_state_transition_ref`` exists at all, and this test constructs the one concrete shape
+    of disagreement it exists to catch.) Re-hashing the Envelope's own content alone cannot catch
+    this -- only independently resolving and comparing against the Store's own real history
+    does."""
+
+    adapter = _seeded(_world)
+    outcome = _observe(_world, _world["store"], adapter)
+    real_transition_ref = outcome["envelope"]["boot_state_transition_ref"]
+    real_transition = _world["store"].resolve_transaction(
+        _world["project_id"], real_transition_ref["id"]
+    )
+
+    # A schema-valid semantic_state mutation (flipping one existing claim's own boolean) --
+    # never an added field, which the closed semantic_state schema itself would refuse.
+    disagreeing_semantic_state = deepcopy(real_transition["after_state"]["semantic_state"])
+    disagreeing_semantic_state["objective"]["claims"]["active"] = not disagreeing_semantic_state[
+        "objective"
+    ]["claims"].get("active")
+    disagreeing_after_state = dict(real_transition["after_state"])
+    disagreeing_after_state["semantic_state"] = disagreeing_semantic_state
+    disagreeing_transition = dict(real_transition)
+    disagreeing_transition["after_state"] = disagreeing_after_state
+    disagreeing_transition["after_fingerprint"] = fingerprint_project_state(
+        disagreeing_after_state
+    ).as_dict()
+    assert disagreeing_transition["after_fingerprint"] != real_transition["after_fingerprint"]
+
+    def _resolve_transaction(project_id: str, transaction_id: str) -> Any:
+        if transaction_id == real_transition_ref["id"]:
+            return disagreeing_transition
+        return _world["store"].resolve_transaction(project_id, transaction_id)
+
+    store = _delegating_store(_world["store"], resolve_transaction=_resolve_transaction)
+    with pytest.raises(UrlBootEnvelopeIntegrityError):
+        route_url_observation_to_evidence(
+            store,
+            outcome["receipt"],
+            _world["project_id"],
+            _committed_envelope_evidence_request(_world),
+        )
+
+
+def test_harmless_later_state_advancement_does_not_invalidate_a_correctly_reconstructed_boot_context(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R2-F3's own required positive control: this project's own current State moving on,
+    through further unrelated commits, never invalidates a correctly reconstructed *historical*
+    Boot context -- the referenced transition is read from this project's own immutable,
+    append-only lineage log, unaffected by anything committed after it."""
+
+    adapter = _seeded(_world)
+    outcome = _observe(_world, _world["store"], adapter)
+
+    later_adapter = _seeded(_world, fields={"status": "later"})
+    _observe(_world, _world["store"], later_adapter, observed_at="2026-09-10T00:00:05Z")
+
+    evidence = route_url_observation_to_evidence(
+        _world["store"],
+        outcome["receipt"],
+        _world["project_id"],
+        _committed_envelope_evidence_request(_world),
+    )
+    assert evidence["evidence_position"] == "CHANGE_FREE_VERIFICATION_EVIDENCE"
+    assert evidence["verification_result_provenance"]["status"] == "VERIFIED"
+
+
 # ---------------------------------------------------------------------------
 # 5. Cross-project relabeling
 # ---------------------------------------------------------------------------
@@ -600,15 +787,15 @@ _NON_OBSERVED_OUTCOMES = sorted(URL_FETCH_OUTCOMES - {"OBSERVED"})
 def _seed_non_observed(
     adapter: FakeUrlSourceAdapter, source_identity: dict[str, Any], outcome: str
 ) -> None:
-    hop_failures = {
-        "DNS_FAILURE",
-        "CONNECTION_FAILURE",
-        "TLS_FAILURE",
-        "TIMEOUT",
-        "BOUNDARY_REFUSED",
-    }
+    hop_failures = {"DNS_FAILURE", "CONNECTION_FAILURE", "TLS_FAILURE", "TIMEOUT"}
     if outcome in hop_failures:
         adapter.seed_hop(source_identity=source_identity, outcome=outcome)
+    elif outcome == "BOUNDARY_REFUSED":
+        # P17-R2-F1: never adapter-asserted -- reached only via a real, unsafe resolved address
+        # the route itself independently classifies.
+        adapter.seed_hop(
+            source_identity=source_identity, outcome="RESPONSE", resolved_address="127.0.0.1"
+        )
     elif outcome == "REDIRECT_REFUSED":
         adapter.seed_hop(
             source_identity=source_identity,

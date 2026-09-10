@@ -11,7 +11,7 @@ CANONICAL_KERNEL_COUNT=1
 URL_BOOT_OWNER_COUNT=1
 PUBLIC_URL_BOOT_ENTRY_POINT_COUNT=2
 SIGNED_DEPLOYMENT_DECLARATION_CHAIN=false
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
 ```
 
 ---
@@ -88,9 +88,11 @@ Store-committed record a target's own claimed identity must match before it is t
 package makes no equivalent claim about a URL. `IDENTITY_MISMATCH` and every other content-level
 classification are route-derived, from an adapter's own bounded, single-hop transport facts
 alone (Structural Review Round 1, P17-R1-F2) -- never accepted as a direct assertion from the
-adapter; `BOUNDARY_REFUSED` alone remains a genuine transport-layer fact an adapter itself
-reports (an unsafe resolved address, or cross-hop resolution drift the route itself detects).
-See `URL_BOOT_CONTRACT.md` §3.4/§6.2/§6.6.
+adapter. `BOUNDARY_REFUSED` is, since Structural Review Round 2 (P17-R2-F1), *also* route-derived
+-- an adapter reports only a genuine DNS resolution result or a genuine connection outcome; the
+route alone classifies a resolved address's own safety and detects cross-hop resolution drift,
+never accepting either as an adapter-asserted outcome. See `URL_BOOT_CONTRACT.md`
+§3.4/§6.2/§10.1.
 
 This is also not a general-purpose HTTP client: one bounded method
 (`HTTP_GET_BOUNDED`), one closed content-type allowlist, one closed permitted-field projection,
@@ -120,10 +122,12 @@ url_source_observation_envelope   The committed URL Source Observation -- the on
                                    exists here (contrast Runtime); the closed fetch Boundary is
                                    the only Human-declared input, and it is a caller-supplied,
                                    schema-validated argument, never a Store-resolved record of
-                                   its own. Carries project_binding_ref/boot_state_fingerprint
-                                   (the exact Boot-observed context, P17-R1-F5) and
-                                   resolution_provenance (the admitted per-(host, port) DNS
-                                   resolution across every hop, P17-R1-F4).
+                                   its own. Carries project_binding_ref/boot_state_fingerprint/
+                                   boot_state_transition_ref (the exact Boot-observed context,
+                                   P17-R1-F5, independently re-resolved and re-verified at
+                                   Evidence handoff, P17-R2-F3) and resolution_provenance (the
+                                   admitted per-(host, port) DNS resolution across every hop,
+                                   P17-R1-F4).
 ```
 
 ### 4.3 The four identities
@@ -147,10 +151,14 @@ URL_FETCH_METHODS         HTTP_GET_BOUNDED
 URL_FETCH_OUTCOMES        OBSERVED, DNS_FAILURE, CONNECTION_FAILURE, TLS_FAILURE, TIMEOUT,
                           REDIRECT_REFUSED, OVERSIZED_RESPONSE, UNSUPPORTED_MEDIA_TYPE,
                           MALFORMED, IDENTITY_MISMATCH, BOUNDARY_REFUSED
-URL_HOP_TRANSPORT_OUTCOMES   DNS_FAILURE, CONNECTION_FAILURE, TLS_FAILURE, TIMEOUT,
-                          BOUNDARY_REFUSED, RESPONSE -- the strictly smaller vocabulary an
-                          adapter's own fetch_one_hop may ever report (P17-R1-F2); every other
-                          URL_FETCH_OUTCOMES member is route-derived from a genuine RESPONSE.
+URL_HOP_RESOLVE_OUTCOMES     DNS_FAILURE, RESOLVED -- what an adapter's own resolve_hop may
+                          ever report (P17-R2-F1); the route alone classifies a RESOLVED
+                          address's own safety, never accepting BOUNDARY_REFUSED as an
+                          adapter-asserted outcome.
+URL_HOP_CONNECT_OUTCOMES     CONNECTION_FAILURE, TLS_FAILURE, TIMEOUT, RESPONSE -- what an
+                          adapter's own connect_hop, given the route's own admitted address,
+                          may ever report. Every other URL_FETCH_OUTCOMES member is
+                          route-derived from a genuine RESPONSE.
 RECEIPT_STATUSES          VERIFIED, FAILED, UNAVAILABLE
 ```
 
@@ -187,9 +195,16 @@ list.
   verification -- not that DNS or the CA system are themselves trustworthy inputs.
 - A failed or refused fetch is never recorded anywhere durable; it is bounded, ephemeral,
   in-memory evidence only, and can never be handed off as Evidence (P17-C7/P17-R1-F1).
-- No caller who only supplies `source_identity`/`boundary` *data* can ever enable a loopback
-  fetch; that allowance is a concrete adapter's own constructor argument, never reachable through
-  the public route's own data-driven surface (P17-R1-F3).
+- No caller who only supplies `source_identity`/`boundary`/`adapter` to public
+  `observe_url_source` can ever enable a loopback fetch (P17-R1-F3, P17-R2-F2) -- no field, no
+  keyword, no positional argument, and no adapter constructor argument reaches it any more; the
+  one exception lives behind a distinctly-named, never-publicly-exported test-composition entry
+  point this repository's own disposable local-HTTP test suite alone calls.
+- A genuinely self-consistent, genuinely committed Envelope is not itself sufficient corroboration
+  for Evidence -- its referenced Project Binding and historical Boot-observed State are
+  independently re-resolved through this Store's own real, canonical history before any Evidence
+  is derived (P17-R2-F3); a copied-but-uncorroborated Envelope is refused even though its own
+  content hash is genuine.
 
 ```text
 MERGE_ALLOWED=false

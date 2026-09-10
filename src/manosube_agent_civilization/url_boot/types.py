@@ -46,25 +46,36 @@ URL_FETCH_OUTCOMES: frozenset[str] = frozenset(
     }
 )
 
-#: The complete, closed *single-hop transport* outcome vocabulary a replaceable
+#: The complete, closed *single-hop resolution* outcome vocabulary a replaceable
 #: :class:`UrlSourceAdapter` may ever report from one call to :meth:`UrlSourceAdapter.
-#: fetch_one_hop` (Structural Review Round 1, P17-R1-F2). Deliberately smaller than, and
-#: strictly upstream of, :data:`URL_FETCH_OUTCOMES`: an adapter reports only what it genuinely
-#: observed at the transport layer for *one explicit hop the route itself chose* -- never a
-#: final/effective identity, never a redirect-hop count, never ``IDENTITY_MISMATCH`` or
-#: ``MALFORMED`` or any other outcome that depends on interpreting response *content* or on
-#: following more than one hop. Every one of those remaining outcomes is derived by the route
-#: alone, from these bounded per-hop facts, in :mod:`~manosube_agent_civilization.url_boot.route`.
-URL_HOP_TRANSPORT_OUTCOMES: frozenset[str] = frozenset(
-    {
-        "DNS_FAILURE",
-        "CONNECTION_FAILURE",
-        "TLS_FAILURE",
-        "TIMEOUT",
-        "BOUNDARY_REFUSED",
-        "RESPONSE",
-    }
+#: resolve_hop` (Structural Review Round 2, P17-R2-F1). An adapter resolves a hop's own host and
+#: reports either a genuine DNS failure or the one address that resolution returned -- it never
+#: classifies that address as safe/unsafe, and it never connects to it: both remain the route's
+#: own job alone, in :mod:`~manosube_agent_civilization.url_boot.route`. ``BOUNDARY_REFUSED`` is
+#: deliberately absent from every adapter-reportable vocabulary below -- it is purely a
+#: route-computed verdict about a resolved address the route itself independently classified,
+#: never something an adapter's own report can assert.
+URL_HOP_RESOLVE_OUTCOMES: frozenset[str] = frozenset({"DNS_FAILURE", "RESOLVED"})
+
+#: The complete, closed *single-hop connection* outcome vocabulary a replaceable
+#: :class:`UrlSourceAdapter` may ever report from one call to :meth:`UrlSourceAdapter.
+#: connect_hop` (Structural Review Round 2, P17-R2-F1). An adapter connects to *exactly* the one
+#: ``admitted_address`` the route itself already independently resolved, classified as safe, and
+#: bound for this hop -- it is never handed a hostname to resolve a second time, and it never
+#: reports ``BOUNDARY_REFUSED``: a connection either genuinely fails at the transport layer
+#: (``CONNECTION_FAILURE``/``TLS_FAILURE``/``TIMEOUT``) or genuinely completes
+#: (``RESPONSE``), full stop.
+URL_HOP_CONNECT_OUTCOMES: frozenset[str] = frozenset(
+    {"CONNECTION_FAILURE", "TLS_FAILURE", "TIMEOUT", "RESPONSE"}
 )
+
+#: The union of both bounded per-hop vocabularies above -- retained only as a documentation and
+#: totality-sweep convenience (every member either :data:`URL_HOP_RESOLVE_OUTCOMES` or
+#: :data:`URL_HOP_CONNECT_OUTCOMES` names, nothing else); no adapter method is ever validated
+#: against this union directly -- each of :meth:`UrlSourceAdapter.resolve_hop` and :meth:`
+#: UrlSourceAdapter.connect_hop` is checked against its own smaller, stage-specific vocabulary
+#: above, precisely so neither stage can ever report the other stage's own outcome.
+URL_HOP_TRANSPORT_OUTCOMES: frozenset[str] = URL_HOP_RESOLVE_OUTCOMES | URL_HOP_CONNECT_OUTCOMES
 
 #: The Evidence owner's own closed verification status vocabulary, reused verbatim here as the
 #: URL Boot receipt's own ``status`` field, never a second, package-only status vocabulary.
@@ -110,48 +121,89 @@ class UrlSourceAdapter(Protocol):
     adapter could therefore follow a disallowed intermediate hop, or simply assert a plausible
     final identity/hop count/``IDENTITY_MISMATCH``/``BOUNDARY_REFUSED`` outcome, and the route had
     no way to catch it: it validated only what the adapter chose to report. An adapter now owns
-    only the one bounded, single-hop transport primitive below; **the route itself owns the
-    redirect loop**, calling :meth:`fetch_one_hop` once per hop with the exact
-    ``source_identity`` *it* has already independently re-authorized against ``boundary``'s own
-    ``network_scope``, reading each hop's own ``Location`` header from the bounded response
-    itself, and performing every redirect/content/identity classification
-    (:data:`URL_FETCH_OUTCOMES`) from those bounded facts alone
-    (:mod:`~manosube_agent_civilization.url_boot.route`). An adapter can therefore no longer
-    fabricate a hop count, hide an intermediate hop, or assert a route-only classification: there
-    is no field left in its own report through which to do so.
+    only bounded, single-hop transport primitives; **the route itself owns the redirect loop**,
+    reading each hop's own ``Location`` header from the bounded response itself, and performing
+    every redirect/content/identity classification (:data:`URL_FETCH_OUTCOMES`) from those bounded
+    facts alone (:mod:`~manosube_agent_civilization.url_boot.route`). An adapter can therefore no
+    longer fabricate a hop count, hide an intermediate hop, or assert a route-only classification:
+    there is no field left in its own report through which to do so.
+
+    **Structural Review Round 2 (P17-R2-F1) correction.** Round 1's own single ``fetch_one_hop``
+    still let a replaceable adapter both *resolve* a hop's address and *classify* whether that
+    resolved address was safe to reach at all (``BOUNDARY_REFUSED``) -- the route re-authorized
+    only the *hostname* against ``network_scope`` before ever calling the adapter, but the
+    adapter's own resolution was still the sole authority for the *resolved address*'s own
+    safety, and the adapter's own connection step was the sole authority for *which* address was
+    actually reached. A dishonest adapter could therefore report a safe-looking resolved address
+    while connecting somewhere else entirely, or simply assert ``BOUNDARY_REFUSED`` for a
+    perfectly safe target. This is now split into two bounded primitives with two disjoint,
+    strictly smaller outcome vocabularies (:data:`URL_HOP_RESOLVE_OUTCOMES`,
+    :data:`URL_HOP_CONNECT_OUTCOMES` -- neither of which contains ``BOUNDARY_REFUSED`` at all):
+    :meth:`resolve_hop` reports only what a genuine DNS lookup returned, never classifying it; the
+    route alone independently classifies that resolved address's own safety
+    (loopback/private/link-local/multicast/reserved) and binds it as *this hop's one admitted
+    address*, refusing with the route-only outcome ``BOUNDARY_REFUSED`` itself, never asking the
+    adapter; only once the route has admitted an address does it call :meth:`connect_hop`, handing
+    the adapter that *exact* admitted address to connect to -- the adapter is never handed a bare
+    hostname to resolve a second time at connect time, closing the time-of-check/time-of-use
+    window a dishonest or buggy adapter could otherwise exploit. The route additionally requires
+    :meth:`connect_hop`'s own reported ``resolved_address`` to equal the exact address it handed
+    in, refusing (:class:`~manosube_agent_civilization.url_boot.errors.UrlBootAdapterError`) an
+    adapter that silently connected anywhere else.
 
     An adapter never owns canonical State, decides Authority, determines Evidence sufficiency,
-    closes a Difference, mutates Store internals, or interprets fetched content as meaningful --
-    it reports bounded, single-hop transport facts alone.
+    closes a Difference, mutates Store internals, classifies a resolved address's own safety, or
+    interprets fetched content as meaningful -- it reports bounded, single-hop transport facts
+    alone, and connects only where the route itself has already told it to.
     """
 
     adapter_identity: Mapping[str, Any]
 
-    def fetch_one_hop(
-        self, *, source_identity: Mapping[str, Any], boundary: Mapping[str, Any]
+    def resolve_hop(self, *, source_identity: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Resolve *source_identity*'s own host to exactly one address, through exactly one
+        genuine DNS lookup -- never classifying that address's own safety, and never connecting
+        to it: both remain the route's own job.
+
+        Must return a mapping whose ``outcome`` is one of :data:`URL_HOP_RESOLVE_OUTCOMES`:
+
+        - ``DNS_FAILURE`` -- carrying no other field, since no address was ever resolved;
+        - ``RESOLVED`` -- carrying ``resolved_address``, the one real address this genuine lookup
+          returned.
+        """
+        ...
+
+    def connect_hop(
+        self,
+        *,
+        source_identity: Mapping[str, Any],
+        boundary: Mapping[str, Any],
+        admitted_address: str,
     ) -> Mapping[str, Any]:
-        """Perform exactly one bounded HTTP GET against *source_identity* -- no redirect
-        following, no content-type/size/identity classification, and no boundary decision of any
-        kind beyond the adapter's own genuine transport/DNS/TLS experience for *this one hop*:
-        every one of those remains the route's own job, never this method's.
+        """Connect to *exactly* ``admitted_address`` -- the one address the route itself already
+        independently resolved, classified as safe, and admitted for this hop -- and, on a
+        successful connection, perform one bounded HTTP GET against *source_identity*. Never
+        resolves *source_identity*'s own host a second time; never connects to any address other
+        than ``admitted_address``. No redirect following, no content-type/size/identity
+        classification, and no boundary decision of any kind beyond the adapter's own genuine
+        transport/TLS experience for *this one hop*: every one of those remains the route's own
+        job, never this method's.
 
-        Must return a mapping whose ``outcome`` is one of :data:`URL_HOP_TRANSPORT_OUTCOMES`:
+        Must return a mapping whose ``outcome`` is one of :data:`URL_HOP_CONNECT_OUTCOMES`:
 
-        - a pre-response failure (``DNS_FAILURE``/``CONNECTION_FAILURE``/``TLS_FAILURE``/
-          ``TIMEOUT``/``BOUNDARY_REFUSED``) -- carrying ``resolved_address: None``, since no
-          response, and in the unsafe-address case no connection either, was ever reached;
-        - ``RESPONSE`` -- a completed HTTP round trip, carrying ``resolved_address`` (the exact,
-          single address this hop's own DNS resolution used and connected to -- never re-resolved
-          a second time for this same hop), ``response_status`` (the real HTTP status code),
-          ``content_type`` (the response's own ``Content-Type`` header, lowercased, with any
-          parameters stripped, or ``None``), ``redirect_location`` (the response's own
-          ``Location`` header when ``300 <= response_status < 400``, else ``None``), ``body``
-          (the raw response bytes, bounded to ``boundary["max_response_bytes"]``), and
-          ``oversized`` (``True`` when the real response exceeded that bound).
+        - a pre-response failure (``CONNECTION_FAILURE``/``TLS_FAILURE``/``TIMEOUT``) -- carrying
+          ``resolved_address: None``, since no response was ever reached;
+        - ``RESPONSE`` -- a completed HTTP round trip, carrying ``resolved_address`` (echoing back
+          the exact ``admitted_address`` this call actually connected to -- the route refuses any
+          report that disagrees), ``response_status`` (the real HTTP status code), ``content_type``
+          (the response's own ``Content-Type`` header, lowercased, with any parameters stripped,
+          or ``None``), ``redirect_location`` (the response's own ``Location`` header when
+          ``300 <= response_status < 400``, else ``None``), ``body`` (the raw response bytes,
+          bounded to ``boundary["max_response_bytes"]``), and ``oversized`` (``True`` when the
+          real response exceeded that bound).
 
-        Never a pre-computed fingerprint, a final/effective identity, or a redirect-hop count:
-        every one of those is derived or recomputed by the route alone, from these bounded facts,
-        never trusted from the adapter's own report.
+        Never a pre-computed fingerprint, a final/effective identity, a redirect-hop count, or a
+        boundary/safety verdict of any kind: every one of those is derived or decided by the
+        route alone, never trusted from the adapter's own report.
         """
         ...
 

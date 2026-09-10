@@ -44,6 +44,7 @@ ENVELOPE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "project_id",
     "project_binding_ref",
     "boot_state_fingerprint",
+    "boot_state_transition_ref",
     "requested_source_identity",
     "requested_source_fingerprint",
     "effective_source_identity",

@@ -1,19 +1,23 @@
 """V3 (Issue #69): real bounded URL Boot vertical proof.
 
 Runs the complete canonical route -- :func:`~manosube_agent_civilization.url_boot.route.
-observe_url_source` through :class:`~manosube_agent_civilization.url_boot.adapter.
-LocalHttpUrlSourceAdapter` -- against one real, disposable, local HTTP target this test itself
-starts and stops (``127.0.0.1``, an ephemeral port). No VPS or cloud provider is used or required
-(Issue #69's own explicit non-target). Proves at least one genuine positive (``OBSERVED``), one
-genuine per-hop-reauthorized redirect follow, one genuine bounded negative
+observe_url_source_for_disposable_local_test` through :class:`~manosube_agent_civilization.
+url_boot.adapter.LocalHttpUrlSourceAdapter` -- against one real, disposable, local HTTP target
+this test itself starts and stops (``127.0.0.1``, an ephemeral port). No VPS or cloud provider is
+used or required (Issue #69's own explicit non-target). Proves at least one genuine positive
+(``OBSERVED``), one genuine per-hop-reauthorized redirect follow, one genuine bounded negative
 (``UNSUPPORTED_MEDIA_TYPE``), and one genuine unreachable-port failure (``CONNECTION_FAILURE``),
 each a real network round trip over ``localhost`` through this package's own
-``network.fetch_one_hop`` -- then hands the positive receipt off to the existing Evidence owner.
+``network.resolve_hop_address``/``network.connect_and_request_hop`` -- then hands the positive
+receipt off to the existing Evidence owner.
 
-Every real local target used here is loopback, so every adapter constructed in this file passes
-``permit_loopback_test_hosts=True`` explicitly -- the one, non-substitutable, test-composition-only
-place that allowance can ever be set (Structural Review Round 1, P17-R1-F3; see ``adapter.py``'s
-own module docstring).
+Every real local target used here is loopback, so every observation in this file goes through
+``observe_url_source_for_disposable_local_test`` -- the one, distinctly-named,
+non-public-surface, trusted-composition-only entry point that allowance can ever be reached
+through (Structural Review Round 1, P17-R1-F3, further corrected in Round 2, P17-R2-F2: no
+adapter constructor argument exists for this any more at all; see ``route.py``'s own module
+docstring). ``LocalHttpUrlSourceAdapter()`` itself now takes no loopback-related argument
+whatsoever.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from manosube_agent_civilization.url_boot.evidence_handoff import (
     route_url_observation_to_evidence,
 )
 from manosube_agent_civilization.url_boot.network import canonical_source_identity
-from manosube_agent_civilization.url_boot.route import observe_url_source
+from manosube_agent_civilization.url_boot.route import observe_url_source_for_disposable_local_test
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -110,9 +114,9 @@ def test_real_local_http_positive_observation_reaches_verified_evidence(
     host, port = _local_http_target
     source_identity = canonical_source_identity(f"http://{host}:{port}/status")
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
-    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
+    adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source(
+    outcome = observe_url_source_for_disposable_local_test(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
@@ -164,9 +168,9 @@ def test_real_local_http_redirect_is_followed_and_reauthorized(
     host, port = _local_http_target
     source_identity = canonical_source_identity(f"http://{host}:{port}/redirect")
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
-    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
+    adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source(
+    outcome = observe_url_source_for_disposable_local_test(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
@@ -209,9 +213,9 @@ def test_a_redirect_to_a_host_outside_scope_is_refused_not_followed(
         host, port = server.server_address
         source_identity = canonical_source_identity(f"http://{host}:{port}/redirect")
         boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
-        adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
+        adapter = LocalHttpUrlSourceAdapter()
 
-        outcome = observe_url_source(
+        outcome = observe_url_source_for_disposable_local_test(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
@@ -236,9 +240,9 @@ def test_real_local_http_wrong_content_type_is_a_genuine_unsupported_media_type(
     host, port = _local_http_target
     source_identity = canonical_source_identity(f"http://{host}:{port}/text")
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
-    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
+    adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source(
+    outcome = observe_url_source_for_disposable_local_test(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
@@ -258,9 +262,9 @@ def test_real_local_http_oversized_response_is_refused_not_truncated_and_kept(
     host, port = _local_http_target
     source_identity = canonical_source_identity(f"http://{host}:{port}/oversized")
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port], max_response_bytes=64)
-    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
+    adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source(
+    outcome = observe_url_source_for_disposable_local_test(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
@@ -280,9 +284,9 @@ def test_real_local_http_unreachable_port_is_connection_failure(_world: dict[str
 
     source_identity = canonical_source_identity("http://127.0.0.1:1/status")
     boundary = boundary_for(admitted_hosts=["127.0.0.1"], admitted_ports=[1], timeout_seconds=2)
-    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
+    adapter = LocalHttpUrlSourceAdapter()
 
-    outcome = observe_url_source(
+    outcome = observe_url_source_for_disposable_local_test(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
@@ -327,9 +331,9 @@ def test_real_local_http_host_header_carries_the_non_default_port(
         capture_host, capture_port = server.server_address
         source_identity = canonical_source_identity(f"http://{capture_host}:{capture_port}/status")
         boundary = boundary_for(admitted_hosts=[capture_host], admitted_ports=[capture_port])
-        adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
+        adapter = LocalHttpUrlSourceAdapter()
 
-        outcome = observe_url_source(
+        outcome = observe_url_source_for_disposable_local_test(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
@@ -446,9 +450,9 @@ def test_real_local_https_round_trip_succeeds_with_exactly_one_tls_wrap(
         boundary = boundary_for(
             admitted_schemes=["https"], admitted_hosts=[host], admitted_ports=[port]
         )
-        adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
+        adapter = LocalHttpUrlSourceAdapter()
 
-        outcome = observe_url_source(
+        outcome = observe_url_source_for_disposable_local_test(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
