@@ -132,8 +132,8 @@ class                          path prefix (or exact path)                requir
                                                                             update
 kernel_surface                 src/, 00_KERNEL/, 01_SCHEMA/, 02_ENGINE/,   yes -- a source_
                                 04_BOOT/, 05_CLI/, 07_AGENT_RUNTIME/,      document from that
-                                pyproject.toml (exact)                    area's own
-                                                                           KERNEL_SURFACE_
+                                11_MODEL_RUNTIME/,                         area's own
+                                pyproject.toml (exact)                    KERNEL_SURFACE_
                                                                            IMPACT_MAP entry
                                                                            (below)
 source_document                docs/project_sources/*.md (excluding       n/a (this *is* a
@@ -153,9 +153,17 @@ other                          everything else (tests/, most of           no
                                 scripts/, docs/decisions/, examples/, ...)
 ```
 
+`11_MODEL_RUNTIME/` was added to the `kernel_surface` prefixes by Phase 16 (Issue #66), for
+exactly the reason `07_AGENT_RUNTIME/` is already there: it is a contract directory whose
+documents define a shipped layer's own frozen semantics, so a doc-only change inside it is an
+OS-implementation change and must be paired with a `docs/project_sources/` update from its own
+`KERNEL_SURFACE_IMPACT_MAP` entry. `09_PROJECTION/` and `10_RUNTIME/` remain unregistered — a
+pre-existing gap Phase 16 deliberately left alone rather than silently widening, since closing it
+is a decision about two other phases' own contract directories.
+
 `scripts/` and `tests/` are deliberately **not** `kernel_surface`: a governance-automation
 or test-only change does not by itself force a `docs/project_sources/` update, only an
-actual `src/`/Kernel/Schema/Boot/CLI/Agent-runtime change does. But the four exact paths
+actual `src/`/Kernel/Schema/Boot/CLI/Agent-runtime/Model-runtime change does. But the four exact paths
 that *implement* Merge Source Reflow's own enforcement are `protected_governance_surface`
 (MSR-R1-F3), not merely `other`: a change to the executor scripts or either reflow workflow
 file is itself a governance-sensitive event, and must be paired with a `03_BINDING/`

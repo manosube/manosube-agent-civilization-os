@@ -47,6 +47,9 @@ pytestmark = pytest.mark.contract
         ("04_BOOT/boot.py", "kernel_surface"),
         ("05_CLI/cli.py", "kernel_surface"),
         ("07_AGENT_RUNTIME/runtime.py", "kernel_surface"),
+        # Phase 16 (Issue #66): the Model Runtime contract directory, registered for exactly
+        # the reason 07_AGENT_RUNTIME/ already is.
+        ("11_MODEL_RUNTIME/MODEL_RUNTIME_CONTRACT.md", "kernel_surface"),
         # kernel_surface: exact
         ("pyproject.toml", "kernel_surface"),
         # source_document: Human-owned narrative docs, excluding generated/
@@ -191,6 +194,7 @@ def test_kernel_surface_area_resolves_to_the_same_key_the_impact_map_uses() -> N
     for path, expected_area in (
         ("src/manosube_agent_civilization/foo.py", "src/"),
         ("00_KERNEL/08_REFLOW/reflow.py", "00_KERNEL/"),
+        ("11_MODEL_RUNTIME/MODEL_RUNTIME_INDEX.md", "11_MODEL_RUNTIME/"),
         ("pyproject.toml", "pyproject.toml"),
     ):
         area = gate._kernel_surface_area(path)

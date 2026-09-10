@@ -1660,3 +1660,138 @@ RUNTIME_CREDENTIAL_USE_AUTHORITY=false
 ```
 
 本addendumは`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するacceptance receiptを代行しない。またPR #65自身のmergeやIssue #64のcloseを主張しない — どちらもSHUKOUの別途決定の対象であり、本correction roundはstructural findingsの閉鎖のみを行う。
+
+---
+
+# 24. Phase 16 bounded addendum (Multi-Model Replaceability and Phase 12 Execution Continuity, Issue #66)
+
+本節は、セクション23のaddendum記録時点以降にrepositoryへ生じた変化のうち、local `git log`とIssue #66自身のadoption commentにより独立再観測できた`OBSERVED_GITHUB_FACT`のみを追記する、bounded addendumである。セクション16〜23の全面再投影ではない。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AGAINST_ORIGIN_MAIN_AND_ISSUE_66_ADOPTION
+```
+
+| Field | Observed value |
+|---|---|
+| Current `origin/main` HEAD | `94f067ba6acb4e4459ef3ecd15d6c8c1332e1db7` |
+| PR #65 (Phase 15, Issue #64) | **Merged** — merge commit `94f067b` |
+| Governing Issue, current Phase | [#66 — Phase 16: Multi-Model Replaceability and Phase 12 Execution Continuity](https://github.com/manosube/manosube-agent-civilization-os/issues/66) |
+| SHUKOU implementation adoption | `ADOPT_P16_D001_MULTI_MODEL_REPLACEABILITY_AND_PHASE12_EXECUTION_CONTINUITY` |
+| Adoption's own reviewed main SHA | `94f067ba6acb4e4459ef3ecd15d6c8c1332e1db7` (identical to the `origin/main` HEAD observed above) |
+| Dedicated implementation branch | `agent/issue-66-phase16-multi-model-replaceability` |
+| Dedicated Pull Request | Not opened by this delivery — the adoption's own corrected `NEW_PR=false` |
+
+```text
+PHASE_15_MERGED=true
+PHASE_15_MERGE_COMMIT=94f067b
+PHASE_15_COMPLETE=true
+COMPLETED_THROUGH_PHASE=15
+CURRENT_PHASE=16_MULTI_MODEL_REPLACEABILITY_AND_PHASE12_EXECUTION_CONTINUITY
+CURRENT_PHASE_ISSUE=66
+CURRENT_PHASE_STATE=LOCAL_IMPLEMENTATION_DELIVERED_BRANCH_PUSHED_NO_PR
+PHASE_16_ALLOWED=true
+PHASE_16_COMPLETE=false
+PHASE_17_ALLOWED=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+```
+
+`ADOPT_P16_D001_...`が要求する実装範囲は`11_MODEL_RUNTIME/MODEL_RUNTIME_INDEX.md`・`11_MODEL_RUNTIME/MODEL_RUNTIME_CONTRACT.md`が所有する。人間目的は次の一点である。
+
+```text
+Agent / model / provider は、Canonical State・Authority・Difference・Boundary・Evidence
+requirements・resumable work continuity のいずれも失うことなく置換できる
+```
+
+本deliveryが実装したcontract項目と、その閉鎖手段：
+
+```text
+P16-C1  provider-neutral execution binding
+        一つのrequest/response境界が、exact State revision + semantic fingerprint /
+        State-bound Work Unit identity / 同一 Difference reference / required capability /
+        explicit Authority reference AND decision / applicable Boundary reference /
+        Evidence requirements / Phase 12 Temporary Agent Execution Contract identity を
+        すべて束ねる。provider payload・chat transcript・model memory・provider session id が
+        到達しうるkeyは一つも存在しない。
+
+P16-C2  replaceable Model Adapter
+        `ModelAdapter` Protocol 一つ。実装は二つで、互いにbase classもhelperも
+        module-level stateも共有しない（seeded-world 型と request-derived 型）。
+        provider SDK importは shipped tree 全体でゼロ（AST走査で証明）。
+
+P16-C3  non-authoritative model output
+        accepting classification `CANDIDATE_ACCEPTED` は adapter 語彙に存在しない。
+        route は adapter result から**厳密に3 key**しか読まず、しかも文字列literalではなく
+        `MODEL_ADAPTER_RESULT_KEYS` 経由で読む。したがって model による
+        Authority mint / Evidence 生成 / Difference closure / Change commit /
+        Boundary 拡張は「拒否される」のではなく「call shape が存在しない」。
+        `adapter.py` は Store / Boot / Agent Runtime / Authority / Evidence /
+        Difference / Change のいずれもimportしない。
+
+P16-C4  model-swap continuity
+        Agent A が停止し、Agent B が Store-resolved canonical records のみから再開する。
+        session境界を越える値は Work Unit の content address 一つ（plain string）だけ。
+        conversation handoff / model memory / provider-local session は、要求もされず
+        受理もされない — routeのsignatureにそれらが到達しうるparameterが無い。
+
+P16-C5  session-loss recovery
+        完全なsession喪失が canonical Store のみから復旧される。stale State /
+        substituted references / cross-project / cross-Store / wrong-Difference /
+        wrong-Authority / wrong-Boundary / wrong-State-revision は、いずれも
+        adapter呼び出しの**前**に、それぞれ固有のtyped errorで拒否される。
+
+P16-C6  typed outcomes and bounded failure
+        7つのcanonical outcome。うち6つが非受理で、それぞれ固有のreceipt statusへ写る。
+        いずれのfailureもsuccess / closure / authoritative absenceへは変換されない。
+
+P16-C7  first real-model execution barrier
+        controlled adapterのみを出荷。live credential / real-provider call /
+        remote command execution / autonomous change はいずれも本deliveryの外。
+```
+
+Authority統合について本deliveryが公開した判断（adopted textが両案を許した箇所）：
+
+```text
+採用 = 既存 `authority` package への narrowly-scoped extension
+       `evaluate_model_execution_authorization`
+
+理由 = `evaluate_authority` は唯一の *Change-permission* evaluator であり、その closed
+       request shape は difference record / requested_action(action_kind・reversibility・
+       opaque operation payload) / requested_scope / rules・prohibitions・approvals /
+       current_state_revision・fingerprint を要求し、AUTONOMOUS / HUMAN_APPROVAL_REQUIRED /
+       PROHIBITED を返す。Phase 16 が問うのは *capability-grant* の問いであり、requested
+       action も reversibility も scope containment も rule/approval precedence も持たない。
+       強引に通せば action_kind を発明することになり、未知だが well-formed な kind は
+       capability decision ではなく HUMAN_APPROVAL_REQUIRED へ fail closed する。
+       これは P13-R3-F1（verifier selection）と P14-R1-F1（projection authorization）が
+       各々記録したのと同一の理由であり、本件はその第三例である。第二のAuthority ownerは
+       作られていない。
+```
+
+```text
+MODEL_RUNTIME_OWNER_COUNT=1
+PUBLIC_MODEL_RUNTIME_ENTRY_POINT_COUNT=5
+MODEL_EXECUTION_AUTHORIZATION_ENTRY_POINT_COUNT=1
+SECOND_EXECUTION_CONTRACT=false
+AGENT_RUNTIME_FILES_CHANGED=0
+PROVIDER_SDK_DEPENDENCY_COUNT=0
+CANONICAL_SCHEMA_COUNT=66
+NEW_SCHEMA_FILES_ADDED_THIS_PHASE=7
+NEW_BRANCH=true
+NEW_PR=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_16_COMPLETE=false
+PHASE_17_ALLOWED=false
+LIVE_PROVIDER_CREDENTIAL_USE=false
+REMOTE_COMMAND_EXECUTION_AUTHORITY=false
+AUTONOMOUS_CHANGE_AUTHORITY=false
+```
+
+`07_AGENT_RUNTIME/`（Phase 12 Temporary Agent Execution Contract）とその実装
+`src/manosube_agent_civilization/agent_runtime/` は、本Phaseにより**一切変更されていない**
+（`AGENT_RUNTIME_FILES_CHANGED=0`）。model_runtime は `boot_project` をimportせず、Bootへは
+Phase 12自身のroute経由でのみ、literal call site一箇所から到達する。
+
+本addendumは、`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するPhase 15の恒久的なacceptance receipt（merge SHA、Human acceptance record、after-state re-observation）を代行しない。それは同ledgerの別途更新の対象であり、本書は現在地を示すための最小限の`OBSERVED_GITHUB_FACT`のみを記録する。またPR作成・merge・Issue closeのいずれも主張しない — いずれもSHUKOUの別途決定の対象である。
