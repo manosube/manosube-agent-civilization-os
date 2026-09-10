@@ -26,10 +26,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.evidence_helpers import change_free_verification_evidence_request
 from tests.fixtures.model_runtime_world import (
     PERMITTED_CANDIDATE_FIELDS,
     authorized_world,
+    evidence_request_for,
     open_kwargs,
 )
 
@@ -411,11 +411,7 @@ def test_a_resumed_executions_candidate_reaches_the_existing_evidence_owner(
     position, with provenance this handoff constructs from the real, resolved Envelope."""
 
     swapped = _run_swap(world)
-    request = _rebind(
-        change_free_verification_evidence_request(provenance=None),
-        "PRJ-0001",
-        world["project_id"],
-    )
+    request = evidence_request_for(world["project_id"], provenance=None)
     evidence = route_model_execution_to_evidence(
         world["store"], swapped["second_receipt"], world["project_id"], request
     )

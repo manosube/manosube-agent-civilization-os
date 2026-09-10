@@ -106,6 +106,7 @@ from .engine import (
     derive_model_swap_receipt,
     derive_model_work_unit,
     derive_session_recovery_receipt,
+    require_valid_adapter_identity,
     require_valid_model_execution_boundary,
     require_valid_model_execution_decision,
     require_valid_model_execution_envelope,
@@ -1010,7 +1011,19 @@ def execute_model_work_unit(
             "adapter does not declare a readable adapter_identity attribute -- an unstated or "
             "unverifiable identity may never execute on this route's behalf"
         )
-    adapter_identity = _plain(declared_identity)
+    # Structural Review Round 1, P16-R1-F3: the *complete* closed shape is proved here, before
+    # this route ever computes a request identity from it and before the adapter is ever
+    # reached -- an empty mapping, a missing field, a wrong-typed one, or a forbidden extra
+    # field are all refused at this same boundary, not merely the shallower "is it a Mapping"
+    # check above.
+    try:
+        adapter_identity = require_valid_adapter_identity(
+            declared_identity, "adapter.adapter_identity"
+        )
+    except ModelRuntimeRequirementError as error:
+        raise ModelAdapterError(
+            f"adapter's own declared adapter_identity is not the canonical closed shape: {error}"
+        ) from error
 
     request_identity = model_execution_request_identity(
         model_work_unit_id_value=str(work_unit["model_work_unit_id"]),

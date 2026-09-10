@@ -164,6 +164,40 @@ def route_model_execution_to_evidence(
             f"envelope={envelope['project_id']!r}, requested={project_id!r}"
         )
 
+    # Structural Review Round 1, P16-R1-F1: a model execution that did not produce an accepted
+    # candidate is never handed to the existing Evidence owner. Every one of the six
+    # non-accepting outcomes -- UNAVAILABLE, REFUSED, MALFORMED, TIMEOUT, CANCELLED,
+    # INCOMPLETE_EVIDENCE -- is refused here, before ``derive_evidence`` is ever reached, so
+    # recording an outcome only inside ``verification_result_provenance.status`` (which
+    # Evidence's own sufficiency evaluator never reads) can never let a failed execution become
+    # sufficient Evidence through this route's own top-level ``status``.
+    #
+    # Checked through the one shared outcome-to-status mapping rather than a literal
+    # ``"CANDIDATE_ACCEPTED"`` comparison here: that string is deliberately confined to
+    # ``route.py``'s own normalizer and ``types.py``'s own vocabulary declaration (this
+    # package's own static conformance suite proves the confinement), and
+    # ``MODEL_OUTCOME_TO_RECEIPT_STATUS`` already proves exactly one outcome maps to
+    # ``"VERIFIED"`` -- so this reads as "not the one outcome that is Evidence-eligible" without
+    # restating that outcome's own name a second time.
+    if MODEL_OUTCOME_TO_RECEIPT_STATUS.get(envelope["execution_outcome"]) != "VERIFIED":
+        raise ModelRuntimeRequirementError(
+            f"resolved Envelope {receipt.model_execution_envelope_id!r} own execution_outcome "
+            f"({envelope['execution_outcome']!r}) is not the one outcome the existing Evidence "
+            "owner's own VERIFIED status maps from -- a model execution that did not produce "
+            "an accepted candidate is never handed to the existing Evidence owner"
+        )
+    if (
+        envelope["normalized_candidate_kind"] is None
+        or envelope["normalized_candidate"] is None
+        or envelope["normalized_candidate_fingerprint"] is None
+    ):
+        raise ModelRuntimeRequirementError(
+            f"resolved Envelope {receipt.model_execution_envelope_id!r} declares "
+            "execution_outcome=CANDIDATE_ACCEPTED but carries no complete normalized "
+            "candidate -- refusing to hand an incomplete accepted candidate to the existing "
+            "Evidence owner"
+        )
+
     # Complete receipt attestation required, the identical discipline Projection's own Round 4
     # (P14-R4-F2) established and Runtime reuses: every one of the receipt's own
     # Evidence-relevant fields must exactly equal the real, resolved Envelope's own content
@@ -245,6 +279,22 @@ def route_model_execution_to_evidence(
     request["verification_result_provenance"] = provenance
 
     evidence = derive_evidence(request)
+
+    # Structural Review Round 1, P16-R1-F2: the Evidence owner derives its own record's
+    # top-level ``difference_ref`` from *this request's own* ``difference_request`` (Evidence's
+    # own re-observation-and-derivation, never a caller-supplied reference) -- which is exactly
+    # what lets a caller execute a Work Unit bound to Difference A, then hand this route an
+    # otherwise-valid *evidence_request* whose own ``difference_request`` re-derives Difference
+    # B in the same project. Requiring exact equality against the real, resolved Envelope's own
+    # ``difference_ref`` here is what refuses that silent rebinding before any Evidence record
+    # is ever returned to a caller who could act on it.
+    if evidence["difference_ref"] != envelope["difference_ref"]:
+        raise ModelRuntimeRequirementError(
+            "the derived Evidence record names a different Difference than the one this model "
+            f"execution was actually about: {evidence['difference_ref']!r} != "
+            f"{envelope['difference_ref']!r} -- an evidence_request may not silently rebind a "
+            "model's already-executed work from one Difference to another"
+        )
 
     if evidence["verification_result_provenance"] != provenance:
         raise ModelRuntimeRequirementError(

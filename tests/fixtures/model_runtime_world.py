@@ -28,14 +28,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from tests.difference_helpers import (
     PREDICATE_ID,
+    PROJECT_ID as DIFFERENCE_HELPERS_PROJECT_ID,
     derivation_request,
     negative_claim,
     objective_revision as difference_objective_revision,
+    observation_request,
     observation_scope,
-    observed_bundle,
     raw_fact,
     state_fingerprint,
 )
+from tests.evidence_helpers import change_free_verification_evidence_request
 from tests.fixtures.product_binding import (
     PROJECT_ID,
     _signing_private_key as canonical_signing_private_key,
@@ -60,6 +62,7 @@ from manosube_agent_civilization.model_runtime.identity import (
     model_execution_boundary_id,
     model_execution_boundary_semantic_fingerprint,
 )
+from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
 
@@ -199,36 +202,92 @@ def touch_state(
 # --------------------------------------------------------------------------- #
 
 
+def evidence_observation_request_for(
+    project_id: str, *, fact_value: str = "NOT-READY"
+) -> dict[str, Any]:
+    """The real ``observation_request`` both :func:`difference_for` and
+    :func:`evidence_request_for` are built from, through the identical real Observation Engine
+    producer the existing Evidence owner's own derivation reproduces internally (Structural
+    Review Round 1, P16-R1-F2), fully rebound onto *project_id* -- including its own embedded
+    ``project_id`` field, which participates in the reproduced Observation bundle and therefore
+    in the derived Difference's own content, not merely in the returned record's cosmetic label.
+
+    Sharing this one builder, and rebinding it identically in both callers, is what makes "the
+    same Difference" and "a genuinely different Difference" decisive rather than coincidental:
+    an Evidence request built from this function's own return value reproduces *exactly* the
+    Difference :func:`difference_for` derives for the identical *fact_value*, and a genuinely
+    different one for any other, because both routes reduce to the same real ``observe`` call
+    over the same, identically-rebound request body.
+    """
+
+    request = observation_request(
+        observation_scope(),
+        [raw_fact(value=fact_value)],
+        state_fingerprint(),
+        negative_claims=[negative_claim("NO_RESULT")],
+    )
+    return _rebind(request, DIFFERENCE_HELPERS_PROJECT_ID, project_id)
+
+
 def difference_for(project_id: str, *, fact_value: str = "NOT-READY") -> dict[str, Any]:
-    """One real, schema-valid, content-addressed Difference bound to *project_id*.
+    """One real, schema-valid, content-addressed Difference bound to *project_id*, derived
+    through the real Observation Engine (:func:`evidence_observation_request_for`) and the
+    public Difference producer.
 
     *fact_value* exists so a test can build a genuinely **second, distinct** Difference inside
     the same project -- the wrong-Difference control's own subject -- without hand-writing a
-    record the producer would never emit.
+    record the producer would never emit. Because the Observation bundle is reproduced through
+    the identical real ``observe`` call :func:`evidence_request_for` triggers internally (via
+    the existing Evidence owner's own derivation), over an identically project_id-rebound
+    request body, a matching *fact_value* is what makes an Evidence request genuinely "about"
+    this exact Difference, not merely a caller's assertion that it is.
     """
 
     fingerprint = state_fingerprint()
     scope = observation_scope()
+    bundle = observe(evidence_observation_request_for(project_id, fact_value=fact_value))
     request = derivation_request(
         difference_objective_revision(),
         [
             {
                 "target_predicate_id": PREDICATE_ID,
                 "observation_scope": scope,
-                "observation_bundle": observed_bundle(
-                    scope,
-                    [raw_fact(value=fact_value)],
-                    fingerprint,
-                    negative_claims=[negative_claim("NO_RESULT")],
-                ),
+                "observation_bundle": bundle,
             }
         ],
         fingerprint,
     )
+    request = _rebind(request, DIFFERENCE_HELPERS_PROJECT_ID, project_id)
     difference: dict[str, Any] = dict(derive_differences(request)["differences"][0])
     difference["project_id"] = project_id
     difference["difference_id"] = compute_difference_id(difference)
     return difference
+
+
+_NOT_GIVEN: Any = object()
+
+
+def evidence_request_for(
+    project_id: str,
+    *,
+    fact_value: str = "NOT-READY",
+    provenance: Any = _NOT_GIVEN,
+) -> dict[str, Any]:
+    """One real Change-Free Verification Evidence request, rebound onto *project_id*, whose own
+    ``observation_request`` is :func:`evidence_observation_request_for`'s return value for
+    *fact_value* -- so this request's own derived Evidence is genuinely bound to exactly the
+    Difference :func:`difference_for` derives for the identical *fact_value* (the P16-R1-F2
+    positive control), and to a genuinely different Difference in the same project for any
+    other *fact_value* (the P16-R1-F2 counterexample) -- never merely assumed to coincide.
+    """
+
+    kwargs: dict[str, Any] = {
+        "observation": evidence_observation_request_for(project_id, fact_value=fact_value)
+    }
+    if provenance is not _NOT_GIVEN:
+        kwargs["provenance"] = provenance
+    request = change_free_verification_evidence_request(**kwargs)
+    return _rebind(request, DIFFERENCE_HELPERS_PROJECT_ID, project_id)
 
 
 def commit_difference(
@@ -583,6 +642,8 @@ __all__ = [
     "commit_records",
     "decision_for",
     "difference_for",
+    "evidence_observation_request_for",
+    "evidence_request_for",
     "foreign_signing_key",
     "foreign_signing_private_key",
     "grant_for",

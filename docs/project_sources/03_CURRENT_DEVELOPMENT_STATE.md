@@ -1806,3 +1806,51 @@ AUTONOMOUS_CHANGE_AUTHORITY=false
 Phase 12自身のroute経由でのみ、literal call site一箇所から到達する。
 
 本addendumは、`05_PHASE_ACCEPTANCE_LEDGER.md`が所有するPhase 15の恒久的なacceptance receipt（merge SHA、Human acceptance record、after-state re-observation）を代行しない。それは同ledgerの別途更新の対象であり、本書は現在地を示すための最小限の`OBSERVED_GITHUB_FACT`のみを記録する。またPR作成・merge・Issue closeのいずれも主張しない — いずれもSHUKOUの別途決定の対象である。
+
+---
+
+# 25. Phase 16 Structural Review Round 1 bounded addendum (Issue #66, PR #67)
+
+本節は、構造参謀によるStructural Review Round 1と、SHUKOUによるその採択を、独立再観測できた事実のみ記録するbounded addendumである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+ADOPTION_ID=ADOPT_P16_R1_EVIDENCE_AND_ADAPTER_BOUNDARY_CORRECTION
+GOVERNING_ISSUE=#66
+TARGET_PR=#67
+REVIEWED_HEAD=b1e3c3eaf6631639b699dad7d90dc9e39ae1e085
+ADOPTED_FINDINGS=P16-R1-F1,P16-R1-F2,P16-R1-F3
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_67_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+```
+
+3件の対応内容：
+
+```text
+P16-R1-F1  route_model_execution_to_evidence が execution_outcome != CANDIDATE_ACCEPTED の
+           committed Envelope を derive_evidence へ渡す前に拒否するようになった。
+           MODEL_OUTCOME_TO_RECEIPT_STATUS 経由（リテラル文字列 "CANDIDATE_ACCEPTED" を
+           再度書かない）で判定する。
+
+P16-R1-F2  derive_evidence が返す Evidence 自身の difference_ref が、Store-resolved
+           Envelope の difference_ref と厳密に一致することを、Evidence owner呼び出し後に
+           要求するようになった。一致しないevidence_request（同一project内の別Difference
+           への再derivation）は拒否される。
+
+P16-R1-F3  execute_model_work_unit が adapter.adapter_identity の完全な閉じた形状
+           （adapter/versionの2フィールドのみ、両方非空文字列）を、request identity計算前・
+           adapter呼び出し前に検証するようになった。model_runtime/engine.py の新規
+           require_valid_adapter_identity が、既存の model_execution_envelope.schema.json
+           の adapter_identity 定義を再利用する。
+```
+
+`07_AGENT_RUNTIME/`・既存canonical owner・既に受理されたPhase 16の境界・既存のpositive
+model-swap/session-loss proofsは、いずれも変更されていない。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_16_COMPLETE=false
+PHASE_17_ALLOWED=false
+```

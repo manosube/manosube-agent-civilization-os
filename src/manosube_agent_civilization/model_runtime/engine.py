@@ -204,6 +204,37 @@ def require_valid_semantic_fingerprint(value: Any, context: str) -> dict[str, An
     return dict(value)
 
 
+def require_valid_adapter_identity(value: Any, context: str) -> dict[str, Any]:
+    """Require *value* to be the complete, closed ``adapter_identity`` shape --
+    exactly ``adapter``/``version``, both non-empty strings, no other property -- proved
+    *before* :func:`~manosube_agent_civilization.model_runtime.route.
+    model_execution_request_identity` is computed and before an adapter is ever reached
+    (Structural Review Round 1, P16-R1-F3), the identical P15-R1-F2 discipline this module's
+    own :func:`require_valid_timestamp` already establishes for its own package.
+
+    An empty mapping, a missing ``adapter`` or ``version``, a wrong-typed one, or a forbidden
+    extra field are every one of them a schema violation of
+    ``model_execution_envelope.schema.json#/$defs/adapter_identity`` -- the identical closed
+    shape :func:`derive_model_execution_envelope` itself commits an adapter's declared identity
+    into -- so this reuses that one canonical projection rather than restating a second,
+    possibly divergent, adapter-identity vocabulary here.
+    """
+
+    try:
+        _validate_canonical_subrecord(
+            value,
+            ENVELOPE_SCHEMA_NAME,
+            "#/$defs/adapter_identity",
+            base=MODEL_RUNTIME_SCHEMA_BASE,
+        )
+    except DifferenceValidationError as error:
+        raise ModelRuntimeRequirementError(
+            f"{context} is not the canonical closed adapter_identity shape (exactly 'adapter' "
+            f"and 'version', both non-empty strings, no other property): {value!r}"
+        ) from error
+    return dict(value)
+
+
 def derive_model_work_unit(
     *,
     project_id: str,

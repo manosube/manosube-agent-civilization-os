@@ -47,6 +47,7 @@ from tests.fixtures.model_runtime_world import (
     commit_difference,
     commit_grant,
     decision_for,
+    evidence_request_for,
     foreign_signing_key,
     foreign_signing_private_key,
     open_kwargs,
@@ -72,6 +73,7 @@ from manosube_agent_civilization.model_runtime import (
     recover_model_execution_session,
     route_model_execution_to_evidence,
 )
+import manosube_agent_civilization.model_runtime.evidence_handoff as evidence_handoff_module
 from manosube_agent_civilization.model_runtime.identity import model_execution_envelope_id
 from manosube_agent_civilization.model_runtime.types import (
     MODEL_ADAPTER_OUTCOMES,
@@ -1061,31 +1063,85 @@ def test_a_candidate_that_survives_the_boundary_empty_is_incomplete_not_accepted
     assert result["receipt"].status == "INSUFFICIENT"
 
 
-def test_a_typed_failure_still_reaches_the_existing_evidence_owner_honestly(
-    world: dict[str, Any],
+@pytest.mark.parametrize("outcome", sorted(MODEL_ADAPTER_OUTCOMES - {"CANDIDATE"}))
+def test_every_non_accepting_outcome_causes_zero_evidence_owner_calls(
+    world: dict[str, Any], outcome: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """TYPED. A failed execution is not hidden: it hands off to the same Evidence owner with the
-    honest status its own outcome maps to, so an unavailable model can never be mistaken for a
-    verified one."""
+    """ZERO-CALL, Structural Review Round 1, P16-R1-F1. A model execution that did not produce
+    an accepted candidate is refused at the Evidence hand-off before ``derive_evidence`` is ever
+    reached -- proved here by counting real calls to the one existing Evidence deriver, not
+    merely by observing a raised error. Recording the honest outcome only inside
+    ``verification_result_provenance.status`` (which Evidence's own sufficiency evaluator never
+    reads) could otherwise let a failed execution become sufficient Evidence through this
+    route's own top-level ``status``, which is exactly what this refusal forecloses."""
+
+    calls = {"count": 0}
+    real_derive_evidence = evidence_handoff_module.derive_evidence
+
+    def _counting(request: dict[str, Any]) -> dict[str, Any]:
+        calls["count"] += 1
+        return real_derive_evidence(request)
+
+    monkeypatch.setattr(evidence_handoff_module, "derive_evidence", _counting)
 
     opened = _open(world)
-    adapter = _seeded_adapter(opened["model_work_unit_ref"], adapter_outcome="UNAVAILABLE")
+    adapter = _seeded_adapter(opened["model_work_unit_ref"], adapter_outcome=outcome)
     result = _execute(world, opened["model_work_unit_ref"], adapter)
-    request = _rebind(
-        change_free_verification_evidence_request(provenance=None),
-        "PRJ-0001",
-        world["project_id"],
+    request = evidence_request_for(world["project_id"], provenance=None)
+    with pytest.raises(ModelRuntimeRequirementError):
+        route_model_execution_to_evidence(
+            world["store"], result["receipt"], world["project_id"], request
+        )
+    assert calls["count"] == 0
+
+
+def test_a_genuine_accepted_candidate_reaches_the_existing_evidence_owner_honestly(
+    world: dict[str, Any],
+) -> None:
+    """TYPED positive control, P16-R1-F1/F2. A genuinely accepted candidate reaches the existing
+    Evidence owner, honestly, and the returned Evidence is bound to exactly the Difference this
+    model execution was actually about -- the same positive path
+    :func:`test_every_non_accepting_outcome_causes_zero_evidence_owner_calls` proves has no
+    non-accepting counterpart."""
+
+    opened = _open(world)
+    result = _execute(
+        world, opened["model_work_unit_ref"], _seeded_adapter(opened["model_work_unit_ref"])
     )
+    assert result["envelope"]["execution_outcome"] == "CANDIDATE_ACCEPTED"
+    request = evidence_request_for(world["project_id"], provenance=None)
     evidence = route_model_execution_to_evidence(
         world["store"], result["receipt"], world["project_id"], request
     )
-    assert evidence["verification_result_provenance"]["status"] == "UNAVAILABLE"
+    assert evidence["difference_ref"] == result["envelope"]["difference_ref"]
+    assert evidence["verification_result_provenance"]["status"] == "VERIFIED"
     assert (
         evidence["verification_result_provenance"]["observations"][
             "normalized_candidate_fingerprint"
         ]
-        is None
+        == result["envelope"]["normalized_candidate_fingerprint"]
     )
+
+
+def test_evidence_cannot_be_rebound_from_the_executed_difference_to_another(
+    world: dict[str, Any],
+) -> None:
+    """The decisive counterexample, Structural Review Round 1, P16-R1-F2. A caller cannot hand
+    this route an ``evidence_request`` whose own ``difference_request`` re-derives a genuinely
+    *different* Difference in the same project and have the result silently bound to that
+    Difference instead of the one this model execution was actually about."""
+
+    opened = _open(world)
+    result = _execute(
+        world, opened["model_work_unit_ref"], _seeded_adapter(opened["model_work_unit_ref"])
+    )
+    request = evidence_request_for(
+        world["project_id"], fact_value="A-DIFFERENT-FACT-THAN-THE-WORK-UNITS-OWN", provenance=None
+    )
+    with pytest.raises(ModelRuntimeRequirementError):
+        route_model_execution_to_evidence(
+            world["store"], result["receipt"], world["project_id"], request
+        )
 
 
 # =========================================================================== #
@@ -1414,3 +1470,81 @@ def test_recovery_of_a_work_unit_that_does_not_resolve_refuses(world: dict[str, 
             recovered_at="2026-09-09T03:00:00Z",
         )
     assert _revision(world) == before
+
+
+# =========================================================================== #
+# 8. Malformed adapter identity (Structural Review Round 1, P16-R1-F3)
+# =========================================================================== #
+
+
+class _IdentityAdapter:
+    """A minimal adapter exposing a directly-controllable ``adapter_identity`` -- built here
+    rather than via :class:`FakeModelAdapter`, so the exact malformed value under test is never
+    coerced or defaulted by that class's own constructor."""
+
+    def __init__(self, adapter_identity: Any) -> None:
+        self.adapter_identity = adapter_identity
+        self.execute_call_count = 0
+
+    def execute(self, *, request: dict[str, Any]) -> dict[str, Any]:
+        self.execute_call_count += 1
+        return {
+            "adapter_outcome": "CANDIDATE",
+            "candidate_kind": "OBSERVATION_CANDIDATE",
+            "candidate_fields": {"summary": "s", "observed_status": "ok"},
+        }
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {},
+        {"adapter": "x"},
+        {"version": "0.1"},
+        {"adapter": "x", "version": 1},
+        {"adapter": 1, "version": "0.1"},
+        {"adapter": "", "version": "0.1"},
+        {"adapter": "x", "version": ""},
+        {"adapter": "x", "version": "0.1", "extra": "field"},
+    ],
+    ids=[
+        "empty_mapping",
+        "missing_version",
+        "missing_adapter",
+        "wrong_type_version",
+        "wrong_type_adapter",
+        "empty_adapter_value",
+        "empty_version_value",
+        "forbidden_extra_field",
+    ],
+)
+def test_a_malformed_adapter_identity_causes_zero_adapter_calls(
+    world: dict[str, Any], identity: Any
+) -> None:
+    """ZERO-CALL, Structural Review Round 1, P16-R1-F3. The complete closed
+    ``adapter_identity`` shape -- exactly ``adapter``/``version``, both non-empty strings, no
+    other property -- is validated before this route ever computes a request identity from it
+    and before the adapter is ever reached, proved here by the adapter's own call counter, not
+    merely by observing a raised error."""
+
+    opened = _open(world)
+    adapter = _IdentityAdapter(identity)
+    before = _revision(world)
+    with pytest.raises(ModelAdapterError):
+        _execute(world, opened["model_work_unit_ref"], adapter)
+    assert adapter.execute_call_count == 0
+    assert _revision(world) == before
+
+
+def test_a_genuinely_canonical_adapter_identity_is_accepted(world: dict[str, Any]) -> None:
+    """Positive control: the identical closed shape both shipped adapters already declare is
+    accepted, and the adapter is genuinely reached."""
+
+    opened = _open(world)
+    adapter = _IdentityAdapter({"adapter": "genuinely_canonical", "version": "0.1"})
+    result = _execute(world, opened["model_work_unit_ref"], adapter)
+    assert adapter.execute_call_count == 1
+    assert result["envelope"]["adapter_identity"] == {
+        "adapter": "genuinely_canonical",
+        "version": "0.1",
+    }
