@@ -40,6 +40,20 @@ route alone), so it has nothing left to be told to permit. The loopback decision
 exclusively in this repository's own trusted, non-shipped test-composition boundary (Structural
 Review Round 3, P17-R3-F2) -- see ``tests/fixtures/url_boot_local_test_authority.py``'s own
 module docstring.
+
+**Structural Review Round 5 (P17-R5-F1) correction.** Neither class's own ``adapter_identity``
+attribute is read by production any more. Through Round 4, ``compose_url_source_observer`` still
+accepted an adapter *object* and read its own ``adapter_identity`` attribute via ``getattr`` on
+every single request -- so a hostile caller-supplied object (a property that raises or mutates
+State on read, a custom ``Mapping``/iterator/``dict``-subclass whose protocol methods execute
+arbitrary code) could still reach this route's own trusted composition boundary and execute on
+every request, even though neither class here ever declared an executable *method*. Since Round
+5, ``compose_url_source_observer`` accepts *adapter_identity* directly, as already-realized data,
+and canonicalizes it exactly once, at composition time (see ``route.py``'s own
+``_canonicalize_inert_adapter_identity``) -- these two classes' own ``adapter_identity`` attribute
+now exists purely as a caller convenience (``dict(FakeUrlSourceAdapter().adapter_identity)``,
+``dict(LocalHttpUrlSourceAdapter().adapter_identity)``) for building that already-realized value;
+no shipped code path ever performs attribute access on an adapter object to obtain it.
 """
 
 from __future__ import annotations

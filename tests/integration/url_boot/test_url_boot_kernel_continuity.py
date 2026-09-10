@@ -20,6 +20,11 @@ from typing import Any
 
 import pytest
 from tests.fixtures.model_runtime_world import authorized_world, open_kwargs
+from tests.fixtures.url_boot_test_engine import (
+    observe_url_source_for_internal_testing,
+    perform_connection_via_adapter,
+    perform_resolution_via_adapter,
+)
 from tests.fixtures.url_boot_world import boundary_for
 
 from manosube_agent_civilization.agent_runtime import start_temporary_agent
@@ -30,12 +35,7 @@ from manosube_agent_civilization.model_runtime import (
 )
 from manosube_agent_civilization.url_boot.adapter import FakeUrlSourceAdapter
 from manosube_agent_civilization.url_boot.network import canonical_source_identity
-from manosube_agent_civilization.url_boot.route import (
-    _observe_url_source_impl,
-    _perform_connection_via_adapter,
-    _perform_resolution_via_adapter,
-    _require_safe_resolved_address_production,
-)
+from manosube_agent_civilization.url_boot.route import _require_safe_resolved_address_production
 
 _ENVELOPE_RECORD_KIND = "url_source_observation_envelope"
 
@@ -92,17 +92,18 @@ def test_a_model_execution_and_a_url_observation_coexist_without_interference(
     # own network-admission machinery -- it therefore calls the internal implementation directly
     # with a deterministic resolver/connector (this repository's own internal test-composition
     # path, never reachable from either genuinely-networked public entry point, P17-R3-F1/P17-R4-F1).
-    url_result = _observe_url_source_impl(
+    url_result = observe_url_source_for_internal_testing(
         store,
         project_id=project_id,
         project_binding_id=project_binding_id,
         source_identity=source_identity,
         boundary=boundary,
+        adapter_identity=dict(url_adapter.adapter_identity),
         adapter=url_adapter,
         observed_at="2026-09-09T02:00:01Z",
         classify_resolved_address=_require_safe_resolved_address_production,
-        perform_resolution=_perform_resolution_via_adapter,
-        perform_connection=_perform_connection_via_adapter,
+        perform_resolution=perform_resolution_via_adapter,
+        perform_connection=perform_connection_via_adapter,
     )
     url_envelope_id = url_result["envelope"]["url_source_observation_envelope_id"]
 

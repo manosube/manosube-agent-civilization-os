@@ -19,7 +19,7 @@ CROSS_HOP_RESOLUTION_DRIFT_BINDING=true
 LOOPBACK_TEST_ALLOWANCE_DATA_DRIVEN=false
 LOOPBACK_TEST_ALLOWANCE_ADAPTER_CONSTRUCTOR_ARGUMENT=false
 BOOT_CONTEXT_INDEPENDENTLY_REVERIFIED_AT_HANDOFF=true
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=5
 ```
 
 ## 1. Position
@@ -44,15 +44,18 @@ PUBLIC_URL_BOOT_ENTRY_POINT_COUNT=2
 
 Since Structural Review Round 4 (P17-R4-F2, §12.2), public `observe_url_source` is replaced by a
 two-step trusted composition: `compose_url_source_observer` binds Store/Project/Binding/adapter
-*once* and returns the request-facing observation closure itself, whose own call signature carries
-only request data.
+identity *once* and returns the request-facing observation closure itself, whose own call
+signature carries only request data. Since Structural Review Round 5 (P17-R5-F1, §13.1),
+composition takes *adapter_identity* -- already-realized plain data -- directly, never an adapter
+*object*: there is no replaceable adapter boundary of any kind on production's own request path
+any more, only inert configuration.
 
 ```python
 observe = compose_url_source_observer(
     store,
     project_id=project_id,
     project_binding_id=project_binding_id,
-    adapter=my_url_source_adapter,  # the one replaceable boundary
+    adapter_identity={"adapter": "my_url_source_adapter", "version": "0.1"},  # plain data only
 )
 result = observe(
     network.canonical_source_identity("https://example.org/status"),
@@ -818,6 +821,126 @@ resolver-, or connector-substitution slot of any kind, by keyword or position
 `::test_compose_url_source_observer_refuses_a_perform_connection_or_resolution_keyword_argument`);
 and every earlier zero-State-mutation, redirect, DNS-drift, provenance, tamper, and Evidence
 preflight proof (§7, §10, §11) remains green under the new API.
+
+`MERGE_ALLOWED`, `ISSUE_CLOSE_ALLOWED`, `PHASE_17_COMPLETE` and `PHASE_18_ALLOWED` are fixed at
+`false` by the adopting authority and are not this document's to change.
+
+## 13. Structural Review Round 5 (P17-R5-F1, P17-R5-F2)
+
+Reviewed at Round 4's own corrected head, finding two further gaps Round 4's own closure left
+open: production still accepted a replaceable adapter *object* (rather than plain data) at its
+trusted composition boundary, and the shipped route still carried the generic, dependency-injected
+orchestration a caller could recombine with the trusted network layer to reconstruct a
+loopback-admitting path.
+
+### 13.1 P17-R5-F1 -- inert `adapter_identity` data, not a replaceable adapter object
+
+Round 4 (§12.1) removed every executable method from `UrlSourceAdapter`, so no replaceable
+adapter's own code could ever run during a request -- but `compose_url_source_observer` still
+accepted a conforming *object* and read its own `adapter_identity` attribute via `getattr` on
+every single request. A hostile caller-supplied object -- a property that raises or mutates
+canonical State the moment it is read, a custom `Mapping`/iterator/`dict`-subclass whose own
+`__iter__`/`__getitem__`/`keys` execute arbitrary code -- could therefore still reach this route's
+own trusted composition boundary and execute, repeatedly, on every request, even though it
+declared no method the Protocol named.
+
+`compose_url_source_observer(store, *, project_id, project_binding_id, adapter_identity: Any) ->
+Callable[...]` now accepts *adapter_identity* directly, as already-realized data of any shape a
+caller hands it, and validates and rebuilds it exactly once, at composition time, via
+`route._canonicalize_inert_adapter_identity` -- a strict recursive validator accepting only the
+closed set of builtin scalar/container types (`str`, `int`, `float`, `bool`, `None`, `dict`,
+`list`), checked by exact `type(x) is <builtin>` rather than `isinstance` specifically so a
+`dict`/`list` *subclass* is refused before any of its own overridden protocol methods ever runs.
+The validator itself never calls `getattr` on the input or any of its nested contents -- only
+`type(...)` (which never invokes user code) followed by the genuine `dict.items()`/`list`
+iteration protocol on a value already confirmed to be an *exact* builtin `dict`/`list`. The
+rebuilt, frozen result (`deep_freeze`, applied once by the composer itself) is captured in the
+returned closure; there is no path back to the original caller-supplied value, and no per-request
+re-validation or re-derivation of any kind.
+
+The required decisive controls: a hostile object whose every attribute access, comparison, or
+hash raises is refused before any of those hostile protocol methods ever runs, proved by the
+refusal surfacing as the canonicalizer's own `UrlBootRequirementError`, never the object's own
+exception
+(`tests/contract/url_boot/test_url_boot_adapter_contract.py::test_compose_url_source_observer_refuses_a_hostile_property_object_before_any_access`);
+a `dict` subclass overriding `items`/`keys`/`__iter__` is refused by the exact `type(x) is dict`
+check before any override ever runs
+(`::test_compose_url_source_observer_refuses_a_hostile_dict_subclass_before_any_iteration`,
+`::test_compose_url_source_observer_refuses_a_hostile_list_subclass_nested_inside_a_plain_dict`);
+a caller-defined object implementing the full `Mapping` protocol but genuinely not a `dict` is
+refused identically, proving `isinstance` is never consulted
+(`::test_compose_url_source_observer_refuses_a_custom_mapping_masquerading_as_a_dict`); closure-
+capture inspection confirms the returned closure's own captured cells hold the frozen, rebuilt
+copy, never the original object, and that mutating the original input after composition never
+reaches a later request
+(`::test_compose_url_source_observer_retains_no_reference_to_the_original_adapter_identity_object`);
+and a genuine positive control confirms an ordinary `dict` still reaches the committed receipt
+unchanged
+(`::test_production_compose_url_source_observer_reads_a_plain_adapter_identity`). A non-`dict`
+*adapter_identity* (`None`, a string, an int, a list) is refused identically wherever the internal
+deterministic route-logic entry point is exercised directly
+(`::test_the_route_refuses_a_non_dict_adapter_identity`).
+
+### 13.2 P17-R5-F2 -- no shipped generic classifier/resolver/connector-injection surface; issuer/verifier-separated local-test authority
+
+Every prior round narrowed *what a replaceable adapter could do*, but left the shipped `route.py`
+itself holding a generic orchestration function (the pre-Round-5 `_observe_url_source_impl`)
+accepting `classify_resolved_address`/`perform_resolution`/`perform_connection` as ordinary
+function parameters. A caller able to import `route.py` directly could therefore call that
+function with the genuine, shipped trusted-network resolver/connector *and* an ordinary permissive
+`lambda address: None` as `classify_resolved_address`, reconstructing the exact
+loopback-admitting path production's own classifier alone was supposed to close -- using only
+shipped code, no isolation break, and no adapter object at all.
+
+The shipped package now ships **only** a fixed, non-parameterized production pipeline
+(`_fetch_with_route_owned_redirects_production`, `_observe_url_source_impl_production`) whose own
+classifier/resolver/connector calls are hardcoded, direct calls by name -- there is no parameter
+list anywhere in `route.py` through which a caller could ever substitute any of the three. The
+*generic*, dependency-injected form of that identical orchestration -- the one this repository's
+own internal deterministic route-logic test suite genuinely needs, to inject a controlled
+`FakeUrlSourceAdapter`'s own simulated resolve/connect facts -- moves entirely into
+`tests/fixtures/url_boot_test_engine.py`, confirmed absent from the distributed wheel by the
+identical packaging fact §11.2 already established. That module also backs the disposable-local-
+test composition itself, binding its own generic engine to the loopback-permitting classifier and
+the *same* trusted network resolver/connector production uses (imported, never reimplemented).
+
+The required decisive control, AST-based rather than a narrower name check: no function defined
+anywhere in `route.py`'s own module source declares a parameter -- positional, keyword-only, or
+otherwise -- named `classify_resolved_address`, `perform_resolution`, or `perform_connection`
+(`tests/contract/url_boot/test_url_boot_static_conformance.py::test_route_py_ships_no_function_accepting_a_classifier_resolver_or_connector_callable`).
+A caller attempting to reconstruct the reviewed reconstruction attack by calling shipped
+internals with a no-op classifier therefore has no such parameter to pass one through at all --
+there is no injection surface left to fail to reach, because the surface itself does not exist.
+
+**Issuer/verifier separation for the disposable-local-test authority.** Round 4's own
+`test_harness_authority` design (§12.2) kept the minting secret and the verifying logic in the
+same non-shipped module -- anyone able to import that module could both mint and verify, so the
+"genuine external authority" property rested entirely on the module's own non-shipped status, not
+on any structural separation of roles. `tests/fixtures/url_boot_local_test_authority.py` now holds
+**only** a hardcoded Ed25519 public-key hex literal and verifies a presented credential against it
+via this repository's own established `binding.signature.verify_ed25519_signature` -- the
+identical verifier `runtime/bootstrap.py`'s own production trust-anchor already uses. It holds no
+private key, no minting function, and imports nothing from the one module that can mint a genuine
+credential: `tests/fixtures/url_boot_local_test_issuer.py`, a deterministic, fixed, disclosed-
+as-test-only Ed25519 keypair (`hashlib.sha256(<fixed descriptive string>).digest()` seeds
+`Ed25519PrivateKey.from_private_bytes`, never `.generate()`) genuinely separate from -- and never
+imported by -- the verifier module.
+
+The required decisive controls: missing, wrong-shaped, or forged (wrong signature, wrong
+algorithm, wrong `key_id`) credentials are all refused before any DNS resolution or network
+connection is ever attempted
+(`tests/integration/url_boot/test_url_boot_local_http_vertical_proof.py::test_compose_disposable_local_test_observer_refuses_a_missing_test_harness_authority`,
+`::test_compose_disposable_local_test_observer_refuses_a_wrong_typed_test_harness_authority`,
+`::test_compose_disposable_local_test_observer_refuses_a_forged_test_harness_authority`); a forged
+authority is refused before *adapter_identity* is ever canonicalized, proving the authority check
+runs first
+(`::test_a_forged_test_harness_authority_never_reaches_adapter_identity_canonicalization`); a
+genuine external-issuer positive control exercises the composition by importing the issuer module
+directly, a genuinely separate file from the one it hands the resulting credential to (every
+positive-route test in that file); and a non-vacuity control confirms the verifier's own hardcoded
+public-key literal genuinely is the public half of the issuer's own private key, rather than the
+two modules silently trusting two different keys
+(`::test_the_verifiers_trusted_public_key_genuinely_matches_the_issuers_own_private_key`).
 
 `MERGE_ALLOWED`, `ISSUE_CLOSE_ALLOWED`, `PHASE_17_COMPLETE` and `PHASE_18_ALLOWED` are fixed at
 `false` by the adopting authority and are not this document's to change.

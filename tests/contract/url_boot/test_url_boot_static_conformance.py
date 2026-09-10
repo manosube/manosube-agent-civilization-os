@@ -345,6 +345,43 @@ def test_route_py_ships_no_loopback_permitting_classifier_of_any_kind() -> None:
             assert not any(substring in node.id for substring in forbidden_substrings), node.id
 
 
+def test_route_py_ships_no_function_accepting_a_classifier_resolver_or_connector_callable() -> None:
+    """Structural Review Round 5 (P17-R5-F2): the pre-Round-5 shipped ``_observe_url_source_impl``
+    took ``classify_resolved_address``/``perform_resolution``/``perform_connection`` as ordinary
+    function parameters -- a caller able to import ``route.py`` directly could call it with the
+    genuine, shipped trusted-network resolver/connector *and* an ordinary permissive lambda as
+    ``classify_resolved_address``, reconstructing a working loopback-admitting path from shipped
+    code alone. This is a real, decisive control, not a narrower name check: it walks every
+    function definition anywhere in this module's own AST and asserts no parameter of any function
+    -- positional, keyword-only, or otherwise -- is named ``classify_resolved_address``,
+    ``perform_resolution``, or ``perform_connection`` (nor any name containing ``classifier``/
+    ``_classify`` beyond the fixed ``_require_safe_resolved_address_production``, which itself
+    takes only a plain ``address: str`` and cannot be redirected). A caller attempting to
+    reconstruct the reviewed reconstruction attack by calling shipped internals with a no-op
+    classifier therefore has no such parameter to pass one through at all -- there is no injection
+    surface left to fail to reach, because the surface itself does not exist."""
+
+    forbidden_param_names = {
+        "classify_resolved_address",
+        "perform_resolution",
+        "perform_connection",
+    }
+    tree = ast.parse(inspect.getsource(route_module))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        all_args = (
+            list(node.args.posonlyargs)
+            + list(node.args.args)
+            + list(node.args.kwonlyargs)
+            + ([node.args.vararg] if node.args.vararg else [])
+            + ([node.args.kwarg] if node.args.kwarg else [])
+        )
+        declared_names = {arg.arg for arg in all_args}
+        offending = declared_names & forbidden_param_names
+        assert not offending, f"{node.name} declares forbidden parameter(s): {offending}"
+
+
 def test_route_py_defines_no_second_loopback_permitting_entry_point() -> None:
     """Structural Review Round 3 (P17-R3-F2): ``route.py`` no longer defines
     ``observe_url_source_for_disposable_local_test`` (Round 2's own since-removed second entry

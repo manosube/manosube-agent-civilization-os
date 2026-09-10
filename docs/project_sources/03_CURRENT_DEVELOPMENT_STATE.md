@@ -2374,3 +2374,111 @@ PHASE_18_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
 
+# 32. Phase 17 Structural Review Round 5 bounded addendum (Issue #69, PR #71) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション31の記録以降、構造参謀によるStructural Review Round 5
+（`P17-R5-F1`, `P17-R5-F2`、PR #71コメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/71#issuecomment-5618489491`）と
+SHUKOUによるその採択（Issue #69コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/69#issuecomment-5618521865`、
+`ADOPTION_ID=ADOPT_P17_R5_INERT_ADAPTER_DATA_AND_EXTERNAL_LOCAL_TEST_AUTHORITY`、
+誤記訂正コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/69#issuecomment-5618524457`が
+実質的なフィールドを変更していないことも確認済み）を独立GitHub API再観測で確認した上で、この
+既存PR #71ブランチ上に実装した是正内容を記録する。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション31自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+CURRENT_PHASE=17_READ_ONLY_URL_BOOT_AND_UNTRUSTED_CONTENT_BOUNDARY
+CURRENT_PHASE_ISSUE=69
+CURRENT_PR=71
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_5_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#69
+TARGET_PR=#71
+BASE_SHA=aee9b669f8bf15626fe162f196cf12338a4ff0da
+BRANCH=agent/issue-69-phase17-read-only-url-boot
+REVIEWED_HEAD=aba7c3e1af83adffa579de08a38829a366e2660a
+ADOPTION_ID=ADOPT_P17_R5_INERT_ADAPTER_DATA_AND_EXTERNAL_LOCAL_TEST_AUTHORITY
+ADOPTED_FINDINGS=P17-R5-F1,P17-R5-F2
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_71_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_5_CORRECTIONS_DELIVERED_AWAITING_ROUND_6
+```
+
+2件の是正内容の要約：
+
+```text
+P17-R5-F1  Round 4はUrlSourceAdapter Protocolから一切の実行可能メソッドを除去したが、
+           productionのcompose_url_source_observerは依然としてadapter"オブジェクト"を
+           受け取り、毎回のrequestごとにgetattrでその own adapter_identity属性を読んで
+           いた -- 悪意あるcaller供給objectが（読み取り時に例外を投げる、あるいは
+           Stateを変異させるproperty、または __iter__/__getitem__/keys を上書きした
+           custom Mapping/iterator/dict subclassが）このrouteのtrusted composition
+           boundaryへ到達し、Protocolが一切のmethodを宣言していないにもかかわらず、
+           request毎に繰り返し実行され得た。compose_url_source_observerは now
+           adapter_identity を直接受け取るようになり -- 既にrealizeされたplain data
+           として -- composition時点で一度だけ検証・再構築される
+           （route._canonicalize_inert_adapter_identity）。この検証器はexact
+           type(x) is dict/list等のみを許容し isinstance を一切使わない -- dict/list
+           subclassが上書きした __iter__/__getitem__/keys を、それが一度でも実行される
+           前に拒否するためである。frozen化された結果はclosure内に一度だけcaptureされ、
+           元のcaller供給objectへの参照は一切残らない。敵対的property/descriptor/
+           Mapping/iterator/subclassがゼロ実行で拒否されること、closure captureの
+           検査により元のobjectへの参照が残らないこと、compositionより後の元object
+           変異が後続のrequestに一切反映されないことを証明するdecisive testを追加した。
+
+P17-R5-F2  route.pyは依然として、classify_resolved_address/perform_resolution/
+           perform_connectionを通常の関数引数として受け取るgeneric な orchestration
+           関数（Round 5以前のObserve_url_source_impl）を出荷していた -- route.pyを
+           直接importできるcallerであれば、この関数を genuine な shipped
+           trusted-network resolver/connector と、単なる permissive lambda
+           （classify_resolved_address として）を組み合わせて呼び出すことで、
+           production自身のclassifierだけが閉じているはずのloopback許容pathを、
+           shipped codeのみ・isolation破りなし・adapter objectなしで再構築できた。
+           shipped packageは今や、classifier/resolver/connectorのいずれも hardcoded
+           な直接呼び出しに置き換えた fixed・非parameterize な production pipeline
+           （_fetch_with_route_owned_redirects_production,
+           _observe_url_source_impl_production）のみを出荷する -- route.py内のいかなる
+           関数も、この3つのいずれかの名前のparameterを一切宣言しない（AST-based
+           decisive testで証明）。この repository 自身の internal deterministic
+           test suiteが真に必要とするgenericなorchestrationは
+           tests/fixtures/url_boot_test_engine.py -- 出荷wheelから確認済みで欠落 --
+           へ完全に移動した。さらに、disposable-local-test authorityをissuer/verifier
+           分離した: url_boot_local_test_authority.pyは now hardcoded な Ed25519
+           公開鍵hex literalのみを保持し、binding.signature.verify_ed25519_signature
+           （runtime/bootstrap.py自身のtrust-anchorが既に使用しているものと同一）で
+           検証する -- 秘密鍵もmint関数も保持せず、genuineな credential を mint
+           できる唯一のmodule tests/fixtures/url_boot_local_test_issuer.py を
+           importしない（決定的・固定・test専用と開示されたEd25519 keypair、
+           Ed25519PrivateKey.generate()ではなく
+           hashlib.sha256(<固定文字列>).digest()がseed）。欠落・型不一致・偽造
+           （誤ったsignature/algorithm/key_id）credentialがいかなるDNS解決・
+           network接続よりも前に拒否されること、偽造authorityがadapter_identityの
+           canonicalizationより前に拒否されること（authority検証が先に実行される
+           ことの証明）、genuineな外部issuerによるpositive control、verifier自身の
+           hardcoded公開鍵literalがissuer自身の秘密鍵の公開半分と genuinely 一致する
+           ことを証明するnon-vacuity controlを追加した。
+```
+
+修正はPR #71の唯一のブランチ上、新規PR無しで行われた。既存の`State`・`Difference`・
+`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Model Runtime`のいずれの
+ownerも置換・変更しない。schema変更は無し（`route.py`の関数surface、`UrlSourceAdapter`
+Protocol/`adapter.py`のdocstring、および非出荷test fixtureのみの変更であり、
+`url_source_observation_envelope.schema.json`は変更していない）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_17_COMPLETE=false
+PHASE_18_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+

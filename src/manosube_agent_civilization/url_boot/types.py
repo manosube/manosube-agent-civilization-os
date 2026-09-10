@@ -178,6 +178,24 @@ class UrlSourceAdapter(Protocol):
     no method on this Protocol, or asked for by either public entry point, through which this
     Protocol's own conformer could ever execute at all".
 
+    **Structural Review Round 5 (P17-R5-F1) correction: production stops reading ``adapter_
+    identity`` off an object at all.** Round 4 emptied this Protocol of every executable method,
+    but production's own :func:`~manosube_agent_civilization.url_boot.route.
+    compose_url_source_observer` still accepted a conforming *object* and read its own
+    ``adapter_identity`` attribute via ``getattr`` on every single request -- a hostile
+    caller-supplied object (a property that raises or mutates State the moment it is read, a
+    custom ``Mapping``/iterator/``dict``-subclass whose protocol methods execute arbitrary code on
+    any attribute or item access) could still reach that boundary and execute, repeatedly, even
+    though it declared no method this Protocol names. Production now accepts *adapter_identity*
+    directly, as already-realized plain data, and canonicalizes it exactly once, at composition
+    time, before any request is ever served (:func:`~manosube_agent_civilization.url_boot.route.
+    _canonicalize_inert_adapter_identity`) -- there is no object, conforming to this Protocol or
+    otherwise, anywhere on production's own request path any more. This Protocol, and the
+    ``adapter_identity`` attribute it still declares, now exist solely for this repository's own
+    internal test suite's convenience in constructing that plain-data value
+    (``dict(FakeUrlSourceAdapter().adapter_identity)``); no shipped code path performs attribute
+    access to obtain it.
+
     An adapter never owns canonical State, decides Authority, determines Evidence sufficiency,
     closes a Difference, mutates Store internals, classifies a resolved address's own safety,
     resolves or connects to any network address at all, or interprets fetched content as

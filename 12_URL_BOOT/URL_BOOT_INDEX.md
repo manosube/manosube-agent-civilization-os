@@ -11,7 +11,7 @@ CANONICAL_KERNEL_COUNT=1
 URL_BOOT_OWNER_COUNT=1
 PUBLIC_URL_BOOT_ENTRY_POINT_COUNT=2
 SIGNED_DEPLOYMENT_DECLARATION_CHAIN=false
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=5
 ```
 
 ---
@@ -110,10 +110,14 @@ attempted.
 
 ```text
 compose_url_source_observer        a trusted composition step (Structural Review Round 4,
-                                    P17-R4-F2) binding Store/Project/Binding/adapter once and
-                                    returning the request-facing observation closure itself: one
-                                    bounded, per-hop-reauthorized HTTP GET against an explicit
-                                    source, under an explicit closed fetch Boundary
+                                    P17-R4-F2) binding Store/Project/Binding/adapter identity once
+                                    and returning the request-facing observation closure itself:
+                                    one bounded, per-hop-reauthorized HTTP GET against an explicit
+                                    source, under an explicit closed fetch Boundary. Since
+                                    Structural Review Round 5 (P17-R5-F1), the bound "adapter" is
+                                    already-realized plain data (adapter_identity), never an
+                                    object -- there is no replaceable adapter of any kind on
+                                    production's own request path any more.
 route_url_observation_to_evidence  hand the receipt to the existing Evidence owner
 ```
 
@@ -221,6 +225,17 @@ list.
   network layer itself creates every real connection and performs every real resolution this
   package ever makes, in both public entry points; an adapter declares only its own
   `adapter_identity`, nothing more.
+- Since Structural Review Round 5 (P17-R5-F1), there is no adapter *object* on production's own
+  request path at all -- `compose_url_source_observer` accepts `adapter_identity` as
+  already-realized plain data and validates/freezes it exactly once, at composition time
+  (`route._canonicalize_inert_adapter_identity`), so a hostile property, descriptor, custom
+  `Mapping`, iterator, or container subclass masquerading as that data can never execute, at
+  composition time or on any later request. Since Structural Review Round 5 (P17-R5-F2),
+  `route.py` also ships no function of any kind that accepts a classifier/resolver/connector as a
+  parameter -- the fixed production pipeline's own calls to each are hardcoded, never
+  caller-suppliable, and the generic, dependency-injected orchestration a caller could otherwise
+  recombine with the trusted network layer lives entirely outside the shipped package
+  (`tests/fixtures/url_boot_test_engine.py`).
 - A genuinely self-consistent, genuinely committed Envelope is not itself sufficient corroboration
   for Evidence -- its referenced Project Binding and historical Boot-observed State are
   independently re-resolved through this Store's own real, canonical history before any Evidence

@@ -19,19 +19,24 @@ shipped package no longer defines any second, distinctly-named, loopback-permitt
 or any loopback-permitting classifier body, at all -- the composition and its classifier live
 entirely under ``tests/``, confirmed absent from the distributed wheel; see that module's own
 docstring for the complete rationale). Every call site in this file therefore threads a genuine
-``test_harness_authority=mint_test_harness_authority()`` value; the negative controls at the foot
-of this file prove a missing, wrong-typed, or forged authority is refused before any DNS
-resolution or network connection is ever attempted. ``LocalHttpUrlSourceAdapter()`` itself now
-takes no loopback-related argument whatsoever, and performs no resolution or connection of its
-own at all (P17-R3-F1/P17-R4-F1) -- every real resolution and connection in this file is made by
+``test_harness_authority=mint_test_harness_authority()`` value, imported from this repository's
+own genuinely separate issuer module (``tests/fixtures/url_boot_local_test_issuer.py`` --
+Structural Review Round 5, P17-R5-F2: the composition module itself holds no minting capability
+any more, only a hardcoded public-key trust anchor); the negative controls at the foot of this
+file prove a missing, wrong-shaped, or forged authority is refused before any DNS resolution or
+network connection is ever attempted. ``LocalHttpUrlSourceAdapter()`` itself now takes no
+loopback-related argument whatsoever, and performs no resolution or connection of its own at all
+(P17-R3-F1/P17-R4-F1) -- every real resolution and connection in this file is made by
 :func:`~manosube_agent_civilization.url_boot.network.perform_resolution`/
 :func:`~manosube_agent_civilization.url_boot.network.perform_admitted_connection`, called
-directly by the route, never through the adapter.
+directly by the route, never through the adapter. Since Structural Review Round 5 (P17-R5-F1),
+``compose_disposable_local_test_observer`` also no longer accepts an adapter *object* at all --
+each call site below constructs a ``LocalHttpUrlSourceAdapter()`` purely to read its own inert
+``adapter_identity`` attribute, then passes that already-realized data directly.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
@@ -41,8 +46,9 @@ from typing import Any
 
 import pytest
 from tests.evidence_helpers import change_free_verification_evidence_request
-from tests.fixtures.url_boot_local_test_authority import (
-    compose_disposable_local_test_observer,
+from tests.fixtures.url_boot_local_test_authority import compose_disposable_local_test_observer
+from tests.fixtures.url_boot_local_test_issuer import (
+    issuer_public_key_hex,
     mint_test_harness_authority,
 )
 from tests.fixtures.url_boot_world import bound, boundary_for
@@ -134,7 +140,7 @@ def test_real_local_http_positive_observation_reaches_verified_evidence(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=adapter,
+        adapter_identity=dict(adapter.adapter_identity),
         test_harness_authority=mint_test_harness_authority(),
     )
     outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -187,7 +193,7 @@ def test_real_local_http_redirect_is_followed_and_reauthorized(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=adapter,
+        adapter_identity=dict(adapter.adapter_identity),
         test_harness_authority=mint_test_harness_authority(),
     )
     outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -231,7 +237,7 @@ def test_a_redirect_to_a_host_outside_scope_is_refused_not_followed(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=adapter,
+            adapter_identity=dict(adapter.adapter_identity),
             test_harness_authority=mint_test_harness_authority(),
         )
         outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -257,7 +263,7 @@ def test_real_local_http_wrong_content_type_is_a_genuine_unsupported_media_type(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=adapter,
+        adapter_identity=dict(adapter.adapter_identity),
         test_harness_authority=mint_test_harness_authority(),
     )
     outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -278,7 +284,7 @@ def test_real_local_http_oversized_response_is_refused_not_truncated_and_kept(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=adapter,
+        adapter_identity=dict(adapter.adapter_identity),
         test_harness_authority=mint_test_harness_authority(),
     )
     outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -299,7 +305,7 @@ def test_real_local_http_unreachable_port_is_connection_failure(_world: dict[str
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=adapter,
+        adapter_identity=dict(adapter.adapter_identity),
         test_harness_authority=mint_test_harness_authority(),
     )
     outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -345,7 +351,7 @@ def test_real_local_http_host_header_carries_the_non_default_port(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=adapter,
+            adapter_identity=dict(adapter.adapter_identity),
             test_harness_authority=mint_test_harness_authority(),
         )
         outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -463,7 +469,7 @@ def test_real_local_https_round_trip_succeeds_with_exactly_one_tls_wrap(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=adapter,
+            adapter_identity=dict(adapter.adapter_identity),
             test_harness_authority=mint_test_harness_authority(),
         )
         outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -490,15 +496,16 @@ def test_compose_disposable_local_test_observer_refuses_a_missing_test_harness_a
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=LocalHttpUrlSourceAdapter(),
+            adapter_identity=dict(LocalHttpUrlSourceAdapter().adapter_identity),
         )
 
 
 def test_compose_disposable_local_test_observer_refuses_a_wrong_typed_test_harness_authority(
     _world: dict[str, Any],
 ) -> None:
-    """A *test_harness_authority* of the wrong type (a string, never the ``bytes`` this factory's
-    own minted value is) is refused structurally, before any DNS resolution or network connection
+    """A *test_harness_authority* of the wrong type (a bare string, never the ``{"algorithm",
+    "key_id", "value"}`` mapping this factory's own minted credential is -- Structural Review
+    Round 5, P17-R5-F2) is refused structurally, before any DNS resolution or network connection
     is ever attempted."""
 
     with pytest.raises(UrlBootRequirementError):
@@ -506,46 +513,99 @@ def test_compose_disposable_local_test_observer_refuses_a_wrong_typed_test_harne
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=LocalHttpUrlSourceAdapter(),
-            test_harness_authority="not-real-bytes-at-all",  # type: ignore[arg-type]
+            adapter_identity=dict(LocalHttpUrlSourceAdapter().adapter_identity),
+            test_harness_authority="not-a-mapping-at-all",
         )
 
 
+@pytest.mark.parametrize(
+    "forged_authority",
+    [
+        pytest.param(
+            {
+                "algorithm": "ed25519",
+                "key_id": "URL-BOOT-LOCAL-TEST-AUTHORITY-0001",
+                "value": "00" * 64,
+            },
+            id="wrong_signature_bytes",
+        ),
+        pytest.param(
+            {
+                "algorithm": "hmac-sha256",
+                "key_id": "URL-BOOT-LOCAL-TEST-AUTHORITY-0001",
+                "value": "ab",
+            },
+            id="wrong_algorithm",
+        ),
+        pytest.param(
+            {"algorithm": "ed25519", "key_id": "SOME-OTHER-KEY-ID", "value": "ab" * 64},
+            id="wrong_key_id",
+        ),
+    ],
+)
 def test_compose_disposable_local_test_observer_refuses_a_forged_test_harness_authority(
-    _world: dict[str, Any],
+    _world: dict[str, Any], forged_authority: dict[str, str]
 ) -> None:
-    """A *test_harness_authority* that is genuinely ``bytes`` -- but not this process's own
-    minted value -- is refused exactly as a missing one is (P17-R4-F2): the classifier this
-    factory would otherwise close over is never even reached, let alone bound to a request-facing
-    closure a caller could invoke."""
+    """A *test_harness_authority* that is correctly shaped but not a genuine Ed25519 signature by
+    the issuer module's own private key -- a wrong signature, a wrong algorithm, or a wrong
+    ``key_id`` -- is refused exactly as a missing one is (P17-R4-F2/P17-R5-F2): the classifier
+    this factory would otherwise close over is never even reached, let alone bound to a
+    request-facing closure a caller could invoke."""
 
     with pytest.raises(UrlBootRequirementError):
         compose_disposable_local_test_observer(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=LocalHttpUrlSourceAdapter(),
-            test_harness_authority=b"\x00" * 32,
+            adapter_identity=dict(LocalHttpUrlSourceAdapter().adapter_identity),
+            test_harness_authority=forged_authority,
         )
 
 
-def test_a_forged_test_harness_authority_never_reaches_the_adapter_at_all(
+def test_a_forged_test_harness_authority_never_reaches_adapter_identity_canonicalization(
     _world: dict[str, Any],
 ) -> None:
-    """Strengthens the control above: composition itself fails, before returning any closure a
-    caller could invoke -- proved here by an adapter whose own ``adapter_identity`` access would
-    raise if ever touched, confirming no partial closure construction reaches even that far."""
+    """Strengthens the control above: composition itself fails at the authority check, before
+    *adapter_identity* is ever canonicalized -- proved here by an ``adapter_identity`` value whose
+    own ``__getattr__``/``__iter__``/``keys`` would raise if this factory's own canonicalizer
+    (:func:`~manosube_agent_civilization.url_boot.route._canonicalize_inert_adapter_identity`)
+    ever reached it. Since that canonicalizer's own exact ``type(x) is dict`` check would refuse
+    this hostile object anyway (P17-R5-F1), the fact that a distinct, forged-authority-specific
+    exception message never surfaces from *that* refusal instead confirms the authority check
+    genuinely runs first."""
 
-    class _PoisonedAdapter:
-        @property
-        def adapter_identity(self) -> Mapping[str, Any]:
-            raise AssertionError("adapter_identity was read despite a forged authority")
+    class _HostileAdapterIdentity:
+        def __getattr__(self, name: str) -> Any:
+            raise AssertionError(f"adapter_identity.{name} was accessed despite a forged authority")
+
+        def __iter__(self) -> Any:
+            raise AssertionError("adapter_identity was iterated despite a forged authority")
 
     with pytest.raises(UrlBootRequirementError):
         compose_disposable_local_test_observer(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=_PoisonedAdapter(),
-            test_harness_authority=b"forged-value-not-minted-here",
+            adapter_identity=_HostileAdapterIdentity(),
+            test_harness_authority={
+                "algorithm": "ed25519",
+                "key_id": "URL-BOOT-LOCAL-TEST-AUTHORITY-0001",
+                "value": "forged-value-not-minted-here",
+            },
         )
+
+
+def test_the_verifiers_trusted_public_key_genuinely_matches_the_issuers_own_private_key(
+    _world: dict[str, Any],
+) -> None:
+    """Non-vacuity control, disclosed as such in both modules' own docstrings: confirms
+    ``url_boot_local_test_authority.py``'s own hardcoded trust-anchor literal is genuinely the
+    public half of the one keypair ``url_boot_local_test_issuer.py`` alone holds the private half
+    of -- so the positive-control tests above (importing only the issuer's own
+    ``mint_test_harness_authority``) are exercising the same keypair the verifier trusts, not two
+    silently-different ones. Production code never performs this comparison -- only this
+    repository's own test suite does, purely to prove the two modules genuinely agree."""
+
+    from tests.fixtures import url_boot_local_test_authority as authority_module
+
+    assert issuer_public_key_hex() == authority_module._TRUSTED_LOCAL_TEST_AUTHORITY_PUBLIC_KEY_HEX

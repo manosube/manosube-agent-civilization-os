@@ -42,31 +42,36 @@ route_url_observation_to_evidence`), never through a mocked owner:
 A seventh class, required by Structural Review Round 1 (P17-R1-F1), closes this file: a
 zero-canonical-State-mutation proof for every one of the ten non-``OBSERVED`` outcomes.
 
-**Structural Review Round 3 (P17-R3-F1) note, extended by Round 4 (P17-R4-F1/F2).** Since Round 3,
-production is permanently bound to :func:`~manosube_agent_civilization.url_boot.
-route._perform_connection_via_trusted_network`; since Round 4, to
-:func:`~manosube_agent_civilization.url_boot.route._perform_resolution_via_trusted_network` too --
-both the real resolution and the real connection to the admitted address are created and
-controlled entirely by the trusted network layer, never by *adapter*. Most of this file's own
-subject is the route's *decision logic* (redirect re-authorization, hop-count discipline,
-tamper/integrity refusal, zero-mutation proofs) driven by ``FakeUrlSourceAdapter``'s controllable
-``resolve_hop``/``connect_hop`` -- exactly the shape Round 1/Round 2 already established -- so
-this file's own ``_observe`` helper calls ``_observe_url_source_impl`` directly with this
-repository's own internal deterministic resolver/connector
-(:func:`~manosube_agent_civilization.url_boot.route._perform_resolution_via_adapter`/
-:func:`~manosube_agent_civilization.url_boot.route._perform_connection_via_adapter`, never
-reachable from either genuinely-networked public entry point), the identical pattern
-``test_url_boot_kernel_continuity.py`` and ``test_url_boot_adapter_contract.py`` already use. The
-distinct claim that production's :func:`~manosube_agent_civilization.url_boot.
-route.compose_url_source_observer` never lets its returned closure reach either an adapter's own
-``resolve_hop`` or ``connect_hop`` at all -- so a malicious adapter's alternate-address I/O is
-structurally impossible, never merely unobserved -- is proved directly in
-``test_url_boot_adapter_contract.py`` (``test_production_compose_url_source_observer_never_invokes_any_adapter_resolve_or_connect_method``);
-that production genuinely reaches a real network boundary when driven correctly is proved in
+**Structural Review Round 3 (P17-R3-F1) note, extended by Round 4 (P17-R4-F1/F2) and Round 5
+(P17-R5-F1/F2).** Since Round 3, production is permanently bound to
+:func:`~manosube_agent_civilization.url_boot.route._perform_connection_via_trusted_network`; since
+Round 4, to :func:`~manosube_agent_civilization.url_boot.
+route._perform_resolution_via_trusted_network` too -- both the real resolution and the real
+connection to the admitted address are created and controlled entirely by the trusted network
+layer, never by *adapter*. Since Round 5, production no longer accepts an adapter *object* at
+all -- only already-realized ``adapter_identity`` data, canonicalized once at composition time --
+and the generic, dependency-injected orchestration this file's own decision-logic proofs still
+need moved entirely out of the shipped ``route.py`` into
+``tests/fixtures/url_boot_test_engine.py``. Most of this file's own subject is the route's
+*decision logic* (redirect re-authorization, hop-count discipline, tamper/integrity refusal,
+zero-mutation proofs) driven by ``FakeUrlSourceAdapter``'s controllable ``resolve_hop``/
+``connect_hop`` -- exactly the shape Round 1/Round 2 already established -- so this file's own
+``_observe`` helper calls :func:`~tests.fixtures.url_boot_test_engine.
+observe_url_source_for_internal_testing` directly with this repository's own internal
+deterministic resolver/connector (:func:`~tests.fixtures.url_boot_test_engine.
+perform_resolution_via_adapter`/:func:`~tests.fixtures.url_boot_test_engine.
+perform_connection_via_adapter`, never reachable from either genuinely-networked public entry
+point), the identical pattern ``test_url_boot_kernel_continuity.py`` and
+``test_url_boot_adapter_contract.py`` already use. The distinct claim that production's
+:func:`~manosube_agent_civilization.url_boot.route.compose_url_source_observer` never lets its
+returned closure reach either an adapter's own ``resolve_hop`` or ``connect_hop`` at all -- so a
+malicious adapter's alternate-address I/O is structurally impossible, never merely unobserved --
+is proved directly in ``test_url_boot_adapter_contract.py``; that production genuinely reaches a
+real network boundary when driven correctly is proved in
 ``test_url_boot_local_http_vertical_proof.py``. This file adds its own decisive control that
 neither :func:`compose_url_source_observer`'s own signature, nor its returned closure's own call
-signature, carries any slot through which an alternate Store, adapter, classifier, resolver, or
-connector could ever be substituted.
+signature, carries any slot through which an alternate Store, adapter identity, classifier,
+resolver, or connector could ever be substituted.
 """
 
 from __future__ import annotations
@@ -79,6 +84,11 @@ from typing import Any
 
 import pytest
 from tests.evidence_helpers import change_free_verification_evidence_request
+from tests.fixtures.url_boot_test_engine import (
+    observe_url_source_for_internal_testing,
+    perform_connection_via_adapter,
+    perform_resolution_via_adapter,
+)
 from tests.fixtures.url_boot_world import bound, boundary_for
 
 from manosube_agent_civilization.boot import boot_project
@@ -99,9 +109,6 @@ from manosube_agent_civilization.url_boot.evidence_handoff import (
 from manosube_agent_civilization.url_boot.identity import url_source_observation_envelope_id
 from manosube_agent_civilization.url_boot.network import canonical_source_identity
 from manosube_agent_civilization.url_boot.route import (
-    _observe_url_source_impl,
-    _perform_connection_via_adapter,
-    _perform_resolution_via_adapter,
     _require_safe_resolved_address_production,
     compose_url_source_observer,
 )
@@ -127,14 +134,16 @@ def _observe(world: dict[str, Any], store: Any, adapter: Any, **kwargs: Any) -> 
     """This file's own subject is the route's decision logic (redirects, hop counting,
     tamper/integrity refusal, zero-mutation proofs), driven by ``FakeUrlSourceAdapter``'s
     controllable ``resolve_hop``/``connect_hop`` -- so, like ``test_url_boot_kernel_continuity.py``
-    and ``test_url_boot_adapter_contract.py``, this calls ``_observe_url_source_impl`` directly
-    with this repository's own internal deterministic resolver/connector
-    (``_perform_resolution_via_adapter``/``_perform_connection_via_adapter``, never reachable from
-    either genuinely-networked public entry point, P17-R3-F1/P17-R4-F1) rather than production
+    and ``test_url_boot_adapter_contract.py``, this calls
+    ``observe_url_source_for_internal_testing`` directly with this repository's own internal
+    deterministic resolver/connector (``perform_resolution_via_adapter``/
+    ``perform_connection_via_adapter``, never reachable from either genuinely-networked public
+    entry point, P17-R3-F1/P17-R4-F1/P17-R5-F2) rather than production
     :func:`compose_url_source_observer`, whose returned closure is permanently bound to the real
     trusted-network resolver/connector instead."""
     kwargs.setdefault("observed_at", "2026-09-10T00:00:01Z")
-    return _observe_url_source_impl(
+    kwargs.setdefault("adapter_identity", dict(adapter.adapter_identity))
+    return observe_url_source_for_internal_testing(
         store,
         project_id=world["project_id"],
         project_binding_id=world["project_binding_id"],
@@ -142,8 +151,8 @@ def _observe(world: dict[str, Any], store: Any, adapter: Any, **kwargs: Any) -> 
         boundary=world["boundary"],
         adapter=adapter,
         classify_resolved_address=_require_safe_resolved_address_production,
-        perform_resolution=_perform_resolution_via_adapter,
-        perform_connection=_perform_connection_via_adapter,
+        perform_resolution=perform_resolution_via_adapter,
+        perform_connection=perform_connection_via_adapter,
         **kwargs,
     )
 
@@ -268,7 +277,7 @@ def test_a_hostname_resolving_to_loopback_is_boundary_refused_by_default(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=adapter,
+        adapter_identity=dict(adapter.adapter_identity),
     )
     outcome = observe(source_identity, boundary, "2026-09-10T00:00:01Z")
     assert outcome["envelope"] is None
@@ -296,7 +305,7 @@ def test_production_observer_cannot_enable_loopback_by_supplying_boundary_data(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=adapter,
+        adapter_identity=dict(adapter.adapter_identity),
     )
     with pytest.raises(UrlBootRequirementError):
         observe(source_identity, boundary, "2026-09-10T00:00:01Z")
@@ -355,7 +364,7 @@ def test_compose_url_source_observer_refuses_a_loopback_permitting_keyword_argum
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=_seeded(_world),
+            adapter_identity=dict(_seeded(_world).adapter_identity),
             permit_loopback_test_hosts=True,  # type: ignore[call-arg]
         )
 
@@ -371,7 +380,7 @@ def test_the_returned_closure_refuses_a_loopback_permitting_keyword_argument(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=_seeded(_world),
+        adapter_identity=dict(_seeded(_world).adapter_identity),
     )
     with pytest.raises(TypeError):
         observe(  # type: ignore[call-arg]
@@ -393,7 +402,7 @@ def test_the_returned_closure_refuses_a_loopback_permitting_positional_argument(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=_seeded(_world),
+        adapter_identity=dict(_seeded(_world).adapter_identity),
     )
     with pytest.raises(TypeError):
         observe(  # type: ignore[call-arg]
@@ -426,7 +435,7 @@ def test_compose_url_source_observer_refuses_a_perform_connection_or_resolution_
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=_seeded(_world),
+            adapter_identity=dict(_seeded(_world).adapter_identity),
             perform_connection=_malicious_perform_connection,  # type: ignore[call-arg]
         )
     with pytest.raises(TypeError):
@@ -434,7 +443,7 @@ def test_compose_url_source_observer_refuses_a_perform_connection_or_resolution_
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
-            adapter=_seeded(_world),
+            adapter_identity=dict(_seeded(_world).adapter_identity),
             perform_resolution=_malicious_perform_resolution,  # type: ignore[call-arg]
         )
 
@@ -492,7 +501,7 @@ def test_a_scheme_outside_scope_is_refused_with_zero_adapter_calls(_world: dict[
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=adapter,
+        adapter_identity=dict(adapter.adapter_identity),
     )
     with pytest.raises(UrlBootRequirementError):
         observe(https_identity, boundary, "2026-09-10T00:00:01Z")
@@ -954,17 +963,18 @@ def test_identity_mismatch_mutates_no_canonical_state_at_all(_world: dict[str, A
         body=json.dumps({"status": "unexpected"}).encode("utf-8"),
     )
 
-    result = _observe_url_source_impl(
+    result = observe_url_source_for_internal_testing(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
         source_identity=_world["source_identity"],
         boundary=boundary,
+        adapter_identity=dict(adapter.adapter_identity),
         adapter=adapter,
         observed_at="2026-09-10T00:00:02Z",
         classify_resolved_address=_require_safe_resolved_address_production,
-        perform_resolution=_perform_resolution_via_adapter,
-        perform_connection=_perform_connection_via_adapter,
+        perform_resolution=perform_resolution_via_adapter,
+        perform_connection=perform_connection_via_adapter,
     )
     assert result["envelope"] is None
     assert result["receipt"].observations["fetch_outcome"] == "IDENTITY_MISMATCH"

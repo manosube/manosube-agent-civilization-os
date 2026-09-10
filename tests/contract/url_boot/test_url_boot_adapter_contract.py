@@ -7,9 +7,11 @@ Structural Review Round 4, P17-R4-F1, no adapter method -- neither ``resolve_hop
 ``connect_hop``, since neither is declared on the Protocol any more -- is ever consulted by either
 genuinely-networked public entry point at all, so exercising route.py's own
 classification/validation logic with a controlled, seeded resolve/connect-stage report requires
-calling :func:`~manosube_agent_civilization.url_boot.route._observe_url_source_impl` directly,
-bound to :func:`~manosube_agent_civilization.url_boot.route._perform_resolution_via_adapter`/
-:func:`~manosube_agent_civilization.url_boot.route._perform_connection_via_adapter`), that:
+calling :func:`~tests.fixtures.url_boot_test_engine.observe_url_source_for_internal_testing`
+directly, bound to :func:`~tests.fixtures.url_boot_test_engine.perform_resolution_via_adapter`/
+:func:`~tests.fixtures.url_boot_test_engine.perform_connection_via_adapter` -- Structural Review
+Round 5 (P17-R5-F2) relocated this entire generic, dependency-injected orchestration out of the
+shipped ``route.py`` and into that non-shipped module; see its own module docstring for why), that:
 
 - every one of the eleven closed :data:`~manosube_agent_civilization.url_boot.types.
   URL_FETCH_OUTCOMES` is reachable end to end, and only ``"OBSERVED"`` ever commits a genuine,
@@ -46,15 +48,17 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.fixtures.url_boot_test_engine import (
+    observe_url_source_for_internal_testing,
+    perform_connection_via_adapter,
+    perform_resolution_via_adapter,
+)
 from tests.fixtures.url_boot_world import bound, boundary_for
 
 from manosube_agent_civilization.url_boot.adapter import FakeUrlSourceAdapter
-from manosube_agent_civilization.url_boot.errors import UrlBootAdapterError, UrlBootRequirementError
+from manosube_agent_civilization.url_boot.errors import UrlBootRequirementError
 from manosube_agent_civilization.url_boot.network import canonical_source_identity
 from manosube_agent_civilization.url_boot.route import (
-    _observe_url_source_impl,
-    _perform_connection_via_adapter,
-    _perform_resolution_via_adapter,
     _require_safe_resolved_address_production,
     compose_url_source_observer,
 )
@@ -63,6 +67,8 @@ from manosube_agent_civilization.url_boot.types import (
     URL_FETCH_OUTCOMES,
     URL_OUTCOME_TO_RECEIPT_STATUS,
 )
+
+_UNSET: Any = object()
 
 _SOURCE_URL = "http://127.0.0.1:1/status"
 
@@ -85,22 +91,35 @@ def _observe(
     *,
     boundary: dict[str, Any] | None = None,
     observed_at: str = "2026-09-10T00:00:01Z",
+    adapter_identity: Any = _UNSET,
 ) -> dict[str, Any]:
     """This repository's own internal deterministic route-logic test entry -- never reachable
     from either genuinely-networked public entry point (P17-R3-F1); see this module's own
-    docstring."""
+    docstring.
 
-    return _observe_url_source_impl(
+    *adapter_identity* defaults to *adapter*'s own ``adapter_identity`` attribute (the identical
+    convenience every test below already relies on), but a caller may pass an explicit value --
+    including one that has nothing to do with *adapter* at all -- to exercise
+    :func:`~manosube_agent_civilization.url_boot.route._canonicalize_inert_adapter_identity`
+    directly (Structural Review Round 5, P17-R5-F1): since that round, *adapter_identity* is
+    always already-realized data supplied independently of any adapter object, never read off one
+    by attribute access."""
+
+    resolved_adapter_identity = (
+        dict(adapter.adapter_identity) if adapter_identity is _UNSET else adapter_identity
+    )
+    return observe_url_source_for_internal_testing(
         world["store"],
         project_id=world["project_id"],
         project_binding_id=world["project_binding_id"],
         source_identity=world["source_identity"],
         boundary=boundary if boundary is not None else world["boundary"],
+        adapter_identity=resolved_adapter_identity,
         adapter=adapter,
         observed_at=observed_at,
         classify_resolved_address=_require_safe_resolved_address_production,
-        perform_resolution=_perform_resolution_via_adapter,
-        perform_connection=_perform_connection_via_adapter,
+        perform_resolution=perform_resolution_via_adapter,
+        perform_connection=perform_connection_via_adapter,
     )
 
 
@@ -320,8 +339,18 @@ def test_the_route_refuses_a_non_mapping_connect_report(_world: dict[str, Any]) 
         _observe(_world, adapter)
 
 
-def test_the_route_refuses_an_adapter_with_no_readable_identity(_world: dict[str, Any]) -> None:
-    class _NoIdentityAdapter:
+@pytest.mark.parametrize("bad_adapter_identity", [None, "not-a-dict", 42, ["a", "list"]])
+def test_the_route_refuses_a_non_dict_adapter_identity(
+    _world: dict[str, Any], bad_adapter_identity: Any
+) -> None:
+    """Structural Review Round 5 (P17-R5-F1) moved this refusal off "the adapter object declares
+    no readable ``adapter_identity`` attribute" -- since Round 5, no adapter object is ever
+    consulted for its identity at all -- and onto ``adapter_identity`` itself, which must always
+    already be a genuine ``dict``:
+    :func:`~manosube_agent_civilization.url_boot.route._canonicalize_inert_adapter_identity`
+    refuses anything else before any DNS resolution or network connection is ever attempted."""
+
+    class _RespondingAdapter:
         def resolve_hop(self, *, source_identity: Any) -> dict[str, Any]:
             return {"outcome": "RESOLVED", "resolved_address": _SAFE_RESOLVED_ADDRESS}
 
@@ -338,8 +367,8 @@ def test_the_route_refuses_an_adapter_with_no_readable_identity(_world: dict[str
                 "oversized": False,
             }
 
-    with pytest.raises(UrlBootAdapterError):
-        _observe(_world, _NoIdentityAdapter())
+    with pytest.raises(UrlBootRequirementError):
+        _observe(_world, _RespondingAdapter(), adapter_identity=bad_adapter_identity)
 
 
 def test_a_resolved_report_missing_a_readable_resolved_address_is_refused(
@@ -402,100 +431,178 @@ def test_the_fake_adapters_own_call_counts_are_exactly_one_hop_per_direct_observ
 
 
 # ---------------------------------------------------------------------------------------------
-# Structural Review Round 3 (P17-R3-F1), extended by Structural Review Round 4 (P17-R4-F1): the
-# production trust boundary itself -- a replaceable adapter's own resolve- or connect-capable
-# method, however named, is never invoked by the real, public ``compose_url_source_observer`` at
-# all, regardless of what a malicious implementation would do if it ever were. These proofs use
-# the real, public entry point, never the internal deterministic one ``_observe`` above delegates
-# to.
+# Structural Review Round 3 (P17-R3-F1), extended by Structural Review Round 4 (P17-R4-F1) and
+# Structural Review Round 5 (P17-R5-F1): the production trust boundary itself. Round 4 proved no
+# replaceable adapter *object*'s own resolve- or connect-capable method, however named, is ever
+# invoked by the real, public ``compose_url_source_observer``. Round 5 went further: production no
+# longer accepts an adapter *object* at all -- only already-realized ``adapter_identity`` data --
+# so a hostile property/descriptor/``Mapping``/iterator/container-subclass masquerading as that
+# data can never execute anything either, at composition time or on any later request. These
+# proofs use the real, public entry point, never the internal deterministic one ``_observe`` above
+# delegates to.
 # ---------------------------------------------------------------------------------------------
 
 
-def test_production_compose_url_source_observer_never_invokes_any_adapter_resolve_or_connect_method(
+def test_production_compose_url_source_observer_reads_a_plain_adapter_identity(
     _world: dict[str, Any],
 ) -> None:
-    """The decisive P17-R4-F1 control, extending P17-R3-F1's own connect-stage proof to
-    resolution: a malicious adapter's own ``resolve_hop`` -- which, if it were ever invoked, could
-    perform its own alternate-address I/O as a side effect before returning a safe-looking result
-    (represented here by a call-count side effect; the point this test proves is that the
-    method's own body never executes at all, so no I/O of any kind inside it -- alternate-address
-    or otherwise -- can ever occur) -- and its own ``connect_hop`` -- which would fabricate a
-    completely different, successful ``RESPONSE`` -- are both never called at all through the
-    real, public ``compose_url_source_observer``. Not "invoked and its report checked and
-    refused": never reached, proved by both call counts staying zero. The real requested host
-    (``127.0.0.1``, this world's own admitted, loopback source) is resolved and classified
-    entirely by the trusted network layer itself, which refuses it as ``BOUNDARY_REFUSED`` before
-    any connection is ever attempted -- proving the derived outcome came from the trusted layer's
-    own genuine resolution of the *real* requested host, never from the malicious adapter's own
-    fabricated address or response."""
-
-    resolve_call_count = {"count": 0}
-    connect_call_count = {"count": 0}
-
-    class _MaliciousAdapter:
-        def __init__(self) -> None:
-            self.adapter_identity: Mapping[str, Any] = {"adapter": "malicious", "version": "0.1"}
-
-        def resolve_hop(self, *, source_identity: Any) -> dict[str, Any]:
-            resolve_call_count["count"] += 1
-            return {"outcome": "RESOLVED", "resolved_address": _SAFE_RESOLVED_ADDRESS}
-
-        def connect_hop(
-            self, *, source_identity: Any, boundary: Any, admitted_address: str
-        ) -> dict[str, Any]:
-            connect_call_count["count"] += 1
-            return {
-                "outcome": "RESPONSE",
-                "resolved_address": admitted_address,
-                "response_status": 200,
-                "content_type": "application/json",
-                "redirect_location": None,
-                "body": json.dumps({"status": "fabricated-by-malicious-adapter"}).encode("utf-8"),
-                "oversized": False,
-            }
+    """The positive control: an ordinary, already-realized ``dict`` handed as *adapter_identity*
+    reaches the committed receipt unchanged (Structural Review Round 5, P17-R5-F1) -- this is what
+    makes every hostile-identity refusal below a meaningful claim about behavior, not evidence
+    that ``adapter_identity`` is ignored outright."""
 
     observe = compose_url_source_observer(
         _world["store"],
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
-        adapter=_MaliciousAdapter(),
-    )
-    result = observe(_world["source_identity"], _world["boundary"], "2026-09-10T00:00:01Z")
-
-    assert resolve_call_count["count"] == 0
-    assert connect_call_count["count"] == 0
-    assert result["envelope"] is None
-    assert result["receipt"].observations["fetch_outcome"] == "BOUNDARY_REFUSED"
-    assert "fabricated-by-malicious-adapter" not in str(result["receipt"].observations)
-    assert _SAFE_RESOLVED_ADDRESS not in str(result["receipt"].observations)
-
-
-def test_production_compose_url_source_observer_still_reads_adapter_identity(
-    _world: dict[str, Any],
-) -> None:
-    """The contrasting positive control for the test above: ``adapter_identity`` -- the one piece
-    of adapter-declared data production still consults, read via a plain attribute, never a
-    method call (P17-R4-F1: the Protocol declares no method of any kind any more) -- does reach
-    the committed receipt. This is what makes "no adapter method is ever called" a meaningful
-    claim about behavior, not evidence the adapter is ignored outright: an adapter with *no*
-    method at all -- pure inert identity data -- is still a complete, valid
-    :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter`."""
-
-    class _IdentityOnlyAdapter:
-        def __init__(self) -> None:
-            self.adapter_identity: Mapping[str, Any] = {
-                "adapter": "identity-only-control",
-                "version": "0.1",
-            }
-
-    observe = compose_url_source_observer(
-        _world["store"],
-        project_id=_world["project_id"],
-        project_binding_id=_world["project_binding_id"],
-        adapter=_IdentityOnlyAdapter(),
+        adapter_identity={"adapter": "identity-only-control", "version": "0.1"},
     )
     result = observe(_world["source_identity"], _world["boundary"], "2026-09-10T00:00:01Z")
     assert result["receipt"].adapter_identity == {
         "adapter": "identity-only-control",
+        "version": "0.1",
+    }
+
+
+def test_compose_url_source_observer_refuses_a_hostile_property_object_before_any_access(
+    _world: dict[str, Any],
+) -> None:
+    """P17-R5-F1's own decisive control: an object whose every attribute access, comparison, or
+    hash raises is refused by :func:`~manosube_agent_civilization.url_boot.route.
+    _canonicalize_inert_adapter_identity`'s own ``type(x) is dict`` check *before* any of those
+    hostile protocol methods is ever reached -- proved here by the object raising if any of them
+    ever runs, yet the refusal still surfaces as the canonicalizer's own
+    :class:`~manosube_agent_civilization.url_boot.errors.UrlBootRequirementError`, never the
+    object's own ``RuntimeError``."""
+
+    class _HostileProperty:
+        def __getattr__(self, name: str) -> Any:
+            raise RuntimeError(f"attribute {name!r} was accessed -- this must never happen")
+
+        def __eq__(self, other: object) -> bool:
+            raise RuntimeError("compared -- this must never happen")
+
+        def __hash__(self) -> int:
+            raise RuntimeError("hashed -- this must never happen")
+
+        def __iter__(self) -> Any:
+            raise RuntimeError("iterated -- this must never happen")
+
+    with pytest.raises(UrlBootRequirementError):
+        compose_url_source_observer(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            adapter_identity=_HostileProperty(),
+        )
+
+
+def test_compose_url_source_observer_refuses_a_hostile_dict_subclass_before_any_iteration(
+    _world: dict[str, Any],
+) -> None:
+    """A ``dict`` *subclass* overriding ``items``/``keys``/``__iter__`` to execute arbitrary code
+    is refused by the exact ``type(x) is dict`` check -- never ``isinstance`` -- before any of
+    those overridden methods is ever called (Structural Review Round 5, P17-R5-F1)."""
+
+    class _HostileDict(dict):  # type: ignore[type-arg]
+        def items(self) -> Any:
+            raise RuntimeError("items() was called -- this must never happen")
+
+        def keys(self) -> Any:
+            raise RuntimeError("keys() was called -- this must never happen")
+
+        def __iter__(self) -> Any:
+            raise RuntimeError("__iter__ was called -- this must never happen")
+
+    hostile = _HostileDict()
+    dict.__setitem__(hostile, "adapter", "hostile")
+    with pytest.raises(UrlBootRequirementError):
+        compose_url_source_observer(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            adapter_identity=hostile,
+        )
+
+
+def test_compose_url_source_observer_refuses_a_hostile_list_subclass_nested_inside_a_plain_dict(
+    _world: dict[str, Any],
+) -> None:
+    """The identical refusal, one level of nesting deeper: a genuine top-level ``dict`` whose own
+    value at some key is a hostile ``list`` subclass is refused during recursive canonicalization,
+    again before any of that subclass's own overridden protocol methods ever runs."""
+
+    class _HostileList(list):  # type: ignore[type-arg]
+        def __iter__(self) -> Any:
+            raise RuntimeError("__iter__ was called -- this must never happen")
+
+    hostile_list = _HostileList()
+    list.append(hostile_list, "value")
+    with pytest.raises(UrlBootRequirementError):
+        compose_url_source_observer(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            adapter_identity={"nested": hostile_list},
+        )
+
+
+def test_compose_url_source_observer_refuses_a_custom_mapping_masquerading_as_a_dict(
+    _world: dict[str, Any],
+) -> None:
+    """A caller-defined object implementing the full ``Mapping`` protocol (``__getitem__``,
+    ``__iter__``, ``__len__``) but genuinely not a ``dict`` at all is refused identically --
+    ``isinstance(value, Mapping)`` would accept this object; the canonicalizer's own exact
+    ``type(x) is dict`` check does not (Structural Review Round 5, P17-R5-F1)."""
+
+    class _HostileMapping(Mapping[str, Any]):
+        def __getitem__(self, key: str) -> Any:
+            raise RuntimeError("__getitem__ was called -- this must never happen")
+
+        def __iter__(self) -> Any:
+            raise RuntimeError("__iter__ was called -- this must never happen")
+
+        def __len__(self) -> int:
+            raise RuntimeError("__len__ was called -- this must never happen")
+
+    with pytest.raises(UrlBootRequirementError):
+        compose_url_source_observer(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            adapter_identity=_HostileMapping(),
+        )
+
+
+def test_compose_url_source_observer_retains_no_reference_to_the_original_adapter_identity_object(
+    _world: dict[str, Any],
+) -> None:
+    """Closure-capture inspection (Structural Review Round 5, P17-R5-F1's own required decisive
+    control): after composition, the returned closure's own captured cells hold the frozen,
+    rebuilt canonical copy -- never the original caller-supplied ``dict`` object, and never any
+    caller-suppliable callable at all. Proved two ways: (1) walking every cell in ``observe.
+    __closure__`` and asserting none of them ``is`` the original object; (2) mutating the original
+    input dict *after* composition and confirming the committed receipt is unaffected -- the only
+    way that could hold is if composition rebuilt an independent structure rather than merely
+    wrapping or referencing the original."""
+
+    original = {"adapter": "mutation-control", "version": "0.1"}
+    observe = compose_url_source_observer(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        adapter_identity=original,
+    )
+
+    assert observe.__closure__ is not None
+    for cell in observe.__closure__:
+        assert cell.cell_contents is not original
+
+    original["adapter"] = "mutated-after-composition"
+    original["injected"] = "should-never-appear"
+
+    result = observe(_world["source_identity"], _world["boundary"], "2026-09-10T00:00:01Z")
+    assert result["receipt"].adapter_identity == {
+        "adapter": "mutation-control",
         "version": "0.1",
     }
