@@ -119,11 +119,20 @@ def _require_request_shape(request: Any) -> dict[str, Any]:
 
 
 def _require_typed_reference(value: Any, *, context: str, kind: str) -> dict[str, Any]:
+    """Return *value* once it is a readable reference of exactly *kind*.
+
+    "Can this be read at all" is asked of the existing owner
+    (:func:`~manosube_agent_civilization.difference.admissibility.require_object` /
+    :func:`~...require_scalar_tag`) rather than restated as a negated type test here -- ADR-0025's
+    rule, which ``tests/contract/authority/test_authority_authority.py`` enforces across this
+    whole package. What stays local is the one thing that genuinely belongs to this evaluator:
+    *which* reference kind may occupy this position.
+    """
+
     reference = require_object(value, context)
     if reference.get("kind") != kind:
         raise AuthorityError(f"{context} does not name kind={kind!r}: {reference.get('kind')!r}")
-    if not isinstance(reference.get("id"), str) or not reference["id"]:
-        raise AuthorityError(f"{context} carries no readable id")
+    require_scalar_tag(reference.get("id"), f"{context} id")
     return reference
 
 

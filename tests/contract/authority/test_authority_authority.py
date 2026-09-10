@@ -33,6 +33,7 @@ from manosube_agent_civilization.authority import (
     approval,
     engine,
     levels,
+    model_execution_authorization,
     prohibition,
     projection_authorization,
     scope,
@@ -64,6 +65,11 @@ REQUIRED_SCHEMAS = (
     "verifier_selection_decision.schema.json",
     "github_projection_grant.schema.json",
     "github_projection_decision.schema.json",
+    # Phase 16 (Issue #66): the fourth evaluator's own two record kinds -- the
+    # Human-Authority-signed model-execution capability grant, and the content-addressed
+    # decision `evaluate_model_execution_authorization` mints over it.
+    "model_execution_grant.schema.json",
+    "model_execution_decision.schema.json",
 )
 
 
@@ -72,15 +78,22 @@ REQUIRED_SCHEMAS = (
 # --------------------------------------------------------------------------- #
 
 
-def test_the_five_contracts_and_eight_schemas_exist_and_are_exactly_those() -> None:
+def test_the_five_contracts_and_ten_schemas_exist_and_are_exactly_those() -> None:
     assert {path.name for path in CONTRACTS.glob("*.md")} == set(REQUIRED_CONTRACTS)
     assert {path.name for path in SCHEMAS.glob("*.schema.json")} == set(REQUIRED_SCHEMAS)
 
 
-def test_the_public_api_is_exactly_the_three_evaluators() -> None:
+def test_the_public_api_is_exactly_the_four_evaluators() -> None:
     """``evaluate_authority``, ``evaluate_verifier_selection`` (Structural Review Round 3,
-    P13-R3-F1), and ``evaluate_projection_authorization`` (Phase 14 Structural Review Round 1,
-    P14-R1-F1) -- and nothing else -- answer any owned question."""
+    P13-R3-F1), ``evaluate_projection_authorization`` (Phase 14 Structural Review Round 1,
+    P14-R1-F1), and ``evaluate_model_execution_authorization`` (Phase 16, Issue #66) -- and
+    nothing else -- answer any owned question.
+
+    Each of the three additions is an *extension of this one owner*, never a second Authority
+    owner: each answers a question the Change-permission evaluator's own closed request shape
+    cannot express, each shares this package's admission grammar, error vocabulary and
+    content-addressing conventions, and none introduces a registry, token, cache or persisted
+    artifact of its own."""
 
     exported = {name for name in authority.__all__ if not name.isupper()}
     callables = {name for name in exported if callable(getattr(authority, name))}
@@ -88,12 +101,17 @@ def test_the_public_api_is_exactly_the_three_evaluators() -> None:
         "evaluate_authority",
         "evaluate_verifier_selection",
         "evaluate_projection_authorization",
+        "evaluate_model_execution_authorization",
     } | {name for name in callables if name.endswith("Error")}
     assert authority.evaluate_authority is engine.evaluate_authority
     assert authority.evaluate_verifier_selection is verifier_selection.evaluate_verifier_selection
     assert (
         authority.evaluate_projection_authorization
         is projection_authorization.evaluate_projection_authorization
+    )
+    assert (
+        authority.evaluate_model_execution_authorization
+        is model_execution_authorization.evaluate_model_execution_authorization
     )
 
 
@@ -109,6 +127,7 @@ def test_no_module_outside_the_owner_produces_a_decision() -> None:
         set(levels.DECISIONS)
         | set(verifier_selection.DECISIONS)
         | set(projection_authorization.DECISIONS)
+        | set(model_execution_authorization.DECISIONS)
     )
     produced: dict[str, list[int]] = {}
     for path in sorted(SRC.rglob("*.py")):
@@ -202,6 +221,7 @@ DELEGATING_MODULES = {
     "authority.scope": scope,
     "authority.approval": approval,
     "authority.prohibition": prohibition,
+    "authority.model_execution_authorization": model_execution_authorization,
 }
 DECISIONS_OWNED_ELSEWHERE = (
     "require_object",
