@@ -14,6 +14,7 @@ element's own State-tree pointers, completely untouched by the other.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +78,11 @@ def test_a_model_execution_and_a_url_observation_coexist_without_interference(
         expires_at="2026-09-09T02:05:00Z",
     )
     url_adapter = FakeUrlSourceAdapter()
-    url_adapter.seed_source(source_identity=source_identity, fields={"status": "ok"})
+    url_adapter.seed_hop(
+        source_identity=source_identity,
+        outcome="RESPONSE",
+        body=json.dumps({"status": "ok"}).encode(),
+    )
     url_result = observe_url_source(
         store,
         project_id=project_id,

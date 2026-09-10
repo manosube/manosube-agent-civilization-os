@@ -159,6 +159,14 @@ def _construct_provenance(envelope: Mapping[str, Any], project_id: str) -> dict[
         "verification_boundary": {
             "requested_source_identity": dict(envelope["requested_source_identity"]),
             "boundary": dict(envelope["boundary"]),
+            # P17-R1-F5: the exact Project Binding / Boot-observed State identity this
+            # committed Envelope was made under -- resolved and integrity-checked, alongside
+            # every other field, by the three-way + semantic-fingerprint check
+            # ``resolve_and_verify_committed_envelope`` already performs above (both fields
+            # participate in ``ENVELOPE_SEMANTIC_FIELDS``, so a tampered value here fails that
+            # check before this function is ever reached).
+            "project_binding_ref": dict(envelope["project_binding_ref"]),
+            "boot_state_fingerprint": dict(envelope["boot_state_fingerprint"]),
         },
         "input_refs": _reference_set(refs),
         "observations": observations,
@@ -198,6 +206,16 @@ def route_url_observation_to_evidence(
             "receipt's own originating project_id does not match the requested project_id -- a "
             f"receipt cannot be relabelled across projects: {receipt.project_id!r} != "
             f"{project_id!r}"
+        )
+    if receipt.status != "VERIFIED" or receipt.url_source_observation_envelope_id is None:
+        # P17-C7/P17-R1-F1: a failed or refused fetch commits no url_source_observation_envelope
+        # record at all -- there is nothing durable this handoff could ever resolve or
+        # corroborate, so it is refused here rather than deriving Evidence from an
+        # unverifiable, caller-claimed receipt.
+        raise UrlBootRequirementError(
+            f"receipt's own status is {receipt.status!r}, not 'VERIFIED' -- only a genuinely "
+            "committed OBSERVED result names a real url_source_observation_envelope, and only "
+            "that can ever be handed off as Evidence"
         )
 
     envelope = resolve_and_verify_committed_envelope(

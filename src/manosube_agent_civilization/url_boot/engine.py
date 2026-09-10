@@ -130,37 +130,57 @@ def require_valid_boundary(boundary: Any) -> dict[str, Any]:
 def derive_url_source_observation_envelope(
     *,
     project_id: str,
+    project_binding_ref: dict[str, Any],
+    boot_state_fingerprint: dict[str, Any],
     requested_source_identity: dict[str, Any],
     requested_source_fingerprint: str,
-    effective_source_identity: dict[str, Any] | None,
-    effective_source_fingerprint: str | None,
+    effective_source_identity: dict[str, Any],
+    effective_source_fingerprint: str,
     boundary: dict[str, Any],
     boundary_fingerprint: str,
     source_request_identity: str,
     retrieved_at: str,
     fetch_outcome: str,
-    response_status: int | None,
+    response_status: int,
     redirect_hop_count: int,
-    observed_fields: dict[str, Any] | None,
-    observed_content_fingerprint: str | None,
+    resolution_provenance: list[dict[str, Any]],
+    observed_fields: dict[str, Any],
+    observed_content_fingerprint: str,
     adapter_identity: dict[str, Any],
     human_authority_ref: dict[str, Any],
 ) -> dict[str, Any]:
     """Return one canonical, schema-valid URL Source Observation Envelope record.
 
+    **Structural Review Round 1 (P17-R1-F1) correction.** This function is now reachable for
+    exactly one *fetch_outcome*: ``"OBSERVED"``. P17-C7 requires that no failed or refused fetch
+    ever mutate canonical State; the route enforces that by never calling this function, or its
+    own committer, for any other outcome (see ``route.py``'s own module docstring) -- and this
+    function itself refuses, structurally, to derive an envelope for anything else, so the
+    invariant holds even if some future caller forgets the route's own discipline.
+
     Every argument must already be real: *requested_source_fingerprint*,
     *effective_source_fingerprint*, *boundary_fingerprint*, and *source_request_identity* must
     already be recomputed by the caller from the real identities/boundary (this function does
     not recompute any of them -- it only asserts the assembled record is internally
-    self-consistent and schema-valid), and *fetch_outcome*/*observed_fields*/
-    *observed_content_fingerprint* must already be the adapter's own honest, per-hop-
-    reauthorized report as the route received it. This function performs no Store I/O of any
-    kind, opens no socket, and reaches no Adapter.
+    self-consistent and schema-valid), and *observed_fields*/*observed_content_fingerprint* must
+    already be the route's own bounded, redacted projection of a genuinely reached response
+    (P17-R1-F2: never the adapter's own unclassified report). *project_binding_ref* and
+    *boot_state_fingerprint* are the exact Project Binding / Boot-observed State identity this
+    call's own Boot restored (P17-R1-F5); *resolution_provenance* is the ordered, per-(host,
+    port) DNS resolution this route itself admitted across every hop of this successful fetch
+    (P17-R1-F4). This function performs no Store I/O of any kind, opens no socket, and reaches
+    no Adapter.
     """
 
     if boundary.get("fetch_method") not in URL_FETCH_METHODS:
         raise UrlBootRequirementError(
             f"boundary names an unrecognized fetch_method: {boundary.get('fetch_method')!r}"
+        )
+    if fetch_outcome != "OBSERVED":
+        raise UrlBootRequirementError(
+            "a url_source_observation_envelope may only ever be derived for fetch_outcome="
+            f"'OBSERVED' (P17-C7) -- got {fetch_outcome!r}: every other outcome is bounded, "
+            "ephemeral failure evidence that commits nothing"
         )
     if fetch_outcome not in URL_FETCH_OUTCOMES:
         raise UrlBootRequirementError(
@@ -170,11 +190,11 @@ def derive_url_source_observation_envelope(
     envelope = {
         "schema_version": SCHEMA_VERSION,
         "project_id": project_id,
+        "project_binding_ref": dict(project_binding_ref),
+        "boot_state_fingerprint": dict(boot_state_fingerprint),
         "requested_source_identity": dict(requested_source_identity),
         "requested_source_fingerprint": requested_source_fingerprint,
-        "effective_source_identity": (
-            dict(effective_source_identity) if effective_source_identity is not None else None
-        ),
+        "effective_source_identity": dict(effective_source_identity),
         "effective_source_fingerprint": effective_source_fingerprint,
         "boundary": dict(boundary),
         "boundary_fingerprint": boundary_fingerprint,
@@ -183,6 +203,7 @@ def derive_url_source_observation_envelope(
         "fetch_outcome": fetch_outcome,
         "response_status": response_status,
         "redirect_hop_count": redirect_hop_count,
+        "resolution_provenance": [dict(hop) for hop in resolution_provenance],
         "observed_fields": observed_fields,
         "observed_content_fingerprint": observed_content_fingerprint,
         "adapter_identity": dict(adapter_identity),

@@ -7,35 +7,64 @@
 owner (:func:`~manosube_agent_civilization.boot.boot_project`), independently fingerprints an
 explicit, fully decomposed source identity and a closed fetch Boundary (never trusting either
 from a caller beyond their declared shape), refuses a source whose own hostname falls outside the
-Boundary's own declared ``network_scope`` before Boot or any adapter is ever reached, calls the
-one replaceable :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` exactly
-once, and derives and commits one canonical URL Source Observation Envelope through the existing
-Store's own single sanctioned committer
-(:func:`~manosube_agent_civilization.store.commit.commit_state_transition`). Read-only, so no
-create-once-reuse-after side effect exists to protect -- observing the identical source under the
-identical Boundary twice is two independent facts, not a duplicate external artifact, the
-identical discipline :mod:`~manosube_agent_civilization.runtime.route` already established.
+Boundary's own declared ``network_scope`` before Boot or any adapter is ever reached, owns the
+entire bounded, per-hop-reauthorized redirect loop itself (never delegating it to the
+replaceable :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter`), and derives
+and commits one canonical URL Source Observation Envelope through the existing Store's own single
+sanctioned committer (:func:`~manosube_agent_civilization.store.commit.commit_state_transition`)
+-- but only when the fetch actually succeeded.
 
-**Deliberately simpler authority model than Runtime (disclosed, P17 non-claim).** Runtime's own
-route additionally resolves, authority-binds, and cryptographically verifies a Store-committed
-``runtime_deployment_declaration`` before trusting a target's own claimed identity, because a
-runtime target is a live, potentially adversarial system a caller could otherwise impersonate by
-mere assertion. A URL Source Observation makes no such trust claim about the fetched content at
-all: :data:`~manosube_agent_civilization.url_boot.types.URL_FETCH_OUTCOMES`'s own
-``IDENTITY_MISMATCH``/``BOUNDARY_REFUSED`` members are the *adapter's own* honest, per-hop
-classification (P17-C4/P17-C7 -- see ``types.py``'s own module docstring for why this route
-performs no second, route-level semantic reinterpretation of them), never a route-computed
-verdict this route derives from a signed declaration. What this route *does* independently
-re-verify, itself, is Authority freshness and network-scope containment -- never the content.
+**Structural Review Round 1 (P17-R1-F1 through F5), applied on top of the three Codex findings
+already closed at this delivery's initial head.** Six corrections land here, together:
 
-**Deliberate departure from Runtime's own ``network.py`` precedent (P17-C5), applied here.**
-Because a URL source is reached by real DNS resolution rather than a Boundary-declared literal
-endpoint, this route re-checks *both* the requested source identity (before Boot, zero-call) and
-whatever *effective* source identity the adapter reports it actually reached after following any
-redirects (immediately after the adapter call, before persistence) against the Boundary's own
-``network_scope`` -- neither site trusts the other, alone, to be the one place that check runs,
-the identical "defense in depth, not exclusive ownership" discipline
-``runtime/route.py``'s own P15-R1-F1 correction established for its own ``network.py``.
+- **P17-R1-F1 (zero State mutation on failure).** The first delivery derived and committed an
+  Envelope for every one of the eleven :data:`~manosube_agent_civilization.url_boot.types.
+  URL_FETCH_OUTCOMES`, including every typed failure -- directly contradicting P17-C7's own
+  requirement that "no failed or refused fetch may mutate canonical State." This route now calls
+  :func:`~manosube_agent_civilization.url_boot.engine.derive_url_source_observation_envelope` and
+  :func:`_commit_envelope` for exactly one outcome, ``"OBSERVED"``; every other outcome returns a
+  bounded, purely ephemeral :class:`~manosube_agent_civilization.url_boot.types.
+  UrlSourceObservationReceipt` (``url_source_observation_envelope_id=None``, ``status`` ``FAILED``
+  or ``UNAVAILABLE``) with zero Store I/O of any kind -- ``engine.py``'s own deriver refuses,
+  structurally, to be called for any other outcome, so the invariant holds even if this route's
+  own discipline were ever violated by a future edit.
+- **P17-R1-F2 (route-owned redirect/boundary/identity authority).** The first delivery gave the
+  adapter one ``fetch()`` method that followed an entire redirect chain internally and reported
+  only the final identity/hop-count/outcome -- a conforming-looking but dishonest adapter could
+  follow a disallowed intermediate hop, fabricate a hop count, or simply assert
+  ``IDENTITY_MISMATCH``/``BOUNDARY_REFUSED`` outright, and the route had no way to catch it. The
+  replaceable :class:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter` now exposes
+  exactly one bounded, single-hop transport primitive
+  (:meth:`~manosube_agent_civilization.url_boot.types.UrlSourceAdapter.fetch_one_hop`); this
+  route owns the entire loop below, re-authorizing every redirect target against ``boundary``'s
+  own ``network_scope`` itself before ever calling the adapter for it, and performing every
+  content-type/size/JSON/``IDENTITY_MISMATCH`` classification itself, from the adapter's own
+  bounded per-hop facts alone. There is no field left in the adapter's own report through which a
+  hidden hop, a fabricated count, or an asserted classification could ever reach this route.
+- **P17-R1-F3 (loopback test allowance is no longer caller-mintable).** ``permit_loopback_test_hosts``
+  no longer exists anywhere in the closed Boundary schema -- a request-facing caller supplying
+  Boundary *data* has no field through which to enable it, at all. The one place it can be set is
+  a concrete adapter's own constructor (``LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=
+  True)``), a Python composition-time decision no request-facing caller who only ever supplies
+  ``source_identity``/``boundary`` data can reach or substitute. See ``adapter.py``'s own module
+  docstring.
+- **P17-R1-F4 (cross-hop DNS resolution drift).** Each hop's own resolved address is now bound,
+  once, to its own ``(host, port)`` for the lifetime of this one fetch: if a later hop resolves
+  the *same* ``(host, port)`` to a *different* address than an earlier hop of this identical
+  fetch already did, the whole fetch refuses as ``BOUNDARY_REFUSED`` -- the same outcome an
+  unsafe resolved address itself produces, since both are "this resolved address is not one this
+  route can trust." The admitted, per-``(host, port)`` resolution is what
+  ``resolution_provenance`` persists on every successful Envelope.
+- **P17-R1-F5 (exact Project/Binding/Boot context binding).** A committed Envelope now carries
+  ``project_binding_ref`` and ``boot_state_fingerprint`` -- the exact Project Binding identity and
+  Boot-observed State fingerprint this call's own Boot restored, both fully identity-sensitive
+  (:data:`~manosube_agent_civilization.url_boot.identity.ENVELOPE_SEMANTIC_FIELDS`) -- so two
+  Boot contexts that happen to share a Human Authority can never again produce indistinguishable
+  provenance. :mod:`~manosube_agent_civilization.url_boot.evidence_handoff` re-verifies both
+  fields against the real, resolved Envelope before handoff, never trusting a receipt's own claim.
+- **P17-R1-F6** is a documentation-only correction (``docs/project_sources/
+  03_CURRENT_DEVELOPMENT_STATE.md``'s own last-wins restatement) and touches no code in this
+  module.
 
 Canonical route (``12_URL_BOOT/URL_BOOT_CONTRACT.md`` §5):
 
@@ -48,22 +77,23 @@ complete schema validation of the declared source identity and closed fetch Boun
 → closed fetch Boundary, fingerprinted (never trusted from a caller)
 → deterministic source_request_identity (source + Boundary + issued_at)
 → authority-freshness re-check -- refuses before the adapter
-→ replaceable URL Source Adapter -- one bounded, per-hop-reauthorized transport call, handed
-  deep-frozen copies it cannot mutate
-→ independent field-boundary projection (any field outside permitted_fields is a refusal, never
-  silently kept), redaction, and a defense-in-depth network-scope re-check of whatever effective
-  source identity the adapter reports it actually reached
-→ canonical URL Source Observation Envelope
-→ authority-freshness re-check on every commit attempt
-→ existing canonical persistence boundary (commit_state_transition)
-→ bounded URL Source Observation Receipt
+→ route-owned, per-hop-reauthorized redirect loop -- one bounded single-hop adapter call per
+  hop, cross-hop DNS-resolution-drift binding, and every redirect/content/identity
+  classification performed here alone
+→ OBSERVED only: canonical URL Source Observation Envelope, exact Boot-context binding,
+  authority-freshness re-check on every commit attempt, existing canonical persistence boundary
+  (commit_state_transition)
+→ anything else: bounded, ephemeral, non-committed URL Source Observation Receipt -- zero State
+  mutation, zero commit, zero Evidence-handoff eligibility
 ```
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from typing import Any
+from urllib.parse import urljoin
 
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
@@ -91,10 +121,11 @@ from .identity import (
     url_source_observation_envelope_semantic_fingerprint,
     url_source_request_identity,
 )
-from .network import require_source_within_network_scope
+from .network import canonical_source_identity, require_source_within_network_scope, source_url
 from .types import (
     RECEIPT_STATUSES,
     URL_FETCH_OUTCOMES,
+    URL_HOP_TRANSPORT_OUTCOMES,
     URL_OUTCOME_TO_RECEIPT_STATUS,
     UrlSourceAdapter,
     UrlSourceObservationReceipt,
@@ -107,27 +138,10 @@ _ENVELOPE_RECORD_KIND = "url_source_observation_envelope"
 #: project between this route's own ``load_current`` and its own ``commit``.
 _MAX_COMMIT_RETRIES = 8
 
-#: Outcomes that mean a response was genuinely received and classified (P17 review finding
-#: P17-C-R1-F1) -- an adapter reporting one of these must name the source actually reached and
-#: the response status it reached it under; this route never trusts an adapter's bare say-so that
-#: a response was "OBSERVED" (or a response-shaped failure) while also reporting nothing was ever
-#: identified.
-_RESPONSE_REACHED_OUTCOMES: frozenset[str] = frozenset(
-    {"OBSERVED", "OVERSIZED_RESPONSE", "UNSUPPORTED_MEDIA_TYPE", "MALFORMED", "IDENTITY_MISMATCH"}
-)
-#: Outcomes that mean no response was ever received -- an adapter reporting one of these must
-#: report a null ``effective_source_identity`` (nothing was ever honestly identified as reached).
-#: A null ``response_status`` is not independently required here: ``REDIRECT_REFUSED`` may
-#: honestly carry the refused redirect response's own status alongside it.
-_NO_IDENTITY_OUTCOMES: frozenset[str] = frozenset(
-    {
-        "DNS_FAILURE",
-        "CONNECTION_FAILURE",
-        "TLS_FAILURE",
-        "TIMEOUT",
-        "BOUNDARY_REFUSED",
-        "REDIRECT_REFUSED",
-    }
+#: A single-hop transport outcome that means no response was ever reached for that hop -- refused
+#: immediately, the whole fetch's own outcome (P17-R1-F2).
+_HOP_FAILURE_OUTCOMES: frozenset[str] = frozenset(
+    {"DNS_FAILURE", "CONNECTION_FAILURE", "TLS_FAILURE", "TIMEOUT", "BOUNDARY_REFUSED"}
 )
 
 
@@ -165,22 +179,6 @@ def _require_within_time_window(boundary: dict[str, Any], observed_at: str) -> N
             f"window [{boundary['time_window']['issued_at']!r}, "
             f"{boundary['time_window']['expires_at']!r}] -- refusing before any adapter call"
         )
-
-
-def _project_to_permitted_fields(
-    observed_fields: Mapping[str, Any], permitted_fields: list[str]
-) -> dict[str, Any]:
-    """Return *observed_fields* projected down to exactly *permitted_fields*, refusing any field
-    the adapter reported that the closed Boundary never permitted -- the identical discipline
-    ``runtime/route.py``'s own P15-R1-F3 correction established, applied here from the start."""
-
-    extra = sorted(set(observed_fields) - set(permitted_fields))
-    if extra:
-        raise UrlBootAdapterError(
-            "adapter.fetch() reported field(s) outside the Boundary's own permitted_fields: "
-            f"{extra} -- refusing rather than persist anything the Boundary never admitted"
-        )
-    return {field: observed_fields[field] for field in permitted_fields if field in observed_fields}
 
 
 def _redact(observed_fields: Mapping[str, Any], redaction_fields: list[str]) -> dict[str, Any]:
@@ -231,6 +229,211 @@ def _require_unchanged_authority_context(
         )
 
 
+def _resolve_redirect_target(
+    current_identity: Mapping[str, Any], redirect_location: str
+) -> dict[str, Any] | None:
+    """Return the canonical, fully decomposed identity a redirect Location header names,
+    resolved against *current_identity*'s own URL -- ``None`` when the target is not a readable
+    ``http``/``https`` URL at all (P17-R1-F2: this route trusts no field the adapter reports as
+    already being that identity; it recomputes it itself from the raw header value alone)."""
+
+    target_url = urljoin(source_url(current_identity), redirect_location)
+    try:
+        return canonical_source_identity(target_url)
+    except UrlBootRequirementError:
+        return None
+
+
+def _hop_result(
+    fetch_outcome: str,
+    *,
+    effective_source_identity: dict[str, Any] | None = None,
+    response_status: int | None = None,
+    redirect_hop_count: int,
+    observed_fields: dict[str, Any] | None = None,
+    resolution_provenance: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "fetch_outcome": fetch_outcome,
+        "effective_source_identity": effective_source_identity,
+        "response_status": response_status,
+        "redirect_hop_count": redirect_hop_count,
+        "observed_fields": observed_fields,
+        "resolution_provenance": resolution_provenance or [],
+    }
+
+
+def _classify_terminal_response(
+    raw: Mapping[str, Any],
+    effective_identity: dict[str, Any],
+    hop: int,
+    status: int,
+    *,
+    boundary: Mapping[str, Any],
+    resolution_provenance: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Classify one genuinely reached, non-redirect HTTP response into its final
+    :data:`~manosube_agent_civilization.url_boot.types.URL_FETCH_OUTCOMES` member -- entirely
+    from the adapter's own bounded per-hop facts, never accepted from the adapter as an assertion
+    (P17-R1-F2)."""
+
+    if raw.get("oversized"):
+        return _hop_result(
+            "OVERSIZED_RESPONSE",
+            effective_source_identity=effective_identity,
+            response_status=status,
+            redirect_hop_count=hop,
+        )
+
+    admitted_content_types = {value.lower() for value in boundary["admitted_content_types"]}
+    if raw.get("content_type") not in admitted_content_types:
+        return _hop_result(
+            "UNSUPPORTED_MEDIA_TYPE",
+            effective_source_identity=effective_identity,
+            response_status=status,
+            redirect_hop_count=hop,
+        )
+
+    body = raw.get("body")
+    if not isinstance(body, bytes | bytearray):
+        raise UrlBootAdapterError(
+            f"adapter.fetch_one_hop() reported RESPONSE with an unreadable body: {body!r}"
+        )
+    try:
+        parsed = json.loads(bytes(body).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _hop_result(
+            "MALFORMED",
+            effective_source_identity=effective_identity,
+            response_status=status,
+            redirect_hop_count=hop,
+        )
+    if not isinstance(parsed, dict) or not (200 <= status < 300):
+        return _hop_result(
+            "MALFORMED",
+            effective_source_identity=effective_identity,
+            response_status=status,
+            redirect_hop_count=hop,
+        )
+
+    expected_field = boundary.get("expected_field")
+    if expected_field is not None and parsed.get(expected_field) != boundary.get("expected_value"):
+        return _hop_result(
+            "IDENTITY_MISMATCH",
+            effective_source_identity=effective_identity,
+            response_status=status,
+            redirect_hop_count=hop,
+        )
+
+    permitted_fields = list(boundary["permitted_fields"])
+    observed_fields = {field: parsed[field] for field in permitted_fields if field in parsed}
+    return _hop_result(
+        "OBSERVED",
+        effective_source_identity=effective_identity,
+        response_status=status,
+        redirect_hop_count=hop,
+        observed_fields=observed_fields,
+        resolution_provenance=resolution_provenance,
+    )
+
+
+def _fetch_with_route_owned_redirects(
+    adapter: UrlSourceAdapter, source_identity: Mapping[str, Any], boundary: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Own the entire bounded, per-hop-reauthorized redirect loop (P17-R1-F2/F4): calls the
+    replaceable adapter's own bounded single-hop transport primitive exactly once per hop,
+    re-authorizes every redirect target against *boundary*'s own ``network_scope`` itself before
+    ever reaching the adapter for it, binds each hop's own resolved address to its own
+    ``(host, port)`` for the lifetime of this one fetch and refuses on any later drift, and
+    performs every content-type/size/JSON/``IDENTITY_MISMATCH`` classification itself.
+
+    Returns ``{"fetch_outcome", "effective_source_identity", "response_status",
+    "redirect_hop_count", "observed_fields", "resolution_provenance"}`` -- the identical shape
+    :func:`observe_url_source` itself now derives an Envelope from (``fetch_outcome ==
+    "OBSERVED"``) or returns as a bounded, ephemeral failure receipt (anything else).
+    """
+
+    network_scope = boundary["network_scope"]
+    max_redirects = boundary["redirect_policy"]["max_redirects"]
+    current_identity = dict(source_identity)
+    resolution_bindings: dict[tuple[str, int], str] = {}
+    resolution_provenance: list[dict[str, Any]] = []
+
+    for hop in range(max_redirects + 1):
+        raw = adapter.fetch_one_hop(
+            source_identity=deep_freeze(current_identity), boundary=deep_freeze(boundary)
+        )
+        if not isinstance(raw, Mapping):
+            raise UrlBootAdapterError(f"adapter.fetch_one_hop() returned {raw!r}, not a mapping")
+        hop_outcome = raw.get("outcome")
+        if hop_outcome not in URL_HOP_TRANSPORT_OUTCOMES:
+            raise UrlBootAdapterError(
+                f"adapter.fetch_one_hop()'s own outcome is not recognized: {hop_outcome!r}"
+            )
+        if hop_outcome in _HOP_FAILURE_OUTCOMES:
+            return _hop_result(hop_outcome, redirect_hop_count=hop)
+
+        resolved_address = raw.get("resolved_address")
+        if not isinstance(resolved_address, str) or not resolved_address:
+            raise UrlBootAdapterError(
+                "adapter.fetch_one_hop() reported RESPONSE with no readable resolved_address"
+            )
+        host_port_key = (current_identity["host"], current_identity["port"])
+        bound_address = resolution_bindings.get(host_port_key)
+        if bound_address is None:
+            resolution_bindings[host_port_key] = resolved_address
+            resolution_provenance.append(
+                {
+                    "host": current_identity["host"],
+                    "port": current_identity["port"],
+                    "resolved_address": resolved_address,
+                }
+            )
+        elif bound_address != resolved_address:
+            # P17-R1-F4: the identical host/port this one fetch already resolved once now
+            # resolves to a *different* address -- DNS/resolution drift within one fetch, never
+            # trusted, regardless of what this hop's own response otherwise says.
+            return _hop_result("BOUNDARY_REFUSED", redirect_hop_count=hop)
+
+        status = raw.get("response_status")
+        if not isinstance(status, int):
+            raise UrlBootAdapterError(
+                "adapter.fetch_one_hop() reported RESPONSE with an unreadable response_status: "
+                f"{status!r}"
+            )
+        redirect_location = raw.get("redirect_location")
+
+        if redirect_location is not None and 300 <= status < 400:
+            if hop == max_redirects:
+                return _hop_result(
+                    "REDIRECT_REFUSED", response_status=status, redirect_hop_count=hop
+                )
+            next_identity = _resolve_redirect_target(current_identity, redirect_location)
+            if next_identity is None:
+                return _hop_result(
+                    "REDIRECT_REFUSED", response_status=status, redirect_hop_count=hop
+                )
+            try:
+                require_source_within_network_scope(next_identity, network_scope)
+            except UrlBootRequirementError:
+                return _hop_result(
+                    "REDIRECT_REFUSED", response_status=status, redirect_hop_count=hop
+                )
+            current_identity = next_identity
+            continue
+
+        return _classify_terminal_response(
+            raw,
+            current_identity,
+            hop,
+            status,
+            boundary=boundary,
+            resolution_provenance=resolution_provenance,
+        )
+
+    return _hop_result("REDIRECT_REFUSED", redirect_hop_count=max_redirects)
+
+
 def observe_url_source(
     store: Any,
     *,
@@ -241,8 +444,12 @@ def observe_url_source(
     adapter: UrlSourceAdapter,
     observed_at: str,
 ) -> dict[str, Any]:
-    """Bounded-observe one explicit URL source and return ``{"envelope": ..., "receipt":
+    """Bounded-observe one explicit URL source and return ``{"envelope": dict | None, "receipt":
     UrlSourceObservationReceipt}``.
+
+    ``envelope`` is ``None`` for every outcome except ``"OBSERVED"`` (P17-C7/P17-R1-F1): a failed
+    or refused fetch mutates no canonical State and commits no record at all, and its own
+    ``receipt`` names no envelope id.
 
     *source_identity* and *boundary* must already be real, explicit, closed shapes -- this
     function proves each completely valid against its own canonical schema before Boot or any
@@ -271,6 +478,11 @@ def observe_url_source(
     boot_context = _boot_authority_context(store, project_id, project_binding_id)
     real_human_authority_ref = dict(boot_context.human_authority_ref)
     authority_context = _authority_context(boot_context)
+    # P17-R1-F5: the exact Boot-restored Binding identity and Boot-observed State fingerprint --
+    # captured here, once, at this call's own initial Boot, exactly like every other real fact
+    # this route commits.
+    real_project_binding_ref = {"kind": "project_binding", "id": project_binding_id}
+    real_boot_state_fingerprint = dict(boot_context.current_state["semantic_fingerprint"])
 
     requested_source_fingerprint = url_source_fingerprint(checked_source_identity)
     boundary_fingerprint = url_boundary_fingerprint(checked_boundary)
@@ -295,94 +507,47 @@ def observe_url_source(
         stage="before the adapter is reached",
     )
 
-    raw = adapter.fetch(
-        source_identity=deep_freeze(checked_source_identity),
-        boundary=deep_freeze(checked_boundary),
+    fetch_result = _fetch_with_route_owned_redirects(
+        adapter, checked_source_identity, checked_boundary
     )
-    if not isinstance(raw, Mapping):
-        raise UrlBootAdapterError(f"adapter.fetch() returned {raw!r}, not a mapping")
-    fetch_outcome = raw.get("fetch_outcome")
+    fetch_outcome = fetch_result["fetch_outcome"]
     if fetch_outcome not in URL_FETCH_OUTCOMES:
-        raise UrlBootAdapterError(
-            f"adapter.fetch()'s own fetch_outcome is not recognized: {fetch_outcome!r}"
-        )
+        raise UrlBootAdapterError(f"unrecognized derived fetch_outcome: {fetch_outcome!r}")
+    status = URL_OUTCOME_TO_RECEIPT_STATUS[fetch_outcome]
+    if status not in RECEIPT_STATUSES:
+        raise UrlBootAdapterError(f"unrecognized receipt status derived from outcome: {status!r}")
 
-    raw_effective_identity = raw.get("effective_source_identity")
-    if fetch_outcome in _RESPONSE_REACHED_OUTCOMES and raw_effective_identity is None:
-        raise UrlBootAdapterError(
-            f"adapter.fetch() reported fetch_outcome={fetch_outcome!r} with no "
-            "effective_source_identity -- this outcome means a response was genuinely reached "
-            "and classified, so the source actually reached must be named, never left null"
+    if fetch_outcome != "OBSERVED":
+        # P17-C7/P17-R1-F1: no failed or refused fetch ever reaches derive/commit -- purely
+        # ephemeral, in-memory evidence, zero Store I/O.
+        receipt = UrlSourceObservationReceipt(
+            status=status,
+            url_source_observation_envelope_id=None,
+            project_id=project_id,
+            requested_source_identity=checked_source_identity,
+            boundary=checked_boundary,
+            adapter_identity=dict(declared_identity),
+            human_authority_ref=real_human_authority_ref,
+            input_refs=(dict(real_human_authority_ref),),
+            observations={
+                "fetch_outcome": fetch_outcome,
+                "observed_content_fingerprint": None,
+                "retrieved_at": observed_at,
+            },
         )
-    if fetch_outcome in _NO_IDENTITY_OUTCOMES and raw_effective_identity is not None:
-        raise UrlBootAdapterError(
-            f"adapter.fetch() reported fetch_outcome={fetch_outcome!r} together with a non-null "
-            "effective_source_identity -- this outcome means no response was ever reached, so no "
-            "source can honestly be reported as identified"
-        )
+        return {"envelope": None, "receipt": receipt}
 
-    effective_source_identity: dict[str, Any] | None = None
-    effective_source_fingerprint: str | None = None
-    if raw_effective_identity is not None:
-        # Independent re-validation of whatever the adapter reports it actually reached
-        # (defense in depth, P17-C5 -- neither this route nor the adapter's own per-hop check
-        # is trusted to be the only place a redirect escape is caught).
-        effective_source_identity = require_valid_source_identity(raw_effective_identity)
-        require_source_within_network_scope(
-            effective_source_identity, checked_boundary["network_scope"]
-        )
-        effective_source_fingerprint = url_source_fingerprint(effective_source_identity)
-
-    response_status = raw.get("response_status")
-    if response_status is not None and not isinstance(response_status, int):
-        raise UrlBootAdapterError(
-            f"adapter.fetch()'s own response_status is unreadable: {response_status!r}"
-        )
-    if fetch_outcome in _RESPONSE_REACHED_OUTCOMES and response_status is None:
-        raise UrlBootAdapterError(
-            f"adapter.fetch() reported fetch_outcome={fetch_outcome!r} with no response_status -- "
-            "this outcome means a response was genuinely reached and classified, so its real "
-            "HTTP status must be reported, never left null"
-        )
-    if fetch_outcome == "OBSERVED" and not (
-        isinstance(response_status, int) and 200 <= response_status < 300
-    ):
-        raise UrlBootAdapterError(
-            "adapter.fetch() reported fetch_outcome='OBSERVED' with response_status="
-            f"{response_status!r} -- OBSERVED requires a genuine 2xx response status, never a "
-            "route-trusted success claim over a non-2xx or unreported status"
-        )
-    redirect_hop_count = raw.get("redirect_hop_count")
-    if not isinstance(redirect_hop_count, int) or redirect_hop_count < 0:
-        raise UrlBootAdapterError(
-            f"adapter.fetch()'s own redirect_hop_count is unreadable: {redirect_hop_count!r}"
-        )
-    if redirect_hop_count > checked_boundary["redirect_policy"]["max_redirects"]:
-        raise UrlBootAdapterError(
-            f"adapter.fetch() reported redirect_hop_count={redirect_hop_count!r} exceeding the "
-            f"Boundary's own max_redirects={checked_boundary['redirect_policy']['max_redirects']!r}"
-        )
-
-    if fetch_outcome == "OBSERVED":
-        raw_observed_fields = raw.get("observed_fields")
-        if not isinstance(raw_observed_fields, Mapping):
-            raise UrlBootAdapterError(
-                f"adapter.fetch() reported OBSERVED with no readable observed_fields: "
-                f"{raw_observed_fields!r}"
-            )
-        observed_fields: dict[str, Any] | None = _redact(
-            _project_to_permitted_fields(
-                raw_observed_fields, list(checked_boundary["permitted_fields"])
-            ),
-            list(checked_boundary.get("redaction_fields", [])),
-        )
-        observed_content_fingerprint: str | None = url_observed_content_fingerprint(observed_fields)
-    else:
-        observed_fields = None
-        observed_content_fingerprint = None
+    effective_source_identity = fetch_result["effective_source_identity"]
+    effective_source_fingerprint = url_source_fingerprint(effective_source_identity)
+    observed_fields = _redact(
+        fetch_result["observed_fields"], list(checked_boundary.get("redaction_fields", []))
+    )
+    observed_content_fingerprint = url_observed_content_fingerprint(observed_fields)
 
     envelope = derive_url_source_observation_envelope(
         project_id=project_id,
+        project_binding_ref=real_project_binding_ref,
+        boot_state_fingerprint=real_boot_state_fingerprint,
         requested_source_identity=checked_source_identity,
         requested_source_fingerprint=requested_source_fingerprint,
         effective_source_identity=effective_source_identity,
@@ -392,8 +557,9 @@ def observe_url_source(
         source_request_identity=source_request_identity,
         retrieved_at=observed_at,
         fetch_outcome=fetch_outcome,
-        response_status=response_status,
-        redirect_hop_count=redirect_hop_count,
+        response_status=fetch_result["response_status"],
+        redirect_hop_count=fetch_result["redirect_hop_count"],
+        resolution_provenance=fetch_result["resolution_provenance"],
         observed_fields=observed_fields,
         observed_content_fingerprint=observed_content_fingerprint,
         adapter_identity=dict(declared_identity),
@@ -409,12 +575,8 @@ def observe_url_source(
         authority_context=authority_context,
     )
 
-    status = URL_OUTCOME_TO_RECEIPT_STATUS[fetch_outcome]
-    if status not in RECEIPT_STATUSES:
-        raise UrlBootAdapterError(f"unrecognized receipt status derived from outcome: {status!r}")
-
     receipt = UrlSourceObservationReceipt(
-        status=status,
+        status="VERIFIED",
         url_source_observation_envelope_id=envelope["url_source_observation_envelope_id"],
         project_id=project_id,
         requested_source_identity=checked_source_identity,
@@ -423,7 +585,7 @@ def observe_url_source(
         human_authority_ref=real_human_authority_ref,
         input_refs=(dict(real_human_authority_ref),),
         observations={
-            "fetch_outcome": fetch_outcome,
+            "fetch_outcome": "OBSERVED",
             "observed_content_fingerprint": observed_content_fingerprint,
             "retrieved_at": observed_at,
         },

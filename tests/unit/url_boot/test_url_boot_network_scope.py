@@ -26,7 +26,6 @@ def _scope(*, schemes: list[str], hosts: list[str], ports: list[int]) -> dict[st
         "admitted_schemes": schemes,
         "admitted_hosts": hosts,
         "admitted_ports": ports,
-        "permit_loopback_test_hosts": False,
     }
 
 

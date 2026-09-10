@@ -8,6 +8,8 @@
     "url_source_observation_envelope_id",
     "url_source_observation_semantic_fingerprint",
     "project_id",
+    "project_binding_ref",
+    "boot_state_fingerprint",
     "requested_source_identity",
     "requested_source_fingerprint",
     "effective_source_identity",
@@ -19,6 +21,7 @@
     "fetch_outcome",
     "response_status",
     "redirect_hop_count",
+    "resolution_provenance",
     "observed_fields",
     "observed_content_fingerprint",
     "adapter_identity",
@@ -35,19 +38,17 @@
       "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
     },
     "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {"$ref": "../common/reference.schema.json"},
+    "boot_state_fingerprint": {"$ref": "../common/fingerprint.schema.json"},
     "requested_source_identity": {"$ref": "#/$defs/source_identity"},
     "requested_source_fingerprint": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
     },
-    "effective_source_identity": {
-      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/source_identity"}]
-    },
+    "effective_source_identity": {"$ref": "#/$defs/source_identity"},
     "effective_source_fingerprint": {
-      "oneOf": [
-        {"type": "null"},
-        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
-      ]
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
     },
     "boundary": {"$ref": "#/$defs/boundary"},
     "boundary_fingerprint": {
@@ -60,28 +61,19 @@
     },
     "retrieved_at": {"$ref": "../common/timestamp.schema.json"},
     "fetch_outcome": {
-      "enum": [
-        "OBSERVED",
-        "DNS_FAILURE",
-        "CONNECTION_FAILURE",
-        "TLS_FAILURE",
-        "TIMEOUT",
-        "REDIRECT_REFUSED",
-        "OVERSIZED_RESPONSE",
-        "UNSUPPORTED_MEDIA_TYPE",
-        "MALFORMED",
-        "IDENTITY_MISMATCH",
-        "BOUNDARY_REFUSED"
-      ]
+      "const": "OBSERVED"
     },
-    "response_status": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 100, "maximum": 599}]},
+    "response_status": {"type": "integer", "minimum": 200, "maximum": 299},
     "redirect_hop_count": {"type": "integer", "minimum": 0},
-    "observed_fields": {"oneOf": [{"type": "null"}, {"type": "object"}]},
+    "resolution_provenance": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/hop_resolution"},
+      "minItems": 1
+    },
+    "observed_fields": {"type": "object"},
     "observed_content_fingerprint": {
-      "oneOf": [
-        {"type": "null"},
-        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
-      ]
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
     },
     "adapter_identity": {"type": "object"},
     "human_authority_ref": {"$ref": "../common/reference.schema.json"}
@@ -97,6 +89,16 @@
         "path": {"type": "string", "minLength": 1, "maxLength": 2048},
         "query": {"oneOf": [{"type": "null"}, {"type": "string", "maxLength": 2048}]},
         "fragment": {"oneOf": [{"type": "null"}, {"type": "string", "maxLength": 2048}]}
+      },
+      "additionalProperties": false
+    },
+    "hop_resolution": {
+      "type": "object",
+      "required": ["host", "port", "resolved_address"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1, "maxLength": 253},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "resolved_address": {"type": "string", "minLength": 1, "maxLength": 45}
       },
       "additionalProperties": false
     },
@@ -118,7 +120,7 @@
         "fetch_method": {"enum": ["HTTP_GET_BOUNDED"]},
         "network_scope": {
           "type": "object",
-          "required": ["admitted_schemes", "admitted_hosts", "admitted_ports", "permit_loopback_test_hosts"],
+          "required": ["admitted_schemes", "admitted_hosts", "admitted_ports"],
           "properties": {
             "admitted_schemes": {
               "type": "array",
@@ -137,8 +139,7 @@
               "items": {"type": "integer", "minimum": 1, "maximum": 65535},
               "minItems": 1,
               "uniqueItems": true
-            },
-            "permit_loopback_test_hosts": {"type": "boolean"}
+            }
           },
           "additionalProperties": false
         },

@@ -11,7 +11,7 @@ CANONICAL_KERNEL_COUNT=1
 URL_BOOT_OWNER_COUNT=1
 PUBLIC_URL_BOOT_ENTRY_POINT_COUNT=2
 SIGNED_DEPLOYMENT_DECLARATION_CHAIN=false
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=0
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
 ```
 
 ---
@@ -34,12 +34,16 @@ The human objective this Phase serves, in the adopting authority's own terms:
 
 ```text
 an explicit, closed fetch Boundary names exactly what may be reached and what may be kept
-  → one bounded, per-hop-reauthorized HTTP GET, resolved exactly once per hop, connected to the
-    exact address that resolution returned
-    → whatever came back is classified honestly into one of eleven closed outcomes -- never
-      reinterpreted as meaningful by this layer itself
-      → the result is a canonical, committed URL Source Observation Envelope
+  → the route itself owns the entire redirect loop, one bounded single-hop transport call per
+    hop, resolved exactly once per hop and bound to its own (host, port) for that fetch,
+    connected to the exact address that resolution returned
+    → the route itself classifies whatever came back into one of eleven closed outcomes -- an
+      adapter can report only a bounded transport fact, never a content/identity verdict
+      → OBSERVED only: the result is a canonical, committed URL Source Observation Envelope,
+        binding the exact Project/Binding/Boot context it was made under
         → handed off, unchanged, to the existing Evidence owner
+      → anything else: bounded, ephemeral, non-committed evidence -- zero canonical State
+        mutation, never eligible for Evidence hand-off
 ```
 
 ---
@@ -81,9 +85,12 @@ CREDENTIAL_TRANSMISSION_PERMITTED=false
 
 Runtime's own `runtime_deployment_declaration` is a canonical, Human-Authority-signed,
 Store-committed record a target's own claimed identity must match before it is trusted. This
-package makes no equivalent claim about a URL: `IDENTITY_MISMATCH`/`BOUNDARY_REFUSED` are the
-*adapter's own* honest, per-hop transport classification, never a route-computed verdict about
-what fetched content means (`URL_BOOT_CONTRACT.md` §3.4).
+package makes no equivalent claim about a URL. `IDENTITY_MISMATCH` and every other content-level
+classification are route-derived, from an adapter's own bounded, single-hop transport facts
+alone (Structural Review Round 1, P17-R1-F2) -- never accepted as a direct assertion from the
+adapter; `BOUNDARY_REFUSED` alone remains a genuine transport-layer fact an adapter itself
+reports (an unsafe resolved address, or cross-hop resolution drift the route itself detects).
+See `URL_BOOT_CONTRACT.md` §3.4/§6.2/§6.6.
 
 This is also not a general-purpose HTTP client: one bounded method
 (`HTTP_GET_BOUNDED`), one closed content-type allowlist, one closed permitted-field projection,
@@ -107,11 +114,16 @@ route_url_observation_to_evidence  hand the receipt to the existing Evidence own
 
 ```text
 url_source_observation_envelope   The committed URL Source Observation -- the only record kind
-                                   this package produces. No Human-declared deployment-identity
-                                   record exists here (contrast Runtime); the closed fetch
-                                   Boundary is the only Human-declared input, and it is a
-                                   caller-supplied, schema-validated argument, never a
-                                   Store-resolved record of its own.
+                                   this package produces, and only ever for fetch_outcome ==
+                                   "OBSERVED" (P17-C7/P17-R1-F1: no failed or refused fetch ever
+                                   commits one). No Human-declared deployment-identity record
+                                   exists here (contrast Runtime); the closed fetch Boundary is
+                                   the only Human-declared input, and it is a caller-supplied,
+                                   schema-validated argument, never a Store-resolved record of
+                                   its own. Carries project_binding_ref/boot_state_fingerprint
+                                   (the exact Boot-observed context, P17-R1-F5) and
+                                   resolution_provenance (the admitted per-(host, port) DNS
+                                   resolution across every hop, P17-R1-F4).
 ```
 
 ### 4.3 The four identities
@@ -131,17 +143,23 @@ in both digests. There is no field a record can carry that its own identity does
 ### 4.4 The closed vocabularies
 
 ```text
-URL_FETCH_METHODS       HTTP_GET_BOUNDED
-URL_FETCH_OUTCOMES      OBSERVED, DNS_FAILURE, CONNECTION_FAILURE, TLS_FAILURE, TIMEOUT,
-                        REDIRECT_REFUSED, OVERSIZED_RESPONSE, UNSUPPORTED_MEDIA_TYPE,
-                        MALFORMED, IDENTITY_MISMATCH, BOUNDARY_REFUSED
-RECEIPT_STATUSES        VERIFIED, FAILED, UNAVAILABLE
+URL_FETCH_METHODS         HTTP_GET_BOUNDED
+URL_FETCH_OUTCOMES        OBSERVED, DNS_FAILURE, CONNECTION_FAILURE, TLS_FAILURE, TIMEOUT,
+                          REDIRECT_REFUSED, OVERSIZED_RESPONSE, UNSUPPORTED_MEDIA_TYPE,
+                          MALFORMED, IDENTITY_MISMATCH, BOUNDARY_REFUSED
+URL_HOP_TRANSPORT_OUTCOMES   DNS_FAILURE, CONNECTION_FAILURE, TLS_FAILURE, TIMEOUT,
+                          BOUNDARY_REFUSED, RESPONSE -- the strictly smaller vocabulary an
+                          adapter's own fetch_one_hop may ever report (P17-R1-F2); every other
+                          URL_FETCH_OUTCOMES member is route-derived from a genuine RESPONSE.
+RECEIPT_STATUSES          VERIFIED, FAILED, UNAVAILABLE
 ```
 
 Every `URL_FETCH_OUTCOMES` member maps to exactly one `RECEIPT_STATUSES` member
 (`URL_OUTCOME_TO_RECEIPT_STATUS`) -- the one shared classification both `route.py` and
 `evidence_handoff.py` read, so neither module can disagree with the other about what a given
-outcome means for Evidence.
+outcome means for Evidence. Only `"OBSERVED"` (status `"VERIFIED"`) ever names a committed
+Envelope; `route_url_observation_to_evidence` itself refuses any receipt whose own status is not
+`"VERIFIED"` (P17-C7/P17-R1-F1).
 
 ---
 
@@ -153,15 +171,25 @@ list.
 - No signed deployment-declaration chain exists here; a URL Source Observation attests only to
   what a bounded fetch actually returned.
 - Fetched content means nothing on its own -- no owner in this package's own call graph ever
-  passes it to `eval`, a template engine, or a shell.
-- No redirect is ever followed unbounded or unvalidated against the closed `network_scope`.
+  passes it to `eval`, a template engine, or a shell. Content classification (`IDENTITY_MISMATCH`
+  and friends) is route-derived from bounded facts, never an adapter's own assertion
+  (P17-R1-F2).
+- No redirect is ever followed unbounded or unvalidated against the closed `network_scope` --
+  the route itself re-validates every redirect target before the adapter is ever reached for it,
+  so a disallowed intermediate hop is never even called (P17-R1-F2).
 - This layer cannot mint Authority, invoke a model, execute a Change, or bypass Evidence -- it
   imports none of `authority`, `change`, `model_runtime`, or `reflow`.
 - No credentials are ever transmitted; `credentials_permitted` is schema-fixed to `false`.
 - This layer is not resistant to a hostile DNS server or a compromised certificate authority the
   caller's own environment already trusts -- what is proved is single-resolution,
-  connect-to-that-exact-address discipline and real hostname-bound TLS verification, not that
-  DNS or the CA system are themselves trustworthy inputs.
+  connect-to-that-exact-address discipline per hop, that the identical `(host, port)` never
+  resolves to two different addresses within one fetch (P17-R1-F4), and real hostname-bound TLS
+  verification -- not that DNS or the CA system are themselves trustworthy inputs.
+- A failed or refused fetch is never recorded anywhere durable; it is bounded, ephemeral,
+  in-memory evidence only, and can never be handed off as Evidence (P17-C7/P17-R1-F1).
+- No caller who only supplies `source_identity`/`boundary` *data* can ever enable a loopback
+  fetch; that allowance is a concrete adapter's own constructor argument, never reachable through
+  the public route's own data-driven surface (P17-R1-F3).
 
 ```text
 MERGE_ALLOWED=false

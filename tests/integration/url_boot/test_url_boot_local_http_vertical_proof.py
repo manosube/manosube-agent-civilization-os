@@ -9,6 +9,11 @@ genuine per-hop-reauthorized redirect follow, one genuine bounded negative
 (``UNSUPPORTED_MEDIA_TYPE``), and one genuine unreachable-port failure (``CONNECTION_FAILURE``),
 each a real network round trip over ``localhost`` through this package's own
 ``network.fetch_one_hop`` -- then hands the positive receipt off to the existing Evidence owner.
+
+Every real local target used here is loopback, so every adapter constructed in this file passes
+``permit_loopback_test_hosts=True`` explicitly -- the one, non-substitutable, test-composition-only
+place that allowance can ever be set (Structural Review Round 1, P17-R1-F3; see ``adapter.py``'s
+own module docstring).
 """
 
 from __future__ import annotations
@@ -105,7 +110,7 @@ def test_real_local_http_positive_observation_reaches_verified_evidence(
     host, port = _local_http_target
     source_identity = canonical_source_identity(f"http://{host}:{port}/status")
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
-    adapter = LocalHttpUrlSourceAdapter()
+    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
 
     outcome = observe_url_source(
         _world["store"],
@@ -120,6 +125,13 @@ def test_real_local_http_positive_observation_reaches_verified_evidence(
     assert outcome["envelope"]["fetch_outcome"] == "OBSERVED"
     assert outcome["envelope"]["observed_fields"] == {"status": "ok"}
     assert "secret" not in outcome["envelope"]["observed_fields"]
+    assert outcome["envelope"]["project_binding_ref"] == {
+        "kind": "project_binding",
+        "id": _world["project_binding_id"],
+    }
+    assert outcome["envelope"]["resolution_provenance"] == [
+        {"host": host, "port": port, "resolved_address": "127.0.0.1"}
+    ]
     assert outcome["receipt"].status == "VERIFIED"
 
     resolved = _world["store"].resolve_record(
@@ -141,6 +153,9 @@ def test_real_local_http_positive_observation_reaches_verified_evidence(
         evidence["verification_result_provenance"]["requirement_id"]
         == outcome["envelope"]["url_source_observation_envelope_id"]
     )
+    assert evidence["verification_result_provenance"]["verification_boundary"][
+        "project_binding_ref"
+    ] == {"kind": "project_binding", "id": _world["project_binding_id"]}
 
 
 def test_real_local_http_redirect_is_followed_and_reauthorized(
@@ -149,7 +164,7 @@ def test_real_local_http_redirect_is_followed_and_reauthorized(
     host, port = _local_http_target
     source_identity = canonical_source_identity(f"http://{host}:{port}/redirect")
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
-    adapter = LocalHttpUrlSourceAdapter()
+    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
 
     outcome = observe_url_source(
         _world["store"],
@@ -165,6 +180,11 @@ def test_real_local_http_redirect_is_followed_and_reauthorized(
     assert outcome["envelope"]["redirect_hop_count"] == 1
     assert outcome["envelope"]["effective_source_identity"]["path"] == "/status"
     assert outcome["envelope"]["requested_source_identity"]["path"] == "/redirect"
+    # P17-R1-F4: the identical host/port was resolved on both hops of this one fetch, and the
+    # admitted resolution is recorded exactly once, not once per hop.
+    assert outcome["envelope"]["resolution_provenance"] == [
+        {"host": host, "port": port, "resolved_address": "127.0.0.1"}
+    ]
 
 
 def test_a_redirect_to_a_host_outside_scope_is_refused_not_followed(
@@ -189,7 +209,7 @@ def test_a_redirect_to_a_host_outside_scope_is_refused_not_followed(
         host, port = server.server_address
         source_identity = canonical_source_identity(f"http://{host}:{port}/redirect")
         boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
-        adapter = LocalHttpUrlSourceAdapter()
+        adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
 
         outcome = observe_url_source(
             _world["store"],
@@ -200,8 +220,10 @@ def test_a_redirect_to_a_host_outside_scope_is_refused_not_followed(
             adapter=adapter,
             observed_at="2026-09-10T00:00:01Z",
         )
-        assert outcome["envelope"]["fetch_outcome"] == "REDIRECT_REFUSED"
+        assert outcome["envelope"] is None
+        assert outcome["receipt"].observations["fetch_outcome"] == "REDIRECT_REFUSED"
         assert outcome["receipt"].status == "FAILED"
+        assert outcome["receipt"].url_source_observation_envelope_id is None
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -214,7 +236,7 @@ def test_real_local_http_wrong_content_type_is_a_genuine_unsupported_media_type(
     host, port = _local_http_target
     source_identity = canonical_source_identity(f"http://{host}:{port}/text")
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port])
-    adapter = LocalHttpUrlSourceAdapter()
+    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
 
     outcome = observe_url_source(
         _world["store"],
@@ -225,8 +247,8 @@ def test_real_local_http_wrong_content_type_is_a_genuine_unsupported_media_type(
         adapter=adapter,
         observed_at="2026-09-10T00:00:01Z",
     )
-    assert outcome["envelope"]["fetch_outcome"] == "UNSUPPORTED_MEDIA_TYPE"
-    assert outcome["envelope"]["observed_fields"] is None
+    assert outcome["envelope"] is None
+    assert outcome["receipt"].observations["fetch_outcome"] == "UNSUPPORTED_MEDIA_TYPE"
     assert outcome["receipt"].status == "FAILED"
 
 
@@ -236,7 +258,7 @@ def test_real_local_http_oversized_response_is_refused_not_truncated_and_kept(
     host, port = _local_http_target
     source_identity = canonical_source_identity(f"http://{host}:{port}/oversized")
     boundary = boundary_for(admitted_hosts=[host], admitted_ports=[port], max_response_bytes=64)
-    adapter = LocalHttpUrlSourceAdapter()
+    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
 
     outcome = observe_url_source(
         _world["store"],
@@ -247,8 +269,8 @@ def test_real_local_http_oversized_response_is_refused_not_truncated_and_kept(
         adapter=adapter,
         observed_at="2026-09-10T00:00:01Z",
     )
-    assert outcome["envelope"]["fetch_outcome"] == "OVERSIZED_RESPONSE"
-    assert outcome["envelope"]["observed_fields"] is None
+    assert outcome["envelope"] is None
+    assert outcome["receipt"].observations["fetch_outcome"] == "OVERSIZED_RESPONSE"
     assert outcome["receipt"].status == "FAILED"
 
 
@@ -258,7 +280,7 @@ def test_real_local_http_unreachable_port_is_connection_failure(_world: dict[str
 
     source_identity = canonical_source_identity("http://127.0.0.1:1/status")
     boundary = boundary_for(admitted_hosts=["127.0.0.1"], admitted_ports=[1], timeout_seconds=2)
-    adapter = LocalHttpUrlSourceAdapter()
+    adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
 
     outcome = observe_url_source(
         _world["store"],
@@ -269,7 +291,8 @@ def test_real_local_http_unreachable_port_is_connection_failure(_world: dict[str
         adapter=adapter,
         observed_at="2026-09-10T00:00:01Z",
     )
-    assert outcome["envelope"]["fetch_outcome"] in ("CONNECTION_FAILURE", "TIMEOUT")
+    assert outcome["envelope"] is None
+    assert outcome["receipt"].observations["fetch_outcome"] in ("CONNECTION_FAILURE", "TIMEOUT")
     assert outcome["receipt"].status == "UNAVAILABLE"
 
 
@@ -304,7 +327,7 @@ def test_real_local_http_host_header_carries_the_non_default_port(
         capture_host, capture_port = server.server_address
         source_identity = canonical_source_identity(f"http://{capture_host}:{capture_port}/status")
         boundary = boundary_for(admitted_hosts=[capture_host], admitted_ports=[capture_port])
-        adapter = LocalHttpUrlSourceAdapter()
+        adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
 
         outcome = observe_url_source(
             _world["store"],
@@ -423,7 +446,7 @@ def test_real_local_https_round_trip_succeeds_with_exactly_one_tls_wrap(
         boundary = boundary_for(
             admitted_schemes=["https"], admitted_hosts=[host], admitted_ports=[port]
         )
-        adapter = LocalHttpUrlSourceAdapter()
+        adapter = LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)
 
         outcome = observe_url_source(
             _world["store"],

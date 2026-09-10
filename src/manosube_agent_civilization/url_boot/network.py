@@ -191,7 +191,8 @@ def fetch_one_hop(
     exactly once and connecting directly to the resolved address.
 
     Returns ``{"status": int, "headers": dict[str, str], "body": bytes, "redirect_location":
-    str | None}`` on any completed HTTP response (including a redirect response, which this
+    str | None, "resolved_address": str}`` on any completed HTTP response (including a redirect
+    response, which this
     function never follows itself -- following is the caller's own per-hop-reauthorized
     decision). Raises :class:`socket.gaierror` for DNS failure, :class:`TimeoutError` for a
     timed-out connection/read, :class:`OSError` for a lower-level connection failure,
@@ -251,6 +252,7 @@ def fetch_one_hop(
             "body": body,
             "oversized": oversized,
             "redirect_location": redirect_location,
+            "resolved_address": address,
         }
     finally:
         connection.close()

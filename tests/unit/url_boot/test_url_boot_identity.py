@@ -36,7 +36,6 @@ _BOUNDARY: dict[str, Any] = {
         "admitted_schemes": ["https"],
         "admitted_hosts": ["example.test"],
         "admitted_ports": [443],
-        "permit_loopback_test_hosts": False,
     },
     "redirect_policy": {"max_redirects": 3},
     "timeout_seconds": 5,
@@ -51,6 +50,8 @@ _REQUESTED_FINGERPRINT = url_source_fingerprint(_SOURCE_IDENTITY)
 _BOUNDARY_FINGERPRINT = url_boundary_fingerprint(_BOUNDARY)
 _ENVELOPE: dict[str, Any] = {
     "project_id": "PRJ-0001",
+    "project_binding_ref": {"kind": "project_binding", "id": "PB-0001"},
+    "boot_state_fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "0" * 64},
     "requested_source_identity": _SOURCE_IDENTITY,
     "requested_source_fingerprint": _REQUESTED_FINGERPRINT,
     "effective_source_identity": _SOURCE_IDENTITY,
@@ -64,6 +65,9 @@ _ENVELOPE: dict[str, Any] = {
     "fetch_outcome": "OBSERVED",
     "response_status": 200,
     "redirect_hop_count": 0,
+    "resolution_provenance": [
+        {"host": "example.test", "port": 443, "resolved_address": "203.0.113.10"}
+    ],
     "observed_fields": {"status": "ok"},
     "observed_content_fingerprint": url_observed_content_fingerprint({"status": "ok"}),
     "adapter_identity": {"adapter": "fake_url_source_adapter", "version": "0.1"},
@@ -173,16 +177,24 @@ def test_envelope_identity_is_sensitive_to_every_semantic_field() -> None:
     baseline_id = url_source_observation_envelope_id(deepcopy(_ENVELOPE))
     baseline_fp = url_source_observation_envelope_semantic_fingerprint(deepcopy(_ENVELOPE))
 
+    other_source_identity = dict(_SOURCE_IDENTITY, path="/other")
     other_content_fingerprint = url_observed_content_fingerprint({"status": "down"})
     mutations: dict[str, Any] = {
         "project_id": "PRJ-OTHER",
-        "effective_source_identity": None,
-        "effective_source_fingerprint": None,
+        "project_binding_ref": {"kind": "project_binding", "id": "PB-OTHER"},
+        "boot_state_fingerprint": {"profile": "MANOSUBE-STATE-SHA256-0.1", "digest": "1" * 64},
+        "effective_source_identity": other_source_identity,
+        "effective_source_fingerprint": url_source_fingerprint(other_source_identity),
         "source_request_identity": "URL-SOURCE-OBSERVATION-REQUEST-" + "0" * 64,
         "retrieved_at": "2026-09-10T00:00:02Z",
+        # identity.py itself validates no enum -- a pure content-address function is sensitive
+        # to any field content, including a value the engine/schema would themselves refuse.
         "fetch_outcome": "DNS_FAILURE",
-        "response_status": None,
+        "response_status": 201,
         "redirect_hop_count": 1,
+        "resolution_provenance": [
+            {"host": "example.test", "port": 443, "resolved_address": "203.0.113.99"}
+        ],
         "observed_fields": {"status": "down"},
         "observed_content_fingerprint": other_content_fingerprint,
         "adapter_identity": {"adapter": "other_adapter", "version": "0.1"},

@@ -51,7 +51,6 @@ def boundary_for(
     admitted_schemes: list[str] | None = None,
     admitted_hosts: list[str] | None = None,
     admitted_ports: list[int] | None = None,
-    permit_loopback_test_hosts: bool = True,
     max_redirects: int = 3,
     timeout_seconds: int = 5,
     max_response_bytes: int = 65536,
@@ -63,7 +62,13 @@ def boundary_for(
     expected_field: str | None = None,
     expected_value: Any = None,
 ) -> dict[str, Any]:
-    """One real, schema-valid, closed fetch Boundary."""
+    """One real, schema-valid, closed fetch Boundary.
+
+    Carries no ``permit_loopback_test_hosts`` field at all (Structural Review Round 1,
+    P17-R1-F3) -- that allowance is set once, on the concrete adapter's own constructor
+    (``LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)``), never through Boundary
+    data.
+    """
 
     boundary: dict[str, Any] = {
         "fetch_method": "HTTP_GET_BOUNDED",
@@ -73,7 +78,6 @@ def boundary_for(
             ),
             "admitted_hosts": list(admitted_hosts if admitted_hosts is not None else ["127.0.0.1"]),
             "admitted_ports": list(admitted_ports if admitted_ports is not None else [80]),
-            "permit_loopback_test_hosts": permit_loopback_test_hosts,
         },
         "redirect_policy": {"max_redirects": max_redirects},
         "timeout_seconds": timeout_seconds,

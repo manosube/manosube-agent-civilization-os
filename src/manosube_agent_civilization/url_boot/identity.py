@@ -42,6 +42,8 @@ from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 #: computed over -- the complete record minus the two digest fields themselves.
 ENVELOPE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "project_id",
+    "project_binding_ref",
+    "boot_state_fingerprint",
     "requested_source_identity",
     "requested_source_fingerprint",
     "effective_source_identity",
@@ -53,6 +55,7 @@ ENVELOPE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "fetch_outcome",
     "response_status",
     "redirect_hop_count",
+    "resolution_provenance",
     "observed_fields",
     "observed_content_fingerprint",
     "adapter_identity",

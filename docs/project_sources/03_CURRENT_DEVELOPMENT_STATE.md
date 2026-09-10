@@ -1979,3 +1979,96 @@ ISSUE_CLOSE_ALLOWED=false
 PHASE_17_COMPLETE=false
 PHASE_18_ALLOWED=false
 ```
+
+---
+
+# 28. Phase 17 Structural Review Round 1 bounded addendum (Issue #69, PR #71) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション27の記録以降、構造参謀によるStructural Review Round 1
+（`P17-R1-F1`〜`P17-R1-F6`）とSHUKOUによるその採択（Issue #69コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/69#issuecomment-5615258933`、
+`ADOPTION_ID=ADOPT_P17_R1_ROUTE_OWNED_FETCH_SAFETY_AND_EXACT_BOOT_PROVENANCE`）を独立GitHub API
+再観測で確認した上で、この既存PR #71ブランチ上に実装した是正内容を記録する。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション27自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+CURRENT_PHASE=17_READ_ONLY_URL_BOOT_AND_UNTRUSTED_CONTENT_BOUNDARY
+CURRENT_PHASE_ISSUE=69
+CURRENT_PR=71
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#69
+TARGET_PR=#71
+BASE_SHA=aee9b669f8bf15626fe162f196cf12338a4ff0da
+BRANCH=agent/issue-69-phase17-read-only-url-boot
+REVIEWED_HEAD=82a008aa406d60cc9e9b0027b8e1e1fd4046c12f
+ADOPTION_ID=ADOPT_P17_R1_ROUTE_OWNED_FETCH_SAFETY_AND_EXACT_BOOT_PROVENANCE
+ADOPTED_FINDINGS=P17-R1-F1,P17-R1-F2,P17-R1-F3,P17-R1-F4,P17-R1-F5,P17-R1-F6
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_71_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED_AWAITING_ROUND_2
+```
+
+6件の是正内容の要約：
+
+```text
+P17-R1-F1  失敗/拒否されたfetchは、もはや一切canonical Stateを変更しない。engine.py自身の
+           derive_url_source_observation_envelopeが、fetch_outcome != "OBSERVED"での呼び出し
+           自体を拒否するようになった。route.pyはOBSERVED以外の10種の結果すべてについて、
+           envelope=None・url_source_observation_envelope_id=Noneのephemeralなreceiptのみを
+           返し、commit_state_transitionを一切呼ばない。
+
+P17-R1-F2  redirect/content/identityの分類は、もはや置換可能なadapterからの主張を信頼しない。
+           UrlSourceAdapter Protocolは単一hopのbounded transport primitive
+           （fetch_one_hop、URL_HOP_TRANSPORT_OUTCOMESの6要素のみ報告可能）のみを公開し、
+           redirectループ全体・content-type/size/JSON/IDENTITY_MISMATCH判定はすべてroute.py
+           自身が、adapterのbounded per-hop factsのみから行う。隠されたscope外の中間hopは
+           route自身のnetwork_scope再検証により一度も到達されない。
+
+P17-R1-F3  loopback test allowanceは、もはやcaller供給のBoundaryデータでは設定不可能。
+           01_SCHEMA/url_boot/url_source_observation_envelope.schema.jsonのnetwork_scopeから
+           permit_loopback_test_hostsフィールド自体を削除した（additionalProperties:false）。
+           設定できる唯一の場所はLocalHttpUrlSourceAdapter自身のconstructor引数
+           （permit_loopback_test_hosts、defaultはFalse）であり、request-facing callerが
+           source_identity/boundaryデータのみで到達できる経路は存在しない。
+
+P17-R1-F4  同一fetch内でのcross-hop DNS解決driftを検出・拒否する。route.py自身が各hopの
+           resolved addressを(host, port)ごとに束縛し、同一(host, port)が別のアドレスに
+           解決された場合はBOUNDARY_REFUSEDとして拒否する。成功した観測は
+           resolution_provenance（このfetchで採用された(host, port, resolved_address)の
+           順序付き記録）をEnvelopeに保持する。
+
+P17-R1-F5  成功して委託されたEnvelopeは、正確なProject/Binding/Boot contextを拘束する。
+           project_binding_ref（Boot時に検証されたProject Binding参照）と
+           boot_state_fingerprint（Boot観測時点のState fingerprint）を新たにEnvelopeへ追加し、
+           両方ともENVELOPE_SEMANTIC_FIELDSに含め、identity-sensitiveとした。
+           evidence_handoff.pyは既存の三者一致・semantic fingerprint再計算チェックにより、
+           これら2フィールドも自動的にtamper検出対象となる。
+
+P17-R1-F6  本節自身が、この是正の対象である。
+```
+
+追加でCodex自動レビューにより発見・修正された3件（前回commit `82a008a`で対応済み、PR #71の
+review threadで解決記録済み）も含め、修正はPR #71の唯一のブランチ上、新規PR無しで行われた。
+
+既存の`State`・`Difference`・`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・
+`Model Runtime`のいずれのownerも置換・変更しない。schema変更（`network_scope`から
+`permit_loopback_test_hosts`削除、`project_binding_ref`/`boot_state_fingerprint`/
+`resolution_provenance`追加、`fetch_outcome`を`"OBSERVED"`固定へ縮小）は
+`01_SCHEMA/url_boot/url_source_observation_envelope.schema.json` 1件のみで、schema総数は
+67のまま変わらない。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_17_COMPLETE=false
+PHASE_18_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```

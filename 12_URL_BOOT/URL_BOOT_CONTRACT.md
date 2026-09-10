@@ -13,7 +13,10 @@ SIGNED_DEPLOYMENT_DECLARATION_CHAIN=false
 DNS_REBINDING_PROTECTION=true
 PER_HOP_REDIRECT_REAUTHORIZATION=true
 CREDENTIAL_TRANSMISSION_PERMITTED=false
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=0
+ROUTE_OWNED_REDIRECT_AND_CONTENT_CLASSIFICATION=true
+CROSS_HOP_RESOLUTION_DRIFT_BINDING=true
+LOOPBACK_TEST_ALLOWANCE_DATA_DRIVEN=false
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
 ```
 
 ## 1. Position
@@ -48,7 +51,6 @@ result = observe_url_source(
             "admitted_schemes": ["https"],
             "admitted_hosts": ["example.org"],
             "admitted_ports": [443],
-            "permit_loopback_test_hosts": False,
         },
         "redirect_policy": {"max_redirects": 3},
         "timeout_seconds": 5,
@@ -62,19 +64,30 @@ result = observe_url_source(
     adapter=my_url_source_adapter,  # the one replaceable boundary
     observed_at="2026-09-10T00:00:01Z",
 )
-result["envelope"]  # the canonical, committed URL Source Observation Envelope
-result["receipt"]   # UrlSourceObservationReceipt (ephemeral, never committed)
+result["envelope"]  # the canonical, committed Envelope, or None (P17-C7/P17-R1-F1: only ever
+                     # non-None when fetch_outcome == "OBSERVED" -- see §5)
+result["receipt"]   # UrlSourceObservationReceipt (ephemeral, never committed itself)
 
 evidence = route_url_observation_to_evidence(store, result["receipt"], project_id, request)
 ```
 
+`network_scope` carries no `permit_loopback_test_hosts` field (Structural Review Round 1,
+P17-R1-F3, §6.5): that allowance is a concrete adapter's own constructor argument
+(`LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)`), never Boundary data a
+request-facing caller could supply.
+
 ## 3. Frozen semantic decisions
 
-1. **Read-only, no create-once-reuse-after side effect.** Unlike Projection, this layer derives
-   no intent/materialize-attempt claim pair -- observing the identical source under the
-   identical Boundary twice is two independent facts about the world at two different instants,
-   not a duplicate external artifact. `observe_url_source` commits exactly one new Envelope per
-   call.
+1. **Read-only, no create-once-reuse-after side effect -- and no State mutation at all unless the
+   fetch genuinely succeeded (Structural Review Round 1, P17-R1-F1).** Unlike Projection, this
+   layer derives no intent/materialize-attempt claim pair -- observing the identical source under
+   the identical Boundary twice is two independent facts about the world at two different
+   instants, not a duplicate external artifact. `observe_url_source` commits exactly one new
+   Envelope **only** when `fetch_outcome == "OBSERVED"`; every other outcome (all ten typed
+   failures) returns a bounded, purely ephemeral `UrlSourceObservationReceipt`
+   (`url_source_observation_envelope_id=None`) with zero canonical State mutation and zero Store
+   I/O of any kind -- `engine.py`'s own deriver refuses to be called for any other outcome, so
+   this holds structurally, not merely by the route's own discipline (§5, §6.5).
 2. **Deliberately simpler authority model than Runtime (disclosed, not a gap).** Runtime
    additionally resolves, authority-binds, and cryptographically verifies a Store-committed
    `runtime_deployment_declaration` before trusting a target's own claimed identity, because a
@@ -89,12 +102,20 @@ evidence = route_url_observation_to_evidence(store, result["receipt"], project_i
    (`PER_HOP_REDIRECT_REAUTHORIZATION=true`) and closes the DNS-rebinding time-of-check/
    time-of-use window (`DNS_REBINDING_PROTECTION=true`), which requires real, bounded DNS
    resolution -- something Phase 15 explicitly declined to do.
-4. **No route-level semantic reinterpretation of fetched content.** Unlike Runtime's own route,
-   which independently computes `NEGATIVE`/`IDENTITY_MISMATCH` from a transport-level report,
-   this route trusts the adapter's own honest, per-hop-reauthorized classification into one of
-   the eleven closed `URL_FETCH_OUTCOMES` -- because P17-C4 forbids this layer from ever treating
-   fetched *content* as meaningful on its own, and a route-level "this content looks wrong"
-   judgment would be exactly that.
+4. **Route-owned redirect/content/identity classification (Structural Review Round 1,
+   P17-R1-F2, superseding this delivery's own first design).** This package's first delivery gave
+   the adapter one `fetch()` method that followed an entire redirect chain internally and
+   reported only a final identity/hop-count/outcome, trusting that report directly -- a
+   conforming-looking but dishonest adapter could therefore follow a disallowed intermediate hop,
+   fabricate a hop count, or simply assert `IDENTITY_MISMATCH`/`BOUNDARY_REFUSED` outright, with
+   no way for the route to catch it. The replaceable `UrlSourceAdapter` now exposes exactly one
+   bounded, single-hop transport primitive (`fetch_one_hop`); the route itself owns the entire
+   redirect loop, re-authorizing every redirect target against `network_scope` **before** ever
+   calling the adapter for it, and performs every content-type/size/JSON/`IDENTITY_MISMATCH`
+   classification itself, from the adapter's bounded per-hop facts alone (§5, §6.5). This is not
+   a relaxation of P17-C4's own "fetched content is never meaningful on its own" rule -- content
+   classification still never mints Authority, invokes a model, or executes a Change; it is only
+   the *owner* of that classification that moved, from a replaceable adapter to this route.
 5. **Every reference is resolved, schema-validated, identity-recomputed and re-bound on every
    call.** A Store-resolved record is never trusted on shape alone, and never trusted at all
    until its own recomputed identity and semantic fingerprint equal its own declared values --
@@ -131,7 +152,12 @@ url_boot/errors.py            the typed refusal vocabulary
 
 ```text
 url_source_observation_envelope   The committed URL Source Observation -- the only record kind
-                                   this package produces.
+                                   this package produces, and only ever for fetch_outcome ==
+                                   "OBSERVED" (P17-C7/P17-R1-F1). Carries project_binding_ref and
+                                   boot_state_fingerprint (the exact Boot-observed context,
+                                   P17-R1-F5) and resolution_provenance (the ordered, per-
+                                   (host, port) DNS resolution this route admitted across every
+                                   hop, P17-R1-F4) -- all identity-sensitive.
 ```
 
 There is no Human-declared deployment-identity record in this package (contrast §3.2): the
@@ -144,45 +170,56 @@ validated argument, never a Store-resolved record of its own.
 complete schema validation of the declared source identity and closed fetch Boundary
 → network-scope check on the requested source -- zero-call, before Boot or any adapter
 → real-instant time-window check -- refuses before any adapter call
-→ real Project/Human Authority (Boot re-verification)
+→ real Project/Human Authority (Boot re-verification) -- captures project_binding_ref and
+  boot_state_fingerprint, the exact Boot-observed context (P17-R1-F5)
 → explicit source identity, fingerprinted (never trusted from a caller)
 → closed fetch Boundary, fingerprinted (never trusted from a caller)
 → deterministic source_request_identity (source + Boundary + issued_at) -- computable before
   the adapter is ever called
 → authority-freshness re-check -- refuses before the adapter
-→ replaceable URL Source Adapter -- one bounded, per-hop-reauthorized transport call, handed
-  deep-frozen copies it cannot mutate
-→ independent field-boundary projection (any field outside permitted_fields is a refusal,
-  never silently kept), redaction, and a defense-in-depth network-scope re-check of whatever
-  effective source identity the adapter reports it actually reached
-→ canonical URL Source Observation Envelope
-→ authority-freshness re-check on every commit attempt
-→ existing canonical persistence boundary (commit_state_transition)
-→ bounded URL Source Observation Receipt → existing Evidence owner
+→ route-owned, per-hop-reauthorized redirect loop (P17-R1-F2/F4): one bounded, single-hop
+  UrlSourceAdapter.fetch_one_hop call per hop, handed deep-frozen copies it cannot mutate;
+  before following a redirect the route itself re-validates the target's hostname against
+  network_scope; each hop's own resolved address is bound to its own (host, port) for the
+  lifetime of this one fetch, and a later hop resolving the identical (host, port) to a
+  different address refuses as BOUNDARY_REFUSED; every content-type/size/JSON/IDENTITY_MISMATCH
+  classification is performed here, from the adapter's bounded per-hop facts alone
+→ fetch_outcome != "OBSERVED": bounded, ephemeral, non-committed URL Source Observation
+  Receipt -- zero State mutation, zero commit, zero Evidence-handoff eligibility (P17-C7/
+  P17-R1-F1)
+→ fetch_outcome == "OBSERVED" only: field-boundary projection + redaction, canonical URL Source
+  Observation Envelope (binding project_binding_ref/boot_state_fingerprint/
+  resolution_provenance), authority-freshness re-check on every commit attempt, existing
+  canonical persistence boundary (commit_state_transition), VERIFIED Receipt → existing
+  Evidence owner
 ```
 
 ### 5.1 The resolve-once-connect-to-that-address technique (P17-C5)
 
 `network.fetch_one_hop` resolves a hop's host exactly once through a single
 `socket.getaddrinfo` call, classifies the resolved address (refusing loopback/private/
-link-local/multicast/reserved/unspecified unless the Boundary's own
-`permit_loopback_test_hosts` explicitly admits loopback for a controlled local test target),
-and connects a raw `http.client.HTTPConnection`/`HTTPSConnection` **directly to that resolved
-address** -- never re-resolving the hostname at connection time, which is exactly the
-resolve-then-reconnect race a naive `urllib`-based fetcher would leave open. The original
-hostname is still sent as the `Host` header and, over HTTPS, as the TLS SNI/certificate
-verification name.
+link-local/multicast/reserved/unspecified unless the concrete adapter's own constructor
+explicitly admits loopback for a controlled local test target -- never Boundary data, §6.5),
+and connects a raw `http.client.HTTPConnection` **directly to that resolved address**, wrapping
+TLS exactly once, against the real hostname, when the scheme is `https` -- never re-resolving
+the hostname at connection time, which is exactly the resolve-then-reconnect race a naive
+`urllib`-based fetcher would leave open. The original hostname is still sent as the `Host`
+header (including a non-default port) and, over HTTPS, as the TLS SNI/certificate verification
+name.
 
-### 5.2 Per-hop redirect reauthorization (P17-C5)
+### 5.2 Route-owned per-hop redirect reauthorization and cross-hop resolution-drift binding (P17-C5, Structural Review Round 1 P17-R1-F2/F4)
 
-`LocalHttpUrlSourceAdapter` follows a redirect only after re-validating its own target's
-hostname against the Boundary's own `network_scope` (`network.canonical_source_identity` +
+The route -- never the replaceable adapter -- owns the entire redirect loop. Before calling
+`fetch_one_hop` for a redirect target, the route itself re-validates that target's hostname
+against the Boundary's own `network_scope` (`network.canonical_source_identity` +
 `network.require_source_within_network_scope`), bounded at
-`boundary.redirect_policy.max_redirects` hops. A redirect naming a host outside scope, or one
-exceeding the hop bound, is reported as `REDIRECT_REFUSED` -- never silently followed and never
-raised as an uncaught exception. The route itself additionally re-checks whatever *effective*
-source identity the adapter reports it actually reached (defense in depth, neither site trusts
-the other to be the only one).
+`boundary.redirect_policy.max_redirects` hops; a redirect naming a host outside scope, or one
+exceeding the hop bound, refuses as `REDIRECT_REFUSED` -- never silently followed, and the
+disallowed hop's own `fetch_one_hop` is never even called (§6.5). The route additionally binds
+each hop's own resolved address to its own `(host, port)` for the lifetime of one fetch: a
+same-host redirect whose second hop resolves to a genuinely different public address than its
+first refuses as `BOUNDARY_REFUSED` (§6.6) -- resolve-once-connect-to-that-address alone closes
+only the single-hop DNS time-of-check/time-of-use window; this closes the cross-hop one.
 
 ## 6. Disclosed judgment calls
 
@@ -198,34 +235,91 @@ only to classify the exception types `network.fetch_one_hop` itself lets escape 
 socket and wraps no TLS itself, proved by `tests/contract/url_boot/
 test_url_boot_static_conformance.py`.
 
-### 6.2 The closed eleven-member outcome vocabulary (P17-C7)
+### 6.2 The closed eleven-member outcome vocabulary (P17-C7), and the smaller six-member per-hop vocabulary beneath it (P17-R1-F2)
 
 `URL_FETCH_OUTCOMES` was chosen to map one-to-one onto every outcome the adopted contract text
 names by name: `OBSERVED`, `DNS_FAILURE`, `CONNECTION_FAILURE`, `TLS_FAILURE`, `TIMEOUT`,
 `REDIRECT_REFUSED`, `OVERSIZED_RESPONSE`, `UNSUPPORTED_MEDIA_TYPE`, `MALFORMED`,
 `IDENTITY_MISMATCH`, `BOUNDARY_REFUSED`. A complete, readable HTTP response whose status falls
-outside 2xx/3xx has no member of its own in that list; `LocalHttpUrlSourceAdapter` reports it as
+outside 2xx/3xx has no member of its own in that list; the route itself classifies it as
 `MALFORMED` (the response failed to honestly answer the bounded question asked), carrying the
 real `response_status` alongside it so nothing about the real status code is lost. This is a
 disclosed narrowing, not a silent one.
 
-### 6.3 `human_authority_ref`, not a fabricated `project_binding_ref`, is the Evidence target
+Since Structural Review Round 1, this eleven-member vocabulary is no longer what an adapter
+itself ever reports. `URL_HOP_TRANSPORT_OUTCOMES` -- `DNS_FAILURE`, `CONNECTION_FAILURE`,
+`TLS_FAILURE`, `TIMEOUT`, `BOUNDARY_REFUSED`, `RESPONSE` -- is the complete, closed vocabulary
+`UrlSourceAdapter.fetch_one_hop` may return. `REDIRECT_REFUSED`, `OVERSIZED_RESPONSE`,
+`UNSUPPORTED_MEDIA_TYPE`, `MALFORMED`, `IDENTITY_MISMATCH`, and `OBSERVED` are all
+route-*derived* classifications of a genuine `RESPONSE`; an adapter naming one of them directly
+in its own report is a malformed report (`UrlBootAdapterError`), never a shortcut.
 
-Runtime's own `target_identity` carries a `project_binding_ref` field of its own, which its
-Evidence hand-off uses as `target_refs`/`input_refs`. This package's `source_identity` is a
-generic URL decomposition (scheme/host/port/path/query/fragment) with no such field, and the
-committed Envelope itself carries no `project_binding_ref` either -- so `evidence_handoff.py`
-uses `human_authority_ref`, the one existing-owner reference the Envelope actually stores,
-mirroring the identical "no separate canonical Difference/Change/Evidence subject" judgment call
-Runtime's own hand-off already makes for its own target's owning Binding.
+### 6.3 `project_binding_ref` and `human_authority_ref` are both the Evidence target's identity (superseded, Structural Review Round 1 P17-R1-F5)
 
-### 6.4 Redaction, then field-boundary projection, both before any fingerprint
+This delivery's first version disclosed that `source_identity` carries no `project_binding_ref`
+field the way Runtime's own `target_identity` does, and used `human_authority_ref` alone as the
+Evidence hand-off's `target_refs`/`input_refs`. Structural Review Round 1 found this
+insufficient on its own: two different Boot contexts sharing the same Human Authority produced
+indistinguishable provenance. The committed Envelope now also carries `project_binding_ref` and
+`boot_state_fingerprint` -- the exact Project Binding identity and Boot-observed State
+fingerprint this call's own Boot restored, both fully identity-sensitive
+(`ENVELOPE_SEMANTIC_FIELDS`) -- and `evidence_handoff.py` exposes both inside the constructed
+`verification_result_provenance.verification_boundary`. `human_authority_ref` remains the one
+reference actually placed in `target_refs`/`input_refs` (§6.3's own original judgment call still
+holds for *that* field: a URL Source Observation has no separate canonical Difference/Change/
+Evidence subject the way a Projection does); `project_binding_ref`/`boot_state_fingerprint` are
+the additional, identity-sensitive exact-context binding P17-R1-F5 requires, integrity-checked
+by the identical resolve-and-recompute discipline every other Envelope field already relies on
+(§3.5) -- there is no second, separate check to add.
 
-`_project_to_permitted_fields` runs before `_redact` in `route.py`, and both run before
-`observed_content_fingerprint` is ever computed -- the identical order Runtime's own P15-R1-F3
-correction established. A field the Boundary never permitted at all is a refusal
-(`UrlBootAdapterError`), never silently dropped; a field the Boundary marked for redaction is
-replaced with `"<REDACTED>"` before it is ever hashed or persisted.
+### 6.4 Redaction, bounded to permitted_fields, before any fingerprint
+
+`_classify_terminal_response` in `route.py` builds `observed_fields` directly bounded to
+`boundary.permitted_fields` while parsing a genuinely reached response's own JSON body -- a
+field the response carries that `permitted_fields` never named is never even placed in the
+dict, by construction, rather than placed and then refused. `_redact` then runs over that
+already-bounded projection before `observed_content_fingerprint` is ever computed -- the
+identical "bound, then redact, then fingerprint" order Runtime's own P15-R1-F3 correction
+established, applied here directly at the one place (the route's own response classification)
+that now builds `observed_fields` at all.
+
+### 6.5 The loopback test allowance is a Python composition-time decision, never Boundary data (Structural Review Round 1, P17-R1-F3)
+
+This delivery's first version read `permit_loopback_test_hosts` out of the caller-supplied,
+request-facing `boundary` data itself. That field no longer exists anywhere in the closed
+Boundary schema (`network_scope`'s own `additionalProperties: false` refuses a caller who still
+tries). The one place this allowance can be set is a concrete adapter's own constructor --
+`LocalHttpUrlSourceAdapter(permit_loopback_test_hosts=True)` -- a Python call only
+test-composition code ever makes, never something reachable from `source_identity`/`boundary`
+request data, and never inspected or branched on by the route itself (no `isinstance` check, no
+sentinel value crossing `observe_url_source`'s own public surface). Choosing which adapter
+object to construct at all is already, in every existing package of this shape, a composition-
+time decision no request-facing caller who only ever supplies data can reach or substitute; this
+is the identical discipline, applied to one adapter-internal flag rather than to swapping the
+whole adapter.
+
+### 6.6 Route-owned redirect classification and cross-hop resolution-drift binding (Structural Review Round 1, P17-R1-F2/F4)
+
+See §5.2 for the mechanism. The judgment call worth stating explicitly: this package's first
+delivery trusted a replaceable adapter's own report of the *final* identity/hop-count/outcome
+after it had already followed an entire redirect chain internally -- a conforming-looking but
+dishonest adapter could follow a disallowed intermediate hop, fabricate a hop count, or assert
+`IDENTITY_MISMATCH`/`BOUNDARY_REFUSED` directly, with nothing left for the route to check. Moving
+the redirect loop, per-hop resolution-drift binding, and all content classification into the
+route itself closes this by construction, not merely by adding more checks against the old
+design: there is no field left in an adapter's own single-hop report through which a hidden hop,
+a fabricated count, or an asserted classification could ever reach this route.
+
+### 6.7 Zero canonical State mutation for a non-`OBSERVED` outcome is structural, not merely disciplined (Structural Review Round 1, P17-R1-F1)
+
+This delivery's first version derived and committed an Envelope for every one of the eleven
+outcomes, including every typed failure -- directly contradicting P17-C7's own "no failed or
+refused fetch may mutate canonical State." `engine.py`'s own
+`derive_url_source_observation_envelope` now refuses, itself, to be called for any
+`fetch_outcome` other than `"OBSERVED"` (`UrlBootRequirementError`); `route.py` never calls it,
+or `_commit_envelope`, for any other outcome. The invariant therefore holds even if some future
+edit to `route.py` forgot its own discipline -- it is enforced at the one function that would
+otherwise silently accept a caller's claim.
 
 ## 7. Required proof layers
 
@@ -246,19 +340,31 @@ V5  Phase 16 continuity + static    tests/integration/url_boot/test_url_boot_ker
   they all compose into -- deterministic and collision-sensitive to every one of its own
   semantic fields, with a harness test pinning each projection to the real record body.
 - **V2** proves all eleven `URL_FETCH_OUTCOMES` are reachable end to end through the real route
-  and commit correctly, that the route fails closed on a malformed/out-of-vocabulary adapter
-  report and on a field the Boundary never permitted, and that a redirect-hop count exceeding
-  the Boundary's own bound is refused.
-- **V3** proves at least one genuine positive (`OBSERVED`), one genuine per-hop-reauthorized
-  redirect follow, one genuine redirect *escape refusal*, one genuine `UNSUPPORTED_MEDIA_TYPE`,
-  one genuine `OVERSIZED_RESPONSE`, and one genuine `CONNECTION_FAILURE` -- each a real network
-  round trip over `127.0.0.1` through this package's own `network.fetch_one_hop` (no VPS, no
-  cloud target) -- then hands the positive receipt off to the existing Evidence owner.
+  and only `OBSERVED` commits (every other outcome returns `envelope=None` and an
+  `envelope_id=None` receipt, P17-R1-F1), that the route fails closed on a malformed/
+  out-of-vocabulary single-hop adapter report and on an adapter with no readable
+  `adapter_identity`, that a field a response body carries beyond `permitted_fields` never
+  reaches a committed Envelope, and that an adapter cannot assert a route-only classification
+  (`IDENTITY_MISMATCH` and friends) directly in its own single-hop report (P17-R1-F2).
+- **V3** proves at least one genuine positive (`OBSERVED`, binding `project_binding_ref` and a
+  real `resolution_provenance`), one genuine per-hop-reauthorized redirect follow, one genuine
+  redirect *escape refusal*, one genuine `UNSUPPORTED_MEDIA_TYPE`, one genuine
+  `OVERSIZED_RESPONSE`, one genuine `CONNECTION_FAILURE`, one genuine HTTPS round trip (real TLS
+  handshake against a throwaway local certificate), and the `Host` header's own non-default-port
+  correctness -- each a real network round trip over `127.0.0.1` through this package's own
+  `network.fetch_one_hop` (no VPS, no cloud target) -- then hands the positive receipt off to
+  the existing Evidence owner.
 - **V4** proves authority freshness (pre-adapter and pre-commit, plus a harmless-contention
-  control), a genuine DNS-rebinding/loopback refusal, zero-adapter-call refusal of userinfo/
-  out-of-scope-host/port/scheme sources, the three-way envelope-identity tamper check (applied
-  from this package's own start, per §3.5), cross-project relabeling refusal, and that hostile-
-  looking fetched content is stored as an inert, unexecuted string.
+  control), a genuine DNS-rebinding/loopback refusal by the default adapter, that Boundary
+  *data* cannot enable loopback at all (schema refusal, P17-R1-F3), a deterministic cross-hop
+  DNS-resolution-drift refusal (P17-R1-F4), zero-adapter-call refusal of userinfo/out-of-scope-
+  host/port/scheme sources, a hidden disallowed intermediate redirect hop never reached at all
+  (P17-R1-F2), an adapter unable to assert a route-only classification or a fabricated hop
+  count, the three-way envelope-identity tamper check extended to `project_binding_ref`/
+  `boot_state_fingerprint` (P17-R1-F5), cross-project relabeling refusal, hostile-looking
+  fetched content stored as an inert, unexecuted string, and a zero-canonical-State-mutation
+  proof (revision/fingerprint/lineage-head/record-absence all unchanged) for every one of the
+  ten non-`OBSERVED` outcomes (P17-R1-F1).
 - **V5** proves a genuine Phase 16 Model Runtime execution and a genuine URL Source Observation
   coexist in the identical Store/project without either disturbing the other's own records or
   State-tree pointers, plus this package's own static conformance (network-opening surfaces
@@ -273,23 +379,34 @@ This delivery does **not** claim, and no test here asserts:
   signed deployment-declaration chain here (contrast Runtime); a URL Source Observation attests
   only to what a bounded fetch against an explicit source, under an explicit Boundary, actually
   returned.
-- that fetched content means anything. `IDENTITY_MISMATCH`/`BOUNDARY_REFUSED` are the adapter's
-  own honest transport-layer classification, never a route-computed judgment about content
-  (§3.4); no owner in this package's own call graph ever passes a fetched field to `eval`, a
-  template engine, or a shell.
+- that fetched content means anything. `IDENTITY_MISMATCH` and the other route-derived
+  classifications (§6.2) are never trusted from the adapter -- the route derives them itself,
+  from bounded per-hop facts alone (P17-R1-F2) -- but content still means nothing beyond that
+  classification: no owner in this package's own call graph ever passes a fetched field to
+  `eval`, a template engine, or a shell (P17-C4 unchanged).
 - that a redirect chain is ever followed unbounded, or that any redirect target is trusted
-  before it is itself re-validated against the identical closed `network_scope`.
+  before it is itself re-validated against the identical closed `network_scope` -- now
+  performed by the route itself, before the disallowed hop's own `fetch_one_hop` is ever called
+  (P17-R1-F2).
 - that this layer can mint Authority, invoke a model, execute a Change, or bypass Evidence. It
   imports none of `authority`, `change`, `model_runtime`, or `reflow`, and its own Evidence
   hand-off resolves a real, integrity-checked, committed Envelope before constructing any
-  provenance at all.
+  provenance at all -- and refuses outright for any receipt that does not name one
+  (`status != "VERIFIED"`, P17-R1-F1).
 - that credentials of any kind are ever transmitted. `credentials_permitted` is schema-fixed to
   `false`, and a userinfo-bearing URL is refused before any resolution is attempted.
 - that this layer is resistant to a hostile *DNS server* the caller's own environment already
   trusts, or to a compromised TLS certificate authority. What is proved is that the address this
-  package connects to is the exact address its own single, un-repeated resolution returned, and
-  that TLS certificate verification runs against the real hostname -- not that DNS or the CA
-  system themselves are trustworthy inputs.
+  package connects to is the exact address its own single, un-repeated resolution returned for
+  each hop, that the identical `(host, port)` never resolves to two different addresses across
+  the hops of one fetch (P17-R1-F4), and that TLS certificate verification runs against the real
+  hostname -- not that DNS or the CA system themselves are trustworthy inputs, and not that DNS
+  cannot legitimately change *between two separate, independent* fetches (only within one).
+- that a failed or refused fetch is recorded anywhere durable at all. P17-C7/P17-R1-F1 requires
+  the opposite: a non-`OBSERVED` outcome is bounded, ephemeral, in-memory evidence only, and
+  cannot be handed off as Evidence (`route_url_observation_to_evidence` itself refuses any
+  receipt whose `status != "VERIFIED"`) -- a caller that needs a durable record of a failure must
+  derive and commit one through some other existing owner, never through this package.
 
 ## 9. Gate 17
 
