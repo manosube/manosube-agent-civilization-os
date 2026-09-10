@@ -1943,3 +1943,39 @@ ISSUE_CLOSE_ALLOWED=false
 PHASE_16_COMPLETE=false
 PHASE_17_ALLOWED=false
 ```
+
+---
+
+# 27. Phase 17 implementation-delivery bounded addendum (Issue #69)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録でもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired updateを、
+`src/`配下の新規kernel_surface変更（`src/manosube_agent_civilization/url_boot/`）に対応付ける
+ためだけの、最小限の事実記録である。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+GOVERNING_ISSUE=#69
+BASE_SHA=aee9b669f8bf15626fe162f196cf12338a4ff0da
+BRANCH=agent/issue-69-phase17-read-only-url-boot
+IMPLEMENTATION_TARGET=NEW_BRANCH_AND_NEW_PR
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+```
+
+追加されたas-built ownerは `12_URL_BOOT/`（`URL_BOOT_INDEX.md`・`URL_BOOT_CONTRACT.md`）、
+`src/manosube_agent_civilization/url_boot/`（`route.py`・`evidence_handoff.py`・`engine.py`・
+`identity.py`・`types.py`・`adapter.py`・`network.py`・`errors.py`）、および
+`01_SCHEMA/url_boot/url_source_observation_envelope.schema.json` 1件である。既存の
+State・Difference・Authority・Change・Evidence・Reflow・Binding・Boot・Model Runtimeの
+いずれのownerも置換・変更しない。`network.py`のみが`socket`/`http.client`/`ssl`/`ipaddress`を
+importできる唯一のモジュールであり、DNS-rebinding防止のため単一解決・解決先アドレス直接接続を
+行う（Runtime自身の`network.py`がI/O-freeである設計からの意図的な乖離であり、`URL_BOOT_CONTRACT.md`
+§6.1に開示済み）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_17_COMPLETE=false
+PHASE_18_ALLOWED=false
+```
