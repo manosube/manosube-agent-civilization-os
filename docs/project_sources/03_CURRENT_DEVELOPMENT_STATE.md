@@ -1895,6 +1895,39 @@ SHUKOUの実装採択が別途必要である。
 
 ---
 
+# 28. Phase 17 implementation adoption
+
+Phase 16 acceptance source synchronization後のmain、専用Issue、およびSHUKOUの実装採択を再観測した。
+
+```text
+OBSERVED_AT_UTC=2026-09-10T06:07:58Z
+CURRENT_MAIN_SHA=aee9b669f8bf15626fe162f196cf12338a4ff0da
+CURRENT_PHASE=17_READ_ONLY_URL_BOOT
+CURRENT_ISSUE=#69
+CURRENT_PR=NONE
+
+ADOPTION_ID=ADOPT_P17_D001_READ_ONLY_URL_BOOT_AND_UNTRUSTED_CONTENT_BOUNDARY
+ADOPTION_COMMENT=https://github.com/manosube/manosube-agent-civilization-os/issues/69#issuecomment-5613991525
+IMPLEMENTATION_ALLOWED=true
+NEW_BRANCH=true
+BRANCH=agent/issue-69-phase17-read-only-url-boot
+NEW_PR=true
+PULL_REQUEST_TARGET=main
+
+PHASE_17_COMPLETE=false
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_ALLOWED=false
+NEXT_OWNER=CLAUDE_CODE
+```
+
+Phase 17は、URL contentを非権威的なread-only Observationとして既存Kernelへ接続する。一般crawler、
+browser automation、JavaScript execution、credential/session import、URL由来Change execution、
+remote command executionおよびautonomous Changeは採択scope外である。GitHub Actions/workflow statusは
+Phase acceptance Authorityとして使用しない。
+
+---
+
 # 26. Phase 16 Structural Review Round 2 bounded addendum (Issue #66, PR #67)
 
 本節は、構造参謀によるStructural Review Round 2と、SHUKOUによるその採択を、独立再観測できた事実のみ記録するbounded addendumである。
