@@ -1680,7 +1680,18 @@ ADDENDUM_OBSERVATION_METHOD=LOCAL_GIT_LOG_AGAINST_ORIGIN_MAIN_AND_ISSUE_66_ADOPT
 | SHUKOU implementation adoption | `ADOPT_P16_D001_MULTI_MODEL_REPLACEABILITY_AND_PHASE12_EXECUTION_CONTINUITY` |
 | Adoption's own reviewed main SHA | `94f067ba6acb4e4459ef3ecd15d6c8c1332e1db7` (identical to the `origin/main` HEAD observed above) |
 | Dedicated implementation branch | `agent/issue-66-phase16-multi-model-replaceability` |
-| Dedicated Pull Request | Not opened by this delivery — the adoption's own corrected `NEW_PR=false` |
+| Dedicated Pull Request | Opened against `main`, per the adoption's own `NEW_PR=true` / `PULL_REQUEST_TARGET=main` |
+
+**Correction to this addendum's own prior text.** An earlier revision of this section stated
+that the adoption comment (`issuecomment-5610016955`) had been "corrected" to `NEW_PR=false` and
+that no PR would be opened for that reason. That statement was false: the adoption comment, read
+directly and in full from the GitHub API, carries exactly one version of the branch/PR policy —
+`NEW_BRANCH=true` / `BRANCH=agent/issue-66-phase16-multi-model-replaceability` / `NEW_PR=true` /
+`PULL_REQUEST_TARGET=main` — and closes with "Claude Code may now implement on the named new
+branch and open one dedicated PR." No comment on Issue #66 revises or supersedes it. The correct
+reading is simply that the implementing delegate pushed the branch without opening the PR itself,
+so that PR creation happens only after the reviewing session has independently re-verified the
+delivered HEAD — never that the adoption withdrew its own `NEW_PR=true` authorization.
 
 ```text
 PHASE_15_MERGED=true
@@ -1689,7 +1700,7 @@ PHASE_15_COMPLETE=true
 COMPLETED_THROUGH_PHASE=15
 CURRENT_PHASE=16_MULTI_MODEL_REPLACEABILITY_AND_PHASE12_EXECUTION_CONTINUITY
 CURRENT_PHASE_ISSUE=66
-CURRENT_PHASE_STATE=LOCAL_IMPLEMENTATION_DELIVERED_BRANCH_PUSHED_NO_PR
+CURRENT_PHASE_STATE=IMPLEMENTATION_DELIVERED_PR_OPENED_AWAITING_STRUCTURAL_REVIEW
 PHASE_16_ALLOWED=true
 PHASE_16_COMPLETE=false
 PHASE_17_ALLOWED=false
@@ -1779,7 +1790,7 @@ PROVIDER_SDK_DEPENDENCY_COUNT=0
 CANONICAL_SCHEMA_COUNT=66
 NEW_SCHEMA_FILES_ADDED_THIS_PHASE=7
 NEW_BRANCH=true
-NEW_PR=false
+NEW_PR=true
 MERGE_ALLOWED=false
 ISSUE_CLOSE_ALLOWED=false
 PHASE_16_COMPLETE=false
