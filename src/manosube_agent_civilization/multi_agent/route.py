@@ -78,6 +78,7 @@ from manosube_agent_civilization.model_runtime.route import (
     open_model_work_unit,
 )
 from manosube_agent_civilization.model_runtime.types import ModelAdapter
+from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
@@ -101,6 +102,7 @@ from .engine import (
 )
 from .errors import (
     MultiAgentAuthorityFreshnessError,
+    MultiAgentPlanExpiredError,
     MultiAgentRecordIntegrityError,
     MultiAgentReleasedAgentError,
     MultiAgentReplayConflictError,
@@ -771,6 +773,13 @@ def _execute_one_slot(
             ),
         )
         if existing_receipt is None:
+            # Structural Review Round 1, P19-R1-F2: this branch is defense in depth, not the
+            # crash-gap fix itself. Since a slot's own attempt output and its release receipt are
+            # now committed together in one atomic transaction below, a genuinely committed slot
+            # output with no release receipt should be unreachable through this package's own
+            # normal execution path -- but this function never trusts a resolved record's own
+            # history without re-checking, the identical discipline this repository already
+            # keeps everywhere else, so the refusal stays exactly where it always was.
             raise MultiAgentRequirementError(
                 f"slot {slot_index} already has a committed attempt but no release receipt -- "
                 "an incomplete prior orchestration attempt cannot be silently treated as replay"
@@ -837,24 +846,11 @@ def _execute_one_slot(
         outcome_detail=outcome_detail,
         started_at=executed_at,
         ended_at=executed_at,
+        execution_snapshot={
+            "state_revision": plan["boot_state_revision"],
+            "semantic_fingerprint": plan["boot_semantic_fingerprint"],
+        },
     )
-    _commit(
-        store,
-        project_id,
-        [
-            (
-                SLOT_OUTPUT_RECORD_KIND,
-                str(slot_output["multi_agent_slot_output_id"]),
-                slot_output,
-            )
-        ],
-        committed_at=executed_at,
-        project_binding_id=project_binding_id,
-        expected_authority=fresh_authority,
-        transaction_prefix="TX-MULTI-AGENT-SLOT-OUTPUT",
-        transaction_key=str(slot_output["multi_agent_slot_output_id"]),
-    )
-
     release_receipt = derive_multi_agent_agent_release_receipt(
         project_id=project_id,
         plan_ref=dict(plan_ref),
@@ -863,21 +859,35 @@ def _execute_one_slot(
         release_status="RELEASED",
         released_at=executed_at,
     )
+    # Structural Review Round 1, P19-R1-F2: the slot's own attempt record and its release
+    # receipt are committed here in one atomic transaction, never two separate ones -- closing
+    # the crash gap the previous two-commit sequence left open (a crash between them left a
+    # committed slot output with no release receipt, and every later replay call raised
+    # MultiAgentRequirementError forever, since a slot's own release is derived only once, right
+    # here, immediately after its own attempt). Either both records land, or neither does; there
+    # is no longer an intermediate state to recover from. This is the identical multi-record
+    # atomic-commit discipline this repository's own Model Runtime already uses for its paired
+    # Decision+Work-Unit genesis commit (`open_model_work_unit`).
     _commit(
         store,
         project_id,
         [
             (
+                SLOT_OUTPUT_RECORD_KIND,
+                str(slot_output["multi_agent_slot_output_id"]),
+                slot_output,
+            ),
+            (
                 RELEASE_RECEIPT_RECORD_KIND,
                 str(release_receipt["multi_agent_agent_release_receipt_id"]),
                 release_receipt,
-            )
+            ),
         ],
         committed_at=executed_at,
         project_binding_id=project_binding_id,
         expected_authority=fresh_authority,
-        transaction_prefix="TX-MULTI-AGENT-RELEASE",
-        transaction_key=str(release_receipt["multi_agent_agent_release_receipt_id"]),
+        transaction_prefix="TX-MULTI-AGENT-SLOT-COMPLETE",
+        transaction_key=str(slot_output["multi_agent_slot_output_id"]),
     )
     return slot_output, release_receipt
 
@@ -1013,6 +1023,23 @@ def execute_dynamic_execution_plan(
         require_exact_state=False,
     )
     plan = resolve_and_verify_committed_plan(store, project_id, checked_plan_ref["id"])
+    # Structural Review Round 1, P19-R1-F5: the plan's own recorded validity window is enforced
+    # here, fail-closed, before any slot's own Agent is constructed, any adapter is reached, or
+    # any new Store mutation is made for this call -- `expires_at` and `execution_bounds.
+    # deadline_at` were previously recorded but never read by any runtime path. Checked against
+    # `executed_at` (the caller-supplied instant, never a wall clock, the identical discipline
+    # every other timestamp-bearing route in this repository already keeps), the identical
+    # fail-closed discipline reflow's own G18 `evaluation_expires_at` check already applies to
+    # an unrelated validity window (`~manosube_agent_civilization.reflow.commit`).
+    if instant(executed_at) >= instant(plan["expires_at"]) or instant(executed_at) >= instant(
+        plan["execution_bounds"]["deadline_at"]
+    ):
+        raise MultiAgentPlanExpiredError(
+            f"executed_at {executed_at!r} is at or past this plan's own recorded "
+            f"expires_at ({plan['expires_at']!r}) or execution_bounds.deadline_at "
+            f"({plan['execution_bounds']['deadline_at']!r}) -- refusing before any slot's own "
+            "Agent is constructed, any adapter is reached, or any new Store mutation is made"
+        )
     if plan["project_binding_ref"] != dict(fresh["project_binding_ref"]):
         raise MultiAgentRequirementError(
             "resolved plan is bound to a different Project Binding than this call's own "

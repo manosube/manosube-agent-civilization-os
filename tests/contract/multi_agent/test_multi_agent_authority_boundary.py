@@ -10,7 +10,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from tests.fixtures.multi_agent_world import authorized_world, open_plan_kwargs
+import pytest
+from tests.fixtures.multi_agent_world import (
+    SeededMultiAgentAdapter,
+    authorized_world,
+    open_plan_kwargs,
+)
 
 from manosube_agent_civilization.agent_runtime import start_temporary_agent
 from manosube_agent_civilization.multi_agent import (
@@ -175,3 +180,96 @@ def test_an_adapter_claiming_the_accepting_classification_itself_is_refused_not_
 
     release_receipt = executed["release_receipts"][0]
     assert release_receipt["release_status"] == "RELEASED"
+
+
+def test_p19_r1_f5_execution_past_the_plans_own_deadline_refuses_with_zero_side_effects(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 1, P19-R1-F5: reproduced exactly -- a plan with
+    ``expires_at=deadline_at=2026-09-11T02:00:00Z`` (this fixture's own default) must refuse
+    execution at ``executed_at=2026-09-11T03:00:00Z``, fail-closed, before any slot's own Agent
+    is constructed, any adapter is reached, or any new Store mutation is made."""
+
+    from manosube_agent_civilization.multi_agent.errors import MultiAgentPlanExpiredError
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+    assert opened["plan"]["expires_at"] == "2026-09-11T02:00:00Z"
+    assert opened["plan"]["execution_bounds"]["deadline_at"] == "2026-09-11T02:00:00Z"
+
+    def _forbidden_factory() -> Any:
+        raise AssertionError("adapter_factory must not be called past the plan's own deadline")
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentPlanExpiredError):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            model_adapter_factory=_forbidden_factory,
+            executed_at="2026-09-11T03:00:00Z",
+        )
+    coordinator.release()
+
+    assert _record_kind_count(store, world["project_id"], "multi_agent_slot_output") == 0
+    assert _record_kind_count(store, world["project_id"], "multi_agent_agent_release_receipt") == 0
+    assert _record_kind_count(store, world["project_id"], "model_execution_envelope") == 0
+
+
+def test_p19_r1_f5_execution_exactly_at_the_deadline_instant_also_refuses(tmp_path: Any) -> None:
+    """Boundary-time control: the plan's own validity window is closed, not open, at its own
+    exact ``deadline_at``/``expires_at`` instant -- ``executed_at`` equal to the deadline must
+    still refuse, never be admitted as "not yet expired"."""
+
+    from manosube_agent_civilization.multi_agent.errors import MultiAgentPlanExpiredError
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentPlanExpiredError):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            model_adapter_factory=lambda: (_ for _ in ()).throw(
+                AssertionError("adapter_factory must not be called at the deadline instant")
+            ),
+            executed_at="2026-09-11T02:00:00Z",
+        )
+    coordinator.release()
+
+
+def test_p19_r1_f5_execution_one_second_before_the_deadline_still_succeeds(tmp_path: Any) -> None:
+    """Boundary-time control, the other direction: one second *before* the plan's own deadline
+    must still admit execution -- the fail-closed check must not be so aggressive that it
+    refuses genuinely valid, in-window execution."""
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    coordinator = _coordinator(world)
+    executed = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened["plan_ref"],
+        model_adapter_factory=SeededMultiAgentAdapter,
+        executed_at="2026-09-11T01:59:59Z",
+    )
+    coordinator.release()
+    assert len(executed["slot_outputs"]) == 1

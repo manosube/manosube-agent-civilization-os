@@ -283,6 +283,7 @@ def derive_multi_agent_slot_output(
     outcome_detail: str | None,
     started_at: str,
     ended_at: str,
+    execution_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     """Return one canonical, schema-valid Multi-Agent Slot Output record for one slot's own
     attempt (P19-C5).
@@ -292,10 +293,31 @@ def derive_multi_agent_slot_output(
     Envelope outcome, or an honest ``UNAVAILABLE`` classification of a caught operational
     error the route itself never lets escape as a lost slot (see ``route.py``'s own per-slot
     ``try/except`` disclosure).
+
+    *execution_snapshot* (Structural Review Round 1, P19-R1-F1) must already be the caller's
+    plan's own ``{"state_revision": plan["boot_state_revision"], "semantic_fingerprint":
+    plan["boot_semantic_fingerprint"]}`` -- the one immutable snapshot every slot of one plan
+    shares by construction, since every slot's own call reads it from the identical, already-
+    committed, genesis-once ``plan`` record rather than from any live re-observation at this
+    slot's own adapter-call time. This is deliberately *not* the live State revision Model
+    Runtime's own unchanged ``execute_model_work_unit`` itself reads when actually reaching the
+    adapter (which legitimately advances slot to slot -- each slot's own Model Execution
+    Envelope commit is what advances it, an accepted, disclosed Model Runtime behaviour this
+    package neither can nor should alter): this field is this package's own bound, order-
+    invariant fact about *which execution this slot's attempt belongs to*, never a claim about
+    what Model Runtime's own request happened to observe live.
     """
 
     if outcome not in MULTI_AGENT_SLOT_OUTCOMES:
         raise MultiAgentRequirementError(f"outcome is not a recognized outcome: {outcome!r}")
+    if not isinstance(execution_snapshot, Mapping) or set(execution_snapshot) != {
+        "state_revision",
+        "semantic_fingerprint",
+    }:
+        raise MultiAgentRequirementError(
+            f"execution_snapshot must be exactly {{'state_revision', 'semantic_fingerprint'}}: "
+            f"{execution_snapshot!r}"
+        )
 
     attempt_id = compute_attempt_id(
         project_id=project_id,
@@ -319,6 +341,10 @@ def derive_multi_agent_slot_output(
         "outcome_detail": outcome_detail,
         "started_at": started_at,
         "ended_at": ended_at,
+        "execution_snapshot": {
+            "state_revision": int(execution_snapshot["state_revision"]),
+            "semantic_fingerprint": dict(execution_snapshot["semantic_fingerprint"]),
+        },
     }
     slot_output["multi_agent_slot_output_id"] = multi_agent_slot_output_id(slot_output)
     slot_output["multi_agent_slot_output_semantic_fingerprint"] = (

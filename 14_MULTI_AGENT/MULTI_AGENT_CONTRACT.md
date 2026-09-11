@@ -684,3 +684,56 @@ ALL_TEMPORARY_AGENTS_RELEASED=true             -- P19-C8's own aggregation-input
   identical canonical Difference, so one shared template (varying only `predecessor_evidence_
   refs`, threaded by this hand-off itself) is correct for this delivery's own one-Difference-
   per-plan design, not a limitation this delivery works around.
+
+## 11. Structural Review Round 1 corrections (P19-R1-F1..F6)
+
+Adopted as `ADOPT_P19_R1_STRUCTURAL_CORRECTIONS` against reviewed head
+`18a4ba8093477fb2a954d1327424f7e0f0cfe8a8` (PR #78). Six findings, all addressed on the
+existing branch/PR, no new module or owner introduced.
+
+- **P19-R1-F1 (common immutable execution snapshot).** `route.py::_execute_one_slot` now binds
+  `plan["boot_state_revision"]`/`plan["boot_semantic_fingerprint"]` -- the plan's own immutable,
+  genesis-once snapshot -- into every slot's own new `multi_agent_slot_output.execution_snapshot`
+  field (`engine.py::derive_multi_agent_slot_output`, `identity.py::SLOT_OUTPUT_SEMANTIC_FIELDS`,
+  schema-required). This is deliberately *not* Model Runtime's own live `executed_state_revision`
+  (which legitimately differs slot to slot, since each slot's own Envelope commit advances it
+  before the next slot's own adapter call -- an accepted, unchanged Model Runtime behaviour this
+  delivery neither can nor should alter): it is this package's own bound, order-invariant fact
+  about which execution a slot's attempt belongs to, read from the identical immutable plan
+  record for every slot of one plan. Proved decisively by
+  `test_p19_r1_f1_every_slot_shares_one_common_immutable_execution_snapshot`, which also
+  independently confirms the underlying Model Runtime drift is real (so the fix is not vacuous).
+- **P19-R1-F2 (atomic slot-output/release-receipt commit).** `_execute_one_slot` now derives
+  both the slot output and its release receipt before committing either, then commits both in
+  one atomic `_commit` call (`TX-MULTI-AGENT-SLOT-COMPLETE`) -- the identical multi-record
+  atomic-commit discipline Model Runtime's own `open_model_work_unit` already uses for its
+  Decision+Work-Unit pair. The previous two-separate-commit crash gap (a crash between them left
+  a committed slot output with no release receipt, and every later replay raised
+  `MultiAgentRequirementError` forever) is closed by construction. Proved by
+  `test_p19_r1_f2_a_crash_between_slot_output_derivation_and_commit_leaves_neither_record`.
+- **P19-R1-F3 (orchestration receipt semantic-fingerprint verification).**
+  `evidence_handoff.py::resolve_and_verify_committed_orchestration_receipt` now recomputes and
+  verifies the full semantic fingerprint, matching every sibling resolver in this package
+  (previously it verified only the narrow identity).
+- **P19-R1-F4 (Evidence records persisted, not only referenced).**
+  `evidence_handoff.py::route_orchestration_to_evidence` now commits every derived Evidence
+  record (kind `observation_evidence`, `derive_evidence`'s own pure-function output) in the
+  identical atomic transaction as the terminal orchestration receipt that names it -- the
+  identical convention `reflow.route` already uses for its own `derive_evidence` calls. Before
+  this fix, only the orchestration receipt was ever committed, so every one of its own
+  `evidence_refs` was dangling.
+- **P19-R1-F5 (fail-closed plan expiry/deadline enforcement).**
+  `execute_dynamic_execution_plan` now refuses (`MultiAgentPlanExpiredError`) before any slot's
+  own Agent is constructed, any adapter is reached, or any new Store mutation is made, when
+  `executed_at` is at or past the plan's own `expires_at` or `execution_bounds.deadline_at` --
+  the identical fail-closed discipline `reflow.commit`'s own G18 `evaluation_expires_at` check
+  already applies to an unrelated validity window. Proved with boundary-time controls (at the
+  exact deadline instant, and one second before it) by
+  `test_p19_r1_f5_execution_past_the_plans_own_deadline_refuses_with_zero_side_effects`,
+  `test_p19_r1_f5_execution_exactly_at_the_deadline_instant_also_refuses`, and
+  `test_p19_r1_f5_execution_one_second_before_the_deadline_still_succeeds`.
+- **P19-R1-F6 (bounded current-state restatement).** `docs/project_sources/
+  03_CURRENT_DEVELOPMENT_STATE.md` §41 appends a bounded, last-wins restatement of
+  `CURRENT_PHASE`/`CURRENT_PHASE_STATE`/`CURRENT_PR`/`MAIN_ACCEPTED_BASE_SHA` reflecting Phase 19
+  Round 1 as the live work unit, without rewriting §0's header block or any historical section.
+  per-plan design, not a limitation this delivery works around.

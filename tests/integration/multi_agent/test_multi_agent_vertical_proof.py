@@ -98,3 +98,65 @@ def test_vertical_proof_1_2_and_n_agent_execution(
     assert orchestration_receipt["orchestration_outcome"] == "COMPLETED_ALL_RELEASED"
     assert len(orchestration_receipt["evidence_refs"]["members"]) == expected_slot_count
     assert len(handed_off["evidence_refs"]) == expected_slot_count
+
+
+def test_p19_r1_f1_every_slot_shares_one_common_immutable_execution_snapshot(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 1, P19-R1-F1: reproduced the exact gap the review itself found --
+    sequential slot execution means Model Runtime's own unchanged, live-observed
+    ``executed_state_revision`` genuinely differs slot to slot (each slot's own Model Execution
+    Envelope commit advances it before the next slot's own adapter call is even built). This
+    delivery cannot and does not alter that accepted Model Runtime behaviour. What it does own is
+    this: every slot's own committed ``multi_agent_slot_output.execution_snapshot`` is the plan's
+    own ``boot_state_revision``/``boot_semantic_fingerprint`` -- read from the identical,
+    immutable, already-committed plan record for every slot -- so it is bit-identical across
+    every slot of one plan by construction, independent of whatever incidental revision drift
+    Model Runtime's own live read happens to observe at each slot's own adapter-call time.
+    """
+
+    from manosube_agent_civilization.model_runtime.route import (
+        resolve_and_verify_committed_envelope,
+    )
+
+    world = authorized_world(tmp_path, risk_class="HIGH")
+    store = world["store"]
+
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+    plan = opened["plan"]
+    assert len(plan["slots"]) == 2
+
+    coordinator = _coordinator(world)
+    executed = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened["plan_ref"],
+        model_adapter_factory=SeededMultiAgentAdapter,
+        executed_at="2026-09-11T01:30:00Z",
+    )
+    coordinator.release()
+
+    slot_outputs = {so["slot_index"]: so for so in executed["slot_outputs"]}
+    expected_snapshot = {
+        "state_revision": plan["boot_state_revision"],
+        "semantic_fingerprint": plan["boot_semantic_fingerprint"],
+    }
+    assert slot_outputs[0]["execution_snapshot"] == expected_snapshot
+    assert slot_outputs[1]["execution_snapshot"] == expected_snapshot
+    assert slot_outputs[0]["execution_snapshot"] == slot_outputs[1]["execution_snapshot"]
+
+    # Decisive negative control: prove the drift this finding described is real, and that this
+    # package's own bound snapshot is genuinely *not* the same thing as Model Runtime's own live
+    # per-call observation -- otherwise this test would be vacuous.
+    envelope_0 = resolve_and_verify_committed_envelope(
+        store, world["project_id"], slot_outputs[0]["model_execution_envelope_ref"]["id"]
+    )
+    envelope_1 = resolve_and_verify_committed_envelope(
+        store, world["project_id"], slot_outputs[1]["model_execution_envelope_ref"]["id"]
+    )
+    assert envelope_0["executed_state_revision"] != envelope_1["executed_state_revision"]
+    assert envelope_1["executed_state_revision"] > plan["boot_state_revision"]

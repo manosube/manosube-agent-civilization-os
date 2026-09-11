@@ -18,7 +18,8 @@
     "result_fingerprint",
     "outcome_detail",
     "started_at",
-    "ended_at"
+    "ended_at",
+    "execution_snapshot"
   ],
   "properties": {
     "schema_version": {"const": "0.1"},
@@ -58,7 +59,8 @@
     },
     "outcome_detail": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 2000}]},
     "started_at": {"$ref": "../common/timestamp.schema.json"},
-    "ended_at": {"$ref": "../common/timestamp.schema.json"}
+    "ended_at": {"$ref": "../common/timestamp.schema.json"},
+    "execution_snapshot": {"$ref": "#/$defs/execution_snapshot"}
   },
   "allOf": [
     {
@@ -89,6 +91,15 @@
         {"$ref": "../common/reference.schema.json"},
         {"properties": {"kind": {"const": "model_execution_envelope"}}}
       ]
+    },
+    "execution_snapshot": {
+      "type": "object",
+      "required": ["state_revision", "semantic_fingerprint"],
+      "properties": {
+        "state_revision": {"type": "integer", "minimum": 0},
+        "semantic_fingerprint": {"$ref": "../common/fingerprint.schema.json"}
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

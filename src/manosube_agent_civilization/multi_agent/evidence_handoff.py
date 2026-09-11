@@ -60,6 +60,7 @@ from .engine import (
     require_valid_timestamp,
 )
 from .errors import (
+    MultiAgentRecordIntegrityError,
     MultiAgentReleaseIncompleteError,
     MultiAgentRequirementError,
 )
@@ -67,6 +68,7 @@ from .identity import (
     multi_agent_conflict_set_id,
     multi_agent_evidence_aggregation_input_id,
     multi_agent_orchestration_receipt_id,
+    multi_agent_orchestration_receipt_semantic_fingerprint,
 )
 
 # Disclosed intra-package reuse of route.py's own private commit/freshness/validation helpers
@@ -275,10 +277,26 @@ def route_orchestration_to_evidence(
         orchestration_outcome=orchestration_outcome,
         completed_at=completed_at,
     )
+    # Structural Review Round 1, P19-R1-F4: every derived Evidence record is committed here, in
+    # the identical single transaction as the terminal receipt that names it -- `derive_evidence`
+    # (reached through `route_model_execution_to_evidence` above) is a pure function, exactly
+    # like every other `derive_*` engine function in this repository, and persists nothing on its
+    # own (the identical discipline :mod:`~manosube_agent_civilization.reflow.route` already
+    # follows for its own `derive_evidence` calls, committing each result under the identical
+    # ``"observation_evidence"`` kind literal, keyed by its own ``evidence_id``). Before this fix,
+    # only the orchestration receipt was ever committed: a caller resolving any of its own
+    # ``evidence_refs`` found nothing, because nothing had ever been written. Committing every
+    # Evidence record atomically with the receipt that references it is what makes "the
+    # orchestration receipt's own evidence_refs all resolve" a fact true from the instant the
+    # receipt itself first becomes visible, never a race a later, separate write could still lose.
     _commit(
         store,
         project_id,
         [
+            (EVIDENCE_REFERENCE_KIND, str(record["evidence_id"]), record)
+            for record in evidence_records
+        ]
+        + [
             (
                 ORCHESTRATION_RECEIPT_RECORD_KIND,
                 str(orchestration_receipt["multi_agent_orchestration_receipt_id"]),
@@ -307,7 +325,20 @@ def resolve_and_verify_committed_orchestration_receipt(
 ) -> dict[str, Any]:
     """Resolve the real, committed ``multi_agent_orchestration_receipt`` named by
     *orchestration_receipt_id* with the identical three-way canonical admission every record
-    this package resolves is held to."""
+    this package resolves is held to -- schema-valid, same project, and its own identity *and*
+    semantic fingerprint, independently recomputed from its own content, equal to their own
+    declared values and (for identity) to the Store lookup key itself.
+
+    Structural Review Round 1, P19-R1-F3: this resolver previously verified only the narrow
+    identity, unlike every sibling resolver this module and ``route.py`` already hold every
+    other record kind to -- a resolved receipt whose own ``orchestration_outcome`` (or any other
+    non-key field) had been altered after commit, with the unchanged narrow id still matching,
+    passed here undetected. The semantic fingerprint check below is what a narrow-id check alone
+    can never catch, since ``multi_agent_orchestration_receipt_id`` is computed from the plan-
+    keyed natural key only (``schema_version``, ``project_id``, ``plan_ref`` -- see
+    :mod:`~manosube_agent_civilization.multi_agent.identity`'s own module docstring) and does not
+    cover the outcome, references or timing the semantic fingerprint alone addresses.
+    """
 
     resolved = _require_resolved(
         store,
@@ -329,6 +360,14 @@ def resolve_and_verify_committed_orchestration_receipt(
             f"the Store lookup key, its own declared value, and its own recomputed value -- "
             f"lookup={orchestration_receipt_id!r}, declared={declared_id!r}, "
             f"recomputed={recomputed_id!r}"
+        )
+    if multi_agent_orchestration_receipt_semantic_fingerprint(receipt) != receipt.get(
+        "multi_agent_orchestration_receipt_semantic_fingerprint"
+    ):
+        raise MultiAgentRecordIntegrityError(
+            f"resolved multi_agent_orchestration_receipt {orchestration_receipt_id!r} own "
+            "recomputed semantic fingerprint does not equal its own declared value -- refusing "
+            "to trust any of its fields"
         )
     return receipt
 

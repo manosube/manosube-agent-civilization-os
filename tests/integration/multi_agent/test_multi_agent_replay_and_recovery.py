@@ -216,6 +216,69 @@ def test_partial_execution_coordinator_crash_and_recovery_leak_no_agent(
     assert recovered["aggregation_input"]["unresolved_capabilities"] == []
 
 
+def test_p19_r1_f2_a_crash_between_slot_output_derivation_and_commit_leaves_neither_record(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Structural Review Round 1, P19-R1-F2: reproduces the exact crash point the review found
+    -- previously, the slot's own attempt output was committed in its own transaction *before*
+    the release receipt was even derived, so a crash right there left a committed slot output
+    with no release receipt, and every later replay call raised ``MultiAgentRequirementError``
+    forever. Now both records are committed together in one atomic transaction: injecting a
+    crash before that single commit call is reached (inside the release receipt's own
+    derivation) must leave *neither* record committed -- there is no longer an intermediate
+    state between "slot output committed" and "release receipt missing".
+    """
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    opened = _open(world)
+
+    real_derive = route_module.derive_multi_agent_agent_release_receipt
+
+    def _crashing_derive(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("simulated crash before the atomic slot-complete commit")
+
+    monkeypatch.setattr(route_module, "derive_multi_agent_agent_release_receipt", _crashing_derive)
+
+    with pytest.raises(
+        RuntimeError, match="simulated crash before the atomic slot-complete commit"
+    ):
+        _execute(
+            world,
+            opened["plan_ref"],
+            lambda: SeededMultiAgentAdapter(candidate_fields={"summary": "ok"}),
+            "2026-09-11T01:30:00Z",
+        )
+
+    store = world["store"]
+    slot_output_id = route_module.compute_slot_output_id(  # type: ignore[attr-defined]
+        project_id=world["project_id"], plan_ref=opened["plan_ref"], slot_index=0
+    )
+    assert (
+        store.resolve_record(world["project_id"], "multi_agent_slot_output", slot_output_id) is None
+    )
+    assert _record_kind_count(store, world["project_id"], "multi_agent_agent_release_receipt") == 0
+
+    monkeypatch.setattr(route_module, "derive_multi_agent_agent_release_receipt", real_derive)
+
+    # Recovery: nothing was left half-committed, so a fresh call executes slot 0 cleanly from
+    # scratch (not "replay" -- there was never anything to replay).
+    recovering_adapter = SeededMultiAgentAdapter(candidate_fields={"summary": "ok"})
+    recovered = _execute(
+        world, opened["plan_ref"], lambda: recovering_adapter, "2026-09-11T01:45:00Z"
+    )
+    assert recovering_adapter.execute_call_count == 1
+    assert len(recovered["slot_outputs"]) == 1
+    assert recovered["slot_outputs"][0]["outcome"] == "CANDIDATE_ACCEPTED"
+    assert recovered["release_receipts"][0]["release_status"] == "RELEASED"
+
+
+def _record_kind_count(store: Any, project_id: str, kind: str) -> int:
+    directory = store.root / "projects" / project_id / "records" / kind
+    if not directory.exists():
+        return 0
+    return len(list(directory.glob("*.json")))
+
+
 def test_release_incompleteness_blocks_aggregation_and_therefore_clean_completion(
     tmp_path: Any, monkeypatch: Any
 ) -> None:

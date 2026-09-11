@@ -84,3 +84,13 @@ class MultiAgentReplayConflictError(MultiAgentError):
     RecordConflictError`) at what this package's own narrow, natural-key identity scheme
     intends to be a single-writer slot. Never silently retried and never resolved by picking
     either side."""
+
+
+class MultiAgentPlanExpiredError(MultiAgentError):
+    """Structural Review Round 1, P19-R1-F5: this call's own *executed_at* is at or past the
+    plan's own recorded ``expires_at`` or ``execution_bounds.deadline_at`` -- refused before any
+    slot's own Agent is constructed, any adapter is reached, or any new Store mutation is made
+    for this call. The identical fail-closed discipline :class:`~manosube_agent_civilization.
+    reflow.errors.StaleReflowError` already applies to a Closure Evaluation's own
+    ``evaluation_expires_at`` (G18): a validity window recorded on an immutable record is
+    honoured, never merely stored and never read."""

@@ -150,6 +150,10 @@ def test_slot_output_identity_recomputes_and_is_schema_valid() -> None:
         outcome_detail=None,
         started_at="2026-09-11T01:30:00Z",
         ended_at="2026-09-11T01:30:00Z",
+        execution_snapshot={
+            "state_revision": plan["boot_state_revision"],
+            "semantic_fingerprint": plan["boot_semantic_fingerprint"],
+        },
     )
     assert multi_agent_slot_output_id(slot_output) == slot_output["multi_agent_slot_output_id"]
     assert (

@@ -113,6 +113,7 @@ SLOT_OUTPUT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "outcome_detail",
     "started_at",
     "ended_at",
+    "execution_snapshot",
 )
 
 #: The narrow, natural-key projection a slot's own release receipt addresses -- one release per
