@@ -1,4 +1,14 @@
-"""MANOSUBE-CANONICAL-JSON-0.1 implementation."""
+"""MANOSUBE-CANONICAL-JSON-0.1 implementation.
+
+Issue #75 (``D-KERNEL-VERIFIED-SCHEMA-BYTE-INJECTION``): every public entry point here also
+accepts the one Kernel-owned :class:`~manosube_agent_civilization.schema_context.
+CanonicalSchemaContext`. Supplying it replaces :func:`_schema_registry`'s per-call ``rglob``
+and re-read of the whole canonical tree with the already-parsed validators that context built
+from its own captured, digest-verified bytes -- the single largest source of post-verification
+filesystem reads in a genesis transaction, and the one most exposed to a verify/use window,
+since this registry is not cached at all and therefore re-reads the directory on *every*
+validation.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +20,8 @@ import unicodedata
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
+
+from manosube_agent_civilization.schema_context import CanonicalSchemaContext
 
 from .errors import (
     AmbiguousCollectionError,
@@ -146,17 +158,39 @@ def _schema_registry(schema_root: Path) -> tuple[dict[str, Any], Registry[Any]]:
     return {schema["$id"]: schema for schema in schemas}, registry
 
 
-def _validate(value: Any, schema_id: str, schema_root: Path | None) -> None:
-    schemas, registry = _schema_registry(schema_root or _default_schema_root())
-    try:
-        schema = schemas[schema_id]
-    except KeyError as exc:
-        raise SchemaValidationError(f"required schema is unavailable: {schema_id}") from exc
-    validator = Draft202012Validator(
-        schema, registry=registry, format_checker=FormatChecker()
-    )
+def _validate(
+    value: Any,
+    schema_id: str,
+    schema_root: Path | None,
+    schema_context: CanonicalSchemaContext | None = None,
+) -> None:
+    """Validate *value* against *schema_id*, failing closed.
+
+    *schema_context* (Issue #75), when supplied, is authoritative and exclusive: the
+    already-parsed validator it holds performs the validation, and no schema root is
+    resolved and no ``*.schema.json`` file is read. Supplying both is refused rather than
+    silently served from one of them.
+    """
+
+    if schema_context is not None:
+        if schema_root is not None:
+            raise SchemaValidationError(
+                "schema_root and schema_context are mutually exclusive: an injected "
+                "validation context is never combined with a filesystem schema root"
+            )
+        if not schema_context.knows_schema(schema_id):
+            raise SchemaValidationError(f"required schema is unavailable: {schema_id}")
+        candidate_errors = schema_context.validation_errors(value, schema_id)
+    else:
+        schemas, registry = _schema_registry(schema_root or _default_schema_root())
+        try:
+            schema = schemas[schema_id]
+        except KeyError as exc:
+            raise SchemaValidationError(f"required schema is unavailable: {schema_id}") from exc
+        validator = Draft202012Validator(schema, registry=registry, format_checker=FormatChecker())
+        candidate_errors = list(validator.iter_errors(value))
     errors = sorted(
-        validator.iter_errors(value),
+        candidate_errors,
         key=lambda error: tuple(str(part) for part in error.absolute_path),
     )
     if errors:
@@ -165,22 +199,28 @@ def _validate(value: Any, schema_id: str, schema_root: Path | None) -> None:
 
 
 def canonical_semantic_state_bytes(
-    project_state: Mapping[str, Any], *, schema_root: Path | None = None
+    project_state: Mapping[str, Any],
+    *,
+    schema_root: Path | None = None,
+    schema_context: CanonicalSchemaContext | None = None,
 ) -> bytes:
     """Validate a Project State, exclude metadata, and serialize its Semantic State."""
 
-    _validate(project_state, PROJECT_STATE_SCHEMA_ID, schema_root)
+    _validate(project_state, PROJECT_STATE_SCHEMA_ID, schema_root, schema_context)
     if "semantic_state" not in project_state:
         raise SchemaValidationError("project state has no semantic_state")
     semantic_state = project_state["semantic_state"]
-    _validate(semantic_state, SEMANTIC_STATE_SCHEMA_ID, schema_root)
+    _validate(semantic_state, SEMANTIC_STATE_SCHEMA_ID, schema_root, schema_context)
     return canonical_json_bytes(semantic_state)
 
 
 def canonical_semantic_value_bytes(
-    semantic_state: Mapping[str, Any], *, schema_root: Path | None = None
+    semantic_state: Mapping[str, Any],
+    *,
+    schema_root: Path | None = None,
+    schema_context: CanonicalSchemaContext | None = None,
 ) -> bytes:
     """Validate and serialize an already projected Semantic State."""
 
-    _validate(semantic_state, SEMANTIC_STATE_SCHEMA_ID, schema_root)
+    _validate(semantic_state, SEMANTIC_STATE_SCHEMA_ID, schema_root, schema_context)
     return canonical_json_bytes(semantic_state)

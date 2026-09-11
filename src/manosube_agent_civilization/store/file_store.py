@@ -1,4 +1,16 @@
-"""Append-only-lineage authoritative filesystem State Store."""
+"""Append-only-lineage authoritative filesystem State Store.
+
+Issue #75 (``D-KERNEL-VERIFIED-SCHEMA-BYTE-INJECTION``): a Store may be constructed with the
+one Kernel-owned :class:`~manosube_agent_civilization.schema_context.CanonicalSchemaContext`
+instead of a filesystem *schema_root*. Every schema validation this class performs -- genesis
+and transition State (:meth:`FileStateStore._validate_state`), every lineage/journal event
+(:meth:`FileStateStore._verify_event`), and the genesis institution receipt
+(:meth:`FileStateStore._read_genesis_receipt`) -- then runs against that context's own
+captured, digest-verified bytes, with no schema-root resolution and no ``*.schema.json`` read
+at any point in a commit, a recovery, or a reconstruction. Commit semantics, atomicity,
+manifest digests, receipt identity and lineage ordering are entirely unchanged
+(``STORE_COMMIT_SEMANTICS_CHANGE=false``).
+"""
 
 from __future__ import annotations
 
@@ -12,6 +24,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from manosube_agent_civilization.schema_context import CanonicalSchemaContext
 from manosube_agent_civilization.state.canonicalize import (
     _validate,
     canonical_json_bytes,
@@ -57,8 +70,26 @@ _GENESIS_RECEIPT_ID_DOMAIN=b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_RECEIPT\x
 _GENESIS_RECEIPT_IDENTITY_FIELDS=("schema_version","project_id","transaction_id","genesis_mode","manifest_member_count","manifest_digest")
 
 class FileStateStore:
-    def __init__(self, root: Path, *, schema_root: Path) -> None:
-        self.root=root.resolve(); self.schema_root=schema_root.resolve()
+    def __init__(self, root: Path, *, schema_root: Path|None=None, schema_context: CanonicalSchemaContext|None=None) -> None:
+        """Open the authoritative Store at *root*.
+
+        Exactly one canonical schema source must be named (Issue #75): either a filesystem
+        *schema_root* -- the long-standing behaviour, unchanged -- or an already-constructed,
+        immutable *schema_context* whose captured, digest-verified bytes then perform every
+        validation this Store ever does. Naming both is refused rather than silently resolved
+        in favour of one, and naming neither is refused rather than silently falling back to
+        an import- or cwd-relative schema directory: a Store must never be in doubt about
+        which bytes its own validation is answerable to.
+        """
+
+        if (schema_root is None) == (schema_context is None):
+            raise BoundaryError(
+                "exactly one of schema_root or schema_context must be supplied to a "
+                "canonical State Store"
+            )
+        self.root=root.resolve()
+        self.schema_root=schema_root.resolve() if schema_root is not None else None
+        self.schema_context=schema_context
         if self.root == Path.cwd().resolve() or self.root.is_relative_to(Path.cwd().resolve()):
             raise BoundaryError("backend root must be outside the repository working tree")
         self.root.mkdir(parents=True,exist_ok=True)
@@ -79,8 +110,8 @@ class FileStateStore:
             finally: fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
 
     def _validate_state(self, project_id: str, state: Mapping[str,Any]) -> dict[str,Any]:
-        canonical_semantic_state_bytes(state,schema_root=self.schema_root)
-        value=deepcopy(dict(state)); actual=fingerprint_project_state(value,schema_root=self.schema_root).as_dict()
+        canonical_semantic_state_bytes(state,schema_root=self.schema_root,schema_context=self.schema_context)
+        value=deepcopy(dict(state)); actual=fingerprint_project_state(value,schema_root=self.schema_root,schema_context=self.schema_context).as_dict()
         if value["project_id"] != project_id or value["semantic_fingerprint"] != actual: raise CorruptStoreError("state identity or fingerprint mismatch")
         return value
 
@@ -388,7 +419,7 @@ class FileStateStore:
         except (OSError,json.JSONDecodeError) as exc:
             raise CorruptStoreError(f"malformed genesis receipt: {project_id}") from exc
         try:
-            _validate(receipt,GENESIS_RECEIPT_SCHEMA_ID,self.schema_root)
+            _validate(receipt,GENESIS_RECEIPT_SCHEMA_ID,self.schema_root,self.schema_context)
         except SchemaValidationError as exc:
             raise CorruptStoreError(f"genesis receipt fails its own schema: {project_id}") from exc
         if receipt["project_id"]!=project_id:
@@ -491,7 +522,7 @@ class FileStateStore:
         own further use (:meth:`recover` still needs it to append to the lineage log)."""
 
         event=self._read_journal_event(journal,project_id)
-        _validate(event,TRANSITION_SCHEMA_ID,self.schema_root)
+        _validate(event,TRANSITION_SCHEMA_ID,self.schema_root,self.schema_context)
         receipt=self._read_genesis_receipt(project_id)
         if receipt is None:
             raise CorruptStoreError(
@@ -603,7 +634,7 @@ class FileStateStore:
         except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError("malformed lineage") from exc
 
     def _verify_event(self, project_id: str, event: Mapping[str,Any], prior: Mapping[str,Any]|None) -> dict[str,Any]:
-        _validate(event,TRANSITION_SCHEMA_ID,self.schema_root)
+        _validate(event,TRANSITION_SCHEMA_ID,self.schema_root,self.schema_context)
         state=self._validate_state(project_id,event["after_state"]); fp=state["semantic_fingerprint"]
         if event["project_id"]!=project_id or event["after_fingerprint"]!=fp or event["to_revision"]!=state["state_revision"]: raise CorruptStoreError("event/state mismatch")
         if prior is None:

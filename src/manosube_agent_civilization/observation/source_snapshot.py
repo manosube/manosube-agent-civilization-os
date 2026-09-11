@@ -23,10 +23,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from manosube_agent_civilization.schema_context import CanonicalSchemaContext
+
 from .errors import ObservationError, ObservationValidationError
 from .identity import deterministic_id
-from .schemas import OBSERVATION_SCHEMA_BASE, validators
+from .schemas import OBSERVATION_SCHEMA_BASE, observation_schema_errors
 from .scope import validate_source_locator
+
+#: The one canonical Source Snapshot schema ``$id``, named once here. Every Source Snapshot
+#: schema validation anywhere in this repository -- this module's own producer and resolver,
+#: and ``binding.admission``'s own pre-commit reverification of an ``additional_genesis_
+#: records`` member -- goes through :func:`validate_source_snapshot_body` below rather than
+#: restating this id and re-deriving a validator of its own
+#: (``SOURCE_SNAPSHOT_IDENTITY_OWNER_COUNT=1``,
+#: ``BINDING_INVENTED_OBSERVATION_VALIDATION=false``, Issue #75 KSI-C3).
+SOURCE_SNAPSHOT_SCHEMA_ID = OBSERVATION_SCHEMA_BASE + "source_snapshot.schema.json"
 
 _SOURCE_SNAPSHOT_SCALARS: tuple[str, ...] = (
     "source_locator",
@@ -52,12 +63,45 @@ def source_snapshot_identity(record: dict[str, Any]) -> str:
     return deterministic_id("SRC-SNAP", {key: record[key] for key in _SOURCE_SNAPSHOT_SCALARS})
 
 
+def validate_source_snapshot_body(
+    record: dict[str, Any],
+    *,
+    context_label: str,
+    schema_context: CanonicalSchemaContext | None = None,
+) -> None:
+    """Schema-validate one Source Snapshot body against Observation's own schema, or raise
+    :class:`~manosube_agent_civilization.observation.errors.ObservationValidationError`.
+
+    The one Source Snapshot schema validation in this repository (Issue #75 KSI-C3). Both of
+    this module's own callers and ``binding.admission``'s own pre-commit reverification of an
+    ``additional_genesis_records`` member reach the identical schema id, the identical
+    validator resolution, and the identical fail-closed semantics through here -- Binding
+    receives and passes a validation context but never reimplements the Source Snapshot
+    schema, identity, or validation semantics.
+
+    *context_label* names the body being rejected in the raised message ("generated
+    source_snapshot", "resolved source_snapshot", "additional genesis record
+    source_snapshot/<id>"), so each caller keeps its own precise diagnostic without owning a
+    second copy of the validation itself.
+
+    With *schema_context* supplied, the captured, digest-verified bytes that context already
+    parsed are the bytes that validate -- never a later filesystem read.
+    """
+
+    errors = observation_schema_errors(
+        record, SOURCE_SNAPSHOT_SCHEMA_ID, schema_context=schema_context
+    )
+    if errors:
+        raise ObservationValidationError(f"{context_label} is schema-invalid: {errors[0].message}")
+
+
 def build_source_snapshot(
     *,
     source_locator: str,
     content_digest: str,
     captured_at: str,
     git_provenance: dict[str, str] | None = None,
+    schema_context: CanonicalSchemaContext | None = None,
 ) -> dict[str, Any]:
     """Return one schema-conformant, content-addressed ``source_snapshot`` record.
 
@@ -73,6 +117,11 @@ def build_source_snapshot(
     caller cannot silently attach a different Git claim to an otherwise-identical
     snapshot), independently re-verifiable by a real Git object witness at the point this
     record is used for Kernel-source provenance, never trusted here as a bare assertion.
+
+    *schema_context* (Issue #75 KSI-C2), when supplied, is the one Kernel-owned
+    :class:`~manosube_agent_civilization.schema_context.CanonicalSchemaContext` whose own
+    captured, digest-verified bytes validate the generated record -- this function then
+    resolves no schema root and reads no ``*.schema.json`` file of any kind.
     """
 
     validate_source_locator(source_locator)
@@ -91,16 +140,18 @@ def build_source_snapshot(
         "git_provenance": dict(git_provenance) if git_provenance is not None else None,
     }
     record["source_snapshot_id"] = source_snapshot_identity(record)
-    validator = validators()[OBSERVATION_SCHEMA_BASE + "source_snapshot.schema.json"]
-    errors = list(validator.iter_errors(record))
-    if errors:
-        raise ObservationValidationError(
-            f"generated source_snapshot is schema-invalid: {errors[0].message}"
-        )
+    validate_source_snapshot_body(
+        record, context_label="generated source_snapshot", schema_context=schema_context
+    )
     return record
 
 
-def resolve_source_snapshot(ref: dict[str, Any], pool: list[dict[str, Any]]) -> dict[str, Any]:
+def resolve_source_snapshot(
+    ref: dict[str, Any],
+    pool: list[dict[str, Any]],
+    *,
+    schema_context: CanonicalSchemaContext | None = None,
+) -> dict[str, Any]:
     """Resolve *ref* (a ``{"kind": "source_snapshot", "id": ...}`` reference) against *pool*
     -- the caller-supplied Source Snapshot records for this Evaluation -- by exact id, then
     verify the resolved record is schema-valid and its own identity recomputes, failing
@@ -118,6 +169,12 @@ def resolve_source_snapshot(ref: dict[str, Any], pool: list[dict[str, Any]]) -> 
     validate_source_locator`), so a resolved record's ``source_locator`` is re-validated
     here exactly as it was at construction, never validated only once and then trusted
     forever after.
+
+    *schema_context* (Issue #75 KSI-C2), when supplied, is the one Kernel-owned
+    :class:`~manosube_agent_civilization.schema_context.CanonicalSchemaContext` whose own
+    captured, digest-verified bytes validate the resolved record -- so a resolution that
+    happens arbitrarily long after capture still validates against the bytes that were
+    verified, never against whatever the schema directory holds at resolution time.
     """
 
     ref_id = ref.get("id")
@@ -126,12 +183,9 @@ def resolve_source_snapshot(ref: dict[str, Any], pool: list[dict[str, Any]]) -> 
         raise ObservationError(
             f"source_snapshot ref does not resolve to any supplied record: {ref_id!r}"
         )
-    validator = validators()[OBSERVATION_SCHEMA_BASE + "source_snapshot.schema.json"]
-    errors = list(validator.iter_errors(record))
-    if errors:
-        raise ObservationValidationError(
-            f"resolved source_snapshot is schema-invalid: {errors[0].message}"
-        )
+    validate_source_snapshot_body(
+        record, context_label="resolved source_snapshot", schema_context=schema_context
+    )
     if record["source_snapshot_id"] != ref_id:
         raise ObservationError("resolved source_snapshot record's own id does not match its ref")
     if record["source_snapshot_id"] != source_snapshot_identity(record):

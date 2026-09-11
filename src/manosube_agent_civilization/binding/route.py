@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from manosube_agent_civilization.authority.identity import rule_id
+from manosube_agent_civilization.schema_context import CanonicalSchemaContext
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import AlreadyInitializedError
@@ -115,6 +116,37 @@ def _read_committed_genesis_manifest_keys(
     return keys
 
 
+def _require_one_validation_context(store: Any, schema_context: CanonicalSchemaContext) -> None:
+    """Fail closed unless *store* was constructed with this exact validation context object
+    (Issue #75 KSI-C5, ``POST_SCHEMA_VERIFY_PRE_VALIDATION_SUBSTITUTION_ACCEPT_COUNT=0``).
+
+    Digest agreement between two contexts would prove only that two registries happen to
+    agree right now; object identity proves the stronger fact this Difference actually claims
+    -- ``ONE_VALIDATION_CONTEXT_USED_END_TO_END=true``. A same-shaped context substituted
+    between the caller's own preflight verification and Store construction is therefore
+    refused here, before any validation, before ``store.initialize``, and before any write --
+    even when the substituted context is itself internally well-formed.
+
+    The check is deliberately made on the Store the caller actually hands in, rather than on
+    a context the Store could be asked to adopt afterwards: the Store validates genesis State
+    and the genesis event with the context it was *built* with, so that is the only context
+    whose agreement with this route's own means anything.
+    """
+
+    store_context = getattr(store, "schema_context", None)
+    if store_context is None:
+        raise BindingValidationError(
+            "schema_context was supplied to bind_project but the Store carries none -- the "
+            "secure route fails closed rather than letting the Store fall back to a "
+            "filesystem schema root"
+        )
+    if store_context is not schema_context:
+        raise BindingValidationError(
+            "the Store was constructed with a different canonical schema validation context "
+            "than the one supplied to bind_project -- ONE_VALIDATION_CONTEXT_USED_END_TO_END"
+        )
+
+
 def bind_project(
     store: Any,
     *,
@@ -132,6 +164,7 @@ def bind_project(
     genesis_state: dict[str, Any],
     additional_genesis_records: list[tuple[str, str, dict[str, Any]]] | None = None,
     schema_root: Path | None = None,
+    schema_context: CanonicalSchemaContext | None = None,
     fault: Any | None = None,
 ) -> dict[str, Any]:
     """Validate, identify, and atomically adopt one Human-declared Project Binding.
@@ -191,17 +224,55 @@ def bind_project(
     (:meth:`load_current`/:meth:`resolve_record`) plus a direct, read-only reproduction of
     its own recovery journal's ``manifest.json`` (never a second persistence mechanism, and
     never any Binding-specific comparison logic added to the Store itself).
+
+    *schema_context* (Issue #75, ``D-KERNEL-VERIFIED-SCHEMA-BYTE-INJECTION``) is the one
+    Kernel-owned :class:`~manosube_agent_civilization.schema_context.CanonicalSchemaContext`
+    every schema validation in this whole genesis transaction is then performed through --
+    Objective Revision and Authority Rule admission here, the Project Binding engine's own
+    four embedded-structure checks, genesis State canonicalization and fingerprinting, the
+    shared pre-commit admission's Source Snapshot reverification (through Observation's own
+    owner), and the Store's own State/event/receipt validation. When it is supplied, nothing
+    in that call graph resolves a schema root, reads a ``*.schema.json`` file, calls the
+    legacy zero-argument Observation registry, or constructs a second registry
+    (``SCHEMA_FILESYSTEM_READ_COUNT_AFTER_CONTEXT_CONSTRUCTION=0``).
+
+    Two things are refused outright rather than resolved in the caller's favour, because
+    either would silently reopen the verify/use window this parameter exists to close:
+    supplying *schema_root* alongside *schema_context*, and supplying a *schema_context* that
+    is not the identical object *store* itself was constructed with
+    (:func:`_require_one_validation_context`). Both refusals happen before any validation and
+    before ``store.initialize`` is ever reached, so ``STORE_WRITE_COUNT_AFTER_REFUSAL=0``.
+
+    A caller that does not request verified-byte injection is entirely unaffected: with no
+    *schema_context*, every path below behaves exactly as it did before, *schema_root*
+    included.
     """
+
+    if schema_context is not None:
+        if schema_root is not None:
+            raise BindingValidationError(
+                "schema_root and schema_context are mutually exclusive: the verified-byte "
+                "route never also names a filesystem schema root to read"
+            )
+        _require_one_validation_context(store, schema_context)
 
     objective_revision_id = objective_revision.get("objective_revision_id")
     if not isinstance(objective_revision_id, str) or not objective_revision_id:
         raise BindingValidationError("objective_revision has no objective_revision_id")
     validate_against_schema_id(
-        objective_revision, OBJECTIVE_REVISION_SCHEMA_ID, schema_root=schema_root
+        objective_revision,
+        OBJECTIVE_REVISION_SCHEMA_ID,
+        schema_root=schema_root,
+        schema_context=schema_context,
     )
 
     reject_wrong_kind_reference("authority_policy_ref", authority_policy_ref)
-    validate_against_schema_id(authority_rule, AUTHORITY_RULE_SCHEMA_ID, schema_root=schema_root)
+    validate_against_schema_id(
+        authority_rule,
+        AUTHORITY_RULE_SCHEMA_ID,
+        schema_root=schema_root,
+        schema_context=schema_context,
+    )
     recomputed_rule_id = rule_id(authority_rule)
     if authority_policy_ref.get("id") != recomputed_rule_id:
         raise BindingIdentityError(
@@ -278,11 +349,12 @@ def bind_project(
         human_authority_signing_key=human_authority_signing_key,
         bound_at=bound_at,
         schema_root=schema_root,
+        schema_context=schema_context,
     )
 
     genesis_state = dict(genesis_state)
     genesis_state["semantic_fingerprint"] = fingerprint_project_state(
-        genesis_state, schema_root=schema_root
+        genesis_state, schema_root=schema_root, schema_context=schema_context
     ).as_dict()
 
     records: list[tuple[str, str, dict[str, Any]]] = [
@@ -304,6 +376,7 @@ def bind_project(
         project_binding=project_binding,
         genesis_state=genesis_state,
         additional_genesis_records=additional_genesis_records or [],
+        schema_context=schema_context,
     )
 
     try:

@@ -31,32 +31,52 @@ from __future__ import annotations
 from typing import Any
 
 from manosube_agent_civilization.difference.canonical import reject_secret_material, walk_references
-from manosube_agent_civilization.observation.schemas import (
-    OBSERVATION_SCHEMA_BASE,
-    validators as _observation_validators,
+from manosube_agent_civilization.observation.errors import ObservationValidationError
+from manosube_agent_civilization.observation.source_snapshot import (
+    source_snapshot_identity,
+    validate_source_snapshot_body,
 )
-from manosube_agent_civilization.observation.source_snapshot import source_snapshot_identity
 from manosube_agent_civilization.reflow import reference_registry as reflow_reference_registry
 from manosube_agent_civilization.reflow.errors import ReflowValidationError
+from manosube_agent_civilization.schema_context import CanonicalSchemaContext
 
 from .errors import BindingIdentityError, BindingValidationError
 from .reference_classification import TypedReferenceEdge, reference_edges
 
 
-def _verify_source_snapshot_body(record_id: str, body: dict[str, Any]) -> None:
+def _verify_source_snapshot_body(
+    record_id: str,
+    body: dict[str, Any],
+    schema_context: CanonicalSchemaContext | None = None,
+) -> None:
     """Schema-validate and identity-reverify one ``additional_genesis_records`` member
-    declared as ``source_snapshot`` -- reusing Observation's own real schema registry and
-    real content-addressed identity function
+    declared as ``source_snapshot`` -- reusing Observation's own real schema validation
+    (:func:`~manosube_agent_civilization.observation.source_snapshot.validate_source_snapshot_
+    body`) and real content-addressed identity function
     (:func:`~manosube_agent_civilization.observation.source_snapshot.source_snapshot_identity`),
-    never a second, Binding-invented identity algorithm for this kind (P9-R3-F3)."""
+    never a second, Binding-invented identity algorithm for this kind (P9-R3-F3).
 
-    validator = _observation_validators()[OBSERVATION_SCHEMA_BASE + "source_snapshot.schema.json"]
-    errors = list(validator.iter_errors(body))
-    if errors:
-        raise BindingValidationError(
-            f"additional genesis record source_snapshot/{record_id} is schema-invalid: "
-            f"{errors[0].message}"
+    Issue #75 KSI-C3 sharpens the same ownership boundary one level further. This function
+    previously reached into Observation's *registry* -- restating the Source Snapshot schema
+    ``$id`` here and calling the zero-argument, reloadable ``validators()`` cache itself --
+    which is a second statement of Observation's own validation semantics inside Binding, and
+    the one seam in the whole genesis call graph that no ``schema_root`` argument could
+    redirect. It now calls Observation's own one validation function instead, passing through
+    whatever *schema_context* the route received: Binding receives and passes the context and
+    names neither the schema nor the validator (``BINDING_INVENTED_OBSERVATION_VALIDATION=
+    false``). Observation's refusal is re-raised as this domain's own
+    :class:`~.errors.BindingValidationError`, with the identical message it has always
+    produced, so Binding's own fail-closed error taxonomy is unchanged.
+    """
+
+    try:
+        validate_source_snapshot_body(
+            body,
+            context_label=f"additional genesis record source_snapshot/{record_id}",
+            schema_context=schema_context,
         )
+    except ObservationValidationError as exc:
+        raise BindingValidationError(str(exc)) from exc
     recomputed = source_snapshot_identity(body)
     if body.get("source_snapshot_id") != recomputed:
         raise BindingIdentityError(
@@ -95,8 +115,14 @@ def admit_genesis_transaction(
     project_binding: dict[str, Any],
     genesis_state: dict[str, Any],
     additional_genesis_records: list[tuple[str, str, dict[str, Any]]],
+    schema_context: CanonicalSchemaContext | None = None,
 ) -> None:
     """Admit one candidate genesis transaction, or raise before anything is persisted.
+
+    *schema_context* (Issue #75 KSI-C2) is the one Kernel-owned validation context every
+    schema check reached from here is performed through when supplied -- currently the
+    ``additional_genesis_records`` kind verifiers, each of which delegates to its own kind's
+    real, existing Observation-owned validation rather than validating anything itself.
 
     *genesis_state* is scanned and reference-checked here as ``project_state`` even though
     it is never itself resolved through :meth:`~manosube_agent_civilization.store.
@@ -127,7 +153,7 @@ def admit_genesis_transaction(
                 f"{kind!r} is not an allowed additional genesis record kind -- "
                 "ADDITIONAL_GENESIS_RECORD_KIND_SET=CLOSED"
             )
-        verifier(record_id, body)
+        verifier(record_id, body, schema_context)
 
     # 1. Duplicate (kind, id) detection across the whole candidate manifest (Phase 9
     #    Structural Review Round 3, P9-R3-F1): SHUKOU's own ratified semantics --

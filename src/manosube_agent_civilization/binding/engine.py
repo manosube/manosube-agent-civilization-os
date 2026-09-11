@@ -21,6 +21,7 @@ from manosube_agent_civilization.difference.canonical import (
     reject_secret_material,
     walk_references,
 )
+from manosube_agent_civilization.schema_context import CanonicalSchemaContext
 
 from .errors import BindingValidationError
 from .identity import (
@@ -107,21 +108,45 @@ def assemble_project_binding(
     human_authority_signing_key: dict[str, Any],
     bound_at: str,
     schema_root: Path | None = None,
+    schema_context: CanonicalSchemaContext | None = None,
 ) -> dict[str, Any]:
     """Validate a declared Project Binding, cross-check its embedded structures, mint and
     reverify its content-addressed identity, and return the full, schema-valid record.
 
     Never touches the Store. Raises :class:`~.errors.BindingValidationError` or
     :class:`~.errors.BindingIdentityError` before returning anything a caller could persist.
+
+    *schema_context* (Issue #75 KSI-C2) is the one Kernel-owned validation context every
+    schema check below is performed through when supplied -- the four ``validate_record``
+    calls in this function are then served entirely from that context's own captured,
+    digest-verified bytes, with no schema-root resolution and no ``*.schema.json`` read.
+    Mutually exclusive with *schema_root*, refused by
+    :func:`~manosube_agent_civilization.binding.validation.validate_against_schema_id` rather
+    than silently resolved in favour of one of them.
     """
 
     # 1. Validate each embedded structure against its own schema first, independently --
     #    a caller's malformed Boundary, Source Registration, or Command Policy is refused
     #    here with a precise field-level message, before any cross-field reasoning runs.
-    validate_record(boundary, "boundary.schema.json", schema_root=schema_root)
+    validate_record(
+        boundary,
+        "boundary.schema.json",
+        schema_root=schema_root,
+        schema_context=schema_context,
+    )
     for registration in source_registrations:
-        validate_record(registration, "source_registration.schema.json", schema_root=schema_root)
-    validate_record(command_policy, "command_policy.schema.json", schema_root=schema_root)
+        validate_record(
+            registration,
+            "source_registration.schema.json",
+            schema_root=schema_root,
+            schema_context=schema_context,
+        )
+    validate_record(
+        command_policy,
+        "command_policy.schema.json",
+        schema_root=schema_root,
+        schema_context=schema_context,
+    )
 
     # 2. Boundary structural checks -- fail closed on escape, never a filesystem read.
     for root in boundary["root_paths"]:
@@ -191,7 +216,12 @@ def assemble_project_binding(
     verify_project_binding_identity(record)
 
     # 6. Validate the fully assembled record against its own top-level schema.
-    validate_record(record, "project_binding.schema.json", schema_root=schema_root)
+    validate_record(
+        record,
+        "project_binding.schema.json",
+        schema_root=schema_root,
+        schema_context=schema_context,
+    )
 
     return record
 

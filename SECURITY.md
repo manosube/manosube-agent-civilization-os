@@ -404,6 +404,76 @@ STALE_CHANGE
 
 競合をlast-write-winsで隠さない。
 
+### Schema Validation Byte Identity
+
+`SCHEMA_VALID`は、「あるschema fileがかつて検証された」ことではなく、「検証されたその
+bytesが実際に検証を実行した」ことを意味しなければならない。
+
+```text
+SCHEMA_PATH_EQUALITY_ALONE_IS_NOT_BYTE_IDENTITY=true
+VERIFIED_SCHEMA_BYTES_ARE_VALIDATION_BYTES=true
+POST_SCHEMA_VERIFY_PRE_VALIDATION_SUBSTITUTION_ACCEPT_COUNT=0
+```
+
+`schema_root`を渡すことは、どのdirectoryを読むかを狭めるだけであり、読むこと自体を除去
+しない。digest検証の後に同じfileを再び読む限り、verify/use windowは残る。検証済みbufferを
+新しいdirectoryへ複製しても、それは所有者が書き込み可能な第二のfilesystem読み取り面である。
+
+これを閉じる唯一のKernel所有機構は、immutableな
+`manosube_agent_civilization.schema_context.CanonicalSchemaContext`である。
+
+```text
+PUBLIC_SCHEMA_CONTEXT_API
+= manosube_agent_civilization.schema_context.CanonicalSchemaContext
++ CanonicalSchemaContext.from_schema_root
++ CanonicalSchemaContext.digest
++ CanonicalSchemaContext.schema_ids
++ CanonicalSchemaContext.relative_paths
++ CanonicalSchemaContext.schema_count
++ CanonicalSchemaContext.knows_schema
++ CanonicalSchemaContext.validation_errors
++ capture_canonical_schema_bytes
++ schema_set_digest
++ SchemaContextError
++ SCHEMA_SET_DIGEST_PROFILE
++ CANONICAL_SCHEMA_SUFFIX
+```
+
+contextは、relative path → captured bytesのclosed mappingから一度だけ構築され、その時点で
+全validatorを構築し、以後はvalidation operationのみを公開する。schema document、validator、
+mutable mappingのいずれも公開しない。
+
+```text
+CONTEXT_EXPOSES_SCHEMA_DOCUMENT=false
+CONTEXT_RELOAD_PATH_COUNT=0
+CONTEXT_CACHE_CLEAR_PATH_COUNT=0
+CONTEXT_ATTRIBUTE_REBINDING_ALLOWED=false
+CONTEXT_RETAINS_CALLER_ALIAS=false
+SCHEMA_FILESYSTEM_READ_COUNT_AFTER_CONTEXT_CONSTRUCTION=0
+```
+
+contextを供給する場合、`FileStateStore`は同一のcontext objectで構築されていなければ
+ならない。fall backしない。
+
+```text
+ONE_VALIDATION_CONTEXT_USED_END_TO_END=true
+SCHEMA_ROOT_AND_SCHEMA_CONTEXT_TOGETHER=REFUSED
+SUBSTITUTED_CONTEXT=REFUSED
+STORE_WRITE_COUNT_AFTER_REFUSAL=0
+```
+
+採用済みのdigest・count・`$id` setを再現しないcontextは、validation、Store構築、write
+のいずれよりも前に拒否される。schemaの意味・identity algorithm・fingerprint・commit
+semanticsは変更されない。
+
+```text
+SCHEMA_MEANING_CHANGE=false
+IDENTITY_ALGORITHM_CHANGE=false
+STATE_FINGERPRINT_CHANGE=false
+STORE_COMMIT_SEMANTICS_CHANGE=false
+PARALLEL_SCHEMA_OWNER=false
+```
+
 ---
 
 ## 9. Evidence Integrity

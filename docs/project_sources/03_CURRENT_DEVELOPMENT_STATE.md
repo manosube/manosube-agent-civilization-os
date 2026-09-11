@@ -2532,3 +2532,129 @@ PASSした。マージ直後の`Merge source post-merge reflow`と`Source freshn
 Phase 18は次のroadmap work unitとして定義可能になったが、自動的な実装Authorityは生じない。
 Issue #69のcloseとPhase 18のObjective/Boundary/Authorityを持つ専用IssueおよびSHUKOU採択は、
 本source-sync PRの手動mergeとその結果mainの再観測後に分離して行う。
+
+---
+
+# 34. Kernel Integrity hardening — injectable immutable schema validation context (Issue #75)
+
+本節は、Phase 18に属さないupstream構造Difference
+`D-KERNEL-VERIFIED-SCHEMA-BYTE-INJECTION`（Issue #75、`ROADMAP_CLASS=
+PHASE_9_BINDING_SECURITY_HARDENING`）の実装現在地である。Phase 17受入後のmainを基点とし、
+新しいPhaseを開始しない。
+
+```text
+DELIVERY_RECORDED_AT=2026-09-11T00:00:00Z
+DIFFERENCE_ID=D-KERNEL-VERIFIED-SCHEMA-BYTE-INJECTION
+GOVERNING_ISSUE=#75
+ROADMAP_CLASS=PHASE_9_BINDING_SECURITY_HARDENING
+NOT_PHASE_18=true
+PHASE_18_IMPLEMENTATION=false
+BASE_BRANCH=main
+BASE_SHA=120cddbddd12e86cb8a233b90a69fe60a24b42c5
+COMPLETED_PHASES_AT_BASE=0..17
+DELIVERY_BRANCH=agent/issue-75-verified-schema-context
+CURRENT_PR=NONE
+DELIVERY_STATE=LOCAL_COMMIT_ONLY_AWAITING_STRUCTURAL_REVIEW
+```
+
+## 34.1 観測された欠陥
+
+`main@120cddbd`において、canonical schemaのdigest検証と、実際にvalidationを行うbytesの
+読み取りは、別々のfilesystem読み取りであった。
+
+```text
+observation.schemas.schema_root()        = ARGUMENTLESS
+observation.schemas.validators()         = ARGUMENTLESS_LRU_CACHE_WITH_PUBLIC_CACHE_CLEAR
+binding.validation._validators()         = LRU_CACHE_KEYED_BY_DIRECTORY_PATH
+state.canonicalize._schema_registry()    = UNCACHED_RGLOB_PER_VALIDATION
+binding.admission._verify_source_snapshot_body() = CALLS_ARGUMENTLESS_REGISTRY_DIRECTLY
+```
+
+実測: 一回の実`bind_project` genesis transactionは、canonical schema fileを**871回**読み
+取っていた（`binding.validation`経由67、`state.canonicalize`経由737、`binding.admission`
+→`observation.schemas.validators()`経由67）。`observation.schemas.validators()`は引数を
+持たないため、`schema_root`を受け取るどのentry pointからも再指定できなかった。
+
+## 34.2 実装
+
+Kernel所有のimmutable validation contextを一つ追加し、genesis transactionのcall graph全体へ
+通した。schema意味・identity algorithm・fingerprint・commit semanticsは変更していない。
+
+```text
+NEW_OWNER=src/manosube_agent_civilization/schema_context.py
+OWNER_COUNT=1
+PARALLEL_SCHEMA_OWNER=false
+LEGACY_DEFAULT_ROUTE_CHANGED=false
+```
+
+配置は`topology.py`と同じくpackage最上位である。canonical `01_SCHEMA` setはどの単一domainの
+所有物でもなく、全domainが受け取れるcontextをいずれかのdomain内部に置くと既存のpackage
+layeringを反転させるため、domain moduleを一切importしないcross-cutting moduleとした。
+
+通した経路（いずれも`schema_context`引数の追加のみ、既定挙動は不変）：
+
+```text
+observation/schemas.py      : observation_schema_errors(...) を追加
+observation/source_snapshot.py : validate_source_snapshot_body(...) を追加し、
+                              build/resolve の両方をその一つの所有者へ集約
+binding/validation.py       : validate_record / validate_against_schema_id
+binding/engine.py           : assemble_project_binding
+binding/admission.py        : admit_genesis_transaction / _verify_source_snapshot_body
+binding/route.py            : bind_project
+state/canonicalize.py       : _validate / canonical_semantic_state_bytes /
+                              canonical_semantic_value_bytes
+state/fingerprint.py        : fingerprint_project_state / fingerprint_semantic_state /
+                              verify_fingerprint
+store/file_store.py         : FileStateStore(root, *, schema_root=None, schema_context=None)
+```
+
+`binding.admission`はObservationのschema registryを直接参照しなくなった。Source Snapshotの
+schema `$id`・validator解決・fail-closed semanticsはObservationの一関数が所有し、Bindingは
+contextを受け取って渡すだけである。
+
+```text
+OBSERVATION_SCHEMA_OWNER_COUNT=1
+SOURCE_SNAPSHOT_IDENTITY_OWNER_COUNT=1
+BINDING_INVENTED_OBSERVATION_VALIDATION=false
+```
+
+## 34.3 実測された閉鎖
+
+```text
+ONE_VALIDATION_CONTEXT_USED_END_TO_END=true
+SCHEMA_FILESYSTEM_READ_COUNT_AFTER_CONTEXT_CONSTRUCTION=0
+INVALID_RECORD_ACCEPTED_AFTER_SCHEMA_SWAP=false
+INVALID_SOURCE_SNAPSHOT_ACCEPTED_AFTER_SCHEMA_SWAP=false
+POST_SCHEMA_VERIFY_PRE_VALIDATION_SUBSTITUTION_ACCEPT_COUNT=0
+STORE_WRITE_COUNT_AFTER_REFUSAL=0
+VALID_BINDING_AND_GENESIS_COMMIT=true
+BINDING_REPLAY_IDEMPOTENT=true
+EXISTING_TEST_DELETION_COUNT=0
+```
+
+読み取り数は主張ではなく実測である。context構築後に`Path.read_text`/`Path.read_bytes`を
+計測し、Source Snapshot生成、完全な`bind_project` genesis transaction、同一replay、新しい
+`FileStateStore`、完全なlineage再構成を通して`*.schema.json`の読み取りが0件であることを
+確認した。
+
+拒否の非空虚性は、すべて positive control と対にしている。weakened schemaから捕捉した
+contextは同一の不正recordを実際に受理する。したがって「swap後も拒否された」という主張は、
+fixtureが最初から不正でなかったこと、あるいはswapが効いていなかったことの産物ではない。
+
+## 34.4 権限境界
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+DOWNSTREAM_PIN_UPDATE_ALLOWED=false
+PHASE_18_IMPLEMENTATION_ALLOWED=false
+REMOTE_PUSH_PERFORMED=false
+PR_CREATED=false
+BOAT_PR_4497_TOUCHED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+IMPLEMENTER_STOP=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本Differenceは、既存のState、Observation、Difference、Authority、Change、Evidence、Reflow、
+Binding、Boot、Runtime、Model Runtime、URL Bootのいずれのownerも置換しない。`01_SCHEMA`の
+内容は一byteも変更していない。
