@@ -264,6 +264,42 @@ def test_worktree_root_with_a_hostless_bare_slug_origin_is_refused_even_with_mat
         validate_execution_boundary(boundary)
 
 
+def test_worktree_root_with_a_non_https_scheme_origin_is_refused_even_with_matching_host_and_path(
+    tmp_path: Path,
+) -> None:
+    """(P18-R5-F2, Structural Review Round 5 supplemental finding) A remote whose own scheme is
+    not ``https`` -- even when the remainder after ``"://"`` names exactly the admitted host and
+    owner/repo path -- must be refused. Before this correction, ``_normalize_repository_slug``'s
+    ``"://"`` branch discarded the scheme itself entirely unchecked, so ``file://github.com/
+    <owner>/<repo>.git`` parsed through undetected: a remote that plainly never reaches the real
+    forge over any real network transport still passed the host check."""
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _run_git("init", "--quiet", str(worktree))
+    _run_git("symbolic-ref", "HEAD", f"refs/heads/{BRANCH}", cwd=str(worktree))
+    _run_git("remote", "add", "origin", f"file://github.com/{REPOSITORY}.git", cwd=str(worktree))
+    boundary = execution_boundary_for(worktree_root=str(worktree))
+    with pytest.raises(ExecutionBoundaryError, match="scheme"):
+        validate_execution_boundary(boundary)
+
+
+def test_worktree_root_with_an_arbitrary_non_https_scheme_origin_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The identical refusal for an arbitrary, entirely made-up scheme (``evil``), confirming
+    this is a genuine scheme allowlist, not merely a single hardcoded ``file`` exclusion."""
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _run_git("init", "--quiet", str(worktree))
+    _run_git("symbolic-ref", "HEAD", f"refs/heads/{BRANCH}", cwd=str(worktree))
+    _run_git("remote", "add", "origin", f"evil://github.com/{REPOSITORY}.git", cwd=str(worktree))
+    boundary = execution_boundary_for(worktree_root=str(worktree))
+    with pytest.raises(ExecutionBoundaryError, match="scheme"):
+        validate_execution_boundary(boundary)
+
+
 def test_linked_git_worktree_resolves_via_its_own_commondir(tmp_path: Path) -> None:
     """A genuine ``git worktree add`` linked worktree -- its own ``.git`` is a *file* naming the
     real gitdir, and that gitdir's own ``commondir`` names the main repository's own git

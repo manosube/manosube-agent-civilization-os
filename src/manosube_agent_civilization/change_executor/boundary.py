@@ -199,6 +199,19 @@ ROLLBACK_POLICIES: frozenset[str] = frozenset({"NONE", "BEST_EFFORT_DELETE_WRITT
 #: remote (e.g. ``https://attacker.invalid/owner/repo.git``) pass undetected.
 _TRUSTED_REPOSITORY_HOST = "github.com"
 
+#: The one trusted URL scheme :func:`_normalize_repository_slug`'s ``"://"`` branch ever admits
+#: (P18-R5-F2, Structural Review Round 5, supplemental finding). Before this correction, the
+#: ``"://"`` branch partitioned the value into ``_, _, rest`` -- discarding the scheme itself
+#: entirely, unchecked -- so any scheme (``file``, ``evil``, ``ftp``, ...) parsed through
+#: unexamined so long as the remainder after ``"://"`` happened to name the admitted host and an
+#: owner/repo path (e.g. ``file://github.com/owner/repo.git``): a remote that plainly never
+#: reaches the real ``github.com`` forge over any real network transport would still pass the
+#: host check below undetected. The admitted scheme must be present and exact, checked before the
+#: host is ever inspected -- the same "nothing about a remote passes on host/path resemblance
+#: alone" discipline the host check (P18-R3-F2) and the hostless-form refusal (P18-R4-F2) already
+#: establish for this function.
+_TRUSTED_REPOSITORY_URL_SCHEME = "https"
+
 #: Every Boundary field that must be exactly the Python value ``False`` -- schema-fixed, never a
 #: caller-supplied toggle: this package never permits following/creating a symlink target,
 #: traversing outside an admitted path, network access, subprocess execution, environment
@@ -387,7 +400,12 @@ def _normalize_repository_slug(url: str) -> str:
     identity at all, so accepting it silently would let any locally-reachable directory whose
     path happens to end in the admitted ``owner/repo`` satisfy this check without ever proving a
     real ``github.com`` remote exists. The admitted repository host must be present and exact in
-    every accepted remote form; there is no hostless admissible form."""
+    every accepted remote form; there is no hostless admissible form. (P18-R5-F2) The
+    ``scheme://`` form additionally requires its own scheme to equal
+    :data:`_TRUSTED_REPOSITORY_URL_SCHEME` (``"https"``) exactly, checked before the host is ever
+    inspected -- previously the scheme was discarded unchecked, so ``file://github.com/owner/
+    repo.git`` (or any other scheme) parsed through undetected so long as the remainder after
+    ``"://"`` happened to name the admitted host and path."""
 
     value = url.strip()
     if value.endswith(".git"):
@@ -395,7 +413,16 @@ def _normalize_repository_slug(url: str) -> str:
     if not value:
         raise ExecutionBoundaryError("execution_boundary.worktree_root's own remote url is empty")
     if "://" in value:
-        _, _, rest = value.partition("://")
+        scheme, _, rest = value.partition("://")
+        # (P18-R5-F2) The scheme itself must be checked, exactly, before the host is ever
+        # inspected -- discarding it here (as this branch previously did) let any scheme parse
+        # through unexamined so long as the remainder resembled an admitted host and path.
+        if scheme.lower() != _TRUSTED_REPOSITORY_URL_SCHEME:
+            raise ExecutionBoundaryError(
+                f"execution_boundary.worktree_root's own remote url names scheme {scheme!r}, "
+                f"not the admitted repository URL scheme {_TRUSTED_REPOSITORY_URL_SCHEME!r} -- "
+                f"refusing (P18-R5-F2): {url!r}"
+            )
         host, _, path = rest.partition("/")
         if not path:
             raise ExecutionBoundaryError(

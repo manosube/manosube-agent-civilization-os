@@ -61,6 +61,23 @@ than returning a record whose own embedded facts contradict its own claimed stat
 below proves the genuine positive route no longer accidentally reaches ``INCOMPLETE`` at all; the
 second is a decisive negative control that tampers only the resolved Observation's own status
 (identity kept genuine) and proves the post-call gate refuses it regardless.
+
+(f) **R5_F1 (P18-R5-F1, Structural Review Round 5).** Round 4's own fix (above) still computed
+``status = VERIFIED`` from ``receipt["outcome"] == "SUCCEEDED"`` alone, before any canonical
+Observation was ever resolved, and only *vetoed* that precomputed status afterward once the
+Observation's own status was checked -- SHUKOU's own adopted meaning is stronger:
+``RECEIPT_OUTCOME_MAY_BE_INPUT_BUT_CANNOT_PRECOMPUTE_PROMOTION``. ``route_change_execution_to_
+evidence`` now resolves the real canonical verification Observation itself, through the one
+existing Observation owner (``observation.engine.observe()``, called directly -- the identical
+pure/deterministic function ``derive_evidence``'s own internal call independently mints an
+identical record from), *before* ``_construct_provenance`` is ever called, and ``_construct_
+provenance`` derives ``VERIFIED`` from that resolved Observation's own status directly, refusing
+outright (before ``derive_evidence`` is ever invoked) rather than precomputing and vetoing
+afterward. The first test below proves this directly: a resolved Observation degraded to
+``INCOMPLETE`` (the receipt's own outcome left genuinely ``SUCCEEDED``) is refused at
+provenance-construction time itself. The second proves the returned provenance's own
+``observations.canonical_verification_observation`` genuinely binds the resolved Observation's
+own identity and status, not merely a fact this hand-off checked and discarded.
 """
 
 from __future__ import annotations
@@ -732,3 +749,139 @@ def test_evidence_with_an_incomplete_grounding_observation_status_is_refused(
     evidence_request["verification_observation_request"] = None
     with pytest.raises(ChangeExecutorError, match="P18-R4-F1"):
         route_change_execution_to_evidence(store, receipt, project_id, evidence_request)
+
+
+# --------------------------------------------------------------------------------------- #
+# (f) R5_F1 (P18-R5-F1, Structural Review Round 5): VERIFIED is derived from the resolved
+# canonical Observation's own status, never precomputed from the receipt's outcome and only
+# vetoed afterward.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_a_degraded_resolved_observation_refuses_verified_even_though_the_receipt_outcome_succeeded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R5_F1_NEGATIVE: with the receipt's own outcome genuinely ``SUCCEEDED``, degrading only the
+    Observation this hand-off itself resolves through the existing Observation owner (``observe()``
+    called directly, before ``_construct_provenance`` is ever invoked) to a non-decisive status
+    must refuse -- proving ``VERIFIED`` is derived from that resolved Observation, never
+    precomputed from the receipt's outcome alone and merely vetoed after the fact."""
+
+    store, info = bound(tmp_path)
+    project_id = info["project_id"]
+    commit_active_kill_switch(store, project_id)
+
+    content = "# R5-F1 derived-not-precomputed proof\n"
+    result = build_committed_change(
+        store,
+        project_id,
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/r5-f1-derived.md", "content_utf8": content}],
+        ),
+        paths=["docs/r5-f1-derived.md"],
+    )
+    change = result["change"]
+
+    worktree_root = git_worktree(tmp_path)
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        store,
+        project_id=project_id,
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree_root)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    outcome = execute(
+        change["change_id"],
+        claim_token="r5-f1-derived-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "SUCCEEDED"
+
+    from manosube_agent_civilization.observation import observe as _real_observe
+
+    def _degrading_observe(request: dict[str, Any]) -> dict[str, Any]:
+        bundle = _real_observe(request)
+        degraded = dict(bundle)
+        observations = list(bundle["observations"])
+        last = dict(observations[-1])
+        last["status"] = "INCOMPLETE"
+        observations[-1] = last
+        degraded["observations"] = observations
+        return degraded
+
+    monkeypatch.setattr(evidence_handoff_module, "observe", _degrading_observe)
+
+    evidence_request = _rebind_project(
+        change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
+    )
+    evidence_request["verification_observation_request"] = None
+    with pytest.raises(ChangeExecutorError, match="P18-R5-F1"):
+        route_change_execution_to_evidence(store, receipt, project_id, evidence_request)
+
+
+def test_verified_provenance_binds_the_resolved_canonical_verification_observation(
+    tmp_path: Path,
+) -> None:
+    """R5_F1_POSITIVE: a genuine ``VERIFIED`` provenance's own
+    ``observations.canonical_verification_observation`` genuinely binds the resolved canonical
+    Observation's own identity and status -- not merely a fact this hand-off checked and
+    discarded -- and equals the identical identity/status the returned Evidence's own
+    ``observed_result`` carries."""
+
+    store, info = bound(tmp_path)
+    project_id = info["project_id"]
+    commit_active_kill_switch(store, project_id)
+
+    content = "# R5-F1 canonical-binding proof\n"
+    result = build_committed_change(
+        store,
+        project_id,
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/r5-f1-binding.md", "content_utf8": content}],
+        ),
+        paths=["docs/r5-f1-binding.md"],
+    )
+    change = result["change"]
+
+    worktree_root = git_worktree(tmp_path)
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        store,
+        project_id=project_id,
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree_root)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    outcome = execute(
+        change["change_id"],
+        claim_token="r5-f1-binding-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "SUCCEEDED"
+
+    evidence_request = _rebind_project(
+        change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
+    )
+    evidence_request["verification_observation_request"] = None
+    evidence = route_change_execution_to_evidence(store, receipt, project_id, evidence_request)
+    assert evidence["verification_result_provenance"]["status"] == "VERIFIED"
+
+    canonical = evidence["verification_result_provenance"]["observations"][
+        "canonical_verification_observation"
+    ]
+    assert canonical["observation_ref"] == {
+        "kind": "observation",
+        "id": evidence["observed_result"]["observation_ref"]["id"],
+    }
+    assert canonical["observation_status"] == evidence["observed_result"]["observation_status"]

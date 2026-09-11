@@ -339,7 +339,13 @@ level out instead of inside the closed record.
     hostless `owner/repo` remote value -- neither a `scheme://` URL nor scp-like syntax, and
     therefore a *relative filesystem path* remote in git's own vocabulary, naming no forge host
     at all -- is now refused outright rather than passed through unchanged; there is no hostless
-    admissible remote form). A mismatch, or any unparseable/missing
+    admissible remote form; **corrected again by Structural Review Round 5, P18-R5-F2**: the
+    `scheme://` form's own scheme itself was previously discarded, entirely unchecked, before the
+    host was ever inspected, so `file://github.com/<owner>/<repo>.git` (or any other scheme)
+    parsed through undetected so long as the remainder after `"://"` happened to name the
+    admitted host and an owner/repo path. `_normalize_repository_slug` now requires the scheme
+    to equal `_TRUSTED_REPOSITORY_URL_SCHEME` (`"https"`) exactly, checked before the host is
+    ever inspected). A mismatch, or any unparseable/missing
     `.git` metadata, raises `ExecutionBoundaryError` at composition time, before any
     request-facing operation can even be obtained.
 16. **`execution_attempt` now carries its own `reobservation_request` durably, embedded at
@@ -383,6 +389,32 @@ level out instead of inside the closed record.
     derive_evidence`'s own internal call -- never a caller-supplied Observation record trusted
     directly), and requires the two independent re-reads to agree before `VERIFIED` may ever be
     derived.
+
+**Structural Review Round 5 (`ADOPT_P18_R5_STRUCTURAL_CORRECTIONS`)**:
+
+19. **`VERIFIED` is now DERIVED FROM the resolved canonical verification Observation itself,
+    never precomputed from the receipt's own `outcome` and merely vetoed afterward (P18-R5-F1).**
+    Rounds 3 and 4 (items 18 above's own R3-F1/R4-F1 refinements, `CHANGE_EXECUTOR_CONTRACT.md`'s
+    own record of which was itself incomplete prior to this item) still computed
+    `status = VERIFIED` from `receipt["outcome"] == "SUCCEEDED"` alone, before any canonical
+    Observation was ever resolved, and only *vetoed* that precomputed status afterward once the
+    minted Observation's own identity/status were checked -- SHUKOU's own adopted meaning for
+    this round is stronger: `RECEIPT_OUTCOME_MAY_BE_INPUT_BUT_CANNOT_PRECOMPUTE_PROMOTION`.
+    `route_change_execution_to_evidence` now itself calls `observation.engine.observe` directly
+    -- the identical pure, deterministic function `evidence.derive_evidence`'s own internal call
+    independently mints an identical record from, so this is calling the existing single
+    Observation owner twice and cross-verifying agreement, never adding a second canonical
+    Observation owner -- *before* `_construct_provenance` is ever invoked, and passes the
+    resolved record into it. `_construct_provenance` derives `status = VERIFIED` directly from
+    that resolved Observation's own `status` (refusing outright, before `derive_evidence` is ever
+    called, when it is not decisive), and binds the resolved Observation's own identity/status
+    into the returned provenance's own `observations.canonical_verification_observation` field
+    (schema-unconstrained, so no schema change was required). The post-`derive_evidence` checks
+    are correspondingly strengthened: the returned Evidence's own grounding Observation identity
+    must equal both the independently recomputed `_expected_verification_observation_id` AND the
+    identity of the Observation this hand-off itself resolved, and the returned Evidence's own
+    `observed_result.observation_status` must EXACTLY equal (not merely fall within an admissible
+    set) the resolved Observation's own `status`.
 
 ## 4. Canonical owner
 

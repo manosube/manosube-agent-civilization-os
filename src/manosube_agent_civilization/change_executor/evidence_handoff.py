@@ -111,6 +111,7 @@ from pathlib import Path
 from typing import Any
 
 from manosube_agent_civilization.evidence import derive_evidence
+from manosube_agent_civilization.observation import observe
 from manosube_agent_civilization.observation.identity import observation_identity
 from manosube_agent_civilization.observation.source_snapshot import build_source_snapshot
 
@@ -222,25 +223,46 @@ def _reference_set(refs: tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
     return {"collection_kind": "UNORDERED_SET", "members": members}
 
 
-def _construct_provenance(receipt: Mapping[str, Any], project_id: str) -> dict[str, Any]:
+def _construct_provenance(
+    receipt: Mapping[str, Any],
+    project_id: str,
+    *,
+    resolved_verification_observation: Mapping[str, Any],
+) -> dict[str, Any]:
     """Return the one, deterministic ``verification_result_provenance`` projection this hand-off
-    derives -- entirely from the real, resolved, integrity-checked receipt, never from any field
-    a caller-constructed receipt dict merely claims.
+    derives -- entirely from the real, resolved, integrity-checked receipt and the real, resolved
+    canonical verification Observation, never from any field a caller-constructed receipt dict
+    merely claims.
 
-    ``status`` is derived from ``receipt["outcome"]`` alone (:data:`_OUTCOME_TO_PROVENANCE_
-    STATUS`), **except** that a receipt claiming ``outcome == "SUCCEEDED"`` whose own embedded
+    A receipt claiming ``outcome == "SUCCEEDED"`` whose own embedded
     ``independent_after_state_observation`` does not itself carry ``outcome == "MATCHED"`` is
     refused outright rather than derived as ``VERIFIED`` -- this should be structurally
     unreachable (``route.py`` itself never commits such a combination), so reaching it here means
     something upstream is broken, and this module fails closed rather than silently trust a
     self-reported ``SUCCEEDED`` it cannot itself independently confirm (P18-R1-F1, Structural
-    Review Round 1). ``verifier_identity`` still names ``executor_identity``/``executor_version``
-    -- the identical, honest framing this package already used before this correction: this
-    package's own re-read code (:mod:`~manosube_agent_civilization.change_executor.
-    reobservation`), not the adapter, is what actually performed the confirming independent
-    observation, and that re-read is itself executed, and its own result committed, under this
-    same executor identity/version -- the field names what performed and confirmed the work, not
-    merely what the adapter self-reported."""
+    Review Round 1).
+
+    **``status`` for a ``SUCCEEDED`` receipt is DERIVED FROM *resolved_verification_observation*
+    itself, never precomputed from the receipt's own outcome (P18-R5-F1, Structural Review Round
+    5).** Earlier corrections (P18-R3-F1, P18-R4-F1) still computed ``status = VERIFIED`` from
+    ``receipt["outcome"]`` alone, before any canonical Observation existed, and only *vetoed* that
+    precomputed status afterward once the Observation was resolved -- SHUKOU's own adopted meaning
+    is stronger: ``RECEIPT_OUTCOME_MAY_BE_INPUT_BUT_CANNOT_PRECOMPUTE_PROMOTION``. *
+    resolved_verification_observation* is the real record :func:`route_change_execution_to_
+    evidence` already resolved, through the one existing canonical Observation owner
+    (:func:`~manosube_agent_civilization.observation.engine.observe`), *before* calling this
+    function -- so ``VERIFIED`` is only ever derived here from that Observation's own ``status``
+    actually being decisive (:data:`_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES`), never from the
+    receipt alone. Its identity and status are also bound directly into this provenance's own
+    ``observations`` payload (``canonical_verification_observation``), so the returned record
+    itself carries the fact that determined the promotion, not merely receipt-derived material.
+
+    ``verifier_identity`` still names ``executor_identity``/``executor_version`` -- the identical,
+    honest framing this package already used before this correction: this package's own re-read
+    code (:mod:`~manosube_agent_civilization.change_executor.reobservation`), not the adapter, is
+    what actually performed the confirming independent observation, and that re-read is itself
+    executed, and its own result committed, under this same executor identity/version -- the field
+    names what performed and confirmed the work, not merely what the adapter self-reported."""
 
     if (
         receipt["outcome"] == "SUCCEEDED"
@@ -255,6 +277,26 @@ def _construct_provenance(receipt: Mapping[str, Any], project_id: str) -> dict[s
             "something upstream is broken"
         )
 
+    if receipt["outcome"] == "SUCCEEDED":
+        # (P18-R5-F1) VERIFIED is derived from the resolved canonical Observation's own status --
+        # the receipt's SUCCEEDED outcome is an input to whether this module even attempts the
+        # derivation, never what determines the resulting status by itself.
+        if (
+            resolved_verification_observation["status"]
+            not in _ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES
+        ):
+            raise ChangeExecutorError(
+                "the receipt's own outcome is SUCCEEDED, but the canonical verification "
+                "Observation this hand-off resolved through its own owner (observe()) before "
+                "constructing provenance did not itself reach a decisive status -- refusing to "
+                "derive VERIFIED from anything but that resolved Observation (P18-R5-F1): "
+                f"observation_status={resolved_verification_observation['status']!r} not in "
+                f"{sorted(_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES)}"
+            )
+        status = "VERIFIED"
+    else:
+        status = _OUTCOME_TO_PROVENANCE_STATUS[receipt["outcome"]]
+
     receipt_ref = {"kind": _RECEIPT_RECORD_KIND, "id": receipt["change_execution_receipt_id"]}
     refs = (dict(receipt["change_ref"]), receipt_ref)
     slot_key = receipt["execution_request_id"]
@@ -266,9 +308,19 @@ def _construct_provenance(receipt: Mapping[str, Any], project_id: str) -> dict[s
         "execution_started_at": receipt["execution_started_at"],
         "execution_ended_at": receipt["execution_ended_at"],
         "independent_after_state_observation": dict(receipt["independent_after_state_observation"]),
+        # (P18-R5-F1) The canonical verification Observation's own identity and status, bound
+        # directly into the returned provenance -- never merely a fact this hand-off checked and
+        # discarded.
+        "canonical_verification_observation": {
+            "observation_ref": {
+                "kind": "observation",
+                "id": resolved_verification_observation["observation_id"],
+            },
+            "observation_status": resolved_verification_observation["status"],
+        },
     }
     provenance = {
-        "status": _OUTCOME_TO_PROVENANCE_STATUS[receipt["outcome"]],
+        "status": status,
         "requirement_id": slot_key,
         "selection_id": slot_key,
         "project_id": project_id,
@@ -643,7 +695,20 @@ def route_change_execution_to_evidence(
         captured_at=captured_at,
     )
 
-    provenance = _construct_provenance(resolved, project_id)
+    # (P18-R5-F1, Structural Review Round 5) Resolve the real canonical verification Observation
+    # THROUGH THE ONE EXISTING OBSERVATION OWNER (observe()) itself, BEFORE constructing
+    # provenance -- so VERIFIED is derived from that resolved Observation's own status, never
+    # precomputed from the receipt's outcome and only vetoed afterward. Calling observe() here
+    # and letting derive_evidence's own internal call mint the identical record for the identical
+    # request (observe() is pure/deterministic -- see observation/engine.py's own docstring) is
+    # calling the existing single owner twice and cross-verifying agreement; it does not create a
+    # second canonical owner.
+    resolved_verification_bundle = observe(verification_observation_request)
+    resolved_verification_observation = resolved_verification_bundle["observations"][-1]
+
+    provenance = _construct_provenance(
+        resolved, project_id, resolved_verification_observation=resolved_verification_observation
+    )
     request = dict(evidence_request)
     request["verification_observation_request"] = verification_observation_request
     request["verification_result_provenance"] = provenance
@@ -659,35 +724,43 @@ def route_change_execution_to_evidence(
     expected_verification_observation_id = _expected_verification_observation_id(
         verification_observation_request
     )
-    if evidence["observed_result"]["observation_ref"]["id"] != expected_verification_observation_id:
+    if (
+        evidence["observed_result"]["observation_ref"]["id"] != expected_verification_observation_id
+        or expected_verification_observation_id
+        != resolved_verification_observation["observation_id"]
+    ):
         raise ChangeExecutorError(
             "the derived Evidence record's own grounding Observation does not match the "
             "identity this hand-off independently recomputed from the exact "
-            "verification_observation_request it built -- refusing to trust a VERIFIED "
-            "promotion this hand-off cannot itself resolve and confirm (P18-R3-F1): "
-            f"{evidence['observed_result']['observation_ref']['id']!r} != "
-            f"{expected_verification_observation_id!r}"
+            "verification_observation_request it built, and/or does not match the identity of "
+            "the canonical Observation this hand-off itself resolved through the existing "
+            "Observation owner before constructing provenance -- refusing to trust a VERIFIED "
+            "promotion this hand-off cannot itself resolve and confirm (P18-R3-F1, P18-R5-F1): "
+            f"evidence={evidence['observed_result']['observation_ref']['id']!r}, "
+            f"recomputed={expected_verification_observation_id!r}, "
+            f"resolved={resolved_verification_observation['observation_id']!r}"
         )
-    # (P18-R4-F1) Identity equality alone proves *which* Observation grounds this Evidence, but
-    # observation_id excludes source_occurrences, their outcomes, and the derived status itself
-    # -- so equal identity does not by itself prove the Observation genuinely resolved anything.
-    # A provenance status of VERIFIED is only trustworthy when the minted Observation's own
-    # resolved status is one this module recognizes as decisive
-    # (:data:`_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES`); an INCOMPLETE, UNKNOWN, or otherwise
-    # undecided Observation must never coexist with a VERIFIED promotion, however the receipt's
-    # own outcome precomputed it.
+    # (P18-R5-F1) The returned Evidence's own observation_status must EXACTLY equal the resolved
+    # canonical Observation's own status -- never merely fall within an admissible set checked
+    # only when the receipt's outcome happened to precompute VERIFIED (P18-R4-F1's weaker,
+    # post-call-veto framing, which this stricter exact-equality check now subsumes). This is the
+    # stronger meaning SHUKOU's own Round 5 adoption named:
+    # RECEIPT_OUTCOME_MAY_BE_INPUT_BUT_CANNOT_PRECOMPUTE_PROMOTION -- the resolved Observation's
+    # own status is what the returned Evidence must actually carry, in every case, not only when
+    # convenient to check.
     if (
-        provenance["status"] == "VERIFIED"
-        and evidence["observed_result"]["observation_status"]
-        not in _ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES
+        evidence["observed_result"]["observation_status"]
+        != resolved_verification_observation["status"]
     ):
         raise ChangeExecutorError(
-            "the receipt's own outcome precomputed a VERIFIED provenance status, but the "
-            "canonical verification Observation this hand-off resolved back did not itself "
-            "reach a decisive status -- refusing to let a receipt's self-report manufacture a "
-            "VERIFIED promotion the resolved Observation does not itself determine (P18-R4-F1): "
-            f"observation_status={evidence['observed_result']['observation_status']!r} not in "
-            f"{sorted(_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES)}"
+            "the derived Evidence record's own observed_result.observation_status does not "
+            "exactly equal the resolved canonical verification Observation's own status this "
+            "hand-off itself obtained through the existing Observation owner before "
+            "constructing provenance -- refusing to trust a status derive_evidence reports that "
+            "disagrees with the Observation this hand-off can itself resolve and confirm "
+            f"(P18-R4-F1, P18-R5-F1): evidence="
+            f"{evidence['observed_result']['observation_status']!r} != "
+            f"resolved={resolved_verification_observation['status']!r}"
         )
     if evidence["verification_result_provenance"] != provenance:
         raise ChangeExecutorError(

@@ -2935,3 +2935,125 @@ PHASE_18_COMPLETE=false
 PHASE_19_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
+
+# 38. Phase 18 Structural Review Round 5 bounded addendum (Issue #73, PR #74) -- current-state restatement (P18-R5-F1/F2/F3)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。構造参謀によるStructural Review Round 5のレビュー本文（review
+id `5176041784`、`https://github.com/manosube/manosube-agent-civilization-os/pull/74#pullrequestreview-5176041784`）
+および補足レビュー（review id `5176442417`、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#pullrequestreview-5176442417`、
+`_normalize_repository_slug`がscheme自体を一切検証していないという新規finding `P18-R5-F2`を
+追加報告）、構造参謀によるhandoff（comment id `5631578194`、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5631578194`）、
+およびSHUKOUによるその採択（comment id `5631613763`、作成時刻`2026-09-11T08:25:37Z`、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5631613763`、
+`ADOPTION_ID=ADOPT_P18_R5_STRUCTURAL_CORRECTIONS`、
+`AUTHORIZED_TARGET_SHA=14f55153eb9ddf3fd9a22c570790db541d0c9832`）を、それぞれGitHub API +
+`git rev-parse`による独立再観測で確認した上で、この既存PR #74ブランチ（新規branch・新規PR無し）
+上に実装した是正内容を記録する。
+
+**本節はまず、`P18-R5-F3`自身が名指しした欠陥そのものを解消する。** セクション37
+（Round 4 bounded addendum）は、自身が採択された2件（`P18-R4-F1`・`P18-R4-F2`）のみを対象とし、
+`CURRENT_PHASE_STATE`/`REVIEW_STATE`フィールド自身の再投影を意図的に行わなかった -- そのため、
+このdocument自身の"last-occurrence extraction convention"の下で有効な`CURRENT_PHASE_STATE`/
+`REVIEW_STATE`は、Round 4自身が実際にdeliverした状態を反映しないまま、セクション36
+（Round 2時点の記述）のまま stale であった。本節はまず、Round 4が実際にdeliverした状態を、
+セクション36自身を書き換えることなく、次のブロックで再投影する：
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-11
+CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+CURRENT_PHASE_ISSUE=73
+CURRENT_PR=74
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#73
+TARGET_PR=#74
+BASE_SHA=71e18e0e6f74cac61ae2bc340243e4d67b805aab
+BRANCH=agent/issue-73-phase18-controlled-autonomous-change
+REVIEWED_HEAD=71e18e0e6f74cac61ae2bc340243e4d67b805aab
+ADOPTION_ID=ADOPT_P18_R4_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P18-R4-F1,P18-R4-F2
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_74_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+FINAL_HEAD_SHA=14f55153eb9ddf3fd9a22c570790db541d0c9832
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_AWAITING_ROUND_5
+TARGETED_TEST_COUNT_AT_THIS_HEAD=209
+```
+
+`FINAL_HEAD_SHA=14f55153eb9ddf3fd9a22c570790db541d0c9832`は、Round 5自身の採択コメントが
+`AUTHORIZED_TARGET_SHA`として独立に確認した、まさにその値と厳密に一致する（`git rev-parse
+origin/agent/issue-73-phase18-controlled-autonomous-change`による独立再観測で確認済み）--
+Round 4自身のコミット自身は、原理的に、自分自身の最終headのSHAを自分自身の内容の中に事前に記録
+できない（セクション36自身が名指しした、まさにこの構造的制約そのもの）ため、この値は、この
+本節自身が事後的に確認できるようになった時点で、遡ってセクション37自身を書き換えることなく、
+初めてここに記録される。`TARGETED_TEST_COUNT_AT_THIS_HEAD=209`は、この本節自身が
+`14f5515`自身へ独立に`git stash`してtargeted test suiteを再実行し、直接確認した実測値である。
+
+**続けて、本節自身のRound 5是正内容を記録する。** 採択された3件（`P18-R5-F1`・`P18-R5-F2`・
+`P18-R5-F3`）の要約：
+
+```text
+P18-R5-F1  Round 3・Round 4自身の是正（セクション37参照）は、receipt自身のoutcome=="SUCCEEDED"
+           から status = VERIFIED を先に precompute し、その後で初めて、resolve された
+           canonical Observation自身の identity/status をpost-call checkとして検査する
+           -- 一致しなければ拒否する、という"post-call veto"の形を取っていた。SHUKOU自身が
+           採択した本round自身の意味はより強い：
+           RECEIPT_OUTCOME_MAY_BE_INPUT_BUT_CANNOT_PRECOMPUTE_PROMOTION -- receipt自身の
+           outcomeは、この hand-off が derivation を試みるかどうかの入力にはなり得るが、
+           それ自体が結果のstatusを決定してはならない。route_change_execution_to_evidenceは
+           今や、_construct_provenanceを呼び出す**前に**、既存の唯一のObservation owner
+           （observation.engine.observe、evidence.derive_evidenceの内部呼び出しが同一の
+           pure/deterministic関数から独立に mint する、まさにそれと同一の関数）を自ら直接
+           呼び出し、実体のあるcanonical Observationを自ら resolve する -- これは既存の
+           唯一のownerを二度呼び、両者の一致を独立に検証しているのであり、新たなcanonical
+           Observation ownerを追加しているのではない。_construct_provenanceは、
+           このresolveされたObservation自身のstatusから直接VERIFIEDを導出し（decisiveで
+           なければderive_evidenceを呼び出す前に拒否する）、resolveされたObservation自身の
+           identity/statusを、返却されるprovenance自身の
+           observations.canonical_verification_observationフィールドへ直接bindする
+           （schema側は元々unconstrainedのため、schema変更は不要）。derive_evidence呼び出し後
+           のpost-call checkも強化した：返却されたEvidence自身のgrounding Observation identity
+           は、独立に再計算された_expected_verification_observation_idと、この hand-off が
+           自ら resolve したObservation自身のidentityの、両方と厳密に一致することを要求し、
+           返却されたEvidence自身のobserved_result.observation_statusは、resolveされた
+           Observation自身のstatusと厳密に等しいことを要求する（従来の"admissible setに属す
+           るか"というより弱いcheckからの強化）。
+
+P18-R5-F2  _normalize_repository_slugの"://"分岐は、これまでscheme自体を一切検証せず、
+           "://"の直後から始まる残り部分（host以降）のみを検査していた -- そのため、
+           `file://github.com/<owner>/<repo>.git`や`evil://github.com/<owner>/<repo>.git`
+           のような、実際のnetwork越しに本物のgithub.comへ到達しないURLでも、host自体が
+           一致してさえいれば、この検証を素通りしてしまっていた。新規定数
+           _TRUSTED_REPOSITORY_URL_SCHEME（"https"）を追加し、"://"分岐がscheme自体を
+           host検査の**前に**厳密一致で検証するよう修正した -- 一致しないschemeは
+           ExecutionBoundaryError（メッセージに"scheme"・"P18-R5-F2"を含む）で拒否される。
+
+P18-R5-F3  本節自身が、この是正の対象である。
+```
+
+修正はPR #74の唯一の既存ブランチ上、新規branch・新規PR無しで行われた。既存の`State`・
+`Difference`・`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Runtime`・
+`Model Runtime`・`URL Boot`のいずれのownerも置換・変更しない。schema変更は無し
+（`verification_result_provenance.observations`は元々schema-unconstrainedのため）。新規module
+の追加も無し -- 既存module（`evidence_handoff.py`・`boundary.py`）自身への是正と、既存test file
+（`tests/integration/change_executor/test_change_executor_independent_reobservation.py`・
+`tests/integration/change_executor/test_change_executor_worktree_git_identity.py`）への追加、
+および`13_CHANGE_EXECUTOR/CHANGE_EXECUTOR_CONTRACT.md`自身への該当箇所の追記のみである。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`）は独立に検証済み（正確な件数は本節自身の記録時点で
+得られた実測値を用いる -- 検証セッション自身のログを参照、predecessor head `14f5515`自身では
+209件PASSが確認済み）。full repository test suiteも独立に再実行し、既知のpre-existing failure
+（`tests/contract/governance/test_source_freshness_drift_detection.py`配下の7件、この作業開始
+以前から`origin/main`上で既に確認済みのもの、本packageとは無関係）を除き、全件PASSで検証済み。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
