@@ -3057,3 +3057,68 @@ PHASE_18_COMPLETE=false
 PHASE_19_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
+
+---
+
+# 39. Phase 18 post-merge acceptance observation
+
+本節は、Structural Review Round 6がexact delivery head
+`906beb88bdbd76731792d59408aab5a727b4b691`をPASSと判定した後、SHUKOUがPR #74を手動mergeし、
+構造参謀がlive GitHubのmerge commit、`main`、両parentおよびmerged treeを再観測した現在地である。
+受入観測はIssue #73コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/73#issuecomment-5632639503`
+へ固定し、API read-backでauthor、timestampおよび本文を確認した。
+
+```text
+OBSERVED_AT_UTC=2026-09-11T09:47:55Z
+MAIN_ACCEPTED_BASE_SHA=91128e332138bb23466bf0f43a9f633cd646e891
+CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+CURRENT_PHASE_STATE=POST_MERGE_ACCEPTED_AWAITING_SOURCE_SYNC_AND_ISSUE_CLOSE
+CURRENT_PHASE_ISSUE=73
+CURRENT_PR=NONE
+GOVERNING_ISSUE=#73
+MERGED_PR=#74
+ACCEPTED_PR_HEAD=906beb88bdbd76731792d59408aab5a727b4b691
+PHASE_18_MERGE_SHA=91128e332138bb23466bf0f43a9f633cd646e891
+MERGE_PARENT_MAIN=120cddbddd12e86cb8a233b90a69fe60a24b42c5
+MERGE_PARENT_DELIVERY=906beb88bdbd76731792d59408aab5a727b4b691
+REVIEWED_TREE_SHA=22c5f442c010c38cc5a2134256590ac9a9628645
+MERGED_TREE_SHA=22c5f442c010c38cc5a2134256590ac9a9628645
+
+PR_74_STATE=MERGED
+MERGED_EXACT_REVIEWED_HEAD=true
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+STRUCTURAL_REVIEW_ROUND_6=PASS
+STRUCTURAL_FINDINGS_OPEN=0
+POST_MERGE_TARGETED_CHANGE_EXECUTOR_SUITE=213_PASSED
+ROUND_6_SCHEMA_VALIDATION=PASS_72_SCHEMAS
+ROUND_6_STATIC_CONFORMANCE_AND_KERNEL_CONTINUITY=22_PASSED
+ROUND_6_SOURCE_IMPACT_GATE=PASS
+
+PHASE_18_COMPLETE=true
+PHASE_18_CURRENT_ROUTE_BLOCKERS=0
+ISSUE_73_CLOSE_ALLOWED=false
+ISSUE_73_CLOSE_ALLOWED_AFTER_SOURCE_SYNC_MERGE=true
+PHASE_19_ALLOWED=true
+PHASE_19_IMPLEMENTATION_ALLOWED=false
+SOURCE_SYNC_BRANCH=source/phase18-acceptance-sync
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+Phase 18は、Authority確認済みのcanonical Changeだけをclosed low-risk Execution Boundary内で実行し、
+preflightとfinal pre-effect barrier、deterministic mapping slot、durable intent/attempt/terminal receipt、
+signed monotonic kill switch、独立after-state Observationおよび既存Evidence/Reflow ownerへのhandoffを
+接続した。Change Executor自身はAuthority、Evidence sufficiency、Difference closureまたはObjective
+completionを宣言せず、canonical ownerを複製しない。
+
+merge後の`main` refはmerge SHAそのものであり、その第二parentはexact reviewed headと一致した。
+reviewed headとmerge commitのtree SHAも同一で、両ref間のfile diffは0である。同一merged tree上の
+targeted Change Executor suiteは213件PASSした。merge時の`Source freshness drift detection`は
+failureだが、job stepは0件で内部検証または自動source更新が実行された証拠はない。このmechanism
+failureをPhase 18 Objectiveのfailureとして扱わず、3つの正準source ownerを本source-sync PRで
+限定更新する。
+
+Phase 19は次のroadmap work unitとして定義可能になったが、自動的な実装Authorityは生じない。
+Issue #73は、本source-sync PRの構造審査、SHUKOU手動merge、およびresulting `main`の再観測後にのみ
+closeする。Phase 19実装には、専用Issue上のObjective / Boundary / AuthorityとSHUKOUの明示採択が
+別途必要である。
