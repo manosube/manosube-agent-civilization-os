@@ -76,6 +76,31 @@ disagreement this module itself discovers, not a re-check of the same embedded d
 existing defensive check against the receipt's own embedded field (paragraph above) remains, as
 belt-and-suspenders on the receipt's own internal consistency, but it is no longer what gates
 ``VERIFIED`` -- this second, independent, handoff-time re-read is.
+
+**The minted verification Observation must itself be resolved back and bound to the receipt's own
+target/scope/operation -- never trusted merely because ``derive_evidence`` returned without
+raising (P18-R3-F1, Structural Review Round 3).** Structural Review Round 3 named the gap the two
+corrections above did not close: this module builds ``verification_observation_request`` and
+hands it to ``derive_evidence``, which mints the real verification Observation internally (via
+``evidence.engine._change_free_verification_evidence`` -> ``_minted_observation`` ->
+``observation.engine.observe()``) -- but, before this correction, the only checks performed on
+``derive_evidence``'s return value were ``evidence["verification_result_provenance"] == provenance``
+(self-referential: comparing the returned value to the value this module itself constructed) and
+``evidence["target"]["project_id"] == project_id``. Neither check ever resolved the freshly-minted
+Observation back and independently confirmed it actually grounds the exact
+``verification_observation_request`` this module built for this exact receipt. :func:`route_
+change_execution_to_evidence` now additionally computes, via the new
+:func:`_expected_verification_observation_id`, the exact content-addressed ``observation_id`` that
+``observation.engine.observe()`` would mint for the ``verification_observation_request`` this
+module itself constructed -- entirely independently recomputed from that request, never trusted
+from whatever ``derive_evidence`` happens to report it minted -- and requires the returned
+Evidence record's own embedded ``observed_result.observation_ref.id`` to equal it exactly. This is
+the identical "resolve and verify a record's own identity by independently recomputing it, without
+a Store lookup" pattern :mod:`~manosube_agent_civilization.observation.source_snapshot`'s own
+``resolve_source_snapshot`` already establishes in this codebase. A receipt's self-reported
+``SUCCEEDED`` outcome can therefore never, by itself, manufacture a ``VERIFIED`` Evidence record --
+only a minted verification Observation this module can itself resolve and confirm grounds the
+exact request it built may.
 """
 
 from __future__ import annotations
@@ -86,6 +111,7 @@ from pathlib import Path
 from typing import Any
 
 from manosube_agent_civilization.evidence import derive_evidence
+from manosube_agent_civilization.observation.identity import observation_identity
 from manosube_agent_civilization.observation.source_snapshot import build_source_snapshot
 
 from .errors import ChangeExecutorError, ExecutionReceiptIntegrityError
@@ -385,6 +411,46 @@ def _build_verification_observation_request(
     }
 
 
+def _expected_verification_observation_id(
+    verification_observation_request: Mapping[str, Any],
+) -> str:
+    """(P18-R3-F1) Independently recompute the exact ``observation_id``
+    :func:`~manosube_agent_civilization.observation.engine.observe` would mint for
+    *verification_observation_request* -- the identical ``observation_identity_payload``
+    projection ``observe()`` itself builds internally from a request (see
+    ``observation/engine.py``'s own ``observe`` for the canonical construction this mirrors),
+    computed here entirely from the request THIS module built, never trusted from whatever
+    ``derive_evidence`` happens to return. Used to resolve the minted verification Observation
+    back and bind it to the receipt's own target/scope/operation, closing the gap Structural
+    Review Round 3 named: a receipt's self-reported ``SUCCEEDED`` outcome must never be what
+    determines ``VERIFIED`` -- only a genuinely resolved-and-checked Observation may."""
+
+    canonical_source_refs = sorted(
+        (dict(ref) for ref in verification_observation_request["source_snapshot_refs"]),
+        key=lambda reference: (reference["kind"], reference["id"]),
+    )
+    payload = {
+        "project_id": verification_observation_request["project_id"],
+        "state_revision_observed": verification_observation_request["state_revision_observed"],
+        "state_fingerprint_observed": dict(
+            verification_observation_request["state_fingerprint_observed"]
+        ),
+        "target": {
+            "target_identity": verification_observation_request["target_identity"],
+            "kind": verification_observation_request["target_kind"],
+        },
+        "scope_ref": {
+            "kind": "observation_scope",
+            "id": verification_observation_request["scope"]["scope_id"],
+        },
+        "method_ref": dict(verification_observation_request["method_ref"]),
+        "time_boundary": dict(verification_observation_request["time_boundary"]),
+        "source_snapshot_refs": canonical_source_refs,
+        "normalization_profile": verification_observation_request["normalization_profile"],
+    }
+    return observation_identity(payload)
+
+
 def route_change_execution_to_evidence(
     store: Any, receipt: Mapping[str, Any], project_id: str, evidence_request: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -532,6 +598,24 @@ def route_change_execution_to_evidence(
 
     evidence = derive_evidence(request)
 
+    # (P18-R3-F1) Resolve the minted verification Observation back and bind it to the receipt's
+    # own target/scope/operation: the returned Evidence's own embedded Observation reference
+    # must equal the identity this module independently recomputes from the exact
+    # verification_observation_request it built (never derive_evidence's own internal claim
+    # about what it minted). A SUCCEEDED receipt's own self-report never determines VERIFIED by
+    # itself -- only this genuinely resolved-and-checked Observation binding does.
+    expected_verification_observation_id = _expected_verification_observation_id(
+        verification_observation_request
+    )
+    if evidence["observed_result"]["observation_ref"]["id"] != expected_verification_observation_id:
+        raise ChangeExecutorError(
+            "the derived Evidence record's own grounding Observation does not match the "
+            "identity this hand-off independently recomputed from the exact "
+            "verification_observation_request it built -- refusing to trust a VERIFIED "
+            "promotion this hand-off cannot itself resolve and confirm (P18-R3-F1): "
+            f"{evidence['observed_result']['observation_ref']['id']!r} != "
+            f"{expected_verification_observation_id!r}"
+        )
     if evidence["verification_result_provenance"] != provenance:
         raise ChangeExecutorError(
             "the derived Evidence record's own verification_result_provenance does not exactly "

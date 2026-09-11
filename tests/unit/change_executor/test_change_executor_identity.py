@@ -47,6 +47,7 @@ from manosube_agent_civilization.change_executor.kill_switch import (
     kill_switch_id,
     kill_switch_semantic_fingerprint,
 )
+from manosube_agent_civilization.difference.errors import DifferenceValidationError
 from manosube_agent_civilization.difference.validation import validate_record
 
 # --------------------------------------------------------------------------------------- #
@@ -205,12 +206,20 @@ BASE_ATTEMPT: dict[str, Any] = {
     **deepcopy(BASE_INTENT),
     "execution_intent_ref": {"kind": "execution_intent", "id": _INTENT_ID},
     "attempt_nonce": "a" * 32,
+    # P18-R3-F3A (Structural Review Round 3): a fixed constant every execution_attempt carries
+    # from the instant it becomes durable -- an ordinary semantic field like every other one
+    # here, fully covered by execution_attempt_semantic_fingerprint (tamper-evident).
+    "attempt_status": "DURABLE_UNRESOLVED_NON_SUCCESS",
     "reobservation_request": deepcopy(_BASE_ATTEMPT_REOBSERVATION_REQUEST),
 }
 VARIANTS_ATTEMPT: dict[str, Any] = {
     **deepcopy(VARIANTS_INTENT),
     "execution_intent_ref": {"kind": "execution_intent", "id": _OTHER_INTENT_ID},
     "attempt_nonce": "b" * 32,
+    # Not a real second value of the schema's own fixed const (attempt_status has exactly one
+    # admissible value) -- only used here to prove the fingerprint is genuinely sensitive to
+    # this field changing at all, the identical purpose every other VARIANTS_* entry serves.
+    "attempt_status": "SOME_OTHER_VALUE_FOR_SENSITIVITY_PROOF_ONLY",
     "reobservation_request": deepcopy(_OTHER_ATTEMPT_REOBSERVATION_REQUEST),
 }
 
@@ -242,6 +251,7 @@ def test_execution_attempt_id_equals_the_identical_slot_key_execution_intent_id_
         "requested_at",
         "execution_intent_ref",
         "attempt_nonce",
+        "attempt_status",
         "reobservation_request",
     ),
 )
@@ -462,6 +472,83 @@ def test_build_execution_attempt_round_trips_through_its_own_schema() -> None:
     validate_record(record, "execution_attempt.schema.json", base=CHANGE_EXECUTOR_SCHEMA_BASE)
     assert record["attempt_nonce"] == "f" * 32
     assert record["execution_attempt_id"] == slot_key
+    # (P18-R3-F3A) From the instant execution_attempt becomes durable, it already carries this
+    # fixed, typed unresolved/non-success status.
+    assert record["attempt_status"] == "DURABLE_UNRESOLVED_NON_SUCCESS"
+
+
+# --------------------------------------------------------------------------------------- #
+# P18-R3-F3A (Structural Review Round 3): execution_attempt's own attempt_status.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_execution_attempt_schema_requires_attempt_status() -> None:
+    """A record missing ``attempt_status`` entirely must fail schema validation -- it is a
+    required field, not an optional one a producer happens to always fill in."""
+
+    change_ref = dict(_CHANGE_REF_A)
+    boundary_fp = "sha256:" + "1" * 64
+    adapter_fp = "sha256:" + "2" * 64
+    slot_key = execution_mapping_slot_key(change_ref["id"], boundary_fp, adapter_fp)
+    record = build_execution_attempt(
+        project_id="PRJ-CE-0001",
+        change_ref=change_ref,
+        execution_boundary_fingerprint=boundary_fp,
+        adapter_identity_fingerprint=adapter_fp,
+        claim_token="claim-alpha",  # noqa: S106
+        requested_at="2026-09-10T00:00:00Z",
+        execution_intent_ref={"kind": "execution_intent", "id": slot_key},
+        attempt_nonce="f" * 32,
+        reobservation_request={
+            "kind": "change_execution_reobservation_request",
+            "target": {"repository": "org/repo", "branch": "main", "paths": ["docs/x.md"]},
+            "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
+            "requested_at": "2026-09-10T00:00:00Z",
+        },
+    )
+    del record["attempt_status"]
+    with pytest.raises(DifferenceValidationError, match="attempt_status"):
+        validate_record(record, "execution_attempt.schema.json", base=CHANGE_EXECUTOR_SCHEMA_BASE)
+
+
+def test_execution_attempt_schema_rejects_a_non_admitted_attempt_status_value() -> None:
+    """The schema fixes ``attempt_status`` to exactly one constant value -- any other string is
+    schema-invalid, never silently accepted."""
+
+    change_ref = dict(_CHANGE_REF_A)
+    boundary_fp = "sha256:" + "1" * 64
+    adapter_fp = "sha256:" + "2" * 64
+    slot_key = execution_mapping_slot_key(change_ref["id"], boundary_fp, adapter_fp)
+    record = build_execution_attempt(
+        project_id="PRJ-CE-0001",
+        change_ref=change_ref,
+        execution_boundary_fingerprint=boundary_fp,
+        adapter_identity_fingerprint=adapter_fp,
+        claim_token="claim-alpha",  # noqa: S106
+        requested_at="2026-09-10T00:00:00Z",
+        execution_intent_ref={"kind": "execution_intent", "id": slot_key},
+        attempt_nonce="f" * 32,
+        reobservation_request={
+            "kind": "change_execution_reobservation_request",
+            "target": {"repository": "org/repo", "branch": "main", "paths": ["docs/x.md"]},
+            "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
+            "requested_at": "2026-09-10T00:00:00Z",
+        },
+    )
+    record["attempt_status"] = "SOME_OTHER_UNADMITTED_STATUS"
+    with pytest.raises(DifferenceValidationError):
+        validate_record(record, "execution_attempt.schema.json", base=CHANGE_EXECUTOR_SCHEMA_BASE)
+
+
+def test_execution_attempt_semantic_fingerprint_is_sensitive_to_attempt_status_tamper() -> None:
+    """Altering ``attempt_status`` alone on an otherwise-genuine attempt changes the semantic
+    fingerprint -- tamper-evident, exactly like every other field (also proven, parametrized
+    over every ``EXECUTION_ATTEMPT_SEMANTIC_FIELDS`` member including this one, above)."""
+
+    genuine_fp = execution_attempt_semantic_fingerprint(BASE_ATTEMPT)
+    tampered = deepcopy(BASE_ATTEMPT)
+    tampered["attempt_status"] = "TAMPERED_STATUS"
+    assert execution_attempt_semantic_fingerprint(tampered) != genuine_fp
 
 
 def test_build_change_execution_receipt_round_trips_through_its_own_schema() -> None:

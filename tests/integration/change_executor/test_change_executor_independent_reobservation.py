@@ -22,6 +22,20 @@ real disk, must produce a receipt whose own ``independent_after_state_observatio
 SECOND, independently-performed, handoff-time re-read this hand-off itself performs must itself
 independently confirm the real, freshly-read on-disk content (never merely re-trust the receipt's
 own embedded field).
+
+(d) **R3_F1_NEGATIVE (P18-R3-F1, Structural Review Round 3)**: the minted verification
+Observation must itself be resolved back and bound to the receipt's own target/scope/operation --
+never trusted merely because ``derive_evidence`` returned without raising. A genuine, otherwise
+fully valid ``derive_evidence`` call whose returned Evidence record's own
+``observed_result.observation_ref.id`` has been tampered (wrapped so it no longer equals the
+identity this hand-off independently recomputes from the exact ``verification_observation_
+request`` it built) must be refused by ``route_change_execution_to_evidence`` -- proving the two
+pre-existing post-call checks (``verification_result_provenance`` self-comparison,
+``target.project_id`` equality) are no longer the only thing standing between a receipt and a
+``VERIFIED`` Evidence record. A second, white-box test additionally proves
+``_expected_verification_observation_id`` is genuinely sensitive to the exact fields it is
+supposed to be sensitive to (an added, unrequested ``source_snapshot_refs`` entry changes the
+recomputed identity), never a function that would silently agree with anything handed to it.
 """
 
 from __future__ import annotations
@@ -50,6 +64,7 @@ from manosube_agent_civilization.change_executor.evidence_handoff import (
     route_change_execution_to_evidence,
 )
 from manosube_agent_civilization.change_executor.route import compose_change_executor
+from manosube_agent_civilization.evidence import derive_evidence as _real_derive_evidence
 
 _ADAPTER_IDENTITY = {"kind": "controlled_filesystem_adapter", "version": "0.1"}
 
@@ -391,3 +406,171 @@ def test_adapter_writing_wrong_content_is_caught_as_reobservation_mismatch(
     assert replay["replay"] is True
     assert replay["receipt"] == receipt
     assert adapter.call_count == 1
+
+
+# --------------------------------------------------------------------------------------- #
+# (d) R3_F1_NEGATIVE (P18-R3-F1, Structural Review Round 3): the minted verification
+# Observation must itself be resolved back and bound to the receipt's own target/scope/
+# operation -- never trusted merely because derive_evidence returned without raising.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_evidence_with_a_tampered_grounding_observation_reference_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuine, otherwise fully valid ``derive_evidence`` call whose returned Evidence
+    record's own ``observed_result.observation_ref.id`` has been tampered (wrapped so it no
+    longer equals the identity this hand-off independently recomputes from the exact
+    ``verification_observation_request`` it built) must be refused -- proving the fix is a real
+    resolve-and-check of the minted Observation, not merely the two pre-existing self-referential
+    post-call checks (``verification_result_provenance`` compared to itself, ``target.
+    project_id`` equality)."""
+
+    store, info = bound(tmp_path)
+    project_id = info["project_id"]
+    commit_active_kill_switch(store, project_id)
+
+    content = "# R3-F1 grounding-observation proof\n"
+    result = build_committed_change(
+        store,
+        project_id,
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/r3-f1-grounding.md", "content_utf8": content}],
+        ),
+        paths=["docs/r3-f1-grounding.md"],
+    )
+    change = result["change"]
+
+    worktree_root = git_worktree(tmp_path)
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        store,
+        project_id=project_id,
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree_root)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    outcome = execute(
+        change["change_id"],
+        claim_token="r3-f1-grounding-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "SUCCEEDED"
+
+    # Wrap (never replace the logic of) the real derive_evidence: every real check it performs
+    # still runs in full -- only the returned record's own grounding Observation reference is
+    # tampered afterward, simulating an Evidence owner whose report of what it minted cannot be
+    # taken on faith.
+    def _tampering_derive_evidence(request: Any) -> dict[str, Any]:
+        genuine = _real_derive_evidence(request)
+        tampered = dict(genuine)
+        tampered_observed_result = dict(tampered["observed_result"])
+        tampered_observed_result["observation_ref"] = {
+            "kind": "observation",
+            "id": "OBS-" + "0" * 64,
+        }
+        tampered["observed_result"] = tampered_observed_result
+        return tampered
+
+    monkeypatch.setattr(evidence_handoff_module, "derive_evidence", _tampering_derive_evidence)
+
+    evidence_request = _rebind_project(
+        change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
+    )
+    evidence_request["verification_observation_request"] = None
+    with pytest.raises(ChangeExecutorError, match="P18-R3-F1"):
+        route_change_execution_to_evidence(store, receipt, project_id, evidence_request)
+
+
+def test_expected_verification_observation_id_is_sensitive_to_an_unrequested_source_snapshot_ref(
+    tmp_path: Path,
+) -> None:
+    """White-box proof that ``_expected_verification_observation_id`` is genuinely sensitive to
+    the exact fields it is supposed to be sensitive to -- never a function that would silently
+    agree with anything handed to it. An extra, unrequested ``source_snapshot_refs`` entry that
+    no real re-read ever produced must change the recomputed identity."""
+
+    store, info = bound(tmp_path)
+    project_id = info["project_id"]
+    commit_active_kill_switch(store, project_id)
+
+    content = "# R3-F1 sensitivity proof\n"
+    result = build_committed_change(
+        store,
+        project_id,
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/r3-f1-sensitivity.md", "content_utf8": content}],
+        ),
+        paths=["docs/r3-f1-sensitivity.md"],
+    )
+    change = result["change"]
+
+    worktree_root = git_worktree(tmp_path)
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        store,
+        project_id=project_id,
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree_root)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    outcome = execute(
+        change["change_id"],
+        claim_token="r3-f1-sensitivity-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "SUCCEEDED"
+
+    captured_at = "2026-09-10T00:00:02Z"
+    snapshots, occurrences, matches = (
+        evidence_handoff_module._second_independent_after_state_reread(
+            receipt["operation"], receipt["target"]["worktree_root"], captured_at=captured_at
+        )
+    )
+    assert matches is True
+
+    fresh_state = store.load_current(project_id)
+    evidence_request = _rebind_project(
+        change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
+    )
+    verification_observation_request = (
+        evidence_handoff_module._build_verification_observation_request(
+            evidence_request["observation_request"],
+            project_id=project_id,
+            fresh_state_revision=fresh_state["state_revision"],
+            fresh_state_fingerprint=fresh_state["semantic_fingerprint"],
+            snapshots=snapshots,
+            occurrences=occurrences,
+            captured_at=captured_at,
+        )
+    )
+
+    genuine_id = evidence_handoff_module._expected_verification_observation_id(
+        verification_observation_request
+    )
+
+    altered_request = dict(verification_observation_request)
+    altered_request["source_snapshot_refs"] = [
+        *verification_observation_request["source_snapshot_refs"],
+        {"kind": "source_snapshot", "id": "SNAP-R3-F1-UNREQUESTED-EXTRA"},
+    ]
+    altered_id = evidence_handoff_module._expected_verification_observation_id(altered_request)
+
+    assert altered_id != genuine_id
+    # And recomputing from the genuine, unaltered request is deterministic/repeatable.
+    assert (
+        evidence_handoff_module._expected_verification_observation_id(
+            verification_observation_request
+        )
+        == genuine_id
+    )

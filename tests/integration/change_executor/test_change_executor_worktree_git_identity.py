@@ -207,6 +207,43 @@ def test_matching_worktree_root_via_scp_like_remote_url_form_also_passes(tmp_pat
     assert boundary["repository"] == REPOSITORY
 
 
+def test_worktree_root_with_a_mismatched_host_origin_is_refused_even_with_matching_owner_repo(
+    tmp_path: Path,
+) -> None:
+    """(P18-R3-F2, Structural Review Round 3) A remote naming the identical ``owner/repo`` path
+    as the Boundary's own declared ``repository``, but on an entirely different, untrusted host,
+    must be refused -- ``_normalize_repository_slug`` must not merely compare the path, having
+    discarded the host."""
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _run_git("init", "--quiet", str(worktree))
+    _run_git("symbolic-ref", "HEAD", f"refs/heads/{BRANCH}", cwd=str(worktree))
+    _run_git(
+        "remote", "add", "origin", f"https://attacker.invalid/{REPOSITORY}.git", cwd=str(worktree)
+    )
+    boundary = execution_boundary_for(worktree_root=str(worktree))
+    with pytest.raises(ExecutionBoundaryError, match="host"):
+        validate_execution_boundary(boundary)
+
+
+def test_worktree_root_with_a_mismatched_host_scp_like_origin_is_refused_even_with_matching_owner_repo(
+    tmp_path: Path,
+) -> None:
+    """The identical refusal for the scp-like remote URL form."""
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _run_git("init", "--quiet", str(worktree))
+    _run_git("symbolic-ref", "HEAD", f"refs/heads/{BRANCH}", cwd=str(worktree))
+    _run_git(
+        "remote", "add", "origin", f"attacker@attacker.invalid:{REPOSITORY}.git", cwd=str(worktree)
+    )
+    boundary = execution_boundary_for(worktree_root=str(worktree))
+    with pytest.raises(ExecutionBoundaryError, match="host"):
+        validate_execution_boundary(boundary)
+
+
 def test_linked_git_worktree_resolves_via_its_own_commondir(tmp_path: Path) -> None:
     """A genuine ``git worktree add`` linked worktree -- its own ``.git`` is a *file* naming the
     real gitdir, and that gitdir's own ``commondir`` names the main repository's own git

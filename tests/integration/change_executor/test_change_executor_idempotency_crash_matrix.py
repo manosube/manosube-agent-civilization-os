@@ -938,6 +938,13 @@ def test_two_racing_callers_for_the_identical_slot_call_the_adapter_at_most_once
 # P18-R2-F3 (Structural Review Round 2): a caller resuming its OWN orphaned execution_attempt
 # (identical claim_token) now resolves to a grounded terminal UNKNOWN receipt, never a
 # perpetual ExecutionReconciliationRequiredError. R2_F3_CRASH/R2_F3_EXISTING.
+#
+# P18-R3-F3B (Structural Review Round 3): the resolved UNKNOWN receipt's own ``operation`` field
+# must equal the real admitted canonical operation ``change["action"]["operation"]`` names --
+# never an empty echo -- since the crash that orphaned this attempt may have happened after the
+# adapter already performed it. The Change built by ``_fresh_change`` already carries a real,
+# non-empty ``file_writes`` entry, so this same test proves both halves at once: the grounded
+# receipt names the real operation, and zero adapter calls are made regardless.
 # --------------------------------------------------------------------------------------- #
 
 
@@ -956,7 +963,12 @@ def test_resuming_ones_own_orphaned_attempt_under_the_identical_claim_token_reso
     call_count stays exactly 0 throughout: the adapter may already have run in the real crash
     this simulates, and re-calling it would risk a real duplicate mutation). A SECOND call for
     the identical slot then cleanly replays that same UNKNOWN receipt, adapter still never
-    called."""
+    called.
+
+    (P18-R3-F3B) The grounded ``UNKNOWN`` receipt's own ``operation`` field must equal the real
+    admitted operation the Change itself names (real, non-empty ``file_writes``) -- never a
+    vacant ``{"file_writes": [], "file_deletes": []}`` echo that discards what was actually
+    requested."""
 
     store, info = bound(tmp_path)
     commit_active_kill_switch(store, info["project_id"])
@@ -1006,6 +1018,12 @@ def test_resuming_ones_own_orphaned_attempt_under_the_identical_claim_token_reso
         "checked_files": [],
     }
     assert receipt["claim_token"] == claim_token
+    # (P18-R3-F3B) The receipt's own operation is the real admitted canonical operation the
+    # Change itself named -- never an empty echo -- even though zero adapter calls were made.
+    assert receipt["operation"] == change["action"]["operation"]
+    assert receipt["operation"]["file_writes"], (
+        "the fixture Change must name a real, non-empty write"
+    )
     assert adapter.call_count == 0, "resuming a caller's own orphaned attempt must never call it"
 
     replay = execute(

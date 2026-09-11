@@ -35,7 +35,12 @@ static-conformance guarantee in full:
    ``config`` (plain INI, via :mod:`configparser`) for ``[remote "origin"] url``, normalized to
    the identical ``owner/repo`` slug form ``execution_boundary["repository"]`` already uses
    (handling both ``https://github.com/owner/repo.git`` and ``git@github.com:owner/repo.git``
-   forms, and a bare already-normalized slug unchanged).
+   forms, and a bare already-normalized slug unchanged). **(P18-R3-F2, Structural Review Round
+   3)** Both URL forms additionally require their own host to equal exactly one trusted
+   repository forge host (:data:`_TRUSTED_REPOSITORY_HOST`, ``"github.com"``) -- before this
+   correction the host was discarded before comparison entirely, so a remote naming an identical
+   ``owner/repo`` path on an arbitrary, untrusted host (e.g.
+   ``https://attacker.invalid/owner/repo.git``) passed this check undetected.
 4. Require the parsed branch to equal ``execution_boundary["branch"]`` exactly, and the parsed
    repository slug to equal ``execution_boundary["repository"]`` exactly -- any mismatch,
    unparseable ``.git`` metadata, or missing ``.git`` entirely raises
@@ -186,6 +191,13 @@ REQUIRED_BOUNDARY_KEYS: frozenset[str] = frozenset(
 
 #: The only ``rollback_policy`` values this package ever admits.
 ROLLBACK_POLICIES: frozenset[str] = frozenset({"NONE", "BEST_EFFORT_DELETE_WRITTEN_FILES"})
+
+#: The one trusted repository forge host this package ever admits -- any origin remote whose
+#: host does not equal this exact value is refused outright, regardless of whether its
+#: owner/repo path happens to match the Boundary's own declared repository (P18-R3-F2,
+#: Structural Review Round 3): stripping the host before comparison let a mismatched-host
+#: remote (e.g. ``https://attacker.invalid/owner/repo.git``) pass undetected.
+_TRUSTED_REPOSITORY_HOST = "github.com"
 
 #: Every Boundary field that must be exactly the Python value ``False`` -- schema-fixed, never a
 #: caller-supplied toggle: this package never permits following/creating a symlink target,
@@ -368,7 +380,9 @@ def _normalize_repository_slug(url: str) -> str:
     ``execution_boundary["repository"]`` already uses -- handling
     ``https://github.com/owner/repo.git``, ``git@github.com:owner/repo.git``, and an
     already-bare ``owner/repo`` slug (passed through unchanged, only trimming a trailing
-    ``.git``/``/``) alike."""
+    ``.git``/``/``) alike. (P18-R3-F2) Both URL forms additionally require their own host to
+    equal :data:`_TRUSTED_REPOSITORY_HOST` exactly -- discarding the host before comparison
+    would let a mismatched-host remote pass by owner/repo path alone."""
 
     value = url.strip()
     if value.endswith(".git"):
@@ -377,21 +391,34 @@ def _normalize_repository_slug(url: str) -> str:
         raise ExecutionBoundaryError("execution_boundary.worktree_root's own remote url is empty")
     if "://" in value:
         _, _, rest = value.partition("://")
-        _, _, path = rest.partition("/")
+        host, _, path = rest.partition("/")
         if not path:
             raise ExecutionBoundaryError(
                 f"execution_boundary.worktree_root's own remote url is not a readable "
                 f"owner/repo URL: {url!r}"
             )
+        if host.lower() != _TRUSTED_REPOSITORY_HOST:
+            raise ExecutionBoundaryError(
+                f"execution_boundary.worktree_root's own remote url names host {host!r}, not "
+                f"the admitted repository host {_TRUSTED_REPOSITORY_HOST!r} -- refusing "
+                f"(P18-R3-F2): {url!r}"
+            )
         return path.strip("/")
     if "@" in value and ":" in value:
-        # scp-like syntax, e.g. git@github.com:owner/repo -- the slug is everything after the
-        # first ':' (there is no '/'-only host/path split to make, unlike the '://' form above).
-        _, _, rest = value.partition(":")
+        # scp-like syntax, e.g. git@github.com:owner/repo -- host is everything between '@' and
+        # the first ':'.
+        userhost, _, rest = value.partition(":")
         if not rest:
             raise ExecutionBoundaryError(
                 f"execution_boundary.worktree_root's own remote url is not a readable "
                 f"scp-like owner/repo reference: {url!r}"
+            )
+        _, _, host = userhost.partition("@")
+        if not host or host.lower() != _TRUSTED_REPOSITORY_HOST:
+            raise ExecutionBoundaryError(
+                f"execution_boundary.worktree_root's own remote url names host {host!r}, not "
+                f"the admitted repository host {_TRUSTED_REPOSITORY_HOST!r} -- refusing "
+                f"(P18-R3-F2): {url!r}"
             )
         return rest.strip("/")
     return value.strip("/")

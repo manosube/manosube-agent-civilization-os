@@ -110,7 +110,17 @@ def build_execution_attempt(
     attempt becomes durable, the durable record chain already preserves a typed re-observation
     obligation, and a caller resuming its own orphaned attempt (attempt committed, no receipt
     yet) has a genuine, already-committed fact to resolve a grounded terminal ``UNKNOWN`` receipt
-    from, without a blind adapter retry (see ``route.py``'s own module docstring)."""
+    from, without a blind adapter retry (see ``route.py``'s own module docstring).
+
+    ``attempt_status`` (P18-R3-F3A, Structural Review Round 3) is a fixed constant,
+    ``"DURABLE_UNRESOLVED_NON_SUCCESS"``, embedded on every ``execution_attempt`` this function
+    ever builds. Before this correction, the record's own declared vocabulary carried no field
+    naming its own typed unresolved/non-success state at all -- only ``reobservation_request``,
+    an *obligation*, not a *status*; a reader had to externally infer "this attempt is
+    unresolved" from the mere absence of a receipt, never from anything the attempt record
+    itself declared. From the instant an ``execution_attempt`` becomes durable, it now already
+    carries this fixed, typed status explicitly, in its own vocabulary -- not merely
+    reconstructible by a reader who already knows to look for a missing sibling record."""
 
     slot_key = execution_mapping_slot_key(
         change_ref["id"], execution_boundary_fingerprint, adapter_identity_fingerprint
@@ -126,6 +136,7 @@ def build_execution_attempt(
         "requested_at": requested_at,
         "execution_intent_ref": dict(execution_intent_ref),
         "attempt_nonce": attempt_nonce,
+        "attempt_status": "DURABLE_UNRESOLVED_NON_SUCCESS",
         "reobservation_request": deepcopy(dict(reobservation_request)),
         "execution_attempt_semantic_fingerprint": "",
     }

@@ -874,10 +874,40 @@ def _commit_orphaned_attempt_unknown_receipt(
     ``before_state_fingerprint`` -- the State this Change was authorized against, and therefore
     also what a fresh, non-resumed Boot would have equaled at this exact attempt's own original
     intent-commit time in the ordinary (non-drifted) case; imprecision here beyond that is
-    inherent to an honestly-unknown outcome, not a defect this function could close."""
+    inherent to an honestly-unknown outcome, not a defect this function could close.
+
+    **The receipt's own ``operation`` field resolves and retains the exact admitted canonical
+    operation, never a vacant echo (P18-R3-F3B, Structural Review Round 3).** Before this
+    correction, this function unconditionally built ``operation`` as an empty echo
+    (``operation_kind`` alone, no ``file_writes``/``file_deletes``) -- discarding what was
+    actually admitted/requested even though the crash that orphaned this attempt may have
+    happened *after* the adapter already performed the real mutation. This function now
+    re-resolves *change*'s own admitted canonical operation the identical way the normal
+    (non-orphan) path already does, via :func:`_operation_violation_reason` -- a pure
+    validation/canonicalization call, never an adapter call, never a mutation, so safe to re-run
+    here with zero risk of a duplicate real effect -- and uses that resolved operation as the
+    grounded ``UNKNOWN`` receipt's own ``operation`` field. When the operation itself would be a
+    boundary violation (``_operation_violation_reason`` returns ``None``), there was never
+    anything real for the adapter to have touched, so the empty echo remains correct for that one
+    case, matching the normal path's own ``BOUNDARY_VIOLATION`` receipt."""
 
     action_kind = change["action"]["action_kind"]
-    empty_operation_echo = {"operation_kind": action_kind, "file_writes": [], "file_deletes": []}
+    # (P18-R3-F3B) Resolve and retain the exact admitted canonical operation -- the crash that
+    # left this attempt orphaned may have happened after the adapter already performed it, so
+    # the grounded UNKNOWN receipt must record what was genuinely requested, never a vacant
+    # echo. _operation_violation_reason is a pure validation/canonicalization call (never an
+    # adapter call, never a mutation) -- safe to re-run here. When the operation itself would
+    # be a boundary violation, there was never anything real for the adapter to have touched,
+    # so the empty echo remains correct for that one case, matching the normal
+    # BOUNDARY_VIOLATION path's own receipt.
+    checked_operation, _violation_reason = _operation_violation_reason(
+        action_kind, change["action"]["operation"], frozen_boundary
+    )
+    empty_operation_echo = checked_operation or {
+        "operation_kind": action_kind,
+        "file_writes": [],
+        "file_deletes": [],
+    }
     empty_summary = {"files_written": [], "bytes_written": 0, "files_deleted": []}
     empty_result_fingerprint = (
         "sha256:" + hashlib.sha256(canonical_json_bytes(empty_summary)).hexdigest()

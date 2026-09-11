@@ -332,7 +332,10 @@ level out instead of inside the closed record.
     `commondir`), reads `HEAD` to require a genuine local branch ref (a detached HEAD fails
     closed -- it cannot prove a branch identity), and reads the main repository's own `config`
     for `[remote "origin"] url` normalized to the identical `owner/repo` slug form
-    `execution_boundary["repository"]` already uses. A mismatch, or any unparseable/missing
+    `execution_boundary["repository"]` already uses (**corrected by Structural Review Round 3,
+    P18-R3-F2**: normalization also requires that URL's own host to equal exactly one trusted
+    repository forge host, `github.com`, rejecting an otherwise owner/repo-matching remote on
+    any other host). A mismatch, or any unparseable/missing
     `.git` metadata, raises `ExecutionBoundaryError` at composition time, before any
     request-facing operation can even be obtained.
 16. **`execution_attempt` now carries its own `reobservation_request` durably, embedded at

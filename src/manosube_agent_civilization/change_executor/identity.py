@@ -76,10 +76,16 @@ EXECUTION_INTENT_SEMANTIC_FIELDS: tuple[str, ...] = (
 #: from the frozen Boundary/Change/execution_instant this call already has, never caller-random),
 #: so it belongs in the semantic fingerprint exactly like every other attempt field -- a caller
 #: could not silently swap it out from under an already-committed attempt.
+#: ``attempt_status`` (P18-R3-F3A, Structural Review Round 3) is a fixed constant
+#: (``"DURABLE_UNRESOLVED_NON_SUCCESS"``) every ``execution_attempt`` carries from the instant it
+#: becomes durable -- the record's own declared vocabulary naming its own typed unresolved/
+#: non-success state explicitly, not merely reconstructible externally from the bare absence of
+#: a receipt. It is fingerprint-covered like every other field here, so it is tamper-evident too.
 EXECUTION_ATTEMPT_SEMANTIC_FIELDS: tuple[str, ...] = (
     *EXECUTION_INTENT_SEMANTIC_FIELDS,
     "execution_intent_ref",
     "attempt_nonce",
+    "attempt_status",
     "reobservation_request",
 )
 

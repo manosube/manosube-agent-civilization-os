@@ -2767,10 +2767,12 @@ DELIVERY_HEAD_OBSERVABLE_VIA=EXTERNAL_RETURN_EVIDENCE_COMMENT_ON_PR_74
 
 `IMPLEMENTATION_COMMIT_SHA`は、この本節自身のRound 2是正（コード変更 + このdocument自身の
 変更）を実際にlandするコミット自身のSHAであり、そのコミットが実在するようになった時点で初めて
-判明する値である -- 本節では意図的にplaceholderトークン`<IMPLEMENTATION_COMMIT_SHA>`のまま
-残し、orchestrating sessionが、その実コミットが存在した後の、小さな genuine な separate
-follow-up commitでこの値を埋めることを想定する（直前roundの`85bd43f`自身のfollow-up commitが
-セクション35のplaceholderを埋めたのと正確に同じ手続き）。`DELIVERY_HEAD_OBSERVABLE_VIA`は、
+判明する値である -- 本節は当初、意図的にplaceholderトークン`<IMPLEMENTATION_COMMIT_SHA>`のまま
+記録された。その後、この値は、実コミットが存在するようになった時点で、小さな genuine な
+separate follow-up commit `7c0457e`によって埋められた（直前roundの`85bd43f`自身のfollow-up
+commitがセクション35のplaceholderを埋めたのと正確に同じ手続き）-- 上記の
+`IMPLEMENTATION_COMMIT_SHA=5ac16e569a5b2ece45dd23536ad8952d81d3c1fa`は、その埋められた後の
+実値そのものである。`DELIVERY_HEAD_OBSERVABLE_VIA`は、
 「あるコミットは自分自身のSHAを自分自身の中に記録できない」という単純な事実を明示的に記録する
 フィールドである -- 真に外部から観測可能な最終delivery headは、この document自身の内部にでは
 なく、push後にPR #74自身へ投稿されるreturn-evidence commentの中に記録される。この2フィールド
