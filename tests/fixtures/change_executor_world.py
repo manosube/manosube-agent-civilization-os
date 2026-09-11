@@ -885,17 +885,33 @@ def git_worktree(
     init`` followed by pointing ``HEAD`` at the requested branch (``symbolic-ref`` works on a
     genuinely unborn branch) and adding the requested ``origin`` remote is sufficient for
     :func:`~manosube_agent_civilization.change_executor.boundary.validate_execution_boundary`'s
-    own read-only metadata checks."""
+    own read-only metadata checks.
+
+    *repository* is still the bare ``owner/repo`` slug callers already pass (the identical value
+    :func:`execution_boundary_for` declares as the Boundary's own ``"repository"`` field) -- but
+    (P18-R4-F2) the real ``origin`` remote this checkout gets is a genuine, host-bearing
+    ``https://github.com/<repository>.git`` URL built from it, never the bare slug passed
+    directly to ``git remote add`` (which git itself treats as a hostless relative-filesystem-
+    path remote -- exactly the bypass Structural Review Round 4 named, and which
+    ``boundary._normalize_repository_slug`` now refuses outright). A caller that already supplies
+    a full URL or scp-like reference (``"://"`` or ``"@"`` present) is passed through unchanged,
+    so every existing mismatched-host/mismatched-owner-repo negative fixture keeps its own exact
+    remote form."""
 
     path = tmp_path / subdir
     path.mkdir(parents=True, exist_ok=True)
+    origin_url = (
+        repository
+        if ("://" in repository or "@" in repository)
+        else f"https://github.com/{repository}"
+    )
     subprocess.run(["git", "init", "--quiet", str(path)], check=True)  # noqa: S603, S607
     subprocess.run(  # noqa: S603
         ["git", "-C", str(path), "symbolic-ref", "HEAD", f"refs/heads/{branch}"],  # noqa: S607
         check=True,
     )
     subprocess.run(  # noqa: S603
-        ["git", "-C", str(path), "remote", "add", "origin", repository],  # noqa: S607
+        ["git", "-C", str(path), "remote", "add", "origin", origin_url],  # noqa: S607
         check=True,
     )
     return path

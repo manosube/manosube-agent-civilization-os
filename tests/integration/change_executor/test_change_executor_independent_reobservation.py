@@ -36,6 +36,31 @@ pre-existing post-call checks (``verification_result_provenance`` self-compariso
 ``_expected_verification_observation_id`` is genuinely sensitive to the exact fields it is
 supposed to be sensitive to (an added, unrequested ``source_snapshot_refs`` entry changes the
 recomputed identity), never a function that would silently agree with anything handed to it.
+
+(e) **R4_F1 (P18-R4-F1, Structural Review Round 4)**: observation identity equality (R3_F1's own
+fix) proves *which* Observation grounds an Evidence record, but ``observation_id`` excludes
+``source_occurrences``, their outcomes, and the derived ``status`` itself -- so equal identity
+alone never proved the minted Observation actually *resolved* anything. Structural Review Round 4
+reproduced a decisive counterexample at the prior head: a genuine ``SUCCEEDED`` receipt's second,
+independent re-read still produced a minted Observation whose own ``status`` was ``INCOMPLETE``
+(the Scope's ``observation_window``/``cutoff`` this hand-off built were still the *base* request's
+own stale, pre-execution values, so ``observation.boundary.time_boundary_within_scope`` always
+failed for a later, handoff-time re-read), while ``verification_result_provenance.status`` was
+still ``VERIFIED`` regardless -- the receipt's own outcome, not the Observation, determined the
+promotion. This round's fix is two-part: (i) :func:`_build_verification_observation_request` now
+rebuilds the Scope's own ``observation_window``/``cutoff`` around the fresh ``captured_at`` instant
+itself, and attaches one real ``attempts`` entry, so a genuinely successful re-read now reaches a
+decisive ``EMPTY`` status (this module never asserts domain Facts, so ``COMPLETE`` is never
+reachable, but ``EMPTY`` -- collection genuinely completed, nothing to report -- is the honest,
+decisive result); (ii) ``route_change_execution_to_evidence`` now additionally requires, whenever
+the receipt's own outcome precomputed ``VERIFIED``, that the resolved Observation's own
+``observed_result.observation_status`` be a member of
+:data:`~manosube_agent_civilization.change_executor.evidence_handoff.
+_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES` (``{"COMPLETE", "EMPTY"}``) -- refusing outright rather
+than returning a record whose own embedded facts contradict its own claimed status. The first test
+below proves the genuine positive route no longer accidentally reaches ``INCOMPLETE`` at all; the
+second is a decisive negative control that tampers only the resolved Observation's own status
+(identity kept genuine) and proves the post-call gate refuses it regardless.
 """
 
 from __future__ import annotations
@@ -574,3 +599,136 @@ def test_expected_verification_observation_id_is_sensitive_to_an_unrequested_sou
         )
         == genuine_id
     )
+
+
+# --------------------------------------------------------------------------------------- #
+# (e) P18-R4-F1 (Structural Review Round 4): the minted verification Observation's own
+# resolved status must be decisive before a receipt's precomputed VERIFIED provenance is
+# ever returned.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_genuine_execution_reaches_a_decisive_observation_status_not_incomplete(
+    tmp_path: Path,
+) -> None:
+    """R4_F1_POSITIVE: a genuine ``execute()`` call's own real, second, handoff-time-only
+    re-read must itself resolve to a decisive Observation status (``EMPTY`` -- this module never
+    asserts domain Facts, so ``COMPLETE`` is never reachable) -- never the ``INCOMPLETE`` a stale,
+    pre-execution Scope time window previously and unconditionally produced regardless of what
+    was actually found on disk."""
+
+    store, info = bound(tmp_path)
+    project_id = info["project_id"]
+    commit_active_kill_switch(store, project_id)
+
+    content = "# R4-F1 decisive-status proof\n"
+    result = build_committed_change(
+        store,
+        project_id,
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/r4-f1-decisive.md", "content_utf8": content}],
+        ),
+        paths=["docs/r4-f1-decisive.md"],
+    )
+    change = result["change"]
+
+    worktree_root = git_worktree(tmp_path)
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        store,
+        project_id=project_id,
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree_root)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    outcome = execute(
+        change["change_id"],
+        claim_token="r4-f1-decisive-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "SUCCEEDED"
+
+    evidence_request = _rebind_project(
+        change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
+    )
+    evidence_request["verification_observation_request"] = None
+    evidence = route_change_execution_to_evidence(store, receipt, project_id, evidence_request)
+
+    assert evidence["verification_result_provenance"]["status"] == "VERIFIED"
+    assert evidence["observed_result"]["observation_status"] in (
+        evidence_handoff_module._ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES
+    )
+    assert evidence["observed_result"]["observation_status"] != "INCOMPLETE"
+
+
+def test_evidence_with_an_incomplete_grounding_observation_status_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R4_F1_NEGATIVE: a genuine, otherwise fully valid ``derive_evidence`` call whose returned
+    Evidence record's own ``observed_result.observation_status`` has been tampered to
+    ``INCOMPLETE`` -- with the Observation's own identity left genuine, so R3_F1's own identity
+    check passes cleanly -- must still be refused, proving the resolved Observation's own status
+    is genuinely checked, not merely its identity."""
+
+    store, info = bound(tmp_path)
+    project_id = info["project_id"]
+    commit_active_kill_switch(store, project_id)
+
+    content = "# R4-F1 incomplete-status proof\n"
+    result = build_committed_change(
+        store,
+        project_id,
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/r4-f1-incomplete.md", "content_utf8": content}],
+        ),
+        paths=["docs/r4-f1-incomplete.md"],
+    )
+    change = result["change"]
+
+    worktree_root = git_worktree(tmp_path)
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        store,
+        project_id=project_id,
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree_root)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    outcome = execute(
+        change["change_id"],
+        claim_token="r4-f1-incomplete-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "SUCCEEDED"
+
+    # Wrap (never replace the logic of) the real derive_evidence: every real check it performs
+    # still runs in full, including the genuine observation_id the minted Observation carries --
+    # only observed_result.observation_status is tampered afterward.
+    def _status_tampering_derive_evidence(request: Any) -> dict[str, Any]:
+        genuine = _real_derive_evidence(request)
+        tampered = dict(genuine)
+        tampered_observed_result = dict(tampered["observed_result"])
+        tampered_observed_result["observation_status"] = "INCOMPLETE"
+        tampered["observed_result"] = tampered_observed_result
+        return tampered
+
+    monkeypatch.setattr(
+        evidence_handoff_module, "derive_evidence", _status_tampering_derive_evidence
+    )
+
+    evidence_request = _rebind_project(
+        change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
+    )
+    evidence_request["verification_observation_request"] = None
+    with pytest.raises(ChangeExecutorError, match="P18-R4-F1"):
+        route_change_execution_to_evidence(store, receipt, project_id, evidence_request)

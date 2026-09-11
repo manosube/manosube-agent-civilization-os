@@ -139,6 +139,19 @@ REQUIRED_PROVENANCE_FIELDS: tuple[str, ...] = (
     "observations",
 )
 
+#: (P18-R4-F1) The only :mod:`~manosube_agent_civilization.observation.engine` ``status``
+#: values that represent a genuinely resolved, decisive collection outcome -- the minted
+#: verification Observation's own status must be one of these before this module will let a
+#: ``VERIFIED`` provenance status survive and be returned. ``EMPTY`` is the value a real,
+#: fully-successful second re-read of this module's own re-observation produces (it checks
+#: on-disk content digests, never asserting domain Facts, so ``has_facts`` is always false);
+#: ``COMPLETE`` is included for forward compatibility should a future caller ever attach real
+#: Facts. Every other member of the Observation status vocabulary (``INCOMPLETE``, ``UNKNOWN``,
+#: ``UNOBSERVED``, ``BLOCKED``, ``FAILED``, ``INVALID``, ``CONFLICTED``) means the Observation
+#: owner itself could not decisively resolve this collection -- never an acceptable basis for
+#: promoting a receipt's self-reported ``SUCCEEDED`` into ``VERIFIED`` Evidence.
+_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES = frozenset({"COMPLETE", "EMPTY"})
+
 #: Every :data:`~manosube_agent_civilization.change_executor.types.EXECUTION_OUTCOMES` member
 #: maps to exactly one of Evidence's own ``verification_result_provenance.status`` vocabulary
 #: members (``VERIFIED``/``FAILED``/``INSUFFICIENT``/``UNAVAILABLE``) -- the one shared
@@ -367,10 +380,25 @@ def _build_verification_observation_request(
     (when there is nothing to independently re-observe -- an empty operation). This request is
     never itself trusted as an Observation: it is handed to ``derive_evidence``, which mints the
     real record through the one existing Observation owner (``observation.engine.observe()``),
-    never accepting a caller-supplied Observation record directly."""
+    never accepting a caller-supplied Observation record directly.
+
+    (P18-R4-F1) The Scope's own ``observation_window``/``cutoff`` are rebuilt around *captured_at*
+    itself, rather than left at *base_request*'s own (necessarily earlier, pre-execution)
+    values -- ``observation.boundary.time_boundary_within_scope`` requires this fresh
+    Observation's own ``observation_started_at``/``observation_ended_at`` (both *captured_at*)
+    to fall inside the Scope's ``observation_window``, and its ``source_snapshot_time`` (also
+    *captured_at*) to fall at or before the Scope's own ``cutoff``; copying the base Scope's
+    stale window verbatim made every genuine handoff-time re-read fail that check and degrade to
+    ``INCOMPLETE`` regardless of what was actually found on disk -- the exact defect Structural
+    Review Round 4 (P18-R4-F1) named. A real ``attempts`` entry is built too (one, representing
+    this module's own single collection attempt over every touched path), required for
+    ``observe()`` to ever report a resolved ``EMPTY``/``COMPLETE`` status instead of falling
+    through to ``UNKNOWN`` for want of any attempt record at all."""
 
     base_scope = base_request["scope"]
     scope = dict(base_scope)
+    scope["observation_window"] = {"start": captured_at, "end": captured_at}
+    scope["cutoff"] = captured_at
     if snapshots:
         new_refs = [
             {"kind": "source_snapshot", "id": snapshot["source_snapshot_id"]}
@@ -389,6 +417,30 @@ def _build_verification_observation_request(
         "target_effective_end": effective_window["end"],
         "source_snapshot_time": captured_at,
     }
+    method_ref = dict(base_request["method_ref"])
+
+    # (P18-R4-F1) One real attempt, representing this module's own single collection attempt
+    # over every touched path -- required for observe() to ever resolve a decisive EMPTY/
+    # COMPLETE status (see observation.engine._observation_status: with zero attempts it always
+    # falls through to UNKNOWN, regardless of how many source_occurrences are present). "EMPTY"
+    # is the honest result: this module's own occurrences never carry Facts (it verifies on-disk
+    # content digests, never asserts domain Facts), so has_facts is always false here. When there
+    # is nothing to observe (an empty operation), no attempt is built -- that path is only ever
+    # reached for a non-SUCCEEDED outcome, which never derives VERIFIED regardless.
+    attempts = (
+        [
+            {
+                "attempt_id": "VERIFICATION-REREAD-ATTEMPT-0001",
+                "method_ref": dict(method_ref),
+                "started_at": captured_at,
+                "ended_at": captured_at,
+                "result": "EMPTY",
+                "failure_class": None,
+            }
+        ]
+        if occurrences
+        else []
+    )
 
     return {
         "project_id": project_id,
@@ -397,12 +449,12 @@ def _build_verification_observation_request(
         "target_identity": base_request["target_identity"],
         "target_kind": base_request["target_kind"],
         "scope": scope,
-        "method_ref": dict(base_request["method_ref"]),
+        "method_ref": method_ref,
         "time_boundary": time_boundary,
         "source_snapshot_refs": top_level_refs,
         "normalization_profile": base_request["normalization_profile"],
         "source_occurrences": occurrences,
-        "attempts": [],
+        "attempts": attempts,
         "blind_spots": [],
         "observation_evidence_refs": [],
         "negative_evidence_refs": [],
@@ -615,6 +667,27 @@ def route_change_execution_to_evidence(
             "promotion this hand-off cannot itself resolve and confirm (P18-R3-F1): "
             f"{evidence['observed_result']['observation_ref']['id']!r} != "
             f"{expected_verification_observation_id!r}"
+        )
+    # (P18-R4-F1) Identity equality alone proves *which* Observation grounds this Evidence, but
+    # observation_id excludes source_occurrences, their outcomes, and the derived status itself
+    # -- so equal identity does not by itself prove the Observation genuinely resolved anything.
+    # A provenance status of VERIFIED is only trustworthy when the minted Observation's own
+    # resolved status is one this module recognizes as decisive
+    # (:data:`_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES`); an INCOMPLETE, UNKNOWN, or otherwise
+    # undecided Observation must never coexist with a VERIFIED promotion, however the receipt's
+    # own outcome precomputed it.
+    if (
+        provenance["status"] == "VERIFIED"
+        and evidence["observed_result"]["observation_status"]
+        not in _ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES
+    ):
+        raise ChangeExecutorError(
+            "the receipt's own outcome precomputed a VERIFIED provenance status, but the "
+            "canonical verification Observation this hand-off resolved back did not itself "
+            "reach a decisive status -- refusing to let a receipt's self-report manufacture a "
+            "VERIFIED promotion the resolved Observation does not itself determine (P18-R4-F1): "
+            f"observation_status={evidence['observed_result']['observation_status']!r} not in "
+            f"{sorted(_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES)}"
         )
     if evidence["verification_result_provenance"] != provenance:
         raise ChangeExecutorError(

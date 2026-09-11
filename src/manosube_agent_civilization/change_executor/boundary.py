@@ -378,11 +378,16 @@ def _resolve_config_dir(git_dir: Path) -> Path:
 def _normalize_repository_slug(url: str) -> str:
     """Normalize a git remote URL to the bare ``owner/repo`` slug form
     ``execution_boundary["repository"]`` already uses -- handling
-    ``https://github.com/owner/repo.git``, ``git@github.com:owner/repo.git``, and an
-    already-bare ``owner/repo`` slug (passed through unchanged, only trimming a trailing
-    ``.git``/``/``) alike. (P18-R3-F2) Both URL forms additionally require their own host to
-    equal :data:`_TRUSTED_REPOSITORY_HOST` exactly -- discarding the host before comparison
-    would let a mismatched-host remote pass by owner/repo path alone."""
+    ``https://github.com/owner/repo.git`` and ``git@github.com:owner/repo.git`` alike. (P18-R3-F2)
+    Both forms require their own host to equal :data:`_TRUSTED_REPOSITORY_HOST` exactly --
+    discarding the host before comparison would let a mismatched-host remote pass by owner/repo
+    path alone. (P18-R4-F2) A bare, hostless ``owner/repo`` value -- neither a ``scheme://`` URL
+    nor scp-like syntax -- is refused outright rather than passed through unchanged: git itself
+    treats such a value as a *relative filesystem path* remote, which carries no forge host
+    identity at all, so accepting it silently would let any locally-reachable directory whose
+    path happens to end in the admitted ``owner/repo`` satisfy this check without ever proving a
+    real ``github.com`` remote exists. The admitted repository host must be present and exact in
+    every accepted remote form; there is no hostless admissible form."""
 
     value = url.strip()
     if value.endswith(".git"):
@@ -421,7 +426,17 @@ def _normalize_repository_slug(url: str) -> str:
                 f"(P18-R3-F2): {url!r}"
             )
         return rest.strip("/")
-    return value.strip("/")
+    # (P18-R4-F2) A bare owner/repo value is a hostless, relative-filesystem-path remote in
+    # git's own vocabulary -- it names no forge host at all, so it can never satisfy the
+    # admitted repository host requirement. Refusing it outright (rather than passing it through
+    # unchanged, as this branch previously did) closes the exact bypass Structural Review Round
+    # 4 named: a `.git/config` origin of literally `owner/repo`, with no scheme and no `@host`,
+    # matched the admitted slug while proving zero forge-host identity.
+    raise ExecutionBoundaryError(
+        f"execution_boundary.worktree_root's own remote url is hostless/relative -- the "
+        f"admitted repository host {_TRUSTED_REPOSITORY_HOST!r} must be present and exact "
+        f"(P18-R4-F2): {url!r}"
+    )
 
 
 def _read_origin_remote_slug(config_dir: Path) -> str:

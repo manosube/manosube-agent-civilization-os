@@ -335,7 +335,11 @@ level out instead of inside the closed record.
     `execution_boundary["repository"]` already uses (**corrected by Structural Review Round 3,
     P18-R3-F2**: normalization also requires that URL's own host to equal exactly one trusted
     repository forge host, `github.com`, rejecting an otherwise owner/repo-matching remote on
-    any other host). A mismatch, or any unparseable/missing
+    any other host; **corrected again by Structural Review Round 4, P18-R4-F2**: a bare,
+    hostless `owner/repo` remote value -- neither a `scheme://` URL nor scp-like syntax, and
+    therefore a *relative filesystem path* remote in git's own vocabulary, naming no forge host
+    at all -- is now refused outright rather than passed through unchanged; there is no hostless
+    admissible remote form). A mismatch, or any unparseable/missing
     `.git` metadata, raises `ExecutionBoundaryError` at composition time, before any
     request-facing operation can even be obtained.
 16. **`execution_attempt` now carries its own `reobservation_request` durably, embedded at

@@ -244,6 +244,26 @@ def test_worktree_root_with_a_mismatched_host_scp_like_origin_is_refused_even_wi
         validate_execution_boundary(boundary)
 
 
+def test_worktree_root_with_a_hostless_bare_slug_origin_is_refused_even_with_matching_owner_repo(
+    tmp_path: Path,
+) -> None:
+    """(P18-R4-F2, Structural Review Round 4) A remote whose own ``.git/config`` origin URL is
+    exactly the bare ``owner/repo`` slug -- no scheme, no ``@host`` -- is a hostless, relative-
+    filesystem-path remote in git's own vocabulary, proving no forge host identity at all. It
+    must be refused even though its literal path equals the Boundary's own admitted
+    ``repository`` exactly -- ``_normalize_repository_slug`` must not pass a hostless value
+    through unchanged."""
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _run_git("init", "--quiet", str(worktree))
+    _run_git("symbolic-ref", "HEAD", f"refs/heads/{BRANCH}", cwd=str(worktree))
+    _run_git("remote", "add", "origin", REPOSITORY, cwd=str(worktree))
+    boundary = execution_boundary_for(worktree_root=str(worktree))
+    with pytest.raises(ExecutionBoundaryError, match="hostless"):
+        validate_execution_boundary(boundary)
+
+
 def test_linked_git_worktree_resolves_via_its_own_commondir(tmp_path: Path) -> None:
     """A genuine ``git worktree add`` linked worktree -- its own ``.git`` is a *file* naming the
     real gitdir, and that gitdir's own ``commondir`` names the main repository's own git

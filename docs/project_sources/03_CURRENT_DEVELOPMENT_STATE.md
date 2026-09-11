@@ -2847,3 +2847,91 @@ PHASE_18_COMPLETE=false
 PHASE_19_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
+
+# 37. Phase 18 Structural Review Round 4 bounded addendum (Issue #73, PR #74) -- P18-R4-F1/F2 only
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。構造参謀によるStructural Review Round 4のhandoff（PR #74コメント
+`issuecomment-5630481239`）とSHUKOUによるその採択（PR #74コメント
+`issuecomment-5630506120`、`ADOPTION_ID=ADOPT_P18_R4_STRUCTURAL_CORRECTIONS`）をGitHub API +
+`git rev-parse`による独立再観測で確認した上で、この既存PR #74ブランチ（新規branch・新規PR無し）
+上に実装した是正内容を記録する。本addendumは**採択された2件（`P18-R4-F1`・`P18-R4-F2`）のみ**を
+対象とし、Round 4自身が別途報告した`P18-R4-F3`（このdocument自身の§36が、実際にはRound 3で
+既に delivered された head を反映せず Round 2 時点の状態のまま stale であるという指摘）は
+`ADOPTED_FINDINGS`に含まれていない -- 本節はその staleness 自体を解消するものではなく、次回
+構造参謀レビューでのSHUKOU採択を待つ、既存の未解決事項として残る。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-11
+GOVERNING_ISSUE=#73
+TARGET_PR=#74
+AUTHORIZED_TARGET_SHA=71e18e0e6f74cac61ae2bc340243e4d67b805aab
+ADOPTION_ID=ADOPT_P18_R4_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P18-R4-F1,P18-R4-F2
+P18-R4-F3_ADOPTED=false
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_74_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+```
+
+2件の是正内容の要約：
+
+```text
+P18-R4-F1  observation_id の一致（Round 3自身の是正）は、どの Observation が Evidence を根拠
+           付けているかを証明するが、observation_id 自体は source_occurrences・その outcome・
+           導出された status を含まない -- 一致した identity だけでは、その Observation が
+           実際に何かを resolve したことを証明しない。Round 4は決定的な反例を実際に再現した：
+           genuine な SUCCEEDED receipt に対する second re-read が実際に mint した Observation
+           の status が INCOMPLETE であったにもかかわらず、verification_result_provenance.
+           status は VERIFIED のままだった -- これは、receipt 自身の outcome が Scope の
+           observation_window/cutoff の自己矛盾（handoff-time の captured_at ではなく、base
+           request 自身の stale な pre-execution window がそのままコピーされていたため、
+           genuine な later re-read は常に time_boundary_within_scope の判定に失敗し
+           INCOMPLETE に degrade していた）を経由して、promotion を単独で決定していたことを
+           意味する。是正は2段階：(i) `_build_verification_observation_request` が、Scope 自身の
+           observation_window/cutoff を captured_at そのものの周辺で再構築し、real な
+           attempts エントリを1件付与する（このmoduleは domain Facts を一切主張しないため
+           COMPLETE には到達しないが、genuine に成功した re-read は今や決定的な EMPTY に
+           到達する）；(ii) `route_change_execution_to_evidence` が、receipt 自身の outcome が
+           VERIFIED を precompute した場合には常に、resolve された Observation 自身の
+           observed_result.observation_status が `_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES`
+           （`{"COMPLETE", "EMPTY"}`）の要素であることを追加で要求し、そうでなければ
+           ChangeExecutorError を送出して VERIFIED の返却自体を拒否する。
+
+P18-R4-F2  `_normalize_repository_slug` の最終分岐（bare owner/repo 値）は、以前は値をそのまま
+           通過させていた -- しかし git 自身の語彙において、bare な owner/repo 値はホストを
+           一切持たない relative filesystem path remote であり、forge host identity を何も
+           証明しない。`.git/config` の origin URL が文字通り `owner/repo` であるような
+           checkout は、admitted slug と owner/repo path が一致するというだけで通過していた。
+           この最終分岐は今やhostless remoteを無条件に拒否する（メッセージに"hostless"を含む
+           ExecutionBoundaryError）。admissible な remote 形式のいずれにも、hostless な形式は
+           存在しない。テスト fixture `git_worktree()` 自身のデフォルト挙動も、bare な
+           `owner/repo` slug を直接 `git remote add origin` へ渡すのではなく、host を伴う
+           `https://github.com/<repository>.git` URL を構築するよう修正した（既に完全な URL /
+           scp-like 参照を明示的に渡す既存の negative fixture は無変更のまま）。
+```
+
+修正はPR #74の唯一の既存ブランチ上、新規branch・新規PR無しで行われた。既存の`State`・
+`Difference`・`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Runtime`・
+`Model Runtime`・`URL Boot`のいずれのownerも置換・変更しない。schema変更は無し。新規module
+の追加も無し -- 既存module（`evidence_handoff.py`・`boundary.py`）自身への是正と、既存test
+fixture（`tests/fixtures/change_executor_world.py`の`git_worktree()`）・既存test file
+（`tests/integration/change_executor/test_change_executor_independent_reobservation.py`・
+`tests/integration/change_executor/test_change_executor_worktree_git_identity.py`）への
+追加のみである。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`）は独立に検証済み（正確な件数は本節自身の記録時点で
+得られた実測値を用いる -- 検証セッション自身のログを参照）。full repository test suiteも
+独立に再実行し、既知のpre-existing failure（`tests/contract/governance/
+test_source_freshness_drift_detection.py`配下の7件、この作業開始以前から`origin/main`上で
+既に確認済みのもの、本packageとは無関係）を除き、全件PASSで検証済み。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
