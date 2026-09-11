@@ -845,3 +845,64 @@ command、model/tool invocation、自律Change、またはproduction credential�
 対応する`03_CURRENT_DEVELOPMENT_STATE.md`および`04_REPOSITORY_ARCHITECTURE.md`の同期を、限定された
 Human-reviewed source-syncとして行う。Issue #69のcloseは、このsource-syncのmergeとresulting mainの
 再観測後に行う。
+
+---
+
+# 24. Phase 18 acceptance receipt
+
+| Phase | Governing Issue | Merged PR | Accepted merge SHA | Receipt class | Accepted capability |
+|---:|---:|---:|---|---|---|
+| 18 | [#73](https://github.com/manosube/manosube-agent-civilization-os/issues/73) | [#74](https://github.com/manosube/manosube-agent-civilization-os/pull/74) | `91128e332138bb23466bf0f43a9f633cd646e891` | `DIRECT_COMPLETION_RECEIPT` | Controlled Autonomous Change inside an explicit low-risk Execution Boundary |
+
+Phase 18のexact delivery headは
+`906beb88bdbd76731792d59408aab5a727b4b691`であり、merge commitの第二parentと一致する。
+第一parentはPhase 17 source-synchronized main
+`120cddbddd12e86cb8a233b90a69fe60a24b42c5`である。reviewed delivery headとmerge commitは同一
+tree `22c5f442c010c38cc5a2134256590ac9a9628645`を持ち、file diffは0である。Structural Review
+Round 6はexact delivery headに対して全finding closed、no regression、`STRUCTURAL_REVIEW=PASS`、
+`MERGE_RECOMMENDED=true`を記録し、その後SHUKOUがPR #74を手動mergeした。
+
+post-merge受入観測とsource reflow境界はIssue #73コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/73#issuecomment-5632639503`
+へ固定し、API read-back済みである。
+
+```text
+OBSERVED_AT_UTC=2026-09-11T09:47:55Z
+ACCEPTED_PHASE_RANGE=0..18
+ACCEPTED_PHASE_COUNT=19
+LAST_ACCEPTED_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+LAST_ACCEPTED_MAIN_SHA=91128e332138bb23466bf0f43a9f633cd646e891
+
+PHASE_18_DELIVERY_HEAD=906beb88bdbd76731792d59408aab5a727b4b691
+PHASE_18_MERGE_PARENT_MAIN=120cddbddd12e86cb8a233b90a69fe60a24b42c5
+PHASE_18_MERGE_PARENT_DELIVERY=906beb88bdbd76731792d59408aab5a727b4b691
+PHASE_18_REVIEWED_TREE=22c5f442c010c38cc5a2134256590ac9a9628645
+PHASE_18_MERGED_TREE=22c5f442c010c38cc5a2134256590ac9a9628645
+MERGED_EXACT_REVIEWED_HEAD=true
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+PHASE_18_STRUCTURAL_REVIEW_ROUND_6=PASS
+PHASE_18_STRUCTURAL_FINDINGS_OPEN=0
+
+POST_MERGE_TARGETED_CHANGE_EXECUTOR_SUITE=213_PASSED
+SCHEMA_VALIDATION=PASS_72_SCHEMAS
+STATIC_CONFORMANCE_AND_KERNEL_CONTINUITY=22_PASSED
+SOURCE_IMPACT_GATE=PASS
+FULL_REPOSITORY_SUITE=21354_PASSED_7_PRE_EXISTING_FAILED_11_SKIPPED
+
+PHASE_18_CURRENT_ROUTE_BLOCKERS=0
+PHASE_18_COMPLETE=true
+ISSUE_73_CLOSE_ALLOWED_AFTER_SOURCE_SYNC=true
+PHASE_19_ALLOWED=true
+PHASE_19_IMPLEMENTATION_ALLOWED=false
+```
+
+Phase 18 acceptanceは、unbounded autonomy、production autonomy、GitHub push/merge、deployment、
+credential/billing/security-policy mutation、Objective/Authority/Kernel Constitution/completion semanticsの
+変更、任意shell/subprocess/network、実production Change、Evidence sufficiency、Difference closureの
+自動宣言、またはPhase 19 Multi-Agent実装を主張しない。
+
+merge時のsource freshness Actionsはstep開始前にfailureとなり、自動source reflowは行われなかった。
+そのmechanism状態はPhase acceptance Authorityとして使用しない。本節と対応する
+`03_CURRENT_DEVELOPMENT_STATE.md`および`04_REPOSITORY_ARCHITECTURE.md`の同期を、限定された
+Human-reviewed source-syncとして行う。Issue #73のcloseは、このsource-syncのmergeとresulting
+`main`の再観測後に行う。
