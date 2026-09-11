@@ -2761,7 +2761,7 @@ PR #74コメント `https://github.com/manosube/manosube-agent-civilization-os/p
 ために、単一の`FINAL_HEAD_SHA`フィールドを、意図的に区別された2つのフィールドへ置き換える：
 
 ```text
-IMPLEMENTATION_COMMIT_SHA=<IMPLEMENTATION_COMMIT_SHA>
+IMPLEMENTATION_COMMIT_SHA=5ac16e569a5b2ece45dd23536ad8952d81d3c1fa
 DELIVERY_HEAD_OBSERVABLE_VIA=EXTERNAL_RETURN_EVIDENCE_COMMENT_ON_PR_74
 ```
 
