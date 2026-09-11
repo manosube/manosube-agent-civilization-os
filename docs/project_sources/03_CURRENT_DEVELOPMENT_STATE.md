@@ -3122,3 +3122,75 @@ Phase 19は次のroadmap work unitとして定義可能になったが、自動�
 Issue #73は、本source-sync PRの構造審査、SHUKOU手動merge、およびresulting `main`の再観測後にのみ
 closeする。Phase 19実装には、専用Issue上のObjective / Boundary / AuthorityとSHUKOUの明示採択が
 別途必要である。
+
+---
+
+# 40. Phase 19 implementation-delivery bounded addendum (Issue #77)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、`src/`および`01_SCHEMA/`配下の新規kernel_surface変更
+（`src/manosube_agent_civilization/multi_agent/`、`01_SCHEMA/multi_agent/`）に対応付けるため
+だけの、最小限の事実記録である。
+
+Issue #77「Multi-Agent Dynamic Execution」はSHUKOUにより採択済みとして本作業の発注元セッション
+から指示され、branch `agent/issue-77-phase19-multi-agent-dynamic-execution`はexact base SHA
+`0ced9d0dd5658196b7a6dc085ca839fa514f1eeb`（`main`のPR #76 merge commit、`git log -1`で本記録
+作成前に直接確認済み）から分岐している。本実行環境にはGitHub API/`gh` CLIへの到達手段が無く、
+Issue #77自身のADOPTION_IDコメントを本記録作成者自身が独立readbackすることはできなかった --
+これは正直に開示する非claimであり、その独立readbackはSHUKOU側の統括セッションが別途行う。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-11
+GOVERNING_ISSUE=#77
+BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+BRANCH=agent/issue-77-phase19-multi-agent-dynamic-execution
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_NO_COMMIT_BY_THIS_SESSION
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=false
+```
+
+追加されたas-built ownerは`14_MULTI_AGENT/`（`MULTI_AGENT_INDEX.md`・
+`MULTI_AGENT_CONTRACT.md`）、`src/manosube_agent_civilization/multi_agent/`（`route.py`・
+`engine.py`・`identity.py`・`selection.py`・`evidence_handoff.py`・`types.py`・`errors.py`・
+`__init__.py`の8モジュール）、`01_SCHEMA/multi_agent/`（`multi_agent_dynamic_execution_plan`・
+`multi_agent_slot_output`・`multi_agent_agent_release_receipt`・`multi_agent_conflict_set`・
+`multi_agent_evidence_aggregation_input`・`multi_agent_orchestration_receipt`の6schema、schema
+総数72→78）である。`scripts/validate_schemas.py`自身のasserted schema countも72から78へ更新
+した。既存のState・Difference・Authority・Change・Evidence・Reflow・Binding・Boot・Runtime・
+Model Runtime・URL Boot・Change Executorのいずれのownerも置換・変更しない -- `multi_agent`は
+既存のPhase 12 Temporary Agent lifecycleとPhase 16 Model Runtime execution contractを一切
+再実装せず再利用するorchestration層であり、Authorityを生成せず、canonical Stateの意味的内容を
+自身の新規6 record kind以外変更せず、Evidence十分性を宣言せず、Differenceをcloseせず、
+completionを宣言しない -- 既存のEvidence/Independent Verification/Reflow ownerへhandoffする
+のみである。
+
+selectionは`risk_class`（LOW/MODERATE/HIGH/CRITICAL、既存のDifference schema自身の closed
+enum）から1/1/2/3 slotへの固定・全域・caller非依存mappingで決定される（`MAX_AGENT_SLOTS=3`）。
+1つのplanに属する全slotは1つの既存Model Runtime Model Work Unitを共有し（既存Authority
+evaluatorが1回だけ評価される）、各slotは独立したTemporary Agent（Phase 12既存owner、call site
+2箇所のみ、いずれも`try/finally`でrelease保証）上でexecute_model_work_unit（既存owner）を実行
+する。conflictはexact-fingerprint-equality-or-explicit-disagreementの1つの closed policyで
+分類され、majority/average/last-writer-winsは一切実装されていない。Evidence-aggregation input
+はrelease_status=="RELEASED"が全slotに対して確認できない限り構築を拒否し、Evidence handoffは
+そのreleaseを独立に再検証する。
+
+targeted test suite（`tests/unit/multi_agent/`・`tests/contract/multi_agent/`・
+`tests/integration/multi_agent/`、8 test files + 1 fixture module）は本記録作成者自身が
+独立に実行し検証済み（正確な件数は本Issue #77への最終報告本文を参照）。`ruff check`・
+`ruff format --check`・`mypy --namespace-packages`はいずれもこの新規packageに対してclean、
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`（`SCHEMA_COUNT=78`）。full
+repository test suiteの独立再実行結果、および`tests/contract/governance/
+test_source_freshness_drift_detection.py`配下のpre-existing failure（本記録作成者自身が
+`git stash`によるbranch-changes有無の比較実行で独立確認 -- 実際は当初想定の7件ではなく10件、
+いずれもこのbranchのPhase 19変更を`git stash`で除去した`main`直上でも同一の10件・同一失敗名で
+再現するため、本Phase 19実装に起因しないpre-existing failureであると確認済み）との一致確認は、
+本Issue #77への最終報告本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+```
