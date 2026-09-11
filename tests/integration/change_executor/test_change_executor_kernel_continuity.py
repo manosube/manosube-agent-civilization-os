@@ -45,6 +45,7 @@ import manosube_agent_civilization.change_executor.errors as errors_module
 import manosube_agent_civilization.change_executor.evidence_handoff as evidence_handoff_module
 import manosube_agent_civilization.change_executor.identity as identity_module
 import manosube_agent_civilization.change_executor.kill_switch as kill_switch_module
+import manosube_agent_civilization.change_executor.reobservation as reobservation_module
 import manosube_agent_civilization.change_executor.route as route_module
 from manosube_agent_civilization.change_executor.route import compose_change_executor
 import manosube_agent_civilization.change_executor.types as types_module
@@ -59,6 +60,7 @@ _ALL_PACKAGE_MODULES = (
     boundary_module,
     kill_switch_module,
     evidence_handoff_module,
+    reobservation_module,
 )
 
 _SHIPPED_PACKAGE_ROOT = pathlib.Path(manosube_agent_civilization.__file__).resolve().parent
@@ -208,10 +210,9 @@ def _executor(store: Any, info: dict[str, Any], adapter: Any, *, worktree_root: 
         store,
         project_id=info["project_id"],
         project_binding_id=info["project_binding_id"],
-        execution_boundary=execution_boundary_for(),
+        execution_boundary=execution_boundary_for(worktree_root=worktree_root),
         adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
         adapter=adapter,
-        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 

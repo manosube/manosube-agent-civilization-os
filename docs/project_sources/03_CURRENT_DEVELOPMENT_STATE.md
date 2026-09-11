@@ -2596,3 +2596,119 @@ ISSUE_CLOSE_ALLOWED=false
 PHASE_18_COMPLETE=false
 PHASE_19_ALLOWED=false
 ```
+
+# 35. Phase 18 Structural Review Round 1 bounded addendum (Issue #73, PR #74) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション34の記録以降、この同一PR #74ブランチ上でGitHub Codex自動
+レビューにより発見された3件の追加是正（`worktree_root`のcomposition-time bindingの欠如、
+`execution_intent`/`execution_attempt`commit間のcrash recovery gap、2並行callerによる
+`adapter.execute`二重呼び出しrace）が実装され、targeted test suiteが161件から167件へ拡張された
+（commit `2010f05`）。この167-test状態自体はセクション34の記録時点では未記録のまま今日に至って
+いたため、本節は先にその事実を記録した上で、続けて構造参謀によるStructural Review Round 1
+（`P18-R1-F1`〜`P18-R1-F6`）とSHUKOUによるその採択（PR #74コメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5626622213`、
+`ADOPTION_ID=ADOPT_P18_R1_STRUCTURAL_CORRECTIONS`）を独立GitHub API再観測で確認した上で、この
+既存PR #74ブランチ上に実装した是正内容を記録する。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション34自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+CURRENT_PHASE_ISSUE=73
+CURRENT_PR=74
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#73
+TARGET_PR=#74
+BASE_SHA=2010f05
+BRANCH=agent/issue-73-phase18-controlled-autonomous-change
+REVIEWED_HEAD=2010f05
+ADOPTION_ID=ADOPT_P18_R1_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P18-R1-F1,P18-R1-F2,P18-R1-F3,P18-R1-F4,P18-R1-F5,P18-R1-F6
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_74_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+FINAL_HEAD_SHA=<FINAL_HEAD_SHA>
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED_AWAITING_ROUND_2
+```
+
+6件の是正内容の要約：
+
+```text
+P18-R1-F1  独立after-state再観測がVERIFIEDを条件付ける。evidence_handoff.pyは、これまで
+           receipt自身の自己申告outcome=="SUCCEEDED"を直接VERIFIEDへ写像していた -- adapter
+           自身の自己申告事実を独立に再確認することなく、executorが自身の成功報告をEvidenceへ
+           自己格上げしていた。新規reobservation.pyが、書き込まれたファイルの実際のon-disk内容
+           を、要求されたcontent_utf8のSHA-256digestと独立に比較する（adapter自身の報告する
+           bytes_written/files_writtenは一切信用しない）。この結果はreceipt自身に
+           independent_after_state_observationとして埋め込まれ（schema必須、semantic
+           fingerprint対象）、evidence_handoff.pyはreceipt自身のoutcome=="SUCCEEDED"に加えて
+           この観測結果自身のoutcome=="MATCHED"を要求した上でなければVERIFIEDを導出しない。
+           一致しないSUCCEEDED主張は新規closed outcome member REOBSERVATION_MISMATCHへ
+           再分類される。
+
+P18-R1-F2  staleness checkの「blanket resuming skip」を、正確なpost-intent-successor checkへ
+           置き換えた。crash-interrupted intentをresumeする呼び出しは、もはや無条件にstaleness
+           checkを skipしない -- state_revisionが厳密にexpected_state_revision + 1であること、
+           かつchain-link fingerprint（previous_state_fingerprint）がbefore_state_fingerprint
+           と厳密に一致することを要求する。さらに、唯一のadapter呼び出しの直前に、
+           final pre-effect State barrierを新設した -- 現在のStateを再取得し、この呼び出し
+           自身のintent+attempt commitが実際に生成したrevisionと厳密に一致することを要求する。
+           不一致は adapter呼び出しゼロのままStaleExecutionInputErrorとして拒否する。
+
+P18-R1-F3  worktree_rootを、closed Execution Boundary自身の内部にある必須schema-validated
+           fieldへ移動した（前round独自のcomposition-time parameterから）。
+           execution_boundary_fingerprintは既にcanonical boundary dict全体をhashするため、
+           worktree_rootは自動的にBoundary fingerprint -- ひいてはmapping-slot key -- に
+           参加するようになった。異なるworktree_rootへbindされた2つのcomposed executorは、
+           構造的に異なるBoundary fingerprint/mapping slotを持つことになり、cross-root/
+           cross-worktreeのslotまたはreceipt substitutionはこのpackage自身のidentity scheme
+           内で構造的に不可能となった。
+
+P18-R1-F4  execution_attemptが既にcommit済みとなった後に到達する、あらゆるpathが、正確に1件の
+           terminal receiptをcommitするようになった -- adapter自身のraiseと、structurally
+           invalidなadapter reportという、これまでこのpatternに従っていなかった2つのpathを
+           含む。両者とも、outcome="UNKNOWN"のterminal receiptをcommitするようになった
+           （bare exceptionではなく）-- これは既存のEXECUTION_OUTCOMES memberであり、"we do
+           not know what happened"という安全で正直なdefaultである。
+
+P18-R1-F5  idempotency-slot resolutionが、time-window/kill-switch checkpoint #1のより前にも
+           実行されるようになった（前roundでは、Boot/stalenessのより前にのみ実行されていた）。
+           3つのslot-resolution outcome（terminal replay、semantic reuse、terminal-claim-
+           mismatch、reconciliation-required）のいずれも、Boot・commit・adapter呼び出しへは
+           一切進まないため、これらは admission checkを一切必要としない -- 新しい副作用を
+           authorizeするためだけに存在するcheckの後ろにread-onlyのreturnをgateすることこそが
+           欠陥そのものであった。
+
+P18-R1-F6  本節自身が、この是正の対象である。
+```
+
+修正はPR #74の唯一のブランチ上、新規PR無しで行われた。既存の`State`・`Difference`・
+`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Runtime`・`Model Runtime`・
+`URL Boot`のいずれのownerも置換・変更しない。schema変更は`01_SCHEMA/change_executor/
+execution_boundary.schema.json`（`worktree_root`をrequiredへ追加）と`01_SCHEMA/change_executor/
+execution_receipt.schema.json`（`independent_after_state_observation`をrequiredへ追加、
+`outcome` enumへ`REOBSERVATION_MISMATCH`を追加）の2件のみで、schema総数は72のまま変わらない
+（新規schema fileの追加ではなく、既存2 schemaへのfield追加のため）。新規moduleとして
+`src/manosube_agent_civilization/change_executor/reobservation.py`が1件追加された。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`、10 test files + 2 fixture modules -- 新規file
+`test_change_executor_independent_reobservation.py`を1件追加）は182件PASS、0 skip、0 failで
+独立に検証済み（167件から+15件）。full repository test suiteも独立に再実行し、既知の
+pre-existing failure（`tests/contract/governance/test_source_freshness_drift_detection.py`
+配下の7件、`origin/main`の clean baseline上で既に確認済みのもの）を除き、全件PASSで検証済み
+（正確な最終件数は本節自身の記録時点で得られた実測値を用いる -- 検証セッション自身のログを参照）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```

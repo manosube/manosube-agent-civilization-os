@@ -14,11 +14,16 @@ produce validates cleanly against its own canonical JSON Schema.
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from manosube_agent_civilization.change_executor.boundary import CHANGE_EXECUTOR_SCHEMA_BASE
+from manosube_agent_civilization.change_executor.boundary import (
+    CHANGE_EXECUTOR_SCHEMA_BASE,
+    execution_boundary_fingerprint,
+    validate_execution_boundary,
+)
 from manosube_agent_civilization.change_executor.engine import (
     build_change_execution_receipt,
     build_execution_attempt,
@@ -260,6 +265,10 @@ BASE_RECEIPT: dict[str, Any] = {
         "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
         "requested_at": "2026-09-10T00:00:01Z",
     },
+    "independent_after_state_observation": {
+        "outcome": "MATCHED",
+        "checked_files": [{"path": "docs/x.md", "kind": "write", "status": "MATCHED"}],
+    },
 }
 
 VARIANTS_RECEIPT: dict[str, Any] = {
@@ -294,6 +303,10 @@ VARIANTS_RECEIPT: dict[str, Any] = {
         "target": {"repository": "org/other", "branch": "dev", "paths": ["docs/y.md"]},
         "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
         "requested_at": "2026-09-10T00:10:01Z",
+    },
+    "independent_after_state_observation": {
+        "outcome": "MISMATCH",
+        "checked_files": [{"path": "docs/y.md", "kind": "write", "status": "MISMATCH"}],
     },
 }
 
@@ -457,7 +470,81 @@ def test_build_change_execution_receipt_round_trips_through_its_own_schema() -> 
             "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
             "requested_at": "2026-09-10T00:00:01Z",
         },
+        independent_after_state_observation={
+            "outcome": "MATCHED",
+            "checked_files": [{"path": "docs/x.md", "kind": "write", "status": "MATCHED"}],
+        },
     )
     validate_record(record, "execution_receipt.schema.json", base=CHANGE_EXECUTOR_SCHEMA_BASE)
     assert record["change_execution_receipt_id"] == slot_key
     assert record["execution_request_id"] == slot_key
+
+
+# --------------------------------------------------------------------------------------- #
+# P18-R1-F3 (Structural Review Round 1): worktree_root, now a required field *inside* the
+# closed Execution Boundary itself, participates in execution_boundary_fingerprint -- and
+# therefore in execution_mapping_slot_key -- the identical way every other Boundary field
+# already does (extends this file's own fingerprint-sensitivity discipline to the Boundary
+# itself, not merely to the three request-scoped record kinds above).
+# --------------------------------------------------------------------------------------- #
+
+
+def _boundary_with(worktree_root: str) -> dict[str, Any]:
+    return {
+        "permitted_action_kinds": ["WRITE_DOCUMENTATION_FILE"],
+        "repository": "org/repo",
+        "branch": "main",
+        "admitted_paths": ["docs"],
+        "max_files_changed": 1,
+        "max_bytes_changed": 1000,
+        "max_file_bytes": 1000,
+        "permit_symlinks": False,
+        "permit_path_traversal": False,
+        "permit_network": False,
+        "permit_subprocess": False,
+        "permit_environment_mutation": False,
+        "permit_credential_access": False,
+        "timeout_seconds": 30,
+        "rollback_policy": "NONE",
+        "executor_identity": "controlled_filesystem_adapter",
+        "executor_version": "0.1",
+        "validity_window": {
+            "issued_at": "2026-09-10T00:00:00Z",
+            "expires_at": "2026-09-10T01:00:00Z",
+        },
+        "worktree_root": worktree_root,
+    }
+
+
+def test_execution_boundary_fingerprint_is_sensitive_to_worktree_root_alone(
+    tmp_path: Path,
+) -> None:
+    """Two Boundaries, identical in every field except ``worktree_root``, must produce two
+    genuinely distinct fingerprints -- and, since ``execution_mapping_slot_key`` is itself a pure
+    function of ``execution_boundary_fingerprint`` (among two other inputs), two genuinely
+    distinct mapping slots for the identical ``change_id``/``adapter_identity_fingerprint``.
+    Both worktree roots are real, existing directories (``validate_execution_boundary`` now
+    requires this)."""
+
+    worktree_a = tmp_path / "worktree-a"
+    worktree_b = tmp_path / "worktree-b"
+    worktree_a.mkdir()
+    worktree_b.mkdir()
+
+    boundary_a = validate_execution_boundary(_boundary_with(str(worktree_a)))
+    boundary_b = validate_execution_boundary(_boundary_with(str(worktree_b)))
+
+    fingerprint_a = execution_boundary_fingerprint(boundary_a)
+    fingerprint_b = execution_boundary_fingerprint(boundary_b)
+    assert fingerprint_a != fingerprint_b, (
+        "two Boundaries differing only in worktree_root must fingerprint differently"
+    )
+
+    change_id = "CHANGE-" + "A" * 64
+    adapter_fp = "sha256:" + "2" * 64
+    slot_a = execution_mapping_slot_key(change_id, fingerprint_a, adapter_fp)
+    slot_b = execution_mapping_slot_key(change_id, fingerprint_b, adapter_fp)
+    assert slot_a != slot_b, (
+        "two composed executors bound to different worktree roots must get different mapping "
+        "slots for the identical change_id/adapter_identity_fingerprint"
+    )

@@ -50,10 +50,11 @@ def _executor(
         store,
         project_id=info["project_id"],
         project_binding_id=info["project_binding_id"],
-        execution_boundary=execution_boundary_for(**boundary_overrides),
+        execution_boundary=execution_boundary_for(
+            worktree_root=worktree_root, **boundary_overrides
+        ),
         adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
         adapter=adapter,
-        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -259,7 +260,7 @@ def test_permitted_action_kinds_is_disjoint_from_human_only_action_kinds() -> No
 
 @pytest.mark.parametrize("human_only_kind", sorted(HUMAN_ONLY_ACTION_KINDS))
 def test_validate_execution_boundary_refuses_a_smuggled_human_only_action_kind(
-    human_only_kind: str,
+    tmp_path: Path, human_only_kind: str
 ) -> None:
     """A genuine runtime attempt to construct a Boundary naming a Human-only ``action_kind`` is
     structurally impossible through the ordinary public surface: ``PERMITTED_ACTION_KINDS`` is a
@@ -272,12 +273,20 @@ def test_validate_execution_boundary_refuses_a_smuggled_human_only_action_kind(
     independently-declared closed vocabulary (never derived from the Python frozenset at
     runtime): even with the Python-level gate defeated, the schema-level gate alone still
     refuses. This is the genuine defense-in-depth the module docstring names -- not a single
-    check duplicated, but two independently-declared closed vocabularies that must both agree."""
+    check duplicated, but two independently-declared closed vocabularies that must both agree.
+
+    ``worktree_root`` is deliberately a genuine, real, existing directory (``tmp_path`` itself)
+    here, not omitted: an omitted ``worktree_root`` would also raise ``ExecutionBoundaryError``
+    (a missing required key), which would make this test pass for the wrong reason entirely --
+    never reaching the Python-membership-then-schema-enum check this test actually exists to
+    prove."""
 
     original = boundary_module.PERMITTED_ACTION_KINDS
     try:
         boundary_module.PERMITTED_ACTION_KINDS = original | {human_only_kind}
-        boundary = execution_boundary_for(permitted_action_kinds=[human_only_kind])
+        boundary = execution_boundary_for(
+            worktree_root=str(tmp_path), permitted_action_kinds=[human_only_kind]
+        )
         with pytest.raises(ExecutionBoundaryError):
             validate_execution_boundary(boundary)
     finally:

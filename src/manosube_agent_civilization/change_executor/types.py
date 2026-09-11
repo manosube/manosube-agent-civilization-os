@@ -44,6 +44,7 @@ EXECUTION_OUTCOMES: frozenset[str] = frozenset(
         "ROLLBACK_SUCCEEDED",
         "ROLLBACK_FAILED",
         "UNKNOWN",
+        "REOBSERVATION_MISMATCH",
     }
 )
 
@@ -51,6 +52,31 @@ EXECUTION_OUTCOMES: frozenset[str] = frozenset(
 #: ever applies to (e.g. ``SUCCEEDED``, or a refusal before any file was ever touched).
 ROLLBACK_OUTCOMES: frozenset[str] = frozenset(
     {"NOT_ATTEMPTED", "ROLLBACK_SUCCEEDED", "ROLLBACK_FAILED"}
+)
+
+#: The closed outcome vocabulary a receipt's own embedded ``independent_after_state_observation``
+#: may carry (P18-R1-F1, Structural Review Round 1) -- a genuine, read-only re-read of the actual
+#: resulting filesystem state, performed by this package itself, never trusted from the adapter's
+#: own self-reported facts. ``MATCHED`` -- every requested write's own actual on-disk content
+#: digest-matched the requested content, and every requested delete's own target genuinely no
+#: longer exists. ``MISMATCH`` -- at least one requested write's own actual content differs from
+#: what was requested, or a requested delete's own target still exists. ``MISSING`` -- at least
+#: one requested write names a path that does not exist on disk at all (and no outright content
+#: mismatch was also found). ``NOT_PERFORMED`` -- no independent re-observation was ever
+#: performed for this receipt, because the adapter was never reached at all (``KILL_SWITCH_
+#: STOPPED``/``BOUNDARY_VIOLATION``) or its own outcome could not be trusted enough to re-observe
+#: against (``UNKNOWN``, from a raised adapter exception or a structurally invalid adapter
+#: report) -- see ``route.py``'s own module docstring.
+INDEPENDENT_REOBSERVATION_OUTCOMES: frozenset[str] = frozenset(
+    {"MATCHED", "MISMATCH", "MISSING", "NOT_PERFORMED"}
+)
+
+#: The closed per-file status vocabulary inside ``independent_after_state_observation.
+#: checked_files``. ``MISSING`` only ever appears for a ``"write"``-kind entry (a requested
+#: delete's own target either still exists, i.e. ``MISMATCH``, or genuinely does not, i.e.
+#: ``MATCHED`` -- there is no third state for a delete).
+INDEPENDENT_REOBSERVATION_FILE_STATUSES: frozenset[str] = frozenset(
+    {"MATCHED", "MISMATCH", "MISSING"}
 )
 
 
@@ -114,6 +140,8 @@ class ChangeExecutorAdapter(Protocol):
 
 __all__ = [
     "EXECUTION_OUTCOMES",
+    "INDEPENDENT_REOBSERVATION_FILE_STATUSES",
+    "INDEPENDENT_REOBSERVATION_OUTCOMES",
     "ROLLBACK_OUTCOMES",
     "AdapterReport",
     "ChangeExecutorAdapter",

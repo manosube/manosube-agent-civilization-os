@@ -18,6 +18,22 @@ fields to exactly equal what that real, resolved record actually recorded -- nev
 adapter call, and never trusting the caller-passed *receipt* dict directly (the identical
 "resolve the real record, never the caller's claim about it" discipline both sibling hand-off
 modules already establish).
+
+**``VERIFIED`` requires independent re-observation agreement, not merely a self-reported
+``SUCCEEDED`` (P18-R1-F1, Structural Review Round 1).** Before this correction, this module
+mapped ``receipt["outcome"] == "SUCCEEDED"`` directly to ``status = "VERIFIED"``, using the
+receipt's own ``executor_identity``/``executor_version`` as ``verifier_identity`` -- the executor
+self-promoting its own success report into Evidence, with no independent check that the written
+files' actual on-disk content matched what was requested. :func:`_construct_provenance` now
+additionally requires the resolved receipt's own embedded ``independent_after_state_observation``
+(:mod:`~manosube_agent_civilization.change_executor.reobservation`, committed as part of the
+receipt itself by ``route.py``) to carry ``outcome == "MATCHED"`` before deriving ``VERIFIED`` --
+and, since ``route.py`` itself already refuses to ever commit a ``SUCCEEDED``-outcome receipt
+whose own independent re-observation disagrees, a receipt reaching this module with
+``outcome == "SUCCEEDED"`` but a disagreeing ``independent_after_state_observation`` should be
+structurally unreachable; this module asserts that defensively (raises
+:class:`~manosube_agent_civilization.change_executor.errors.ChangeExecutorError`) rather than
+silently deriving ``VERIFIED`` for it regardless.
 """
 
 from __future__ import annotations
@@ -64,6 +80,7 @@ _OUTCOME_TO_PROVENANCE_STATUS: dict[str, str] = {
     "ROLLBACK_SUCCEEDED": "INSUFFICIENT",
     "ROLLBACK_FAILED": "FAILED",
     "UNKNOWN": "UNAVAILABLE",
+    "REOBSERVATION_MISMATCH": "FAILED",
 }
 
 
@@ -119,7 +136,35 @@ def _reference_set(refs: tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
 def _construct_provenance(receipt: Mapping[str, Any], project_id: str) -> dict[str, Any]:
     """Return the one, deterministic ``verification_result_provenance`` projection this hand-off
     derives -- entirely from the real, resolved, integrity-checked receipt, never from any field
-    a caller-constructed receipt dict merely claims."""
+    a caller-constructed receipt dict merely claims.
+
+    ``status`` is derived from ``receipt["outcome"]`` alone (:data:`_OUTCOME_TO_PROVENANCE_
+    STATUS`), **except** that a receipt claiming ``outcome == "SUCCEEDED"`` whose own embedded
+    ``independent_after_state_observation`` does not itself carry ``outcome == "MATCHED"`` is
+    refused outright rather than derived as ``VERIFIED`` -- this should be structurally
+    unreachable (``route.py`` itself never commits such a combination), so reaching it here means
+    something upstream is broken, and this module fails closed rather than silently trust a
+    self-reported ``SUCCEEDED`` it cannot itself independently confirm (P18-R1-F1, Structural
+    Review Round 1). ``verifier_identity`` still names ``executor_identity``/``executor_version``
+    -- the identical, honest framing this package already used before this correction: this
+    package's own re-read code (:mod:`~manosube_agent_civilization.change_executor.
+    reobservation`), not the adapter, is what actually performed the confirming independent
+    observation, and that re-read is itself executed, and its own result committed, under this
+    same executor identity/version -- the field names what performed and confirmed the work, not
+    merely what the adapter self-reported."""
+
+    if (
+        receipt["outcome"] == "SUCCEEDED"
+        and receipt["independent_after_state_observation"].get("outcome") != "MATCHED"
+    ):
+        raise ChangeExecutorError(
+            "resolved execution_receipt claims outcome=SUCCEEDED but its own embedded "
+            "independent_after_state_observation does not agree (outcome="
+            f"{receipt['independent_after_state_observation'].get('outcome')!r}) -- refusing to "
+            "derive VERIFIED for a self-reported success this package cannot itself independently "
+            "confirm; route.py should never commit this combination, so reaching this check means "
+            "something upstream is broken"
+        )
 
     receipt_ref = {"kind": _RECEIPT_RECORD_KIND, "id": receipt["change_execution_receipt_id"]}
     refs = (dict(receipt["change_ref"]), receipt_ref)
@@ -131,6 +176,7 @@ def _construct_provenance(receipt: Mapping[str, Any], project_id: str) -> dict[s
         "rollback_outcome": receipt["rollback_outcome"],
         "execution_started_at": receipt["execution_started_at"],
         "execution_ended_at": receipt["execution_ended_at"],
+        "independent_after_state_observation": dict(receipt["independent_after_state_observation"]),
     }
     provenance = {
         "status": _OUTCOME_TO_PROVENANCE_STATUS[receipt["outcome"]],
@@ -219,6 +265,7 @@ def route_change_execution_to_evidence(
         "rollback_outcome",
         "claim_token",
         "reobservation_request",
+        "independent_after_state_observation",
     ):
         if dict(receipt).get(field) != resolved.get(field):
             raise ChangeExecutorError(

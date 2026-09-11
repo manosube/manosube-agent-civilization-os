@@ -56,10 +56,11 @@ def _executor(
         store,
         project_id=info["project_id"],
         project_binding_id=info["project_binding_id"],
-        execution_boundary=execution_boundary_for(**boundary_overrides),
+        execution_boundary=execution_boundary_for(
+            worktree_root=worktree_root, **boundary_overrides
+        ),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
-        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -70,8 +71,12 @@ def _executor(
 
 
 @pytest.mark.parametrize("human_only_kind", sorted(HUMAN_ONLY_ACTION_KINDS))
-def test_human_only_action_kind_cannot_populate_a_valid_boundary(human_only_kind: str) -> None:
-    boundary = execution_boundary_for(permitted_action_kinds=[human_only_kind])
+def test_human_only_action_kind_cannot_populate_a_valid_boundary(
+    tmp_path: Path, human_only_kind: str
+) -> None:
+    boundary = execution_boundary_for(
+        worktree_root=str(tmp_path), permitted_action_kinds=[human_only_kind]
+    )
     with pytest.raises(ExecutionBoundaryError):
         validate_execution_boundary(boundary)
 
@@ -243,8 +248,10 @@ def test_adapter_itself_refuses_writing_through_an_existing_symlink_leaf(tmp_pat
         "permit_credential_access",
     ),
 )
-def test_fixed_false_permission_toggle_is_refused_when_supplied_true(toggle: str) -> None:
-    boundary = execution_boundary_for(**{toggle: True})
+def test_fixed_false_permission_toggle_is_refused_when_supplied_true(
+    tmp_path: Path, toggle: str
+) -> None:
+    boundary = execution_boundary_for(worktree_root=str(tmp_path), **{toggle: True})
     with pytest.raises(ExecutionBoundaryError):
         validate_execution_boundary(boundary)
 
@@ -461,10 +468,9 @@ def test_mid_execution_kill_switch_revocation_produces_a_terminal_kill_switch_st
         proxy,
         project_id=info["project_id"],
         project_binding_id=info["project_binding_id"],
-        execution_boundary=execution_boundary_for(),
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree)),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
-        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -476,14 +482,145 @@ def test_mid_execution_kill_switch_revocation_produces_a_terminal_kill_switch_st
     assert outcome["receipt"]["outcome"] == "KILL_SWITCH_STOPPED"
     assert adapter.call_count == 0, "the adapter must never be reached once checkpoint #2 refuses"
 
-    # And a second call for this exact slot, now genuinely stale (this package's own commits
-    # from the first call advanced state_revision -- see V4's own module docstring), is at least
-    # never silently retried into a second real mutation.
-    from manosube_agent_civilization.change_executor.errors import StaleExecutionInputError
+    # And a second call for this exact slot, under the identical claim_token, now replays the
+    # terminal KILL_SWITCH_STOPPED receipt cleanly -- never re-raising, never re-mutating.
+    # (P18-R1-F5, Structural Review Round 1: idempotency-slot resolution runs *before*
+    # time-window/kill-switch checkpoint #1, precisely so a terminal outcome -- KILL_SWITCH_
+    # STOPPED is as terminal as SUCCEEDED -- replays unconditionally, regardless of the kill
+    # switch's own now-REVOKED state; before this correction this second call would have hit
+    # checkpoint #1 first and raised ExecutionKillSwitchError, which this test's own prior
+    # assertion required -- that ordering was itself the defect P18-R1-F5 closes.)
+    second_outcome = execute(
+        change["change_id"],
+        claim_token="mid-execution",  # noqa: S106
+        execution_instant="2026-09-10T00:00:02Z",
+    )
+    assert second_outcome["replay"] is True
+    assert second_outcome["receipt"] == outcome["receipt"]
+    assert adapter.call_count == 0, "a replay must never reach the adapter either"
 
-    with pytest.raises((StaleExecutionInputError, ExecutionKillSwitchError)):
-        execute(
-            change["change_id"],
-            claim_token="mid-execution",  # noqa: S106
-            execution_instant="2026-09-10T00:00:02Z",
-        )
+
+# --------------------------------------------------------------------------------------- #
+# (h) P18-R1-F5 (Structural Review Round 1): idempotency-slot resolution runs before
+# time-window/kill-switch checkpoint #1 -- a terminal receipt replays cleanly even once the
+# Boundary's own validity_window has since expired, or the kill switch has since been revoked.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_terminal_receipt_replays_cleanly_after_the_boundarys_own_validity_window_has_expired(
+    tmp_path: Path,
+) -> None:
+    """A terminal receipt committed while ``execution_instant`` still fell inside the bound
+    Boundary's own ``validity_window`` must still replay cleanly through the identical composed
+    executor when retried with an ``execution_instant`` that no longer does -- zero Boot,
+    zero Store commit, and zero adapter calls, exactly like any other replay, because
+    idempotency-slot resolution (P18-R1-F5) resolves the terminal receipt and returns before
+    ``require_within_time_window`` is ever reached again."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    result = build_committed_change(
+        store,
+        info["project_id"],
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/window-replay.md", "content_utf8": "x"}],
+        ),
+        paths=["docs/window-replay.md"],
+    )
+    change = result["change"]
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        store,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(
+            worktree_root=str(worktree),
+            validity_window={
+                "issued_at": "2026-09-10T00:00:00Z",
+                "expires_at": "2026-09-10T00:05:00Z",
+            },
+        ),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+
+    first = execute(
+        change["change_id"],
+        claim_token="window-replay-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",  # inside the window
+    )
+    assert first["receipt"]["outcome"] == "SUCCEEDED"
+    assert adapter.call_count == 1
+
+    # A genuinely new call for the identical slot, well *outside* the Boundary's own
+    # validity_window, would raise ExecutionBoundaryError if this route ever re-checked the time
+    # window for it -- but it must not, because it is a replay.
+    second = execute(
+        change["change_id"],
+        claim_token="window-replay-claim",  # noqa: S106
+        execution_instant="2026-09-10T05:00:00Z",  # well outside the window
+    )
+    assert second["replay"] is True
+    assert second["receipt"] == first["receipt"]
+    assert adapter.call_count == 1, "a replay must never reach the adapter, nor re-Boot"
+
+
+def test_terminal_receipt_replays_cleanly_after_the_kill_switch_has_since_been_revoked(
+    tmp_path: Path,
+) -> None:
+    """A terminal receipt committed while the kill switch was ``ACTIVE`` must still replay
+    cleanly after the kill switch is later ``REVOKED`` -- zero adapter calls, no
+    ``ExecutionKillSwitchError`` -- because idempotency-slot resolution (P18-R1-F5) resolves the
+    terminal receipt and returns before kill-switch checkpoint #1 is ever reached again."""
+
+    store, info = bound(tmp_path)
+    active = commit_active_kill_switch(store, info["project_id"])
+    result = build_committed_change(
+        store,
+        info["project_id"],
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/revoked-replay.md", "content_utf8": "x"}],
+        ),
+        paths=["docs/revoked-replay.md"],
+    )
+    change = result["change"]
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        store,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+
+    first = execute(
+        change["change_id"],
+        claim_token="revoked-replay-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    assert first["receipt"]["outcome"] == "SUCCEEDED"
+    assert adapter.call_count == 1
+
+    commit_revoked_successor(store, info["project_id"], active)
+
+    second = execute(
+        change["change_id"],
+        claim_token="revoked-replay-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:02Z",
+    )
+    assert second["replay"] is True
+    assert second["receipt"] == first["receipt"]
+    assert adapter.call_count == 1, "a replay must never reach the adapter, even post-revocation"

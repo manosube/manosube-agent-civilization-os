@@ -102,6 +102,7 @@ CHANGE_EXECUTION_RECEIPT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "rollback_outcome",
     "claim_token",
     "reobservation_request",
+    "independent_after_state_observation",
 )
 
 

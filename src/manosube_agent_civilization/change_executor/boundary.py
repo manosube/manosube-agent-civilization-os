@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 import hashlib
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -144,6 +145,7 @@ REQUIRED_BOUNDARY_KEYS: frozenset[str] = frozenset(
         "executor_identity",
         "executor_version",
         "validity_window",
+        "worktree_root",
     }
 )
 
@@ -261,6 +263,23 @@ def validate_execution_boundary(raw: Any) -> dict[str, Any]:
         value = canonical[key]
         if type(value) is not str or not value:
             raise ExecutionBoundaryError(f"execution_boundary.{key} must be a non-empty string")
+
+    # worktree_root: folded into the closed Boundary itself (P18-R1-F3, Structural Review Round
+    # 1) rather than a separate composition-time parameter alongside it -- validated the identical
+    # way every other trust-sensitive string field above is, plus the one check specific to a
+    # worktree root: it must resolve to a real, existing directory (moved here, verbatim, from
+    # the prior round's own `route._require_existing_worktree_root`, since the identity now lives
+    # in the Boundary). Because `execution_boundary_fingerprint` hashes the *entire* canonical
+    # boundary dict, this single change makes worktree_root participate in the Boundary
+    # fingerprint -- and therefore in every mapping-slot key derived from it -- automatically.
+    worktree_root = canonical["worktree_root"]
+    if type(worktree_root) is not str or not worktree_root:
+        raise ExecutionBoundaryError("execution_boundary.worktree_root must be a non-empty string")
+    if not Path(worktree_root).is_dir():
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root must resolve to a real, existing directory: "
+            f"{worktree_root!r}"
+        )
 
     admitted_paths = canonical["admitted_paths"]
     if type(admitted_paths) is not list or not admitted_paths:

@@ -46,10 +46,11 @@ def _executor(
         store,
         project_id=info["project_id"],
         project_binding_id=info["project_binding_id"],
-        execution_boundary=execution_boundary_for(**boundary_overrides),
+        execution_boundary=execution_boundary_for(
+            worktree_root=worktree_root, **boundary_overrides
+        ),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
-        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -94,10 +95,9 @@ def test_cross_project_change_id_never_resolves_against_a_different_bound_projec
         store,
         project_id=info_b["project_id"],
         project_binding_id=info_b["project_binding_id"],
-        execution_boundary=execution_boundary_for(),
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree)),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
-        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -162,10 +162,9 @@ def test_stale_project_binding_id_propagates_boots_own_typed_error(tmp_path: Pat
         store,
         project_id=info["project_id"],
         project_binding_id=bogus_binding_id,
-        execution_boundary=execution_boundary_for(),
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree)),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
-        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -337,7 +336,7 @@ def test_two_adapter_identities_produce_two_distinct_slots_for_the_identical_cha
 
     worktree = tmp_path / "worktree"
     worktree.mkdir()
-    boundary = execution_boundary_for()
+    boundary = execution_boundary_for(worktree_root=str(worktree))
     identity_a = adapter_identity_for(kind="adapter-a")
     identity_b = adapter_identity_for(kind="adapter-b")
 
@@ -373,7 +372,6 @@ def test_two_adapter_identities_produce_two_distinct_slots_for_the_identical_cha
         execution_boundary=boundary,
         adapter_identity=identity_b,
         adapter=adapter_b,
-        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
     outcome_b = execute_b(
@@ -389,3 +387,93 @@ def test_two_adapter_identities_produce_two_distinct_slots_for_the_identical_cha
         != planted["change_execution_receipt_id"]
     )
     assert adapter_b.call_count == 1, "slot B's own execution must genuinely call its own adapter"
+
+
+# --------------------------------------------------------------------------------------- #
+# (i) P18-R1-F3 (Structural Review Round 1): worktree_root substitution -- a receipt planted
+# under one composed executor's own worktree_root cannot be replayed/reused by a different
+# composed executor bound to a different worktree_root, for the identical change_id/claim_token.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_two_worktree_roots_produce_two_distinct_slots_for_the_identical_change_and_claim(
+    tmp_path: Path,
+) -> None:
+    """Two composed executors, identical in every respect (Boundary content, adapter identity)
+    except ``worktree_root``, must never share a mapping slot: a terminal receipt planted under
+    executor A's own worktree_root, for a given ``change_id``/``claim_token``, must not be
+    resolved -- as a replay, a semantic reuse, or anything else -- by executor B's own distinct
+    worktree_root for the identical ``change_id``/``claim_token``. Each gets its own independent
+    slot, verified here directly rather than merely assumed from the Boundary-fingerprint proof
+    in ``tests/unit/change_executor/test_change_executor_identity.py``."""
+
+    store, info = bound(tmp_path)
+    project_id = info["project_id"]
+    commit_active_kill_switch(store, project_id)
+    result = _fresh_change(
+        store, info, path="docs/worktree-substitution.md", extra_state_revision_headroom=1
+    )
+    change = result["change"]
+
+    worktree_a = tmp_path / "worktree-a"
+    worktree_b = tmp_path / "worktree-b"
+    worktree_a.mkdir()
+    worktree_b.mkdir()
+    boundary_a = execution_boundary_for(worktree_root=str(worktree_a))
+    boundary_b = execution_boundary_for(worktree_root=str(worktree_b))
+
+    identical_claim_token = "identical-claim-across-both-worktrees"  # noqa: S105
+
+    # Plant a real terminal receipt at worktree A's own slot -- this Change's own one valid
+    # staleness window is consumed by this single commit (extra_state_revision_headroom=1 above).
+    planted = plant_terminal_receipt(
+        store,
+        project_id,
+        change,
+        result["decision"],
+        boundary_a,
+        _ADAPTER_IDENTITY,
+        project_binding_id=info["project_binding_id"],
+        worktree_root=str(worktree_a),
+        claim_token=identical_claim_token,
+        outcome="SUCCEEDED",
+        performed_result_summary={
+            "files_written": ["docs/worktree-substitution.md"],
+            "bytes_written": 7,
+            "files_deleted": [],
+        },
+    )
+
+    # A single, real, live execute() call through worktree B's own closure, under the identical
+    # change_id and the identical claim_token planted for worktree A -- a genuinely different
+    # mapping slot (different Boundary fingerprint), so it must proceed as a first-time
+    # execution: never replaying, never reusing, never even resolving worktree A's own planted
+    # receipt.
+    adapter_b = CountingAdapter()
+    execute_b = compose_change_executor(
+        store,
+        project_id=project_id,
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=boundary_b,
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter_b,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    outcome_b = execute_b(
+        change["change_id"],
+        claim_token=identical_claim_token,
+        execution_instant="2026-09-10T00:00:02Z",
+    )
+    assert outcome_b["replay"] is False
+    assert outcome_b["semantic_reuse"] is False
+    assert outcome_b["receipt"]["outcome"] == "SUCCEEDED"
+    assert (
+        outcome_b["receipt"]["change_execution_receipt_id"]
+        != planted["change_execution_receipt_id"]
+    )
+    assert outcome_b["receipt"]["target"]["worktree_root"] == str(worktree_b)
+    assert adapter_b.call_count == 1, (
+        "worktree B's own execution must genuinely call its own adapter, never resolve worktree "
+        "A's own planted receipt"
+    )
+    assert (worktree_b / "docs" / "worktree-substitution.md").is_file()

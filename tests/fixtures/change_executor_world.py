@@ -604,6 +604,7 @@ def plant_terminal_receipt(
     outcome: str,
     performed_result_summary: dict[str, Any] | None = None,
     rollback_outcome: str | None = None,
+    independent_after_state_observation: dict[str, Any] | None = None,
     execution_instant: str = "2026-09-10T00:00:01Z",
     committed_at: str = "2026-09-10T00:00:01Z",
 ) -> dict[str, Any]:
@@ -635,6 +636,9 @@ def plant_terminal_receipt(
     )
     from manosube_agent_civilization.change_executor.engine import build_change_execution_receipt
     from manosube_agent_civilization.change_executor.identity import execution_mapping_slot_key
+    from manosube_agent_civilization.change_executor.reobservation import (
+        NOT_PERFORMED_REOBSERVATION,
+    )
 
     canonical_boundary = validate_execution_boundary(boundary)
     boundary_fp = execution_boundary_fingerprint(canonical_boundary)
@@ -657,6 +661,28 @@ def plant_terminal_receipt(
         "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
         "requested_at": execution_instant,
     }
+    if independent_after_state_observation is not None:
+        reobservation_result = dict(independent_after_state_observation)
+    elif outcome == "SUCCEEDED":
+        # A genuine SUCCEEDED receipt's own embedded independent_after_state_observation must
+        # itself carry outcome=="MATCHED" (route.py never commits any other combination) --
+        # default to a MATCHED result naming every one of this Change's own requested files, for
+        # a caller that does not care about the exact shape and only wants a self-consistent
+        # planted SUCCEEDED receipt.
+        operation = change["action"]["operation"]
+        reobservation_result = {
+            "outcome": "MATCHED",
+            "checked_files": [
+                {"path": entry["path"], "kind": "write", "status": "MATCHED"}
+                for entry in operation.get("file_writes", [])
+            ]
+            + [
+                {"path": entry["path"], "kind": "delete", "status": "MATCHED"}
+                for entry in operation.get("file_deletes", [])
+            ],
+        }
+    else:
+        reobservation_result = dict(NOT_PERFORMED_REOBSERVATION)
     receipt = build_change_execution_receipt(
         execution_request_id=slot_key,
         change_ref={"kind": "change", "id": change["change_id"]},
@@ -682,6 +708,7 @@ def plant_terminal_receipt(
         rollback_outcome=rollback_outcome,
         claim_token=claim_token,
         reobservation_request=reobservation_request,
+        independent_after_state_observation=reobservation_result,
     )
     commit_foreign_record(
         store, project_id, "execution_receipt", slot_key, receipt, committed_at=committed_at
@@ -808,10 +835,19 @@ def commit_revoked_successor(
 # --------------------------------------------------------------------------------------- #
 
 
-def execution_boundary_for(**overrides: Any) -> dict[str, Any]:
+def execution_boundary_for(*, worktree_root: str, **overrides: Any) -> dict[str, Any]:
     """One real, schema-valid, closed Execution Boundary -- mirrors
     ``tests/fixtures/url_boot_world.py``'s own ``boundary_for`` shape. *overrides* replaces any
-    single top-level key (including ``validity_window`` wholesale)."""
+    single top-level key (including ``validity_window`` wholesale).
+
+    *worktree_root* is a required keyword-only argument, never a default: since P18-R1-F3 folded
+    ``worktree_root`` into the closed Boundary itself (``01_SCHEMA/change_executor/
+    execution_boundary.schema.json`` now requires it, and ``boundary.validate_execution_boundary``
+    requires it to resolve to a real, existing directory), no fixed default value could ever be
+    correct across every caller's own real ``tmp_path`` -- forcing every call site to supply its
+    own real directory explicitly, rather than silently omitting the key (which would still raise
+    ``ExecutionBoundaryError`` for the *wrong* reason -- a missing key -- and could mask a test
+    that meant to exercise a different validation path entirely)."""
 
     boundary: dict[str, Any] = {
         "permitted_action_kinds": ["WRITE_DOCUMENTATION_FILE", "DELETE_DOCUMENTATION_FILE"],
@@ -832,6 +868,7 @@ def execution_boundary_for(**overrides: Any) -> dict[str, Any]:
         "executor_identity": "controlled_filesystem_adapter",
         "executor_version": "0.1",
         "validity_window": dict(DEFAULT_TIME_WINDOW),
+        "worktree_root": worktree_root,
     }
     boundary.update(overrides)
     return boundary

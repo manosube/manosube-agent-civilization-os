@@ -29,7 +29,7 @@ from .identity import (
     execution_intent_semantic_fingerprint,
     execution_mapping_slot_key,
 )
-from .types import EXECUTION_OUTCOMES, ROLLBACK_OUTCOMES
+from .types import EXECUTION_OUTCOMES, INDEPENDENT_REOBSERVATION_OUTCOMES, ROLLBACK_OUTCOMES
 
 SCHEMA_VERSION = "0.1"
 
@@ -148,6 +148,7 @@ def build_change_execution_receipt(
     rollback_outcome: str | None,
     claim_token: str,
     reobservation_request: Mapping[str, Any],
+    independent_after_state_observation: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Build one canonical, immutable ``change_execution_receipt`` record -- the sole durable
     fact this package ever commits about one execution attempt's own terminal outcome.
@@ -164,6 +165,14 @@ def build_change_execution_receipt(
     target kind those owners' own existing reference-closure registries would need to learn
     about. A typed request for independent Observation is preserved without inventing a fourth
     thing for the rest of the Kernel to resolve.
+
+    ``independent_after_state_observation`` (P18-R1-F1, Structural Review Round 1) is the result
+    of this package's own genuine, independent, read-only re-read of the actual resulting
+    filesystem state (:func:`~manosube_agent_civilization.change_executor.reobservation.
+    independently_reobserve`), embedded directly in this record so it becomes a durable,
+    immutable, tamper-checked fact of the receipt itself -- never a transient value discarded
+    once ``execute()`` returns. It is what ``evidence_handoff.py`` now requires, in addition to
+    ``outcome == "SUCCEEDED"``, before deriving Evidence's own ``VERIFIED`` status.
     """
 
     if outcome not in EXECUTION_OUTCOMES:
@@ -173,6 +182,16 @@ def build_change_execution_receipt(
     if rollback_outcome is not None and rollback_outcome not in ROLLBACK_OUTCOMES:
         raise ChangeExecutorError(
             f"rollback_outcome is not a recognized ROLLBACK_OUTCOMES member: {rollback_outcome!r}"
+        )
+    if (
+        not isinstance(independent_after_state_observation, Mapping)
+        or independent_after_state_observation.get("outcome")
+        not in INDEPENDENT_REOBSERVATION_OUTCOMES
+    ):
+        raise ChangeExecutorError(
+            "independent_after_state_observation must be a mapping whose own outcome is a "
+            "recognized INDEPENDENT_REOBSERVATION_OUTCOMES member: "
+            f"{independent_after_state_observation!r}"
         )
 
     record: dict[str, Any] = {
@@ -198,6 +217,7 @@ def build_change_execution_receipt(
         "rollback_outcome": rollback_outcome,
         "claim_token": claim_token,
         "reobservation_request": deepcopy(dict(reobservation_request)),
+        "independent_after_state_observation": deepcopy(dict(independent_after_state_observation)),
         "change_execution_receipt_semantic_fingerprint": "",
     }
     record["change_execution_receipt_semantic_fingerprint"] = (

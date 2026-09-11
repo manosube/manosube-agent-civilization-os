@@ -70,10 +70,9 @@ def test_real_vertical_execution_writes_disk_round_trips_and_hands_off_to_eviden
         store,
         project_id=project_id,
         project_binding_id=info["project_binding_id"],
-        execution_boundary=execution_boundary_for(),
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree_root)),
         adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
         adapter=adapter,
-        worktree_root=str(worktree_root),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 

@@ -26,6 +26,7 @@ import manosube_agent_civilization.change_executor.errors as errors_module
 import manosube_agent_civilization.change_executor.evidence_handoff as evidence_handoff_module
 import manosube_agent_civilization.change_executor.identity as identity_module
 import manosube_agent_civilization.change_executor.kill_switch as kill_switch_module
+import manosube_agent_civilization.change_executor.reobservation as reobservation_module
 import manosube_agent_civilization.change_executor.route as route_module
 import manosube_agent_civilization.change_executor.types as types_module
 
@@ -39,6 +40,7 @@ _ALL_PACKAGE_MODULES = (
     boundary_module,
     kill_switch_module,
     evidence_handoff_module,
+    reobservation_module,
 )
 
 _SHIPPED_PACKAGE_ROOT = pathlib.Path(manosube_agent_civilization.__file__).resolve().parent
@@ -127,7 +129,12 @@ class _StubAdapter:
         return {"files_written": [], "bytes_written": 0, "files_deleted": [], "error": None}
 
 
-def _minimal_boundary() -> dict[str, object]:
+def _minimal_boundary(worktree_root: str) -> dict[str, object]:
+    """``worktree_root`` is a required argument, never a default (P18-R1-F3, Structural Review
+    Round 1): it is now a required, schema-validated field *inside* the closed Boundary itself,
+    resolving to a real, existing directory -- there is no fixed value that could ever be correct
+    across every caller's own real ``tmp_path``."""
+
     return {
         "permitted_action_kinds": ["WRITE_DOCUMENTATION_FILE"],
         "repository": "org/repo",
@@ -150,6 +157,7 @@ def _minimal_boundary() -> dict[str, object]:
             "issued_at": "2026-09-10T00:00:00Z",
             "expires_at": "2026-09-10T01:00:00Z",
         },
+        "worktree_root": worktree_root,
     }
 
 
@@ -160,18 +168,19 @@ def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set(
     parameter anywhere in the returned closure's own signature -- introspecting a real Python
     object (``inspect.signature``), never AST, since this proves what a caller of the *closure
     itself* can pass, not merely what the composing function's own source names.
-    ``worktree_root`` moved to composition time (Phase 18 Issue #73 review finding) -- it is
-    bound below, once, and is asserted absent from the returned closure's own signature exactly
-    like every other trust-sensitive composition-time parameter."""
+    ``worktree_root`` is bound at composition, inside the closed Boundary itself (P18-R1-F3,
+    Structural Review Round 1, superseding the prior round's separate composition-time
+    parameter) -- it is asserted absent from the returned closure's own signature exactly like
+    every other trust-sensitive composition-time parameter, and ``compose_change_executor``
+    itself no longer accepts a bare ``worktree_root=`` keyword at all."""
 
     execute = change_executor_module.compose_change_executor(
         object(),
         project_id="PRJ-STATIC-0001",
         project_binding_id="PROJBIND-STATIC-0001",
-        execution_boundary=_minimal_boundary(),
+        execution_boundary=_minimal_boundary(str(tmp_path)),
         adapter_identity={"kind": "stub", "version": "0.1"},
         adapter=_StubAdapter(),
-        worktree_root=str(tmp_path),
         kill_switch_trust_anchor_public_key_hex="ab" * 32,
     )
     code = execute.__code__
@@ -201,12 +210,34 @@ def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set(
         assert forbidden not in signature.parameters, forbidden
 
 
+def test_compose_change_executor_rejects_a_worktree_root_keyword_argument_at_composition(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``compose_change_executor`` itself no longer accepts a bare ``worktree_root=`` keyword at
+    all (P18-R1-F3): a genuine ``TypeError``, never a silently-accepted-and-ignored keyword,
+    confirms the parameter is really gone from composition's own call shape, not merely from the
+    Boundary's own required-keys set."""
+
+    with pytest.raises(TypeError):
+        change_executor_module.compose_change_executor(
+            object(),
+            project_id="PRJ-STATIC-0004",
+            project_binding_id="PROJBIND-STATIC-0004",
+            execution_boundary=_minimal_boundary(str(tmp_path)),
+            adapter_identity={"kind": "stub", "version": "0.1"},
+            adapter=_StubAdapter(),
+            worktree_root=str(tmp_path),
+            kill_switch_trust_anchor_public_key_hex="ab" * 32,
+        )
+
+
 def test_compose_change_executor_requires_worktree_root_to_be_an_existing_directory(
     tmp_path: pathlib.Path,
 ) -> None:
-    """``worktree_root`` is validated at composition time -- a non-existent directory refuses
-    before any request-facing operation can even be obtained (mirrors how a malformed
-    ``execution_boundary``/``adapter_identity`` already refuses at this same point)."""
+    """``worktree_root`` is validated at composition time, as part of Boundary validation -- a
+    non-existent directory refuses before any request-facing operation can even be obtained
+    (mirrors how a malformed ``execution_boundary``/``adapter_identity`` already refuses at this
+    same point)."""
 
     from manosube_agent_civilization.change_executor.errors import ChangeExecutorError
 
@@ -216,10 +247,9 @@ def test_compose_change_executor_requires_worktree_root_to_be_an_existing_direct
             object(),
             project_id="PRJ-STATIC-0002",
             project_binding_id="PROJBIND-STATIC-0002",
-            execution_boundary=_minimal_boundary(),
+            execution_boundary=_minimal_boundary(str(missing)),
             adapter_identity={"kind": "stub", "version": "0.1"},
             adapter=_StubAdapter(),
-            worktree_root=str(missing),
             kill_switch_trust_anchor_public_key_hex="ab" * 32,
         )
 
@@ -236,10 +266,9 @@ def test_composed_execute_closure_rejects_a_worktree_root_keyword_argument(
         object(),
         project_id="PRJ-STATIC-0003",
         project_binding_id="PROJBIND-STATIC-0003",
-        execution_boundary=_minimal_boundary(),
+        execution_boundary=_minimal_boundary(str(tmp_path)),
         adapter_identity={"kind": "stub", "version": "0.1"},
         adapter=_StubAdapter(),
-        worktree_root=str(tmp_path),
         kill_switch_trust_anchor_public_key_hex="ab" * 32,
     )
     with pytest.raises(TypeError):

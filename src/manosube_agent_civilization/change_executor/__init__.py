@@ -41,10 +41,12 @@ execute = compose_change_executor(
     store,
     project_id=project_id,
     project_binding_id=project_binding_id,
-    execution_boundary={...},  # a closed Execution Boundary -- see boundary.py
+    # a closed Execution Boundary -- see boundary.py. worktree_root is now a required field
+    # *inside* the Boundary itself (Structural Review Round 1, P18-R1-F3), not a separate
+    # parameter of compose_change_executor.
+    execution_boundary={..., "worktree_root": "/path/to/an/admitted/disposable/worktree"},
     adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
     adapter=ControlledFilesystemAdapter(executor_identity="controlled_filesystem_adapter", executor_version="0.1"),
-    worktree_root="/path/to/an/admitted/disposable/worktree",  # bound once, here -- see route.py
     kill_switch_trust_anchor_public_key_hex=configured_trust_anchor,
 )
 

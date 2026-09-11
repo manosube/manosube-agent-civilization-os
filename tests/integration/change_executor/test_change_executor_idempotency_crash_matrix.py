@@ -59,6 +59,7 @@ from manosube_agent_civilization.change_executor.errors import (
     ExecutionConcurrentClaimError,
     ExecutionReconciliationRequiredError,
     ExecutionTerminalClaimMismatchError,
+    StaleExecutionInputError,
 )
 from manosube_agent_civilization.change_executor.route import compose_change_executor
 
@@ -71,8 +72,17 @@ from manosube_agent_civilization.change_executor.route import compose_change_exe
 #: implementation-detail count :data:`ONE_SUCCESSFUL_CALL_COMMIT_COUNT` predicts.
 ONE_SUCCESSFUL_CALL_COMMIT_COUNT = 3
 
-_BOUNDARY = execution_boundary_for()
 _ADAPTER_IDENTITY = {"kind": "controlled_filesystem_adapter", "version": "0.1"}
+
+
+def _boundary_for(worktree_root: str, **overrides: Any) -> dict[str, Any]:
+    """``worktree_root`` is now a required field *inside* the closed Boundary itself
+    (P18-R1-F3, Structural Review Round 1) -- so, unlike the prior round, no single shared
+    module-level ``_BOUNDARY`` constant can be reused across tests that each build their own
+    real ``tmp_path``-derived worktree: every boundary a test needs is built fresh, here, from
+    that test's own real worktree root."""
+
+    return execution_boundary_for(worktree_root=worktree_root, **overrides)
 
 
 def _executor(
@@ -82,12 +92,9 @@ def _executor(
         store,
         project_id=info["project_id"],
         project_binding_id=info["project_binding_id"],
-        execution_boundary=execution_boundary_for(**boundary_overrides)
-        if boundary_overrides
-        else _BOUNDARY,
+        execution_boundary=_boundary_for(worktree_root, **boundary_overrides),
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=adapter,
-        worktree_root=worktree_root,
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -183,7 +190,7 @@ def _planted(
         info["project_id"],
         change,
         result["decision"],
-        _BOUNDARY,
+        _boundary_for(str(worktree)),
         _ADAPTER_IDENTITY,
         project_binding_id=info["project_binding_id"],
         worktree_root=str(worktree),
@@ -276,18 +283,18 @@ def test_concurrent_execution_intent_on_the_same_slot_raises_concurrent_claim(
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, headroom=1)["change"]
 
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
     commit_bare_execution_intent(
         store,
         info["project_id"],
         change_id=change["change_id"],
-        boundary=_BOUNDARY,
+        boundary=_boundary_for(str(worktree)),
         adapter_identity=_ADAPTER_IDENTITY,
         claim_token="a-different-concurrent-claim",  # noqa: S106
         requested_at="2026-09-10T00:00:00Z",
     )
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -312,18 +319,18 @@ def test_orphaned_execution_attempt_on_the_same_slot_requires_reconciliation(
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, headroom=1)["change"]
 
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
     commit_bare_execution_attempt(
         store,
         info["project_id"],
         change_id=change["change_id"],
-        boundary=_BOUNDARY,
+        boundary=_boundary_for(str(worktree)),
         adapter_identity=_ADAPTER_IDENTITY,
         claim_token="an-orphaned-claim",  # noqa: S106
         requested_at="2026-09-10T00:00:00Z",
     )
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -460,7 +467,7 @@ def test_partial_failure_second_call_is_a_clean_idempotent_replay_not_a_second_a
         info["project_id"],
         change,
         result["decision"],
-        _BOUNDARY,
+        _boundary_for(str(worktree)),
         _ADAPTER_IDENTITY,
         project_binding_id=info["project_binding_id"],
         worktree_root=str(worktree),
@@ -528,7 +535,7 @@ def test_crash_between_intent_commit_and_attempt_commit_is_recoverable_via_resum
         store,
         info["project_id"],
         change_id=change["change_id"],
-        boundary=_BOUNDARY,
+        boundary=_boundary_for(str(worktree)),
         adapter_identity=_ADAPTER_IDENTITY,
         claim_token=claim_token,
         requested_at=execution_instant,
@@ -553,6 +560,244 @@ def test_crash_between_intent_commit_and_attempt_commit_is_recoverable_via_resum
         "the adapter must be called exactly once across both the interrupted attempt and the "
         "successful retry"
     )
+
+
+# --------------------------------------------------------------------------------------- #
+# P18-R1-F2 (Structural Review Round 1): the exact post-intent-successor check, and the final
+# pre-effect State barrier. The test immediately above is P18-R1-F2's own positive control --
+# resuming from an intent with genuinely no unrelated drift succeeds normally. The two tests
+# below are its negative controls.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_resuming_a_crash_interrupted_intent_with_an_unrelated_transition_in_between_is_refused(
+    tmp_path: Path,
+) -> None:
+    """P18-R1-F2(b): plant an intent (simulating the identical crash point the test immediately
+    above does), then commit a genuinely *unrelated* transition to this same project's own State
+    (any harmless, real commit through the project's own sanctioned committer -- here, a second,
+    unrelated Change/Authority-Decision pair, exactly as ``_fresh_change`` already builds
+    elsewhere in this file) before retrying the identical, resuming caller. Before P18-R1-F2, a
+    blanket staleness skip for any claim_token match would have let this retry proceed as if
+    nothing else had happened; the exact successor check now correctly refuses it -- the current
+    State's own ``state_revision`` is two past the Change's own ``expected_state_revision``, not
+    exactly one, so it can never be genuinely mistaken for "only this call's own intent commit
+    happened." Zero adapter calls."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/resume-with-drift.md")["change"]
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    claim_token = "resume-with-drift-claim"  # noqa: S105
+    execution_instant = "2026-09-10T00:00:01Z"
+
+    # Simulate the crash: an execution_intent is durably committed for this exact slot.
+    commit_bare_execution_intent(
+        store,
+        info["project_id"],
+        change_id=change["change_id"],
+        boundary=_boundary_for(str(worktree)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        claim_token=claim_token,
+        requested_at=execution_instant,
+    )
+
+    # An unrelated, genuinely real transition lands on this identical project's own State --
+    # a second, unrelated Change committed through the real route, never a hand-forged State
+    # edit -- before the resuming retry ever runs.
+    _fresh_change(store, info, path="docs/unrelated-drift-during-resume.md")
+
+    adapter = CountingAdapter()
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
+
+    with pytest.raises(StaleExecutionInputError):
+        execute(
+            change["change_id"],
+            claim_token=claim_token,
+            execution_instant=execution_instant,
+        )
+    assert adapter.call_count == 0, (
+        "an unrelated transition landing between the crash and the resumed retry must refuse "
+        "before the adapter is ever reached"
+    )
+
+
+class _DriftOnThirdLoadCurrent:
+    """A thin, real Store proxy -- forwards every call unchanged except the *third* call to
+    ``load_current`` for *project_id*, which additionally commits a genuine, unrelated Change
+    (through the real, sanctioned committer, never a hand-forged State edit) as a side effect
+    before delegating. The three ordinary ``load_current`` calls a genuinely fresh execution
+    performs, in order, are: the ``execution_intent`` commit's own retry-loop read (1st), the
+    ``execution_attempt`` commit's own retry-loop read (2nd), and P18-R1-F2's own final
+    pre-effect State barrier's direct read (3rd) -- so triggering on the third call reproduces
+    exactly the race the barrier exists to catch: an unrelated transition landing in the narrow
+    window between the attempt commit finishing and the one adapter call."""
+
+    def __init__(self, inner: Any, project_id: str, drift: Callable[[], None]) -> None:
+        self._inner = inner
+        self._project_id = project_id
+        self._drift = drift
+        self._count = 0
+
+    def load_current(self, project_id: str) -> dict[str, Any]:
+        if project_id == self._project_id:
+            self._count += 1
+            if self._count == 3:
+                self._drift()
+        result: dict[str, Any] = self._inner.load_current(project_id)
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def test_unrelated_transition_immediately_before_the_adapter_call_is_refused_by_the_final_barrier(
+    tmp_path: Path,
+) -> None:
+    """P18-R1-F2(c): after the intent and attempt commits both finish, but immediately before the
+    one adapter call would run, an unrelated transition lands. The final pre-effect State barrier
+    must refuse before ``adapter.execute`` is ever called, zero further mutation."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/resume-with-final-barrier-drift.md")["change"]
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    def _drift() -> None:
+        _fresh_change(store, info, path="docs/unrelated-drift-at-the-final-barrier.md")
+
+    proxy = _DriftOnThirdLoadCurrent(store, info["project_id"], _drift)
+    adapter = CountingAdapter()
+    execute = compose_change_executor(
+        proxy,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=_boundary_for(str(worktree)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+
+    with pytest.raises(StaleExecutionInputError):
+        execute(
+            change["change_id"],
+            claim_token="final-barrier-claim",  # noqa: S106
+            execution_instant="2026-09-10T00:00:01Z",
+        )
+    assert adapter.call_count == 0, (
+        "an unrelated transition landing immediately before the adapter call must refuse before "
+        "the adapter is ever reached"
+    )
+
+
+# --------------------------------------------------------------------------------------- #
+# P18-R1-F4 (Structural Review Round 1): every post-attempt outcome -- including an adapter
+# raise and a structurally invalid adapter report -- commits exactly one terminal receipt,
+# never a bare exception.
+# --------------------------------------------------------------------------------------- #
+
+
+class _RaisingAdapter:
+    """A real adapter double that always raises on ``execute`` -- never a mock returning a
+    fabricated report, a genuine exception with no facts to report at all."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def execute(self, operation: Any, *, worktree_root: str) -> dict[str, Any]:
+        self.call_count += 1
+        raise RuntimeError("simulated adapter failure: disk unavailable")
+
+
+class _MalformedReportAdapter:
+    """A real adapter double that performs no filesystem I/O at all and instead returns a
+    structurally invalid report (missing required keys) -- the other path
+    ``_validate_adapter_report`` refuses, distinct from a raised exception."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def execute(self, operation: Any, *, worktree_root: str) -> dict[str, Any]:
+        self.call_count += 1
+        return {"files_written": ["not-actually-written.md"]}  # missing required keys
+
+
+def test_adapter_raise_commits_a_terminal_unknown_receipt_not_a_bare_exception(
+    tmp_path: Path,
+) -> None:
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/adapter-raises.md")["change"]
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    adapter = _RaisingAdapter()
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
+
+    outcome = execute(
+        change["change_id"],
+        claim_token="adapter-raises-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "UNKNOWN"
+    assert receipt["independent_after_state_observation"] == {
+        "outcome": "NOT_PERFORMED",
+        "checked_files": [],
+    }
+    assert receipt["reobservation_request"]["kind"] == "change_execution_reobservation_request"
+    assert adapter.call_count == 1
+
+    # A second call for the identical slot replays the identical UNKNOWN receipt -- never
+    # re-calling the adapter.
+    replay = execute(
+        change["change_id"],
+        claim_token="adapter-raises-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:02Z",
+    )
+    assert replay["replay"] is True
+    assert replay["receipt"] == receipt
+    assert adapter.call_count == 1, "a replay must never re-call a raising adapter either"
+
+
+def test_structurally_invalid_adapter_report_commits_a_terminal_unknown_receipt(
+    tmp_path: Path,
+) -> None:
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/malformed-report.md")["change"]
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    adapter = _MalformedReportAdapter()
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
+
+    outcome = execute(
+        change["change_id"],
+        claim_token="malformed-report-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "UNKNOWN"
+    assert receipt["independent_after_state_observation"] == {
+        "outcome": "NOT_PERFORMED",
+        "checked_files": [],
+    }
+    assert adapter.call_count == 1
+
+    replay = execute(
+        change["change_id"],
+        claim_token="malformed-report-claim",  # noqa: S106
+        execution_instant="2026-09-10T00:00:02Z",
+    )
+    assert replay["replay"] is True
+    assert replay["receipt"] == receipt
+    assert adapter.call_count == 1, "a replay must never re-call the adapter either"
 
 
 # --------------------------------------------------------------------------------------- #
@@ -622,19 +867,19 @@ def test_two_racing_callers_for_the_identical_slot_call_the_adapter_at_most_once
     shared_adapter = CountingAdapter()
     claim_token = "racing-claim"  # noqa: S105
     execution_instant = "2026-09-10T00:00:01Z"
+    boundary = _boundary_for(str(worktree))
 
     slot_key, _boundary_fp, _adapter_fp = slot_key_for(
-        change["change_id"], _BOUNDARY, _ADAPTER_IDENTITY
+        change["change_id"], boundary, _ADAPTER_IDENTITY
     )
 
     execute_second = compose_change_executor(
         store,
         project_id=info["project_id"],
         project_binding_id=info["project_binding_id"],
-        execution_boundary=_BOUNDARY,
+        execution_boundary=boundary,
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=shared_adapter,
-        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -657,10 +902,9 @@ def test_two_racing_callers_for_the_identical_slot_call_the_adapter_at_most_once
         proxy,
         project_id=info["project_id"],
         project_binding_id=info["project_binding_id"],
-        execution_boundary=_BOUNDARY,
+        execution_boundary=boundary,
         adapter_identity=_ADAPTER_IDENTITY,
         adapter=shared_adapter,
-        worktree_root=str(worktree),
         kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
     )
 
@@ -679,8 +923,22 @@ def test_two_racing_callers_for_the_identical_slot_call_the_adapter_at_most_once
     assert second_outcome["result"]["receipt"]["outcome"] == "SUCCEEDED"
 
     assert first_outcome is None
-    assert isinstance(first_error, ExecutionConcurrentClaimError), (
-        f"the caller that loses the race must be refused as a concurrent claim, not {first_error!r}"
+    # P18-R1-F2 (Structural Review Round 1) changes exactly *which* typed refusal the loser gets
+    # here, without changing the decisive guarantee this test exists to prove (adapter called at
+    # most once combined). By the time the first caller's own idempotency-slot resolution reaches
+    # its own execution_intent check, the second caller has already raced all the way to a full
+    # terminal SUCCEEDED receipt (intent + attempt + receipt, three commits) -- so the intent this
+    # first caller resolves (under the identical claim_token, by this test's own design) makes it
+    # *believe* it is resuming its own crash-interrupted intent. Before P18-R1-F2, staleness was
+    # blanket-skipped for that belief, and the genuine conflict only surfaced one step later, at
+    # the attempt-commit itself (RecordConflictError -> ExecutionConcurrentClaimError). P18-R1-F2's
+    # own exact-successor staleness check now catches the *same* underlying problem one step
+    # earlier and more precisely: state_revision has advanced by three (a full completed
+    # execution), not the one commit a genuine crash-interrupted resume would ever produce, so it
+    # correctly refuses as StaleExecutionInputError instead -- an equally fail-closed, equally
+    # zero-adapter-call refusal, just a more precise diagnosis of the identical race.
+    assert isinstance(first_error, ExecutionConcurrentClaimError | StaleExecutionInputError), (
+        f"the caller that loses the race must be refused, not {first_error!r}"
     )
 
     assert shared_adapter.call_count == 1, (

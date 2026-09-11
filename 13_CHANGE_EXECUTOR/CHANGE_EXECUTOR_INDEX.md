@@ -11,7 +11,7 @@ CANONICAL_KERNEL_COUNT=1
 CHANGE_EXECUTOR_OWNER_COUNT=1
 PUBLIC_CHANGE_EXECUTOR_ENTRY_POINT_COUNT=2
 SIGNED_DEPLOYMENT_DECLARATION_CHAIN=false
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=0
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
 ```
 
 ---
@@ -32,8 +32,14 @@ existing Evidence/Observation/Reflow owners rather than declaring anything itsel
                                   the required proof layers, the explicit non-claims, and Gate 18
 ```
 
-This is a **first delivery**: `STRUCTURAL_REVIEW_ROUNDS_APPLIED=0`. No structural review round
-has yet reopened, corrected, or superseded anything stated here.
+This was a **first delivery**: `STRUCTURAL_REVIEW_ROUNDS_APPLIED` started at `0`. It is now `1`:
+SHUKOU adopted six structural-review corrections
+(`ADOPT_P18_R1_STRUCTURAL_CORRECTIONS`, comment
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5626622213`)
+against this package's exact prior head (commit `2010f05`), each implemented on the identical
+branch, no new PR. `CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 9-14/§11 items 12-16/§12 record the
+six corrections and their proof in full; this document's own restatements below are updated to
+match.
 
 The human objective this Phase serves, in the adopting authority's own terms (SHUKOU's
 `ADOPT_P18_CONTROLLED_AUTONOMOUS_CHANGE` comment on Issue #73):
@@ -46,12 +52,17 @@ trusted Boot + exact Project Binding
 + canonical AUTHORIZED Change
 + explicit low-risk execution Boundary
   → controlled Change Executor adapter, called at most once for the primary operation
-    → immutable authorized change_execution_receipt (KILL_SWITCH_STOPPED and
-      BOUNDARY_VIOLATION are themselves terminal receipts, never bare exceptions, once an
-      execution_attempt already exists)
-      → embedded independent after-state re-observation request
-        → existing Evidence / Independent Verification / Reflow owners, via the one existing
-          derive_evidence call, in the Change-Free Verification Evidence position
+    → this package's own independent, read-only re-read of the actual resulting filesystem
+      state (Structural Review Round 1, P18-R1-F1) -- never trusting the adapter's own
+      self-reported facts alone
+      → immutable authorized change_execution_receipt, embedding that independent observation
+        (KILL_SWITCH_STOPPED, BOUNDARY_VIOLATION, and UNKNOWN -- an adapter raise or a
+        structurally invalid report, P18-R1-F4 -- are themselves terminal receipts, never bare
+        exceptions, once an execution_attempt already exists)
+        → embedded independent after-state re-observation request
+          → existing Evidence / Independent Verification / Reflow owners, via the one existing
+            derive_evidence call, in the Change-Free Verification Evidence position -- which now
+            also requires the embedded independent observation to agree before deriving VERIFIED
 ```
 
 "Execution does not create Authority, update canonical State, prove causality, establish
@@ -136,19 +147,22 @@ VPS_OR_CLOUD_PROVIDER_REQUIRED=false
 
 ```text
 compose_change_executor              a trusted composition step binding Store/Project/Binding/
-                                      Execution Boundary/adapter identity/adapter/worktree_root/
-                                      kill-switch trust anchor once, and returning the
-                                      request-facing operation itself: execute(change_id, *,
-                                      claim_token, execution_instant,
-                                      permit_semantic_reuse=False) -> {"receipt": ...,
-                                      "replay": bool, "semantic_reuse": bool}. worktree_root
-                                      moved to composition time (an automated PR review finding,
-                                      CHANGE_EXECUTOR_CONTRACT.md §3 item 6) -- every other
-                                      trust-sensitive parameter here was already bound once at
-                                      composition, and worktree_root now is too.
+                                      Execution Boundary/adapter identity/adapter/kill-switch
+                                      trust anchor once, and returning the request-facing
+                                      operation itself: execute(change_id, *, claim_token,
+                                      execution_instant, permit_semantic_reuse=False) ->
+                                      {"receipt": ..., "replay": bool, "semantic_reuse": bool}.
+                                      worktree_root is a required field *inside* the closed
+                                      Execution Boundary itself (Structural Review Round 1,
+                                      P18-R1-F3, CHANGE_EXECUTOR_CONTRACT.md §3 item 11,
+                                      superseding the prior round's own separate
+                                      composition-time parameter, §3 item 6) -- compose_change_
+                                      executor no longer accepts a worktree_root= keyword at all.
 route_change_execution_to_evidence   hand a committed change_execution_receipt to the existing
                                       Evidence owner, in the Change-Free Verification Evidence
-                                      position
+                                      position -- now also requiring the receipt's own embedded
+                                      independent_after_state_observation to agree before
+                                      deriving VERIFIED (Structural Review Round 1, P18-R1-F1)
 ```
 
 ### 4.2 The three new record kinds, and the one kill switch chain
@@ -169,7 +183,11 @@ execution_attempt          restates execution_intent's own fields plus a referen
 change_execution_receipt   the sole durable, immutable fact this package ever commits about one
                             execution attempt's own terminal outcome (P18-C6). Its own id is
                             always exactly its own execution_request_id, the shared mapping-slot
-                            key all three related records carry.
+                            key all three related records carry. Now also embeds
+                            independent_after_state_observation (Structural Review Round 1,
+                            P18-R1-F1) -- this package's own genuine, read-only re-read of the
+                            actual resulting filesystem state, never the adapter's own
+                            self-reported facts alone; produced by the new reobservation.py.
 change_executor_kill_switch   a monotonic, Ed25519-signed ACTIVE/REVOKED chain (see contract
                                §10) -- not one of the three request-scoped record kinds above,
                                and never produced by an execution request itself; only an
@@ -181,7 +199,8 @@ change_executor_kill_switch   a monotonic, Ed25519-signed ACTIVE/REVOKED chain (
 ```text
 EXECUTION_OUTCOMES   SUCCEEDED, REFUSED, BOUNDARY_VIOLATION, STALE_AUTHORITY, TARGET_DRIFT,
                       KILL_SWITCH_STOPPED, TIMEOUT, ADAPTER_FAILURE, PARTIAL_MUTATION,
-                      ROLLBACK_SUCCEEDED, ROLLBACK_FAILED, UNKNOWN
+                      ROLLBACK_SUCCEEDED, ROLLBACK_FAILED, UNKNOWN, REOBSERVATION_MISMATCH
+                      (REOBSERVATION_MISMATCH added Structural Review Round 1, P18-R1-F1)
 ROLLBACK_OUTCOMES    NOT_ATTEMPTED, ROLLBACK_SUCCEEDED, ROLLBACK_FAILED
 ```
 
@@ -211,8 +230,19 @@ the full list.
   against `route.py` (a request-facing `worktree_root` not bound to the Boundary; a crash between
   the `execution_intent` and `execution_attempt` commits permanently stranding the slot; two
   concurrent callers able to both call `adapter.execute`), each fixed and each proven by a new
-  regression test -- the same 9 files and 2 fixture modules, now 167 tests, 0 skipped, 0 failed
-  (`CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 6-8/§11 items 9-11/§12).
+  regression test -- the same 9 files and 2 fixture modules, then 167 tests, 0 skipped, 0 failed.
+  SHUKOU's own Structural Review Round 1 subsequently adopted six further corrections
+  (`ADOPT_P18_R1_STRUCTURAL_CORRECTIONS`) against that exact 167-test head (commit `2010f05`):
+  independent after-state re-observation now gates `VERIFIED` (P18-R1-F1); an exact
+  post-intent-successor staleness check and a final pre-effect State barrier replace a blanket
+  staleness skip (P18-R1-F2); `worktree_root` moved from a separate composition-time parameter
+  into the closed Boundary itself (P18-R1-F3); every post-attempt path, including an adapter raise
+  and a structurally invalid adapter report, now commits exactly one terminal receipt (P18-R1-F4);
+  idempotency-slot resolution now runs before time-window/kill-switch checkpoint #1 too, not
+  merely before Boot/staleness (P18-R1-F5). Each was fixed and each proven by new tests -- the
+  same 9 files and 2 fixture modules plus one new file
+  (`test_change_executor_independent_reobservation.py`), now 10 files, 182 tests, 0 skipped, 0
+  failed (`CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 6-8, 9-14/§11 items 9-16/§12).
 - A model output, URL Boot content, or temporary Agent output is never treated as executable
   authority-bearing instruction here -- this package imports none of `model_runtime`, `url_boot`,
   or `agent_runtime`, and its one replaceable adapter receives only a closed, prevalidated
@@ -220,7 +250,14 @@ the full list.
 - This package never implements Phase 19 multi-Agent orchestration.
 - A committed `change_execution_receipt` is never treated, by this package, as sufficient
   Evidence -- it is handed to the existing Evidence owner as one Change-Free Verification input
-  among whatever else that owner requires.
+  among whatever else that owner requires. Since Structural Review Round 1 (P18-R1-F1), the
+  hand-off additionally requires the receipt's own embedded
+  `independent_after_state_observation` to agree before deriving `VERIFIED` -- but this still
+  never makes this package the decider of sufficiency; that remains `derive_evidence`'s own.
+- A Boundary's own `worktree_root` (now bound inside the Boundary itself, P18-R1-F3) is never
+  cryptographically or otherwise verified to be a real checkout of that same Boundary's own
+  `repository`/`branch` -- this package still performs no subprocess/network call of any kind
+  (`CHANGE_EXECUTOR_CONTRACT.md` §13's new non-claim).
 
 ```text
 MERGE_ALLOWED=false

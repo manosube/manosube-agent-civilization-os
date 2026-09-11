@@ -3,7 +3,7 @@
   "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/change_executor/execution_receipt.schema.json",
   "title": "Change Execution Receipt",
   "type": "object",
-  "required": ["schema_version", "change_execution_receipt_id", "execution_request_id", "change_ref", "idempotency_key", "authority_ref", "project_id", "project_binding_ref", "boot_state_fingerprint", "execution_boundary_fingerprint", "executor_identity", "executor_version", "target", "operation", "execution_started_at", "execution_ended_at", "outcome", "performed_result_fingerprint", "performed_result_summary", "rollback_outcome", "claim_token", "reobservation_request", "change_execution_receipt_semantic_fingerprint"],
+  "required": ["schema_version", "change_execution_receipt_id", "execution_request_id", "change_ref", "idempotency_key", "authority_ref", "project_id", "project_binding_ref", "boot_state_fingerprint", "execution_boundary_fingerprint", "executor_identity", "executor_version", "target", "operation", "execution_started_at", "execution_ended_at", "outcome", "performed_result_fingerprint", "performed_result_summary", "rollback_outcome", "claim_token", "reobservation_request", "independent_after_state_observation", "change_execution_receipt_semantic_fingerprint"],
   "properties": {
     "schema_version": {"const": "0.1"},
     "change_execution_receipt_id": {"$ref": "#/$defs/slot_id"},
@@ -27,6 +27,7 @@
     "rollback_outcome": {"$ref": "#/$defs/rollback_outcome"},
     "claim_token": {"type": "string", "minLength": 1, "maxLength": 256},
     "reobservation_request": {"$ref": "#/$defs/reobservation_request"},
+    "independent_after_state_observation": {"$ref": "#/$defs/independent_after_state_observation"},
     "change_execution_receipt_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}
   },
   "$defs": {
@@ -88,7 +89,7 @@
       },
       "additionalProperties": false
     },
-    "outcome": {"enum": ["SUCCEEDED", "REFUSED", "BOUNDARY_VIOLATION", "STALE_AUTHORITY", "TARGET_DRIFT", "KILL_SWITCH_STOPPED", "TIMEOUT", "ADAPTER_FAILURE", "PARTIAL_MUTATION", "ROLLBACK_SUCCEEDED", "ROLLBACK_FAILED", "UNKNOWN"]},
+    "outcome": {"enum": ["SUCCEEDED", "REFUSED", "BOUNDARY_VIOLATION", "STALE_AUTHORITY", "TARGET_DRIFT", "KILL_SWITCH_STOPPED", "TIMEOUT", "ADAPTER_FAILURE", "PARTIAL_MUTATION", "ROLLBACK_SUCCEEDED", "ROLLBACK_FAILED", "UNKNOWN", "REOBSERVATION_MISMATCH"]},
     "performed_result_summary": {
       "type": "object",
       "required": ["files_written", "bytes_written", "files_deleted"],
@@ -122,6 +123,25 @@
         },
         "reason_codes": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}(?![\\s\\S])"}},
         "requested_at": {"$ref": "../common/timestamp.schema.json"}
+      },
+      "additionalProperties": false
+    },
+    "independent_after_state_observation": {
+      "type": "object",
+      "required": ["outcome", "checked_files"],
+      "properties": {
+        "outcome": {"enum": ["MATCHED", "MISMATCH", "MISSING", "NOT_PERFORMED"]},
+        "checked_files": {"type": "array", "items": {"$ref": "#/$defs/checked_file"}}
+      },
+      "additionalProperties": false
+    },
+    "checked_file": {
+      "type": "object",
+      "required": ["path", "kind", "status"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["write", "delete"]},
+        "status": {"enum": ["MATCHED", "MISMATCH", "MISSING"]}
       },
       "additionalProperties": false
     }
