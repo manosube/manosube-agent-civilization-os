@@ -784,3 +784,55 @@ production compositionはcaller-supplied adapter objectまたはclassifier/resol
 loopbackを許すdisposable local verticalは非出荷test fixtureに隔離され、issuerとverifierはEd25519で
 分離される。これらはPhase 17のread-only observation Boundaryを成立させるが、Phase 18の
 Autonomous Change権限または実装を先取りしない。
+
+---
+
+# 22. Accepted architecture through Phase 18
+
+```text
+OBSERVED_AT_UTC=2026-09-11T09:47:55Z
+AS_BUILT_REF=91128e332138bb23466bf0f43a9f633cd646e891
+AS_BUILT_TREE_ENTRY_COUNT=749
+AS_BUILT_BLOB_COUNT=611
+AS_BUILT_DIRECTORY_COUNT=138
+AS_BUILT_TREE_TRUNCATED=false
+
+ACCEPTED_PHASE_RANGE=0..18
+PHASE_18_CONTROLLED_AUTONOMOUS_CHANGE_ACCEPTED=true
+PHASE_19_MULTI_AGENT_IMPLEMENTED=false
+```
+
+Phase 18で追加されたas-built surfaceは、`13_CHANGE_EXECUTOR/`、
+`src/manosube_agent_civilization/change_executor/`、
+`01_SCHEMA/change_executor/`の5 schema、および既存static/source-impact mappingへの限定的な登録である。
+Change Executorは既にAuthority確認済みのcanonical Changeを、composition時に固定・検証されたclosed
+Boundaryとadapter identityの下で実行するadapter layerであり、Kernel elementではない。
+
+```text
+CHANGE_EXECUTOR_ROLE=BOUNDED_AUTHORIZED_CHANGE_EXECUTION_ADAPTER
+CHANGE_EXECUTOR_OWNER_COUNT=1
+AUTONOMY_BOUNDARY_EXPLICIT=true
+AUTHORITY_CHECK_BEFORE_EXECUTION=true
+PROHIBITED_SCOPE_BLOCKED=true
+STALE_AUTHORITY_BLOCKED=true
+EXECUTION_IDEMPOTENCY_DEFINED=true
+AGENT_CANNOT_SELF_CLOSE=true
+REOBSERVATION_REQUIRED=true
+HUMAN_KILL_SWITCH_PROVEN=true
+SECOND_STATE_OWNER=false
+SECOND_OBSERVATION_OWNER=false
+SECOND_EVIDENCE_OWNER=false
+SECOND_AUTHORITY_OWNER=false
+SECOND_REFLOW_OWNER=false
+CANONICAL_STATE_OWNER_COUNT=1
+PARALLEL_CANONICAL_AUTHORITY=0
+```
+
+production adapterはcaller-supplied disposable worktreeに限定されたfilesystem write/deleteだけを扱い、
+GitHub push/merge、deployment、credential、billing、security policy、Objective、Authority、Kernel
+Constitution、completion semantics、任意shell/subprocess/networkまたはproduction mutationを許可しない。
+intent、attempt、terminal receiptおよびkill-switch chainはChange Executor固有のexecution記録であり、
+既存canonical State、Observation、EvidenceまたはReflow ownerを置換しない。
+
+Phase 19のdynamic multi-agent selection、Agent-specific provenance、conflict representation、Evidence
+aggregation inputおよびrelease receiptは、このaccepted architectureには未実装である。
