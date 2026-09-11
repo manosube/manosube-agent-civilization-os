@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/change_executor/execution_boundary.schema.json",
+  "title": "Execution Boundary",
+  "type": "object",
+  "required": ["permitted_action_kinds", "repository", "branch", "admitted_paths", "max_files_changed", "max_bytes_changed", "max_file_bytes", "permit_symlinks", "permit_path_traversal", "permit_network", "permit_subprocess", "permit_environment_mutation", "permit_credential_access", "timeout_seconds", "rollback_policy", "executor_identity", "executor_version", "validity_window", "worktree_root"],
+  "properties": {
+    "permitted_action_kinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/permitted_action_kind"}},
+    "repository": {"type": "string", "minLength": 1},
+    "branch": {"type": "string", "minLength": 1},
+    "worktree_root": {"type": "string", "minLength": 1},
+    "admitted_paths": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "max_files_changed": {"type": "integer", "minimum": 1},
+    "max_bytes_changed": {"type": "integer", "minimum": 1},
+    "max_file_bytes": {"type": "integer", "minimum": 1},
+    "permit_symlinks": {"const": false},
+    "permit_path_traversal": {"const": false},
+    "permit_network": {"const": false},
+    "permit_subprocess": {"const": false},
+    "permit_environment_mutation": {"const": false},
+    "permit_credential_access": {"const": false},
+    "timeout_seconds": {"type": "integer", "minimum": 1},
+    "rollback_policy": {"enum": ["NONE", "BEST_EFFORT_DELETE_WRITTEN_FILES"]},
+    "executor_identity": {"type": "string", "minLength": 1},
+    "executor_version": {"type": "string", "minLength": 1},
+    "validity_window": {"$ref": "#/$defs/validity_window"}
+  },
+  "$defs": {
+    "permitted_action_kind": {"enum": ["WRITE_DOCUMENTATION_FILE", "WRITE_TEST_FILE", "WRITE_ISOLATED_SOURCE_FILE", "WRITE_LOW_RISK_CONFIGURATION_FILE", "DELETE_DOCUMENTATION_FILE", "DELETE_TEST_FILE", "DELETE_ISOLATED_SOURCE_FILE"]},
+    "validity_window": {
+      "type": "object",
+      "required": ["issued_at", "expires_at"],
+      "properties": {
+        "issued_at": {"$ref": "../common/timestamp.schema.json"},
+        "expires_at": {"$ref": "../common/timestamp.schema.json"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

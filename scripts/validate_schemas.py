@@ -101,8 +101,15 @@ def main() -> int:
     # content-addressed decision `evaluate_model_execution_authorization` mints). No existing
     # schema file is replaced or removed. Phase 17's own Read-only URL Boot delivery (Issue #69)
     # adds one more, `url_boot/url_source_observation_envelope` -- the committed URL Source
-    # Observation Envelope -- making 67.
-    if len(paths) != 67 or len(set(ids)) != len(paths) or None in ids:
+    # Observation Envelope -- making 67. Phase 18's own Controlled Autonomous Change delivery
+    # (Issue #73) adds five more, all owned by the new `change_executor` package:
+    # `execution_boundary` (the closed, low-risk Execution Boundary schema), `execution_intent`
+    # and `execution_attempt` (the two durable idempotency-slot claim records P18-C5's own
+    # replay/conflict/reconciliation state machine is built on), `execution_receipt` (the
+    # immutable `change_execution_receipt` P18-C6 requires), and `change_executor_kill_switch`
+    # (the signed, monotonic ACTIVE/REVOKED Human kill-switch chain P18-C8 requires) -- making
+    # 72.
+    if len(paths) != 72 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
