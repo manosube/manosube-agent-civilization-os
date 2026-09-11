@@ -1,19 +1,32 @@
-"""P18-R1-F1 (Structural Review Round 1, ADOPT_P18_R1_STRUCTURAL_CORRECTIONS): independent
-after-state re-observation gates ``VERIFIED``.
+"""P18-R1-F1 (Structural Review Round 1, ADOPT_P18_R1_STRUCTURAL_CORRECTIONS) and P18-R2-F1
+(Structural Review Round 2, ADOPT_P18_R2_STRUCTURAL_CORRECTIONS): independent after-state
+re-observation gates ``VERIFIED``.
 
-(a) **Negative control**: a receipt claiming ``outcome == "SUCCEEDED"`` whose own embedded
-``independent_after_state_observation`` disagrees (forged/mismatched, or simply not
+(a) **Negative control (P18-R1-F1)**: a receipt claiming ``outcome == "SUCCEEDED"`` whose own
+embedded ``independent_after_state_observation`` disagrees (forged/mismatched, or simply not
 ``"MATCHED"``) must be refused by ``route_change_execution_to_evidence`` -- never silently
 derived as ``VERIFIED``.
 
-(b) **Positive control**: a genuine ``execute()`` call through the real route, with a real
-``ControlledFilesystemAdapter`` writing the exact requested content to real disk, must produce a
-receipt whose own ``independent_after_state_observation["outcome"] == "MATCHED"``, and
-``route_change_execution_to_evidence`` must derive ``VERIFIED`` for it.
+(a2) **Negative control (P18-R2-F1)**: R2_F1_NEGATIVE -- a receipt claiming ``outcome ==
+"SUCCEEDED"`` whose own embedded ``independent_after_state_observation`` is *forged to agree*
+(``"MATCHED"``, passing the P18-R1-F1 check above cleanly), but whose *actual* real on-disk bytes
+(written directly by this test, independently of anything the receipt claims) genuinely disagree
+with what the receipt's own ``operation`` requested, must still be refused -- proving the fix is
+not merely re-trusting the same embedded field a second time under a different name: this is a
+real, independent disagreement this hand-off's own SECOND, handoff-time-only re-read discovers.
+
+(b) **Positive control (P18-R1-F1 and R2_F1_POSITIVE)**: a genuine ``execute()`` call through the
+real route, with a real ``ControlledFilesystemAdapter`` writing the exact requested content to
+real disk, must produce a receipt whose own ``independent_after_state_observation["outcome"] ==
+"MATCHED"``, and ``route_change_execution_to_evidence`` must derive ``VERIFIED`` for it -- and the
+SECOND, independently-performed, handoff-time re-read this hand-off itself performs must itself
+independently confirm the real, freshly-read on-disk content (never merely re-trust the receipt's
+own embedded field).
 """
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +39,12 @@ from tests.fixtures.change_executor_world import (
     build_committed_change,
     commit_active_kill_switch,
     execution_boundary_for,
+    git_worktree,
     operation_for,
     plant_terminal_receipt,
 )
 
+from manosube_agent_civilization.change_executor import evidence_handoff as evidence_handoff_module
 from manosube_agent_civilization.change_executor.errors import ChangeExecutorError
 from manosube_agent_civilization.change_executor.evidence_handoff import (
     route_change_execution_to_evidence,
@@ -84,8 +99,7 @@ def test_forged_succeeded_receipt_with_disagreeing_reobservation_is_refused(
     )
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     boundary = execution_boundary_for(worktree_root=str(worktree))
 
     # A genuine, real, schema-valid, self-consistent receipt (built by the real
@@ -115,8 +129,83 @@ def test_forged_succeeded_receipt_with_disagreeing_reobservation_is_refused(
     evidence_request = _rebind_project(
         change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
     )
+    # (P18-R2-F1, Structural Review Round 2) route_change_execution_to_evidence now constructs
+    # verification_observation_request itself, from a second, independent, handoff-time-only
+    # re-read of the real resulting filesystem state -- it must not be caller-supplied.
+    evidence_request["verification_observation_request"] = None
     with pytest.raises(ChangeExecutorError):
         route_change_execution_to_evidence(store, forged, project_id, evidence_request)
+
+
+# --------------------------------------------------------------------------------------- #
+# (a2) R2_F1_NEGATIVE: a receipt whose own embedded independent_after_state_observation is
+# forged to MATCH, but whose real on-disk bytes genuinely disagree, is still refused -- proving
+# the fix is a real, independent disagreement (this hand-off's own second, handoff-time-only
+# re-read), never a re-check of the same embedded dict route.py itself already computed.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_second_independent_reread_disagreement_refuses_a_receipt_forged_to_match(
+    tmp_path: Path,
+) -> None:
+    store, info = bound(tmp_path)
+    project_id = info["project_id"]
+    commit_active_kill_switch(store, project_id)
+    requested_content = "the real requested content"
+    result = build_committed_change(
+        store,
+        project_id,
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE",
+            writes=[{"path": "docs/second-reread.md", "content_utf8": requested_content}],
+        ),
+        paths=["docs/second-reread.md"],
+    )
+    change = result["change"]
+
+    worktree = git_worktree(tmp_path)
+    boundary = execution_boundary_for(worktree_root=str(worktree))
+
+    # Real, DIFFERENT bytes are written directly to disk -- never through the adapter, never
+    # matching what the receipt's own operation requests -- simulating a receipt whose own
+    # embedded independent_after_state_observation was forged (or is simply stale/wrong) to
+    # claim MATCHED regardless of what is actually on disk.
+    (worktree / "docs").mkdir(parents=True, exist_ok=True)
+    (worktree / "docs" / "second-reread.md").write_text(
+        "DIFFERENT bytes than what was ever requested", encoding="utf-8"
+    )
+
+    forged_matching = plant_terminal_receipt(
+        store,
+        project_id,
+        change,
+        result["decision"],
+        boundary,
+        _ADAPTER_IDENTITY,
+        project_binding_id=info["project_binding_id"],
+        worktree_root=str(worktree),
+        claim_token="forged-matching-claim",  # noqa: S106
+        outcome="SUCCEEDED",
+        performed_result_summary={
+            "files_written": ["docs/second-reread.md"],
+            "bytes_written": len(requested_content.encode("utf-8")),
+            "files_deleted": [],
+        },
+        independent_after_state_observation={
+            "outcome": "MATCHED",
+            "checked_files": [
+                {"path": "docs/second-reread.md", "kind": "write", "status": "MATCHED"}
+            ],
+        },
+    )
+
+    evidence_request = _rebind_project(
+        change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
+    )
+    evidence_request["verification_observation_request"] = None
+    with pytest.raises(ChangeExecutorError):
+        route_change_execution_to_evidence(store, forged_matching, project_id, evidence_request)
 
 
 # --------------------------------------------------------------------------------------- #
@@ -145,8 +234,7 @@ def test_genuine_execution_carries_a_matched_independent_reobservation_and_deriv
     )
     change = result["change"]
 
-    worktree_root = tmp_path / "worktree"
-    worktree_root.mkdir()
+    worktree_root = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = compose_change_executor(
         store,
@@ -175,6 +263,10 @@ def test_genuine_execution_carries_a_matched_independent_reobservation_and_deriv
     evidence_request = _rebind_project(
         change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
     )
+    # (P18-R2-F1, Structural Review Round 2) route_change_execution_to_evidence now constructs
+    # verification_observation_request itself, from a second, independent, handoff-time-only
+    # re-read of the real resulting filesystem state -- it must not be caller-supplied.
+    evidence_request["verification_observation_request"] = None
     evidence = route_change_execution_to_evidence(store, receipt, project_id, evidence_request)
     assert evidence["verification_result_provenance"]["status"] == "VERIFIED"
     assert (
@@ -183,6 +275,25 @@ def test_genuine_execution_carries_a_matched_independent_reobservation_and_deriv
         ]
         == receipt["independent_after_state_observation"]
     )
+
+    # R2_F1_POSITIVE: the SECOND, independently-performed, handoff-time-only re-read this
+    # hand-off itself performs (never the receipt's own embedded field) genuinely reflects real,
+    # freshly-read file content -- proven directly, in white-box fashion, by calling the same
+    # internal re-read this hand-off calls and independently confirming its own real snapshot
+    # digests equal a real, independently-computed SHA-256 of the actual bytes on disk at test
+    # time.
+    snapshots, _occurrences, matches = (
+        evidence_handoff_module._second_independent_after_state_reread(
+            receipt["operation"],
+            receipt["target"]["worktree_root"],
+            captured_at="2026-08-30T10:00:00Z",
+        )
+    )
+    assert matches is True
+    assert len(snapshots) == 1
+    real_bytes = (worktree_root / "docs" / "reobservation_proof.md").read_bytes()
+    assert snapshots[0]["content_digest"] == "sha256:" + hashlib.sha256(real_bytes).hexdigest()
+    assert snapshots[0]["source_locator"] == "docs/reobservation_proof.md"
 
 
 # --------------------------------------------------------------------------------------- #
@@ -238,8 +349,7 @@ def test_adapter_writing_wrong_content_is_caught_as_reobservation_mismatch(
     )
     change = result["change"]
 
-    worktree_root = tmp_path / "worktree"
-    worktree_root.mkdir()
+    worktree_root = git_worktree(tmp_path)
     adapter = _LyingAdapter()
     execute = compose_change_executor(
         store,
@@ -264,6 +374,10 @@ def test_adapter_writing_wrong_content_is_caught_as_reobservation_mismatch(
     evidence_request = _rebind_project(
         change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
     )
+    # (P18-R2-F1, Structural Review Round 2) route_change_execution_to_evidence now constructs
+    # verification_observation_request itself, from a second, independent, handoff-time-only
+    # re-read of the real resulting filesystem state -- it must not be caller-supplied.
+    evidence_request["verification_observation_request"] = None
     evidence = route_change_execution_to_evidence(store, receipt, project_id, evidence_request)
     assert evidence["verification_result_provenance"]["status"] == "FAILED"
 

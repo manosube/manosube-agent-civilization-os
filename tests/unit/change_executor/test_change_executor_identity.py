@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.fixtures.change_executor_world import git_worktree
 
 from manosube_agent_civilization.change_executor.boundary import (
     CHANGE_EXECUTOR_SCHEMA_BASE,
@@ -184,15 +185,33 @@ _OTHER_INTENT_ID = execution_mapping_slot_key(
     _CHANGE_REF_B["id"], "sha256:" + "3" * 64, "sha256:" + "4" * 64
 )
 
+#: P18-R2-F3 (Structural Review Round 2): execution_attempt now carries its own
+#: reobservation_request durably, embedded at commit time -- an ordinary semantic field like
+#: every other one here, fully covered by execution_attempt_semantic_fingerprint.
+_BASE_ATTEMPT_REOBSERVATION_REQUEST: dict[str, Any] = {
+    "kind": "change_execution_reobservation_request",
+    "target": {"repository": "org/repo", "branch": "main", "paths": ["docs/x.md"]},
+    "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
+    "requested_at": "2026-09-10T00:00:01Z",
+}
+_OTHER_ATTEMPT_REOBSERVATION_REQUEST: dict[str, Any] = {
+    "kind": "change_execution_reobservation_request",
+    "target": {"repository": "org/other", "branch": "dev", "paths": ["docs/y.md"]},
+    "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
+    "requested_at": "2026-09-10T00:10:01Z",
+}
+
 BASE_ATTEMPT: dict[str, Any] = {
     **deepcopy(BASE_INTENT),
     "execution_intent_ref": {"kind": "execution_intent", "id": _INTENT_ID},
     "attempt_nonce": "a" * 32,
+    "reobservation_request": deepcopy(_BASE_ATTEMPT_REOBSERVATION_REQUEST),
 }
 VARIANTS_ATTEMPT: dict[str, Any] = {
     **deepcopy(VARIANTS_INTENT),
     "execution_intent_ref": {"kind": "execution_intent", "id": _OTHER_INTENT_ID},
     "attempt_nonce": "b" * 32,
+    "reobservation_request": deepcopy(_OTHER_ATTEMPT_REOBSERVATION_REQUEST),
 }
 
 assert set(BASE_ATTEMPT) == set(EXECUTION_ATTEMPT_SEMANTIC_FIELDS)
@@ -217,7 +236,14 @@ def test_execution_attempt_id_equals_the_identical_slot_key_execution_intent_id_
 
 
 @pytest.mark.parametrize(
-    "field", ("claim_token", "requested_at", "execution_intent_ref", "attempt_nonce")
+    "field",
+    (
+        "claim_token",
+        "requested_at",
+        "execution_intent_ref",
+        "attempt_nonce",
+        "reobservation_request",
+    ),
 )
 def test_execution_attempt_id_is_insensitive_to_non_slot_fields(field: str) -> None:
     baseline_id = execution_attempt_id(BASE_ATTEMPT)
@@ -426,6 +452,12 @@ def test_build_execution_attempt_round_trips_through_its_own_schema() -> None:
         requested_at="2026-09-10T00:00:00Z",
         execution_intent_ref={"kind": "execution_intent", "id": slot_key},
         attempt_nonce="f" * 32,
+        reobservation_request={
+            "kind": "change_execution_reobservation_request",
+            "target": {"repository": "org/repo", "branch": "main", "paths": ["docs/x.md"]},
+            "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
+            "requested_at": "2026-09-10T00:00:00Z",
+        },
     )
     validate_record(record, "execution_attempt.schema.json", base=CHANGE_EXECUTOR_SCHEMA_BASE)
     assert record["attempt_nonce"] == "f" * 32
@@ -524,12 +556,13 @@ def test_execution_boundary_fingerprint_is_sensitive_to_worktree_root_alone(
     function of ``execution_boundary_fingerprint`` (among two other inputs), two genuinely
     distinct mapping slots for the identical ``change_id``/``adapter_identity_fingerprint``.
     Both worktree roots are real, existing directories (``validate_execution_boundary`` now
-    requires this)."""
+    requires this) -- and, since P18-R2-F2 (Structural Review Round 2), real git checkouts of
+    this fixture's own declared ``repository``/``branch`` (``"org/repo"``/``"main"``), or
+    composition would refuse for an unrelated reason before this test's own assertion is ever
+    reached."""
 
-    worktree_a = tmp_path / "worktree-a"
-    worktree_b = tmp_path / "worktree-b"
-    worktree_a.mkdir()
-    worktree_b.mkdir()
+    worktree_a = git_worktree(tmp_path, repository="org/repo", branch="main", subdir="worktree-a")
+    worktree_b = git_worktree(tmp_path, repository="org/repo", branch="main", subdir="worktree-b")
 
     boundary_a = validate_execution_boundary(_boundary_with(str(worktree_a)))
     boundary_b = validate_execution_boundary(_boundary_with(str(worktree_b)))

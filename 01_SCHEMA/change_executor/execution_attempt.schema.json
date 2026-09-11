@@ -3,7 +3,7 @@
   "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/change_executor/execution_attempt.schema.json",
   "title": "Execution Attempt",
   "type": "object",
-  "required": ["schema_version", "execution_attempt_id", "project_id", "change_ref", "execution_boundary_fingerprint", "adapter_identity_fingerprint", "claim_token", "requested_at", "execution_intent_ref", "attempt_nonce", "execution_attempt_semantic_fingerprint"],
+  "required": ["schema_version", "execution_attempt_id", "project_id", "change_ref", "execution_boundary_fingerprint", "adapter_identity_fingerprint", "claim_token", "requested_at", "execution_intent_ref", "attempt_nonce", "reobservation_request", "execution_attempt_semantic_fingerprint"],
   "properties": {
     "schema_version": {"const": "0.1"},
     "execution_attempt_id": {"$ref": "#/$defs/slot_id"},
@@ -15,6 +15,7 @@
     "requested_at": {"$ref": "../common/timestamp.schema.json"},
     "execution_intent_ref": {"$ref": "#/$defs/execution_intent_ref"},
     "attempt_nonce": {"type": "string", "pattern": "^[0-9a-f]{32}(?![\\s\\S])"},
+    "reobservation_request": {"$ref": "#/$defs/reobservation_request"},
     "execution_attempt_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}
   },
   "$defs": {
@@ -31,6 +32,26 @@
         {"$ref": "../common/reference.schema.json"},
         {"properties": {"kind": {"const": "execution_intent"}, "id": {"$ref": "#/$defs/slot_id"}}}
       ]
+    },
+    "reobservation_request": {
+      "type": "object",
+      "required": ["kind", "target", "reason_codes", "requested_at"],
+      "properties": {
+        "kind": {"const": "change_execution_reobservation_request"},
+        "target": {
+          "type": "object",
+          "required": ["repository", "branch", "paths"],
+          "properties": {
+            "repository": {"type": "string", "minLength": 1},
+            "branch": {"type": "string", "minLength": 1},
+            "paths": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          },
+          "additionalProperties": false
+        },
+        "reason_codes": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}(?![\\s\\S])"}},
+        "requested_at": {"$ref": "../common/timestamp.schema.json"}
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

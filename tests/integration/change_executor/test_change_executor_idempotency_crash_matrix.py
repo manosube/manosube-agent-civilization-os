@@ -50,6 +50,7 @@ from tests.fixtures.change_executor_world import (
     commit_bare_execution_attempt,
     commit_bare_execution_intent,
     execution_boundary_for,
+    git_worktree,
     operation_for,
     plant_terminal_receipt,
     slot_key_for,
@@ -137,8 +138,7 @@ def test_exact_replay_is_broken_by_the_staleness_before_idempotency_ordering_def
     store, info = bound(tmp_path)
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info)["change"]
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -183,8 +183,7 @@ def _planted(
     commit_active_kill_switch(store, info["project_id"])
     result = _fresh_change(store, info, headroom=1)
     change = result["change"]
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     receipt = plant_terminal_receipt(
         store,
         info["project_id"],
@@ -283,8 +282,7 @@ def test_concurrent_execution_intent_on_the_same_slot_raises_concurrent_claim(
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, headroom=1)["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     commit_bare_execution_intent(
         store,
         info["project_id"],
@@ -319,8 +317,7 @@ def test_orphaned_execution_attempt_on_the_same_slot_requires_reconciliation(
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, headroom=1)["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     commit_bare_execution_attempt(
         store,
         info["project_id"],
@@ -397,8 +394,7 @@ def test_partial_failure_with_rollback_policy_none_stays_partial_mutation(tmp_pa
     commit_active_kill_switch(store, info["project_id"])
     change = _two_write_change(store, info)
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = _PartialFailureAdapter(keep=1)
     execute = _executor(store, info, adapter, worktree_root=str(worktree), rollback_policy="NONE")
 
@@ -422,8 +418,7 @@ def test_partial_failure_with_best_effort_rollback_policy_deletes_written_files(
     commit_active_kill_switch(store, info["project_id"])
     change = _two_write_change(store, info)
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = _PartialFailureAdapter(keep=1)
     execute = _executor(
         store,
@@ -460,8 +455,7 @@ def test_partial_failure_second_call_is_a_clean_idempotent_replay_not_a_second_a
     result = _fresh_change(store, info, headroom=1)
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     planted = plant_terminal_receipt(
         store,
         info["project_id"],
@@ -522,8 +516,7 @@ def test_crash_between_intent_commit_and_attempt_commit_is_recoverable_via_resum
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, path="docs/resume-after-intent-crash.md")["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
 
     claim_token = "resume-after-crash-claim"  # noqa: S105
     execution_instant = "2026-09-10T00:00:01Z"
@@ -588,8 +581,7 @@ def test_resuming_a_crash_interrupted_intent_with_an_unrelated_transition_in_bet
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, path="docs/resume-with-drift.md")["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
 
     claim_token = "resume-with-drift-claim"  # noqa: S105
     execution_instant = "2026-09-10T00:00:01Z"
@@ -665,8 +657,7 @@ def test_unrelated_transition_immediately_before_the_adapter_call_is_refused_by_
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, path="docs/resume-with-final-barrier-drift.md")["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
 
     def _drift() -> None:
         _fresh_change(store, info, path="docs/unrelated-drift-at-the-final-barrier.md")
@@ -734,8 +725,7 @@ def test_adapter_raise_commits_a_terminal_unknown_receipt_not_a_bare_exception(
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, path="docs/adapter-raises.md")["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = _RaisingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -772,8 +762,7 @@ def test_structurally_invalid_adapter_report_commits_a_terminal_unknown_receipt(
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, path="docs/malformed-report.md")["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = _MalformedReportAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -861,8 +850,7 @@ def test_two_racing_callers_for_the_identical_slot_call_the_adapter_at_most_once
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, path="docs/race.md")["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
 
     shared_adapter = CountingAdapter()
     claim_token = "racing-claim"  # noqa: S105
@@ -944,3 +932,204 @@ def test_two_racing_callers_for_the_identical_slot_call_the_adapter_at_most_once
     assert shared_adapter.call_count == 1, (
         "adapter.execute must be called exactly once combined across both racing callers"
     )
+
+
+# --------------------------------------------------------------------------------------- #
+# P18-R2-F3 (Structural Review Round 2): a caller resuming its OWN orphaned execution_attempt
+# (identical claim_token) now resolves to a grounded terminal UNKNOWN receipt, never a
+# perpetual ExecutionReconciliationRequiredError. R2_F3_CRASH/R2_F3_EXISTING.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_resuming_ones_own_orphaned_attempt_under_the_identical_claim_token_resolves_to_unknown(
+    tmp_path: Path,
+) -> None:
+    """R2_F3_CRASH: a bare ``execution_attempt`` (no receipt) is planted directly, with a real,
+    well-formed, durably-embedded ``reobservation_request`` reflecting a real Change -- the exact
+    state a genuine crash between the attempt-commit and the receipt-commit leaves behind (the
+    identical shape ``test_adapter_raise_commits_a_terminal_unknown_receipt_not_a_bare_exception``
+    would leave behind had a genuine crash interrupted it between its own attempt-commit and its
+    own receipt-commit, instead of the adapter actually raising -- R2_F3_EXISTING's own
+    complementary half). Calling ``execute()`` again for the identical slot under the IDENTICAL
+    ``claim_token`` must resolve to a terminal ``UNKNOWN`` receipt, never re-raise
+    ``ExecutionReconciliationRequiredError`` and never blindly re-call the adapter (its own
+    call_count stays exactly 0 throughout: the adapter may already have run in the real crash
+    this simulates, and re-calling it would risk a real duplicate mutation). A SECOND call for
+    the identical slot then cleanly replays that same UNKNOWN receipt, adapter still never
+    called."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/resume-own-orphaned-attempt.md")["change"]
+
+    worktree = git_worktree(tmp_path)
+    boundary = _boundary_for(str(worktree))
+    claim_token = "resume-own-orphaned-attempt-claim"  # noqa: S105
+    requested_at = "2026-09-10T00:00:00Z"
+
+    reobservation_request = {
+        "kind": "change_execution_reobservation_request",
+        "target": {
+            "repository": boundary["repository"],
+            "branch": boundary["branch"],
+            "paths": list(change["scope"]["paths"]),
+        },
+        "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
+        "requested_at": requested_at,
+    }
+    commit_bare_execution_attempt(
+        store,
+        info["project_id"],
+        change_id=change["change_id"],
+        boundary=boundary,
+        adapter_identity=_ADAPTER_IDENTITY,
+        claim_token=claim_token,
+        requested_at=requested_at,
+        reobservation_request=reobservation_request,
+    )
+
+    adapter = CountingAdapter()
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
+
+    outcome = execute(
+        change["change_id"],
+        claim_token=claim_token,
+        execution_instant="2026-09-10T00:00:01Z",
+    )
+    assert outcome["replay"] is False
+    assert outcome["semantic_reuse"] is False
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "UNKNOWN"
+    assert receipt["reobservation_request"] == reobservation_request
+    assert receipt["independent_after_state_observation"] == {
+        "outcome": "NOT_PERFORMED",
+        "checked_files": [],
+    }
+    assert receipt["claim_token"] == claim_token
+    assert adapter.call_count == 0, "resuming a caller's own orphaned attempt must never call it"
+
+    replay = execute(
+        change["change_id"],
+        claim_token=claim_token,
+        execution_instant="2026-09-10T00:00:02Z",
+    )
+    assert replay["replay"] is True
+    assert replay["receipt"] == receipt
+    assert adapter.call_count == 0, "a replay of the resumed UNKNOWN receipt must never call it"
+
+
+def test_a_different_claim_token_against_an_orphaned_attempt_still_requires_reconciliation(
+    tmp_path: Path,
+) -> None:
+    """The unchanged half of P18-R2-F3: an orphaned attempt under a *different* claim_token is
+    not this caller's own to resolve -- ``ExecutionReconciliationRequiredError``, exactly as
+    before this correction (mirrors ``test_orphaned_execution_attempt_on_the_same_slot_requires_
+    reconciliation`` above, restated here directly alongside the new same-claim_token behavior
+    for contrast)."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/orphaned-different-claim.md")["change"]
+
+    worktree = git_worktree(tmp_path)
+    commit_bare_execution_attempt(
+        store,
+        info["project_id"],
+        change_id=change["change_id"],
+        boundary=_boundary_for(str(worktree)),
+        adapter_identity=_ADAPTER_IDENTITY,
+        claim_token="the-original-caller-claim",  # noqa: S106
+        requested_at="2026-09-10T00:00:00Z",
+    )
+
+    adapter = CountingAdapter()
+    execute = _executor(store, info, adapter, worktree_root=str(worktree))
+
+    with pytest.raises(ExecutionReconciliationRequiredError):
+        execute(
+            change["change_id"],
+            claim_token="a-genuinely-different-caller-claim",  # noqa: S106
+            execution_instant="2026-09-10T00:00:01Z",
+        )
+    assert adapter.call_count == 0
+
+
+# --------------------------------------------------------------------------------------- #
+# P18-R2-F3: R2_F3_BARRIER -- the final pre-effect barrier's own refusal leaves the slot in the
+# identical "attempt committed, no receipt yet" state a genuine crash would, and resuming it
+# under the identical claim_token now also resolves to a grounded terminal UNKNOWN receipt.
+# --------------------------------------------------------------------------------------- #
+
+
+def test_resuming_after_the_final_barrier_refusal_under_the_identical_claim_token_resolves_to_unknown(
+    tmp_path: Path,
+) -> None:
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    change = _fresh_change(store, info, path="docs/resume-after-final-barrier.md")["change"]
+
+    worktree = git_worktree(tmp_path)
+    boundary = _boundary_for(str(worktree))
+
+    def _drift() -> None:
+        _fresh_change(store, info, path="docs/unrelated-drift-after-final-barrier.md")
+
+    proxy = _DriftOnThirdLoadCurrent(store, info["project_id"], _drift)
+    adapter = CountingAdapter()
+    claim_token = "resume-after-final-barrier-claim"  # noqa: S105
+    execute_first = compose_change_executor(
+        proxy,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=boundary,
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+
+    # First call: the identical final-pre-effect-barrier drift the existing test above proves --
+    # unchanged by this correction. It leaves the slot with a durably committed attempt and no
+    # receipt, exactly as a genuine crash between the attempt-commit and the adapter call would.
+    with pytest.raises(StaleExecutionInputError):
+        execute_first(
+            change["change_id"],
+            claim_token=claim_token,
+            execution_instant="2026-09-10T00:00:01Z",
+        )
+    assert adapter.call_count == 0
+
+    # Second call: the identical caller (identical claim_token), retrying against the real Store
+    # directly (no more proxy drift needed), now resolves to a grounded terminal UNKNOWN
+    # receipt -- never a perpetual ExecutionReconciliationRequiredError, and zero adapter calls.
+    execute_retry = compose_change_executor(
+        store,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=boundary,
+        adapter_identity=_ADAPTER_IDENTITY,
+        adapter=adapter,
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    outcome = execute_retry(
+        change["change_id"],
+        claim_token=claim_token,
+        execution_instant="2026-09-10T00:00:02Z",
+    )
+    assert outcome["replay"] is False
+    receipt = outcome["receipt"]
+    assert receipt["outcome"] == "UNKNOWN"
+    assert receipt["independent_after_state_observation"] == {
+        "outcome": "NOT_PERFORMED",
+        "checked_files": [],
+    }
+    assert adapter.call_count == 0, "resuming after the final barrier must never call the adapter"
+
+    # A third call for the identical slot then cleanly replays the identical UNKNOWN receipt.
+    replay = execute_retry(
+        change["change_id"],
+        claim_token=claim_token,
+        execution_instant="2026-09-10T00:00:03Z",
+    )
+    assert replay["replay"] is True
+    assert replay["receipt"] == receipt
+    assert adapter.call_count == 0

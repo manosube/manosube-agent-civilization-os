@@ -21,6 +21,7 @@ from tests.fixtures.change_executor_world import (
     build_committed_change,
     commit_active_kill_switch,
     execution_boundary_for,
+    git_worktree,
     operation_for,
     plant_terminal_receipt,
 )
@@ -88,8 +89,7 @@ def test_cross_project_change_id_never_resolves_against_a_different_bound_projec
 
     change_a = _fresh_change(store, info_a)["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute_for_b = compose_change_executor(
         store,
@@ -127,8 +127,7 @@ def test_cross_store_change_id_never_resolves_against_a_different_store_instance
     change_a = _fresh_change(store_a, info_a)["change"]
     assert store_b.resolve_record(info_b["project_id"], "change", change_a["change_id"]) is None
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute_via_b = _executor(store_b, info_b, adapter, worktree_root=str(worktree))
 
@@ -155,8 +154,7 @@ def test_stale_project_binding_id_propagates_boots_own_typed_error(tmp_path: Pat
     bogus_binding_id = real_binding_id[:-1] + ("A" if real_binding_id[-1] != "A" else "B")
     assert bogus_binding_id != real_binding_id
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = compose_change_executor(
         store,
@@ -196,8 +194,7 @@ def test_genuine_target_drift_after_change_derivation_is_refused_as_stale(tmp_pa
     # "target drift" means here: the world moved on after this Change observed it.
     _fresh_change(store, info, path="docs/unrelated-drift.md")
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -222,8 +219,7 @@ def test_a_change_admitted_by_a_wider_boundary_cannot_execute_through_a_narrower
     commit_active_kill_switch(store, info["project_id"])
     change = _fresh_change(store, info, path="docs/general/report.md")["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
 
     narrow_adapter = CountingAdapter()
     execute_narrow = _executor(
@@ -278,8 +274,7 @@ def test_mutated_receipt_copy_is_refused_by_the_evidence_handoff(tmp_path: Path)
     commit_active_kill_switch(store, project_id)
     change = _fresh_change(store, info, path="docs/mutate.md")["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
     outcome = execute(
@@ -310,6 +305,10 @@ def test_mutated_receipt_copy_is_refused_by_the_evidence_handoff(tmp_path: Path)
     evidence_request = _rebind_project(
         change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
     )
+    # (P18-R2-F1, Structural Review Round 2) route_change_execution_to_evidence now constructs
+    # verification_observation_request itself, from a second, independent, handoff-time-only
+    # re-read of the real resulting filesystem state -- it must not be caller-supplied.
+    evidence_request["verification_observation_request"] = None
     with pytest.raises(ChangeExecutorError):
         route_change_execution_to_evidence(store, mutated, project_id, evidence_request)
 
@@ -334,8 +333,7 @@ def test_two_adapter_identities_produce_two_distinct_slots_for_the_identical_cha
     )
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     boundary = execution_boundary_for(worktree_root=str(worktree))
     identity_a = adapter_identity_for(kind="adapter-a")
     identity_b = adapter_identity_for(kind="adapter-b")
@@ -415,10 +413,8 @@ def test_two_worktree_roots_produce_two_distinct_slots_for_the_identical_change_
     )
     change = result["change"]
 
-    worktree_a = tmp_path / "worktree-a"
-    worktree_b = tmp_path / "worktree-b"
-    worktree_a.mkdir()
-    worktree_b.mkdir()
+    worktree_a = git_worktree(tmp_path, subdir="worktree-a")
+    worktree_b = git_worktree(tmp_path, subdir="worktree-b")
     boundary_a = execution_boundary_for(worktree_root=str(worktree_a))
     boundary_b = execution_boundary_for(worktree_root=str(worktree_b))
 

@@ -27,6 +27,7 @@ from tests.fixtures.change_executor_world import (
     commit_active_kill_switch,
     commit_revoked_successor,
     execution_boundary_for,
+    git_worktree,
     operation_for,
 )
 
@@ -123,8 +124,7 @@ def test_sibling_directory_path_is_not_admitted_by_a_narrower_admitted_prefix(
     )
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree), admitted_paths=["docs"])
 
@@ -164,8 +164,7 @@ def test_operation_naming_a_traversal_path_is_refused_by_routes_own_admission_ch
     )
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -184,8 +183,7 @@ def test_adapter_itself_refuses_a_real_symlink_planted_inside_the_worktree(tmp_p
     depth -- never written through, and reported as a structural fact (``error`` set), never
     raised."""
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
     (worktree / "docs").symlink_to(outside)
@@ -210,8 +208,7 @@ def test_adapter_itself_refuses_writing_through_an_existing_symlink_leaf(tmp_pat
     """The leaf target itself is a symlink (not a parent component) -- also refused, never
     followed."""
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     outside_file = tmp_path / "outside.txt"
     outside_file.write_text("original", encoding="utf-8")
     (worktree / "link.txt").symlink_to(outside_file)
@@ -274,8 +271,7 @@ def test_no_kill_switch_ever_committed_refuses_with_zero_adapter_calls(tmp_path:
         extra_state_revision_headroom=0,
     )
     change = result["change"]
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -303,8 +299,7 @@ def test_revoked_kill_switch_refuses_with_zero_adapter_calls(tmp_path: Path) -> 
         paths=["docs/x.md"],
     )
     change = result["change"]
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -378,8 +373,7 @@ def test_pre_start_kill_switch_revocation_refuses_with_zero_adapter_calls(tmp_pa
 
     commit_revoked_successor(store, info["project_id"], active)
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -461,8 +455,7 @@ def test_mid_execution_kill_switch_revocation_produces_a_terminal_kill_switch_st
     )
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = compose_change_executor(
         proxy,
@@ -531,8 +524,7 @@ def test_terminal_receipt_replays_cleanly_after_the_boundarys_own_validity_windo
     )
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = compose_change_executor(
         store,
@@ -593,8 +585,7 @@ def test_terminal_receipt_replays_cleanly_after_the_kill_switch_has_since_been_r
     )
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = compose_change_executor(
         store,

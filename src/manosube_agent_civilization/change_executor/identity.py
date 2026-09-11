@@ -67,10 +67,20 @@ EXECUTION_INTENT_SEMANTIC_FIELDS: tuple[str, ...] = (
 #: :func:`execution_mapping_slot_key`/:func:`execution_attempt_id` below, which must stay a pure
 #: function of exactly *change_ref*/*execution_boundary_fingerprint*/*adapter_identity_fingerprint*
 #: for replay/reconciliation detection to keep working at all.
+#: ``reobservation_request`` (P18-R2-F3, Structural Review Round 2) is embedded here, at
+#: attempt-commit time, rather than only recomputed later once a terminal receipt is built --
+#: closing the gap where a caller resuming its own orphaned attempt (attempt committed, no
+#: receipt yet, identical claim_token -- a genuine crash, or a final-barrier refusal) had no
+#: durably-committed re-observation obligation to resolve against without either a blind retry
+#: or a permanent ``ExecutionReconciliationRequiredError``. It is deterministic content (built
+#: from the frozen Boundary/Change/execution_instant this call already has, never caller-random),
+#: so it belongs in the semantic fingerprint exactly like every other attempt field -- a caller
+#: could not silently swap it out from under an already-committed attempt.
 EXECUTION_ATTEMPT_SEMANTIC_FIELDS: tuple[str, ...] = (
     *EXECUTION_INTENT_SEMANTIC_FIELDS,
     "execution_intent_ref",
     "attempt_nonce",
+    "reobservation_request",
 )
 
 #: What a ``change_execution_receipt`` *is*, for tamper-detection purposes -- every field of the

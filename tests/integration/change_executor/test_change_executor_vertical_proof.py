@@ -21,6 +21,7 @@ from tests.fixtures.change_executor_world import (
     build_committed_change,
     commit_active_kill_switch,
     execution_boundary_for,
+    git_worktree,
     operation_for,
 )
 
@@ -63,8 +64,7 @@ def test_real_vertical_execution_writes_disk_round_trips_and_hands_off_to_eviden
     )
     change = result["change"]
 
-    worktree_root = tmp_path / "worktree"
-    worktree_root.mkdir()
+    worktree_root = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = compose_change_executor(
         store,
@@ -103,6 +103,10 @@ def test_real_vertical_execution_writes_disk_round_trips_and_hands_off_to_eviden
     evidence_request = _rebind_project(
         change_free_verification_evidence_request(provenance=None), "PRJ-0001", project_id
     )
+    # (P18-R2-F1, Structural Review Round 2) route_change_execution_to_evidence now constructs
+    # verification_observation_request itself, from a second, independent, handoff-time-only
+    # re-read of the real resulting filesystem state -- it must not be caller-supplied.
+    evidence_request["verification_observation_request"] = None
     evidence = route_change_execution_to_evidence(store, receipt, project_id, evidence_request)
     assert evidence["evidence_position"] == "CHANGE_FREE_VERIFICATION_EVIDENCE"
     assert evidence["verification_result_provenance"]["status"] == "VERIFIED"

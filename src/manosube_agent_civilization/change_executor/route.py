@@ -28,13 +28,17 @@ see the disclosed judgment calls, items 9-14):
 ```text
 canonicalize + freeze execution_boundary / adapter_identity                (composition, once)
   -- worktree_root is now a required field *inside* the closed Boundary itself, never a
-  separate composition-time parameter (disclosed judgment call 6, superseded by item 11 below)
+  separate composition-time parameter (disclosed judgment call 6, superseded by item 11 below);
+  validated there to also be a genuine git checkout of the Boundary's own repository/branch
+  (disclosed judgment call 15, Structural Review Round 2, P18-R2-F2)
 → idempotency-slot resolution: an existing receipt (replay/reuse/mismatch), an existing attempt
-  with no receipt (reconciliation required), an existing intent under this exact caller's own
-  claim_token with neither (resuming a crash-interrupted attempt -- see this module's own
-  disclosed judgment call 7 below), or none of the three (proceed) -- deliberately *before*
-  time-window/kill-switch #1/Boot/staleness; see this module's own disclosed judgment calls 5
-  and 12 below for why
+  with no receipt under this exact caller's own claim_token (resolves to a grounded terminal
+  UNKNOWN receipt, zero adapter calls -- disclosed judgment calls 16-17, Structural Review Round
+  2, P18-R2-F3) or under a different one (reconciliation required, unchanged), an existing intent
+  under this exact caller's own claim_token with neither (resuming a crash-interrupted attempt --
+  see this module's own disclosed judgment call 7 below), or none of the three (proceed) --
+  deliberately *before* time-window/kill-switch #1/Boot/staleness; see this module's own
+  disclosed judgment calls 5 and 12 below for why
 → execution_instant falls within the bound Boundary's own validity_window  (zero-call refusal;
   reached only for a genuinely new or resumed slot -- a terminal outcome above already returned)
 → kill switch check #1 -- fresh resolve, ACTIVE required, signature re-verified
@@ -319,6 +323,88 @@ call (never overwriting the history above):
     STOPPED``, ``BOUNDARY_VIOLATION``, and the two ``UNKNOWN`` paths item 13 above introduces --
     since there is nothing meaningful to independently re-observe when the primary operation was
     never admitted to run, or its own outcome could not be trusted enough to re-observe against.
+
+**Structural Review Round 2 (ADOPT_P18_R2_STRUCTURAL_CORRECTIONS)** -- four further corrections,
+adopted against this package's exact prior head (PR #74, comment
+``https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5628140572``),
+each disclosed here as its own new judgment call (never overwriting the history above):
+
+15. **Composition-time ``worktree_root`` identity verification against the Boundary's own
+    ``repository``/``branch`` (P18-R2-F2).** Item 11 above closed the *structural* substitution
+    gap (a given ``worktree_root`` binds to exactly one Boundary fingerprint/slot) but explicitly
+    disclaimed proving the directory is genuinely a checkout of that Boundary's own declared
+    ``repository``/``branch`` at all. :mod:`~manosube_agent_civilization.change_executor.boundary`
+    now closes that gap too, entirely through pure, local ``.git`` metadata file reads (no
+    ``subprocess``/network call of any kind, preserving this package's own static-conformance
+    guarantee): it resolves the real git directory (following a linked worktree's own ``.git``
+    file and ``commondir``), reads ``HEAD`` to require a genuine local branch ref (a detached
+    HEAD fails closed -- it cannot prove a branch identity), and reads the main repository's own
+    ``config`` for ``[remote "origin"] url`` normalized to the identical ``owner/repo`` slug form
+    ``execution_boundary["repository"]`` already uses. A mismatch, or any unparseable/missing
+    ``.git`` metadata, raises :class:`~manosube_agent_civilization.change_executor.errors.
+    ExecutionBoundaryError` at composition time, before any request-facing operation can even be
+    obtained. See ``boundary.py``'s own module docstring for the full mechanism, and
+    ``CHANGE_EXECUTOR_CONTRACT.md``'s corrected non-claim (the prior round's own non-claim is
+    superseded, not silently dropped).
+16. **``execution_attempt`` now carries its own ``reobservation_request`` durably, embedded at
+    commit time -- not merely recomputed later at each terminal-receipt call site (P18-R2-F3,
+    part 1).** Before this correction, ``reobservation_request`` was built as a local variable
+    *after* ``execution_attempt`` was already committed, and recomputed independently (from the
+    identical inputs, so byte-identical in practice, but never read back from the durably
+    committed record itself) at every one of the five ``_commit_terminal_receipt`` call sites.
+    This route now builds it once, *before* the intent/attempt commits (everything it depends on
+    -- the frozen Boundary, ``change_ref``, the resolved Change's own canonical scope, and
+    ``execution_instant`` -- is already known by then), passes it into
+    :func:`~manosube_agent_civilization.change_executor.engine.build_execution_attempt` as a new,
+    schema-required, semantic-fingerprint-covered field, and every later terminal-receipt commit
+    site reads it back off the durably committed ``attempt`` record itself
+    (``attempt["reobservation_request"]``) rather than recomputing it a second time. The point is
+    not the byte content (identical either way in the ordinary path) -- it is that from the
+    instant ``execution_attempt`` becomes durable, the durable record chain already preserves a
+    typed re-observation obligation a *future*, *resuming* caller can read back and resolve
+    against, which item 17 below depends on.
+17. **A caller resuming its OWN orphaned ``execution_attempt`` (identical ``claim_token``) now
+    resolves to a grounded terminal ``UNKNOWN`` receipt, never a perpetual
+    ``ExecutionReconciliationRequiredError`` (P18-R2-F3, part 2).** Before this correction, step 2
+    (idempotency-slot resolution) raised ``ExecutionReconciliationRequiredError`` unconditionally
+    the instant it found *any* orphaned ``execution_attempt`` (committed, no receipt yet) --
+    regardless of whose ``claim_token`` it carried, mirroring the exact problem the pre-existing
+    intent-only-crash fix (item 7) already solved for the intent-without-attempt case, but left
+    unsolved one step later. The fix extends the identical claim_token-based distinction: when the
+    orphaned attempt's own declared ``claim_token`` equals this call's own, this call is that
+    exact caller resuming its own crash-interrupted (or final-pre-effect-barrier-refused, or
+    otherwise unresolved) attempt -- not a collision -- so instead of raising, this route commits
+    one terminal receipt with ``outcome = "UNKNOWN"`` directly from the orphaned attempt's own
+    durably-embedded ``reobservation_request`` (item 16), with
+    ``independent_after_state_observation = NOT_PERFORMED_REOBSERVATION``: the true outcome of
+    whatever happened between the attempt commit and the crash -- including whether the adapter
+    ever actually ran -- is genuinely unknowable, so ``UNKNOWN`` is the honest, safe answer, and
+    the adapter is never re-called on this resume path (it may already have run; re-calling it
+    would risk a real duplicate mutation). Neither Boot, either kill-switch checkpoint, nor the
+    time-window check runs on this path -- none of them gate a *new* admission decision here (none
+    is being made: no new ``execution_intent``/``execution_attempt`` is committed, only an
+    already-admitted one is honestly concluded), the identical "a terminal outcome does not need
+    an admission check first" reasoning items 5/12 already establish for idempotency-slot
+    resolution as a whole. A *different* ``claim_token`` against an orphaned attempt remains
+    exactly as before this fix: ``ExecutionReconciliationRequiredError``, unchanged -- an
+    unrelated caller must not be able to auto-resolve someone else's stuck attempt. See
+    :func:`_commit_orphaned_attempt_unknown_receipt`'s own docstring for the full mechanism.
+18. **``evidence_handoff.route_change_execution_to_evidence`` no longer promotes a receipt's own
+    self-reported ``SUCCEEDED`` to ``VERIFIED`` Evidence on the strength of this route's own
+    embedded ``independent_after_state_observation`` alone (P18-R2-F1).** Item 14 above remains
+    exactly as it was -- a legitimate, useful receipt-level cross-check (the adapter's own raw
+    self-report vs. a fresh read, gating the receipt's own ``outcome`` field) -- but using that
+    *same* embedded field, alone, to promote Evidence to ``VERIFIED`` let the executor manufacture
+    the fact that promotes its own receipt. ``evidence_handoff.py`` now performs a *second*,
+    genuinely independent, handoff-time-only re-read (entirely separate from, and never trusting,
+    this route's own execution-time reobservation embedded on the receipt), mints a real
+    Observation from it through the existing Observation owner
+    (:func:`~manosube_agent_civilization.observation.engine.observe`, via ``evidence.
+    derive_evidence``'s own internal call -- never a caller-supplied Observation record trusted
+    directly), and requires the two independent re-reads to agree before ``VERIFIED`` may ever be
+    derived. See ``evidence_handoff.py``'s own module docstring for the full mechanism -- this
+    route's own code is unchanged by this item; only its own downstream consumer's promotion
+    discipline is.
 """
 
 from __future__ import annotations
@@ -756,6 +842,89 @@ def _attempt_rollback(adapter: Any, worktree_root: str, files_written: list[str]
     return "ROLLBACK_SUCCEEDED"
 
 
+def _commit_orphaned_attempt_unknown_receipt(
+    *,
+    store: Any,
+    project_id: str,
+    project_binding_id: str,
+    slot_key: str,
+    change_id: str,
+    change: Mapping[str, Any],
+    frozen_boundary: Mapping[str, Any],
+    frozen_worktree_root: str,
+    boundary_fp: str,
+    claim_token: str,
+    execution_instant: str,
+    reobservation_request: Mapping[str, Any],
+) -> dict[str, Any]:
+    """(P18-R2-F3) Resolve a caller's own orphaned ``execution_attempt`` (attempt durably
+    committed, no terminal receipt yet, this exact caller's own ``claim_token``) into one
+    grounded, honest terminal ``UNKNOWN`` receipt -- directly from *reobservation_request*, the
+    identical obligation already durably embedded on the attempt itself at commit time (P18-R2-F3
+    part 1, ``engine.build_execution_attempt``) -- with zero adapter calls: the adapter may
+    already have run (a genuine crash, or a final-pre-effect-barrier refusal, both leave the slot
+    in this identical state), and re-calling it here would risk a real duplicate mutation.
+
+    Deliberately does not re-run Boot, either kill-switch checkpoint, or the time-window check:
+    none of those gate a *new* admission decision here (none is being made -- this call commits
+    no new ``execution_intent``/``execution_attempt``, only concludes an already-admitted one
+    honestly), exactly the same "a terminal outcome is read-only with respect to admission"
+    reasoning that already lets idempotency-slot resolution as a whole run ahead of every
+    admission check (disclosed judgment calls 5/12). ``boot_state_fingerprint`` is *change*'s own
+    ``before_state_fingerprint`` -- the State this Change was authorized against, and therefore
+    also what a fresh, non-resumed Boot would have equaled at this exact attempt's own original
+    intent-commit time in the ordinary (non-drifted) case; imprecision here beyond that is
+    inherent to an honestly-unknown outcome, not a defect this function could close."""
+
+    action_kind = change["action"]["action_kind"]
+    empty_operation_echo = {"operation_kind": action_kind, "file_writes": [], "file_deletes": []}
+    empty_summary = {"files_written": [], "bytes_written": 0, "files_deleted": []}
+    empty_result_fingerprint = (
+        "sha256:" + hashlib.sha256(canonical_json_bytes(empty_summary)).hexdigest()
+    )
+    receipt = build_change_execution_receipt(
+        execution_request_id=slot_key,
+        change_ref={"kind": "change", "id": change_id},
+        idempotency_key=change["idempotency_key"],
+        authority_ref=dict(change["authority_ref"]),
+        project_id=project_id,
+        project_binding_ref={"kind": "project_binding", "id": project_binding_id},
+        boot_state_fingerprint=dict(change["before_state_fingerprint"]),
+        execution_boundary_fingerprint=boundary_fp,
+        executor_identity=frozen_boundary["executor_identity"],
+        executor_version=frozen_boundary["executor_version"],
+        target={
+            "repository": frozen_boundary["repository"],
+            "branch": frozen_boundary["branch"],
+            "worktree_root": frozen_worktree_root,
+        },
+        operation=empty_operation_echo,
+        execution_started_at=execution_instant,
+        execution_ended_at=execution_instant,
+        outcome="UNKNOWN",
+        performed_result_fingerprint=empty_result_fingerprint,
+        performed_result_summary=empty_summary,
+        rollback_outcome=None,
+        claim_token=claim_token,
+        reobservation_request=dict(reobservation_request),
+        independent_after_state_observation=NOT_PERFORMED_REOBSERVATION,
+    )
+    try:
+        _commit_records(
+            store,
+            project_id,
+            [(_RECEIPT_RECORD_KIND, slot_key, receipt)],
+            execution_instant,
+            transaction_prefix=f"TX-EXEC-RECEIPT-{slot_key}",
+        )
+    except RecordConflictError as error:
+        raise ExecutionReceiptIntegrityError(
+            f"a different change_execution_receipt already occupies mapping slot {slot_key!r} "
+            "-- refusing rather than trust either"
+        ) from error
+    return receipt
+
+
 def compose_change_executor(
     store: Any,
     *,
@@ -877,7 +1046,7 @@ def compose_change_executor(
             store, project_id, _ATTEMPT_RECORD_KIND, slot_key
         )
         if resolved_attempt_raw is not None:
-            _verify_slot_record(
+            verified_attempt = _verify_slot_record(
                 resolved_attempt_raw,
                 kind=_ATTEMPT_RECORD_KIND,
                 declared_id_field="execution_attempt_id",
@@ -886,12 +1055,45 @@ def compose_change_executor(
                 fingerprint_field="execution_attempt_semantic_fingerprint",
                 slot_key=slot_key,
             )
-            raise ExecutionReconciliationRequiredError(
-                f"an execution_attempt already exists for mapping slot {slot_key!r} with no "
-                "terminal change_execution_receipt yet -- the true outcome of a prior attempt "
-                "(which may already have called the adapter) is genuinely unknown; refusing "
-                "rather than risk a duplicate real mutation"
+            if verified_attempt["claim_token"] != claim_token:
+                # A different, genuinely concurrent/unrelated caller already holds this slot's
+                # own orphaned attempt -- not this caller's own to resolve. Unchanged from before
+                # P18-R2-F3.
+                raise ExecutionReconciliationRequiredError(
+                    f"an execution_attempt already exists for mapping slot {slot_key!r} with no "
+                    "terminal change_execution_receipt yet, under a different claim_token than "
+                    "this caller's own -- the true outcome of a prior attempt (which may already "
+                    "have called the adapter) is genuinely unknown; refusing rather than risk a "
+                    "duplicate real mutation"
+                )
+            # (P18-R2-F3) This exact caller (identical claim_token) resuming its OWN orphaned
+            # attempt -- not a collision. From the instant execution_attempt became durable, it
+            # already carried a typed re-observation obligation (its own embedded
+            # reobservation_request -- disclosed judgment call 16 below) and this resolves to a
+            # grounded, honest terminal UNKNOWN receipt built directly from that durably
+            # committed record -- zero adapter calls, since the adapter may already have run
+            # (a genuine crash, or the final pre-effect barrier's own refusal, both leave the
+            # slot in this identical state) and re-calling it here would risk a real duplicate
+            # mutation. This closes the prior permanent ExecutionReconciliationRequiredError trap
+            # for this exact caller; a different caller (above) is still refused unchanged.
+            # (see this module's own module docstring, disclosed judgment calls 16-17, for the
+            # full P18-R2-F3 discipline)
+            change_for_resume = _resolve_change(store, project_id, change_id)
+            receipt = _commit_orphaned_attempt_unknown_receipt(
+                store=store,
+                project_id=project_id,
+                project_binding_id=project_binding_id,
+                slot_key=slot_key,
+                change_id=change_id,
+                change=change_for_resume,
+                frozen_boundary=frozen_boundary,
+                frozen_worktree_root=frozen_worktree_root,
+                boundary_fp=boundary_fp,
+                claim_token=claim_token,
+                execution_instant=execution_instant,
+                reobservation_request=verified_attempt["reobservation_request"],
             )
+            return {"receipt": receipt, "replay": False, "semantic_reuse": False}
 
         # (2, continued) resolve any existing execution_intent for the slot -- reached only when
         # neither a receipt nor an attempt exists yet. When one exists and its own declared
@@ -1012,6 +1214,28 @@ def compose_change_executor(
                 "executed against a State it did not observe"
             )
 
+        # (10a) build reobservation_request -- moved here, *before* the intent/attempt commits
+        # (P18-R2-F3 part 1, Structural Review Round 2), so it can be embedded durably inside
+        # execution_attempt itself at commit time (below), not merely recomputed fresh after the
+        # fact at each terminal-receipt call site. Everything it depends on (frozen_boundary,
+        # change_ref, the resolved Change's own scope, execution_instant) is already known by
+        # this point. The one canonical scope-normalization owner (`authority.scope.
+        # canonical_scope`) is used here rather than a local sort -- re-sorting
+        # `scope["paths"]` in this module would be a second, competing answer to what the
+        # canonical member order is (`tests/contract/authority/
+        # test_scope_normalization_owner.py`'s own static sweep).
+        canonical_change_scope = canonical_scope(scope)
+        reobservation_request = {
+            "kind": "change_execution_reobservation_request",
+            "target": {
+                "repository": frozen_boundary["repository"],
+                "branch": frozen_boundary["branch"],
+                "paths": canonical_change_scope["paths"],
+            },
+            "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
+            "requested_at": execution_instant,
+        }
+
         # (11) commit execution_intent.
         intent = build_execution_intent(
             project_id=project_id,
@@ -1053,6 +1277,7 @@ def compose_change_executor(
             requested_at=execution_instant,
             execution_intent_ref={"kind": _INTENT_RECORD_KIND, "id": slot_key},
             attempt_nonce=secrets.token_hex(16),
+            reobservation_request=reobservation_request,
         )
         try:
             attempt_commit_result = _commit_records(
@@ -1073,27 +1298,21 @@ def compose_change_executor(
         # compares a fresh re-fetch against, immediately before the one real side effect.
         post_attempt_state_revision = attempt_commit_result["state_revision"]
 
+        # (P18-R2-F3 part 1) Every terminal-receipt call site below reads its own
+        # reobservation_request back off the durably committed attempt record itself, rather
+        # than recomputing it independently -- the identical content either way (this route
+        # itself just built and committed it), but reading it back is what actually proves the
+        # receipt's own embedded obligation is the *same* one the attempt durably preserved from
+        # the instant it became committed (the exact fact the resumed-orphaned-attempt path
+        # above depends on, and every other path here now shares).
+        reobservation_request = attempt["reobservation_request"]
+
         authority_ref = {"kind": "authority_decision", "id": decision["authority_decision_id"]}
         project_binding_ref = {"kind": "project_binding", "id": project_binding_id}
         target = {
             "repository": frozen_boundary["repository"],
             "branch": frozen_boundary["branch"],
             "worktree_root": frozen_worktree_root,
-        }
-        # The one canonical scope-normalization owner (`authority.scope.canonical_scope`) is
-        # used here rather than a local sort -- re-sorting `scope["paths"]` in this module
-        # would be a second, competing answer to what the canonical member order is
-        # (`tests/contract/authority/test_scope_normalization_owner.py`'s own static sweep).
-        canonical_change_scope = canonical_scope(scope)
-        reobservation_request = {
-            "kind": "change_execution_reobservation_request",
-            "target": {
-                "repository": frozen_boundary["repository"],
-                "branch": frozen_boundary["branch"],
-                "paths": canonical_change_scope["paths"],
-            },
-            "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
-            "requested_at": execution_instant,
         }
 
         def _commit_terminal_receipt(

@@ -29,6 +29,7 @@ from tests.fixtures.change_executor_world import (
     build_committed_change,
     commit_active_kill_switch,
     execution_boundary_for,
+    git_worktree,
     operation_for,
 )
 
@@ -222,8 +223,7 @@ def test_two_real_execution_cycles_advance_revision_by_exactly_this_packages_own
 ) -> None:
     store, info = bound(tmp_path)
     project_id = info["project_id"]
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
 
     revision_0 = store.load_current(project_id)["state_revision"]
 

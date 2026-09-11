@@ -34,19 +34,69 @@ whose own independent re-observation disagrees, a receipt reaching this module w
 structurally unreachable; this module asserts that defensively (raises
 :class:`~manosube_agent_civilization.change_executor.errors.ChangeExecutorError`) rather than
 silently deriving ``VERIFIED`` for it regardless.
+
+**``VERIFIED`` now additionally requires a SECOND, genuinely independent, handoff-time-only
+re-read -- never the executor's own embedded field alone (P18-R2-F1, Structural Review Round
+2).** SHUKOU's own adoption of Structural Review Round 2 named the gap the correction directly
+above did not close: "an executor-local filesystem re-read embedded in the executor's own receipt
+is not, by itself, the independently produced and resolved after-state Observation/Independent
+Verification result adopted in Round 1... The executor must not manufacture the fact that
+promotes its own receipt." The defensive check the paragraph above describes still only reads
+``receipt["independent_after_state_observation"]`` -- a field ``route.py`` itself computed, at
+execution time, and simply carried along; trusting it alone to gate ``VERIFIED`` is trusting the
+executor's own self-check a second time, under a different name.
+
+:func:`route_change_execution_to_evidence` now itself performs a SECOND, genuinely independent
+re-read of the real, current on-disk filesystem state -- entirely separate from, and at a
+strictly later instant than, ``route.py``'s own execution-time re-read (:func:`
+_second_independent_after_state_reread`) -- and mints a real Observation from it through the one
+existing Observation owner (:func:`~manosube_agent_civilization.observation.engine.observe`, via
+``evidence.derive_evidence``'s own internal call -- never a caller-supplied Observation record
+trusted directly). It builds one real, content-addressed :func:`~manosube_agent_civilization.
+observation.source_snapshot.build_source_snapshot` record per file the receipt's own operation
+named, from bytes it reads itself, at handoff time; the caller-supplied base ``observation_
+request`` (``evidence_request["observation_request"]``, already establishing this exact target's
+own ``project_id``/``target_identity``/``target_kind``/``method_ref``/``scope`` shape) is copied
+verbatim for those fields, with only ``source_snapshot_refs`` replaced by the freshly-built ones
+(or left as the base request's own, unchanged, when there is nothing to independently
+re-observe -- an empty operation, e.g. ``KILL_SWITCH_STOPPED``/``BOUNDARY_VIOLATION``/
+``UNKNOWN``) and a fresh ``state_revision_observed``/``state_fingerprint_observed`` from a fresh
+:meth:`~manosube_agent_civilization.store.FileStateStore.load_current` read. This module therefore
+now itself CONSTRUCTS ``verification_observation_request`` (exactly the way it already constructs
+and injects ``verification_result_provenance``) rather than trusting whatever a caller supplied --
+so *evidence_request* must now carry ``verification_observation_request: None`` (the position
+this hand-off itself produces), the mirror image of the pre-existing requirement that
+*evidence_request* carry no caller-supplied ``verification_result_provenance``.
+
+A receipt claiming ``outcome == "SUCCEEDED"`` whose own real, current on-disk content (read fresh,
+right here, never from the receipt's own embedded field) disagrees with what the receipt's own
+``operation`` requested is refused (raises :class:`~manosube_agent_civilization.change_executor.
+errors.ChangeExecutorError`) before ``derive_evidence`` is ever called -- a genuine, independent
+disagreement this module itself discovers, not a re-check of the same embedded dict. The pre-
+existing defensive check against the receipt's own embedded field (paragraph above) remains, as
+belt-and-suspenders on the receipt's own internal consistency, but it is no longer what gates
+``VERIFIED`` -- this second, independent, handoff-time re-read is.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
+from pathlib import Path
 from typing import Any
 
 from manosube_agent_civilization.evidence import derive_evidence
+from manosube_agent_civilization.observation.source_snapshot import build_source_snapshot
 
 from .errors import ChangeExecutorError, ExecutionReceiptIntegrityError
 from .identity import change_execution_receipt_id, change_execution_receipt_semantic_fingerprint
 
 _RECEIPT_RECORD_KIND = "execution_receipt"
+
+#: The digest :func:`_second_independent_after_state_reread` embeds for a requested delete's own
+#: source_snapshot -- there is no real content to digest once a file is gone, so this fixed
+#: sentinel (the digest of zero bytes) stands for "genuinely absent," schema-valid either way.
+_ABSENT_CONTENT_DIGEST = "sha256:" + hashlib.sha256(b"").hexdigest()
 
 #: The identical ten fields ``evidence.schema.json``'s own ``verification_result_provenance``
 #: requires -- see ``url_boot/evidence_handoff.py``'s own identical constant.
@@ -205,6 +255,136 @@ def _construct_provenance(receipt: Mapping[str, Any], project_id: str) -> dict[s
     return provenance
 
 
+def _second_independent_after_state_reread(
+    operation: Mapping[str, Any], worktree_root: str, *, captured_at: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+    """(P18-R2-F1) Perform a SECOND, genuinely independent, handoff-time-only read-only re-read
+    of the actual, current, on-disk filesystem state named by *operation* -- entirely separate
+    from, and never trusting, ``route.py``'s own execution-time reobservation embedded on the
+    receipt itself. Builds one real, content-addressed
+    :func:`~manosube_agent_civilization.observation.source_snapshot.build_source_snapshot` record
+    per touched path, from bytes actually read right here -- never from the receipt's own claims.
+
+    Returns ``(source_snapshot records, matching source_occurrences, whether every touched
+    path's own real current content matches what the receipt's own operation requested)`` -- the
+    third element is this module's own independent gate (never derived from the Observation's own
+    facts, which carry none: see this module's own docstring for why)."""
+
+    root = Path(worktree_root)
+    snapshots: list[dict[str, Any]] = []
+    occurrences: list[dict[str, Any]] = []
+    matches = True
+
+    for entry in operation.get("file_writes", []):
+        path = entry["path"]
+        target = root / path
+        try:
+            actual_bytes = target.read_bytes() if target.is_file() else b""
+        except OSError:
+            actual_bytes = b""
+        actual_digest = "sha256:" + hashlib.sha256(actual_bytes).hexdigest()
+        expected_digest = (
+            "sha256:" + hashlib.sha256(entry["content_utf8"].encode("utf-8")).hexdigest()
+        )
+        if not target.is_file() or actual_digest != expected_digest:
+            matches = False
+        snapshot = build_source_snapshot(
+            source_locator=path, content_digest=actual_digest, captured_at=captured_at
+        )
+        snapshots.append(snapshot)
+        occurrences.append(
+            {
+                "source_ref": {"kind": "source_snapshot", "id": snapshot["source_snapshot_id"]},
+                "source_locator": path,
+                "outcome": "COMPLETE",
+                "facts": [],
+            }
+        )
+
+    for entry in operation.get("file_deletes", []):
+        path = entry["path"]
+        target = root / path
+        if target.exists() or target.is_symlink():
+            matches = False
+        snapshot = build_source_snapshot(
+            source_locator=path, content_digest=_ABSENT_CONTENT_DIGEST, captured_at=captured_at
+        )
+        snapshots.append(snapshot)
+        occurrences.append(
+            {
+                "source_ref": {"kind": "source_snapshot", "id": snapshot["source_snapshot_id"]},
+                "source_locator": path,
+                "outcome": "COMPLETE",
+                "facts": [],
+            }
+        )
+
+    return snapshots, occurrences, matches
+
+
+def _build_verification_observation_request(
+    base_request: Mapping[str, Any],
+    *,
+    project_id: str,
+    fresh_state_revision: int,
+    fresh_state_fingerprint: Mapping[str, Any],
+    snapshots: list[dict[str, Any]],
+    occurrences: list[dict[str, Any]],
+    captured_at: str,
+) -> dict[str, Any]:
+    """Build one genuine, ``observe()``-shaped ``verification_observation_request`` -- the
+    identical ``project_id``/``target_identity``/``target_kind``/``method_ref``/scope shape
+    *base_request* already establishes for this exact target (copied verbatim), bound to a
+    *fresh*, handoff-time State revision/fingerprint and a fresh time_boundary, and carrying
+    either the real, freshly-captured ``source_snapshot_refs`` this hand-off itself just read
+    (when *snapshots* is non-empty), or the base request's own unchanged ``source_snapshot_refs``
+    (when there is nothing to independently re-observe -- an empty operation). This request is
+    never itself trusted as an Observation: it is handed to ``derive_evidence``, which mints the
+    real record through the one existing Observation owner (``observation.engine.observe()``),
+    never accepting a caller-supplied Observation record directly."""
+
+    base_scope = base_request["scope"]
+    scope = dict(base_scope)
+    if snapshots:
+        new_refs = [
+            {"kind": "source_snapshot", "id": snapshot["source_snapshot_id"]}
+            for snapshot in snapshots
+        ]
+        scope["source_snapshot_refs"] = new_refs
+        top_level_refs = new_refs
+    else:
+        top_level_refs = list(base_scope["source_snapshot_refs"])
+
+    effective_window = base_scope["target_effective_window"]
+    time_boundary = {
+        "observation_started_at": captured_at,
+        "observation_ended_at": captured_at,
+        "target_effective_start": effective_window["start"],
+        "target_effective_end": effective_window["end"],
+        "source_snapshot_time": captured_at,
+    }
+
+    return {
+        "project_id": project_id,
+        "state_revision_observed": fresh_state_revision,
+        "state_fingerprint_observed": dict(fresh_state_fingerprint),
+        "target_identity": base_request["target_identity"],
+        "target_kind": base_request["target_kind"],
+        "scope": scope,
+        "method_ref": dict(base_request["method_ref"]),
+        "time_boundary": time_boundary,
+        "source_snapshot_refs": top_level_refs,
+        "normalization_profile": base_request["normalization_profile"],
+        "source_occurrences": occurrences,
+        "attempts": [],
+        "blind_spots": [],
+        "observation_evidence_refs": [],
+        "negative_evidence_refs": [],
+        "negative_claims": [],
+        "collection_complete": True,
+    }
+
+
 def route_change_execution_to_evidence(
     store: Any, receipt: Mapping[str, Any], project_id: str, evidence_request: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -216,12 +396,15 @@ def route_change_execution_to_evidence(
     of the passed-in *receipt* to exactly equal the corresponding field of that resolved record
     before deriving anything.
 
-    *evidence_request* must already be a real, Change-free,
-    ``verification_observation_request``-grounded Evidence request (see
-    :mod:`manosube_agent_civilization.evidence.engine` for its own real, complete request shape,
-    which this function follows exactly). This function fabricates none of that; it only
-    constructs and injects ``verification_result_provenance``, and re-verifies the derived record
-    actually carries exactly that provenance before returning it.
+    *evidence_request* must already be a real, Change-free Evidence request carrying a genuine
+    ``observation_request`` (see :mod:`manosube_agent_civilization.evidence.engine` for its own
+    real, complete request shape, which this function follows exactly) -- but, since P18-R2-F1
+    (Structural Review Round 2), must carry ``verification_observation_request: None``: this
+    function now constructs that field itself, from a second, independent, handoff-time-only
+    re-read of the real resulting filesystem state (never from whatever a caller supplied), the
+    identical way it already constructs and injects ``verification_result_provenance``, and
+    re-verifies the derived record actually carries exactly what it constructed before returning
+    it.
 
     Every :class:`~manosube_agent_civilization.evidence.errors.EvidenceError` the existing owner
     itself raises propagates unchanged.
@@ -287,10 +470,19 @@ def route_change_execution_to_evidence(
             "evidence_request must carry no post_change_observation_request -- a Change "
             "Execution receipt never grounds a Change result"
         )
-    if evidence_request.get("verification_observation_request") is None:
+    if evidence_request.get("verification_observation_request") is not None:
         raise ChangeExecutorError(
-            "evidence_request must carry a verification_observation_request -- the one Evidence "
-            "position (Change-Free Verification Evidence) this hand-off produces"
+            "evidence_request must not already carry a verification_observation_request -- this "
+            "hand-off constructs it itself, from a second, independent, handoff-time-only "
+            "re-read of the real resulting filesystem state (P18-R2-F1), never from whatever a "
+            "caller already supplied"
+        )
+    if evidence_request.get("observation_request") is None:
+        raise ChangeExecutorError(
+            "evidence_request must carry a real observation_request establishing this exact "
+            "target's own project_id/target_identity/target_kind/method_ref/scope shape -- this "
+            "hand-off copies that shape verbatim when building its own verification_observation_"
+            "request (P18-R2-F1)"
         )
     if evidence_request.get("verification_result_provenance") is not None:
         raise ChangeExecutorError(
@@ -298,8 +490,44 @@ def route_change_execution_to_evidence(
             "hand-off constructs it from the real, resolved execution_receipt itself"
         )
 
+    # (P18-R2-F1, Structural Review Round 2) A SECOND, genuinely independent, handoff-time-only
+    # re-read of the real, current on-disk filesystem state -- entirely separate from, and never
+    # trusting, route.py's own execution-time reobservation already embedded on *resolved*
+    # itself. captured_at reuses evidence_request's own caller-supplied recorded_at (this
+    # package reads no ambient clock anywhere, the identical discipline route.py itself keeps)
+    # as the bounded instant this second re-read is captured at.
+    captured_at = evidence_request.get("recorded_at")
+    if not isinstance(captured_at, str) or not captured_at:
+        raise ChangeExecutorError(
+            "evidence_request.recorded_at must be a real, non-empty instant -- reused as the "
+            "bounded instant this hand-off's own second, independent, handoff-time re-read is "
+            "captured at (P18-R2-F1)"
+        )
+    snapshots, occurrences, reread_matches_requested = _second_independent_after_state_reread(
+        resolved["operation"], resolved["target"]["worktree_root"], captured_at=captured_at
+    )
+    if resolved["outcome"] == "SUCCEEDED" and not reread_matches_requested:
+        raise ChangeExecutorError(
+            "a second, independent, handoff-time-only re-read of the real resulting filesystem "
+            "state disagrees with what the receipt's own operation requested -- refusing to "
+            "derive VERIFIED for a self-reported SUCCEEDED this hand-off cannot itself "
+            "independently confirm (P18-R2-F1): an executor-local re-read embedded in the "
+            "receipt itself is never, by itself, sufficient to promote the executor's own receipt"
+        )
+    fresh_state = store.load_current(project_id)
+    verification_observation_request = _build_verification_observation_request(
+        evidence_request["observation_request"],
+        project_id=project_id,
+        fresh_state_revision=fresh_state["state_revision"],
+        fresh_state_fingerprint=fresh_state["semantic_fingerprint"],
+        snapshots=snapshots,
+        occurrences=occurrences,
+        captured_at=captured_at,
+    )
+
     provenance = _construct_provenance(resolved, project_id)
     request = dict(evidence_request)
+    request["verification_observation_request"] = verification_observation_request
     request["verification_result_provenance"] = provenance
 
     evidence = derive_evidence(request)

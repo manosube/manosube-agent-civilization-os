@@ -16,6 +16,7 @@ import pathlib
 from types import ModuleType
 
 import pytest
+from tests.fixtures.change_executor_world import git_worktree
 
 import manosube_agent_civilization
 import manosube_agent_civilization.change_executor as change_executor_module
@@ -161,6 +162,16 @@ def _minimal_boundary(worktree_root: str) -> dict[str, object]:
     }
 
 
+def _minimal_boundary_at(tmp_path: pathlib.Path) -> dict[str, object]:
+    """:func:`_minimal_boundary`, at a real git checkout of its own declared ``"org/repo"``/
+    ``"main"`` (P18-R2-F2, Structural Review Round 2: ``worktree_root`` must now also verify as
+    a genuine checkout of the Boundary's own declared repository/branch, not merely an existing
+    directory)."""
+
+    worktree_root = git_worktree(tmp_path, repository="org/repo", branch="main")
+    return _minimal_boundary(str(worktree_root))
+
+
 def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -178,7 +189,7 @@ def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set(
         object(),
         project_id="PRJ-STATIC-0001",
         project_binding_id="PROJBIND-STATIC-0001",
-        execution_boundary=_minimal_boundary(str(tmp_path)),
+        execution_boundary=_minimal_boundary_at(tmp_path),
         adapter_identity={"kind": "stub", "version": "0.1"},
         adapter=_StubAdapter(),
         kill_switch_trust_anchor_public_key_hex="ab" * 32,
@@ -223,7 +234,7 @@ def test_compose_change_executor_rejects_a_worktree_root_keyword_argument_at_com
             object(),
             project_id="PRJ-STATIC-0004",
             project_binding_id="PROJBIND-STATIC-0004",
-            execution_boundary=_minimal_boundary(str(tmp_path)),
+            execution_boundary=_minimal_boundary_at(tmp_path),
             adapter_identity={"kind": "stub", "version": "0.1"},
             adapter=_StubAdapter(),
             worktree_root=str(tmp_path),
@@ -266,7 +277,7 @@ def test_composed_execute_closure_rejects_a_worktree_root_keyword_argument(
         object(),
         project_id="PRJ-STATIC-0003",
         project_binding_id="PROJBIND-STATIC-0003",
-        execution_boundary=_minimal_boundary(str(tmp_path)),
+        execution_boundary=_minimal_boundary_at(tmp_path),
         adapter_identity={"kind": "stub", "version": "0.1"},
         adapter=_StubAdapter(),
         kill_switch_trust_anchor_public_key_hex="ab" * 32,

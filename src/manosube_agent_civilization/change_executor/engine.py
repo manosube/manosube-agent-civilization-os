@@ -87,6 +87,7 @@ def build_execution_attempt(
     requested_at: str,
     execution_intent_ref: Mapping[str, str],
     attempt_nonce: str,
+    reobservation_request: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Build one canonical ``execution_attempt`` record, under the identical mapping-slot id its
     own ``execution_intent`` record already carries.
@@ -101,7 +102,15 @@ def build_execution_attempt(
     ``execution_attempt_semantic_fingerprint`` like every other field -- it deliberately never
     participates in the deterministic mapping-slot id itself (:func:`execution_mapping_slot_key`,
     unchanged), which must stay a pure function of *change_ref*/*execution_boundary_fingerprint*/
-    *adapter_identity_fingerprint* alone for replay/reconciliation detection to work at all."""
+    *adapter_identity_fingerprint* alone for replay/reconciliation detection to work at all.
+
+    *reobservation_request* (P18-R2-F3, Structural Review Round 2) is embedded here, at
+    attempt-commit time -- the identical ``change_execution_reobservation_request`` shape
+    ``change_execution_receipt``'s own field already carries -- so that from the instant this
+    attempt becomes durable, the durable record chain already preserves a typed re-observation
+    obligation, and a caller resuming its own orphaned attempt (attempt committed, no receipt
+    yet) has a genuine, already-committed fact to resolve a grounded terminal ``UNKNOWN`` receipt
+    from, without a blind adapter retry (see ``route.py``'s own module docstring)."""
 
     slot_key = execution_mapping_slot_key(
         change_ref["id"], execution_boundary_fingerprint, adapter_identity_fingerprint
@@ -117,6 +126,7 @@ def build_execution_attempt(
         "requested_at": requested_at,
         "execution_intent_ref": dict(execution_intent_ref),
         "attempt_nonce": attempt_nonce,
+        "reobservation_request": deepcopy(dict(reobservation_request)),
         "execution_attempt_semantic_fingerprint": "",
     }
     record["execution_attempt_semantic_fingerprint"] = execution_attempt_semantic_fingerprint(

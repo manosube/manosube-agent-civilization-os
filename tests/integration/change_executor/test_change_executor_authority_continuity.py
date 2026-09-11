@@ -24,6 +24,7 @@ from tests.fixtures.change_executor_world import (
     commit_active_kill_switch,
     commit_foreign_record,
     execution_boundary_for,
+    git_worktree,
     operation_for,
     tamper_committed_record,
 )
@@ -86,8 +87,7 @@ def test_composed_execute_runs_a_genuinely_autonomous_committed_change(tmp_path:
     change = result["change"]
     assert result["decision"]["decision"] == "AUTONOMOUS"
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -125,8 +125,7 @@ def test_tampered_authority_decision_is_refused_before_any_adapter_call(tmp_path
         store, info["project_id"], "authority_decision", decision["authority_decision_id"], _flip
     )
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -156,8 +155,7 @@ def test_tampered_change_record_is_refused_before_any_adapter_call(tmp_path: Pat
 
     tamper_committed_record(store, info["project_id"], "change", change["change_id"], _flip)
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store, info, adapter, worktree_root=str(worktree))
 
@@ -198,8 +196,7 @@ def test_change_declaring_a_different_project_is_refused_before_any_adapter_call
         result_b["decision"],
     )
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     execute = _executor(store_a, info_a, adapter, worktree_root=str(worktree))
 
@@ -231,8 +228,7 @@ def test_action_kind_outside_the_bound_boundarys_permitted_set_is_refused(tmp_pa
     )
     change = result["change"]
 
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
     adapter = CountingAdapter()
     # Boundary only permits WRITE_DOCUMENTATION_FILE/DELETE_DOCUMENTATION_FILE (the default) --
     # the Change's own WRITE_ISOLATED_SOURCE_FILE is not among them.
@@ -331,8 +327,7 @@ def test_every_refusal_path_above_never_once_called_the_adapter(tmp_path: Path) 
     store, info = _world(tmp_path)
     commit_active_kill_switch(store, info["project_id"])
     adapter = CountingAdapter()
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
+    worktree = git_worktree(tmp_path)
 
     # (e)-shaped: action_kind outside the bound Boundary.
     result = build_committed_change(

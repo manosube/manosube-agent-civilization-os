@@ -2712,3 +2712,136 @@ PHASE_18_COMPLETE=false
 PHASE_19_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 ```
+
+# 36. Phase 18 Structural Review Round 2 bounded addendum (Issue #73, PR #74) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション35の記録以降、構造参謀によるStructural Review Round 2
+（`P18-R2-F1`〜`P18-R2-F4`）とSHUKOUによるその採択（PR #74コメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5628140572`、
+`ADOPTION_ID=ADOPT_P18_R2_STRUCTURAL_CORRECTIONS`）をGitHub API + `git rev-parse`による独立
+再観測で確認した上で、この既存PR #74ブランチ（新規branch・新規PR無し）上に実装した是正内容を
+記録する。Round 1の既存2件のclosed finding（P18-R1-F2の post-intent-successor check、および
+idempotency-slot resolutionのordering）は、本round自身のいずれの変更によっても退行していない
+-- それぞれの既存testは無変更のまま引き続きPASSしている。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション35自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-11
+CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+CURRENT_PHASE_ISSUE=73
+CURRENT_PR=74
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#73
+TARGET_PR=#74
+BASE_SHA=85bd43fbf4619d6ae9f765c76441dd5ea94bbdff
+BRANCH=agent/issue-73-phase18-controlled-autonomous-change
+REVIEWED_HEAD=85bd43fbf4619d6ae9f765c76441dd5ea94bbdff
+ADOPTION_ID=ADOPT_P18_R2_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P18-R2-F1,P18-R2-F2,P18-R2-F3,P18-R2-F4
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_74_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED_AWAITING_FURTHER_REVIEW
+```
+
+**この節自身の governance-fields は、セクション35自身の `FINAL_HEAD_SHA` が抱えていた欠陥を、
+遡ってセクション35自身を書き換えることなく、修正する。** あるコミットは、原理的に、自分自身の
+SHAを自分自身の内容の中に事前に記録することができない -- セクション35の `FINAL_HEAD_SHA=
+4b47eb50a9869e6ca4ea9751295a61ab2a030e31` は、実際には、その直後にpushされた真に最終的な
+delivery head（`85bd43fbf4619d6ae9f765c76441dd5ea94bbdff`、独立GitHub API検証で確認済み、
+PR #74コメント `https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5628140572`
+参照）ではなく、その直前の親コミット（自分自身の実装コミット）を記録していた -- これは
+`P18-R2-F4`自身が名指しした、まさにこの欠陥の実例である。本節はこの同じ構造的欠陥を繰り返さない
+ために、単一の`FINAL_HEAD_SHA`フィールドを、意図的に区別された2つのフィールドへ置き換える：
+
+```text
+IMPLEMENTATION_COMMIT_SHA=<IMPLEMENTATION_COMMIT_SHA>
+DELIVERY_HEAD_OBSERVABLE_VIA=EXTERNAL_RETURN_EVIDENCE_COMMENT_ON_PR_74
+```
+
+`IMPLEMENTATION_COMMIT_SHA`は、この本節自身のRound 2是正（コード変更 + このdocument自身の
+変更）を実際にlandするコミット自身のSHAであり、そのコミットが実在するようになった時点で初めて
+判明する値である -- 本節では意図的にplaceholderトークン`<IMPLEMENTATION_COMMIT_SHA>`のまま
+残し、orchestrating sessionが、その実コミットが存在した後の、小さな genuine な separate
+follow-up commitでこの値を埋めることを想定する（直前roundの`85bd43f`自身のfollow-up commitが
+セクション35のplaceholderを埋めたのと正確に同じ手続き）。`DELIVERY_HEAD_OBSERVABLE_VIA`は、
+「あるコミットは自分自身のSHAを自分自身の中に記録できない」という単純な事実を明示的に記録する
+フィールドである -- 真に外部から観測可能な最終delivery headは、この document自身の内部にでは
+なく、push後にPR #74自身へ投稿されるreturn-evidence commentの中に記録される。この2フィールド
+モデルは、セクション35自身の`FINAL_HEAD_SHA`が示した欠陥を、遡及的にセクション35自身を書き換え
+ることなく、今後のroundに向けて修正するものである。
+
+4件の是正内容の要約：
+
+```text
+P18-R2-F1  executor-local filesystem re-readがreceipt自身に埋め込まれているだけでは、
+           Round 1で採択された独立の after-state Observation/Independent Verification結果には
+           ならない -- executorが自身のreceiptを自ら格上げする事実を製造してはならない。
+           evidence_handoff.route_change_execution_to_evidenceが自ら、SECONDの、genuinely
+           independentな、handoff-time限定の再読み取りを実行し（route.py自身の execution-time
+           reobservationとは完全に別物、別時点）、既存のObservation owner（observation.
+           engine.observe()、evidence.derive_evidenceの内部呼び出し経由 -- caller供給の
+           Observation recordを一切信用しない）を通じて実体のあるObservationを生成する。
+           receipt自身のoutcome=="SUCCEEDED"かつこのSECOND re-readが不一致の場合はVERIFIEDを
+           拒否する。receipt自身のindependent_after_state_observationへの防御的チェックは
+           残すが、それはVERIFIEDをgateしなくなった。
+
+P18-R2-F2  worktree_rootがBoundary fingerprint/mapping slotへ参加することは必要条件だが十分
+           条件ではない -- 実際にbindされたworktreeが、Boundary自身が認可したrepository・
+           branch/worktree identityであることを検証しない限り、compositionはfail closed
+           しなければならない。boundary.validate_execution_boundaryが、純粋なlocal `.git`
+           metadataファイル読み取りのみで（subprocess・network呼び出し無し）、
+           worktree_root自身の実際のgit checkout identity（HEADのbranch、origin remoteの
+           repository slug）を、Boundary自身が宣言するrepository/branchと厳密一致するよう
+           要求する。detached HEADはbranch identityを証明できないためfail closedする。
+
+P18-R2-F3  execution_attemptが durableになった瞬間から、durable record chainは既に、typed
+           re-observation obligationと non-success/UNKNOWN unresolved stateを保持していな
+           ければならない。execution_attempt自身が、commit時点でreobservation_requestを
+           durably embedするようになった（新規schema-required field、semantic fingerprint
+           対象）。さらに、この exact caller（同一claim_token）が自身のorphaned attempt
+           （attempt commit済み、receipt未だ無し）をresumeする場合、これまでの perpetual
+           ExecutionReconciliationRequiredErrorではなく、その埋め込み済みreobservation_
+           requestから直接、grounded terminal UNKNOWN receiptへ解決するようになった --
+           adapter呼び出しゼロ（adapterは既に実行済みかもしれず、再呼び出しはreal duplicate
+           mutationのriskを負う）。異なるclaim_tokenに対する既存の
+           ExecutionReconciliationRequiredErrorは無変更のまま残る。
+
+P18-R2-F4  canonical current-state fieldは、事実として自己参照的であってはならない。親/
+           correction commitを、最終的にdeliverされたheadとしてlabelしてはならない。本節
+           自身がこの原則を、セクション35自身の`FINAL_HEAD_SHA`の欠陥を修正する形で実践する
+           （このaddendum自身のIMPLEMENTATION_COMMIT_SHA/DELIVERY_HEAD_OBSERVABLE_VIA、上記
+           参照）。
+```
+
+修正はPR #74の唯一の既存ブランチ上、新規branch・新規PR無しで行われた。既存の`State`・
+`Difference`・`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Runtime`・
+`Model Runtime`・`URL Boot`のいずれのownerも置換・変更しない。schema変更は
+`01_SCHEMA/change_executor/execution_attempt.schema.json`（`reobservation_request`を
+requiredへ追加）の1件のみで、schema総数は72のまま変わらない（新規schema fileの追加ではなく、
+既存schemaへのfield追加のため）。新規moduleの追加は無し -- 既存module
+（`route.py`・`boundary.py`・`evidence_handoff.py`・`engine.py`・`identity.py`）自身への
+是正のみである。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`、11 test files + 2 fixture modules -- 新規file
+`test_change_executor_worktree_git_identity.py`を1件追加）は197件PASS、0 skip、0 failで
+独立に検証済み（182件から+15件）。full repository test suiteも独立に再実行し、既知の
+pre-existing failure（`tests/contract/governance/test_source_freshness_drift_detection.py`
+配下の7件、この作業開始以前から`origin/main`上で既に確認済みのもの、本packageとは無関係）を
+除き、全件PASSで検証済み（正確な最終件数は本節自身の記録時点で得られた実測値を用いる --
+検証セッション自身のログを参照）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```

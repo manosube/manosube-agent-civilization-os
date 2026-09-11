@@ -33,6 +33,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from tests.authority_helpers import action as authority_action, rule as authority_rule
@@ -559,15 +560,41 @@ def commit_bare_execution_attempt(
     adapter_identity: dict[str, Any],
     claim_token: str,
     requested_at: str,
+    reobservation_request: dict[str, Any] | None = None,
+    paths: list[str] | None = None,
     committed_at: str = "2026-09-10T00:00:00Z",
 ) -> dict[str, Any]:
     """Commit one real, schema-valid, standalone ``execution_attempt`` (no receipt) directly to
     *store*, at the exact mapping slot a composed executor for the same triple would itself
-    resolve -- the crash-recovery setup V4(e) needs."""
+    resolve -- the crash-recovery setup V4(e) needs.
 
+    *reobservation_request*, when supplied, is embedded verbatim (P18-R2-F3, Structural Review
+    Round 2: ``execution_attempt`` now carries this field durably from the instant it is
+    committed -- see ``route.py``'s own module docstring). When omitted, a real, schema-valid
+    one is built from *boundary*'s own ``repository``/``branch`` and *paths* (defaulting to an
+    empty path list, since this standalone helper has no real Change record to read a scope
+    from) -- schema-valid either way, and sufficient for a test that only needs the resumed
+    same-claim_token path to have a genuine, well-formed obligation to resolve against."""
+
+    from manosube_agent_civilization.change_executor.boundary import validate_execution_boundary
     from manosube_agent_civilization.change_executor.engine import build_execution_attempt
 
     slot_key, boundary_fp, adapter_fp = slot_key_for(change_id, boundary, adapter_identity)
+    canonical_boundary = validate_execution_boundary(boundary)
+    effective_reobservation_request = (
+        dict(reobservation_request)
+        if reobservation_request is not None
+        else {
+            "kind": "change_execution_reobservation_request",
+            "target": {
+                "repository": canonical_boundary["repository"],
+                "branch": canonical_boundary["branch"],
+                "paths": list(paths) if paths is not None else [],
+            },
+            "reason_codes": ["AUTONOMOUS_CHANGE_EXECUTION_ATTEMPTED"],
+            "requested_at": requested_at,
+        }
+    )
     # A deterministic (never `secrets`-random) test-only nonce: this helper plants a *standalone*
     # attempt directly, never through a live `execute()` call, so there is no genuine concurrent
     # caller here to distinguish from -- determinism keeps this fixture's own output reproducible.
@@ -583,6 +610,7 @@ def commit_bare_execution_attempt(
         requested_at=requested_at,
         execution_intent_ref={"kind": "execution_intent", "id": slot_key},
         attempt_nonce=attempt_nonce,
+        reobservation_request=effective_reobservation_request,
     )
     commit_foreign_record(
         store, project_id, "execution_attempt", slot_key, attempt, committed_at=committed_at
@@ -835,6 +863,44 @@ def commit_revoked_successor(
 # --------------------------------------------------------------------------------------- #
 
 
+def git_worktree(
+    tmp_path: Path, *, repository: str = REPOSITORY, branch: str = BRANCH, subdir: str = "worktree"
+) -> Path:
+    """One real, on-disk git checkout of *repository*/*branch*, built via the real ``git``
+    binary itself -- a test-only technique (this package's own static-conformance guarantee is
+    about the *shipped* package's own modules never importing ``subprocess``, never about what a
+    test's own setup does; see ``tests/contract/change_executor/
+    test_change_executor_static_conformance.py``).
+
+    P18-R2-F2 (Structural Review Round 2) requires ``validate_execution_boundary`` to verify, via
+    pure local ``.git`` metadata reads, that a Boundary's own ``worktree_root`` is genuinely a
+    checkout of that same Boundary's own declared ``repository``/``branch`` -- so every
+    ``worktree_root`` any test in this suite hands to a composed executor (or directly to
+    ``validate_execution_boundary``) must now be a real git checkout matching whatever
+    ``repository``/``branch`` the Boundary itself declares. Defaults to this world's own
+    :data:`REPOSITORY`/:data:`BRANCH` -- the identical values :func:`execution_boundary_for`
+    already declares -- so every ordinary test needs no override at all.
+
+    No commit is ever made (there is nothing to write beyond the checkout's own identity): ``git
+    init`` followed by pointing ``HEAD`` at the requested branch (``symbolic-ref`` works on a
+    genuinely unborn branch) and adding the requested ``origin`` remote is sufficient for
+    :func:`~manosube_agent_civilization.change_executor.boundary.validate_execution_boundary`'s
+    own read-only metadata checks."""
+
+    path = tmp_path / subdir
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "--quiet", str(path)], check=True)  # noqa: S603, S607
+    subprocess.run(  # noqa: S603
+        ["git", "-C", str(path), "symbolic-ref", "HEAD", f"refs/heads/{branch}"],  # noqa: S607
+        check=True,
+    )
+    subprocess.run(  # noqa: S603
+        ["git", "-C", str(path), "remote", "add", "origin", repository],  # noqa: S607
+        check=True,
+    )
+    return path
+
+
 def execution_boundary_for(*, worktree_root: str, **overrides: Any) -> dict[str, Any]:
     """One real, schema-valid, closed Execution Boundary -- mirrors
     ``tests/fixtures/url_boot_world.py``'s own ``boundary_for`` shape. *overrides* replaces any
@@ -946,6 +1012,7 @@ __all__ = [
     "commit_foreign_record",
     "commit_revoked_successor",
     "execution_boundary_for",
+    "git_worktree",
     "operation_for",
     "plant_terminal_receipt",
     "slot_key_for",

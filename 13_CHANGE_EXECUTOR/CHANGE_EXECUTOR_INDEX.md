@@ -11,7 +11,7 @@ CANONICAL_KERNEL_COUNT=1
 CHANGE_EXECUTOR_OWNER_COUNT=1
 PUBLIC_CHANGE_EXECUTOR_ENTRY_POINT_COUNT=2
 SIGNED_DEPLOYMENT_DECLARATION_CHAIN=false
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
 ```
 
 ---
@@ -32,14 +32,19 @@ existing Evidence/Observation/Reflow owners rather than declaring anything itsel
                                   the required proof layers, the explicit non-claims, and Gate 18
 ```
 
-This was a **first delivery**: `STRUCTURAL_REVIEW_ROUNDS_APPLIED` started at `0`. It is now `1`:
-SHUKOU adopted six structural-review corrections
+This was a **first delivery**: `STRUCTURAL_REVIEW_ROUNDS_APPLIED` started at `0`. It became `1`
+when SHUKOU adopted six structural-review corrections
 (`ADOPT_P18_R1_STRUCTURAL_CORRECTIONS`, comment
 `https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5626622213`)
 against this package's exact prior head (commit `2010f05`), each implemented on the identical
-branch, no new PR. `CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 9-14/§11 items 12-16/§12 record the
-six corrections and their proof in full; this document's own restatements below are updated to
-match.
+branch, no new PR. It is now `2`: SHUKOU subsequently adopted four further corrections
+(`ADOPT_P18_R2_STRUCTURAL_CORRECTIONS`, comment
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5628140572`)
+against this package's exact prior head (commit `85bd43fbf4619d6ae9f765c76441dd5ea94bbdff`),
+again each implemented on the identical existing branch, no new branch, no new PR.
+`CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 9-14/§11 items 12-16/§12 record Round 1's six
+corrections and their proof in full; §1/§3 items 15-18/§11 items 18-22/§12 record Round 2's four;
+this document's own restatements below are updated to match both.
 
 The human objective this Phase serves, in the adopting authority's own terms (SHUKOU's
 `ADOPT_P18_CONTROLLED_AUTONOMOUS_CHANGE` comment on Issue #73):
@@ -162,7 +167,12 @@ route_change_execution_to_evidence   hand a committed change_execution_receipt t
                                       Evidence owner, in the Change-Free Verification Evidence
                                       position -- now also requiring the receipt's own embedded
                                       independent_after_state_observation to agree before
-                                      deriving VERIFIED (Structural Review Round 1, P18-R1-F1)
+                                      deriving VERIFIED (Structural Review Round 1, P18-R1-F1),
+                                      AND now itself performing a SECOND, genuinely independent,
+                                      handoff-time-only re-read that must also agree before
+                                      VERIFIED may ever be derived -- never trusting the receipt's
+                                      own embedded field alone (Structural Review Round 2,
+                                      P18-R2-F1, CHANGE_EXECUTOR_CONTRACT.md §3 item 18)
 ```
 
 ### 4.2 The three new record kinds, and the one kill switch chain
@@ -179,7 +189,12 @@ execution_attempt          restates execution_intent's own fields plus a referen
                             passed. attempt_nonce (never part of the id itself) makes two
                             independently-built attempts for the identical slot genuinely
                             different byte-for-byte, closing a genuine race an automated PR
-                            review identified (CHANGE_EXECUTOR_CONTRACT.md §3 item 8).
+                            review identified (CHANGE_EXECUTOR_CONTRACT.md §3 item 8). Now also
+                            embeds reobservation_request durably, at commit time (Structural
+                            Review Round 2, P18-R2-F3 part 1, §3 item 16) -- so a caller resuming
+                            its own orphaned attempt (identical claim_token) can resolve to a
+                            grounded terminal UNKNOWN receipt directly from it, never a perpetual
+                            ExecutionReconciliationRequiredError (P18-R2-F3 part 2, §3 item 17).
 change_execution_receipt   the sole durable, immutable fact this package ever commits about one
                             execution attempt's own terminal outcome (P18-C6). Its own id is
                             always exactly its own execution_request_id, the shared mapping-slot
@@ -242,7 +257,20 @@ the full list.
   merely before Boot/staleness (P18-R1-F5). Each was fixed and each proven by new tests -- the
   same 9 files and 2 fixture modules plus one new file
   (`test_change_executor_independent_reobservation.py`), now 10 files, 182 tests, 0 skipped, 0
-  failed (`CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 6-8, 9-14/§11 items 9-16/§12).
+  failed (`CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 6-8, 9-14/§11 items 9-16/§12). SHUKOU's own
+  Structural Review Round 2 subsequently adopted four further corrections
+  (`ADOPT_P18_R2_STRUCTURAL_CORRECTIONS`) against that exact 182-test head (commit `85bd43f`): a
+  second, genuinely independent, handoff-time-only re-read now gates `VERIFIED`, never the
+  receipt's own embedded field alone (P18-R2-F1); composition-time `worktree_root` identity
+  verification against the Boundary's own `repository`/`branch`, via pure local `.git` metadata
+  reads (P18-R2-F2); `execution_attempt` now durably embeds its own `reobservation_request` at
+  commit time, and a caller resuming its own orphaned attempt (identical `claim_token`) resolves
+  to a grounded terminal `UNKNOWN` receipt rather than a perpetual
+  `ExecutionReconciliationRequiredError` (P18-R2-F3); and this document pair's own
+  record-keeping corrected its prior round's self-referential `FINAL_HEAD_SHA` field (P18-R2-F4).
+  Each was fixed and each proven by new tests -- the same 10 files and 2 fixture modules plus
+  one new file (`test_change_executor_worktree_git_identity.py`), now 11 files, 197 tests, 0
+  skipped, 0 failed (`CHANGE_EXECUTOR_CONTRACT.md` §1/§3 items 15-18/§11 items 18-22/§12).
 - A model output, URL Boot content, or temporary Agent output is never treated as executable
   authority-bearing instruction here -- this package imports none of `model_runtime`, `url_boot`,
   or `agent_runtime`, and its one replaceable adapter receives only a closed, prevalidated
@@ -254,10 +282,14 @@ the full list.
   hand-off additionally requires the receipt's own embedded
   `independent_after_state_observation` to agree before deriving `VERIFIED` -- but this still
   never makes this package the decider of sufficiency; that remains `derive_evidence`'s own.
-- A Boundary's own `worktree_root` (now bound inside the Boundary itself, P18-R1-F3) is never
-  cryptographically or otherwise verified to be a real checkout of that same Boundary's own
-  `repository`/`branch` -- this package still performs no subprocess/network call of any kind
-  (`CHANGE_EXECUTOR_CONTRACT.md` §13's new non-claim).
+- A Boundary's own `worktree_root` (now bound inside the Boundary itself, P18-R1-F3) is, since
+  Structural Review Round 2 (P18-R2-F2), verified -- via pure local `.git` metadata file reads,
+  still no subprocess/network call of any kind -- to be a genuine checkout of that same
+  Boundary's own `repository`/`branch`. What remains a non-claim: this package trusts that local
+  `.git` metadata itself to be an honest report of the worktree's own real state; it performs no
+  cryptographic verification of `.git/HEAD`/`.git/config`, and a `.git` directory whose own
+  metadata has been hand-edited to lie is not detected (`CHANGE_EXECUTOR_CONTRACT.md` §13's
+  corresponding non-claims).
 
 ```text
 MERGE_ALLOWED=false

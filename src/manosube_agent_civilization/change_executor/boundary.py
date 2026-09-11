@@ -12,11 +12,46 @@ never merged into one function: :func:`deep_freeze` rebuilds ``dict``/``list`` i
 ``type(x) is list`` checks against its own already-frozen output would spuriously refuse
 genuinely safe, already-validated data (the exact bug closed in a prior Phase 17 round -- see
 ``url_boot/route.py``'s own docstring, Structural Review Round 5, P17-R5-F1).
+
+**Composition-time worktree/repository/branch identity verification (Structural Review Round 2,
+P18-R2-F2).** Structural Review Round 1 (P18-R1-F3) folded ``worktree_root`` inside the closed
+Boundary itself, making it participate in the Boundary fingerprint -- but explicitly disclaimed
+proving the directory it names is genuinely a checkout of that same Boundary's own declared
+``repository``/``branch`` at all (this package still performs no ``subprocess``/network call, so
+it could not previously invoke ``git`` to confirm that association). :func:`validate_execution_
+boundary` now closes that gap, entirely through pure, local file reads of the worktree's own
+``.git`` metadata -- no ``subprocess``, no network, preserving this package's own
+static-conformance guarantee in full:
+
+1. Resolve the real git directory: ``<worktree_root>/.git`` is either a directory (an ordinary
+   checkout) directly, or a file (a linked ``git worktree``) whose one ``gitdir: <path>`` line is
+   followed, resolving a relative path against *worktree_root*.
+2. Read that git directory's own ``HEAD``: it must be ``ref: refs/heads/<branch>`` -- a detached
+   HEAD (a bare SHA, no ``ref:`` prefix) fails closed, since it cannot prove a branch identity at
+   all.
+3. Resolve the *main* repository's own git directory -- for a linked worktree, its own
+   ``commondir`` file names the real one, since only the main repository's own git directory
+   carries a populated ``config`` (a linked worktree's own git directory does not) -- and read its
+   ``config`` (plain INI, via :mod:`configparser`) for ``[remote "origin"] url``, normalized to
+   the identical ``owner/repo`` slug form ``execution_boundary["repository"]`` already uses
+   (handling both ``https://github.com/owner/repo.git`` and ``git@github.com:owner/repo.git``
+   forms, and a bare already-normalized slug unchanged).
+4. Require the parsed branch to equal ``execution_boundary["branch"]`` exactly, and the parsed
+   repository slug to equal ``execution_boundary["repository"]`` exactly -- any mismatch,
+   unparseable ``.git`` metadata, or missing ``.git`` entirely raises
+   :class:`~manosube_agent_civilization.change_executor.errors.ExecutionBoundaryError`, at
+   composition time, before any request-facing operation can even be obtained.
+
+This closes the gap the prior round's own non-claim named (see ``CHANGE_EXECUTOR_CONTRACT.md``'s
+corrected non-claim, which supersedes -- without deleting -- the prior round's own text); the
+prior round's own structural claim (a *given* ``worktree_root`` binds to exactly one Boundary
+fingerprint/slot) is unaffected and still holds in full.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import configparser
 from datetime import datetime
 import hashlib
 from pathlib import Path
@@ -226,6 +261,196 @@ def path_is_admitted(candidate: str, admitted_paths: Sequence[str]) -> bool:
     return False
 
 
+def _resolve_git_dir(worktree_root: Path) -> Path:
+    """Resolve *worktree_root*'s own real git directory -- an ordinary ``.git`` directory
+    directly, or (a linked ``git worktree``) the ``gitdir: <path>`` its own ``.git`` *file*
+    names, resolved against *worktree_root* when relative."""
+
+    dot_git = worktree_root / ".git"
+    if dot_git.is_dir():
+        return dot_git
+    if dot_git.is_file():
+        try:
+            content = dot_git.read_text(encoding="utf-8")
+        except OSError as error:
+            raise ExecutionBoundaryError(
+                f"execution_boundary.worktree_root's own .git file could not be read: {error}"
+            ) from error
+        line = content.strip().splitlines()[0].strip() if content.strip() else ""
+        prefix = "gitdir:"
+        if not line.startswith(prefix):
+            raise ExecutionBoundaryError(
+                f"execution_boundary.worktree_root's own .git file is not a readable "
+                f"'gitdir: <path>' pointer: {content!r}"
+            )
+        raw_path = line[len(prefix) :].strip()
+        gitdir = Path(raw_path)
+        gitdir = gitdir if gitdir.is_absolute() else worktree_root / gitdir
+        gitdir = gitdir.resolve()
+        if not gitdir.is_dir():
+            raise ExecutionBoundaryError(
+                f"execution_boundary.worktree_root's own .git file names a gitdir that does not "
+                f"resolve to a real, existing directory: {gitdir}"
+            )
+        return gitdir
+    raise ExecutionBoundaryError(
+        "execution_boundary.worktree_root carries no .git entry at all -- cannot verify it is a "
+        f"genuine git checkout of the Boundary's own declared repository/branch: {worktree_root}"
+    )
+
+
+def _read_head_branch(git_dir: Path) -> str:
+    """Read *git_dir*'s own ``HEAD`` and require it to name a genuine local branch ref -- a
+    detached HEAD (a bare commit SHA, no ``ref:`` prefix) fails closed, since it cannot prove a
+    branch identity at all."""
+
+    head_path = git_dir / "HEAD"
+    if not head_path.is_file():
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root's own git directory carries no readable HEAD: "
+            f"{git_dir}"
+        )
+    try:
+        content = head_path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root's own HEAD could not be read: {error}"
+        ) from error
+    prefix = "ref:"
+    if not content.startswith(prefix):
+        raise ExecutionBoundaryError(
+            "execution_boundary.worktree_root is a detached HEAD checkout -- cannot prove a "
+            f"branch identity: {content!r}"
+        )
+    ref = content[len(prefix) :].strip()
+    branch_prefix = "refs/heads/"
+    if not ref.startswith(branch_prefix):
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root's own HEAD does not point at a local branch ref: "
+            f"{ref!r}"
+        )
+    branch = ref[len(branch_prefix) :]
+    if not branch:
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root's own HEAD names an empty branch: {content!r}"
+        )
+    return branch
+
+
+def _resolve_config_dir(git_dir: Path) -> Path:
+    """Return the git directory that actually carries a populated ``config`` -- *git_dir*
+    itself, unless it is a linked worktree's own git directory, in which case its own
+    ``commondir`` file names the real, main repository's own git directory (a linked worktree's
+    own git directory carries no ``[remote ...]`` sections of its own)."""
+
+    commondir_path = git_dir / "commondir"
+    if not commondir_path.is_file():
+        return git_dir
+    try:
+        raw = commondir_path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root's own commondir could not be read: {error}"
+        ) from error
+    common = Path(raw)
+    common = common if common.is_absolute() else (git_dir / common)
+    common = common.resolve()
+    if not common.is_dir():
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root's own commondir does not resolve to a real, "
+            f"existing directory: {common}"
+        )
+    return common
+
+
+def _normalize_repository_slug(url: str) -> str:
+    """Normalize a git remote URL to the bare ``owner/repo`` slug form
+    ``execution_boundary["repository"]`` already uses -- handling
+    ``https://github.com/owner/repo.git``, ``git@github.com:owner/repo.git``, and an
+    already-bare ``owner/repo`` slug (passed through unchanged, only trimming a trailing
+    ``.git``/``/``) alike."""
+
+    value = url.strip()
+    if value.endswith(".git"):
+        value = value[: -len(".git")]
+    if not value:
+        raise ExecutionBoundaryError("execution_boundary.worktree_root's own remote url is empty")
+    if "://" in value:
+        _, _, rest = value.partition("://")
+        _, _, path = rest.partition("/")
+        if not path:
+            raise ExecutionBoundaryError(
+                f"execution_boundary.worktree_root's own remote url is not a readable "
+                f"owner/repo URL: {url!r}"
+            )
+        return path.strip("/")
+    if "@" in value and ":" in value:
+        # scp-like syntax, e.g. git@github.com:owner/repo -- the slug is everything after the
+        # first ':' (there is no '/'-only host/path split to make, unlike the '://' form above).
+        _, _, rest = value.partition(":")
+        if not rest:
+            raise ExecutionBoundaryError(
+                f"execution_boundary.worktree_root's own remote url is not a readable "
+                f"scp-like owner/repo reference: {url!r}"
+            )
+        return rest.strip("/")
+    return value.strip("/")
+
+
+def _read_origin_remote_slug(config_dir: Path) -> str:
+    config_path = config_dir / "config"
+    if not config_path.is_file():
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root's own git config carries no readable file: "
+            f"{config_path}"
+        )
+    parser = configparser.ConfigParser(strict=False)
+    try:
+        parser.read(config_path, encoding="utf-8")
+    except configparser.Error as error:
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root's own git config is not readable INI: {error}"
+        ) from error
+    section = 'remote "origin"'
+    if not parser.has_section(section):
+        raise ExecutionBoundaryError(
+            'execution_boundary.worktree_root\'s own git config carries no [remote "origin"] '
+            "section -- cannot verify its own repository identity"
+        )
+    url = parser.get(section, "url", fallback=None)
+    if not url:
+        raise ExecutionBoundaryError(
+            'execution_boundary.worktree_root\'s own [remote "origin"] carries no url'
+        )
+    return _normalize_repository_slug(url)
+
+
+def _verify_worktree_repository_branch_identity(
+    worktree_root: str, repository: str, branch: str
+) -> None:
+    """(P18-R2-F2) Require *worktree_root* to be a genuine git checkout of exactly *repository*/
+    *branch* -- pure, local ``.git`` metadata file reads only, never ``subprocess``/network.
+    Raises :class:`ExecutionBoundaryError` on any mismatch, unparseable metadata, or missing
+    ``.git`` entirely; see this module's own docstring for the full mechanism."""
+
+    root = Path(worktree_root)
+    git_dir = _resolve_git_dir(root)
+    actual_branch = _read_head_branch(git_dir)
+    if actual_branch != branch:
+        raise ExecutionBoundaryError(
+            f"execution_boundary.worktree_root is a git checkout of branch {actual_branch!r}, "
+            f"not the Boundary's own declared branch {branch!r} -- refusing (P18-R2-F2)"
+        )
+    config_dir = _resolve_config_dir(git_dir)
+    actual_repository = _read_origin_remote_slug(config_dir)
+    if actual_repository != repository:
+        raise ExecutionBoundaryError(
+            'execution_boundary.worktree_root\'s own [remote "origin"] names repository '
+            f"{actual_repository!r}, not the Boundary's own declared repository {repository!r} "
+            "-- refusing (P18-R2-F2)"
+        )
+
+
 def validate_execution_boundary(raw: Any) -> dict[str, Any]:
     """Validate *raw* as a closed Execution Boundary, and return a fresh, canonical, plain
     (unfrozen) ``dict``. Every field required by :data:`REQUIRED_BOUNDARY_KEYS` is checked
@@ -280,6 +505,12 @@ def validate_execution_boundary(raw: Any) -> dict[str, Any]:
             f"execution_boundary.worktree_root must resolve to a real, existing directory: "
             f"{worktree_root!r}"
         )
+    # (P18-R2-F2, Structural Review Round 2) worktree_root being an existing directory is
+    # necessary but not sufficient -- require it to also be verified, via pure local .git
+    # metadata reads, as a genuine checkout of this exact Boundary's own repository/branch.
+    _verify_worktree_repository_branch_identity(
+        worktree_root, canonical["repository"], canonical["branch"]
+    )
 
     admitted_paths = canonical["admitted_paths"]
     if type(admitted_paths) is not list or not admitted_paths:
