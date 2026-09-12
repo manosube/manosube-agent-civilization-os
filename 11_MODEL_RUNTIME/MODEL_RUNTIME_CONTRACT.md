@@ -444,3 +444,45 @@ GATE_16_MULTI_MODEL_REPLACEABILITY
 
 `MERGE_ALLOWED`, `ISSUE_CLOSE_ALLOWED`, `PHASE_16_COMPLETE` and `PHASE_17_ALLOWED` are fixed at
 `false` by the adopting authority and are not this document's to change.
+
+## 10. Cross-package extension: `pinned_execution_snapshot` (Phase 19, Issue #77, Structural
+Review Round 3, P19-R3-F1)
+
+`execute_model_work_unit` takes one additional optional keyword parameter, added for Phase 19's
+own Multi-Agent Dynamic Execution package (`multi_agent`) and never reimplemented there:
+
+```python
+result = execute_model_work_unit(
+    store,
+    agent,
+    project_id=project_id,
+    project_binding_id=project_binding_id,
+    model_work_unit_ref=opened["model_work_unit_ref"],
+    adapter=my_model_adapter,
+    executed_at="2026-01-01T00:01:00Z",
+    pinned_execution_snapshot=None,  # optional; default preserves every existing caller unchanged
+)
+```
+
+When omitted (every caller that predates this extension, unchanged), this route's own request
+and committed Envelope continue to declare the true live State a fresh reboot observes at this
+exact call -- identical behaviour to before this parameter existed. When supplied, it must be a
+mapping with exactly `state_revision` (a non-negative `int`, never from the Store's own future --
+a revision ahead of the fresh reboot's own is refused with `ModelRuntimeStaleStateError` before
+the adapter is reached) and `semantic_fingerprint` (the matching fingerprint shape); those two
+values are what the adapter's own real request and the committed Envelope declare *instead of*
+the freshly-rebooted live values, while every other freshness/staleness/Authority check in this
+route still runs against the true live Boot underneath, completely unchanged. `project_binding_ref`
+and `human_authority_ref` are never overridable this way -- they always come from the true live
+Boot, regardless.
+
+This exists because `multi_agent`'s own plans open one shared Model Work Unit that every one of
+1-3 slots' own independent Temporary Agent then executes against in sequence; each slot's own
+real committed Envelope legitimately advances the Store's own live State before the next slot's
+own adapter call, so an unpinned request would let each slot's own request observe a different,
+order-dependent `state_revision`/`semantic_fingerprint` pair -- Structural Review Round 3's own
+P19-R3-F1 finding. Pinning every slot's own real request to the plan's own immutable, genesis-once
+snapshot closes that drift at the one place a real adapter request is ever constructed
+(`_canonical_request`), rather than in `multi_agent`'s own bookkeeping alone. No second Authority
+evaluator, execution route, or Model Runtime owner is introduced by this extension; it is a single
+additive parameter on the one existing route this repository's every caller already shares.

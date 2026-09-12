@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/multi_agent/multi_agent_evidence_aggregation_input.schema.json",
+  "title": "Canonical Multi-Agent Evidence Aggregation Input",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "multi_agent_evidence_aggregation_input_id",
+    "multi_agent_evidence_aggregation_input_semantic_fingerprint",
+    "project_id",
+    "plan_ref",
+    "conflict_set_ref",
+    "admitted_slot_output_refs",
+    "unresolved_capabilities",
+    "absent_slot_output_refs",
+    "release_receipt_refs"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "multi_agent_evidence_aggregation_input_id": {
+      "type": "string",
+      "pattern": "^MULTI-AGENT-AGGREGATION-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "multi_agent_evidence_aggregation_input_semantic_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "plan_ref": {"$ref": "#/$defs/plan_ref"},
+    "conflict_set_ref": {"$ref": "#/$defs/conflict_set_ref"},
+    "admitted_slot_output_refs": {"$ref": "#/$defs/unordered_slot_output_refs"},
+    "unresolved_capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["PROPOSE_EVIDENCE_CANDIDATE"]}
+    },
+    "absent_slot_output_refs": {"$ref": "#/$defs/unordered_slot_output_refs"},
+    "release_receipt_refs": {"$ref": "#/$defs/unordered_release_receipt_refs"}
+  },
+  "$defs": {
+    "plan_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "multi_agent_dynamic_execution_plan"}}}
+      ]
+    },
+    "conflict_set_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "multi_agent_conflict_set"}}}
+      ]
+    },
+    "slot_output_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "multi_agent_slot_output"}}}
+      ]
+    },
+    "unordered_slot_output_refs": {
+      "type": "object",
+      "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"const": "UNORDERED_SET"},
+        "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/slot_output_ref"}}
+      },
+      "additionalProperties": false
+    },
+    "release_receipt_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "multi_agent_agent_release_receipt"}}}
+      ]
+    },
+    "unordered_release_receipt_refs": {
+      "type": "object",
+      "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"const": "UNORDERED_SET"},
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/release_receipt_ref"}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
