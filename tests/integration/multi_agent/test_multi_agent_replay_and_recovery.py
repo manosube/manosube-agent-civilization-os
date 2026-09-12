@@ -156,6 +156,20 @@ class _ReleaseCountingAgentProxy(TemporaryAgent):
 def test_partial_execution_coordinator_crash_and_recovery_leak_no_agent(
     tmp_path: Any, monkeypatch: Any
 ) -> None:
+    """Structural Review Round 4, P19-R4-F2's own required proof (rewritten from this test's
+    pre-Round-4 shape): a genuinely unexpected, non-``ModelRuntimeError`` adapter crash --
+    exactly this test's own ``CrashingMultiAgentAdapter`` -- is no longer allowed to propagate
+    out of the whole orchestration call uncaught (Round 3's own explicit, deliberate design
+    choice, now reversed). It is instead caught by :func:`_execute_one_slot`'s own broadened
+    ``except Exception`` and durably terminalized: this call returns normally, with a typed
+    ``UNAVAILABLE`` outcome and a resolved ``RELEASED`` release receipt for the crashed slot, no
+    Agent left unaccounted for, and no attempt-envelope claim (there is no real Envelope this
+    attempt could ever truthfully name). Because that terminal pair is now genuinely committed,
+    replaying the identical ``plan_ref`` afterward reuses it verbatim -- P19-R4-F2's own
+    ``replay must not ambiguously repeat a terminal attempt`` requirement -- never invoking the
+    adapter a second time for that same, now-permanently-UNAVAILABLE attempt.
+    """
+
     world = authorized_world(tmp_path, risk_class="HIGH")
     opened = _open(world)
 
@@ -173,48 +187,56 @@ def test_partial_execution_coordinator_crash_and_recovery_leak_no_agent(
     crashing_adapter = CrashingMultiAgentAdapter()
     factory_calls = iter([working_adapter, crashing_adapter])
 
-    with pytest.raises(RuntimeError, match="simulated coordinator/infrastructure crash"):
-        _execute(world, opened["plan_ref"], lambda: next(factory_calls), "2026-09-11T01:30:00Z")
+    executed = _execute(
+        world, opened["plan_ref"], lambda: next(factory_calls), "2026-09-11T01:30:00Z"
+    )
 
-    # Slot 0 completed and was released before the crash on slot 1; slot 1's own Agent (the
-    # freshness-check helper aside) was also released in its own finally even though the
-    # exception then propagated out of the whole call.
+    # No Agent this package constructed is ever leaked, even for the slot whose own adapter call
+    # crashed with a genuinely unexpected exception.
     assert counters["constructed"] == counters["released"]
     assert counters["constructed"] >= 2
 
+    assert crashing_adapter.execute_call_count == 1
+    assert executed["slot_outputs"][0]["outcome"] == "CANDIDATE_ACCEPTED"
+    slot1_output = executed["slot_outputs"][1]
+    assert slot1_output["outcome"] == "UNAVAILABLE"
+    assert slot1_output["model_execution_envelope_ref"] is None
+    assert slot1_output["result_fingerprint"] is None
+    assert executed["release_receipts"][1]["release_status"] == "RELEASED"
+
     store = world["store"]
-    slot0_output = store.resolve_record(
-        world["project_id"],
-        "multi_agent_slot_output",
-        route_module.compute_slot_output_id(  # type: ignore[attr-defined]
-            project_id=world["project_id"], plan_ref=opened["plan_ref"], slot_index=0
-        ),
+    assert (
+        route_module.resolve_and_verify_committed_slot_output(  # type: ignore[attr-defined]
+            store,
+            world["project_id"],
+            route_module.compute_slot_output_id(  # type: ignore[attr-defined]
+                project_id=world["project_id"], plan_ref=opened["plan_ref"], slot_index=1
+            ),
+        )
+        is not None
     )
-    assert slot0_output is not None
-    assert slot0_output["outcome"] == "CANDIDATE_ACCEPTED"
-    slot1_output = store.resolve_record(
-        world["project_id"],
-        "multi_agent_slot_output",
-        route_module.compute_slot_output_id(  # type: ignore[attr-defined]
-            project_id=world["project_id"], plan_ref=opened["plan_ref"], slot_index=1
-        ),
+    # No claim is committed for a crashed attempt: no real Envelope was ever derived to name.
+    assert (
+        _record_kind_count(store, world["project_id"], "multi_agent_slot_attempt_envelope_claim")
+        == 1
     )
-    assert slot1_output is None  # the crash happened before slot 1's own attempt was committed
 
     monkeypatch.undo()
 
-    # Recovery: a fresh call over the identical plan_ref reuses slot 0 untouched (no second
-    # adapter call) and completes slot 1 fresh.
+    # Replay: a fresh call over the identical plan_ref reuses BOTH slots verbatim -- slot 1's own
+    # crash is now a genuine terminal attempt, not a recoverable gap, so the adapter is never
+    # reached again for it.
     recovering_adapter = SeededMultiAgentAdapter(candidate_fields={"summary": "ok"})
     recovered = _execute(
         world, opened["plan_ref"], iter([recovering_adapter]).__next__, "2026-09-11T01:45:00Z"
     )
     assert working_adapter.execute_call_count == 1
-    assert recovering_adapter.execute_call_count == 1
+    assert crashing_adapter.execute_call_count == 1
+    assert recovering_adapter.execute_call_count == 0
     assert len(recovered["slot_outputs"]) == 2
-    assert all(so["outcome"] == "CANDIDATE_ACCEPTED" for so in recovered["slot_outputs"])
+    assert recovered["slot_outputs"][0]["outcome"] == "CANDIDATE_ACCEPTED"
+    assert recovered["slot_outputs"][1]["outcome"] == "UNAVAILABLE"
     assert all(receipt["release_status"] == "RELEASED" for receipt in recovered["release_receipts"])
-    assert recovered["aggregation_input"]["unresolved_capabilities"] == []
 
 
 def test_p19_r1_f2_a_crash_between_slot_output_derivation_and_commit_leaves_neither_record(
@@ -438,3 +460,79 @@ def test_p19_r3_f4_a_genuinely_hanging_adapter_is_bounded_by_the_plans_own_real_
     # adapter call ran past the bound.
     release_receipt = executed["release_receipts"][0]
     assert release_receipt["release_status"] == "RELEASED"
+
+
+def test_p19_r4_f1_a_late_returning_adapter_call_never_commits_after_this_call_gave_up(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 4, P19-R4-F1's own required proof.
+
+    ``executor.shutdown(wait=False)`` never stops or kills the abandoned background thread --
+    it only stops this call's own waiting on it -- so a genuinely late-returning adapter call
+    could, before this fix, still go on to commit a real Envelope and attempt-claim well after
+    this function had already given up and recorded a typed ``TIMEOUT`` outcome. This proof lets
+    that abandoned worker actually finish (a real wait past its own sleep duration, never a
+    mock or a monkeypatched clock), then inspects the Store directly and proves every late write
+    that attempt could have made is durably absent: no committed attempt-claim exists under this
+    attempt's own deterministic claim key, and the Store's own committed State revision -- which
+    only ever advances via a real commit -- is unchanged from immediately after the bounded call
+    itself already returned.
+    """
+
+    import time
+
+    from manosube_agent_civilization.multi_agent.route import (
+        compute_slot_attempt_envelope_claim_id,
+        resolve_and_verify_committed_slot_attempt_envelope_claim,
+    )
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(
+        world["store"],
+        coordinator,
+        **open_plan_kwargs(world),
+        per_slot_timeout_seconds=1,
+    )
+    coordinator.release()
+
+    sleep_seconds = 3.0
+    hanging_adapter = HangingMultiAgentAdapter(sleep_seconds=sleep_seconds)
+    executed = _execute(world, opened["plan_ref"], lambda: hanging_adapter, "2026-09-11T01:30:00Z")
+
+    slot_output = executed["slot_outputs"][0]
+    assert slot_output["outcome"] == "TIMEOUT"
+    assert slot_output["model_execution_envelope_ref"] is None
+
+    claim_key = compute_slot_attempt_envelope_claim_id(
+        project_id=world["project_id"], plan_ref=dict(opened["plan_ref"]), slot_index=0
+    )
+    assert (
+        resolve_and_verify_committed_slot_attempt_envelope_claim(
+            world["store"], world["project_id"], claim_key
+        )
+        is None
+    )
+    state_revision_immediately_after_timeout = world["store"].load_current(world["project_id"])[
+        "state_revision"
+    ]
+
+    # A real wait, strictly longer than the hanging adapter's own real sleep, for the abandoned
+    # background worker to actually finish and reach this route's own cancellation check.
+    time.sleep(sleep_seconds + 5.0)
+    assert hanging_adapter.execute_call_count == 1
+
+    # LATE_WRITE_COUNT=0: neither the attempt-claim nor any State-revision advance exists after
+    # the abandoned worker's own real completion -- this call's own typed TIMEOUT, recorded
+    # while the caller had already moved on, was never silently overwritten by a late success.
+    assert (
+        resolve_and_verify_committed_slot_attempt_envelope_claim(
+            world["store"], world["project_id"], claim_key
+        )
+        is None
+    )
+    assert (
+        world["store"].load_current(world["project_id"])["state_revision"]
+        == state_revision_immediately_after_timeout
+    )

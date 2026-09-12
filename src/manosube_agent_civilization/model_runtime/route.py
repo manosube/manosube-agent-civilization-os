@@ -80,7 +80,7 @@ live Phase 12 Temporary Agent Execution Contract (its own boot_context, read not
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from manosube_agent_civilization.agent_runtime import TemporaryAgent, start_temporary_agent
@@ -119,6 +119,7 @@ from .errors import (
     ModelRecordIntegrityError,
     ModelReleasedAgentError,
     ModelRuntimeAuthorityFreshnessError,
+    ModelRuntimeExecutionCancelledError,
     ModelRuntimeRequirementError,
     ModelRuntimeStaleStateError,
 )
@@ -960,9 +961,10 @@ def _normalize(
 
 
 def _require_valid_pinned_execution_snapshot(
-    value: Mapping[str, Any], *, fresh: Mapping[str, Any]
+    value: Mapping[str, Any], *, fresh: Mapping[str, Any], work_unit: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Validate a caller-supplied *pinned_execution_snapshot* against the true live State.
+    """Validate a caller-supplied *pinned_execution_snapshot* against the true live State and
+    the resolved Work Unit's own genesis snapshot.
 
     Multi-Agent Dynamic Execution Round 3, P19-R3-F1: a caller orchestrating several bounded
     executions against *one* immutable plan snapshot needs every one of those executions' own
@@ -974,6 +976,15 @@ def _require_valid_pinned_execution_snapshot(
     is what reaches the adapter's own request and the committed Envelope alike. Authority
     freshness is still re-proven against the true live Boot below, unchanged: this override
     narrows only *which State the request itself declares*, never *which Authority is honored*.
+
+    Structural Review Round 4, P19-R4-F4: a caller may not mint an arbitrary
+    ``(state_revision, semantic_fingerprint)`` pair this way -- the *only* value this override
+    may ever carry is the exact ``opened_state_revision``/``opened_semantic_fingerprint`` pair
+    already recorded on this call's own resolved, schema-valid, identity-recomputed Work Unit
+    (verified by :func:`_resolve_work_unit` before this function is ever reached). That pair is
+    itself a real, committed, canonical fact -- the State this Work Unit was genuinely opened
+    against -- never a value this function or its caller invents. A supplied pair that does not
+    equal it is refused before the adapter is ever reached, regardless of how it was obtained.
     """
 
     if not isinstance(value, Mapping) or set(value) != {"state_revision", "semantic_fingerprint"}:
@@ -992,9 +1003,22 @@ def _require_valid_pinned_execution_snapshot(
             f"Store has never reached (current revision {fresh['state_revision']}) -- a pinned "
             "snapshot may never claim a revision from the Store's own future"
         )
+    semantic_fingerprint = dict(value["semantic_fingerprint"])
+    if state_revision != int(work_unit["opened_state_revision"]) or semantic_fingerprint != dict(
+        work_unit["opened_semantic_fingerprint"]
+    ):
+        raise ModelRuntimeRequirementError(
+            "pinned_execution_snapshot does not equal the resolved Work Unit's own "
+            "opened_state_revision/opened_semantic_fingerprint -- a caller may only pin this "
+            f"call's own request to that exact, already Store-resolved, identity-verified "
+            f"genesis snapshot, never an independently supplied value: got "
+            f"(state_revision={state_revision!r}, semantic_fingerprint={semantic_fingerprint!r}), "
+            f"expected (state_revision={work_unit['opened_state_revision']!r}, "
+            f"semantic_fingerprint={dict(work_unit['opened_semantic_fingerprint'])!r})"
+        )
     return {
         "state_revision": state_revision,
-        "semantic_fingerprint": dict(value["semantic_fingerprint"]),
+        "semantic_fingerprint": semantic_fingerprint,
     }
 
 
@@ -1008,6 +1032,9 @@ def execute_model_work_unit(
     adapter: ModelAdapter,
     executed_at: str,
     pinned_execution_snapshot: Mapping[str, Any] | None = None,
+    cancellation_check: Callable[[], bool] | None = None,
+    additional_records_factory: Callable[[Mapping[str, Any]], list[tuple[str, str, dict[str, Any]]]]
+    | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded, provider-neutral model invocation against one already-open Work Unit
     and return ``{"envelope": ..., "receipt": ModelExecutionReceipt}``.
@@ -1021,10 +1048,29 @@ def execute_model_work_unit(
     *pinned_execution_snapshot* is optional and, when omitted (every existing caller's own
     behavior, unchanged), this route's request/envelope continue to declare the true live State
     a fresh reboot observes at this exact call, exactly as before. When supplied -- see
-    :func:`_require_valid_pinned_execution_snapshot` -- its own ``state_revision``/
-    ``semantic_fingerprint`` are what the adapter's own request and the committed Envelope
-    declare *instead of* the freshly-rebooted live values, while every freshness/staleness check
-    below still runs against the true live Boot, unchanged.
+    :func:`_require_valid_pinned_execution_snapshot` -- it must equal the resolved Work Unit's
+    own ``opened_state_revision``/``opened_semantic_fingerprint`` pair exactly (P19-R4-F4: never
+    an independently caller-minted value), and that pair is what the adapter's own request and
+    the committed Envelope declare *instead of* the freshly-rebooted live values, while every
+    freshness/staleness check below still runs against the true live Boot, unchanged.
+
+    *cancellation_check* is optional (Structural Review Round 4, P19-R4-F1). When supplied, it
+    is called once, immediately before the Envelope would be committed; if it returns ``True``,
+    this call raises :class:`~manosube_agent_civilization.model_runtime.errors.
+    ModelRuntimeExecutionCancelledError` instead of committing anything. This exists for a
+    caller that bounds this call's own real duration on its own side (e.g. a worker-thread
+    timeout): a real adapter call may still be running past that caller's own bound, since a
+    blocked Python thread cannot be forcibly killed, but its late completion must never silently
+    become a committed success after the caller already recorded its own typed timeout outcome.
+
+    *additional_records_factory* is optional (Structural Review Round 4, P19-R4-F3). When
+    supplied, it is called once with the fully-derived, self-verified Envelope (after
+    *cancellation_check*, so a cancelled attempt never reaches it) and must return a list of
+    ``(kind, id, body)`` record tuples; those records are committed in the *exact same atomic
+    transaction* as the Envelope itself, never a separate follow-up commit. This lets a caller
+    durably claim its own attempt-tracking record against a real Envelope with no crash window
+    between the two -- either both commit, or neither does -- without this route ever needing to
+    know that other record's own kind or shape.
 
     Every refusal below lands with the adapter called **zero** times and nothing committed: a
     released or foreign Temporary Agent, a stale execution contract, a Work Unit that does not
@@ -1032,8 +1078,9 @@ def execute_model_work_unit(
     that does not resolve or does not restate this exact question, a Boundary or Authority
     Decision belonging to a different Human Authority, a Work Unit claiming a State revision
     this Store never reached, or a *pinned_execution_snapshot* claiming a revision from the
-    Store's own future. Only after all of them does the adapter exist at all, and what it then
-    returns can only ever become one of the seven typed outcomes.
+    Store's own future or not equal to the resolved Work Unit's own genesis snapshot. Only after
+    all of them does the adapter exist at all, and what it then returns can only ever become one
+    of the seven typed outcomes.
     """
 
     _require_canonical_identity("project_id", project_id)
@@ -1050,11 +1097,6 @@ def execute_model_work_unit(
         project_binding_id=project_binding_id,
         require_exact_state=False,
     )
-    execution_snapshot = (
-        fresh
-        if pinned_execution_snapshot is None
-        else _require_valid_pinned_execution_snapshot(pinned_execution_snapshot, fresh=fresh)
-    )
     resumed = _resume_from_store(
         store,
         project_id=project_id,
@@ -1064,6 +1106,13 @@ def execute_model_work_unit(
     )
     work_unit = resumed["model_work_unit"]
     boundary = resumed["model_execution_boundary"]
+    execution_snapshot = (
+        fresh
+        if pinned_execution_snapshot is None
+        else _require_valid_pinned_execution_snapshot(
+            pinned_execution_snapshot, fresh=fresh, work_unit=work_unit
+        )
+    )
 
     declared_identity = getattr(adapter, "adapter_identity", None)
     if not isinstance(declared_identity, Mapping):
@@ -1149,16 +1198,32 @@ def execute_model_work_unit(
             "newly derived Envelope's own recomputed semantic fingerprint does not equal its own "
             "declared value -- refusing to commit"
         )
+    # Structural Review Round 4, P19-R4-F1: checked immediately before the one commit below,
+    # after the real adapter call already returned -- a caller that bounded this call's own
+    # duration on its own side and already gave up (recording its own typed timeout outcome)
+    # must never have this late-returning result silently become a committed success.
+    if cancellation_check is not None and cancellation_check():
+        raise ModelRuntimeExecutionCancelledError(
+            "this call's own caller already gave up on this attempt before this Envelope could "
+            "be committed -- refusing to commit a late, no-longer-awaited result"
+        )
+    records: list[tuple[str, str, dict[str, Any]]] = [
+        (
+            ENVELOPE_RECORD_KIND,
+            str(envelope["model_execution_envelope_id"]),
+            envelope,
+        )
+    ]
+    if additional_records_factory is not None:
+        # Structural Review Round 4, P19-R4-F3: a caller-supplied record (e.g. an attempt claim
+        # naming this exact Envelope) commits in this exact same atomic transaction -- either
+        # both land, or neither does, closing the crash window a separate follow-up commit would
+        # otherwise leave between "Envelope committed" and "caller's own record committed".
+        records.extend(additional_records_factory(envelope))
     _commit(
         store,
         project_id,
-        [
-            (
-                ENVELOPE_RECORD_KIND,
-                str(envelope["model_execution_envelope_id"]),
-                envelope,
-            )
-        ],
+        records,
         committed_at=executed_at,
         project_binding_id=project_binding_id,
         expected_authority=fresh,

@@ -30,8 +30,13 @@ from manosube_agent_civilization.multi_agent import (
     route_orchestration_to_evidence,
 )
 from manosube_agent_civilization.multi_agent.errors import (
+    MultiAgentRecordIntegrityError,
     MultiAgentRequirementError,
     MultiAgentStaleStateError,
+)
+from manosube_agent_civilization.multi_agent.route import (
+    compute_slot_attempt_envelope_claim_id,
+    resolve_and_verify_committed_slot_attempt_envelope_claim,
 )
 from manosube_agent_civilization.store import FileStateStore
 
@@ -189,3 +194,99 @@ def test_kernel_topology_still_reports_single_canonical_owners() -> None:
     topology.kernel_topology_inventory.cache_clear()
     assert topology.k002_single_canonical_state_owner() is True
     assert topology.k003_single_authority_and_transition_owner() is True
+
+
+def test_p19_r4_f5_a_redirected_envelope_ref_on_a_committed_claim_is_refused(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 4, P19-R4-F5's own required proof:
+    ``resolve_and_verify_committed_slot_attempt_envelope_claim`` previously verified only the
+    claim's own declared identity against the Store lookup key -- never recomputing its own
+    identity or its own semantic fingerprint from its full content, unlike every sibling resolver
+    in this module. A claim whose ``model_execution_envelope_ref`` is redirected to name a
+    *different*, genuinely real, committed Envelope (never a forged or nonexistent one) --
+    while its own declared identity and fingerprint fields are left exactly as they were before
+    the redirection -- is a schema-valid record whose lookup key still matches its own declared
+    id. Only an independent recomputation of its own semantic fingerprint from its actual
+    content (which includes ``model_execution_envelope_ref``) can catch this, and this proof
+    shows it now does.
+    """
+
+    import json
+
+    world = authorized_world(tmp_path, risk_class="HIGH")
+    store = world["store"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    # Distinct candidate content per slot (never the same adapter instance twice): the two
+    # slots share one Model Work Unit, so a real Envelope's own content-addressed identity
+    # differs between slots only if the candidate content itself differs.
+    factory_calls = iter(
+        [
+            SeededMultiAgentAdapter(candidate_fields={"summary": "slot-0-candidate"}),
+            SeededMultiAgentAdapter(candidate_fields={"summary": "slot-1-candidate"}),
+        ]
+    )
+    coordinator = _coordinator(world)
+    executed = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened["plan_ref"],
+        model_adapter_factory=lambda: next(factory_calls),
+        executed_at="2026-09-11T01:30:00Z",
+    )
+    coordinator.release()
+    assert len(executed["slot_outputs"]) == 2
+    envelope_ref_0 = executed["slot_outputs"][0]["model_execution_envelope_ref"]
+    envelope_ref_1 = executed["slot_outputs"][1]["model_execution_envelope_ref"]
+    assert envelope_ref_0 is not None and envelope_ref_1 is not None
+    assert envelope_ref_0["id"] != envelope_ref_1["id"]
+
+    claim_key = compute_slot_attempt_envelope_claim_id(
+        project_id=world["project_id"], plan_ref=dict(opened["plan_ref"]), slot_index=0
+    )
+    # Sanity: the genuine, untampered claim resolves cleanly before this test tampers it.
+    assert (
+        resolve_and_verify_committed_slot_attempt_envelope_claim(
+            store, world["project_id"], claim_key
+        )
+        is not None
+    )
+
+    from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
+    from manosube_agent_civilization.store.atomic_write import atomic_write
+
+    claim_kind = "multi_agent_slot_attempt_envelope_claim"
+    claim_path = (
+        store.root / "projects" / world["project_id"] / "records" / claim_kind / f"{claim_key}.json"
+    )
+    tampered = json.loads(claim_path.read_text(encoding="utf-8"))
+    assert tampered["model_execution_envelope_ref"]["id"] == envelope_ref_0["id"]
+    # The redirection: slot 0's own claim now names slot 1's own genuinely real, committed
+    # Envelope, while every other declared field -- including the claim's own declared identity
+    # and semantic fingerprint -- is left exactly as it was.
+    tampered["model_execution_envelope_ref"] = dict(envelope_ref_1)
+    tampered_bytes = canonical_json_bytes(tampered)
+
+    # The Store's own manifest/journal claimant mechanism keeps a staged copy of this same
+    # record alongside the permanent file and refuses (CorruptStoreError) if the two ever
+    # diverge -- a real, independent, lower-layer integrity check this test must not trip, so
+    # every staged copy this claim's own committing transaction(s) left behind is overwritten
+    # identically, leaving only the claim's own declared fingerprint stale relative to its own
+    # (now-redirected) content -- exactly the gap this proof targets.
+    recovery_dir = store.root / "projects" / world["project_id"] / "state" / "recovery"
+    staged_name = f"{claim_kind}__{claim_key}.json"
+    for journal in recovery_dir.iterdir() if recovery_dir.exists() else []:
+        staged_path = journal / "records" / staged_name
+        if staged_path.exists():
+            atomic_write(staged_path, tampered_bytes)
+    atomic_write(claim_path, tampered_bytes)
+
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        resolve_and_verify_committed_slot_attempt_envelope_claim(
+            store, world["project_id"], claim_key
+        )

@@ -3303,3 +3303,64 @@ Phase 19自身のこのPR #78には一切マージされていない）。
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_3_REVIEWED_HEAD`・
 Issue #75/PR #79のclosed-unmerged状態。§41以前のセクションが投影する過去のPhase/PR状態はそのまま
 保持され、本節のみが現在の投影として優先される（last-wins）。
+
+# 43. Phase 19 Structural Review Round 4 bounded current-state restatement (Issue #77, PR #78)
+
+本節は、Structural Advisor Structural Review Round 4（reviewed head/AUTHORIZED_TARGET_SHA
+`0927b3fb712a27d00f54d3ea12eed55984c5518f`、finding `P19-R4-F1`〜`P19-R4-F5`）をSHUKOUが
+`ADOPT_P19_R4_STRUCTURAL_CORRECTIONS`として正式採択した後、Claude Codeが既存branch
+`agent/issue-77-phase19-multi-agent-dynamic-execution`・既存PR #78上でF1〜F5の是正を実装した
+時点の、bounded・append-only current-state restatementである（SHUKOU正式採択コメント：
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5648836483
+、Claude Code実装ハンドオフコメント：
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5648839492
+、GitHub API再接続・再確認通知コメント：
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5648864760
+、いずれも本記録作成者自身がGitHub API経由でauthor login/id/associationを直接検証済み）。
+GitHub MCPサーバの一時的な切断が本Round着手前に発生したが、切断中は一切の行動を取らず、
+再接続後にPR #78のPR本体・当該3コメントを本記録作成者自身が独立にGitHub API経由で再取得し、
+live head（`0927b3fb712a27d00f54d3ea12eed55984c5518f`、AUTHORIZED_TARGET_SHAと完全一致）・
+base（`main`@`0ced9d0dd5658196b7a6dc085ca839fa514f1eeb`、不変）・3コメントいずれもauthor
+`manosube`（OWNER）であることを確認した上で実装に着手した。
+§0冒頭のheader blockおよびセクション1〜42の本文は、先行するStructural Review Round 1自身が
+P19-R1-F6として指摘した通り、書き換えない -- 本節が最後に追記される、bounded・last-wins
+restatementである。
+
+是正した5個のfindingの要旨: P19-R4-F1（タイムアウトしたattemptが後から遅延commitできない
+よう、`_execute_one_slot`の`threading.Event`を`cancellation_check`として`execute_model_work_
+unit`へ渡し、そのrouteが実際のcommit直前にそれを検査して`ModelRuntimeExecutionCancelledError`
+で拒否する）、P19-R4-F2（slot Agent構築後の任意の例外を`except Exception`へ広げ、durableな
+typed `UNAVAILABLE`結果とrelease receiptを必ず残す -- Round 3自身の意図的な設計判断を反転）、
+P19-R4-F3（EnvelopeとattemptクレームをModel Runtimeの新規`additional_records_factory`により
+単一のatomic commitへ統合し、以前2つの別transactionが残していたcrash windowを解消）、
+P19-R4-F4（`pinned_execution_snapshot`を、解決済みWork Unit自身の`opened_state_revision`/
+`opened_semantic_fingerprint`と厳密一致するよう要求し、任意にmintされた偽のペアを拒否）、
+P19-R4-F5（`resolve_and_verify_committed_slot_attempt_envelope_claim`が、姉妹resolverと同様に
+自身のidentityとsemantic fingerprintを再計算・比較するよう修正し、redirectされた
+`model_execution_envelope_ref`を検出可能にする）。
+
+```text
+OBSERVED_AT_UTC=2026-09-12T14:30:00Z
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_PR_OPEN
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=78
+GOVERNING_ISSUE=#77
+STRUCTURAL_REVIEW_ROUND_4_REVIEWED_HEAD=0927b3fb712a27d00f54d3ea12eed55984c5518f
+AUTHORIZED_TARGET_SHA=0927b3fb712a27d00f54d3ea12eed55984c5518f
+ADOPTION_ID=ADOPT_P19_R4_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P19-R4-F1,P19-R4-F2,P19-R4-F3,P19-R4-F4,P19-R4-F5
+
+MERGE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+このrestatementは、この一回の追記時点で真であった七個のfieldの事実記録に限られる:
+`CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
+`MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_4_REVIEWED_HEAD`。
+§42以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
+優先される（last-wins）。

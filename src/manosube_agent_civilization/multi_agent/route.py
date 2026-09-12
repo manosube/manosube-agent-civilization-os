@@ -63,17 +63,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import concurrent.futures
+import threading
 from typing import Any
 
 from manosube_agent_civilization.agent_runtime import TemporaryAgent, start_temporary_agent
-from manosube_agent_civilization.agent_runtime.errors import AgentReleasedError, AgentRuntimeError
+from manosube_agent_civilization.agent_runtime.errors import AgentReleasedError
 from manosube_agent_civilization.difference.errors import DifferenceValidationError
 from manosube_agent_civilization.difference.identity import difference_id as compute_difference_id
 from manosube_agent_civilization.difference.validation import (
     DIFFERENCE_SCHEMA_BASE,
     validate_record as validate_canonical_record,
 )
-from manosube_agent_civilization.model_runtime.errors import ModelRuntimeError
 from manosube_agent_civilization.model_runtime.route import (
     execute_model_work_unit,
     open_model_work_unit,
@@ -125,6 +125,8 @@ from .identity import (
     multi_agent_dynamic_execution_plan_semantic_fingerprint,
     multi_agent_evidence_aggregation_input_id,
     multi_agent_evidence_aggregation_input_semantic_fingerprint,
+    multi_agent_slot_attempt_envelope_claim_id,
+    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
     multi_agent_slot_output_id,
     multi_agent_slot_output_semantic_fingerprint,
 )
@@ -482,10 +484,25 @@ def resolve_and_verify_committed_slot_attempt_envelope_claim(
     claim = require_valid_multi_agent_slot_attempt_envelope_claim(resolved)
     _require_same_project(claim, project_id, SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND)
     declared_id = claim.get("multi_agent_slot_attempt_envelope_claim_id")
-    if claim_id != declared_id:
+    recomputed_id = multi_agent_slot_attempt_envelope_claim_id(claim)
+    if claim_id != declared_id or recomputed_id != declared_id:
         raise MultiAgentRecordIntegrityError(
-            "resolved multi_agent_slot_attempt_envelope_claim's own declared identity does not "
-            f"equal the Store lookup key: lookup={claim_id!r}, declared={declared_id!r}"
+            "resolved multi_agent_slot_attempt_envelope_claim's own identity does not agree "
+            f"across the Store lookup key, its own declared value, and its own recomputed "
+            f"value -- lookup={claim_id!r}, declared={declared_id!r}, recomputed={recomputed_id!r}"
+        )
+    # Structural Review Round 4, P19-R4-F5: a claim's own semantic fingerprint is derived from
+    # its full field set, including model_execution_envelope_ref -- recomputing and comparing it
+    # here (the identical sibling pattern already applied above and in
+    # resolve_and_verify_committed_release_receipt) is what actually detects a redirected
+    # envelope ref, since a redirected ref alone would still satisfy the identity check above.
+    if multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(claim) != claim.get(
+        "multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"
+    ):
+        raise MultiAgentRecordIntegrityError(
+            f"resolved multi_agent_slot_attempt_envelope_claim {claim_id!r} own recomputed "
+            "semantic fingerprint does not equal its own declared value -- refusing to trust "
+            "any of its fields"
         )
     return claim
 
@@ -915,6 +932,39 @@ def _execute_one_slot(
             # *this call never blocks past it and never reports success for an unbounded
             # attempt*, not that the abandoned background call is terminated.
             timeout_seconds = float(plan["execution_bounds"]["per_slot_timeout_seconds"])
+            # Structural Review Round 4, P19-R4-F1: this Event is the one signal the abandoned
+            # background worker actually observes. `executor.shutdown(wait=False)` below never
+            # stops or kills that thread -- it only stops waiting on it -- so without this signal
+            # a late-returning adapter call could still silently commit a real Envelope/claim
+            # after this function has already given up and recorded TIMEOUT.
+            cancelled = threading.Event()
+
+            def _build_claim_records(
+                envelope: Mapping[str, Any],
+            ) -> list[tuple[str, str, dict[str, Any]]]:
+                # Structural Review Round 4, P19-R4-F3: this attempt's own claim now commits in
+                # the SAME atomic transaction as its Envelope, via
+                # execute_model_work_unit's own additional_records_factory -- eliminating (not
+                # just narrowing) the separate follow-up commit Round 3's own design left as a
+                # real crash window between "Envelope committed" and "claim committed": either
+                # both land, or neither does.
+                claim = derive_multi_agent_slot_attempt_envelope_claim(
+                    project_id=project_id,
+                    plan_ref=dict(plan_ref),
+                    slot_index=slot_index,
+                    attempt_ordinal=1,
+                    model_execution_envelope_ref={
+                        "kind": ENVELOPE_RECORD_KIND,
+                        "id": str(envelope["model_execution_envelope_id"]),
+                    },
+                )
+                return [
+                    (
+                        SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND,
+                        str(claim["multi_agent_slot_attempt_envelope_claim_id"]),
+                        claim,
+                    )
+                ]
 
             def _call_execute_model_work_unit() -> dict[str, Any]:
                 return execute_model_work_unit(
@@ -929,6 +979,8 @@ def _execute_one_slot(
                         "state_revision": plan["boot_state_revision"],
                         "semantic_fingerprint": plan["boot_semantic_fingerprint"],
                     },
+                    cancellation_check=cancelled.is_set,
+                    additional_records_factory=_build_claim_records,
                 )
 
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -936,11 +988,16 @@ def _execute_one_slot(
             try:
                 result = future.result(timeout=timeout_seconds)
             except concurrent.futures.TimeoutError:
-                # The plan's own real per_slot_timeout_seconds elapsed before the adapter call
-                # returned. Never reported as success: a typed TIMEOUT outcome, no Envelope ref
-                # (none is known to exist), and no claim committed -- there is no real Envelope
-                # this attempt could name. This call returns now regardless of whether the
-                # abandoned background call ever completes.
+                # Structural Review Round 4, P19-R4-F1: signal the still-running background
+                # worker that this call has already given up on it -- checked by
+                # execute_model_work_unit itself immediately before it would otherwise commit an
+                # Envelope (and, via additional_records_factory, this attempt's own claim) for
+                # this attempt. The plan's own real per_slot_timeout_seconds elapsed before the
+                # adapter call returned. Never reported as success: a typed TIMEOUT outcome, no
+                # Envelope ref (none is known to exist), and no claim committed -- there is no
+                # real Envelope this attempt could name. This call returns now regardless of
+                # whether the abandoned background call ever completes.
+                cancelled.set()
                 outcome = "TIMEOUT"
                 outcome_detail = (
                     f"adapter call did not return within this plan's own "
@@ -954,47 +1011,22 @@ def _execute_one_slot(
                     "kind": ENVELOPE_RECORD_KIND,
                     "id": str(envelope["model_execution_envelope_id"]),
                 }
-                # Structural Review Round 3, P19-R3-F3: durably claim this attempt's own real,
-                # already-committed Envelope *before* deriving or committing this slot's own
-                # terminal pair -- the one fact a coordinator crash right after this point must
-                # leave behind, so recovery reuses this real Envelope rather than calling the
-                # adapter a second time (see the ``existing_claim is not None`` branch above).
-                claim = derive_multi_agent_slot_attempt_envelope_claim(
-                    project_id=project_id,
-                    plan_ref=dict(plan_ref),
-                    slot_index=slot_index,
-                    attempt_ordinal=1,
-                    model_execution_envelope_ref=envelope_ref,
-                )
-                _commit(
-                    store,
-                    project_id,
-                    [
-                        (
-                            SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND,
-                            str(claim["multi_agent_slot_attempt_envelope_claim_id"]),
-                            claim,
-                        )
-                    ],
-                    committed_at=executed_at,
-                    project_binding_id=project_binding_id,
-                    expected_authority=fresh_authority,
-                    transaction_prefix="TX-MULTI-AGENT-ENVELOPE-CLAIM",
-                    transaction_key=str(claim["multi_agent_slot_attempt_envelope_claim_id"]),
-                )
+                # This attempt's own claim was already committed, atomically with its Envelope,
+                # by execute_model_work_unit itself via _build_claim_records above (P19-R4-F3) --
+                # no separate commit call remains here.
             finally:
                 executor.shutdown(wait=False)
-        except (ModelRuntimeError, AgentRuntimeError) as error:
-            # Disclosed judgment call (P19-C5/V6): a caught Model Runtime or Agent Runtime
-            # operational failure never loses this slot's own provenance for the sake of the
-            # others -- it becomes a first-class, honestly-classified UNAVAILABLE attempt rather
-            # than an exception that aborts the whole orchestration. A genuinely unexpected error
-            # (any other exception type) is deliberately NOT caught here -- it propagates, the
-            # `finally` below still releases this slot's own Agent, and the orchestration attempt
-            # as a whole aborts, leaving every slot completed so far durably committed and
-            # released for a later, recovering call to resume. No claim is committed for this
-            # branch: there is no real Envelope to name, so a genuine retry (not a duplicate
-            # adapter call) is the correct recovery.
+        except Exception as error:
+            # Structural Review Round 4, P19-R4-F2: broadened from
+            # `except (ModelRuntimeError, AgentRuntimeError)` to every exception type --
+            # deliberately reversing Round 3's own explicit design choice. Any exception raised
+            # after this slot's own Agent was constructed, including a genuinely unexpected
+            # adapter crash, must still leave a durable, typed terminal outcome and a resolved
+            # release receipt for this slot (P19-R4-F2), rather than propagating uncaught out of
+            # the whole orchestration call and leaving this slot's own attempt with no terminal
+            # record at all. The `finally` below still releases this slot's own Agent either way.
+            # No claim is committed for this branch: there is no real Envelope to name, so a
+            # genuine retry (not a duplicate adapter call) is the correct recovery.
             outcome = "UNAVAILABLE"
             outcome_detail = f"{type(error).__name__}: {error}"[:2000]
         finally:

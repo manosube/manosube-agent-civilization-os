@@ -831,3 +831,107 @@ existing branch/PR, no new module or owner introduced.
   Round 3 as the live work unit, and records Issue #75/PR #79 (a separate, unrelated work item)
   as independently re-verified `CLOSED`/unmerged/cancelled and no longer an integration barrier
   for Phase 19 -- without rewriting §0's header block or any section through §41.
+
+## 13. Structural Review Round 4 corrections (P19-R4-F1..F5)
+
+Adopted as `ADOPT_P19_R4_STRUCTURAL_CORRECTIONS` against reviewed head/authorized target
+`0927b3fb712a27d00f54d3ea12eed55984c5518f` (PR #78). Five findings, all addressed on the
+existing branch/PR, no new module or owner introduced.
+
+- **P19-R4-F1 (terminal timeout isolation: a timed-out attempt can never later commit).** Round
+  3's own P19-R3-F4 fix bounds this call's own wait, but never stops the abandoned background
+  worker: `executor.shutdown(wait=False)` only stops *this call* from waiting, not the thread
+  itself, so a genuinely late-returning adapter call could still go on to derive and commit a
+  real Envelope (and, after P19-R4-F3 below, its own attempt-claim) well after this function had
+  already recorded a typed `TIMEOUT` outcome and moved on. The fix is a new
+  `threading.Event()` (`_execute_one_slot`'s own `cancelled`), set the instant the bounded
+  `future.result(timeout=...)` raises `TimeoutError`, and passed as the new
+  `cancellation_check=cancelled.is_set` keyword to `model_runtime.route.execute_model_work_unit`
+  (additive, optional -- every other caller is unaffected). That route now checks this callable
+  exactly once, immediately before it would otherwise commit the Envelope, and raises
+  `ModelRuntimeExecutionCancelledError` instead of committing anything if it reports `True` --
+  the one place a real commit for this attempt could ever happen, checked at the one moment that
+  matters. Proved by the new
+  `test_p19_r4_f1_a_late_returning_adapter_call_never_commits_after_this_call_gave_up`, which
+  drives a real, several-second `time.sleep()` adapter past a short `per_slot_timeout_seconds`,
+  lets the bounded call return `TIMEOUT` as before, then *actually waits* (a real `time.sleep()`,
+  never a mock) for the abandoned worker to finish, and proves both that no attempt-claim exists
+  under this attempt's own deterministic claim key and that the Store's own committed State
+  revision -- which only ever advances via a real commit -- is byte-for-byte unchanged from
+  immediately after the bounded call returned.
+- **P19-R4-F2 (durable terminalization of any genuinely unexpected failure).** Round 3's own
+  design deliberately let any exception other than `(ModelRuntimeError, AgentRuntimeError)`
+  propagate out of `_execute_one_slot` uncaught, reasoning that a genuinely unexpected error
+  should abort the whole orchestration rather than be silently absorbed. Structural Review Round
+  4 reverses that choice: `_execute_one_slot`'s own except clause is broadened to
+  `except Exception as error:`, so any exception raised after a slot's own Agent is constructed
+  -- including a genuinely unexpected adapter crash -- is now durably terminalized as a typed
+  `UNAVAILABLE` outcome with a resolved `RELEASED` release receipt, exactly like every other
+  terminal path. No claim is committed for this branch (there is no real Envelope to name), and
+  because the slot's own terminal pair is now genuinely committed, a later call over the
+  identical `plan_ref` replays it verbatim -- the same sticky, single-attempt-per-plan semantics
+  `TIMEOUT` already has -- never re-invoking the adapter for that slot a second time
+  (`replay must not ambiguously repeat a terminal attempt`). The constructed Agent is still
+  released either way. Proved by the rewritten
+  `test_partial_execution_coordinator_crash_and_recovery_leak_no_agent`, whose own
+  `CrashingMultiAgentAdapter` (a genuine, non-`ModelRuntimeError` `RuntimeError`) now produces a
+  normal return with a typed `UNAVAILABLE` slot output and a `RELEASED` receipt rather than a
+  propagated exception, no Agent leaked, and zero new adapter calls on a subsequent replay over
+  the same plan.
+- **P19-R4-F3 (the Envelope-to-claim crash window is closed by atomic commit, not by a
+  second transaction).** Round 3's own P19-R3-F3 fix committed the attempt-envelope claim in a
+  *separate* transaction immediately after the Envelope's own commit returned, leaving a real,
+  if narrow, crash window in which a real, already-committed Envelope existed with no claim
+  naming it -- a state this package's own recovery path (resolving the claim first) had no way
+  to reach at all. The fix is a new `additional_records_factory` optional keyword on
+  `model_runtime.route.execute_model_work_unit`: called once with the fully-derived Envelope
+  (after `cancellation_check`), it returns the caller's own `(kind, id, body)` record tuples,
+  which that route folds into the *exact same* atomic `_commit` call it already uses for the
+  Envelope itself. `_execute_one_slot`'s own `_build_claim_records` closure derives the claim
+  from the given Envelope and is passed this way -- the previous separate
+  `_commit(... SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND ...)` call is removed entirely. Either
+  both the Envelope and the claim land, or neither does; there is no longer an intermediate state
+  to recover from. Proved directly at the Model Runtime level (the one shared route every caller,
+  including this package, reuses) by the new
+  `test_p19_r4_f3_a_crash_immediately_before_the_one_atomic_commit_leaves_neither_record`, which
+  injects a crash immediately before that one commit call -- strictly after the real adapter call
+  already returned -- and proves neither the Envelope nor the caller-supplied record exists
+  afterward, and that a subsequent, uninterrupted retry makes exactly one real adapter call of
+  its own (`RECOVERY_DUPLICATE_ADAPTER_CALL_COUNT=0`).
+- **P19-R4-F4 (verified snapshot lineage: a `pinned_execution_snapshot` can no longer be
+  fabricated).** Round 3's own P19-R3-F1 fix required a supplied `pinned_execution_snapshot` to
+  be well-shaped and never claim a State revision from the Store's own future, but never checked
+  it against any real historical fact -- an arbitrary, caller-minted
+  `(state_revision, semantic_fingerprint)` pair was otherwise accepted.
+  `model_runtime.route._require_valid_pinned_execution_snapshot` now additionally requires the
+  supplied pair to equal, exactly, the resolved Work Unit's own already schema-valid, identity-
+  recomputed `opened_state_revision`/`opened_semantic_fingerprint` fields -- the one real,
+  committed, canonical fact of the State this Work Unit was genuinely opened against. This
+  package's own plan-boot snapshot (`plan["boot_state_revision"]`/
+  `plan["boot_semantic_fingerprint"]`) and the shared Work Unit's own opened fields are both
+  derived from the identical live State read inside the same `open_dynamic_execution_plan` call,
+  so this new requirement changes nothing for this package's own one legitimate caller. Proved
+  by the new
+  `test_p19_r4_f4_a_fabricated_pinned_execution_snapshot_is_refused_with_zero_adapter_calls`
+  (at the Model Runtime level), which supplies a schema-valid but fabricated pair and proves
+  refusal with `ModelRuntimeRequirementError`, zero adapter calls, and an unchanged State
+  revision.
+- **P19-R4-F5 (claim integrity: recomputed identity and semantic fingerprint, not just the
+  lookup key).** `resolve_and_verify_committed_slot_attempt_envelope_claim` previously verified
+  only the claim's own declared identity against the Store lookup key, unlike every sibling
+  resolver in this module (`resolve_and_verify_committed_release_receipt` and
+  `resolve_and_verify_committed_slot_output` both already recompute their own identity and their
+  own semantic fingerprint and compare each to the declared value). A claim whose
+  `model_execution_envelope_ref` is redirected to name a *different*, genuinely real, committed
+  Envelope -- while every other declared field, including the claim's own declared identity and
+  semantic fingerprint, is left untouched -- previously went undetected: the lookup key still
+  matched the declared id. The fix brings this resolver into line with its siblings: it now also
+  recomputes `multi_agent_slot_attempt_envelope_claim_id` and compares it to the declared value,
+  and recomputes `multi_agent_slot_attempt_envelope_claim_semantic_fingerprint` (which is derived
+  from the claim's full content, including `model_execution_envelope_ref`) and compares that too,
+  raising `MultiAgentRecordIntegrityError` on either mismatch. Proved by the new
+  `test_p19_r4_f5_a_redirected_envelope_ref_on_a_committed_claim_is_refused`, which executes a
+  real 2-slot plan, then redirects slot 0's own committed claim to name slot 1's own genuinely
+  real, committed Envelope (updating every on-disk claimant copy identically, so the Store's own
+  independent manifest-body integrity check is not what catches this) and proves the resolver
+  now refuses it.

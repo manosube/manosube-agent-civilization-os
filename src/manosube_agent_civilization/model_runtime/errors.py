@@ -66,6 +66,22 @@ class ModelRuntimeAuthorityFreshnessError(ModelRuntimeError):
     Envelope carrying now-stale Authority (P16-C5)."""
 
 
+class ModelRuntimeExecutionCancelledError(ModelRuntimeError):
+    """This call's own caller already gave up on this attempt -- its own bounded wait already
+    expired -- before this route reached the point of committing an Envelope for it (Structural
+    Review Round 4, P19-R4-F1).
+
+    Raised only when a caller supplies a *cancellation_check* callable to
+    :func:`~manosube_agent_civilization.model_runtime.route.execute_model_work_unit` and that
+    callable reports ``True`` immediately before the Envelope commit: a real adapter call may
+    still be running past a caller's own bound (a blocked Python thread cannot be forcibly
+    killed), but that late result must never silently become a committed success after the
+    caller has already moved on and recorded its own typed timeout outcome. Every caller that
+    supplies no *cancellation_check* is entirely unaffected -- this class is never raised for
+    them.
+    """
+
+
 class ModelReleasedAgentError(ModelRuntimeError):
     """The Phase 12 Temporary Agent supplied to this route is not a live one.
 

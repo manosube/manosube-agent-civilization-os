@@ -486,3 +486,62 @@ snapshot closes that drift at the one place a real adapter request is ever const
 (`_canonical_request`), rather than in `multi_agent`'s own bookkeeping alone. No second Authority
 evaluator, execution route, or Model Runtime owner is introduced by this extension; it is a single
 additive parameter on the one existing route this repository's every caller already shares.
+
+## 11. Structural Review Round 4 corrections (Phase 19, Issue #77, P19-R4-F1/F3/F4)
+
+Three further, purely additive changes to `execute_model_work_unit` and its own
+`_require_valid_pinned_execution_snapshot` helper, adopted the same way as §10 above: every
+existing caller that supplies none of these is entirely unaffected.
+
+**P19-R4-F1 -- `cancellation_check`.** An optional `Callable[[], bool]` keyword. When supplied,
+it is called exactly once, immediately before this route would otherwise commit the Envelope --
+after the real adapter call has already returned, and after that Envelope's own recomputed
+semantic fingerprint has already been checked against its own declared value. If it returns
+`True`, this call raises `ModelRuntimeExecutionCancelledError` instead of committing anything.
+This exists because a caller that bounds this call's own real duration on its own side (a
+worker-thread timeout, since a blocked Python thread cannot be forcibly killed) may already have
+recorded its own typed timeout outcome and moved on by the time a late adapter call finally
+returns; without this check, that late, no-longer-awaited result could still silently become a
+committed success. `multi_agent`'s own per-slot `ThreadPoolExecutor` bound (`execute_
+dynamic_execution_plan`, Structural Review Round 3's own P19-R3-F4) sets a `threading.Event()`
+the instant it gives up on a slot's own attempt, and passes that Event's own `is_set` as this
+parameter -- the one, real, runtime-enforced signal this route itself checks before ever
+committing, rather than a second, parallel cancellation mechanism `multi_agent` would otherwise
+have had to build and maintain on its own.
+
+**P19-R4-F3 -- `additional_records_factory`.** An optional
+`Callable[[Mapping[str, Any]], list[tuple[str, str, Mapping[str, Any]]]]` keyword, called once
+with the fully-derived, self-verified Envelope -- after `cancellation_check`, so a cancelled
+attempt never reaches it -- and expected to return zero or more `(kind, id, body)` record tuples.
+Those records are committed in the *exact same* atomic `_commit` transaction as the Envelope
+itself, never a separate follow-up commit. This exists because `multi_agent`'s own per-slot
+attempt-envelope claim (Structural Review Round 3's own P19-R3-F3) previously committed in a
+second, separate transaction immediately after this route's own Envelope commit returned --
+leaving a real, if narrow, crash window in which a real, already-committed Envelope existed with
+no claim naming it, a state `multi_agent`'s own recovery path had no way to reach. Folding the
+caller's own record into this route's one existing commit call closes that window entirely:
+either both the Envelope and the caller's own record land, or neither does. This route never
+inspects, validates, or interprets the caller's own record kind or body -- it only extends the
+one commit call's own record list, so no second commit primitive, Store owner, or transaction
+authority is introduced.
+
+**P19-R4-F4 -- `pinned_execution_snapshot` is now verified against the resolved Work Unit's own
+genesis snapshot, not merely shape- and future-checked.** §10 above already required a supplied
+`pinned_execution_snapshot` to be well-shaped and never claim a State revision from the Store's
+own future; that alone left an arbitrary, caller-minted `(state_revision, semantic_fingerprint)`
+pair otherwise unchecked, which a `pinned_execution_snapshot` originating outside the one
+legitimate caller could exploit to have the Envelope declare a State pair that was never actually
+resolved from anywhere real. `_require_valid_pinned_execution_snapshot` now additionally requires
+the supplied pair to equal, exactly, the resolved Work Unit's own already schema-valid, identity-
+recomputed `opened_state_revision`/`opened_semantic_fingerprint` fields -- the real, committed,
+canonical fact of the State this Work Unit was genuinely opened against, verified by
+`_resolve_work_unit` before this check is ever reached. A supplied pair that does not equal it is
+refused with `ModelRuntimeRequirementError` before the adapter is ever reached and with nothing
+committed, regardless of how the pair was obtained. `multi_agent`'s own plan-boot snapshot and
+the shared Work Unit's own opened fields are both derived from the identical live State read
+inside the same `open_dynamic_execution_plan` call, so this new requirement changes nothing for
+that one legitimate caller.
+
+No second Authority evaluator, execution route, Store owner, or Model Runtime owner is introduced
+by any of these three changes; each is a single additive parameter, or a strengthened check on an
+existing one, on the one route this repository's every caller already shares.

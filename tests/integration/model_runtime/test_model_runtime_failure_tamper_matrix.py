@@ -75,6 +75,7 @@ from manosube_agent_civilization.model_runtime import (
 )
 import manosube_agent_civilization.model_runtime.evidence_handoff as evidence_handoff_module
 from manosube_agent_civilization.model_runtime.identity import model_execution_envelope_id
+import manosube_agent_civilization.model_runtime.route as model_runtime_route_module
 from manosube_agent_civilization.model_runtime.types import (
     MODEL_ADAPTER_OUTCOMES,
     MODEL_OUTCOME_TO_RECEIPT_STATUS,
@@ -1656,3 +1657,124 @@ def test_a_genuinely_canonical_adapter_identity_is_accepted(world: dict[str, Any
         "adapter": "genuinely_canonical",
         "version": "0.1",
     }
+
+
+# =========================================================================== #
+# 9. Structural Review Round 4: cancellation, atomic caller records, pin lineage
+# =========================================================================== #
+
+
+def test_p19_r4_f3_a_crash_immediately_before_the_one_atomic_commit_leaves_neither_record(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Structural Review Round 4, P19-R4-F3's own required proof, at the level of the one
+    shared route this repository's own single owner discipline requires every caller (including
+    ``multi_agent``) to reuse: ``additional_records_factory`` folds a caller-supplied record into
+    the *exact same* atomic ``_commit`` call this route already uses for its own Envelope. A
+    crash injected immediately before that one commit call -- strictly after the real adapter
+    call already returned -- used to leave the Envelope committed and the caller's own record
+    (e.g. ``multi_agent``'s attempt-claim) missing, since they were two separate transactions.
+    Now there is only one transaction: this proof shows neither record survives such a crash,
+    and a subsequent, uninterrupted retry makes exactly one real adapter call of its own (never
+    zero, never a duplicate of the crashed attempt's own work, since none of it was ever
+    committed)."""
+
+    opened = _open(world)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    real_commit = model_runtime_route_module._commit
+
+    def _crashing_commit(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("simulated crash immediately before the one atomic commit")
+
+    monkeypatch.setattr(model_runtime_route_module, "_commit", _crashing_commit)
+
+    additional_record_id = "attempt-claim-for-crash-injection-proof"
+    with pytest.raises(
+        RuntimeError, match="simulated crash immediately before the one atomic commit"
+    ):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            additional_records_factory=lambda envelope: [
+                ("multi_agent_slot_attempt_envelope_claim", additional_record_id, {"probe": True})
+            ],
+        )
+    assert adapter.execute_call_count == 1
+
+    # LATE_WRITE_COUNT=0 for both records this single atomic commit would have carried: neither
+    # the Envelope nor the caller-supplied record exists -- the former no longer silently
+    # survives while the latter is lost, since both were always the same one commit.
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_slot_attempt_envelope_claim", additional_record_id
+        )
+        is None
+    )
+    envelope_kind_count = 0
+    envelope_dir = (
+        world["store"].root / "projects" / world["project_id"] / "records" / ENVELOPE_KIND
+    )
+    if envelope_dir.exists():
+        envelope_kind_count = len(list(envelope_dir.glob("*.json")))
+    assert envelope_kind_count == 0
+
+    monkeypatch.setattr(model_runtime_route_module, "_commit", real_commit)
+
+    # RECOVERY_DUPLICATE_ADAPTER_CALL_COUNT=0: nothing was committed to reuse, so the very next
+    # attempt over the identical Work Unit makes exactly one real, fresh adapter call -- not a
+    # duplicate of the crashed attempt's own already-paid-for work (there is none to reuse), and
+    # not skipped either.
+    recovering_adapter = _seeded_adapter(opened["model_work_unit_ref"])
+    recovered = execute_model_work_unit(
+        world["store"],
+        _agent(world),
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        model_work_unit_ref=opened["model_work_unit_ref"],
+        adapter=recovering_adapter,
+        executed_at="2026-09-09T02:05:00Z",
+    )
+    assert recovering_adapter.execute_call_count == 1
+    assert recovered["envelope"]["execution_outcome"] == "CANDIDATE_ACCEPTED"
+
+
+def test_p19_r4_f4_a_fabricated_pinned_execution_snapshot_is_refused_with_zero_adapter_calls(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 4, P19-R4-F4's own required required negative control: a
+    schema-valid ``pinned_execution_snapshot`` whose ``(state_revision, semantic_fingerprint)``
+    pair does not equal the resolved Work Unit's own ``opened_state_revision``/
+    ``opened_semantic_fingerprint`` -- an arbitrary, caller-minted pair, never a real, Store-
+    resolved, identity-verified genesis snapshot -- is refused before the adapter is ever
+    reached, with nothing committed."""
+
+    opened = _open(world)
+    genuine_state_revision = int(opened["model_work_unit"]["opened_state_revision"])
+    fabricated = {
+        "state_revision": genuine_state_revision,
+        "semantic_fingerprint": {
+            **dict(opened["model_work_unit"]["opened_semantic_fingerprint"]),
+            "fabricated_probe_field": "this pair was never resolved from any real Store state",
+        },
+    }
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            pinned_execution_snapshot=fabricated,
+        )
+    assert adapter.execute_call_count == 0
+    assert _revision(world) == before
