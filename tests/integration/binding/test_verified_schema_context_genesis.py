@@ -350,12 +350,13 @@ def test_the_verified_byte_route_commits_exactly_what_the_schema_root_route_comm
 def test_mutating_a_returned_validation_errors_schema_cannot_reopen_a_verified_context(
     tmp_path: Path,
 ) -> None:
-    """P79-R1-F1 -- the independently reproduced counterexample, at real ``bind_project``
-    scale: flipping a returned :class:`jsonschema.ValidationError`'s own
+    """P79-R1-F1 Round 2 -- the independently reproduced counterexample, at real
+    ``bind_project`` scale: flipping a returned :class:`jsonschema.ValidationError`'s own
     ``.schema["unevaluatedProperties"]`` from ``False`` to ``True`` -- exactly the mutation the
     Structural Advisor's reproduction used to make a real ``bind_project`` genesis transaction
-    incorrectly commit a schema-invalid Objective Revision -- must not change any later
-    validation outcome this same context reports, nor any later genesis transaction it
+    incorrectly commit a schema-invalid Objective Revision -- now raises at the attempt
+    itself, because the schema document it would reach is frozen, so it cannot change any
+    later validation outcome this same context reports, nor any later genesis transaction it
     performs."""
 
     context = _verified_from_schema_root(SCHEMA_ROOT)
@@ -363,14 +364,15 @@ def test_mutating_a_returned_validation_errors_schema_cannot_reopen_a_verified_c
 
     first_errors = context.validation_errors(invalid, OBJECTIVE_REVISION_SCHEMA_ID)
     assert first_errors
-    mutated_any = False
+    mutation_attempted = False
     for error in first_errors:
         if isinstance(error.schema, dict) and "unevaluatedProperties" in error.schema:
-            error.schema["unevaluatedProperties"] = True
-            mutated_any = True
-    assert mutated_any, "the counterexample's own mutation target was not reached"
+            mutation_attempted = True
+            with pytest.raises(SchemaContextError):
+                error.schema["unevaluatedProperties"] = True
+    assert mutation_attempted, "the counterexample's own mutation target was not reached"
 
-    # The same context, revalidating the identical invalid body, still refuses it.
+    # Unaffected: the same context, revalidating the identical invalid body, still refuses it.
     assert context.validation_errors(invalid, OBJECTIVE_REVISION_SCHEMA_ID)
 
     kwargs = bind_project_kwargs()
@@ -399,11 +401,17 @@ def test_mutating_a_returned_validation_errors_schema_cannot_reopen_a_verified_c
 
 
 def test_an_unverified_context_is_refused_by_the_store_constructor(tmp_path: Path) -> None:
-    """P79-R1-F2: a context built with no adopted ``expected_digest`` at all -- one whose own
-    ``verified`` is ``False`` -- must never reach a Store, even one that would otherwise
-    validate against real, byte-identical canonical schemas."""
+    """P79-R1-F2 Round 2: a context whose own ``verified`` is ``False`` -- because its
+    captured bytes do not reproduce ``ADOPTED_SCHEMA_SET_DIGEST``, regardless of what
+    ``expected_digest`` (if any) the caller declares -- must never reach a Store, even one
+    that would otherwise validate against schemas that are almost entirely byte-identical to
+    canonical. ``_verified_from_schema_root`` passes the capture's own self-computed digest
+    back in as ``expected_digest``, exactly the Round 1 counterexample: declaring your own
+    digest as your own expectation does not manufacture ``verified``."""
 
-    unverified = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    root = _mutable_schema_root(tmp_path)
+    _weaken_source_snapshot_schema_version(root)
+    unverified = _verified_from_schema_root(root)
     assert unverified.verified is False
     with pytest.raises(BoundaryError, match="unverified validation context"):
         FileStateStore(tmp_path / "backend", schema_context=unverified)
@@ -419,7 +427,9 @@ def test_an_unverified_context_is_refused_by_bind_project_even_if_the_store_alre
     context = _verified_from_schema_root(SCHEMA_ROOT)
     store = FileStateStore(tmp_path / "backend", schema_context=context)
 
-    unverified = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    root = _mutable_schema_root(tmp_path / "weakened")
+    _weaken_source_snapshot_schema_version(root)
+    unverified = _verified_from_schema_root(root)
     assert unverified.verified is False
     store.schema_context = unverified  # simulate the one residual reassignment gap
 
@@ -493,19 +503,18 @@ def test_an_invalid_objective_revision_stays_rejected_after_the_schema_is_swappe
     assert writes == []
     assert not (store.root / "projects").exists()
 
-    # Positive control: a context captured from the *swapped* root accepts the very same
-    # body and commits it -- the earlier refusal is therefore non-vacuous, and the swap was
-    # real.
+    # Positive control: a context captured from the *swapped* root would validate the very
+    # same body cleanly -- the earlier refusal is therefore non-vacuous, and the swap was
+    # real. Proved directly via validation_errors(), since the swapped root's own digest no
+    # longer reproduces ADOPTED_SCHEMA_SET_DIGEST (Issue #75, P79-R1-F2 Round 2): the swap
+    # itself makes ``swapped`` unverified, so it must -- and does -- also be refused before
+    # it can reach a real Store, exactly like any other unverified context.
     swapped = _verified_from_schema_root(root)
     assert swapped.digest != context.digest
-    permissive_store = FileStateStore(tmp_path / "permissive", schema_context=swapped)
-    accepted = bind_project(
-        permissive_store,
-        **kwargs,
-        additional_genesis_records=_genesis_records(schema_context=swapped),
-        schema_context=swapped,
-    )
-    assert accepted["objective_revision"] == invalid
+    assert swapped.verified is False
+    assert swapped.validation_errors(invalid, OBJECTIVE_REVISION_SCHEMA_ID) == []
+    with pytest.raises(BoundaryError, match="unverified validation context"):
+        FileStateStore(tmp_path / "permissive", schema_context=swapped)
 
 
 def test_an_invalid_source_snapshot_stays_rejected_by_real_admission_after_the_schema_is_swapped(
@@ -541,23 +550,26 @@ def test_an_invalid_source_snapshot_stays_rejected_by_real_admission_after_the_s
     assert writes == []
     assert not (store.root / "projects").exists()
 
-    # Positive control: the weakened Source Snapshot schema genuinely accepts this body.
+    # Positive control: the weakened Source Snapshot schema genuinely accepts this body --
+    # proved directly through Observation's own validator, since the weakening itself makes
+    # ``swapped``'s own digest no longer reproduce ADOPTED_SCHEMA_SET_DIGEST (Issue #75,
+    # P79-R1-F2 Round 2), so ``swapped`` must -- and does -- also be refused before it can
+    # reach a real Store, exactly like any other unverified context.
     swapped = _verified_from_schema_root(root)
     assert swapped.digest != context.digest
-    permissive_store = FileStateStore(tmp_path / "permissive", schema_context=swapped)
-    accepted = bind_project(
-        permissive_store,
-        **bind_project_kwargs(),
-        additional_genesis_records=records,
+    assert swapped.verified is False
+
+    from manosube_agent_civilization.observation.source_snapshot import (
+        validate_source_snapshot_body,
+    )
+
+    validate_source_snapshot_body(  # does not raise: the weakened schema accepts it
+        invalid_snapshot,
+        context_label="positive control",
         schema_context=swapped,
     )
-    assert accepted["committed_state"]["state_revision"] == 0
-    assert (
-        permissive_store.resolve_record(
-            PROJECT_ID, "source_snapshot", invalid_snapshot["source_snapshot_id"]
-        )
-        == invalid_snapshot
-    )
+    with pytest.raises(BoundaryError, match="unverified validation context"):
+        FileStateStore(tmp_path / "permissive", schema_context=swapped)
 
 
 # --- adversarial matrix item 4: the legacy cache cannot redirect the secure route ----------- #

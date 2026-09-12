@@ -206,24 +206,44 @@ def json_ids(captured: dict[str, bytes]) -> list[str]:
 # --- P79-R1-F2: adopted-identity verification is explicit and durable -------------------- #
 
 
-def test_a_context_is_unverified_unless_an_expected_digest_was_supplied() -> None:
+def test_verified_reflects_only_whether_the_adopted_digest_actually_matches() -> None:
+    """P79-R1-F2 Round 2 -- ``verified`` cannot be manufactured by any caller-supplied value.
+
+    A real canonical capture is ``verified`` regardless of what (if anything) is passed as
+    ``expected_digest``: adoption is a fact about the bytes, not a caller's own declaration.
+    A weakened capture stays unverified even when its own self-computed digest is passed
+    back in as its own ``expected_digest`` -- the exact Round 1 counterexample Round 2
+    review reproduced, where a caller declaration alone had been accepted as if it were an
+    independently adopted identity.
+    """
+
     captured = _captured()
-    assert CanonicalSchemaContext(captured).verified is False
-    assert CanonicalSchemaContext(captured, expected_schema_count=len(captured)).verified is False
+    assert CanonicalSchemaContext(captured).verified is True
+    assert CanonicalSchemaContext(captured, expected_schema_count=len(captured)).verified is True
     assert (
         CanonicalSchemaContext(captured, expected_digest=schema_set_digest(captured)).verified
         is True
     )
 
+    weakened = dict(captured)
+    weakened[SOURCE_SNAPSHOT_RELATIVE_PATH] = _weakened_source_snapshot_schema()
+    weakened_digest = schema_set_digest(weakened)
+    assert CanonicalSchemaContext(weakened).verified is False
+    assert CanonicalSchemaContext(weakened, expected_digest=weakened_digest).verified is False, (
+        "a self-computed digest passed back as its own expected_digest must not manufacture "
+        "verified=True"
+    )
 
-def test_verified_is_durable_on_the_context_not_recomputed_per_access() -> None:
-    """``verified`` is a stored fact about construction, not a live re-check: it stays
-    ``True`` (or ``False``) for the whole lifetime of the context, exactly like ``digest``."""
+
+def test_verified_agrees_on_every_read() -> None:
+    """``verified`` is a computed property (Round 2), recomputed from ``self._digest`` on
+    every access rather than stored as a separate flag -- but ``self._digest`` itself never
+    changes after construction, so every read agrees for the lifetime of the context."""
 
     captured = _captured()
     context = CanonicalSchemaContext(captured, expected_digest=schema_set_digest(captured))
     assert context.verified is True
-    assert context.verified is True  # a second read agrees; nothing to recompute
+    assert context.verified is True  # a second read agrees
 
 
 @pytest.mark.parametrize(
@@ -384,40 +404,84 @@ def test_the_internal_validator_mapping_itself_refuses_mutation() -> None:
         context._validators[SOURCE_SNAPSHOT_SCHEMA_ID] = None  # type: ignore[index]
 
 
+def test_a_validators_own_schema_document_refuses_direct_mutation_too() -> None:
+    """P79-R1-F1 Round 2 -- the finding SHUKOU's Round 2 review actually reproduced: Round
+    1's deep-copy-on-return fix only ever closed the *returned*-error alias. A caller with a
+    bare reference to the context and no error object at all -- reaching
+    ``context._validators[schema_id].schema`` directly -- previously mutated the same live
+    document every future validation reads. That document is now frozen, so the identical
+    reach-in raises instead of silently succeeding, and it stays that way at every nesting
+    depth a real canonical schema uses (top-level ``properties``, not just a leaf value)."""
+
+    context = CanonicalSchemaContext(_captured())
+    validator = context._validators[SOURCE_SNAPSHOT_SCHEMA_ID]
+    assert isinstance(validator.schema, dict)
+
+    with pytest.raises(SchemaContextError):
+        validator.schema["properties"]["schema_version"] = {"type": "string"}
+    with pytest.raises(SchemaContextError):
+        validator.schema["unevaluatedProperties"] = True
+
+    # Unaffected: the schema still rejects exactly what it rejected before the attempt.
+    invalid = _schema_invalid_source_snapshot()
+    assert context.validation_errors(invalid, SOURCE_SNAPSHOT_SCHEMA_ID)
+
+
+def test_object_setattr_cannot_promote_an_unverified_context() -> None:
+    """P79-R1-F2 Round 2 -- the other half of the reproduced counterexample:
+    ``object.__setattr__`` bypasses this class's own ``__setattr__`` override by design (it
+    is the same mechanism the constructor itself uses to set slots), so a Round 1-shaped
+    stored boolean ``_verified`` flag could always be forced from ``False`` to ``True`` by
+    any caller holding a bare reference. There is no such slot to promote any more: ``verified``
+    is computed fresh from ``_digest`` on every access, so the identical attack now raises
+    ``AttributeError`` instead of silently promoting an unverified, weakened context."""
+
+    weakened = dict(_captured())
+    weakened[SOURCE_SNAPSHOT_RELATIVE_PATH] = _weakened_source_snapshot_schema()
+    context = CanonicalSchemaContext(weakened)
+    assert context.verified is False
+
+    with pytest.raises(AttributeError):
+        object.__setattr__(context, "_verified", True)
+    assert context.verified is False
+
+
 # --- KSI-C4/C5: no verify/use window ------------------------------------------------------- #
 
 
-def test_mutating_a_returned_validation_errors_own_schema_reference_changes_no_outcome() -> None:
-    """P79-R1-F1 -- the independently reproduced counterexample, at this module's own
+def test_a_returned_validation_errors_own_schema_reference_is_immutable() -> None:
+    """P79-R1-F1 Round 2 -- the independently reproduced counterexample, at this module's own
     boundary: a raw :class:`jsonschema.ValidationError`'s own ``.schema`` attribute is not a
-    copy but a direct reference into the schema document node it was raised against. A caller
-    who reaches it through the returned list and mutates it in place -- flipping
-    ``unevaluatedProperties`` from ``False`` to ``True``, exactly as the reproduced
-    counterexample did -- must not be able to change any later validation outcome this same
-    context reports."""
+    copy but a direct reference into the schema document node it was raised against. Round 1
+    closed this by deep-copying every returned error and asserting the mutation "changed no
+    outcome"; Round 2 closes it structurally instead -- the mutation itself, attempted
+    exactly as the reproduced counterexample did (flipping a ``const`` check to match the
+    invalid instance), now raises immediately, because the schema document is frozen."""
 
     context = CanonicalSchemaContext(_captured())
     invalid = _schema_invalid_source_snapshot()
     errors = context.validation_errors(invalid, SOURCE_SNAPSHOT_SCHEMA_ID)
     assert errors
 
-    mutated_any = False
+    mutation_attempted = False
     for error in errors:
         if error.validator == "const" and isinstance(error.schema, dict):
-            # The exact counterexample: flip the schema's own const value to match the
-            # invalid instance's value, which would make an aliased validator accept it.
-            error.schema["const"] = error.instance
-            mutated_any = True
-    assert mutated_any, "the counterexample's own mutation target was not reached"
+            mutation_attempted = True
+            with pytest.raises(SchemaContextError):
+                error.schema["const"] = error.instance
+    assert mutation_attempted, "the counterexample's own mutation target was not reached"
 
-    # The same context, revalidating the identical invalid body, still refuses it.
+    # Unaffected: the same context, revalidating the identical invalid body, still refuses it.
     assert context.validation_errors(invalid, SOURCE_SNAPSHOT_SCHEMA_ID)
     assert context.validation_errors(_valid_source_snapshot(), SOURCE_SNAPSHOT_SCHEMA_ID) == []
 
 
 def test_two_calls_to_validation_errors_never_share_a_single_error_object() -> None:
-    """Defence in depth for P79-R1-F1: even the error objects themselves are never the same
-    Python objects across two calls, so no cross-call aliasing is possible either."""
+    """Defence in depth for P79-R1-F1: the error objects themselves -- and their own mutable
+    per-call state, like ``.path`` -- are never the same Python objects across two calls, so
+    no cross-call aliasing of *that* state is possible either. (A returned error's own
+    ``.schema`` may legitimately be the very same frozen document node on both calls: sharing
+    an already-immutable value is not a threat, since neither call can mutate it.)"""
 
     context = CanonicalSchemaContext(_captured())
     invalid = _schema_invalid_source_snapshot()
@@ -425,7 +489,7 @@ def test_two_calls_to_validation_errors_never_share_a_single_error_object() -> N
     second = context.validation_errors(invalid, SOURCE_SNAPSHOT_SCHEMA_ID)
     assert first and second
     assert all(a is not b for a, b in zip(first, second, strict=True))
-    assert all(a.schema is not b.schema for a, b in zip(first, second, strict=True))
+    assert all(a.path is not b.path for a, b in zip(first, second, strict=True))
 
 
 def test_mutating_the_caller_mapping_after_construction_changes_no_outcome() -> None:

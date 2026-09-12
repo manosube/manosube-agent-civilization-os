@@ -3416,3 +3416,124 @@ PHASE_19_PR_78_MERGE_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+---
+
+# 43. Issue #75 Structural Review Round 2 corrections + last-occurrence field re-projection（Draft PR #79）
+
+本節はClaude Codeが記録するbounded restatementであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。セクション40・41・42は書き換えない。SHUKOU正式採択（PR #79コメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644627200`
+（Structural Review Round 2）、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644627286`
+（SHUKOU正式採択）、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644632650`
+（実装handoff）、`ADOPTION_ID=ADOPT_ISSUE_75_STRUCTURAL_REVIEW_ROUND_2`）を独立GitHub API
+再観測で確認した上で記録する。
+
+Round 2審査は、対象head`c46f85d35d3c562696ac2dba7dc9380c6b355fce`（セクション42自身が記録した
+delivery）に対し、セクション42が「閉鎖済み」と主張した三件すべてが実際には未閉鎖であると判定した：
+
+- **P79-R1-F1は未閉鎖のまま**: セクション42の`copy.deepcopy`によるfixは、*返された*error
+  object自身のaliasを切り離すのみであり、`context._validators[schema_id].schema`という
+  内部参照自体は直接到達可能かつ書き換え可能なままであった（再現: 有効なcontextの
+  `_validators`から直接`.schema["properties"][...]`を書き換えると、以降の同一context上の
+  validationが実際に変化した）。`object.__setattr__(context, "_verified", True)`による
+  未検証contextの昇格も同様に閉じていなかった。
+- **P79-R1-F2は未閉鎖のまま**: `verified = expected_digest is not None`は、独立に採択された
+  identityへ束縛されていなかった -- 弱化されたcaptureが自身で計算した digestを
+  `expected_digest`として渡し戻すだけで`verified=True`となり、`FileStateStore`/
+  `bind_project`双方がそれを受理した。「caller自身の宣言だけでは採択されたidentityにはならない」。
+- **P79-R1-F3は未閉鎖のまま**: セクション42は、このrepository全体で使われる
+  last-occurrence抽出対象のfield名（`CURRENT_PHASE`/`CURRENT_PHASE_ISSUE`/`TARGET_PR`/
+  `MAIN_ACCEPTED_BASE_SHA`/`REVIEW_STATE`）を一切再投影していなかった。そのため、これらの
+  field名で本書を走査する読者は、セクション39以前（Phase 18/PR #74era）の値
+  （`CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE`、`CURRENT_PHASE_ISSUE=73`、
+  `TARGET_PR=#74`、`MAIN_ACCEPTED_BASE_SHA=91128e332138bb23466bf0f43a9f633cd646e891`、
+  `REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_AWAITING_ROUND_5`）を
+  最終値として読み取ってしまう -- これらは既にIssue #75/Draft PR #79へ実質的に置き換わった
+  現在地と矛盾する。
+
+```text
+RESTATEMENT_OBSERVED_AT_UTC=2026-09-12T09:30:00Z
+ADOPTION_ID=ADOPT_ISSUE_75_STRUCTURAL_REVIEW_ROUND_2
+ADOPTION_URL=https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644627286
+STRUCTURAL_REVIEW_URL=https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644627200
+EXECUTION_HANDOFF_URL=https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644632650
+AUTHORIZED_TARGET_SHA=c46f85d35d3c562696ac2dba7dc9380c6b355fce
+AUTHORIZED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+ADOPTED_FINDINGS=P79-R1-F1,P79-R1-F2,P79-R1-F3
+CURRENT_PHASE_STATE=ISSUE_75_STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED
+DELIVERY_STATE=NEW_HEAD_PUSHED_AWAITING_STRUCTURAL_REVIEW
+```
+
+## 43.1 是正内容
+
+```text
+P79_R1_F1_STATUS=CLOSED_STRUCTURALLY
+P79_R1_F2_STATUS=CLOSED_STRUCTURALLY
+P79_R1_F3_STATUS=CLOSED（43.2自身）
+```
+
+- **P79-R1-F1**（内部validator/schema参照の非漏出、構造的閉鎖）: `CanonicalSchemaContext`が
+  parseする各schema documentを、`Draft202012Validator`へ渡す前に再帰的に凍結する
+  （`_deep_freeze`: `dict`を`_FrozenSchemaMapping`へ、`list`を`_FrozenSchemaSequence`へ --
+  ともに実際の`dict`/`list`のsubclassであり、`jsonschema`/`referencing`自身の
+  `isinstance(..., dict)`判定（特に`unevaluatedProperties`keywordの`$ref`/`allOf`展開）は
+  従来どおり成立するが、mutating methodは全て例外を送出する）。これにより、
+  `context._validators[schema_id].schema`への直接到達も、返された`ValidationError`の
+  `.schema`経由の到達も、いずれも書き換え不能になった -- 返されたerrorのdeep-copyは
+  不要になった（凍結済みdocumentを`copy.deepcopy`することは、それ自体が
+  `TypeError: cannot pickle 'mappingproxy' object`相当で失敗するため、行わない）。
+- **P79-R1-F2**（採択されたschema identityへの束縛）: `verified`をconstruction時の
+  storedな真偽値から、`self._digest == ADOPTED_SCHEMA_SET_DIGEST`を毎回計算するcomputed
+  propertyへ変更した。`ADOPTED_SCHEMA_SET_DIGEST`はこのmodule自身が`01_SCHEMA`の実際の
+  変更と同一commitでのみ更新するsource-committedな定数であり、callerが渡す
+  `expected_digest`には一切依存しない。弱化されたcaptureが自身のdigestを
+  `expected_digest`として渡し戻しても`verified`は`False`のままである。`_verified`は
+  `__slots__`からも削除したため、`object.__setattr__(context, "_verified", True)`による
+  昇格は`AttributeError`で失敗する（そもそもpromoteすべき格納された属性が存在しない）。
+- **P79-R1-F3**: 43.2自身。
+
+```text
+DIRECT_CONTEXT_VALIDATOR_REFERENCE_ESCAPE_COUNT=0
+DIRECT_CONTEXT_SCHEMA_REFERENCE_ESCAPE_COUNT=0
+OBJECT_SETATTR_PROMOTION_ACCEPTED=false
+SELF_DIGEST_WEAKENED_CONTEXT_VERIFIED=false
+SELF_DIGEST_WEAKENED_CONTEXT_ACCEPTED_BY_STORE=false
+SELF_DIGEST_WEAKENED_CONTEXT_ACCEPTED_BY_BIND_PROJECT=false
+ADOPTED_SCHEMA_IDENTITY_ARTIFACT_BOUND=true
+PROHIBITED_SCOPE_DIFF_EMPTY=true
+KSI_C1_C7=REPROVEN
+ADVERSARIAL_MATRIX=REPROVEN_COMPLETE
+```
+
+## 43.2 last-occurrence field再投影
+
+このrepositoryの"last-occurrence extraction convention"が対象とする標準field名のうち、
+以下の五つはセクション39（Phase 18 post-merge、line 3073-3078付近）およびそれ以前
+（`TARGET_PR`の最終出現、`REVIEW_STATE`の最終出現）を最終値として保持したまま、
+セクション40〜42では一切restateされていなかった。本節がこれら五つのfieldの
+last-occurrenceとなる。セクション39以前のPhase 18/PR #74時代の値そのものは書き換えず、
+そのまま保持する。
+
+```text
+CURRENT_PHASE=PHASE_9_BINDING_SECURITY_HARDENING_ISSUE_75_KERNEL_INTEGRITY
+CURRENT_PHASE_NOTE=NOT_A_NEW_LINEAR_PHASE_NUMBER_SEE_SECTION_40_NOT_PHASE_18_TRUE
+CURRENT_PHASE_ISSUE=#75
+TARGET_PR=#79
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED_AWAITING_ROUND_3
+```
+
+## 43.3 権限境界
+
+```text
+MERGE_ALLOWED=false
+ISSUE_75_CLOSE_ALLOWED=false
+DOWNSTREAM_BOAT_PIN_UPDATE_ALLOWED=false
+PHASE_19_IMPLEMENTATION_IN_PR_79=false
+PHASE_19_PR_78_MERGE_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
