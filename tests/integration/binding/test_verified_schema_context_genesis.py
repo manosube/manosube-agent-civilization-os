@@ -45,7 +45,9 @@ from tests.state_helpers import SCHEMA_ROOT, real_kernel_git_objects
 from manosube_agent_civilization.binding import bind_project
 from manosube_agent_civilization.binding.errors import BindingValidationError
 from manosube_agent_civilization.observation.source_snapshot import build_source_snapshot
+import manosube_agent_civilization.schema_context as schema_context_module
 from manosube_agent_civilization.schema_context import (
+    ADOPTED_SCHEMA_SET_DIGEST,
     CANONICAL_SCHEMA_SUFFIX,
     CanonicalSchemaContext,
     SchemaContextError,
@@ -290,7 +292,11 @@ def test_exactly_one_validation_context_object_performs_every_validation(
 
     context = _verified_from_schema_root(SCHEMA_ROOT)
     seen: list[int] = []
-    original = CanonicalSchemaContext.validation_errors
+    # Issue #75, P79-R1-F2 Round 2 / P79-R3-F2 Round 3: ``context``'s own ``__class__`` is a
+    # fresh per-construction subclass whose ``validation_errors`` is its own closure, shadowing
+    # whatever the shared ``CanonicalSchemaContext`` base class defines -- so the monkeypatch
+    # target here must be that per-instance subclass, not the base class, or it is never called.
+    original = type(context).validation_errors
 
     def recording_validation_errors(
         self: CanonicalSchemaContext, instance: Any, schema_id: str
@@ -298,7 +304,7 @@ def test_exactly_one_validation_context_object_performs_every_validation(
         seen.append(id(self))
         return original(self, instance, schema_id)
 
-    monkeypatch.setattr(CanonicalSchemaContext, "validation_errors", recording_validation_errors)
+    monkeypatch.setattr(type(context), "validation_errors", recording_validation_errors)
 
     store = FileStateStore(tmp_path / "backend", schema_context=context)
     bind_project(
@@ -355,9 +361,9 @@ def test_mutating_a_returned_validation_errors_schema_cannot_reopen_a_verified_c
     ``.schema["unevaluatedProperties"]`` from ``False`` to ``True`` -- exactly the mutation the
     Structural Advisor's reproduction used to make a real ``bind_project`` genesis transaction
     incorrectly commit a schema-invalid Objective Revision -- now raises at the attempt
-    itself, because the schema document it would reach is frozen, so it cannot change any
-    later validation outcome this same context reports, nor any later genesis transaction it
-    performs."""
+    itself, because the schema document it would reach is frozen (and, per P79-R3-F1, not a
+    ``dict``/``list`` subclass any more either), so it cannot change any later validation
+    outcome this same context reports, nor any later genesis transaction it performs."""
 
     context = _verified_from_schema_root(SCHEMA_ROOT)
     invalid = _schema_invalid_objective_revision()
@@ -366,9 +372,9 @@ def test_mutating_a_returned_validation_errors_schema_cannot_reopen_a_verified_c
     assert first_errors
     mutation_attempted = False
     for error in first_errors:
-        if isinstance(error.schema, dict) and "unevaluatedProperties" in error.schema:
+        if not isinstance(error.schema, dict) and "unevaluatedProperties" in error.schema:
             mutation_attempted = True
-            with pytest.raises(SchemaContextError):
+            with pytest.raises(TypeError):
                 error.schema["unevaluatedProperties"] = True
     assert mutation_attempted, "the counterexample's own mutation target was not reached"
 
@@ -388,6 +394,56 @@ def test_mutating_a_returned_validation_errors_schema_cannot_reopen_a_verified_c
     assert not (store.root / "projects").exists()
 
     # The same context, immediately afterwards, still admits the real transaction.
+    recovered = bind_project(
+        store,
+        **bind_project_kwargs(),
+        additional_genesis_records=_genesis_records(schema_context=context),
+        schema_context=context,
+    )
+    assert recovered["committed_state"]["state_revision"] == 0
+
+
+def test_the_base_type_mutator_bypass_cannot_reopen_a_verified_context_either(
+    tmp_path: Path,
+) -> None:
+    """P79-R3-F1 -- the Round 3 Structural Review's own exact-head reproduction: calling
+    ``dict.__setitem__`` directly against the already-admitted top-level Objective Revision
+    validator's ``.schema["unevaluatedProperties"]`` bypassed every subclass override Round 2
+    had added, made an identical invalid Objective Revision pass, and a real ``bind_project``
+    genesis transaction commit it (``INVALID_ACCEPTED_AFTER_BASE_MUTATOR=true``,
+    ``REAL_BIND_PROJECT_COMMITTED=true`` in that reproduction). The frozen documents this
+    context now builds are not ``dict``/``list`` subclasses at all, so the same base-type call
+    now raises at the attempt itself instead of succeeding, and a real ``bind_project`` for the
+    identical invalid body still refuses it with zero writes."""
+
+    context = _verified_from_schema_root(SCHEMA_ROOT)
+    invalid = _schema_invalid_objective_revision()
+
+    first_errors = context.validation_errors(invalid, OBJECTIVE_REVISION_SCHEMA_ID)
+    assert first_errors
+    mutation_attempted = False
+    for error in first_errors:
+        if not isinstance(error.schema, dict) and "unevaluatedProperties" in error.schema:
+            mutation_attempted = True
+            with pytest.raises(TypeError):
+                dict.__setitem__(error.schema, "unevaluatedProperties", True)
+    assert mutation_attempted, "the counterexample's own mutation target was not reached"
+
+    # Unaffected: the same context, revalidating the identical invalid body, still refuses it.
+    assert context.validation_errors(invalid, OBJECTIVE_REVISION_SCHEMA_ID)
+
+    kwargs = bind_project_kwargs()
+    kwargs["objective_revision"] = invalid
+    store = FileStateStore(tmp_path / "backend", schema_context=context)
+    with pytest.raises(BindingValidationError, match="schema-invalid"):
+        bind_project(
+            store,
+            **kwargs,
+            additional_genesis_records=_genesis_records(schema_context=context),
+            schema_context=context,
+        )
+    assert not (store.root / "projects").exists()
+
     recovered = bind_project(
         store,
         **bind_project_kwargs(),
@@ -443,6 +499,94 @@ def test_an_unverified_context_is_refused_by_bind_project_even_if_the_store_alre
         )
     assert writes == []
     assert not (store.root / "projects").exists()
+
+
+def test_object_setattr_digest_replacement_still_cannot_reach_the_store_or_bind_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P79-R3-F2 -- the Round 3 Structural Review's own exact-head reproduction:
+    ``object.__setattr__(context, "_digest", ADOPTED_SCHEMA_SET_DIGEST)`` made ``verified``
+    read ``True`` for a weakened context, which the Store then accepted
+    (``OBJECT_SETATTR_DIGEST_PROMOTION=true``, ``STORE_ACCEPTED_PROMOTED_CONTEXT=true`` in
+    that reproduction). ``verified`` is now bound to a closure computed once, before this
+    attribute is ever replaced, so the identical call has no effect and both the Store
+    constructor and ``bind_project`` still refuse the context."""
+
+    root = _mutable_schema_root(tmp_path)
+    _weaken_source_snapshot_schema_version(root)
+    weakened = _verified_from_schema_root(root)
+    assert weakened.verified is False
+
+    object.__setattr__(weakened, "_digest", ADOPTED_SCHEMA_SET_DIGEST)
+    assert weakened.digest == ADOPTED_SCHEMA_SET_DIGEST, "the slot itself really was replaced"
+    assert weakened.verified is False, "but verified must not follow it"
+
+    with pytest.raises(BoundaryError, match="unverified validation context"):
+        FileStateStore(tmp_path / "backend", schema_context=weakened)
+
+    verified_context = _verified_from_schema_root(SCHEMA_ROOT)
+    store = FileStateStore(tmp_path / "existing", schema_context=verified_context)
+    store.schema_context = weakened
+    writes = _store_write_recorder(monkeypatch)
+    with pytest.raises(BindingValidationError, match="unverified validation context"):
+        bind_project(
+            store,
+            **bind_project_kwargs(),
+            additional_genesis_records=_genesis_records(schema_context=weakened),
+            schema_context=weakened,
+        )
+    assert writes == []
+    assert not (store.root / "projects").exists()
+
+
+def test_object_setattr_cannot_splice_substitute_validators_into_an_existing_context(
+    tmp_path: Path,
+) -> None:
+    """P79-R3-F2 -- the reproduction's second half: with Round 2's shape,
+    ``object.__setattr__(context, "_validators", weakened_validators)`` left a correct
+    ``verified`` reading untouched while silently pointing every future
+    ``validation_errors`` call at different bytes. There is no ``_validators`` attribute left
+    on a fully constructed context to replace at all -- the attempt itself raises
+    ``AttributeError``, and the context keeps validating against exactly what it was built
+    from."""
+
+    context = _verified_from_schema_root(SCHEMA_ROOT)
+    assert context.verified is True
+
+    with pytest.raises(AttributeError):
+        object.__setattr__(context, "_validators", {})
+
+    store = FileStateStore(tmp_path / "backend", schema_context=context)
+    result = bind_project(
+        store,
+        **bind_project_kwargs(),
+        additional_genesis_records=_genesis_records(schema_context=context),
+        schema_context=context,
+    )
+    assert result["committed_state"]["state_revision"] == 0
+
+
+def test_rebinding_the_module_adopted_digest_cannot_promote_an_existing_context_for_the_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P79-R3-F2 -- the reproduction's third counterexample: ``Final`` does not stop
+    ``schema_context.ADOPTED_SCHEMA_SET_DIGEST`` from being rebound like any other module
+    attribute, and Round 2's ``verified`` property re-read that global on every access, so
+    rebinding it to an *already existing*, already-refused context's own digest made that
+    same context start reporting ``verified is True``. ``verified`` is now computed once, at
+    construction, so an existing context's answer -- and the Store's/``bind_project``'s
+    refusal of it -- survive a later rebind of the module constant."""
+
+    root = _mutable_schema_root(tmp_path)
+    _weaken_source_snapshot_schema_version(root)
+    weakened = _verified_from_schema_root(root)
+    assert weakened.verified is False
+
+    monkeypatch.setattr(schema_context_module, "ADOPTED_SCHEMA_SET_DIGEST", weakened.digest)
+    assert weakened.verified is False, "an existing context must not be promoted by a later rebind"
+
+    with pytest.raises(BoundaryError, match="unverified validation context"):
+        FileStateStore(tmp_path / "backend", schema_context=weakened)
 
 
 # --- adversarial matrix items 1, 2, 3 and 9: mutate the root after capture ------------------ #

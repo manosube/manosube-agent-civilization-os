@@ -35,7 +35,9 @@ from typing import Any
 import pytest
 from tests.state_helpers import SCHEMA_ROOT
 
+import manosube_agent_civilization.schema_context as schema_context_module
 from manosube_agent_civilization.schema_context import (
+    ADOPTED_SCHEMA_SET_DIGEST,
     CANONICAL_SCHEMA_SUFFIX,
     SCHEMA_SET_DIGEST_PROFILE,
     CanonicalSchemaContext,
@@ -396,35 +398,83 @@ def test_a_context_attribute_cannot_be_deleted(name: str) -> None:
 
 
 def test_the_internal_validator_mapping_itself_refuses_mutation() -> None:
-    """Defence in depth: even reached by its private name, the validator mapping is a
-    read-only view, so no schema can be swapped into or out of an existing context."""
+    """P79-R3-F1/F2 Round 3: Round 2's ``_validators`` was a ``MappingProxyType`` instance
+    attribute -- read-only against reassignment of its own entries, but still a named target
+    ``object.__setattr__(context, "_validators", weakened_validators)`` could replace
+    wholesale, splicing in a validator mapping built from different bytes while ``verified``
+    (bound to a separate ``_digest`` slot) kept reporting the original, correct answer. There
+    is no such attribute any more to reach, read, or replace: the constructor retypes every
+    instance to a per-construction class whose validation methods are closures with no
+    backing instance attribute at all (see ``schema_context._bind_adopted_identity``)."""
 
     context = CanonicalSchemaContext(_captured())
-    with pytest.raises(TypeError):
-        context._validators[SOURCE_SNAPSHOT_SCHEMA_ID] = None  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        _ = context._validators  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        object.__setattr__(context, "_validators", {})
 
 
 def test_a_validators_own_schema_document_refuses_direct_mutation_too() -> None:
     """P79-R1-F1 Round 2 -- the finding SHUKOU's Round 2 review actually reproduced: Round
-    1's deep-copy-on-return fix only ever closed the *returned*-error alias. A caller with a
-    bare reference to the context and no error object at all -- reaching
-    ``context._validators[schema_id].schema`` directly -- previously mutated the same live
-    document every future validation reads. That document is now frozen, so the identical
-    reach-in raises instead of silently succeeding, and it stays that way at every nesting
-    depth a real canonical schema uses (top-level ``properties``, not just a leaf value)."""
+    1's deep-copy-on-return fix only ever closed the *returned*-error alias, leaving the
+    schema node any returned error's ``.schema`` points at reachable and mutable through that
+    same reference. That document is now frozen (:class:`_FrozenSchemaMapping`/
+    :class:`_FrozenSchemaSequence`, neither a ``dict``/``list`` subclass at all), so ordinary
+    item assignment at any nesting depth a real canonical schema uses -- top-level
+    ``properties``, not just a leaf value -- raises immediately instead of silently
+    succeeding."""
 
     context = CanonicalSchemaContext(_captured())
-    validator = context._validators[SOURCE_SNAPSHOT_SCHEMA_ID]
-    assert isinstance(validator.schema, dict)
+    errors = context.validation_errors({}, SOURCE_SNAPSHOT_SCHEMA_ID)
+    required_error = next(error for error in errors if error.validator == "required")
+    schema = required_error.schema
+    assert not isinstance(schema, dict)
 
-    with pytest.raises(SchemaContextError):
-        validator.schema["properties"]["schema_version"] = {"type": "string"}
-    with pytest.raises(SchemaContextError):
-        validator.schema["unevaluatedProperties"] = True
+    with pytest.raises(TypeError):
+        schema["properties"]["schema_version"] = {"type": "string"}
+    with pytest.raises(TypeError):
+        schema["unevaluatedProperties"] = True
 
     # Unaffected: the schema still rejects exactly what it rejected before the attempt.
     invalid = _schema_invalid_source_snapshot()
     assert context.validation_errors(invalid, SOURCE_SNAPSHOT_SCHEMA_ID)
+
+
+def test_a_frozen_schema_node_refuses_the_base_type_mutator_bypass_too() -> None:
+    """P79-R3-F1 -- the Round 3 Structural Review finding: Round 2's frozen documents were
+    real ``dict``/``list`` *subclasses*, whose own mutating methods raised, but a ``dict``/
+    ``list`` subclass's base-type mutating slots stay reachable by calling the base type
+    directly (``dict.__setitem__(node, ...)``), bypassing every subclass override entirely
+    (independently reproduced: exactly that call against the already-admitted top-level
+    Objective Revision validator's ``.schema["unevaluatedProperties"]`` made an identical
+    invalid record pass, and a real ``bind_project`` genesis transaction commit it -- see
+    ``tests/integration/binding/test_verified_schema_context_genesis.py`` for that scale).
+
+    Closed by not being a ``dict``/``list`` subclass at all any more: calling the base type's
+    own mutating method against a :class:`_FrozenSchemaMapping`/:class:`_FrozenSchemaSequence`
+    instance raises ``TypeError`` at the call itself, because there is no ``dict``/``list``
+    in its MRO for that base-type method to operate on.
+    """
+
+    context = CanonicalSchemaContext(_captured())
+    errors = context.validation_errors({}, SOURCE_SNAPSHOT_SCHEMA_ID)
+    required_error = next(error for error in errors if error.validator == "required")
+    schema = required_error.schema
+    required_list = schema["required"]
+    assert not isinstance(schema, dict)
+    assert not isinstance(required_list, list)
+
+    with pytest.raises(TypeError):
+        dict.__setitem__(schema, "unevaluatedProperties", True)
+    with pytest.raises(TypeError):
+        list.append(required_list, "schema_version")
+    with pytest.raises(TypeError):
+        list.__setitem__(required_list, 0, "schema_version")
+
+    # Unaffected: the schema still rejects exactly what it rejected before every attempt.
+    invalid = _schema_invalid_source_snapshot()
+    assert context.validation_errors(invalid, SOURCE_SNAPSHOT_SCHEMA_ID)
+    assert context.validation_errors(_valid_source_snapshot(), SOURCE_SNAPSHOT_SCHEMA_ID) == []
 
 
 def test_object_setattr_cannot_promote_an_unverified_context() -> None:
@@ -446,6 +496,54 @@ def test_object_setattr_cannot_promote_an_unverified_context() -> None:
     assert context.verified is False
 
 
+def test_object_setattr_cannot_promote_a_weakened_context_by_replacing_its_digest() -> None:
+    """P79-R3-F2 -- the Round 3 Structural Review finding: Round 2's ``verified`` property
+    compared ``self._digest`` (a plain, replaceable slot) against the module constant on
+    every access. ``object.__setattr__(context, "_digest", ADOPTED_SCHEMA_SET_DIGEST)``
+    replaces the comparison's left side to match its right and promotes a weakened context
+    (independently reproduced: this exact call made ``verified`` read ``True`` for a context
+    built from schema bytes that do not reproduce the adopted set).
+
+    Closed structurally: ``verified`` is bound, at construction, to a closure over a plain
+    Python ``bool`` computed once from the digest at that moment -- it is never read back
+    from ``self._digest`` at all, so replacing that slot (which still exists, for the
+    informational :attr:`~CanonicalSchemaContext.digest` property) has no effect on it.
+    """
+
+    weakened = dict(_captured())
+    weakened[SOURCE_SNAPSHOT_RELATIVE_PATH] = _weakened_source_snapshot_schema()
+    context = CanonicalSchemaContext(weakened)
+    assert context.verified is False
+
+    object.__setattr__(context, "_digest", ADOPTED_SCHEMA_SET_DIGEST)
+    assert context.digest == ADOPTED_SCHEMA_SET_DIGEST, "the slot itself really was replaced"
+    assert context.verified is False, "but verified must not follow it"
+
+
+def test_rebinding_the_module_adopted_digest_cannot_promote_an_existing_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P79-R3-F2 -- the third reproduced counterexample: ``Final`` is a static-analysis
+    annotation only, not runtime enforcement, so ``schema_context.ADOPTED_SCHEMA_SET_DIGEST``
+    can be rebound like any other module attribute. Round 2's ``verified`` property re-read
+    that global fresh on every single access, so rebinding it to a weakened context's own
+    digest, *after* that context already existed and had already reported ``verified is
+    False``, made the same, already-existing context start reporting ``True``.
+
+    Closed structurally: the comparison against the adopted digest happens exactly once, at
+    construction, and the resulting ``bool`` is what the per-instance closure returns from
+    then on -- an already-constructed context never re-reads the module global again.
+    """
+
+    weakened = dict(_captured())
+    weakened[SOURCE_SNAPSHOT_RELATIVE_PATH] = _weakened_source_snapshot_schema()
+    context = CanonicalSchemaContext(weakened)
+    assert context.verified is False
+
+    monkeypatch.setattr(schema_context_module, "ADOPTED_SCHEMA_SET_DIGEST", context.digest)
+    assert context.verified is False, "an existing context must not be promoted by a later rebind"
+
+
 # --- KSI-C4/C5: no verify/use window ------------------------------------------------------- #
 
 
@@ -456,7 +554,9 @@ def test_a_returned_validation_errors_own_schema_reference_is_immutable() -> Non
     closed this by deep-copying every returned error and asserting the mutation "changed no
     outcome"; Round 2 closes it structurally instead -- the mutation itself, attempted
     exactly as the reproduced counterexample did (flipping a ``const`` check to match the
-    invalid instance), now raises immediately, because the schema document is frozen."""
+    invalid instance), now raises immediately, because the schema document is frozen (and,
+    per P79-R3-F1, not a ``dict``/``list`` subclass any more, so there is no base-type
+    mutator bypass either)."""
 
     context = CanonicalSchemaContext(_captured())
     invalid = _schema_invalid_source_snapshot()
@@ -465,9 +565,9 @@ def test_a_returned_validation_errors_own_schema_reference_is_immutable() -> Non
 
     mutation_attempted = False
     for error in errors:
-        if error.validator == "const" and isinstance(error.schema, dict):
+        if error.validator == "const" and not isinstance(error.schema, dict):
             mutation_attempted = True
-            with pytest.raises(SchemaContextError):
+            with pytest.raises(TypeError):
                 error.schema["const"] = error.instance
     assert mutation_attempted, "the counterexample's own mutation target was not reached"
 

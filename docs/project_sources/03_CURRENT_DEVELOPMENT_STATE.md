@@ -3537,3 +3537,133 @@ PHASE_19_PR_78_MERGE_ALLOWED=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+# 44. Issue #75 Structural Review Round 3 corrections + linear-phase / active-Difference separation（Draft PR #79）
+
+本節はClaude Codeが記録するbounded restatementであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。セクション40・41・42・43は書き換えない。SHUKOU正式採択（PR #79コメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644963849`
+（Structural Review Round 3、`STRUCTURAL_REVIEW=CHANGES_REQUIRED`）、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644965665`
+（SHUKOU正式採択、`ADOPTION_ID=ADOPT_ISSUE_75_STRUCTURAL_REVIEW_ROUND_3`）、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644976855`
+（実装handoff）を独立GitHub API再観測で確認した上で記録する。
+
+```text
+RESTATEMENT_OBSERVED_AT_UTC=2026-09-12T10:16:00Z
+ADOPTION_ID=ADOPT_ISSUE_75_STRUCTURAL_REVIEW_ROUND_3
+ADOPTION_URL=https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644965665
+STRUCTURAL_REVIEW_URL=https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644963849
+EXECUTION_HANDOFF_URL=https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5644976855
+AUTHORIZED_TARGET_SHA=73370ebc75e2bd35c841a0d53462763b98722d54
+AUTHORIZED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+ADOPTED_FINDINGS=P79-R3-F1,P79-R3-F2,P79-R3-F3,P79-R3-F4
+CURRENT_PHASE_STATE=ISSUE_75_STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_DELIVERED
+DELIVERY_STATE=NEW_HEAD_PUSHED_AWAITING_STRUCTURAL_REVIEW
+```
+
+Round 3審査は、対象head`73370ebc75e2bd35c841a0d53462763b98722d54`（セクション43自身が記録した
+delivery）に対し、以下四件を採択した：
+
+- **P79-R3-F1（BASE_TYPE_MUTATOR_SCHEMA_BYPASS）**: セクション43の`_FrozenSchemaMapping`/
+  `_FrozenSchemaSequence`は実際の`dict`/`list`の*subclass*のままであり、`dict.__setitem__(node, ...)`/
+  `list.append(node, ...)`のようにbase型自身のmutating methodを直接呼び出すと、subclass自身の
+  override全てを迂回して生のC-level storageを書き換えられる（再現: Objective Revisionの
+  error countが1→0へ変化し、実際の`bind_project`がinvalidなrecordをcommitした）。
+- **P79-R3-F2（VERIFICATION_INPUT_PROMOTION）**: セクション43の`verified`（
+  `self._digest == ADOPTED_SCHEMA_SET_DIGEST`を毎回再計算するcomputed property）は、
+  三つの経路で昇格可能であった -- (1)`object.__setattr__(context, "_digest", ADOPTED_SCHEMA_SET_DIGEST)`、
+  (2)`object.__setattr__(context, "_validators", weakened_validators)`（`verified`は正しいまま
+  異なるvalidatorをsplice）、(3)module-level定数`ADOPTED_SCHEMA_SET_DIGEST`自身の再束縛（`Final`は
+  static-onlyでありruntimeでは強制されない -- `verified`が毎回このglobalを再読していたため、
+  既存の、既に拒否されていた弱化contextさえ後から昇格した）。
+- **P79-R3-F3（LINEAR_PHASE_AND_ACTIVE_DIFFERENCE_COLLAPSE）**: セクション43.2自身の
+  `CURRENT_PHASE=PHASE_9_BINDING_SECURITY_HARDENING_ISSUE_75_KERNEL_INTEGRITY`という記述が、
+  このrepository全体の線形roadmap上のphase位置（Phase 19 / Issue #77のまま変わっていない）と、
+  現在issue #75を塞いでいるhardening Differenceそのものとを、同一のfield上へ誤って collapse
+  していた。
+- **P79-R3-F4（FUTURE_OBSERVATION_TIMESTAMP）**: セクション43冒頭の
+  `RESTATEMENT_OBSERVED_AT_UTC=2026-09-12T09:30:00Z`は、実際のcommit時刻（`73370eb`は
+  `2026-09-12T08:58:44Z`にcommitされた）より未来のtimestampであった。
+
+## 44.1 是正内容
+
+```text
+P79_R3_F1_STATUS=CLOSED_STRUCTURALLY
+P79_R3_F2_STATUS=CLOSED_STRUCTURALLY
+P79_R3_F3_STATUS=CLOSED（44.2自身）
+P79_R3_F4_STATUS=CLOSED（本節自身の観測時刻が非未来であることをもって）
+```
+
+- **P79-R3-F1**（base-type mutator bypassの構造的閉鎖）: `_FrozenSchemaMapping`/
+  `_FrozenSchemaSequence`を、`dict`/`list`の具象subclassから`collections.abc.Mapping`/
+  `Sequence`の純粋なABC実装（`__slots__ = ()`、mutating methodを一切持たない）へ置き換えた。
+  これにより、そもそもbase型のmutating slotそのものがMRO上に存在せず、
+  `dict.__setitem__(instance, ...)`は即座に`TypeError`を送出する（凍結済みnodeが
+  そもそも`dict`/`list`のinstanceではなくなったため、「base型自身のmethodを直接呼ぶ」という
+  迂回経路自体が成立しない）。`jsonschema`側の`unevaluatedProperties`展開が内部で行う
+  `isinstance(schema_value, dict)`相当の判定（`jsonschema._utils.find_evaluated_property_keys_by_schema`）
+  は、`jsonschema.validators.extend()`で構築した専用`TypeChecker`（新しいABC-based frozen
+  classをJSONの"object"/"array"として認識する）で維持した -- 共有される既定の
+  `Draft202012Validator`自体は一切変更していない。
+- **P79-R3-F2**（verificationへの入力昇格の構造的閉鎖）: `CanonicalSchemaContext.__init__`の
+  最後で、`self.__class__`を、construction呼び出しごとに新しく生成される専用subclass
+  （`_bind_adopted_identity(verified_flag, validators)`が返す型）へ`object.__setattr__`で
+  retypeするようにした。この専用subclassの`verified`/`knows_schema`/`validation_errors`は、
+  いずれもPython closureに閉じ込められたlocal変数（`verified_flag`は`digest ==
+  ADOPTED_SCHEMA_SET_DIGEST`をconstruction時に一度だけ評価した plain `bool`、`validators`は
+  同じくclosure内にのみ存在するmapping）のみを参照し、instanceのどの属性も参照しない。
+  `_validators`は`__slots__`から完全に削除した。結果として: (1)`_digest`を書き換えても
+  `verified`はもはや`_digest`を読まないため無関係、(2)`_validators`という名前の属性自体が
+  存在しないため`object.__setattr__(context, "_validators", ...)`は`AttributeError`で
+  失敗する、(3)`verified_flag`はconstruction時に評価済みのplain値であるため、その後
+  module-level定数`ADOPTED_SCHEMA_SET_DIGEST`を再束縛しても、既存instanceの`verified`は
+  影響を受けない（この定数corruption後に新規construction されるcontextが、腐敗した
+  anchorへ正しく反応してしまう点は、source定数そのものを書き換える場合と同等の、
+  この三findingsの対象外の脅威として意図的に残している）。
+- **P79-R3-F3**: 44.2自身。
+- **P79-R3-F4**: 本節冒頭の`RESTATEMENT_OBSERVED_AT_UTC`が実際のwall-clock時刻
+  （`date -u`で確認）に対し非未来であることを、記録時点で直接確認した。
+
+```text
+BASE_TYPE_MUTATOR_BYPASS_ACCEPTED=false
+DICT_SETITEM_ON_FROZEN_SCHEMA_NODE_RAISES=TypeError
+LIST_APPEND_ON_FROZEN_SCHEMA_NODE_RAISES=TypeError
+OBJECT_SETATTR_DIGEST_REPLACEMENT_PROMOTES_VERIFIED=false
+OBJECT_SETATTR_VALIDATORS_SPLICE_RAISES=AttributeError
+MODULE_GLOBAL_DIGEST_REBIND_PROMOTES_EXISTING_CONTEXT=false
+UNEVALUATED_PROPERTIES_KEYWORD_STILL_FUNCTIONS=true
+KSI_C1_C7=REPROVEN
+ADVERSARIAL_MATRIX=REPROVEN_COMPLETE
+```
+
+## 44.2 linear-phase / active-Difference分離 + last-occurrence field再投影
+
+セクション43.2の`CURRENT_PHASE=PHASE_9_BINDING_SECURITY_HARDENING_ISSUE_75_KERNEL_INTEGRITY`は
+取り消さず、そのまま歴史的記録として残す。本節が、このrepository全体で使われる
+last-occurrence抽出対象のfield名のうち、線形roadmap上のphase位置を表すfieldと、現在
+issue #75を塞いでいるhardening Differenceを表すfieldとを分離した、新しいlast-occurrenceを
+与える。
+
+```text
+CURRENT_LINEAR_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_ISSUE=#77
+ACTIVE_BLOCKING_DIFFERENCE=#75
+ACTIVE_REVIEW_PR=#79
+PHASE_9_REOPENED=false
+TARGET_PR=#79
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_DELIVERED_AWAITING_ROUND_4
+```
+
+## 44.3 権限境界
+
+```text
+MERGE_ALLOWED=false
+ISSUE_75_CLOSE_ALLOWED=false
+DOWNSTREAM_BOAT_PIN_UPDATE_ALLOWED=false
+PHASE_19_IMPLEMENTATION_IN_PR_79=false
+PHASE_19_PR_78_MERGE_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

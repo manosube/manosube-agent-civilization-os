@@ -69,15 +69,15 @@ cache behaviour is part of that route (``KSI-C6``).
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 import hashlib
 import json
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Final
 
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import ValidationError
+from jsonschema.validators import extend as _extend_validator
 from referencing import Registry, Resource
 
 
@@ -118,92 +118,97 @@ ADOPTED_SCHEMA_SET_DIGEST: Final = (
 )
 
 
-class _FrozenSchemaMapping(dict):  # type: ignore[type-arg]
-    """A real ``dict`` -- ``isinstance(x, dict)`` holds, ``dict(x)``/``**x``/``.copy()`` all
-    behave exactly as :mod:`jsonschema` and :mod:`referencing` require internally (Round 2's
-    first attempt used :class:`~types.MappingProxyType` here, which is not a ``dict`` at all;
-    ``jsonschema``'s own ``unevaluatedProperties`` resolution walks ``$ref``/``allOf`` subschemas
-    with ``isinstance(..., dict)`` checks that a proxy fails, silently treating every
-    already-evaluated property as unevaluated) -- except that every mutating method raises
-    instead of changing this document.
+class _FrozenSchemaMapping(Mapping[str, Any]):
+    """Marker base for every frozen schema-document mapping node (Issue #75, P79-R3-F1).
+
+    Round 2 froze schema documents into real ``dict`` *subclasses* whose mutating methods
+    raised. That closed ordinary assignment (``node["x"] = y``, ``node.update(...)``), but a
+    ``dict`` subclass is still, underneath, a real ``dict``: its mutating slots are
+    C-implemented on the base type and operate on the instance's own storage regardless of
+    which Python-level methods the subclass defines. Calling the *base type's* method
+    directly -- ``dict.__setitem__(node, "unevaluatedProperties", True)`` -- bypasses every
+    subclass override entirely and reaches the same live storage every validator built from
+    it reads (independently reproduced: this exact call on the top-level Objective Revision
+    schema's already-admitted validator flipped an invalid record's error count from 1 to 0,
+    and a real ``bind_project`` genesis transaction then committed it).
+
+    There is no way to override that for an actual ``dict``/``list`` instance -- so this
+    class is not one. It implements only :class:`collections.abc.Mapping`'s read protocol
+    (``__getitem__``/``__iter__``/``__len__``, with ``.get``/``.keys``/``.items``/``.values``/
+    ``__contains__`` supplied by the ABC from those three) and declares no ``__setitem__`` or
+    any other mutating method at all -- not overridden-to-raise, *absent*. There is no base
+    type whose mutating slot a caller could reach through this class, by any name, because no
+    such slot exists on any class in its MRO.
     """
 
-    def __setitem__(self, key: Any, value: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot set an item")
-
-    def __delitem__(self, key: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot delete an item")
-
-    def clear(self) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot clear")
-
-    def pop(self, *args: Any, **kwargs: Any) -> Any:
-        raise SchemaContextError("a canonical schema document is immutable: cannot pop")
-
-    def popitem(self) -> Any:
-        raise SchemaContextError("a canonical schema document is immutable: cannot pop")
-
-    def setdefault(self, *args: Any, **kwargs: Any) -> Any:
-        raise SchemaContextError("a canonical schema document is immutable: cannot setdefault")
-
-    def update(self, *args: Any, **kwargs: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot update")
-
-    def __ior__(self, other: Any) -> _FrozenSchemaMapping:  # type: ignore[misc]
-        raise SchemaContextError("a canonical schema document is immutable: cannot update")
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> _FrozenSchemaMapping:
-        return self
-
-    def __copy__(self) -> _FrozenSchemaMapping:
-        return self
+    __slots__ = ()
 
 
-class _FrozenSchemaSequence(list):  # type: ignore[type-arg]
-    """The ``list`` analog of :class:`_FrozenSchemaMapping`, for the same reason: a real
-    ``list`` for every read-only purpose, immutable against every mutating method."""
+class _FrozenSchemaSequence(Sequence[Any]):
+    """The ``list`` analog of :class:`_FrozenSchemaMapping`, for the identical reason: a real
+    ``list`` subclass's mutating slots (``list.__setitem__``, ``list.append``, ...) remain
+    reachable by calling the base type directly regardless of subclass overrides, so this
+    implements only :class:`collections.abc.Sequence`'s read protocol
+    (``__getitem__``/``__len__``, with ``__contains__``/``__iter__``/``__reversed__``/
+    ``index``/``count`` supplied by the ABC) and defines no mutating method anywhere in its
+    MRO.
+    """
 
-    def __setitem__(self, index: Any, value: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot set an item")
+    __slots__ = ()
 
-    def __delitem__(self, index: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot delete an item")
 
-    def append(self, value: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot append")
+def _freeze_mapping(data: Mapping[str, Any]) -> _FrozenSchemaMapping:
+    """Recursively freeze *data* into a :class:`_FrozenSchemaMapping`.
 
-    def extend(self, values: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot extend")
+    The frozen key/value pairs live only in a closure captured by this one instance's own
+    ``__getitem__``/``__iter__``/``__len__`` -- never as a named instance attribute (no
+    ``__dict__``, no ``__slots__`` entry) and never as a module-level or otherwise shared
+    mutable object. There is therefore no attribute name a caller could reach with
+    ``object.__setattr__`` (which bypasses a *subclass's own* ``__setattr__`` override by
+    design, but cannot conjure an attribute a class never declares) to replace or reach this
+    mapping's backing storage, in addition to there being no mutating method to call in the
+    first place.
+    """
 
-    def insert(self, index: Any, value: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot insert")
+    frozen = {key: _deep_freeze(value) for key, value in data.items()}
 
-    def remove(self, value: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot remove")
+    class _Frozen(_FrozenSchemaMapping):
+        __slots__ = ()
 
-    def pop(self, *args: Any, **kwargs: Any) -> Any:
-        raise SchemaContextError("a canonical schema document is immutable: cannot pop")
+        def __getitem__(self, key: str) -> Any:
+            return frozen[key]
 
-    def clear(self) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot clear")
+        def __iter__(self) -> Any:
+            return iter(frozen)
 
-    def sort(self, *args: Any, **kwargs: Any) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot sort")
+        def __len__(self) -> int:
+            return len(frozen)
 
-    def reverse(self) -> None:
-        raise SchemaContextError("a canonical schema document is immutable: cannot reverse")
+        def __repr__(self) -> str:
+            return f"_FrozenSchemaMapping({frozen!r})"
 
-    def __iadd__(self, other: Any) -> _FrozenSchemaSequence:  # type: ignore[misc]
-        raise SchemaContextError("a canonical schema document is immutable: cannot extend")
+    return _Frozen()
 
-    def __imul__(self, other: Any) -> _FrozenSchemaSequence:  # type: ignore[misc]
-        raise SchemaContextError("a canonical schema document is immutable: cannot extend")
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> _FrozenSchemaSequence:
-        return self
+def _freeze_sequence(data: Sequence[Any]) -> _FrozenSchemaSequence:
+    """The :func:`_freeze_mapping` analog for a JSON array node -- see there for why the
+    frozen items live only in a closure, never as a reachable attribute."""
 
-    def __copy__(self) -> _FrozenSchemaSequence:
-        return self
+    frozen = tuple(_deep_freeze(item) for item in data)
+
+    class _Frozen(_FrozenSchemaSequence):
+        __slots__ = ()
+
+        def __getitem__(self, index: Any) -> Any:
+            return frozen[index]
+
+        def __len__(self) -> int:
+            return len(frozen)
+
+        def __repr__(self) -> str:
+            return f"_FrozenSchemaSequence({frozen!r})"
+
+    return _Frozen()
 
 
 def _deep_freeze(value: Any) -> Any:
@@ -211,20 +216,61 @@ def _deep_freeze(value: Any) -> Any:
     :class:`_FrozenSchemaMapping`, ``list`` to :class:`_FrozenSchemaSequence`, everything else
     returned unchanged.
 
-    Applied to every parsed schema document before it is ever handed to a
-    :class:`jsonschema.Draft202012Validator` (Issue #75, P79-R1-F1 Round 2): a validator's
-    own ``.schema`` attribute is not a copy of what it was constructed with, it *is* that
-    same object, so mutating it in place (``context._validators[schema_id].schema[...] =
-    ...``) previously changed every future validation this context performs. A frozen
-    document raises on that same attempt instead -- while remaining a real ``dict``/``list``
-    for every read this module, ``jsonschema``, and ``referencing`` still need to perform.
+    Applied to every parsed schema document before it is ever handed to a validator (Issue
+    #75, P79-R1-F1 Round 2, hardened P79-R3-F1 Round 3): a validator's own ``.schema``
+    attribute is not a copy of what it was constructed with, it *is* that same object, so
+    mutating it in place -- directly, or by calling the base ``dict``/``list`` type's own
+    mutating method on it -- previously changed every future validation this context
+    performs. Neither is possible against the frozen structures this function now returns,
+    because they are not ``dict``/``list`` instances at all (see
+    :class:`_FrozenSchemaMapping`).
     """
 
     if isinstance(value, dict):
-        return _FrozenSchemaMapping({key: _deep_freeze(item) for key, item in value.items()})
+        return _freeze_mapping(value)
     if isinstance(value, list):
-        return _FrozenSchemaSequence(_deep_freeze(item) for item in value)
+        return _freeze_sequence(value)
     return value
+
+
+def _is_object_type(checker: Any, instance: Any) -> bool:
+    """``jsonschema``'s default ``"object"`` type check is ``isinstance(instance, dict)``
+    (:mod:`jsonschema._types`) -- true of the real JSON *instance* a caller validates, which
+    is never frozen, but false of a frozen schema *document* node such as the value of a
+    schema's own ``"properties"`` key. ``unevaluatedProperties``'s own subschema walk
+    (:func:`jsonschema._utils.find_evaluated_property_keys_by_schema`) checks exactly that
+    (``validator.is_type(properties, "object")``) to decide whether a schema's ``properties``
+    keyword counts as declaring evaluated keys; against a real ``dict`` this is ``True``,
+    against Round 2's :class:`~types.MappingProxyType` attempt it was silently ``False`` --
+    which is why that attempt turned every already-evaluated property into an "unevaluated"
+    one and broke validation outright, independent of any freezing/mutation question. This
+    predicate, installed on a validator built via :func:`jsonschema.validators.extend`, adds
+    exactly that one case back without touching how any real JSON instance is type-checked.
+    """
+
+    return isinstance(instance, (dict, _FrozenSchemaMapping))
+
+
+def _is_array_type(checker: Any, instance: Any) -> bool:
+    """The :func:`_is_object_type` analog for ``"array"`` -- no call site in ``jsonschema``
+    currently type-checks a schema-level list node this way, but this closes the same class
+    of gap defensively, at no cost to real-instance array validation.
+    """
+
+    return isinstance(instance, (list, _FrozenSchemaSequence))
+
+
+_FROZEN_AWARE_TYPE_CHECKER = Draft202012Validator.TYPE_CHECKER.redefine_many(
+    {"object": _is_object_type, "array": _is_array_type}
+)
+
+#: A ``Draft202012Validator`` that additionally recognizes :class:`_FrozenSchemaMapping` and
+#: :class:`_FrozenSchemaSequence` as JSON ``"object"``/``"array"`` instances, via
+#: ``jsonschema``'s own documented ``validators.extend`` customization point -- not a private
+#: monkeypatch of the shared default validator or its module-level ``TYPE_CHECKER``.
+_FrozenAwareValidator = _extend_validator(
+    Draft202012Validator, type_checker=_FROZEN_AWARE_TYPE_CHECKER
+)
 
 
 def _reject_unsafe_relative_schema_path(relative_path: str) -> None:
@@ -355,23 +401,31 @@ class CanonicalSchemaContext:
       construction, and never retained: mutating it afterwards changes nothing;
     - no schema document, validator, or internal mapping is ever returned as *itself*
       mutable -- only validation *operations* are public;
-    - every parsed schema document is recursively frozen (dicts to
-      :class:`_FrozenSchemaMapping`, lists to :class:`_FrozenSchemaSequence` -- real
-      ``dict``/``list`` subclasses so ``jsonschema`` and ``referencing`` still treat them as
-      such, but every mutating method raises) *before* it is ever handed to a
-      :class:`jsonschema.Draft202012Validator`, so even a caller who reaches
-      ``context._validators[schema_id].schema`` directly, or a caller mutating a
-      ``.schema`` reachable from a returned :class:`~jsonschema.exceptions.ValidationError`,
-      gets a structure that raises on assignment rather than one that silently mutates every
-      future validation this context performs (Issue #75, P79-R1-F1 Round 2) -- which is
-      also why :meth:`validation_errors` no longer needs to deep-copy what it returns: there
-      is nothing left reachable from a returned error that mutation could reach;
+    - every parsed schema document is recursively frozen into :class:`_FrozenSchemaMapping`/
+      :class:`_FrozenSchemaSequence` nodes -- not ``dict``/``list`` subclasses (Round 3
+      found that a ``dict`` subclass's own mutating slots stay reachable by calling the base
+      type directly, e.g. ``dict.__setitem__(node, ...)``, bypassing every subclass
+      override), but :class:`collections.abc.Mapping`/``Sequence`` implementations with no
+      mutating method anywhere in their MRO at all -- *before* any validator is built from
+      them, so no reachable node, however it is reached, can be mutated (Issue #75,
+      P79-R1-F1 Round 2, hardened P79-R3-F1 Round 3). This is also why
+      :meth:`validation_errors` does not need to deep-copy what it returns: there is nothing
+      reachable from a returned error that mutation could reach;
     - :meth:`__setattr__`/:meth:`__delattr__` refuse outright, so a context attribute cannot
       be rebound to a weakened registry after the fact;
-    - :attr:`verified` is a computed property, not a stored flag -- there is no boolean for
-      ``object.__setattr__`` (which bypasses ``__setattr__`` by design, the same mechanism
-      this class's own constructor uses to set its slots) to promote from ``False`` to
-      ``True`` (Issue #75, P79-R1-F2 Round 2).
+    - :attr:`verified`, :meth:`knows_schema` and :meth:`validation_errors` are bound once, at
+      construction, as closures over this one construction's own adopted-identity comparison
+      and validator mapping -- never read back through a named instance attribute at all.
+      Round 2 made ``verified`` a property computed from ``self._digest``, which closed the
+      Round 1 stored-flag promotion but left two other named, independently replaceable
+      targets: ``object.__setattr__(context, "_digest", ADOPTED_SCHEMA_SET_DIGEST)`` promotes
+      a weakened context by replacing the comparison's left side to match its right, and
+      ``object.__setattr__(context, "_validators", weakened_validators)`` (or rebinding the
+      module-level :data:`ADOPTED_SCHEMA_SET_DIGEST` global itself, which ``Final`` does not
+      make immutable at runtime) splits what ``verified`` reports from what
+      :meth:`validation_errors` actually validates against. None of the three has a named
+      attribute left to target after construction (Issue #75, P79-R1-F2 Round 2, hardened
+      P79-R3-F2 Round 3).
 
     There is deliberately no ``cache_clear``, ``reload``, ``with_schema_root``, or
     filesystem fallback of any kind. Equality is identity: two contexts built from identical
@@ -379,12 +433,11 @@ class CanonicalSchemaContext:
     used end to end rather than merely that two contexts happened to agree.
     """
 
-    __slots__ = ("_digest", "_relative_paths", "_schema_ids", "_validators")
+    __slots__ = ("_digest", "_relative_paths", "_schema_ids")
 
     _digest: str
     _relative_paths: tuple[str, ...]
     _schema_ids: tuple[str, ...]
-    _validators: Mapping[str, Draft202012Validator]
 
     def __init__(
         self,
@@ -463,15 +516,19 @@ class CanonicalSchemaContext:
             for schema_id, document in frozen_documents.items()
         )
         validators = {
-            schema_id: Draft202012Validator(
+            schema_id: _FrozenAwareValidator(
                 document, registry=registry, format_checker=FormatChecker()
             )
             for schema_id, document in frozen_documents.items()
         }
-        object.__setattr__(self, "_validators", MappingProxyType(validators))
         object.__setattr__(self, "_digest", digest)
         object.__setattr__(self, "_schema_ids", tuple(sorted(documents)))
         object.__setattr__(self, "_relative_paths", relative_paths)
+        object.__setattr__(
+            self,
+            "__class__",
+            _bind_adopted_identity(digest == ADOPTED_SCHEMA_SET_DIGEST, validators),
+        )
 
     @classmethod
     def from_schema_root(
@@ -523,81 +580,99 @@ class CanonicalSchemaContext:
         return len(self._schema_ids)
 
     def knows_schema(self, schema_id: str) -> bool:
-        """Whether *schema_id* is part of this context's adopted, closed schema set."""
+        """Whether *schema_id* is part of this context's adopted, closed schema set.
 
-        return schema_id in self._validators
+        This base-class body is a fail-closed default that is never actually reached: every
+        instance's own ``__class__`` is retyped, at the end of construction, to a fresh
+        per-instance subclass whose :meth:`knows_schema`/:meth:`validation_errors`/
+        :attr:`verified` are closures over that one construction's own validator mapping and
+        adopted-identity comparison (see :func:`_bind_adopted_identity`, Issue #75,
+        P79-R1-F2 Round 2, hardened P79-R3-F2 Round 3) -- there is no ``_validators`` instance
+        attribute here to consult, by design.
+        """
+
+        return False
 
     @property
     def verified(self) -> bool:
-        """Whether this context's own measured :attr:`digest` reproduces the Kernel's
-        independently adopted :data:`ADOPTED_SCHEMA_SET_DIGEST` (Issue #75, P79-R1-F2
-        Round 2).
+        """Whether this context's captured bytes reproduce the Kernel's independently
+        adopted :data:`ADOPTED_SCHEMA_SET_DIGEST` (Issue #75, P79-R1-F2 Round 2, hardened
+        P79-R3-F2 Round 3).
 
-        Computed fresh on every access from ``self._digest`` -- never stored as a separate
-        flag -- so there is no boolean to promote: unlike the Round 1 shape, reaching in
-        with ``object.__setattr__(context, "_verified", True)`` has no attribute left to
-        set (this class no longer declares one), and cannot make an unverified context's
-        ``verified`` read ``True``.
+        This base-class body is a fail-closed default (``False``) that is never actually
+        reached for a fully constructed context -- see :meth:`knows_schema`. It matters only
+        in that it fixes what happens if a caller ever did strip a context's per-instance
+        override back off (``object.__setattr__(context, "__class__",
+        CanonicalSchemaContext)``): the result is always the conservative ``False``, never a
+        promotion, because *this* body never reads any instance attribute at all.
 
-        Deliberately independent of whatever *expected_digest* a caller supplied at
-        construction: a caller cannot make an arbitrary (including deliberately weakened)
-        capture "verified" merely by recomputing that capture's own digest and passing it
-        back in as its own expectation -- that closes the Round 1 counterexample where a
-        self-computed digest was accepted as if it were an independently adopted identity.
-        The only way ``verified`` is ``True`` is for the captured bytes to actually
-        reproduce the exact canonical ``01_SCHEMA`` set this module's own source commits
-        to. :class:`~manosube_agent_civilization.store.file_store.FileStateStore` and
-        :func:`~manosube_agent_civilization.binding.route.bind_project` both refuse a
-        *schema_context* whose ``verified`` is ``False``, so an unverified context can
-        never reach validation, Store construction, or a write.
+        Round 2 made ``verified`` a property computed fresh from ``self._digest`` on every
+        access, comparing it against the module-level :data:`ADOPTED_SCHEMA_SET_DIGEST`.
+        That closed the Round 1 stored-``_verified``-flag promotion, but left three other
+        independently replaceable targets, each an exact-head reproduced counterexample:
+        ``object.__setattr__(context, "_digest", ADOPTED_SCHEMA_SET_DIGEST)`` replaces the
+        comparison's left side to match its right and promotes a weakened context;
+        ``object.__setattr__(context, "_validators", weakened_validators)`` leaves the
+        (correct) comparison alone but splices in validators built from different bytes, so
+        ``verified`` stays ``True`` while :meth:`validation_errors` no longer validates
+        against what was actually adopted; and rebinding the module global
+        ``ADOPTED_SCHEMA_SET_DIGEST`` itself (``Final`` is a static-analysis annotation, not
+        a runtime enforcement) changes what *every* context, including ones already
+        constructed and already found unverified, reports thereafter, since Round 2's
+        property re-read that global on every single access.
+
+        The per-instance closure this property is overridden with (see
+        :func:`_bind_adopted_identity`) closes all three at once: ``verified_flag`` is read
+        from the module global exactly once, at construction, and from then on lives only in
+        a closure cell no instance attribute names -- there is nothing for
+        ``object.__setattr__`` to replace, on this object or on the module, that changes an
+        already-constructed context's answer. The same closure also supplies the validator
+        mapping :meth:`validation_errors` actually uses, so the two can never independently
+        drift: what ``verified`` reports and what actually validates come from the exact same
+        construction event. :class:`~manosube_agent_civilization.store.file_store.
+        FileStateStore` and :func:`~manosube_agent_civilization.binding.route.bind_project`
+        both refuse a *schema_context* whose ``verified`` is ``False``, so an unverified
+        context can never reach validation, Store construction, or a write.
         """
 
-        return self._digest == ADOPTED_SCHEMA_SET_DIGEST
+        return False
 
     def validation_errors(self, instance: Any, schema_id: str) -> list[ValidationError]:
         """Return every validation error *instance* produces against *schema_id*.
 
-        A validation *operation* -- the caller receives errors, never a mutable schema
-        document, and never the validator object holding one. A raw
+        This base-class body is a fail-closed default that is never actually reached -- see
+        :meth:`knows_schema`. A validation *operation* -- the caller receives errors, never a
+        mutable schema document, and never the validator object holding one. A raw
         :class:`jsonschema.ValidationError`'s own ``.schema`` attribute is not a copy but a
         direct reference into the schema document node it was raised against (Issue #75,
         P79-R1-F1). Round 1 tried to close that by deep-copying every returned error; Round 2
-        found the real reachable state one layer deeper -- ``context._validators[schema_id]
-        .schema`` itself, never returned to any caller at all, was still a plain mutable
-        ``dict`` that in-place mutation could reach and change, with no return value ever
-        needed (an independently reproduced counterexample: ``context._validators[schema_id]
-        .schema["properties"][...]`` reached and flipped directly, with no error object
-        involved, then made this same context, and a real ``bind_project`` genesis
-        transaction carrying the identical invalid body, incorrectly accept it).
+        froze every parsed schema document into a ``dict``/``list`` subclass whose mutating
+        methods raised, closing in-place mutation through ``obj[key] = value`` -- but Round 3
+        found that a ``dict``/``list`` subclass's own mutating slots stay reachable by
+        calling the *base type* directly (``dict.__setitem__(node, ...)``), bypassing every
+        subclass override entirely (an independently reproduced counterexample: exactly that
+        call against the already-admitted top-level Objective Revision validator's
+        ``.schema["unevaluatedProperties"]`` made the identical invalid record pass, and a
+        real ``bind_project`` genesis transaction commit it).
 
-        That is closed structurally, not by copying: every parsed schema document is
-        recursively frozen (:func:`_deep_freeze` -- nested ``dict`` to
-        :class:`_FrozenSchemaMapping`, nested ``list`` to :class:`_FrozenSchemaSequence`, both
-        real ``dict``/``list`` subclasses so ``jsonschema``'s and ``referencing``'s own
-        internal ``isinstance(..., dict)``/``isinstance(..., list)`` checks -- including the
-        ``unevaluatedProperties`` keyword's ``$ref``/``allOf`` subschema walk -- keep working
-        exactly as they do over a plain document) before any
-        :class:`~jsonschema.Draft202012Validator` is ever constructed from it, so the
-        document a validator holds -- and therefore every ``error.schema`` reachable from
-        any error it raises, at any nesting depth -- is already immutable. Attempting the
-        counterexample above now raises :class:`SchemaContextError` at the mutation itself,
-        whether reached through a returned error or through ``context._validators``
-        directly; there is no longer a plain mutable dict or list anywhere on the path a
-        caller (or an attacker with a bare reference to this context) can reach. Freezing,
-        not per-call copying, is what makes returning errors by direct reference safe:
-        nothing reachable from a returned error can mutate this context's own validators or
-        documents, so no deep-copy is needed -- and none is performed here.
+        That is closed by not being a ``dict``/``list`` subclass at all: every parsed schema
+        document is recursively frozen (:func:`_deep_freeze`) into
+        :class:`_FrozenSchemaMapping`/:class:`_FrozenSchemaSequence` nodes, which implement
+        only :class:`collections.abc.Mapping`/``Sequence``'s read protocol and declare no
+        mutating method anywhere in their MRO -- there is no base type whose mutating slot a
+        caller could reach through them, by any name, because none exists. A validator built
+        via :func:`jsonschema.validators.extend` with a type checker that also recognizes
+        these frozen nodes as JSON ``"object"``/``"array"`` instances (:data:`
+        _FrozenAwareValidator`) validates against them exactly as it would a plain document,
+        including the ``unevaluatedProperties`` keyword's ``$ref``/``allOf`` subschema walk.
 
         Raises :class:`SchemaContextError` when *schema_id* is outside the adopted set: a
         context fails closed rather than silently validating against nothing.
         """
 
-        validator = self._validators.get(schema_id)
-        if validator is None:
-            raise SchemaContextError(
-                f"canonical schema is unavailable in this validation context: {schema_id}"
-            )
-        return list(validator.iter_errors(instance))
+        raise SchemaContextError(
+            f"canonical schema is unavailable in this validation context: {schema_id}"
+        )
 
     def __setattr__(self, name: str, value: object) -> None:
         raise SchemaContextError(
@@ -611,3 +686,66 @@ class CanonicalSchemaContext:
 
     def __repr__(self) -> str:
         return f"CanonicalSchemaContext(schema_count={self.schema_count}, digest={self._digest})"
+
+
+def _bind_adopted_identity(
+    verified_flag: bool, validators: Mapping[str, Draft202012Validator]
+) -> type[CanonicalSchemaContext]:
+    """Build the one-off, per-construction subclass a :class:`CanonicalSchemaContext`
+    retypes itself to at the end of ``__init__`` (Issue #75, P79-R1-F2 Round 2, hardened
+    P79-R3-F2 Round 3).
+
+    *verified_flag* and *validators* are read exactly once, from this one construction's own
+    locals, and captured only in the closures of the three methods defined below --
+    :attr:`~CanonicalSchemaContext.verified`, :meth:`~CanonicalSchemaContext.knows_schema`,
+    :meth:`~CanonicalSchemaContext.validation_errors` -- never assigned to any instance
+    attribute. The returned class's ``__slots__`` is empty: it adds no instance storage at
+    all over the base class, so there is no attribute name anywhere in the resulting
+    instance's layout through which ``object.__setattr__`` could reach or replace either
+    value, independently or together. This is what makes the three required guarantees hold
+    simultaneously:
+
+    - replacing ``context._digest`` cannot change what ``verified`` reports, because
+      ``verified`` no longer reads ``self._digest`` at all;
+    - replacing (there is nothing named ``context._validators`` to replace any more) or
+      otherwise reaching in to substitute validators cannot change what ``verified`` reports
+      while leaving :meth:`validation_errors` pointed at different bytes, because both read
+      the same closure-captured ``validators`` established here;
+    - rebinding the module-level :data:`ADOPTED_SCHEMA_SET_DIGEST` global after construction
+      cannot change what an *already-constructed* context reports, because *verified_flag*
+      was computed once, before this function was ever called, and is never re-read from
+      that global afterward.
+
+    Building a fresh class per construction (rather than one shared class checking a shared
+    private attribute) is what keeps these three guarantees from just becoming the same
+    single-named-target problem one level down: a shared attribute, however named, would
+    once again be a single ``object.__setattr__`` target reachable given only a context
+    reference.
+    """
+
+    def verified(self: CanonicalSchemaContext) -> bool:
+        return verified_flag
+
+    def knows_schema(self: CanonicalSchemaContext, schema_id: str) -> bool:
+        return schema_id in validators
+
+    def validation_errors(
+        self: CanonicalSchemaContext, instance: Any, schema_id: str
+    ) -> list[ValidationError]:
+        validator = validators.get(schema_id)
+        if validator is None:
+            raise SchemaContextError(
+                f"canonical schema is unavailable in this validation context: {schema_id}"
+            )
+        return list(validator.iter_errors(instance))
+
+    return type(
+        "_VerifiedCanonicalSchemaContext",
+        (CanonicalSchemaContext,),
+        {
+            "__slots__": (),
+            "verified": property(verified),
+            "knows_schema": knows_schema,
+            "validation_errors": validation_errors,
+        },
+    )
