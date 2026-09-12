@@ -3246,3 +3246,88 @@ IMPLEMENTER_STOP=READY_FOR_STRUCTURAL_REVIEW
 本Differenceは、既存のState、Observation、Difference、Authority、Change、Evidence、Reflow、
 Binding、Boot、Runtime、Model Runtime、URL Bootのいずれのownerも置換しない。`01_SCHEMA`の
 内容は一byteも変更していない。
+
+---
+
+# 41. Issue #75 live-main統合 restatement（Draft PR #79）
+
+本節はClaude Codeが記録するbounded restatementであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。セクション40自身は書き換えない -- `37c530aa…`が独立に検証・保存され
+GitHubへpublishされた時点の事実として、そのまま保持する。セクション40末尾の`CURRENT_PR=NONE`・
+`REMOTE_PUSH_PERFORMED=false`・`PR_CREATED=false`・`DELIVERY_STATE=
+LOCAL_COMMIT_ONLY_AWAITING_STRUCTURAL_REVIEW`は、remote publication以前の事実であり、Draft
+PR #79が存在する現在は真ではない。このrepositoryの"last-occurrence extraction convention"に
+従い、本節は`CURRENT_PR`/`CURRENT_PHASE_STATE`の最終的な再投影となる。
+
+構造参謀によるIssue #75 Draft PR #79統合handoff
+（`https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5642674669`）
+を独立GitHub API再観測で確認した上で、`37c530aa…`を履歴上不変のまま保持する history-preserving
+mergeにより現行`main`を統合し、KSI-C1〜C7・十項目adversarial matrix・targeted/full suite・
+schema validation・static conformanceを再証明した結果を記録する。
+
+```text
+RESTATEMENT_OBSERVED_AT_UTC=2026-09-12T03:40:00Z
+GOVERNING_ISSUE=#75
+DIFFERENCE_ID=D-KERNEL-VERIFIED-SCHEMA-BYTE-INJECTION
+PRESERVED_DELIVERED_HEAD=37c530aa257ec02c562a25ce166786aaa190cd4b
+CURRENT_PR=79
+PR_STATE=OPEN_DRAFT_UNMERGED
+DELIVERY_BRANCH=agent/issue-75-verified-schema-context
+LIVE_MAIN_SHA_INTEGRATED=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+INTEGRATED_HEAD_MERGE_PARENTS=37c530aa257ec02c562a25ce166786aaa190cd4b,0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+PRESERVED_COMMIT_REWRITE_ALLOWED=false
+PRESERVED_COMMIT_REWRITTEN=false
+CURRENT_PHASE_STATE=ISSUE_75_LIVE_MAIN_INTEGRATED_AWAITING_STRUCTURAL_REVIEW
+DELIVERY_STATE=INTEGRATED_HEAD_PUSHED_AWAITING_STRUCTURAL_REVIEW
+```
+
+## 41.1 統合後の再証明結果
+
+```text
+PRESERVED_HEAD_ANCESTOR_CHECK=PASS
+INTEGRATED_MAIN_ANCESTOR_CHECK=PASS
+KSI_C1_C7=PASS
+ADVERSARIAL_MATRIX_10_OF_10=PASS
+TARGETED_SUITE=79 passed (tests/contract/schema_context + tests/integration/binding/test_verified_schema_context_genesis.py)
+SCHEMA_VALIDATION=PASS (SCHEMA_COUNT=72, digest derived from current main's schema set, not hard-coded)
+FULL_REPOSITORY_SUITE=21433 passed, 11 skipped, 10 failed (21454 collected)
+FULL_SUITE_NEW_TEST_DELTA=+82 vs main baseline (21372) -- 79 new KSI tests (51 contract + 28
+  integration) plus 3 new parametrize instances of pre-existing totality-sweep tests
+  (test_scope_normalization_owner.py, test_active_document_terminal_state.py) triggered by the
+  new schema_context.py module; independently confirmed by node-id diff against origin/main
+MAIN_BASELINE_FAILURE_SEPARATION=CONFIRMED -- the same 10 failures, same names, same root cause
+  (tests/contract/governance/test_source_freshness_drift_detection.py; 3 MAIN_ACCEPTED_BASE_SHA
+  occurrences vs 2 expected) reproduce identically on bare origin/main@0ced9d0d, independently
+  verified in a separate worktree; this delivery introduces zero new full-suite failures
+RUFF_CHECK=177 findings repo-wide, identical class/scale to 178 on bare origin/main@0ced9d0d
+  (independently verified in a separate worktree); the two new KSI files themselves are clean
+RUFF_FORMAT_CHECK=113 files repo-wide would reformat, identical class/scale to 114 on bare
+  origin/main@0ced9d0d; the two new KSI files themselves are already formatted
+RUFF_MYPY_DRIFT_CAUSE=installed toolchain versions (ruff 0.16.5, mypy 1.20.2) exceed this
+  repository's pinned `required-version=">=0.9.0"` floor; mypy's `namespace_packages=false` +
+  `explicit_package_bases=true` combination is rejected outright by mypy 1.20.2 on bare
+  origin/main@0ced9d0d as well -- pre-existing environment/tooling drift, not a regression
+  introduced by this integration
+BOAT_PR_4497_TOUCHED=false
+PHASE_19_IMPLEMENTATION_IN_THIS_PR=false
+```
+
+## 41.2 Phase 19 / PR #78 serialized-integration barrier（観測のみ）
+
+Issue #75 comment
+`https://github.com/manosube/manosube-agent-civilization-os/issues/75#issuecomment-5641912727`
+の定めるsequencing authorityにより、PR #78（Phase 19、branch
+`agent/issue-77-phase19-multi-agent-dynamic-execution`）は、Issue #75が構造審査・SHUKOU採択を
+経てmainへ手動mergeされるまでmerge不可であり、その後で新しい`main`を追随してV1〜V7・targeted/
+full suiteを再証明する義務を負う。本節はこの barrier を観測として記録するのみであり、Phase 19の
+実装内容は本branch/本PR #79には一切import・混入していない（`src/manosube_agent_civilization/`
+配下にPhase 19の`multi_agent`packageは本branchの追跡対象に含まれない）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_75_CLOSE_ALLOWED=false
+DOWNSTREAM_BOAT_PIN_UPDATE_ALLOWED=false
+PHASE_19_IMPLEMENTATION_IN_PR_79=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
