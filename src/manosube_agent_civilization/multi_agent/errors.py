@@ -86,6 +86,24 @@ class MultiAgentReplayConflictError(MultiAgentError):
     either side."""
 
 
+class MultiAgentPlanSelectionMismatchError(MultiAgentError):
+    """Structural Review Round 3, P19-R3-F2: the resolved plan's own declared slot selection
+    (``slots``/``capability_selection_fingerprint``) does not equal what
+    :func:`~manosube_agent_civilization.multi_agent.selection.select_agent_slots` independently
+    recomputes today from the plan's own ``difference_ref`` -- refused before any slot's own
+    Agent is constructed, any adapter is reached, or any new Store mutation is made.
+
+    A plan's own content-addressed identity and semantic-fingerprint checks alone only prove
+    internal self-consistency -- that its own declared fields agree with each other -- never
+    that those declared fields were honestly *derived* from the named Difference in the first
+    place. A plan committed by some route other than :func:`~manosube_agent_civilization.
+    multi_agent.route.open_dynamic_execution_plan` (which always calls ``select_agent_slots``
+    itself) could declare a self-consistent but forged selection -- for example, silently
+    narrowing a ``HIGH`` risk Difference's own required two slots down to one -- and this check
+    is what refuses it at the one place every execution attempt must pass through.
+    """
+
+
 class MultiAgentPlanExpiredError(MultiAgentError):
     """Structural Review Round 1, P19-R1-F5: this call's own *executed_at* is at or past the
     plan's own recorded ``expires_at`` or ``execution_bounds.deadline_at`` -- refused before any

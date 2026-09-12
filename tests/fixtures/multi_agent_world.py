@@ -240,6 +240,49 @@ class SeededMultiAgentAdapter:
         }
 
 
+class StateRecordingMultiAgentAdapter:
+    """A controlled adapter, structurally identical to :class:`SeededMultiAgentAdapter`, that
+    additionally appends the exact ``state_revision``/``semantic_fingerprint`` pair its own real
+    ``request`` carried onto a caller-supplied shared list -- Structural Review Round 3's own
+    P19-R3-F1 required proof that every real adapter request in one plan consumed one actual
+    common snapshot, observed from the adapter's own side of the boundary rather than only
+    inferred from this package's own bookkeeping metadata or the committed Envelope."""
+
+    def __init__(
+        self,
+        *,
+        observed: list[dict[str, Any]],
+        candidate_fields: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.adapter_identity: Mapping[str, Any] = {
+            "adapter": "fake_model_adapter",
+            "version": "0.1",
+        }
+        self._candidate_fields = dict(candidate_fields or {"summary": "seeded"})
+        self._observed = observed
+        self.execute_call_count = 0
+
+    def execute(self, *, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.execute_call_count += 1
+        self._observed.append(
+            {
+                "state_revision": request["state_revision"],
+                "semantic_fingerprint": dict(request["semantic_fingerprint"]),
+            }
+        )
+        permitted = list(request["boundary"]["permitted_candidate_fields"])
+        candidate_fields = {
+            field: self._candidate_fields[field]
+            for field in permitted
+            if field in self._candidate_fields
+        }
+        return {
+            "adapter_outcome": "CANDIDATE",
+            "candidate_kind": "OBSERVATION_CANDIDATE",
+            "candidate_fields": candidate_fields,
+        }
+
+
 class CrashingMultiAgentAdapter:
     """A controlled adapter that raises a genuinely unexpected (non-``ModelRuntimeError``)
     exception from ``execute()`` -- the V6 coordinator-crash simulation's own subject. Never
@@ -261,6 +304,36 @@ class CrashingMultiAgentAdapter:
         raise RuntimeError("simulated coordinator/infrastructure crash")
 
 
+class HangingMultiAgentAdapter:
+    """A controlled adapter whose ``execute()`` blocks for a caller-declared, real wall-clock
+    duration before ever returning -- Structural Review Round 3's own P19-R3-F4 required proof
+    subject: a genuinely hanging adapter, never a simulated timeout. The duration is chosen by
+    each test to exceed its own plan's ``per_slot_timeout_seconds`` so the real bounded-call
+    enforcement (``route.py``'s own ``ThreadPoolExecutor`` + ``future.result(timeout=...)``) is
+    what ends the call, never this adapter returning early on its own."""
+
+    def __init__(
+        self, *, sleep_seconds: float, adapter_identity: Mapping[str, Any] | None = None
+    ) -> None:
+        self.adapter_identity: Mapping[str, Any] = dict(
+            adapter_identity or {"adapter": "fake_model_adapter", "version": "0.1"}
+        )
+        self._sleep_seconds = sleep_seconds
+        self.execute_call_count = 0
+
+    def execute(self, *, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        import time
+
+        self.execute_call_count += 1
+        time.sleep(self._sleep_seconds)
+        permitted = list(request["boundary"]["permitted_candidate_fields"])
+        return {
+            "adapter_outcome": "CANDIDATE",
+            "candidate_kind": "OBSERVATION_CANDIDATE",
+            "candidate_fields": dict.fromkeys(permitted, "late"),
+        }
+
+
 __all__ = [
     "PERMITTED_CANDIDATE_FIELDS",
     "PROJECT_ID",
@@ -268,7 +341,9 @@ __all__ = [
     "RISK_CLASSES",
     "SECOND_PROJECT_ID",
     "CrashingMultiAgentAdapter",
+    "HangingMultiAgentAdapter",
     "SeededMultiAgentAdapter",
+    "StateRecordingMultiAgentAdapter",
     "authorized_world",
     "bind_into",
     "commit_boundary",

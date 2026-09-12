@@ -354,6 +354,7 @@ def test_this_package_declares_exactly_the_record_kinds_it_owns() -> None:
     assert route_kinds == {
         "PLAN_RECORD_KIND": "multi_agent_dynamic_execution_plan",
         "SLOT_OUTPUT_RECORD_KIND": "multi_agent_slot_output",
+        "SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND": "multi_agent_slot_attempt_envelope_claim",
         "RELEASE_RECEIPT_RECORD_KIND": "multi_agent_agent_release_receipt",
         "CONFLICT_SET_RECORD_KIND": "multi_agent_conflict_set",
         "AGGREGATION_INPUT_RECORD_KIND": "multi_agent_evidence_aggregation_input",

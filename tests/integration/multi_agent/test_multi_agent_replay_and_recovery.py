@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from tests.fixtures.multi_agent_world import (
     CrashingMultiAgentAdapter,
+    HangingMultiAgentAdapter,
     SeededMultiAgentAdapter,
     authorized_world,
     open_plan_kwargs,
@@ -219,14 +220,21 @@ def test_partial_execution_coordinator_crash_and_recovery_leak_no_agent(
 def test_p19_r1_f2_a_crash_between_slot_output_derivation_and_commit_leaves_neither_record(
     tmp_path: Any, monkeypatch: Any
 ) -> None:
-    """Structural Review Round 1, P19-R1-F2: reproduces the exact crash point the review found
-    -- previously, the slot's own attempt output was committed in its own transaction *before*
-    the release receipt was even derived, so a crash right there left a committed slot output
-    with no release receipt, and every later replay call raised ``MultiAgentRequirementError``
-    forever. Now both records are committed together in one atomic transaction: injecting a
-    crash before that single commit call is reached (inside the release receipt's own
-    derivation) must leave *neither* record committed -- there is no longer an intermediate
-    state between "slot output committed" and "release receipt missing".
+    """Structural Review Round 1, P19-R1-F2, refined by Round 3's own P19-R3-F3: reproduces the
+    exact crash point the review found -- previously, the slot's own attempt output was
+    committed in its own transaction *before* the release receipt was even derived, so a crash
+    right there left a committed slot output with no release receipt, and every later replay
+    call raised ``MultiAgentRequirementError`` forever. The slot output and release receipt are
+    still committed together in one atomic transaction: injecting a crash before that single
+    commit call is reached (inside the release receipt's own derivation) still leaves *neither*
+    of those two records committed.
+
+    Round 3's own P19-R3-F3 adds a durable envelope claim record, committed right after the
+    real adapter call itself succeeds -- strictly *before* this test's own crash point. So this
+    exact crash no longer loses the real adapter work it already paid for: recovery must resolve
+    the already-committed claim, reuse its already-committed Model Execution Envelope, and reach
+    the identical terminal outcome *without* invoking the adapter a second time. That is
+    precisely P19-R3-F3's own required proof, ``RECOVERY_DUPLICATE_ADAPTER_CALL_COUNT=0``.
     """
 
     world = authorized_world(tmp_path, risk_class="LOW")
@@ -239,15 +247,17 @@ def test_p19_r1_f2_a_crash_between_slot_output_derivation_and_commit_leaves_neit
 
     monkeypatch.setattr(route_module, "derive_multi_agent_agent_release_receipt", _crashing_derive)
 
+    crashing_adapter = SeededMultiAgentAdapter(candidate_fields={"summary": "ok"})
     with pytest.raises(
         RuntimeError, match="simulated crash before the atomic slot-complete commit"
     ):
         _execute(
             world,
             opened["plan_ref"],
-            lambda: SeededMultiAgentAdapter(candidate_fields={"summary": "ok"}),
+            lambda: crashing_adapter,
             "2026-09-11T01:30:00Z",
         )
+    assert crashing_adapter.execute_call_count == 1
 
     store = world["store"]
     slot_output_id = route_module.compute_slot_output_id(  # type: ignore[attr-defined]
@@ -257,16 +267,23 @@ def test_p19_r1_f2_a_crash_between_slot_output_derivation_and_commit_leaves_neit
         store.resolve_record(world["project_id"], "multi_agent_slot_output", slot_output_id) is None
     )
     assert _record_kind_count(store, world["project_id"], "multi_agent_agent_release_receipt") == 0
+    # The real adapter call already committed its own Model Execution Envelope and this Round
+    # 3 envelope claim durably -- both survive the crash, since both commit strictly before the
+    # crash point this test injects.
+    assert (
+        _record_kind_count(store, world["project_id"], "multi_agent_slot_attempt_envelope_claim")
+        == 1
+    )
 
     monkeypatch.setattr(route_module, "derive_multi_agent_agent_release_receipt", real_derive)
 
-    # Recovery: nothing was left half-committed, so a fresh call executes slot 0 cleanly from
-    # scratch (not "replay" -- there was never anything to replay).
+    # Recovery: the envelope claim committed by the crashed attempt is resolved and reused -- the
+    # adapter is never called a second time for the same slot attempt.
     recovering_adapter = SeededMultiAgentAdapter(candidate_fields={"summary": "ok"})
     recovered = _execute(
         world, opened["plan_ref"], lambda: recovering_adapter, "2026-09-11T01:45:00Z"
     )
-    assert recovering_adapter.execute_call_count == 1
+    assert recovering_adapter.execute_call_count == 0
     assert len(recovered["slot_outputs"]) == 1
     assert recovered["slot_outputs"][0]["outcome"] == "CANDIDATE_ACCEPTED"
     assert recovered["release_receipts"][0]["release_status"] == "RELEASED"
@@ -348,3 +365,76 @@ def test_release_incompleteness_blocks_aggregation_and_therefore_clean_completio
             completed_at="2026-09-11T01:40:00Z",
         )
     coordinator.release()
+
+
+def test_p19_r3_f4_a_genuinely_hanging_adapter_is_bounded_by_the_plans_own_real_timeout(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 3, P19-R3-F4's own required proof: a genuinely hanging adapter
+    (a real ``time.sleep()`` far longer than the plan's own ``per_slot_timeout_seconds``, never
+    a simulated timeout) is bounded by this package's own real, runtime-enforced per-slot call
+    budget. The call returns promptly -- long before the adapter itself ever would -- with a
+    typed ``TIMEOUT`` outcome, no Envelope reference, and a release receipt that still resolves
+    to ``RELEASED`` (the constructed slot Agent is never leaked even though its own adapter call
+    never returned in time).
+    """
+
+    import time
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+
+    # A same-shaped baseline call (identical plan/world setup, an ordinary fast adapter) first,
+    # to measure this environment's own real Store I/O overhead for one full execute call --
+    # this file-backed Store's own commit latency varies by host, so the decisive comparison
+    # below is relative to that measured baseline, never a hardcoded absolute wall-clock bound.
+    baseline_coordinator = _coordinator(world)
+    baseline_opened = open_dynamic_execution_plan(
+        world["store"], baseline_coordinator, **open_plan_kwargs(world)
+    )
+    baseline_coordinator.release()
+    baseline_started_at = time.monotonic()
+    _execute(
+        world,
+        baseline_opened["plan_ref"],
+        lambda: SeededMultiAgentAdapter(candidate_fields={"summary": "ok"}),
+        "2026-09-11T01:15:00Z",
+    )
+    baseline_elapsed = time.monotonic() - baseline_started_at
+
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(
+        world["store"],
+        coordinator,
+        **open_plan_kwargs(world),
+        per_slot_timeout_seconds=1,
+    )
+    coordinator.release()
+    assert opened["plan"]["execution_bounds"]["per_slot_timeout_seconds"] == 1
+
+    sleep_seconds = 20.0
+    hanging_adapter = HangingMultiAgentAdapter(sleep_seconds=sleep_seconds)
+    started_at = time.monotonic()
+    executed = _execute(world, opened["plan_ref"], lambda: hanging_adapter, "2026-09-11T01:30:00Z")
+    elapsed = time.monotonic() - started_at
+
+    # HANGING_ADAPTER_BOUNDED_TERMINATION=true: this call returned within a small, environment-
+    # scaled margin over the baseline call's own overhead plus the plan's own 1-second bound --
+    # nowhere near the adapter's own real 20-second sleep, which this assertion would fail hard
+    # against if the bounded call had actually waited for it.
+    assert elapsed < baseline_elapsed + 10.0
+    assert elapsed < sleep_seconds
+    assert hanging_adapter.execute_call_count == 1
+
+    # TIMEOUT_OR_CANCELLATION_TYPED_OUTCOME=true, DEADLINE_CROSSED_DURING_EXECUTION_CLEAN_
+    # SUCCESS=false: a typed TIMEOUT outcome, never a fabricated success, and no Envelope this
+    # attempt could ever truthfully name.
+    slot_output = executed["slot_outputs"][0]
+    assert slot_output["outcome"] == "TIMEOUT"
+    assert slot_output["result_fingerprint"] is None
+    assert slot_output["model_execution_envelope_ref"] is None
+
+    # TIMEOUT_OR_CANCELLATION_RELEASE_RECEIPT_RESOLVES=true: the constructed slot Agent this
+    # attempt built is still accounted for as released, never left open just because its own
+    # adapter call ran past the bound.
+    release_receipt = executed["release_receipts"][0]
+    assert release_receipt["release_status"] == "RELEASED"

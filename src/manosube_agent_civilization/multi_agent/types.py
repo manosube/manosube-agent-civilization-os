@@ -84,6 +84,19 @@ CONFLICT_POLICY = "EXACT_FINGERPRINT_EQUALITY_OR_EXPLICIT_DISAGREEMENT"
 CANCELLATION_POLICIES: frozenset[str] = frozenset({"COOPERATIVE_PER_SLOT_TIMEOUT"})
 CANCELLATION_POLICY = "COOPERATIVE_PER_SLOT_TIMEOUT"
 
+#: Structural Review Round 3, P19-R3-F4: the real, wall-clock-bounded per-slot adapter-call
+#: budget this delivery's default plans open with -- runtime-enforced (``route.py``'s own
+#: bounded call around ``execute_model_work_unit``, not merely a declared, unread policy name).
+#: A caller of :func:`~manosube_agent_civilization.multi_agent.route.open_dynamic_execution_plan`
+#: may supply its own bound (a real test proving enforcement needs a much shorter one than this
+#: production default), but every plan's own ``execution_bounds.per_slot_timeout_seconds`` is
+#: always a real, positive, bounded whole number of seconds -- never absent, never read as a
+#: no-op, and never a fraction: Canonical State's own v0.1 encoding prohibits floating-point
+#: values entirely (:mod:`~manosube_agent_civilization.state.canonicalize`), so this bound is an
+#: ``int``, the same convention every other ``timeout_seconds`` field in this repository already
+#: keeps.
+DEFAULT_PER_SLOT_TIMEOUT_SECONDS = 30
+
 #: P19-C8's own release-receipt vocabulary. ``RELEASE_FAILED`` is carried honestly even though
 #: :mod:`~manosube_agent_civilization.agent_runtime`'s own ``release()`` is documented
 #: "local, idempotent, and zero-write" and cannot currently fail -- the record still states the
@@ -144,6 +157,7 @@ __all__ = [
     "CONFLICT_MEMBER_KINDS",
     "CONFLICT_POLICIES",
     "CONFLICT_POLICY",
+    "DEFAULT_PER_SLOT_TIMEOUT_SECONDS",
     "EXECUTION_ORDER",
     "EXECUTION_ORDERS",
     "MULTI_AGENT_CAPABILITIES",

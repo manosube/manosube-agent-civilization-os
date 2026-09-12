@@ -3236,3 +3236,70 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 `CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`。§39以前のセクションが投影する過去のPhase/PR状態は
 そのまま保持され、本節のみが現在の投影として優先される（last-wins）。
+
+---
+
+# 42. Phase 19 Structural Review Round 3 bounded current-state restatement (Issue #77, PR #78)
+
+本節は、Structural Advisor Structural Review Round 3（reviewed head/AUTHORIZED_TARGET_SHA
+`7485e49229b77e6507626f16fe76a824ef4da3fa`、finding `P19-R3-F1`〜`P19-R3-F5`）をSHUKOUが
+`ADOPT_P19_R3_STRUCTURAL_CORRECTIONS`として正式採択した後、Claude Codeが既存branch
+`agent/issue-77-phase19-multi-agent-dynamic-execution`・既存PR #78上でF1〜F5の是正を実装した
+時点の、bounded・append-only current-state restatementである（Structural Review Round 3自身の
+コメント：
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5644963849
+、SHUKOU正式採択コメント：
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5645513367
+、実行ハンドオフコメント：
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5645516220
+、いずれも本記録作成者自身がGitHub API経由でauthor login/id/associationを直接検証済み）。
+§0冒頭のheader blockおよびセクション1〜41の本文は、先行するStructural Review Round 1自身が
+P19-R1-F6として指摘した通り、書き換えない -- 本節が最後に追記される、bounded・last-wins
+restatementである。
+
+是正した5個のfindingの要旨: P19-R3-F1（1つのplanに属する全slotの実際のadapter requestが1つの
+共通・不変State revision/semantic fingerprintを消費するよう、`model_runtime.route.
+execute_model_work_unit`へ新規オプション引数`pinned_execution_snapshot`を追加）、P19-R3-F2
+（`execute_dynamic_execution_plan`が、admission/使用時に束縛されたDifferenceを再解決し、
+slot数・assignment・capability-selection fingerprintを独立に再計算し、caller-selectedまたは
+自己無矛盾なforged planをAgent構築/adapter呼び出し/Store書き込み前に拒否）、P19-R3-F3
+（構築済みslot Agentの全terminal経路が、coordinator/infrastructure crashを含め、durableな
+typed slot outcomeとidentity-boundなrelease receiptを生成し、recoveryが完了済みadapter作業を
+決して繰り返さないよう、新規record kind `multi_agent_slot_attempt_envelope_claim`を導入）、
+P19-R3-F4（宣言のみで未enforceだった`CANCELLATION_POLICY`を、実際にruntime-enforceされた
+per-slot deadline/timeout/cancellationへ置換 -- `ThreadPoolExecutor`+`future.result(timeout=
+...)`による、disclosedなPythonの限界を伴う real wall-clock boundとして実装、Model Runtime/
+Agent Runtime/State Store/Evidenceの既存ownerは一切増設しない）、P19-R3-F5（本節自身）。
+
+```text
+OBSERVED_AT_UTC=2026-09-12T12:10:00Z
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_3_CORRECTIONS_DELIVERED_PR_OPEN
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=78
+GOVERNING_ISSUE=#77
+STRUCTURAL_REVIEW_ROUND_3_REVIEWED_HEAD=7485e49229b77e6507626f16fe76a824ef4da3fa
+AUTHORIZED_TARGET_SHA=7485e49229b77e6507626f16fe76a824ef4da3fa
+ADOPTION_ID=ADOPT_P19_R3_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P19-R3-F1,P19-R3-F2,P19-R3-F3,P19-R3-F4,P19-R3-F5
+
+MERGE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+Issue #75「Difference Engine」・PR #79は、本記録作成者自身が本Round着手前にGitHub API経由で
+独立に再検証した結果、`CLOSED`（unmerged、SHUKOUによりcancel済み）であることを確認済みである。
+Issue #75/PR #79はPhase 19（Issue #77/PR #78）とは別のwork itemであり、Phase 19自身のscope・
+branch・PRを一切変更しない -- 本節はこの事実を記録するのみであり、Issue #75/PR #79は既に
+Phase 19の統合を妨げるbarrierではない（closed-unmergedとして確定した別系統の履歴であり、
+Phase 19自身のこのPR #78には一切マージされていない）。
+
+このrestatementは、この一回の追記時点で真であった八個のfieldの事実記録に限られる:
+`CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
+`MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_3_REVIEWED_HEAD`・
+Issue #75/PR #79のclosed-unmerged状態。§41以前のセクションが投影する過去のPhase/PR状態はそのまま
+保持され、本節のみが現在の投影として優先される（last-wins）。

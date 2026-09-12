@@ -737,3 +737,97 @@ existing branch/PR, no new module or owner introduced.
   `CURRENT_PHASE`/`CURRENT_PHASE_STATE`/`CURRENT_PR`/`MAIN_ACCEPTED_BASE_SHA` reflecting Phase 19
   Round 1 as the live work unit, without rewriting §0's header block or any historical section.
   per-plan design, not a limitation this delivery works around.
+
+## 12. Structural Review Round 3 corrections (P19-R3-F1..F5)
+
+Adopted as `ADOPT_P19_R3_STRUCTURAL_CORRECTIONS` against reviewed head/authorized target
+`7485e49229b77e6507626f16fe76a824ef4da3fa` (PR #78). Five findings, all addressed on the
+existing branch/PR, no new module or owner introduced.
+
+- **P19-R3-F1 (real per-request common execution snapshot).** Round 1's own P19-R1-F1 fix bound
+  only this package's own `multi_agent_slot_output.execution_snapshot` bookkeeping field to the
+  plan's genesis snapshot -- the *real* adapter request each slot made still derived its own
+  `state_revision`/`semantic_fingerprint` from a live reboot that genuinely advances slot to
+  slot (each slot's own committed Model Execution Envelope is what advances it). This is the
+  "result metadata used as snapshot substitute" gap the Round 3 review named. The fix is a new
+  `pinned_execution_snapshot` optional parameter on Model Runtime's own
+  `model_runtime.route.execute_model_work_unit` (additive, fully backward compatible -- every
+  existing caller that supplies none keeps its unchanged live-reboot behaviour): when supplied,
+  its own `state_revision`/`semantic_fingerprint` are what the adapter's own real request and
+  the committed Envelope declare instead of the freshly-rebooted live values, while every
+  freshness/staleness check still runs against the true live Boot underneath, unchanged. Every
+  slot of one plan now passes the identical `plan["boot_state_revision"]`/
+  `plan["boot_semantic_fingerprint"]` pair through it (`route.py::_execute_one_slot`), so the
+  *actual* committed Envelope -- not just this package's own bookkeeping -- carries the
+  identical, plan-pinned snapshot for every slot, in front-to-back and reversed slot-execution
+  order alike. Proved by the rewritten
+  `test_p19_r1_f1_every_slot_shares_one_common_immutable_execution_snapshot` (now asserting the
+  real committed Envelope's own `executed_state_revision`/`executed_semantic_fingerprint`, and
+  independently confirming the Store's own live state genuinely advanced between the real
+  adapter calls it would otherwise have leaked into an unpinned request) and by the new
+  `test_p19_r3_f1_state_sensitive_adapter_and_order_reversal_prove_no_snapshot_drift`, which
+  records the exact `state_revision`/`semantic_fingerprint` a state-sensitive fake adapter's own
+  request carried across a 3-slot plan driven in the *reverse* of this package's own fixed
+  ascending execution order.
+- **P19-R3-F2 (independent re-derivation of the admitted slot selection).**
+  `execute_dynamic_execution_plan` now calls a new `_require_selection_matches_difference` right
+  after resolving the plan and before any Agent is constructed, any adapter is reached, or any
+  new Store mutation is made: it independently re-resolves the plan's own `difference_ref`,
+  recomputes `select_agent_slots` and `capability_selection_fingerprint` against that resolved
+  Difference, and raises the new `MultiAgentPlanSelectionMismatchError`
+  (`multi_agent/errors.py`) on any mismatch -- closing the route through which a plan committed
+  by some path other than `open_dynamic_execution_plan` could declare a self-consistent but
+  forged selection (e.g. a HIGH-risk Difference requiring 2 slots, with a committed plan
+  self-consistently declaring only 1). Proved by
+  `test_p19_r3_f2_a_forged_self_consistent_one_slot_plan_against_a_high_risk_difference_is_refused_before_any_effect`,
+  which commits such a plan directly (bypassing `open_dynamic_execution_plan`) and proves zero
+  Agent construction (the adapter factory itself is never called), zero new Store records of
+  any kind this package writes, and an unchanged `state_revision`.
+- **P19-R3-F3 (crash-safe envelope reuse, no duplicate adapter call on recovery).** A new record
+  kind, `multi_agent_slot_attempt_envelope_claim`
+  (`01_SCHEMA/multi_agent/multi_agent_slot_attempt_envelope_claim.schema.json`,
+  `engine.py::derive_multi_agent_slot_attempt_envelope_claim`,
+  `identity.py::multi_agent_slot_attempt_envelope_claim_id`), is committed durably right after
+  the real adapter call succeeds and its own Model Execution Envelope is committed -- strictly
+  *before* this slot's own terminal `multi_agent_slot_output`/`multi_agent_agent_release_receipt`
+  pair is derived or committed. `_execute_one_slot` now resolves this claim first
+  (`resolve_and_verify_committed_slot_attempt_envelope_claim`): if it already exists, the already
+  -committed Envelope it names is reused verbatim and the adapter is never called a second time
+  for that slot attempt. A coordinator/infrastructure crash at any point -- including exactly
+  where Round 1's own P19-R1-F2 fix already made the slot-output/release-receipt pair atomic --
+  now always leaves a durable, typed outcome to recover from: either the claim (real adapter work
+  already paid for, safely reusable) or nothing at all (a genuine retry, not a duplicate charge).
+  Proved by the rewritten
+  `test_p19_r1_f2_a_crash_between_slot_output_derivation_and_commit_leaves_neither_record`, which
+  now additionally proves the claim survives the injected crash and that recovery's own adapter
+  `execute_call_count` is `0` -- the decisive `RECOVERY_DUPLICATE_ADAPTER_CALL_COUNT=0` proof.
+- **P19-R3-F4 (real, runtime-enforced per-slot timeout).** The previously declared-but-unread
+  `CANCELLATION_POLICY = "COOPERATIVE_PER_SLOT_TIMEOUT"` (Round 1's own honest disclosure: "no
+  module in this package reads a clock, schedules a timeout, or cancels a running Agent") is now
+  backed by a real bound. `open_dynamic_execution_plan` takes a new
+  `per_slot_timeout_seconds` parameter (default `types.DEFAULT_PER_SLOT_TIMEOUT_SECONDS = 30`, a
+  whole number of seconds -- Canonical State's own v0.1 encoding prohibits floating-point values
+  entirely, so this bound, like every other `timeout_seconds` field in this repository, is an
+  `int`, never a fraction), validated and recorded in the plan's own
+  `execution_bounds.per_slot_timeout_seconds` (schema-required). `_execute_one_slot` submits its
+  real adapter call to a disposable, one-worker `concurrent.futures.ThreadPoolExecutor` and reads
+  the result via `future.result(timeout=...)` bound to that exact per-plan value: this call never
+  blocks past the bound and never reports success for an unbounded attempt -- the disclosed,
+  accepted Python limitation is that a blocked thread cannot be forcibly killed, so an abandoned
+  background call may still be running when this call already returned. A timeout produces a
+  typed `TIMEOUT` outcome (no Envelope reference, no result fingerprint -- there is no real
+  Envelope this attempt could ever truthfully name) and the constructed slot Agent is still
+  released and accounted for as `RELEASED`, exactly as every other terminal path already is. No
+  second Model Runtime/Agent Runtime/State Store/Evidence owner is introduced -- the bound wraps
+  the identical, unmodified `execute_model_work_unit` call this package already made. Proved by
+  the new
+  `test_p19_r3_f4_a_genuinely_hanging_adapter_is_bounded_by_the_plans_own_real_timeout`, which
+  drives a real `time.sleep()` adapter far longer than a short, test-supplied
+  `per_slot_timeout_seconds` and proves the call returns in bounded time with a typed `TIMEOUT`
+  outcome and a resolving release receipt.
+- **P19-R3-F5 (bounded current-state restatement).** `docs/project_sources/
+  03_CURRENT_DEVELOPMENT_STATE.md` §42 appends a bounded, last-wins restatement of
+  `CURRENT_PHASE`/`CURRENT_PHASE_STATE`/`CURRENT_PR`/`MAIN_ACCEPTED_BASE_SHA` reflecting Phase 19
+  Round 3 as the live work unit, and records Issue #75/PR #79 (a separate, unrelated work item)
+  as independently re-verified `CLOSED`/unmerged/cancelled and no longer an integration barrier
+  for Phase 19 -- without rewriting §0's header block or any section through §41.

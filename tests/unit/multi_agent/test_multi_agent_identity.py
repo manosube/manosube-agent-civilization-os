@@ -67,6 +67,7 @@ def _plan() -> dict[str, Any]:
             "deadline_at": "2026-09-11T02:00:00Z",
             "cancellation_policy": "COOPERATIVE_PER_SLOT_TIMEOUT",
             "max_concurrent_slots": 1,
+            "per_slot_timeout_seconds": 30,
         },
         conflict_policy="EXACT_FINGERPRINT_EQUALITY_OR_EXPLICIT_DISAGREEMENT",
         release_policy="RELEASE_ON_TERMINAL_OUTCOME",

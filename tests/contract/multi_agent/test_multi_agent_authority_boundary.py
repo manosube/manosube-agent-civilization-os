@@ -273,3 +273,136 @@ def test_p19_r1_f5_execution_one_second_before_the_deadline_still_succeeds(tmp_p
     )
     coordinator.release()
     assert len(executed["slot_outputs"]) == 1
+
+
+def test_p19_r3_f2_a_forged_self_consistent_one_slot_plan_against_a_high_risk_difference_is_refused_before_any_effect(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 3, P19-R3-F2's own required proof: this delivery's own
+    ``select_agent_slots`` derives exactly 2 slots for a HIGH-risk Difference, closed and fixed
+    by ``RISK_CLASS_TO_SLOT_COUNT``. A plan committed by some path other than
+    ``open_dynamic_execution_plan`` -- self-consistent (its own recorded
+    ``capability_selection_fingerprint`` matches its own recorded ``slots``) but *forged*
+    against the real Difference it names (1 slot, not the 2 the Difference's own risk_class
+    requires) -- is refused by ``execute_dynamic_execution_plan`` before any Agent is
+    constructed, any adapter is reached, or any new Store record is written.
+    """
+
+    from manosube_agent_civilization.multi_agent.engine import (
+        derive_multi_agent_dynamic_execution_plan,
+    )
+    from manosube_agent_civilization.multi_agent.errors import (
+        MultiAgentPlanSelectionMismatchError,
+    )
+    from manosube_agent_civilization.multi_agent.identity import (
+        capability_selection_fingerprint,
+    )
+    import manosube_agent_civilization.multi_agent.route as route_module
+    from manosube_agent_civilization.multi_agent.route import PLAN_RECORD_KIND
+
+    world = authorized_world(tmp_path, risk_class="HIGH")
+    store = world["store"]
+
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+    legitimate_plan = opened["plan"]
+    assert len(legitimate_plan["slots"]) == 2
+
+    forged_slots = (dict(legitimate_plan["slots"][0]),)
+    forged_plan = derive_multi_agent_dynamic_execution_plan(
+        project_id=legitimate_plan["project_id"],
+        project_binding_ref=dict(legitimate_plan["project_binding_ref"]),
+        boot_state_revision=int(legitimate_plan["boot_state_revision"]),
+        boot_semantic_fingerprint=dict(legitimate_plan["boot_semantic_fingerprint"]),
+        difference_ref=dict(legitimate_plan["difference_ref"]),
+        capability_selection_fingerprint=capability_selection_fingerprint(forged_slots),
+        slots=forged_slots,
+        model_work_unit_ref=dict(legitimate_plan["model_work_unit_ref"]),
+        authority_ref=dict(legitimate_plan["authority_ref"]),
+        adapter_identity=dict(legitimate_plan["adapter_identity"]),
+        execution_order=legitimate_plan["execution_order"],
+        execution_bounds=dict(legitimate_plan["execution_bounds"]),
+        conflict_policy=legitimate_plan["conflict_policy"],
+        release_policy=legitimate_plan["release_policy"],
+        opened_at=legitimate_plan["opened_at"],
+        expires_at=legitimate_plan["expires_at"],
+    )
+    assert (
+        forged_plan["multi_agent_dynamic_execution_plan_id"]
+        != legitimate_plan["multi_agent_dynamic_execution_plan_id"]
+    )
+    # Self-consistent: the forged plan's own recorded fingerprint matches its own recorded
+    # slots -- this is not a schema-shape violation, only a violation of what the *real*,
+    # independently re-resolved Difference itself requires.
+    assert forged_plan["capability_selection_fingerprint"] == capability_selection_fingerprint(
+        forged_plan["slots"]
+    )
+
+    coordinator = _coordinator(world)
+    _held, fresh = route_module._live_contract(
+        store,
+        coordinator,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        require_exact_state=False,
+    )
+    route_module._commit(
+        store,
+        world["project_id"],
+        [
+            (
+                PLAN_RECORD_KIND,
+                str(forged_plan["multi_agent_dynamic_execution_plan_id"]),
+                forged_plan,
+            )
+        ],
+        committed_at="2026-09-11T01:29:00Z",
+        project_binding_id=world["project_binding_id"],
+        expected_authority=fresh,
+        transaction_prefix="TX-MULTI-AGENT-PLAN",
+        transaction_key=str(forged_plan["multi_agent_dynamic_execution_plan_id"]),
+    )
+    coordinator.release()
+
+    before_state_revision = int(store.load_current(world["project_id"])["state_revision"])
+    effect_kinds = (
+        "multi_agent_slot_output",
+        "multi_agent_agent_release_receipt",
+        "multi_agent_slot_attempt_envelope_claim",
+        "model_execution_envelope",
+    )
+    for kind in effect_kinds:
+        assert _record_kind_count(store, world["project_id"], kind) == 0
+
+    constructed_adapters: list[SeededMultiAgentAdapter] = []
+
+    def _tracking_factory() -> SeededMultiAgentAdapter:
+        adapter = SeededMultiAgentAdapter(candidate_fields={"summary": "ok"})
+        constructed_adapters.append(adapter)
+        return adapter
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentPlanSelectionMismatchError):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            plan_ref={
+                "kind": PLAN_RECORD_KIND,
+                "id": str(forged_plan["multi_agent_dynamic_execution_plan_id"]),
+            },
+            model_adapter_factory=_tracking_factory,
+            executed_at="2026-09-11T01:30:00Z",
+        )
+    coordinator.release()
+
+    # STORE_WRITE_COUNT_AFTER_FORGED_PLAN_REFUSAL=0 and CALLER_SELECTED_SLOT_COUNT_BYPASS_
+    # ACCEPTED=false: no Agent was ever constructed (the adapter factory was never even called),
+    # no new record of any kind this package writes exists, and the Store's own state_revision
+    # never advanced.
+    assert constructed_adapters == []
+    for kind in effect_kinds:
+        assert _record_kind_count(store, world["project_id"], kind) == 0
+    assert int(store.load_current(world["project_id"])["state_revision"]) == before_state_revision

@@ -62,6 +62,7 @@ own raw result directly.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import concurrent.futures
 from typing import Any
 
 from manosube_agent_civilization.agent_runtime import TemporaryAgent, start_temporary_agent
@@ -76,6 +77,7 @@ from manosube_agent_civilization.model_runtime.errors import ModelRuntimeError
 from manosube_agent_civilization.model_runtime.route import (
     execute_model_work_unit,
     open_model_work_unit,
+    resolve_and_verify_committed_envelope,
 )
 from manosube_agent_civilization.model_runtime.types import ModelAdapter
 from manosube_agent_civilization.observation.boundary import instant
@@ -86,23 +88,27 @@ from manosube_agent_civilization.store.errors import RecordConflictError, StaleS
 from .engine import (
     MULTI_AGENT_SCHEMA_BASE,
     compute_attempt_id,
+    compute_slot_attempt_envelope_claim_id,
     compute_slot_output_id,
     derive_multi_agent_agent_release_receipt,
     derive_multi_agent_conflict_set,
     derive_multi_agent_dynamic_execution_plan,
     derive_multi_agent_evidence_aggregation_input,
+    derive_multi_agent_slot_attempt_envelope_claim,
     derive_multi_agent_slot_output,
     require_valid_adapter_identity,
     require_valid_multi_agent_agent_release_receipt,
     require_valid_multi_agent_conflict_set,
     require_valid_multi_agent_dynamic_execution_plan,
     require_valid_multi_agent_evidence_aggregation_input,
+    require_valid_multi_agent_slot_attempt_envelope_claim,
     require_valid_multi_agent_slot_output,
     require_valid_timestamp,
 )
 from .errors import (
     MultiAgentAuthorityFreshnessError,
     MultiAgentPlanExpiredError,
+    MultiAgentPlanSelectionMismatchError,
     MultiAgentRecordIntegrityError,
     MultiAgentReleasedAgentError,
     MultiAgentReplayConflictError,
@@ -127,12 +133,14 @@ from .types import (
     ACCEPTED_SLOT_OUTCOME,
     CANCELLATION_POLICY,
     CONFLICT_POLICY,
+    DEFAULT_PER_SLOT_TIMEOUT_SECONDS,
     EXECUTION_ORDER,
     RELEASE_POLICY,
 )
 
 PLAN_RECORD_KIND = "multi_agent_dynamic_execution_plan"
 SLOT_OUTPUT_RECORD_KIND = "multi_agent_slot_output"
+SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND = "multi_agent_slot_attempt_envelope_claim"
 RELEASE_RECEIPT_RECORD_KIND = "multi_agent_agent_release_receipt"
 CONFLICT_SET_RECORD_KIND = "multi_agent_conflict_set"
 AGGREGATION_INPUT_RECORD_KIND = "multi_agent_evidence_aggregation_input"
@@ -367,6 +375,46 @@ def _resolve_difference(
     return difference
 
 
+def _require_selection_matches_difference(
+    store: Any, project_id: str, plan: Mapping[str, Any]
+) -> None:
+    """Structural Review Round 3, P19-R3-F2: re-resolve the plan's own ``difference_ref`` and
+    independently recompute ``select_agent_slots``/``capability_selection_fingerprint`` from it,
+    refusing before any slot's own Agent is constructed, any adapter is reached, or any new
+    Store mutation is made if the plan's own declared selection does not equal what that
+    recomputation yields today. See :class:`~manosube_agent_civilization.multi_agent.errors.
+    MultiAgentPlanSelectionMismatchError` for why the plan's own self-consistency checks alone
+    do not already close this."""
+
+    difference = _resolve_difference(store, project_id, plan["difference_ref"])
+    expected_slots = [
+        {"slot_index": int(slot["slot_index"]), "capability": str(slot["capability"])}
+        for slot in select_agent_slots(difference)
+    ]
+    declared_slots = [
+        {"slot_index": int(slot["slot_index"]), "capability": str(slot["capability"])}
+        for slot in plan["slots"]
+    ]
+    expected_fingerprint = capability_selection_fingerprint(
+        tuple(
+            {"slot_index": slot["slot_index"], "capability": slot["capability"]}
+            for slot in expected_slots
+        )
+    )
+    if (
+        declared_slots != expected_slots
+        or plan["capability_selection_fingerprint"] != expected_fingerprint
+    ):
+        raise MultiAgentPlanSelectionMismatchError(
+            "the resolved plan's own declared slot selection does not equal what "
+            f"select_agent_slots independently recomputes today from its own difference_ref "
+            f"{dict(plan['difference_ref'])!r}: declared_slots={declared_slots!r} "
+            f"expected_slots={expected_slots!r}, "
+            f"declared_fingerprint={plan['capability_selection_fingerprint']!r} "
+            f"expected_fingerprint={expected_fingerprint!r}"
+        )
+
+
 def resolve_and_verify_committed_plan(store: Any, project_id: str, plan_id: str) -> dict[str, Any]:
     """Resolve the real, committed ``multi_agent_dynamic_execution_plan`` named by *plan_id*
     and require the identical three-way canonical admission every record this package resolves
@@ -423,6 +471,23 @@ def resolve_and_verify_committed_slot_output(
             "fields"
         )
     return slot_output
+
+
+def resolve_and_verify_committed_slot_attempt_envelope_claim(
+    store: Any, project_id: str, claim_id: str
+) -> dict[str, Any] | None:
+    resolved = _resolve(store, project_id, SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND, claim_id)
+    if resolved is None:
+        return None
+    claim = require_valid_multi_agent_slot_attempt_envelope_claim(resolved)
+    _require_same_project(claim, project_id, SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND)
+    declared_id = claim.get("multi_agent_slot_attempt_envelope_claim_id")
+    if claim_id != declared_id:
+        raise MultiAgentRecordIntegrityError(
+            "resolved multi_agent_slot_attempt_envelope_claim's own declared identity does not "
+            f"equal the Store lookup key: lookup={claim_id!r}, declared={declared_id!r}"
+        )
+    return claim
 
 
 def resolve_and_verify_committed_release_receipt(
@@ -601,6 +666,7 @@ def open_dynamic_execution_plan(
     opened_at: str,
     expires_at: str,
     deadline_at: str | None = None,
+    per_slot_timeout_seconds: int = DEFAULT_PER_SLOT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """Open one canonical, immutable, content-addressed Multi-Agent Dynamic Execution Plan and
     return ``{"plan": ..., "plan_ref": ..., "model_execution_decision": ...}``.
@@ -623,6 +689,19 @@ def open_dynamic_execution_plan(
     require_valid_timestamp(expires_at, "expires_at")
     resolved_deadline_at = expires_at if deadline_at is None else deadline_at
     require_valid_timestamp(resolved_deadline_at, "deadline_at")
+    if (
+        not isinstance(per_slot_timeout_seconds, int)
+        or isinstance(per_slot_timeout_seconds, bool)
+        or per_slot_timeout_seconds <= 0
+        or per_slot_timeout_seconds > 3600
+    ):
+        raise MultiAgentRequirementError(
+            "per_slot_timeout_seconds must be a whole number of seconds in [1, 3600]: "
+            f"{per_slot_timeout_seconds!r} -- Structural Review Round 3, P19-R3-F4 requires a "
+            "genuine, runtime-enforced bound, never an absent or non-positive one, and Canonical "
+            "State's own v0.1 encoding prohibits floating-point values, so this bound is always "
+            "a whole number of seconds, never a fraction"
+        )
     checked_difference_ref = _require_reference(
         difference_ref, context="difference_ref", kind=DIFFERENCE_RECORD_KIND
     )
@@ -696,6 +775,7 @@ def open_dynamic_execution_plan(
             "deadline_at": resolved_deadline_at,
             "cancellation_policy": CANCELLATION_POLICY,
             "max_concurrent_slots": len(slots),
+            "per_slot_timeout_seconds": int(per_slot_timeout_seconds),
         },
         conflict_policy=CONFLICT_POLICY,
         release_policy=RELEASE_POLICY,
@@ -786,53 +866,139 @@ def _execute_one_slot(
             )
         return existing_slot_output, existing_receipt
 
-    # The one, second literal `start_temporary_agent` call site in this package -- executed
-    # once per slot that has not already been recorded. See this module's own docstring.
-    slot_agent = start_temporary_agent(
-        store, project_id=project_id, project_binding_id=project_binding_id
+    claim_key = compute_slot_attempt_envelope_claim_id(
+        project_id=project_id, plan_ref=dict(plan_ref), slot_index=slot_index
+    )
+    existing_claim = resolve_and_verify_committed_slot_attempt_envelope_claim(
+        store, project_id, claim_key
     )
     outcome: str
     envelope_ref: dict[str, Any] | None = None
     result_fingerprint: str | None = None
     outcome_detail: str | None = None
-    try:
-        adapter = model_adapter_factory()
-        declared_identity = getattr(adapter, "adapter_identity", None)
-        if dict(declared_identity or {}) != dict(plan["adapter_identity"]):
-            raise MultiAgentRequirementError(
-                "the adapter this slot's own model_adapter_factory produced declares an "
-                f"adapter_identity that does not equal this plan's own admitted one: "
-                f"{declared_identity!r} != {plan['adapter_identity']!r}"
-            )
-        result = execute_model_work_unit(
-            store,
-            slot_agent,
-            project_id=project_id,
-            project_binding_id=project_binding_id,
-            model_work_unit_ref=plan["model_work_unit_ref"],
-            adapter=adapter,
-            executed_at=executed_at,
+    if existing_claim is not None:
+        # Structural Review Round 3, P19-R3-F3: a coordinator crash between a slot's own real
+        # adapter call durably committing its Model Execution Envelope (which committed this
+        # claim atomically, immediately afterward) and this function's own terminal slot_output/
+        # release_receipt commit leaves exactly this state on recovery -- a durable claim naming
+        # an already-committed, already-real Envelope, with no terminal pair yet. Recovery
+        # resolves that Envelope directly and reconstructs the terminal pair from it: no new
+        # Agent is constructed, and the adapter is never reached a second time for this attempt.
+        envelope = resolve_and_verify_committed_envelope(
+            store, project_id, existing_claim["model_execution_envelope_ref"]["id"]
         )
-        envelope = result["envelope"]
         outcome = str(envelope["execution_outcome"])
         result_fingerprint = envelope["normalized_candidate_fingerprint"]
-        envelope_ref = {
-            "kind": ENVELOPE_RECORD_KIND,
-            "id": str(envelope["model_execution_envelope_id"]),
-        }
-    except (ModelRuntimeError, AgentRuntimeError) as error:
-        # Disclosed judgment call (P19-C5/V6): a caught Model Runtime or Agent Runtime
-        # operational failure never loses this slot's own provenance for the sake of the
-        # others -- it becomes a first-class, honestly-classified UNAVAILABLE attempt rather
-        # than an exception that aborts the whole orchestration. A genuinely unexpected error
-        # (any other exception type) is deliberately NOT caught here -- it propagates, the
-        # `finally` below still releases this slot's own Agent, and the orchestration attempt
-        # as a whole aborts, leaving every slot completed so far durably committed and
-        # released for a later, recovering call to resume.
-        outcome = "UNAVAILABLE"
-        outcome_detail = f"{type(error).__name__}: {error}"[:2000]
-    finally:
-        slot_agent.release()
+        envelope_ref = dict(existing_claim["model_execution_envelope_ref"])
+    else:
+        # The one, second literal `start_temporary_agent` call site in this package -- executed
+        # once per slot that has not already been recorded. See this module's own docstring.
+        slot_agent = start_temporary_agent(
+            store, project_id=project_id, project_binding_id=project_binding_id
+        )
+        try:
+            adapter = model_adapter_factory()
+            declared_identity = getattr(adapter, "adapter_identity", None)
+            if dict(declared_identity or {}) != dict(plan["adapter_identity"]):
+                raise MultiAgentRequirementError(
+                    "the adapter this slot's own model_adapter_factory produced declares an "
+                    f"adapter_identity that does not equal this plan's own admitted one: "
+                    f"{declared_identity!r} != {plan['adapter_identity']!r}"
+                )
+            # Structural Review Round 3, P19-R3-F4: this package's own runtime-enforced bound on
+            # a real adapter call, replacing the previously declared-but-unread
+            # ``CANCELLATION_POLICY`` non-claim. This is deliberately the one place in this
+            # package that reads a real wall clock (via the bounded-future's own timeout) rather
+            # than a caller-supplied instant: genuine enforcement against a real, possibly
+            # hanging external call requires real elapsed time, not a simulated one. A Python
+            # thread that has not returned cannot be forcibly killed -- this bound guarantees
+            # *this call never blocks past it and never reports success for an unbounded
+            # attempt*, not that the abandoned background call is terminated.
+            timeout_seconds = float(plan["execution_bounds"]["per_slot_timeout_seconds"])
+
+            def _call_execute_model_work_unit() -> dict[str, Any]:
+                return execute_model_work_unit(
+                    store,
+                    slot_agent,
+                    project_id=project_id,
+                    project_binding_id=project_binding_id,
+                    model_work_unit_ref=plan["model_work_unit_ref"],
+                    adapter=adapter,
+                    executed_at=executed_at,
+                    pinned_execution_snapshot={
+                        "state_revision": plan["boot_state_revision"],
+                        "semantic_fingerprint": plan["boot_semantic_fingerprint"],
+                    },
+                )
+
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(_call_execute_model_work_unit)
+            try:
+                result = future.result(timeout=timeout_seconds)
+            except concurrent.futures.TimeoutError:
+                # The plan's own real per_slot_timeout_seconds elapsed before the adapter call
+                # returned. Never reported as success: a typed TIMEOUT outcome, no Envelope ref
+                # (none is known to exist), and no claim committed -- there is no real Envelope
+                # this attempt could name. This call returns now regardless of whether the
+                # abandoned background call ever completes.
+                outcome = "TIMEOUT"
+                outcome_detail = (
+                    f"adapter call did not return within this plan's own "
+                    f"per_slot_timeout_seconds={timeout_seconds}"
+                )
+            else:
+                envelope = result["envelope"]
+                outcome = str(envelope["execution_outcome"])
+                result_fingerprint = envelope["normalized_candidate_fingerprint"]
+                envelope_ref = {
+                    "kind": ENVELOPE_RECORD_KIND,
+                    "id": str(envelope["model_execution_envelope_id"]),
+                }
+                # Structural Review Round 3, P19-R3-F3: durably claim this attempt's own real,
+                # already-committed Envelope *before* deriving or committing this slot's own
+                # terminal pair -- the one fact a coordinator crash right after this point must
+                # leave behind, so recovery reuses this real Envelope rather than calling the
+                # adapter a second time (see the ``existing_claim is not None`` branch above).
+                claim = derive_multi_agent_slot_attempt_envelope_claim(
+                    project_id=project_id,
+                    plan_ref=dict(plan_ref),
+                    slot_index=slot_index,
+                    attempt_ordinal=1,
+                    model_execution_envelope_ref=envelope_ref,
+                )
+                _commit(
+                    store,
+                    project_id,
+                    [
+                        (
+                            SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND,
+                            str(claim["multi_agent_slot_attempt_envelope_claim_id"]),
+                            claim,
+                        )
+                    ],
+                    committed_at=executed_at,
+                    project_binding_id=project_binding_id,
+                    expected_authority=fresh_authority,
+                    transaction_prefix="TX-MULTI-AGENT-ENVELOPE-CLAIM",
+                    transaction_key=str(claim["multi_agent_slot_attempt_envelope_claim_id"]),
+                )
+            finally:
+                executor.shutdown(wait=False)
+        except (ModelRuntimeError, AgentRuntimeError) as error:
+            # Disclosed judgment call (P19-C5/V6): a caught Model Runtime or Agent Runtime
+            # operational failure never loses this slot's own provenance for the sake of the
+            # others -- it becomes a first-class, honestly-classified UNAVAILABLE attempt rather
+            # than an exception that aborts the whole orchestration. A genuinely unexpected error
+            # (any other exception type) is deliberately NOT caught here -- it propagates, the
+            # `finally` below still releases this slot's own Agent, and the orchestration attempt
+            # as a whole aborts, leaving every slot completed so far durably committed and
+            # released for a later, recovering call to resume. No claim is committed for this
+            # branch: there is no real Envelope to name, so a genuine retry (not a duplicate
+            # adapter call) is the correct recovery.
+            outcome = "UNAVAILABLE"
+            outcome_detail = f"{type(error).__name__}: {error}"[:2000]
+        finally:
+            slot_agent.release()
 
     slot_output = derive_multi_agent_slot_output(
         project_id=project_id,
@@ -1023,6 +1189,12 @@ def execute_dynamic_execution_plan(
         require_exact_state=False,
     )
     plan = resolve_and_verify_committed_plan(store, project_id, checked_plan_ref["id"])
+    # Structural Review Round 3, P19-R3-F2: the plan's own declared slot selection is
+    # independently re-derived from its own difference_ref and required to still match, before
+    # any slot's own Agent is constructed, any adapter is reached, or any new Store mutation is
+    # made -- closing a route through which a plan committed by some path other than
+    # open_dynamic_execution_plan could declare a self-consistent but forged selection.
+    _require_selection_matches_difference(store, project_id, plan)
     # Structural Review Round 1, P19-R1-F5: the plan's own recorded validity window is enforced
     # here, fail-closed, before any slot's own Agent is constructed, any adapter is reached, or
     # any new Store mutation is made for this call -- `expires_at` and `execution_bounds.
@@ -1142,5 +1314,6 @@ __all__ = [
     "resolve_and_verify_committed_conflict_set",
     "resolve_and_verify_committed_plan",
     "resolve_and_verify_committed_release_receipt",
+    "resolve_and_verify_committed_slot_attempt_envelope_claim",
     "resolve_and_verify_committed_slot_output",
 ]

@@ -114,8 +114,12 @@ def main() -> int:
     # slot's own attempt, P19-C5), `multi_agent_agent_release_receipt` (P19-C8),
     # `multi_agent_conflict_set` (P19-C6), `multi_agent_evidence_aggregation_input` (P19-C7),
     # and `multi_agent_orchestration_receipt` (the terminal fact P19-C8/P19-C9 describe) --
-    # making 78.
-    if len(paths) != 78 or len(set(ids)) != len(paths) or None in ids:
+    # making 78. Phase 19 Structural Review Round 3's own crash-recovery extension (P19-R3-F3,
+    # `multi_agent_slot_attempt_envelope_claim` -- the durable claim naming a slot's own already-
+    # committed Model Execution Envelope, committed before that slot's own terminal
+    # slot_output/release_receipt pair, so a coordinator crash between the two never causes a
+    # duplicate adapter call on recovery) adds one more, making 79.
+    if len(paths) != 79 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

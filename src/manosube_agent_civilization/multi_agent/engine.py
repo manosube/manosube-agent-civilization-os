@@ -40,6 +40,7 @@ from .identity import (
     CONFLICT_SET_SEMANTIC_FIELDS,
     ORCHESTRATION_RECEIPT_SEMANTIC_FIELDS,
     RELEASE_RECEIPT_SEMANTIC_FIELDS,
+    SLOT_ATTEMPT_ENVELOPE_CLAIM_SEMANTIC_FIELDS,
     SLOT_OUTPUT_SEMANTIC_FIELDS,
     multi_agent_agent_release_receipt_id,
     multi_agent_agent_release_receipt_semantic_fingerprint,
@@ -52,6 +53,8 @@ from .identity import (
     multi_agent_evidence_aggregation_input_semantic_fingerprint,
     multi_agent_orchestration_receipt_id,
     multi_agent_orchestration_receipt_semantic_fingerprint,
+    multi_agent_slot_attempt_envelope_claim_id,
+    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
     multi_agent_slot_output_id,
     multi_agent_slot_output_semantic_fingerprint,
 )
@@ -62,6 +65,7 @@ SCHEMA_VERSION = "0.1"
 
 PLAN_SCHEMA_NAME = "multi_agent_dynamic_execution_plan.schema.json"
 SLOT_OUTPUT_SCHEMA_NAME = "multi_agent_slot_output.schema.json"
+SLOT_ATTEMPT_ENVELOPE_CLAIM_SCHEMA_NAME = "multi_agent_slot_attempt_envelope_claim.schema.json"
 RELEASE_RECEIPT_SCHEMA_NAME = "multi_agent_agent_release_receipt.schema.json"
 CONFLICT_SET_SCHEMA_NAME = "multi_agent_conflict_set.schema.json"
 AGGREGATION_INPUT_SCHEMA_NAME = "multi_agent_evidence_aggregation_input.schema.json"
@@ -137,6 +141,14 @@ def require_valid_multi_agent_dynamic_execution_plan(plan: Any) -> dict[str, Any
 def require_valid_multi_agent_slot_output(slot_output: Any) -> dict[str, Any]:
     return _require_schema_valid_record(
         slot_output, SLOT_OUTPUT_SCHEMA_NAME, "resolved multi_agent_slot_output"
+    )
+
+
+def require_valid_multi_agent_slot_attempt_envelope_claim(claim: Any) -> dict[str, Any]:
+    return _require_schema_valid_record(
+        claim,
+        SLOT_ATTEMPT_ENVELOPE_CLAIM_SCHEMA_NAME,
+        "resolved multi_agent_slot_attempt_envelope_claim",
     )
 
 
@@ -354,6 +366,63 @@ def derive_multi_agent_slot_output(
     return slot_output
 
 
+def derive_multi_agent_slot_attempt_envelope_claim(
+    *,
+    project_id: str,
+    plan_ref: dict[str, Any],
+    slot_index: int,
+    attempt_ordinal: int,
+    model_execution_envelope_ref: dict[str, Any],
+) -> dict[str, Any]:
+    """Return one canonical, schema-valid Multi-Agent Slot Attempt Envelope Claim (P19-R3-F3).
+
+    Committed by the route, in its own small atomic commit, immediately after a slot's own real
+    adapter call durably commits a Model Execution Envelope -- *before* that slot's own terminal
+    ``multi_agent_slot_output``/``multi_agent_agent_release_receipt`` pair is derived or
+    committed. A coordinator crash between the two commits leaves this claim durably resolvable
+    by the identical narrow key :func:`compute_slot_output_id` itself resolves by, so recovery
+    can reconstruct the terminal pair directly from the already-committed Envelope this claim
+    names, rather than reaching a fresh Agent and the adapter a second time.
+    """
+
+    claim: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "project_id": project_id,
+        "plan_ref": dict(plan_ref),
+        "slot_index": slot_index,
+        "attempt_ordinal": attempt_ordinal,
+        "model_execution_envelope_ref": dict(model_execution_envelope_ref),
+    }
+    claim["multi_agent_slot_attempt_envelope_claim_id"] = (
+        multi_agent_slot_attempt_envelope_claim_id(claim)
+    )
+    claim["multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"] = (
+        multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(claim)
+    )
+    _validate_canonical_record(
+        claim, SLOT_ATTEMPT_ENVELOPE_CLAIM_SCHEMA_NAME, base=MULTI_AGENT_SCHEMA_BASE
+    )
+    return claim
+
+
+def compute_slot_attempt_envelope_claim_id(
+    *, project_id: str, plan_ref: dict[str, Any], slot_index: int, attempt_ordinal: int = 1
+) -> str:
+    """The narrow-key Store primary key a slot's own attempt envelope claim occupies -- resolved
+    before any Agent is constructed or any adapter is reached, the identical convention
+    :func:`compute_slot_output_id` itself already establishes for the terminal record."""
+
+    return multi_agent_slot_attempt_envelope_claim_id(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "project_id": project_id,
+            "plan_ref": dict(plan_ref),
+            "slot_index": slot_index,
+            "attempt_ordinal": attempt_ordinal,
+        }
+    )
+
+
 def derive_multi_agent_agent_release_receipt(
     *,
     project_id: str,
@@ -554,15 +623,19 @@ __all__ = [
     "RELEASE_RECEIPT_SCHEMA_NAME",
     "RELEASE_RECEIPT_SEMANTIC_FIELDS",
     "SCHEMA_VERSION",
+    "SLOT_ATTEMPT_ENVELOPE_CLAIM_SCHEMA_NAME",
+    "SLOT_ATTEMPT_ENVELOPE_CLAIM_SEMANTIC_FIELDS",
     "SLOT_OUTPUT_SCHEMA_NAME",
     "SLOT_OUTPUT_SEMANTIC_FIELDS",
     "compute_attempt_id",
+    "compute_slot_attempt_envelope_claim_id",
     "compute_slot_output_id",
     "derive_multi_agent_agent_release_receipt",
     "derive_multi_agent_conflict_set",
     "derive_multi_agent_dynamic_execution_plan",
     "derive_multi_agent_evidence_aggregation_input",
     "derive_multi_agent_orchestration_receipt",
+    "derive_multi_agent_slot_attempt_envelope_claim",
     "derive_multi_agent_slot_output",
     "require_valid_adapter_identity",
     "require_valid_multi_agent_agent_release_receipt",
@@ -570,6 +643,7 @@ __all__ = [
     "require_valid_multi_agent_dynamic_execution_plan",
     "require_valid_multi_agent_evidence_aggregation_input",
     "require_valid_multi_agent_orchestration_receipt",
+    "require_valid_multi_agent_slot_attempt_envelope_claim",
     "require_valid_multi_agent_slot_output",
     "require_valid_semantic_fingerprint",
     "require_valid_timestamp",

@@ -841,6 +841,7 @@ def _canonical_request(
     request_identity: str,
     project_id: str,
     fresh: Mapping[str, Any],
+    execution_snapshot: Mapping[str, Any],
     work_unit: Mapping[str, Any],
     boundary: Mapping[str, Any],
     work_unit_ref: Mapping[str, Any],
@@ -848,21 +849,26 @@ def _canonical_request(
     """The one provider-neutral request/response boundary every model invocation is bound to
     (P16-C1).
 
-    Carries exactly: the exact State revision and semantic fingerprint; the State-bound Work Unit
-    identity; the same Difference reference; the required capability; the explicit Authority
-    reference *and* the decision it records; the applicable Boundary reference and its resolved
-    body; the Evidence requirements; and the Phase 12 Temporary Agent Execution Contract
-    identity. It carries **no** provider payload, prompt text, chat transcript, model memory or
-    provider session id -- there is no key here through which one could arrive, and the adapter
-    receives nothing else at all.
+    Carries exactly: the exact State revision and semantic fingerprint the request declares (see
+    *execution_snapshot* below); the State-bound Work Unit identity; the same Difference
+    reference; the required capability; the explicit Authority reference *and* the decision it
+    records; the applicable Boundary reference and its resolved body; the Evidence requirements;
+    and the Phase 12 Temporary Agent Execution Contract identity. It carries **no** provider
+    payload, prompt text, chat transcript, model memory or provider session id -- there is no key
+    here through which one could arrive, and the adapter receives nothing else at all.
+
+    *execution_snapshot* is *fresh* itself for every caller that supplies no
+    *pinned_execution_snapshot* (unchanged behavior); *project_binding_ref* and
+    *human_authority_ref* always come from *fresh*, the true live Boot, regardless -- only the
+    declared ``state_revision``/``semantic_fingerprint`` pair is ever overridable (P19-R3-F1).
     """
 
     return {
         "model_execution_request_identity": request_identity,
         "project_id": project_id,
         "project_binding_ref": dict(fresh["project_binding_ref"]),
-        "state_revision": int(fresh["state_revision"]),
-        "semantic_fingerprint": dict(fresh["semantic_fingerprint"]),
+        "state_revision": int(execution_snapshot["state_revision"]),
+        "semantic_fingerprint": dict(execution_snapshot["semantic_fingerprint"]),
         "model_work_unit_ref": dict(work_unit_ref),
         "difference_ref": dict(work_unit["difference_ref"]),
         "required_capability": str(work_unit["required_capability"]),
@@ -874,8 +880,8 @@ def _canonical_request(
         "execution_contract": {
             "project_id": str(fresh["project_id"]),
             "project_binding_ref": dict(fresh["project_binding_ref"]),
-            "state_revision": int(fresh["state_revision"]),
-            "semantic_fingerprint": dict(fresh["semantic_fingerprint"]),
+            "state_revision": int(execution_snapshot["state_revision"]),
+            "semantic_fingerprint": dict(execution_snapshot["semantic_fingerprint"]),
             "human_authority_ref": dict(fresh["human_authority_ref"]),
         },
     }
@@ -953,6 +959,45 @@ def _normalize(
     )
 
 
+def _require_valid_pinned_execution_snapshot(
+    value: Mapping[str, Any], *, fresh: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Validate a caller-supplied *pinned_execution_snapshot* against the true live State.
+
+    Multi-Agent Dynamic Execution Round 3, P19-R3-F1: a caller orchestrating several bounded
+    executions against *one* immutable plan snapshot needs every one of those executions' own
+    request/envelope to declare the identical ``(state_revision, semantic_fingerprint)`` pair,
+    never whichever live value a fresh reboot happens to observe at that exact call's own
+    instant (which legitimately advances as each sibling execution's own Envelope commits). This
+    route accepts an explicit override for exactly those two fields -- nothing else -- so the
+    caller's own already-established snapshot, never a value this function invents or widens,
+    is what reaches the adapter's own request and the committed Envelope alike. Authority
+    freshness is still re-proven against the true live Boot below, unchanged: this override
+    narrows only *which State the request itself declares*, never *which Authority is honored*.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != {"state_revision", "semantic_fingerprint"}:
+        raise ModelRuntimeRequirementError(
+            "pinned_execution_snapshot must be exactly {'state_revision', "
+            f"'semantic_fingerprint'}}: {value!r}"
+        )
+    state_revision = value["state_revision"]
+    if not isinstance(state_revision, int) or isinstance(state_revision, bool):
+        raise ModelRuntimeRequirementError(
+            f"pinned_execution_snapshot['state_revision'] must be an int: {state_revision!r}"
+        )
+    if state_revision > int(fresh["state_revision"]):
+        raise ModelRuntimeStaleStateError(
+            f"pinned_execution_snapshot claims State revision {state_revision}, which this "
+            f"Store has never reached (current revision {fresh['state_revision']}) -- a pinned "
+            "snapshot may never claim a revision from the Store's own future"
+        )
+    return {
+        "state_revision": state_revision,
+        "semantic_fingerprint": dict(value["semantic_fingerprint"]),
+    }
+
+
 def execute_model_work_unit(
     store: Any,
     agent: TemporaryAgent,
@@ -962,6 +1007,7 @@ def execute_model_work_unit(
     model_work_unit_ref: Mapping[str, Any],
     adapter: ModelAdapter,
     executed_at: str,
+    pinned_execution_snapshot: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded, provider-neutral model invocation against one already-open Work Unit
     and return ``{"envelope": ..., "receipt": ModelExecutionReceipt}``.
@@ -972,13 +1018,22 @@ def execute_model_work_unit(
     caller-supplied instant (this route reads no clock, the identical discipline every other
     route in this repository already requires).
 
+    *pinned_execution_snapshot* is optional and, when omitted (every existing caller's own
+    behavior, unchanged), this route's request/envelope continue to declare the true live State
+    a fresh reboot observes at this exact call, exactly as before. When supplied -- see
+    :func:`_require_valid_pinned_execution_snapshot` -- its own ``state_revision``/
+    ``semantic_fingerprint`` are what the adapter's own request and the committed Envelope
+    declare *instead of* the freshly-rebooted live values, while every freshness/staleness check
+    below still runs against the true live Boot, unchanged.
+
     Every refusal below lands with the adapter called **zero** times and nothing committed: a
     released or foreign Temporary Agent, a stale execution contract, a Work Unit that does not
     resolve or whose own identity does not recompute, a Difference/Boundary/Authority reference
     that does not resolve or does not restate this exact question, a Boundary or Authority
-    Decision belonging to a different Human Authority, and a Work Unit claiming a State revision
-    this Store never reached. Only after all of them does the adapter exist at all, and what it
-    then returns can only ever become one of the seven typed outcomes.
+    Decision belonging to a different Human Authority, a Work Unit claiming a State revision
+    this Store never reached, or a *pinned_execution_snapshot* claiming a revision from the
+    Store's own future. Only after all of them does the adapter exist at all, and what it then
+    returns can only ever become one of the seven typed outcomes.
     """
 
     _require_canonical_identity("project_id", project_id)
@@ -994,6 +1049,11 @@ def execute_model_work_unit(
         project_id=project_id,
         project_binding_id=project_binding_id,
         require_exact_state=False,
+    )
+    execution_snapshot = (
+        fresh
+        if pinned_execution_snapshot is None
+        else _require_valid_pinned_execution_snapshot(pinned_execution_snapshot, fresh=fresh)
     )
     resumed = _resume_from_store(
         store,
@@ -1027,14 +1087,15 @@ def execute_model_work_unit(
 
     request_identity = model_execution_request_identity(
         model_work_unit_id_value=str(work_unit["model_work_unit_id"]),
-        state_revision=int(fresh["state_revision"]),
-        semantic_fingerprint=dict(fresh["semantic_fingerprint"]),
+        state_revision=int(execution_snapshot["state_revision"]),
+        semantic_fingerprint=dict(execution_snapshot["semantic_fingerprint"]),
         adapter_identity=adapter_identity,
     )
     request = _canonical_request(
         request_identity=request_identity,
         project_id=project_id,
         fresh=fresh,
+        execution_snapshot=execution_snapshot,
         work_unit=work_unit,
         boundary=boundary,
         work_unit_ref=checked_work_unit_ref,
@@ -1065,8 +1126,8 @@ def execute_model_work_unit(
         project_binding_ref=dict(fresh["project_binding_ref"]),
         model_work_unit_ref=checked_work_unit_ref,
         model_execution_request_identity=request_identity,
-        executed_state_revision=int(fresh["state_revision"]),
-        executed_semantic_fingerprint=dict(fresh["semantic_fingerprint"]),
+        executed_state_revision=int(execution_snapshot["state_revision"]),
+        executed_semantic_fingerprint=dict(execution_snapshot["semantic_fingerprint"]),
         adapter_identity=adapter_identity,
         executed_at=executed_at,
         execution_outcome=outcome,
