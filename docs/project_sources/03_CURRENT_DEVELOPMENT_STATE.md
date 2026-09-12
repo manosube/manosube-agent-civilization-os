@@ -2535,7 +2535,595 @@ Issue #69のcloseとPhase 18のObjective/Boundary/Authorityを持つ専用Issue�
 
 ---
 
-# 34. Kernel Integrity hardening — injectable immutable schema validation context (Issue #75)
+# 34. Phase 18 implementation-delivery bounded addendum (Issue #73)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、`src/`および`01_SCHEMA/`配下の新規kernel_surface変更
+（`src/manosube_agent_civilization/change_executor/`、`01_SCHEMA/change_executor/`）に
+対応付けるためだけの、最小限の事実記録である。
+
+Issue #73「Controlled Autonomous Change」のSHUKOU採択（Issue #73コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/73#issuecomment-5620526355`、
+`ADOPTION_ID=ADOPT_P18_CONTROLLED_AUTONOMOUS_CHANGE`、構造参謀API read-back receipt
+`https://github.com/manosube/manosube-agent-civilization-os/issues/73#issuecomment-5620533870`）
+を独立GitHub API再観測で確認し、`main`の実HEADが採択記録の`AUTHORIZED_TARGET_SHA`と一致する
+ことを確認した上で、新規branch上に実装した内容を記録する。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+GOVERNING_ISSUE=#73
+BASE_SHA=120cddbddd12e86cb8a233b90a69fe60a24b42c5
+BRANCH=agent/issue-73-phase18-controlled-autonomous-change
+IMPLEMENTATION_TARGET=NEW_BRANCH_AND_NEW_PR
+ADOPTION_ID=ADOPT_P18_CONTROLLED_AUTONOMOUS_CHANGE
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+```
+
+追加されたas-built ownerは `13_CHANGE_EXECUTOR/`（`CHANGE_EXECUTOR_INDEX.md`・
+`CHANGE_EXECUTOR_CONTRACT.md`）、`src/manosube_agent_civilization/change_executor/`
+（`route.py`・`boundary.py`・`kill_switch.py`・`adapter.py`・`engine.py`・`identity.py`・
+`types.py`・`errors.py`・`evidence_handoff.py`・`__init__.py`の10モジュール）、
+`01_SCHEMA/change_executor/`（`execution_boundary`・`execution_intent`・`execution_attempt`・
+`execution_receipt`・`change_executor_kill_switch`の5schema、schema総数67→72）である。
+`scripts/validate_schemas.py`自身のasserted schema countも67から72へ更新した。既存の
+State・Difference・Authority・Change・Evidence・Reflow・Binding・Boot・Runtime・Model
+Runtime・URL Bootのいずれのownerも置換・変更しない -- `change_executor`は既にAUTHORIZED
+状態のcanonical Changeを、closed low-risk Execution Boundary内でのみ実行し、immutableな
+`change_execution_receipt`を1件生成した上で停止する adapter layer であり、Authorityを
+生成せず、canonical Stateの意味的内容を自身の新規record kind以外変更せず、causalityを
+証明せず、十分なEvidenceを確立せず、Differenceをcloseせず、completionを宣言しない --
+既存のEvidence/Observation/Reflow ownerへhandoffするのみである。
+
+Human-controlled kill switch（`change_executor_kill_switch`、署名付きmonotonic
+ACTIVE/REVOKED chain）は、実行のたびに2回（Boot前と、唯一のadapter呼び出し直前）fresh
+resolve・signature再検証される。Production adapterは1つのみ（`ControlledFilesystemAdapter`
+-- disposable worktree上のbounded filesystem write/delete）であり、GitHub push/merge、
+deployment、認証情報、任意shell/subprocess/networkのいずれも一切実行しない。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`、9 test files + 2 fixture modules）は161件PASS、0
+skip、0 failで独立に検証済み。実装過程でtest suite自身が発見した1件の genuine defect
+（idempotency-slot resolutionがstalenessチェックより後に実行されていたため、最初の成功
+実行以降、同一claim_tokenでの通常replayがstaleとして誤って拒否されていた）は、
+`route.py`自身のdocstring disclosed judgment call 5として開示の上、この同一commit内で
+修正済みである。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+```
+
+# 35. Phase 18 Structural Review Round 1 bounded addendum (Issue #73, PR #74) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション34の記録以降、この同一PR #74ブランチ上でGitHub Codex自動
+レビューにより発見された3件の追加是正（`worktree_root`のcomposition-time bindingの欠如、
+`execution_intent`/`execution_attempt`commit間のcrash recovery gap、2並行callerによる
+`adapter.execute`二重呼び出しrace）が実装され、targeted test suiteが161件から167件へ拡張された
+（commit `2010f05`）。この167-test状態自体はセクション34の記録時点では未記録のまま今日に至って
+いたため、本節は先にその事実を記録した上で、続けて構造参謀によるStructural Review Round 1
+（`P18-R1-F1`〜`P18-R1-F6`）とSHUKOUによるその採択（PR #74コメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5626622213`、
+`ADOPTION_ID=ADOPT_P18_R1_STRUCTURAL_CORRECTIONS`）を独立GitHub API再観測で確認した上で、この
+既存PR #74ブランチ上に実装した是正内容を記録する。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション34自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-10
+CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+CURRENT_PHASE_ISSUE=73
+CURRENT_PR=74
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#73
+TARGET_PR=#74
+BASE_SHA=2010f05
+BRANCH=agent/issue-73-phase18-controlled-autonomous-change
+REVIEWED_HEAD=2010f05
+ADOPTION_ID=ADOPT_P18_R1_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P18-R1-F1,P18-R1-F2,P18-R1-F3,P18-R1-F4,P18-R1-F5,P18-R1-F6
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_74_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+FINAL_HEAD_SHA=4b47eb50a9869e6ca4ea9751295a61ab2a030e31
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED_AWAITING_ROUND_2
+```
+
+6件の是正内容の要約：
+
+```text
+P18-R1-F1  独立after-state再観測がVERIFIEDを条件付ける。evidence_handoff.pyは、これまで
+           receipt自身の自己申告outcome=="SUCCEEDED"を直接VERIFIEDへ写像していた -- adapter
+           自身の自己申告事実を独立に再確認することなく、executorが自身の成功報告をEvidenceへ
+           自己格上げしていた。新規reobservation.pyが、書き込まれたファイルの実際のon-disk内容
+           を、要求されたcontent_utf8のSHA-256digestと独立に比較する（adapter自身の報告する
+           bytes_written/files_writtenは一切信用しない）。この結果はreceipt自身に
+           independent_after_state_observationとして埋め込まれ（schema必須、semantic
+           fingerprint対象）、evidence_handoff.pyはreceipt自身のoutcome=="SUCCEEDED"に加えて
+           この観測結果自身のoutcome=="MATCHED"を要求した上でなければVERIFIEDを導出しない。
+           一致しないSUCCEEDED主張は新規closed outcome member REOBSERVATION_MISMATCHへ
+           再分類される。
+
+P18-R1-F2  staleness checkの「blanket resuming skip」を、正確なpost-intent-successor checkへ
+           置き換えた。crash-interrupted intentをresumeする呼び出しは、もはや無条件にstaleness
+           checkを skipしない -- state_revisionが厳密にexpected_state_revision + 1であること、
+           かつchain-link fingerprint（previous_state_fingerprint）がbefore_state_fingerprint
+           と厳密に一致することを要求する。さらに、唯一のadapter呼び出しの直前に、
+           final pre-effect State barrierを新設した -- 現在のStateを再取得し、この呼び出し
+           自身のintent+attempt commitが実際に生成したrevisionと厳密に一致することを要求する。
+           不一致は adapter呼び出しゼロのままStaleExecutionInputErrorとして拒否する。
+
+P18-R1-F3  worktree_rootを、closed Execution Boundary自身の内部にある必須schema-validated
+           fieldへ移動した（前round独自のcomposition-time parameterから）。
+           execution_boundary_fingerprintは既にcanonical boundary dict全体をhashするため、
+           worktree_rootは自動的にBoundary fingerprint -- ひいてはmapping-slot key -- に
+           参加するようになった。異なるworktree_rootへbindされた2つのcomposed executorは、
+           構造的に異なるBoundary fingerprint/mapping slotを持つことになり、cross-root/
+           cross-worktreeのslotまたはreceipt substitutionはこのpackage自身のidentity scheme
+           内で構造的に不可能となった。
+
+P18-R1-F4  execution_attemptが既にcommit済みとなった後に到達する、あらゆるpathが、正確に1件の
+           terminal receiptをcommitするようになった -- adapter自身のraiseと、structurally
+           invalidなadapter reportという、これまでこのpatternに従っていなかった2つのpathを
+           含む。両者とも、outcome="UNKNOWN"のterminal receiptをcommitするようになった
+           （bare exceptionではなく）-- これは既存のEXECUTION_OUTCOMES memberであり、"we do
+           not know what happened"という安全で正直なdefaultである。
+
+P18-R1-F5  idempotency-slot resolutionが、time-window/kill-switch checkpoint #1のより前にも
+           実行されるようになった（前roundでは、Boot/stalenessのより前にのみ実行されていた）。
+           3つのslot-resolution outcome（terminal replay、semantic reuse、terminal-claim-
+           mismatch、reconciliation-required）のいずれも、Boot・commit・adapter呼び出しへは
+           一切進まないため、これらは admission checkを一切必要としない -- 新しい副作用を
+           authorizeするためだけに存在するcheckの後ろにread-onlyのreturnをgateすることこそが
+           欠陥そのものであった。
+
+P18-R1-F6  本節自身が、この是正の対象である。
+```
+
+修正はPR #74の唯一のブランチ上、新規PR無しで行われた。既存の`State`・`Difference`・
+`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Runtime`・`Model Runtime`・
+`URL Boot`のいずれのownerも置換・変更しない。schema変更は`01_SCHEMA/change_executor/
+execution_boundary.schema.json`（`worktree_root`をrequiredへ追加）と`01_SCHEMA/change_executor/
+execution_receipt.schema.json`（`independent_after_state_observation`をrequiredへ追加、
+`outcome` enumへ`REOBSERVATION_MISMATCH`を追加）の2件のみで、schema総数は72のまま変わらない
+（新規schema fileの追加ではなく、既存2 schemaへのfield追加のため）。新規moduleとして
+`src/manosube_agent_civilization/change_executor/reobservation.py`が1件追加された。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`、10 test files + 2 fixture modules -- 新規file
+`test_change_executor_independent_reobservation.py`を1件追加）は182件PASS、0 skip、0 failで
+独立に検証済み（167件から+15件）。full repository test suiteも独立に再実行し、既知の
+pre-existing failure（`tests/contract/governance/test_source_freshness_drift_detection.py`
+配下の7件、`origin/main`の clean baseline上で既に確認済みのもの）を除き、全件PASSで検証済み
+（正確な最終件数は本節自身の記録時点で得られた実測値を用いる -- 検証セッション自身のログを参照）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+# 36. Phase 18 Structural Review Round 2 bounded addendum (Issue #73, PR #74) -- current-state restatement
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。セクション35の記録以降、構造参謀によるStructural Review Round 2
+（`P18-R2-F1`〜`P18-R2-F4`）とSHUKOUによるその採択（PR #74コメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5628140572`、
+`ADOPTION_ID=ADOPT_P18_R2_STRUCTURAL_CORRECTIONS`）をGitHub API + `git rev-parse`による独立
+再観測で確認した上で、この既存PR #74ブランチ（新規branch・新規PR無し）上に実装した是正内容を
+記録する。Round 1の既存2件のclosed finding（P18-R1-F2の post-intent-successor check、および
+idempotency-slot resolutionのordering）は、本round自身のいずれの変更によっても退行していない
+-- それぞれの既存testは無変更のまま引き続きPASSしている。
+
+このrepositoryの"last-occurrence extraction convention"の要求に従い、本節は以降で
+`CURRENT_PHASE`/`CURRENT_PR`/`CURRENT_PHASE_STATE`の**最終的な**再投影となる -- 本節より前の
+どの節の同名フィールドよりも新しい現在地として扱われるべきであり、セクション35自身を含め、以前の
+記録を置換・撤回するものではない（それぞれ自身の記録時点における事実として保持される）。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-11
+CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+CURRENT_PHASE_ISSUE=73
+CURRENT_PR=74
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#73
+TARGET_PR=#74
+BASE_SHA=85bd43fbf4619d6ae9f765c76441dd5ea94bbdff
+BRANCH=agent/issue-73-phase18-controlled-autonomous-change
+REVIEWED_HEAD=85bd43fbf4619d6ae9f765c76441dd5ea94bbdff
+ADOPTION_ID=ADOPT_P18_R2_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P18-R2-F1,P18-R2-F2,P18-R2-F3,P18-R2-F4
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_74_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_2_CORRECTIONS_DELIVERED_AWAITING_FURTHER_REVIEW
+```
+
+**この節自身の governance-fields は、セクション35自身の `FINAL_HEAD_SHA` が抱えていた欠陥を、
+遡ってセクション35自身を書き換えることなく、修正する。** あるコミットは、原理的に、自分自身の
+SHAを自分自身の内容の中に事前に記録することができない -- セクション35の `FINAL_HEAD_SHA=
+4b47eb50a9869e6ca4ea9751295a61ab2a030e31` は、実際には、その直後にpushされた真に最終的な
+delivery head（`85bd43fbf4619d6ae9f765c76441dd5ea94bbdff`、独立GitHub API検証で確認済み、
+PR #74コメント `https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5628140572`
+参照）ではなく、その直前の親コミット（自分自身の実装コミット）を記録していた -- これは
+`P18-R2-F4`自身が名指しした、まさにこの欠陥の実例である。本節はこの同じ構造的欠陥を繰り返さない
+ために、単一の`FINAL_HEAD_SHA`フィールドを、意図的に区別された2つのフィールドへ置き換える：
+
+```text
+IMPLEMENTATION_COMMIT_SHA=5ac16e569a5b2ece45dd23536ad8952d81d3c1fa
+DELIVERY_HEAD_OBSERVABLE_VIA=EXTERNAL_RETURN_EVIDENCE_COMMENT_ON_PR_74
+```
+
+`IMPLEMENTATION_COMMIT_SHA`は、この本節自身のRound 2是正（コード変更 + このdocument自身の
+変更）を実際にlandするコミット自身のSHAであり、そのコミットが実在するようになった時点で初めて
+判明する値である -- 本節は当初、意図的にplaceholderトークン`<IMPLEMENTATION_COMMIT_SHA>`のまま
+記録された。その後、この値は、実コミットが存在するようになった時点で、小さな genuine な
+separate follow-up commit `7c0457e`によって埋められた（直前roundの`85bd43f`自身のfollow-up
+commitがセクション35のplaceholderを埋めたのと正確に同じ手続き）-- 上記の
+`IMPLEMENTATION_COMMIT_SHA=5ac16e569a5b2ece45dd23536ad8952d81d3c1fa`は、その埋められた後の
+実値そのものである。`DELIVERY_HEAD_OBSERVABLE_VIA`は、
+「あるコミットは自分自身のSHAを自分自身の中に記録できない」という単純な事実を明示的に記録する
+フィールドである -- 真に外部から観測可能な最終delivery headは、この document自身の内部にでは
+なく、push後にPR #74自身へ投稿されるreturn-evidence commentの中に記録される。この2フィールド
+モデルは、セクション35自身の`FINAL_HEAD_SHA`が示した欠陥を、遡及的にセクション35自身を書き換え
+ることなく、今後のroundに向けて修正するものである。
+
+4件の是正内容の要約：
+
+```text
+P18-R2-F1  executor-local filesystem re-readがreceipt自身に埋め込まれているだけでは、
+           Round 1で採択された独立の after-state Observation/Independent Verification結果には
+           ならない -- executorが自身のreceiptを自ら格上げする事実を製造してはならない。
+           evidence_handoff.route_change_execution_to_evidenceが自ら、SECONDの、genuinely
+           independentな、handoff-time限定の再読み取りを実行し（route.py自身の execution-time
+           reobservationとは完全に別物、別時点）、既存のObservation owner（observation.
+           engine.observe()、evidence.derive_evidenceの内部呼び出し経由 -- caller供給の
+           Observation recordを一切信用しない）を通じて実体のあるObservationを生成する。
+           receipt自身のoutcome=="SUCCEEDED"かつこのSECOND re-readが不一致の場合はVERIFIEDを
+           拒否する。receipt自身のindependent_after_state_observationへの防御的チェックは
+           残すが、それはVERIFIEDをgateしなくなった。
+
+P18-R2-F2  worktree_rootがBoundary fingerprint/mapping slotへ参加することは必要条件だが十分
+           条件ではない -- 実際にbindされたworktreeが、Boundary自身が認可したrepository・
+           branch/worktree identityであることを検証しない限り、compositionはfail closed
+           しなければならない。boundary.validate_execution_boundaryが、純粋なlocal `.git`
+           metadataファイル読み取りのみで（subprocess・network呼び出し無し）、
+           worktree_root自身の実際のgit checkout identity（HEADのbranch、origin remoteの
+           repository slug）を、Boundary自身が宣言するrepository/branchと厳密一致するよう
+           要求する。detached HEADはbranch identityを証明できないためfail closedする。
+
+P18-R2-F3  execution_attemptが durableになった瞬間から、durable record chainは既に、typed
+           re-observation obligationと non-success/UNKNOWN unresolved stateを保持していな
+           ければならない。execution_attempt自身が、commit時点でreobservation_requestを
+           durably embedするようになった（新規schema-required field、semantic fingerprint
+           対象）。さらに、この exact caller（同一claim_token）が自身のorphaned attempt
+           （attempt commit済み、receipt未だ無し）をresumeする場合、これまでの perpetual
+           ExecutionReconciliationRequiredErrorではなく、その埋め込み済みreobservation_
+           requestから直接、grounded terminal UNKNOWN receiptへ解決するようになった --
+           adapter呼び出しゼロ（adapterは既に実行済みかもしれず、再呼び出しはreal duplicate
+           mutationのriskを負う）。異なるclaim_tokenに対する既存の
+           ExecutionReconciliationRequiredErrorは無変更のまま残る。
+
+P18-R2-F4  canonical current-state fieldは、事実として自己参照的であってはならない。親/
+           correction commitを、最終的にdeliverされたheadとしてlabelしてはならない。本節
+           自身がこの原則を、セクション35自身の`FINAL_HEAD_SHA`の欠陥を修正する形で実践する
+           （このaddendum自身のIMPLEMENTATION_COMMIT_SHA/DELIVERY_HEAD_OBSERVABLE_VIA、上記
+           参照）。
+```
+
+修正はPR #74の唯一の既存ブランチ上、新規branch・新規PR無しで行われた。既存の`State`・
+`Difference`・`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Runtime`・
+`Model Runtime`・`URL Boot`のいずれのownerも置換・変更しない。schema変更は
+`01_SCHEMA/change_executor/execution_attempt.schema.json`（`reobservation_request`を
+requiredへ追加）の1件のみで、schema総数は72のまま変わらない（新規schema fileの追加ではなく、
+既存schemaへのfield追加のため）。新規moduleの追加は無し -- 既存module
+（`route.py`・`boundary.py`・`evidence_handoff.py`・`engine.py`・`identity.py`）自身への
+是正のみである。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`、11 test files + 2 fixture modules -- 新規file
+`test_change_executor_worktree_git_identity.py`を1件追加）は197件PASS、0 skip、0 failで
+独立に検証済み（182件から+15件）。full repository test suiteも独立に再実行し、既知の
+pre-existing failure（`tests/contract/governance/test_source_freshness_drift_detection.py`
+配下の7件、この作業開始以前から`origin/main`上で既に確認済みのもの、本packageとは無関係）を
+除き、全件PASSで検証済み（正確な最終件数は本節自身の記録時点で得られた実測値を用いる --
+検証セッション自身のログを参照）。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+# 37. Phase 18 Structural Review Round 4 bounded addendum (Issue #73, PR #74) -- P18-R4-F1/F2 only
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。構造参謀によるStructural Review Round 4のhandoff（PR #74コメント
+`issuecomment-5630481239`）とSHUKOUによるその採択（PR #74コメント
+`issuecomment-5630506120`、`ADOPTION_ID=ADOPT_P18_R4_STRUCTURAL_CORRECTIONS`）をGitHub API +
+`git rev-parse`による独立再観測で確認した上で、この既存PR #74ブランチ（新規branch・新規PR無し）
+上に実装した是正内容を記録する。本addendumは**採択された2件（`P18-R4-F1`・`P18-R4-F2`）のみ**を
+対象とし、Round 4自身が別途報告した`P18-R4-F3`（このdocument自身の§36が、実際にはRound 3で
+既に delivered された head を反映せず Round 2 時点の状態のまま stale であるという指摘）は
+`ADOPTED_FINDINGS`に含まれていない -- 本節はその staleness 自体を解消するものではなく、次回
+構造参謀レビューでのSHUKOU採択を待つ、既存の未解決事項として残る。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-11
+GOVERNING_ISSUE=#73
+TARGET_PR=#74
+AUTHORIZED_TARGET_SHA=71e18e0e6f74cac61ae2bc340243e4d67b805aab
+ADOPTION_ID=ADOPT_P18_R4_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P18-R4-F1,P18-R4-F2
+P18-R4-F3_ADOPTED=false
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_74_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+AUTHOR=CLAUDE_CODE
+```
+
+2件の是正内容の要約：
+
+```text
+P18-R4-F1  observation_id の一致（Round 3自身の是正）は、どの Observation が Evidence を根拠
+           付けているかを証明するが、observation_id 自体は source_occurrences・その outcome・
+           導出された status を含まない -- 一致した identity だけでは、その Observation が
+           実際に何かを resolve したことを証明しない。Round 4は決定的な反例を実際に再現した：
+           genuine な SUCCEEDED receipt に対する second re-read が実際に mint した Observation
+           の status が INCOMPLETE であったにもかかわらず、verification_result_provenance.
+           status は VERIFIED のままだった -- これは、receipt 自身の outcome が Scope の
+           observation_window/cutoff の自己矛盾（handoff-time の captured_at ではなく、base
+           request 自身の stale な pre-execution window がそのままコピーされていたため、
+           genuine な later re-read は常に time_boundary_within_scope の判定に失敗し
+           INCOMPLETE に degrade していた）を経由して、promotion を単独で決定していたことを
+           意味する。是正は2段階：(i) `_build_verification_observation_request` が、Scope 自身の
+           observation_window/cutoff を captured_at そのものの周辺で再構築し、real な
+           attempts エントリを1件付与する（このmoduleは domain Facts を一切主張しないため
+           COMPLETE には到達しないが、genuine に成功した re-read は今や決定的な EMPTY に
+           到達する）；(ii) `route_change_execution_to_evidence` が、receipt 自身の outcome が
+           VERIFIED を precompute した場合には常に、resolve された Observation 自身の
+           observed_result.observation_status が `_ADMISSIBLE_VERIFIED_OBSERVATION_STATUSES`
+           （`{"COMPLETE", "EMPTY"}`）の要素であることを追加で要求し、そうでなければ
+           ChangeExecutorError を送出して VERIFIED の返却自体を拒否する。
+
+P18-R4-F2  `_normalize_repository_slug` の最終分岐（bare owner/repo 値）は、以前は値をそのまま
+           通過させていた -- しかし git 自身の語彙において、bare な owner/repo 値はホストを
+           一切持たない relative filesystem path remote であり、forge host identity を何も
+           証明しない。`.git/config` の origin URL が文字通り `owner/repo` であるような
+           checkout は、admitted slug と owner/repo path が一致するというだけで通過していた。
+           この最終分岐は今やhostless remoteを無条件に拒否する（メッセージに"hostless"を含む
+           ExecutionBoundaryError）。admissible な remote 形式のいずれにも、hostless な形式は
+           存在しない。テスト fixture `git_worktree()` 自身のデフォルト挙動も、bare な
+           `owner/repo` slug を直接 `git remote add origin` へ渡すのではなく、host を伴う
+           `https://github.com/<repository>.git` URL を構築するよう修正した（既に完全な URL /
+           scp-like 参照を明示的に渡す既存の negative fixture は無変更のまま）。
+```
+
+修正はPR #74の唯一の既存ブランチ上、新規branch・新規PR無しで行われた。既存の`State`・
+`Difference`・`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Runtime`・
+`Model Runtime`・`URL Boot`のいずれのownerも置換・変更しない。schema変更は無し。新規module
+の追加も無し -- 既存module（`evidence_handoff.py`・`boundary.py`）自身への是正と、既存test
+fixture（`tests/fixtures/change_executor_world.py`の`git_worktree()`）・既存test file
+（`tests/integration/change_executor/test_change_executor_independent_reobservation.py`・
+`tests/integration/change_executor/test_change_executor_worktree_git_identity.py`）への
+追加のみである。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`）は独立に検証済み（正確な件数は本節自身の記録時点で
+得られた実測値を用いる -- 検証セッション自身のログを参照）。full repository test suiteも
+独立に再実行し、既知のpre-existing failure（`tests/contract/governance/
+test_source_freshness_drift_detection.py`配下の7件、この作業開始以前から`origin/main`上で
+既に確認済みのもの、本packageとは無関係）を除き、全件PASSで検証済み。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+# 38. Phase 18 Structural Review Round 5 bounded addendum (Issue #73, PR #74) -- current-state restatement (P18-R5-F1/F2/F3)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。構造参謀によるStructural Review Round 5のレビュー本文（review
+id `5176041784`、`https://github.com/manosube/manosube-agent-civilization-os/pull/74#pullrequestreview-5176041784`）
+および補足レビュー（review id `5176442417`、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#pullrequestreview-5176442417`、
+`_normalize_repository_slug`がscheme自体を一切検証していないという新規finding `P18-R5-F2`を
+追加報告）、構造参謀によるhandoff（comment id `5631578194`、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5631578194`）、
+およびSHUKOUによるその採択（comment id `5631613763`、作成時刻`2026-09-11T08:25:37Z`、
+`https://github.com/manosube/manosube-agent-civilization-os/pull/74#issuecomment-5631613763`、
+`ADOPTION_ID=ADOPT_P18_R5_STRUCTURAL_CORRECTIONS`、
+`AUTHORIZED_TARGET_SHA=14f55153eb9ddf3fd9a22c570790db541d0c9832`）を、それぞれGitHub API +
+`git rev-parse`による独立再観測で確認した上で、この既存PR #74ブランチ（新規branch・新規PR無し）
+上に実装した是正内容を記録する。
+
+**本節はまず、`P18-R5-F3`自身が名指しした欠陥そのものを解消する。** セクション37
+（Round 4 bounded addendum）は、自身が採択された2件（`P18-R4-F1`・`P18-R4-F2`）のみを対象とし、
+`CURRENT_PHASE_STATE`/`REVIEW_STATE`フィールド自身の再投影を意図的に行わなかった -- そのため、
+このdocument自身の"last-occurrence extraction convention"の下で有効な`CURRENT_PHASE_STATE`/
+`REVIEW_STATE`は、Round 4自身が実際にdeliverした状態を反映しないまま、セクション36
+（Round 2時点の記述）のまま stale であった。本節はまず、Round 4が実際にdeliverした状態を、
+セクション36自身を書き換えることなく、次のブロックで再投影する：
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-11
+CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+CURRENT_PHASE_ISSUE=73
+CURRENT_PR=74
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_PR_OPEN
+GOVERNING_ISSUE=#73
+TARGET_PR=#74
+BASE_SHA=71e18e0e6f74cac61ae2bc340243e4d67b805aab
+BRANCH=agent/issue-73-phase18-controlled-autonomous-change
+REVIEWED_HEAD=71e18e0e6f74cac61ae2bc340243e4d67b805aab
+ADOPTION_ID=ADOPT_P18_R4_STRUCTURAL_CORRECTIONS
+ADOPTED_FINDINGS=P18-R4-F1,P18-R4-F2
+IMPLEMENTATION_TARGET=EXISTING_BRANCH_AND_PR_74_ONLY
+NEW_BRANCH=false
+NEW_PR=false
+FINAL_HEAD_SHA=14f55153eb9ddf3fd9a22c570790db541d0c9832
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=STRUCTURAL_REVIEW_ROUND_4_CORRECTIONS_DELIVERED_AWAITING_ROUND_5
+TARGETED_TEST_COUNT_AT_THIS_HEAD=209
+```
+
+`FINAL_HEAD_SHA=14f55153eb9ddf3fd9a22c570790db541d0c9832`は、Round 5自身の採択コメントが
+`AUTHORIZED_TARGET_SHA`として独立に確認した、まさにその値と厳密に一致する（`git rev-parse
+origin/agent/issue-73-phase18-controlled-autonomous-change`による独立再観測で確認済み）--
+Round 4自身のコミット自身は、原理的に、自分自身の最終headのSHAを自分自身の内容の中に事前に記録
+できない（セクション36自身が名指しした、まさにこの構造的制約そのもの）ため、この値は、この
+本節自身が事後的に確認できるようになった時点で、遡ってセクション37自身を書き換えることなく、
+初めてここに記録される。`TARGETED_TEST_COUNT_AT_THIS_HEAD=209`は、この本節自身が
+`14f5515`自身へ独立に`git stash`してtargeted test suiteを再実行し、直接確認した実測値である。
+
+**続けて、本節自身のRound 5是正内容を記録する。** 採択された3件（`P18-R5-F1`・`P18-R5-F2`・
+`P18-R5-F3`）の要約：
+
+```text
+P18-R5-F1  Round 3・Round 4自身の是正（セクション37参照）は、receipt自身のoutcome=="SUCCEEDED"
+           から status = VERIFIED を先に precompute し、その後で初めて、resolve された
+           canonical Observation自身の identity/status をpost-call checkとして検査する
+           -- 一致しなければ拒否する、という"post-call veto"の形を取っていた。SHUKOU自身が
+           採択した本round自身の意味はより強い：
+           RECEIPT_OUTCOME_MAY_BE_INPUT_BUT_CANNOT_PRECOMPUTE_PROMOTION -- receipt自身の
+           outcomeは、この hand-off が derivation を試みるかどうかの入力にはなり得るが、
+           それ自体が結果のstatusを決定してはならない。route_change_execution_to_evidenceは
+           今や、_construct_provenanceを呼び出す**前に**、既存の唯一のObservation owner
+           （observation.engine.observe、evidence.derive_evidenceの内部呼び出しが同一の
+           pure/deterministic関数から独立に mint する、まさにそれと同一の関数）を自ら直接
+           呼び出し、実体のあるcanonical Observationを自ら resolve する -- これは既存の
+           唯一のownerを二度呼び、両者の一致を独立に検証しているのであり、新たなcanonical
+           Observation ownerを追加しているのではない。_construct_provenanceは、
+           このresolveされたObservation自身のstatusから直接VERIFIEDを導出し（decisiveで
+           なければderive_evidenceを呼び出す前に拒否する）、resolveされたObservation自身の
+           identity/statusを、返却されるprovenance自身の
+           observations.canonical_verification_observationフィールドへ直接bindする
+           （schema側は元々unconstrainedのため、schema変更は不要）。derive_evidence呼び出し後
+           のpost-call checkも強化した：返却されたEvidence自身のgrounding Observation identity
+           は、独立に再計算された_expected_verification_observation_idと、この hand-off が
+           自ら resolve したObservation自身のidentityの、両方と厳密に一致することを要求し、
+           返却されたEvidence自身のobserved_result.observation_statusは、resolveされた
+           Observation自身のstatusと厳密に等しいことを要求する（従来の"admissible setに属す
+           るか"というより弱いcheckからの強化）。
+
+P18-R5-F2  _normalize_repository_slugの"://"分岐は、これまでscheme自体を一切検証せず、
+           "://"の直後から始まる残り部分（host以降）のみを検査していた -- そのため、
+           `file://github.com/<owner>/<repo>.git`や`evil://github.com/<owner>/<repo>.git`
+           のような、実際のnetwork越しに本物のgithub.comへ到達しないURLでも、host自体が
+           一致してさえいれば、この検証を素通りしてしまっていた。新規定数
+           _TRUSTED_REPOSITORY_URL_SCHEME（"https"）を追加し、"://"分岐がscheme自体を
+           host検査の**前に**厳密一致で検証するよう修正した -- 一致しないschemeは
+           ExecutionBoundaryError（メッセージに"scheme"・"P18-R5-F2"を含む）で拒否される。
+
+P18-R5-F3  本節自身が、この是正の対象である。
+```
+
+修正はPR #74の唯一の既存ブランチ上、新規branch・新規PR無しで行われた。既存の`State`・
+`Difference`・`Authority`・`Change`・`Evidence`・`Reflow`・`Binding`・`Boot`・`Runtime`・
+`Model Runtime`・`URL Boot`のいずれのownerも置換・変更しない。schema変更は無し
+（`verification_result_provenance.observations`は元々schema-unconstrainedのため）。新規module
+の追加も無し -- 既存module（`evidence_handoff.py`・`boundary.py`）自身への是正と、既存test file
+（`tests/integration/change_executor/test_change_executor_independent_reobservation.py`・
+`tests/integration/change_executor/test_change_executor_worktree_git_identity.py`）への追加、
+および`13_CHANGE_EXECUTOR/CHANGE_EXECUTOR_CONTRACT.md`自身への該当箇所の追記のみである。
+
+targeted test suite（`tests/unit/change_executor/`・`tests/contract/change_executor/`・
+`tests/integration/change_executor/`）は独立に検証済み（正確な件数は本節自身の記録時点で
+得られた実測値を用いる -- 検証セッション自身のログを参照、predecessor head `14f5515`自身では
+209件PASSが確認済み）。full repository test suiteも独立に再実行し、既知のpre-existing failure
+（`tests/contract/governance/test_source_freshness_drift_detection.py`配下の7件、この作業開始
+以前から`origin/main`上で既に確認済みのもの、本packageとは無関係）を除き、全件PASSで検証済み。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_18_COMPLETE=false
+PHASE_19_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+---
+
+# 39. Phase 18 post-merge acceptance observation
+
+本節は、Structural Review Round 6がexact delivery head
+`906beb88bdbd76731792d59408aab5a727b4b691`をPASSと判定した後、SHUKOUがPR #74を手動mergeし、
+構造参謀がlive GitHubのmerge commit、`main`、両parentおよびmerged treeを再観測した現在地である。
+受入観測はIssue #73コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/73#issuecomment-5632639503`
+へ固定し、API read-backでauthor、timestampおよび本文を確認した。
+
+```text
+OBSERVED_AT_UTC=2026-09-11T09:47:55Z
+MAIN_ACCEPTED_BASE_SHA=91128e332138bb23466bf0f43a9f633cd646e891
+CURRENT_PHASE=18_CONTROLLED_AUTONOMOUS_CHANGE
+CURRENT_PHASE_STATE=POST_MERGE_ACCEPTED_AWAITING_ISSUE_CLOSE
+CURRENT_PHASE_ISSUE=73
+CURRENT_PR=NONE
+GOVERNING_ISSUE=#73
+MERGED_PR=#74
+ACCEPTED_PR_HEAD=906beb88bdbd76731792d59408aab5a727b4b691
+PHASE_18_MERGE_SHA=91128e332138bb23466bf0f43a9f633cd646e891
+MERGE_PARENT_MAIN=120cddbddd12e86cb8a233b90a69fe60a24b42c5
+MERGE_PARENT_DELIVERY=906beb88bdbd76731792d59408aab5a727b4b691
+REVIEWED_TREE_SHA=22c5f442c010c38cc5a2134256590ac9a9628645
+MERGED_TREE_SHA=22c5f442c010c38cc5a2134256590ac9a9628645
+
+PR_74_STATE=MERGED
+MERGED_EXACT_REVIEWED_HEAD=true
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+STRUCTURAL_REVIEW_ROUND_6=PASS
+STRUCTURAL_FINDINGS_OPEN=0
+POST_MERGE_TARGETED_CHANGE_EXECUTOR_SUITE=213_PASSED
+ROUND_6_SCHEMA_VALIDATION=PASS_72_SCHEMAS
+ROUND_6_STATIC_CONFORMANCE_AND_KERNEL_CONTINUITY=22_PASSED
+ROUND_6_SOURCE_IMPACT_GATE=PASS
+
+PHASE_18_COMPLETE=true
+PHASE_18_CURRENT_ROUTE_BLOCKERS=0
+ISSUE_73_CLOSE_ALLOWED=true
+ISSUE_73_CLOSE_ALLOWED_AFTER_SOURCE_SYNC_MERGE=true
+PHASE_19_ALLOWED=true
+PHASE_19_IMPLEMENTATION_ALLOWED=false
+SOURCE_SYNC_BRANCH=source/phase18-acceptance-sync
+NEXT_OWNER=SHUKOU
+```
+
+Phase 18は、Authority確認済みのcanonical Changeだけをclosed low-risk Execution Boundary内で実行し、
+preflightとfinal pre-effect barrier、deterministic mapping slot、durable intent/attempt/terminal receipt、
+signed monotonic kill switch、独立after-state Observationおよび既存Evidence/Reflow ownerへのhandoffを
+接続した。Change Executor自身はAuthority、Evidence sufficiency、Difference closureまたはObjective
+completionを宣言せず、canonical ownerを複製しない。
+
+merge後の`main` refはmerge SHAそのものであり、その第二parentはexact reviewed headと一致した。
+reviewed headとmerge commitのtree SHAも同一で、両ref間のfile diffは0である。同一merged tree上の
+targeted Change Executor suiteは213件PASSした。merge時の`Source freshness drift detection`は
+failureだが、job stepは0件で内部検証または自動source更新が実行された証拠はない。このmechanism
+failureをPhase 18 Objectiveのfailureとして扱わず、3つの正準source ownerを本source-sync PRで
+限定更新する。
+
+Phase 19は次のroadmap work unitとして定義可能になったが、自動的な実装Authorityは生じない。
+Issue #73は、本source-sync PRの構造審査、SHUKOU手動merge、およびresulting `main`の再観測後にのみ
+closeする。Phase 19実装には、専用Issue上のObjective / Boundary / AuthorityとSHUKOUの明示採択が
+別途必要である。
+
+# 40. Kernel Integrity hardening — injectable immutable schema validation context (Issue #75)
 
 本節は、Phase 18に属さないupstream構造Difference
 `D-KERNEL-VERIFIED-SCHEMA-BYTE-INJECTION`（Issue #75、`ROADMAP_CLASS=
@@ -2557,7 +3145,7 @@ CURRENT_PR=NONE
 DELIVERY_STATE=LOCAL_COMMIT_ONLY_AWAITING_STRUCTURAL_REVIEW
 ```
 
-## 34.1 観測された欠陥
+## 40.1 観測された欠陥
 
 `main@120cddbd`において、canonical schemaのdigest検証と、実際にvalidationを行うbytesの
 読み取りは、別々のfilesystem読み取りであった。
@@ -2575,7 +3163,7 @@ binding.admission._verify_source_snapshot_body() = CALLS_ARGUMENTLESS_REGISTRY_D
 →`observation.schemas.validators()`経由67）。`observation.schemas.validators()`は引数を
 持たないため、`schema_root`を受け取るどのentry pointからも再指定できなかった。
 
-## 34.2 実装
+## 40.2 実装
 
 Kernel所有のimmutable validation contextを一つ追加し、genesis transactionのcall graph全体へ
 通した。schema意味・identity algorithm・fingerprint・commit semanticsは変更していない。
@@ -2618,7 +3206,7 @@ SOURCE_SNAPSHOT_IDENTITY_OWNER_COUNT=1
 BINDING_INVENTED_OBSERVATION_VALIDATION=false
 ```
 
-## 34.3 実測された閉鎖
+## 40.3 実測された閉鎖
 
 ```text
 ONE_VALIDATION_CONTEXT_USED_END_TO_END=true
@@ -2641,7 +3229,7 @@ EXISTING_TEST_DELETION_COUNT=0
 contextは同一の不正recordを実際に受理する。したがって「swap後も拒否された」という主張は、
 fixtureが最初から不正でなかったこと、あるいはswapが効いていなかったことの産物ではない。
 
-## 34.4 権限境界
+## 40.4 権限境界
 
 ```text
 MERGE_ALLOWED=false

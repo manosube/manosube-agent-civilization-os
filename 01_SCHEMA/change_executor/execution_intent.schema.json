@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/change_executor/execution_intent.schema.json",
+  "title": "Execution Intent",
+  "type": "object",
+  "required": ["schema_version", "execution_intent_id", "project_id", "change_ref", "execution_boundary_fingerprint", "adapter_identity_fingerprint", "claim_token", "requested_at", "execution_intent_semantic_fingerprint"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "execution_intent_id": {"$ref": "#/$defs/slot_id"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "change_ref": {"$ref": "#/$defs/change_ref"},
+    "execution_boundary_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"},
+    "adapter_identity_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"},
+    "claim_token": {"type": "string", "minLength": 1, "maxLength": 256},
+    "requested_at": {"$ref": "../common/timestamp.schema.json"},
+    "execution_intent_semantic_fingerprint": {"$ref": "#/$defs/semantic_fingerprint"}
+  },
+  "$defs": {
+    "semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
+    "slot_id": {"type": "string", "pattern": "^EXEC-SLOT-[0-9A-F]{64}(?![\\s\\S])"},
+    "change_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "change"}, "id": {"pattern": "^CHANGE-[0-9A-F]{64}(?![\\s\\S])"}}}
+      ]
+    }
+  },
+  "additionalProperties": false
+}
