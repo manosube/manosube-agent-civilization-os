@@ -80,12 +80,22 @@ class FileStateStore:
         in favour of one, and naming neither is refused rather than silently falling back to
         an import- or cwd-relative schema directory: a Store must never be in doubt about
         which bytes its own validation is answerable to.
+
+        A *schema_context* whose own ``verified`` is ``False`` -- one constructed with no
+        ``expected_digest`` at all -- is refused here as well (Issue #75, P79-R1-F2): a
+        Store must never be constructed against a validation context whose adopted schema
+        identity was never checked against anything.
         """
 
         if (schema_root is None) == (schema_context is None):
             raise BoundaryError(
                 "exactly one of schema_root or schema_context must be supplied to a "
                 "canonical State Store"
+            )
+        if schema_context is not None and not schema_context.verified:
+            raise BoundaryError(
+                "schema_context was not constructed against an adopted schema digest -- an "
+                "unverified validation context may not construct a canonical State Store"
             )
         self.root=root.resolve()
         self.schema_root=schema_root.resolve() if schema_root is not None else None

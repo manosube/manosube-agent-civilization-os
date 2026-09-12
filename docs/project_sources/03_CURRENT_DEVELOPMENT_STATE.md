@@ -3331,3 +3331,88 @@ PHASE_19_IMPLEMENTATION_IN_PR_79=false
 NEXT_OWNER=STRUCTURAL_ADVISOR
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+---
+
+# 42. Issue #75 Structural Review Round 1 corrections（Draft PR #79）
+
+本節はClaude Codeが記録するbounded restatementであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。セクション40・41は書き換えない。SHUKOU正式採択
+（PR #79コメント`https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5643952482`、
+`ADOPTION_ID=ADOPT_ISSUE_75_STRUCTURAL_REVIEW_ROUND_1`）を独立GitHub API再観測で確認した上で、
+既存branch/既存Draft PR #79上に実装した三件の是正を記録する。この採択記録自身が明示する通り、
+本節はセクション41の`KSI_C1_C7=PASS`/`ADVERSARIAL_MATRIX_10_OF_10=PASS`という主張を、この三件の
+是正が閉じられるまでsupersedeする。
+
+```text
+RESTATEMENT_OBSERVED_AT_UTC=2026-09-12T06:10:00Z
+ADOPTION_ID=ADOPT_ISSUE_75_STRUCTURAL_REVIEW_ROUND_1
+ADOPTION_URL=https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5643952482
+READ_BACK_RECEIPT_URL=https://github.com/manosube/manosube-agent-civilization-os/pull/79#issuecomment-5643957015
+AUTHORIZED_TARGET_SHA=c7c5166a84a42771b79ca03cc3567812a58229fa
+ADOPTED_FINDINGS=P79-R1-F1,P79-R1-F2,P79-R1-F3
+CURRENT_PHASE_STATE=ISSUE_75_STRUCTURAL_REVIEW_ROUND_1_CORRECTIONS_DELIVERED
+DELIVERY_STATE=NEW_HEAD_PUSHED_AWAITING_STRUCTURAL_REVIEW
+```
+
+## 42.1 是正内容
+
+```text
+P79-R1-F1_STATUS=CLOSED
+P79-R1-F2_STATUS=CLOSED
+P79-R1-F3_STATUS=CLOSED（本節自身）
+```
+
+- **P79-R1-F1**（内部schema参照の非漏出）: `CanonicalSchemaContext.validation_errors`が返す
+  各`jsonschema.ValidationError`は、以前はcontext自身の内部schema documentノードへの直接参照
+  を`.schema`属性として保持していた。独立に再現されたcounterexample（返されたerrorの
+  `error.schema["unevaluatedProperties"]`を`False`から`True`へ書き換えると、同一contextが
+  実際にその後の`bind_project`genesis transactionでschema-invalidなObjective Revisionを
+  受理した）を、`copy.deepcopy`で各errorを返す前に切り離すことで閉鎖済み。テストは
+  `tests/contract/schema_context/test_canonical_schema_context.py::
+  test_mutating_a_returned_validation_errors_own_schema_reference_changes_no_outcome`と
+  `tests/integration/binding/test_verified_schema_context_genesis.py::
+  test_mutating_a_returned_validation_errors_schema_cannot_reopen_a_verified_context`
+  （実bind_project scaleでのcounterexample再現と閉鎖）。
+
+- **P79-R1-F2**（未検証contextのStore/bind_project到達禁止）: `CanonicalSchemaContext`に新規
+  `verified`property（構築時に`expected_digest`が渡され一致した場合のみ`True`、durable、
+  以降変化しない）を追加。`FileStateStore.__init__`と`binding.route.bind_project`の双方が
+  `schema_context.verified`が`False`のcontextを構築/実行前に拒否する（`FileStateStore`の
+  attribute再割り当てというdefense-in-depthの残余経路も、`bind_project`自身の同一チェックで
+  閉じる）。`verified=True`は「構築時にある期待値が検査され一致した」ことのみを証明し、
+  その期待値自身が同一の未検証capture由来ではなく独立に採択された値であることまでは
+  証明しない -- この provenance はcaller側の責務として`CanonicalSchemaContext.verified`の
+  docstring自身に明記した。テストは`test_a_context_is_unverified_unless_an_expected_digest_
+  was_supplied`、`test_an_unverified_context_is_refused_by_the_store_constructor`、
+  `test_an_unverified_context_is_refused_by_bind_project_even_if_the_store_already_holds_it`。
+
+- **P79-R1-F3**: 本節自身。
+
+```text
+RAW_VALIDATION_ERROR_SCHEMA_REFERENCE_ESCAPE_COUNT=0
+INTERNAL_VALIDATOR_OR_SCHEMA_MUTATION_PATH_COUNT=0
+VALIDATION_OUTCOME_MUTABLE_AFTER_CONTEXT_CONSTRUCTION=false
+UNVERIFIED_CONTEXT_ACCEPTED_BY_STORE=false
+UNVERIFIED_CONTEXT_ACCEPTED_BY_BIND_PROJECT=false
+ADOPTED_SCHEMA_IDENTITY_BOUND=true
+MISMATCH_REFUSED_BEFORE_STORE_CONSTRUCTION=true
+STORE_WRITE_COUNT_AFTER_REFUSAL=0
+F1_REAL_BIND_PROJECT_COUNTEREXAMPLE_CLOSED=true
+F2_WEAKENED_CONTEXT_COUNTEREXAMPLE_CLOSED=true
+CURRENT_STATE_LAST_OCCURRENCE_PROJECTION=CONSISTENT
+KSI_C1_C7=REPROVEN
+ADVERSARIAL_MATRIX=REPROVEN_COMPLETE
+```
+
+## 42.2 権限境界
+
+```text
+MERGE_ALLOWED=false
+ISSUE_75_CLOSE_ALLOWED=false
+DOWNSTREAM_BOAT_PIN_UPDATE_ALLOWED=false
+PHASE_19_IMPLEMENTATION_IN_PR_79=false
+PHASE_19_PR_78_MERGE_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

@@ -58,6 +58,7 @@ from manosube_agent_civilization.store.errors import BoundaryError
 pytestmark = [pytest.mark.integration, pytest.mark.security]
 
 OBJECTIVE_REVISION_RELATIVE_PATH = "objective/objective_revision.schema.json"
+OBJECTIVE_REVISION_SCHEMA_ID = "https://schemas.manosube.org/agent-civilization-os/v0.1/objective/objective_revision.schema.json"
 SOURCE_SNAPSHOT_RELATIVE_PATH = "observation/source_snapshot.schema.json"
 
 
@@ -111,6 +112,26 @@ def _mutable_schema_root(tmp_path: Path) -> Path:
     destination = tmp_path / "01_SCHEMA"
     shutil.copytree(SCHEMA_ROOT, destination)
     return destination
+
+
+def _verified_from_schema_root(root: Path) -> CanonicalSchemaContext:
+    """A context adopted from *root* with its own captured bytes' digest passed back in as
+    ``expected_digest`` -- enough to satisfy the mandatory ``verified`` gate
+    :class:`FileStateStore` and :func:`bind_project` both enforce (Issue #75, P79-R1-F2) for
+    every test in this module that needs the context to actually reach a Store or a genesis
+    transaction. This is *not* an independently adopted expectation in the sense P79-R1-F2
+    itself requires of a real caller (whose ``expected_digest`` must come from outside the
+    capture being checked) -- it only satisfies the mechanical gate so this module can go on
+    proving what it already proves about the whole-transaction route."""
+
+    captured = capture_canonical_schema_bytes(root)
+    return CanonicalSchemaContext(captured, expected_digest=schema_set_digest(captured))
+
+
+def _verified(captured: dict[str, bytes]) -> CanonicalSchemaContext:
+    """As :func:`_verified_from_schema_root`, for an already-captured mapping."""
+
+    return CanonicalSchemaContext(captured, expected_digest=schema_set_digest(captured))
 
 
 def _replace_with_anything_goes(root: Path, relative_path: str) -> None:
@@ -267,7 +288,7 @@ def test_exactly_one_validation_context_object_performs_every_validation(
     the object every single validation in the transaction actually ran against -- never by
     trusting that two registries happened to agree."""
 
-    context = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    context = _verified_from_schema_root(SCHEMA_ROOT)
     seen: list[int] = []
     original = CanonicalSchemaContext.validation_errors
 
@@ -301,7 +322,7 @@ def test_the_verified_byte_route_commits_exactly_what_the_schema_root_route_comm
     fingerprint, and no committed body (``IDENTITY_ALGORITHM_CHANGE=false``,
     ``STATE_FINGERPRINT_CHANGE=false``, ``BINDING_ID_CHANGE=false``)."""
 
-    context = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    context = _verified_from_schema_root(SCHEMA_ROOT)
     records = _genesis_records(schema_context=context)
 
     secure_store = FileStateStore(tmp_path / "secure", schema_context=context)
@@ -323,6 +344,97 @@ def test_the_verified_byte_route_commits_exactly_what_the_schema_root_route_comm
     assert secure == default
 
 
+# --- P79-R1-F1: no internal schema reference escapes a real bind_project transaction -------- #
+
+
+def test_mutating_a_returned_validation_errors_schema_cannot_reopen_a_verified_context(
+    tmp_path: Path,
+) -> None:
+    """P79-R1-F1 -- the independently reproduced counterexample, at real ``bind_project``
+    scale: flipping a returned :class:`jsonschema.ValidationError`'s own
+    ``.schema["unevaluatedProperties"]`` from ``False`` to ``True`` -- exactly the mutation the
+    Structural Advisor's reproduction used to make a real ``bind_project`` genesis transaction
+    incorrectly commit a schema-invalid Objective Revision -- must not change any later
+    validation outcome this same context reports, nor any later genesis transaction it
+    performs."""
+
+    context = _verified_from_schema_root(SCHEMA_ROOT)
+    invalid = _schema_invalid_objective_revision()
+
+    first_errors = context.validation_errors(invalid, OBJECTIVE_REVISION_SCHEMA_ID)
+    assert first_errors
+    mutated_any = False
+    for error in first_errors:
+        if isinstance(error.schema, dict) and "unevaluatedProperties" in error.schema:
+            error.schema["unevaluatedProperties"] = True
+            mutated_any = True
+    assert mutated_any, "the counterexample's own mutation target was not reached"
+
+    # The same context, revalidating the identical invalid body, still refuses it.
+    assert context.validation_errors(invalid, OBJECTIVE_REVISION_SCHEMA_ID)
+
+    kwargs = bind_project_kwargs()
+    kwargs["objective_revision"] = invalid
+    store = FileStateStore(tmp_path / "backend", schema_context=context)
+    with pytest.raises(BindingValidationError, match="schema-invalid"):
+        bind_project(
+            store,
+            **kwargs,
+            additional_genesis_records=_genesis_records(schema_context=context),
+            schema_context=context,
+        )
+    assert not (store.root / "projects").exists()
+
+    # The same context, immediately afterwards, still admits the real transaction.
+    recovered = bind_project(
+        store,
+        **bind_project_kwargs(),
+        additional_genesis_records=_genesis_records(schema_context=context),
+        schema_context=context,
+    )
+    assert recovered["committed_state"]["state_revision"] == 0
+
+
+# --- P79-R1-F2: an unverified context can never reach a Store or a genesis transaction ------ #
+
+
+def test_an_unverified_context_is_refused_by_the_store_constructor(tmp_path: Path) -> None:
+    """P79-R1-F2: a context built with no adopted ``expected_digest`` at all -- one whose own
+    ``verified`` is ``False`` -- must never reach a Store, even one that would otherwise
+    validate against real, byte-identical canonical schemas."""
+
+    unverified = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    assert unverified.verified is False
+    with pytest.raises(BoundaryError, match="unverified validation context"):
+        FileStateStore(tmp_path / "backend", schema_context=unverified)
+
+
+def test_an_unverified_context_is_refused_by_bind_project_even_if_the_store_already_holds_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defence in depth for P79-R1-F2: ``FileStateStore`` does not freeze its own
+    ``schema_context`` attribute, so this proves ``bind_project`` itself also refuses an
+    unverified context rather than relying solely on the Store constructor's own gate."""
+
+    context = _verified_from_schema_root(SCHEMA_ROOT)
+    store = FileStateStore(tmp_path / "backend", schema_context=context)
+
+    unverified = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    assert unverified.verified is False
+    store.schema_context = unverified  # simulate the one residual reassignment gap
+
+    writes = _store_write_recorder(monkeypatch)
+    with pytest.raises(BindingValidationError, match="unverified validation context"):
+        bind_project(
+            store,
+            **bind_project_kwargs(),
+            additional_genesis_records=_genesis_records(schema_context=unverified),
+            schema_context=unverified,
+        )
+    assert writes == []
+    assert not (store.root / "projects").exists()
+
+
 # --- adversarial matrix items 1, 2, 3 and 9: mutate the root after capture ------------------ #
 
 
@@ -334,7 +446,7 @@ def test_a_valid_transaction_stays_byte_identical_after_the_original_root_is_des
     commits."""
 
     root = _mutable_schema_root(tmp_path)
-    context = CanonicalSchemaContext.from_schema_root(root)
+    context = _verified_from_schema_root(root)
     records = _genesis_records(schema_context=context)
 
     control_store = FileStateStore(tmp_path / "control", schema_context=context)
@@ -366,7 +478,7 @@ def test_an_invalid_objective_revision_stays_rejected_after_the_schema_is_swappe
     its own positive control (item 9) proving the swap really would have let it through."""
 
     root = _mutable_schema_root(tmp_path)
-    context = CanonicalSchemaContext.from_schema_root(root)
+    context = _verified_from_schema_root(root)
     records = _genesis_records(schema_context=context)
     invalid = _schema_invalid_objective_revision()
 
@@ -384,7 +496,7 @@ def test_an_invalid_objective_revision_stays_rejected_after_the_schema_is_swappe
     # Positive control: a context captured from the *swapped* root accepts the very same
     # body and commits it -- the earlier refusal is therefore non-vacuous, and the swap was
     # real.
-    swapped = CanonicalSchemaContext.from_schema_root(root)
+    swapped = _verified_from_schema_root(root)
     assert swapped.digest != context.digest
     permissive_store = FileStateStore(tmp_path / "permissive", schema_context=swapped)
     accepted = bind_project(
@@ -411,7 +523,7 @@ def test_an_invalid_source_snapshot_stays_rejected_by_real_admission_after_the_s
     """
 
     root = _mutable_schema_root(tmp_path)
-    context = CanonicalSchemaContext.from_schema_root(root)
+    context = _verified_from_schema_root(root)
     invalid_snapshot = _schema_invalid_source_snapshot()
     records = _genesis_records(snapshot=invalid_snapshot)
 
@@ -430,7 +542,7 @@ def test_an_invalid_source_snapshot_stays_rejected_by_real_admission_after_the_s
     assert not (store.root / "projects").exists()
 
     # Positive control: the weakened Source Snapshot schema genuinely accepts this body.
-    swapped = CanonicalSchemaContext.from_schema_root(root)
+    swapped = _verified_from_schema_root(root)
     assert swapped.digest != context.digest
     permissive_store = FileStateStore(tmp_path / "permissive", schema_context=swapped)
     accepted = bind_project(
@@ -465,7 +577,7 @@ def test_clearing_the_legacy_zero_argument_registry_cannot_redirect_the_secure_r
 
     from manosube_agent_civilization.observation.schemas import validators
 
-    context = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    context = _verified_from_schema_root(SCHEMA_ROOT)
     snapshot = _kernel_source_snapshot(schema_context=context)
     kwargs = bind_project_kwargs()
 
@@ -494,7 +606,7 @@ def test_mutating_the_caller_mapping_after_construction_cannot_change_the_transa
     committed result is byte-identical to a run where it was never touched."""
 
     captured = capture_canonical_schema_bytes(SCHEMA_ROOT)
-    context = CanonicalSchemaContext(captured)
+    context = _verified(captured)
     records = _genesis_records(schema_context=context)
 
     control_store = FileStateStore(tmp_path / "control", schema_context=context)
@@ -538,8 +650,8 @@ def test_a_substituted_context_is_refused_before_any_validation_or_write(
     from a weakened capture -- is refused the moment it disagrees with the object the Store
     itself was constructed with."""
 
-    verified = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
-    substituted = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    verified = _verified_from_schema_root(SCHEMA_ROOT)
+    substituted = _verified_from_schema_root(SCHEMA_ROOT)
     assert substituted.digest == verified.digest
     assert substituted is not verified
 
@@ -580,7 +692,7 @@ def test_naming_both_a_schema_root_and_a_context_is_refused_everywhere(tmp_path:
     """One schema source or the other, never both -- at the Store constructor and at the
     route, so a caller can never end up half-injected and half-reading a directory."""
 
-    context = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    context = _verified_from_schema_root(SCHEMA_ROOT)
 
     with pytest.raises(BoundaryError, match="exactly one of"):
         FileStateStore(tmp_path / "both", schema_root=SCHEMA_ROOT, schema_context=context)
@@ -686,7 +798,7 @@ def test_a_failure_at_any_affected_pre_commit_seam_leaves_the_store_unchanged(
     fingerprinting, and the shared pre-commit admission's Source Snapshot reverification.
     ``STORE_WRITE_COUNT_AFTER_REFUSAL=0`` at every one of them."""
 
-    context = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    context = _verified_from_schema_root(SCHEMA_ROOT)
     kwargs = _kwargs_for_seam(seam)
     if seam == "source_snapshot":
         records = _genesis_records(snapshot=_schema_invalid_source_snapshot())
@@ -826,7 +938,7 @@ def test_binding_admission_reuses_observations_own_validation_and_message(
         validate_source_snapshot_body,
     )
 
-    context = CanonicalSchemaContext.from_schema_root(SCHEMA_ROOT)
+    context = _verified_from_schema_root(SCHEMA_ROOT)
     invalid = _schema_invalid_source_snapshot()
     record_id = invalid["source_snapshot_id"]
 

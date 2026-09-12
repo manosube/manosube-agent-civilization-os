@@ -70,6 +70,7 @@ cache behaviour is part of that route (``KSI-C6``).
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -243,12 +244,13 @@ class CanonicalSchemaContext:
     used end to end rather than merely that two contexts happened to agree.
     """
 
-    __slots__ = ("_digest", "_relative_paths", "_schema_ids", "_validators")
+    __slots__ = ("_digest", "_relative_paths", "_schema_ids", "_validators", "_verified")
 
     _digest: str
     _relative_paths: tuple[str, ...]
     _schema_ids: tuple[str, ...]
     _validators: Mapping[str, Draft202012Validator]
+    _verified: bool
 
     def __init__(
         self,
@@ -333,6 +335,7 @@ class CanonicalSchemaContext:
         object.__setattr__(self, "_digest", digest)
         object.__setattr__(self, "_schema_ids", tuple(sorted(documents)))
         object.__setattr__(self, "_relative_paths", relative_paths)
+        object.__setattr__(self, "_verified", expected_digest is not None)
 
     @classmethod
     def from_schema_root(
@@ -388,12 +391,47 @@ class CanonicalSchemaContext:
 
         return schema_id in self._validators
 
+    @property
+    def verified(self) -> bool:
+        """Whether this context was constructed against a caller-declared
+        ``expected_digest`` (Issue #75, P79-R1-F2).
+
+        ``True`` only when construction supplied and matched an ``expected_digest``; a
+        context built with no expectation at all is ``False``. :class:`~manosube_agent_
+        civilization.store.file_store.FileStateStore` and :func:`~manosube_agent_
+        civilization.binding.route.bind_project` both refuse a *schema_context* whose
+        ``verified`` is ``False``, so an unverified context can never reach validation,
+        Store construction, or a write.
+
+        This proves only that *an* expectation was checked and matched at construction
+        time -- it does not and cannot prove the expectation itself was independently
+        adopted rather than freshly recomputed from the same untrusted bytes being
+        checked. That provenance is the caller's own responsibility: a real production
+        caller must source ``expected_digest`` from outside the capture it verifies (a
+        signed manifest, a reviewed source constant), never recompute it from the same
+        bytes at the call site -- a digest calculated from the same untrusted capture is
+        not an independent adopted expectation.
+        """
+
+        return self._verified
+
     def validation_errors(self, instance: Any, schema_id: str) -> list[ValidationError]:
         """Return every validation error *instance* produces against *schema_id*.
 
         A validation *operation* -- the caller receives errors, never the schema document
         that produced them, and never the validator object holding it. Each call returns a
-        freshly built list, so a caller cannot retain or mutate anything this context owns.
+        freshly built list of freshly deep-copied errors, so a caller cannot retain or
+        mutate anything this context owns: a raw :class:`jsonschema.ValidationError`'s own
+        ``.schema`` attribute is not a copy but a direct reference into the schema document
+        node it was raised against (Issue #75, P79-R1-F1) -- returning it uncopied would let
+        a caller reach into and mutate this context's own internal, already-adopted schema
+        documents (an independently reproduced counterexample: flipping a returned error's
+        own ``error.schema["unevaluatedProperties"]`` from ``False`` to ``True`` then made
+        this same context, and a real ``bind_project`` genesis transaction carrying the
+        identical invalid body, incorrectly accept it). Every error returned here, and every
+        error nested in its own ``.context`` chain, is therefore deep-copied before it ever
+        leaves this method, so no reachable attribute on any returned error can alias --
+        let alone mutate -- this context's own validators or documents.
 
         Raises :class:`SchemaContextError` when *schema_id* is outside the adopted set: a
         context fails closed rather than silently validating against nothing.
@@ -404,7 +442,7 @@ class CanonicalSchemaContext:
             raise SchemaContextError(
                 f"canonical schema is unavailable in this validation context: {schema_id}"
             )
-        return list(validator.iter_errors(instance))
+        return [copy.deepcopy(error) for error in validator.iter_errors(instance)]
 
     def __setattr__(self, name: str, value: object) -> None:
         raise SchemaContextError(

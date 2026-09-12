@@ -236,12 +236,15 @@ def bind_project(
     legacy zero-argument Observation registry, or constructs a second registry
     (``SCHEMA_FILESYSTEM_READ_COUNT_AFTER_CONTEXT_CONSTRUCTION=0``).
 
-    Two things are refused outright rather than resolved in the caller's favour, because
-    either would silently reopen the verify/use window this parameter exists to close:
-    supplying *schema_root* alongside *schema_context*, and supplying a *schema_context* that
-    is not the identical object *store* itself was constructed with
-    (:func:`_require_one_validation_context`). Both refusals happen before any validation and
-    before ``store.initialize`` is ever reached, so ``STORE_WRITE_COUNT_AFTER_REFUSAL=0``.
+    Three things are refused outright rather than resolved in the caller's favour, because
+    each would silently reopen the verify/use window this parameter exists to close:
+    supplying *schema_root* alongside *schema_context*; supplying a *schema_context* that is
+    not the identical object *store* itself was constructed with
+    (:func:`_require_one_validation_context`); and supplying a *schema_context* whose own
+    :attr:`~manosube_agent_civilization.schema_context.CanonicalSchemaContext.verified` is
+    ``False`` -- one built with no adopted ``expected_digest`` at all (Issue #75, P79-R1-F2).
+    All three refusals happen before any validation and before ``store.initialize`` is ever
+    reached, so ``STORE_WRITE_COUNT_AFTER_REFUSAL=0``.
 
     A caller that does not request verified-byte injection is entirely unaffected: with no
     *schema_context*, every path below behaves exactly as it did before, *schema_root*
@@ -255,6 +258,12 @@ def bind_project(
                 "route never also names a filesystem schema root to read"
             )
         _require_one_validation_context(store, schema_context)
+        if not schema_context.verified:
+            raise BindingValidationError(
+                "schema_context was not constructed against an adopted schema digest -- an "
+                "unverified validation context may not perform a bind_project genesis "
+                "transaction"
+            )
 
     objective_revision_id = objective_revision.get("objective_revision_id")
     if not isinstance(objective_revision_id, str) or not objective_revision_id:
