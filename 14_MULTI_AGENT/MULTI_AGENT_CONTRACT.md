@@ -1110,3 +1110,30 @@ CODE_CHANGE_REQUIRED=false`, `EXISTING_R6_F1_REPLAY_PROOF_STILL_PASSES=true`. Se
 Authority evaluator, execution route, Store owner, Model Runtime owner, or Multi-Agent owner is
 introduced by either finding; ownership of the one closed claim kind's identity, semantic
 fingerprint, and schema remains singular, in `model_runtime.claim_identity`.
+
+## 17. Structural Review Round 8 correction (P19-R8-F1)
+
+Adopted as `ADOPT_P19_R8_VERIFIED_BINDING_CONTINUITY` against reviewed head/authorized target
+`dcf5c23c5dc58e9ee1811a7599dd0543d5d4c78c` (PR #78). See `MODEL_RUNTIME_CONTRACT.md` §15 for the
+full P19-R8-F1 finding, fix, and proof.
+
+**This package required zero code changes to close P19-R8-F1.** The gap §15 closes -- the
+post-adapter commit-tail re-reading `slot_attempt_envelope_claim_binding` a second time, after
+`adapter.execute()` had already run, rather than comparing against the identical value verified
+before the adapter -- existed entirely inside `model_runtime.execute_model_work_unit`'s own
+internal state, never in how any caller supplies that parameter. `_execute_one_slot`'s own
+`_call_execute_model_work_unit` (§13/§15's own P19-R6-F2 delivery, unchanged since) already builds
+`slot_attempt_envelope_claim_binding={"plan_ref": dict(plan_ref), "slot_index": slot_index,
+"attempt_ordinal": 1}` as a fresh dict literal at each call, with its own `plan_ref` a fresh
+`dict(plan_ref)` copy -- and this package's own adapter (whichever `ModelAdapter` implementation
+its own caller supplies to `execute_dynamic_execution_plan`) is never handed a reference to that
+binding dict at all. There was accordingly no object this package's own code could mutate in place
+between `model_runtime`'s own pre-adapter and post-adapter reads even before the fix existed; §15's
+correction closes the gap for every caller of `execute_model_work_unit`, this package included,
+purely inside `model_runtime`'s own package boundary.
+
+`THIS_PACKAGES_OWN_BINDING_ALREADY_FRESH_PER_CALL=true`, `THIS_PACKAGES_OWN_ADAPTER_NEVER_HANDED_
+THE_BINDING=true`, `ROUTE_LEVEL_CODE_CHANGE_REQUIRED=false`. The existing Round 6 acknowledgement-
+loss recovery test and every other existing Phase 19 proof in this package continue to pass
+unmodified against the new head. No second Authority evaluator, execution route, Store owner,
+Model Runtime owner, or Multi-Agent owner is introduced.

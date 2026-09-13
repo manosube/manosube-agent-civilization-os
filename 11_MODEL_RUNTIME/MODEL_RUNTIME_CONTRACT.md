@@ -755,3 +755,58 @@ comparator, hidden equivalent hook, duplicated identity/schema implementation, o
 Store/State/Authority owner was introduced; ownership of the plan kind's identity, semantic
 fingerprint, and schema is now singular in this route's own package, exactly as the claim kind's
 already is.
+
+## 15. Structural Review Round 8 correction (Phase 19, Issue #77, P19-R8-F1)
+
+Adopted as `ADOPT_P19_R8_VERIFIED_BINDING_CONTINUITY` against reviewed head/authorized target
+`dcf5c23c5dc58e9ee1811a7599dd0543d5d4c78c` (PR #78).
+
+**P19-R8-F1 -- the canonical plan verified before the adapter and the plan the post-adapter claim
+comparison checks against are now the identical retained value, never two independent reads of
+`slot_attempt_envelope_claim_binding`.** §14 above resolved and verified the canonical plan
+*before* the adapter was ever reached, but the post-adapter commit-tail (§12/§13) then built its
+own comparator by taking `dict(slot_attempt_envelope_claim_binding)` a second time -- reading the
+identical caller-owned Mapping again, after `adapter.execute()` had already returned. Because the
+same public caller supplies the adapter, the binding, and the claim factory, the adapter could
+mutate that Mapping in place -- including its own nested `plan_ref` -- from a genuinely resolved
+and verified Plan A to an uncommitted Plan B between those two reads, and the factory (invoked
+after the adapter, over the by-then-mutated Mapping) could follow that same mutation to build a
+self-consistent Plan-B claim the post-adapter re-read would have agreed with, even though only
+Plan A was ever resolved and independently verified against the Store.
+
+`slot_attempt_envelope_claim_binding` is now validated and normalized exactly once, before the
+adapter is ever reached, into a value wholly detached from the caller's own Mapping object
+(`_detach_slot_attempt_envelope_claim_binding`): it reads `plan_ref.kind`, `plan_ref.id`, `slot_
+index`, and `attempt_ordinal` once, and returns a freshly built dict -- including a freshly built
+`plan_ref` dict of its own -- sharing no nested container with the caller's own Mapping. A shallow
+`dict(binding)` alone would not have sufficed, since its own `plan_ref` entry could still be the
+identical nested Mapping object the caller (or an adapter it controls) continues to hold and
+mutate. This one retained value, and never another read of the parameter itself, is what both the
+pre-adapter canonical-plan resolution (§14) and the post-adapter claim comparison (§12/§13) use.
+
+Proved in `test_model_runtime_failure_tamper_matrix.py`: a new required decisive adversarial
+regression in which a genuine Plan A is committed and resolved/verified before the adapter, a
+custom `FakeModelAdapter` subclass mutates the original caller-owned binding Mapping in place --
+including its own nested `plan_ref` -- to a wholly uncommitted Plan B inside its own `execute()`,
+and the claim factory (called after the adapter, reading only the by-then-mutated Mapping) follows
+Plan B. `PLAN_A_RESOLVED_AND_VERIFIED=true`, `ADAPTER_MUTATES_ORIGINAL_CALLER_BINDING_TO_PLAN_
+B=true`, `FACTORY_FOLLOWS_MUTATED_PLAN_B=true`, `PLAN_B_CANONICAL_RESOLUTION=false` (Plan B is
+never committed to the test's own Store at all), `ADAPTER_CALL_COUNT=1` (Plan A's own pre-adapter
+check genuinely passes, so the adapter really is reached -- unlike §14's own pre-adapter collusion
+control), `PLAN_B_CLAIM_WRITE_COUNT=0`, `ENVELOPE_WRITE_COUNT=0`, `STATE_REVISION_ADVANCE=0`; and a
+new required positive control proving the fix does not narrow the honest route -- when nothing
+mutates the original binding at all, the retained, caller-detached value is exactly what the caller
+declared, and the Envelope plus its companion claim still commit atomically in the same one
+transaction, the identical Round 4-7 invariant, preserved. The Round 6 acknowledgement-loss
+recovery test, every Round 7 control, and the Round 5/6 claim-factory suite all continue to pass
+unmodified.
+
+`BINDING_NORMALIZED_ONCE_BEFORE_ADAPTER=true`, `NORMALIZED_BINDING_DETACHED_FROM_ALL_CALLER_
+ALIASES=true`, `CANONICAL_PLAN_VERIFIED_AGAINST_RETAINED_BINDING=true`, `POST_ADAPTER_CLAIM_
+COMPARED_TO_SAME_RETAINED_BINDING=true`, `CALLER_BINDING_RE_READ_AFTER_ADAPTER=false`, `VERIFIED_
+PLAN_A_TO_UNVERIFIED_PLAN_B_SWITCH_ACCEPTED=false`. `multi_agent.route`'s own `_call_execute_
+model_work_unit` required zero code changes: its own `slot_attempt_envelope_claim_binding` is
+already a freshly built dict literal at each call (with its own `plan_ref` a fresh `dict(plan_
+ref)` copy), never handed to the adapter it constructs, so nothing in that package could ever
+mutate it. No import of `multi_agent` was added to this package; no second caller-provided
+comparator, hidden equivalent hook, or second Store/State/Authority owner was introduced.

@@ -2378,6 +2378,165 @@ def test_p19_r7_f1_a_genuine_store_resolved_plan_still_admits_its_companion_clai
     )
 
 
+# =========================================================================== #
+# 11. Structural Review Round 8: verified binding continuity across the adapter (P19-R8-F1)
+# =========================================================================== #
+
+
+def test_p19_r8_f1_an_adapter_that_mutates_the_original_binding_to_an_unverified_plan_is_refused(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 8, P19-R8-F1's own required decisive adversarial regression.
+
+    Round 7 resolves and verifies the canonical plan *slot_attempt_envelope_claim_binding* names
+    before the adapter is ever reached -- but the (pre-fix) route then discarded that verified
+    value and took its own ``dict(slot_attempt_envelope_claim_binding)`` a second time, in the
+    post-adapter commit-tail, reading the identical caller-owned Mapping again after
+    ``adapter.execute()`` had already returned. Because the same public caller supplies the
+    adapter, the binding, and the claim factory, the adapter here mutates the original binding
+    Mapping in place -- including its own nested ``plan_ref`` -- from a genuinely committed and
+    verified Plan A to an uncommitted Plan B, and the factory (called after the adapter, seeing
+    only the mutated Mapping) follows Plan B. ``PLAN_A_RESOLVED_AND_VERIFIED=true``,
+    ``ADAPTER_MUTATES_ORIGINAL_CALLER_BINDING_TO_PLAN_B=true``,
+    ``FACTORY_FOLLOWS_MUTATED_PLAN_B=true``, ``PLAN_B_CANONICAL_RESOLUTION=false`` (Plan B is
+    never committed to this test's own Store at all). The fix must refuse this: the retained,
+    caller-detached value captured *before* the adapter call (naming Plan A) is what the
+    post-adapter claim comparison uses, never a fresh read of the (by-then mutated) original
+    Mapping, so the claim body's own declared Plan-B fields mismatch it and commitment is
+    refused. Because this mismatch is only detectable in the post-adapter commit-tail (the claim
+    body itself does not exist until the factory is called, after the adapter),
+    ``ADAPTER_CALL_COUNT=1`` here -- unlike Round 7's own pre-adapter collusion control --  but
+    ``PLAN_B_CLAIM_WRITE_COUNT=0``, ``ENVELOPE_WRITE_COUNT=0``, ``STATE_REVISION_ADVANCE=0``."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)  # Plan A: genuinely committed and Store-resolvable
+    plan_a_ref = dict(_CLAIM_PLAN_REF)
+
+    mutable_binding: dict[str, Any] = {
+        "plan_ref": dict(plan_a_ref),
+        "slot_index": _CLAIM_SLOT_INDEX,
+        "attempt_ordinal": _CLAIM_ATTEMPT_ORDINAL,
+    }
+    plan_b_ref = {"kind": "multi_agent_dynamic_execution_plan", "id": "UNCOMMITTED-PLAN-B"}
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_dynamic_execution_plan", "UNCOMMITTED-PLAN-B"
+        )
+        is None
+    )
+
+    class _BindingMutatingAdapter(FakeModelAdapter):
+        def execute(self, *, request: Mapping[str, Any]) -> Mapping[str, Any]:
+            result = super().execute(request=request)
+            # Mutate the ORIGINAL caller-owned Mapping in place, including its own nested
+            # plan_ref object -- exactly what a second, later dict() of the same Mapping would
+            # follow, and exactly what the retained, caller-detached value must not.
+            mutable_binding["plan_ref"] = dict(plan_b_ref)
+            mutable_binding["slot_index"] = 999
+            return result
+
+    adapter = _BindingMutatingAdapter()
+    adapter.seed_candidate(
+        model_work_unit_ref=opened["model_work_unit_ref"],
+        candidate_fields={"summary": "s", "observed_status": "ok"},
+    )
+
+    def _factory_following_the_mutated_binding(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        # Called after adapter.execute() returns, so it observes the already-mutated binding --
+        # exactly the shape a colluding caller-side factory would produce to follow the mutation.
+        return _self_consistent_claim_body(
+            world,
+            envelope,
+            plan_ref=dict(mutable_binding["plan_ref"]),
+            slot_index=mutable_binding["slot_index"],
+        )
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_factory_following_the_mutated_binding,
+            slot_attempt_envelope_claim_binding=mutable_binding,
+        )
+    # ADAPTER_CALL_COUNT=1: Plan A's own pre-adapter canonical-plan check genuinely passes (it is
+    # resolved and verified before the mutation ever happens), so the adapter really is reached.
+    assert adapter.execute_call_count == 1
+    # STATE_REVISION_ADVANCE=0 / ENVELOPE_WRITE_COUNT=0 / PLAN_B_CLAIM_WRITE_COUNT=0
+    assert _revision(world) == before
+    forged_claim_body = _self_consistent_claim_body(
+        world,
+        {"model_execution_envelope_id": "MODEL-EXECUTION-" + "8" * 64},
+        plan_ref=dict(plan_b_ref),
+        slot_index=999,
+    )
+    assert (
+        world["store"].resolve_record(
+            world["project_id"],
+            "multi_agent_slot_attempt_envelope_claim",
+            forged_claim_body["multi_agent_slot_attempt_envelope_claim_id"],
+        )
+        is None
+    )
+    # PLAN_B_CANONICAL_RESOLUTION=false: the mutated-to plan was never committed at all.
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_dynamic_execution_plan", "UNCOMMITTED-PLAN-B"
+        )
+        is None
+    )
+
+
+def test_p19_r8_f1_a_genuine_unmutated_binding_still_admits_its_companion_claim_atomically(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 8, P19-R8-F1's own required positive control: the fix closes a
+    binding-continuity gap, it does not narrow the honest route. When nothing mutates the
+    original binding Mapping at all, the retained, caller-detached value the fix now uses is
+    exactly the same plan/slot/attempt the caller declared, and the Envelope plus its companion
+    claim still commit atomically in the same one transaction -- the identical Round 4-7
+    invariant, preserved."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _genuine_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return _self_consistent_claim_body(world, envelope)
+
+    before = _revision(world)
+    result = execute_model_work_unit(
+        world["store"],
+        _agent(world),
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        model_work_unit_ref=opened["model_work_unit_ref"],
+        adapter=adapter,
+        executed_at="2026-09-09T02:00:00Z",
+        slot_attempt_envelope_claim_factory=_genuine_claim_factory,
+        slot_attempt_envelope_claim_binding=_claim_binding(world),
+    )
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before + 1
+    envelope_id = result["envelope"]["model_execution_envelope_id"]
+    assert (
+        world["store"].resolve_record(world["project_id"], ENVELOPE_KIND, envelope_id) is not None
+    )
+    claim_body = _self_consistent_claim_body(world, result["envelope"])
+    claim_id = claim_body["multi_agent_slot_attempt_envelope_claim_id"]
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_slot_attempt_envelope_claim", claim_id
+        )
+        is not None
+    )
+
+
 def test_p19_r4_f4_a_fabricated_pinned_execution_snapshot_is_refused_with_zero_adapter_calls(
     world: dict[str, Any],
 ) -> None:

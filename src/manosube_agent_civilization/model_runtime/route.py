@@ -501,6 +501,58 @@ def _resolve_difference(
     return difference
 
 
+def _detach_slot_attempt_envelope_claim_binding(binding: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and normalize a caller-supplied ``slot_attempt_envelope_claim_binding`` exactly
+    once, returning a value wholly detached from the caller's own Mapping object (Structural
+    Review Round 8, P19-R8-F1).
+
+    Round 7 resolved and verified the canonical plan *expected_binding* named before the adapter
+    was ever reached, but then discarded that verified value: the post-adapter commit-tail built
+    its own comparator by taking ``dict(slot_attempt_envelope_claim_binding)`` a second time,
+    reading the identical caller-owned Mapping again after ``adapter.execute()`` had already run.
+    Because the same public caller supplies the adapter, the binding, and the claim factory, the
+    adapter can mutate that original Mapping in place -- including its own nested ``plan_ref`` --
+    from a genuinely verified Plan A to an uncommitted Plan B between those two reads, and the
+    factory can then follow that same mutated binding to build a self-consistent Plan-B claim
+    that the (unfixed) post-adapter re-read would have agreed with.
+
+    This function is called exactly once, before the adapter is ever reached, and its return
+    value -- never another read of *binding* itself -- is what both the pre-adapter canonical-
+    plan resolution and the post-adapter claim comparison use. A shallow ``dict(binding)`` alone
+    would not suffice: its own ``plan_ref`` entry could still be the identical nested Mapping
+    object the caller continues to hold and mutate. This instead reads each of the four accepted
+    fields (``plan_ref.kind``, ``plan_ref.id``, ``slot_index``, ``attempt_ordinal``) once, here,
+    and returns a freshly built dict -- including a freshly built ``plan_ref`` dict of its own --
+    containing only those already-read, now-immutable values, sharing no nested container with
+    *binding*.
+    """
+
+    if not isinstance(binding, Mapping):
+        raise ModelRuntimeRequirementError(
+            f"slot_attempt_envelope_claim_binding must be an explicit mapping: {binding!r}"
+        )
+    declared_plan_ref = binding.get("plan_ref")
+    if not (
+        isinstance(declared_plan_ref, Mapping)
+        and isinstance(declared_plan_ref.get("kind"), str)
+        and declared_plan_ref.get("kind")
+        and isinstance(declared_plan_ref.get("id"), str)
+        and declared_plan_ref.get("id")
+    ):
+        raise ModelRuntimeRequirementError(
+            "slot_attempt_envelope_claim_binding's own plan_ref is not a readable reference with "
+            "a non-empty kind and id -- refusing to resolve a canonical plan from it"
+        )
+    return {
+        "plan_ref": {
+            "kind": str(declared_plan_ref["kind"]),
+            "id": str(declared_plan_ref["id"]),
+        },
+        "slot_index": binding.get("slot_index"),
+        "attempt_ordinal": binding.get("attempt_ordinal"),
+    }
+
+
 def _resolve_and_verify_canonical_plan(
     store: Any,
     project_id: str,
@@ -1263,6 +1315,21 @@ def execute_model_work_unit(
     this system's own single-attempt-per-slot design means it is checked as the fixed,
     route-derived invariant ``1``.
 
+    Structural Review Round 8, P19-R8-F1: Round 7's own resolve-and-verify above ran against
+    *slot_attempt_envelope_claim_binding*, but the post-adapter commit-tail below independently
+    took its own ``dict(slot_attempt_envelope_claim_binding)`` a second time, reading the
+    identical caller-owned Mapping again after ``adapter.execute()`` had already returned. Because
+    the same public caller supplies the adapter, the binding, and the factory, the adapter could
+    mutate that Mapping in place -- including its own nested ``plan_ref`` -- from a genuinely
+    verified Plan A to an uncommitted Plan B between those two reads, and the factory could then
+    follow that same mutated binding to build a self-consistent Plan-B claim the post-adapter
+    re-read would have agreed with, even though only Plan A was ever resolved and verified.
+    *slot_attempt_envelope_claim_binding* is now validated and normalized into a caller-detached
+    trusted value exactly once, here, before the adapter is ever reached
+    (:func:`_detach_slot_attempt_envelope_claim_binding`), and that identical retained value --
+    never another read of the parameter itself -- is what both the pre-adapter canonical-plan
+    resolution and the post-adapter claim comparison use.
+
     Every refusal below lands with the adapter called **zero** times and nothing committed: a
     released or foreign Temporary Agent, a stale execution contract, a Work Unit that does not
     resolve or whose own identity does not recompute, a Difference/Boundary/Authority reference
@@ -1315,6 +1382,12 @@ def execute_model_work_unit(
     # slot_attempt_envelope_claim_binding's own declared values; the identical single caller
     # supplies both, so that agreement alone never proved a genuinely committed plan stood behind
     # either one. See :func:`_resolve_and_verify_canonical_plan`.
+    #
+    # Structural Review Round 8, P19-R8-F1: the value verified here must be the *exact* value the
+    # post-adapter commit-tail below compares its claim body against -- never a second, later read
+    # of slot_attempt_envelope_claim_binding itself, which the adapter this call is about to
+    # invoke may since have mutated. See :func:`_detach_slot_attempt_envelope_claim_binding`.
+    retained_claim_binding: dict[str, Any] | None = None
     if slot_attempt_envelope_claim_factory is not None:
         if slot_attempt_envelope_claim_binding is None:
             raise ModelRuntimeRequirementError(
@@ -1322,10 +1395,13 @@ def execute_model_work_unit(
                 "slot_attempt_envelope_claim_factory is supplied -- this call's own caller, "
                 "never the factory, declares which exact attempt this claim is committed for"
             )
+        retained_claim_binding = _detach_slot_attempt_envelope_claim_binding(
+            slot_attempt_envelope_claim_binding
+        )
         _resolve_and_verify_canonical_plan(
             store,
             project_id,
-            expected_binding=dict(slot_attempt_envelope_claim_binding),
+            expected_binding=retained_claim_binding,
             checked_work_unit_ref=checked_work_unit_ref,
             work_unit=work_unit,
         )
@@ -1437,13 +1513,17 @@ def execute_model_work_unit(
         # atomic transaction as the Envelope -- either both land, or neither does -- closing the
         # crash window a separate follow-up commit would otherwise leave open, without this
         # route ever becoming a second, generic record-injection surface.
-        if slot_attempt_envelope_claim_binding is None:
+        # Structural Review Round 8, P19-R8-F1: compare against the identical retained, caller-
+        # detached value already validated and used for canonical-plan resolution above -- never
+        # slot_attempt_envelope_claim_binding itself again. That original Mapping (and any nested
+        # plan_ref inside it) may have been mutated by anything that ran since, not least the
+        # adapter this very call just invoked; only the retained value is trusted.
+        if retained_claim_binding is None:
             raise ModelRuntimeRequirementError(
-                "slot_attempt_envelope_claim_binding is required whenever "
-                "slot_attempt_envelope_claim_factory is supplied -- this call's own caller, "
-                "never the factory, declares which exact attempt this claim is committed for"
+                "internal invariant violated: retained_claim_binding was not established before "
+                "the adapter call despite slot_attempt_envelope_claim_factory being supplied"
             )
-        expected_binding = dict(slot_attempt_envelope_claim_binding)
+        expected_binding = retained_claim_binding
         claim_body = dict(slot_attempt_envelope_claim_factory(envelope))
         # Structural Review Round 6, P19-R6-F2: schema-validate the full closed shape first --
         # this is what catches an additional, unregistered field, which recomputing the id/

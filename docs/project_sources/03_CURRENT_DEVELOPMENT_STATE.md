@@ -3543,3 +3543,64 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_7_REVIEWED_HEAD`。
 §45以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
 優先される(last-wins)。
+
+# 47. Phase 19 Structural Review Round 8 bounded current-state restatement (Issue #77, PR #78)
+
+本節は、Structural Advisor Structural Review Round 8(reviewed head/AUTHORIZED_TARGET_SHA
+`dcf5c23c5dc58e9ee1811a7599dd0543d5d4c78c`、finding `P19-R8-F1`)をSHUKOUが
+`ADOPT_P19_R8_VERIFIED_BINDING_CONTINUITY`として正式採択した後、Claude Codeが既存
+branch`agent/issue-77-phase19-multi-agent-dynamic-execution`・既存PR #78上でF1の是正を実装した
+時点の、bounded・append-only current-state restatementである(SHUKOU正式採択コメント:
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5651851789
+、Claude Code実装ハンドオフコメント:
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5651853864
+、いずれも本記録作成者自身がGitHub API経由でauthor login/id/associationを直接検証済み、live
+head/base不変も同様に確認済み)。§0冒頭のheader blockおよびセクション1〜46の本文は、書き換えない
+-- 本節が最後に追記される、bounded・last-wins restatementである。
+
+是正した finding の要旨: P19-R8-F1(Round 7自身が新設した`_resolve_and_verify_canonical_plan`
+は`slot_attempt_envelope_claim_binding`が名指す canonical plan をadapter到達前に解決・検証した
+が、その検証済み値は破棄され、post-adapter commit-tailは`adapter.execute()`が既に返った後で、
+同一の呼び出し元所有Mappingへの二度目の`dict()`読み取りを独自に行っていた。adapter・binding・
+claim factoryのいずれも同一の単一呼び出し元が供給するため、adapterがその原本Mapping自身を
+--自身の入れ子`plan_ref`を含めて -- 真にcommit・検証済みのPlan Aから、一切commitされていない
+Plan Bへとin-place mutateし、factory(adapter呼び出し後に呼ばれ、mutate済みMappingのみを見る)
+がそのPlan Bへ追随することで、post-adapter側の再読み取りとは一致してしまう -- Plan Aのみが
+真に解決・検証されたにもかかわらず。是正は、`slot_attempt_envelope_claim_binding`を、adapterへ
+到達する前に一度だけ検証・正規化し、呼び出し元自身のMapping objectから完全に切り離された
+trusted local値(`plan_ref.kind`・`plan_ref.id`・`slot_index`・`attempt_ordinal`のみを含む、
+新設`_detach_slot_attempt_envelope_claim_binding`が返す、自身の`plan_ref`も含めて新規構築された
+dict)を構築し、この同一のretained値 -- 二度目の読み取りは一切行わない -- を、pre-adapter側の
+canonical plan解決とpost-adapter側のclaim比較の双方が用いるようにする。単純な shallow
+`dict(binding)`では不十分である -- その`plan_ref`エントリ自身が、呼び出し元が引き続き保持し
+mutateしうる同一の入れ子Mapping objectのままでありうるため。`multi_agent`側の変更は不要であった
+-- この package 自身の`_call_execute_model_work_unit`は、既に呼び出しごとに新規構築される
+dict literal(自身の`plan_ref`も新規`dict(plan_ref)`コピー)を`slot_attempt_envelope_claim_
+binding`として渡しており、この package 自身が構築するadapterへその binding が渡されることも
+一切ないため、mutateしうるobjectがそもそも存在しない。
+
+```text
+OBSERVED_AT_UTC=2026-09-13T07:16:40Z
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_8_CORRECTIONS_DELIVERED_PR_OPEN
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=78
+GOVERNING_ISSUE=#77
+STRUCTURAL_REVIEW_ROUND_8_REVIEWED_HEAD=dcf5c23c5dc58e9ee1811a7599dd0543d5d4c78c
+AUTHORIZED_TARGET_SHA=dcf5c23c5dc58e9ee1811a7599dd0543d5d4c78c
+ADOPTION_ID=ADOPT_P19_R8_VERIFIED_BINDING_CONTINUITY
+ADOPTED_FINDINGS=P19-R8-F1
+
+MERGE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+このrestatementは、この一回の追記時点で真であった七個のfieldの事実記録に限られる:
+`CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
+`MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_8_REVIEWED_HEAD`。
+§46以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
+優先される(last-wins)。
