@@ -906,3 +906,73 @@ merge時のsource freshness Actionsはstep開始前にfailureとなり、自動s
 `03_CURRENT_DEVELOPMENT_STATE.md`および`04_REPOSITORY_ARCHITECTURE.md`の同期を、限定された
 Human-reviewed source-syncとして行う。Issue #73のcloseは、このsource-syncのmergeとresulting
 `main`の再観測後に行う。
+
+---
+
+# 25. Phase 19 acceptance receipt
+
+| Phase | Governing Issue | Merged PR | Accepted merge SHA | Receipt class | Accepted capability |
+|---:|---:|---:|---|---|---|
+| 19 | [#77](https://github.com/manosube/manosube-agent-civilization-os/issues/77) | [#78](https://github.com/manosube/manosube-agent-civilization-os/pull/78) | `a73d6e804e8ae40491d3aeded989c997b68c93f0` | `DIRECT_COMPLETION_RECEIPT` | Difference-derived dynamic multi-Agent execution inside existing Temporary Agent lifecycle, Authority/Change, and Evidence/Reflow boundaries |
+
+Phase 19のexact delivery headは`3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d`であり、merge commitの
+第二parentと一致する。第一parentはPhase 18 source-synchronized main
+`0ced9d0dd5658196b7a6dc085ca839fa514f1eeb`である。reviewed delivery headとmerge commitは同一
+tree `d1a31cf27fbcdf53e1bd302bd416ff741fa885a1`を持ち、file diffは0である。12回のStructural
+Review(Round 1〜12)はexact delivery headに対して全finding closed、no regression、
+`FINAL_ADVERSARIAL_CLOSURE_SWEEP=PASS`を記録し、その後SHUKOUがPR #78を手動mergeした。
+
+post-merge受入観測とsource reflow境界はIssue #77コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-5653547984`
+へ固定し、API read-back済みである。
+
+```text
+OBSERVED_AT_UTC=2026-09-13T13:29:29Z
+ACCEPTED_PHASE_RANGE=0..19
+ACCEPTED_PHASE_COUNT=20
+LAST_ACCEPTED_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+LAST_ACCEPTED_MAIN_SHA=a73d6e804e8ae40491d3aeded989c997b68c93f0
+
+PHASE_19_DELIVERY_HEAD=3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d
+PHASE_19_MERGE_PARENT_MAIN=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+PHASE_19_MERGE_PARENT_DELIVERY=3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d
+PHASE_19_REVIEWED_TREE=d1a31cf27fbcdf53e1bd302bd416ff741fa885a1
+PHASE_19_MERGED_TREE=d1a31cf27fbcdf53e1bd302bd416ff741fa885a1
+MERGED_EXACT_REVIEWED_HEAD=true
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+PHASE_19_STRUCTURAL_REVIEW_ROUND_12=PASS
+PHASE_19_STRUCTURAL_FINDINGS_OPEN=0
+FINAL_ADVERSARIAL_CLOSURE_SWEEP=PASS
+
+POST_MERGE_TARGETED_MULTI_AGENT_UNIT_CONTRACT_SUITE=224_PASSED
+POST_MERGE_TARGETED_SUBSTITUTION_AND_CONTINUITY_FILE=19_PASSED
+POST_MERGE_TARGETED_MULTI_AGENT_MODEL_RUNTIME_INTEGRATION=128_PASSED
+SCHEMA_VALIDATION=PASS_79_SCHEMAS
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=21496_PASSED_10_PRE_EXISTING_FAILED_11_SKIPPED
+GITHUB_ACTIONS_RESULT=FAILED_EXTERNAL_OBSERVATION
+GITHUB_ACTIONS_IS_PHASE_ACCEPTANCE_AUTHORITY=false
+
+PHASE_19_CURRENT_ROUTE_BLOCKERS=0
+PHASE_19_COMPLETE=true
+ISSUE_77_CLOSE_ALLOWED_AFTER_SOURCE_SYNC=true
+PHASE_20_ALLOWED=true
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+GOVERNANCE_INCIDENT_ISSUE=#80
+ISSUE_80_REQUIRED_BEFORE_PHASE20_IMPLEMENTATION=true
+```
+
+Phase 19 acceptanceは、unbounded agent count、永続的なAgent organization/hierarchy/registry、
+consensus-as-truth、unrestricted tool dispatch、この package自身によるEvidence sufficiency宣言、
+自動Difference/Issue closure、real OS-level thread/async並列実行、またはPhase 20実装を主張しない。
+
+merge時のGitHub Actionsはstep完了まで到達したがfailureであり(`runner_id`未割当のinfrastructure
+signatureが12回のRoundにわたり再現、独立local実行では同一diffが一貫してPASSした)、SHUKOUの別途の
+正式決定(PR #78コメント5653073894)により、Issue #77原契約どおりActions状態はPhase acceptance
+Authorityとして使用しない(CI waiverではなく、非blocking external observationとしての明示的な
+再確認である)。本節と対応する`03_CURRENT_DEVELOPMENT_STATE.md`および
+`04_REPOSITORY_ARCHITECTURE.md`の同期を、限定されたHuman-reviewed source-syncとして行う。
+Issue #77のcloseは、このsource-syncのmergeとresulting`main`の再観測後に行う。
+
+別件のIssue #80(`FD-0004`、acceptance policy lineageと未宣言gate拒否に関するgovernance/kernel
+Difference)は、本Phase 19 acceptance receiptを遡及無効化しない。Issue #80のkernel実装完了・受入
+は、Phase 20実装の前提条件として別途必要である。

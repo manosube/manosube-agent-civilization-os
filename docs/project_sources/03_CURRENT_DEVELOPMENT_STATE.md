@@ -3779,3 +3779,88 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_11_REVIEWED_HEAD`。
 §49以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
 優先される(last-wins)。
+
+# 51. Phase 19 post-merge acceptance observation and source-sync (Issue #77, PR #78)
+
+本節は、Structural Review Round 12(finding `P19-R12-F1`、`IMPLEMENTATION_CLASS=TEST_ONLY`)の
+delivery head `3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d`に対するreturn evidenceコメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5653458747`
+の後、SHUKOUがPR #78を手動mergeし、構造参謀がlive GitHubのPR状態・merge commit・`main`・
+両parentおよびmerged treeを再観測した現在地である(§50はRound 11の restatement であり、
+Round 11自身のreviewed head`6c4f69af886b57223d2b3af8dafa6383eb9fa592`を記録するのみで、
+Round 12のdelivery head/evidenceはこの§51で初めて記録する)。受入観測と本節が実装するbounded
+source-sync work unitの指示は、Issue #77コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-5653547984`
+へ固定し、本記録作成者自身がGitHub API経由でauthor login/id/association(`manosube`/OWNER)・
+本文・live PR/mainの不変を独立に検証済みである。
+
+```text
+OBSERVED_AT_UTC=2026-09-13T13:29:29Z
+MAIN_ACCEPTED_BASE_SHA=a73d6e804e8ae40491d3aeded989c997b68c93f0
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=POST_MERGE_ACCEPTED_AWAITING_SOURCE_SYNC_AND_ISSUE_CLOSE
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=NONE
+GOVERNING_ISSUE=#77
+MERGED_PR=#78
+ACCEPTED_PR_HEAD=3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d
+PHASE_19_MERGE_SHA=a73d6e804e8ae40491d3aeded989c997b68c93f0
+MERGE_PARENT_MAIN=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+MERGE_PARENT_DELIVERY=3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d
+REVIEWED_TREE_SHA=d1a31cf27fbcdf53e1bd302bd416ff741fa885a1
+MERGED_TREE_SHA=d1a31cf27fbcdf53e1bd302bd416ff741fa885a1
+
+PR_78_STATE=MERGED
+PR_78_MERGED_AT=2026-09-13T13:20:08Z
+MERGED_EXACT_REVIEWED_HEAD=true
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+REVIEWED_HEAD_IS_ANCESTOR_OF_MAIN=true
+STRUCTURAL_REVIEW_ROUND_12=PASS
+STRUCTURAL_FINDINGS_OPEN=0
+FINAL_ADVERSARIAL_CLOSURE_SWEEP=PASS
+ROUND_12_TEST_PROOF_CLOSED=true
+SCHEMA_VALIDATION=PASS_79_SCHEMAS
+POST_MERGE_TARGETED_MULTI_AGENT_UNIT_CONTRACT_SUITE=224_PASSED
+POST_MERGE_TARGETED_SUBSTITUTION_AND_CONTINUITY_FILE=19_PASSED
+POST_MERGE_TARGETED_MULTI_AGENT_MODEL_RUNTIME_INTEGRATION=128_PASSED
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=21496_PASSED_10_KNOWN_BASELINE_FAILED_11_SKIPPED
+GITHUB_ACTIONS_RESULT=FAILED_EXTERNAL_OBSERVATION
+GITHUB_ACTIONS_IS_PHASE_ACCEPTANCE_AUTHORITY=false
+
+PHASE_19_COMPLETE=true
+PHASE_19_CURRENT_ROUTE_BLOCKERS=0
+ISSUE_77_CLOSE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED_AFTER_SOURCE_SYNC_MERGE=true
+PHASE_20_ALLOWED=true
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+GOVERNANCE_INCIDENT_ISSUE=#80
+ISSUE_80_REQUIRED_BEFORE_PHASE20_IMPLEMENTATION=true
+SOURCE_SYNC_BRANCH=source/phase19-acceptance-sync
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+Phase 19は、Difference由来の1/2/N temporary-Agent選択、deterministic dynamic execution plan、
+既存Temporary Agent lifecycle(Phase 12)・Authority/Change継続性・Evidence aggregation input・
+release receiptを、既存canonical ownerを複製することなく接続した。12回のStructural Review
+(Round 1〜12)を経て、全finding closed・no open structural finding・
+`FINAL_ADVERSARIAL_CLOSURE_SWEEP=PASS`に到達した後、SHUKOUがPR #78を手動mergeした。
+
+merge後の`main` refはmerge SHAそのものであり、その第二parentはexact reviewed head
+(`3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d`)と一致した。reviewed headとmerge commitのtree SHAも
+同一で、両ref間のfile diffは0である。merge時のGitHub Actionsは非blocking external observationとして
+記録され(SHUKOUの別途の正式決定、PR #78コメント5653073894により、Issue #77原契約どおりActionsは
+Phase acceptance Authorityではないと再確認された)、そのfailureをPhase 19 Objectiveのfailureとして
+扱わない。
+
+ただし`main`上のcanonical mutable sources(本書および`04_REPOSITORY_ARCHITECTURE.md`・
+`05_PHASE_ACCEPTANCE_LEDGER.md`)は、この受入観測以前はPhase 18 acceptance時点のlast-winsで
+あった。本source-sync PR(`source/phase19-acceptance-sync`)が、既存Phase 18 source-sync PR #76の
+三owner限定precedentを再利用し、3つの正準source ownerを限定append-onlyで更新する。Issue #77の
+closeは、本source-sync PRの構造審査・SHUKOU手動merge・およびresulting `main`の再観測後にのみ
+行う。
+
+別件のIssue #80(`FD-0004`、acceptance policy lineageに関するgovernance/kernel Difference)は、
+このPhase 19 実装受入自体を遡及無効化しない(`ISSUE_80_REQUIRED_BEFORE_PHASE20_IMPLEMENTATION`は
+Phase 20実装の前提条件であり、本source-sync work unit自体はIssue #80の実装を一切含まない)。
+Phase 20実装には、Issue #80のkernel実装完了・受入と、専用Issue上のObjective / Boundary /
+AuthorityへのSHUKOUの明示採択が別途必要である。

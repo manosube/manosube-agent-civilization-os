@@ -836,3 +836,74 @@ intent、attempt、terminal receiptおよびkill-switch chainはChange Executor�
 
 Phase 19のdynamic multi-agent selection、Agent-specific provenance、conflict representation、Evidence
 aggregation inputおよびrelease receiptは、このaccepted architectureには未実装である。
+
+---
+
+# 23. Accepted architecture through Phase 19
+
+```text
+OBSERVED_AT_UTC=2026-09-13T13:29:29Z
+AS_BUILT_REF=a73d6e804e8ae40491d3aeded989c997b68c93f0
+AS_BUILT_TREE_ENTRY_COUNT=782
+AS_BUILT_BLOB_COUNT=638
+AS_BUILT_DIRECTORY_COUNT=144
+AS_BUILT_TREE_TRUNCATED=false
+
+ACCEPTED_PHASE_RANGE=0..19
+PHASE_19_MULTI_AGENT_DYNAMIC_EXECUTION_ACCEPTED=true
+PHASE_20_IMPLEMENTED=false
+```
+
+Phase 19で追加されたas-built surfaceは、`14_MULTI_AGENT/`(`MULTI_AGENT_CONTRACT.md`・
+`MULTI_AGENT_INDEX.md`)、`src/manosube_agent_civilization/multi_agent/`(`__init__.py`・
+`engine.py`・`errors.py`・`evidence_handoff.py`・`identity.py`・`route.py`・`selection.py`・
+`types.py`の8ファイル)、`01_SCHEMA/multi_agent/`の7 schema(schema count 72→79)、
+`tests/unit/multi_agent/`・`tests/contract/multi_agent/`・`tests/integration/multi_agent/`
+(固定fixture `tests/fixtures/multi_agent_world.py`を含む9テストファイル)、既存
+`src/manosube_agent_civilization/model_runtime/route.py`への12回のStructural Review
+(Round 1〜12)を通じた限定的な追加公開wrapper群(`resolve_and_verify_committed_work_unit`・
+`resolve_and_verify_committed_authority_decision`ほか)、および新設
+`src/manosube_agent_civilization/model_runtime/claim_identity.py`である。この最後のモジュールは
+単なるroute wrapperではなく、Structural Review Round 6(P19-R6-F2)がPhase 19の
+`multi_agent_slot_attempt_envelope_claim`記録種別のidentity・semantic fingerprint・schemaの
+唯一のownerとして`multi_agent`から`model_runtime`側へ再配置し、Round 7(P19-R7-F1)が同じ
+ownerに`multi_agent_dynamic_execution_plan`記録種別のidentity・semantic fingerprint・schemaも
+拡張した、Phase 19 plan/claim identity検証の単一責任owner(model_runtimeは`multi_agent`を
+importしないという既存境界を保ったまま、caller供給のclaim/plan本体をこのmoduleで独立に
+再計算・検証する)である。Multi-Agent orchestrationは独立Kernelではなく、Phase 12 Temporary
+Agent lifecycle・Difference/Authority/Change/Evidence/Reflowの既存canonical ownerを再利用する
+薄いorchestration layerである。
+
+```text
+MULTI_AGENT_ROLE=BOUNDED_DIFFERENCE_DRIVEN_TEMPORARY_AGENT_ORCHESTRATION_ADAPTER
+MULTI_AGENT_OWNER_COUNT=1
+MAX_AGENT_SLOTS=3
+AUTHORITY_MINTING_CALL_COUNT=0
+CHANGE_EXECUTOR_REACHABLE_CAPABILITY_COUNT=0
+CONFLICT_SILENT_COLLAPSE=false
+EVIDENCE_SUFFICIENCY_DECLARED_BY_THIS_PACKAGE=false
+DIFFERENCE_CLOSURE_DECLARED_BY_THIS_PACKAGE=false
+RELEASE_RECEIPT_REQUIRED_BEFORE_AGGREGATION=true
+NARROW_NATURAL_KEY_IDENTITY_FOR_FIVE_OF_SIX_RECORD_KINDS=true
+SECOND_STATE_OWNER=false
+SECOND_OBSERVATION_OWNER=false
+SECOND_EVIDENCE_OWNER=false
+SECOND_AUTHORITY_OWNER=false
+SECOND_REFLOW_OWNER=false
+SECOND_AGENT_LIFECYCLE_OWNER=false
+CANONICAL_STATE_OWNER_COUNT=1
+PARALLEL_CANONICAL_AUTHORITY=0
+```
+
+production route.pyは`start_temporary_agent`呼び出しを厳密に2箇所(いずれも`try/finally`で
+release)しか持たず、システム全体で唯一のcapability(`PROPOSE_EVIDENCE_CANDIDATE`、read-only)は
+`change_executor`に到達しない。Structural Review Round 1〜12は、canonical Work Unit/Authority
+Decision/Envelope lineageの推移的証明の隙間、attempt identity、Project Binding/Human Authority
+continuity、adapter/request identity continuityを段階的に閉じ、Round 12でReplay経路だけでなく
+実際の公開Evidence hand-off route(`route_orchestration_to_evidence`)自身がRound 11の偽造class
+双方を拒否することを直接証明した。この時点で構造上のfindingは0件である。
+
+Phase 20は、このaccepted architectureにはまだ実装されていない。Phase 20実装には、別件の
+governance/kernel Difference(Issue #80、`FD-0004`、acceptance policy lineageと未宣言gate拒否)の
+kernel実装完了・受入が前提条件として必要であり、加えて専用Issue上のObjective / Boundary /
+AuthorityへのSHUKOUの明示採択が別途必要である。
