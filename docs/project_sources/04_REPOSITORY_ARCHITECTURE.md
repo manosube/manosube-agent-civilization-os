@@ -859,12 +859,20 @@ Phase 19で追加されたas-built surfaceは、`14_MULTI_AGENT/`(`MULTI_AGENT_C
 `engine.py`・`errors.py`・`evidence_handoff.py`・`identity.py`・`route.py`・`selection.py`・
 `types.py`の8ファイル)、`01_SCHEMA/multi_agent/`の7 schema(schema count 72→79)、
 `tests/unit/multi_agent/`・`tests/contract/multi_agent/`・`tests/integration/multi_agent/`
-(固定fixture `tests/fixtures/multi_agent_world.py`を含む9テストファイル)、および既存
+(固定fixture `tests/fixtures/multi_agent_world.py`を含む9テストファイル)、既存
 `src/manosube_agent_civilization/model_runtime/route.py`への12回のStructural Review
 (Round 1〜12)を通じた限定的な追加公開wrapper群(`resolve_and_verify_committed_work_unit`・
-`resolve_and_verify_committed_authority_decision`ほか)である。Multi-Agent orchestrationは
-独立Kernelではなく、Phase 12 Temporary Agent lifecycle・Difference/Authority/Change/Evidence/
-Reflowの既存canonical ownerを再利用する薄いorchestration layerである。
+`resolve_and_verify_committed_authority_decision`ほか)、および新設
+`src/manosube_agent_civilization/model_runtime/claim_identity.py`である。この最後のモジュールは
+単なるroute wrapperではなく、Structural Review Round 6(P19-R6-F2)がPhase 19の
+`multi_agent_slot_attempt_envelope_claim`記録種別のidentity・semantic fingerprint・schemaの
+唯一のownerとして`multi_agent`から`model_runtime`側へ再配置し、Round 7(P19-R7-F1)が同じ
+ownerに`multi_agent_dynamic_execution_plan`記録種別のidentity・semantic fingerprint・schemaも
+拡張した、Phase 19 plan/claim identity検証の単一責任owner(model_runtimeは`multi_agent`を
+importしないという既存境界を保ったまま、caller供給のclaim/plan本体をこのmoduleで独立に
+再計算・検証する)である。Multi-Agent orchestrationは独立Kernelではなく、Phase 12 Temporary
+Agent lifecycle・Difference/Authority/Change/Evidence/Reflowの既存canonical ownerを再利用する
+薄いorchestration layerである。
 
 ```text
 MULTI_AGENT_ROLE=BOUNDED_DIFFERENCE_DRIVEN_TEMPORARY_AGENT_ORCHESTRATION_ADAPTER

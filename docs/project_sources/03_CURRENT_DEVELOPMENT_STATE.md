@@ -3782,11 +3782,14 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 
 # 51. Phase 19 post-merge acceptance observation and source-sync (Issue #77, PR #78)
 
-本節は、Structural Review Round 12(§50が記録した`3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d`、
-finding `P19-R12-F1`、`IMPLEMENTATION_CLASS=TEST_ONLY`)に対するreturn evidenceコメント
-(PR #78コメント5653458747)の後、SHUKOUがPR #78を手動mergeし、構造参謀がlive GitHubの
-PR状態・merge commit・`main`・両parentおよびmerged treeを再観測した現在地である。受入観測と
-本節が実装するbounded source-sync work unitの指示は、Issue #77コメント
+本節は、Structural Review Round 12(finding `P19-R12-F1`、`IMPLEMENTATION_CLASS=TEST_ONLY`)の
+delivery head `3dac23c5b8ea95abc0cc79be0e86aaaf30338e9d`に対するreturn evidenceコメント
+`https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5653458747`
+の後、SHUKOUがPR #78を手動mergeし、構造参謀がlive GitHubのPR状態・merge commit・`main`・
+両parentおよびmerged treeを再観測した現在地である(§50はRound 11の restatement であり、
+Round 11自身のreviewed head`6c4f69af886b57223d2b3af8dafa6383eb9fa592`を記録するのみで、
+Round 12のdelivery head/evidenceはこの§51で初めて記録する)。受入観測と本節が実装するbounded
+source-sync work unitの指示は、Issue #77コメント
 `https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-5653547984`
 へ固定し、本記録作成者自身がGitHub API経由でauthor login/id/association(`manosube`/OWNER)・
 本文・live PR/mainの不変を独立に検証済みである。
