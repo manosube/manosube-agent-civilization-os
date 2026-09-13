@@ -89,7 +89,10 @@ from manosube_agent_civilization.authority import (
     MODEL_EXECUTION_AUTHORIZED,
     evaluate_model_execution_authorization,
 )
-from manosube_agent_civilization.authority.identity import model_execution_decision_id
+from manosube_agent_civilization.authority.identity import (
+    model_execution_decision_id,
+    model_execution_decision_semantic_fingerprint,
+)
 from manosube_agent_civilization.difference.errors import DifferenceValidationError
 from manosube_agent_civilization.difference.identity import difference_id as compute_difference_id
 from manosube_agent_civilization.difference.validation import (
@@ -737,6 +740,58 @@ def _resolve_boundary(
     return boundary
 
 
+def _resolve_decision(
+    store: Any, project_id: str, authority_ref: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Resolve, schema-validate and identity/fingerprint-recompute the real Model Execution
+    Decision *authority_ref* names -- the static, time-invariant half of decision resolution,
+    shared by :func:`_resolve_authority_decision` (which additionally re-binds it to the live,
+    currently-fresh Human Authority before an adapter is ever reached) and
+    :func:`resolve_and_verify_committed_authority_decision` (Structural Review Round 11,
+    P19-R11-F1: a later, post-hoc terminal-graph check against this immutable committed record's
+    own declared fields, never against a re-observed live Boot that may have legitimately moved
+    on since this decision was made).
+    """
+
+    resolved = _resolve(store, project_id, DECISION_RECORD_KIND, authority_ref)
+    decision = require_valid_model_execution_decision(resolved)
+    _require_same_project(decision, project_id, DECISION_RECORD_KIND)
+    if model_execution_decision_id(decision) != decision.get("model_execution_decision_id"):
+        raise ModelRecordIntegrityError(
+            f"resolved model_execution_decision {authority_ref['id']!r} own recomputed identity "
+            "does not equal its own declared value -- refusing to trust it"
+        )
+    if model_execution_decision_semantic_fingerprint(decision) != decision.get(
+        "decision_semantic_fingerprint"
+    ):
+        raise ModelRecordIntegrityError(
+            f"resolved model_execution_decision {authority_ref['id']!r} own recomputed semantic "
+            "fingerprint does not equal its own declared value -- refusing to trust it"
+        )
+    return decision
+
+
+def resolve_and_verify_committed_authority_decision(
+    store: Any, project_id: str, authority_ref: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Resolve the real, committed ``model_execution_decision`` *authority_ref* names, with the
+    identical static canonical admission :func:`_resolve_decision` already applies internally:
+    schema-valid, same project, and its own identity and semantic fingerprint independently
+    recomputed from its own content, equal to its own declared values.
+
+    Structural Review Round 11, P19-R11-F1: exposed as a thin public wrapper so a caller outside
+    this module (``multi_agent``) can read this immutable committed record's own
+    ``selection_authority_ref`` -- the canonical, never-re-evaluated Human Authority lineage an
+    Envelope's own ``human_authority_ref`` must agree with -- without duplicating this module's
+    own decision identity/schema verification logic a second time, and without re-checking that
+    decision against whatever Human Authority happens to be live right now (this is a genesis-
+    once, immutable record; a legitimate later Authority rotation must never make an honest
+    historical Envelope look forged).
+    """
+
+    return _resolve_decision(store, project_id, authority_ref)
+
+
 def _resolve_authority_decision(
     store: Any,
     project_id: str,
@@ -761,14 +816,7 @@ def _resolve_authority_decision(
     can never be replayed as the authority for a different one.
     """
 
-    resolved = _resolve(store, project_id, DECISION_RECORD_KIND, authority_ref)
-    decision = require_valid_model_execution_decision(resolved)
-    _require_same_project(decision, project_id, DECISION_RECORD_KIND)
-    if model_execution_decision_id(decision) != decision.get("model_execution_decision_id"):
-        raise ModelRecordIntegrityError(
-            f"resolved model_execution_decision {authority_ref['id']!r} own recomputed identity "
-            "does not equal its own declared value -- refusing to trust it"
-        )
+    decision = _resolve_decision(store, project_id, authority_ref)
     if decision["decision"] != MODEL_EXECUTION_AUTHORIZED:
         raise ModelRuntimeRequirementError(
             f"resolved model_execution_decision {authority_ref['id']!r} does not authorize model "

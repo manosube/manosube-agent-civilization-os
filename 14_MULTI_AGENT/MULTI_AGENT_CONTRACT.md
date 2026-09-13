@@ -1283,3 +1283,61 @@ proof continue to pass unmodified.
 `GENUINE_REPLAY_ZERO_DUPLICATE_ADAPTER_CALLS=true`, `GENUINE_EVIDENCE_HANDOFF=unchanged`. No
 second Authority evaluator, execution route, Store owner, Model Runtime owner, or Multi-Agent
 owner is introduced by either finding.
+
+## 20. Structural Review Round 11 corrections (P19-R11-F1..F2)
+
+Adopted as `ADOPT_P19_R11_AUTHORITY_AND_ADAPTER_IDENTITY_CONTINUITY` against reviewed head/
+authorized target `6c4f69af886b57223d2b3af8dafa6383eb9fa592` (PR #78). Round 11's own final
+closure sweep found the last two of the Envelope's own duplicated fields Round 10 still left
+unchecked against their own canonical owner.
+
+- **P19-R11-F1 (an Envelope's own `project_binding_ref`/`human_authority_ref` are now checked
+  directly against their own canonical owners, never left implicit).** `project_binding_ref` is
+  compared directly against the canonical Work Unit's own (a field the Work Unit already
+  carries). `human_authority_ref` cannot be checked the same way -- neither the Work Unit nor
+  the Plan records it, since the genuine route always sets it from whichever Human Authority is
+  live at *execution* time, never at genesis -- so it is instead checked against the one
+  immutable canonical fact that already existed the moment this Work Unit's Authority was
+  granted: the committed Model Execution Decision's own `selection_authority_ref`, resolved
+  through Model Runtime's new public `resolve_and_verify_committed_authority_decision` (§17 of
+  `MODEL_RUNTIME_CONTRACT.md`) -- a thin wrapper reusing Model Runtime's own existing decision
+  schema/identity/fingerprint verification, never a duplicated formula in this package, and
+  never a re-evaluation of whatever Human Authority happens to be live *now* (a legitimate later
+  rotation must never make an honest historical Envelope look forged).
+- **P19-R11-F2 (an Envelope's own `adapter_identity`/`model_execution_request_identity` are now
+  checked directly against the Plan's own admitted lineage).** `adapter_identity` is compared
+  directly against the Plan's own admitted `adapter_identity` (the identical value
+  `_execute_one_slot` already requires a constructed adapter to declare -- this closes the same
+  gap for a claim/slot output resolved on replay, where no adapter is ever constructed to check
+  against). `model_execution_request_identity` is independently recomputed via the existing
+  `model_execution_request_identity` function from the canonical Work Unit's own
+  `model_work_unit_id`, the Plan's own admitted `boot_state_revision`/`boot_semantic_fingerprint`,
+  and the Plan's own admitted `adapter_identity` -- never a second, competing formula -- and
+  required to equal the Envelope's own declared value.
+
+Both checks live in the same shared `_require_envelope_matches_plan_lineage`, so every one of
+that function's existing callers (the replay fast path, the acknowledgement-loss recovery
+branch, and the terminal-graph slot-output lineage check) is covered automatically, with no new
+call site.
+
+Two required decisive proofs, added to
+`tests/integration/multi_agent/test_multi_agent_substitution_and_continuity.py`:
+`test_p19_r11_f1_an_envelope_with_a_different_project_binding_and_human_authority_is_refused` (a
+genuine claim/Envelope pair reached via the Round 1/3/9/10 crash-before-terminal-commit
+technique; a new, genuinely committed forged Envelope -- copied from the genuine one with both
+`project_binding_ref` and `human_authority_ref` swapped for different, equally well-formed
+references, its own id/fingerprint honestly recomputed -- named by the redirected claim; replay
+refuses with zero new adapter calls, zero terminal writes, zero State advance) and
+`test_p19_r11_f2_an_envelope_with_a_different_adapter_identity_and_matching_request_identity_is_
+refused` (the identical technique, with `adapter_identity` swapped for a different, equally
+well-formed closed shape and `model_execution_request_identity` honestly recomputed to match
+*that* declared `adapter_identity` -- so the Envelope is internally self-consistent about which
+adapter produced it, and only the cross-check against the Plan's own admitted `adapter_identity`
+catches the substitution; replay refuses identically). The shared canonical terminal-graph
+verifier and every Round 1-10 proof continue to pass unmodified.
+
+`P19_R11_F1_PROJECT_BINDING_AND_HUMAN_AUTHORITY_SUBSTITUTION=refused`,
+`P19_R11_F2_ADAPTER_AND_REQUEST_IDENTITY_SUBSTITUTION=refused`,
+`GENUINE_REPLAY_ZERO_DUPLICATE_ADAPTER_CALLS=true`, `GENUINE_EVIDENCE_HANDOFF=unchanged`. No
+second Authority evaluator, execution route, Store owner, Model Runtime owner, or Multi-Agent
+owner is introduced by either finding.

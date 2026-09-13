@@ -3722,3 +3722,60 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_10_REVIEWED_HEAD`。
 §48以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
 優先される(last-wins)。
+
+# 50. Phase 19 Structural Review Round 11 bounded current-state restatement (Issue #77, PR #78)
+
+本節は、Structural Advisor Structural Review Round 11(reviewed head/AUTHORIZED_TARGET_SHA
+`6c4f69af886b57223d2b3af8dafa6383eb9fa592`、findings `P19-R11-F1`・`P19-R11-F2`)をSHUKOUが
+`ADOPT_P19_R11_AUTHORITY_AND_ADAPTER_IDENTITY_CONTINUITY`として正式採択した後、Claude Codeが
+既存branch`agent/issue-77-phase19-multi-agent-dynamic-execution`・既存PR #78上で両findingの
+是正を実装した時点の、bounded・append-only current-state restatementである(SHUKOU正式採択
+コメント・Claude Code実装ハンドオフコメントの双方を、本記録作成者自身がGitHub API経由で
+author login/id/association・live head/base不変の双方を独立に検証済み)。§0冒頭のheader
+blockおよびセクション1〜49の本文は、書き換えない -- 本節が最後に追記される、bounded・
+last-wins restatementである。
+
+是正した finding の要旨: Round 10のcanonical Work Unit cross-checkが未だ閉じ残していた、
+Envelope自身の複製lineage fieldのうち最後の二個を是正した。P19-R11-F1(Envelope自身の
+`project_binding_ref`・`human_authority_ref`は、Round 10のcanonical Work Unit照合の後も未検証
+のままであった -- `project_binding_ref`はWork Unit自身も保持するfieldであり直接照合できるが、
+`human_authority_ref`はWork Unit・Planいずれにも記録されない、実行時ごとにfresh Bootから設定
+される値であるため、同じ手法では照合できない)は、`project_binding_ref`をcanonical Work
+Unit自身のものへ直接照合し、`human_authority_ref`を、このWork UnitのAuthorityが認可された
+瞬間に既に存在していた不変のcanonical fact -- committed Model Execution Decision自身の
+`selection_authority_ref` -- へ照合することで解決した。`model_runtime`側に新設した薄い公開
+wrapper `resolve_and_verify_committed_authority_decision`(既存private decision解決ロジックの
+静的部分のみを公開する)を通じて解決し、現在liveなHuman Authorityへの再評価は一切行わない
+-- 正当な後のAuthority rotationが、過去の正直なEnvelopeを偽造と誤判定することは決してない。
+P19-R11-F2(Envelope自身の`adapter_identity`・`model_execution_request_identity`は、Plan自身の
+admitted adapter_identityと照合されていなかった)は、`adapter_identity`をPlan自身の
+admitted値へ直接照合し、`model_execution_request_identity`を既存`model_execution_request_
+identity`関数から、canonical Work Unit id・Plan自身のboot_state_revision/boot_semantic_
+fingerprint・Plan自身のadapter_identityを用いて独立に再計算し、Envelope自身の宣言値と一致する
+ことを要求することで解決した -- 第二の競合するidentity formulaを一切導入しない。
+
+```text
+OBSERVED_AT_UTC=2026-09-13T10:50:34Z
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_11_CORRECTIONS_DELIVERED_PR_OPEN
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=78
+GOVERNING_ISSUE=#77
+STRUCTURAL_REVIEW_ROUND_11_REVIEWED_HEAD=6c4f69af886b57223d2b3af8dafa6383eb9fa592
+AUTHORIZED_TARGET_SHA=6c4f69af886b57223d2b3af8dafa6383eb9fa592
+ADOPTION_ID=ADOPT_P19_R11_AUTHORITY_AND_ADAPTER_IDENTITY_CONTINUITY
+ADOPTED_FINDINGS=P19-R11-F1,P19-R11-F2
+
+MERGE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+このrestatementは、この一回の追記時点で真であった七個のfieldの事実記録に限られる:
+`CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
+`MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_11_REVIEWED_HEAD`。
+§49以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
+優先される(last-wins)。

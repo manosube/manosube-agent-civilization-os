@@ -80,9 +80,11 @@ from manosube_agent_civilization.model_runtime.claim_identity import (
     multi_agent_slot_attempt_envelope_claim_id,
     multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
 )
+from manosube_agent_civilization.model_runtime.identity import model_execution_request_identity
 from manosube_agent_civilization.model_runtime.route import (
     execute_model_work_unit,
     open_model_work_unit,
+    resolve_and_verify_committed_authority_decision,
     resolve_and_verify_committed_envelope,
     resolve_and_verify_committed_work_unit,
 )
@@ -610,16 +612,17 @@ def _require_envelope_matches_plan_lineage(
     slot: Mapping[str, Any],
     envelope: Mapping[str, Any],
 ) -> None:
-    """Structural Review Round 9, P19-R9-F1, corrected by Round 10, P19-R10-F1: a resolved,
-    individually self-consistent Model Execution Envelope a claim or slot output names is not
-    this slot's own genuine terminal fact merely because the claim/slot output and the Envelope
-    are each independently schema/id/fingerprint-valid -- a self-consistent claim naming a
-    *different*, wholly unrelated, but equally genuine and equally self-consistent Envelope (from
-    another Work Unit, another Plan, another lineage entirely, in the same project) would pass
-    every check Round 4-9 already established. This function is the genuine third-party check: it
-    compares the Envelope's own already-independently-verified fields (never re-derived, never
-    trusted from the claim/slot output that named it) directly against this plan's own
-    already-resolved, already-verified fields.
+    """Structural Review Round 9, P19-R9-F1, corrected by Round 10, P19-R10-F1, extended by
+    Round 11, P19-R11-F1/F2: a resolved, individually self-consistent Model Execution Envelope a
+    claim or slot output names is not this slot's own genuine terminal fact merely because the
+    claim/slot output and the Envelope are each independently schema/id/fingerprint-valid -- a
+    self-consistent claim naming a *different*, wholly unrelated, but equally genuine and equally
+    self-consistent Envelope (from another Work Unit, another Plan, another lineage entirely, in
+    the same project) would pass every check Round 4-10 already established. This function is the
+    genuine third-party check: it compares the Envelope's own already-independently-verified
+    fields (never re-derived, never trusted from the claim/slot output that named it) directly
+    against this plan's own already-resolved, already-verified fields, and against the canonical,
+    Store-resolved Work Unit and Authority Decision those fields are themselves rooted in.
 
     Round 9 treated ``model_work_unit_ref`` equality alone as sufficient transitive proof of
     Boundary lineage, on the theory that ``execute_model_work_unit``'s own commit-time invariant
@@ -634,6 +637,38 @@ def _require_envelope_matches_plan_lineage(
     resolve_and_verify_committed_work_unit`, never a duplicated identity/schema formula in this
     package), and compares the Envelope's own duplicated Work-Unit-owned lineage fields --
     ``boundary_ref`` and ``evidence_requirements`` -- directly against that canonical record.
+
+    Round 11's own adversarial closure sweep found two more of the Envelope's own duplicated
+    fields that Round 10 still left unchecked against their own canonical owner:
+
+    - **P19-R11-F1 (Project Binding / Human Authority continuity).** The Envelope's own
+      ``project_binding_ref`` is now compared directly against the canonical Work Unit's own
+      ``project_binding_ref`` (a field the Work Unit already carries -- see
+      ``WORK_UNIT_SEMANTIC_FIELDS``). The Envelope's own ``human_authority_ref`` cannot be
+      checked against the Work Unit or the Plan the same way -- neither carries that field, since
+      the genuine route sets it from whichever Human Authority is live at each *execution*, not
+      at Work Unit or Plan genesis (``model_runtime.route._canonical_request``) -- so it is
+      instead checked against the one immutable, canonical, never-re-evaluated fact that *did*
+      exist the moment this Work Unit's Authority was granted: the committed Model Execution
+      Decision's own ``selection_authority_ref``, resolved through Model Runtime's own new public
+      :func:`~manosube_agent_civilization.model_runtime.route.
+      resolve_and_verify_committed_authority_decision` (itself a thin wrapper reusing this
+      package's existing decision schema/identity/fingerprint verification -- never a duplicated
+      formula, and never a re-evaluation of whatever Human Authority happens to be live *now*,
+      which a legitimate later rotation must never make an honest historical Envelope look
+      forged under).
+    - **P19-R11-F2 (Adapter / request identity continuity).** The Envelope's own
+      ``adapter_identity`` is now compared directly against the Plan's own admitted
+      ``adapter_identity`` (already the exact value ``_execute_one_slot`` itself requires the
+      constructed adapter to declare -- see the ``declared_identity`` check below -- so this
+      closes the identical gap for a claim/slot output resolved on replay, where no adapter is
+      ever constructed to check against). The Envelope's own
+      ``model_execution_request_identity`` is independently recomputed via the existing
+      :func:`~manosube_agent_civilization.model_runtime.identity.model_execution_request_identity`
+      -- never a second, competing formula -- from the canonical Work Unit's own
+      ``model_work_unit_id``, the Plan's own admitted ``boot_state_revision``/
+      ``boot_semantic_fingerprint``, and the Plan's own admitted ``adapter_identity``, and
+      required to equal the Envelope's own declared value.
     """
 
     work_unit = resolve_and_verify_committed_work_unit(
@@ -682,6 +717,55 @@ def _require_envelope_matches_plan_lineage(
             "the Envelope this slot's own committed claim or slot output names declares "
             "evidence_requirements that do not equal its own canonical Work Unit's -- refusing "
             "to adopt it as this attempt's own terminal outcome"
+        )
+    # Structural Review Round 11, P19-R11-F1: the Envelope's own duplicated Project Binding
+    # lineage is checked directly against the canonical Work Unit's own; its Human Authority
+    # lineage is checked against the one immutable canonical fact that already existed the
+    # moment this Work Unit's Authority was granted -- the committed Authority Decision's own
+    # ``selection_authority_ref`` -- never against whatever Human Authority happens to be live
+    # right now.
+    if dict(envelope["project_binding_ref"]) != dict(work_unit["project_binding_ref"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names is bound to a "
+            f"different Project Binding than its own canonical Work Unit's: "
+            f"{envelope['project_binding_ref']!r} != {work_unit['project_binding_ref']!r} -- "
+            "refusing to adopt it as this attempt's own terminal outcome"
+        )
+    decision = resolve_and_verify_committed_authority_decision(
+        store, project_id, work_unit["authority_ref"]
+    )
+    if dict(envelope["human_authority_ref"]) != dict(decision["selection_authority_ref"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names declares a "
+            "human_authority_ref that does not equal its own canonical Authority Decision's own "
+            f"selection_authority_ref: {envelope['human_authority_ref']!r} != "
+            f"{decision['selection_authority_ref']!r} -- refusing to adopt it as this attempt's "
+            "own terminal outcome"
+        )
+    # Structural Review Round 11, P19-R11-F2: the Envelope's own duplicated adapter/request
+    # identity is checked directly against this plan's own admitted adapter_identity, and its
+    # model_execution_request_identity is independently recomputed from the canonical Work
+    # Unit/Plan lineage those two fields are themselves a pure function of.
+    if dict(envelope["adapter_identity"]) != dict(plan["adapter_identity"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names declares an "
+            f"adapter_identity that does not equal this plan's own admitted one: "
+            f"{envelope['adapter_identity']!r} != {plan['adapter_identity']!r} -- refusing to "
+            "adopt it as this attempt's own terminal outcome"
+        )
+    expected_request_identity = model_execution_request_identity(
+        model_work_unit_id_value=str(work_unit["model_work_unit_id"]),
+        state_revision=int(plan["boot_state_revision"]),
+        semantic_fingerprint=dict(plan["boot_semantic_fingerprint"]),
+        adapter_identity=dict(plan["adapter_identity"]),
+    )
+    if envelope["model_execution_request_identity"] != expected_request_identity:
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names declares a "
+            "model_execution_request_identity that does not equal the deterministic identity "
+            "this exact Work Unit/Plan lineage independently recomputes to: "
+            f"{envelope['model_execution_request_identity']!r} != {expected_request_identity!r} "
+            "-- refusing to adopt it as this attempt's own terminal outcome"
         )
     expected_snapshot = {
         "state_revision": int(plan["boot_state_revision"]),

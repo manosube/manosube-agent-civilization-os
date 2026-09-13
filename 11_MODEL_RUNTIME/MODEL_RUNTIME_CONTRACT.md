@@ -848,6 +848,53 @@ name it. `FORGED_ENVELOPE_SELF_CONSISTENT=true`, `FORGED_ENVELOPE_DIFFERENT_ID_F
 the lineage check, before any new adapter execution), `SLOT_OUTPUT_WRITE_COUNT=0`,
 `STATE_REVISION_ADVANCE=0`. Every Round 1-9 proof in this module continues to pass unmodified.
 
+## 17. Structural Review Round 11 correction (Phase 19, Issue #77, P19-R11-F1)
+
+Adopted as `ADOPT_P19_R11_AUTHORITY_AND_ADAPTER_IDENTITY_CONTINUITY` against reviewed head/
+authorized target `6c4f69af886b57223d2b3af8dafa6383eb9fa592` (PR #78). Only `P19-R11-F1` touches
+this module; `P19-R11-F2` is addressed entirely inside `multi_agent/route.py` and requires no
+change here, since it reuses this module's own existing `model_execution_request_identity`
+unchanged.
+
+**P19-R11-F1 -- a caller outside this module can now resolve and verify a committed Model
+Execution Decision's own canonical, Store-recomputed lineage directly, without re-evaluating
+whatever Human Authority happens to be live right now.** `multi_agent`'s own Round 10 fix
+resolved the canonical Work Unit and compared an Envelope's `boundary_ref`/
+`evidence_requirements` against it, but left the Envelope's own `project_binding_ref` and
+`human_authority_ref` unchecked against any canonical owner. `project_binding_ref` is
+straightforward -- the Work Unit already carries the identical field -- but `human_authority_ref`
+is not: neither the Work Unit nor the Plan records it, since the genuine route
+(`_canonical_request`) always sets it from whichever Human Authority is live at *execution* time,
+never at Work Unit or Plan genesis. The one immutable, canonical fact that already existed the
+moment this Work Unit's Authority was granted, and that every genuine Envelope produced under it
+is unconditionally required to agree with (`_resolve_authority_decision`'s own
+`selection_authority_ref` == fresh Human Authority check, run on **every** execution against this
+Work Unit, not merely at genesis), is the committed Model Execution Decision's own
+`selection_authority_ref`.
+
+The existing `_resolve_authority_decision` bundled two concerns that this correction now
+separates: (1) the static, time-invariant admission of the decision record itself --
+schema-valid, same project, its own identity and semantic fingerprint independently recomputed
+and equal to its own declared values -- and (2) the live-freshness re-binding against whatever
+Human Authority a fresh Boot reports *right now*. Only (1) is safe to reuse for a later, post-hoc
+terminal-graph check that may run long after the original execution: re-running (2) against a
+current live Boot would be wrong for exactly the reason (1) is right -- a legitimate Human
+Authority rotation after this Work Unit's own lifetime must never make an honest historical
+Envelope look forged. New private `_resolve_decision` extracts exactly (1), and both
+`_resolve_authority_decision` (unchanged behavior, still applying (2) on top) and new public
+`resolve_and_verify_committed_authority_decision(store, project_id, authority_ref)` (a thin
+wrapper exposing only (1)) now call it -- no duplicated identity/schema/fingerprint logic exists
+in two places.
+
+Proved in `test_multi_agent_substitution_and_continuity.py`
+(`test_p19_r11_f1_an_envelope_with_a_different_project_binding_and_human_authority_is_refused`):
+a genuine claim/Envelope pair is reached via the Round 1/3/9/10 crash-before-terminal-commit
+technique; a new, genuinely committed forged Envelope -- copied from the genuine one with both
+`project_binding_ref` and `human_authority_ref` swapped for different, equally well-formed
+references, and its own id/fingerprint honestly recomputed -- is named by the redirected claim;
+replay refuses with zero new adapter calls, zero terminal writes, zero State advance. Every
+Round 1-10 proof in this module continues to pass unmodified.
+
 `BINDING_NORMALIZED_ONCE_BEFORE_ADAPTER=true`, `NORMALIZED_BINDING_DETACHED_FROM_ALL_CALLER_
 ALIASES=true`, `CANONICAL_PLAN_VERIFIED_AGAINST_RETAINED_BINDING=true`, `POST_ADAPTER_CLAIM_
 COMPARED_TO_SAME_RETAINED_BINDING=true`, `CALLER_BINDING_RE_READ_AFTER_ADAPTER=false`, `VERIFIED_
