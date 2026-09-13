@@ -801,6 +801,53 @@ transaction, the identical Round 4-7 invariant, preserved. The Round 6 acknowled
 recovery test, every Round 7 control, and the Round 5/6 claim-factory suite all continue to pass
 unmodified.
 
+## 16. Structural Review Round 10 correction (Phase 19, Issue #77, P19-R10-F1)
+
+Adopted as `ADOPT_P19_R10_CANONICAL_WORK_UNIT_AND_ATTEMPT_IDENTITY` against reviewed head/
+authorized target `cd6ea7e7a07092ad8fe30d18b28c26ac1881e5a7` (PR #78). Only `P19-R10-F1` touches
+this module; `P19-R10-F2` is addressed entirely inside `multi_agent/route.py` and requires no
+change here.
+
+**P19-R10-F1 -- a caller outside this module can now resolve and verify a committed Model Work
+Unit's own canonical, Store-recomputed lineage directly, rather than either trust an in-memory
+copy of it or duplicate this module's own identity/schema verification a second time.** Round 9's
+`multi_agent/route.py` treated `model_work_unit_ref` equality alone as sufficient transitive proof
+that an Envelope genuinely binds to the plan's own Model Work Unit's `boundary_ref` and
+`evidence_requirements` -- reasoning that a Work Unit is one immutable, content-addressed record
+whose consistency with any Envelope committed against it is already enforced by
+`execute_model_work_unit`'s own commit-time check. That reasoning holds only for an Envelope
+genuinely produced through the real `execute_model_work_unit` route; it does not hold for a
+schema/id/fingerprint-valid Envelope that some other, non-canonical path constructed and committed
+directly, naming the same `model_work_unit_ref` while declaring a different, equally genuine
+Boundary the Work Unit never actually authorized. Closing that gap requires resolving the
+canonical Work Unit itself, not merely trusting the equality of a reference to it.
+
+New public `resolve_and_verify_committed_work_unit(store, project_id, model_work_unit_id_value)`
+is a thin wrapper around the existing private `_resolve_work_unit`, which already performs this
+module's own full three-way canonical admission for a Work Unit: schema-valid, same-project, and
+its own identity and semantic fingerprint independently recomputed from its own content, equal to
+its own declared values and to the Store lookup key itself. No Work Unit identity or schema logic
+is duplicated in `multi_agent`; the caller receives the identical canonical record this module's
+own execution route itself would resolve. Deliberately not added to `__all__`, matching the
+existing convention that `resolve_and_verify_committed_envelope` is public but excluded from
+`__all__` -- direct imports continue to work regardless of `__all__` membership. This is a
+genesis-once, immutable record; resolving it here never re-derives or re-evaluates Authority, and
+never introduces a second Work Unit owner.
+
+Proved in `test_multi_agent_substitution_and_continuity.py`
+(`test_p19_r10_f1_an_envelope_with_the_plans_own_work_unit_but_a_different_genuine_boundary_is_
+refused`): a second, genuinely committed Boundary is opened alongside the plan's own; a genuine
+claim/Envelope pair is reached via the Round 1/3 crash-before-terminal-commit technique; a new,
+genuinely committed forged Envelope is built by copying the genuine one with `boundary_ref`
+swapped and its own `model_execution_envelope_id`/semantic fingerprint honestly recomputed from
+that changed content (this module's own `ENVELOPE_SEMANTIC_FIELDS` include `boundary_ref`, so an
+in-place, same-key tamper is impossible here -- a genuinely new record, committed through a real
+Store transaction, is the only way to construct this control); the existing claim is redirected to
+name it. `FORGED_ENVELOPE_SELF_CONSISTENT=true`, `FORGED_ENVELOPE_DIFFERENT_ID_FROM_GENUINE=true`,
+`WORK_UNIT_BOUNDARY_CROSS_CHECK=refused`, `ADAPTER_CALL_COUNT=0` (redirection is caught purely by
+the lineage check, before any new adapter execution), `SLOT_OUTPUT_WRITE_COUNT=0`,
+`STATE_REVISION_ADVANCE=0`. Every Round 1-9 proof in this module continues to pass unmodified.
+
 `BINDING_NORMALIZED_ONCE_BEFORE_ADAPTER=true`, `NORMALIZED_BINDING_DETACHED_FROM_ALL_CALLER_
 ALIASES=true`, `CANONICAL_PLAN_VERIFIED_AGAINST_RETAINED_BINDING=true`, `POST_ADAPTER_CLAIM_
 COMPARED_TO_SAME_RETAINED_BINDING=true`, `CALLER_BINDING_RE_READ_AFTER_ADAPTER=false`, `VERIFIED_

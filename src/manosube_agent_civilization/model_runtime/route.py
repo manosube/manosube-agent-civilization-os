@@ -819,6 +819,28 @@ def _resolve_work_unit(
     return work_unit
 
 
+def resolve_and_verify_committed_work_unit(
+    store: Any, project_id: str, model_work_unit_id_value: str
+) -> dict[str, Any]:
+    """Resolve the real, committed ``model_work_unit`` named by *model_work_unit_id_value* under
+    *project_id*, with the identical canonical admission :func:`_resolve_work_unit` already
+    applies internally: schema-valid, same project, and its own identity and semantic
+    fingerprint, independently recomputed from its own content, equal to its own declared values
+    and to the Store lookup key itself.
+
+    Structural Review Round 10, P19-R10-F1: exposed as a thin public wrapper so a caller outside
+    this module (``multi_agent``) can verify a Work Unit's own canonical, Store-resolved lineage
+    -- e.g. its ``boundary_ref``/``evidence_requirements`` -- rather than either trust an
+    in-memory copy or duplicate this module's own identity/schema verification logic a second
+    time. This is a genesis-once, immutable record; resolving it here never re-derives or
+    re-evaluates Authority.
+    """
+
+    return _resolve_work_unit(
+        store, project_id, {"kind": WORK_UNIT_RECORD_KIND, "id": model_work_unit_id_value}
+    )
+
+
 def _resume_from_store(
     store: Any,
     *,

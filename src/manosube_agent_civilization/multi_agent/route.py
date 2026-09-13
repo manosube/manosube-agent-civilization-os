@@ -84,6 +84,7 @@ from manosube_agent_civilization.model_runtime.route import (
     execute_model_work_unit,
     open_model_work_unit,
     resolve_and_verify_committed_envelope,
+    resolve_and_verify_committed_work_unit,
 )
 from manosube_agent_civilization.model_runtime.types import ModelAdapter
 from manosube_agent_civilization.observation.boundary import instant
@@ -603,27 +604,41 @@ def resolve_and_verify_committed_aggregation_input(
 
 
 def _require_envelope_matches_plan_lineage(
-    plan: Mapping[str, Any], slot: Mapping[str, Any], envelope: Mapping[str, Any]
+    store: Any,
+    project_id: str,
+    plan: Mapping[str, Any],
+    slot: Mapping[str, Any],
+    envelope: Mapping[str, Any],
 ) -> None:
-    """Structural Review Round 9, P19-R9-F1: a resolved, individually self-consistent Model
-    Execution Envelope a claim or slot output names is not this slot's own genuine terminal fact
-    merely because the claim/slot output and the Envelope are each independently schema/id/
-    fingerprint-valid -- a self-consistent claim naming a *different*, wholly unrelated, but
-    equally genuine and equally self-consistent Envelope (from another Work Unit, another Plan,
-    another lineage entirely, in the same project) would pass every check Round 4-8 already
-    established. This function is the genuine third-party check: it compares the Envelope's own
-    already-independently-verified fields (never re-derived, never trusted from the claim/slot
-    output that named it) directly against this plan's own already-resolved, already-verified
-    fields.
+    """Structural Review Round 9, P19-R9-F1, corrected by Round 10, P19-R10-F1: a resolved,
+    individually self-consistent Model Execution Envelope a claim or slot output names is not
+    this slot's own genuine terminal fact merely because the claim/slot output and the Envelope
+    are each independently schema/id/fingerprint-valid -- a self-consistent claim naming a
+    *different*, wholly unrelated, but equally genuine and equally self-consistent Envelope (from
+    another Work Unit, another Plan, another lineage entirely, in the same project) would pass
+    every check Round 4-9 already established. This function is the genuine third-party check: it
+    compares the Envelope's own already-independently-verified fields (never re-derived, never
+    trusted from the claim/slot output that named it) directly against this plan's own
+    already-resolved, already-verified fields.
 
-    ``model_work_unit_ref`` equality alone already proves Boundary lineage too, since the Work
-    Unit it names is one single immutable, content-addressed record whose own ``boundary_ref`` is
-    fixed at genesis and whose consistency with an Envelope committed against it is already an
-    existing Model Runtime invariant (enforced by ``execute_model_work_unit`` itself, at commit
-    time) -- reusing that existing owner's own guarantee rather than duplicating it with a second,
-    redundant Boundary resolve this plan does not itself even carry a reference to.
+    Round 9 treated ``model_work_unit_ref`` equality alone as sufficient transitive proof of
+    Boundary lineage, on the theory that ``execute_model_work_unit``'s own commit-time invariant
+    already binds every genuinely-produced Envelope to its Work Unit's real ``boundary_ref``.
+    Round 10's own adversarial threat model disallows that assumption: a schema/id/fingerprint-
+    valid Envelope can be *constructed* (never genuinely produced through that route) under the
+    same ``model_work_unit_ref`` while declaring a different, equally genuine Boundary, and the
+    Envelope resolver alone cannot detect this since it verifies only that record's own shape/
+    identity/fingerprint, never its relationship to the Work Unit it claims to belong to. This
+    function now resolves the canonical Work Unit itself, through Model Runtime's own singular
+    owner (:func:`~manosube_agent_civilization.model_runtime.route.
+    resolve_and_verify_committed_work_unit`, never a duplicated identity/schema formula in this
+    package), and compares the Envelope's own duplicated Work-Unit-owned lineage fields --
+    ``boundary_ref`` and ``evidence_requirements`` -- directly against that canonical record.
     """
 
+    work_unit = resolve_and_verify_committed_work_unit(
+        store, project_id, str(plan["model_work_unit_ref"]["id"])
+    )
     if dict(envelope["model_work_unit_ref"]) != dict(plan["model_work_unit_ref"]):
         raise MultiAgentRecordIntegrityError(
             "the Envelope this slot's own committed claim or slot output names belongs to a "
@@ -652,6 +667,22 @@ def _require_envelope_matches_plan_lineage(
             f"{envelope['required_capability']!r} != {slot['capability']!r} -- refusing to adopt "
             "it as this attempt's own terminal outcome"
         )
+    # Structural Review Round 10, P19-R10-F1: ``model_work_unit_ref`` equality is no longer
+    # trusted as transitive proof of the Envelope's own duplicated Work-Unit-owned lineage --
+    # cross-check the Envelope directly against the canonical, Store-resolved Work Unit itself.
+    if dict(envelope["boundary_ref"]) != dict(work_unit["boundary_ref"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names is bound to a "
+            f"different Model Execution Boundary than its own canonical Work Unit's: "
+            f"{envelope['boundary_ref']!r} != {work_unit['boundary_ref']!r} -- refusing to adopt "
+            "it as this attempt's own terminal outcome"
+        )
+    if dict(envelope["evidence_requirements"]) != dict(work_unit["evidence_requirements"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names declares "
+            "evidence_requirements that do not equal its own canonical Work Unit's -- refusing "
+            "to adopt it as this attempt's own terminal outcome"
+        )
     expected_snapshot = {
         "state_revision": int(plan["boot_state_revision"]),
         "semantic_fingerprint": dict(plan["boot_semantic_fingerprint"]),
@@ -675,21 +706,49 @@ def _require_slot_output_matches_plan_lineage(
     slot: Mapping[str, Any],
     slot_output: Mapping[str, Any],
 ) -> None:
-    """Structural Review Round 9, P19-R9-F2: a resolved, individually self-consistent
-    ``multi_agent_slot_output`` is not proof it genuinely belongs to *this* plan's *this* slot --
-    its own narrow Store key (``compute_slot_output_id``) covers only ``plan_ref``/``slot_index``/
-    ``attempt_ordinal``, deliberately excluding ``capability``, ``execution_snapshot`` and its own
-    Envelope relationship (see :mod:`~manosube_agent_civilization.multi_agent.identity`'s own
-    module docstring on why this kind's own id is a narrow natural key, not a full-content hash);
-    a schema-valid, self-consistently-fingerprinted slot output planted directly at that exact
-    key but declaring a *different* capability, execution snapshot, or Envelope than this exact
-    plan's own slot would pass every existing check unnoticed. This closes that gap."""
+    """Structural Review Round 9, P19-R9-F2, corrected by Round 10, P19-R10-F2: a resolved,
+    individually self-consistent ``multi_agent_slot_output`` is not proof it genuinely belongs to
+    *this* plan's *this* slot -- its own narrow Store key (``compute_slot_output_id``) covers only
+    ``plan_ref``/``slot_index``/``attempt_ordinal``, deliberately excluding ``capability``,
+    ``attempt_id``, ``execution_snapshot`` and its own Envelope relationship (see
+    :mod:`~manosube_agent_civilization.multi_agent.identity`'s own module docstring on why this
+    kind's own id is a narrow natural key, not a full-content hash); a schema-valid,
+    self-consistently-fingerprinted slot output planted directly at that exact key but declaring a
+    *different* capability, attempt identity, execution snapshot, or Envelope than this exact
+    plan's own slot would pass every existing check unnoticed. This closes that gap.
+
+    Round 9 verified only that a release receipt's own ``attempt_id`` equals its slot output's own
+    ``attempt_id`` -- never that either actually equals the deterministic attempt identity the
+    verified Plan and slot themselves imply. A slot output and its release receipt could
+    therefore both declare the identical, validly-formatted, but wrong ``attempt_id`` and still
+    pass. This function now independently recomputes the expected attempt identity from the
+    verified Plan/slot (fixed ``attempt_ordinal=1``, the only ordinal this delivery ever produces)
+    via the identical :func:`~manosube_agent_civilization.multi_agent.engine.compute_attempt_id`
+    this package's own route uses to derive it in the first place, and requires the slot output's
+    own declared value to equal it -- before the existing receipt-to-slot-output comparison, which
+    is only meaningful once the slot output's own attempt identity is itself proven correct."""
 
     if str(slot_output["capability"]) != str(slot["capability"]):
         raise MultiAgentRecordIntegrityError(
             f"resolved multi_agent_slot_output for slot {slot['slot_index']!r} declares "
             f"capability {slot_output['capability']!r}, which does not equal this plan's own "
             f"slot capability {slot['capability']!r} -- refusing to trust it"
+        )
+    expected_attempt_id = compute_attempt_id(
+        project_id=project_id,
+        plan_ref={
+            "kind": PLAN_RECORD_KIND,
+            "id": str(plan["multi_agent_dynamic_execution_plan_id"]),
+        },
+        slot_index=int(slot["slot_index"]),
+        attempt_ordinal=1,
+    )
+    if slot_output.get("attempt_id") != expected_attempt_id:
+        raise MultiAgentRecordIntegrityError(
+            f"resolved multi_agent_slot_output for slot {slot['slot_index']!r} declares "
+            f"attempt_id {slot_output.get('attempt_id')!r}, which does not equal the "
+            f"deterministic attempt identity this exact Plan/slot independently recomputes to "
+            f"{expected_attempt_id!r} -- refusing to trust it"
         )
     expected_snapshot = {
         "state_revision": int(plan["boot_state_revision"]),
@@ -704,7 +763,7 @@ def _require_slot_output_matches_plan_lineage(
     envelope_ref = slot_output.get("model_execution_envelope_ref")
     if envelope_ref is not None:
         envelope = resolve_and_verify_committed_envelope(store, project_id, envelope_ref["id"])
-        _require_envelope_matches_plan_lineage(plan, slot, envelope)
+        _require_envelope_matches_plan_lineage(store, project_id, plan, slot, envelope)
         if str(envelope["execution_outcome"]) != str(slot_output["outcome"]):
             raise MultiAgentRecordIntegrityError(
                 f"resolved multi_agent_slot_output for slot {slot['slot_index']!r} declares "
@@ -1209,7 +1268,7 @@ def _execute_one_slot(
         # Structural Review Round 9, P19-R9-F1: a claim and the Envelope it names being each
         # individually self-consistent never proved they genuinely belong together -- see
         # _require_envelope_matches_plan_lineage's own docstring.
-        _require_envelope_matches_plan_lineage(plan, slot, envelope)
+        _require_envelope_matches_plan_lineage(store, project_id, plan, slot, envelope)
         outcome = str(envelope["execution_outcome"])
         result_fingerprint = envelope["normalized_candidate_fingerprint"]
         envelope_ref = dict(existing_claim["model_execution_envelope_ref"])
@@ -1406,7 +1465,9 @@ def _execute_one_slot(
                 # Structural Review Round 9, P19-R9-F1: identical lineage requirement as the
                 # replay-first path above -- a recovered claim's own named Envelope must genuinely
                 # belong to this exact plan's this exact slot, never merely be self-consistent.
-                _require_envelope_matches_plan_lineage(plan, slot, recovered_envelope)
+                _require_envelope_matches_plan_lineage(
+                    store, project_id, plan, slot, recovered_envelope
+                )
                 outcome = str(recovered_envelope["execution_outcome"])
                 result_fingerprint = recovered_envelope["normalized_candidate_fingerprint"]
                 envelope_ref = dict(recovered_claim["model_execution_envelope_ref"])

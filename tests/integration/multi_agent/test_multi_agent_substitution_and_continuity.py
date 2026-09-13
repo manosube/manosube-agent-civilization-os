@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from tests.fixtures.model_runtime_world import touch_state
+from tests.fixtures.model_runtime_world import commit_records, touch_state
 from tests.fixtures.multi_agent_world import (
     SeededMultiAgentAdapter,
     authorized_world,
@@ -27,6 +27,10 @@ from manosube_agent_civilization.agent_runtime import start_temporary_agent
 from manosube_agent_civilization.evidence import EVIDENCE_REFERENCE_KIND
 from manosube_agent_civilization.model_runtime.claim_identity import (
     multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
+)
+from manosube_agent_civilization.model_runtime.identity import (
+    model_execution_envelope_id,
+    model_execution_envelope_semantic_fingerprint,
 )
 from manosube_agent_civilization.multi_agent import (
     execute_dynamic_execution_plan,
@@ -735,6 +739,264 @@ def test_p19_r9_f2_an_aggregation_input_admitting_an_unresolved_slot_output_is_r
     # raises before ``route_orchestration_to_evidence`` ever reaches its own commit call.
     assert _record_kind_count(store, world["project_id"], "multi_agent_orchestration_receipt") == 0
     assert _record_kind_count(store, world["project_id"], EVIDENCE_REFERENCE_KIND) == 0
+
+
+def test_p19_r10_f1_an_envelope_with_the_plans_own_work_unit_but_a_different_genuine_boundary_is_refused(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Structural Review Round 10, P19-R10-F1's own required proof: Round 9's own
+    ``_require_envelope_matches_plan_lineage`` treated ``model_work_unit_ref`` equality alone as
+    sufficient transitive proof of Boundary lineage. A genuinely real, self-consistent Envelope
+    (its own declared identity and semantic fingerprint both independently recomputed and equal)
+    that names the *exact same* Model Work Unit as the resolved Plan, but declares a *different*,
+    equally genuine, committed Model Execution Boundary, passes every check Round 4-9 already
+    established -- only resolving the canonical Work Unit itself (through Model Runtime's own
+    ``resolve_and_verify_committed_work_unit``) and comparing the Envelope's own ``boundary_ref``
+    directly against it catches this.
+    """
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+    project_id = world["project_id"]
+
+    # A second, genuinely distinct, committed Model Execution Boundary in the same project --
+    # never used by the Plan's own Work Unit, but equally real and equally self-consistent.
+    foreign_boundary_ref, _ = commit_boundary(
+        store,
+        project_id,
+        world["project_binding_id"],
+        transaction_id="TX-MODEL-BOUNDARY-0002",
+        declared_at="2026-09-11T00:00:01Z",
+    )
+
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    # Crash strictly after the sole slot's own real claim+Envelope commit but before its own
+    # terminal slot_output/release_receipt commit -- the identical Round 1/3/9 technique -- so a
+    # genuine claim naming a genuine Envelope exists with no terminal pair yet.
+    real_derive = route_module.derive_multi_agent_agent_release_receipt
+
+    def _crashing_derive(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("simulated crash before the atomic slot-complete commit")
+
+    monkeypatch.setattr(route_module, "derive_multi_agent_agent_release_receipt", _crashing_derive)
+    crashing_adapter = SeededMultiAgentAdapter()
+    coordinator = _coordinator(world)
+    with pytest.raises(
+        RuntimeError, match="simulated crash before the atomic slot-complete commit"
+    ):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=project_id,
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            model_adapter_factory=lambda: crashing_adapter,
+            executed_at="2026-09-11T01:30:00Z",
+        )
+    coordinator.release()
+    monkeypatch.setattr(route_module, "derive_multi_agent_agent_release_receipt", real_derive)
+
+    claim_key = compute_slot_attempt_envelope_claim_id(
+        project_id=project_id, plan_ref=dict(opened["plan_ref"]), slot_index=0
+    )
+    real_claim = resolve_and_verify_committed_slot_attempt_envelope_claim(
+        store, project_id, claim_key
+    )
+    assert real_claim is not None
+    genuine_envelope = route_module.resolve_and_verify_committed_envelope(
+        store, project_id, real_claim["model_execution_envelope_ref"]["id"]
+    )
+    assert dict(genuine_envelope["boundary_ref"]) == dict(world["boundary_ref"])
+    assert dict(genuine_envelope["model_work_unit_ref"]) == dict(
+        opened["plan"]["model_work_unit_ref"]
+    )
+
+    # A fully self-consistent forged Envelope: every field copied from the genuine one -- same
+    # project, same Work Unit, same Difference/Authority/capability/execution snapshot -- except
+    # its own ``boundary_ref``, redirected to the second genuine Boundary, with its own identity
+    # and semantic fingerprint honestly recomputed from that changed content.
+    forged_envelope = dict(genuine_envelope)
+    forged_envelope["boundary_ref"] = dict(foreign_boundary_ref)
+    forged_envelope["model_execution_envelope_id"] = model_execution_envelope_id(forged_envelope)
+    forged_envelope["model_execution_semantic_fingerprint"] = (
+        model_execution_envelope_semantic_fingerprint(forged_envelope)
+    )
+    assert (
+        forged_envelope["model_execution_envelope_id"]
+        != genuine_envelope["model_execution_envelope_id"]
+    )
+    commit_records(
+        store,
+        project_id,
+        store.load_current(project_id),
+        "TX-FORGED-ENVELOPE-BOUNDARY-0001",
+        [
+            (
+                "model_execution_envelope",
+                forged_envelope["model_execution_envelope_id"],
+                forged_envelope,
+            )
+        ],
+    )
+
+    # The redirection: the claim now names the forged Envelope -- same Work Unit, wrong Boundary
+    # -- self-consistently refingerprinted, at its own unchanged narrow claim key.
+    tampered_claim = dict(real_claim)
+    tampered_claim["model_execution_envelope_ref"] = {
+        "kind": "model_execution_envelope",
+        "id": forged_envelope["model_execution_envelope_id"],
+    }
+    tampered_claim["multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"] = (
+        multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(tampered_claim)
+    )
+    _overwrite_committed_record(
+        store,
+        project_id,
+        "multi_agent_slot_attempt_envelope_claim",
+        claim_key,
+        tampered_claim,
+    )
+
+    # Sanity: both the forged Envelope and the redirected claim resolve cleanly as fully
+    # self-consistent on their own.
+    assert (
+        route_module.resolve_and_verify_committed_envelope(
+            store, project_id, forged_envelope["model_execution_envelope_id"]
+        )
+        is not None
+    )
+    assert (
+        resolve_and_verify_committed_slot_attempt_envelope_claim(store, project_id, claim_key)
+        is not None
+    )
+
+    state_before = store.load_current(project_id)
+
+    def _unreachable_adapter() -> Any:
+        raise AssertionError("no new adapter call is ever permitted for this replay")
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=project_id,
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            model_adapter_factory=_unreachable_adapter,
+            executed_at="2026-09-11T01:40:00Z",
+        )
+    coordinator.release()
+
+    state_after = store.load_current(project_id)
+    assert state_after["state_revision"] == state_before["state_revision"]
+    slot_output_key = compute_slot_output_id(
+        project_id=project_id, plan_ref=dict(opened["plan_ref"]), slot_index=0
+    )
+    assert store.resolve_record(project_id, "multi_agent_slot_output", slot_output_key) is None
+
+
+def test_p19_r10_f2_a_slot_output_and_release_receipt_sharing_the_same_wrong_attempt_id_is_refused(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 10, P19-R10-F2's own required proof: Round 9's own
+    ``_require_release_receipt_matches_slot_output`` verified only that a release receipt's own
+    ``attempt_id`` equals its slot output's own ``attempt_id`` -- never that either actually
+    equals the deterministic attempt identity the verified Plan/slot themselves imply. A slot
+    output and its release receipt that both declare the identical, validly-formatted, but wrong
+    ``attempt_id`` -- each self-consistently refingerprinted at its own correct narrow key --
+    would pass every check Round 9 already established. Both replay and Evidence hand-off must
+    refuse."""
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+    project_id = world["project_id"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    coordinator = _coordinator(world)
+    executed = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=project_id,
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened["plan_ref"],
+        model_adapter_factory=lambda: SeededMultiAgentAdapter(),
+        executed_at="2026-09-11T01:30:00Z",
+    )
+    coordinator.release()
+    genuine_slot_output = executed["slot_outputs"][0]
+    genuine_receipt = executed["release_receipts"][0]
+
+    wrong_attempt_id = compute_attempt_id(
+        project_id=project_id, plan_ref=dict(opened["plan_ref"]), slot_index=99
+    )
+    assert wrong_attempt_id != genuine_slot_output["attempt_id"]
+
+    tampered_slot_output = dict(genuine_slot_output)
+    tampered_slot_output["attempt_id"] = wrong_attempt_id
+    tampered_slot_output["multi_agent_slot_output_semantic_fingerprint"] = (
+        multi_agent_slot_output_semantic_fingerprint(tampered_slot_output)
+    )
+    slot_output_key = str(genuine_slot_output["multi_agent_slot_output_id"])
+    _overwrite_committed_record(
+        store, project_id, "multi_agent_slot_output", slot_output_key, tampered_slot_output
+    )
+
+    tampered_receipt = dict(genuine_receipt)
+    tampered_receipt["attempt_id"] = wrong_attempt_id
+    tampered_receipt["multi_agent_agent_release_receipt_semantic_fingerprint"] = (
+        multi_agent_agent_release_receipt_semantic_fingerprint(tampered_receipt)
+    )
+    receipt_key = str(genuine_receipt["multi_agent_agent_release_receipt_id"])
+    _overwrite_committed_record(
+        store, project_id, "multi_agent_agent_release_receipt", receipt_key, tampered_receipt
+    )
+
+    # Sanity: both tampered records resolve cleanly as fully self-consistent on their own, and
+    # agree with each other -- exactly the case the receipt-to-slot-output comparison alone
+    # cannot catch.
+    assert (
+        route_module.resolve_and_verify_committed_slot_output(store, project_id, slot_output_key)
+        is not None
+    )
+    assert (
+        route_module.resolve_and_verify_committed_release_receipt(store, project_id, receipt_key)
+        is not None
+    )
+
+    def _unreachable_adapter() -> Any:
+        raise AssertionError("no new adapter call is ever permitted for this replay")
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=project_id,
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            model_adapter_factory=_unreachable_adapter,
+            executed_at="2026-09-11T01:40:00Z",
+        )
+    coordinator.release()
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        route_orchestration_to_evidence(
+            store,
+            coordinator,
+            project_id=project_id,
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            evidence_request_template=evidence_request_for(project_id, provenance=None),
+            completed_at="2026-09-11T01:41:00Z",
+        )
+    coordinator.release()
 
 
 def _record_kind_count(store: FileStateStore, project_id: str, kind: str) -> int:

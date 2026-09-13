@@ -1221,3 +1221,65 @@ genuine Evidence hand-off remain unchanged and idempotent under every one of the
 `P19_R9_F2_AGGREGATION_REDERIVATION=refused`, `GENUINE_REPLAY_ZERO_DUPLICATE_ADAPTER_CALLS=true`,
 `GENUINE_EVIDENCE_HANDOFF=unchanged`. No second Authority evaluator, execution route, Store
 owner, Model Runtime owner, or Multi-Agent owner is introduced by either finding.
+
+## 19. Structural Review Round 10 corrections (P19-R10-F1..F2)
+
+Adopted as `ADOPT_P19_R10_CANONICAL_WORK_UNIT_AND_ATTEMPT_IDENTITY` against reviewed head/
+authorized target `cd6ea7e7a07092ad8fe30d18b28c26ac1881e5a7` (PR #78). Both findings correct the
+same Round 9 boundary between "this reference resolves to a self-consistent record" and "this
+reference resolves to the *canonically correct* record" -- Round 9 closed that gap for most of
+the terminal graph, but left two of its own transitive-proof shortcuts unclosed.
+
+- **P19-R10-F1 (an Envelope's own duplicated Work-Unit-owned lineage -- `boundary_ref` and
+  `evidence_requirements` -- is now checked directly against the canonical, Store-resolved Work
+  Unit itself, never merely inferred from `model_work_unit_ref` equality).** Round 9's
+  `_require_envelope_matches_plan_lineage` reused `model_work_unit_ref` equality as sufficient
+  transitive proof of Boundary lineage, reasoning that a Work Unit's own consistency with any
+  Envelope committed against it is already enforced by `execute_model_work_unit`'s own commit-time
+  check -- but that enforcement only applies to an Envelope genuinely produced through that real
+  route; a schema/id/fingerprint-valid Envelope constructed and committed by some other path could
+  name the same Work Unit while declaring a different, equally genuine Boundary the Work Unit
+  never authorized. `_require_envelope_matches_plan_lineage` now takes `store`/`project_id` and
+  resolves the plan's own Work Unit through Model Runtime's new public
+  `resolve_and_verify_committed_work_unit` (§16 of `MODEL_RUNTIME_CONTRACT.md`) -- no Work Unit
+  identity/schema logic is duplicated here -- and compares the Envelope's own already-verified
+  `boundary_ref` and `evidence_requirements` directly against that canonical record's own values,
+  raising `MultiAgentRecordIntegrityError` on any mismatch, before the existing execution-snapshot
+  check. All 3 call sites (the replay fast path, the acknowledgement-loss recovery branch, and the
+  terminal-graph slot-output lineage check) now pass `store`/`project_id` through.
+- **P19-R10-F2 (a slot output's own declared `attempt_id` is now required to equal the
+  deterministic identity independently recomputed from the verified Plan/slot, before it is ever
+  compared to its release receipt's `attempt_id`).** Round 9's release-receipt check compared a
+  receipt's `attempt_id` only to its own slot output's `attempt_id` -- a comparison that is
+  meaningless if the slot output's own `attempt_id` was never itself proven correct, since both
+  could agree with each other while both being equally wrong. New logic in
+  `_require_slot_output_matches_plan_lineage` calls the existing `compute_attempt_id` with the
+  verified Plan's own `plan_ref`, the slot's own `slot_index`, and the fixed `attempt_ordinal=1`,
+  and requires the resolved slot output's own declared `attempt_id` to equal that independently
+  recomputed value, raising `MultiAgentRecordIntegrityError` otherwise -- reusing the identical
+  deterministic identity function that produced it the first time, never a second, competing
+  attempt-identity formula. This runs before the pre-existing execution-snapshot and
+  release-receipt-to-slot-output checks, so a wrong shared attempt id is caught even when it is
+  identically wrong in both records.
+
+Two required decisive proofs, added to
+`tests/integration/multi_agent/test_multi_agent_substitution_and_continuity.py`:
+`test_p19_r10_f1_an_envelope_with_the_plans_own_work_unit_but_a_different_genuine_boundary_is_
+refused` (a second genuine Boundary is committed; a genuine claim/Envelope pair is reached via
+the Round 1/3 crash-before-terminal-commit technique; a new, genuinely committed forged Envelope
+-- copied from the genuine one with `boundary_ref` swapped and its own id/fingerprint honestly
+recomputed, since this record's full-content identity in `model_runtime` makes in-place tampering
+at an unchanged key impossible -- is named by the redirected claim; replay refuses with zero new
+adapter calls, zero terminal writes, zero State advance) and
+`test_p19_r10_f2_a_slot_output_and_release_receipt_sharing_the_same_wrong_attempt_id_is_refused`
+(a genuine plan is fully executed; both the slot output and its release receipt are independently
+overwritten to declare the same wrong, validly-formatted `attempt_id` and self-consistently
+refingerprinted, with correct narrow Store keys retained; both replay and Evidence hand-off
+refuse). The shared canonical terminal-graph verifier, all 4 Round 9 tests, and every Round 1-8
+proof continue to pass unmodified.
+
+`P19_R10_F1_CROSS_BOUNDARY_ENVELOPE_SUBSTITUTION=refused`,
+`P19_R10_F2_SHARED_WRONG_ATTEMPT_ID_SUBSTITUTION=refused`,
+`GENUINE_REPLAY_ZERO_DUPLICATE_ADAPTER_CALLS=true`, `GENUINE_EVIDENCE_HANDOFF=unchanged`. No
+second Authority evaluator, execution route, Store owner, Model Runtime owner, or Multi-Agent
+owner is introduced by either finding.
