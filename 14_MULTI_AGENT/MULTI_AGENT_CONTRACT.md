@@ -1003,3 +1003,68 @@ ENVELOPE=true`, `CHECK_TO_COMMIT_RACE_TERMINAL_WINNER_COUNT=1`, `TIMEOUT_WIN_LAT
 WRITE_COUNT=0`, `TIMEOUT_WIN_LATE_CLAIM_WRITE_COUNT=0`, `TIMEOUT_WIN_LATE_STATE_REVISION_
 ADVANCE=0`. No second Authority evaluator, execution route, Store owner, Model Runtime owner, or
 Multi-Agent owner is introduced by either finding.
+
+## 15. Structural Review Round 6 corrections (P19-R6-F1..F2)
+
+Adopted as `ADOPT_P19_R6_POST_COMMIT_RECOVERY_AND_CLAIM_INTEGRITY` against reviewed
+head/authorized target `b9df7f8179db7e3ab3d67d411cc59b50d69924f1` (PR #78). Two findings, both
+addressed on the existing branch/PR, no new module or owner introduced (P19-R6-F3 is the
+append-only current-state restatement in `docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`
+§45 and this section itself; it introduces no code).
+
+- **P19-R6-F1 (post-commit acknowledgement-loss recovery in `_execute_one_slot`'s own exception
+  handler).** §14's own P19-R4-F2 broadened `_execute_one_slot`'s own `except Exception` to catch
+  every exception raised after this slot's own Agent was constructed, falling back to a typed
+  `UNAVAILABLE` outcome for anything it could not otherwise explain. Exact-head reproduction
+  showed the gap that broad catch-all left open: `model_runtime.route.execute_model_work_unit`
+  can raise *after* its own atomic Envelope+claim commit has already succeeded (an
+  acknowledgement-loss between that real, durable commit and this coordinator thread observing
+  its return value) -- and the old handler had no way to distinguish that case from a genuine
+  pre-commit failure, so it published a durable `UNAVAILABLE` slot output directly over a real,
+  already-committed `CANDIDATE_ACCEPTED` Envelope. The fix reuses the identical deterministic
+  `claim_key` this function already computes once, before any Agent is even constructed, as part
+  of its own pre-existing replay-first fast path (§13's own P19-R3-F3 recovery): inside the
+  `except Exception` handler itself, before ever falling back to `UNAVAILABLE`, this branch
+  re-resolves that same `claim_key` via `resolve_and_verify_committed_slot_attempt_envelope_
+  claim`; if a valid, verified claim now exists, this attempt's own real terminal outcome is
+  reconstructed from its own bound Envelope via `resolve_and_verify_committed_envelope` -- exactly
+  like the pre-existing `existing_claim is not None` recovery branch above it -- and the adapter is
+  never reached a second time. Only when no such claim exists (proving nothing was ever durably
+  committed for this attempt) does the branch fall back to `UNAVAILABLE`, unchanged from before.
+  Proved by the new
+  `test_p19_r6_f1_a_post_commit_acknowledgement_loss_never_publishes_a_false_unavailable`, which
+  wraps `execute_model_work_unit` so it still performs its own real call in full (the real
+  Envelope+claim commit genuinely happens) before raising, simulating the caller never receiving
+  the acknowledgement of that already-durable commit -- and asserts the published slot output is
+  the real `CANDIDATE_ACCEPTED` outcome, exactly one Envelope and one claim exist, exactly one slot
+  output and one release receipt exist, and a subsequent replay call makes zero further adapter
+  calls.
+- **P19-R6-F2 (the `slot_attempt_envelope_claim_factory` surface is closed against
+  identity/schema/lineage forgery).** See `MODEL_RUNTIME_CONTRACT.md` §13 for the full fix, which
+  lands primarily on `model_runtime.route.execute_model_work_unit` and the new
+  `model_runtime.claim_identity` module. This package's own contribution is threefold: (1)
+  `multi_agent.identity` no longer defines `multi_agent_slot_attempt_envelope_claim_id` or
+  `..._semantic_fingerprint` -- both are relocated, not duplicated, into
+  `model_runtime.claim_identity`, and this package now imports them from there; (2)
+  `multi_agent.engine`'s `derive_multi_agent_slot_attempt_envelope_claim` and
+  `compute_slot_attempt_envelope_claim_id` are unchanged in body, since the imported names resolve
+  identically; (3) `_execute_one_slot`'s own `_call_execute_model_work_unit` now passes the new
+  required `slot_attempt_envelope_claim_binding={"plan_ref": ..., "slot_index": ..., "attempt_
+  ordinal": 1}` argument -- this package's own trusted call site, never
+  `_self_verified_claim_body`'s own returned value, declaring the exact attempt Model Runtime must
+  verify the returned claim body binds to. This is the same relocation discipline §13 documents in
+  full: `model_runtime` becomes the singular owner of this one closed kind's identity, semantic
+  fingerprint, and schema, and every existing consumer -- this package's own construction-time
+  self-verification in `_self_verified_claim_body` and its own read-time resolver
+  `resolve_and_verify_committed_slot_attempt_envelope_claim` alike -- follows that same owner. No
+  second implementation of the hash formula exists anywhere in this repository after this change.
+
+`POST_COMMIT_ACK_LOSS_REAL_ENVELOPE_COUNT=1`, `POST_COMMIT_ACK_LOSS_REAL_CLAIM_COUNT=1`,
+`POST_COMMIT_ACK_LOSS_PUBLISHED_UNAVAILABLE_COUNT=0`, `DURABLE_CLAIM_REOBSERVED_BEFORE_FALLBACK_
+TERMINALIZATION=true`, `RECONSTRUCTED_SLOT_OUTCOME_EQUALS_ENVELOPE_OUTCOME=true`, `REPLAY_
+DUPLICATE_ADAPTER_CALL_COUNT=0`, `TERMINAL_FACT_COUNT_EXACTLY_ONE=true`. See
+`MODEL_RUNTIME_CONTRACT.md` §13 for the full P19-R6-F2 proof-field list
+(`CALLER_SELECTED_CLAIM_ID_ACCEPTED=false` through `UNKNOWN_FIELD_ACCEPTED=false`). No second
+Authority evaluator, execution route, Store owner, Model Runtime owner, or Multi-Agent owner is
+introduced by either finding; ownership of the one closed claim kind's identity, semantic
+fingerprint, and schema remains singular, in `model_runtime.claim_identity`.

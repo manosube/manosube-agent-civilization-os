@@ -594,3 +594,74 @@ is refused the same way.
 `PUBLIC_GENERIC_ADDITIONAL_RECORD_FACTORY_PRESENT=false`: no parameter on this route's public
 signature accepts a caller-selected record kind, id, or list of records. No second Authority
 evaluator, execution route, Store owner, or Model Runtime owner is introduced by this change.
+
+## 13. Structural Review Round 6 correction (Phase 19, Issue #77, P19-R6-F2)
+
+Adopted as `ADOPT_P19_R6_POST_COMMIT_RECOVERY_AND_CLAIM_INTEGRITY` against reviewed head/
+authorized target `b9df7f8179db7e3ab3d67d411cc59b50d69924f1` (PR #78). One finding lands on this
+route (P19-R6-F1 is entirely a `multi_agent`-side fix over this route's own unchanged commit and
+return-value contract; it introduces no change here).
+
+**P19-R6-F2 -- this route closes the `slot_attempt_envelope_claim_factory` surface §12 opened
+against caller-selected identity, cross-attempt binding, forged semantic fingerprint, and
+schema-unbounded shape.** §12's own fix required only a non-empty declared id and a correct
+`model_execution_envelope_ref`; it could not independently recompute that id or the claim's own
+semantic fingerprint, since that hash formula lived in `multi_agent.identity`, and this route may
+never import `multi_agent` (that package depends on this one, never the reverse). Exact-head
+reproduction showed the gap that left open: a caller-selected non-empty claim id unrelated to its
+own content, a wrong `project_id`/`plan_ref`/`slot_index`/`attempt_ordinal`, a missing or forged
+semantic fingerprint, and an additional unregistered field all passed this route's own shallow
+checks.
+
+The fix is relocation, not duplication: a new module, `model_runtime.claim_identity`, is now the
+single owner of this one closed kind's own identity, semantic fingerprint, and schema --
+`multi_agent_slot_attempt_envelope_claim_id` and `multi_agent_slot_attempt_envelope_claim_
+semantic_fingerprint` moved here verbatim (identical formula, identical field-list constants) from
+`multi_agent.identity`, which now imports them from here instead of maintaining its own copy. This
+is deliberately not a general dependency on `multi_agent`: no name from that package is read here,
+and both functions are generic -- the identical `sha256(canonical_json_bytes(projection))` recipe
+every other canonical kind in this repository already uses. `require_schema_valid_slot_attempt_
+envelope_claim` performs the identical generic, package-neutral schema lookup `binding.validation.
+validate_against_schema_id` already establishes as the sanctioned pattern for a record a domain
+accepts but does not own the schema of: it loads this kind's own registered `$id` from `01_SCHEMA/`
+via `jsonschema.Draft202012Validator` + `referencing.Registry`/`Resource`, generically, exactly as
+that existing precedent does.
+
+`execute_model_work_unit` gained a new required parameter, `slot_attempt_envelope_claim_binding:
+Mapping[str, Any] | None = None`, required whenever `slot_attempt_envelope_claim_factory` is
+supplied and carrying `{"plan_ref": ..., "slot_index": ..., "attempt_ordinal": ...}` -- this call's
+own caller's declared expectation for what this exact attempt's claim must bind to, never the
+untrusted factory's own self-selected values. The commit-tail validation sequence is now: (1)
+schema-validate the returned body against its own registered canonical schema (closing the
+additional-field gap a field-projection recompute alone cannot, since `additionalProperties:
+false` is the only check that reads outside each projection's own named field set); (2) require its
+declared `model_execution_envelope_ref` to name this exact, newly-derived Envelope (unchanged from
+§12); (3) require its declared `project_id`/`plan_ref`/`slot_index`/`attempt_ordinal` to equal this
+call's own `project_id` parameter and `slot_attempt_envelope_claim_binding`'s own declared values
+exactly; (4) independently recompute the claim's own narrow id and require it to equal its own
+declared value; (5) independently recompute the claim's own full semantic fingerprint and require
+it to equal its own declared value. Any failure raises `ModelRuntimeRequirementError` with nothing
+committed. `multi_agent` itself now imports these same two functions from
+`model_runtime.claim_identity` rather than defining its own copy, so its own construction-time
+self-verification and its own read-time resolver both follow this same single owner -- exactly the
+"ownership remains singular and every existing consumer follows that same owner" constraint the
+adoption required.
+
+Proved at the Model Runtime level in `test_model_runtime_failure_tamper_matrix.py`: the three
+existing §12 negative-control tests, rewritten to supply the new required binding parameter and a
+schema-valid, self-consistent claim body while still isolating each test's own original condition
+(crash-before-commit; wrong Envelope binding; missing declared id), plus eight new required
+negative controls -- a caller-selected, self-inconsistent claim id; a wrong `project_id`, `plan_
+ref`, `slot_index`, and `attempt_ordinal` binding (four separate tests, each isolating one field);
+a forged semantic fingerprint; a missing semantic fingerprint; and an additional, unregistered
+field -- each proving `FORGED_OR_MALFORMED_CLAIM_WRITE_COUNT=0` (the adapter is called exactly
+once, since this route's own commit-tail validation runs strictly after the real adapter call, but
+the Store's own State revision is unchanged and nothing is committed).
+
+`CALLER_SELECTED_CLAIM_ID_ACCEPTED=false`, `CLAIM_SCHEMA_VALIDATED_BEFORE_COMMIT=true`,
+`CLAIM_NATURAL_KEY_ID_RECOMPUTED=true`, `CLAIM_FULL_SEMANTIC_FINGERPRINT_VERIFIED=true`,
+`CLAIM_PROJECT_BINDING_EXACT=true`, `CLAIM_PLAN_BINDING_EXACT=true`,
+`CLAIM_SLOT_BINDING_EXACT=true`, `CLAIM_ENVELOPE_BINDING_EXACT=true`,
+`UNKNOWN_FIELD_ACCEPTED=false`. No import of `multi_agent` was added to this package; no second
+Store/State/Authority owner was introduced; ownership of this one closed kind's identity, semantic
+fingerprint, and schema remains singular.

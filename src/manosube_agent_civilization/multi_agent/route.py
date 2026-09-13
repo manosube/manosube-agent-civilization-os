@@ -74,6 +74,10 @@ from manosube_agent_civilization.difference.validation import (
     DIFFERENCE_SCHEMA_BASE,
     validate_record as validate_canonical_record,
 )
+from manosube_agent_civilization.model_runtime.claim_identity import (
+    multi_agent_slot_attempt_envelope_claim_id,
+    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
+)
 from manosube_agent_civilization.model_runtime.route import (
     execute_model_work_unit,
     open_model_work_unit,
@@ -125,8 +129,6 @@ from .identity import (
     multi_agent_dynamic_execution_plan_semantic_fingerprint,
     multi_agent_evidence_aggregation_input_id,
     multi_agent_evidence_aggregation_input_semantic_fingerprint,
-    multi_agent_slot_attempt_envelope_claim_id,
-    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
     multi_agent_slot_output_id,
     multi_agent_slot_output_semantic_fingerprint,
 )
@@ -1027,6 +1029,17 @@ def _execute_one_slot(
                     # paths can never both win.
                     cancellation_check=lambda: not gate.claim(),
                     slot_attempt_envelope_claim_factory=_self_verified_claim_body,
+                    # Structural Review Round 6, P19-R6-F2: this call's own caller -- never the
+                    # factory above -- declares the exact attempt this claim must be committed
+                    # for. Model Runtime independently compares the factory's own returned
+                    # declared plan_ref/slot_index/attempt_ordinal against this, so a hand-rolled
+                    # factory (a hypothetical caller other than this one) can no longer smuggle a
+                    # claim naming a different plan or slot through a merely self-consistent id.
+                    slot_attempt_envelope_claim_binding={
+                        "plan_ref": dict(plan_ref),
+                        "slot_index": slot_index,
+                        "attempt_ordinal": 1,
+                    },
                 )
 
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -1086,10 +1099,38 @@ def _execute_one_slot(
             # release receipt for this slot (P19-R4-F2), rather than propagating uncaught out of
             # the whole orchestration call and leaving this slot's own attempt with no terminal
             # record at all. The `finally` below still releases this slot's own Agent either way.
-            # No claim is committed for this branch: there is no real Envelope to name, so a
-            # genuine retry (not a duplicate adapter call) is the correct recovery.
-            outcome = "UNAVAILABLE"
-            outcome_detail = f"{type(error).__name__}: {error}"[:2000]
+            #
+            # Structural Review Round 6, P19-R6-F1: an exception here does not prove this
+            # attempt's own real Envelope+claim never committed -- `execute_model_work_unit`'s
+            # own commit and this function's own observation of its return value are two
+            # different events, and an acknowledgement-loss between them (this exact exception
+            # surfacing *after* a real, durable commit already succeeded) is exactly the
+            # exact-head counterexample this round's own adoption reproduced: a real Envelope
+            # proving `CANDIDATE_ACCEPTED` durably existed, yet this branch still published a
+            # contradictory `UNAVAILABLE`. Before ever falling back to that typed failure, this
+            # branch re-resolves the identical deterministic `claim_key` this function's own
+            # replay-first check already computed above (before any Agent was even constructed)
+            # -- if a valid, verified claim now exists, this attempt's own real terminal outcome
+            # is reconstructed from its own bound Envelope, exactly like the pre-existing
+            # `existing_claim is not None` recovery path above, and the adapter is never reached
+            # a second time. Only when no such claim exists -- proving nothing was ever durably
+            # committed for this attempt -- does this branch fall back to `UNAVAILABLE`.
+            recovered_claim = resolve_and_verify_committed_slot_attempt_envelope_claim(
+                store, project_id, claim_key
+            )
+            if recovered_claim is not None:
+                recovered_envelope = resolve_and_verify_committed_envelope(
+                    store, project_id, recovered_claim["model_execution_envelope_ref"]["id"]
+                )
+                outcome = str(recovered_envelope["execution_outcome"])
+                result_fingerprint = recovered_envelope["normalized_candidate_fingerprint"]
+                envelope_ref = dict(recovered_claim["model_execution_envelope_ref"])
+                outcome_detail = None
+            else:
+                # No claim is committed for this branch: there is no real Envelope to name, so a
+                # genuine retry (not a duplicate adapter call) is the correct recovery.
+                outcome = "UNAVAILABLE"
+                outcome_detail = f"{type(error).__name__}: {error}"[:2000]
         finally:
             slot_agent.release()
 

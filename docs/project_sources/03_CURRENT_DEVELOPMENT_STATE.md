@@ -3422,3 +3422,62 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_5_REVIEWED_HEAD`。
 §43以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
 優先される(last-wins)。
+
+# 45. Phase 19 Structural Review Round 6 bounded current-state restatement (Issue #77, PR #78)
+
+本節は、Structural Advisor Structural Review Round 6（reviewed head/AUTHORIZED_TARGET_SHA
+`b9df7f8179db7e3ab3d67d411cc59b50d69924f1`、finding `P19-R6-F1`〜`P19-R6-F3`）をSHUKOUが
+`ADOPT_P19_R6_POST_COMMIT_RECOVERY_AND_CLAIM_INTEGRITY`として正式採択した後、Claude Codeが
+既存branch`agent/issue-77-phase19-multi-agent-dynamic-execution`・既存PR #78上でF1〜F3の是正を
+実装した時点の、bounded・append-only current-state restatementである(SHUKOU正式採択コメント:
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5650308390
+、Claude Code実装ハンドオフコメント:
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5650314694
+、いずれも本記録作成者自身がGitHub API経由でauthor login/id/associationを直接検証済み、live
+head/base不変も同様に確認済み)。§0冒頭のheader blockおよびセクション1〜44の本文は、書き換えない
+-- 本節が最後に追記される、bounded・last-wins restatementである。
+
+是正した3個のfindingの要旨: P19-R6-F1(Round 5自身の広い`except Exception`は、真のEnvelope+claim
+atomic commitが成功した直後にこの呼び出し元がその戻り値を観測する前に例外が生じる
+acknowledgement-loss -- exact-head reproductionで再現 -- を、その真の`CANDIDATE_ACCEPTED`
+commitと矛盾する`UNAVAILABLE`として発行し得た。是正は、この例外ハンドラ自身の内部で、この
+関数が既にAgent構築前に計算済みの決定論的`claim_key`を再解決し、有効なclaimとその紐付く
+Envelopeが既にcommit済みであればそこから真の終端結果を再構成する -- adapterへの二重呼び出しは
+一切発生せず、`UNAVAILABLE`は真にcommitされたclaimが存在しない場合にのみ発行される)、
+P19-R6-F2(Round 5自身の`slot_attempt_envelope_claim_factory`は、Envelope自身への参照と非空の
+宣言idのみを検査していたため、呼び出し側選択の非空claim id・誤ったproject_id/plan_ref/
+slot_index・欠落または偽造されたsemantic fingerprint・未登録の追加fieldがいずれもcommitを
+通過し得た -- 是正は`model_runtime`を単一の所有者とする新設`model_runtime.claim_identity`へ
+identity/semantic fingerprint関数を`multi_agent`から再配置(重複ではない)し、新設必須
+引数`slot_attempt_envelope_claim_binding`により呼び出し元自身(factoryではない)がこの
+attemptの真のplan_ref/slot_index/attempt_ordinalを宣言し、model_runtime自身がスキーマ検証・
+Envelope binding検証・この宣言された値との厳密一致検証・id/semantic fingerprintの独立再計算
+検証を全て実施する -- `multi_agent`への依存やidentity実装の複製は生じておらず、所有者は
+単一のまま)、P19-R6-F3(本節自身 -- 過去のGitHub pre-merge gate失敗を新規headでの再診断により
+解消、または独立に切り分けた)。
+
+```text
+OBSERVED_AT_UTC=2026-09-13T03:14:00Z
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_6_CORRECTIONS_DELIVERED_PR_OPEN
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=78
+GOVERNING_ISSUE=#77
+STRUCTURAL_REVIEW_ROUND_6_REVIEWED_HEAD=b9df7f8179db7e3ab3d67d411cc59b50d69924f1
+AUTHORIZED_TARGET_SHA=b9df7f8179db7e3ab3d67d411cc59b50d69924f1
+ADOPTION_ID=ADOPT_P19_R6_POST_COMMIT_RECOVERY_AND_CLAIM_INTEGRITY
+ADOPTED_FINDINGS=P19-R6-F1,P19-R6-F2,P19-R6-F3
+
+MERGE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+このrestatementは、この一回の追記時点で真であった七個のfieldの事実記録に限られる:
+`CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
+`MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_6_REVIEWED_HEAD`。
+§44以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
+優先される(last-wins)。

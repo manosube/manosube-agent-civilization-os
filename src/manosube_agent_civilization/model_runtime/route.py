@@ -100,6 +100,11 @@ from manosube_agent_civilization.state.fingerprint import fingerprint_project_st
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
 
+from .claim_identity import (
+    multi_agent_slot_attempt_envelope_claim_id,
+    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
+    require_schema_valid_slot_attempt_envelope_claim,
+)
 from .engine import (
     MODEL_RUNTIME_SCHEMA_BASE,
     derive_model_execution_envelope,
@@ -1043,6 +1048,7 @@ def execute_model_work_unit(
     cancellation_check: Callable[[], bool] | None = None,
     slot_attempt_envelope_claim_factory: Callable[[Mapping[str, Any]], Mapping[str, Any]]
     | None = None,
+    slot_attempt_envelope_claim_binding: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded, provider-neutral model invocation against one already-open Work Unit
     and return ``{"envelope": ..., "receipt": ModelExecutionReceipt}``.
@@ -1080,17 +1086,31 @@ def execute_model_work_unit(
     ``(kind, id, body)`` tuples, and exact-head reproduction showed it could co-commit a forged
     ``authority_decision`` (or any other kind) alongside a real Envelope. This parameter instead
     admits exactly one closed, hardcoded companion-record kind
-    (``multi_agent_slot_attempt_envelope_claim``) -- the caller can never choose a different one,
-    and this route refuses (nothing committed) unless the returned body's own
-    ``model_execution_envelope_ref`` field is present and names *this exact, newly-derived*
-    Envelope and its own ``multi_agent_slot_attempt_envelope_claim_id`` field is a non-empty
-    string. This route does not itself re-derive that id or the claim's own semantic
-    fingerprint -- it has no legitimate way to (that hash function belongs to
-    ``multi_agent``, never duplicated here) -- so the caller's own factory is expected to
-    self-verify its own construction before ever returning it, and every read of the committed
-    record independently re-verifies both, exactly as every other canonical record's own
-    resolver already does. Either the Envelope and this one claim commit together, or neither
-    does -- the identical atomicity Round 4 established, now bounded to one caller-immune kind.
+    (``multi_agent_slot_attempt_envelope_claim``) -- the caller can never choose a different one.
+
+    *slot_attempt_envelope_claim_binding* is required whenever *slot_attempt_envelope_claim_
+    factory* is supplied (Structural Review Round 6, P19-R6-F2), and must carry ``{"plan_ref":
+    ..., "slot_index": ..., "attempt_ordinal": ...}`` -- the exact identity this call's own
+    caller (never the factory) declares this attempt to be. Round 5's own fix checked only that
+    the returned body's ``model_execution_envelope_ref`` named this exact Envelope and that its
+    own declared id was a non-empty string; exact-head reproduction showed a caller-selected
+    non-empty id, a wrong ``project_id``/``plan_ref``/``slot_index``, a missing or forged
+    semantic fingerprint, and an additional unregistered field all passed those shallow checks
+    unnoticed. This route now: (1) validates the returned body against its own registered
+    canonical schema (:func:`~manosube_agent_civilization.model_runtime.claim_identity.
+    require_schema_valid_slot_attempt_envelope_claim`, closing the additional-field gap a
+    field-projection recompute alone cannot); (2) requires its declared ``project_id``/
+    ``plan_ref``/``slot_index``/``attempt_ordinal`` to equal this call's own ``project_id``
+    parameter and *slot_attempt_envelope_claim_binding*'s own declared values exactly; (3)
+    independently recomputes the claim's own narrow id and full semantic fingerprint
+    (:mod:`~manosube_agent_civilization.model_runtime.claim_identity`) and requires each to equal
+    its own declared value. That hash formula moved into this route's own package precisely so
+    it could be recomputed here without ever importing ``multi_agent`` (which depends on this
+    package, never the reverse) or duplicating a second, potentially-diverging implementation --
+    ``multi_agent`` itself now imports these same functions from here, so there is exactly one
+    owner and every consumer follows it. Either the Envelope and this one claim commit together,
+    or neither does -- the identical atomicity Round 4 established, now closed against every
+    forgery a caller-selected factory could otherwise smuggle through.
 
     Every refusal below lands with the adapter called **zero** times and nothing committed: a
     released or foreign Temporary Agent, a stale execution contract, a Work Unit that does not
@@ -1241,7 +1261,18 @@ def execute_model_work_unit(
         # atomic transaction as the Envelope -- either both land, or neither does -- closing the
         # crash window a separate follow-up commit would otherwise leave open, without this
         # route ever becoming a second, generic record-injection surface.
+        if slot_attempt_envelope_claim_binding is None:
+            raise ModelRuntimeRequirementError(
+                "slot_attempt_envelope_claim_binding is required whenever "
+                "slot_attempt_envelope_claim_factory is supplied -- this call's own caller, "
+                "never the factory, declares which exact attempt this claim is committed for"
+            )
+        expected_binding = dict(slot_attempt_envelope_claim_binding)
         claim_body = dict(slot_attempt_envelope_claim_factory(envelope))
+        # Structural Review Round 6, P19-R6-F2: schema-validate the full closed shape first --
+        # this is what catches an additional, unregistered field, which recomputing the id/
+        # semantic fingerprint below (both projections over a *named* field set) can never see.
+        require_schema_valid_slot_attempt_envelope_claim(claim_body)
         declared_envelope_ref = claim_body.get("model_execution_envelope_ref")
         if not (
             isinstance(declared_envelope_ref, Mapping)
@@ -1253,13 +1284,46 @@ def execute_model_work_unit(
                 "model_execution_envelope_ref bound to this exact newly-derived Envelope -- "
                 "refusing to commit anything"
             )
-        claim_id = claim_body.get("multi_agent_slot_attempt_envelope_claim_id")
-        if not isinstance(claim_id, str) or not claim_id:
+        # P19-R6-F2: exact project/plan/slot/attempt binding to this call's own caller-declared
+        # expectation -- never merely the claim body's own (self-selectable) declared values.
+        if (
+            claim_body.get("project_id") != project_id
+            or claim_body.get("plan_ref") != expected_binding.get("plan_ref")
+            or claim_body.get("slot_index") != expected_binding.get("slot_index")
+            or claim_body.get("attempt_ordinal") != expected_binding.get("attempt_ordinal")
+        ):
+            raise ModelRuntimeRequirementError(
+                "the Phase 19 slot-attempt-envelope-claim this call produced does not declare "
+                "the exact project_id/plan_ref/slot_index/attempt_ordinal this call's own caller "
+                "declared via slot_attempt_envelope_claim_binding -- refusing to commit anything"
+            )
+        # P19-R6-F2: independently recompute this claim's own narrow id and full semantic
+        # fingerprint -- never merely trust a non-empty, caller-selected id -- refusing any
+        # mismatch. This is the identical recompute-and-compare discipline every other canonical
+        # record this route commits already receives; it was previously impossible here only
+        # because the hash formula lived in a package this route may never import, and it has
+        # now been relocated to this route's own package for exactly this reason.
+        declared_id = claim_body.get("multi_agent_slot_attempt_envelope_claim_id")
+        if (
+            not isinstance(declared_id, str)
+            or not declared_id
+            or multi_agent_slot_attempt_envelope_claim_id(claim_body) != declared_id
+        ):
             raise ModelRuntimeRequirementError(
                 "the Phase 19 slot-attempt-envelope-claim this call produced has no readable "
-                "multi_agent_slot_attempt_envelope_claim_id -- refusing to commit anything"
+                "multi_agent_slot_attempt_envelope_claim_id, or its own recomputed identity does "
+                "not equal its own declared value -- refusing to commit anything"
             )
-        records.append((_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND, claim_id, claim_body))
+        if multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(
+            claim_body
+        ) != claim_body.get("multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"):
+            raise ModelRuntimeRequirementError(
+                "the Phase 19 slot-attempt-envelope-claim this call produced has no readable "
+                "multi_agent_slot_attempt_envelope_claim_semantic_fingerprint, or its own "
+                "recomputed value does not equal its own declared value -- refusing to commit "
+                "anything"
+            )
+        records.append((_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND, declared_id, claim_body))
     _commit(
         store,
         project_id,

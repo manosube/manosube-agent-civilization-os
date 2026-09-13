@@ -116,22 +116,6 @@ SLOT_OUTPUT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "execution_snapshot",
 )
 
-#: The narrow, natural-key projection a slot's own attempt envelope claim addresses -- one claim
-#: per (plan, slot, attempt_ordinal), the identical narrow key
-#: :data:`SLOT_OUTPUT_KEY_FIELDS` itself addresses, but under this kind's own distinct
-#: ``MULTI-AGENT-ENVELOPE-CLAIM-`` prefix so the two kinds never collide even for identical key
-#: content (Structural Review Round 3, P19-R3-F3).
-SLOT_ATTEMPT_ENVELOPE_CLAIM_KEY_FIELDS: tuple[str, ...] = SLOT_OUTPUT_KEY_FIELDS
-
-SLOT_ATTEMPT_ENVELOPE_CLAIM_SEMANTIC_FIELDS: tuple[str, ...] = (
-    "schema_version",
-    "project_id",
-    "plan_ref",
-    "slot_index",
-    "attempt_ordinal",
-    "model_execution_envelope_ref",
-)
-
 #: The narrow, natural-key projection a slot's own release receipt addresses -- one release per
 #: (plan, slot), never per attempt (this delivery releases the Agent exactly once per slot,
 #: regardless of which attempt ordinal it executed).
@@ -289,30 +273,19 @@ def multi_agent_slot_output_semantic_fingerprint(slot_output: dict[str, Any]) ->
     return _digest(_projection(slot_output, SLOT_OUTPUT_SEMANTIC_FIELDS, "multi_agent_slot_output"))
 
 
-def multi_agent_slot_attempt_envelope_claim_id(claim: dict[str, Any]) -> str:
-    """The narrow, natural-key content address of a Multi-Agent Slot Attempt Envelope Claim --
-    one per ``(plan, slot, attempt_ordinal)``, the identical narrow key
-    :func:`multi_agent_slot_output_id` itself addresses, but under this kind's own distinct
-    prefix (Structural Review Round 3, P19-R3-F3)."""
-
-    return _address(
-        "MULTI-AGENT-ENVELOPE-CLAIM-",
-        _projection(
-            claim,
-            SLOT_ATTEMPT_ENVELOPE_CLAIM_KEY_FIELDS,
-            "multi_agent_slot_attempt_envelope_claim",
-        ),
-    )
-
-
-def multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(claim: dict[str, Any]) -> str:
-    return _digest(
-        _projection(
-            claim,
-            SLOT_ATTEMPT_ENVELOPE_CLAIM_SEMANTIC_FIELDS,
-            "multi_agent_slot_attempt_envelope_claim",
-        )
-    )
+#: Structural Review Round 6, P19-R6-F2: this kind's own identity and semantic fingerprint no
+#: longer live here. ``model_runtime`` is the one route that ever commits this closed companion
+#: kind atomically alongside its own Envelope, and it could not independently recompute or
+#: verify a hash formula defined only in this package (which it may never import -- this
+#: package depends on ``model_runtime``, never the reverse); exact-head reproduction showed the
+#: gap that left open. The identical implementation now lives at
+#: :mod:`manosube_agent_civilization.model_runtime.claim_identity`
+#: (``multi_agent_slot_attempt_envelope_claim_id`` /
+#: ``multi_agent_slot_attempt_envelope_claim_semantic_fingerprint``), imported from there by this
+#: package's own :mod:`~manosube_agent_civilization.multi_agent.engine` and
+#: :mod:`~manosube_agent_civilization.multi_agent.route` -- relocated, never duplicated, so
+#: there is exactly one owner and every consumer, on both sides of the package boundary, follows
+#: it.
 
 
 def multi_agent_agent_release_receipt_id(receipt: dict[str, Any]) -> str:

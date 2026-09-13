@@ -33,6 +33,10 @@ from manosube_agent_civilization.difference.validation import (
     validate_record as _validate_canonical_record,
     validate_subrecord as _validate_canonical_subrecord,
 )
+from manosube_agent_civilization.model_runtime.claim_identity import (
+    multi_agent_slot_attempt_envelope_claim_id,
+    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
+)
 
 from .errors import MultiAgentReleaseIncompleteError, MultiAgentRequirementError
 from .identity import (
@@ -40,7 +44,6 @@ from .identity import (
     CONFLICT_SET_SEMANTIC_FIELDS,
     ORCHESTRATION_RECEIPT_SEMANTIC_FIELDS,
     RELEASE_RECEIPT_SEMANTIC_FIELDS,
-    SLOT_ATTEMPT_ENVELOPE_CLAIM_SEMANTIC_FIELDS,
     SLOT_OUTPUT_SEMANTIC_FIELDS,
     multi_agent_agent_release_receipt_id,
     multi_agent_agent_release_receipt_semantic_fingerprint,
@@ -53,8 +56,6 @@ from .identity import (
     multi_agent_evidence_aggregation_input_semantic_fingerprint,
     multi_agent_orchestration_receipt_id,
     multi_agent_orchestration_receipt_semantic_fingerprint,
-    multi_agent_slot_attempt_envelope_claim_id,
-    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
     multi_agent_slot_output_id,
     multi_agent_slot_output_semantic_fingerprint,
 )
@@ -624,7 +625,6 @@ __all__ = [
     "RELEASE_RECEIPT_SEMANTIC_FIELDS",
     "SCHEMA_VERSION",
     "SLOT_ATTEMPT_ENVELOPE_CLAIM_SCHEMA_NAME",
-    "SLOT_ATTEMPT_ENVELOPE_CLAIM_SEMANTIC_FIELDS",
     "SLOT_OUTPUT_SCHEMA_NAME",
     "SLOT_OUTPUT_SEMANTIC_FIELDS",
     "compute_attempt_id",

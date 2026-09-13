@@ -663,3 +663,83 @@ def test_p19_r5_f1_the_worker_already_won_the_gate_is_never_overridden_by_a_fals
         assert slot_output["outcome"] == "CANDIDATE_ACCEPTED"
         assert slot_output["model_execution_envelope_ref"] is not None
         assert executed["release_receipts"][0]["release_status"] == "RELEASED"
+
+
+def test_p19_r6_f1_a_post_commit_acknowledgement_loss_never_publishes_a_false_unavailable(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Structural Review Round 6, P19-R6-F1's own required decisive test: the exact-head
+    counterexample the adoption reproduced was an exception surfacing from
+    ``execute_model_work_unit`` strictly *after* its own atomic Envelope+claim commit already
+    succeeded -- an acknowledgement-loss between that real commit and this coordinator thread
+    observing its return value, never a failure of the adapter or the commit itself. Round 5's
+    own broad ``except Exception`` (P19-R4-F2) had no way to distinguish that case from a
+    genuine pre-commit failure, so it published a durable ``UNAVAILABLE`` slot output over a
+    real, already-committed ``CANDIDATE_ACCEPTED`` Envelope.
+
+    This test injects exactly that: ``execute_model_work_unit`` itself is wrapped so it still
+    performs its own real call (the real Envelope+claim commit genuinely happens) but then
+    raises before returning to its caller. The fix must recover the real terminal outcome from
+    the durably committed claim/Envelope pair -- never publish ``UNAVAILABLE`` -- and a
+    subsequent replay call must make zero further adapter calls.
+    """
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    opened = _open(world)
+
+    real_execute_model_work_unit = route_module.execute_model_work_unit  # type: ignore[attr-defined]
+
+    def _ack_losing_execute_model_work_unit(*args: Any, **kwargs: Any) -> Any:
+        # The real call still runs to completion -- its own atomic Envelope+claim commit
+        # genuinely succeeds -- before this wrapper discards its return value and raises,
+        # simulating the caller never receiving the acknowledgement of that already-durable
+        # commit.
+        real_execute_model_work_unit(*args, **kwargs)
+        raise RuntimeError("simulated acknowledgement loss after the real commit already succeeded")
+
+    monkeypatch.setattr(
+        route_module, "execute_model_work_unit", _ack_losing_execute_model_work_unit
+    )
+
+    adapter = SeededMultiAgentAdapter(candidate_fields={"summary": "ack-loss-survives"})
+    executed = _execute(world, opened["plan_ref"], lambda: adapter, "2026-09-11T01:30:00Z")
+
+    monkeypatch.setattr(route_module, "execute_model_work_unit", real_execute_model_work_unit)
+
+    # POST_COMMIT_ACK_LOSS_REAL_ENVELOPE_COUNT=1 / POST_COMMIT_ACK_LOSS_REAL_CLAIM_COUNT=1: the
+    # real adapter call happened exactly once, and its own real Envelope+claim genuinely
+    # committed durably despite the exception this coordinator observed afterward.
+    assert adapter.execute_call_count == 1
+    assert _record_kind_count(world["store"], world["project_id"], "model_execution_envelope") == 1
+    assert (
+        _record_kind_count(
+            world["store"], world["project_id"], "multi_agent_slot_attempt_envelope_claim"
+        )
+        == 1
+    )
+
+    # POST_COMMIT_ACK_LOSS_PUBLISHED_UNAVAILABLE_COUNT=0 /
+    # RECONSTRUCTED_SLOT_OUTCOME_EQUALS_ENVELOPE_OUTCOME=true: the published slot output is the
+    # real, durably committed outcome -- never a contradictory UNAVAILABLE fallback -- and it
+    # names the real committed Envelope.
+    slot_output = executed["slot_outputs"][0]
+    assert slot_output["outcome"] == "CANDIDATE_ACCEPTED"
+    assert slot_output["model_execution_envelope_ref"] is not None
+
+    # TERMINAL_FACT_COUNT_EXACTLY_ONE=true: exactly one slot output and one release receipt
+    # exist for this attempt -- the recovery path derived a single terminal fact, not a second
+    # one alongside some other record this exception might otherwise have left behind.
+    assert _record_kind_count(world["store"], world["project_id"], "multi_agent_slot_output") == 1
+    assert executed["release_receipts"][0]["release_status"] == "RELEASED"
+
+    # REPLAY_DUPLICATE_ADAPTER_CALL_COUNT=0: a fresh call over the identical plan_ref reuses the
+    # already-committed slot output verbatim -- the adapter is never reached again.
+    def _forbidden_factory() -> Any:
+        raise AssertionError("adapter_factory must not be called on a genuine replay")
+
+    replayed = _execute(world, opened["plan_ref"], _forbidden_factory, "2026-09-11T01:45:00Z")
+    assert (
+        replayed["slot_outputs"][0]["multi_agent_slot_output_id"]
+        == slot_output["multi_agent_slot_output_id"]
+    )
+    assert adapter.execute_call_count == 1
