@@ -19,7 +19,7 @@ from manosube_agent_civilization.store.errors import (
     TransactionConflictError,
 )
 
-from . import engine, identity
+from . import engine, identity, validation
 from .errors import (
     AcceptancePolicyValidationError,
     ConflictingPolicyReplayError,
@@ -27,6 +27,12 @@ from .errors import (
     UnauthorizedPolicyAdoptionError,
 )
 from .types import HUMAN_AUTHORITY, REQUIRED_COMMENT_AUTHOR_ASSOCIATION
+
+_BASELINE_SCHEMA = "acceptance_policy_baseline.schema.json"
+_TRANSITION_SCHEMA = "acceptance_policy_transition.schema.json"
+_ADOPTION_SCHEMA = "acceptance_policy_adoption.schema.json"
+_EFFECTIVE_VIEW_SCHEMA = "acceptance_policy_effective_view.schema.json"
+_IMPACT_PREVIEW_SCHEMA = "acceptance_policy_impact_preview.schema.json"
 
 _BASELINE_KIND = "acceptance_policy_baseline"
 _TRANSITION_KIND = "acceptance_policy_transition"
@@ -159,6 +165,7 @@ def open_acceptance_policy_baseline(
         source_reference=source_reference,
         clauses=clauses,
     )
+    validation.validate_record(baseline, _BASELINE_SCHEMA)
     _commit_one_record(
         store,
         project_id,
@@ -183,6 +190,7 @@ def resolve_and_verify_baseline(
         raise PolicyProvenanceError(
             f"acceptance_policy_baseline {baseline_id_value!r} does not resolve"
         )
+    validation.validate_record(resolved, _BASELINE_SCHEMA)
     if resolved["project_id"] != project_id:
         raise PolicyProvenanceError(
             f"acceptance_policy_baseline {baseline_id_value!r} is bound to a different project "
@@ -215,6 +223,7 @@ def resolve_and_verify_transition(
         raise PolicyProvenanceError(
             f"acceptance_policy_transition {transition_id_value!r} does not resolve"
         )
+    validation.validate_record(resolved, _TRANSITION_SCHEMA)
     if resolved["project_id"] != project_id:
         raise PolicyProvenanceError(
             f"acceptance_policy_transition {transition_id_value!r} is bound to a different "
@@ -249,6 +258,7 @@ def resolve_and_verify_adoption(
         raise PolicyProvenanceError(
             f"acceptance_policy_adoption {adoption_id_value!r} does not resolve"
         )
+    validation.validate_record(resolved, _ADOPTION_SCHEMA)
     if resolved["project_id"] != project_id:
         raise PolicyProvenanceError(
             f"acceptance_policy_adoption {adoption_id_value!r} is bound to a different project "
@@ -274,32 +284,65 @@ def resolve_and_verify_adoption(
     return resolved
 
 
+def _resolve_canonical_adoptions(
+    store: Any, project_id: str, baseline: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """P82-R1-F1: derive the complete, canonically-ordered adoption set for this baseline's own
+    work unit directly from Store-owned state -- never from a caller-supplied list. A caller
+    can no longer omit, subset, reorder, fork, or substitute an unrelated adoption into this
+    lineage's own effective-policy resolution, because it no longer supplies the set at all.
+
+    Canonical order is genuine commit order, not directory/sort order: ``_commit_one_record``
+    sets a record's own content-addressed id as its committing transaction's ``transaction_id``
+    (see :mod:`.route` module docstring), so :meth:`store.resolve_transaction` keyed by each
+    adoption id returns that adoption's own committed ``to_revision`` -- the one canonical,
+    monotonic ordering this project's Store ever assigns.
+    """
+
+    governing_issue = baseline["governing_issue"]
+    candidate_ids = store.list_committed_record_ids(project_id, _ADOPTION_KIND)
+    ordered: list[tuple[int, dict[str, Any]]] = []
+    for adoption_id_value in candidate_ids:
+        adoption = resolve_and_verify_adoption(store, project_id, adoption_id_value)
+        if adoption["governing_issue"] != governing_issue:
+            continue
+        transaction = store.resolve_transaction(project_id, adoption_id_value)
+        if transaction is None:
+            raise PolicyProvenanceError(
+                f"acceptance_policy_adoption {adoption_id_value!r} has no resolvable "
+                "committing transaction -- cannot establish canonical lineage order"
+            )
+        ordered.append((transaction["to_revision"], adoption))
+    ordered.sort(key=lambda pair: pair[0])
+    return [adoption for _, adoption in ordered]
+
+
 def resolve_and_verify_effective_policy(
     store: Any,
     project_id: str,
     baseline_ref: dict[str, str],
-    adoption_refs: list[dict[str, str]],
 ) -> dict[str, Any]:
     """FD4-C6: derive the current effective policy from the Store-resolved, independently
-    reproduced baseline plus the Store-resolved, independently reproduced adoptions named by
-    *adoption_refs*, in the order given. Every referenced transition is likewise Store-resolved
-    and reproduced before being folded -- nothing here trusts an unresolved reference.
+    reproduced baseline plus the complete, canonically-ordered adoption set this same lineage's
+    own Store state defines (P82-R1-F1 -- never a caller-supplied ``adoption_refs`` list).
+    Every referenced transition is likewise Store-resolved and reproduced before being folded --
+    nothing here trusts an unresolved reference.
     """
 
     baseline = resolve_and_verify_baseline(store, project_id, baseline_ref["id"])
+    adoptions = _resolve_canonical_adoptions(store, project_id, baseline)
 
-    adoptions: list[dict[str, Any]] = []
     transitions_by_id: dict[str, dict[str, Any]] = {}
-    for adoption_ref in adoption_refs:
-        adoption = resolve_and_verify_adoption(store, project_id, adoption_ref["id"])
-        adoptions.append(adoption)
+    for adoption in adoptions:
         adopted_ref = adoption["adopted_ref"]
         if adopted_ref["kind"] == _TRANSITION_KIND and adopted_ref["id"] not in transitions_by_id:
             transitions_by_id[adopted_ref["id"]] = resolve_and_verify_transition(
                 store, project_id, adopted_ref["id"]
             )
 
-    return engine.derive_effective_policy(baseline, transitions_by_id, adoptions)
+    effective_view = engine.derive_effective_policy(baseline, transitions_by_id, adoptions)
+    validation.validate_record(effective_view, _EFFECTIVE_VIEW_SCHEMA)
+    return effective_view
 
 
 def propose_acceptance_policy_transition(
@@ -308,7 +351,6 @@ def propose_acceptance_policy_transition(
     *,
     governing_issue: int,
     baseline_ref: dict[str, str],
-    adoption_refs: list[dict[str, str]],
     clause_id: str,
     policy_operation: str,
     proposed_by: str,
@@ -328,9 +370,7 @@ def propose_acceptance_policy_transition(
 
     _require_source_reference(source_reference)
     baseline = resolve_and_verify_baseline(store, project_id, baseline_ref["id"])
-    effective_view = resolve_and_verify_effective_policy(
-        store, project_id, baseline_ref, adoption_refs
-    )
+    effective_view = resolve_and_verify_effective_policy(store, project_id, baseline_ref)
     effective_by_id = {c["clause_id"]: c for c in effective_view["effective_clauses"]}
     prior_effective = effective_by_id.get(clause_id)
 
@@ -372,6 +412,7 @@ def propose_acceptance_policy_transition(
         source_reference=source_reference,
         rollback_condition=rollback_condition,
     )
+    validation.validate_record(transition, _TRANSITION_SCHEMA)
     _commit_one_record(
         store,
         project_id,
@@ -420,6 +461,7 @@ def adopt_acceptance_policy_transition(
         source_reference=source_reference,
         decided_at=decided_at,
     )
+    validation.validate_record(adoption, _ADOPTION_SCHEMA)
     _commit_one_record(
         store,
         project_id,
@@ -435,24 +477,23 @@ def preview_acceptance_policy_transition(
     store: Any,
     project_id: str,
     baseline_ref: dict[str, str],
-    adoption_refs: list[dict[str, str]],
     candidate_transition: dict[str, Any],
 ) -> dict[str, Any]:
     """FD4-C7: the bounded before/after impact preview, computed against the real,
-    Store-resolved current effective policy. Makes no Store mutation -- *candidate_transition*
-    need not even be committed yet."""
+    Store-resolved current effective policy (P82-R1-F1: the canonical, Store-derived adoption
+    set, never a caller-supplied list). Makes no Store mutation -- *candidate_transition* need
+    not even be committed yet."""
 
-    effective_view = resolve_and_verify_effective_policy(
-        store, project_id, baseline_ref, adoption_refs
-    )
-    return engine.build_impact_preview(effective_view, candidate_transition)
+    effective_view = resolve_and_verify_effective_policy(store, project_id, baseline_ref)
+    preview = engine.build_impact_preview(effective_view, candidate_transition)
+    validation.validate_record(preview, _IMPACT_PREVIEW_SCHEMA)
+    return preview
 
 
 def assert_no_undeclared_policy_change_in_payload(
     store: Any,
     project_id: str,
     baseline_ref: dict[str, str],
-    adoption_refs: list[dict[str, str]],
     payload: dict[str, Any],
 ) -> None:
     """FD4-C4: refuse fail-closed if *payload* -- a code finding, review round, implementation
@@ -460,9 +501,7 @@ def assert_no_undeclared_policy_change_in_payload(
     this lineage's own Store-resolved effective policy, without declaring
     ``policy_change: True``."""
 
-    effective_view = resolve_and_verify_effective_policy(
-        store, project_id, baseline_ref, adoption_refs
-    )
+    effective_view = resolve_and_verify_effective_policy(store, project_id, baseline_ref)
     known_clause_ids = frozenset(c["clause_id"] for c in effective_view["effective_clauses"])
     engine.assert_no_undeclared_policy_change(payload, known_clause_ids)
 

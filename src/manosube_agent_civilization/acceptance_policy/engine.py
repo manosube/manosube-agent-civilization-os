@@ -335,12 +335,17 @@ def derive_effective_policy(
     complete ordered set of valid, identity-bound adoptions -- never a caller-authored
     summary.
 
-    *adoptions* must already be in the order they were decided (the Store's own append-order
-    for this work unit's adoption records). Each adoption's target is folded in turn; the
-    moment any one cannot be cleanly folded onto the state-so-far, this function refuses
-    rather than silently picking a resolution (FD4-C6's own explicit requirement that
-    conflicting/missing/cyclic/stale/cross-project/unauthorized transitions "remain explicit
-    and block a clean policy view").
+    *adoptions* must already be in the order they were decided (the Store's own canonical
+    commit order for this work unit's adoption records -- see ``route._resolve_canonical_
+    adoptions``). Each adoption's target is folded in turn; the moment any one cannot be
+    cleanly folded onto the state-so-far, this function refuses rather than silently picking a
+    resolution (FD4-C6's own explicit requirement that conflicting/missing/cyclic/stale/
+    cross-project/unauthorized transitions "remain explicit and block a clean policy view").
+
+    P82-R1-F2: the baseline's own clauses are not live until an adoption of the baseline
+    itself is folded -- ``effective_clauses`` is empty for a proposed-but-not-yet-adopted
+    baseline, and a transition-targeting adoption folded before the baseline's own is refused
+    as an ordering violation, never silently accepted against an unseeded state.
     """
 
     project_id = baseline["project_id"]
@@ -353,14 +358,10 @@ def derive_effective_policy(
     live: dict[str, dict[str, Any]] = {}
     provenance: dict[str, list[dict[str, str]]] = {}
     current_version_ref: dict[str, dict[str, str]] = {}
-
-    for clause in baseline["clauses"]:
-        clause_id = clause["clause_id"]
-        if clause_id in live:
-            raise PolicyLineageConflictError(f"baseline declares duplicate clause_id {clause_id!r}")
-        live[clause_id] = clause
-        provenance[clause_id] = [baseline_ref]
-        current_version_ref[clause_id] = baseline_ref
+    # P82-R1-F2: the genesis baseline's own clauses are never seeded into the effective view
+    # until an explicit, identity-bound Human-Authority adoption of the baseline itself is
+    # folded -- a baseline that merely exists (proposed, committed) is not yet in effect.
+    baseline_activated = False
 
     folded_adoption_refs: list[dict[str, str]] = []
     seen_adoption_ids: set[str] = set()
@@ -387,8 +388,37 @@ def derive_effective_policy(
                 raise PolicyLineageConflictError(
                     f"adoption {adoption_record_id!r} adopts a different baseline than this lineage's own"
                 )
+            if baseline_activated:
+                # P82-R1-F2: a second adoption of the identical, already-activated genesis
+                # baseline is a duplicate baseline adoption -- refused rather than silently
+                # folded as a no-op, so exactly one Human-Authority act is ever what activates
+                # a genesis.
+                raise PolicyLineageConflictError(
+                    f"adoption {adoption_record_id!r} is a duplicate genesis-baseline adoption -- "
+                    f"baseline {baseline['acceptance_policy_baseline_id']!r} is already activated"
+                )
+            for clause in baseline["clauses"]:
+                clause_id = clause["clause_id"]
+                if clause_id in live:
+                    raise PolicyLineageConflictError(
+                        f"baseline declares duplicate clause_id {clause_id!r}"
+                    )
+                live[clause_id] = clause
+                provenance[clause_id] = [baseline_ref]
+                current_version_ref[clause_id] = baseline_ref
+            baseline_activated = True
             folded_adoption_refs.append(adoption_ref)
             continue
+
+        if not baseline_activated:
+            # P82-R1-F2: a transition-targeting adoption folded before the genesis baseline's
+            # own adoption is a transition-before-baseline ordering violation -- there is no
+            # activated predecessor state for it to extend yet.
+            raise PolicyLineageConflictError(
+                f"adoption {adoption_record_id!r} adopts transition {adopted_ref['id']!r} "
+                f"before this lineage's own genesis baseline "
+                f"{baseline['acceptance_policy_baseline_id']!r} has itself been adopted"
+            )
 
         transition_id_value = adopted_ref["id"]
         transition = transitions_by_id.get(transition_id_value)
@@ -514,18 +544,29 @@ def build_impact_preview(
 
     after_clauses_by_id = dict(before_clauses_by_id)
     if candidate_transition["policy_operation"] == "REMOVE":
+        # P82-R1-F5: a removed clause has no surviving effective version -- no provenance to
+        # extend, because there is nothing left to attribute it to.
         after_clauses_by_id.pop(clause_id, None)
     else:
         proposed = candidate_transition["proposed_clause"]
+        # P82-R1-F5: the candidate transition itself must appear in the after-policy clause's
+        # own provenance -- an ADD's chain starts with it (there is no prior chain to extend);
+        # every modifying operation (REPLACE/NARROW/BROADEN/RECLASSIFY) extends the prior
+        # effective clause's own chain with it. Previously this fold silently reused the prior
+        # clause's provenance unchanged, so a preview's own after-policy could never be
+        # attributed back to the candidate transition that produced it.
+        candidate_transition_ref = {
+            "kind": "acceptance_policy_transition",
+            "id": candidate_transition["acceptance_policy_transition_id"],
+        }
+        prior_provenance = list(prior_effective["provenance_chain"]) if prior_effective else []
         after_clauses_by_id[clause_id] = {
             "clause_id": clause_id,
             "policy_class": proposed["policy_class"],
             "blocking_effect": proposed["blocking_effect"],
             "scope": proposed["scope"],
             "existed_in_original_contract": proposed["existed_in_original_contract"],
-            "provenance_chain": list(prior_effective["provenance_chain"])
-            if prior_effective
-            else [],
+            "provenance_chain": [*prior_provenance, candidate_transition_ref],
         }
 
     prior_blockers = (

@@ -10,7 +10,7 @@ KERNEL_ELEMENT=NONE_ACCEPTANCE_POLICY_LINEAGE_ADAPTER
 CANONICAL_KERNEL_COUNT=1
 ACCEPTANCE_POLICY_OWNER_COUNT=1
 PUBLIC_ACCEPTANCE_POLICY_ENTRY_POINT_COUNT=9
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=0
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
 ```
 
 ---
@@ -30,7 +30,8 @@ never as prose, never as a side effect of an unrelated record.
                                     non-claims
 ```
 
-This is a **first delivery**: `STRUCTURAL_REVIEW_ROUNDS_APPLIED=0`. Issue #80's own adopted
+This delivery has passed one round of Structural Review: `STRUCTURAL_REVIEW_ROUNDS_APPLIED=1`
+(P82-R1-F1..F5, `ACCEPTANCE_POLICY_CONTRACT.md` §10). Issue #80's own adopted
 FD-0004 contract, restated structurally:
 
 ```text
@@ -131,9 +132,13 @@ resolve_and_verify_transition             the same, for a committed Transition.
 resolve_and_verify_adoption               the same, for a committed Adoption -- additionally
                                            re-verifies decision_owner and source_reference every
                                            read, never only at commit time (FD4-C3).
-resolve_and_verify_effective_policy       fold a Store-resolved baseline + ordered, Store-
-                                           resolved adoptions into the current effective policy
-                                           (FD4-C6). Refuses on any lineage conflict.
+resolve_and_verify_effective_policy       fold a Store-resolved baseline + the complete,
+                                           canonically-ordered adoption set this lineage's own
+                                           Store state defines (never a caller-supplied list,
+                                           Structural Review Round 1 P82-R1-F1) into the current
+                                           effective policy (FD4-C6). Refuses on any lineage
+                                           conflict, and exposes no baseline clause until the
+                                           baseline's own adoption is folded (P82-R1-F2).
 propose_acceptance_policy_transition      commit one Transition against the real, freshly
                                            resolved effective policy -- refuses fail-closed if the
                                            declared operation disagrees with the independently

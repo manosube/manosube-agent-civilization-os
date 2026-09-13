@@ -33,6 +33,20 @@ BASELINE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "clauses",
 )
 
+#: P82-R1-F3: the baseline's own *identity* is deliberately narrower than its semantic
+#: fingerprint -- a natural key over which work unit it is the genesis for, never its full
+#: content. This is the same deliberate narrow-key exception ``multi_agent/identity.py``'s
+#: own module docstring already documents for five of its six kinds: a narrow, natural-key id
+#: is what makes "exactly one canonical genesis baseline per (project_id, governing_issue)" a
+#: native Store behaviour rather than application-level bookkeeping. Two different baseline
+#: bodies proposed for the identical work unit collide at the identical content-addressed
+#: transaction id `route._commit_one_record` already derives from a record's own id, so the
+#: Store's own manifest-identity check refuses the second one as a conflicting replay
+#: (``ConflictingPolicyReplayError``) before any durable write -- no second schema, no second
+#: locking primitive. The full content is still independently verified on every read via
+#: :func:`baseline_semantic_fingerprint`, unchanged.
+BASELINE_NATURAL_KEY_FIELDS: tuple[str, ...] = ("project_id", "governing_issue")
+
 #: What a proposed Transition *is*: the exact operation on the exact clause, hash-linked to the
 #: exact predecessor it extends, proposed by whom, from where, with what declared classification
 #: -- deliberately excluding no lifecycle field, because a transition has none: it is either
@@ -118,7 +132,7 @@ def baseline_semantic_fingerprint(baseline: dict[str, Any]) -> str:
 
 
 def baseline_id(baseline: dict[str, Any]) -> str:
-    return _record_id(baseline, BASELINE_SEMANTIC_FIELDS, "AP-BASE-")
+    return _record_id(baseline, BASELINE_NATURAL_KEY_FIELDS, "AP-BASE-")
 
 
 def transition_semantic_fingerprint(transition: dict[str, Any]) -> str:

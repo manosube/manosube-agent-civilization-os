@@ -9,7 +9,7 @@ STATUS=CANONICAL_DESIGN
 KERNEL_ELEMENT=NONE_ACCEPTANCE_POLICY_LINEAGE_ADAPTER
 ACCEPTANCE_POLICY_OWNER_COUNT=1
 PUBLIC_ACCEPTANCE_POLICY_ENTRY_POINT_COUNT=9
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=0
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
 TEST_SUITE_PRESENT_AT_DELIVERY=true
 NEW_SCHEMA_COUNT=7
 ```
@@ -72,18 +72,18 @@ genesis_adoption = adopt_acceptance_policy_transition(
     store, project_id, governing_issue=77,
     adopted_ref=baseline_ref, decision_owner="SHUKOU",
     source_reference={...}, decided_at="...", committed_at="...",
-)
-adoption_refs = [{"kind": "acceptance_policy_adoption", "id": genesis_adoption["acceptance_policy_adoption_id"]}]
+)                                              # P82-R1-F2: the baseline's own clauses are not
+                                               # effective until this exact act happens
 
 transition = propose_acceptance_policy_transition(
     store, project_id, governing_issue=77,
-    baseline_ref=baseline_ref, adoption_refs=adoption_refs,
+    baseline_ref=baseline_ref,
     clause_id="GITHUB_PREMERGE_GATE_GREEN", policy_operation="ADD",
     proposed_by="STRUCTURAL_ADVISOR", proposed_clause={...}, source_reference={...},
     rollback_condition="revert on demand", committed_at="...",
 )
 
-preview = preview_acceptance_policy_transition(store, project_id, baseline_ref, adoption_refs, transition)
+preview = preview_acceptance_policy_transition(store, project_id, baseline_ref, transition)
 preview["new_blockers"]                       # exactly what SHUKOU sees before adopting
 
 adoption = adopt_acceptance_policy_transition(
@@ -91,13 +91,14 @@ adoption = adopt_acceptance_policy_transition(
     adopted_ref={"kind": "acceptance_policy_transition", "id": transition["acceptance_policy_transition_id"]},
     decision_owner="SHUKOU", source_reference={...}, decided_at="...", committed_at="...",
 )
-adoption_refs.append({"kind": "acceptance_policy_adoption", "id": adoption["acceptance_policy_adoption_id"]})
 
-effective = resolve_and_verify_effective_policy(store, project_id, baseline_ref, adoption_refs)
-effective["effective_clauses"]                # the derived, never-committed view
+effective = resolve_and_verify_effective_policy(store, project_id, baseline_ref)
+effective["effective_clauses"]                # the derived, never-committed view -- the complete
+                                               # adoption set is derived from Store-owned state
+                                               # (§10, P82-R1-F1), never supplied by the caller
 
 assert_no_undeclared_policy_change_in_payload(
-    store, project_id, baseline_ref, adoption_refs,
+    store, project_id, baseline_ref,
     payload={"required_proofs": {"GITHUB_PREMERGE_GATE_GREEN_REQUIRED": True}},
 )                                              # refuses unless payload["policy_change"] is True
 ```
@@ -512,11 +513,14 @@ ASSOCIATION                 "OWNER" -- the sole comment-author association this 
 
 ```text
 V1  Deterministic schema/identity totality       tests/unit/acceptance_policy/
-    test_acceptance_policy_identity.py (15 tests): clause shape/enum validation, every one of
+    test_acceptance_policy_identity.py (17 tests): clause shape/enum validation, every one of
     baseline/transition/adoption/impact-preview reproduces its own id/fingerprint from its own
     content, changes when a semantic field changes, is stable under identical reconstruction,
     and every refusal path (empty clause list, duplicate clause_id, non-original-contract
-    genesis clause, non-SHUKOU adoption) is exercised.
+    genesis clause, non-SHUKOU adoption) is exercised. (§10, P82-R1-F3) two tests prove the
+    baseline id is now a narrow ``(project_id, governing_issue)`` natural key -- stable across
+    different clause content for the same work unit, distinct for a different governing_issue
+    or project.
 
 V3  Semantic diff and undeclared-change scanner  tests/unit/acceptance_policy/
     test_acceptance_policy_diff.py (17 tests): all six classify_operation outcomes plus the
@@ -526,22 +530,30 @@ V3  Semantic diff and undeclared-change scanner  tests/unit/acceptance_policy/
 
 V6  Lineage integration, incident fixture, and   tests/integration/acceptance_policy/
     tamper/replay/substitution matrix            test_acceptance_policy_lineage_and_incident_
-    fixture.py (19 tests): the canonical successful route (genesis, propose+adopt, impact
+    fixture.py (29 tests): the canonical successful route (genesis, propose+adopt, impact
     preview), the four-test Phase 19 incident fixture (FD4-C8), the undeclared-change
     integration controls (FD4-C4), the Human-Authority/comment-association/cross-project tamper
     matrix (FD4-C3/C6), the missing-predecessor/fork/reorder lineage-conflict matrix (FD4-C6),
-    exact-replay idempotency and conflicting-replay refusal (FD4-C9), and the decisive
-    "no refusal ever advances state_revision" sweep.
+    exact-replay idempotency and conflicting-replay refusal (FD4-C9), the decisive
+    "no refusal ever advances state_revision" sweep, and (§10, Structural Review Round 1) the
+    Store-derived canonical adoption scoping (P82-R1-F1), baseline-activation ordering
+    (P82-R1-F2), singleton genesis baseline (P82-R1-F3), construction/resolve-boundary schema
+    validation (P82-R1-F4), and impact-preview provenance extension (P82-R1-F5) matrices.
 
 V7  Static conformance                           tests/contract/acceptance_policy/
     test_acceptance_policy_static_conformance.py (10 tests): single Store committer, no second
     Store/Authority/Difference/Evidence/Reflow owner, engine.py touches no Store, the public
     surface is exactly the 9 documented entry points, no undocumented leading-underscore escape,
     and all 7 schemas exist, are Draft 2020-12 valid, and are internally resolvable.
+
+    (§10) tests/unit/acceptance_policy/test_acceptance_policy_validation.py (11 tests):
+    positive and negative schema-validation controls for each of the five committed/derived
+    record kinds (baseline, transition, adoption, effective view, impact preview) against the
+    unchanged 86-schema canonical registry (P82-R1-F4), plus an unregistered-schema-name control.
 ```
 
-Total: 62 tests, `pytest tests/unit/acceptance_policy tests/contract/acceptance_policy
-tests/integration/acceptance_policy -q` -> `62 passed`.
+Total: 84 tests, `pytest tests/unit/acceptance_policy tests/contract/acceptance_policy
+tests/integration/acceptance_policy -q` -> `84 passed`.
 
 ## 9. Explicit non-claims
 
@@ -569,3 +581,78 @@ tests/integration/acceptance_policy -q` -> `62 passed`.
   world.py` and the test suite itself.** This delivery does not commit a real, production
   Baseline for this repository's actual current acceptance policy -- that is a Structural
   Review / SHUKOU decision, out of scope for this code delivery.
+
+## 10. Structural Review Round 1 corrections (PR #82, P82-R1-F1..F5)
+
+SHUKOU adopted Structural Review Round 1's five findings on PR #82
+(review `...#issuecomment-5656441320`, adoption `...#issuecomment-5656449713`, handoff
+`...#issuecomment-5656451312`). All five are closed on the same branch/PR, with no new schema
+file (`NEW_SCHEMA_COUNT=7` unchanged, `EXPECTED_SCHEMA_COUNT=86` unchanged) and no scope
+expansion beyond the five findings.
+
+**P82-R1-F1 (caller-supplied `adoption_refs` removed):** every public route that used to accept
+an `adoption_refs: list[dict[str, str]]` parameter (`resolve_and_verify_effective_policy`,
+`propose_acceptance_policy_transition`, `preview_acceptance_policy_transition`,
+`assert_no_undeclared_policy_change_in_payload`) no longer does. The complete adoption set for
+one `(project_id, governing_issue)` lineage is derived entirely from Store-owned state by a new
+private helper, `route._resolve_canonical_adoptions`: it enumerates every committed
+`acceptance_policy_adoption` for the project (`store.list_committed_record_ids`), filters to
+this lineage's own `governing_issue`, and orders the result by each adoption's own committing
+transaction's `to_revision` (`store.resolve_transaction`, keyed by the adoption's own id -- a
+record's content-addressed id is already that record's own committing `transaction_id`, per
+`route._commit_one_record`). A caller can no longer omit, subset, reorder, fork, or substitute
+an unrelated adoption into this resolution, because it no longer supplies the set at all.
+`engine.derive_effective_policy` itself is retained as a defense-in-depth pure function that
+still refuses an out-of-canonical-order adoption list handed to it directly (proven by
+`test_reordered_adoption_sequence_refuses`, now exercised at that lower layer).
+
+**P82-R1-F2 (baseline-activation gating):** `engine.derive_effective_policy` no longer seeds a
+baseline's own clauses into the effective view unconditionally. A new `baseline_activated` gate
+seeds `live`/`provenance`/`current_version_ref` from the baseline's own clauses only when an
+adoption whose `adopted_ref` names that exact baseline is folded; every other adoption (a
+transition-targeting one) folded before that point raises `PolicyLineageConflictError`
+("transition-before-baseline"), and a second baseline-targeting adoption after activation raises
+the same error ("duplicate genesis-baseline adoption"). `effective_clauses` is the empty list for
+a baseline that is committed but never itself adopted.
+
+**P82-R1-F3 (singleton genesis baseline via a narrow natural-key identity):**
+`identity.baseline_id` (and therefore `acceptance_policy_baseline_id`) is now computed over a new
+`BASELINE_NATURAL_KEY_FIELDS = ("project_id", "governing_issue")` tuple, not the full
+`BASELINE_SEMANTIC_FIELDS` content -- the same deliberate narrow-key exception
+`multi_agent/identity.py` already documents for five of its own six record kinds.
+`baseline_semantic_fingerprint` is unchanged (still the full-content hash, independently
+re-verified on every read). Two different baseline bodies proposed for the identical
+`(project_id, governing_issue)` now collide at the identical id, so `route._commit_one_record`'s
+existing manifest-identity reuse check refuses the second one as a `ConflictingPolicyReplayError`
+before any durable write -- no second schema, no second locking primitive, reusing the exact
+mechanism FD4-C9 already provides for exact-replay/conflicting-replay detection.
+
+**P82-R1-F4 (schema validation at construction and Store-resolve boundaries):** a new module,
+`acceptance_policy/validation.py`, is a direct structural analogue of `binding/validation.py` --
+its own private `lru_cache`d `Draft202012Validator` registry over the same canonical
+`01_SCHEMA/` tree, never imported from or into another domain's copy. `route.py` calls
+`validation.validate_record` at eight points: immediately after each of the five record-shaped
+constructions (`open_acceptance_policy_baseline`, `propose_acceptance_policy_transition`,
+`adopt_acceptance_policy_transition`, `resolve_and_verify_effective_policy`,
+`preview_acceptance_policy_transition`) and before any commit or return, and again inside each of
+the three Store-resolve functions (`resolve_and_verify_baseline`, `resolve_and_verify_transition`,
+`resolve_and_verify_adoption`) immediately after the `None`-check, before any other field is read
+off a Store-resolved body. `acceptance_policy_clause` validates only embedded, via the baseline/
+transition schemas' own `$ref`; `acceptance_policy_refusal_outcome` has no producer to validate,
+unchanged from §3 item 7.
+
+**P82-R1-F5 (impact-preview provenance extension):** `engine.build_impact_preview` now appends
+the candidate transition's own reference to the changed after-policy clause's `provenance_chain`
+-- an ADD's chain starts with just that reference (there is no prior chain to extend); every
+modifying operation (REPLACE/NARROW/BROADEN/RECLASSIFY) extends the prior effective clause's own
+chain with it; REMOVE has no surviving clause in `after_policy` at all, so nothing is added.
+Previously this fold silently reused the prior clause's own provenance chain unchanged, so a
+preview's own after-policy could never be attributed back to the candidate transition that
+produced it.
+
+```text
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=5
+STRUCTURAL_REVIEW_ROUND_1_NEW_SCHEMA_FILES=0
+STRUCTURAL_REVIEW_ROUND_1_SCHEMA_COUNT_UNCHANGED=true
+STRUCTURAL_REVIEW_ROUND_1_TEST_COUNT=84
+```

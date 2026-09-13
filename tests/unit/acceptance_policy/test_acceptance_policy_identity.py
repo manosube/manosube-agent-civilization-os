@@ -112,13 +112,48 @@ def test_baseline_id_and_fingerprint_reproduce_from_their_own_content() -> None:
     )
 
 
-def test_baseline_id_changes_when_a_clause_changes() -> None:
+def test_baseline_id_is_a_narrow_natural_key_stable_across_different_clause_content() -> None:
+    """P82-R1-F3: the baseline's own identity is a narrow ``(project_id, governing_issue)``
+    natural key, not a full-content hash -- two different clause sets proposed for the
+    identical work unit collide at the identical id (so the Store's own manifest-identity
+    check is what refuses the second one as a conflicting replay), while their own semantic
+    fingerprints still differ and still independently verify the full content on every read."""
+
     baseline_a = _baseline()
     baseline_b = build_baseline(
         project_id=_PROJECT_ID,
         governing_issue=77,
         source_reference=baseline_a["source_reference"],
         clauses=[_clause("ORIGINAL_CLAUSE", merge=True)],
+    )
+    assert (
+        baseline_a["acceptance_policy_baseline_id"] == baseline_b["acceptance_policy_baseline_id"]
+    )
+    assert (
+        baseline_a["baseline_semantic_fingerprint"] != baseline_b["baseline_semantic_fingerprint"]
+    )
+
+
+def test_baseline_id_changes_for_a_different_governing_issue() -> None:
+    baseline_a = _baseline()
+    baseline_b = build_baseline(
+        project_id=_PROJECT_ID,
+        governing_issue=78,
+        source_reference=baseline_a["source_reference"],
+        clauses=[_clause("ORIGINAL_CLAUSE")],
+    )
+    assert (
+        baseline_a["acceptance_policy_baseline_id"] != baseline_b["acceptance_policy_baseline_id"]
+    )
+
+
+def test_baseline_id_changes_for_a_different_project() -> None:
+    baseline_a = _baseline()
+    baseline_b = build_baseline(
+        project_id="PRJ-AP-0002",
+        governing_issue=77,
+        source_reference=baseline_a["source_reference"],
+        clauses=[_clause("ORIGINAL_CLAUSE")],
     )
     assert (
         baseline_a["acceptance_policy_baseline_id"] != baseline_b["acceptance_policy_baseline_id"]

@@ -3947,3 +3947,80 @@ ISSUE_CLOSE_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 PHASE_20_ALLOWED=false
 ```
+
+# 53. PR #82 Structural Review Round 1 (P82-R1-F1..F5) bounded addendum
+
+本節もClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。§52と同じ理由 -- `MERGE_SOURCE_REFLOW_CONTRACT.md`の要求する
+source_document paired updateを、`src/manosube_agent_civilization/acceptance_policy/`・
+`src/manosube_agent_civilization/store/file_store.py`配下の変更に対応付けるためだけの、最小限の
+事実記録である。
+
+PR #82上で構造参謀レビュー`https://github.com/manosube/manosube-agent-civilization-os/pull/82#issuecomment-5656441320`
+(5件のfinding、`STRUCTURAL_DECISION=CHANGES_REQUIRED`)、SHUKOU正式採択
+`...#issuecomment-5656449713`、実装handoff`...#issuecomment-5656451312`が投稿された。本記録
+作成者はこれら3件全てを、著者login/id/association(`manosube`/OWNER)・本文・live PR #82状態
+(OPEN・未マージ)・head/base SHA(`a8b61aab8be6c57ef4135cc4808eaa7e9a02f1cd`/
+`3791831884e7419f7f2f3497666da68842b8e276`、いずれも未変化)について、本記録作成直前にGitHub
+API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-13
+GOVERNING_PR=#82
+REVIEW_ROUND=1
+STRUCTURAL_REVIEW_COMMENT_ID=5656441320
+ADOPTION_COMMENT_ID=5656449713
+HANDOFF_COMMENT_ID=5656451312
+PRE_ROUND_HEAD_SHA=a8b61aab8be6c57ef4135cc4808eaa7e9a02f1cd
+BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された5件のfinding(P82-R1-F1..F5)はいずれも`15_ACCEPTANCE_POLICY/`の既存contractが
+pinする`EXPECTED_SCHEMA_COUNT=86`を変更せず、既存の7 schemaファイルのみを対象に、
+`src/manosube_agent_civilization/acceptance_policy/`(`route.py`・`engine.py`・`identity.py`)・
+`src/manosube_agent_civilization/store/file_store.py`・新規`validation.py`の変更のみで修正した。
+
+F1(caller供給`adoption_refs`廃止): `route.resolve_and_verify_effective_policy`は
+もはや呼び出し側から採択集合を受け取らず、`store.list_committed_record_ids`と
+`store.resolve_transaction`が返す`to_revision`から、governing_issueで絞り込んだ正準
+commit順序を自ら導出する(新規private helper `route._resolve_canonical_adoptions`)。
+省略・部分集合・並べ替え・無関係adoptionの混入は、供給する引数自体が存在しなくなったことで
+構造的に不可能になった。F2(baseline未採択時のeffective view空化):
+`engine.derive_effective_policy`は、baseline自身を対象とするadoptionが実際に畳み込まれる
+までbaseline自身のclauseを`live`へ一切seedしない(`baseline_activated`ゲート)。重複baseline
+adoptionおよびbaseline採択前のtransition adoption畳み込みはいずれも
+`PolicyLineageConflictError`で拒否される。F3(単一genesis baselineのnatural-key identity):
+`identity.baseline_id`の入力を`BASELINE_SEMANTIC_FIELDS`(全内容)から新規
+`BASELINE_NATURAL_KEY_FIELDS = (project_id, governing_issue)`へ変更した。同一work unitに
+対する内容の異なる2つのbaselineは同一idに衝突し、`route._commit_one_record`の既存
+manifest-identity再利用検証がconflicting replayとして拒否する -- 新規schema・新規locking
+機構は追加していない。`baseline_semantic_fingerprint`は既存の全内容hashのまま変更していない。
+F4(construction/commit境界およびStore-resolve境界でのschema検証): 新規
+`acceptance_policy/validation.py`(既存`binding/validation.py`と同型の、この packageだけの
+private validatorレジストリ)を追加し、`route.py`の5箇所の構築境界
+(`open_acceptance_policy_baseline`・`propose_acceptance_policy_transition`・
+`adopt_acceptance_policy_transition`・`resolve_and_verify_effective_policy`・
+`preview_acceptance_policy_transition`のcommit/return直前)と3箇所のStore-resolve境界
+(`resolve_and_verify_baseline`・`resolve_and_verify_transition`・`resolve_and_verify_adoption`
+のNone-check直後)の両方でschema検証を呼び出す。F5(impact previewのprovenance修正):
+`engine.build_impact_preview`は、変更後clauseのprovenance_chainへ候補transition自身への
+参照を追加するよう修正した(ADDは候補自身から開始、REPLACE/NARROW/BROADEN/RECLASSIFYは
+既存chainを延長、REMOVEは生存clauseがないため何も追加しない)。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、5 test files + 1 fixture module、84 tests、既存62件を
+新API/新意味論へ書き換え、F1-F5それぞれの決定的positive/negative controlを新規追加)は本記録
+作成者自身が独立に実行し検証済み(`84 passed`)。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=86`、変更なし)。full repository test suite・
+`ruff check`・`ruff format --check`・`mypy --namespace-packages`の独立再実行結果は、本Round
+の新head到達後にPR #82への返却Evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_80_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
