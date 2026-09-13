@@ -18,6 +18,7 @@ from tests.fixtures.multi_agent_world import (
 )
 
 from manosube_agent_civilization.agent_runtime import TemporaryAgent, start_temporary_agent
+import manosube_agent_civilization.model_runtime.route as model_runtime_route_module
 from manosube_agent_civilization.multi_agent import (
     execute_dynamic_execution_plan,
     open_dynamic_execution_plan,
@@ -536,3 +537,129 @@ def test_p19_r4_f1_a_late_returning_adapter_call_never_commits_after_this_call_g
         world["store"].load_current(world["project_id"])["state_revision"]
         == state_revision_immediately_after_timeout
     )
+
+
+def test_p19_r5_f1_the_worker_already_won_the_gate_is_never_overridden_by_a_false_timeout(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Structural Review Round 5, P19-R5-F1's own required decisive test: pause the worker
+    thread *after* it has already won this attempt's own terminal-decision gate (its own real
+    adapter call already succeeded, and its own ``cancellation_check`` already observed it is
+    the winner) but strictly *before* the physical Envelope+claim commit, then let the plan's
+    own real ``per_slot_timeout_seconds`` genuinely elapse while it stays paused there. Round
+    4's own design would have let the coordinator declare a contradictory TIMEOUT right there
+    (the worker's own earlier, independent ``cancellation_check()`` call could not know the
+    coordinator was about to give up); this test proves that no longer happens -- the
+    coordinator's own bounded wait times out, but it recognizes the gate is already won and
+    blocks for the worker's own real, already-decided result instead of publishing a false
+    terminal fact for an attempt that actually completed. The pause point is a real
+    synchronization barrier (:class:`threading.Event`), never a sleep-based race -- this
+    ordering is structural under every interleaving, not a fluke of timing, and this is proved
+    by repeating the identical deterministic scenario several times, each against its own fresh
+    plan.
+    """
+
+    import threading
+    import time
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+
+    # A same-shaped baseline call (identical plan/world setup, an ordinary fast adapter, no
+    # pausing) first, to measure this environment's own real Store I/O + adapter-call overhead
+    # for one full, un-paused attempt -- this file-backed Store's own commit latency varies by
+    # host, so this decisive test's own per_slot_timeout_seconds below is set relative to that
+    # measured baseline, never a hardcoded absolute wall-clock bound. Too tight a bound here would
+    # let the coordinator's own bounded wait race the worker to its *own* cancellation_check call
+    # (a different, already-proven race) instead of the one this test exists to prove: the
+    # coordinator's timeout firing *after* the worker already won the gate.
+    baseline_coordinator = _coordinator(world)
+    baseline_opened = open_dynamic_execution_plan(
+        world["store"], baseline_coordinator, **open_plan_kwargs(world)
+    )
+    baseline_coordinator.release()
+    baseline_started_at = time.monotonic()
+    _execute(
+        world,
+        baseline_opened["plan_ref"],
+        lambda: SeededMultiAgentAdapter(candidate_fields={"summary": "baseline"}),
+        "2026-09-11T01:10:00Z",
+    )
+    baseline_elapsed = time.monotonic() - baseline_started_at
+    # Canonical State's own v0.1 encoding admits only a whole number of seconds here (Structural
+    # Review Round 3, P19-R3-F4) -- rounded up, never truncated down below the measured margin.
+    per_slot_timeout_seconds = int(max(5.0, baseline_elapsed * 5.0 + 5.0)) + 1
+
+    for iteration in range(3):
+        coordinator = _coordinator(world)
+        opened = open_dynamic_execution_plan(
+            world["store"],
+            coordinator,
+            **open_plan_kwargs(world),
+            per_slot_timeout_seconds=per_slot_timeout_seconds,
+        )
+        coordinator.release()
+
+        reached_commit = threading.Event()
+        release_commit = threading.Event()
+        real_commit = model_runtime_route_module._commit
+
+        # Every loop-scoped name this closure reads is bound as its own default argument
+        # (evaluated once, immediately, at this exact iteration's own function-definition point)
+        # rather than read from the enclosing loop's own rebindable variable -- this is a real
+        # concurrency proof, so it must never depend on which iteration's own name a late call
+        # happens to still see.
+        def _pausing_commit(
+            *args: Any,
+            _reached_commit: threading.Event = reached_commit,
+            _release_commit: threading.Event = release_commit,
+            _real_commit: Any = real_commit,
+            **kwargs: Any,
+        ) -> Any:
+            _reached_commit.set()
+            # A real synchronization barrier, not a sleep: this call blocks here,
+            # deterministically, until the test itself releases it -- well past the plan's own
+            # per_slot_timeout_seconds, guaranteeing the coordinator's own bounded wait times out
+            # while this attempt already holds the gate, every single time this runs.
+            _release_commit.wait(timeout=60)
+            return _real_commit(*args, **kwargs)
+
+        monkeypatch.setattr(model_runtime_route_module, "_commit", _pausing_commit)
+
+        adapter = SeededMultiAgentAdapter(
+            candidate_fields={"summary": f"worker-wins-the-race-{iteration}"}
+        )
+        result_holder: dict[str, Any] = {}
+
+        def _run(
+            _opened: dict[str, Any] = opened,
+            _adapter: Any = adapter,
+            _result_holder: dict[str, Any] = result_holder,
+        ) -> None:
+            _result_holder["executed"] = _execute(
+                world, _opened["plan_ref"], lambda: _adapter, "2026-09-11T01:30:00Z"
+            )
+
+        runner = threading.Thread(target=_run)
+        runner.start()
+        assert reached_commit.wait(timeout=per_slot_timeout_seconds + 30.0), (
+            "worker never reached its own pre-commit checkpoint"
+        )
+        # The worker is now paused holding the gate -- it already passed cancellation_check --
+        # strictly after its own real adapter call already succeeded. Let the plan's own real
+        # per_slot_timeout_seconds genuinely elapse while it stays paused right there.
+        time.sleep(per_slot_timeout_seconds + 2.0)
+        release_commit.set()
+        runner.join(timeout=30)
+        assert not runner.is_alive()
+
+        monkeypatch.setattr(model_runtime_route_module, "_commit", real_commit)
+
+        executed = result_holder["executed"]
+        slot_output = executed["slot_outputs"][0]
+        # CHECK_TO_COMMIT_RACE_TERMINAL_WINNER_COUNT=1: the worker's own already-won commit is
+        # what this attempt's own terminal outcome reflects -- never a contradictory TIMEOUT,
+        # even though the coordinator's own bounded wait for this slot genuinely elapsed while
+        # the worker was paused holding the gate.
+        assert slot_output["outcome"] == "CANDIDATE_ACCEPTED"
+        assert slot_output["model_execution_envelope_ref"] is not None
+        assert executed["release_receipts"][0]["release_status"] == "RELEASED"

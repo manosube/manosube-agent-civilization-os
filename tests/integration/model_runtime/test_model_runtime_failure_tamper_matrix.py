@@ -1669,15 +1669,15 @@ def test_p19_r4_f3_a_crash_immediately_before_the_one_atomic_commit_leaves_neith
 ) -> None:
     """Structural Review Round 4, P19-R4-F3's own required proof, at the level of the one
     shared route this repository's own single owner discipline requires every caller (including
-    ``multi_agent``) to reuse: ``additional_records_factory`` folds a caller-supplied record into
-    the *exact same* atomic ``_commit`` call this route already uses for its own Envelope. A
-    crash injected immediately before that one commit call -- strictly after the real adapter
-    call already returned -- used to leave the Envelope committed and the caller's own record
-    (e.g. ``multi_agent``'s attempt-claim) missing, since they were two separate transactions.
-    Now there is only one transaction: this proof shows neither record survives such a crash,
-    and a subsequent, uninterrupted retry makes exactly one real adapter call of its own (never
-    zero, never a duplicate of the crashed attempt's own work, since none of it was ever
-    committed)."""
+    ``multi_agent``) to reuse: ``slot_attempt_envelope_claim_factory`` folds a caller-supplied
+    claim record into the *exact same* atomic ``_commit`` call this route already uses for its
+    own Envelope. A crash injected immediately before that one commit call -- strictly after the
+    real adapter call already returned -- used to leave the Envelope committed and the caller's
+    own record (e.g. ``multi_agent``'s attempt-claim) missing, since they were two separate
+    transactions. Now there is only one transaction: this proof shows neither record survives
+    such a crash, and a subsequent, uninterrupted retry makes exactly one real adapter call of
+    its own (never zero, never a duplicate of the crashed attempt's own work, since none of it
+    was ever committed)."""
 
     opened = _open(world)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
@@ -1690,6 +1690,17 @@ def test_p19_r4_f3_a_crash_immediately_before_the_one_atomic_commit_leaves_neith
     monkeypatch.setattr(model_runtime_route_module, "_commit", _crashing_commit)
 
     additional_record_id = "attempt-claim-for-crash-injection-proof"
+
+    def _claim_factory(envelope: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "multi_agent_slot_attempt_envelope_claim_id": additional_record_id,
+            "model_execution_envelope_ref": {
+                "kind": ENVELOPE_KIND,
+                "id": envelope["model_execution_envelope_id"],
+            },
+            "probe": True,
+        }
+
     with pytest.raises(
         RuntimeError, match="simulated crash immediately before the one atomic commit"
     ):
@@ -1701,9 +1712,7 @@ def test_p19_r4_f3_a_crash_immediately_before_the_one_atomic_commit_leaves_neith
             model_work_unit_ref=opened["model_work_unit_ref"],
             adapter=adapter,
             executed_at="2026-09-09T02:00:00Z",
-            additional_records_factory=lambda envelope: [
-                ("multi_agent_slot_attempt_envelope_claim", additional_record_id, {"probe": True})
-            ],
+            slot_attempt_envelope_claim_factory=_claim_factory,
         )
     assert adapter.execute_call_count == 1
 
@@ -1742,6 +1751,114 @@ def test_p19_r4_f3_a_crash_immediately_before_the_one_atomic_commit_leaves_neith
     )
     assert recovering_adapter.execute_call_count == 1
     assert recovered["envelope"]["execution_outcome"] == "CANDIDATE_ACCEPTED"
+
+
+def test_p19_r5_f2_the_generic_additional_records_factory_no_longer_exists(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 5, P19-R5-F2's own required proof:
+    ``PUBLIC_GENERIC_ADDITIONAL_RECORD_FACTORY_PRESENT=false``. Round 4's own
+    ``additional_records_factory`` accepted arbitrary caller-selected ``(kind, id, body)``
+    tuples; exact-head reproduction showed it could co-commit a forged ``authority_decision``
+    alongside a real Envelope. That parameter is gone -- passing it is a ``TypeError`` at the
+    call boundary itself, before this route runs at all, never a runtime refusal."""
+
+    opened = _open(world)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+    with pytest.raises(TypeError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            additional_records_factory=lambda envelope: [
+                ("authority_decision", "FORGED-BY-CALLER", {"unvalidated": "forged body"})
+            ],
+        )
+    assert adapter.execute_call_count == 0
+
+
+def test_p19_r5_f2_a_slot_attempt_envelope_claim_factory_not_bound_to_the_new_envelope_is_refused(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 5, P19-R5-F2's own required negative control:
+    ``WRONG_PROJECT_PLAN_SLOT_ENVELOPE_BINDING=REFUSED_ZERO_WRITE``. A claim body whose own
+    ``model_execution_envelope_ref`` names a different (wrong) Envelope id than the one this
+    call itself just derived is refused before any commit -- proving this route's own
+    structural binding check, independent of whatever schema/identity checks the caller's own
+    factory may or may not have already performed."""
+
+    opened = _open(world)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _wrongly_bound_claim_factory(envelope: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "multi_agent_slot_attempt_envelope_claim_id": "claim-with-wrong-envelope-binding",
+            "model_execution_envelope_ref": {
+                "kind": ENVELOPE_KIND,
+                "id": "MODEL-EXECUTION-0000000000000000000000000000000000000000000000000000000000000000",
+            },
+        }
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_wrongly_bound_claim_factory,
+        )
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before
+    assert (
+        world["store"].resolve_record(
+            world["project_id"],
+            "multi_agent_slot_attempt_envelope_claim",
+            "claim-with-wrong-envelope-binding",
+        )
+        is None
+    )
+
+
+def test_p19_r5_f2_a_slot_attempt_envelope_claim_factory_missing_its_own_id_is_refused(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 5, P19-R5-F2's own required negative control: a claim body with
+    no readable ``multi_agent_slot_attempt_envelope_claim_id`` is refused before any commit --
+    this route never invents an id on the caller's behalf."""
+
+    opened = _open(world)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _idless_claim_factory(envelope: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "model_execution_envelope_ref": {
+                "kind": ENVELOPE_KIND,
+                "id": envelope["model_execution_envelope_id"],
+            }
+        }
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_idless_claim_factory,
+        )
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before
 
 
 def test_p19_r4_f4_a_fabricated_pinned_execution_snapshot_is_refused_with_zero_adapter_calls(

@@ -545,3 +545,52 @@ that one legitimate caller.
 No second Authority evaluator, execution route, Store owner, or Model Runtime owner is introduced
 by any of these three changes; each is a single additive parameter, or a strengthened check on an
 existing one, on the one route this repository's every caller already shares.
+
+## 12. Structural Review Round 5 correction (Phase 19, Issue #77, P19-R5-F2)
+
+Adopted as `ADOPT_P19_R5_ATOMIC_TIMEOUT_AND_BOUNDED_ADDITIONAL_RECORDS` against reviewed
+head/authorized target `d762ccb7f88a0e3fbfd1c8478955da5abe501adf` (PR #78). One finding lands on
+this route (P19-R5-F1 is entirely a `multi_agent`-side fix over the unchanged
+`cancellation_check` contract from §11 above; it introduces no change here).
+
+**P19-R5-F2 -- `additional_records_factory` is replaced by
+`slot_attempt_envelope_claim_factory`, a closed, caller-immune single-record surface.** §11's
+own P19-R4-F3 fix accepted a caller-supplied `Callable[[Mapping[str, Any]], list[tuple[str, str,
+Mapping[str, Any]]]]` -- a generic record-injection surface with no restriction on the returned
+`kind`. Exact-head reproduction against that surface successfully persisted a forged
+`kind="authority_decision"` record, `id="FORGED-BY-MODEL-RUNTIME-CALLER"`, atomically alongside a
+real Envelope: nothing about the parameter's own shape stopped a caller (or a bug, or an
+attacker with the caller's own access) from choosing any kind at all. The fix replaces that
+parameter with `slot_attempt_envelope_claim_factory: Callable[[Mapping[str, Any]], Mapping[str,
+Any]] | None`, called once, in the identical position (after `cancellation_check`, so a
+cancelled attempt never reaches it), and returning exactly one record *body* -- never a kind, an
+id, or a list. The kind this route ever commits alongside that body is a single, hardcoded module
+constant, `_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND = "multi_agent_slot_attempt_envelope_claim"`;
+no parameter, argument, or caller-controlled value can ever select a different one, so the class
+of forgery the reproduction demonstrated is now structurally inexpressible rather than merely
+checked and refused. Before committing, this route additionally requires the returned body's own
+`model_execution_envelope_ref` field to be present and to name *this exact, newly-derived*
+Envelope (its `kind` equal to `ENVELOPE_RECORD_KIND` and its `id` equal to this call's own
+`envelope["model_execution_envelope_id"]`), and its own
+`multi_agent_slot_attempt_envelope_claim_id` field to be a non-empty string; either check failing
+raises `ModelRuntimeRequirementError` with nothing committed. This route does not itself recompute
+that id or the claim's own semantic fingerprint -- it has no legitimate way to, since that hash
+function belongs to `multi_agent`, never duplicated here (the one-way package layering this
+repository already establishes: `multi_agent` depends on `model_runtime`, never the reverse). The
+caller's own factory is therefore expected to self-verify its own construction (recomputing and
+comparing its own identity and semantic fingerprint) before ever returning the body to this route,
+and every subsequent read of the committed record independently re-verifies both again, exactly as
+every other canonical record's own resolver in this repository already does — a corrupted claim is
+caught at construction time and at every later read, never silently trusted at any single point.
+Either the Envelope and this one claim commit together, or neither does — the identical atomicity
+§11 established, now bounded to one caller-immune kind. Proved at the Model Runtime level by four
+tests in `test_model_runtime_failure_tamper_matrix.py`: the rewritten P19-R4-F3 crash-window proof
+(now against the new parameter shape), a proof that the old `additional_records_factory` keyword
+no longer exists (`TypeError`, zero adapter calls), a proof that a claim body whose
+`model_execution_envelope_ref` names a different, fabricated Envelope id is refused with zero
+writes and an unchanged State revision, and a proof that a claim body missing its own declared id
+is refused the same way.
+
+`PUBLIC_GENERIC_ADDITIONAL_RECORD_FACTORY_PRESENT=false`: no parameter on this route's public
+signature accepts a caller-selected record kind, id, or list of records. No second Authority
+evaluator, execution route, Store owner, or Model Runtime owner is introduced by this change.

@@ -154,6 +154,14 @@ SWAP_RECEIPT_RECORD_KIND = "model_swap_receipt"
 RECOVERY_RECEIPT_RECORD_KIND = "session_recovery_receipt"
 DIFFERENCE_RECORD_KIND = "difference"
 
+#: Structural Review Round 5, P19-R5-F2: the one, hardcoded, caller-immune companion-record
+#: kind ``slot_attempt_envelope_claim_factory`` may ever commit alongside a real Envelope --
+#: never a caller-selected kind. This route does not import or otherwise depend on
+#: ``multi_agent`` (that package depends on this one, never the reverse); this literal is the
+#: one disclosed exception, a plain string constant naming the single reserved companion kind,
+#: not a schema or identity dependency.
+_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND = "multi_agent_slot_attempt_envelope_claim"
+
 #: The identical Compare-And-Swap retry bound Projection's own ``_claim_slot`` and Runtime's own
 #: ``_commit_envelope`` use -- not a timeout, not a backoff, bounded protection against genuine,
 #: ordinary contention from an unrelated commit landing on this project between this route's own
@@ -1033,7 +1041,7 @@ def execute_model_work_unit(
     executed_at: str,
     pinned_execution_snapshot: Mapping[str, Any] | None = None,
     cancellation_check: Callable[[], bool] | None = None,
-    additional_records_factory: Callable[[Mapping[str, Any]], list[tuple[str, str, dict[str, Any]]]]
+    slot_attempt_envelope_claim_factory: Callable[[Mapping[str, Any]], Mapping[str, Any]]
     | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded, provider-neutral model invocation against one already-open Work Unit
@@ -1063,14 +1071,26 @@ def execute_model_work_unit(
     blocked Python thread cannot be forcibly killed, but its late completion must never silently
     become a committed success after the caller already recorded its own typed timeout outcome.
 
-    *additional_records_factory* is optional (Structural Review Round 4, P19-R4-F3). When
-    supplied, it is called once with the fully-derived, self-verified Envelope (after
-    *cancellation_check*, so a cancelled attempt never reaches it) and must return a list of
-    ``(kind, id, body)`` record tuples; those records are committed in the *exact same atomic
-    transaction* as the Envelope itself, never a separate follow-up commit. This lets a caller
-    durably claim its own attempt-tracking record against a real Envelope with no crash window
-    between the two -- either both commit, or neither does -- without this route ever needing to
-    know that other record's own kind or shape.
+    *slot_attempt_envelope_claim_factory* is optional (Structural Review Round 4's own
+    P19-R4-F3, closed by Structural Review Round 5's own P19-R5-F2). When supplied, it is
+    called once with the fully-derived, self-verified Envelope (after *cancellation_check*, so
+    a cancelled attempt never reaches it) and must return exactly one record *body* -- never a
+    kind, an id, or a list. This is deliberately **not** a generic record-injection surface:
+    Round 4's own ``additional_records_factory`` accepted arbitrary caller-selected
+    ``(kind, id, body)`` tuples, and exact-head reproduction showed it could co-commit a forged
+    ``authority_decision`` (or any other kind) alongside a real Envelope. This parameter instead
+    admits exactly one closed, hardcoded companion-record kind
+    (``multi_agent_slot_attempt_envelope_claim``) -- the caller can never choose a different one,
+    and this route refuses (nothing committed) unless the returned body's own
+    ``model_execution_envelope_ref`` field is present and names *this exact, newly-derived*
+    Envelope and its own ``multi_agent_slot_attempt_envelope_claim_id`` field is a non-empty
+    string. This route does not itself re-derive that id or the claim's own semantic
+    fingerprint -- it has no legitimate way to (that hash function belongs to
+    ``multi_agent``, never duplicated here) -- so the caller's own factory is expected to
+    self-verify its own construction before ever returning it, and every read of the committed
+    record independently re-verifies both, exactly as every other canonical record's own
+    resolver already does. Either the Envelope and this one claim commit together, or neither
+    does -- the identical atomicity Round 4 established, now bounded to one caller-immune kind.
 
     Every refusal below lands with the adapter called **zero** times and nothing committed: a
     released or foreign Temporary Agent, a stale execution contract, a Work Unit that does not
@@ -1214,12 +1234,32 @@ def execute_model_work_unit(
             envelope,
         )
     ]
-    if additional_records_factory is not None:
-        # Structural Review Round 4, P19-R4-F3: a caller-supplied record (e.g. an attempt claim
-        # naming this exact Envelope) commits in this exact same atomic transaction -- either
-        # both land, or neither does, closing the crash window a separate follow-up commit would
-        # otherwise leave between "Envelope committed" and "caller's own record committed".
-        records.extend(additional_records_factory(envelope))
+    if slot_attempt_envelope_claim_factory is not None:
+        # Structural Review Round 5, P19-R5-F2: this is the one, hardcoded, caller-immune
+        # companion-record kind this route will ever commit alongside its own Envelope -- never
+        # a caller-selected kind, id, or multiple records. The claim commits in this exact same
+        # atomic transaction as the Envelope -- either both land, or neither does -- closing the
+        # crash window a separate follow-up commit would otherwise leave open, without this
+        # route ever becoming a second, generic record-injection surface.
+        claim_body = dict(slot_attempt_envelope_claim_factory(envelope))
+        declared_envelope_ref = claim_body.get("model_execution_envelope_ref")
+        if not (
+            isinstance(declared_envelope_ref, Mapping)
+            and declared_envelope_ref.get("kind") == ENVELOPE_RECORD_KIND
+            and declared_envelope_ref.get("id") == envelope["model_execution_envelope_id"]
+        ):
+            raise ModelRuntimeRequirementError(
+                "the Phase 19 slot-attempt-envelope-claim this call produced does not declare "
+                "model_execution_envelope_ref bound to this exact newly-derived Envelope -- "
+                "refusing to commit anything"
+            )
+        claim_id = claim_body.get("multi_agent_slot_attempt_envelope_claim_id")
+        if not isinstance(claim_id, str) or not claim_id:
+            raise ModelRuntimeRequirementError(
+                "the Phase 19 slot-attempt-envelope-claim this call produced has no readable "
+                "multi_agent_slot_attempt_envelope_claim_id -- refusing to commit anything"
+            )
+        records.append((_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND, claim_id, claim_body))
     _commit(
         store,
         project_id,

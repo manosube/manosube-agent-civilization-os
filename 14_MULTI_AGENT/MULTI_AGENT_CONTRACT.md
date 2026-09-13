@@ -935,3 +935,71 @@ existing branch/PR, no new module or owner introduced.
   real, committed Envelope (updating every on-disk claimant copy identically, so the Store's own
   independent manifest-body integrity check is not what catches this) and proves the resolver
   now refuses it.
+
+## 14. Structural Review Round 5 corrections (P19-R5-F1..F2)
+
+Adopted as `ADOPT_P19_R5_ATOMIC_TIMEOUT_AND_BOUNDED_ADDITIONAL_RECORDS` against reviewed
+head/authorized target `d762ccb7f88a0e3fbfd1c8478955da5abe501adf` (PR #78). Two findings, both
+addressed on the existing branch/PR, no new module or owner introduced (P19-R5-F3 is the
+append-only current-state restatement in `docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`
+§44 and this section itself; it introduces no code).
+
+- **P19-R5-F1 (atomic winner between a coordinator's own TIMEOUT declaration and a worker's own
+  real commit).** §13's own P19-R4-F1 fix bounds a genuinely late-returning adapter call from
+  ever committing after this call gave up, but it left a narrower, real race between the *two
+  decision points themselves*: `_execute_one_slot`'s own bounded `future.result(timeout=...)`
+  could raise `TimeoutError` and declare `TIMEOUT` independently of, and concurrently with, the
+  worker thread's own `cancellation_check()` observation inside
+  `model_runtime.route.execute_model_work_unit` -- a worker could observe "not cancelled" and
+  proceed toward its own real commit, while the coordinator, on its own independent bounded wait,
+  simultaneously (or immediately after) declared TIMEOUT and committed that terminal pair,
+  letting the worker's own later commit still land afterward: two contradictory committed
+  terminal facts for one attempt. The fix is a new `_AttemptTerminalGate` -- a first-caller-wins
+  mutual-exclusion decision guarded by a single `threading.Lock`, with exactly one `claim()`
+  method returning `True` to its first caller and `False` to every subsequent one, forever.
+  `_execute_one_slot` constructs one gate per real attempt and passes
+  `cancellation_check=lambda: not gate.claim()` to `execute_model_work_unit` (that route's own
+  `cancellation_check` contract is entirely unchanged: called once, immediately before the
+  commit, `True` means refuse); the coordinator's own `except concurrent.futures.TimeoutError`
+  branch now also calls `gate.claim()` before declaring TIMEOUT -- if the *worker* already won
+  (the gate returns `False` to the coordinator), the coordinator blocks for the worker's own
+  real, already-decided `future.result()` instead of publishing a contradictory TIMEOUT; only if
+  the *coordinator* wins does it proceed to record TIMEOUT, in which case the worker's own later
+  `cancellation_check()` call is guaranteed to observe the gate already claimed and refuse to
+  commit. Exactly one side ever wins, under every interleaving, because the decision is made
+  atomically at one shared lock rather than independently at two separate call sites. Proved by
+  the new
+  `test_p19_r5_f1_the_worker_already_won_the_gate_is_never_overridden_by_a_false_timeout`, which
+  monkeypatches the one shared `_commit` boundary to pause -- via a real `threading.Event` pair,
+  never a sleep-based race -- strictly after the worker's own `cancellation_check` call already
+  won the gate but strictly before the physical Envelope+claim commit, lets the plan's own real,
+  environment-scaled `per_slot_timeout_seconds` genuinely elapse while the worker stays paused
+  there, then releases it and asserts the attempt's own terminal outcome is the real
+  `CANDIDATE_ACCEPTED` result (never a contradictory `TIMEOUT`) -- repeated three times against
+  fresh plans to demonstrate the ordering is structural, not timing luck.
+- **P19-R5-F2 (the generic `additional_records_factory` surface is closed to one caller-immune
+  kind).** See `MODEL_RUNTIME_CONTRACT.md` §12 for the full fix, which lands entirely on
+  `model_runtime.route.execute_model_work_unit`'s own public signature. This package's own
+  `_execute_one_slot` is updated to match: its previous `_build_claim_records` closure (which
+  returned a `(kind, id, body)` tuple list under the old `additional_records_factory` keyword) is
+  replaced by a new `_self_verified_claim_body(envelope)` closure, passed as the new
+  `slot_attempt_envelope_claim_factory` keyword. That closure derives the claim via
+  `derive_multi_agent_slot_attempt_envelope_claim` exactly as before, then -- before ever
+  returning the body to `model_runtime` -- proactively self-verifies it by recomputing and
+  comparing its own `multi_agent_slot_attempt_envelope_claim_id` and
+  `multi_agent_slot_attempt_envelope_claim_semantic_fingerprint` against the values it just
+  derived, raising `MultiAgentRecordIntegrityError` on either mismatch. This closes the one gap
+  `model_runtime` itself cannot check (it has no legitimate way to import this package's own hash
+  functions without inverting the established one-way package layering): a corrupted claim is now
+  caught at construction time, before it is ever handed across the package boundary, in addition
+  to `resolve_and_verify_committed_slot_attempt_envelope_claim`'s own existing re-verification at
+  every read (§13's own P19-R4-F5). No other change to this package's own public surface,
+  identity functions, or Store interaction is required.
+
+`PUBLIC_GENERIC_ADDITIONAL_RECORD_FACTORY_PRESENT=false`, `ARBITRARY_AUTHORITY_RECORD_WRITE_
+ACCEPTED=false`, `ARBITRARY_EVIDENCE_RECORD_WRITE_ACCEPTED=false`, `ARBITRARY_STATE_RECORD_WRITE_
+ACCEPTED=false`, `UNKNOWN_KIND_WRITE_ACCEPTED=false`, `EXACT_PHASE19_CLAIM_ATOMIC_WITH_
+ENVELOPE=true`, `CHECK_TO_COMMIT_RACE_TERMINAL_WINNER_COUNT=1`, `TIMEOUT_WIN_LATE_ENVELOPE_
+WRITE_COUNT=0`, `TIMEOUT_WIN_LATE_CLAIM_WRITE_COUNT=0`, `TIMEOUT_WIN_LATE_STATE_REVISION_
+ADVANCE=0`. No second Authority evaluator, execution route, Store owner, Model Runtime owner, or
+Multi-Agent owner is introduced by either finding.

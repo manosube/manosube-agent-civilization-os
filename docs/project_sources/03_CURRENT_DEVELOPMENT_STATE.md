@@ -3364,3 +3364,61 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_4_REVIEWED_HEAD`。
 §42以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
 優先される（last-wins）。
+
+# 44. Phase 19 Structural Review Round 5 bounded current-state restatement (Issue #77, PR #78)
+
+本節は、Structural Advisor Structural Review Round 5（reviewed head/AUTHORIZED_TARGET_SHA
+`d762ccb7f88a0e3fbfd1c8478955da5abe501adf`、finding `P19-R5-F1`〜`P19-R5-F3`）をSHUKOUが
+`ADOPT_P19_R5_ATOMIC_TIMEOUT_AND_BOUNDED_ADDITIONAL_RECORDS`として正式採択した後、Claude Codeが
+既存branch`agent/issue-77-phase19-multi-agent-dynamic-execution`・既存PR #78上でF1〜F3の是正を
+実装した時点の、bounded・append-only current-state restatementである（SHUKOU正式採択コメント：
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5649402996
+、Claude Code実装ハンドオフコメント：
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5649406310
+、いずれも本記録作成者自身がGitHub API経由でauthor login/id/associationを直接検証済み、live
+head/base不変も同様に確認済み）。§0冒頭のheader blockおよびセクション1〜43の本文は、書き換えない
+-- 本節が最後に追記される、bounded・last-wins restatementである。
+
+是正した3個のfindingの要旨: P19-R5-F1（Round 4自身の`cancellation_check()`検査と物理commitとの
+間に真のcheck-to-commit raceが残っていた -- workerが「まだキャンセルされていない」と観測した
+直後に、coordinatorが独立にTIMEOUTを宣言してcommitでき、その後にworker自身のcommitも成立し得る
+ため、同一attemptに対し矛盾する2つの確定事実が生じ得た。是正は新設の`_AttemptTerminalGate`
+--「最初にclaimした側のみが勝つ」単一の`threading.Lock`guardedな排他決定を、coordinatorの
+TIMEOUT宣言経路とworkerの`cancellation_check`の双方から同一gateへ照会させ、どのスレッド
+interleavingでも勝者が厳密に1つになるようにした。model_runtime.route.execute_model_work_unit
+自身の`cancellation_check`契約は無変更）、P19-R5-F2（Round 4自身の汎用
+`additional_records_factory`は呼び出し側が任意の`(kind, id, body)`を選べたため、exact-head
+reproductionにより偽造`authority_decision`レコードの持ち込みに成功した -- 是正は
+`slot_attempt_envelope_claim_factory`という単一の閉じた機構へ置換し、kindを呼び出し側が選択
+できないよう`_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND`としてmodel_runtime.route自身に
+hardcodeし、返却bodyがこのEnvelope自身への`model_execution_envelope_ref`を宣言し、かつ非空の
+`multi_agent_slot_attempt_envelope_claim_id`を持つことのみを構造的に検査する -- Authority/
+Evidence/State/未知kindのいずれの任意レコード書き込みも、型として選択不能になったことで拒否
+される）、P19-R5-F3（本節自身 -- 過去のGitHub pre-merge gate失敗を新規pushによる再診断で解消、
+または独立に切り分けた）。
+
+```text
+OBSERVED_AT_UTC=2026-09-13T00:10:00Z
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_5_CORRECTIONS_DELIVERED_PR_OPEN
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=78
+GOVERNING_ISSUE=#77
+STRUCTURAL_REVIEW_ROUND_5_REVIEWED_HEAD=d762ccb7f88a0e3fbfd1c8478955da5abe501adf
+AUTHORIZED_TARGET_SHA=d762ccb7f88a0e3fbfd1c8478955da5abe501adf
+ADOPTION_ID=ADOPT_P19_R5_ATOMIC_TIMEOUT_AND_BOUNDED_ADDITIONAL_RECORDS
+ADOPTED_FINDINGS=P19-R5-F1,P19-R5-F2,P19-R5-F3
+
+MERGE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+このrestatementは、この一回の追記時点で真であった七個のfieldの事実記録に限られる:
+`CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
+`MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_5_REVIEWED_HEAD`。
+§43以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
+優先される(last-wins)。

@@ -824,6 +824,29 @@ def open_dynamic_execution_plan(
 # --------------------------------------------------------------------------- #
 
 
+class _AttemptTerminalGate:
+    """First caller to call :meth:`claim` wins; every later caller gets ``False``, forever.
+
+    Structural Review Round 5, P19-R5-F1: purely an in-process mutual-exclusion decision
+    between one slot attempt's own two possible terminal facts -- a coordinator-declared
+    TIMEOUT, and a worker thread's own real Envelope+claim commit -- never a Store-level or
+    Model Runtime primitive. Exactly one side may ever act as this attempt's own winner, and
+    that decision is made atomically (guarded by a single lock), so no interleaving of the two
+    threads racing for it can ever produce two winners or zero winners.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._claimed = False
+
+    def claim(self) -> bool:
+        with self._lock:
+            if self._claimed:
+                return False
+            self._claimed = True
+            return True
+
+
 def _execute_one_slot(
     store: Any,
     *,
@@ -932,22 +955,30 @@ def _execute_one_slot(
             # *this call never blocks past it and never reports success for an unbounded
             # attempt*, not that the abandoned background call is terminated.
             timeout_seconds = float(plan["execution_bounds"]["per_slot_timeout_seconds"])
-            # Structural Review Round 4, P19-R4-F1: this Event is the one signal the abandoned
-            # background worker actually observes. `executor.shutdown(wait=False)` below never
-            # stops or kills that thread -- it only stops waiting on it -- so without this signal
-            # a late-returning adapter call could still silently commit a real Envelope/claim
-            # after this function has already given up and recorded TIMEOUT.
-            cancelled = threading.Event()
+            # Structural Review Round 5, P19-R5-F1: a real, in-process, first-caller-wins gate
+            # -- never a second Store/Model Runtime commit primitive -- deciding, atomically,
+            # exactly once, which of this attempt's own two possible terminal facts is real: a
+            # TIMEOUT this coordinator declares, or a genuine Envelope+claim commit the worker
+            # thread wins. Round 4's own plain `threading.Event` + independent `cancellation_
+            # check()` left a real check-to-commit race: the worker could observe "not yet
+            # cancelled", then the coordinator could declare TIMEOUT and commit that terminal
+            # pair, and only *afterward* would the worker's own commit land -- two contradictory
+            # committed terminal facts for the same attempt. `claim()` closes that: whichever
+            # side calls it first is the attempt's own sole winner, structurally, under every
+            # interleaving -- never by timing luck.
+            gate = _AttemptTerminalGate()
 
-            def _build_claim_records(
-                envelope: Mapping[str, Any],
-            ) -> list[tuple[str, str, dict[str, Any]]]:
-                # Structural Review Round 4, P19-R4-F3: this attempt's own claim now commits in
-                # the SAME atomic transaction as its Envelope, via
-                # execute_model_work_unit's own additional_records_factory -- eliminating (not
-                # just narrowing) the separate follow-up commit Round 3's own design left as a
-                # real crash window between "Envelope committed" and "claim committed": either
-                # both land, or neither does.
+            def _self_verified_claim_body(envelope: Mapping[str, Any]) -> dict[str, Any]:
+                # Structural Review Round 5, P19-R5-F2: `execute_model_work_unit` no longer
+                # accepts a generic caller-selected `(kind, id, body)` factory (Round 4's own
+                # `additional_records_factory` let a caller co-commit an arbitrary record kind,
+                # including a forged `authority_decision`, alongside a real Envelope). This
+                # factory instead returns exactly one, self-verified claim *body* -- the kind is
+                # now hardcoded inside `execute_model_work_unit` itself, never caller-selectable
+                # -- and this function proves its own construction correct (schema, recomputed
+                # identity, recomputed semantic fingerprint) before ever returning it, so a
+                # corrupted or malformed claim is refused here, before any commit is even
+                # attempted, rather than merely detected later on read.
                 claim = derive_multi_agent_slot_attempt_envelope_claim(
                     project_id=project_id,
                     plan_ref=dict(plan_ref),
@@ -958,13 +989,23 @@ def _execute_one_slot(
                         "id": str(envelope["model_execution_envelope_id"]),
                     },
                 )
-                return [
-                    (
-                        SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND,
-                        str(claim["multi_agent_slot_attempt_envelope_claim_id"]),
-                        claim,
+                validated = require_valid_multi_agent_slot_attempt_envelope_claim(claim)
+                declared_id = validated.get("multi_agent_slot_attempt_envelope_claim_id")
+                if multi_agent_slot_attempt_envelope_claim_id(validated) != declared_id:
+                    raise MultiAgentRecordIntegrityError(
+                        "this attempt's own newly-derived slot_attempt_envelope_claim's own "
+                        "recomputed identity does not equal its own declared value -- refusing "
+                        "to let it reach any commit"
                     )
-                ]
+                if multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(
+                    validated
+                ) != validated.get("multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"):
+                    raise MultiAgentRecordIntegrityError(
+                        "this attempt's own newly-derived slot_attempt_envelope_claim's own "
+                        "recomputed semantic fingerprint does not equal its own declared value "
+                        "-- refusing to let it reach any commit"
+                    )
+                return dict(validated)
 
             def _call_execute_model_work_unit() -> dict[str, Any]:
                 return execute_model_work_unit(
@@ -979,8 +1020,13 @@ def _execute_one_slot(
                         "state_revision": plan["boot_state_revision"],
                         "semantic_fingerprint": plan["boot_semantic_fingerprint"],
                     },
-                    cancellation_check=cancelled.is_set,
-                    additional_records_factory=_build_claim_records,
+                    # `execute_model_work_unit`'s own `cancellation_check` contract is unchanged
+                    # from Round 4 (called once, atomically, immediately before it would commit;
+                    # `True` refuses). What changed is who decides that boolean: the *same* gate
+                    # the coordinator's own TIMEOUT path below also claims against, so the two
+                    # paths can never both win.
+                    cancellation_check=lambda: not gate.claim(),
+                    slot_attempt_envelope_claim_factory=_self_verified_claim_body,
                 )
 
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -988,21 +1034,36 @@ def _execute_one_slot(
             try:
                 result = future.result(timeout=timeout_seconds)
             except concurrent.futures.TimeoutError:
-                # Structural Review Round 4, P19-R4-F1: signal the still-running background
-                # worker that this call has already given up on it -- checked by
-                # execute_model_work_unit itself immediately before it would otherwise commit an
-                # Envelope (and, via additional_records_factory, this attempt's own claim) for
-                # this attempt. The plan's own real per_slot_timeout_seconds elapsed before the
-                # adapter call returned. Never reported as success: a typed TIMEOUT outcome, no
-                # Envelope ref (none is known to exist), and no claim committed -- there is no
-                # real Envelope this attempt could name. This call returns now regardless of
-                # whether the abandoned background call ever completes.
-                cancelled.set()
-                outcome = "TIMEOUT"
-                outcome_detail = (
-                    f"adapter call did not return within this plan's own "
-                    f"per_slot_timeout_seconds={timeout_seconds}"
-                )
+                if gate.claim():
+                    # This coordinator is this attempt's own sole winner: the worker's own
+                    # cancellation_check (`not gate.claim()`) can now never again observe
+                    # `False`, so it is structurally guaranteed to refuse its own commit --
+                    # committing nothing -- no matter when it reaches that check. The plan's own
+                    # real per_slot_timeout_seconds elapsed before the adapter call returned.
+                    # Never reported as success: a typed TIMEOUT outcome, no Envelope ref (none
+                    # is known to exist), and no claim committed.
+                    outcome = "TIMEOUT"
+                    outcome_detail = (
+                        f"adapter call did not return within this plan's own "
+                        f"per_slot_timeout_seconds={timeout_seconds}"
+                    )
+                else:
+                    # The worker already won this attempt's one terminal decision before this
+                    # coordinator's own timeout path reached the gate -- its own commit is
+                    # either already durable or unstoppably in flight. Declaring TIMEOUT here
+                    # would be a false, contradictory terminal fact for an attempt that actually
+                    # completed, so this call instead blocks for the worker's own real,
+                    # already-decided result and uses it as this attempt's own terminal outcome.
+                    # Any exception surfacing from that wait is handled by this function's own
+                    # outer `except Exception`, exactly like every other path.
+                    result = future.result()
+                    envelope = result["envelope"]
+                    outcome = str(envelope["execution_outcome"])
+                    result_fingerprint = envelope["normalized_candidate_fingerprint"]
+                    envelope_ref = {
+                        "kind": ENVELOPE_RECORD_KIND,
+                        "id": str(envelope["model_execution_envelope_id"]),
+                    }
             else:
                 envelope = result["envelope"]
                 outcome = str(envelope["execution_outcome"])
@@ -1012,8 +1073,8 @@ def _execute_one_slot(
                     "id": str(envelope["model_execution_envelope_id"]),
                 }
                 # This attempt's own claim was already committed, atomically with its Envelope,
-                # by execute_model_work_unit itself via _build_claim_records above (P19-R4-F3) --
-                # no separate commit call remains here.
+                # by execute_model_work_unit itself via _self_verified_claim_body above
+                # (P19-R4-F3, narrowed by P19-R5-F2) -- no separate commit call remains here.
             finally:
                 executor.shutdown(wait=False)
         except Exception as error:
