@@ -33,6 +33,7 @@ INERT       nothing is refused at all -- the execution genuinely succeeds -- and
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -73,12 +74,20 @@ from manosube_agent_civilization.model_runtime import (
     recover_model_execution_session,
     route_model_execution_to_evidence,
 )
+from manosube_agent_civilization.model_runtime.claim_identity import (
+    multi_agent_dynamic_execution_plan_id,
+    multi_agent_dynamic_execution_plan_semantic_fingerprint,
+    multi_agent_slot_attempt_envelope_claim_id,
+    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
+)
 import manosube_agent_civilization.model_runtime.evidence_handoff as evidence_handoff_module
 from manosube_agent_civilization.model_runtime.identity import model_execution_envelope_id
+import manosube_agent_civilization.model_runtime.route as model_runtime_route_module
 from manosube_agent_civilization.model_runtime.types import (
     MODEL_ADAPTER_OUTCOMES,
     MODEL_OUTCOME_TO_RECEIPT_STATUS,
 )
+from manosube_agent_civilization.multi_agent.identity import capability_selection_fingerprint
 from manosube_agent_civilization.store.errors import RecordConflictError
 
 pytestmark = pytest.mark.integration
@@ -128,6 +137,111 @@ def _seeded_adapter(work_unit_ref: dict[str, Any], **seed: Any) -> FakeModelAdap
         **seed,
     )
     return adapter
+
+
+_CLAIM_PLAN_REF = {"kind": "multi_agent_dynamic_execution_plan", "id": "PLAN-0001"}
+_CLAIM_SLOT_INDEX = 0
+_CLAIM_ATTEMPT_ORDINAL = 1
+
+
+def _claim_binding(world: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "plan_ref": dict(_CLAIM_PLAN_REF),
+        "slot_index": _CLAIM_SLOT_INDEX,
+        "attempt_ordinal": _CLAIM_ATTEMPT_ORDINAL,
+    }
+
+
+def _self_consistent_claim_body(
+    world: dict[str, Any], envelope: Mapping[str, Any], **overrides: Any
+) -> dict[str, Any]:
+    """A schema-valid, fully self-consistent (recomputable id + semantic fingerprint) Phase 19
+    slot-attempt-envelope-claim body, bound to *envelope* and this test's own fixed plan/slot/
+    attempt binding -- the shape every ``slot_attempt_envelope_claim_factory`` test now needs
+    unless its own point is to deviate from exactly one of these fields."""
+
+    body = {
+        "schema_version": "0.1",
+        "project_id": world["project_id"],
+        "plan_ref": dict(_CLAIM_PLAN_REF),
+        "slot_index": _CLAIM_SLOT_INDEX,
+        "attempt_ordinal": _CLAIM_ATTEMPT_ORDINAL,
+        "model_execution_envelope_ref": {
+            "kind": ENVELOPE_KIND,
+            "id": envelope["model_execution_envelope_id"],
+        },
+    }
+    body.update(overrides)
+    body["multi_agent_slot_attempt_envelope_claim_id"] = multi_agent_slot_attempt_envelope_claim_id(
+        body
+    )
+    body["multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"] = (
+        multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(body)
+    )
+    body.update(overrides)
+    return body
+
+
+def _commit_canonical_plan(world: dict[str, Any], opened: Mapping[str, Any]) -> dict[str, Any]:
+    """Commit a genuine, schema-valid ``multi_agent_dynamic_execution_plan`` naming *opened*'s
+    own Work Unit at slot ``_CLAIM_SLOT_INDEX``, with a capability equal to that Work Unit's own
+    ``required_capability`` -- the Store-resolved canonical plan Structural Review Round 7,
+    P19-R7-F1 now requires to genuinely stand behind ``_CLAIM_PLAN_REF`` before any
+    ``slot_attempt_envelope_claim_binding`` naming it is ever admitted. Every field this plan
+    carries beyond ``project_id``/``model_work_unit_ref``/``slots`` is inert filler as far as
+    this route's own check is concerned (it verifies schema validity, project binding, Work Unit
+    binding, slot/capability existence and the plan's own recomputed identity -- never any other
+    record's provenance), so it is fixed, literal content, not derived from anything else in
+    *world*. Mutates ``_CLAIM_PLAN_REF`` in place so every existing caller of
+    :func:`_claim_binding`/:func:`_self_consistent_claim_body` (both of which reference it) binds
+    to this exact newly-committed plan without any further change at their own call sites."""
+
+    work_unit = opened["model_work_unit"]
+    slots = [{"slot_index": _CLAIM_SLOT_INDEX, "capability": work_unit["required_capability"]}]
+    plan_body: dict[str, Any] = {
+        "schema_version": "0.1",
+        "project_id": world["project_id"],
+        "project_binding_ref": {"kind": "project_binding", "id": world["project_binding_id"]},
+        "boot_state_revision": int(work_unit["opened_state_revision"]),
+        "boot_semantic_fingerprint": dict(work_unit["opened_semantic_fingerprint"]),
+        "difference_ref": dict(work_unit["difference_ref"]),
+        "capability_selection_fingerprint": capability_selection_fingerprint(slots),
+        "slots": slots,
+        "model_work_unit_ref": dict(opened["model_work_unit_ref"]),
+        "authority_ref": dict(work_unit["authority_ref"]),
+        "adapter_identity": {"adapter": "fake_model_adapter", "version": "0.1"},
+        "execution_order": "CONCURRENT",
+        "execution_bounds": {
+            "deadline_at": "2026-09-09T03:00:00Z",
+            "cancellation_policy": "COOPERATIVE_PER_SLOT_TIMEOUT",
+            "max_concurrent_slots": 1,
+            "per_slot_timeout_seconds": 30,
+        },
+        "conflict_policy": "EXACT_FINGERPRINT_EQUALITY_OR_EXPLICIT_DISAGREEMENT",
+        "release_policy": "RELEASE_ON_TERMINAL_OUTCOME",
+        "opened_at": "2026-09-09T01:30:00Z",
+        "expires_at": "2026-09-09T03:00:00Z",
+    }
+    plan_body["multi_agent_dynamic_execution_plan_id"] = multi_agent_dynamic_execution_plan_id(
+        plan_body
+    )
+    plan_body["multi_agent_dynamic_execution_plan_semantic_fingerprint"] = (
+        multi_agent_dynamic_execution_plan_semantic_fingerprint(plan_body)
+    )
+    plant_records(
+        world["store"],
+        world["project_id"],
+        [
+            (
+                "multi_agent_dynamic_execution_plan",
+                plan_body["multi_agent_dynamic_execution_plan_id"],
+                plan_body,
+            )
+        ],
+        transaction_id="TX-MODEL-PLANTED-CANONICAL-PLAN-0001",
+    )
+    _CLAIM_PLAN_REF["id"] = plan_body["multi_agent_dynamic_execution_plan_id"]
+    return plan_body
 
 
 def _execute(
@@ -1656,3 +1770,804 @@ def test_a_genuinely_canonical_adapter_identity_is_accepted(world: dict[str, Any
         "adapter": "genuinely_canonical",
         "version": "0.1",
     }
+
+
+# =========================================================================== #
+# 9. Structural Review Round 4: cancellation, atomic caller records, pin lineage
+# =========================================================================== #
+
+
+def test_p19_r4_f3_a_crash_immediately_before_the_one_atomic_commit_leaves_neither_record(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Structural Review Round 4, P19-R4-F3's own required proof, at the level of the one
+    shared route this repository's own single owner discipline requires every caller (including
+    ``multi_agent``) to reuse: ``slot_attempt_envelope_claim_factory`` folds a caller-supplied
+    claim record into the *exact same* atomic ``_commit`` call this route already uses for its
+    own Envelope. A crash injected immediately before that one commit call -- strictly after the
+    real adapter call already returned -- used to leave the Envelope committed and the caller's
+    own record (e.g. ``multi_agent``'s attempt-claim) missing, since they were two separate
+    transactions. Now there is only one transaction: this proof shows neither record survives
+    such a crash, and a subsequent, uninterrupted retry makes exactly one real adapter call of
+    its own (never zero, never a duplicate of the crashed attempt's own work, since none of it
+    was ever committed)."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    real_commit = model_runtime_route_module._commit
+
+    def _crashing_commit(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("simulated crash immediately before the one atomic commit")
+
+    monkeypatch.setattr(model_runtime_route_module, "_commit", _crashing_commit)
+
+    claim_body_holder: dict[str, dict[str, Any]] = {}
+
+    def _claim_factory(envelope: dict[str, Any]) -> dict[str, Any]:
+        claim_body_holder["body"] = _self_consistent_claim_body(world, envelope)
+        return claim_body_holder["body"]
+
+    with pytest.raises(
+        RuntimeError, match="simulated crash immediately before the one atomic commit"
+    ):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    assert adapter.execute_call_count == 1
+    additional_record_id = claim_body_holder["body"]["multi_agent_slot_attempt_envelope_claim_id"]
+
+    # LATE_WRITE_COUNT=0 for both records this single atomic commit would have carried: neither
+    # the Envelope nor the caller-supplied record exists -- the former no longer silently
+    # survives while the latter is lost, since both were always the same one commit.
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_slot_attempt_envelope_claim", additional_record_id
+        )
+        is None
+    )
+    envelope_kind_count = 0
+    envelope_dir = (
+        world["store"].root / "projects" / world["project_id"] / "records" / ENVELOPE_KIND
+    )
+    if envelope_dir.exists():
+        envelope_kind_count = len(list(envelope_dir.glob("*.json")))
+    assert envelope_kind_count == 0
+
+    monkeypatch.setattr(model_runtime_route_module, "_commit", real_commit)
+
+    # RECOVERY_DUPLICATE_ADAPTER_CALL_COUNT=0: nothing was committed to reuse, so the very next
+    # attempt over the identical Work Unit makes exactly one real, fresh adapter call -- not a
+    # duplicate of the crashed attempt's own already-paid-for work (there is none to reuse), and
+    # not skipped either.
+    recovering_adapter = _seeded_adapter(opened["model_work_unit_ref"])
+    recovered = execute_model_work_unit(
+        world["store"],
+        _agent(world),
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        model_work_unit_ref=opened["model_work_unit_ref"],
+        adapter=recovering_adapter,
+        executed_at="2026-09-09T02:05:00Z",
+    )
+    assert recovering_adapter.execute_call_count == 1
+    assert recovered["envelope"]["execution_outcome"] == "CANDIDATE_ACCEPTED"
+
+
+def test_p19_r5_f2_the_generic_additional_records_factory_no_longer_exists(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 5, P19-R5-F2's own required proof:
+    ``PUBLIC_GENERIC_ADDITIONAL_RECORD_FACTORY_PRESENT=false``. Round 4's own
+    ``additional_records_factory`` accepted arbitrary caller-selected ``(kind, id, body)``
+    tuples; exact-head reproduction showed it could co-commit a forged ``authority_decision``
+    alongside a real Envelope. That parameter is gone -- passing it is a ``TypeError`` at the
+    call boundary itself, before this route runs at all, never a runtime refusal."""
+
+    opened = _open(world)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+    with pytest.raises(TypeError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            additional_records_factory=lambda envelope: [
+                ("authority_decision", "FORGED-BY-CALLER", {"unvalidated": "forged body"})
+            ],
+        )
+    assert adapter.execute_call_count == 0
+
+
+def test_p19_r5_f2_a_slot_attempt_envelope_claim_factory_not_bound_to_the_new_envelope_is_refused(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 5, P19-R5-F2's own required negative control:
+    ``WRONG_PROJECT_PLAN_SLOT_ENVELOPE_BINDING=REFUSED_ZERO_WRITE``. A claim body whose own
+    ``model_execution_envelope_ref`` names a different (wrong) Envelope id than the one this
+    call itself just derived is refused before any commit -- proving this route's own
+    structural binding check, independent of whatever schema/identity checks the caller's own
+    factory may or may not have already performed."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+    wrong_envelope_ref = {
+        "kind": ENVELOPE_KIND,
+        "id": "MODEL-EXECUTION-0000000000000000000000000000000000000000000000000000000000000000",
+    }
+
+    def _wrongly_bound_claim_factory(envelope: dict[str, Any]) -> dict[str, Any]:
+        # Otherwise fully schema-valid and self-consistent (its own recomputed id and semantic
+        # fingerprint both equal its own declared values, honestly reflecting this wrong ref) --
+        # isolating this route's own structural Envelope-binding check from every other check.
+        return _self_consistent_claim_body(
+            world, envelope, model_execution_envelope_ref=wrong_envelope_ref
+        )
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_wrongly_bound_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before
+    assert (
+        world["store"].resolve_record(
+            world["project_id"],
+            "multi_agent_slot_attempt_envelope_claim",
+            multi_agent_slot_attempt_envelope_claim_id(
+                {
+                    "schema_version": "0.1",
+                    "project_id": world["project_id"],
+                    "plan_ref": dict(_CLAIM_PLAN_REF),
+                    "slot_index": _CLAIM_SLOT_INDEX,
+                    "attempt_ordinal": _CLAIM_ATTEMPT_ORDINAL,
+                }
+            ),
+        )
+        is None
+    )
+
+
+def test_p19_r5_f2_a_slot_attempt_envelope_claim_factory_missing_its_own_id_is_refused(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 5, P19-R5-F2's own required negative control: a claim body with
+    no readable ``multi_agent_slot_attempt_envelope_claim_id`` is refused before any commit --
+    this route never invents an id on the caller's behalf."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _idless_claim_factory(envelope: dict[str, Any]) -> dict[str, Any]:
+        body = _self_consistent_claim_body(world, envelope)
+        del body["multi_agent_slot_attempt_envelope_claim_id"]
+        return body
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_idless_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before
+
+
+def _assert_claim_refused_zero_write(
+    world: dict[str, Any], adapter: Any, before_revision: int
+) -> None:
+    """Shared negative-control assertion for every Structural Review Round 6, P19-R6-F2
+    refusal below: the real adapter call already happened (this route's own commit-tail
+    validation runs strictly after it), but nothing at all was committed -- neither the
+    Envelope nor the forged/malformed claim -- and the Store's own State revision is
+    unchanged."""
+
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before_revision
+
+
+def test_p19_r6_f2_a_caller_selected_claim_id_is_refused(world: dict[str, Any]) -> None:
+    """Structural Review Round 6, P19-R6-F2's own required negative control:
+    ``CALLER_SELECTED_CLAIM_ID_ACCEPTED=false``. A claim body that is otherwise fully
+    schema-valid and self-consistent (its own semantic fingerprint honestly reflects its own
+    content) but whose own declared id is a different, caller-selected value -- not the
+    identity this route's own independent recompute derives from that same content -- is
+    refused before any commit."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _caller_selected_id_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        body = _self_consistent_claim_body(world, envelope)
+        body["multi_agent_slot_attempt_envelope_claim_id"] = (
+            "MULTI-AGENT-ENVELOPE-CLAIM-" + "0" * 64
+        )
+        return body
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_caller_selected_id_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    _assert_claim_refused_zero_write(world, adapter, before)
+
+
+def test_p19_r6_f2_a_wrong_project_id_binding_is_refused(world: dict[str, Any]) -> None:
+    """Structural Review Round 6, P19-R6-F2's own required negative control:
+    ``CLAIM_PROJECT_BINDING_EXACT`` is refused when it fails. The claim body is otherwise fully
+    self-consistent for a *different* ``project_id`` than this call's own -- proving this
+    route's own structural binding check runs independently of, and before, the recompute-and-
+    compare identity checks."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _wrong_project_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return _self_consistent_claim_body(world, envelope, project_id="PRJ-WRONG-0001")
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_wrong_project_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    _assert_claim_refused_zero_write(world, adapter, before)
+
+
+def test_p19_r6_f2_a_wrong_plan_ref_binding_is_refused(world: dict[str, Any]) -> None:
+    """Structural Review Round 6, P19-R6-F2's own required negative control:
+    ``CLAIM_PLAN_BINDING_EXACT`` is refused when it fails -- a claim body self-consistently
+    bound to a different ``plan_ref`` than this call's own ``slot_attempt_envelope_claim_
+    binding`` declares."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+    wrong_plan_ref = {"kind": "multi_agent_dynamic_execution_plan", "id": "PLAN-OTHER"}
+
+    def _wrong_plan_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return _self_consistent_claim_body(world, envelope, plan_ref=wrong_plan_ref)
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_wrong_plan_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    _assert_claim_refused_zero_write(world, adapter, before)
+
+
+def test_p19_r6_f2_a_wrong_slot_index_binding_is_refused(world: dict[str, Any]) -> None:
+    """Structural Review Round 6, P19-R6-F2's own required negative control:
+    ``CLAIM_SLOT_BINDING_EXACT`` is refused when it fails -- a claim body self-consistently
+    bound to a different ``slot_index`` than this call's own ``slot_attempt_envelope_claim_
+    binding`` declares."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _wrong_slot_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return _self_consistent_claim_body(world, envelope, slot_index=_CLAIM_SLOT_INDEX + 1)
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_wrong_slot_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    _assert_claim_refused_zero_write(world, adapter, before)
+
+
+def test_p19_r6_f2_a_wrong_attempt_ordinal_binding_is_refused(world: dict[str, Any]) -> None:
+    """Structural Review Round 6, P19-R6-F2's own required negative control: a claim body
+    self-consistently bound to a different ``attempt_ordinal`` than this call's own
+    ``slot_attempt_envelope_claim_binding`` declares is refused before any commit."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _wrong_attempt_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return _self_consistent_claim_body(
+            world, envelope, attempt_ordinal=_CLAIM_ATTEMPT_ORDINAL + 1
+        )
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_wrong_attempt_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    _assert_claim_refused_zero_write(world, adapter, before)
+
+
+def test_p19_r6_f2_a_forged_semantic_fingerprint_is_refused(world: dict[str, Any]) -> None:
+    """Structural Review Round 6, P19-R6-F2's own required negative control:
+    ``CLAIM_FULL_SEMANTIC_FINGERPRINT_VERIFIED`` is refused when it fails. The claim body's own
+    declared id is genuinely self-consistent (so the narrow-id recompute alone would accept
+    it), but its own declared semantic fingerprint -- covering ``model_execution_envelope_ref``,
+    which the narrow id deliberately excludes -- is a forged, unrelated value."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _forged_fingerprint_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        body = _self_consistent_claim_body(world, envelope)
+        body["multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"] = "sha256:" + "0" * 64
+        return body
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_forged_fingerprint_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    _assert_claim_refused_zero_write(world, adapter, before)
+
+
+def test_p19_r6_f2_a_missing_semantic_fingerprint_is_refused(world: dict[str, Any]) -> None:
+    """Structural Review Round 6, P19-R6-F2's own required negative control: a claim body with
+    no readable ``multi_agent_slot_attempt_envelope_claim_semantic_fingerprint`` at all is
+    refused by this route's own schema validation, before any commit."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _fingerprintless_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        body = _self_consistent_claim_body(world, envelope)
+        del body["multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"]
+        return body
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_fingerprintless_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    _assert_claim_refused_zero_write(world, adapter, before)
+
+
+def test_p19_r6_f2_an_additional_unregistered_field_is_refused(world: dict[str, Any]) -> None:
+    """Structural Review Round 6, P19-R6-F2's own required negative control:
+    ``UNKNOWN_FIELD_ACCEPTED=false``. A claim body that is otherwise fully self-consistent
+    (its own recomputed id and semantic fingerprint both equal its own declared values, since
+    neither projection reads a field outside its own named set) but carries one additional,
+    unregistered property is refused by this route's own schema validation
+    (``additionalProperties: false``) -- a gap recomputing identity/fingerprint alone can never
+    close, since an extra field affects neither projection."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _extra_field_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        body = _self_consistent_claim_body(world, envelope)
+        body["unregistered_smuggled_field"] = "attacker-controlled"
+        return body
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_extra_field_claim_factory,
+            slot_attempt_envelope_claim_binding=_claim_binding(world),
+        )
+    _assert_claim_refused_zero_write(world, adapter, before)
+
+
+# =========================================================================== #
+# 10. Structural Review Round 7: canonical claim origin binding (P19-R7-F1)
+# =========================================================================== #
+
+
+def test_p19_r7_f1_a_self_consistent_colluding_body_and_binding_is_refused_before_the_adapter(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 7, P19-R7-F1's own required decisive negative control.
+
+    Round 6 verified only that the factory-produced claim body's own declared
+    ``plan_ref``/``slot_index``/``attempt_ordinal`` equalled *slot_attempt_envelope_claim_
+    binding*'s own declared values -- but the identical single caller supplies both, so a
+    caller can trivially make both agree for a plan/slot/attempt that was never genuinely
+    committed. This body and binding are mutually, honestly self-consistent (schema-valid,
+    recomputed id and semantic fingerprint both equal their own declared values) for
+    ``plan_ref={"id": "CALLER-SELECTED-PLAN"}``, ``slot_index=2``, ``attempt_ordinal=999`` --
+    a plan that this test's own Store never committed. ``CANONICAL_PLAN_RESOLVES=false``, and
+    the refusal occurs before the adapter is ever reached: ``ADAPTER_CALL_COUNT=0``,
+    ``ENVELOPE_WRITE_COUNT=0``, ``CLAIM_WRITE_COUNT=0``, ``STATE_REVISION_ADVANCE=0``,
+    ``SELF_CONSISTENT_COLLUDING_BODY_AND_BINDING_WRITE_COUNT=0``."""
+
+    opened = _open(world)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    forged_plan_ref = {"kind": "multi_agent_dynamic_execution_plan", "id": "CALLER-SELECTED-PLAN"}
+    forged_binding = {"plan_ref": dict(forged_plan_ref), "slot_index": 2, "attempt_ordinal": 999}
+
+    def _colluding_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        # Self-consistent by construction (via the shared helper's own recompute-and-set), so
+        # this is exactly the shape a purely mutual-agreement check would have accepted --
+        # schema-valid, narrow id and full semantic fingerprint both genuinely recomputed over
+        # this exact (forged) content, not merely asserted.
+        return _self_consistent_claim_body(
+            world,
+            envelope,
+            plan_ref=dict(forged_plan_ref),
+            slot_index=2,
+            attempt_ordinal=999,
+        )
+
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_dynamic_execution_plan", "CALLER-SELECTED-PLAN"
+        )
+        is None
+    )
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_colluding_claim_factory,
+            slot_attempt_envelope_claim_binding=forged_binding,
+        )
+    # ADAPTER_CALL_COUNT=0: unlike every Round 5/6 negative control above (which all show
+    # execute_call_count == 1, since their own tamper is only caught in the post-adapter
+    # commit-tail), this refusal is the new canonical-plan-origin check, which runs before the
+    # adapter is ever reached.
+    assert adapter.execute_call_count == 0
+    # STATE_REVISION_ADVANCE=0
+    assert _revision(world) == before
+    # ENVELOPE_WRITE_COUNT=0 / CLAIM_WRITE_COUNT=0 / SELF_CONSISTENT_COLLUDING_BODY_AND_BINDING_
+    # WRITE_COUNT=0: nothing this call could have produced was ever committed.
+    forged_claim_body = _self_consistent_claim_body(
+        world,
+        {"model_execution_envelope_id": "MODEL-EXECUTION-" + "9" * 64},
+        plan_ref=dict(forged_plan_ref),
+        slot_index=2,
+        attempt_ordinal=999,
+    )
+    assert (
+        world["store"].resolve_record(
+            world["project_id"],
+            "multi_agent_slot_attempt_envelope_claim",
+            forged_claim_body["multi_agent_slot_attempt_envelope_claim_id"],
+        )
+        is None
+    )
+
+
+def test_p19_r7_f1_a_genuine_store_resolved_plan_still_admits_its_companion_claim_atomically(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 7, P19-R7-F1's own required positive control: the fix closes a
+    collusion gap, it does not narrow the honest route. A genuine, Store-resolved canonical
+    plan (:func:`_commit_canonical_plan`) whose own slot/capability and Work Unit binding this
+    call's own ``slot_attempt_envelope_claim_binding`` truthfully names still admits its
+    companion claim exactly as every Round 4-6 proof already established: the Envelope and the
+    claim commit atomically, in the same one transaction (both present afterward)."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _genuine_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return _self_consistent_claim_body(world, envelope)
+
+    before = _revision(world)
+    result = execute_model_work_unit(
+        world["store"],
+        _agent(world),
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        model_work_unit_ref=opened["model_work_unit_ref"],
+        adapter=adapter,
+        executed_at="2026-09-09T02:00:00Z",
+        slot_attempt_envelope_claim_factory=_genuine_claim_factory,
+        slot_attempt_envelope_claim_binding=_claim_binding(world),
+    )
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before + 1
+    envelope_id = result["envelope"]["model_execution_envelope_id"]
+    assert (
+        world["store"].resolve_record(world["project_id"], ENVELOPE_KIND, envelope_id) is not None
+    )
+    claim_body = _self_consistent_claim_body(world, result["envelope"])
+    claim_id = claim_body["multi_agent_slot_attempt_envelope_claim_id"]
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_slot_attempt_envelope_claim", claim_id
+        )
+        is not None
+    )
+
+
+# =========================================================================== #
+# 11. Structural Review Round 8: verified binding continuity across the adapter (P19-R8-F1)
+# =========================================================================== #
+
+
+def test_p19_r8_f1_an_adapter_that_mutates_the_original_binding_to_an_unverified_plan_is_refused(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 8, P19-R8-F1's own required decisive adversarial regression.
+
+    Round 7 resolves and verifies the canonical plan *slot_attempt_envelope_claim_binding* names
+    before the adapter is ever reached -- but the (pre-fix) route then discarded that verified
+    value and took its own ``dict(slot_attempt_envelope_claim_binding)`` a second time, in the
+    post-adapter commit-tail, reading the identical caller-owned Mapping again after
+    ``adapter.execute()`` had already returned. Because the same public caller supplies the
+    adapter, the binding, and the claim factory, the adapter here mutates the original binding
+    Mapping in place -- including its own nested ``plan_ref`` -- from a genuinely committed and
+    verified Plan A to an uncommitted Plan B, and the factory (called after the adapter, seeing
+    only the mutated Mapping) follows Plan B. ``PLAN_A_RESOLVED_AND_VERIFIED=true``,
+    ``ADAPTER_MUTATES_ORIGINAL_CALLER_BINDING_TO_PLAN_B=true``,
+    ``FACTORY_FOLLOWS_MUTATED_PLAN_B=true``, ``PLAN_B_CANONICAL_RESOLUTION=false`` (Plan B is
+    never committed to this test's own Store at all). The fix must refuse this: the retained,
+    caller-detached value captured *before* the adapter call (naming Plan A) is what the
+    post-adapter claim comparison uses, never a fresh read of the (by-then mutated) original
+    Mapping, so the claim body's own declared Plan-B fields mismatch it and commitment is
+    refused. Because this mismatch is only detectable in the post-adapter commit-tail (the claim
+    body itself does not exist until the factory is called, after the adapter),
+    ``ADAPTER_CALL_COUNT=1`` here -- unlike Round 7's own pre-adapter collusion control --  but
+    ``PLAN_B_CLAIM_WRITE_COUNT=0``, ``ENVELOPE_WRITE_COUNT=0``, ``STATE_REVISION_ADVANCE=0``."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)  # Plan A: genuinely committed and Store-resolvable
+    plan_a_ref = dict(_CLAIM_PLAN_REF)
+
+    mutable_binding: dict[str, Any] = {
+        "plan_ref": dict(plan_a_ref),
+        "slot_index": _CLAIM_SLOT_INDEX,
+        "attempt_ordinal": _CLAIM_ATTEMPT_ORDINAL,
+    }
+    plan_b_ref = {"kind": "multi_agent_dynamic_execution_plan", "id": "UNCOMMITTED-PLAN-B"}
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_dynamic_execution_plan", "UNCOMMITTED-PLAN-B"
+        )
+        is None
+    )
+
+    class _BindingMutatingAdapter(FakeModelAdapter):
+        def execute(self, *, request: Mapping[str, Any]) -> Mapping[str, Any]:
+            result = super().execute(request=request)
+            # Mutate the ORIGINAL caller-owned Mapping in place, including its own nested
+            # plan_ref object -- exactly what a second, later dict() of the same Mapping would
+            # follow, and exactly what the retained, caller-detached value must not.
+            mutable_binding["plan_ref"] = dict(plan_b_ref)
+            mutable_binding["slot_index"] = 999
+            return result
+
+    adapter = _BindingMutatingAdapter()
+    adapter.seed_candidate(
+        model_work_unit_ref=opened["model_work_unit_ref"],
+        candidate_fields={"summary": "s", "observed_status": "ok"},
+    )
+
+    def _factory_following_the_mutated_binding(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        # Called after adapter.execute() returns, so it observes the already-mutated binding --
+        # exactly the shape a colluding caller-side factory would produce to follow the mutation.
+        return _self_consistent_claim_body(
+            world,
+            envelope,
+            plan_ref=dict(mutable_binding["plan_ref"]),
+            slot_index=mutable_binding["slot_index"],
+        )
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_factory_following_the_mutated_binding,
+            slot_attempt_envelope_claim_binding=mutable_binding,
+        )
+    # ADAPTER_CALL_COUNT=1: Plan A's own pre-adapter canonical-plan check genuinely passes (it is
+    # resolved and verified before the mutation ever happens), so the adapter really is reached.
+    assert adapter.execute_call_count == 1
+    # STATE_REVISION_ADVANCE=0 / ENVELOPE_WRITE_COUNT=0 / PLAN_B_CLAIM_WRITE_COUNT=0
+    assert _revision(world) == before
+    forged_claim_body = _self_consistent_claim_body(
+        world,
+        {"model_execution_envelope_id": "MODEL-EXECUTION-" + "8" * 64},
+        plan_ref=dict(plan_b_ref),
+        slot_index=999,
+    )
+    assert (
+        world["store"].resolve_record(
+            world["project_id"],
+            "multi_agent_slot_attempt_envelope_claim",
+            forged_claim_body["multi_agent_slot_attempt_envelope_claim_id"],
+        )
+        is None
+    )
+    # PLAN_B_CANONICAL_RESOLUTION=false: the mutated-to plan was never committed at all.
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_dynamic_execution_plan", "UNCOMMITTED-PLAN-B"
+        )
+        is None
+    )
+
+
+def test_p19_r8_f1_a_genuine_unmutated_binding_still_admits_its_companion_claim_atomically(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 8, P19-R8-F1's own required positive control: the fix closes a
+    binding-continuity gap, it does not narrow the honest route. When nothing mutates the
+    original binding Mapping at all, the retained, caller-detached value the fix now uses is
+    exactly the same plan/slot/attempt the caller declared, and the Envelope plus its companion
+    claim still commit atomically in the same one transaction -- the identical Round 4-7
+    invariant, preserved."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _genuine_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return _self_consistent_claim_body(world, envelope)
+
+    before = _revision(world)
+    result = execute_model_work_unit(
+        world["store"],
+        _agent(world),
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        model_work_unit_ref=opened["model_work_unit_ref"],
+        adapter=adapter,
+        executed_at="2026-09-09T02:00:00Z",
+        slot_attempt_envelope_claim_factory=_genuine_claim_factory,
+        slot_attempt_envelope_claim_binding=_claim_binding(world),
+    )
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before + 1
+    envelope_id = result["envelope"]["model_execution_envelope_id"]
+    assert (
+        world["store"].resolve_record(world["project_id"], ENVELOPE_KIND, envelope_id) is not None
+    )
+    claim_body = _self_consistent_claim_body(world, result["envelope"])
+    claim_id = claim_body["multi_agent_slot_attempt_envelope_claim_id"]
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_slot_attempt_envelope_claim", claim_id
+        )
+        is not None
+    )
+
+
+def test_p19_r4_f4_a_fabricated_pinned_execution_snapshot_is_refused_with_zero_adapter_calls(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 4, P19-R4-F4's own required required negative control: a
+    schema-valid ``pinned_execution_snapshot`` whose ``(state_revision, semantic_fingerprint)``
+    pair does not equal the resolved Work Unit's own ``opened_state_revision``/
+    ``opened_semantic_fingerprint`` -- an arbitrary, caller-minted pair, never a real, Store-
+    resolved, identity-verified genesis snapshot -- is refused before the adapter is ever
+    reached, with nothing committed."""
+
+    opened = _open(world)
+    genuine_state_revision = int(opened["model_work_unit"]["opened_state_revision"])
+    fabricated = {
+        "state_revision": genuine_state_revision,
+        "semantic_fingerprint": {
+            **dict(opened["model_work_unit"]["opened_semantic_fingerprint"]),
+            "fabricated_probe_field": "this pair was never resolved from any real Store state",
+        },
+    }
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            pinned_execution_snapshot=fabricated,
+        )
+    assert adapter.execute_call_count == 0
+    assert _revision(world) == before

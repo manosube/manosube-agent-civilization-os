@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/multi_agent/multi_agent_agent_release_receipt.schema.json",
+  "title": "Canonical Multi-Agent Agent Release Receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "multi_agent_agent_release_receipt_id",
+    "multi_agent_agent_release_receipt_semantic_fingerprint",
+    "project_id",
+    "plan_ref",
+    "slot_index",
+    "attempt_id",
+    "release_status",
+    "released_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "multi_agent_agent_release_receipt_id": {
+      "type": "string",
+      "pattern": "^MULTI-AGENT-RELEASE-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "multi_agent_agent_release_receipt_semantic_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "plan_ref": {"$ref": "#/$defs/plan_ref"},
+    "slot_index": {"type": "integer", "minimum": 0, "maximum": 2},
+    "attempt_id": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^MULTI-AGENT-ATTEMPT-[0-9A-F]{64}(?![\\s\\S])"}
+      ]
+    },
+    "release_status": {"enum": ["RELEASED", "RELEASE_FAILED"]},
+    "released_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "$defs": {
+    "plan_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "multi_agent_dynamic_execution_plan"}}}
+      ]
+    }
+  },
+  "additionalProperties": false
+}

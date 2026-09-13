@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/multi_agent/multi_agent_conflict_set.schema.json",
+  "title": "Canonical Multi-Agent Conflict Set",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "multi_agent_conflict_set_id",
+    "multi_agent_conflict_set_semantic_fingerprint",
+    "project_id",
+    "plan_ref",
+    "considered_slot_output_refs",
+    "members"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "multi_agent_conflict_set_id": {
+      "type": "string",
+      "pattern": "^MULTI-AGENT-CONFLICT-[0-9A-F]{64}(?![\\s\\S])"
+    },
+    "multi_agent_conflict_set_semantic_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "plan_ref": {"$ref": "#/$defs/plan_ref"},
+    "considered_slot_output_refs": {"$ref": "#/$defs/unordered_slot_output_refs"},
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/member"}
+    }
+  },
+  "$defs": {
+    "plan_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "multi_agent_dynamic_execution_plan"}}}
+      ]
+    },
+    "slot_output_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "multi_agent_slot_output"}}}
+      ]
+    },
+    "unordered_slot_output_refs": {
+      "type": "object",
+      "required": ["collection_kind", "members"],
+      "properties": {
+        "collection_kind": {"const": "UNORDERED_SET"},
+        "members": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/slot_output_ref"}}
+      },
+      "additionalProperties": false
+    },
+    "required_capability": {"enum": ["PROPOSE_EVIDENCE_CANDIDATE"]},
+    "member": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["member_kind", "capability", "result_fingerprint", "slot_output_refs"],
+          "properties": {
+            "member_kind": {"const": "AGREEING"},
+            "capability": {"$ref": "#/$defs/required_capability"},
+            "result_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
+            "slot_output_refs": {"$ref": "#/$defs/unordered_slot_output_refs"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["member_kind", "capability", "fingerprint_groups"],
+          "properties": {
+            "member_kind": {"const": "CONTRADICTING"},
+            "capability": {"$ref": "#/$defs/required_capability"},
+            "fingerprint_groups": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "object",
+                "required": ["result_fingerprint", "slot_output_refs"],
+                "properties": {
+                  "result_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
+                  "slot_output_refs": {"$ref": "#/$defs/unordered_slot_output_refs"}
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["member_kind", "capability", "slot_index", "outcome", "slot_output_ref"],
+          "properties": {
+            "member_kind": {"const": "ABSENT"},
+            "capability": {"$ref": "#/$defs/required_capability"},
+            "slot_index": {"type": "integer", "minimum": 0, "maximum": 2},
+            "outcome": {
+              "enum": ["UNAVAILABLE", "REFUSED", "MALFORMED", "TIMEOUT", "CANCELLED", "INCOMPLETE_EVIDENCE"]
+            },
+            "slot_output_ref": {"$ref": "#/$defs/slot_output_ref"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

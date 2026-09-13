@@ -114,6 +114,7 @@ from .errors import (
     ModelReleasedAgentError,
     ModelRuntimeAuthorityFreshnessError,
     ModelRuntimeError,
+    ModelRuntimeExecutionCancelledError,
     ModelRuntimeRequirementError,
     ModelRuntimeStaleStateError,
 )
@@ -157,6 +158,7 @@ __all__ = [
     "ModelReleasedAgentError",
     "ModelRuntimeAuthorityFreshnessError",
     "ModelRuntimeError",
+    "ModelRuntimeExecutionCancelledError",
     "ModelRuntimeRequirementError",
     "ModelRuntimeStaleStateError",
     "RequestDerivedModelAdapter",

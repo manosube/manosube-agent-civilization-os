@@ -80,7 +80,7 @@ live Phase 12 Temporary Agent Execution Contract (its own boot_context, read not
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from manosube_agent_civilization.agent_runtime import TemporaryAgent, start_temporary_agent
@@ -89,7 +89,10 @@ from manosube_agent_civilization.authority import (
     MODEL_EXECUTION_AUTHORIZED,
     evaluate_model_execution_authorization,
 )
-from manosube_agent_civilization.authority.identity import model_execution_decision_id
+from manosube_agent_civilization.authority.identity import (
+    model_execution_decision_id,
+    model_execution_decision_semantic_fingerprint,
+)
 from manosube_agent_civilization.difference.errors import DifferenceValidationError
 from manosube_agent_civilization.difference.identity import difference_id as compute_difference_id
 from manosube_agent_civilization.difference.validation import (
@@ -100,6 +103,14 @@ from manosube_agent_civilization.state.fingerprint import fingerprint_project_st
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
 
+from .claim_identity import (
+    multi_agent_dynamic_execution_plan_id,
+    multi_agent_dynamic_execution_plan_semantic_fingerprint,
+    multi_agent_slot_attempt_envelope_claim_id,
+    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
+    require_schema_valid_multi_agent_dynamic_execution_plan,
+    require_schema_valid_slot_attempt_envelope_claim,
+)
 from .engine import (
     MODEL_RUNTIME_SCHEMA_BASE,
     derive_model_execution_envelope,
@@ -119,6 +130,7 @@ from .errors import (
     ModelRecordIntegrityError,
     ModelReleasedAgentError,
     ModelRuntimeAuthorityFreshnessError,
+    ModelRuntimeExecutionCancelledError,
     ModelRuntimeRequirementError,
     ModelRuntimeStaleStateError,
 )
@@ -152,6 +164,20 @@ ENVELOPE_RECORD_KIND = "model_execution_envelope"
 SWAP_RECEIPT_RECORD_KIND = "model_swap_receipt"
 RECOVERY_RECEIPT_RECORD_KIND = "session_recovery_receipt"
 DIFFERENCE_RECORD_KIND = "difference"
+
+#: Structural Review Round 5, P19-R5-F2: the one, hardcoded, caller-immune companion-record
+#: kind ``slot_attempt_envelope_claim_factory`` may ever commit alongside a real Envelope --
+#: never a caller-selected kind. This route does not import or otherwise depend on
+#: ``multi_agent`` (that package depends on this one, never the reverse); this literal is the
+#: one disclosed exception, a plain string constant naming the single reserved companion kind,
+#: not a schema or identity dependency.
+_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND = "multi_agent_slot_attempt_envelope_claim"
+
+#: Structural Review Round 7, P19-R7-F1: the record kind this route resolves from the Store to
+#: independently verify the canonical Phase 19 plan a slot-attempt-envelope-claim's own binding
+#: names, for the identical reason as the constant above -- a plain string naming a kind this
+#: route does not own the business meaning of, never an import of ``multi_agent``.
+_MULTI_AGENT_DYNAMIC_EXECUTION_PLAN_RECORD_KIND = "multi_agent_dynamic_execution_plan"
 
 #: The identical Compare-And-Swap retry bound Projection's own ``_claim_slot`` and Runtime's own
 #: ``_commit_envelope`` use -- not a timeout, not a backoff, bounded protection against genuine,
@@ -478,6 +504,184 @@ def _resolve_difference(
     return difference
 
 
+def _detach_slot_attempt_envelope_claim_binding(binding: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and normalize a caller-supplied ``slot_attempt_envelope_claim_binding`` exactly
+    once, returning a value wholly detached from the caller's own Mapping object (Structural
+    Review Round 8, P19-R8-F1).
+
+    Round 7 resolved and verified the canonical plan *expected_binding* named before the adapter
+    was ever reached, but then discarded that verified value: the post-adapter commit-tail built
+    its own comparator by taking ``dict(slot_attempt_envelope_claim_binding)`` a second time,
+    reading the identical caller-owned Mapping again after ``adapter.execute()`` had already run.
+    Because the same public caller supplies the adapter, the binding, and the claim factory, the
+    adapter can mutate that original Mapping in place -- including its own nested ``plan_ref`` --
+    from a genuinely verified Plan A to an uncommitted Plan B between those two reads, and the
+    factory can then follow that same mutated binding to build a self-consistent Plan-B claim
+    that the (unfixed) post-adapter re-read would have agreed with.
+
+    This function is called exactly once, before the adapter is ever reached, and its return
+    value -- never another read of *binding* itself -- is what both the pre-adapter canonical-
+    plan resolution and the post-adapter claim comparison use. A shallow ``dict(binding)`` alone
+    would not suffice: its own ``plan_ref`` entry could still be the identical nested Mapping
+    object the caller continues to hold and mutate. This instead reads each of the four accepted
+    fields (``plan_ref.kind``, ``plan_ref.id``, ``slot_index``, ``attempt_ordinal``) once, here,
+    and returns a freshly built dict -- including a freshly built ``plan_ref`` dict of its own --
+    containing only those already-read, now-immutable values, sharing no nested container with
+    *binding*.
+    """
+
+    if not isinstance(binding, Mapping):
+        raise ModelRuntimeRequirementError(
+            f"slot_attempt_envelope_claim_binding must be an explicit mapping: {binding!r}"
+        )
+    declared_plan_ref = binding.get("plan_ref")
+    if not (
+        isinstance(declared_plan_ref, Mapping)
+        and isinstance(declared_plan_ref.get("kind"), str)
+        and declared_plan_ref.get("kind")
+        and isinstance(declared_plan_ref.get("id"), str)
+        and declared_plan_ref.get("id")
+    ):
+        raise ModelRuntimeRequirementError(
+            "slot_attempt_envelope_claim_binding's own plan_ref is not a readable reference with "
+            "a non-empty kind and id -- refusing to resolve a canonical plan from it"
+        )
+    return {
+        "plan_ref": {
+            "kind": str(declared_plan_ref["kind"]),
+            "id": str(declared_plan_ref["id"]),
+        },
+        "slot_index": binding.get("slot_index"),
+        "attempt_ordinal": binding.get("attempt_ordinal"),
+    }
+
+
+def _resolve_and_verify_canonical_plan(
+    store: Any,
+    project_id: str,
+    *,
+    expected_binding: Mapping[str, Any],
+    checked_work_unit_ref: Mapping[str, Any],
+    work_unit: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve, independently verify and bind the canonical Phase 19 dynamic execution plan a
+    slot-attempt-envelope-claim's own binding names (Structural Review Round 7, P19-R7-F1).
+
+    Structural Review Round 6 closed only a shallow gap: it verified that the factory-produced
+    claim body's own declared ``plan_ref``/``slot_index``/``attempt_ordinal`` equalled
+    *expected_binding*'s own declared values -- but the identical single public caller supplies
+    both the factory and the binding, so their mutual agreement never proved a genuinely
+    committed plan stood behind either one. This function is the genuine third-party check: it
+    resolves the plan *expected_binding* names from the Store itself, schema-validates it,
+    independently recomputes its own narrow id and full semantic fingerprint
+    (:mod:`~manosube_agent_civilization.model_runtime.claim_identity`, relocated there for the
+    identical reason as the claim kind's own identity functions -- this route may never import
+    ``multi_agent``, which depends on this package, never the reverse), and requires each to
+    equal the plan's own declared value *and* the Store lookup key used to find it -- never
+    merely trusting a caller-selected non-empty string. It further requires the resolved plan to
+    name this exact project and this exact Work Unit, and the caller-declared slot index to exist
+    in it with a capability equal to this call's own already-resolved Work Unit's
+    ``required_capability``. ``attempt_ordinal`` is never accepted as a free caller-selected
+    value either: this system's own design is single-attempt-per-slot (no retry loop exists), so
+    it is checked here as the fixed, route-derived invariant ``1``, never read from any caller-
+    supplied "expected" field.
+
+    Every refusal here lands before the adapter is ever reached, with the adapter called zero
+    times and nothing committed -- this function is called from
+    :func:`execute_model_work_unit` before its own adapter call, not from its post-adapter
+    commit-tail.
+    """
+
+    declared_plan_ref = expected_binding.get("plan_ref")
+    if not (
+        isinstance(declared_plan_ref, Mapping)
+        and isinstance(declared_plan_ref.get("id"), str)
+        and declared_plan_ref.get("id")
+    ):
+        raise ModelRuntimeRequirementError(
+            "slot_attempt_envelope_claim_binding's own plan_ref is not a readable reference with "
+            "a non-empty id -- refusing to resolve a canonical plan from it"
+        )
+    plan_id_lookup_key = str(declared_plan_ref["id"])
+    resolved = store.resolve_record(
+        project_id, _MULTI_AGENT_DYNAMIC_EXECUTION_PLAN_RECORD_KIND, plan_id_lookup_key
+    )
+    if resolved is None:
+        raise ModelRuntimeRequirementError(
+            "slot_attempt_envelope_claim_binding names a plan_ref that does not resolve to a "
+            f"committed multi_agent_dynamic_execution_plan under project {project_id!r}: "
+            f"{plan_id_lookup_key!r} -- a caller-declared plan_ref with no genuine canonical plan "
+            "behind it is refused before the adapter is ever reached"
+        )
+    if not isinstance(resolved, Mapping):
+        raise ModelRuntimeRequirementError(
+            f"resolved multi_agent_dynamic_execution_plan is not a readable record: {resolved!r}"
+        )
+    plan = dict(resolved)
+    require_schema_valid_multi_agent_dynamic_execution_plan(plan)
+    _require_same_project(plan, project_id, _MULTI_AGENT_DYNAMIC_EXECUTION_PLAN_RECORD_KIND)
+    declared_plan_id = plan.get("multi_agent_dynamic_execution_plan_id")
+    if (
+        not isinstance(declared_plan_id, str)
+        or not declared_plan_id
+        or declared_plan_id != plan_id_lookup_key
+        or multi_agent_dynamic_execution_plan_id(plan) != declared_plan_id
+    ):
+        raise ModelRecordIntegrityError(
+            f"resolved multi_agent_dynamic_execution_plan {plan_id_lookup_key!r} own recomputed "
+            "identity does not equal its own declared value, or its own declared value does not "
+            "equal the reference used to resolve it -- refusing to trust any of its fields"
+        )
+    if multi_agent_dynamic_execution_plan_semantic_fingerprint(plan) != plan.get(
+        "multi_agent_dynamic_execution_plan_semantic_fingerprint"
+    ):
+        raise ModelRecordIntegrityError(
+            f"resolved multi_agent_dynamic_execution_plan {declared_plan_id!r} own recomputed "
+            "semantic fingerprint does not equal its own declared value -- refusing to trust any "
+            "of its fields"
+        )
+    declared_work_unit_ref = plan.get("model_work_unit_ref")
+    if not (
+        isinstance(declared_work_unit_ref, Mapping)
+        and declared_work_unit_ref.get("kind") == checked_work_unit_ref.get("kind")
+        and declared_work_unit_ref.get("id") == checked_work_unit_ref.get("id")
+    ):
+        raise ModelRuntimeRequirementError(
+            f"resolved multi_agent_dynamic_execution_plan {declared_plan_id!r} does not name "
+            "this exact Work Unit via its own model_work_unit_ref -- refusing to admit it as the "
+            "canonical plan behind this attempt"
+        )
+    declared_slot_index = expected_binding.get("slot_index")
+    slots = plan.get("slots")
+    matching_slot: Any = None
+    if isinstance(slots, list):
+        for slot in slots:
+            if isinstance(slot, Mapping) and slot.get("slot_index") == declared_slot_index:
+                matching_slot = slot
+                break
+    if matching_slot is None:
+        raise ModelRuntimeRequirementError(
+            f"slot_attempt_envelope_claim_binding declares slot_index {declared_slot_index!r}, "
+            f"which does not exist in the resolved multi_agent_dynamic_execution_plan "
+            f"{declared_plan_id!r} -- refusing to admit an attempt for a slot the canonical plan "
+            "never opened"
+        )
+    if matching_slot.get("capability") != work_unit.get("required_capability"):
+        raise ModelRuntimeRequirementError(
+            f"the resolved multi_agent_dynamic_execution_plan's own slot {declared_slot_index!r} "
+            f"declares capability {matching_slot.get('capability')!r}, which does not equal this "
+            f"call's own resolved Work Unit's required_capability "
+            f"{work_unit.get('required_capability')!r} -- refusing to admit this attempt"
+        )
+    if expected_binding.get("attempt_ordinal") != 1:
+        raise ModelRuntimeRequirementError(
+            "slot_attempt_envelope_claim_binding declares an attempt_ordinal other than 1 -- "
+            "this system's own single-attempt-per-slot design means attempt_ordinal is a fixed, "
+            "route-derived invariant, never a free caller-selected origin"
+        )
+    return plan
+
+
 def _resolve_boundary(
     store: Any,
     project_id: str,
@@ -536,6 +740,58 @@ def _resolve_boundary(
     return boundary
 
 
+def _resolve_decision(
+    store: Any, project_id: str, authority_ref: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Resolve, schema-validate and identity/fingerprint-recompute the real Model Execution
+    Decision *authority_ref* names -- the static, time-invariant half of decision resolution,
+    shared by :func:`_resolve_authority_decision` (which additionally re-binds it to the live,
+    currently-fresh Human Authority before an adapter is ever reached) and
+    :func:`resolve_and_verify_committed_authority_decision` (Structural Review Round 11,
+    P19-R11-F1: a later, post-hoc terminal-graph check against this immutable committed record's
+    own declared fields, never against a re-observed live Boot that may have legitimately moved
+    on since this decision was made).
+    """
+
+    resolved = _resolve(store, project_id, DECISION_RECORD_KIND, authority_ref)
+    decision = require_valid_model_execution_decision(resolved)
+    _require_same_project(decision, project_id, DECISION_RECORD_KIND)
+    if model_execution_decision_id(decision) != decision.get("model_execution_decision_id"):
+        raise ModelRecordIntegrityError(
+            f"resolved model_execution_decision {authority_ref['id']!r} own recomputed identity "
+            "does not equal its own declared value -- refusing to trust it"
+        )
+    if model_execution_decision_semantic_fingerprint(decision) != decision.get(
+        "decision_semantic_fingerprint"
+    ):
+        raise ModelRecordIntegrityError(
+            f"resolved model_execution_decision {authority_ref['id']!r} own recomputed semantic "
+            "fingerprint does not equal its own declared value -- refusing to trust it"
+        )
+    return decision
+
+
+def resolve_and_verify_committed_authority_decision(
+    store: Any, project_id: str, authority_ref: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Resolve the real, committed ``model_execution_decision`` *authority_ref* names, with the
+    identical static canonical admission :func:`_resolve_decision` already applies internally:
+    schema-valid, same project, and its own identity and semantic fingerprint independently
+    recomputed from its own content, equal to its own declared values.
+
+    Structural Review Round 11, P19-R11-F1: exposed as a thin public wrapper so a caller outside
+    this module (``multi_agent``) can read this immutable committed record's own
+    ``selection_authority_ref`` -- the canonical, never-re-evaluated Human Authority lineage an
+    Envelope's own ``human_authority_ref`` must agree with -- without duplicating this module's
+    own decision identity/schema verification logic a second time, and without re-checking that
+    decision against whatever Human Authority happens to be live right now (this is a genesis-
+    once, immutable record; a legitimate later Authority rotation must never make an honest
+    historical Envelope look forged).
+    """
+
+    return _resolve_decision(store, project_id, authority_ref)
+
+
 def _resolve_authority_decision(
     store: Any,
     project_id: str,
@@ -560,14 +816,7 @@ def _resolve_authority_decision(
     can never be replayed as the authority for a different one.
     """
 
-    resolved = _resolve(store, project_id, DECISION_RECORD_KIND, authority_ref)
-    decision = require_valid_model_execution_decision(resolved)
-    _require_same_project(decision, project_id, DECISION_RECORD_KIND)
-    if model_execution_decision_id(decision) != decision.get("model_execution_decision_id"):
-        raise ModelRecordIntegrityError(
-            f"resolved model_execution_decision {authority_ref['id']!r} own recomputed identity "
-            "does not equal its own declared value -- refusing to trust it"
-        )
+    decision = _resolve_decision(store, project_id, authority_ref)
     if decision["decision"] != MODEL_EXECUTION_AUTHORIZED:
         raise ModelRuntimeRequirementError(
             f"resolved model_execution_decision {authority_ref['id']!r} does not authorize model "
@@ -616,6 +865,28 @@ def _resolve_work_unit(
             f"{work_unit['model_work_unit_id']!r} != {work_unit_ref['id']!r}"
         )
     return work_unit
+
+
+def resolve_and_verify_committed_work_unit(
+    store: Any, project_id: str, model_work_unit_id_value: str
+) -> dict[str, Any]:
+    """Resolve the real, committed ``model_work_unit`` named by *model_work_unit_id_value* under
+    *project_id*, with the identical canonical admission :func:`_resolve_work_unit` already
+    applies internally: schema-valid, same project, and its own identity and semantic
+    fingerprint, independently recomputed from its own content, equal to its own declared values
+    and to the Store lookup key itself.
+
+    Structural Review Round 10, P19-R10-F1: exposed as a thin public wrapper so a caller outside
+    this module (``multi_agent``) can verify a Work Unit's own canonical, Store-resolved lineage
+    -- e.g. its ``boundary_ref``/``evidence_requirements`` -- rather than either trust an
+    in-memory copy or duplicate this module's own identity/schema verification logic a second
+    time. This is a genesis-once, immutable record; resolving it here never re-derives or
+    re-evaluates Authority.
+    """
+
+    return _resolve_work_unit(
+        store, project_id, {"kind": WORK_UNIT_RECORD_KIND, "id": model_work_unit_id_value}
+    )
 
 
 def _resume_from_store(
@@ -841,6 +1112,7 @@ def _canonical_request(
     request_identity: str,
     project_id: str,
     fresh: Mapping[str, Any],
+    execution_snapshot: Mapping[str, Any],
     work_unit: Mapping[str, Any],
     boundary: Mapping[str, Any],
     work_unit_ref: Mapping[str, Any],
@@ -848,21 +1120,26 @@ def _canonical_request(
     """The one provider-neutral request/response boundary every model invocation is bound to
     (P16-C1).
 
-    Carries exactly: the exact State revision and semantic fingerprint; the State-bound Work Unit
-    identity; the same Difference reference; the required capability; the explicit Authority
-    reference *and* the decision it records; the applicable Boundary reference and its resolved
-    body; the Evidence requirements; and the Phase 12 Temporary Agent Execution Contract
-    identity. It carries **no** provider payload, prompt text, chat transcript, model memory or
-    provider session id -- there is no key here through which one could arrive, and the adapter
-    receives nothing else at all.
+    Carries exactly: the exact State revision and semantic fingerprint the request declares (see
+    *execution_snapshot* below); the State-bound Work Unit identity; the same Difference
+    reference; the required capability; the explicit Authority reference *and* the decision it
+    records; the applicable Boundary reference and its resolved body; the Evidence requirements;
+    and the Phase 12 Temporary Agent Execution Contract identity. It carries **no** provider
+    payload, prompt text, chat transcript, model memory or provider session id -- there is no key
+    here through which one could arrive, and the adapter receives nothing else at all.
+
+    *execution_snapshot* is *fresh* itself for every caller that supplies no
+    *pinned_execution_snapshot* (unchanged behavior); *project_binding_ref* and
+    *human_authority_ref* always come from *fresh*, the true live Boot, regardless -- only the
+    declared ``state_revision``/``semantic_fingerprint`` pair is ever overridable (P19-R3-F1).
     """
 
     return {
         "model_execution_request_identity": request_identity,
         "project_id": project_id,
         "project_binding_ref": dict(fresh["project_binding_ref"]),
-        "state_revision": int(fresh["state_revision"]),
-        "semantic_fingerprint": dict(fresh["semantic_fingerprint"]),
+        "state_revision": int(execution_snapshot["state_revision"]),
+        "semantic_fingerprint": dict(execution_snapshot["semantic_fingerprint"]),
         "model_work_unit_ref": dict(work_unit_ref),
         "difference_ref": dict(work_unit["difference_ref"]),
         "required_capability": str(work_unit["required_capability"]),
@@ -874,8 +1151,8 @@ def _canonical_request(
         "execution_contract": {
             "project_id": str(fresh["project_id"]),
             "project_binding_ref": dict(fresh["project_binding_ref"]),
-            "state_revision": int(fresh["state_revision"]),
-            "semantic_fingerprint": dict(fresh["semantic_fingerprint"]),
+            "state_revision": int(execution_snapshot["state_revision"]),
+            "semantic_fingerprint": dict(execution_snapshot["semantic_fingerprint"]),
             "human_authority_ref": dict(fresh["human_authority_ref"]),
         },
     }
@@ -953,6 +1230,68 @@ def _normalize(
     )
 
 
+def _require_valid_pinned_execution_snapshot(
+    value: Mapping[str, Any], *, fresh: Mapping[str, Any], work_unit: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Validate a caller-supplied *pinned_execution_snapshot* against the true live State and
+    the resolved Work Unit's own genesis snapshot.
+
+    Multi-Agent Dynamic Execution Round 3, P19-R3-F1: a caller orchestrating several bounded
+    executions against *one* immutable plan snapshot needs every one of those executions' own
+    request/envelope to declare the identical ``(state_revision, semantic_fingerprint)`` pair,
+    never whichever live value a fresh reboot happens to observe at that exact call's own
+    instant (which legitimately advances as each sibling execution's own Envelope commits). This
+    route accepts an explicit override for exactly those two fields -- nothing else -- so the
+    caller's own already-established snapshot, never a value this function invents or widens,
+    is what reaches the adapter's own request and the committed Envelope alike. Authority
+    freshness is still re-proven against the true live Boot below, unchanged: this override
+    narrows only *which State the request itself declares*, never *which Authority is honored*.
+
+    Structural Review Round 4, P19-R4-F4: a caller may not mint an arbitrary
+    ``(state_revision, semantic_fingerprint)`` pair this way -- the *only* value this override
+    may ever carry is the exact ``opened_state_revision``/``opened_semantic_fingerprint`` pair
+    already recorded on this call's own resolved, schema-valid, identity-recomputed Work Unit
+    (verified by :func:`_resolve_work_unit` before this function is ever reached). That pair is
+    itself a real, committed, canonical fact -- the State this Work Unit was genuinely opened
+    against -- never a value this function or its caller invents. A supplied pair that does not
+    equal it is refused before the adapter is ever reached, regardless of how it was obtained.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != {"state_revision", "semantic_fingerprint"}:
+        raise ModelRuntimeRequirementError(
+            "pinned_execution_snapshot must be exactly {'state_revision', "
+            f"'semantic_fingerprint'}}: {value!r}"
+        )
+    state_revision = value["state_revision"]
+    if not isinstance(state_revision, int) or isinstance(state_revision, bool):
+        raise ModelRuntimeRequirementError(
+            f"pinned_execution_snapshot['state_revision'] must be an int: {state_revision!r}"
+        )
+    if state_revision > int(fresh["state_revision"]):
+        raise ModelRuntimeStaleStateError(
+            f"pinned_execution_snapshot claims State revision {state_revision}, which this "
+            f"Store has never reached (current revision {fresh['state_revision']}) -- a pinned "
+            "snapshot may never claim a revision from the Store's own future"
+        )
+    semantic_fingerprint = dict(value["semantic_fingerprint"])
+    if state_revision != int(work_unit["opened_state_revision"]) or semantic_fingerprint != dict(
+        work_unit["opened_semantic_fingerprint"]
+    ):
+        raise ModelRuntimeRequirementError(
+            "pinned_execution_snapshot does not equal the resolved Work Unit's own "
+            "opened_state_revision/opened_semantic_fingerprint -- a caller may only pin this "
+            f"call's own request to that exact, already Store-resolved, identity-verified "
+            f"genesis snapshot, never an independently supplied value: got "
+            f"(state_revision={state_revision!r}, semantic_fingerprint={semantic_fingerprint!r}), "
+            f"expected (state_revision={work_unit['opened_state_revision']!r}, "
+            f"semantic_fingerprint={dict(work_unit['opened_semantic_fingerprint'])!r})"
+        )
+    return {
+        "state_revision": state_revision,
+        "semantic_fingerprint": semantic_fingerprint,
+    }
+
+
 def execute_model_work_unit(
     store: Any,
     agent: TemporaryAgent,
@@ -962,6 +1301,11 @@ def execute_model_work_unit(
     model_work_unit_ref: Mapping[str, Any],
     adapter: ModelAdapter,
     executed_at: str,
+    pinned_execution_snapshot: Mapping[str, Any] | None = None,
+    cancellation_check: Callable[[], bool] | None = None,
+    slot_attempt_envelope_claim_factory: Callable[[Mapping[str, Any]], Mapping[str, Any]]
+    | None = None,
+    slot_attempt_envelope_claim_binding: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded, provider-neutral model invocation against one already-open Work Unit
     and return ``{"envelope": ..., "receipt": ModelExecutionReceipt}``.
@@ -972,13 +1316,101 @@ def execute_model_work_unit(
     caller-supplied instant (this route reads no clock, the identical discipline every other
     route in this repository already requires).
 
+    *pinned_execution_snapshot* is optional and, when omitted (every existing caller's own
+    behavior, unchanged), this route's request/envelope continue to declare the true live State
+    a fresh reboot observes at this exact call, exactly as before. When supplied -- see
+    :func:`_require_valid_pinned_execution_snapshot` -- it must equal the resolved Work Unit's
+    own ``opened_state_revision``/``opened_semantic_fingerprint`` pair exactly (P19-R4-F4: never
+    an independently caller-minted value), and that pair is what the adapter's own request and
+    the committed Envelope declare *instead of* the freshly-rebooted live values, while every
+    freshness/staleness check below still runs against the true live Boot, unchanged.
+
+    *cancellation_check* is optional (Structural Review Round 4, P19-R4-F1). When supplied, it
+    is called once, immediately before the Envelope would be committed; if it returns ``True``,
+    this call raises :class:`~manosube_agent_civilization.model_runtime.errors.
+    ModelRuntimeExecutionCancelledError` instead of committing anything. This exists for a
+    caller that bounds this call's own real duration on its own side (e.g. a worker-thread
+    timeout): a real adapter call may still be running past that caller's own bound, since a
+    blocked Python thread cannot be forcibly killed, but its late completion must never silently
+    become a committed success after the caller already recorded its own typed timeout outcome.
+
+    *slot_attempt_envelope_claim_factory* is optional (Structural Review Round 4's own
+    P19-R4-F3, closed by Structural Review Round 5's own P19-R5-F2). When supplied, it is
+    called once with the fully-derived, self-verified Envelope (after *cancellation_check*, so
+    a cancelled attempt never reaches it) and must return exactly one record *body* -- never a
+    kind, an id, or a list. This is deliberately **not** a generic record-injection surface:
+    Round 4's own ``additional_records_factory`` accepted arbitrary caller-selected
+    ``(kind, id, body)`` tuples, and exact-head reproduction showed it could co-commit a forged
+    ``authority_decision`` (or any other kind) alongside a real Envelope. This parameter instead
+    admits exactly one closed, hardcoded companion-record kind
+    (``multi_agent_slot_attempt_envelope_claim``) -- the caller can never choose a different one.
+
+    *slot_attempt_envelope_claim_binding* is required whenever *slot_attempt_envelope_claim_
+    factory* is supplied (Structural Review Round 6, P19-R6-F2), and must carry ``{"plan_ref":
+    ..., "slot_index": ..., "attempt_ordinal": ...}`` -- the exact identity this call's own
+    caller (never the factory) declares this attempt to be. Round 5's own fix checked only that
+    the returned body's ``model_execution_envelope_ref`` named this exact Envelope and that its
+    own declared id was a non-empty string; exact-head reproduction showed a caller-selected
+    non-empty id, a wrong ``project_id``/``plan_ref``/``slot_index``, a missing or forged
+    semantic fingerprint, and an additional unregistered field all passed those shallow checks
+    unnoticed. This route now: (1) validates the returned body against its own registered
+    canonical schema (:func:`~manosube_agent_civilization.model_runtime.claim_identity.
+    require_schema_valid_slot_attempt_envelope_claim`, closing the additional-field gap a
+    field-projection recompute alone cannot); (2) requires its declared ``project_id``/
+    ``plan_ref``/``slot_index``/``attempt_ordinal`` to equal this call's own ``project_id``
+    parameter and *slot_attempt_envelope_claim_binding*'s own declared values exactly; (3)
+    independently recomputes the claim's own narrow id and full semantic fingerprint
+    (:mod:`~manosube_agent_civilization.model_runtime.claim_identity`) and requires each to equal
+    its own declared value. That hash formula moved into this route's own package precisely so
+    it could be recomputed here without ever importing ``multi_agent`` (which depends on this
+    package, never the reverse) or duplicating a second, potentially-diverging implementation --
+    ``multi_agent`` itself now imports these same functions from here, so there is exactly one
+    owner and every consumer follows it. Either the Envelope and this one claim commit together,
+    or neither does -- the identical atomicity Round 4 established, now closed against every
+    forgery a caller-selected factory could otherwise smuggle through.
+
+    Structural Review Round 7, P19-R7-F1: Round 6's own checks above compare the returned claim
+    body's declared ``plan_ref``/``slot_index``/``attempt_ordinal`` to
+    *slot_attempt_envelope_claim_binding*'s own declared values -- but the identical single
+    public caller supplies both the factory and the binding, so their mutual agreement never
+    proved a genuinely committed plan stood behind either one; exact-head reproduction showed a
+    wholly caller-invented ``plan_ref``/``slot_index``/``attempt_ordinal`` triple passing every
+    Round 6 check unnoticed. Before the adapter is ever reached, this route now resolves the
+    plan *slot_attempt_envelope_claim_binding*'s own ``plan_ref`` names from the Store itself
+    (:func:`_resolve_and_verify_canonical_plan`), schema-validates it, independently recomputes
+    its own narrow id and full semantic fingerprint, and requires the declared slot index to
+    exist in it with a capability equal to this call's own resolved Work Unit's
+    ``required_capability`` -- the genuine third-party check a second caller-supplied comparator
+    can never be. ``attempt_ordinal`` is likewise never accepted as a free caller-selected value:
+    this system's own single-attempt-per-slot design means it is checked as the fixed,
+    route-derived invariant ``1``.
+
+    Structural Review Round 8, P19-R8-F1: Round 7's own resolve-and-verify above ran against
+    *slot_attempt_envelope_claim_binding*, but the post-adapter commit-tail below independently
+    took its own ``dict(slot_attempt_envelope_claim_binding)`` a second time, reading the
+    identical caller-owned Mapping again after ``adapter.execute()`` had already returned. Because
+    the same public caller supplies the adapter, the binding, and the factory, the adapter could
+    mutate that Mapping in place -- including its own nested ``plan_ref`` -- from a genuinely
+    verified Plan A to an uncommitted Plan B between those two reads, and the factory could then
+    follow that same mutated binding to build a self-consistent Plan-B claim the post-adapter
+    re-read would have agreed with, even though only Plan A was ever resolved and verified.
+    *slot_attempt_envelope_claim_binding* is now validated and normalized into a caller-detached
+    trusted value exactly once, here, before the adapter is ever reached
+    (:func:`_detach_slot_attempt_envelope_claim_binding`), and that identical retained value --
+    never another read of the parameter itself -- is what both the pre-adapter canonical-plan
+    resolution and the post-adapter claim comparison use.
+
     Every refusal below lands with the adapter called **zero** times and nothing committed: a
     released or foreign Temporary Agent, a stale execution contract, a Work Unit that does not
     resolve or whose own identity does not recompute, a Difference/Boundary/Authority reference
     that does not resolve or does not restate this exact question, a Boundary or Authority
-    Decision belonging to a different Human Authority, and a Work Unit claiming a State revision
-    this Store never reached. Only after all of them does the adapter exist at all, and what it
-    then returns can only ever become one of the seven typed outcomes.
+    Decision belonging to a different Human Authority, a Work Unit claiming a State revision
+    this Store never reached, a *pinned_execution_snapshot* claiming a revision from the Store's
+    own future or not equal to the resolved Work Unit's own genesis snapshot, or (Round 7) a
+    *slot_attempt_envelope_claim_binding* naming a ``plan_ref`` that does not resolve to a
+    genuine, independently-verified canonical plan admitting this exact slot. Only after
+    all of them does the adapter exist at all, and what it then returns can only ever become one
+    of the seven typed outcomes.
     """
 
     _require_canonical_identity("project_id", project_id)
@@ -1004,6 +1436,45 @@ def execute_model_work_unit(
     )
     work_unit = resumed["model_work_unit"]
     boundary = resumed["model_execution_boundary"]
+    execution_snapshot = (
+        fresh
+        if pinned_execution_snapshot is None
+        else _require_valid_pinned_execution_snapshot(
+            pinned_execution_snapshot, fresh=fresh, work_unit=work_unit
+        )
+    )
+
+    # Structural Review Round 7, P19-R7-F1: when a companion claim will be committed, the
+    # canonical plan its own binding names is resolved from the Store and independently verified
+    # *here* -- before the adapter is ever reached, exactly like every other admission check
+    # above -- rather than only inside the post-adapter commit-tail below. Round 6 checked only
+    # that the factory-produced claim body's own declared values equalled
+    # slot_attempt_envelope_claim_binding's own declared values; the identical single caller
+    # supplies both, so that agreement alone never proved a genuinely committed plan stood behind
+    # either one. See :func:`_resolve_and_verify_canonical_plan`.
+    #
+    # Structural Review Round 8, P19-R8-F1: the value verified here must be the *exact* value the
+    # post-adapter commit-tail below compares its claim body against -- never a second, later read
+    # of slot_attempt_envelope_claim_binding itself, which the adapter this call is about to
+    # invoke may since have mutated. See :func:`_detach_slot_attempt_envelope_claim_binding`.
+    retained_claim_binding: dict[str, Any] | None = None
+    if slot_attempt_envelope_claim_factory is not None:
+        if slot_attempt_envelope_claim_binding is None:
+            raise ModelRuntimeRequirementError(
+                "slot_attempt_envelope_claim_binding is required whenever "
+                "slot_attempt_envelope_claim_factory is supplied -- this call's own caller, "
+                "never the factory, declares which exact attempt this claim is committed for"
+            )
+        retained_claim_binding = _detach_slot_attempt_envelope_claim_binding(
+            slot_attempt_envelope_claim_binding
+        )
+        _resolve_and_verify_canonical_plan(
+            store,
+            project_id,
+            expected_binding=retained_claim_binding,
+            checked_work_unit_ref=checked_work_unit_ref,
+            work_unit=work_unit,
+        )
 
     declared_identity = getattr(adapter, "adapter_identity", None)
     if not isinstance(declared_identity, Mapping):
@@ -1027,14 +1498,15 @@ def execute_model_work_unit(
 
     request_identity = model_execution_request_identity(
         model_work_unit_id_value=str(work_unit["model_work_unit_id"]),
-        state_revision=int(fresh["state_revision"]),
-        semantic_fingerprint=dict(fresh["semantic_fingerprint"]),
+        state_revision=int(execution_snapshot["state_revision"]),
+        semantic_fingerprint=dict(execution_snapshot["semantic_fingerprint"]),
         adapter_identity=adapter_identity,
     )
     request = _canonical_request(
         request_identity=request_identity,
         project_id=project_id,
         fresh=fresh,
+        execution_snapshot=execution_snapshot,
         work_unit=work_unit,
         boundary=boundary,
         work_unit_ref=checked_work_unit_ref,
@@ -1065,8 +1537,8 @@ def execute_model_work_unit(
         project_binding_ref=dict(fresh["project_binding_ref"]),
         model_work_unit_ref=checked_work_unit_ref,
         model_execution_request_identity=request_identity,
-        executed_state_revision=int(fresh["state_revision"]),
-        executed_semantic_fingerprint=dict(fresh["semantic_fingerprint"]),
+        executed_state_revision=int(execution_snapshot["state_revision"]),
+        executed_semantic_fingerprint=dict(execution_snapshot["semantic_fingerprint"]),
         adapter_identity=adapter_identity,
         executed_at=executed_at,
         execution_outcome=outcome,
@@ -1088,16 +1560,100 @@ def execute_model_work_unit(
             "newly derived Envelope's own recomputed semantic fingerprint does not equal its own "
             "declared value -- refusing to commit"
         )
+    # Structural Review Round 4, P19-R4-F1: checked immediately before the one commit below,
+    # after the real adapter call already returned -- a caller that bounded this call's own
+    # duration on its own side and already gave up (recording its own typed timeout outcome)
+    # must never have this late-returning result silently become a committed success.
+    if cancellation_check is not None and cancellation_check():
+        raise ModelRuntimeExecutionCancelledError(
+            "this call's own caller already gave up on this attempt before this Envelope could "
+            "be committed -- refusing to commit a late, no-longer-awaited result"
+        )
+    records: list[tuple[str, str, dict[str, Any]]] = [
+        (
+            ENVELOPE_RECORD_KIND,
+            str(envelope["model_execution_envelope_id"]),
+            envelope,
+        )
+    ]
+    if slot_attempt_envelope_claim_factory is not None:
+        # Structural Review Round 5, P19-R5-F2: this is the one, hardcoded, caller-immune
+        # companion-record kind this route will ever commit alongside its own Envelope -- never
+        # a caller-selected kind, id, or multiple records. The claim commits in this exact same
+        # atomic transaction as the Envelope -- either both land, or neither does -- closing the
+        # crash window a separate follow-up commit would otherwise leave open, without this
+        # route ever becoming a second, generic record-injection surface.
+        # Structural Review Round 8, P19-R8-F1: compare against the identical retained, caller-
+        # detached value already validated and used for canonical-plan resolution above -- never
+        # slot_attempt_envelope_claim_binding itself again. That original Mapping (and any nested
+        # plan_ref inside it) may have been mutated by anything that ran since, not least the
+        # adapter this very call just invoked; only the retained value is trusted.
+        if retained_claim_binding is None:
+            raise ModelRuntimeRequirementError(
+                "internal invariant violated: retained_claim_binding was not established before "
+                "the adapter call despite slot_attempt_envelope_claim_factory being supplied"
+            )
+        expected_binding = retained_claim_binding
+        claim_body = dict(slot_attempt_envelope_claim_factory(envelope))
+        # Structural Review Round 6, P19-R6-F2: schema-validate the full closed shape first --
+        # this is what catches an additional, unregistered field, which recomputing the id/
+        # semantic fingerprint below (both projections over a *named* field set) can never see.
+        require_schema_valid_slot_attempt_envelope_claim(claim_body)
+        declared_envelope_ref = claim_body.get("model_execution_envelope_ref")
+        if not (
+            isinstance(declared_envelope_ref, Mapping)
+            and declared_envelope_ref.get("kind") == ENVELOPE_RECORD_KIND
+            and declared_envelope_ref.get("id") == envelope["model_execution_envelope_id"]
+        ):
+            raise ModelRuntimeRequirementError(
+                "the Phase 19 slot-attempt-envelope-claim this call produced does not declare "
+                "model_execution_envelope_ref bound to this exact newly-derived Envelope -- "
+                "refusing to commit anything"
+            )
+        # P19-R6-F2: exact project/plan/slot/attempt binding to this call's own caller-declared
+        # expectation -- never merely the claim body's own (self-selectable) declared values.
+        if (
+            claim_body.get("project_id") != project_id
+            or claim_body.get("plan_ref") != expected_binding.get("plan_ref")
+            or claim_body.get("slot_index") != expected_binding.get("slot_index")
+            or claim_body.get("attempt_ordinal") != expected_binding.get("attempt_ordinal")
+        ):
+            raise ModelRuntimeRequirementError(
+                "the Phase 19 slot-attempt-envelope-claim this call produced does not declare "
+                "the exact project_id/plan_ref/slot_index/attempt_ordinal this call's own caller "
+                "declared via slot_attempt_envelope_claim_binding -- refusing to commit anything"
+            )
+        # P19-R6-F2: independently recompute this claim's own narrow id and full semantic
+        # fingerprint -- never merely trust a non-empty, caller-selected id -- refusing any
+        # mismatch. This is the identical recompute-and-compare discipline every other canonical
+        # record this route commits already receives; it was previously impossible here only
+        # because the hash formula lived in a package this route may never import, and it has
+        # now been relocated to this route's own package for exactly this reason.
+        declared_id = claim_body.get("multi_agent_slot_attempt_envelope_claim_id")
+        if (
+            not isinstance(declared_id, str)
+            or not declared_id
+            or multi_agent_slot_attempt_envelope_claim_id(claim_body) != declared_id
+        ):
+            raise ModelRuntimeRequirementError(
+                "the Phase 19 slot-attempt-envelope-claim this call produced has no readable "
+                "multi_agent_slot_attempt_envelope_claim_id, or its own recomputed identity does "
+                "not equal its own declared value -- refusing to commit anything"
+            )
+        if multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(
+            claim_body
+        ) != claim_body.get("multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"):
+            raise ModelRuntimeRequirementError(
+                "the Phase 19 slot-attempt-envelope-claim this call produced has no readable "
+                "multi_agent_slot_attempt_envelope_claim_semantic_fingerprint, or its own "
+                "recomputed value does not equal its own declared value -- refusing to commit "
+                "anything"
+            )
+        records.append((_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND, declared_id, claim_body))
     _commit(
         store,
         project_id,
-        [
-            (
-                ENVELOPE_RECORD_KIND,
-                str(envelope["model_execution_envelope_id"]),
-                envelope,
-            )
-        ],
+        records,
         committed_at=executed_at,
         project_binding_id=project_binding_id,
         expected_authority=fresh,
