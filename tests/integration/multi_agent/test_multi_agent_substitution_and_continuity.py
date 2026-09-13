@@ -1273,6 +1273,163 @@ def test_p19_r11_f2_an_envelope_with_a_different_adapter_identity_and_matching_r
     assert store.resolve_record(project_id, "multi_agent_slot_output", slot_output_key) is None
 
 
+def _forge_round11_envelope(forgery_kind: str, genuine_envelope: dict[str, Any]) -> dict[str, Any]:
+    """Build a fully self-consistent forged Envelope exercising one of the two Round 11 forgery
+    classes (P19-R11-F1/F2), copied from *genuine_envelope* with only the named field(s) swapped
+    for a different, equally well-formed value, and its own identity/semantic fingerprint
+    honestly recomputed from that changed content."""
+
+    forged_envelope = dict(genuine_envelope)
+    if forgery_kind == "project_binding_and_human_authority":
+        forged_envelope["project_binding_ref"] = {
+            "kind": "project_binding",
+            "id": str(genuine_envelope["project_binding_ref"]["id"]) + "X",
+        }
+        forged_envelope["human_authority_ref"] = {
+            "kind": "human_authority",
+            "id": str(genuine_envelope["human_authority_ref"]["id"]) + "X",
+        }
+    elif forgery_kind == "adapter_and_request_identity":
+        different_adapter_identity = dict(genuine_envelope["adapter_identity"])
+        different_adapter_identity["version"] = "0.2"
+        forged_envelope["adapter_identity"] = different_adapter_identity
+        forged_envelope["model_execution_request_identity"] = model_execution_request_identity(
+            model_work_unit_id_value=str(genuine_envelope["model_work_unit_ref"]["id"]),
+            state_revision=int(genuine_envelope["executed_state_revision"]),
+            semantic_fingerprint=dict(genuine_envelope["executed_semantic_fingerprint"]),
+            adapter_identity=different_adapter_identity,
+        )
+    else:
+        raise AssertionError(f"unknown forgery_kind: {forgery_kind!r}")
+
+    forged_envelope["model_execution_envelope_id"] = model_execution_envelope_id(forged_envelope)
+    forged_envelope["model_execution_semantic_fingerprint"] = (
+        model_execution_envelope_semantic_fingerprint(forged_envelope)
+    )
+    assert (
+        forged_envelope["model_execution_envelope_id"]
+        != genuine_envelope["model_execution_envelope_id"]
+    )
+    return forged_envelope
+
+
+@pytest.mark.parametrize(
+    "forgery_kind",
+    ["project_binding_and_human_authority", "adapter_and_request_identity"],
+)
+def test_p19_r12_f1_evidence_handoff_refuses_a_round11_forged_envelope(
+    tmp_path: Any, forgery_kind: str
+) -> None:
+    """Structural Review Round 12, P19-R12-F1's own required proof: Round 11's own two decisive
+    tests exercised forged-Envelope refusal only through the replay path
+    (``execute_dynamic_execution_plan``); the identical two forgery classes (P19-R11-F1's
+    ``project_binding_ref``/``human_authority_ref`` substitution and P19-R11-F2's
+    ``adapter_identity``/``model_execution_request_identity`` substitution) are proved here to be
+    refused by the actual public Evidence hand-off route
+    (``route_orchestration_to_evidence``) as well, since it reaches the identical shared
+    ``_require_envelope_matches_plan_lineage`` verifier via
+    ``resolve_and_verify_canonical_terminal_graph`` -- never a second, weaker check.
+
+    A genuine plan is executed to completion (a real, committed slot output/release
+    receipt/conflict set/aggregation input, exactly as Evidence hand-off itself would resolve).
+    A new, genuinely committed forged Envelope is built (fully self-consistent, its own identity/
+    fingerprint honestly recomputed) and the genuine slot output's own
+    ``model_execution_envelope_ref`` is redirected to it, at its own unchanged narrow key with
+    an honestly recomputed semantic fingerprint (the identical technique
+    ``test_p19_r9_f2_a_slot_output_declaring_a_different_execution_snapshot_is_refused_on_replay``
+    established) -- both the forged Envelope and the redirected slot output resolve cleanly as
+    individually self-consistent (schema/id/fingerprint-valid) on their own. Evidence hand-off
+    must still refuse, with zero new Evidence/receipt writes and zero State advance."""
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+    project_id = world["project_id"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    coordinator = _coordinator(world)
+    executed = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=project_id,
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened["plan_ref"],
+        model_adapter_factory=lambda: SeededMultiAgentAdapter(),
+        executed_at="2026-09-11T01:30:00Z",
+    )
+    coordinator.release()
+    genuine_slot_output = executed["slot_outputs"][0]
+    genuine_envelope = route_module.resolve_and_verify_committed_envelope(
+        store, project_id, genuine_slot_output["model_execution_envelope_ref"]["id"]
+    )
+
+    forged_envelope = _forge_round11_envelope(forgery_kind, genuine_envelope)
+    transaction_tag = {
+        "project_binding_and_human_authority": "BINDING-AUTHORITY",
+        "adapter_and_request_identity": "ADAPTER-REQUEST",
+    }[forgery_kind]
+    commit_records(
+        store,
+        project_id,
+        store.load_current(project_id),
+        f"TX-R12-FORGED-ENVELOPE-{transaction_tag}",
+        [
+            (
+                "model_execution_envelope",
+                forged_envelope["model_execution_envelope_id"],
+                forged_envelope,
+            )
+        ],
+    )
+
+    tampered_slot_output = dict(genuine_slot_output)
+    tampered_slot_output["model_execution_envelope_ref"] = {
+        "kind": "model_execution_envelope",
+        "id": forged_envelope["model_execution_envelope_id"],
+    }
+    tampered_slot_output["multi_agent_slot_output_semantic_fingerprint"] = (
+        multi_agent_slot_output_semantic_fingerprint(tampered_slot_output)
+    )
+    slot_output_key = str(genuine_slot_output["multi_agent_slot_output_id"])
+    _overwrite_committed_record(
+        store, project_id, "multi_agent_slot_output", slot_output_key, tampered_slot_output
+    )
+
+    # Sanity: both the forged Envelope and the redirected slot output resolve cleanly as
+    # individually self-consistent (schema/id/fingerprint-valid) on their own -- exactly the case
+    # the terminal-graph lineage verifier alone can catch.
+    assert (
+        route_module.resolve_and_verify_committed_envelope(
+            store, project_id, forged_envelope["model_execution_envelope_id"]
+        )
+        is not None
+    )
+    assert (
+        route_module.resolve_and_verify_committed_slot_output(store, project_id, slot_output_key)
+        is not None
+    )
+
+    state_before = store.load_current(project_id)
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        route_orchestration_to_evidence(
+            store,
+            coordinator,
+            project_id=project_id,
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            evidence_request_template=evidence_request_for(project_id, provenance=None),
+            completed_at="2026-09-11T01:41:00Z",
+        )
+    coordinator.release()
+
+    state_after = store.load_current(project_id)
+    assert state_after["state_revision"] == state_before["state_revision"]
+    assert _record_kind_count(store, project_id, "multi_agent_orchestration_receipt") == 0
+    assert _record_kind_count(store, project_id, EVIDENCE_REFERENCE_KIND) == 0
+
+
 def _record_kind_count(store: FileStateStore, project_id: str, kind: str) -> int:
     directory = store.root / "projects" / project_id / "records" / kind
     if not directory.exists():
