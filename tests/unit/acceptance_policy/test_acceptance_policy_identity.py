@@ -1,0 +1,266 @@
+"""V1: Schema identity and semantic-fingerprint totality (FD-0004, Issue #80).
+
+Every one of the five committed/derived record kinds -- Baseline, Clause (embedded),
+Transition, Adoption, Effective View, Impact Preview -- gets a deterministic id and/or
+semantic fingerprint whose own declared value always reproduces from the record's own content,
+and which changes the moment any semantic field changes (never a lifecycle/provenance field).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from manosube_agent_civilization.acceptance_policy import (
+    AcceptancePolicyValidationError,
+    build_adoption,
+    build_baseline,
+    build_impact_preview,
+    build_transition,
+    identity as ap_identity,
+    require_valid_clause,
+)
+
+_PROJECT_ID = "PRJ-AP-0001"
+
+
+_BLOCKING_FIELDS = (
+    "implementation",
+    "structural_review",
+    "merge",
+    "issue_closure",
+    "phase_completion",
+)
+
+
+def _clause(clause_id: str, **overrides: Any) -> dict[str, Any]:
+    blocking_overrides = {
+        field: overrides.pop(field) for field in _BLOCKING_FIELDS if field in overrides
+    }
+    body = {
+        "clause_id": clause_id,
+        "policy_class": "AUTHORITY",
+        "statement": "statement",
+        "blocking_effect": {
+            "implementation": False,
+            "structural_review": False,
+            "merge": False,
+            "issue_closure": False,
+            "phase_completion": False,
+            **blocking_overrides,
+        },
+        "scope": {"project_id": _PROJECT_ID, "affected_phases": [19], "affected_prs": [78]},
+        "rationale": "rationale",
+        "existed_in_original_contract": True,
+    }
+    body.update(overrides)
+    return body
+
+
+def _baseline() -> dict[str, Any]:
+    return build_baseline(
+        project_id=_PROJECT_ID,
+        governing_issue=77,
+        source_reference={
+            "comment_url": "https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-1",
+            "comment_id": "1",
+            "comment_author": "manosube",
+            "comment_author_association": "OWNER",
+            "source_kind": "ORIGINAL_ISSUE",
+        },
+        clauses=[_clause("ORIGINAL_CLAUSE")],
+    )
+
+
+def test_require_valid_clause_accepts_a_well_formed_clause() -> None:
+    require_valid_clause(_clause("C1"))
+
+
+def test_require_valid_clause_refuses_missing_keys() -> None:
+    body = _clause("C1")
+    del body["scope"]
+    with pytest.raises(AcceptancePolicyValidationError):
+        require_valid_clause(body)
+
+
+def test_require_valid_clause_refuses_unknown_keys() -> None:
+    body = _clause("C1")
+    body["extra"] = "not part of the schema"
+    with pytest.raises(AcceptancePolicyValidationError):
+        require_valid_clause(body)
+
+
+def test_require_valid_clause_refuses_unknown_policy_class() -> None:
+    with pytest.raises(AcceptancePolicyValidationError):
+        require_valid_clause(_clause("C1", policy_class="SOMETHING_ELSE"))
+
+
+def test_require_valid_clause_refuses_incomplete_blocking_effect() -> None:
+    body = _clause("C1")
+    del body["blocking_effect"]["merge"]
+    with pytest.raises(AcceptancePolicyValidationError):
+        require_valid_clause(body)
+
+
+def test_baseline_id_and_fingerprint_reproduce_from_their_own_content() -> None:
+    baseline = _baseline()
+    assert ap_identity.baseline_id(baseline) == baseline["acceptance_policy_baseline_id"]
+    assert (
+        ap_identity.baseline_semantic_fingerprint(baseline)
+        == baseline["baseline_semantic_fingerprint"]
+    )
+
+
+def test_baseline_id_changes_when_a_clause_changes() -> None:
+    baseline_a = _baseline()
+    baseline_b = build_baseline(
+        project_id=_PROJECT_ID,
+        governing_issue=77,
+        source_reference=baseline_a["source_reference"],
+        clauses=[_clause("ORIGINAL_CLAUSE", merge=True)],
+    )
+    assert (
+        baseline_a["acceptance_policy_baseline_id"] != baseline_b["acceptance_policy_baseline_id"]
+    )
+
+
+def test_baseline_id_is_stable_under_identical_reconstruction() -> None:
+    assert (
+        _baseline()["acceptance_policy_baseline_id"] == _baseline()["acceptance_policy_baseline_id"]
+    )
+
+
+def test_baseline_refuses_empty_clause_list() -> None:
+    with pytest.raises(AcceptancePolicyValidationError):
+        build_baseline(
+            project_id=_PROJECT_ID,
+            governing_issue=77,
+            source_reference=_baseline()["source_reference"],
+            clauses=[],
+        )
+
+
+def test_baseline_refuses_duplicate_clause_ids() -> None:
+    with pytest.raises(AcceptancePolicyValidationError):
+        build_baseline(
+            project_id=_PROJECT_ID,
+            governing_issue=77,
+            source_reference=_baseline()["source_reference"],
+            clauses=[_clause("SAME"), _clause("SAME", merge=True)],
+        )
+
+
+def test_baseline_refuses_a_clause_not_declaring_existed_in_original_contract() -> None:
+    with pytest.raises(AcceptancePolicyValidationError):
+        build_baseline(
+            project_id=_PROJECT_ID,
+            governing_issue=77,
+            source_reference=_baseline()["source_reference"],
+            clauses=[_clause("C1", existed_in_original_contract=False)],
+        )
+
+
+def test_transition_id_and_fingerprint_reproduce_and_bind_to_baseline() -> None:
+    baseline = _baseline()
+    proposed = _clause(
+        "NEW_CLAUSE",
+        policy_class="REQUIRED_EVIDENCE",
+        existed_in_original_contract=False,
+        merge=True,
+    )
+    transition = build_transition(
+        project_id=_PROJECT_ID,
+        governing_issue=77,
+        baseline=baseline,
+        clause_id="NEW_CLAUSE",
+        policy_operation="ADD",
+        proposed_by="STRUCTURAL_ADVISOR",
+        prior_clause_binding={
+            "source": "BASELINE",
+            "source_ref": {
+                "kind": "acceptance_policy_baseline",
+                "id": baseline["acceptance_policy_baseline_id"],
+            },
+        },
+        proposed_clause=proposed,
+        prior_clause=None,
+        declared_existed_in_original_contract=False,
+        source_reference=baseline["source_reference"],
+        rollback_condition="revert on demand",
+    )
+    assert ap_identity.transition_id(transition) == transition["acceptance_policy_transition_id"]
+    assert (
+        ap_identity.transition_semantic_fingerprint(transition)
+        == transition["transition_semantic_fingerprint"]
+    )
+    assert transition["baseline_ref"]["id"] == baseline["acceptance_policy_baseline_id"]
+
+
+def test_adoption_id_and_fingerprint_reproduce_and_require_shukou() -> None:
+    adoption = build_adoption(
+        project_id=_PROJECT_ID,
+        governing_issue=77,
+        adopted_ref={
+            "kind": "acceptance_policy_baseline",
+            "id": _baseline()["acceptance_policy_baseline_id"],
+        },
+        decision_owner="SHUKOU",
+        source_reference=_baseline()["source_reference"],
+        decided_at="2026-09-13T14:00:00Z",
+    )
+    assert ap_identity.adoption_id(adoption) == adoption["acceptance_policy_adoption_id"]
+    assert (
+        ap_identity.adoption_semantic_fingerprint(adoption)
+        == adoption["adoption_semantic_fingerprint"]
+    )
+
+
+def test_build_adoption_refuses_a_non_shukou_decision_owner() -> None:
+    with pytest.raises(AcceptancePolicyValidationError):
+        build_adoption(
+            project_id=_PROJECT_ID,
+            governing_issue=77,
+            adopted_ref={
+                "kind": "acceptance_policy_baseline",
+                "id": _baseline()["acceptance_policy_baseline_id"],
+            },
+            decision_owner="CLAUDE_CODE",
+            source_reference=_baseline()["source_reference"],
+            decided_at="2026-09-13T14:00:00Z",
+        )
+
+
+def test_impact_preview_fingerprint_reproduces() -> None:
+    view = {
+        "project_id": _PROJECT_ID,
+        "governing_issue": 77,
+        "effective_clauses": [],
+    }
+    candidate = build_transition(
+        project_id=_PROJECT_ID,
+        governing_issue=77,
+        baseline=_baseline(),
+        clause_id="C1",
+        policy_operation="ADD",
+        proposed_by="STRUCTURAL_ADVISOR",
+        prior_clause_binding={
+            "source": "BASELINE",
+            "source_ref": {
+                "kind": "acceptance_policy_baseline",
+                "id": _baseline()["acceptance_policy_baseline_id"],
+            },
+        },
+        proposed_clause=_clause("C1", existed_in_original_contract=False, merge=True),
+        prior_clause=None,
+        declared_existed_in_original_contract=False,
+        source_reference=_baseline()["source_reference"],
+        rollback_condition="r",
+    )
+    preview = build_impact_preview(view, candidate)
+    assert (
+        ap_identity.impact_preview_semantic_fingerprint(preview)
+        == preview["preview_semantic_fingerprint"]
+    )
+    assert preview["new_blockers"] == [{"clause_id": "C1", "blocking_effect_field": "merge"}]
+    assert preview["removed_blockers"] == []

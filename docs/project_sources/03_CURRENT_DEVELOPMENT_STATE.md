@@ -3864,3 +3864,86 @@ closeは、本source-sync PRの構造審査・SHUKOU手動merge・およびresul
 Phase 20実装の前提条件であり、本source-sync work unit自体はIssue #80の実装を一切含まない)。
 Phase 20実装には、Issue #80のkernel実装完了・受入と、専用Issue上のObjective / Boundary /
 AuthorityへのSHUKOUの明示採択が別途必要である。
+
+# 52. Issue #80 (FD-0004) implementation-delivery bounded addendum
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、`src/`および`01_SCHEMA/`配下の新規kernel_surface変更
+(`src/manosube_agent_civilization/acceptance_policy/`、`01_SCHEMA/acceptance_policy/`)に対応
+付けるためだけの、最小限の事実記録である。
+
+Issue #80「Acceptance Policy Lineage and Undeclared Gate Rejection」(`FD-0004`)はSHUKOU採択
+コメント`https://github.com/manosube/manosube-agent-civilization-os/issues/80#issuecomment-5653169957`
+および実装指示コメント`...#issuecomment-5653174967`で正式採択・指示された。指示された当初base
+SHA(`0ced9d0dd5658196b7a6dc085ca839fa514f1eeb`)は本記録作成者自身がGitHub API経由で独立検証した
+時点でlive `main`から乖離していたため、実装を開始せずDifferenceを報告し
+(`...#issuecomment-5653668808`)、構造参謀が同一乖離を追認し(`...#issuecomment-5653670036`)、
+SHUKOUが正式にbaseを`main@3791831884e7419f7f2f3497666da68842b8e276`へ再拘束した
+(`...#issuecomment-5653676641`)。本記録作成者は、この再拘束コメントおよび先行する4コメント全て
+について、著者login/id/association(`manosube`/OWNER)・本文・live Issue #80状態(OPEN)・
+live `main` head(再拘束後も`3791831884e7419f7f2f3497666da68842b8e276`のまま不変)を、本記録作成
+直前にGitHub API経由で改めて独立readbackし一致を確認済みである。branch
+`agent/issue-80-acceptance-policy-lineage`はこの再拘束済みexact base SHAから分岐している。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-13
+GOVERNING_ISSUE=#80
+DIFFERENCE_ID=FD-0004
+ADOPTION_COMMENT_ID=5653169957
+HANDOFF_COMMENT_ID=5653174967
+DRIFT_REPORT_COMMENT_ID=5653668808
+DRIFT_CONFIRMATION_COMMENT_ID=5653670036
+REBIND_COMMENT_ID=5653676641
+AUTHORIZED_BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+IMPLEMENTATION_TARGET=NEW_BRANCH_THIS_SESSION
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+追加されたas-built ownerは`15_ACCEPTANCE_POLICY/`(`ACCEPTANCE_POLICY_INDEX.md`・
+`ACCEPTANCE_POLICY_CONTRACT.md`)、`src/manosube_agent_civilization/acceptance_policy/`
+(`route.py`・`engine.py`・`identity.py`・`types.py`・`errors.py`・`__init__.py`の6モジュール)、
+`01_SCHEMA/acceptance_policy/`(`acceptance_policy_baseline`・`acceptance_policy_clause`・
+`acceptance_policy_transition`・`acceptance_policy_adoption`・`acceptance_policy_effective_view`・
+`acceptance_policy_impact_preview`・`acceptance_policy_refusal_outcome`の7schema、schema総数
+79→86)である。`scripts/validate_schemas.py`自身のasserted schema countも79から86へ更新した。
+既存のState・Difference・Authority・Change・Evidence・Reflow・Binding・Boot・Runtime・
+Model Runtime・URL Boot・Change Executor・Multi-Agentのいずれのownerも置換・変更しない --
+`acceptance_policy`はSHUKOU(`decision_owner == "SHUKOU"`、`comment_author_association ==
+"OWNER"`の二重検証)を唯一のHuman Authorityとして値により参照するのみで、既存Authority
+evaluatorを一切importせず、既存State/Store(`commit_state_transition`、`route.py`一箇所のみ)を
+再利用し、Difference/Evidence/Reflowのいずれの既存ownerもimportしない、自己完結した新規record
+種別7種の追加のみである。
+
+原契約baseline(genesis、`existed_in_original_contract=true`必須)、hash-linkされた
+transition(ADD/REMOVE/REPLACE/NARROW/BROADEN/RECLASSIFYの6closed operation、構造化フィールド
+`policy_class`/`blocking_effect`/`scope`のみから独立に再分類され宣言値と不一致なら拒否)、
+identity-boundなSHUKOU adoption(baseline/transitionいずれかを採択する別act、proposeとadoptは
+別act)、これらから導出されるeffective view(pure fold、コミットされない)という4層構造で
+lineageを表現する。未申告policy変更の混入検知(`assert_no_undeclared_policy_change`)は、
+dict keyとvalueの両方を再帰的にsubstring走査し、`policy_change: true`宣言なしにclause_idが
+どこかに現れれば拒否する -- 実際のPhase 19事故形状(`REQUIRED_PROOFS`キー名内への部分文字列混入)
+を再現する負制御を含む。Issue #80自身が要求する必須永続regression fixtureは、Issue #77原契約の
+`GITHUB_ACTIONS_WORKFLOW_STATUS_IS_NOT_PHASE_ACCEPTANCE_AUTHORITY`節・Round 5の
+`GITHUB_PREMERGE_GATE_GREEN_REQUIRED`追加供体・その後の除去を、3つの独立した矛盾しない事実として
+再構成する統合テストとして実装済みである。PR #78のbranch・GitHub Actionsポリシー選択は一切変更
+していない。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、4 test files + 1 fixture module、62 tests)は本記録作成者
+自身が独立に実行し検証済み(`62 passed`)。`ruff check`・`ruff format --check`・
+`mypy --namespace-packages`はいずれもこの新規packageに対してclean、
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=86`)。full
+repository test suiteの独立再実行結果、および`tests/contract/governance/
+test_source_freshness_drift_detection.py`配下のpre-existing failureとの一致確認は、本Issue #80
+への最終報告本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+PHASE_20_ALLOWED=false
+```

@@ -118,8 +118,19 @@ def main() -> int:
     # `multi_agent_slot_attempt_envelope_claim` -- the durable claim naming a slot's own already-
     # committed Model Execution Envelope, committed before that slot's own terminal
     # slot_output/release_receipt pair, so a coordinator crash between the two never causes a
-    # duplicate adapter call on recovery) adds one more, making 79.
-    if len(paths) != 79 or len(set(ids)) != len(paths) or None in ids:
+    # duplicate adapter call on recovery) adds one more, making 79. Issue #80's own Acceptance
+    # Policy Lineage and Undeclared Gate Rejection delivery (FD-0004) adds seven more, all owned
+    # by the new `acceptance_policy` package: `acceptance_policy_baseline` (the immutable genesis
+    # record, FD4-C2), `acceptance_policy_clause` (the embedded closed clause shape every
+    # baseline/transition validates against), `acceptance_policy_transition` (the hash-linked
+    # ADD/REMOVE/REPLACE/NARROW/BROADEN/RECLASSIFY proposal, FD4-C1/C5),
+    # `acceptance_policy_adoption` (the identity-bound SHUKOU decision, FD4-C3),
+    # `acceptance_policy_effective_view` (the derived, never-committed fold, FD4-C6),
+    # `acceptance_policy_impact_preview` (the pre-adoption before/after projection, FD4-C7), and
+    # `acceptance_policy_refusal_outcome` (the closed conflict/refusal shape, schema-declared for
+    # wire-shape completeness though this delivery's own production code raises typed exceptions
+    # rather than committing one -- see ACCEPTANCE_POLICY_CONTRACT.md §3 item 7) -- making 86.
+    if len(paths) != 86 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
