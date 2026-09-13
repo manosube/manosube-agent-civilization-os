@@ -34,6 +34,8 @@ from manosube_agent_civilization.difference.validation import (
     validate_subrecord as _validate_canonical_subrecord,
 )
 from manosube_agent_civilization.model_runtime.claim_identity import (
+    multi_agent_dynamic_execution_plan_id,
+    multi_agent_dynamic_execution_plan_semantic_fingerprint,
     multi_agent_slot_attempt_envelope_claim_id,
     multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
 )
@@ -50,8 +52,6 @@ from .identity import (
     multi_agent_attempt_id,
     multi_agent_conflict_set_id,
     multi_agent_conflict_set_semantic_fingerprint,
-    multi_agent_dynamic_execution_plan_id,
-    multi_agent_dynamic_execution_plan_semantic_fingerprint,
     multi_agent_evidence_aggregation_input_id,
     multi_agent_evidence_aggregation_input_semantic_fingerprint,
     multi_agent_orchestration_receipt_id,

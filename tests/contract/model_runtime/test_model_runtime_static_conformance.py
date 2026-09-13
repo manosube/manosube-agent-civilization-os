@@ -786,7 +786,11 @@ def test_this_package_declares_exactly_the_record_kinds_it_owns() -> None:
     Structural Review Round 5's own P19-R5-F2 adds the ninth: `_SLOT_ATTEMPT_ENVELOPE_CLAIM_
     RECORD_KIND`, the single hardcoded, caller-immune companion-record kind this route commits
     alongside its own Envelope -- owned by `multi_agent` (its identity and schema functions live
-    there, never duplicated here), never a kind this route itself defines the meaning of."""
+    there, never duplicated here), never a kind this route itself defines the meaning of.
+    Structural Review Round 7's own P19-R7-F1 adds the tenth: `_MULTI_AGENT_DYNAMIC_EXECUTION_
+    PLAN_RECORD_KIND`, the record kind this route resolves (never writes) from the Store to
+    independently verify the canonical plan a claim's own binding names -- likewise owned by
+    `multi_agent`, never a kind this route itself defines the meaning of."""
 
     kinds = {
         target.id: node.value.value
@@ -805,6 +809,7 @@ def test_this_package_declares_exactly_the_record_kinds_it_owns() -> None:
         "RECOVERY_RECEIPT_RECORD_KIND": "session_recovery_receipt",
         "DIFFERENCE_RECORD_KIND": "difference",
         "_SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND": "multi_agent_slot_attempt_envelope_claim",
+        "_MULTI_AGENT_DYNAMIC_EXECUTION_PLAN_RECORD_KIND": "multi_agent_dynamic_execution_plan",
     }
 
 

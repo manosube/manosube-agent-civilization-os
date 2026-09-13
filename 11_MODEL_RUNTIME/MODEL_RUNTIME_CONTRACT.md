@@ -665,3 +665,93 @@ the Store's own State revision is unchanged and nothing is committed).
 `UNKNOWN_FIELD_ACCEPTED=false`. No import of `multi_agent` was added to this package; no second
 Store/State/Authority owner was introduced; ownership of this one closed kind's identity, semantic
 fingerprint, and schema remains singular.
+
+## 14. Structural Review Round 7 correction (Phase 19, Issue #77, P19-R7-F1)
+
+Adopted as `ADOPT_P19_R7_CANONICAL_CLAIM_ORIGIN_BINDING` against reviewed head/authorized target
+`976a7ef28c4b98a0312f033e36ae5df6c75c87be` (PR #78).
+
+**P19-R7-F1 -- this route now independently resolves and verifies the canonical Phase 19 plan
+behind a claim, rather than merely comparing two caller-supplied values to each other.** §13's own
+fix verified that the factory-produced claim body's own declared `plan_ref`/`slot_index`/`attempt_
+ordinal` equalled `slot_attempt_envelope_claim_binding`'s own declared values -- but the identical
+single public caller supplies both the factory and the binding, so their mutual agreement never
+proved a genuinely committed plan stood behind either one. Exact-head reproduction showed a wholly
+caller-invented `plan_ref`/`slot_index`/`attempt_ordinal` triple -- self-consistent, schema-valid,
+with a genuinely recomputed id and semantic fingerprint -- passing every §13 check unnoticed, for a
+plan that was never committed to the Store at all.
+
+The fix is the identical relocation discipline §13 already established, extended to the plan kind:
+`multi_agent_dynamic_execution_plan_id`, `multi_agent_dynamic_execution_plan_semantic_fingerprint`,
+and a new `require_schema_valid_multi_agent_dynamic_execution_plan` now live in this route's own
+`model_runtime.claim_identity` module (relocated, not duplicated, from `multi_agent.identity`,
+which now imports the two identity functions from here). Before the adapter is ever reached --
+immediately after this call's own Work Unit is resolved, alongside every other pre-adapter
+admission check -- a new private helper, `_resolve_and_verify_canonical_plan`, is called whenever
+`slot_attempt_envelope_claim_factory` is supplied: it resolves the plan
+`slot_attempt_envelope_claim_binding`'s own `plan_ref` names from the Store itself (via the
+Store's own generic, kind-agnostic `resolve_record`, exactly as `_SLOT_ATTEMPT_ENVELOPE_CLAIM_
+RECORD_KIND` has been resolved and committed by name since Round 5), schema-validates it,
+independently recomputes its own narrow id and requires it to equal both its own declared value
+*and* the Store lookup key used to find it, independently recomputes its own full semantic
+fingerprint and requires it to equal its own declared value, requires its own declared `project_
+id` to equal this call's own, requires its own declared `model_work_unit_ref` (kind and id) to
+name this exact Work Unit, requires the caller-declared `slot_index` to exist in its own `slots`
+with a `capability` equal to this call's own already-resolved Work Unit's own `required_
+capability`, and requires the caller-declared `attempt_ordinal` to equal the fixed literal `1` --
+this system's own single-attempt-per-slot design (no retry loop exists; `multi_agent.route`'s own
+`_call_execute_model_work_unit` already always hardcodes `attempt_ordinal=1`) means this field is a
+route-derived invariant, never a free caller-selected value trusted from any "expected" parameter.
+Any failure raises `ModelRuntimeRequirementError` or `ModelRecordIntegrityError`, with the adapter
+never reached and nothing committed -- unlike every §12/§13 claim-body check, which necessarily
+runs after the one real adapter call this route's own commit-tail follows, this is a genuine
+pre-adapter admission check, the identical class as the pre-existing Difference/Boundary/Authority
+resolution above it.
+
+This closes the collusion gap without any of the prohibited approaches the adoption named: no
+second caller-provided "expected" comparator was added (the canonical plan is resolved from the
+Store itself, never merely asserted by any parameter); the check is not limited to body-versus-
+binding equality (it independently re-derives the plan's own identity and fingerprint from its own
+resolved content); no hidden equivalent public hook exists (the one existing
+`slot_attempt_envelope_claim_factory`/`slot_attempt_envelope_claim_binding` pair is where this
+verification now lives); `model_runtime` still does not import `multi_agent` (the plan kind's
+identity/fingerprint/schema functions were relocated here, the identical precedent as the claim
+kind); no second implementation of the plan's own identity/fingerprint formula exists (`multi_
+agent.identity` now imports these two functions from here rather than defining its own copy); and
+no second Store/State/Authority owner was introduced (the existing Store's own generic `resolve_
+record` is the only new call, exactly as the pre-existing Difference/Boundary resolvers already
+use it).
+
+Proved in `test_model_runtime_failure_tamper_matrix.py`: a new required decisive negative control,
+using the adoption's own exact literal values (`plan_ref={"id": "CALLER-SELECTED-PLAN"}`, `slot_
+index=2`, `attempt_ordinal=999`, a self-consistent, schema-valid claim body and binding, and no
+such plan ever committed to the Store) -- proving `ADAPTER_CALL_COUNT=0` (unlike every §12/§13
+negative control, which all show exactly one adapter call), `ENVELOPE_WRITE_COUNT=0`, `CLAIM_
+WRITE_COUNT=0`, and `STATE_REVISION_ADVANCE=0`; and a new required positive control, using a
+genuine, Store-resolved plan (this test file's own new `_commit_canonical_plan` helper) naming
+this exact Work Unit and slot, proving the fix does not narrow the honest route -- the Envelope
+and the claim still commit atomically, in the same one transaction, exactly as every Round 4-6
+proof already established. The pre-existing Round 5/6 claim-factory tests (all eleven of them)
+were updated to call this same helper before their own `execute_model_work_unit` call, so the
+canonical plan their own `slot_attempt_envelope_claim_binding` names now genuinely resolves --
+each test's own original point (a caller-selected id, a wrong project/plan/slot/attempt binding, a
+forged or missing semantic fingerprint, an additional unregistered field, a crash immediately
+before commit) is otherwise unchanged and still isolated at the identical post-adapter commit-tail
+layer it always was. The Round 6 F1 post-commit acknowledgement-loss recovery test (`multi_agent`'s
+own `test_p19_r6_f1_a_post_commit_acknowledgement_loss_never_publishes_a_false_unavailable`, which
+runs through the full `multi_agent` stack and therefore already commits a genuine plan via `open_
+dynamic_execution_plan`/`resolve_and_verify_committed_plan` before ever reaching this route)
+continues to pass unmodified, and its own `REPLAY_DUPLICATE_ADAPTER_CALL_COUNT=0` proof already
+covers this fix's own zero-duplicate-adapter-call replay requirement over a real, Store-resolved
+plan.
+
+`CALLER_SUPPLIED_BODY_AND_BINDING_DEFINE_CANONICAL_ORIGIN=false`, `PLAN_REF_RESOLVED_FROM_
+STORE=true`, `PLAN_SCHEMA_IDENTITY_AND_SEMANTIC_FINGERPRINT_VERIFIED=true`, `PLAN_PROJECT_
+BINDING_MATCH=true`, `PLAN_MODEL_WORK_UNIT_BINDING_MATCH=true`, `SLOT_INDEX_EXISTS_IN_RESOLVED_
+PLAN=true`, `SLOT_CAPABILITY_MATCHES_RESOLVED_PLAN=true`, `ATTEMPT_ORDINAL_ROUTE_DERIVED=true`,
+`SELF_CONSISTENT_COLLUDING_BODY_AND_BINDING_WRITE_COUNT=0`, `GENUINE_PHASE19_CLAIM_ATOMIC_WITH_
+ENVELOPE=true`. No import of `multi_agent` was added to this package; no second caller-provided
+comparator, hidden equivalent hook, duplicated identity/schema implementation, or second
+Store/State/Authority owner was introduced; ownership of the plan kind's identity, semantic
+fingerprint, and schema is now singular in this route's own package, exactly as the claim kind's
+already is.

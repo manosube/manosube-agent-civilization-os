@@ -1064,6 +1064,48 @@ append-only current-state restatement in `docs/project_sources/03_CURRENT_DEVELO
 TERMINALIZATION=true`, `RECONSTRUCTED_SLOT_OUTCOME_EQUALS_ENVELOPE_OUTCOME=true`, `REPLAY_
 DUPLICATE_ADAPTER_CALL_COUNT=0`, `TERMINAL_FACT_COUNT_EXACTLY_ONE=true`. See
 `MODEL_RUNTIME_CONTRACT.md` §13 for the full P19-R6-F2 proof-field list
+
+## 16. Structural Review Round 7 correction (P19-R7-F1)
+
+Adopted as `ADOPT_P19_R7_CANONICAL_CLAIM_ORIGIN_BINDING` against reviewed head/authorized target
+`976a7ef28c4b98a0312f033e36ae5df6c75c87be` (PR #78). One finding, addressed entirely on
+`model_runtime`'s own side of the boundary this package already crosses; see
+`MODEL_RUNTIME_CONTRACT.md` §14 for the full fix.
+
+**P19-R7-F1 (the canonical plan behind a claim is now independently resolved from the Store,
+never merely asserted by the mutual agreement of two caller-supplied values).** This package's own
+contribution mirrors §15's own P19-R6-F2 contribution exactly: (1) `multi_agent.identity` no
+longer defines `multi_agent_dynamic_execution_plan_id` or `..._semantic_fingerprint` -- both are
+relocated, not duplicated, into `model_runtime.claim_identity`, and this package now imports them
+from there (the module's own docstring records this as "the one exception, and is **not** a
+deviation", unchanged from its own pre-existing rationale for why the plan's own natural key is a
+full-content projection); (2) `multi_agent.engine`'s own plan-derivation call sites are unchanged
+in body, since the imported names resolve identically; (3) `_execute_one_slot`'s own
+`_call_execute_model_work_unit` already passed `slot_attempt_envelope_claim_binding={"plan_ref":
+dict(plan_ref), "slot_index": slot_index, "attempt_ordinal": 1}` naming the exact plan/slot/
+attempt this attempt genuinely belongs to (unchanged since §13/§15's own P19-R6-F2 delivery), so
+this package requires no route-level change at all -- every plan this package's own coordinator
+ever names in that binding was already genuinely resolved and independently verified by this
+package's own `resolve_and_verify_committed_plan` before `execute_dynamic_execution_plan` ever
+opened it, meaning `model_runtime`'s own new canonical-plan-origin check (§14) resolves and
+verifies the identical real plan a second, independent time, from its own singular Store-read
+surface, rather than trusting this package's own prior verification.
+
+No code in this package changed to close P19-R7-F1: the gap it closed existed entirely in
+`model_runtime.execute_model_work_unit`'s own admission of a *directly*-supplied
+`slot_attempt_envelope_claim_factory`/`slot_attempt_envelope_claim_binding` pair -- a caller this
+package's own `_execute_one_slot` already is, but never the only possible one, and the
+collusion §14 closes was never observable through this package's own genuine route (which never
+names a plan it did not itself first resolve and verify). The existing
+`test_p19_r6_f1_a_post_commit_acknowledgement_loss_never_publishes_a_false_unavailable` (§15)
+continues to pass unmodified against the new head, and its own `REPLAY_DUPLICATE_ADAPTER_CALL_
+COUNT=0` proof, over the real plan this package's own `open_dynamic_execution_plan` genuinely
+committed, is the required positive control demonstrating this fix does not narrow this package's
+own honest route.
+
+`GENUINE_PLAN_ALREADY_INDEPENDENTLY_VERIFIED_BY_THIS_PACKAGE_BEFORE_BINDING=true`, `ROUTE_LEVEL_
+CODE_CHANGE_REQUIRED=false`, `EXISTING_R6_F1_REPLAY_PROOF_STILL_PASSES=true`. See
+`MODEL_RUNTIME_CONTRACT.md` §14 for the full P19-R7-F1 proof-field list
 (`CALLER_SELECTED_CLAIM_ID_ACCEPTED=false` through `UNKNOWN_FIELD_ACCEPTED=false`). No second
 Authority evaluator, execution route, Store owner, Model Runtime owner, or Multi-Agent owner is
 introduced by either finding; ownership of the one closed claim kind's identity, semantic

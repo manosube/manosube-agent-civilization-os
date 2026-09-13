@@ -75,6 +75,8 @@ from manosube_agent_civilization.model_runtime import (
     route_model_execution_to_evidence,
 )
 from manosube_agent_civilization.model_runtime.claim_identity import (
+    multi_agent_dynamic_execution_plan_id,
+    multi_agent_dynamic_execution_plan_semantic_fingerprint,
     multi_agent_slot_attempt_envelope_claim_id,
     multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
 )
@@ -85,6 +87,7 @@ from manosube_agent_civilization.model_runtime.types import (
     MODEL_ADAPTER_OUTCOMES,
     MODEL_OUTCOME_TO_RECEIPT_STATUS,
 )
+from manosube_agent_civilization.multi_agent.identity import capability_selection_fingerprint
 from manosube_agent_civilization.store.errors import RecordConflictError
 
 pytestmark = pytest.mark.integration
@@ -177,6 +180,68 @@ def _self_consistent_claim_body(
     )
     body.update(overrides)
     return body
+
+
+def _commit_canonical_plan(world: dict[str, Any], opened: Mapping[str, Any]) -> dict[str, Any]:
+    """Commit a genuine, schema-valid ``multi_agent_dynamic_execution_plan`` naming *opened*'s
+    own Work Unit at slot ``_CLAIM_SLOT_INDEX``, with a capability equal to that Work Unit's own
+    ``required_capability`` -- the Store-resolved canonical plan Structural Review Round 7,
+    P19-R7-F1 now requires to genuinely stand behind ``_CLAIM_PLAN_REF`` before any
+    ``slot_attempt_envelope_claim_binding`` naming it is ever admitted. Every field this plan
+    carries beyond ``project_id``/``model_work_unit_ref``/``slots`` is inert filler as far as
+    this route's own check is concerned (it verifies schema validity, project binding, Work Unit
+    binding, slot/capability existence and the plan's own recomputed identity -- never any other
+    record's provenance), so it is fixed, literal content, not derived from anything else in
+    *world*. Mutates ``_CLAIM_PLAN_REF`` in place so every existing caller of
+    :func:`_claim_binding`/:func:`_self_consistent_claim_body` (both of which reference it) binds
+    to this exact newly-committed plan without any further change at their own call sites."""
+
+    work_unit = opened["model_work_unit"]
+    slots = [{"slot_index": _CLAIM_SLOT_INDEX, "capability": work_unit["required_capability"]}]
+    plan_body: dict[str, Any] = {
+        "schema_version": "0.1",
+        "project_id": world["project_id"],
+        "project_binding_ref": {"kind": "project_binding", "id": world["project_binding_id"]},
+        "boot_state_revision": int(work_unit["opened_state_revision"]),
+        "boot_semantic_fingerprint": dict(work_unit["opened_semantic_fingerprint"]),
+        "difference_ref": dict(work_unit["difference_ref"]),
+        "capability_selection_fingerprint": capability_selection_fingerprint(slots),
+        "slots": slots,
+        "model_work_unit_ref": dict(opened["model_work_unit_ref"]),
+        "authority_ref": dict(work_unit["authority_ref"]),
+        "adapter_identity": {"adapter": "fake_model_adapter", "version": "0.1"},
+        "execution_order": "CONCURRENT",
+        "execution_bounds": {
+            "deadline_at": "2026-09-09T03:00:00Z",
+            "cancellation_policy": "COOPERATIVE_PER_SLOT_TIMEOUT",
+            "max_concurrent_slots": 1,
+            "per_slot_timeout_seconds": 30,
+        },
+        "conflict_policy": "EXACT_FINGERPRINT_EQUALITY_OR_EXPLICIT_DISAGREEMENT",
+        "release_policy": "RELEASE_ON_TERMINAL_OUTCOME",
+        "opened_at": "2026-09-09T01:30:00Z",
+        "expires_at": "2026-09-09T03:00:00Z",
+    }
+    plan_body["multi_agent_dynamic_execution_plan_id"] = multi_agent_dynamic_execution_plan_id(
+        plan_body
+    )
+    plan_body["multi_agent_dynamic_execution_plan_semantic_fingerprint"] = (
+        multi_agent_dynamic_execution_plan_semantic_fingerprint(plan_body)
+    )
+    plant_records(
+        world["store"],
+        world["project_id"],
+        [
+            (
+                "multi_agent_dynamic_execution_plan",
+                plan_body["multi_agent_dynamic_execution_plan_id"],
+                plan_body,
+            )
+        ],
+        transaction_id="TX-MODEL-PLANTED-CANONICAL-PLAN-0001",
+    )
+    _CLAIM_PLAN_REF["id"] = plan_body["multi_agent_dynamic_execution_plan_id"]
+    return plan_body
 
 
 def _execute(
@@ -1728,6 +1793,7 @@ def test_p19_r4_f3_a_crash_immediately_before_the_one_atomic_commit_leaves_neith
     was ever committed)."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     real_commit = model_runtime_route_module._commit
@@ -1836,6 +1902,7 @@ def test_p19_r5_f2_a_slot_attempt_envelope_claim_factory_not_bound_to_the_new_en
     factory may or may not have already performed."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
     wrong_envelope_ref = {
         "kind": ENVELOPE_KIND,
@@ -1891,6 +1958,7 @@ def test_p19_r5_f2_a_slot_attempt_envelope_claim_factory_missing_its_own_id_is_r
     this route never invents an id on the caller's behalf."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     def _idless_claim_factory(envelope: dict[str, Any]) -> dict[str, Any]:
@@ -1937,6 +2005,7 @@ def test_p19_r6_f2_a_caller_selected_claim_id_is_refused(world: dict[str, Any]) 
     refused before any commit."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     def _caller_selected_id_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -1970,6 +2039,7 @@ def test_p19_r6_f2_a_wrong_project_id_binding_is_refused(world: dict[str, Any]) 
     compare identity checks."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     def _wrong_project_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -1998,6 +2068,7 @@ def test_p19_r6_f2_a_wrong_plan_ref_binding_is_refused(world: dict[str, Any]) ->
     binding`` declares."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
     wrong_plan_ref = {"kind": "multi_agent_dynamic_execution_plan", "id": "PLAN-OTHER"}
 
@@ -2027,6 +2098,7 @@ def test_p19_r6_f2_a_wrong_slot_index_binding_is_refused(world: dict[str, Any]) 
     binding`` declares."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     def _wrong_slot_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -2054,6 +2126,7 @@ def test_p19_r6_f2_a_wrong_attempt_ordinal_binding_is_refused(world: dict[str, A
     ``slot_attempt_envelope_claim_binding`` declares is refused before any commit."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     def _wrong_attempt_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -2085,6 +2158,7 @@ def test_p19_r6_f2_a_forged_semantic_fingerprint_is_refused(world: dict[str, Any
     which the narrow id deliberately excludes -- is a forged, unrelated value."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     def _forged_fingerprint_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -2114,6 +2188,7 @@ def test_p19_r6_f2_a_missing_semantic_fingerprint_is_refused(world: dict[str, An
     refused by this route's own schema validation, before any commit."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     def _fingerprintless_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -2147,6 +2222,7 @@ def test_p19_r6_f2_an_additional_unregistered_field_is_refused(world: dict[str, 
     close, since an extra field affects neither projection."""
 
     opened = _open(world)
+    _commit_canonical_plan(world, opened)
     adapter = _seeded_adapter(opened["model_work_unit_ref"])
 
     def _extra_field_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -2168,6 +2244,138 @@ def test_p19_r6_f2_an_additional_unregistered_field_is_refused(world: dict[str, 
             slot_attempt_envelope_claim_binding=_claim_binding(world),
         )
     _assert_claim_refused_zero_write(world, adapter, before)
+
+
+# =========================================================================== #
+# 10. Structural Review Round 7: canonical claim origin binding (P19-R7-F1)
+# =========================================================================== #
+
+
+def test_p19_r7_f1_a_self_consistent_colluding_body_and_binding_is_refused_before_the_adapter(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 7, P19-R7-F1's own required decisive negative control.
+
+    Round 6 verified only that the factory-produced claim body's own declared
+    ``plan_ref``/``slot_index``/``attempt_ordinal`` equalled *slot_attempt_envelope_claim_
+    binding*'s own declared values -- but the identical single caller supplies both, so a
+    caller can trivially make both agree for a plan/slot/attempt that was never genuinely
+    committed. This body and binding are mutually, honestly self-consistent (schema-valid,
+    recomputed id and semantic fingerprint both equal their own declared values) for
+    ``plan_ref={"id": "CALLER-SELECTED-PLAN"}``, ``slot_index=2``, ``attempt_ordinal=999`` --
+    a plan that this test's own Store never committed. ``CANONICAL_PLAN_RESOLVES=false``, and
+    the refusal occurs before the adapter is ever reached: ``ADAPTER_CALL_COUNT=0``,
+    ``ENVELOPE_WRITE_COUNT=0``, ``CLAIM_WRITE_COUNT=0``, ``STATE_REVISION_ADVANCE=0``,
+    ``SELF_CONSISTENT_COLLUDING_BODY_AND_BINDING_WRITE_COUNT=0``."""
+
+    opened = _open(world)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    forged_plan_ref = {"kind": "multi_agent_dynamic_execution_plan", "id": "CALLER-SELECTED-PLAN"}
+    forged_binding = {"plan_ref": dict(forged_plan_ref), "slot_index": 2, "attempt_ordinal": 999}
+
+    def _colluding_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        # Self-consistent by construction (via the shared helper's own recompute-and-set), so
+        # this is exactly the shape a purely mutual-agreement check would have accepted --
+        # schema-valid, narrow id and full semantic fingerprint both genuinely recomputed over
+        # this exact (forged) content, not merely asserted.
+        return _self_consistent_claim_body(
+            world,
+            envelope,
+            plan_ref=dict(forged_plan_ref),
+            slot_index=2,
+            attempt_ordinal=999,
+        )
+
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_dynamic_execution_plan", "CALLER-SELECTED-PLAN"
+        )
+        is None
+    )
+
+    before = _revision(world)
+    with pytest.raises(ModelRuntimeRequirementError):
+        execute_model_work_unit(
+            world["store"],
+            _agent(world),
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            model_work_unit_ref=opened["model_work_unit_ref"],
+            adapter=adapter,
+            executed_at="2026-09-09T02:00:00Z",
+            slot_attempt_envelope_claim_factory=_colluding_claim_factory,
+            slot_attempt_envelope_claim_binding=forged_binding,
+        )
+    # ADAPTER_CALL_COUNT=0: unlike every Round 5/6 negative control above (which all show
+    # execute_call_count == 1, since their own tamper is only caught in the post-adapter
+    # commit-tail), this refusal is the new canonical-plan-origin check, which runs before the
+    # adapter is ever reached.
+    assert adapter.execute_call_count == 0
+    # STATE_REVISION_ADVANCE=0
+    assert _revision(world) == before
+    # ENVELOPE_WRITE_COUNT=0 / CLAIM_WRITE_COUNT=0 / SELF_CONSISTENT_COLLUDING_BODY_AND_BINDING_
+    # WRITE_COUNT=0: nothing this call could have produced was ever committed.
+    forged_claim_body = _self_consistent_claim_body(
+        world,
+        {"model_execution_envelope_id": "MODEL-EXECUTION-" + "9" * 64},
+        plan_ref=dict(forged_plan_ref),
+        slot_index=2,
+        attempt_ordinal=999,
+    )
+    assert (
+        world["store"].resolve_record(
+            world["project_id"],
+            "multi_agent_slot_attempt_envelope_claim",
+            forged_claim_body["multi_agent_slot_attempt_envelope_claim_id"],
+        )
+        is None
+    )
+
+
+def test_p19_r7_f1_a_genuine_store_resolved_plan_still_admits_its_companion_claim_atomically(
+    world: dict[str, Any],
+) -> None:
+    """Structural Review Round 7, P19-R7-F1's own required positive control: the fix closes a
+    collusion gap, it does not narrow the honest route. A genuine, Store-resolved canonical
+    plan (:func:`_commit_canonical_plan`) whose own slot/capability and Work Unit binding this
+    call's own ``slot_attempt_envelope_claim_binding`` truthfully names still admits its
+    companion claim exactly as every Round 4-6 proof already established: the Envelope and the
+    claim commit atomically, in the same one transaction (both present afterward)."""
+
+    opened = _open(world)
+    _commit_canonical_plan(world, opened)
+    adapter = _seeded_adapter(opened["model_work_unit_ref"])
+
+    def _genuine_claim_factory(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return _self_consistent_claim_body(world, envelope)
+
+    before = _revision(world)
+    result = execute_model_work_unit(
+        world["store"],
+        _agent(world),
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        model_work_unit_ref=opened["model_work_unit_ref"],
+        adapter=adapter,
+        executed_at="2026-09-09T02:00:00Z",
+        slot_attempt_envelope_claim_factory=_genuine_claim_factory,
+        slot_attempt_envelope_claim_binding=_claim_binding(world),
+    )
+    assert adapter.execute_call_count == 1
+    assert _revision(world) == before + 1
+    envelope_id = result["envelope"]["model_execution_envelope_id"]
+    assert (
+        world["store"].resolve_record(world["project_id"], ENVELOPE_KIND, envelope_id) is not None
+    )
+    claim_body = _self_consistent_claim_body(world, result["envelope"])
+    claim_id = claim_body["multi_agent_slot_attempt_envelope_claim_id"]
+    assert (
+        world["store"].resolve_record(
+            world["project_id"], "multi_agent_slot_attempt_envelope_claim", claim_id
+        )
+        is not None
+    )
 
 
 def test_p19_r4_f4_a_fabricated_pinned_execution_snapshot_is_refused_with_zero_adapter_calls(

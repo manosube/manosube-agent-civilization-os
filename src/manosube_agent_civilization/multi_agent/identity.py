@@ -46,10 +46,12 @@ ONE PER (PLAN, SLOT) / PLAN a slot has exactly one attempt (this delivery's own 
                             runtime convention this package promises to honour.
 ```
 
-:func:`multi_agent_dynamic_execution_plan_id` is the one exception, and is **not** a deviation:
-P19-C2 itself requires "every field that can widen execution or change provenance" to
-participate in the plan's own identity, so the plan's ``<kind>_id`` is the ordinary full-content
-projection every other Kernel record already uses.
+``multi_agent_dynamic_execution_plan_id`` (now defined in
+:mod:`manosube_agent_civilization.model_runtime.claim_identity`, see Structural Review Round 7's
+own P19-R7-F1) is the one exception, and is **not** a deviation: P19-C2 itself requires "every
+field that can widen execution or change provenance" to participate in the plan's own identity,
+so the plan's ``<kind>_id`` is the ordinary full-content projection every other Kernel record
+already uses.
 """
 
 from __future__ import annotations
@@ -61,31 +63,17 @@ from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 from .errors import MultiAgentRequirementError
 
-#: Every field a Multi-Agent Dynamic Execution Plan's own identity and semantic fingerprint are
-#: computed over -- the complete record minus the two digest fields themselves, so tampering
-#: any field (the Boot snapshot it was opened against, the Difference it is about, the exact
-#: slot/capability assignment, the shared Model Work Unit it binds, the reproduced Authority
-#: reference, the admitted adapter identity, the ordering/bounds/policy declarations, or the
-#: validity window) is detectable by either digest.
-PLAN_SEMANTIC_FIELDS: tuple[str, ...] = (
-    "schema_version",
-    "project_id",
-    "project_binding_ref",
-    "boot_state_revision",
-    "boot_semantic_fingerprint",
-    "difference_ref",
-    "capability_selection_fingerprint",
-    "slots",
-    "model_work_unit_ref",
-    "authority_ref",
-    "adapter_identity",
-    "execution_order",
-    "execution_bounds",
-    "conflict_policy",
-    "release_policy",
-    "opened_at",
-    "expires_at",
-)
+#: Structural Review Round 7, P19-R7-F1: this kind's own identity and semantic fingerprint no
+#: longer live here. ``model_runtime`` must independently resolve and verify a caller-named plan
+#: from the Store before ever admitting a companion claim that names it (the caller-supplied
+#: claim body and the caller-supplied expected binding alone could not prove that -- both are
+#: chosen by the identical public caller); exact-head reproduction showed the gap that left open.
+#: The identical implementation now lives at :mod:`manosube_agent_civilization.model_runtime.
+#: claim_identity` (``multi_agent_dynamic_execution_plan_id`` /
+#: ``multi_agent_dynamic_execution_plan_semantic_fingerprint``), imported from there by this
+#: package's own :mod:`~manosube_agent_civilization.multi_agent.engine` and
+#: :mod:`~manosube_agent_civilization.multi_agent.route` -- relocated, never duplicated, so there
+#: is exactly one owner and every consumer, on both sides of the package boundary, follows it.
 
 #: The narrow, natural-key projection every one of a slot's own attempt records addresses --
 #: see this module's own docstring for why this is deliberately narrower than "every field".
@@ -191,23 +179,6 @@ def _address(prefix: str, projection: dict[str, Any]) -> str:
 
 def _digest(projection: dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
-
-
-def multi_agent_dynamic_execution_plan_id(plan: dict[str, Any]) -> str:
-    """The content address of a canonical Multi-Agent Dynamic Execution Plan -- a pure function
-    of the complete, real record content, never of a caller-declared value (P19-C2)."""
-
-    return _address(
-        "MULTI-AGENT-PLAN-",
-        _projection(plan, PLAN_SEMANTIC_FIELDS, "multi_agent_dynamic_execution_plan"),
-    )
-
-
-def multi_agent_dynamic_execution_plan_semantic_fingerprint(plan: dict[str, Any]) -> str:
-    """The digest of a Multi-Agent Dynamic Execution Plan's full meaning -- the identical
-    projection :func:`multi_agent_dynamic_execution_plan_id` hashes."""
-
-    return _digest(_projection(plan, PLAN_SEMANTIC_FIELDS, "multi_agent_dynamic_execution_plan"))
 
 
 def capability_selection_fingerprint(

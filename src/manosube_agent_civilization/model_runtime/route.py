@@ -101,8 +101,11 @@ from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
 
 from .claim_identity import (
+    multi_agent_dynamic_execution_plan_id,
+    multi_agent_dynamic_execution_plan_semantic_fingerprint,
     multi_agent_slot_attempt_envelope_claim_id,
     multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
+    require_schema_valid_multi_agent_dynamic_execution_plan,
     require_schema_valid_slot_attempt_envelope_claim,
 )
 from .engine import (
@@ -166,6 +169,12 @@ DIFFERENCE_RECORD_KIND = "difference"
 #: one disclosed exception, a plain string constant naming the single reserved companion kind,
 #: not a schema or identity dependency.
 _SLOT_ATTEMPT_ENVELOPE_CLAIM_RECORD_KIND = "multi_agent_slot_attempt_envelope_claim"
+
+#: Structural Review Round 7, P19-R7-F1: the record kind this route resolves from the Store to
+#: independently verify the canonical Phase 19 plan a slot-attempt-envelope-claim's own binding
+#: names, for the identical reason as the constant above -- a plain string naming a kind this
+#: route does not own the business meaning of, never an import of ``multi_agent``.
+_MULTI_AGENT_DYNAMIC_EXECUTION_PLAN_RECORD_KIND = "multi_agent_dynamic_execution_plan"
 
 #: The identical Compare-And-Swap retry bound Projection's own ``_claim_slot`` and Runtime's own
 #: ``_commit_envelope`` use -- not a timeout, not a backoff, bounded protection against genuine,
@@ -490,6 +499,132 @@ def _resolve_difference(
             "its own declared value -- refusing to trust any of its fields"
         )
     return difference
+
+
+def _resolve_and_verify_canonical_plan(
+    store: Any,
+    project_id: str,
+    *,
+    expected_binding: Mapping[str, Any],
+    checked_work_unit_ref: Mapping[str, Any],
+    work_unit: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve, independently verify and bind the canonical Phase 19 dynamic execution plan a
+    slot-attempt-envelope-claim's own binding names (Structural Review Round 7, P19-R7-F1).
+
+    Structural Review Round 6 closed only a shallow gap: it verified that the factory-produced
+    claim body's own declared ``plan_ref``/``slot_index``/``attempt_ordinal`` equalled
+    *expected_binding*'s own declared values -- but the identical single public caller supplies
+    both the factory and the binding, so their mutual agreement never proved a genuinely
+    committed plan stood behind either one. This function is the genuine third-party check: it
+    resolves the plan *expected_binding* names from the Store itself, schema-validates it,
+    independently recomputes its own narrow id and full semantic fingerprint
+    (:mod:`~manosube_agent_civilization.model_runtime.claim_identity`, relocated there for the
+    identical reason as the claim kind's own identity functions -- this route may never import
+    ``multi_agent``, which depends on this package, never the reverse), and requires each to
+    equal the plan's own declared value *and* the Store lookup key used to find it -- never
+    merely trusting a caller-selected non-empty string. It further requires the resolved plan to
+    name this exact project and this exact Work Unit, and the caller-declared slot index to exist
+    in it with a capability equal to this call's own already-resolved Work Unit's
+    ``required_capability``. ``attempt_ordinal`` is never accepted as a free caller-selected
+    value either: this system's own design is single-attempt-per-slot (no retry loop exists), so
+    it is checked here as the fixed, route-derived invariant ``1``, never read from any caller-
+    supplied "expected" field.
+
+    Every refusal here lands before the adapter is ever reached, with the adapter called zero
+    times and nothing committed -- this function is called from
+    :func:`execute_model_work_unit` before its own adapter call, not from its post-adapter
+    commit-tail.
+    """
+
+    declared_plan_ref = expected_binding.get("plan_ref")
+    if not (
+        isinstance(declared_plan_ref, Mapping)
+        and isinstance(declared_plan_ref.get("id"), str)
+        and declared_plan_ref.get("id")
+    ):
+        raise ModelRuntimeRequirementError(
+            "slot_attempt_envelope_claim_binding's own plan_ref is not a readable reference with "
+            "a non-empty id -- refusing to resolve a canonical plan from it"
+        )
+    plan_id_lookup_key = str(declared_plan_ref["id"])
+    resolved = store.resolve_record(
+        project_id, _MULTI_AGENT_DYNAMIC_EXECUTION_PLAN_RECORD_KIND, plan_id_lookup_key
+    )
+    if resolved is None:
+        raise ModelRuntimeRequirementError(
+            "slot_attempt_envelope_claim_binding names a plan_ref that does not resolve to a "
+            f"committed multi_agent_dynamic_execution_plan under project {project_id!r}: "
+            f"{plan_id_lookup_key!r} -- a caller-declared plan_ref with no genuine canonical plan "
+            "behind it is refused before the adapter is ever reached"
+        )
+    if not isinstance(resolved, Mapping):
+        raise ModelRuntimeRequirementError(
+            f"resolved multi_agent_dynamic_execution_plan is not a readable record: {resolved!r}"
+        )
+    plan = dict(resolved)
+    require_schema_valid_multi_agent_dynamic_execution_plan(plan)
+    _require_same_project(plan, project_id, _MULTI_AGENT_DYNAMIC_EXECUTION_PLAN_RECORD_KIND)
+    declared_plan_id = plan.get("multi_agent_dynamic_execution_plan_id")
+    if (
+        not isinstance(declared_plan_id, str)
+        or not declared_plan_id
+        or declared_plan_id != plan_id_lookup_key
+        or multi_agent_dynamic_execution_plan_id(plan) != declared_plan_id
+    ):
+        raise ModelRecordIntegrityError(
+            f"resolved multi_agent_dynamic_execution_plan {plan_id_lookup_key!r} own recomputed "
+            "identity does not equal its own declared value, or its own declared value does not "
+            "equal the reference used to resolve it -- refusing to trust any of its fields"
+        )
+    if multi_agent_dynamic_execution_plan_semantic_fingerprint(plan) != plan.get(
+        "multi_agent_dynamic_execution_plan_semantic_fingerprint"
+    ):
+        raise ModelRecordIntegrityError(
+            f"resolved multi_agent_dynamic_execution_plan {declared_plan_id!r} own recomputed "
+            "semantic fingerprint does not equal its own declared value -- refusing to trust any "
+            "of its fields"
+        )
+    declared_work_unit_ref = plan.get("model_work_unit_ref")
+    if not (
+        isinstance(declared_work_unit_ref, Mapping)
+        and declared_work_unit_ref.get("kind") == checked_work_unit_ref.get("kind")
+        and declared_work_unit_ref.get("id") == checked_work_unit_ref.get("id")
+    ):
+        raise ModelRuntimeRequirementError(
+            f"resolved multi_agent_dynamic_execution_plan {declared_plan_id!r} does not name "
+            "this exact Work Unit via its own model_work_unit_ref -- refusing to admit it as the "
+            "canonical plan behind this attempt"
+        )
+    declared_slot_index = expected_binding.get("slot_index")
+    slots = plan.get("slots")
+    matching_slot: Any = None
+    if isinstance(slots, list):
+        for slot in slots:
+            if isinstance(slot, Mapping) and slot.get("slot_index") == declared_slot_index:
+                matching_slot = slot
+                break
+    if matching_slot is None:
+        raise ModelRuntimeRequirementError(
+            f"slot_attempt_envelope_claim_binding declares slot_index {declared_slot_index!r}, "
+            f"which does not exist in the resolved multi_agent_dynamic_execution_plan "
+            f"{declared_plan_id!r} -- refusing to admit an attempt for a slot the canonical plan "
+            "never opened"
+        )
+    if matching_slot.get("capability") != work_unit.get("required_capability"):
+        raise ModelRuntimeRequirementError(
+            f"the resolved multi_agent_dynamic_execution_plan's own slot {declared_slot_index!r} "
+            f"declares capability {matching_slot.get('capability')!r}, which does not equal this "
+            f"call's own resolved Work Unit's required_capability "
+            f"{work_unit.get('required_capability')!r} -- refusing to admit this attempt"
+        )
+    if expected_binding.get("attempt_ordinal") != 1:
+        raise ModelRuntimeRequirementError(
+            "slot_attempt_envelope_claim_binding declares an attempt_ordinal other than 1 -- "
+            "this system's own single-attempt-per-slot design means attempt_ordinal is a fixed, "
+            "route-derived invariant, never a free caller-selected origin"
+        )
+    return plan
 
 
 def _resolve_boundary(
@@ -1112,13 +1247,31 @@ def execute_model_work_unit(
     or neither does -- the identical atomicity Round 4 established, now closed against every
     forgery a caller-selected factory could otherwise smuggle through.
 
+    Structural Review Round 7, P19-R7-F1: Round 6's own checks above compare the returned claim
+    body's declared ``plan_ref``/``slot_index``/``attempt_ordinal`` to
+    *slot_attempt_envelope_claim_binding*'s own declared values -- but the identical single
+    public caller supplies both the factory and the binding, so their mutual agreement never
+    proved a genuinely committed plan stood behind either one; exact-head reproduction showed a
+    wholly caller-invented ``plan_ref``/``slot_index``/``attempt_ordinal`` triple passing every
+    Round 6 check unnoticed. Before the adapter is ever reached, this route now resolves the
+    plan *slot_attempt_envelope_claim_binding*'s own ``plan_ref`` names from the Store itself
+    (:func:`_resolve_and_verify_canonical_plan`), schema-validates it, independently recomputes
+    its own narrow id and full semantic fingerprint, and requires the declared slot index to
+    exist in it with a capability equal to this call's own resolved Work Unit's
+    ``required_capability`` -- the genuine third-party check a second caller-supplied comparator
+    can never be. ``attempt_ordinal`` is likewise never accepted as a free caller-selected value:
+    this system's own single-attempt-per-slot design means it is checked as the fixed,
+    route-derived invariant ``1``.
+
     Every refusal below lands with the adapter called **zero** times and nothing committed: a
     released or foreign Temporary Agent, a stale execution contract, a Work Unit that does not
     resolve or whose own identity does not recompute, a Difference/Boundary/Authority reference
     that does not resolve or does not restate this exact question, a Boundary or Authority
     Decision belonging to a different Human Authority, a Work Unit claiming a State revision
-    this Store never reached, or a *pinned_execution_snapshot* claiming a revision from the
-    Store's own future or not equal to the resolved Work Unit's own genesis snapshot. Only after
+    this Store never reached, a *pinned_execution_snapshot* claiming a revision from the Store's
+    own future or not equal to the resolved Work Unit's own genesis snapshot, or (Round 7) a
+    *slot_attempt_envelope_claim_binding* naming a ``plan_ref`` that does not resolve to a
+    genuine, independently-verified canonical plan admitting this exact slot. Only after
     all of them does the adapter exist at all, and what it then returns can only ever become one
     of the seven typed outcomes.
     """
@@ -1153,6 +1306,29 @@ def execute_model_work_unit(
             pinned_execution_snapshot, fresh=fresh, work_unit=work_unit
         )
     )
+
+    # Structural Review Round 7, P19-R7-F1: when a companion claim will be committed, the
+    # canonical plan its own binding names is resolved from the Store and independently verified
+    # *here* -- before the adapter is ever reached, exactly like every other admission check
+    # above -- rather than only inside the post-adapter commit-tail below. Round 6 checked only
+    # that the factory-produced claim body's own declared values equalled
+    # slot_attempt_envelope_claim_binding's own declared values; the identical single caller
+    # supplies both, so that agreement alone never proved a genuinely committed plan stood behind
+    # either one. See :func:`_resolve_and_verify_canonical_plan`.
+    if slot_attempt_envelope_claim_factory is not None:
+        if slot_attempt_envelope_claim_binding is None:
+            raise ModelRuntimeRequirementError(
+                "slot_attempt_envelope_claim_binding is required whenever "
+                "slot_attempt_envelope_claim_factory is supplied -- this call's own caller, "
+                "never the factory, declares which exact attempt this claim is committed for"
+            )
+        _resolve_and_verify_canonical_plan(
+            store,
+            project_id,
+            expected_binding=dict(slot_attempt_envelope_claim_binding),
+            checked_work_unit_ref=checked_work_unit_ref,
+            work_unit=work_unit,
+        )
 
     declared_identity = getattr(adapter, "adapter_identity", None)
     if not isinstance(declared_identity, Mapping):

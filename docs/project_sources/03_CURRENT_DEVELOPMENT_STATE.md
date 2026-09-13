@@ -3481,3 +3481,65 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_6_REVIEWED_HEAD`。
 §44以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
 優先される(last-wins)。
+
+# 46. Phase 19 Structural Review Round 7 bounded current-state restatement (Issue #77, PR #78)
+
+本節は、Structural Advisor Structural Review Round 7(reviewed head/AUTHORIZED_TARGET_SHA
+`976a7ef28c4b98a0312f033e36ae5df6c75c87be`、finding `P19-R7-F1`)をSHUKOUが
+`ADOPT_P19_R7_CANONICAL_CLAIM_ORIGIN_BINDING`として正式採択した後、Claude Codeが既存
+branch`agent/issue-77-phase19-multi-agent-dynamic-execution`・既存PR #78上でF1の是正を実装した
+時点の、bounded・append-only current-state restatementである(SHUKOU正式採択コメント:
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5651309825
+、Claude Code実装ハンドオフコメント:
+https://github.com/manosube/manosube-agent-civilization-os/pull/78#issuecomment-5651312351
+、いずれも本記録作成者自身がGitHub API経由でauthor login/id/associationを直接検証済み、live
+head/base不変も同様に確認済み)。§0冒頭のheader blockおよびセクション1〜45の本文は、書き換えない
+-- 本節が最後に追記される、bounded・last-wins restatementである。
+
+是正した finding の要旨: P19-R7-F1(Round 6自身の`slot_attempt_envelope_claim_binding`検証は、
+factoryが返すclaim bodyの宣言済みplan_ref/slot_index/attempt_ordinalと、この呼び出し自身が
+宣言するbindingとの一致のみを検証していたが、両者はいずれも同一の単一呼び出し元が供給する値
+であるため、その相互一致は真にcommit済みのplanの存在を何ら証明しない -- exact-head
+reproductionで、自己矛盾なくschema-validで、id/semantic fingerprintが真に再計算可能な、
+しかし一切commitされていないplan/slot/attempt三つ組(`plan_ref={"id":
+"CALLER-SELECTED-PLAN"}`, `slot_index=2`, `attempt_ordinal=999`)がRound 6の全検査を通過する
+ことを確認した。是正は、Round 6自身が確立した「再配置であり複製ではない」原則をplan種別へ
+拡張したものである: `multi_agent_dynamic_execution_plan_id`・`..._semantic_fingerprint`・新設
+`require_schema_valid_multi_agent_dynamic_execution_plan`を`model_runtime.claim_identity`
+(claim種別と同じ単一所有者)へ再配置し、adapterへ到達する前に -- この呼び出し自身のWork
+Unitが解決された直後、他の事前admission検査と並んで -- 新設`_resolve_and_verify_canonical_
+plan`が、`slot_attempt_envelope_claim_binding`自身が宣言するplan_refをStore自身から
+`resolve_record`により解決し、schema検証し、その宣言済みid/semantic fingerprintを独立に
+再計算した値と比較し、project_idとmodel_work_unit_refの一致を要求し、宣言済みslot_indexが
+解決済みplanの`slots`内に存在しその`capability`がこの呼び出し自身の解決済みWork Unitの
+`required_capability`と一致することを要求し、`attempt_ordinal`をこのsystem自身の
+single-attempt-per-slot設計に基づく固定値`1`として(呼び出し元宣言値としては一切信頼せず)
+検証する。`multi_agent`側の変更は不要であった -- この package 自身の唯一の呼び出し経路
+(`_execute_one_slot`)は、既に自身の`resolve_and_verify_committed_plan`により独立検証済みの
+真のplanのみを`slot_attempt_envelope_claim_binding`に宣言しているため。
+
+```text
+OBSERVED_AT_UTC=2026-09-13T05:37:09Z
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_7_CORRECTIONS_DELIVERED_PR_OPEN
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=78
+GOVERNING_ISSUE=#77
+STRUCTURAL_REVIEW_ROUND_7_REVIEWED_HEAD=976a7ef28c4b98a0312f033e36ae5df6c75c87be
+AUTHORIZED_TARGET_SHA=976a7ef28c4b98a0312f033e36ae5df6c75c87be
+ADOPTION_ID=ADOPT_P19_R7_CANONICAL_CLAIM_ORIGIN_BINDING
+ADOPTED_FINDINGS=P19-R7-F1
+
+MERGE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+このrestatementは、この一回の追記時点で真であった七個のfieldの事実記録に限られる:
+`CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
+`MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_7_REVIEWED_HEAD`。
+§45以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
+優先される(last-wins)。

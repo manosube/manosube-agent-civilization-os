@@ -13,6 +13,10 @@ from typing import Any
 
 import pytest
 
+from manosube_agent_civilization.model_runtime.claim_identity import (
+    multi_agent_dynamic_execution_plan_id,
+    multi_agent_dynamic_execution_plan_semantic_fingerprint,
+)
 from manosube_agent_civilization.multi_agent.engine import (
     derive_multi_agent_agent_release_receipt,
     derive_multi_agent_conflict_set,
@@ -28,8 +32,6 @@ from manosube_agent_civilization.multi_agent.identity import (
     multi_agent_agent_release_receipt_semantic_fingerprint,
     multi_agent_conflict_set_id,
     multi_agent_conflict_set_semantic_fingerprint,
-    multi_agent_dynamic_execution_plan_id,
-    multi_agent_dynamic_execution_plan_semantic_fingerprint,
     multi_agent_evidence_aggregation_input_id,
     multi_agent_evidence_aggregation_input_semantic_fingerprint,
     multi_agent_orchestration_receipt_id,
