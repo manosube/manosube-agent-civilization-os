@@ -3604,3 +3604,66 @@ NEXT_OWNER=STRUCTURAL_ADVISOR
 `MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_8_REVIEWED_HEAD`。
 §46以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
 優先される(last-wins)。
+
+# 48. Phase 19 Structural Review Round 9 bounded current-state restatement (Issue #77, PR #78)
+
+本節は、Structural Advisor Structural Review Round 9(reviewed head/AUTHORIZED_TARGET_SHA
+`12b2244399950fa95681eb7155dabbef6818377b`、findings `P19-R9-F1`・`P19-R9-F2`、
+`IMPLEMENT_TOGETHER=true`)をSHUKOUが`ADOPT_P19_R9_CANONICAL_TERMINAL_GRAPH_CONTINUITY`として
+正式採択した後、Claude Codeが既存branch`agent/issue-77-phase19-multi-agent-dynamic-execution`・
+既存PR #78上で両findingの是正を実装した時点の、bounded・append-only current-state
+restatementである(SHUKOU正式採択コメント・Claude Code実装ハンドオフコメントの双方を、本記録
+作成者自身がGitHub API経由でauthor login/id/association・live head/base不変の双方を独立に
+検証済み)。§0冒頭のheader blockおよびセクション1〜47の本文は、書き換えない -- 本節が最後に
+追記される、bounded・last-wins restatementである。
+
+是正した finding の要旨: `multi_agent`パッケージ自身の narrow natural-key identity 規約
+(`identity.py`自身のmodule docstringが記録する、6種のrecord種別のうち5種が、自身の
+full-content semantic fingerprintより狭い natural key projection を`<kind>_id`として意図的に
+採用する規約 -- replay-without-rerunとconflicting-reuse-refusalをStoreの native behavior と
+するため)は、まさにP19-R9-F1/F2が突く隙間そのものであった: あるrecordの自己完結的な narrow-key
+self-consistency check(自身の再計算identity・semantic fingerprintが自身の宣言値と一致する
+こと)は、その narrow key 自身が除外する field(`capability`・`execution_snapshot`・Envelope
+関係・`attempt_id`・conflict/aggregation membership)の差し替えを、原理的に一切検出できない。
+P19-R9-F1(claim/slot outputが名指す Model Execution Envelope は、個別に自己完結的である
+だけでなく、解決済みPlanの正確な Model Work Unit・その Work Unit の capability/Difference/
+Authority/Boundary lineage に真に拘束されることを要求されねばならない)は、新設
+`_require_envelope_matches_plan_lineage`が、Envelope自身の既に独立検証済みのfieldを、Planの
+既に解決済みのfieldへ直接比較することで解決する -- `model_work_unit_ref`の一致のみを、Boundary
+lineageの十分な推移的証明として再利用し(Work Unitは単一のimmutable content-addressed record
+であり、Envelopeとの整合は`execute_model_work_unit`自身の既存commit時不変条件が既に保証する
+ため)、Planが自身の参照すら持たない冗長な二度目のBoundary解決を導入しない。P19-R9-F2
+(個別にschema/id/fingerprint有効なslot output・release receipt・conflict set・aggregation
+inputは、それらの相互関係が正しいことの証明として信頼してはならない)は、新設の単一・共有
+verification/rederivation経路`resolve_and_verify_canonical_terminal_graph`が、既存の
+`_classify_conflicts`・`derive_multi_agent_conflict_set`・
+`derive_multi_agent_evidence_aggregation_input`を再利用してterminal graph全体を独立に
+再導出し、Store解決済みrecord自身が宣言するsemantic fingerprintと比較することで解決する --
+replay時とEvidence hand-off時の双方が、この同一経路を用いる。第二のStore/Authority/Evidence
+owner、第二のconflict/completion policyは、いずれも新設されていない。
+
+```text
+OBSERVED_AT_UTC=2026-09-13T08:59:30Z
+MAIN_ACCEPTED_BASE_SHA=0ced9d0dd5658196b7a6dc085ca839fa514f1eeb
+CURRENT_PHASE=19_MULTI_AGENT_DYNAMIC_EXECUTION
+CURRENT_PHASE_STATE=STRUCTURAL_REVIEW_ROUND_9_CORRECTIONS_DELIVERED_PR_OPEN
+CURRENT_PHASE_ISSUE=77
+CURRENT_PR=78
+GOVERNING_ISSUE=#77
+STRUCTURAL_REVIEW_ROUND_9_REVIEWED_HEAD=12b2244399950fa95681eb7155dabbef6818377b
+AUTHORIZED_TARGET_SHA=12b2244399950fa95681eb7155dabbef6818377b
+ADOPTION_ID=ADOPT_P19_R9_CANONICAL_TERMINAL_GRAPH_CONTINUITY
+ADOPTED_FINDINGS=P19-R9-F1,P19-R9-F2
+
+MERGE_ALLOWED=false
+ISSUE_77_CLOSE_ALLOWED=false
+PHASE_19_COMPLETE=false
+PHASE_20_ALLOWED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR
+```
+
+このrestatementは、この一回の追記時点で真であった七個のfieldの事実記録に限られる:
+`CURRENT_PHASE`・`CURRENT_PHASE_STATE`・`CURRENT_PHASE_ISSUE`・`CURRENT_PR`・
+`MAIN_ACCEPTED_BASE_SHA`・`GOVERNING_ISSUE`・`STRUCTURAL_REVIEW_ROUND_9_REVIEWED_HEAD`。
+§47以前のセクションが投影する過去のPhase/PR状態はそのまま保持され、本節のみが現在の投影として
+優先される(last-wins)。

@@ -1137,3 +1137,87 @@ THE_BINDING=true`, `ROUTE_LEVEL_CODE_CHANGE_REQUIRED=false`. The existing Round 
 loss recovery test and every other existing Phase 19 proof in this package continue to pass
 unmodified against the new head. No second Authority evaluator, execution route, Store owner,
 Model Runtime owner, or Multi-Agent owner is introduced.
+
+## 18. Structural Review Round 9 corrections (P19-R9-F1..F2)
+
+Adopted as `ADOPT_P19_R9_CANONICAL_TERMINAL_GRAPH_CONTINUITY` against reviewed head/authorized
+target `12b2244399950fa95681eb7155dabbef6818377b` (PR #78). Two findings, both addressed entirely
+inside this package's own `route.py`/`evidence_handoff.py`, on the existing branch/PR.
+
+This module's own narrow-natural-key identity convention (this package's `identity.py` module
+docstring) is exactly what both findings exploit: five of six record kinds this package defines
+use a Store natural key narrower than their own full-content semantic fingerprint, deliberately,
+so replay-without-rerun and conflicting-reuse-refusal are native Store behavior. A record's own
+narrow-key self-consistency check (its own recomputed identity and semantic fingerprint equal to
+its own declared values) can never catch a substitution confined to exactly the fields the
+narrow key excludes -- a genuinely real, schema-valid, self-consistently-fingerprinted record
+that simply names, or declares, the *wrong* cross-record relationship.
+
+- **P19-R9-F1 (a claim's or slot output's own named Envelope is now required to genuinely bind
+  to this exact plan's own Model Work Unit/Difference/Authority/capability/execution-snapshot
+  lineage, not merely resolve as an independently self-consistent record).** New
+  `_require_envelope_matches_plan_lineage(plan, slot, envelope)` compares the Envelope's own
+  already-independently-verified fields directly against the plan's own already-resolved fields
+  -- `model_work_unit_ref`, `difference_ref`, `authority_ref`, `required_capability` against the
+  slot's own `capability`, and `executed_state_revision`/`executed_semantic_fingerprint` against
+  the plan's own `boot_state_revision`/`boot_semantic_fingerprint` -- raising
+  `MultiAgentRecordIntegrityError` on any mismatch. `model_work_unit_ref` equality alone is
+  reused as sufficient transitive proof of Boundary lineage too, since a Work Unit is one
+  immutable, content-addressed record whose own `boundary_ref` is fixed at genesis and whose
+  consistency with any Envelope committed against it is already an existing Model Runtime
+  invariant (`execute_model_work_unit`'s own commit-time enforcement) -- never a second,
+  redundant Boundary resolve this plan does not itself carry a reference to. Wired into
+  `_execute_one_slot`'s two claim-resolving trust points (the replay-first fast path and the
+  post-commit-acknowledgement-loss recovery branch (§15's own P19-R6-F1)) immediately after each
+  resolves its own Envelope.
+- **P19-R9-F2 (the complete terminal graph -- every slot output, every release receipt, the
+  conflict set, and the Evidence-aggregation input -- is now independently reconstructed and
+  verified from the plan's own canonical lineage-verified slot outputs, never trusted merely
+  because each, resolved in isolation, is individually schema/id/fingerprint-valid).** New
+  `_require_slot_output_matches_plan_lineage` closes the slot output's own narrow-key gap
+  (`capability`, `execution_snapshot`, and, when present, the named Envelope's own lineage and
+  outcome/fingerprint agreement, are all outside `compute_slot_output_id`'s own key fields); new
+  `_require_release_receipt_matches_slot_output` closes the release receipt's own narrow-key gap
+  (`attempt_id` is outside `RELEASE_RECEIPT_KEY_FIELDS`). New public
+  `resolve_and_verify_canonical_terminal_graph(store, project_id, plan, plan_ref)` is the one
+  shared verification/rederivation path both replay (`_execute_one_slot`'s own full-pair fast
+  path) and Evidence hand-off now call: for each plan slot it resolves and lineage-verifies the
+  slot output and release receipt, then rederives the conflict set via this package's own
+  existing `_classify_conflicts` and `derive_multi_agent_conflict_set`, and the aggregation
+  input via the existing `derive_multi_agent_evidence_aggregation_input`, and requires each
+  rederived record's own semantic fingerprint to equal the one the Store-resolved record itself
+  declares -- reusing the identical engine constructors that produced them the first time,
+  never a second, competing conflict/completion policy. `evidence_handoff.route_orchestration_to_
+  evidence` was rewritten to call this one function and hand off only its own verified,
+  lineage-checked slot outputs; the previous manual resolve-conflict_set /
+  resolve-aggregation_input / per-receipt / per-admitted-output sequence (each step individually
+  self-consistency-checked but never cross-checked) is removed, not duplicated. No second Store,
+  Authority, or Evidence owner is introduced; no second conflict or completion policy exists
+  anywhere in this repository after this change.
+
+Five required decisive proofs, added to
+`tests/integration/multi_agent/test_multi_agent_substitution_and_continuity.py`:
+`test_p19_r9_f1_a_claim_redirected_to_a_genuine_envelope_from_a_different_plans_lineage_is_refused`
+(a genuinely committed claim -- reached via the identical Round 1/3 crash-before-terminal-commit
+technique -- redirected, self-consistently refingerprinted, to name a genuinely real, committed
+Envelope from a second plan's own distinct Model Work Unit in the same project/Store; replay
+raises `MultiAgentRecordIntegrityError` with zero new adapter calls, zero terminal writes, zero
+State advance), `test_p19_r9_f2_a_slot_output_declaring_a_different_execution_snapshot_is_refused_
+on_replay` (a genuine, committed slot output's `execution_snapshot.state_revision` overwritten in
+place and self-consistently refingerprinted; replay refuses), `test_p19_r9_f2_a_release_receipt_
+naming_a_different_attempt_id_is_refused_at_evidence_handoff` (a genuine, committed release
+receipt's `attempt_id` overwritten to a different, validly-formatted attempt id and self-
+consistently refingerprinted; Evidence hand-off refuses),
+`test_p19_r9_f2_an_aggregation_input_admitting_an_unresolved_slot_output_is_refused_at_evidence_
+handoff` (a genuine, committed aggregation input's `admitted_slot_output_refs` falsely admits one
+half of a genuinely CONTRADICTING two-slot pair, self-consistently refingerprinted; Evidence
+hand-off refuses with zero Evidence/receipt writes), and the pre-existing, unmodified `test_exact_
+replay_reuses_every_slot_output_with_zero_new_adapter_calls` /
+`test_vertical_proof_1_2_and_n_agent_execution` continuing to pass, proving genuine replay and
+genuine Evidence hand-off remain unchanged and idempotent under every one of these new checks.
+
+`P19_R9_F1_CROSS_ENVELOPE_SUBSTITUTION=refused`, `P19_R9_F2_SLOT_OUTPUT_CROSS_BINDING=refused`,
+`P19_R9_F2_RELEASE_ATTEMPT_BINDING=refused`, `P19_R9_F2_CONFLICT_REDERIVATION=refused`,
+`P19_R9_F2_AGGREGATION_REDERIVATION=refused`, `GENUINE_REPLAY_ZERO_DUPLICATE_ADAPTER_CALLS=true`,
+`GENUINE_EVIDENCE_HANDOFF=unchanged`. No second Authority evaluator, execution route, Store
+owner, Model Runtime owner, or Multi-Agent owner is introduced by either finding.

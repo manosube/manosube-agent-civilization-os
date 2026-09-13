@@ -59,14 +59,8 @@ from .engine import (
     require_valid_multi_agent_orchestration_receipt,
     require_valid_timestamp,
 )
-from .errors import (
-    MultiAgentRecordIntegrityError,
-    MultiAgentReleaseIncompleteError,
-    MultiAgentRequirementError,
-)
+from .errors import MultiAgentRecordIntegrityError, MultiAgentRequirementError
 from .identity import (
-    multi_agent_conflict_set_id,
-    multi_agent_evidence_aggregation_input_id,
     multi_agent_orchestration_receipt_id,
     multi_agent_orchestration_receipt_semantic_fingerprint,
 )
@@ -83,21 +77,11 @@ from .route import (
     _require_canonical_identity,
     _require_reference,
     _require_resolved,
-    resolve_and_verify_committed_aggregation_input,
-    resolve_and_verify_committed_conflict_set,
+    resolve_and_verify_canonical_terminal_graph,
     resolve_and_verify_committed_plan,
-    resolve_and_verify_committed_release_receipt,
-    resolve_and_verify_committed_slot_output,
 )
-from .types import ACCEPTED_SLOT_OUTCOME
 
 ORCHESTRATION_RECEIPT_RECORD_KIND = "multi_agent_orchestration_receipt"
-
-
-def _plan_keyed_payload(
-    schema_version: str, project_id: str, plan_ref: Mapping[str, Any]
-) -> dict[str, Any]:
-    return {"schema_version": schema_version, "project_id": project_id, "plan_ref": dict(plan_ref)}
 
 
 def _receipt_from_envelope(envelope: Mapping[str, Any]) -> ModelExecutionReceipt:
@@ -150,12 +134,17 @@ def route_orchestration_to_evidence(
     Evidence owner and commit the terminal Multi-Agent Orchestration Receipt.
 
     Requires :func:`~manosube_agent_civilization.multi_agent.route.
-    execute_dynamic_execution_plan` to have already run for *plan_ref* -- resolves the plan's
-    own conflict set and Evidence-aggregation input from the Store (never trusts an in-memory
-    copy), refuses if either does not yet exist or if any accounted-for release is not
-    ``RELEASED`` (defense in depth: :func:`~manosube_agent_civilization.multi_agent.engine.
-    derive_multi_agent_evidence_aggregation_input` already refused to let this state exist, but
-    this module never trusts a resolved record's own history without re-checking).
+    execute_dynamic_execution_plan` to have already run for *plan_ref* -- resolves and
+    independently verifies the plan's own complete canonical terminal graph from the Store
+    (:func:`~manosube_agent_civilization.multi_agent.route.
+    resolve_and_verify_canonical_terminal_graph`, Structural Review Round 9, P19-R9-F2), never
+    trusts an in-memory copy or a merely individually schema/id/fingerprint-valid conflict set or
+    aggregation input: every slot output and release receipt is proved to genuinely belong to
+    this exact plan (including, for any slot output naming a real Envelope, that Envelope's own
+    Work Unit/Difference/Authority/capability/execution-snapshot lineage -- P19-R9-F1), and the
+    conflict set and aggregation input are independently rederived from that verified graph and
+    required to equal what is actually stored, before any of it is ever handed to the existing
+    Evidence owner.
 
     *evidence_request_template* must already be a real, Change-free,
     ``verification_observation_request``-grounded Evidence request (the identical shape
@@ -186,38 +175,26 @@ def route_orchestration_to_evidence(
 
     plan = resolve_and_verify_committed_plan(store, project_id, checked_plan_ref["id"])
 
-    conflict_set_id = multi_agent_conflict_set_id(
-        _plan_keyed_payload(plan["schema_version"], project_id, checked_plan_ref)
+    # Structural Review Round 9, P19-R9-F2: never resolve the conflict set and Evidence-
+    # aggregation input directly and trust them merely because each, in isolation, is schema/id/
+    # fingerprint-valid -- independently reconstruct and verify the complete canonical terminal
+    # graph (every slot output, every release receipt, the conflict set, and the aggregation
+    # input, each proved to genuinely belong to this exact plan and to each other) through the
+    # one shared verification path this package now owns. See
+    # :func:`~manosube_agent_civilization.multi_agent.route.
+    # resolve_and_verify_canonical_terminal_graph`'s own docstring.
+    verified_graph = resolve_and_verify_canonical_terminal_graph(
+        store, project_id, plan, checked_plan_ref
     )
-    conflict_set = resolve_and_verify_committed_conflict_set(store, project_id, conflict_set_id)
-
-    aggregation_input_id = multi_agent_evidence_aggregation_input_id(
-        _plan_keyed_payload(plan["schema_version"], project_id, checked_plan_ref)
-    )
-    aggregation_input = resolve_and_verify_committed_aggregation_input(
-        store, project_id, aggregation_input_id
-    )
-    if aggregation_input["conflict_set_ref"] != {
-        "kind": CONFLICT_SET_RECORD_KIND,
-        "id": conflict_set_id,
-    }:
-        raise MultiAgentRequirementError(
-            "resolved Evidence aggregation input names a different conflict set than the one "
-            "this plan actually produced -- refusing to trust it"
-        )
+    conflict_set = verified_graph["conflict_set"]
+    aggregation_input = verified_graph["aggregation_input"]
+    conflict_set_id = str(conflict_set["multi_agent_conflict_set_id"])
+    aggregation_input_id = str(aggregation_input["multi_agent_evidence_aggregation_input_id"])
+    slot_outputs_by_id = {
+        str(so["multi_agent_slot_output_id"]): so for so in verified_graph["slot_outputs"]
+    }
 
     release_receipt_refs = list(aggregation_input["release_receipt_refs"]["members"])
-    unreleased: list[str] = []
-    for ref in release_receipt_refs:
-        release_receipt = resolve_and_verify_committed_release_receipt(store, project_id, ref["id"])
-        if release_receipt is None or release_receipt.get("release_status") != "RELEASED":
-            unreleased.append(ref["id"])
-    if unreleased:
-        raise MultiAgentReleaseIncompleteError(
-            f"one or more release receipts this plan's Evidence aggregation input names are "
-            f"not RELEASED: {sorted(unreleased)!r} -- refusing to hand any admitted output off "
-            "to the existing Evidence owner while any release remains unaccounted for"
-        )
 
     evidence_records: list[dict[str, Any]] = []
     predecessor_ref: dict[str, Any] | None = None
@@ -225,19 +202,15 @@ def route_orchestration_to_evidence(
         aggregation_input["admitted_slot_output_refs"]["members"], key=lambda ref: ref["id"]
     )
     for ref in admitted_refs:
-        slot_output = resolve_and_verify_committed_slot_output(store, project_id, ref["id"])
-        if slot_output is None:
+        # Already resolved, lineage-verified, and proved (by the rederivation above) to
+        # genuinely be the admitted member the conflict classification names -- never re-
+        # resolved from Store a second time here.
+        slot_output = slot_outputs_by_id.get(ref["id"])
+        if slot_output is None or slot_output["model_execution_envelope_ref"] is None:
             raise MultiAgentRequirementError(
-                f"aggregation input names an admitted slot output that no longer resolves: "
-                f"{ref['id']!r}"
-            )
-        if (
-            slot_output["outcome"] != ACCEPTED_SLOT_OUTCOME
-            or slot_output["model_execution_envelope_ref"] is None
-        ):
-            raise MultiAgentRequirementError(
-                f"aggregation input names slot output {ref['id']!r} as admitted, but it is not "
-                "a CANDIDATE_ACCEPTED attempt with a real Envelope -- refusing to hand it off"
+                f"the verified terminal graph's own admitted_slot_output_refs names "
+                f"{ref['id']!r}, which does not resolve to one of this plan's own verified "
+                "canonical slot outputs with a real Envelope -- refusing to hand it off"
             )
         envelope = resolve_and_verify_committed_envelope(
             store, project_id, slot_output["model_execution_envelope_ref"]["id"]

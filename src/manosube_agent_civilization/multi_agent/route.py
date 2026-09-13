@@ -598,6 +598,275 @@ def resolve_and_verify_committed_aggregation_input(
 
 
 # --------------------------------------------------------------------------- #
+# Structural Review Round 9 (P19-R9-F1/F2): cross-record terminal-graph verification
+# --------------------------------------------------------------------------- #
+
+
+def _require_envelope_matches_plan_lineage(
+    plan: Mapping[str, Any], slot: Mapping[str, Any], envelope: Mapping[str, Any]
+) -> None:
+    """Structural Review Round 9, P19-R9-F1: a resolved, individually self-consistent Model
+    Execution Envelope a claim or slot output names is not this slot's own genuine terminal fact
+    merely because the claim/slot output and the Envelope are each independently schema/id/
+    fingerprint-valid -- a self-consistent claim naming a *different*, wholly unrelated, but
+    equally genuine and equally self-consistent Envelope (from another Work Unit, another Plan,
+    another lineage entirely, in the same project) would pass every check Round 4-8 already
+    established. This function is the genuine third-party check: it compares the Envelope's own
+    already-independently-verified fields (never re-derived, never trusted from the claim/slot
+    output that named it) directly against this plan's own already-resolved, already-verified
+    fields.
+
+    ``model_work_unit_ref`` equality alone already proves Boundary lineage too, since the Work
+    Unit it names is one single immutable, content-addressed record whose own ``boundary_ref`` is
+    fixed at genesis and whose consistency with an Envelope committed against it is already an
+    existing Model Runtime invariant (enforced by ``execute_model_work_unit`` itself, at commit
+    time) -- reusing that existing owner's own guarantee rather than duplicating it with a second,
+    redundant Boundary resolve this plan does not itself even carry a reference to.
+    """
+
+    if dict(envelope["model_work_unit_ref"]) != dict(plan["model_work_unit_ref"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names belongs to a "
+            f"different Model Work Unit than this plan's own: {envelope['model_work_unit_ref']!r} "
+            f"!= {plan['model_work_unit_ref']!r} -- refusing to adopt it as this attempt's own "
+            "terminal outcome"
+        )
+    if dict(envelope["difference_ref"]) != dict(plan["difference_ref"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names is bound to a "
+            f"different Difference than this plan's own: {envelope['difference_ref']!r} != "
+            f"{plan['difference_ref']!r} -- refusing to adopt it as this attempt's own terminal "
+            "outcome"
+        )
+    if dict(envelope["authority_ref"]) != dict(plan["authority_ref"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names is bound to a "
+            f"different Authority Decision than this plan's own: {envelope['authority_ref']!r} "
+            f"!= {plan['authority_ref']!r} -- refusing to adopt it as this attempt's own terminal "
+            "outcome"
+        )
+    if str(envelope["required_capability"]) != str(slot["capability"]):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names declares a "
+            f"different required_capability than this slot's own: "
+            f"{envelope['required_capability']!r} != {slot['capability']!r} -- refusing to adopt "
+            "it as this attempt's own terminal outcome"
+        )
+    expected_snapshot = {
+        "state_revision": int(plan["boot_state_revision"]),
+        "semantic_fingerprint": dict(plan["boot_semantic_fingerprint"]),
+    }
+    if (
+        int(envelope["executed_state_revision"]) != expected_snapshot["state_revision"]
+        or dict(envelope["executed_semantic_fingerprint"])
+        != expected_snapshot["semantic_fingerprint"]
+    ):
+        raise MultiAgentRecordIntegrityError(
+            "the Envelope this slot's own committed claim or slot output names was not executed "
+            "against this plan's own admitted execution snapshot -- refusing to adopt it as this "
+            "attempt's own terminal outcome"
+        )
+
+
+def _require_slot_output_matches_plan_lineage(
+    store: Any,
+    project_id: str,
+    plan: Mapping[str, Any],
+    slot: Mapping[str, Any],
+    slot_output: Mapping[str, Any],
+) -> None:
+    """Structural Review Round 9, P19-R9-F2: a resolved, individually self-consistent
+    ``multi_agent_slot_output`` is not proof it genuinely belongs to *this* plan's *this* slot --
+    its own narrow Store key (``compute_slot_output_id``) covers only ``plan_ref``/``slot_index``/
+    ``attempt_ordinal``, deliberately excluding ``capability``, ``execution_snapshot`` and its own
+    Envelope relationship (see :mod:`~manosube_agent_civilization.multi_agent.identity`'s own
+    module docstring on why this kind's own id is a narrow natural key, not a full-content hash);
+    a schema-valid, self-consistently-fingerprinted slot output planted directly at that exact
+    key but declaring a *different* capability, execution snapshot, or Envelope than this exact
+    plan's own slot would pass every existing check unnoticed. This closes that gap."""
+
+    if str(slot_output["capability"]) != str(slot["capability"]):
+        raise MultiAgentRecordIntegrityError(
+            f"resolved multi_agent_slot_output for slot {slot['slot_index']!r} declares "
+            f"capability {slot_output['capability']!r}, which does not equal this plan's own "
+            f"slot capability {slot['capability']!r} -- refusing to trust it"
+        )
+    expected_snapshot = {
+        "state_revision": int(plan["boot_state_revision"]),
+        "semantic_fingerprint": dict(plan["boot_semantic_fingerprint"]),
+    }
+    if dict(slot_output["execution_snapshot"]) != expected_snapshot:
+        raise MultiAgentRecordIntegrityError(
+            f"resolved multi_agent_slot_output for slot {slot['slot_index']!r} declares an "
+            "execution_snapshot that does not equal this plan's own admitted "
+            "boot_state_revision/boot_semantic_fingerprint -- refusing to trust it"
+        )
+    envelope_ref = slot_output.get("model_execution_envelope_ref")
+    if envelope_ref is not None:
+        envelope = resolve_and_verify_committed_envelope(store, project_id, envelope_ref["id"])
+        _require_envelope_matches_plan_lineage(plan, slot, envelope)
+        if str(envelope["execution_outcome"]) != str(slot_output["outcome"]):
+            raise MultiAgentRecordIntegrityError(
+                f"resolved multi_agent_slot_output for slot {slot['slot_index']!r} declares "
+                f"outcome {slot_output['outcome']!r}, which does not equal its own named "
+                f"Envelope's own execution_outcome {envelope['execution_outcome']!r} -- refusing "
+                "to trust it"
+            )
+        if slot_output.get("result_fingerprint") != envelope.get(
+            "normalized_candidate_fingerprint"
+        ):
+            raise MultiAgentRecordIntegrityError(
+                f"resolved multi_agent_slot_output for slot {slot['slot_index']!r} declares a "
+                "result_fingerprint that does not equal its own named Envelope's own "
+                "normalized_candidate_fingerprint -- refusing to trust it"
+            )
+
+
+def _require_release_receipt_matches_slot_output(
+    receipt: Mapping[str, Any], slot_output: Mapping[str, Any]
+) -> None:
+    """Structural Review Round 9, P19-R9-F2: a release receipt's own narrow Store key
+    (``(schema_version, project_id, plan_ref, slot_index)``) never includes its own declared
+    ``attempt_id`` -- a schema-valid, self-consistently-fingerprinted receipt planted at the
+    correct key but naming a *different* ``attempt_id`` than the slot output it is supposed to
+    release would pass every existing check unnoticed. This closes that gap."""
+
+    if receipt.get("attempt_id") != slot_output.get("attempt_id"):
+        raise MultiAgentRecordIntegrityError(
+            f"resolved multi_agent_agent_release_receipt for slot "
+            f"{slot_output['slot_index']!r} declares attempt_id {receipt.get('attempt_id')!r}, "
+            f"which does not equal its own slot output's own attempt_id "
+            f"{slot_output.get('attempt_id')!r} -- refusing to trust it"
+        )
+
+
+def resolve_and_verify_canonical_terminal_graph(
+    store: Any, project_id: str, plan: Mapping[str, Any], plan_ref: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Structural Review Round 9, P19-R9-F2: independently reconstruct and verify the complete
+    canonical terminal graph for one already-executed plan -- every slot output, every release
+    receipt, the conflict set, and the Evidence-aggregation input -- rather than trust any of
+    them merely because each, resolved in isolation, is individually schema/id/fingerprint-valid.
+
+    For every plan slot: resolves its own canonical slot output and release receipt by their own
+    deterministic narrow keys, and requires each to genuinely match this plan's own slot (P19-F2,
+    reusing :func:`_require_slot_output_matches_plan_lineage` and
+    :func:`_require_release_receipt_matches_slot_output`, which in turn reuse
+    :func:`_require_envelope_matches_plan_lineage`, P19-R9-F1, whenever a slot output names a
+    real Envelope). Only then does it independently rederive the conflict classification (reusing
+    :func:`_classify_conflicts`, never a second, duplicated classification policy) from those
+    now-verified canonical slot outputs, and the Evidence-aggregation input from that conflict set
+    and those now-verified release receipts (reusing :func:`~manosube_agent_civilization.
+    multi_agent.engine.derive_multi_agent_conflict_set`/``derive_multi_agent_evidence_
+    aggregation_input`` -- the identical functions that produced them in the first place), and
+    requires each rederived record's own identity *and* semantic fingerprint to equal the ones
+    the Store-resolved record itself declares. A self-consistent conflict set or aggregation
+    input that does not equal what genuinely rederiving it from the canonical graph produces is
+    refused, never merely resolved-and-trusted.
+
+    Returns ``{"plan": ..., "slot_outputs": [...], "release_receipts": [...], "conflict_set":
+    ..., "aggregation_input": ...}`` -- the one graph this package's own Evidence hand-off route
+    (:mod:`~manosube_agent_civilization.multi_agent.evidence_handoff`) ever hands to the existing
+    Evidence owner.
+    """
+
+    slot_outputs: list[dict[str, Any]] = []
+    release_receipts: list[dict[str, Any]] = []
+    for slot in sorted(plan["slots"], key=lambda item: int(item["slot_index"])):
+        slot_index = int(slot["slot_index"])
+        slot_output_key = compute_slot_output_id(
+            project_id=project_id, plan_ref=dict(plan_ref), slot_index=slot_index
+        )
+        slot_output = resolve_and_verify_committed_slot_output(store, project_id, slot_output_key)
+        if slot_output is None:
+            raise MultiAgentRequirementError(
+                f"plan slot {slot_index} has no committed multi_agent_slot_output -- the "
+                "canonical terminal graph cannot be verified before every plan slot has settled"
+            )
+        _require_slot_output_matches_plan_lineage(store, project_id, plan, slot, slot_output)
+        receipt_key = multi_agent_agent_release_receipt_id(
+            {
+                "schema_version": plan["schema_version"],
+                "project_id": project_id,
+                "plan_ref": dict(plan_ref),
+                "slot_index": slot_index,
+            }
+        )
+        release_receipt = resolve_and_verify_committed_release_receipt(
+            store, project_id, receipt_key
+        )
+        if release_receipt is None:
+            raise MultiAgentRequirementError(
+                f"plan slot {slot_index} has a committed multi_agent_slot_output but no release "
+                "receipt -- the canonical terminal graph cannot be verified before every plan "
+                "slot's own Agent release is accounted for"
+            )
+        _require_release_receipt_matches_slot_output(release_receipt, slot_output)
+        slot_outputs.append(slot_output)
+        release_receipts.append(release_receipt)
+
+    members, admitted_refs, unresolved_capabilities, absent_refs = _classify_conflicts(slot_outputs)
+    considered_refs = sorted(
+        (
+            {"kind": SLOT_OUTPUT_RECORD_KIND, "id": str(so["multi_agent_slot_output_id"])}
+            for so in slot_outputs
+        ),
+        key=lambda ref: ref["id"],
+    )
+    expected_conflict_set = derive_multi_agent_conflict_set(
+        project_id=project_id,
+        plan_ref=dict(plan_ref),
+        considered_slot_output_refs=considered_refs,
+        members=members,
+    )
+    conflict_set_id = str(expected_conflict_set["multi_agent_conflict_set_id"])
+    stored_conflict_set = resolve_and_verify_committed_conflict_set(
+        store, project_id, conflict_set_id
+    )
+    if stored_conflict_set[
+        "multi_agent_conflict_set_semantic_fingerprint"
+    ] != expected_conflict_set.get("multi_agent_conflict_set_semantic_fingerprint"):
+        raise MultiAgentRecordIntegrityError(
+            "the committed multi_agent_conflict_set does not equal the one independently "
+            "rederived from this plan's own canonical slot outputs -- refusing to trust it"
+        )
+
+    expected_aggregation_input = derive_multi_agent_evidence_aggregation_input(
+        project_id=project_id,
+        plan_ref=dict(plan_ref),
+        conflict_set_ref={"kind": CONFLICT_SET_RECORD_KIND, "id": conflict_set_id},
+        admitted_slot_output_refs=admitted_refs,
+        unresolved_capabilities=unresolved_capabilities,
+        absent_slot_output_refs=absent_refs,
+        release_receipts=release_receipts,
+    )
+    aggregation_input_id = str(
+        expected_aggregation_input["multi_agent_evidence_aggregation_input_id"]
+    )
+    stored_aggregation_input = resolve_and_verify_committed_aggregation_input(
+        store, project_id, aggregation_input_id
+    )
+    if stored_aggregation_input[
+        "multi_agent_evidence_aggregation_input_semantic_fingerprint"
+    ] != expected_aggregation_input.get(
+        "multi_agent_evidence_aggregation_input_semantic_fingerprint"
+    ):
+        raise MultiAgentRecordIntegrityError(
+            "the committed multi_agent_evidence_aggregation_input does not equal the one "
+            "independently rederived from this plan's own canonical conflict set, admitted/"
+            "absent membership, and release receipts -- refusing to trust it"
+        )
+
+    return {
+        "plan": plan,
+        "slot_outputs": slot_outputs,
+        "release_receipts": release_receipts,
+        "conflict_set": stored_conflict_set,
+        "aggregation_input": stored_aggregation_input,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # The one persistence boundary
 # --------------------------------------------------------------------------- #
 
@@ -906,6 +1175,14 @@ def _execute_one_slot(
                 f"slot {slot_index} already has a committed attempt but no release receipt -- "
                 "an incomplete prior orchestration attempt cannot be silently treated as replay"
             )
+        # Structural Review Round 9, P19-R9-F2: a resolved slot output and release receipt each
+        # individually self-consistent (schema/id/fingerprint) is not proof they genuinely belong
+        # to this exact plan's this exact slot -- see _require_slot_output_matches_plan_lineage's
+        # own docstring for the narrow-key gap this closes.
+        _require_slot_output_matches_plan_lineage(
+            store, project_id, plan, slot, existing_slot_output
+        )
+        _require_release_receipt_matches_slot_output(existing_receipt, existing_slot_output)
         return existing_slot_output, existing_receipt
 
     claim_key = compute_slot_attempt_envelope_claim_id(
@@ -929,6 +1206,10 @@ def _execute_one_slot(
         envelope = resolve_and_verify_committed_envelope(
             store, project_id, existing_claim["model_execution_envelope_ref"]["id"]
         )
+        # Structural Review Round 9, P19-R9-F1: a claim and the Envelope it names being each
+        # individually self-consistent never proved they genuinely belong together -- see
+        # _require_envelope_matches_plan_lineage's own docstring.
+        _require_envelope_matches_plan_lineage(plan, slot, envelope)
         outcome = str(envelope["execution_outcome"])
         result_fingerprint = envelope["normalized_candidate_fingerprint"]
         envelope_ref = dict(existing_claim["model_execution_envelope_ref"])
@@ -1122,6 +1403,10 @@ def _execute_one_slot(
                 recovered_envelope = resolve_and_verify_committed_envelope(
                     store, project_id, recovered_claim["model_execution_envelope_ref"]["id"]
                 )
+                # Structural Review Round 9, P19-R9-F1: identical lineage requirement as the
+                # replay-first path above -- a recovered claim's own named Envelope must genuinely
+                # belong to this exact plan's this exact slot, never merely be self-consistent.
+                _require_envelope_matches_plan_lineage(plan, slot, recovered_envelope)
                 outcome = str(recovered_envelope["execution_outcome"])
                 result_fingerprint = recovered_envelope["normalized_candidate_fingerprint"]
                 envelope_ref = dict(recovered_claim["model_execution_envelope_ref"])
@@ -1444,6 +1729,7 @@ __all__ = [
     "MULTI_AGENT_SCHEMA_BASE",
     "execute_dynamic_execution_plan",
     "open_dynamic_execution_plan",
+    "resolve_and_verify_canonical_terminal_graph",
     "resolve_and_verify_committed_aggregation_input",
     "resolve_and_verify_committed_conflict_set",
     "resolve_and_verify_committed_plan",

@@ -24,21 +24,58 @@ from tests.fixtures.multi_agent_world import (
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.agent_runtime import start_temporary_agent
+from manosube_agent_civilization.evidence import EVIDENCE_REFERENCE_KIND
+from manosube_agent_civilization.model_runtime.claim_identity import (
+    multi_agent_slot_attempt_envelope_claim_semantic_fingerprint,
+)
 from manosube_agent_civilization.multi_agent import (
     execute_dynamic_execution_plan,
     open_dynamic_execution_plan,
     route_orchestration_to_evidence,
+)
+from manosube_agent_civilization.multi_agent.engine import (
+    compute_attempt_id,
+    compute_slot_output_id,
 )
 from manosube_agent_civilization.multi_agent.errors import (
     MultiAgentRecordIntegrityError,
     MultiAgentRequirementError,
     MultiAgentStaleStateError,
 )
+from manosube_agent_civilization.multi_agent.identity import (
+    multi_agent_agent_release_receipt_semantic_fingerprint,
+    multi_agent_evidence_aggregation_input_semantic_fingerprint,
+    multi_agent_slot_output_semantic_fingerprint,
+)
+import manosube_agent_civilization.multi_agent.route as route_module
 from manosube_agent_civilization.multi_agent.route import (
     compute_slot_attempt_envelope_claim_id,
     resolve_and_verify_committed_slot_attempt_envelope_claim,
 )
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.store import FileStateStore
+from manosube_agent_civilization.store.atomic_write import atomic_write
+
+
+def _overwrite_committed_record(
+    store: FileStateStore, project_id: str, kind: str, record_id: str, body: dict[str, Any]
+) -> None:
+    """Overwrite an already-committed record's own file content in place, at its own unchanged
+    (kind, id) key -- including any staged recovery-journal copy of the same record -- so the
+    Store's own manifest-tracked committed-boundary visibility (which keys by (kind, id), never
+    by content) is never itself tripped by a change targeted at exactly the narrow-key-excluded
+    fields this delivery's own tests exercise. See ``test_p19_r4_f5_...``'s own established
+    convention, reused unchanged here for Round 9's own required proofs."""
+
+    body_bytes = canonical_json_bytes(body)
+    record_path = store.root / "projects" / project_id / "records" / kind / f"{record_id}.json"
+    recovery_dir = store.root / "projects" / project_id / "state" / "recovery"
+    staged_name = f"{kind}__{record_id}.json"
+    for journal in recovery_dir.iterdir() if recovery_dir.exists() else []:
+        staged_path = journal / "records" / staged_name
+        if staged_path.exists():
+            atomic_write(staged_path, body_bytes)
+    atomic_write(record_path, body_bytes)
 
 
 def _coordinator(world: dict[str, Any]) -> Any:
@@ -290,3 +327,418 @@ def test_p19_r4_f5_a_redirected_envelope_ref_on_a_committed_claim_is_refused(
         resolve_and_verify_committed_slot_attempt_envelope_claim(
             store, world["project_id"], claim_key
         )
+
+
+def _second_plan_kwargs_in(world: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Commit a second, genuinely distinct Difference (-> a second, genuinely distinct Model
+    Work Unit) in *world*'s own already-bound project, reusing its already-committed Boundary --
+    and return ``(open_dynamic_execution_plan kwargs, the first plan's own kwargs)`` so a caller
+    can open two plans, of two genuinely different lineages, in the identical project/Store."""
+
+    store = world["store"]
+    second_difference_ref, _ = commit_difference(
+        store,
+        world["project_id"],
+        risk_class="LOW",
+        fact_value="OTHER-LINEAGE",
+        transaction_id="TX-MULTI-AGENT-DIFFERENCE-0002",
+    )
+    second_grant_ref, _ = commit_grant(
+        store,
+        world["project_id"],
+        second_difference_ref,
+        world["boundary_ref"],
+        transaction_id="TX-MODEL-GRANT-0002",
+    )
+    second_kwargs = {
+        "project_id": world["project_id"],
+        "project_binding_id": world["project_binding_id"],
+        "difference_ref": second_difference_ref,
+        "boundary_ref": world["boundary_ref"],
+        "model_execution_grant_refs": [second_grant_ref],
+        "adapter_identity": {"adapter": "fake_model_adapter", "version": "0.1"},
+        "opened_at": "2026-09-11T01:00:00Z",
+        "expires_at": "2026-09-11T02:00:00Z",
+    }
+    return second_kwargs, open_plan_kwargs(world)
+
+
+def test_p19_r9_f1_a_claim_redirected_to_a_genuine_envelope_from_a_different_plans_lineage_is_refused(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Structural Review Round 9, P19-R9-F1's own required proof: a
+    ``multi_agent_slot_attempt_envelope_claim`` that is itself fully self-consistent (its own
+    declared identity and semantic fingerprint both independently recomputed and equal) and that
+    names a genuinely real, committed Model Execution Envelope (never a forged or nonexistent
+    one) still names the *wrong* Envelope when that Envelope belongs to a different plan's own
+    Model Work Unit/Difference/Authority lineage -- every check Round 4-8 already established
+    passes it; only ``_require_envelope_matches_plan_lineage`` (comparing the Envelope's own
+    already-verified fields against this plan's own) catches it. Proves zero new Agent/adapter
+    calls, zero terminal writes, and zero State advance on the refused replay.
+    """
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+
+    coordinator = _coordinator(world)
+    opened_a = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    second_kwargs, _ = _second_plan_kwargs_in(world)
+    coordinator = _coordinator(world)
+    opened_b = open_dynamic_execution_plan(store, coordinator, **second_kwargs)
+    coordinator.release()
+    assert opened_a["plan"]["model_work_unit_ref"] != opened_b["plan"]["model_work_unit_ref"]
+
+    coordinator = _coordinator(world)
+    executed_b = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened_b["plan_ref"],
+        model_adapter_factory=lambda: SeededMultiAgentAdapter(),
+        executed_at="2026-09-11T01:30:00Z",
+    )
+    coordinator.release()
+    foreign_envelope_ref = dict(executed_b["slot_outputs"][0]["model_execution_envelope_ref"])
+    assert foreign_envelope_ref is not None
+
+    # Crash Plan A's own sole slot strictly after its own real claim+Envelope commit but before
+    # its own terminal slot_output/release_receipt commit -- the identical established technique
+    # ``test_p19_r1_f2_a_crash_between_slot_output_derivation_and_commit_leaves_neither_record``
+    # (Round 1/3) uses, reused here unchanged to reach a genuine claim-only intermediate state.
+    real_derive = route_module.derive_multi_agent_agent_release_receipt
+
+    def _crashing_derive(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("simulated crash before the atomic slot-complete commit")
+
+    monkeypatch.setattr(route_module, "derive_multi_agent_agent_release_receipt", _crashing_derive)
+    crashing_adapter = SeededMultiAgentAdapter(candidate_fields={"summary": "a-own"})
+    coordinator = _coordinator(world)
+    with pytest.raises(
+        RuntimeError, match="simulated crash before the atomic slot-complete commit"
+    ):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened_a["plan_ref"],
+            model_adapter_factory=lambda: crashing_adapter,
+            executed_at="2026-09-11T01:35:00Z",
+        )
+    coordinator.release()
+    monkeypatch.setattr(route_module, "derive_multi_agent_agent_release_receipt", real_derive)
+
+    claim_key = compute_slot_attempt_envelope_claim_id(
+        project_id=world["project_id"], plan_ref=dict(opened_a["plan_ref"]), slot_index=0
+    )
+    real_claim = resolve_and_verify_committed_slot_attempt_envelope_claim(
+        store, world["project_id"], claim_key
+    )
+    assert real_claim is not None
+    assert real_claim["model_execution_envelope_ref"]["id"] != foreign_envelope_ref["id"]
+
+    # The redirection: Plan A's own slot 0 claim now names Plan B's own genuinely real,
+    # committed, but wholly unrelated Envelope, self-consistently refingerprinted.
+    tampered_claim = dict(real_claim)
+    tampered_claim["model_execution_envelope_ref"] = dict(foreign_envelope_ref)
+    tampered_claim["multi_agent_slot_attempt_envelope_claim_semantic_fingerprint"] = (
+        multi_agent_slot_attempt_envelope_claim_semantic_fingerprint(tampered_claim)
+    )
+    _overwrite_committed_record(
+        store,
+        world["project_id"],
+        "multi_agent_slot_attempt_envelope_claim",
+        claim_key,
+        tampered_claim,
+    )
+
+    # Sanity: the tampered claim is now fully self-consistent on its own -- exactly the
+    # individually-valid-but-cross-referentially-wrong case P19-R9-F1 targets.
+    assert (
+        resolve_and_verify_committed_slot_attempt_envelope_claim(
+            store, world["project_id"], claim_key
+        )
+        is not None
+    )
+
+    state_before = store.load_current(world["project_id"])
+
+    def _unreachable_adapter() -> Any:
+        raise AssertionError("no new adapter call is ever permitted for this replay")
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened_a["plan_ref"],
+            model_adapter_factory=_unreachable_adapter,
+            executed_at="2026-09-11T01:40:00Z",
+        )
+    coordinator.release()
+
+    state_after = store.load_current(world["project_id"])
+    assert state_after["state_revision"] == state_before["state_revision"]
+    slot_output_key = compute_slot_output_id(
+        project_id=world["project_id"], plan_ref=dict(opened_a["plan_ref"]), slot_index=0
+    )
+    assert (
+        store.resolve_record(world["project_id"], "multi_agent_slot_output", slot_output_key)
+        is None
+    )
+
+
+def test_p19_r9_f2_a_slot_output_declaring_a_different_execution_snapshot_is_refused_on_replay(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 9, P19-R9-F2's own required proof: a self-consistently-
+    fingerprinted ``multi_agent_slot_output`` planted at its own correct narrow key
+    (``compute_slot_output_id`` covers only ``plan_ref``/``slot_index``/``attempt_ordinal`` --
+    see :mod:`~manosube_agent_civilization.multi_agent.identity`'s own module docstring) but
+    declaring a different ``execution_snapshot`` than this exact plan's own admitted
+    ``boot_state_revision``/``boot_semantic_fingerprint`` passed every existing check unnoticed
+    before this delivery; ``_require_slot_output_matches_plan_lineage`` now refuses it on replay.
+    """
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    coordinator = _coordinator(world)
+    executed = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened["plan_ref"],
+        model_adapter_factory=lambda: SeededMultiAgentAdapter(),
+        executed_at="2026-09-11T01:30:00Z",
+    )
+    coordinator.release()
+    genuine_slot_output = executed["slot_outputs"][0]
+
+    tampered_slot_output = dict(genuine_slot_output)
+    tampered_slot_output["execution_snapshot"] = {
+        "state_revision": int(genuine_slot_output["execution_snapshot"]["state_revision"]) + 1,
+        "semantic_fingerprint": dict(
+            genuine_slot_output["execution_snapshot"]["semantic_fingerprint"]
+        ),
+    }
+    tampered_slot_output["multi_agent_slot_output_semantic_fingerprint"] = (
+        multi_agent_slot_output_semantic_fingerprint(tampered_slot_output)
+    )
+    slot_output_key = str(genuine_slot_output["multi_agent_slot_output_id"])
+    _overwrite_committed_record(
+        store, world["project_id"], "multi_agent_slot_output", slot_output_key, tampered_slot_output
+    )
+
+    # Sanity: the tampered slot output resolves cleanly as fully self-consistent on its own.
+    assert (
+        route_module.resolve_and_verify_committed_slot_output(
+            store, world["project_id"], slot_output_key
+        )
+        is not None
+    )
+
+    def _unreachable_adapter() -> Any:
+        raise AssertionError("no new adapter call is ever permitted for this replay")
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        execute_dynamic_execution_plan(
+            store,
+            coordinator,
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            model_adapter_factory=_unreachable_adapter,
+            executed_at="2026-09-11T01:40:00Z",
+        )
+    coordinator.release()
+
+
+def test_p19_r9_f2_a_release_receipt_naming_a_different_attempt_id_is_refused_at_evidence_handoff(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 9, P19-R9-F2's own required proof: a release receipt's own
+    narrow Store key never includes its own declared ``attempt_id`` -- a self-consistently-
+    fingerprinted receipt planted at the correct key but naming a *different*, validly-formatted
+    ``attempt_id`` than the slot output it is supposed to release passed every existing check
+    unnoticed before this delivery; ``_require_release_receipt_matches_slot_output`` now refuses
+    it at Evidence hand-off."""
+
+    world = authorized_world(tmp_path, risk_class="LOW")
+    store = world["store"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+
+    coordinator = _coordinator(world)
+    executed = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened["plan_ref"],
+        model_adapter_factory=lambda: SeededMultiAgentAdapter(),
+        executed_at="2026-09-11T01:30:00Z",
+    )
+    coordinator.release()
+    genuine_receipt = executed["release_receipts"][0]
+
+    wrong_attempt_id = compute_attempt_id(
+        project_id=world["project_id"], plan_ref=dict(opened["plan_ref"]), slot_index=99
+    )
+    assert wrong_attempt_id != genuine_receipt["attempt_id"]
+    tampered_receipt = dict(genuine_receipt)
+    tampered_receipt["attempt_id"] = wrong_attempt_id
+    tampered_receipt["multi_agent_agent_release_receipt_semantic_fingerprint"] = (
+        multi_agent_agent_release_receipt_semantic_fingerprint(tampered_receipt)
+    )
+    receipt_key = str(genuine_receipt["multi_agent_agent_release_receipt_id"])
+    _overwrite_committed_record(
+        store,
+        world["project_id"],
+        "multi_agent_agent_release_receipt",
+        receipt_key,
+        tampered_receipt,
+    )
+
+    # Sanity: the tampered receipt resolves cleanly as fully self-consistent on its own.
+    assert (
+        route_module.resolve_and_verify_committed_release_receipt(
+            store, world["project_id"], receipt_key
+        )
+        is not None
+    )
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        route_orchestration_to_evidence(
+            store,
+            coordinator,
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            evidence_request_template=evidence_request_for(world["project_id"], provenance=None),
+            completed_at="2026-09-11T01:40:00Z",
+        )
+    coordinator.release()
+
+
+def test_p19_r9_f2_an_aggregation_input_admitting_an_unresolved_slot_output_is_refused_at_evidence_handoff(
+    tmp_path: Any,
+) -> None:
+    """Structural Review Round 9, P19-R9-F2's own required proof: a self-consistently-
+    fingerprinted ``multi_agent_evidence_aggregation_input`` whose own ``admitted_slot_output_
+    refs`` falsely admits a slot output the real conflict classification never admitted (here,
+    one half of a genuinely CONTRADICTING pair) passed every existing check unnoticed before this
+    delivery, since its own narrow plan-keyed identity never covers ``admitted_slot_output_
+    refs``. ``resolve_and_verify_canonical_terminal_graph`` now independently rederives the
+    aggregation input from the plan's own canonical slot outputs/conflict set/release receipts
+    and refuses to trust a committed one that disagrees, before any Evidence/receipt is ever
+    written."""
+
+    world = authorized_world(tmp_path, risk_class="HIGH")
+    store = world["store"]
+    coordinator = _coordinator(world)
+    opened = open_dynamic_execution_plan(store, coordinator, **open_plan_kwargs(world))
+    coordinator.release()
+    assert len(opened["plan"]["slots"]) == 2
+
+    factory_calls = iter(
+        [
+            SeededMultiAgentAdapter(candidate_fields={"summary": "slot-0-candidate"}),
+            SeededMultiAgentAdapter(candidate_fields={"summary": "slot-1-candidate"}),
+        ]
+    )
+    coordinator = _coordinator(world)
+    executed = execute_dynamic_execution_plan(
+        store,
+        coordinator,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        plan_ref=opened["plan_ref"],
+        model_adapter_factory=lambda: next(factory_calls),
+        executed_at="2026-09-11T01:30:00Z",
+    )
+    coordinator.release()
+    # Two genuinely CONTRADICTING candidates for the identical capability -- the real
+    # classification admits neither.
+    assert (
+        executed["slot_outputs"][0]["result_fingerprint"]
+        != (executed["slot_outputs"][1]["result_fingerprint"])
+    )
+
+    plan = route_module.resolve_and_verify_committed_plan(
+        store, world["project_id"], str(opened["plan_ref"]["id"])
+    )
+    genuine_graph = route_module.resolve_and_verify_canonical_terminal_graph(
+        store, world["project_id"], plan, opened["plan_ref"]
+    )
+    genuine_aggregation_input = genuine_graph["aggregation_input"]
+    assert genuine_aggregation_input["admitted_slot_output_refs"]["members"] == []
+
+    falsely_admitted_ref = {
+        "kind": "multi_agent_slot_output",
+        "id": str(executed["slot_outputs"][0]["multi_agent_slot_output_id"]),
+    }
+    tampered_aggregation_input = dict(genuine_aggregation_input)
+    tampered_aggregation_input["admitted_slot_output_refs"] = {
+        "collection_kind": "UNORDERED_SET",
+        "members": [falsely_admitted_ref],
+    }
+    tampered_aggregation_input["multi_agent_evidence_aggregation_input_semantic_fingerprint"] = (
+        multi_agent_evidence_aggregation_input_semantic_fingerprint(tampered_aggregation_input)
+    )
+    aggregation_input_key = str(
+        genuine_aggregation_input["multi_agent_evidence_aggregation_input_id"]
+    )
+    _overwrite_committed_record(
+        store,
+        world["project_id"],
+        "multi_agent_evidence_aggregation_input",
+        aggregation_input_key,
+        tampered_aggregation_input,
+    )
+
+    # Sanity: the tampered aggregation input resolves cleanly as fully self-consistent on its
+    # own.
+    assert (
+        route_module.resolve_and_verify_committed_aggregation_input(
+            store, world["project_id"], aggregation_input_key
+        )
+        is not None
+    )
+
+    coordinator = _coordinator(world)
+    with pytest.raises(MultiAgentRecordIntegrityError):
+        route_orchestration_to_evidence(
+            store,
+            coordinator,
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            plan_ref=opened["plan_ref"],
+            evidence_request_template=evidence_request_for(world["project_id"], provenance=None),
+            completed_at="2026-09-11T01:40:00Z",
+        )
+    coordinator.release()
+
+    # Zero Evidence/receipt writes: the rederivation-vs-stored comparison this delivery adds
+    # raises before ``route_orchestration_to_evidence`` ever reaches its own commit call.
+    assert _record_kind_count(store, world["project_id"], "multi_agent_orchestration_receipt") == 0
+    assert _record_kind_count(store, world["project_id"], EVIDENCE_REFERENCE_KIND) == 0
+
+
+def _record_kind_count(store: FileStateStore, project_id: str, kind: str) -> int:
+    directory = store.root / "projects" / project_id / "records" / kind
+    if not directory.exists():
+        return 0
+    return len(list(directory.glob("*.json")))

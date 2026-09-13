@@ -351,11 +351,7 @@ def test_release_incompleteness_blocks_aggregation_and_therefore_clean_completio
     tampered = dict(release_receipt)
     tampered["release_status"] = "RELEASE_FAILED"
 
-    import manosube_agent_civilization.multi_agent.evidence_handoff as evidence_handoff_module
-
-    real_resolver = (
-        evidence_handoff_module.resolve_and_verify_committed_release_receipt  # type: ignore[attr-defined]
-    )
+    real_resolver = route_module.resolve_and_verify_committed_release_receipt
 
     def _tampering_resolver(store_arg: Any, project_id_arg: str, release_receipt_id: str) -> Any:
         resolved = real_resolver(store_arg, project_id_arg, release_receipt_id)
@@ -368,7 +364,7 @@ def test_release_incompleteness_blocks_aggregation_and_therefore_clean_completio
         return resolved
 
     monkeypatch.setattr(
-        evidence_handoff_module, "resolve_and_verify_committed_release_receipt", _tampering_resolver
+        route_module, "resolve_and_verify_committed_release_receipt", _tampering_resolver
     )
 
     from tests.fixtures.multi_agent_world import evidence_request_for
