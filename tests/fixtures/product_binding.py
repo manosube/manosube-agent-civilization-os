@@ -240,6 +240,49 @@ def sign_github_projection_grant_declaration(
     }
 
 
+def sign_governance_adoption_authority(
+    *,
+    project_id: str,
+    governing_issue: int,
+    adopted_ref: dict[str, Any],
+    decision_owner: str,
+    source_reference: dict[str, Any],
+    project_binding_id: str,
+    decided_at: str,
+    governance_adoption_record_core: dict[str, Any],
+) -> dict[str, Any]:
+    """Sign the exact canonical payload :func:`~manosube_agent_civilization.acceptance_policy.
+    identity.governance_adoption_authority_signing_payload` recomputes once ``engine.
+    verify_governance_adoption_record`` verifies the real record built from these same fields
+    (Structural Review Round 4, PR #82, P82-R4-F2 -- the complete Human-Authority act,
+    superseding Round 3's narrower comment/reviewed/authorized-target-only projection) -- the
+    identical shared-signing-helper discipline :func:`sign_human_grant_declaration` and
+    :func:`sign_github_projection_grant_declaration` already establish, over an Acceptance
+    Policy adoption's own bound payload instead of a Binding declaration's."""
+
+    from manosube_agent_civilization.acceptance_policy.identity import (
+        governance_adoption_authority_signing_payload,
+    )
+
+    payload_record = {
+        "project_id": project_id,
+        "governing_issue": governing_issue,
+        "adopted_ref": adopted_ref,
+        "decision_owner": decision_owner,
+        "source_reference": source_reference,
+        "governance_adoption_record_core": governance_adoption_record_core,
+        "project_binding_id": project_binding_id,
+        "decided_at": decided_at,
+    }
+    message = governance_adoption_authority_signing_payload(payload_record)
+    signature_bytes = _signing_private_key().sign(message)
+    return {
+        "algorithm": "ed25519",
+        "key_id": human_authority_signing_key()["key_id"],
+        "value": signature_bytes.hex(),
+    }
+
+
 def authority_rule() -> dict[str, Any]:
     """A real, schema-valid Authority Rule body -- the Human-declared input Product Binding
     accepts, validates against Authority's own schema, identity-reverifies via Authority's

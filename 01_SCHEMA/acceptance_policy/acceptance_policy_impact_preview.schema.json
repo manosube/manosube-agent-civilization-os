@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/acceptance_policy/acceptance_policy_impact_preview.schema.json",
+  "title": "Acceptance Policy Impact Preview",
+  "description": "The bounded before/after impact preview the Human Authority must see before adopting a transition (FD4-C7). Computed from a candidate (not-yet-committed) transition against the current effective policy; never itself an authoritative fact and never Store-committed.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "governing_issue",
+    "before_policy",
+    "proposed_change",
+    "after_policy",
+    "new_blockers",
+    "removed_blockers",
+    "affected_work_units",
+    "rollback_condition",
+    "preview_semantic_fingerprint"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "governing_issue": {"type": "integer", "minimum": 1},
+    "before_policy": {"type": "array", "items": {"$ref": "acceptance_policy_effective_view.schema.json#/$defs/effective_clause"}},
+    "proposed_change": {"$ref": "#/$defs/proposed_change"},
+    "after_policy": {"type": "array", "items": {"$ref": "acceptance_policy_effective_view.schema.json#/$defs/effective_clause"}},
+    "new_blockers": {"type": "array", "items": {"$ref": "#/$defs/blocker_delta"}},
+    "removed_blockers": {"type": "array", "items": {"$ref": "#/$defs/blocker_delta"}},
+    "affected_work_units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["project_id", "governing_issue"],
+        "properties": {
+          "project_id": {"$ref": "../common/identity.schema.json"},
+          "governing_issue": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "rollback_condition": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "preview_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "proposed_change": {
+      "type": "object",
+      "required": ["policy_operation", "clause_id"],
+      "properties": {
+        "policy_operation": {"enum": ["ADD", "REMOVE", "REPLACE", "NARROW", "BROADEN", "RECLASSIFY"]},
+        "clause_id": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    },
+    "blocker_delta": {
+      "type": "object",
+      "required": ["clause_id", "blocking_effect_field"],
+      "properties": {
+        "clause_id": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"},
+        "blocking_effect_field": {"enum": ["implementation", "structural_review", "merge", "issue_closure", "phase_completion"]}
+      },
+      "additionalProperties": false
+    }
+  }
+}

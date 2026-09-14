@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/acceptance_policy/acceptance_policy_effective_view.schema.json",
+  "title": "Acceptance Policy Effective View",
+  "description": "The derived current-effective-policy snapshot (FD4-C6): the original baseline plus every valid, identity-bound adopted transition, folded in adoption order. Never Store-committed as a fact in its own right -- always recomputed from committed baseline/transition/adoption records, so it can never become a caller-authored last-wins summary that could drift from what actually happened.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "governing_issue",
+    "baseline_ref",
+    "effective_clauses",
+    "folded_adoption_refs",
+    "effective_view_semantic_fingerprint"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "governing_issue": {"type": "integer", "minimum": 1},
+    "baseline_ref": {"$ref": "acceptance_policy_transition.schema.json#/$defs/baseline_ref"},
+    "effective_clauses": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/effective_clause"}
+    },
+    "folded_adoption_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "id"],
+        "properties": {
+          "kind": {"const": "acceptance_policy_adoption"},
+          "id": {"type": "string", "pattern": "^AP-ADOPT-[0-9A-F]{64}(?![\\s\\S])"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "effective_view_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "effective_clause": {
+      "type": "object",
+      "required": ["clause_id", "policy_class", "blocking_effect", "scope", "existed_in_original_contract", "provenance_chain"],
+      "properties": {
+        "clause_id": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"},
+        "policy_class": {"$ref": "acceptance_policy_clause.schema.json#/$defs/policy_class"},
+        "blocking_effect": {"$ref": "acceptance_policy_clause.schema.json#/$defs/blocking_effect"},
+        "scope": {"$ref": "acceptance_policy_clause.schema.json#/$defs/scope"},
+        "existed_in_original_contract": {"type": "boolean"},
+        "provenance_chain": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["kind", "id"],
+            "properties": {
+              "kind": {"enum": ["acceptance_policy_baseline", "acceptance_policy_transition"]},
+              "id": {"type": "string", "pattern": "^AP-(?:BASE|TRANS)-[0-9A-F]{64}(?![\\s\\S])"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

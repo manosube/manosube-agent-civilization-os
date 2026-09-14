@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/acceptance_policy/acceptance_policy_clause.schema.json",
+  "title": "Acceptance Policy Clause",
+  "description": "A single normalized acceptance/merge/completion policy clause (FD-0004, Issue #80). The authoritative comparison input for the semantic-diff gate (FD4-C5) is these closed structured fields, never `statement` prose.",
+  "type": "object",
+  "required": ["clause_id", "policy_class", "statement", "blocking_effect", "scope", "rationale", "existed_in_original_contract"],
+  "properties": {
+    "clause_id": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])", "minLength": 3, "maxLength": 128},
+    "policy_class": {"$ref": "#/$defs/policy_class"},
+    "statement": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "blocking_effect": {"$ref": "#/$defs/blocking_effect"},
+    "scope": {"$ref": "#/$defs/scope"},
+    "rationale": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "existed_in_original_contract": {"type": "boolean"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "policy_class": {
+      "description": "FD4-C3/FD4-C4: Authority (who may decide) and required Evidence (what proof is needed) are separate dimensions, never conflated.",
+      "enum": ["AUTHORITY", "REQUIRED_EVIDENCE"]
+    },
+    "blocking_effect": {
+      "type": "object",
+      "required": ["implementation", "structural_review", "merge", "issue_closure", "phase_completion"],
+      "properties": {
+        "implementation": {"type": "boolean"},
+        "structural_review": {"type": "boolean"},
+        "merge": {"type": "boolean"},
+        "issue_closure": {"type": "boolean"},
+        "phase_completion": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "required": ["project_id", "affected_phases", "affected_prs"],
+      "properties": {
+        "project_id": {"$ref": "../common/identity.schema.json"},
+        "affected_phases": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "affected_prs": {"type": "array", "items": {"type": "integer", "minimum": 1}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

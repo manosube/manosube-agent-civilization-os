@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/acceptance_policy/acceptance_policy_transition.schema.json",
+  "title": "Acceptance Policy Transition",
+  "description": "A proposed acceptance-policy operation on one clause (FD4-C1, FD4-C5). Proposing does not make it effective -- only a bound `acceptance_policy_adoption` by the Human Authority does (FD4-C3). `prior_clause_binding` hash-links this transition to the exact baseline or predecessor transition it extends, so the lineage is walkable and verifiable rather than a caller-authored summary (FD4-C6).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "acceptance_policy_transition_id",
+    "project_id",
+    "governing_issue",
+    "baseline_ref",
+    "clause_id",
+    "policy_operation",
+    "proposed_by",
+    "prior_clause_binding",
+    "proposed_clause",
+    "declared_existed_in_original_contract",
+    "policy_change_declared",
+    "source_reference",
+    "rollback_condition",
+    "transition_semantic_fingerprint"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "acceptance_policy_transition_id": {"type": "string", "pattern": "^AP-TRANS-[0-9A-F]{64}(?![\\s\\S])"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "governing_issue": {"type": "integer", "minimum": 1},
+    "baseline_ref": {"$ref": "#/$defs/baseline_ref"},
+    "clause_id": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])", "minLength": 3, "maxLength": 128},
+    "policy_operation": {"enum": ["ADD", "REMOVE", "REPLACE", "NARROW", "BROADEN", "RECLASSIFY"]},
+    "proposed_by": {"enum": ["HUMAN_AUTHORITY", "STRUCTURAL_ADVISOR", "EXECUTOR", "OTHER_AGENT"]},
+    "prior_clause_binding": {"$ref": "#/$defs/prior_clause_binding"},
+    "proposed_clause": {
+      "oneOf": [
+        {"$ref": "acceptance_policy_clause.schema.json"},
+        {"type": "null"}
+      ]
+    },
+    "declared_existed_in_original_contract": {"type": "boolean"},
+    "policy_change_declared": {"const": true},
+    "source_reference": {"$ref": "acceptance_policy_baseline.schema.json#/$defs/source_reference"},
+    "rollback_condition": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "transition_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "baseline_ref": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"const": "acceptance_policy_baseline"},
+        "id": {"type": "string", "pattern": "^AP-BASE-[0-9A-F]{64}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    },
+    "prior_clause_binding": {
+      "type": "object",
+      "required": ["source", "source_ref"],
+      "properties": {
+        "source": {"enum": ["BASELINE", "TRANSITION"]},
+        "source_ref": {
+          "type": "object",
+          "required": ["kind", "id"],
+          "properties": {
+            "kind": {"enum": ["acceptance_policy_baseline", "acceptance_policy_transition"]},
+            "id": {"type": "string", "pattern": "^AP-(?:BASE|TRANS)-[0-9A-F]{64}(?![\\s\\S])"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

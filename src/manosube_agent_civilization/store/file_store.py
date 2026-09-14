@@ -121,6 +121,33 @@ class FileStateStore:
         except (OSError,json.JSONDecodeError) as exc:
             raise CorruptStoreError(f"malformed record: {kind}/{record_id}") from exc
 
+    def list_committed_record_ids(self, project_id: str, kind: str) -> list[str]:
+        """Return every ``record_id`` of *kind* that is durably ``COMMITTED`` for *project_id*,
+        sorted by ``record_id`` for a deterministic return value -- **not** a canonical
+        commit/lineage order (a content-addressed identity carries no timestamp; a caller
+        needing genuine commit order must additionally resolve each id's own committing
+        transaction, e.g. via :meth:`resolve_transaction` keyed by that same id, and order by
+        the transition event's own ``to_revision``).
+
+        A generic, read-only enumeration built entirely from the same durability boundary
+        :meth:`resolve_record` already enforces (:meth:`_record_committed_by_any_transaction`)
+        -- this never reads a record body a concurrent recovery has not yet finished
+        promoting, and never returns an id whose own file exists only as an uncommitted
+        journal artifact. Returns an empty list for a kind directory that does not exist.
+        """
+
+        kind_dir = self._record_kind_dir(project_id, kind)
+        if not kind_dir.exists():
+            return []
+        ids: list[str] = []
+        for path in sorted(kind_dir.iterdir()):
+            if path.suffix != ".json":
+                continue
+            record_id = path.stem
+            if self._record_committed_by_any_transaction(project_id, kind, record_id):
+                ids.append(record_id)
+        return sorted(ids)
+
     def _record_committed_by_any_transaction(self, project_id: str, kind: str, record_id: str) -> bool:
         """Return whether *(kind, record_id)*'s permanent file was promoted by a transaction
         that is now durably ``COMMITTED`` -- R8-F4, sharpened by R10-F3, sharpened again by

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/acceptance_policy/acceptance_policy_refusal_outcome.schema.json",
+  "title": "Acceptance Policy Refusal Outcome",
+  "description": "The structured, non-mutating outcome of a refused admission attempt (undeclared change, conflict, tamper, substitution). Never Store-committed -- a refusal causes zero policy/State/Authority mutation, so this shape exists purely for the caller's own diagnostic/audit use and for decisive negative-control assertions.",
+  "type": "object",
+  "required": ["schema_version", "refused", "reason_codes", "attempted_operation"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "refused": {"const": true},
+    "reason_codes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"}
+    },
+    "attempted_operation": {"type": "string", "minLength": 1, "maxLength": 256}
+  },
+  "additionalProperties": false
+}

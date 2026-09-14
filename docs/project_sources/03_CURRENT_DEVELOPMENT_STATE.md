@@ -3864,3 +3864,417 @@ closeは、本source-sync PRの構造審査・SHUKOU手動merge・およびresul
 Phase 20実装の前提条件であり、本source-sync work unit自体はIssue #80の実装を一切含まない)。
 Phase 20実装には、Issue #80のkernel実装完了・受入と、専用Issue上のObjective / Boundary /
 AuthorityへのSHUKOUの明示採択が別途必要である。
+
+# 52. Issue #80 (FD-0004) implementation-delivery bounded addendum
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、`src/`および`01_SCHEMA/`配下の新規kernel_surface変更
+(`src/manosube_agent_civilization/acceptance_policy/`、`01_SCHEMA/acceptance_policy/`)に対応
+付けるためだけの、最小限の事実記録である。
+
+Issue #80「Acceptance Policy Lineage and Undeclared Gate Rejection」(`FD-0004`)はSHUKOU採択
+コメント`https://github.com/manosube/manosube-agent-civilization-os/issues/80#issuecomment-5653169957`
+および実装指示コメント`...#issuecomment-5653174967`で正式採択・指示された。指示された当初base
+SHA(`0ced9d0dd5658196b7a6dc085ca839fa514f1eeb`)は本記録作成者自身がGitHub API経由で独立検証した
+時点でlive `main`から乖離していたため、実装を開始せずDifferenceを報告し
+(`...#issuecomment-5653668808`)、構造参謀が同一乖離を追認し(`...#issuecomment-5653670036`)、
+SHUKOUが正式にbaseを`main@3791831884e7419f7f2f3497666da68842b8e276`へ再拘束した
+(`...#issuecomment-5653676641`)。本記録作成者は、この再拘束コメントおよび先行する4コメント全て
+について、著者login/id/association(`manosube`/OWNER)・本文・live Issue #80状態(OPEN)・
+live `main` head(再拘束後も`3791831884e7419f7f2f3497666da68842b8e276`のまま不変)を、本記録作成
+直前にGitHub API経由で改めて独立readbackし一致を確認済みである。branch
+`agent/issue-80-acceptance-policy-lineage`はこの再拘束済みexact base SHAから分岐している。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-13
+GOVERNING_ISSUE=#80
+DIFFERENCE_ID=FD-0004
+ADOPTION_COMMENT_ID=5653169957
+HANDOFF_COMMENT_ID=5653174967
+DRIFT_REPORT_COMMENT_ID=5653668808
+DRIFT_CONFIRMATION_COMMENT_ID=5653670036
+REBIND_COMMENT_ID=5653676641
+AUTHORIZED_BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+IMPLEMENTATION_TARGET=NEW_BRANCH_THIS_SESSION
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+追加されたas-built ownerは`15_ACCEPTANCE_POLICY/`(`ACCEPTANCE_POLICY_INDEX.md`・
+`ACCEPTANCE_POLICY_CONTRACT.md`)、`src/manosube_agent_civilization/acceptance_policy/`
+(`route.py`・`engine.py`・`identity.py`・`types.py`・`errors.py`・`__init__.py`の6モジュール)、
+`01_SCHEMA/acceptance_policy/`(`acceptance_policy_baseline`・`acceptance_policy_clause`・
+`acceptance_policy_transition`・`acceptance_policy_adoption`・`acceptance_policy_effective_view`・
+`acceptance_policy_impact_preview`・`acceptance_policy_refusal_outcome`の7schema、schema総数
+79→86)である。`scripts/validate_schemas.py`自身のasserted schema countも79から86へ更新した。
+既存のState・Difference・Authority・Change・Evidence・Reflow・Binding・Boot・Runtime・
+Model Runtime・URL Boot・Change Executor・Multi-Agentのいずれのownerも置換・変更しない --
+`acceptance_policy`はSHUKOU(`decision_owner == "SHUKOU"`、`comment_author_association ==
+"OWNER"`の二重検証)を唯一のHuman Authorityとして値により参照するのみで、既存Authority
+evaluatorを一切importせず、既存State/Store(`commit_state_transition`、`route.py`一箇所のみ)を
+再利用し、Difference/Evidence/Reflowのいずれの既存ownerもimportしない、自己完結した新規record
+種別7種の追加のみである。
+
+原契約baseline(genesis、`existed_in_original_contract=true`必須)、hash-linkされた
+transition(ADD/REMOVE/REPLACE/NARROW/BROADEN/RECLASSIFYの6closed operation、構造化フィールド
+`policy_class`/`blocking_effect`/`scope`のみから独立に再分類され宣言値と不一致なら拒否)、
+identity-boundなSHUKOU adoption(baseline/transitionいずれかを採択する別act、proposeとadoptは
+別act)、これらから導出されるeffective view(pure fold、コミットされない)という4層構造で
+lineageを表現する。未申告policy変更の混入検知(`assert_no_undeclared_policy_change`)は、
+dict keyとvalueの両方を再帰的にsubstring走査し、`policy_change: true`宣言なしにclause_idが
+どこかに現れれば拒否する -- 実際のPhase 19事故形状(`REQUIRED_PROOFS`キー名内への部分文字列混入)
+を再現する負制御を含む。Issue #80自身が要求する必須永続regression fixtureは、Issue #77原契約の
+`GITHUB_ACTIONS_WORKFLOW_STATUS_IS_NOT_PHASE_ACCEPTANCE_AUTHORITY`節・Round 5の
+`GITHUB_PREMERGE_GATE_GREEN_REQUIRED`追加供体・その後の除去を、3つの独立した矛盾しない事実として
+再構成する統合テストとして実装済みである。PR #78のbranch・GitHub Actionsポリシー選択は一切変更
+していない。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、4 test files + 1 fixture module、62 tests)は本記録作成者
+自身が独立に実行し検証済み(`62 passed`)。`ruff check`・`ruff format --check`・
+`mypy --namespace-packages`はいずれもこの新規packageに対してclean、
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=86`)。full
+repository test suiteの独立再実行結果、および`tests/contract/governance/
+test_source_freshness_drift_detection.py`配下のpre-existing failureとの一致確認は、本Issue #80
+への最終報告本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_CLOSE_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+PHASE_20_ALLOWED=false
+```
+
+# 53. PR #82 Structural Review Round 1 (P82-R1-F1..F5) bounded addendum
+
+本節もClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。§52と同じ理由 -- `MERGE_SOURCE_REFLOW_CONTRACT.md`の要求する
+source_document paired updateを、`src/manosube_agent_civilization/acceptance_policy/`・
+`src/manosube_agent_civilization/store/file_store.py`配下の変更に対応付けるためだけの、最小限の
+事実記録である。
+
+PR #82上で構造参謀レビュー`https://github.com/manosube/manosube-agent-civilization-os/pull/82#issuecomment-5656441320`
+(5件のfinding、`STRUCTURAL_DECISION=CHANGES_REQUIRED`)、SHUKOU正式採択
+`...#issuecomment-5656449713`、実装handoff`...#issuecomment-5656451312`が投稿された。本記録
+作成者はこれら3件全てを、著者login/id/association(`manosube`/OWNER)・本文・live PR #82状態
+(OPEN・未マージ)・head/base SHA(`a8b61aab8be6c57ef4135cc4808eaa7e9a02f1cd`/
+`3791831884e7419f7f2f3497666da68842b8e276`、いずれも未変化)について、本記録作成直前にGitHub
+API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-13
+GOVERNING_PR=#82
+REVIEW_ROUND=1
+STRUCTURAL_REVIEW_COMMENT_ID=5656441320
+ADOPTION_COMMENT_ID=5656449713
+HANDOFF_COMMENT_ID=5656451312
+PRE_ROUND_HEAD_SHA=a8b61aab8be6c57ef4135cc4808eaa7e9a02f1cd
+BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された5件のfinding(P82-R1-F1..F5)はいずれも`15_ACCEPTANCE_POLICY/`の既存contractが
+pinする`EXPECTED_SCHEMA_COUNT=86`を変更せず、既存の7 schemaファイルのみを対象に、
+`src/manosube_agent_civilization/acceptance_policy/`(`route.py`・`engine.py`・`identity.py`)・
+`src/manosube_agent_civilization/store/file_store.py`・新規`validation.py`の変更のみで修正した。
+
+F1(caller供給`adoption_refs`廃止): `route.resolve_and_verify_effective_policy`は
+もはや呼び出し側から採択集合を受け取らず、`store.list_committed_record_ids`と
+`store.resolve_transaction`が返す`to_revision`から、governing_issueで絞り込んだ正準
+commit順序を自ら導出する(新規private helper `route._resolve_canonical_adoptions`)。
+省略・部分集合・並べ替え・無関係adoptionの混入は、供給する引数自体が存在しなくなったことで
+構造的に不可能になった。F2(baseline未採択時のeffective view空化):
+`engine.derive_effective_policy`は、baseline自身を対象とするadoptionが実際に畳み込まれる
+までbaseline自身のclauseを`live`へ一切seedしない(`baseline_activated`ゲート)。重複baseline
+adoptionおよびbaseline採択前のtransition adoption畳み込みはいずれも
+`PolicyLineageConflictError`で拒否される。F3(単一genesis baselineのnatural-key identity):
+`identity.baseline_id`の入力を`BASELINE_SEMANTIC_FIELDS`(全内容)から新規
+`BASELINE_NATURAL_KEY_FIELDS = (project_id, governing_issue)`へ変更した。同一work unitに
+対する内容の異なる2つのbaselineは同一idに衝突し、`route._commit_one_record`の既存
+manifest-identity再利用検証がconflicting replayとして拒否する -- 新規schema・新規locking
+機構は追加していない。`baseline_semantic_fingerprint`は既存の全内容hashのまま変更していない。
+F4(construction/commit境界およびStore-resolve境界でのschema検証): 新規
+`acceptance_policy/validation.py`(既存`binding/validation.py`と同型の、この packageだけの
+private validatorレジストリ)を追加し、`route.py`の5箇所の構築境界
+(`open_acceptance_policy_baseline`・`propose_acceptance_policy_transition`・
+`adopt_acceptance_policy_transition`・`resolve_and_verify_effective_policy`・
+`preview_acceptance_policy_transition`のcommit/return直前)と3箇所のStore-resolve境界
+(`resolve_and_verify_baseline`・`resolve_and_verify_transition`・`resolve_and_verify_adoption`
+のNone-check直後)の両方でschema検証を呼び出す。F5(impact previewのprovenance修正):
+`engine.build_impact_preview`は、変更後clauseのprovenance_chainへ候補transition自身への
+参照を追加するよう修正した(ADDは候補自身から開始、REPLACE/NARROW/BROADEN/RECLASSIFYは
+既存chainを延長、REMOVEは生存clauseがないため何も追加しない)。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、5 test files + 1 fixture module、84 tests、既存62件を
+新API/新意味論へ書き換え、F1-F5それぞれの決定的positive/negative controlを新規追加)は本記録
+作成者自身が独立に実行し検証済み(`84 passed`)。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=86`、変更なし)。full repository test suite・
+`ruff check`・`ruff format --check`・`mypy --namespace-packages`の独立再実行結果は、本Round
+の新head到達後にPR #82への返却Evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_80_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
+
+# 54. PR #82 Structural Review Round 2 (P82-R2-F1..F4) bounded addendum
+
+本節も§52・§53と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/acceptance_policy/`配下の変更に対応付ける
+ためだけの、最小限の事実記録である。
+
+PR #82上で構造参謀レビュー`https://github.com/manosube/manosube-agent-civilization-os/pull/82#issuecomment-5656963531`
+(4件のfinding、`STRUCTURAL_DECISION=CHANGES_REQUIRED`)、SHUKOU正式採択
+`...#issuecomment-5656976873`、実装handoff`...#issuecomment-5656979990`が投稿された。本記録
+作成者はこれら3件全てを、著者login/id/association(`manosube`/OWNER)・本文・live PR #82状態
+(OPEN・未マージ)・head/base SHA(`865be02c486016f4ce34891600b43ce1647f4c7a`/
+`3791831884e7419f7f2f3497666da68842b8e276`、いずれも未変化)について、本記録作成直前にGitHub
+API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-13
+GOVERNING_PR=#82
+REVIEW_ROUND=2
+STRUCTURAL_REVIEW_COMMENT_ID=5656963531
+ADOPTION_COMMENT_ID=5656976873
+HANDOFF_COMMENT_ID=5656979990
+PRE_ROUND_HEAD_SHA=865be02c486016f4ce34891600b43ce1647f4c7a
+BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された4件のfinding(P82-R2-F1..F4)はいずれも`15_ACCEPTANCE_POLICY/`の既存contractが
+pinする`EXPECTED_SCHEMA_COUNT=86`を変更せず(既存`acceptance_policy_adoption.schema.json`への
+`governance_adoption_record`必須プロパティおよび2件の新規`$defs`追加のみ、新規schemaファイルは
+0件)、`src/manosube_agent_civilization/acceptance_policy/`(`engine.py`・`route.py`・
+`identity.py`・`validation.py`)の変更のみで修正した。
+
+F1(実在するGovernance Adoption Record ownerとの実合成): caller供給の
+`decision_owner="SHUKOU"`と`source_reference.comment_author_association="OWNER"`の組は、
+もはやそれ単独ではHuman Authority証明として不十分である。`engine.build_adoption`は新規必須
+引数`governance_adoption_record`を要求し、新規`engine.verify_governance_adoption_record`が
+既存の非代替可能なowner`development_binding.adoption_record.evaluate_adoption_record`
+(Issue #53)と実合成する -- ad hocな文字列比較による再検証ではない。recordは独立に
+`ADOPTION_RECORD_ADMITTED`へ評価され、かつその`comment_url`/`governing_issue`が本adoption
+自身の`source_reference.comment_url`/`governing_issue`と厳密一致しなければならない。
+`route.resolve_and_verify_adoption`はこの結合をevery読み取り時に再評価する(commit時のみでは
+ない)。adoptionのcontent-addressed identity(`identity.ADOPTION_SEMANTIC_FIELDS`)は
+`governance_adoption_record`を含むようになった。F2(commit前のpermanent-poisoning防止):
+`adopt_acceptance_policy_transition`はtarget(baselineまたはtransition)をadoption構築前に
+独立解決・再現し、その`(project_id, governing_issue)`を呼び出し自身のものと照合する
+(cross-work-unit adoptionはcommit前に拒否)。新規private helper
+`route._assert_adoption_does_not_poison_the_canonical_lineage`は、候補adoptionを現在の正準
+adoption lineageへ畳み込むsimulationを`engine.derive_effective_policy`の同一foldを再利用して
+commit前に実行し、`PolicyLineageConflictError`が上がればcommitをblockする。F3(preview候補の
+detach・schema/identity/fingerprint/lineage検証): 新規private helper
+`route._verify_candidate_transition_for_preview`は候補transitionを即座に`deepcopy`し
+(caller自身のmutable objectからdetach)、schema検証・id/fingerprint再現・
+project_id/governing_issue/baseline_ref結合検証・実効 view由来のprior_clause_binding検証・
+独立再計算したsemantic diffとdeclared operationの一致検証を行う。この検証済みcopyのみが
+`engine.build_impact_preview`へ渡される。F4(mypy net-new findingを実際にゼロへ): Round 1の
+`acceptance_policy/validation.py`が導入した1件のnet-new mypy finding(`jsonschema`
+importのuntyped stub欠如)へ、targeted `# type: ignore[import-untyped]`を追加した。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、既存84件を新API(`governance_adoption_record`引数)へ
+書き換え、F1-F4それぞれの決定的positive/negative controlおよび六operation全てのpreview
+matrixを新規追加、107 tests)は本記録作成者自身が独立に実行し検証済み(`107 passed`)。
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=86`、変更な
+し)。full repository test suite・`ruff check`・`ruff format --check`・
+`mypy --namespace-packages`(`NET_NEW_MYPY_FINDINGS=0`)の独立再実行結果は、本Roundの新head
+到達後にPR #82への返却Evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_80_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
+
+# 55. PR #82 Structural Review Round 3 (P82-R3-F1..F3) bounded addendum
+
+本節も§53・§54と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/acceptance_policy/`配下の変更に対応付ける
+ためだけの、最小限の事実記録である。
+
+PR #82上で構造参謀レビュー`https://github.com/manosube/manosube-agent-civilization-os/pull/82#issuecomment-5657494008`
+(3件のfinding、`STRUCTURAL_DECISION=CHANGES_REQUIRED`)、SHUKOU正式採択
+`...#issuecomment-5657529350`、実装handoff`...#issuecomment-5657531457`が投稿された。本記録
+作成者はこれら3件全てを、著者login/id/association(`manosube`/OWNER)・本文・live PR #82状態
+(OPEN・未マージ)・head/base SHA(`479b293b40aa252a81ea2d6b679087677a77b2b4`/
+`3791831884e7419f7f2f3497666da68842b8e276`、いずれも未変化)について、本記録作成直前にGitHub
+API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#82
+REVIEW_ROUND=3
+STRUCTURAL_REVIEW_COMMENT_ID=5657494008
+ADOPTION_COMMENT_ID=5657529350
+HANDOFF_COMMENT_ID=5657531457
+PRE_ROUND_HEAD_SHA=479b293b40aa252a81ea2d6b679087677a77b2b4
+BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された3件のfinding(P82-R3-F1..F3)はいずれも`15_ACCEPTANCE_POLICY/`の既存contractが
+pinする`EXPECTED_SCHEMA_COUNT=86`を変更せず(既存`acceptance_policy_adoption.schema.json`への
+`project_binding_id`必須プロパティ・`governance_adoption_record`への`signature`必須プロパティ・
+1件の新規`$defs.signature`追加のみ、新規schemaファイルは0件)、
+`src/manosube_agent_civilization/acceptance_policy/`(`engine.py`・`route.py`・
+`identity.py`)の変更のみで修正した。
+
+F1(信頼可能かつ対象拘束されたAdoption Evidence、caller自己申告claimのみでは不十分): 既存の
+`governance_adoption_record`は、それ単独では内部整合性のあるcaller claimに過ぎず、trusted
+Human Authorityが実際に作成した証明ではなく、また`adopted_ref`への結合も持たなかった
+(同一recordを異なるtargetへreplay可能な余地)。Round 3は、既存の非forgeable trusted capability
+パターン(`binding/`パッケージのEd25519 Project-Binding-signing-key機構、SHUKOU自身の先行
+Round 5-R1が類似問題へ確立した同一機構、Issue #51/P13-R5-R1)を再利用する形で閉じた -- 第二の
+汎用Authority ownerを新設しない。新規必須top-levelフィールド`project_binding_id: str`が、
+どの既に committed 済みStore-resolved Project Bindingの`human_authority_signing_key`が
+recordの新規必須`signature`フィールドを生成すべきかを指名する。新規`route.
+_resolve_trusted_signing_key`が当該recordをStoreから都度fresh解決する。新規`identity.
+governance_adoption_authority_signing_payload`が、本adoption自身の既検証済み
+`project_id`/`governing_issue`/`adopted_ref`/`decision_owner`とrecord自身の
+`comment_url`/`reviewed_sha`/`authorized_target_sha`から署名対象payloadを導出する。`engine.
+verify_governance_adoption_record`はこの署名を既存`binding.signature.
+verify_ed25519_signature`(合成、第二verifierではない)で実Project Bindingの実鍵に対し検証し、
+`route.resolve_and_verify_adoption`はevery読み取り時にこの結合を再解決・再検証する。
+adoptionのcontent-addressed identity(`identity.ADOPTION_SEMANTIC_FIELDS`)は
+`project_binding_id`を含むようになった。F2(lineage検証をcommitへ拘束、stale State時は
+full cycle再実行): `adopt_acceptance_policy_transition`のpre-commit poisoning simulationと
+実際のcommitは、従来retryable TOCTOU windowで分離されていた(`_commit_one_record`の
+`StaleStateError`retryはcommit envelopeのみ再構築し、simulationは再実行しなかった)。同関数は
+今や単一のouter retry loopとなり、each iterationの先頭で`current_state = store.
+load_current(project_id)`を読み直し、target解決・signing key解決・adoption構築・
+poisoning simulation・commit試行(新規`route._attempt_commit_at_state`、渡された
+`current_state`snapshotへ拘束)の全体を、`StaleStateError`発生時は毎回ゼロから再実行する。
+`_commit_one_record`も同一の`_attempt_commit_at_state`primitiveを自身の既存retry loop内で
+再利用するよう refactor した(挙動不変)。F3(preview候補をpublic boundaryの最初の操作として
+detach): `preview_acceptance_policy_transition`は従来baseline/effective policy解決
+(Store呼び出し)の後でのみdetachしていた(Round 2が導入した`deepcopy`は後続helper内部に
+あった)。同関数は今や`candidate = deepcopy(candidate_transition)`を自身の文字通り最初の文へ
+移動し、いかなるStore呼び出しよりも前に実行する。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、既存107件を新API(`project_binding_id`/`signing_key`
+引数)へ書き換え、F1-F3それぞれの決定的positive/negative control(F1の偽造署名・攻撃者自前
+鍵・target間replay、F2の competitor-wins/worker-wins決定的race、F3のmid-call mutation)を
+新規追加、113 tests)は本記録作成者自身が独立に実行し検証済み(`113 passed`)。
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=86`、変更な
+し)。`python scripts/source_impact_gate.py`は`decision: PASS`。`mypy --namespace-packages`
+は`NET_NEW_MYPY_FINDINGS=0`(29件、Round 2 baselineと同数)。`ruff check`/`ruff format --check`
+は`NET_NEW_RUFF_FINDINGS=0`。full repository test suiteの独立再実行結果は、本Roundの新head
+到達後にPR #82への返却Evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_80_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
+
+
+# 56. PR #82 Structural Review Round 4 (P82-R4-F1..F4) bounded addendum
+
+本節も§53〜§55と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/acceptance_policy/`配下の変更に対応付ける
+ためだけの、最小限の事実記録である。
+
+PR #82上で構造参謀レビュー`https://github.com/manosube/manosube-agent-civilization-os/pull/82#issuecomment-5658959454`
+(4件のfinding、`STRUCTURAL_DECISION=CHANGES_REQUIRED`)、SHUKOU正式採択
+`...#issuecomment-5658969907`、実装handoff`...#issuecomment-5658973082`が投稿された。本記録
+作成者はこれら3件全てを、著者login/id/association(`manosube`/OWNER)・本文・live PR #82状態
+(OPEN・未マージ)・head/base SHA(`9601886fc16efc46f77d496497b8991d639ce553`/
+`3791831884e7419f7f2f3497666da68842b8e276`、いずれも未変化)について、本記録作成直前にGitHub
+API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#82
+REVIEW_ROUND=4
+STRUCTURAL_REVIEW_COMMENT_ID=5658959454
+ADOPTION_COMMENT_ID=5658969907
+HANDOFF_COMMENT_ID=5658973082
+PRE_ROUND_HEAD_SHA=9601886fc16efc46f77d496497b8991d639ce553
+BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された4件のfinding(P82-R4-F1..F4)はいずれも`15_ACCEPTANCE_POLICY/`の既存contractが
+pinする`EXPECTED_SCHEMA_COUNT=86`を変更せず(schemaファイルへの変更は0件、既存の
+`acceptance_policy_adoption.schema.json`/`governance_adoption_record`の閉じたフィールド集合
+も不変)、`src/manosube_agent_civilization/acceptance_policy/`(`engine.py`・`route.py`・
+`identity.py`)の変更のみで修正した。
+
+F1(canonical genesis Project Bindingの信頼根証明): 既存`_resolve_trusted_signing_key`は、
+caller供給の`project_binding_id`がresolveでき、かつその`project_id`が一致することのみを
+検証しており、"Store-resolved"と"canonical trust root"を混同していた。同一project label下の
+第二の(攻撃者鍵を持つ)内部整合的な`project_binding` recordがcaller選択によって信頼される
+余地があった。新規`route._resolve_canonical_genesis_project_binding`は、`binding.route.
+_read_committed_genesis_manifest_keys`が既に読む同一の`TX-GENESIS`manifest
+(`store.resolve_transaction_manifest`)から、genesis自身が委託した唯一の`project_binding`
+recordをcaller入力なしに導出し、既存`binding.validation.validate_record`/`binding.identity.
+verify_project_binding_identity`(合成、第二owner新設なし)で再検証する。caller供給の
+`project_binding_id`は、この導出済みcanonical idとの等価性チェックにのみ用いられ、選択には
+一切用いられない。`resolve_and_verify_adoption`もevery読み取り時にこの導出を再実行する。
+
+F2(完全なHuman-Authority署名payload): Round 3の署名payloadは`project_id`/`governing_issue`/
+`adopted_ref`/`decision_owner`/`comment_url`/`reviewed_sha`/`authorized_target_sha`のみを
+覆っており、Governance Adoption Record自身の`adoption_id`/`decision_status`/receipt identity、
+本adoption自身の`project_binding_id`、完全な`source_reference`、`decided_at`は未署名のまま
+だった。新規`identity.governance_adoption_authority_signing_payload`は、adoptionのcontent
+identity(`ADOPTION_SEMANTIC_FIELDS`)と意図的に同一の閉じたフィールド集合を、record自身の
+署名除外済み`governance_adoption_record_core`(新規`identity.governance_adoption_record_core`)
+と共に署名する -- 署名対象projectionとadoptionの完全なcontent identityが決して乖離しない設計。
+
+F3(every adoption読み取り時のexact target再解決・再検証): 既存`resolve_and_verify_adoption`
+はAdoption自身のschema/id/fingerprint/signatureのみを再検証し、`adopted_ref`自体は一度も
+再解決していなかった。新規共有helper`route._resolve_and_verify_adopted_target`(commit経路と
+read経路の双方から呼ばれる)が、`adopted_ref`を`resolve_and_verify_baseline`/
+`resolve_and_verify_transition`経由で再解決し、project/governing_issue一致とTransition対象の
+canonical Baseline lineageを検証する。
+
+F4(全caller-owned入力の入口即時detach): `adopt_acceptance_policy_transition`は
+`adopted_ref`/`source_reference`/`governance_adoption_record`の3件のmutable caller供給
+mappingを、`_require_source_reference`や`load_current`を含むいかなるStore呼び出しよりも前の
+文字通り最初の操作として`deepcopy`する(Round 3のP82-R3-F3が`preview_acceptance_policy_
+transition`へ既に確立した同一規律の拡張)。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、既存113件を新API(`source_reference`/
+`project_binding_id`/`decided_at`引数を伴う`governance_adoption_record`/
+`sign_governance_adoption_authority`/`engine.verify_governance_adoption_record`)へ書き換え、
+F1-F4それぞれの決定的positive/negative control(F1の第二Project Binding+攻撃者鍵、F2の
+adoption_id/receipt/project_binding_id/source_reference/decided_at変異、F3の欠落/schema
+不正/work-unit相違/lineage欠落の直接`resolve_and_verify_adoption`control、F4のmid-call
+Store-hook substitution)を新規7件追加、120 tests)は本記録作成者自身が独立に実行し検証済み
+(`120 passed`)。`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`
+(`SCHEMA_COUNT=86`、変更なし)。`python scripts/source_impact_gate.py`は`decision: PASS`。
+`mypy --namespace-packages`/`ruff check`/`ruff format --check`の独立再実行結果は、本Roundの
+新head到達後にPR #82への返却Evidenceコメント本文を参照。full repository test suiteの独立
+再実行結果も同様。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_80_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
