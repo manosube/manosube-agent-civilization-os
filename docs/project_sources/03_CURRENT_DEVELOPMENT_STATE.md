@@ -4332,3 +4332,91 @@ SOURCE_SYNC_MERGE_ALLOWED=false
 ISSUE_80_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 ```
+
+# 58. Issue #22 (Human Wait-Time Transparency vertical) implementation-delivery bounded addendum
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、`src/`および`01_SCHEMA/`配下の新規kernel_surface変更
+(`src/manosube_agent_civilization/work_time_transparency/`、
+`01_SCHEMA/work_time_transparency/`)に対応付けるためだけの、最小限の事実記録である。
+
+Issue #22「Human Wait-Time Transparency」はSHUKOU正式採択・実装handoffコメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/22#issuecomment-5659817582`
+(`ADOPT_ISSUE_22_HUMAN_WAIT_TIME_TRANSPARENCY_VERTICAL`)によって、構造参謀rebind determination
+`...#issuecomment-5659798986`を正式採択する形で指示された。本記録作成者は、この2件について
+著者login/id/association(`manosube`/OWNER)・本文・live `main` head
+(`279572fb51775bd8a13665376aa751a63c1d0c35`、authorized baseと一致)を、実装開始直前に
+GitHub API経由で独立readbackし一致を確認済みである。branch
+`agent/issue-22-human-wait-time-transparency`はこのexact base SHAから分岐している。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_ISSUE=#22
+ADOPTION_ID=ADOPT_ISSUE_22_HUMAN_WAIT_TIME_TRANSPARENCY_VERTICAL
+ADOPTION_COMMENT_ID=5659817582
+STRUCTURAL_ADVISOR_REBIND_COMMENT_ID=5659798986
+AUTHORIZED_BASE_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+IMPLEMENTATION_TARGET=NEW_BRANCH_THIS_SESSION
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+追加されたas-built ownerは`16_WORK_TIME_TRANSPARENCY/`
+(`WORK_TIME_TRANSPARENCY_INDEX.md`・`WORK_TIME_TRANSPARENCY_CONTRACT.md`)、
+`src/manosube_agent_civilization/work_time_transparency/`
+(`route.py`・`engine.py`・`identity.py`・`types.py`・`errors.py`・`adapters.py`・
+`__init__.py`の7モジュール)、`01_SCHEMA/work_time_transparency/`
+(`work_time_coordination_open`・`work_time_coordination_update`・
+`work_time_coordination_terminal`の3schema、schema総数86→89)である。
+`scripts/validate_schemas.py`自身のasserted schema countも86から89へ更新した。既存の
+State・Authority・Evidence・Reflow・Boot・8つの既存execution-capable adapter(CLI、Boot、
+Temporary Agent、Model Runtime、Multi-Agent、Change Executor、Independent Verification、
+GitHub Projection)のいずれのownerも置換・変更しない -- `work_time_transparency`は
+`commit_state_transition`(`route.py`一箇所のみ)と`boot_project`(3公開entrypoint全てが
+fresh呼び出し、キャッシュなし)を再利用し、Authority/Evidence/Reflow/Differenceのいずれの
+既存ownerもimportしない(AST-levelで検証済み)、自己完結した新規record種別3種の追加のみで
+ある。
+
+3新規record種別(`work_time_coordination_open`/`update`/`terminal`)のid設計は、
+`change_executor`自身のmapping-slot key技術を再利用した決定論的narrow-key方式である --
+open idは`(project_id, work_unit_ref)`のみの、update idは`(open_id, sequence_number)`のみの、
+terminal idは`open_id`単独の純関数であり、Storeの既存same-id-same-body replay許容と
+same-id-different-body`RecordConflictError`拒否機構が、冪等リプレイ・衝突検知・
+「coordinationごとに terminal はちょうど1つ」の強制を、新規機構なしに提供する。
+Authority境界は構造的に証明されている: 3schemaいずれも`human_authority_ref`/signature
+フィールドを持たず、`reflow.reference_registry.STORE_OWNED_REFERENCE_KINDS`に3種いずれも
+登録されておらず(実際の`reference_edges()`がfail-closedで拒否することも確認済み)、
+`evidence.engine.EVIDENCE_REFERENCE_KIND`は`"observation_evidence"`固定定数であり、
+本packageの全モジュールが`reflow`/`evidence`/`authority`/`difference.graph`を一切importしない
+ことをAST走査で確認済みである。
+
+adapter conformanceは、disclosed scope decisionとして、Boot(唯一の本番未改変entrypointに
+対する完全実証、成功・失敗両経路)と、全8 `ADAPTER_KINDS`にわたる共有composition primitive
+(`with_work_time_coordination`)の一様合成証明として提供される。残り7 adapter
+(CLI、Temporary Agent、Model Runtime、Multi-Agent、Change Executor、Independent
+Verification、GitHub Projection)それぞれの持つ実質的なprecondition chain
+(Authority Rule、Execution Boundary、Model Execution Grant、kill switch、verifier
+selection、GitHub projection grant)を本bounded work unitで全面再構築することは、
+UX/coordination-onlyな関心事のために8件の既受理済みverticalへ不要なリスクを負わせるとして
+意図的に見送られており、この決定は`adapters.py`自身のmodule docstringおよびテストファイル
+自身のdocstringに明示開示されている(隠された欠落ではない) -- `16_WORK_TIME_TRANSPARENCY/
+WORK_TIME_TRANSPARENCY_CONTRACT.md`§11。
+
+targeted test suite(`tests/unit/work_time_transparency/`・
+`tests/contract/work_time_transparency/`・`tests/integration/work_time_transparency/`、
+6 test files + 1 fixture module、101 tests)は本記録作成者自身が独立に実行し検証済み
+(`101 passed`)。`ruff check`・`ruff format --check`・`mypy --namespace-packages`はいずれも
+この新規packageに対してclean。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。full repository test suiteの独立再実行結果、
+および`tests/contract/governance/test_source_freshness_drift_detection.py`配下の
+pre-existing failureとの一致確認は、本Issue #22への最終return-evidence本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+```

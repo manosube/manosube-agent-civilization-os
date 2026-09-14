@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/work_time_transparency/work_time_coordination_open.schema.json",
+  "title": "Human Wait-Time Transparency: Work Coordination Open (start estimate)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "work_time_coordination_open_id",
+    "work_time_coordination_open_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "work_unit_ref",
+    "adapter_kind",
+    "estimated_duration_lower_minutes",
+    "estimated_duration_upper_minutes",
+    "estimate_confidence",
+    "major_steps",
+    "next_progress_update_due_minutes",
+    "variability_factors",
+    "opened_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "work_time_coordination_open_id": {"$ref": "#/$defs/open_id"},
+    "work_time_coordination_open_semantic_fingerprint": {"$ref": "#/$defs/sha256"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "project_binding"}}}
+      ]
+    },
+    "work_unit_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"enum": [
+          "cli_invocation",
+          "boot_session",
+          "temporary_agent_session",
+          "model_runtime_work_unit",
+          "multi_agent_execution_plan",
+          "change_executor_execution",
+          "independent_verification_run",
+          "github_projection_attempt"
+        ]}}}
+      ]
+    },
+    "adapter_kind": {"enum": [
+      "CLI",
+      "BOOT",
+      "TEMPORARY_AGENT",
+      "MODEL_RUNTIME",
+      "MULTI_AGENT",
+      "CHANGE_EXECUTOR",
+      "INDEPENDENT_VERIFICATION",
+      "GITHUB_PROJECTION"
+    ]},
+    "estimated_duration_lower_minutes": {"type": "integer", "minimum": 0},
+    "estimated_duration_upper_minutes": {"type": "integer", "minimum": 0},
+    "estimate_confidence": {"enum": ["HIGH", "MEDIUM", "LOW"]},
+    "major_steps": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 512},
+      "minItems": 1,
+      "maxItems": 64
+    },
+    "next_progress_update_due_minutes": {"type": "integer", "minimum": 0},
+    "variability_factors": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "opened_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "$defs": {
+    "open_id": {"type": "string", "pattern": "^WTC-OPEN-[0-9A-F]{64}(?![\\s\\S])"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false
+}
