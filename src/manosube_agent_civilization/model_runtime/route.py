@@ -81,6 +81,7 @@ live Phase 12 Temporary Agent Execution Contract (its own boot_context, read not
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import hashlib
 from typing import Any
 
 from manosube_agent_civilization.agent_runtime import TemporaryAgent, start_temporary_agent
@@ -102,6 +103,11 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
+from manosube_agent_civilization.work_time_transparency.adapters import (
+    ProgressReporter,
+    with_work_time_coordination,
+)
+from manosube_agent_civilization.work_time_transparency.clock import default_clock
 
 from .claim_identity import (
     multi_agent_dynamic_execution_plan_id,
@@ -960,56 +966,22 @@ def _resume_from_store(
 # --------------------------------------------------------------------------- #
 
 
-def open_model_work_unit(
+def _open_model_work_unit_body(
     store: Any,
     agent: TemporaryAgent,
     *,
     project_id: str,
     project_binding_id: str,
-    difference_ref: Mapping[str, Any],
+    checked_difference_ref: dict[str, Any],
     required_capability: str,
-    boundary_ref: Mapping[str, Any],
-    model_execution_grant_refs: list[Mapping[str, Any]],
+    checked_boundary_ref: dict[str, Any],
+    checked_grant_refs: list[dict[str, Any]],
     opened_at: str,
+    reporter: ProgressReporter,
 ) -> dict[str, Any]:
-    """Open one canonical, immutable, State-bound Model Work Unit and return it.
-
-    A Work Unit is genesis-only: it is opened exactly once by whichever Agent starts the work,
-    is never mutated, has no current pointer and no transition chain, and is resolved by content
-    address for the whole lifetime of the work. Two Agents "resuming the same Work Unit" resolve
-    the identical address and independently re-verify the identical body -- which is what makes
-    "the same Work Unit" a re-proved fact rather than a shared variable.
-
-    Returns ``{"model_work_unit": ..., "model_work_unit_ref": ..., "model_execution_decision":
-    ...}``. The Authority Decision is committed in the **same** State transition as the Work Unit
-    that references it, so a Work Unit whose ``authority_ref`` resolves to nothing can never
-    exist.
-    """
-
-    _require_canonical_identity("project_id", project_id)
-    _require_canonical_identity("project_binding_id", project_binding_id)
-    require_valid_timestamp(opened_at, "opened_at")
-    if required_capability not in MODEL_EXECUTION_CAPABILITIES:
-        raise ModelRuntimeRequirementError(
-            f"required_capability is not a recognized capability: {required_capability!r}"
-        )
-    checked_difference_ref = _require_reference(
-        difference_ref, context="difference_ref", kind=DIFFERENCE_RECORD_KIND
-    )
-    checked_boundary_ref = _require_reference(
-        boundary_ref, context="boundary_ref", kind=BOUNDARY_RECORD_KIND
-    )
-    if not isinstance(model_execution_grant_refs, list) or not model_execution_grant_refs:
-        raise ModelRuntimeRequirementError(
-            "model_execution_grant_refs must be a non-empty list of references -- a Work Unit "
-            "opened against no Human Authority grant at all is never authorized"
-        )
-    checked_grant_refs = [
-        _require_reference(
-            reference, context=f"model_execution_grant_refs[{position}]", kind=GRANT_RECORD_KIND
-        )
-        for position, reference in enumerate(model_execution_grant_refs)
-    ]
+    """The full pre-Round-2 body of :func:`open_model_work_unit`, now composed inside
+    :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    with_work_time_coordination` (Structural Review Round 2, P84-R2-F1/F4)."""
 
     _held, fresh = _live_contract(
         store,
@@ -1100,6 +1072,116 @@ def open_model_work_unit(
         },
         "model_execution_decision": decision,
     }
+
+
+def open_model_work_unit(
+    store: Any,
+    agent: TemporaryAgent,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    difference_ref: Mapping[str, Any],
+    required_capability: str,
+    boundary_ref: Mapping[str, Any],
+    model_execution_grant_refs: list[Mapping[str, Any]],
+    opened_at: str,
+    estimated_duration_lower_minutes: int = 0,
+    estimated_duration_upper_minutes: int = 5,
+    estimate_confidence: str = "MEDIUM",
+    major_steps: list[str] | None = None,
+    next_progress_update_due_minutes: int = 10,
+    variability_factors: str = "none",
+    work_time_coordination_clock: Callable[[], str] = default_clock,
+) -> dict[str, Any]:
+    """Open one canonical, immutable, State-bound Model Work Unit and return it.
+
+    A Work Unit is genesis-only: it is opened exactly once by whichever Agent starts the work,
+    is never mutated, has no current pointer and no transition chain, and is resolved by content
+    address for the whole lifetime of the work. Two Agents "resuming the same Work Unit" resolve
+    the identical address and independently re-verify the identical body -- which is what makes
+    "the same Work Unit" a re-proved fact rather than a shared variable.
+
+    Returns ``{"model_work_unit": ..., "model_work_unit_ref": ..., "model_execution_decision":
+    ...}``. The Authority Decision is committed in the **same** State transition as the Work Unit
+    that references it, so a Work Unit whose ``authority_ref`` resolves to nothing can never
+    exist.
+
+    Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_
+    REBIND``): every call below the eager, pure-shape checks (``project_id``/
+    ``project_binding_id``/``opened_at``/``required_capability``/``difference_ref``/
+    ``boundary_ref``/``model_execution_grant_refs``, none of which reads the Store) is composed
+    inside :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    with_work_time_coordination`. ``work_unit_ref`` is content-addressed from *project_id*,
+    *difference_ref*, and one real clock reading taken before the coordination opens. The new
+    ``estimated_duration_*``/``estimate_confidence``/``major_steps``/
+    ``next_progress_update_due_minutes``/``variability_factors``/
+    ``work_time_coordination_clock`` parameters are all optional, each defaulting to this route's
+    own canonical estimate, so every existing caller's own call syntax remains valid unchanged.
+    """
+
+    _require_canonical_identity("project_id", project_id)
+    _require_canonical_identity("project_binding_id", project_binding_id)
+    require_valid_timestamp(opened_at, "opened_at")
+    if required_capability not in MODEL_EXECUTION_CAPABILITIES:
+        raise ModelRuntimeRequirementError(
+            f"required_capability is not a recognized capability: {required_capability!r}"
+        )
+    checked_difference_ref = _require_reference(
+        difference_ref, context="difference_ref", kind=DIFFERENCE_RECORD_KIND
+    )
+    checked_boundary_ref = _require_reference(
+        boundary_ref, context="boundary_ref", kind=BOUNDARY_RECORD_KIND
+    )
+    if not isinstance(model_execution_grant_refs, list) or not model_execution_grant_refs:
+        raise ModelRuntimeRequirementError(
+            "model_execution_grant_refs must be a non-empty list of references -- a Work Unit "
+            "opened against no Human Authority grant at all is never authorized"
+        )
+    checked_grant_refs = [
+        _require_reference(
+            reference, context=f"model_execution_grant_refs[{position}]", kind=GRANT_RECORD_KIND
+        )
+        for position, reference in enumerate(model_execution_grant_refs)
+    ]
+
+    def _perform_open(reporter: ProgressReporter) -> dict[str, Any]:
+        return _open_model_work_unit_body(
+            store,
+            agent,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            checked_difference_ref=checked_difference_ref,
+            required_capability=required_capability,
+            checked_boundary_ref=checked_boundary_ref,
+            checked_grant_refs=checked_grant_refs,
+            opened_at=opened_at,
+            reporter=reporter,
+        )
+
+    _attempt_marker = work_time_coordination_clock()
+    _work_unit_id = (
+        "MRWORK-"
+        + hashlib.sha256(f"{project_id}|{checked_difference_ref['id']}|{_attempt_marker}".encode())
+        .hexdigest()
+        .upper()
+    )
+
+    _open_record, _terminal_record, result = with_work_time_coordination(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="MODEL_RUNTIME",
+        work_unit_ref={"kind": "model_runtime_work_unit", "id": _work_unit_id},
+        estimated_duration_lower_minutes=estimated_duration_lower_minutes,
+        estimated_duration_upper_minutes=estimated_duration_upper_minutes,
+        estimate_confidence=estimate_confidence,
+        major_steps=major_steps or ["open_model_work_unit"],
+        next_progress_update_due_minutes=next_progress_update_due_minutes,
+        variability_factors=variability_factors,
+        perform=_perform_open,
+        clock=work_time_coordination_clock,
+    )
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -1292,22 +1374,25 @@ def _require_valid_pinned_execution_snapshot(
     }
 
 
-def execute_model_work_unit(
+def _execute_model_work_unit_body(
     store: Any,
     agent: TemporaryAgent,
     *,
     project_id: str,
     project_binding_id: str,
-    model_work_unit_ref: Mapping[str, Any],
+    checked_work_unit_ref: dict[str, Any],
     adapter: ModelAdapter,
     executed_at: str,
-    pinned_execution_snapshot: Mapping[str, Any] | None = None,
-    cancellation_check: Callable[[], bool] | None = None,
-    slot_attempt_envelope_claim_factory: Callable[[Mapping[str, Any]], Mapping[str, Any]]
-    | None = None,
-    slot_attempt_envelope_claim_binding: Mapping[str, Any] | None = None,
+    pinned_execution_snapshot: Mapping[str, Any] | None,
+    cancellation_check: Callable[[], bool] | None,
+    slot_attempt_envelope_claim_factory: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
+    slot_attempt_envelope_claim_binding: Mapping[str, Any] | None,
+    reporter: ProgressReporter,
 ) -> dict[str, Any]:
-    """Execute one bounded, provider-neutral model invocation against one already-open Work Unit
+    """The full pre-Round-2 body of :func:`execute_model_work_unit` (Structural Review Round 2,
+    P84-R2-F1/F4), now composed inside :func:`~manosube_agent_civilization.
+    work_time_transparency.adapters.with_work_time_coordination`. Execute one bounded, provider-
+    neutral model invocation against one already-open Work Unit
     and return ``{"envelope": ..., "receipt": ModelExecutionReceipt}``.
 
     *model_work_unit_ref* is resolved from the canonical Store by content address alone -- no
@@ -1413,13 +1498,6 @@ def execute_model_work_unit(
     of the seven typed outcomes.
     """
 
-    _require_canonical_identity("project_id", project_id)
-    _require_canonical_identity("project_binding_id", project_binding_id)
-    require_valid_timestamp(executed_at, "executed_at")
-    checked_work_unit_ref = _require_reference(
-        model_work_unit_ref, context="model_work_unit_ref", kind=WORK_UNIT_RECORD_KIND
-    )
-
     held, fresh = _live_contract(
         store,
         agent,
@@ -1524,6 +1602,12 @@ def execute_model_work_unit(
         stage="before the adapter is reached",
     )
 
+    reporter.report(
+        position_kind="WORK_RUNNING",
+        current_position="calling the bound Model Adapter",
+        next_progress_update_due_minutes=10,
+        remaining_duration_unknown=True,
+    )
     # The adapter receives deep-frozen, alias-free copies: a replaceable adapter could otherwise
     # mutate the exact structures this route validated and then goes on to fingerprint, persist
     # and attest to, so that what was committed would differ from what was actually checked.
@@ -1681,6 +1765,95 @@ def execute_model_work_unit(
         },
     )
     return {"envelope": envelope, "receipt": receipt}
+
+
+def execute_model_work_unit(
+    store: Any,
+    agent: TemporaryAgent,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    model_work_unit_ref: Mapping[str, Any],
+    adapter: ModelAdapter,
+    executed_at: str,
+    pinned_execution_snapshot: Mapping[str, Any] | None = None,
+    cancellation_check: Callable[[], bool] | None = None,
+    slot_attempt_envelope_claim_factory: Callable[[Mapping[str, Any]], Mapping[str, Any]]
+    | None = None,
+    slot_attempt_envelope_claim_binding: Mapping[str, Any] | None = None,
+    estimated_duration_lower_minutes: int = 0,
+    estimated_duration_upper_minutes: int = 10,
+    estimate_confidence: str = "MEDIUM",
+    major_steps: list[str] | None = None,
+    next_progress_update_due_minutes: int = 10,
+    variability_factors: str = "none",
+    work_time_coordination_clock: Callable[[], str] = default_clock,
+) -> dict[str, Any]:
+    """Execute one bounded, provider-neutral model invocation against one already-open Work Unit
+    and return ``{"envelope": ..., "receipt": ModelExecutionReceipt}`` -- see
+    :func:`_execute_model_work_unit_body` for the full pre-Round-2 discipline this preserves
+    unchanged.
+
+    Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_
+    REBIND``): every call below the eager, pure-shape checks (``project_id``/
+    ``project_binding_id``/``executed_at``/``model_work_unit_ref``, none of which reads the
+    Store) is composed inside :func:`~manosube_agent_civilization.work_time_transparency.
+    adapters.with_work_time_coordination`. ``work_unit_ref`` is content-addressed from
+    *project_id*, the resolved Work Unit's own ref, and one real clock reading taken before the
+    coordination opens. The new ``estimated_duration_*``/``estimate_confidence``/
+    ``major_steps``/``next_progress_update_due_minutes``/``variability_factors``/
+    ``work_time_coordination_clock`` parameters are all optional, each defaulting to this
+    route's own canonical estimate, so every existing caller's own call syntax remains valid
+    unchanged. A genuine in-flight heartbeat is posted immediately before this route's own one
+    real adapter call (``adapter.execute``)."""
+
+    _require_canonical_identity("project_id", project_id)
+    _require_canonical_identity("project_binding_id", project_binding_id)
+    require_valid_timestamp(executed_at, "executed_at")
+    checked_work_unit_ref = _require_reference(
+        model_work_unit_ref, context="model_work_unit_ref", kind=WORK_UNIT_RECORD_KIND
+    )
+
+    def _perform_execute(reporter: ProgressReporter) -> dict[str, Any]:
+        return _execute_model_work_unit_body(
+            store,
+            agent,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            checked_work_unit_ref=checked_work_unit_ref,
+            adapter=adapter,
+            executed_at=executed_at,
+            pinned_execution_snapshot=pinned_execution_snapshot,
+            cancellation_check=cancellation_check,
+            slot_attempt_envelope_claim_factory=slot_attempt_envelope_claim_factory,
+            slot_attempt_envelope_claim_binding=slot_attempt_envelope_claim_binding,
+            reporter=reporter,
+        )
+
+    _attempt_marker = work_time_coordination_clock()
+    _work_unit_id = (
+        "MREXEC-"
+        + hashlib.sha256(f"{project_id}|{checked_work_unit_ref['id']}|{_attempt_marker}".encode())
+        .hexdigest()
+        .upper()
+    )
+
+    _open_record, _terminal_record, result = with_work_time_coordination(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="MODEL_RUNTIME",
+        work_unit_ref={"kind": "model_runtime_work_unit", "id": _work_unit_id},
+        estimated_duration_lower_minutes=estimated_duration_lower_minutes,
+        estimated_duration_upper_minutes=estimated_duration_upper_minutes,
+        estimate_confidence=estimate_confidence,
+        major_steps=major_steps or ["execute_model_work_unit"],
+        next_progress_update_due_minutes=next_progress_update_due_minutes,
+        variability_factors=variability_factors,
+        perform=_perform_execute,
+        clock=work_time_coordination_clock,
+    )
+    return result
 
 
 # --------------------------------------------------------------------------- #

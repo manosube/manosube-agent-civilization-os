@@ -1341,3 +1341,29 @@ verifier and every Round 1-10 proof continue to pass unmodified.
 `GENUINE_REPLAY_ZERO_DUPLICATE_ADAPTER_CALLS=true`, `GENUINE_EVIDENCE_HANDOFF=unchanged`. No
 second Authority evaluator, execution route, Store owner, Model Runtime owner, or Multi-Agent
 owner is introduced by either finding.
+
+## 21. Structural Review Round 12 Work Coordination wrap (Issue #22, `ADOPT_P84_PROJECT_STATE_
+ORTHOGONAL_COORDINATION_REBIND`, PR #84)
+
+`open_dynamic_execution_plan` is now composed inside the Human Wait-Time Transparency vertical's
+own `with_work_time_coordination` (`work_time_transparency.adapters`), below its own eager,
+pure-shape identity checks and above everything that was its prior body -- renamed `_open_
+dynamic_execution_plan_body`, otherwise byte-identical. Every normal invocation reaching this
+route's own Difference/slot-selection/Model Work Unit sequence, or any refusal beyond the eager
+checks, now durably commits a Work Coordination `open`/`terminal` record pair through the
+Store's own orthogonal `coordination/` ledger (`FileStateStore.commit_coordination_record`) --
+never through `commit_state_transition`/`store.commit`, so a coordination commit can never
+advance `state_revision`, authorize a Plan, or otherwise mutate canonical Project State.
+`work_unit_ref` is content-addressed from this project's own id, the resolved Difference's own
+id, and one real clock reading taken before the coordination opens. The route gained seven
+optional `estimated_duration_*`/`estimate_confidence`/`major_steps`/`next_progress_update_due_
+minutes`/`variability_factors`/`work_time_coordination_clock` keyword parameters, each
+defaulting to this route's own canonical estimate for opening a dynamic execution plan, so every
+existing caller's own call syntax remains valid unchanged. A genuine in-flight heartbeat is
+posted immediately before this route's own one real, potentially long-running composed call into
+`model_runtime.open_model_work_unit`. `derive_multi_agent_dynamic_execution_plan`'s own `dict[str,
+Any]`-typed parameters are passed `dict(checked_difference_ref)`/`dict(checked_adapter_identity)`
+copies at this call site -- the values were always caller-detached (`_detach`'d) dicts already;
+this is a typing-only tightening at the boundary, not a behavior change. See `16_WORK_TIME_
+TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §5 and `tests/integration/store/test_
+coordination_ledger.py` for the ledger's own proof.

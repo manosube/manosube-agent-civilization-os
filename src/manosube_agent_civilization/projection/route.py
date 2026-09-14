@@ -118,7 +118,7 @@ disclosed operation, never silently conflated with "this call was the winning at
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import hashlib
 from typing import Any
 
@@ -143,6 +143,11 @@ from manosube_agent_civilization.evidence.identity import (
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
+from manosube_agent_civilization.work_time_transparency.adapters import (
+    ProgressReporter,
+    with_work_time_coordination,
+)
+from manosube_agent_civilization.work_time_transparency.clock import default_clock
 
 from .engine import (
     PROJECTION_SCHEMA_BASE,
@@ -681,8 +686,34 @@ def project_to_github(
     subject_record: Mapping[str, Any] | None = None,
     subject_fingerprint: str | None = None,
     permit_semantic_reuse: bool = False,
+    estimated_duration_lower_minutes: int = 0,
+    estimated_duration_upper_minutes: int = 10,
+    estimate_confidence: str = "MEDIUM",
+    major_steps: list[str] | None = None,
+    next_progress_update_due_minutes: int = 10,
+    variability_factors: str = "none",
+    work_time_coordination_clock: Callable[[], str] = default_clock,
 ) -> dict[str, Any]:
     """Project one canonical subject to GitHub and return
+
+    Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_BOOT_READ_ONLY_BOUNDARY_REBIND``):
+    the admission/authority/adapter sequence below the three eager, pure-shape identity checks
+    (*project_id*/*project_binding_id*/*attempt_claim_token*) is composed inside
+    :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    with_work_time_coordination` -- every normal invocation reaching a real adapter call, or any
+    refusal beyond those three eager checks, durably commits a Work Coordination timing record
+    chain. ``work_unit_ref`` is content-addressed from *project_id*, *attempt_claim_token* (this
+    route's own existing per-attempt identity -- see its own docstring below), and one real clock
+    reading taken before the coordination opens -- never *attempt_claim_token* alone, since a
+    genuine same-attempt retry legitimately presents the identical token again, and Work
+    Coordination's own ``work_time_coordination_open`` is a fresh "one open per work unit, ever"
+    identity, never itself idempotent across two real, separately-timed invocations. The new
+    ``estimated_duration_*``/``estimate_confidence``/``major_steps``/
+    ``next_progress_update_due_minutes``/``variability_factors``/``work_time_coordination_clock``
+    parameters are all optional, each defaulting to this route's own canonical estimate, so every
+    existing caller's own call syntax remains valid unchanged. A genuine in-flight heartbeat is
+    posted immediately before this route's own first real external GitHub Adapter call
+    (``find_by_correlation_key``), on both the reuse and the fresh-materialize path alike.
     ``{"envelope": ..., "receipt": GitHubObservationReceipt, "reused": bool, "same_attempt":
     bool}``.
 
@@ -731,6 +762,79 @@ def project_to_github(
     _require_canonical_identity("project_id", project_id)
     _require_canonical_identity("project_binding_id", project_binding_id)
     _require_canonical_identity("attempt_claim_token", attempt_claim_token)
+
+    def _perform(reporter: ProgressReporter) -> dict[str, Any]:
+        return _project_to_github_body(
+            store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            subject_ref=subject_ref,
+            projection_kind=projection_kind,
+            target_repository=target_repository,
+            projection_payload=projection_payload,
+            github_authority_ref=github_authority_ref,
+            materialized_at=materialized_at,
+            adapter=adapter,
+            github_projection_grant_refs=github_projection_grant_refs,
+            github_projection_grant_declaration_refs=github_projection_grant_declaration_refs,
+            attempt_claim_token=attempt_claim_token,
+            subject_record=subject_record,
+            subject_fingerprint=subject_fingerprint,
+            permit_semantic_reuse=permit_semantic_reuse,
+            reporter=reporter,
+        )
+
+    _attempt_marker = work_time_coordination_clock()
+    _work_unit_id = (
+        "GHPROJ-"
+        + hashlib.sha256(f"{project_id}|{attempt_claim_token}|{_attempt_marker}".encode())
+        .hexdigest()
+        .upper()
+    )
+
+    _open_record, _terminal_record, result = with_work_time_coordination(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="GITHUB_PROJECTION",
+        work_unit_ref={"kind": "github_projection_attempt", "id": _work_unit_id},
+        estimated_duration_lower_minutes=estimated_duration_lower_minutes,
+        estimated_duration_upper_minutes=estimated_duration_upper_minutes,
+        estimate_confidence=estimate_confidence,
+        major_steps=major_steps or ["project_to_github"],
+        next_progress_update_due_minutes=next_progress_update_due_minutes,
+        variability_factors=variability_factors,
+        perform=_perform,
+        clock=work_time_coordination_clock,
+    )
+    return result
+
+
+def _project_to_github_body(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    subject_ref: Mapping[str, Any],
+    projection_kind: str,
+    target_repository: Mapping[str, Any],
+    projection_payload: Mapping[str, Any],
+    github_authority_ref: Mapping[str, Any],
+    materialized_at: str,
+    adapter: GitHubAdapter,
+    github_projection_grant_refs: list[Mapping[str, Any]],
+    github_projection_grant_declaration_refs: list[Mapping[str, Any]],
+    attempt_claim_token: str,
+    subject_record: Mapping[str, Any] | None,
+    subject_fingerprint: str | None,
+    permit_semantic_reuse: bool,
+    reporter: ProgressReporter,
+) -> dict[str, Any]:
+    """The full pre-existing ``project_to_github`` route body, now called exclusively from
+    inside the public :func:`project_to_github`'s own ``with_work_time_coordination``
+    composition (Structural Review Round 2, P84-R2-F1/F4) -- *reporter* is that coordination's
+    own bound :class:`~manosube_agent_civilization.work_time_transparency.adapters.
+    ProgressReporter`."""
 
     checked_subject_ref = _require_reference(
         subject_ref, context="subject_ref", allowed_kinds=SUBJECT_REF_KINDS
@@ -858,6 +962,15 @@ def project_to_github(
                 "request later semantic reuse of this already-completed projection as a "
                 "distinct, disclosed operation"
             )
+        # Structural Review Round 2 (P84-R2-F4): a genuine in-flight heartbeat, posted
+        # immediately before this route's own real external GitHub Adapter call on the reuse
+        # path.
+        reporter.report(
+            position_kind="WORK_RUNNING",
+            current_position="re-observing an already-committed Envelope's external artifact",
+            next_progress_update_due_minutes=10,
+            remaining_duration_unknown=True,
+        )
         receipt = _observe(
             adapter,
             envelope_id=mapping_key,
@@ -915,6 +1028,15 @@ def project_to_github(
     # Every caller reaches this lookup regardless of who owns the intent claim above: a
     # caller that lost the claim race may still legitimately *observe* an artifact the claim
     # owner already created, it simply may never *materialize* one of its own.
+    # Structural Review Round 2 (P84-R2-F4): a genuine in-flight heartbeat, posted immediately
+    # before this route's own first real external GitHub Adapter call on the fresh-materialize
+    # path.
+    reporter.report(
+        position_kind="WORK_RUNNING",
+        current_position="searching for an already-materialized external artifact",
+        next_progress_update_due_minutes=10,
+        remaining_duration_unknown=True,
+    )
     found_ref = adapter.find_by_correlation_key(
         correlation_key=mapping_key,
         target_repository=real_target_repository,

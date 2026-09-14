@@ -63,6 +63,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import concurrent.futures
+import hashlib
 import threading
 from typing import Any
 
@@ -93,6 +94,11 @@ from manosube_agent_civilization.observation.boundary import instant
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
+from manosube_agent_civilization.work_time_transparency.adapters import (
+    ProgressReporter,
+    with_work_time_coordination,
+)
+from manosube_agent_civilization.work_time_transparency.clock import default_clock
 
 from .engine import (
     MULTI_AGENT_SCHEMA_BASE,
@@ -1098,6 +1104,13 @@ def open_dynamic_execution_plan(
     expires_at: str,
     deadline_at: str | None = None,
     per_slot_timeout_seconds: int = DEFAULT_PER_SLOT_TIMEOUT_SECONDS,
+    estimated_duration_lower_minutes: int = 0,
+    estimated_duration_upper_minutes: int = 5,
+    estimate_confidence: str = "MEDIUM",
+    major_steps: list[str] | None = None,
+    next_progress_update_due_minutes: int = 10,
+    variability_factors: str = "none",
+    work_time_coordination_clock: Callable[[], str] = default_clock,
 ) -> dict[str, Any]:
     """Open one canonical, immutable, content-addressed Multi-Agent Dynamic Execution Plan and
     return ``{"plan": ..., "plan_ref": ..., "model_execution_decision": ...}``.
@@ -1112,6 +1125,16 @@ def open_dynamic_execution_plan(
     two separate calls observe can genuinely differ (the identical precedent
     :func:`~manosube_agent_civilization.model_runtime.open_model_work_unit` itself already
     establishes; see this package's own contract doc for the disclosed reasoning).
+
+    Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_BOOT_READ_ONLY_BOUNDARY_REBIND``): the
+    sequence below the eager, pure-shape checks is composed inside
+    :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    with_work_time_coordination` -- every normal invocation, success or refusal, durably commits
+    a Work Coordination timing record chain. The new ``estimated_duration_*``/
+    ``estimate_confidence``/``major_steps``/``next_progress_update_due_minutes``/
+    ``variability_factors``/``work_time_coordination_clock`` parameters are all optional, each
+    defaulting to this route's own canonical estimate, so every existing caller's own call syntax
+    remains valid unchanged.
     """
 
     _require_canonical_identity("project_id", project_id)
@@ -1153,6 +1176,13 @@ def open_dynamic_execution_plan(
         for position, reference in enumerate(model_execution_grant_refs)
     ]
 
+    # Structural Review Round 2 (P84-R2-F1/F4) correction: this call's own Phase 12 execution
+    # contract freshness/exactness check must run *before* Work Coordination ever opens --
+    # opening a coordination is itself a real, unrelated Store commit (the WTC-open record),
+    # and this route's own require_exact_state=True demands the caller's held contract equal
+    # the *current* State exactly. Running this check after the coordination already opened
+    # would make every normal call spuriously stale by the coordination's own one-revision
+    # advance, never a genuine Authority/State problem this check exists to catch.
     _held, fresh = _live_contract(
         store,
         agent,
@@ -1160,6 +1190,73 @@ def open_dynamic_execution_plan(
         project_binding_id=project_binding_id,
         require_exact_state=True,
     )
+
+    def _perform(reporter: ProgressReporter) -> dict[str, Any]:
+        return _open_dynamic_execution_plan_body(
+            store,
+            agent,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            opened_at=opened_at,
+            expires_at=expires_at,
+            resolved_deadline_at=resolved_deadline_at,
+            per_slot_timeout_seconds=per_slot_timeout_seconds,
+            checked_difference_ref=checked_difference_ref,
+            checked_boundary_ref=checked_boundary_ref,
+            checked_adapter_identity=checked_adapter_identity,
+            checked_grant_refs=checked_grant_refs,
+            fresh=fresh,
+            reporter=reporter,
+        )
+
+    _attempt_marker = work_time_coordination_clock()
+    _work_unit_id = (
+        "MAPLAN-"
+        + hashlib.sha256(f"{project_id}|{checked_difference_ref['id']}|{_attempt_marker}".encode())
+        .hexdigest()
+        .upper()
+    )
+
+    _open_record, _terminal_record, result = with_work_time_coordination(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="MULTI_AGENT",
+        work_unit_ref={"kind": "multi_agent_execution_plan", "id": _work_unit_id},
+        estimated_duration_lower_minutes=estimated_duration_lower_minutes,
+        estimated_duration_upper_minutes=estimated_duration_upper_minutes,
+        estimate_confidence=estimate_confidence,
+        major_steps=major_steps or ["open_dynamic_execution_plan"],
+        next_progress_update_due_minutes=next_progress_update_due_minutes,
+        variability_factors=variability_factors,
+        perform=_perform,
+        clock=work_time_coordination_clock,
+    )
+    return result
+
+
+def _open_dynamic_execution_plan_body(
+    store: Any,
+    agent: TemporaryAgent,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    opened_at: str,
+    expires_at: str,
+    resolved_deadline_at: str,
+    per_slot_timeout_seconds: int,
+    checked_difference_ref: Mapping[str, Any],
+    checked_boundary_ref: Mapping[str, Any],
+    checked_adapter_identity: Mapping[str, Any],
+    checked_grant_refs: list[Mapping[str, Any]],
+    fresh: Mapping[str, Any],
+    reporter: ProgressReporter,
+) -> dict[str, Any]:
+    """The full pre-existing ``open_dynamic_execution_plan`` route body, now called exclusively
+    from inside the public :func:`open_dynamic_execution_plan`'s own
+    ``with_work_time_coordination`` composition (Structural Review Round 2, P84-R2-F1/F4).
+    *fresh* is this call's own Phase 12 execution contract, already re-verified for exactness
+    *before* the Work Coordination above ever opened (see that function's own comment)."""
 
     difference = _resolve_difference(store, project_id, checked_difference_ref)
     slots = select_agent_slots(difference)
@@ -1172,6 +1269,15 @@ def open_dynamic_execution_plan(
     required_capability = next(iter(capabilities))
     fingerprint = capability_selection_fingerprint(slots)
 
+    # Structural Review Round 2 (P84-R2-F4): a genuine in-flight heartbeat, posted immediately
+    # before this route's own one real, potentially long-running composed call into the
+    # existing Model Runtime owner.
+    reporter.report(
+        position_kind="WORK_RUNNING",
+        current_position="opening the shared Model Work Unit",
+        next_progress_update_due_minutes=10,
+        remaining_duration_unknown=True,
+    )
     opened = open_model_work_unit(
         store,
         agent,
@@ -1195,12 +1301,12 @@ def open_dynamic_execution_plan(
         project_binding_ref=dict(fresh["project_binding_ref"]),
         boot_state_revision=int(fresh["state_revision"]),
         boot_semantic_fingerprint=dict(fresh["semantic_fingerprint"]),
-        difference_ref=checked_difference_ref,
+        difference_ref=dict(checked_difference_ref),
         capability_selection_fingerprint=fingerprint,
         slots=slots,
         model_work_unit_ref=work_unit_ref,
         authority_ref=authority_ref,
-        adapter_identity=checked_adapter_identity,
+        adapter_identity=dict(checked_adapter_identity),
         execution_order=EXECUTION_ORDER,
         execution_bounds={
             "deadline_at": resolved_deadline_at,
@@ -1727,6 +1833,13 @@ def execute_dynamic_execution_plan(
     plan_ref: Mapping[str, Any],
     model_adapter_factory: Callable[[], ModelAdapter],
     executed_at: str,
+    estimated_duration_lower_minutes: int = 0,
+    estimated_duration_upper_minutes: int = 10,
+    estimate_confidence: str = "MEDIUM",
+    major_steps: list[str] | None = None,
+    next_progress_update_due_minutes: int = 10,
+    variability_factors: str = "none",
+    work_time_coordination_clock: Callable[[], str] = default_clock,
 ) -> dict[str, Any]:
     """Execute (or replay) every slot of one already-open plan and return
     ``{"plan": ..., "slot_outputs": [...], "conflict_set": ..., "aggregation_input": ...,
@@ -1738,12 +1851,76 @@ def execute_dynamic_execution_plan(
     After every slot has settled, build and commit the deterministic conflict set (P19-C6) and,
     only if every constructed Agent's own release is accounted for as ``RELEASED``, the
     Evidence-aggregation input (P19-C7/P19-C8).
+
+    Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_BOOT_READ_ONLY_BOUNDARY_REBIND``): the
+    sequence below the eager, pure-shape checks is composed inside
+    :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    with_work_time_coordination` -- every normal invocation, success or refusal, durably commits
+    a Work Coordination timing record chain. The new ``estimated_duration_*``/
+    ``estimate_confidence``/``major_steps``/``next_progress_update_due_minutes``/
+    ``variability_factors``/``work_time_coordination_clock`` parameters are all optional, each
+    defaulting to this route's own canonical estimate, so every existing caller's own call syntax
+    remains valid unchanged. A genuine in-flight heartbeat is posted after each slot's own real
+    attempt settles, reflecting real, genuinely-advancing per-slot progress.
     """
 
     _require_canonical_identity("project_id", project_id)
     _require_canonical_identity("project_binding_id", project_binding_id)
     require_valid_timestamp(executed_at, "executed_at")
     checked_plan_ref = _require_reference(plan_ref, context="plan_ref", kind=PLAN_RECORD_KIND)
+
+    def _perform(reporter: ProgressReporter) -> dict[str, Any]:
+        return _execute_dynamic_execution_plan_body(
+            store,
+            agent,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            checked_plan_ref=checked_plan_ref,
+            model_adapter_factory=model_adapter_factory,
+            executed_at=executed_at,
+            reporter=reporter,
+        )
+
+    _attempt_marker = work_time_coordination_clock()
+    _work_unit_id = (
+        "MAEXEC-"
+        + hashlib.sha256(f"{project_id}|{checked_plan_ref['id']}|{_attempt_marker}".encode())
+        .hexdigest()
+        .upper()
+    )
+
+    _open_record, _terminal_record, result = with_work_time_coordination(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="MULTI_AGENT",
+        work_unit_ref={"kind": "multi_agent_execution_plan", "id": _work_unit_id},
+        estimated_duration_lower_minutes=estimated_duration_lower_minutes,
+        estimated_duration_upper_minutes=estimated_duration_upper_minutes,
+        estimate_confidence=estimate_confidence,
+        major_steps=major_steps or ["execute_dynamic_execution_plan"],
+        next_progress_update_due_minutes=next_progress_update_due_minutes,
+        variability_factors=variability_factors,
+        perform=_perform,
+        clock=work_time_coordination_clock,
+    )
+    return result
+
+
+def _execute_dynamic_execution_plan_body(
+    store: Any,
+    agent: TemporaryAgent,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    checked_plan_ref: Mapping[str, Any],
+    model_adapter_factory: Callable[[], ModelAdapter],
+    executed_at: str,
+    reporter: ProgressReporter,
+) -> dict[str, Any]:
+    """The full pre-existing ``execute_dynamic_execution_plan`` route body, now called
+    exclusively from inside the public :func:`execute_dynamic_execution_plan`'s own
+    ``with_work_time_coordination`` composition (Structural Review Round 2, P84-R2-F1/F4)."""
 
     _held, fresh = _live_contract(
         store,
@@ -1799,6 +1976,16 @@ def execute_dynamic_execution_plan(
         )
         slot_outputs.append(slot_output)
         release_receipts.append(release_receipt)
+        # Structural Review Round 2 (P84-R2-F4): a genuine in-flight heartbeat, posted after
+        # each slot's own real attempt (Agent construction, adapter execution, release) has
+        # genuinely settled -- real, advancing progress through a potentially long-running
+        # fan-out, not a report posted from outside before this route's own real work began.
+        reporter.report(
+            position_kind="WORK_RUNNING",
+            current_position=f"slot {slot['slot_index']} of {len(plan['slots'])} settled",
+            next_progress_update_due_minutes=10,
+            remaining_duration_unknown=True,
+        )
 
     members, admitted_refs, unresolved_capabilities, absent_refs = _classify_conflicts(slot_outputs)
     considered_refs = sorted(

@@ -25,30 +25,39 @@ is detached (deep-copied) as the literal first operation of every public entrypo
 ``predecessor_ref`` are never trusted as caller-supplied record bodies: every continuation
 resolves and verifies its own lineage from this project's own Store through
 :mod:`~manosube_agent_civilization.work_time_transparency.verify`'s own canonical resolve-and-
-verify boundary (P84-R1-F2/F5) before any record is built, and that whole resolve-verify-build
-sequence runs fresh inside :func:`_commit_tip_dependent`'s own retry loop, so a concurrent writer
-is corrected on retry rather than committed against a stale tip. ``is_material_reestimate`` and
+verify boundary (P84-R1-F2/F5) before any record is built. ``is_material_reestimate`` and
 ``heartbeat_deadline_breached`` are never raw caller-supplied booleans -- both are derived here,
 from the resolved canonical predecessor's own state, immediately before being embedded in a
 built record (P84-R1-F3).
+
+**Structural Review Round 2 persistence rebind (P84-R2-F1/F4,
+``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND``).** This module commits every record
+through :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
+commit_coordination_record` -- the Store's own orthogonal, append-only coordination ledger --
+never through :func:`~manosube_agent_civilization.store.commit.commit_state_transition`. A
+Work Coordination commit therefore never reads or advances ``state_revision``, never touches
+``semantic_fingerprint``/``lineage_head_ref``, and stages no Project-State transition: it cannot
+mutate or authorize canonical Project State, structurally, since no code path here ever reaches
+``commit_state_transition``/``store.commit`` at all. Because the ledger's own identity-keyed
+conflict check (same ``(kind, id)``, different body -> ``RecordConflictError``) is fail-closed
+and requires no Project-State Compare-And-Swap to detect a race, no CAS retry loop is needed --
+a resolve-verify-build sequence runs once per call, under this project's own Store lock held
+for the whole commit, and a genuine concurrent conflict on the identical coordination fails
+closed immediately rather than being silently retried against a moving tip.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from manosube_agent_civilization.boot import boot_project
-from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
-from manosube_agent_civilization.store.commit import commit_state_transition
-from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
 
 from .clock import elapsed_minutes
 from .engine import (
     build_work_time_coordination_open,
     build_work_time_coordination_terminal,
     build_work_time_coordination_update,
-    is_heartbeat_overdue,
     is_material_reestimate,
 )
 from .errors import WorkTimeTransparencyLineageError, WorkTimeTransparencyValidationError
@@ -62,8 +71,6 @@ from .verify import (
     verify_monotonic_continuation,
     verify_predecessor_matches,
 )
-
-_MAX_COMMIT_RETRIES = 8
 
 
 def _detach(value: Any) -> Any:
@@ -81,115 +88,28 @@ def _detach(value: Any) -> Any:
     return value
 
 
-def _new_transaction(
-    current_state: dict[str, Any], project_id: str, transaction_id: str, committed_at: str
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    next_state = dict(current_state)
-    next_state["state_revision"] = current_state["state_revision"] + 1
-    next_state["previous_state_fingerprint"] = current_state["semantic_fingerprint"]
-    next_state["lineage_head_ref"] = {"kind": "state_transition", "id": transaction_id}
-    next_state["semantic_fingerprint"] = fingerprint_project_state(next_state).as_dict()
-    transition = {
-        "schema_version": "0.1",
-        "transaction_id": transaction_id,
-        "event_type": "TRANSITION",
-        "project_id": project_id,
-        "from_revision": current_state["state_revision"],
-        "to_revision": next_state["state_revision"],
-        "before_fingerprint": current_state["semantic_fingerprint"],
-        "after_fingerprint": next_state["semantic_fingerprint"],
-        "after_state": next_state,
-        "evidence_refs": [],
-        "committed_at": committed_at,
-    }
-    return next_state, transition
-
-
-def _commit_records(
-    store: Any,
-    project_id: str,
-    records: list[tuple[str, str, dict[str, Any]]],
-    committed_at: str,
-    *,
-    transaction_prefix: str,
-) -> dict[str, Any]:
-    """The bounded Compare-And-Swap retry template ``change_executor/route.py``'s own
-    ``_commit_records`` uses, for records whose content does not depend on this project's own
-    live tip (``open_work_time_coordination`` alone -- an open record's content is a pure
-    function of its own caller-supplied inputs, not of anything already committed)."""
-
-    for _ in range(_MAX_COMMIT_RETRIES):
-        current_state = store.load_current(project_id)
-        transaction_id = f"{transaction_prefix}-{current_state['state_revision']}"
-        next_state, transition = _new_transaction(
-            current_state, project_id, transaction_id, committed_at
-        )
-        try:
-            return commit_state_transition(
-                store,
-                project_id,
-                current_state["state_revision"],
-                current_state["semantic_fingerprint"],
-                next_state,
-                transition,
-                records=records,
-            )
-        except RecordConflictError:
-            raise
-        except StaleStateError:
-            continue
-    raise WorkTimeTransparencyValidationError(
-        f"could not durably commit under transaction prefix {transaction_prefix!r} after "
-        f"{_MAX_COMMIT_RETRIES} Compare-And-Swap retries -- sustained unrelated contention on "
-        "this project's own State"
-    )
-
-
 def _commit_tip_dependent(
     store: Any,
     project_id: str,
-    committed_at: str,
-    *,
-    transaction_prefix: str,
-    build: Callable[[], tuple[str, str, dict[str, Any]]],
+    build: Any,
 ) -> dict[str, Any]:
-    """The identical retry template as :func:`_commit_records`, except *build* -- the whole
-    resolve-lineage/verify/derive/build sequence for a Work Coordination Update or Terminal
-    Notice -- is called fresh at the top of every attempt, after re-reading this project's own
-    current committed State. A concurrent writer that lands between one attempt's own lineage
-    resolution and its commit is therefore corrected on the next retry (which re-resolves the
-    live tip against the now-current State) rather than committed against a stale tip
-    (Structural Review Round 1, P84-R1-F2). A genuine lineage/validation refusal raised by
-    *build* itself (not a Compare-And-Swap staleness) always propagates immediately -- it is
-    never retried, since re-resolving the identical current State would only reproduce the
-    identical refusal."""
+    """Run *build* -- the whole resolve-lineage/verify/derive/build sequence for a Work
+    Coordination Update or Terminal Notice -- exactly once, then commit its result through the
+    Store's own orthogonal coordination ledger (Structural Review Round 2, P84-R2-F1/F4,
+    ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND``).
 
-    for _ in range(_MAX_COMMIT_RETRIES):
-        current_state = store.load_current(project_id)
-        kind, record_id, record = build()
-        transaction_id = f"{transaction_prefix}-{current_state['state_revision']}"
-        next_state, transition = _new_transaction(
-            current_state, project_id, transaction_id, committed_at
-        )
-        try:
-            commit_state_transition(
-                store,
-                project_id,
-                current_state["state_revision"],
-                current_state["semantic_fingerprint"],
-                next_state,
-                transition,
-                records=[(kind, record_id, record)],
-            )
-            return record
-        except RecordConflictError:
-            raise
-        except StaleStateError:
-            continue
-    raise WorkTimeTransparencyValidationError(
-        f"could not durably commit under transaction prefix {transaction_prefix!r} after "
-        f"{_MAX_COMMIT_RETRIES} Compare-And-Swap retries -- sustained unrelated contention on "
-        "this project's own State"
+    No Compare-And-Swap retry loop is needed here (unlike the pre-Round-2 Project-State-commit
+    design this replaces): the ledger's own conflict check is keyed purely on this record's own
+    ``(kind, id)`` identity, not on any Project-State revision unrelated activity elsewhere could
+    advance, so nothing about this project's own coordination ledger ever goes "stale" out from
+    under a single resolve-verify-build-commit pass. A genuine concurrent writer racing on the
+    identical coordination is still caught -- and fails closed, never silently retried -- by
+    :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
+    commit_coordination_record`'s own same-id/different-body :class:`RecordConflictError`."""
+
+    kind, record_id, record = build()
+    return cast(
+        "dict[str, Any]", store.commit_coordination_record(project_id, kind, record_id, record)
     )
 
 
@@ -246,14 +166,15 @@ def open_work_time_coordination(
         variability_factors=variability_factors,
         opened_at=opened_at,
     )
-    _commit_records(
-        store,
-        project_id,
-        [("work_time_coordination_open", record["work_time_coordination_open_id"], record)],
-        opened_at,
-        transaction_prefix=f"WTC-OPEN-{record['work_time_coordination_open_id']}",
+    return cast(
+        "dict[str, Any]",
+        store.commit_coordination_record(
+            project_id,
+            "work_time_coordination_open",
+            record["work_time_coordination_open_id"],
+            record,
+        ),
     )
-    return record
 
 
 def record_work_time_progress_update(
@@ -385,13 +306,7 @@ def record_work_time_progress_update(
             record,
         )
 
-    return _commit_tip_dependent(
-        store,
-        project_id,
-        recorded_at,
-        transaction_prefix=f"WTC-UPDATE-{open_ref['id']}-{sequence_number}",
-        build=_resolve_verify_and_build,
-    )
+    return _commit_tip_dependent(store, project_id, _resolve_verify_and_build)
 
 
 def record_work_time_terminal_notice(
@@ -440,12 +355,13 @@ def record_work_time_terminal_notice(
             else tip_record["next_progress_update_due_minutes"]
         )
         elapsed_since_open = elapsed_minutes(open_record["opened_at"], recorded_at)
-        heartbeat_deadline_breached = is_heartbeat_overdue(
-            opened_at_minutes=0,
-            next_progress_update_due_minutes=previous_due_minutes,
-            now_minutes=elapsed_since_open,
-            has_update=tip_sequence >= 1,
-        )
+        # Structural Review Round 2 (P84-R2-F3): a direct write-time comparison against the
+        # *current* tip's own declared deadline, exactly like the Update path (route.py's own
+        # record_work_time_progress_update) -- never is_heartbeat_overdue's own has_update=True
+        # short-circuit, which would let one early heartbeat permanently suppress detection of a
+        # later missed deadline (an update at sequence 1 due minute 15 does not excuse a terminal
+        # arriving at minute 30 with no further update in between).
+        heartbeat_deadline_breached = elapsed_since_open > previous_due_minutes
 
         record = build_work_time_coordination_terminal(
             project_id=project_id,
@@ -464,13 +380,7 @@ def record_work_time_terminal_notice(
             record,
         )
 
-    return _commit_tip_dependent(
-        store,
-        project_id,
-        recorded_at,
-        transaction_prefix=f"WTC-TERMINAL-{open_ref['id']}",
-        build=_resolve_verify_and_build,
-    )
+    return _commit_tip_dependent(store, project_id, _resolve_verify_and_build)
 
 
 __all__ = [

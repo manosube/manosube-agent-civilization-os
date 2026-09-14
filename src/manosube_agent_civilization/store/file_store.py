@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from manosube_agent_civilization.state.canonicalize import (
     _validate,
@@ -236,6 +236,158 @@ class FileStateStore:
                 f"same-identity record diverges across manifest claimants: {kind}/{record_id}"
             )
         return True
+
+    # -- Orthogonal coordination ledger (Structural Review Round 2, P84-R2-F1/F4 --
+    # ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND) --------------------------------
+    #
+    # A second, independent append-only lane, entirely disjoint from Project State's own
+    # lineage (``events/transitions.jsonl``), current view (``state/current.json``), records
+    # (``records/<kind>/<id>.json``) and recovery journal (``state/recovery/``): every path
+    # here lives under this project's own ``coordination/`` directory, which none of
+    # ``reconstruct``, ``load_current``, ``_validate_state``, ``commit`` or ``recover`` ever
+    # read or write. A caller committing a coordination record can therefore never advance
+    # ``state_revision``, change ``semantic_fingerprint``, extend ``lineage_head_ref``, or
+    # otherwise authorize or mutate canonical Project State -- structurally, not by
+    # convention, since no code path connects the two.
+    #
+    # The ledger (``coordination/ledger.jsonl``) is the authoritative, durable record of every
+    # committed coordination write, in commit order -- each line embeds the full canonical
+    # body, not only its identity, so a crash between the ledger append and the permanent
+    # record file's own write can always be healed by replaying the ledger, exactly as
+    # ``events/transitions.jsonl`` is the authority ``reconstruct`` replays Project State from.
+    # The per-``(kind, id)`` file under ``coordination/records/`` is a materialized, resolve-
+    # time-convenient cache of that same body, always reproducible from the ledger alone.
+    #
+    # This lane reuses this project's own single exclusive lock (:meth:`_lock`) -- the same
+    # lock :meth:`commit` itself holds -- so a coordination write can never interleave with a
+    # concurrent Project State commit, nor with a concurrent coordination write from another
+    # process: at most one writer is ever inside either critical section at a time, and every
+    # committed coordination record therefore has exactly one, unambiguous place in this
+    # ledger's own single, total, append order.
+
+    def _coordination_dir(self, project_id: str) -> Path:
+        return self._project(project_id) / "coordination"
+
+    def _coordination_record_path(self, project_id: str, kind: str, record_id: str) -> Path:
+        if not kind or "/" in kind or ".." in kind:
+            raise BoundaryError("invalid record kind")
+        if not record_id or "/" in record_id or ".." in record_id:
+            raise BoundaryError("invalid record identity")
+        return self._coordination_dir(project_id) / "records" / kind / f"{record_id}.json"
+
+    def _coordination_ledger_path(self, project_id: str) -> Path:
+        return self._coordination_dir(project_id) / "ledger.jsonl"
+
+    def _coordination_ledger_entries(self, project_id: str) -> list[dict[str, Any]]:
+        path = self._coordination_ledger_path(project_id)
+        if not path.exists():
+            return []
+        entries: list[dict[str, Any]] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line:
+                    continue
+                entries.append(json.loads(line))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CorruptStoreError("malformed coordination ledger") from exc
+        return entries
+
+    def _materialize_coordination_record(self, project_id: str, entry: Mapping[str, Any]) -> None:
+        canonical = canonical_json_bytes(entry["body"])
+        digest = hashlib.sha256(canonical).hexdigest()
+        if digest != entry["fingerprint"]:
+            raise CorruptStoreError(
+                f"coordination ledger entry {entry['kind']}/{entry['id']} does not fingerprint "
+                "to its own embedded body -- refusing a corrupted ledger line"
+            )
+        target = self._coordination_record_path(project_id, entry["kind"], entry["id"])
+        if target.exists():
+            if target.read_bytes() != canonical:
+                raise CorruptStoreError(
+                    f"materialized coordination record diverges from its own ledger entry: "
+                    f"{entry['kind']}/{entry['id']}"
+                )
+            return
+        atomic_write(target, canonical)
+
+    def commit_coordination_record(
+        self, project_id: str, kind: str, record_id: str, body: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Durably commit one immutable coordination record, entirely orthogonal to Project
+        State (see this section's own module-level note above).
+
+        Same ``(kind, record_id)``/identical *body* twice is an idempotent replay: no new
+        ledger line, the existing committed body is simply returned. Same ``(kind, record_id)``
+        with a *different* body is refused with :class:`RecordConflictError` -- fail-closed,
+        never silently overwritten. A crash strictly between the ledger append below and this
+        record's own permanent-file materialization is healed the next time this id is either
+        committed again or resolved (:meth:`resolve_coordination_record`), both of which replay
+        any ledger entry not yet materialized before doing anything else.
+        """
+
+        canonical = canonical_json_bytes(body)
+        with self._lock(project_id):
+            for entry in self._coordination_ledger_entries(project_id):
+                if entry["kind"] == kind and entry["id"] == record_id:
+                    if canonical_json_bytes(entry["body"]) != canonical:
+                        raise RecordConflictError(f"{kind}/{record_id}")
+                    self._materialize_coordination_record(project_id, entry)
+                    return deepcopy(dict(entry["body"]))
+            digest = hashlib.sha256(canonical).hexdigest()
+            entry = {
+                "kind": kind,
+                "id": record_id,
+                "project_id": project_id,
+                "fingerprint": digest,
+                "body": json.loads(canonical.decode("utf-8")),
+            }
+            ledger_path = self._coordination_ledger_path(project_id)
+            ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            with ledger_path.open("ab") as stream:
+                stream.write(canonical_json_bytes(entry) + b"\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            fsync_directory(ledger_path.parent)
+            self._materialize_coordination_record(project_id, entry)
+            return deepcopy(dict(body))
+
+    def resolve_coordination_record(
+        self, project_id: str, kind: str, record_id: str
+    ) -> dict[str, Any] | None:
+        """The permanent, committed coordination record body for ``(kind, record_id)``, or
+        ``None`` if no such record has ever been committed. Self-heals a materialization gap
+        left by a crash inside :meth:`commit_coordination_record` (a ledger entry exists with
+        no corresponding permanent file yet) before returning, exactly as that method does."""
+
+        path = self._coordination_record_path(project_id, kind, record_id)
+        if path.exists():
+            try:
+                return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise CorruptStoreError(
+                    f"malformed coordination record: {kind}/{record_id}"
+                ) from exc
+        with self._lock(project_id):
+            for entry in self._coordination_ledger_entries(project_id):
+                if entry["kind"] == kind and entry["id"] == record_id:
+                    self._materialize_coordination_record(project_id, entry)
+                    return deepcopy(dict(entry["body"]))
+        return None
+
+    def recover_coordination_ledger(self, project_id: str) -> int:
+        """Replay this project's own coordination ledger, materializing any committed entry
+        whose permanent record file a crash left missing. Returns the count healed. Safe to
+        call at any time, including when nothing needs healing (returns ``0``) -- the same
+        idempotent, side-effect-free-when-current shape as :meth:`recover`."""
+
+        healed = 0
+        with self._lock(project_id):
+            for entry in self._coordination_ledger_entries(project_id):
+                target = self._coordination_record_path(project_id, entry["kind"], entry["id"])
+                if not target.exists():
+                    self._materialize_coordination_record(project_id, entry)
+                    healed += 1
+        return healed
 
     def resolve_transaction(self, project_id: str, transaction_id: str) -> dict[str,Any]|None:
         """Return the committed ``state_transition`` event named by *transaction_id*, or

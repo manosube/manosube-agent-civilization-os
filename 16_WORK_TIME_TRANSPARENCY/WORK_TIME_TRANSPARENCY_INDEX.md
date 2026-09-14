@@ -193,11 +193,30 @@ Restated here so the index and the contract cannot drift; `WORK_TIME_TRANSPARENC
   switches, verifier selections, GitHub projection grants) is built genuinely -- real committed
   Differences/Boundaries/Grants, real Ed25519 signatures, a real git worktree -- through each
   adapter's own existing test-side fixture builders, never reconstructed from scratch or
-  duplicated inside this package. `work_time_transparency` still never imports, wraps, or gates
-  any of the 8 adapters' own `route.py` files -- this remains a deliberate, permanent design
-  decision (§3 above), not something Round 1 asked to change; what Round 1 corrected was only
-  this document's own prior disclosure of a narrower proof scope. See
-  `WORK_TIME_TRANSPARENCY_CONTRACT.md` §11 for the full per-adapter account.
+  duplicated inside this package. See `WORK_TIME_TRANSPARENCY_CONTRACT.md` §11 for the full
+  per-adapter account.
+- **Structural Review Round 2 (P84-R2-F1/F4, `ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_
+  REBIND`) supersedes this document's own prior "never imports, wraps, or gates" disclosure for
+  7 of the 8 declared `ADAPTER_KINDS`.** Composition through `with_work_time_coordination` is no
+  longer merely available to a caller -- it is now mandatory and unbypassable *inside* each
+  execution-capable adapter's own real production entrypoint (`change_executor.route.execute`,
+  `independent_verification.route.run_independent_verification`,
+  `projection.route.project_to_github`, `multi_agent.route.open_dynamic_execution_plan`/
+  `execute_dynamic_execution_plan`, `model_runtime.route.open_model_work_unit`/
+  `execute_model_work_unit`, `agent_runtime.route.start_temporary_agent`,
+  `cli.main.run`): each of those seven modules now imports
+  `work_time_transparency.adapters.with_work_time_coordination`/`ProgressReporter` and composes
+  its own real work through it on every normal invocation -- a bypass-negative test per adapter
+  proves a normal call cannot complete without the chain. `BOOT` alone remains excluded
+  (`ADOPT_P84_BOOT_READ_ONLY_BOUNDARY_REBIND`): `boot_project` itself stays fully read-only and
+  recursion-free, since `open_work_time_coordination` already calls `boot_project` on every one
+  of its own calls, and wrapping `boot_project` itself would recurse. The dependency direction
+  stays strictly one-way even so: `work_time_transparency` itself still never imports any of the
+  8 adapters' own `route.py` files -- only each adapter imports `work_time_transparency`, never
+  the reverse. Persistence for every one of those composed calls also moved, in this same round,
+  off `commit_state_transition` onto the Store's own orthogonal coordination ledger
+  (`FileStateStore.commit_coordination_record`) -- see `WORK_TIME_TRANSPARENCY_CONTRACT.md` §5's
+  own Structural Review Round 2 note and `tests/integration/store/test_coordination_ledger.py`.
 - This package never implements a scheduler, a progress UI, or a ninth execution adapter (§3).
 - A `work_time_coordination_*` record is never treated, by this package or by any existing
   owner it touches, as sufficient Authority, Evidence, Difference closure, Issue closure, or

@@ -9,6 +9,13 @@ the resolved predecessor -- and ``actual_elapsed_minutes`` is no longer a caller
 argument to :func:`record_work_time_terminal_notice` -- it is derived server-side from the
 resolved open record's own ``opened_at`` and this call's own ``recorded_at``. Both derivations
 are asserted below against the fixed, deterministic timestamps this test already uses.
+
+Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_
+REBIND``): every one of this chain's four commits now persists through the Store's own
+orthogonal coordination ledger, never through ``commit_state_transition`` -- so
+``state_revision`` is asserted unchanged (not advanced by 4, as the pre-Round-2 Project-State-
+committing design would have left it) across the whole chain, proving this vertical cannot
+mutate or authorize canonical Project State.
 """
 
 from __future__ import annotations
@@ -51,7 +58,9 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
         "kind": "work_time_coordination_open",
         "id": open_record["work_time_coordination_open_id"],
     }
-    resolved_open = store.resolve_record(project_id, "work_time_coordination_open", open_ref["id"])
+    resolved_open = store.resolve_coordination_record(
+        project_id, "work_time_coordination_open", open_ref["id"]
+    )
     assert resolved_open == open_record
 
     heartbeat = record_work_time_progress_update(
@@ -76,7 +85,9 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
         "id": heartbeat["work_time_coordination_update_id"],
     }
     assert (
-        store.resolve_record(project_id, "work_time_coordination_update", heartbeat_ref["id"])
+        store.resolve_coordination_record(
+            project_id, "work_time_coordination_update", heartbeat_ref["id"]
+        )
         == heartbeat
     )
     # revised remaining (3-8) vs the original estimate (5-15): both bounds moved by >= 5 --
@@ -121,7 +132,7 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
         recorded_at="2026-09-14T06:27:00Z",
     )
     assert (
-        store.resolve_record(
+        store.resolve_coordination_record(
             project_id,
             "work_time_coordination_terminal",
             terminal["work_time_coordination_terminal_id"],
@@ -133,7 +144,7 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
     assert terminal["actual_elapsed_minutes"] == 27
 
     final_state = store.load_current(project_id)
-    assert final_state["state_revision"] == world["genesis_state"]["state_revision"] + 4
+    assert final_state["state_revision"] == world["genesis_state"]["state_revision"]
 
 
 def test_short_work_can_go_directly_from_open_to_terminal_with_zero_heartbeats(

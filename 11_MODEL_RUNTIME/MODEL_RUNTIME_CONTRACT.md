@@ -904,3 +904,27 @@ already a freshly built dict literal at each call (with its own `plan_ref` a fre
 ref)` copy), never handed to the adapter it constructs, so nothing in that package could ever
 mutate it. No import of `multi_agent` was added to this package; no second caller-provided
 comparator, hidden equivalent hook, or second Store/State/Authority owner was introduced.
+
+## 18. Structural Review Round 2 Work Coordination wrap (Issue #22, `ADOPT_P84_PROJECT_STATE_
+ORTHOGONAL_COORDINATION_REBIND`, PR #84)
+
+`open_model_work_unit` and `execute_model_work_unit` are now each composed inside the Human
+Wait-Time Transparency vertical's own `with_work_time_coordination` (`work_time_transparency.
+adapters`), below their own eager, pure-shape identity checks and above everything that was
+their prior body -- renamed `_open_model_work_unit_body`/`_execute_model_work_unit_body`,
+otherwise byte-identical. Every normal invocation reaching this module's own Store/Authority/
+Boot admission sequence, or any refusal beyond the eager checks, now durably commits a Work
+Coordination `open`/`terminal` record pair through the Store's own orthogonal `coordination/`
+ledger (`FileStateStore.commit_coordination_record`) -- a second, independent append-only lane
+this module's own State/Authority/Evidence surface never reads or writes, so nothing here can
+ever be authorized or mutated by a Work Coordination commit. `work_unit_ref` is content-
+addressed from this project's own id, the resolved Difference/Work Unit id, and one real clock
+reading taken before the coordination opens -- never reused across two distinct attempts. Both
+entrypoints gained seven optional `estimated_duration_*`/`estimate_confidence`/`major_steps`/
+`next_progress_update_due_minutes`/`variability_factors`/`work_time_coordination_clock` keyword
+parameters, each defaulting to this module's own canonical estimate, so every existing caller's
+call syntax remains valid unchanged (`multi_agent.route`'s own call sites required no changes).
+`MODEL_RUNTIME_EXACT_STATE_WEAKENING_ALLOWED=false` holds unmodified: the wrap never touches
+`_live_contract(require_exact_state=True)`, only wraps around the two public entrypoints that
+already called it. See `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §5 and
+`tests/integration/store/test_coordination_ledger.py` for the ledger's own proof.

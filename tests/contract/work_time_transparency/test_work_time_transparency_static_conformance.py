@@ -7,8 +7,14 @@ pinning ``WORK_TIME_TRANSPARENCY_OWNER_COUNT=1`` and
 ``PUBLIC_WORK_TIME_TRANSPARENCY_ENTRY_POINT_COUNT=3`` (:func:`open_work_time_coordination`,
 :func:`record_work_time_progress_update`, :func:`record_work_time_terminal_notice`), and that
 the package performs no network/subprocess/environment I/O and never calls the raw Store
-``commit`` method directly (only through the one sanctioned
-:func:`~manosube_agent_civilization.store.commit.commit_state_transition` wrapper).
+``commit`` method directly.
+
+**Structural Review Round 2 persistence rebind (P84-R2-F1/F4,
+``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND``).** This package never calls
+:func:`~manosube_agent_civilization.store.commit.commit_state_transition` at all -- every
+commit goes through the Store's own orthogonal coordination ledger primitive,
+:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.commit_coordination_record`,
+called only from ``route.py`` (the one sanctioned committer).
 """
 
 from __future__ import annotations
@@ -90,17 +96,24 @@ def test_no_module_imports_a_network_subprocess_or_filesystem_i_o_surface() -> N
         assert not offending, f"{module.__name__} imports a forbidden I/O surface: {offending}"
 
 
-def test_only_route_py_calls_commit_state_transition_within_this_package() -> None:
+def test_only_route_py_calls_commit_coordination_record_within_this_package() -> None:
     """Every other module builds records; only ``route.py`` ever persists one -- the identical
-    single-committer discipline ``store/commit.py``'s own module docstring requires repo-wide."""
+    single-committer discipline ``store/commit.py``'s own module docstring requires repo-wide,
+    now through the Store's own orthogonal coordination ledger (Structural Review Round 2,
+    P84-R2-F1/F4) rather than ``commit_state_transition``, which this package never calls at
+    all -- a Work Coordination commit must never reach Project State's own commit path."""
 
     for module in _ALL_PACKAGE_MODULES:
         source = inspect.getsource(module)
-        if module is route_module:
-            assert "commit_state_transition(" in source
-            continue
         assert "commit_state_transition(" not in source, (
-            f"{module.__name__} must not call commit_state_transition directly"
+            f"{module.__name__} must not call commit_state_transition -- Work Coordination "
+            "persistence is orthogonal to Project State (Structural Review Round 2)"
+        )
+        if module is route_module:
+            assert "commit_coordination_record(" in source
+            continue
+        assert "commit_coordination_record(" not in source, (
+            f"{module.__name__} must not call commit_coordination_record directly"
         )
 
 

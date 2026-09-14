@@ -223,3 +223,24 @@ MULTI_AGENT_IMPLEMENTED=false
 CONSOLE_SCRIPT_ENTRY_ADDED=true
 SECOND_PUBLIC_CLI_ENTRYPOINT=false
 ```
+
+## Structural Review Round 2 Work Coordination wrap (Issue #22, `ADOPT_P84_PROJECT_STATE_
+ORTHOGONAL_COORDINATION_REBIND`, PR #84)
+
+`run(argv)`'s own `boot_project` call is now composed inside the Human Wait-Time Transparency
+vertical's own `with_work_time_coordination` (`work_time_transparency.adapters`), still fully
+inside the pre-existing outer `try`/`except _DOMAIN_ERRORS`/`except Exception` boundary that
+handles CLI exit codes -- `run(argv)`'s own signature is unchanged (a CLI entrypoint takes no
+new keyword parameters). Every successful boot, or any `boot_project` refusal, now durably
+commits a Work Coordination `open`/`terminal` record pair through the Store's own orthogonal
+`coordination/` ledger (`FileStateStore.commit_coordination_record`) -- never through
+`commit_state_transition`/`store.commit`, so a coordination commit can never advance
+`state_revision` or otherwise authorize a Boot. `work_unit_ref` is content-addressed from
+`args.project_id`, `args.project_binding_id`, and one real clock reading taken before the
+coordination opens. This exposed a genuine, pre-existing packaging gap -- `01_SCHEMA` was never
+included in the built wheel, only in the sdist -- now fixed via a `force-include` addition in
+`pyproject.toml`'s `[tool.hatch.build.targets.wheel]` table; the installed-wheel tests
+(`tests/integration/cli/test_cli_boot_command.py`) are the first CLI-adapter code path to reach
+Work Coordination's own schema validation, which needs `01_SCHEMA` present in the installed
+package. See `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §5 and `tests/
+integration/store/test_coordination_ledger.py` for the ledger's own proof.

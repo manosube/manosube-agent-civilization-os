@@ -838,3 +838,29 @@ EXISTING_FIXTURE_COMPATIBILITY_EXCEPTION=NONE
 PHASE_13_ACCEPTANCE=false
 PHASE_14_ALLOWED=false
 ```
+
+## 16. Structural Review Round 2 Work Coordination wrap (Issue #22, `ADOPT_P84_PROJECT_STATE_
+ORTHOGONAL_COORDINATION_REBIND`, PR #84)
+
+`run_independent_verification` is now composed inside the Human Wait-Time Transparency
+vertical's own `with_work_time_coordination` (`work_time_transparency.adapters`), below its own
+two eager, pure-shape checks (`project_id`/`project_binding_id` identity form and
+`verification_requirement`'s own instance check) and above everything that was its prior
+admission/authority/verifier sequence -- renamed `_run_independent_verification_body`,
+otherwise byte-identical. Every normal invocation reaching the caller-supplied `verifier`, or
+any refusal beyond the two eager checks, now durably commits a Work Coordination `open`/
+`terminal` record pair through the Store's own orthogonal `coordination/` ledger
+(`FileStateStore.commit_coordination_record`) -- never through `commit_state_transition`/
+`store.commit`, and this route's own §5 single-side-effect guarantee (no Store write beyond the
+existing resolve/re-verification reads, no exception caught or reclassified) now holds *beyond*
+the Work Coordination timing chain, not in place of it. `work_unit_ref` is `{"kind":
+"independent_verification_run", "id": verification_requirement.requirement_id}` --
+deterministic from a caller input this route already required, so no new required parameter
+names a work unit identity. `run_independent_verification` gained seven optional
+`estimated_duration_*`/`estimate_confidence`/`major_steps`/`next_progress_update_due_minutes`/
+`variability_factors`/`clock` keyword parameters, each defaulting to this route's own canonical
+estimate, so every existing caller's own call syntax remains valid unchanged -- the timing chain
+fires unconditionally regardless of whether a caller customizes it. A genuine in-flight
+heartbeat is posted immediately before the one real, potentially long-running call to the
+caller-supplied `verifier`. See `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md`
+§5 and `tests/integration/store/test_coordination_ledger.py` for the ledger's own proof.

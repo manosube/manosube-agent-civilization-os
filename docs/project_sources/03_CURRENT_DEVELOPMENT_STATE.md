@@ -4525,3 +4525,110 @@ ISSUE_22_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 60. PR #84 Structural Review Round 2 -- Project-State-orthogonal coordination rebind
+(P84-R2-F1/F4/F5, superseded by ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND)
+bounded addendum
+
+本節も§53〜§59と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/work_time_transparency/`・
+`src/manosube_agent_civilization/store/file_store.py`配下の本Round是正に対応付けるためだけ
+の、最小限の事実記録である。
+
+PR #84上でStructural Advisor authority correction
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5662926716`
+(`P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND`)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5662942651`
+(`ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND`、`GOVERNING_ISSUE=#22`)が投稿さ
+れた。本記録作成者はこれら2件を、著者login/id/association(`manosube`/OWNER)・本文一致に
+ついて、実装開始直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#84
+DETERMINATION_ID=P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND
+ADOPTION_ID=ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND
+STRUCTURAL_REVIEW_COMMENT_ID=5662926716
+ADOPTION_COMMENT_ID=5662942651
+PRE_ROUND_HEAD_SHA=e4d6fed0222a3d98e882914fddfd808295c2a8cb
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本Roundが是正した設計上の誤りは、`multi_agent.open_dynamic_execution_plan`が内部で
+`model_runtime.open_model_work_unit`(`require_exact_state=True`)に委譲するため、WTTの
+openを`commit_state_transition`経由でProject Stateに書き込むと、そのタイミングUX記録の
+コミットだけでcanonical State revisionが進み、直前に取得したTemporary Agentのexact-state
+snapshotが無効化されてしまう、という構造的競合であった。是正は、WTT recordの永続化先を
+Project State(`state/`・`events/`・`records/`)から、Storeが所有する直交な
+append-only coordination ledger(`coordination/ledger.jsonl`、
+`FileStateStore.commit_coordination_record`/`resolve_coordination_record`/
+`recover_coordination_ledger`)へ全面的に置き換えることで行った。
+
+`commit_coordination_record`/`resolve_coordination_record`は、Storeの既存per-project
+`fcntl`排他ロックを再利用し、同一(kind, id)に対するsame-body replayを冪等に許容し、
+different-bodyを`RecordConflictError`で拒否し、ledger append後にmaterializationが完了
+していない場合の crash-between-append-and-materialize を`resolve`時・
+`recover_coordination_ledger`呼び出し時の双方で healする。3 record kind
+(`work_time_coordination_open`/`update`/`terminal`)いずれも、`reflow.reference_registry.
+STORE_OWNED_REFERENCE_KINDS`に登録されておらず、`human_authority_ref`/signatureフィール
+ドを持たず、Authority・Evidence・Change・Reflow closure・Issue closure・merge認可のいず
+れも構成しない。WTT recordの`open`はもはやProject State revision・semantic fingerprint・
+lineage head・resolved stateのいずれも変更しない -- `tests/integration/store/
+test_coordination_ledger.py`の`test_no_coordination_commit_ever_touches_project_state`
+がこれを直接証明する。
+
+`work_time_transparency/route.py`・`verify.py`は、`open_ref`/`predecessor_ref`を
+resolve-and-verify境界(`resolve_coordination_record`経由)越しに解決するよう更新され、
+`work_time_transparency/adapters.py`(`with_work_time_coordination`)経由で統合される
+本番entrypointは、BOOT(read-only・recursion-freeのまま除外)を除く7/7
+(CLI、Temporary Agent、Model Runtime、Multi-Agent、Change Executor、Independent
+Verification、GitHub Projection)全てで、実precondition chain越しに実証されている
+(`tests/integration/work_time_transparency/
+test_work_time_transparency_adapter_conformance.py`)。`multi_agent.
+open_dynamic_execution_plan`が実`model_runtime.open_model_work_unit`(`require_exact_
+state=True`不変)に到達することは、TemporaryAgentを`with_work_time_coordination`の
+`perform`内部(WTTのopen commitが完了した後)で起動する同ファイルの実entrypoint testが
+直接証明する。`boot_project`自身(`src/manosube_agent_civilization/boot/route.py`)は本
+Roundにより一切変更されておらず、coordination commit呼び出しを含まない(grep確認済み)。
+
+schema変更は不要であった(3 WTT schemaファイルは既存のまま、新規record kindは
+Store所有の非schema化ledger entryとして実装されており、`SCHEMA_COUNT=89`は不変)。
+
+targeted test suite(`tests/unit/work_time_transparency/`・
+`tests/contract/work_time_transparency/`・`tests/integration/work_time_transparency/`・
+`tests/integration/store/test_coordination_ledger.py`、および本Roundが変更した
+`tests/integration/multi_agent/test_multi_agent_replay_and_recovery.py`の該当タイミング
+較正修正2箇所)は本記録作成者自身が独立に実行し検証済みである。`ruff check`・
+`ruff format --check`・`mypy --namespace-packages`はいずれも本Round変更ファイル全体に
+対してclean(既存baseline findingとの差分をコミット単位で確認済み)。
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。
+`python scripts/source_impact_gate.py`は`decision=PASS`・`merge_blocked=false`・
+`required_source_update_missing=false`。full repository test suiteの独立再実行結果、
+および`tests/contract/governance/test_source_freshness_drift_detection.py`配下の
+pre-existing failureとの一致確認、本Roundの新head到達後の正確な値は、PR #84への最終
+return-evidenceコメント本文を参照。
+
+開示済み・本Round scope外の既知の限界(隠された欠落ではない): (1) coordination
+ledgerの`commit_coordination_record`/`resolve_coordination_record`は、呼び出しごとに
+`coordination/ledger.jsonl`全体を線形走査・parseする(O(n))設計特性であり、正しさには
+影響しないが、実行時間には影響する。将来のindexing最適化は本Roundのscope
+(永続化先の付け替えそのもの)外として意図的に見送られている。(2) 単一project内での
+非ロック読み取り同士の間に存在する既存(本Round導入ではない)潜在的race condition
+(`CorruptStoreError: current view differs from lineage`)が、WTT wrapが追加する
+呼び出しごとの遅延によって、そのwindowが広がる形で偶発的に露見しうることを、本Round中の
+診断調査で確認した。これは本Roundが作り出したものではなく、修正は本Round scope外である。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

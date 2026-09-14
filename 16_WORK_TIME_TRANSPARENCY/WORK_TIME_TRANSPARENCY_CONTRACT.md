@@ -172,13 +172,15 @@ open_work_time_coordination(...)
   -> validate adapter_kind against ADAPTER_KIND_TO_WORK_UNIT_REF_KIND[adapter_kind] == work_unit_ref.kind
   -> boot_project (fresh)
   -> build_work_time_coordination_open (pure builder, schema-validates)
-  -> _commit_records (commit_state_transition, bounded CAS retry, 8 attempts)
+  -> store.commit_coordination_record (Structural Review Round 2, P84-R2-F1/F4 -- the Store's
+     own orthogonal coordination ledger, never commit_state_transition)
   -> return the committed record
 
 record_work_time_progress_update(...)
   -> _detach(open_ref), _detach(predecessor_ref)           (literal first operation, P84-R1-F6)
   -> boot_project (fresh)
-  -> _commit_tip_dependent, retried fresh on every CAS attempt:
+  -> _commit_tip_dependent (run once -- no Compare-And-Swap retry loop is needed under the
+     orthogonal ledger; see Structural Review Round 2 below):
        resolve_open -> verify_binding_congruity -> refuse if a terminal already exists
        -> resolve_predecessor_at_sequence -> verify_predecessor_matches
        -> verify_monotonic_continuation
@@ -186,18 +188,51 @@ record_work_time_progress_update(...)
        -> build_work_time_coordination_update (pure builder, schema-validates,
           cross-validates remaining_duration_unknown against the two revised_remaining_duration_*
           fields)
+       -> store.commit_coordination_record
   -> return the committed record
 
 record_work_time_terminal_notice(...)
   -> _detach(open_ref), _detach(predecessor_ref)           (literal first operation, P84-R1-F6)
   -> boot_project (fresh)
-  -> _commit_tip_dependent, retried fresh on every CAS attempt:
+  -> _commit_tip_dependent (run once -- see Structural Review Round 2 below):
        resolve_open -> verify_binding_congruity -> resolve_tip -> verify_predecessor_matches
        -> verify_monotonic_continuation
        -> derive actual_elapsed_minutes, heartbeat_deadline_breached (never caller-supplied)
        -> build_work_time_coordination_terminal (pure builder, schema-validates)
+       -> store.commit_coordination_record
   -> return the committed record
 ```
+
+**Structural Review Round 2 (P84-R2-F1/F4, `ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_
+REBIND`): persistence moved off `commit_state_transition` onto the Store's own orthogonal
+coordination ledger.** Every commit above goes through
+`FileStateStore.commit_coordination_record` -- a second, independent append-only lane living
+entirely under this project's own `coordination/` directory (`coordination/ledger.jsonl` as the
+authoritative, full-body append-only log; `coordination/records/<kind>/<id>.json` as a
+materialized, resolve-time-convenient cache always reproducible from the ledger alone) -- never
+through `commit_state_transition`/`store.commit`, which this package no longer calls at all. No
+code path here ever reads or advances `state_revision`, `semantic_fingerprint`, or
+`lineage_head_ref`, and no coordination commit ever stages, reads, or writes anything under
+`state/`, `events/`, or Project State's own `records/`: this is structural, not conventional,
+proven by `tests/integration/store/test_coordination_ledger.py`'s own
+`test_no_coordination_commit_ever_touches_project_state` and by every adapter integration test's
+own "no mutation beyond `coordination/`" proof. Because the ledger's own conflict check is keyed
+purely on each record's own `(kind, id)` identity -- never on a Project-State revision unrelated
+activity elsewhere could advance -- no Compare-And-Swap retry loop is needed for
+`record_work_time_progress_update`/`record_work_time_terminal_notice` any more: a resolve-verify-
+build-commit pass runs exactly once, and a genuine concurrent writer racing on the identical
+coordination still fails closed immediately (`RecordConflictError`) rather than being silently
+retried against a moving tip. The ledger reuses this project's own single exclusive Store lock
+(the same lock `commit()` itself holds), so a coordination write can never interleave with a
+concurrent Project State commit, nor with a concurrent coordination write from another process --
+giving every committed coordination record exactly one, unambiguous place in the ledger's own
+single, total, append order. The ledger is crash-safe and replay-safe: same-body replay is
+idempotent (no new ledger line, the already-committed body is simply returned), a same-identity/
+different-body replay fails closed (`RecordConflictError`), a hand-edited ledger entry whose own
+embedded fingerprint no longer matches its own embedded body is refused (`CorruptStoreError`,
+never silently trusted), and a crash strictly between the ledger append and a record's own
+permanent-file materialization heals itself on the next resolve or commit of that identical id
+(or via the explicit `FileStateStore.recover_coordination_ledger`).
 
 **Structural Review Round 1 (P84-R1-F2/F5): resolve-and-verify lineage, not a trusted caller-
 supplied record body.** `open_ref`/`predecessor_ref` are bare `{"kind": ..., "id": ...}` pairs;
@@ -207,22 +242,25 @@ every continuation resolves them from this project's own Store through
 `verify_monotonic_continuation`, `verify_binding_congruity`) before any record is built or any
 commit is attempted -- a nonexistent open, a cross-project/cross-coordination predecessor, a
 skipped/reordered/forked sequence position, a terminal-before-open, an update-after-terminal, or a
-non-monotonic continuation is refused *here*, so every refusal leaves `state_revision` unchanged
-(nothing was ever staged to commit). An Update's own predecessor must be whatever record genuinely
-sits at `sequence_number - 1` (`resolve_predecessor_at_sequence` -- correct for both a new
-sequence position and an exact replay, since the tip has moved on by the time of a replay but the
-replay's own original predecessor never changes); a Terminal Notice's own predecessor must always
-be the coordination's current live tip (`resolve_tip` -- unaffected by that distinction, since
-nothing after a terminal can ever move the tip further). This whole resolve-verify-derive-build
-sequence is re-run fresh inside every Compare-And-Swap retry attempt (`_commit_tip_dependent`), so
-a concurrent writer landing mid-attempt is corrected on retry against freshly-read committed
-State, never committed against a stale tip.
+non-monotonic continuation is refused *here*, so every refusal leaves the coordination ledger
+untouched (nothing was ever committed) and never touches `state_revision` at all (Structural
+Review Round 2: no path here reaches Project State). An Update's own predecessor must be whatever
+record genuinely sits at `sequence_number - 1` (`resolve_predecessor_at_sequence` -- correct for
+both a new sequence position and an exact replay, since the tip has moved on by the time of a
+replay but the replay's own original predecessor never changes); a Terminal Notice's own
+predecessor must always be the coordination's current live tip (`resolve_tip` -- unaffected by
+that distinction, since nothing after a terminal can ever move the tip further).
 
-`_commit_records`/`_commit_tip_dependent` are the identical bounded Compare-And-Swap retry
-template `change_executor/route.py`'s own `_commit_records` uses: on `StaleStateError` (another
-transaction landed first) it re-reads `store.load_current` and retries, up to 8 attempts; a real
-identity/content conflict (`RecordConflictError`) or a genuine lineage/validation refusal is never
-swallowed into a retry -- it always propagates to the caller immediately.
+`_commit_tip_dependent` (Structural Review Round 2) runs this whole resolve-verify-derive-build
+sequence exactly once, then commits the result through `store.commit_coordination_record`. No
+Compare-And-Swap retry loop is needed (unlike the pre-Round-2 `commit_state_transition`-based
+design this replaced): the ledger's own conflict check is keyed purely on the record's own
+`(kind, id)` identity, never on a Project-State revision unrelated activity elsewhere could
+advance, so nothing about this project's own coordination ledger ever goes stale out from under a
+single pass. A genuine concurrent writer racing on the identical coordination is still caught, and
+still fails closed rather than silently retried, by `commit_coordination_record`'s own same-id/
+different-body `RecordConflictError` -- a real identity/content conflict or a genuine lineage/
+validation refusal always propagates to the caller immediately.
 
 ## 6. WTT-C1 through WTT-C6
 

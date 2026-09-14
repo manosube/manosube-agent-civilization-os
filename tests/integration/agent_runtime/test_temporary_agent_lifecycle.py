@@ -74,6 +74,27 @@ def _snapshot(store_root: Path, project_id: str) -> dict[str, str]:
     }
 
 
+def _assert_no_mutation_beyond_work_time_coordination(
+    store_root: Path, project_id: str, before: dict[str, str]
+) -> None:
+    """Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_
+    COORDINATION_REBIND``): ``start_temporary_agent`` now durably commits its own Work
+    Coordination timing chain through the Store's own orthogonal coordination ledger -- every
+    such commit lands only under this project's own ``coordination/`` directory, never under
+    ``state/``, ``events/`` or Project State's own ``records/``. This route's own "zero Store
+    mutation" guarantee is therefore "no mutation outside the orthogonal coordination ledger",
+    never widened to tolerate any other kind of write."""
+
+    after = _snapshot(store_root, project_id)
+    new_paths = set(after) - set(before)
+    changed_paths = {path for path in set(after) & set(before) if after[path] != before[path]}
+    touched = new_paths | changed_paths
+    unexpected = {path for path in touched if not path.startswith("coordination/")}
+    assert not unexpected, (
+        f"unexpected Store mutation beyond Work Coordination: {sorted(unexpected)}"
+    )
+
+
 def _advance(
     store: FileStateStore, project_id: str, genesis_state: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -121,7 +142,7 @@ def test_start_temporary_agent_boots_a_real_bound_project(tmp_path: Path) -> Non
     assert agent.boot_context.project_id == project_id
     assert agent.boot_context.project_binding_id == result["project_binding_id"]
     assert _unfreeze(agent.boot_context.current_state) == result["committed_state"]
-    assert _snapshot(store_root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store_root, project_id, before)
 
 
 def test_start_calls_boot_project_exactly_once(
@@ -190,7 +211,7 @@ def test_start_temporary_agent_makes_zero_store_mutation(tmp_path: Path) -> None
     _ = agent.boot_context
     agent.release()
 
-    assert _snapshot(store_root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store_root, project_id, before)
 
 
 # --- release lifecycle ----------------------------------------------------------------------- #
@@ -209,7 +230,7 @@ def test_release_is_idempotent_and_makes_zero_store_mutation(tmp_path: Path) -> 
     agent.release()
     agent.release()
 
-    assert _snapshot(store_root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store_root, project_id, before)
 
 
 def test_released_agent_rejects_boot_context_access(tmp_path: Path) -> None:
@@ -498,4 +519,4 @@ def test_repeated_fresh_process_starts_give_byte_equivalent_boot_context_project
     assert second.returncode == 0, second.stderr
     assert first.stdout == second.stdout
     assert first.stdout.endswith(b"\n")
-    assert _snapshot(store_root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store_root, project_id, before)

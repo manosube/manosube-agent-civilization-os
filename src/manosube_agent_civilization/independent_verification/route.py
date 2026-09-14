@@ -97,20 +97,48 @@ verification at commit time.
 Every requirement/selection/boundary/target/authority admission failure raises
 :class:`~manosube_agent_civilization.independent_verification.errors.
 VerificationRequirementError` before this route ever calls the supplied verifier, and calling
-the verifier is this route's own single side effect: no Store write, no second read beyond the
-one ``resolve_record`` provenance check per Store-owned target plus the one ``boot_project``
-authority re-verification and the one ``evaluate_verifier_selection`` Authority-owned
-selection-decision re-verification, and no exception this route catches or reclassifies once
-raised, in either direction.
+the verifier is this route's own single side effect beyond the Work Coordination timing chain
+below: no Store write, no second read beyond the one ``resolve_record`` provenance check per
+Store-owned target plus the one ``boot_project`` authority re-verification and the one
+``evaluate_verifier_selection`` Authority-owned selection-decision re-verification, and no
+exception this route catches or reclassifies once raised, in either direction.
+
+Structural Review Round 2, P84-R2-F1/F4 correction (``ADOPT_P84_BOOT_READ_ONLY_BOUNDARY_
+REBIND``): every normal invocation of this route now composes the Human Wait-Time Transparency
+vertical's own :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+with_work_time_coordination` around the entire admission/authority/verifier sequence below the
+two eager, pure-shape checks (*project_id*/*project_binding_id* identity form and
+*verification_requirement*'s own instance check -- the minimum needed to name a real
+``work_unit_ref`` before any coordination can open) -- a caller can no longer reach a genuine
+verifier invocation, nor any authority/target refusal beyond those two eager checks, without a
+durable ``work_time_coordination_open``/``..._terminal`` record pair being committed for it.
+``work_unit_ref`` is ``{"kind": "independent_verification_run", "id": verification_requirement.
+requirement_id}`` -- deterministic from a caller input this route already required, so no new
+required parameter names a work unit identity. The new *estimated_duration_lower_minutes*/
+*estimated_duration_upper_minutes*/*estimate_confidence*/*major_steps*/
+*next_progress_update_due_minutes*/*variability_factors*/*clock* parameters are all optional,
+each defaulting to this route's own canonical estimate for an Independent Verification run, so
+every existing caller's own call syntax remains valid unchanged -- the timing chain fires
+unconditionally on every call regardless of whether a caller customizes it. A genuine in-flight
+heartbeat (:meth:`~manosube_agent_civilization.work_time_transparency.adapters.ProgressReporter.
+report`) is posted immediately before the one real, potentially long-running call to the
+caller-supplied *verifier* -- the one moment this route's own real work has genuinely advanced
+past pure admission checking and is about to perform its single external side effect.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+import hashlib
 from typing import Any
 
 from manosube_agent_civilization.authority import SELECTED, evaluate_verifier_selection
 from manosube_agent_civilization.boot import boot_project
+from manosube_agent_civilization.work_time_transparency.adapters import (
+    ProgressReporter,
+    with_work_time_coordination,
+)
+from manosube_agent_civilization.work_time_transparency.clock import default_clock
 
 from .errors import VerificationRequirementError, VerifierOutputError
 from .types import (
@@ -229,6 +257,13 @@ def run_independent_verification(
     verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
     human_grant_declaration_refs: Sequence[Mapping[str, Any]],
     verifier: IndependentVerifier,
+    estimated_duration_lower_minutes: int = 0,
+    estimated_duration_upper_minutes: int = 5,
+    estimate_confidence: str = "MEDIUM",
+    major_steps: list[str] | None = None,
+    next_progress_update_due_minutes: int = 10,
+    variability_factors: str = "none",
+    clock: Callable[[], str] = default_clock,
 ) -> VerificationResult:
     """Run one explicit Independent Verification and return its one immutable result.
 
@@ -255,6 +290,13 @@ def run_independent_verification(
     only provenance is that it was, by itself, durably Store-committed, absent a real, matching
     Human Grant Declaration anchoring it (P13-R5).
 
+    Structural Review Round 2 (P84-R2-F1/F4): the admission/authority/verifier sequence below
+    the two eager, pure-shape checks (project_id/project_binding_id identity form and
+    verification_requirement's own instance check) is composed inside :func:`~manosube_agent_
+    civilization.work_time_transparency.adapters.with_work_time_coordination` -- every normal
+    invocation reaching a real verifier call, or any refusal beyond those two eager checks,
+    durably commits a Work Coordination timing record chain; see this module's own docstring.
+
     See ``08_VERIFICATION/VERIFICATION_CONTRACT.md`` §5 for the full canonical route this
     function implements, step by step.
     """
@@ -267,6 +309,80 @@ def run_independent_verification(
             "verification_requirement must be a VerificationRequirement instance, not "
             f"{type(verification_requirement)!r}"
         )
+
+    def _perform(reporter: ProgressReporter) -> VerificationResult:
+        return _run_independent_verification_body(
+            store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            verification_requirement=verification_requirement,
+            verifier_selection=verifier_selection,
+            verifier_selection_grant_refs=verifier_selection_grant_refs,
+            human_grant_declaration_refs=human_grant_declaration_refs,
+            verifier=verifier,
+            reporter=reporter,
+        )
+
+    # work_time_transparency's own identity module docstring is explicit: "one open record per
+    # work unit, ever -- a retry with a different estimate for the identical work unit collides
+    # and is refused, never silently coexists under a second id." An Independent Verification
+    # run is a repeatable action -- the identical (project_id, requirement_id) pair is routinely
+    # re-verified over a project's own lifetime, each such call a genuinely distinct real-world
+    # attempt, never a replay of an earlier one -- so requirement_id alone is not this call's own
+    # attempt identity. *_attempt_marker* (one real clock reading, taken before this call's own
+    # Work Coordination opens) makes each call's own work_unit_ref content-addressed and unique
+    # to itself, without adding any new required parameter a caller must supply.
+    _attempt_marker = clock()
+    _work_unit_id = (
+        "IVR-"
+        + hashlib.sha256(
+            f"{project_id}|{verification_requirement.requirement_id}|{_attempt_marker}".encode()
+        )
+        .hexdigest()
+        .upper()
+    )
+
+    _open_record, _terminal_record, result = with_work_time_coordination(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="INDEPENDENT_VERIFICATION",
+        work_unit_ref={
+            "kind": "independent_verification_run",
+            "id": _work_unit_id,
+        },
+        estimated_duration_lower_minutes=estimated_duration_lower_minutes,
+        estimated_duration_upper_minutes=estimated_duration_upper_minutes,
+        estimate_confidence=estimate_confidence,
+        major_steps=major_steps or ["run_independent_verification"],
+        next_progress_update_due_minutes=next_progress_update_due_minutes,
+        variability_factors=variability_factors,
+        perform=_perform,
+        clock=clock,
+    )
+    return result
+
+
+def _run_independent_verification_body(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    verification_requirement: VerificationRequirement,
+    verifier_selection: VerifierSelection,
+    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
+    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
+    verifier: IndependentVerifier,
+    reporter: ProgressReporter,
+) -> VerificationResult:
+    """The full pre-existing Independent Verification route body (every check, Boot/Authority
+    re-verification, and the one real *verifier* call), now called exclusively from inside the
+    public :func:`run_independent_verification`'s own :func:`~manosube_agent_civilization.
+    work_time_transparency.adapters.with_work_time_coordination` composition (Structural Review
+    Round 2, P84-R2-F1/F4) -- *reporter* is that coordination's own bound
+    :class:`~manosube_agent_civilization.work_time_transparency.adapters.ProgressReporter`.
+    """
+
     if not isinstance(verifier_selection, VerifierSelection):
         raise VerificationRequirementError(
             f"verifier_selection must be a VerifierSelection instance, not {type(verifier_selection)!r}"
@@ -452,6 +568,17 @@ def run_independent_verification(
         context="verifier's own declared verifier_identity vs verifier_selection.verifier_identity",
     )
 
+    # Structural Review Round 2 (P84-R2-F4): a genuine in-flight heartbeat, posted immediately
+    # before this route's own one real, potentially long-running side effect -- proof that a
+    # real, unmodified production entrypoint's own progress channel is reachable while its real
+    # work is genuinely in progress, not only from a test closure calling ProgressReporter
+    # from outside.
+    reporter.report(
+        position_kind="WORK_RUNNING",
+        current_position="invoking the selected verifier",
+        next_progress_update_due_minutes=10,
+        remaining_duration_unknown=True,
+    )
     result_payload = verifier(requirement=verification_requirement, selection=verifier_selection)
     if not isinstance(result_payload, Mapping):
         raise VerifierOutputError(f"verifier returned {result_payload!r}, not a mapping")

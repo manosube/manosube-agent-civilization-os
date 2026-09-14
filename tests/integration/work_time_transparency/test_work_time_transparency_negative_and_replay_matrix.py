@@ -229,11 +229,15 @@ def test_cross_project_substitution_a_coordination_opened_in_one_store_is_absent
     open_record = _open(store_a, world_a)
     open_id = open_record["work_time_coordination_open_id"]
     assert (
-        store_a.resolve_record(world_a["project_id"], "work_time_coordination_open", open_id)
+        store_a.resolve_coordination_record(
+            world_a["project_id"], "work_time_coordination_open", open_id
+        )
         is not None
     )
     assert (
-        store_b.resolve_record(world_b["project_id"], "work_time_coordination_open", open_id)
+        store_b.resolve_coordination_record(
+            world_b["project_id"], "work_time_coordination_open", open_id
+        )
         is None
     )
 
@@ -393,6 +397,99 @@ def test_a_late_heartbeat_past_its_own_due_deadline_is_still_accepted_and_record
     )
 
 
+def test_a_terminal_past_the_current_tips_own_deadline_is_breached_even_after_an_earlier_on_time_update(
+    tmp_path: Path,
+) -> None:
+    """Structural Review Round 2 (P84-R2-F3): one early, on-time heartbeat must never permanently
+    suppress detection of a *later* missed deadline. Open due minute 10; update at minute 5,
+    itself due minute 15 (on time); terminal at minute 30 -- 15 minutes past the update's own
+    declared deadline, with no further update in between -- must be breached."""
+
+    store, world = bound(tmp_path)
+    open_record = _open(store, world)
+    open_ref = _open_ref(open_record)
+    update = record_work_time_progress_update(
+        store,
+        **_heartbeat_kwargs(
+            world,
+            open_ref,
+            open_ref,
+            1,
+            recorded_at="2026-09-14T06:05:00Z",
+            next_progress_update_due_minutes=15,
+        ),
+    )
+    assert update["heartbeat_deadline_breached"] is False
+
+    terminal = record_work_time_terminal_notice(
+        store,
+        **_terminal_kwargs(
+            world,
+            open_ref,
+            _update_ref(update),
+            recorded_at="2026-09-14T06:30:00Z",
+        ),
+    )
+    assert terminal["actual_elapsed_minutes"] == 30
+    assert terminal["heartbeat_deadline_breached"] is True
+
+
+def test_a_terminal_at_the_exact_tip_deadline_is_not_breached(tmp_path: Path) -> None:
+    store, world = bound(tmp_path)
+    open_record = _open(store, world)
+    open_ref = _open_ref(open_record)
+    update = record_work_time_progress_update(
+        store,
+        **_heartbeat_kwargs(
+            world,
+            open_ref,
+            open_ref,
+            1,
+            recorded_at="2026-09-14T06:05:00Z",
+            next_progress_update_due_minutes=15,
+        ),
+    )
+    terminal = record_work_time_terminal_notice(
+        store,
+        **_terminal_kwargs(
+            world,
+            open_ref,
+            _update_ref(update),
+            recorded_at="2026-09-14T06:15:00Z",
+        ),
+    )
+    assert terminal["actual_elapsed_minutes"] == 15
+    assert terminal["heartbeat_deadline_breached"] is False
+
+
+def test_a_terminal_before_the_tip_deadline_is_not_breached(tmp_path: Path) -> None:
+    store, world = bound(tmp_path)
+    open_record = _open(store, world)
+    open_ref = _open_ref(open_record)
+    update = record_work_time_progress_update(
+        store,
+        **_heartbeat_kwargs(
+            world,
+            open_ref,
+            open_ref,
+            1,
+            recorded_at="2026-09-14T06:05:00Z",
+            next_progress_update_due_minutes=15,
+        ),
+    )
+    terminal = record_work_time_terminal_notice(
+        store,
+        **_terminal_kwargs(
+            world,
+            open_ref,
+            _update_ref(update),
+            recorded_at="2026-09-14T06:10:00Z",
+        ),
+    )
+    assert terminal["actual_elapsed_minutes"] == 10
+    assert terminal["heartbeat_deadline_breached"] is False
+
+
 def test_missing_heartbeat_a_terminal_notice_never_requires_any_update_to_have_been_recorded(
     tmp_path: Path,
 ) -> None:
@@ -420,7 +517,7 @@ def test_post_commit_tampering_a_hand_edited_record_no_longer_matches_its_own_st
 ) -> None:
     store, world = bound(tmp_path)
     open_record = _open(store, world)
-    resolved = store.resolve_record(
+    resolved = store.resolve_coordination_record(
         world["project_id"],
         "work_time_coordination_open",
         open_record["work_time_coordination_open_id"],
@@ -529,9 +626,129 @@ def test_mutating_caller_owned_inputs_while_boot_project_runs_never_reaches_the_
         "id": "WORK-UNIT-MUTATION-ORIGINAL-1",
     }
     assert record["major_steps"] == ["original step"]
-    resolved = store.resolve_record(
+    resolved = store.resolve_coordination_record(
         world["project_id"],
         "work_time_coordination_open",
         record["work_time_coordination_open_id"],
     )
     assert resolved == record
+
+
+# --- Structural Review Round 2 (P84-R2-F2) ---------------------------------------------------- #
+
+
+def _tampering_store(delegate: Any, *, kind: str, record_id: str, field: str, value: Any) -> Any:
+    """Wraps *delegate* so resolving exactly the named ``(kind, record_id)`` Store slot returns a
+    hand-edited body -- a genuinely committed record whose *field* no longer matches what it was
+    committed with, simulating a corrupted/hand-edited Store slot -- while every other resolve
+    passes straight through unchanged. The identical pattern
+    ``tests/integration/url_boot/test_url_boot_failure_tamper_matrix.py`` already uses for its own
+    real-boundary tamper controls."""
+
+    class _TamperedFieldStore:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(delegate, name)
+
+        def resolve_coordination_record(
+            self, project_id: str, resolved_kind: str, resolved_id: str
+        ) -> Any:
+            resolved = delegate.resolve_coordination_record(project_id, resolved_kind, resolved_id)
+            if resolved_kind != kind or resolved_id != record_id or resolved is None:
+                return resolved
+            tampered = dict(resolved)
+            tampered[field] = value
+            return tampered
+
+    return _TamperedFieldStore()
+
+
+def test_a_tampered_open_body_is_refused_through_the_real_public_boundary_with_unchanged_state_revision(
+    tmp_path: Path,
+) -> None:
+    """P84-R2-F2's own required decisive test: a hand-edited ``work_time_coordination_open`` Store
+    slot -- genuinely resolvable, just no longer matching its own stored fingerprint -- must be
+    refused by the real public route boundary itself (:func:`record_work_time_progress_update`'s
+    own ``resolve_open`` call), never merely observed by a test recomputing a fingerprint on its
+    own; and the refusal must leave ``state_revision`` unchanged (nothing was ever staged to
+    commit)."""
+
+    store, world = bound(tmp_path)
+    open_record = _open(store, world)
+    open_id = open_record["work_time_coordination_open_id"]
+    before_revision = store.load_current(world["project_id"])["state_revision"]
+
+    tampering_store = _tampering_store(
+        store,
+        kind="work_time_coordination_open",
+        record_id=open_id,
+        field="estimated_duration_upper_minutes",
+        value=999,
+    )
+    open_ref = _open_ref(open_record)
+    with pytest.raises(WorkTimeTransparencyLineageError):
+        record_work_time_progress_update(
+            tampering_store, **_heartbeat_kwargs(world, open_ref, open_ref, 1)
+        )
+    assert store.load_current(world["project_id"])["state_revision"] == before_revision
+
+
+def test_a_tampered_update_body_is_refused_through_the_real_public_boundary_with_unchanged_state_revision(
+    tmp_path: Path,
+) -> None:
+    """The identical decisive proof for a ``work_time_coordination_update`` Store slot, refused by
+    :func:`record_work_time_terminal_notice`'s own ``resolve_tip`` call when it walks forward and
+    reaches the tampered update."""
+
+    store, world = bound(tmp_path)
+    open_record = _open(store, world)
+    open_ref = _open_ref(open_record)
+    update = record_work_time_progress_update(
+        store, **_heartbeat_kwargs(world, open_ref, open_ref, 1)
+    )
+    update_id = update["work_time_coordination_update_id"]
+    before_revision = store.load_current(world["project_id"])["state_revision"]
+
+    tampering_store = _tampering_store(
+        store,
+        kind="work_time_coordination_update",
+        record_id=update_id,
+        field="current_position",
+        value="TAMPERED",
+    )
+    with pytest.raises(WorkTimeTransparencyLineageError):
+        record_work_time_terminal_notice(
+            tampering_store, **_terminal_kwargs(world, open_ref, _update_ref(update))
+        )
+    assert store.load_current(world["project_id"])["state_revision"] == before_revision
+
+
+def test_a_tampered_terminal_body_is_refused_through_the_real_public_boundary_with_unchanged_state_revision(
+    tmp_path: Path,
+) -> None:
+    """The identical decisive proof for a ``work_time_coordination_terminal`` Store slot, refused
+    by :func:`record_work_time_progress_update`'s own ``resolve_terminal_if_exists`` call -- the
+    tampered terminal is refused for its own integrity failure, not merely observed present, since
+    :func:`~manosube_agent_civilization.work_time_transparency.verify.resolve_terminal_if_exists`
+    verifies every body it resolves before ever returning it."""
+
+    store, world = bound(tmp_path)
+    open_record = _open(store, world)
+    open_ref = _open_ref(open_record)
+    terminal = record_work_time_terminal_notice(
+        store, **_terminal_kwargs(world, open_ref, open_ref)
+    )
+    terminal_id = terminal["work_time_coordination_terminal_id"]
+    before_revision = store.load_current(world["project_id"])["state_revision"]
+
+    tampering_store = _tampering_store(
+        store,
+        kind="work_time_coordination_terminal",
+        record_id=terminal_id,
+        field="explanation",
+        value="TAMPERED",
+    )
+    with pytest.raises(WorkTimeTransparencyLineageError):
+        record_work_time_progress_update(
+            tampering_store, **_heartbeat_kwargs(world, open_ref, open_ref, 1)
+        )
+    assert store.load_current(world["project_id"])["state_revision"] == before_revision

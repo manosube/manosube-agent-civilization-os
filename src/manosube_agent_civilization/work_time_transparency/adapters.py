@@ -191,16 +191,29 @@ def with_work_time_coordination[T](
             raise WorkTimeTransparencyClockError(
                 f"observed terminal time {terminal_time!r} is before opened_at {opened_at!r}"
             ) from error
-        record_work_time_terminal_notice(
-            store,
-            project_id=project_id,
-            project_binding_id=project_binding_id,
-            open_ref=open_ref,
-            predecessor_ref=reporter.tip_ref,
-            terminal_outcome="FAILED_TERMINAL",
-            explanation=f"{type(error).__name__}: {error}",
-            recorded_at=terminal_time,
-        )
+        # Structural Review Round 2 (P84-R2-F5): if persisting the FAILED_TERMINAL notice
+        # itself raises, that persistence failure must never replace *error* as the exception
+        # this function raises -- the original adapter failure is always the primary fact. The
+        # persistence failure is instead attached to *error* as a secondary diagnostic (a note,
+        # per Python's own built-in mechanism for exactly this) and set as its __cause__, so it
+        # remains fully inspectable without ever becoming the raised exception itself.
+        try:
+            record_work_time_terminal_notice(
+                store,
+                project_id=project_id,
+                project_binding_id=project_binding_id,
+                open_ref=open_ref,
+                predecessor_ref=reporter.tip_ref,
+                terminal_outcome="FAILED_TERMINAL",
+                explanation=f"{type(error).__name__}: {error}",
+                recorded_at=terminal_time,
+            )
+        except Exception as persistence_error:
+            error.add_note(
+                "work_time_transparency: terminal notice persistence also failed -- "
+                f"{type(persistence_error).__name__}: {persistence_error}"
+            )
+            raise error from persistence_error
         raise
 
     terminal_time = clock()

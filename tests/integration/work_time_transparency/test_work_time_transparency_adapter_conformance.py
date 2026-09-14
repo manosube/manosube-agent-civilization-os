@@ -107,6 +107,7 @@ from manosube_agent_civilization.multi_agent.route import open_dynamic_execution
 from manosube_agent_civilization.projection import FakeGitHubAdapter, project_to_github
 from manosube_agent_civilization.projection.identity import projection_payload_fingerprint
 from manosube_agent_civilization.store import FileStateStore
+import manosube_agent_civilization.work_time_transparency.adapters as adapters_module
 from manosube_agent_civilization.work_time_transparency.adapters import (
     ProgressReporter,
     with_work_time_coordination,
@@ -170,14 +171,14 @@ def test_boot_the_one_real_unmodified_production_entrypoint_composes_end_to_end(
     )
     assert terminal_record["terminal_outcome"] == "COMPLETED"
     assert boot_context.project_id == project_id
-    resolved_terminal = store.resolve_record(
+    resolved_terminal = store.resolve_coordination_record(
         project_id,
         "work_time_coordination_terminal",
         terminal_record["work_time_coordination_terminal_id"],
     )
     assert resolved_terminal == terminal_record
     assert (
-        store.resolve_record(
+        store.resolve_coordination_record(
             project_id, "work_time_coordination_open", open_record["work_time_coordination_open_id"]
         )
         == open_record
@@ -217,12 +218,66 @@ def test_a_failing_real_call_produces_a_failed_terminal_notice_and_the_original_
     open_id = work_time_coordination_open_id(
         project_id, {"kind": "boot_session", "id": "WORK-UNIT-ADAPTER-BOOT-FAIL-1"}
     )
-    terminal = store.resolve_record(
+    terminal = store.resolve_coordination_record(
         project_id, "work_time_coordination_terminal", work_time_coordination_terminal_id(open_id)
     )
     assert terminal is not None
     assert terminal["terminal_outcome"] == "FAILED_TERMINAL"
     assert original_exception_type.__name__ in terminal["explanation"]
+
+
+def test_a_terminal_persistence_failure_never_masks_the_original_adapter_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Structural Review Round 2 (P84-R2-F5): if persisting the FAILED_TERMINAL notice itself
+    raises, the original adapter exception must still be the one that propagates -- never
+    replaced by the persistence failure -- with the persistence failure recoverable as a
+    secondary diagnostic (an attached note and __cause__), never lost."""
+
+    store, world = bound(tmp_path)
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+
+    class _OriginalAdapterError(RuntimeError):
+        pass
+
+    class _TerminalPersistenceError(RuntimeError):
+        pass
+
+    def _perform_and_fail(reporter: ProgressReporter) -> object:
+        raise _OriginalAdapterError("the real adapter call genuinely failed")
+
+    def _failing_terminal_notice(*args: Any, **kwargs: Any) -> Any:
+        raise _TerminalPersistenceError("the Store write for the terminal notice itself failed")
+
+    monkeypatch.setattr(
+        adapters_module, "record_work_time_terminal_notice", _failing_terminal_notice
+    )
+
+    with pytest.raises(_OriginalAdapterError) as excinfo:
+        with_work_time_coordination(
+            store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            adapter_kind="BOOT",
+            work_unit_ref={"kind": "boot_session", "id": "WORK-UNIT-TERMINAL-PERSISTENCE-FAIL-1"},
+            estimated_duration_lower_minutes=0,
+            estimated_duration_upper_minutes=1,
+            estimate_confidence="HIGH",
+            major_steps=["boot"],
+            next_progress_update_due_minutes=10,
+            variability_factors="none",
+            perform=_perform_and_fail,
+            clock=_deterministic_clock(start="2026-09-14T08:20:00Z"),
+        )
+    # the primary, raised exception is genuinely the original adapter failure...
+    assert isinstance(excinfo.value, _OriginalAdapterError)
+    # ...and the terminal-persistence failure is still fully recoverable, as a secondary fact.
+    assert isinstance(excinfo.value.__cause__, _TerminalPersistenceError)
+    assert any(
+        "terminal notice persistence also failed" in note
+        for note in getattr(excinfo.value, "__notes__", [])
+    )
 
 
 @pytest.mark.parametrize("adapter_kind", ADAPTER_KINDS)
@@ -503,7 +558,9 @@ def test_change_executor_the_real_unmodified_production_entrypoint_composes_end_
     assert terminal_record["terminal_outcome"] == "COMPLETED"
     # the in-flight heartbeat genuinely committed, chained ahead of the terminal notice.
     heartbeat_id = terminal_record["predecessor_ref"]["id"]
-    heartbeat = store.resolve_record(project_id, "work_time_coordination_update", heartbeat_id)
+    heartbeat = store.resolve_coordination_record(
+        project_id, "work_time_coordination_update", heartbeat_id
+    )
     assert heartbeat is not None
     assert heartbeat["sequence_number"] == 1
 
@@ -622,7 +679,9 @@ def test_independent_verification_the_real_unmodified_production_entrypoint_comp
     assert open_record["adapter_kind"] == "INDEPENDENT_VERIFICATION"
     assert terminal_record["terminal_outcome"] == "COMPLETED"
     heartbeat_id = terminal_record["predecessor_ref"]["id"]
-    heartbeat = store.resolve_record(project_id, "work_time_coordination_update", heartbeat_id)
+    heartbeat = store.resolve_coordination_record(
+        project_id, "work_time_coordination_update", heartbeat_id
+    )
     assert heartbeat is not None
     assert heartbeat["sequence_number"] == 1
 

@@ -67,6 +67,27 @@ def _snapshot(store_root: Path, project_id: str) -> dict[str, str]:
     }
 
 
+def _assert_no_mutation_beyond_work_time_coordination(
+    store_root: Path, project_id: str, before: dict[str, str]
+) -> None:
+    """Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_
+    COORDINATION_REBIND``): ``run`` now durably commits its own Work Coordination timing chain
+    through the Store's own orthogonal coordination ledger -- every such commit lands only under
+    this project's own ``coordination/`` directory, never under ``state/``, ``events/`` or
+    Project State's own ``records/``. This route's own "zero Store mutation" guarantee is
+    therefore "no mutation outside the orthogonal coordination ledger", never widened to
+    tolerate any other kind of write."""
+
+    after = _snapshot(store_root, project_id)
+    new_paths = set(after) - set(before)
+    changed_paths = {path for path in set(after) & set(before) if after[path] != before[path]}
+    touched = new_paths | changed_paths
+    unexpected = {path for path in touched if not path.startswith("coordination/")}
+    assert not unexpected, (
+        f"unexpected Store mutation beyond Work Coordination: {sorted(unexpected)}"
+    )
+
+
 def _argv(
     store_root: Path, schema_root: Path, project_id: str, project_binding_id: str
 ) -> list[str]:
@@ -144,7 +165,7 @@ def test_cli_success_writes_nothing_anywhere_in_the_store(
     capsysbinary.readouterr()
 
     assert exit_code == 0
-    assert _snapshot(store_root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store_root, project_id, before)
 
 
 # --- required rejection proofs (§6) ------------------------------------------------------- #
@@ -455,4 +476,4 @@ def test_cli_keeps_success_emission_inside_the_failure_boundary(
     document = json.loads(err)
     assert document["error"] == "BrokenPipeError"
     assert b"Traceback" not in err
-    assert _snapshot(store_root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store_root, project_id, before)

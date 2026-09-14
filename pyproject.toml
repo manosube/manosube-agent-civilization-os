@@ -85,8 +85,20 @@ packages = ["src/manosube_agent_civilization"]
 # guard; it does not create a second file to keep in step. Without it, `evaluate()` resolved
 # a repository-relative path that does not exist once installed, and the guard -- which fails
 # closed, so it refused rather than permitted -- could not run at all.
+#
+# The canonical schema registry travels with the package too, at the wheel root (sibling of the
+# installed package directory, i.e. directly under site-packages) -- the exact location
+# `difference/validation.py`'s own `_schema_root()` already checks
+# (`module_path.parents[2] / "01_SCHEMA"`). Without this, `difference.validation.validate_record`
+# -- reached from the Work Time Transparency vertical's own schema-integrity checks
+# (Structural Review Round 2, P84-R2-F2), which every mandatory adapter's production entrypoint
+# now composes through -- raised `DifferenceValidationError("canonical schema root is
+# unavailable")` on every installed-wheel invocation outside this repository's own working tree
+# (`tests/integration/cli/test_cli_installed_command.py` first exposed this once the CLI adapter
+# began reaching that check too).
 [tool.hatch.build.targets.wheel.force-include]
 "03_BINDING/DEVELOPMENT_BINDING_POLICY.json" = "manosube_agent_civilization/development_binding/DEVELOPMENT_BINDING_POLICY.json"
+"01_SCHEMA" = "01_SCHEMA"
 
 [tool.hatch.build.targets.sdist]
 include = [
