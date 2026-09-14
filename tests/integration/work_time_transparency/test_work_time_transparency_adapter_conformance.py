@@ -39,6 +39,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import timedelta
 import itertools
+import json
 from pathlib import Path
 from typing import Any
 
@@ -482,6 +483,54 @@ def test_multi_agent_the_real_unmodified_production_entrypoint_composes_end_to_e
     assert "plan" in opened
     assert open_record["adapter_kind"] == "MULTI_AGENT"
     assert terminal_record["terminal_outcome"] == "COMPLETED"
+
+
+def test_multi_agent_nested_model_runtime_call_joins_the_outer_coordination_root(
+    tmp_path: Path,
+) -> None:
+    """Structural Review Round 3 (P84-R3-F4, ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``): the
+    real production nested call (``multi_agent.open_dynamic_execution_plan`` ->
+    ``model_runtime.open_model_work_unit``) asserts the *exact* expected coordination-root
+    topology, not merely that the call succeeds. Reading this project's own coordination ledger
+    directly (the authoritative source, independent of any Store-side cache) proves: exactly one
+    ``work_time_coordination_open`` record with ``adapter_kind == "MULTI_AGENT"`` exists, and
+    zero ``work_time_coordination_open`` records with ``adapter_kind == "MODEL_RUNTIME"`` exist
+    -- the nested nested call never opened a second, independent coordination root of its own."""
+
+    world = multi_agent_authorized_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+
+    # ``open_dynamic_execution_plan`` is the real, unmodified production entrypoint -- it
+    # already composes its own single ``with_work_time_coordination`` wrap internally (as every
+    # real caller invokes it), so this test calls it directly rather than wrapping it a second
+    # time itself, which would otherwise manufacture a second, test-only MULTI_AGENT root that
+    # no real caller ever creates.
+    opened = open_dynamic_execution_plan(
+        store,
+        agent,
+        **open_plan_kwargs(
+            world, opened_at="2026-09-14T10:30:00Z", expires_at="2026-09-14T11:30:00Z"
+        ),
+    )
+    assert "plan" in opened
+
+    ledger_path = store.root / "projects" / project_id / "coordination" / "ledger.jsonl"
+    open_entries = [
+        entry
+        for line in ledger_path.read_text(encoding="utf-8").splitlines()
+        if line
+        for entry in [json.loads(line)]
+        if entry["kind"] == "work_time_coordination_open"
+    ]
+    multi_agent_opens = [e for e in open_entries if e["body"]["adapter_kind"] == "MULTI_AGENT"]
+    model_runtime_opens = [e for e in open_entries if e["body"]["adapter_kind"] == "MODEL_RUNTIME"]
+    assert len(multi_agent_opens) == 1
+    assert model_runtime_opens == []
 
 
 # --- Change Executor ----------------------------------------------------------------------- #

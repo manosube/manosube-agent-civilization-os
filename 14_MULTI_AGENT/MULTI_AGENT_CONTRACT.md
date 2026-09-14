@@ -1367,3 +1367,18 @@ copies at this call site -- the values were always caller-detached (`_detach`'d)
 this is a typing-only tightening at the boundary, not a behavior change. See `16_WORK_TIME_
 TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §5 and `tests/integration/store/test_
 coordination_ledger.py` for the ledger's own proof.
+
+## 22. Structural Review Round 3 nested coordination ownership (P84-R3-F4,
+`ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE`)
+
+The nested call into `model_runtime.open_model_work_unit` now passes this route's own bound
+`ProgressReporter` (the same one `with_work_time_coordination` handed to `_perform`) as that
+entrypoint's new `joined_coordination` parameter, rather than letting it open a second,
+independent Work Coordination root of its own. This is the only change: `open_model_work_unit`
+itself decides, from that one parameter, whether to open its own root or join the caller's --
+this route makes no other change to how it calls it. See `11_MODEL_RUNTIME/MODEL_RUNTIME_
+CONTRACT.md` §19 and `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §15 for the
+full rationale and required decisive tests, including
+`tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py::
+test_multi_agent_nested_model_runtime_call_joins_the_outer_coordination_root`, which reads this
+project's own coordination ledger directly and asserts the exact expected topology.

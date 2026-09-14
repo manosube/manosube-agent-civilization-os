@@ -639,6 +639,80 @@ verified at that first draft; Structural Review Round 1 (`ADOPT_P84_R1_F1_F6_HUM
 TRANSPARENCY_CORRECTION`) required the corrections this document now reflects, growing the suite
 to 127 tests (§13 above cites the current state by real file and test name).
 
+## 15. Structural Review Round 3 -- coordination ledger closure (`ADOPT_P84_R3_COORDINATION_
+LEDGER_CLOSURE`)
+
+Structural Review Round 2's own orthogonal coordination ledger (§5) left four closure gaps the
+Structural Advisor identified against the live head this vertical's own Round 2 delivery reached
+(`cf3f6c079d66a92f95b3fedd0268891f41fb3502`): a caller-side resolve-then-commit sequence could
+race a concurrent writer between its own outside-lock predecessor resolve and its own commit
+(P84-R3-F1); a resolved coordination record's own materialized cache file was trusted directly,
+without re-verification against the ledger's own authoritative fact, on every resolve after the
+first (P84-R3-F2); a crash strictly mid-append could leave the ledger unreadable rather than
+recoverable (P84-R3-F3); and the real production nested call from
+`multi_agent.open_dynamic_execution_plan` into `model_runtime.open_model_work_unit` opened a
+second, independent coordination root with no defined ownership relation to the outer one
+(P84-R3-F4).
+
+**P84-R3-F1 (atomic coordination-tip admission).** `FileStateStore.commit_coordination_record`
+is replaced by `commit_coordination_record_at_tip(project_id, chain_id, kind, record_id, body, *,
+expected_predecessor)`: under the project's own single exclusive lock, it re-derives *chain_id*'s
+own actual current tip (the last ledger entry, by the ledger's own single append order, carrying
+that `chain_id`) and requires it to equal *expected_predecessor* before admitting the new entry --
+in the same atomic pass the entry is appended and materialized. A stale predecessor, resolved
+correctly before another writer's commit but no longer current by the time this call runs, is
+refused with the new `CoordinationTipConflictError`, regardless of whether the racing writes share
+the same `(kind, record_id)` -- closing the update-vs-terminal race a same-id-only conflict check
+could never see (their record ids differ by construction: `update_id` depends on
+`sequence_number`, `terminal_id` does not). `route.py`'s three public entrypoints now thread
+`open_id` as `chain_id` and their own already-resolved-and-verified `predecessor_ref` as
+`expected_predecessor` for every commit, open included (`expected_predecessor=None` for a chain's
+first entry).
+
+**P84-R3-F2 (authoritative-ledger read verification).** `resolve_coordination_record` no longer
+returns an on-disk cache file directly: every resolve re-derives this id's own unique
+authoritative ledger fact, refuses (`CorruptStoreError`) a duplicate divergent ledger entry for
+the identical `(kind, record_id)`, refuses an orphaned cache file with no ledger entry backing it
+at all, and requires the materialized cache's own bytes to equal the ledger fact's own canonical
+bytes exactly before returning it -- catching a schema-valid, internally self-consistent
+substituted cache body the pre-Round-3 design's own direct-return fast path could never detect.
+
+**P84-R3-F3 (interrupted-append recovery boundary).** The ledger append protocol assumes only
+the file's own final line can ever be a torn write (append-only, `"ab"` mode never rewrites
+earlier bytes): `_coordination_ledger_entries` silently excludes a trailing line with no
+terminating `b"\n"` rather than raising `CorruptStoreError` for the whole file, while any
+*earlier* malformed line is still genuine corruption and still refused. `_heal_coordination_
+ledger_tail` physically truncates that incomplete trailing fragment -- called as the first step
+of every coordination commit and of `recover_coordination_ledger` -- so a subsequent append can
+never silently concatenate its own new content onto a torn write.
+
+**P84-R3-F4 (nested coordination ownership).** `model_runtime.open_model_work_unit` gains one new
+optional parameter, `joined_coordination: ProgressReporter | None = None`. Every existing
+standalone caller (`joined_coordination=None`, the default) is unaffected -- it keeps opening and
+closing its own independent coordination root exactly as before. `multi_agent.
+open_dynamic_execution_plan`'s own nested call now passes its own bound `ProgressReporter` as
+`joined_coordination`: `open_model_work_unit` then opens **no** coordination root of its own at
+all, calling straight into its own body with the caller's already-open reporter. There is
+therefore only ever the one coordination root a real nested invocation actually has -- no second
+root, so no cycle between two roots and no orphan-parent substitution can ever arise, because no
+second root is ever created to reason about.
+
+**Required decisive tests (Structural Review Round 3).** `tests/integration/store/
+test_coordination_ledger.py` (22 tests): the full Round 2 suite adapted to the new atomic
+tip-guarded API, plus new coverage for a stale-predecessor refusal, a second-open-on-a-non-empty-
+chain refusal, a barrier-controlled concurrent update-vs-terminal race admitting exactly one
+winner (P84-R3-F1); a schema-valid substituted materialized cache refusal, a duplicate-divergent-
+ledger-entry refusal, a tolerated duplicate-identical-entry, an orphaned-cache refusal (P84-R3-F2);
+a torn trailing write excluded rather than treated as whole-file corruption, the next commit
+healing that torn tail before appending its own new entry, `recover_coordination_ledger` healing
+a torn tail directly, and a genuinely malformed *non*-trailing line still refused as corruption
+(P84-R3-F3). `tests/integration/work_time_transparency/
+test_work_time_transparency_adapter_conformance.py` gains one new real-production-nested-call
+topology test (P84-R3-F4) that reads this project's own coordination ledger directly and asserts
+the exact expected topology -- exactly one `work_time_coordination_open` record with
+`adapter_kind == "MULTI_AGENT"`, zero with `adapter_kind == "MODEL_RUNTIME"` -- not merely that
+the nested call succeeds.
+
 ```text
 MERGE_ALLOWED=false
 ISSUE_22_CLOSE_ALLOWED=false

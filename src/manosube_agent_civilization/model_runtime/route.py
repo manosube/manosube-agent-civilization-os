@@ -1092,6 +1092,7 @@ def open_model_work_unit(
     next_progress_update_due_minutes: int = 10,
     variability_factors: str = "none",
     work_time_coordination_clock: Callable[[], str] = default_clock,
+    joined_coordination: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     """Open one canonical, immutable, State-bound Model Work Unit and return it.
 
@@ -1117,7 +1118,21 @@ def open_model_work_unit(
     ``next_progress_update_due_minutes``/``variability_factors``/
     ``work_time_coordination_clock`` parameters are all optional, each defaulting to this route's
     own canonical estimate, so every existing caller's own call syntax remains valid unchanged.
-    """
+
+    Structural Review Round 3 (P84-R3-F4, ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``).
+    *joined_coordination* is ``None`` by default -- every existing standalone caller keeps
+    opening (and later closing) its own independent Work Coordination root, exactly as before.
+    A caller that is itself already running *inside* another adapter's own already-open
+    coordination (today, only :func:`~manosube_agent_civilization.multi_agent.route.
+    open_dynamic_execution_plan`'s own nested call) instead passes that outer coordination's own
+    bound :class:`~manosube_agent_civilization.work_time_transparency.adapters.ProgressReporter`
+    here: this call then opens **no** Work Coordination root of its own at all -- it joins the
+    caller's own already-open one, posting through the identical reporter, and this call's own
+    result is returned directly, with no independent open/terminal record ever committed. This
+    closes the nested-coordination-ownership gap by construction, not by a verified parent/child
+    reference between two roots: there is only ever the one root a human-visible nested
+    invocation actually has, so no second root, no cycle between roots, and no orphan-parent
+    substitution can ever arise, because no second root is ever created to reason about."""
 
     _require_canonical_identity("project_id", project_id)
     _require_canonical_identity("project_binding_id", project_binding_id)
@@ -1157,6 +1172,12 @@ def open_model_work_unit(
             opened_at=opened_at,
             reporter=reporter,
         )
+
+    if joined_coordination is not None:
+        # Structural Review Round 3 (P84-R3-F4): join the caller's own already-open
+        # coordination -- no independent Work Coordination root is opened or closed by this
+        # call at all, so there is only ever the one root a nested invocation actually has.
+        return _perform_open(joined_coordination)
 
     _attempt_marker = work_time_coordination_clock()
     _work_unit_id = (

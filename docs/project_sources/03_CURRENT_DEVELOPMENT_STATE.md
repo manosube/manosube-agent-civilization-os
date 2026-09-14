@@ -4632,3 +4632,96 @@ ISSUE_22_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 61. PR #84 Structural Review Round 3 -- coordination ledger closure
+(P84-R3-F1..F4, ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE) bounded addendum
+
+本節も§53〜§60と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/store/file_store.py`・
+`src/manosube_agent_civilization/work_time_transparency/`・
+`src/manosube_agent_civilization/model_runtime/route.py`・
+`src/manosube_agent_civilization/multi_agent/route.py`配下の本Round是正に対応付けるための、
+最小限の事実記録である。
+
+PR #84上で構造参謀レビュー
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5670482392`
+(4件のfinding、P84-R3-F1..F4)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5670497927`
+(`ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE`、`GOVERNING_ISSUE=#22`)が投稿された。本記録
+作成者はこれら2件を、著者login/id/association(`manosube`/OWNER)・本文一致について、実装
+開始直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#84
+DETERMINATION_ID=P84_R3_COORDINATION_LEDGER_CLOSURE (implicit in the Structural Advisor review)
+ADOPTION_ID=ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE
+STRUCTURAL_REVIEW_COMMENT_ID=5670482392
+ADOPTION_COMMENT_ID=5670497927
+PRE_ROUND_HEAD_SHA=cf3f6c079d66a92f95b3fedd0268891f41fb3502
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本Roundが是正した4件は、Round 2の直交coordination ledger自体に残っていた4つのclosure
+gapである。
+
+P84-R3-F1(atomic coordination-tip admission): `FileStateStore.commit_coordination_record`を
+`commit_coordination_record_at_tip(project_id, chain_id, kind, record_id, body, *,
+expected_predecessor)`に置き換えた。単一のexclusive lock保持下で、*chain_id*の実際の現在
+tip(そのchain_idを持つledgerの最終entry、ledger自身の単一append順で決定)を再導出し、
+*expected_predecessor*と一致することを要求してから初めて新entryを許可する -- 解決と
+コミットが別々のlock取得にまたがることは二度となく、update-vs-terminal race(異なる
+record_idを持つ2つの書き込みが同一の期限切れpredecessorを解決する場合)も、新規
+`CoordinationTipConflictError`によってatomicに拒否される。
+
+P84-R3-F2(authoritative-ledger read verification): `resolve_coordination_record`は
+materialized cache fileを直接返さなくなった。毎回、ledger自身の一意な権威的factを再導出
+し、そのcacheの実バイト列がledger factの正準バイト列と厳密に一致することを要求してから
+返す -- schema-valid・内部整合的な差し替えcache bodyも、重複した相違するledger entryも、
+backing ledger entryのないorphan cacheも、いずれも`CorruptStoreError`で拒否する。
+
+P84-R3-F3(interrupted-append recovery boundary): `_coordination_ledger_entries`は、
+ledger fileの末尾行が(このStore自身が常に書き込む)終端`b"\n"`を持たない場合、それを
+crashによる未完了の書き込みとして静かに除外する(append-onlyな`"ab"`モードでは、末尾行
+以外が壊れることは構造的にありえないため、これは正しい)。`_heal_coordination_ledger_tail`
+は、全てのcoordination commitおよび`recover_coordination_ledger`の最初のステップとして、
+その不完全な末尾断片を物理的に切り詰める -- 以降のappendが壊れた書き込みの上に新content
+を黙って連結することは二度とない。
+
+P84-R3-F4(nested coordination ownership): `model_runtime.open_model_work_unit`に新規
+optional引数`joined_coordination: ProgressReporter | None = None`を追加した。既存の
+standalone呼び出し元は全て影響を受けない(デフォルトの`None`のまま、従来通り自分自身の
+coordination rootを開閉する)。`multi_agent.open_dynamic_execution_plan`自身のnested呼び
+出しは、自らの既にopen済みの`ProgressReporter`を`joined_coordination`として渡すように
+なった -- `open_model_work_unit`はこの場合、自分自身のcoordination rootを一切開かない。
+実際のnested呼び出しが持つcoordination rootは常にただ1つであり、第二のrootが存在しない
+以上、root間のcycleもorphan-parent substitutionも構造的に発生しえない。
+
+schema変更は不要であった(3 WTT schemaファイルは既存のまま、`SCHEMA_COUNT=89`は不変)。
+
+targeted test suite(`tests/integration/store/test_coordination_ledger.py`が22 testへ全面
+書き換え -- 新規tip-guard race・cache-substitution・duplicate-ledger-entry・torn-tail
+crash injectionの各シナリオを追加、`tests/integration/work_time_transparency/
+test_work_time_transparency_adapter_conformance.py`に実本番nested-call topology test 1件
+を追加)は本記録作成者自身が独立に実行し検証済みである。`ruff check`・
+`ruff format --check`・`mypy --namespace-packages`はいずれも本Round変更ファイル全体に
+対してclean(既存baseline findingとの差分をコミット単位で確認済み -- `store/errors.py`へ
+新規error class 1件を、file_store.pyと異なりdense-styleではなく標準styleで追加すること
+でnet-new finding 0件を維持)。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。full repository test suiteの独立再実行結果
+は、本Roundの新head到達後にPR #84への最終return-evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

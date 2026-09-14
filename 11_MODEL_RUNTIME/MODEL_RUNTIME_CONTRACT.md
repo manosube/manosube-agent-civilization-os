@@ -928,3 +928,20 @@ call syntax remains valid unchanged (`multi_agent.route`'s own call sites requir
 `_live_contract(require_exact_state=True)`, only wraps around the two public entrypoints that
 already called it. See `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §5 and
 `tests/integration/store/test_coordination_ledger.py` for the ledger's own proof.
+
+## 19. Structural Review Round 3 Work Coordination hardening (P84-R3-F1/F2/F3/F4,
+`ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE`)
+
+`commit_coordination_record` is replaced by the Store's own atomically tip-guarded
+`commit_coordination_record_at_tip` (see `16_WORK_TIME_TRANSPARENCY/
+WORK_TIME_TRANSPARENCY_CONTRACT.md` §15) -- `work_time_transparency/route.py`'s own callers,
+this module included, require no call-site changes.
+
+`open_model_work_unit` gains one new optional parameter, `joined_coordination:
+work_time_transparency.adapters.ProgressReporter | None = None`. `None` (the default) is every
+existing caller's own behavior, unchanged: an independent Work Coordination root is opened and
+closed exactly as before. When `multi_agent.open_dynamic_execution_plan`'s own nested call
+supplies its own bound `ProgressReporter` as `joined_coordination`, this entrypoint opens **no**
+coordination root of its own at all -- it composes straight into its own body with the caller's
+already-open reporter, so real production nesting has one root, never two (P84-R3-F4; see
+`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §15 for the full rationale).

@@ -1278,6 +1278,10 @@ def _open_dynamic_execution_plan_body(
         next_progress_update_due_minutes=10,
         remaining_duration_unknown=True,
     )
+    # Structural Review Round 3 (P84-R3-F4, ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``):
+    # join this call's own already-open MULTI_AGENT coordination rather than letting
+    # open_model_work_unit open a second, independent coordination root of its own -- there is
+    # only ever the one root this nested invocation actually has.
     opened = open_model_work_unit(
         store,
         agent,
@@ -1288,6 +1292,7 @@ def _open_dynamic_execution_plan_body(
         boundary_ref=checked_boundary_ref,
         model_execution_grant_refs=checked_grant_refs,
         opened_at=opened_at,
+        joined_coordination=reporter,
     )
     work_unit_ref = opened["model_work_unit_ref"]
     decision = opened["model_execution_decision"]

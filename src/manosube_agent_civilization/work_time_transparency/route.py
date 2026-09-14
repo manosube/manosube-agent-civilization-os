@@ -32,19 +32,24 @@ built record (P84-R1-F3).
 
 **Structural Review Round 2 persistence rebind (P84-R2-F1/F4,
 ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND``).** This module commits every record
-through :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
-commit_coordination_record` -- the Store's own orthogonal, append-only coordination ledger --
-never through :func:`~manosube_agent_civilization.store.commit.commit_state_transition`. A
-Work Coordination commit therefore never reads or advances ``state_revision``, never touches
+through the Store's own orthogonal, append-only coordination ledger -- never through
+:func:`~manosube_agent_civilization.store.commit.commit_state_transition`. A Work Coordination
+commit therefore never reads or advances ``state_revision``, never touches
 ``semantic_fingerprint``/``lineage_head_ref``, and stages no Project-State transition: it cannot
 mutate or authorize canonical Project State, structurally, since no code path here ever reaches
-``commit_state_transition``/``store.commit`` at all. Because the ledger's own identity-keyed
-conflict check (same ``(kind, id)``, different body -> ``RecordConflictError``) is fail-closed
-and requires no Project-State Compare-And-Swap to detect a race, no CAS retry loop is needed --
-a resolve-verify-build sequence runs once per call, under this project's own Store lock held
-for the whole commit, and a genuine concurrent conflict on the identical coordination fails
-closed immediately rather than being silently retried against a moving tip.
-"""
+``commit_state_transition``/``store.commit`` at all.
+
+**Structural Review Round 3 hardening (P84-R3-F1, ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``).**
+Every commit below goes through :meth:`~manosube_agent_civilization.store.file_store.
+FileStateStore.commit_coordination_record_at_tip`, never the Round-2 chain-agnostic
+``commit_coordination_record`` this module used before -- the coordination's own ``open_id`` is
+threaded through as this call's ``chain_id``, and the caller's already-resolved-and-verified
+``open_ref``/``predecessor_ref`` is threaded through unchanged as ``expected_predecessor``. The
+Store re-derives this chain's own actual current tip and admits the new entry in one atomic pass
+under its own single exclusive lock, so a genuine concurrent writer -- even one committing under
+a completely different ``record_id`` (an Update and a Terminal Notice racing on the identical
+predecessor, P84-R3-F1's own counterexample) -- is refused atomically, never silently admitted
+because same-id-only conflict detection could not see it."""
 
 from __future__ import annotations
 
@@ -94,22 +99,31 @@ def _commit_tip_dependent(
     build: Any,
 ) -> dict[str, Any]:
     """Run *build* -- the whole resolve-lineage/verify/derive/build sequence for a Work
-    Coordination Update or Terminal Notice -- exactly once, then commit its result through the
-    Store's own orthogonal coordination ledger (Structural Review Round 2, P84-R2-F1/F4,
-    ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND``).
+    Coordination Update or Terminal Notice, returning ``(kind, record_id, record, chain_id,
+    expected_predecessor)`` -- exactly once, then commit its result atomically against
+    *chain_id*'s own current tip through the Store's own orthogonal coordination ledger
+    (Structural Review Round 2, P84-R2-F1/F4; hardened Structural Review Round 3, P84-R3-F1,
+    ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``).
 
-    No Compare-And-Swap retry loop is needed here (unlike the pre-Round-2 Project-State-commit
-    design this replaces): the ledger's own conflict check is keyed purely on this record's own
-    ``(kind, id)`` identity, not on any Project-State revision unrelated activity elsewhere could
-    advance, so nothing about this project's own coordination ledger ever goes "stale" out from
-    under a single resolve-verify-build-commit pass. A genuine concurrent writer racing on the
-    identical coordination is still caught -- and fails closed, never silently retried -- by
-    :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
-    commit_coordination_record`'s own same-id/different-body :class:`RecordConflictError`."""
+    Unlike the Round 2 design this replaces, the outside-lock resolve above is not itself the
+    race-closing check: :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
+    commit_coordination_record_at_tip` re-derives *chain_id*'s own actual current tip a second
+    time, under its own single exclusive lock, and requires it to still equal
+    *expected_predecessor* -- so a concurrent writer that committed the genuine next entry
+    between this call's own outside-lock resolve and this commit is still caught here,
+    atomically, never silently admitted."""
 
-    kind, record_id, record = build()
+    kind, record_id, record, chain_id, expected_predecessor = build()
     return cast(
-        "dict[str, Any]", store.commit_coordination_record(project_id, kind, record_id, record)
+        "dict[str, Any]",
+        store.commit_coordination_record_at_tip(
+            project_id,
+            chain_id,
+            kind,
+            record_id,
+            record,
+            expected_predecessor=expected_predecessor,
+        ),
     )
 
 
@@ -166,13 +180,16 @@ def open_work_time_coordination(
         variability_factors=variability_factors,
         opened_at=opened_at,
     )
+    open_id = record["work_time_coordination_open_id"]
     return cast(
         "dict[str, Any]",
-        store.commit_coordination_record(
+        store.commit_coordination_record_at_tip(
             project_id,
+            open_id,
             "work_time_coordination_open",
-            record["work_time_coordination_open_id"],
+            open_id,
             record,
+            expected_predecessor=None,
         ),
     )
 
@@ -216,7 +233,9 @@ def record_work_time_progress_update(
     boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
     project_binding_ref = {"kind": "project_binding", "id": boot_context.project_binding_id}
 
-    def _resolve_verify_and_build() -> tuple[str, str, dict[str, Any]]:
+    def _resolve_verify_and_build() -> tuple[
+        str, str, dict[str, Any], str, dict[str, str]
+    ]:
         open_record = resolve_open(store, project_id, open_ref)
         verify_binding_congruity(
             open_record=open_record, project_binding_id=boot_context.project_binding_id
@@ -304,6 +323,8 @@ def record_work_time_progress_update(
             "work_time_coordination_update",
             record["work_time_coordination_update_id"],
             record,
+            open_id,
+            dict(predecessor_ref),
         )
 
     return _commit_tip_dependent(store, project_id, _resolve_verify_and_build)
@@ -340,11 +361,14 @@ def record_work_time_terminal_notice(
     boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
     project_binding_ref = {"kind": "project_binding", "id": boot_context.project_binding_id}
 
-    def _resolve_verify_and_build() -> tuple[str, str, dict[str, Any]]:
+    def _resolve_verify_and_build() -> tuple[
+        str, str, dict[str, Any], str, dict[str, str]
+    ]:
         open_record = resolve_open(store, project_id, open_ref)
         verify_binding_congruity(
             open_record=open_record, project_binding_id=boot_context.project_binding_id
         )
+        open_id = open_record["work_time_coordination_open_id"]
         tip_record, tip_sequence = resolve_tip(store, project_id, open_record)
         verify_predecessor_matches(predecessor_ref=predecessor_ref, expected_record=tip_record)
         verify_monotonic_continuation(expected_record=tip_record, new_recorded_at=recorded_at)
@@ -378,6 +402,8 @@ def record_work_time_terminal_notice(
             "work_time_coordination_terminal",
             record["work_time_coordination_terminal_id"],
             record,
+            open_id,
+            dict(predecessor_ref),
         )
 
     return _commit_tip_dependent(store, project_id, _resolve_verify_and_build)

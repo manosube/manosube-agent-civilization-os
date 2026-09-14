@@ -82,6 +82,14 @@ class ProgressReporter:
 
         return self._tip_ref
 
+    @property
+    def open_ref(self) -> dict[str, str]:
+        """This coordination's own root identity (Structural Review Round 3, P84-R3-F4) -- lets
+        a nested adapter call join this same, already-open coordination instead of opening a
+        second, independent one of its own."""
+
+        return self._open_ref
+
     def report(
         self,
         *,
