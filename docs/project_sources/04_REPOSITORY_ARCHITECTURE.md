@@ -907,3 +907,61 @@ Phase 20は、このaccepted architectureにはまだ実装されていない。
 governance/kernel Difference(Issue #80、`FD-0004`、acceptance policy lineageと未宣言gate拒否)の
 kernel実装完了・受入が前提条件として必要であり、加えて専用Issue上のObjective / Boundary /
 AuthorityへのSHUKOUの明示採択が別途必要である。
+
+---
+
+# 24. Accepted architecture through FD-0004 (Issue #80)
+
+```text
+OBSERVED_AT_UTC=2026-09-14T05:45:38Z
+AS_BUILT_REF=fca6b1646bb178e945f5eaad4725bc6a3a63bf8e
+AS_BUILT_TREE_ENTRY_COUNT=810
+AS_BUILT_BLOB_COUNT=660
+AS_BUILT_DIRECTORY_COUNT=150
+AS_BUILT_TREE_TRUNCATED=false
+
+ACCEPTED_PHASE_RANGE=0..19
+FD_0004_ACCEPTANCE_POLICY_LINEAGE_ACCEPTED=true
+GOVERNING_ISSUE=#80
+MERGED_PR=#82
+PHASE_20_IMPLEMENTED=false
+```
+
+Issue #80(`FD-0004`)は、新規roadmap Phaseではなく、Phase 19完成後に発見された
+governance/kernelのDifference(Phase 19自身のAcceptance Authority/Required Evidence混同drift
+incidentへの恒久的な保護機構)であり、Phase 20実装の前提条件として別途accepted された。
+
+追加されたas-built surfaceは、`15_ACCEPTANCE_POLICY/`(`ACCEPTANCE_POLICY_CONTRACT.md`・
+`ACCEPTANCE_POLICY_INDEX.md`)、`01_SCHEMA/acceptance_policy/`の7 schema(schema count
+79→86)、`src/manosube_agent_civilization/acceptance_policy/`(`__init__.py`・`engine.py`・
+`errors.py`・`identity.py`・`route.py`・`types.py`・`validation.py`の7ファイル)、
+`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`(固定fixture`tests/fixtures/acceptance_policy_world.py`
+を含む複数テストファイル、delivery head時点で120 targeted tests)である。
+
+Acceptance Policy Lineageは独立Kernel要素ではなく(`KERNEL_ELEMENT_COUNT=8`は不変)、
+既存のStore commit経路(`store.commit.commit_state_transition`、`SINGLE_COMMITTER_REQUIRED`)
+と`development_binding.adoption_record`(Human Authority `SHUKOU`との値比較、importなし)の
+みを再利用するadapter/lineage layerである。`authority`・`evidence`・`reflow`・`difference`・
+`change_executor`のいずれもimportしない。4回のStructural Review(Round 1〜4)は、canonical
+genesis Project Binding trust root証明の欠落、Human-Authority署名payloadの部分性、adoption
+読取時のtarget再検証欠落、caller-owned入力のdetachタイミングを段階的に閉じ、Round 4で構造上の
+findingは0件となった。
+
+```text
+ACCEPTANCE_POLICY_ROLE=ACCEPTANCE_POLICY_LINEAGE_AND_UNDECLARED_GATE_REJECTION_ADAPTER
+ACCEPTANCE_POLICY_OWNER_COUNT=1
+PUBLIC_ACCEPTANCE_POLICY_ENTRY_POINT_COUNT=9
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
+STRUCTURAL_REVIEW_FINDINGS_OPEN=0
+SECOND_STATE_OWNER=false
+SECOND_AUTHORITY_OWNER=false
+SECOND_EVIDENCE_OWNER=false
+SECOND_REFLOW_OWNER=false
+SECOND_HUMAN_AUTHORITY_OWNER=false
+PARALLEL_CANONICAL_AUTHORITY=0
+CANONICAL_STATE_OWNER_COUNT=1
+```
+
+Phase 20は、このaccepted architectureにはまだ実装されていない。Phase 20実装には、Phase 20
+専用Issue上のObjective / Boundary / AuthorityへのSHUKOUの明示採択が別途必要である。

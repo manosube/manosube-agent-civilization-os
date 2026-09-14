@@ -976,3 +976,55 @@ Issue #77のcloseは、このsource-syncのmergeとresulting`main`の再観測�
 別件のIssue #80(`FD-0004`、acceptance policy lineageと未宣言gate拒否に関するgovernance/kernel
 Difference)は、本Phase 19 acceptance receiptを遡及無効化しない。Issue #80のkernel実装完了・受入
 は、Phase 20実装の前提条件として別途必要である。
+
+---
+
+# 26. FD-0004 (Issue #80) acceptance receipt
+
+FD-0004は新規roadmap Phaseではなく、governance/kernelのDifference(Phase 19自身のAcceptance
+Authority/Required Evidence混同drift incidentへの恒久的な保護機構)であり、Phase 20実装の
+前提条件として別途acceptされた。本節は既存のPhase番号付きreceipt(§4〜§25)とは区別される。
+
+| Difference | Governing Issue | Merged PR | Accepted merge SHA | Receipt class | Accepted capability |
+|---|---:|---:|---|---|---|
+| FD-0004 | [#80](https://github.com/manosube/manosube-agent-civilization-os/issues/80) | [#82](https://github.com/manosube/manosube-agent-civilization-os/pull/82) | `fca6b1646bb178e945f5eaad4725bc6a3a63bf8e` | `DIRECT_COMPLETION_RECEIPT` | Acceptance Policy Lineage and undeclared-gate rejection (closed hash-linked Human-Authority-adopted policy lineage, permanent Phase 19 incident regression fixture) |
+
+```text
+OBSERVED_AT_UTC=2026-09-14T05:45:38Z
+GOVERNING_ISSUE=#80
+DIFFERENCE_ID=FD-0004
+MERGED_PR=#82
+FD_0004_DELIVERY_HEAD=a01aaa49dfa0bfab2655138be8c913c936e406c5
+FD_0004_MERGE_PARENT_MAIN=3791831884e7419f7f2f3497666da68842b8e276
+FD_0004_MERGE_PARENT_DELIVERY=a01aaa49dfa0bfab2655138be8c913c936e406c5
+FD_0004_MERGE_SHA=fca6b1646bb178e945f5eaad4725bc6a3a63bf8e
+FD_0004_REVIEWED_TREE=856ad09dbe2230e10ea5d9cdd2d5cc6308c2f5ef
+FD_0004_MERGED_TREE=856ad09dbe2230e10ea5d9cdd2d5cc6308c2f5ef
+MERGED_EXACT_REVIEWED_HEAD=true
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+FD_0004_STRUCTURAL_REVIEW_ROUNDS=4
+FD_0004_STRUCTURAL_FINDINGS_OPEN=0
+
+TARGETED_TEST_COUNT_AT_DELIVERY_HEAD=120_PASSED
+SCHEMA_VALIDATION_AT_DELIVERY_HEAD=PASS_86_SCHEMAS
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=21637_PASSED_10_PRE_EXISTING_FAILED_11_SKIPPED
+NET_NEW_TEST_FAILURES_AT_DELIVERY_HEAD=0
+PHASE19_INCIDENT_REGRESSION_FIXTURE=PERMANENT
+
+FD_0004_IS_ROADMAP_PHASE=false
+FD_0004_IS_PHASE_19_RETROACTIVE_MODIFICATION=false
+FD_0004_IS_PHASE_20_PREREQUISITE=true
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+ISSUE_80_CLOSE_ALLOWED=false
+```
+
+merge commit`fca6b1646bb178e945f5eaad4725bc6a3a63bf8e`のfirst parentは、構造参謀・SHUKOUが
+採択したexact base `main@3791831884e7419f7f2f3497666da68842b8e276`であり、second parentは
+4回のStructural Reviewを経てfinding open 0件に到達したexact delivery head
+`a01aaa49dfa0bfab2655138be8c913c936e406c5`である。reviewed head/merge commitのtreeは同一
+(file diff 0)であることを、GitHub API独立readbackとローカル`git`の双方で確認済みである。
+
+FD-0004のkernel実装完了・受入は、Phase 20実装開始の前提条件であるが、Phase 19 acceptance
+receipt(§25)を遡及無効化しない。Issue #80のcloseは、本receiptの記録元となった
+post-merge source-sync work unitがSHUKOU mergeされ、resulting `main`がGitHub API経由で
+再観測された後にのみ許可される。
