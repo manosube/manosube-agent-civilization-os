@@ -304,14 +304,16 @@ def build_transition(
 def verify_governance_adoption_record(
     record: Any,
     *,
-    comment_url: str,
+    source_reference: dict[str, Any],
     governing_issue: int,
     adopted_ref: dict[str, Any],
     decision_owner: str,
     project_id: str,
+    project_binding_id: str,
+    decided_at: str,
     signing_key: dict[str, Any],
 ) -> dict[str, Any]:
-    """P82-R2-F1/P82-R3-F1: compose with the repository's existing, non-substitutable
+    """P82-R2-F1/P82-R3-F1/P82-R4-F2: compose with the repository's existing, non-substitutable
     Governance Adoption Record owner (``development_binding.adoption_record.evaluate_adoption_
     record``, Issue #53) rather than trusting a caller-asserted ``decision_owner``/comment-
     association string pair as sufficient Human-Authority proof on its own.
@@ -324,16 +326,20 @@ def verify_governance_adoption_record(
     work unit -- an admitted record for a *different* comment or work unit is not authority for
     *this* one.
 
-    P82-R3-F1: that alone only proves the record is an internally-consistent *claim* -- never
-    that a trusted Human Authority actually produced it, nor that it authorizes *this exact*
-    policy target rather than some other one the identical claim could be replayed against.
-    *record* must additionally carry a genuine Ed25519 ``signature``, over exactly the bound
-    payload :func:`identity.governance_adoption_authority_signing_payload` derives from this
-    adoption's own already-validated fields (never a caller-supplied restatement of them),
-    verified against *signing_key* -- the real, Store-resolved Project Binding's own
-    ``human_authority_signing_key``, never a caller-supplied key. Reuses the existing
-    ``binding.signature.verify_ed25519_signature`` primitive rather than a second verifier.
+    P82-R4-F2: *record* must additionally carry a genuine Ed25519 ``signature``, over exactly
+    the complete Human-Authority act :func:`identity.governance_adoption_authority_signing_
+    payload` derives from this adoption's own already-validated fields -- *project_id*,
+    *governing_issue*, *adopted_ref*, *decision_owner*, the complete *source_reference*, the
+    canonical *project_binding_id*, *decided_at*, and *record*'s own signature-excluded
+    :func:`identity.governance_adoption_record_core` -- never a caller-supplied restatement or
+    a narrower projection of them, so a genuine signature can never be replayed after changing
+    any one of these into a different claimed Human act. Verified against *signing_key* -- the
+    real, canonical genesis Project Binding's own ``human_authority_signing_key``, never a
+    caller-supplied key. Reuses the existing ``binding.signature.verify_ed25519_signature``
+    primitive rather than a second verifier.
     """
+
+    comment_url = source_reference["comment_url"]
 
     shaped = _require_object(record, "governance_adoption_record")
     signature = shaped.get("signature")
@@ -383,9 +389,10 @@ def verify_governance_adoption_record(
             "governing_issue": governing_issue,
             "adopted_ref": adopted_ref,
             "decision_owner": decision_owner,
-            "comment_url": shaped["comment_url"],
-            "reviewed_sha": shaped["reviewed_sha"],
-            "authorized_target_sha": shaped["authorized_target_sha"],
+            "source_reference": source_reference,
+            "governance_adoption_record_core": identity.governance_adoption_record_core(shaped),
+            "project_binding_id": project_binding_id,
+            "decided_at": decided_at,
         }
     )
     signature_value = signature.get("value")
@@ -430,11 +437,13 @@ def build_adoption(
         )
     verified_record = verify_governance_adoption_record(
         governance_adoption_record,
-        comment_url=source_reference["comment_url"],
+        source_reference=source_reference,
         governing_issue=governing_issue,
         adopted_ref=adopted_ref,
         decision_owner=decision_owner,
         project_id=project_id,
+        project_binding_id=project_binding_id,
+        decided_at=decided_at,
         signing_key=signing_key,
     )
 

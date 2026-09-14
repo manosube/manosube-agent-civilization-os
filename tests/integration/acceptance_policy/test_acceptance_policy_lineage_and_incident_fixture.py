@@ -22,6 +22,7 @@ from tests.fixtures.acceptance_policy_world import (
 from tests.fixtures.product_binding import human_authority_signing_key
 
 from manosube_agent_civilization.acceptance_policy import (
+    AcceptancePolicyValidationError,
     ConflictingPolicyReplayError,
     PolicyLineageConflictError,
     PolicyProvenanceError,
@@ -78,21 +79,21 @@ def _adopt(
     governing_issue: int = GOVERNING_ISSUE,
     path: str = "issues/80",
 ) -> dict[str, Any]:
-    comment_url = source_reference(comment_id, source_kind="AUTHORITY_ADOPTION", path=path)[
-        "comment_url"
-    ]
+    sr = source_reference(comment_id, source_kind="AUTHORITY_ADOPTION", path=path)
     return adopt_acceptance_policy_transition(
         world["store"],
         world["project_id"],
         governing_issue=governing_issue,
         adopted_ref=adopted_ref,
         decision_owner="SHUKOU",
-        source_reference=source_reference(comment_id, source_kind="AUTHORITY_ADOPTION", path=path),
+        source_reference=sr,
         governance_adoption_record=governance_adoption_record(
             project_id=world["project_id"],
             governing_issue=governing_issue,
             adopted_ref=adopted_ref,
-            comment_url=comment_url,
+            source_reference=sr,
+            project_binding_id=world["project_binding_id"],
+            decided_at=decided_at,
         ),
         project_binding_id=world["project_binding_id"],
         decided_at=decided_at,
@@ -546,7 +547,7 @@ def test_wrong_human_authority_decision_owner_refuses(tmp_path: Path) -> None:
     world = bound_world(tmp_path)
     baseline = _open_baseline(world)
     baseline_ref = _baseline_ref(baseline)
-    comment_url = source_reference("3001", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("3001", source_kind="AUTHORITY_ADOPTION")
     with pytest.raises(AcceptancePolicyValidationError):
         adopt_acceptance_policy_transition(
             world["store"],
@@ -554,12 +555,14 @@ def test_wrong_human_authority_decision_owner_refuses(tmp_path: Path) -> None:
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=baseline_ref,
             decision_owner="CLAUDE_CODE",
-            source_reference=source_reference("3001", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=baseline_ref,
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T00:00:00Z",
                 decision_owner="CLAUDE_CODE",
             ),
             project_binding_id=world["project_binding_id"],
@@ -572,9 +575,9 @@ def test_wrong_comment_author_association_refuses(tmp_path: Path) -> None:
     world = bound_world(tmp_path)
     baseline = _open_baseline(world)
     baseline_ref = _baseline_ref(baseline)
-    comment_url = source_reference(
+    sr = source_reference(
         "3002", source_kind="AUTHORITY_ADOPTION", comment_author_association="MEMBER"
-    )["comment_url"]
+    )
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         adopt_acceptance_policy_transition(
             world["store"],
@@ -582,14 +585,14 @@ def test_wrong_comment_author_association_refuses(tmp_path: Path) -> None:
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=baseline_ref,
             decision_owner="SHUKOU",
-            source_reference=source_reference(
-                "3002", source_kind="AUTHORITY_ADOPTION", comment_author_association="MEMBER"
-            ),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=baseline_ref,
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T00:00:00Z",
             ),
             project_binding_id=world["project_binding_id"],
             decided_at="2026-09-13T00:00:00Z",
@@ -651,18 +654,20 @@ def test_missing_predecessor_transition_refuses(tmp_path: Path) -> None:
         "kind": "acceptance_policy_transition",
         "id": "AP-TRANS-" + "0" * 64,
     }
-    comment_url = source_reference("7001", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("7001", source_kind="AUTHORITY_ADOPTION")
     forged_adoption = ap_engine.build_adoption(
         project_id=project_id,
         governing_issue=GOVERNING_ISSUE,
         adopted_ref=forged_transition_ref,
         decision_owner="SHUKOU",
-        source_reference=source_reference("7001", source_kind="AUTHORITY_ADOPTION"),
+        source_reference=sr,
         governance_adoption_record=governance_adoption_record(
             project_id=project_id,
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=forged_transition_ref,
-            comment_url=comment_url,
+            source_reference=sr,
+            project_binding_id=world["project_binding_id"],
+            decided_at="2026-09-13T00:00:00Z",
         ),
         project_binding_id=world["project_binding_id"],
         signing_key=human_authority_signing_key(),
@@ -963,9 +968,9 @@ def test_no_refusal_ever_advances_state_revision(tmp_path: Path) -> None:
     baseline_ref = _baseline_ref(baseline)
     revision_before = world["store"].load_current(world["project_id"])["state_revision"]
 
-    comment_url = source_reference(
+    sr = source_reference(
         "6001", source_kind="AUTHORITY_ADOPTION", comment_author_association="MEMBER"
-    )["comment_url"]
+    )
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         adopt_acceptance_policy_transition(
             world["store"],
@@ -973,14 +978,14 @@ def test_no_refusal_ever_advances_state_revision(tmp_path: Path) -> None:
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=baseline_ref,
             decision_owner="SHUKOU",
-            source_reference=source_reference(
-                "6001", source_kind="AUTHORITY_ADOPTION", comment_author_association="MEMBER"
-            ),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=baseline_ref,
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T00:00:00Z",
             ),
             project_binding_id=world["project_binding_id"],
             decided_at="2026-09-13T00:00:00Z",
@@ -1022,9 +1027,7 @@ def test_adoptions_from_a_different_governing_issue_are_excluded_from_this_linea
         ],
         committed_at="2026-09-13T00:00:00Z",
     )
-    other_comment_url = source_reference(
-        "8002", source_kind="AUTHORITY_ADOPTION", path="issues/9999"
-    )["comment_url"]
+    other_sr = source_reference("8002", source_kind="AUTHORITY_ADOPTION", path="issues/9999")
     other_baseline_ref = {
         "kind": "acceptance_policy_baseline",
         "id": other_baseline["acceptance_policy_baseline_id"],
@@ -1035,14 +1038,14 @@ def test_adoptions_from_a_different_governing_issue_are_excluded_from_this_linea
         governing_issue=other_issue,
         adopted_ref=other_baseline_ref,
         decision_owner="SHUKOU",
-        source_reference=source_reference(
-            "8002", source_kind="AUTHORITY_ADOPTION", path="issues/9999"
-        ),
+        source_reference=other_sr,
         governance_adoption_record=governance_adoption_record(
             project_id=world["project_id"],
             governing_issue=other_issue,
             adopted_ref=other_baseline_ref,
-            comment_url=other_comment_url,
+            source_reference=other_sr,
+            project_binding_id=world["project_binding_id"],
+            decided_at="2026-09-13T00:00:01Z",
         ),
         project_binding_id=world["project_binding_id"],
         decided_at="2026-09-13T00:00:01Z",
@@ -1063,18 +1066,20 @@ def test_duplicate_baseline_adoption_refuses(tmp_path: Path) -> None:
     baseline = _open_and_adopt_baseline(world)
     baseline_ref = _baseline_ref(baseline)
 
-    comment_url = source_reference("10012", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("10012", source_kind="AUTHORITY_ADOPTION")
     second_adoption = ap_engine.build_adoption(
         project_id=project_id,
         governing_issue=GOVERNING_ISSUE,
         adopted_ref=baseline_ref,
         decision_owner="SHUKOU",
-        source_reference=source_reference("10012", source_kind="AUTHORITY_ADOPTION"),
+        source_reference=sr,
         governance_adoption_record=governance_adoption_record(
             project_id=project_id,
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=baseline_ref,
-            comment_url=comment_url,
+            source_reference=sr,
+            project_binding_id=world["project_binding_id"],
+            decided_at="2026-09-11T13:00:02Z",
         ),
         project_binding_id=world["project_binding_id"],
         signing_key=human_authority_signing_key(),
@@ -1287,7 +1292,7 @@ def test_forged_owner_governance_adoption_record_refuses_before_any_commit(
 
     world = bound_world(tmp_path)
     baseline = _open_baseline(world)
-    comment_url = source_reference("20001", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("20001", source_kind="AUTHORITY_ADOPTION")
     revision_before = world["store"].load_current(world["project_id"])["state_revision"]
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         adopt_acceptance_policy_transition(
@@ -1296,12 +1301,14 @@ def test_forged_owner_governance_adoption_record_refuses_before_any_commit(
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=_baseline_ref(baseline),
             decision_owner="SHUKOU",
-            source_reference=source_reference("20001", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=_baseline_ref(baseline),
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T01:00:00Z",
                 decision_authority="CLAUDE_CODE",
             ),
             project_binding_id=world["project_binding_id"],
@@ -1321,7 +1328,7 @@ def test_forged_read_back_receipt_governance_adoption_record_refuses_before_any_
 
     world = bound_world(tmp_path)
     baseline = _open_baseline(world)
-    comment_url = source_reference("20002", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("20002", source_kind="AUTHORITY_ADOPTION")
     revision_before = world["store"].load_current(world["project_id"])["state_revision"]
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         adopt_acceptance_policy_transition(
@@ -1330,12 +1337,14 @@ def test_forged_read_back_receipt_governance_adoption_record_refuses_before_any_
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=_baseline_ref(baseline),
             decision_owner="SHUKOU",
-            source_reference=source_reference("20002", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=_baseline_ref(baseline),
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T01:00:01Z",
                 receipt_overrides={"reviewed_sha": "b" * 40},
             ),
             project_binding_id=world["project_binding_id"],
@@ -1359,6 +1368,7 @@ def test_forged_comment_governance_adoption_record_refuses_before_any_commit(
     a_different_comment_url = source_reference("9999997", source_kind="AUTHORITY_ADOPTION")[
         "comment_url"
     ]
+    sr = source_reference("20003", source_kind="AUTHORITY_ADOPTION")
     revision_before = world["store"].load_current(world["project_id"])["state_revision"]
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         adopt_acceptance_policy_transition(
@@ -1367,11 +1377,14 @@ def test_forged_comment_governance_adoption_record_refuses_before_any_commit(
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=_baseline_ref(baseline),
             decision_owner="SHUKOU",
-            source_reference=source_reference("20003", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=_baseline_ref(baseline),
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T01:00:02Z",
                 comment_url=a_different_comment_url,
             ),
             project_binding_id=world["project_binding_id"],
@@ -1391,7 +1404,7 @@ def test_forged_target_governance_adoption_record_refuses_before_any_commit(
 
     world = bound_world(tmp_path)
     baseline = _open_baseline(world)
-    comment_url = source_reference("20004", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("20004", source_kind="AUTHORITY_ADOPTION")
     revision_before = world["store"].load_current(world["project_id"])["state_revision"]
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         adopt_acceptance_policy_transition(
@@ -1400,12 +1413,14 @@ def test_forged_target_governance_adoption_record_refuses_before_any_commit(
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=_baseline_ref(baseline),
             decision_owner="SHUKOU",
-            source_reference=source_reference("20004", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE + 5000,
                 adopted_ref=_baseline_ref(baseline),
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T01:00:03Z",
             ),
             project_binding_id=world["project_binding_id"],
             decided_at="2026-09-13T01:00:03Z",
@@ -1422,7 +1437,7 @@ def test_forged_sha_governance_adoption_record_refuses_before_any_commit(tmp_pat
 
     world = bound_world(tmp_path)
     baseline = _open_baseline(world)
-    comment_url = source_reference("20005", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("20005", source_kind="AUTHORITY_ADOPTION")
     revision_before = world["store"].load_current(world["project_id"])["state_revision"]
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         adopt_acceptance_policy_transition(
@@ -1431,12 +1446,14 @@ def test_forged_sha_governance_adoption_record_refuses_before_any_commit(tmp_pat
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=_baseline_ref(baseline),
             decision_owner="SHUKOU",
-            source_reference=source_reference("20005", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=_baseline_ref(baseline),
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T01:00:04Z",
                 reviewed_sha="a" * 40,
                 authorized_target_sha="c" * 40,
             ),
@@ -1477,6 +1494,9 @@ def test_forged_repository_governance_adoption_record_refuses_before_any_commit(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=_baseline_ref(baseline),
+                source_reference=forged_source_reference,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T01:00:05Z",
                 comment_url=foreign_comment_url,
             ),
             project_binding_id=world["project_binding_id"],
@@ -1589,7 +1609,7 @@ def test_adopting_a_transition_from_a_different_work_unit_refuses_before_any_com
     )
 
     revision_before = store.load_current(project_id)["state_revision"]
-    comment_url = source_reference("21004", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("21004", source_kind="AUTHORITY_ADOPTION")
     cross_target_ref = {
         "kind": "acceptance_policy_transition",
         "id": other_transition["acceptance_policy_transition_id"],
@@ -1601,12 +1621,14 @@ def test_adopting_a_transition_from_a_different_work_unit_refuses_before_any_com
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=cross_target_ref,
             decision_owner="SHUKOU",
-            source_reference=source_reference("21004", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=project_id,
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=cross_target_ref,
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T02:00:03Z",
             ),
             project_binding_id=world["project_binding_id"],
             decided_at="2026-09-13T02:00:03Z",
@@ -2294,7 +2316,7 @@ def test_forged_signature_governance_adoption_record_refuses_before_any_commit(
     world = bound_world(tmp_path)
     baseline = _open_baseline(world)
     adopted_ref = _baseline_ref(baseline)
-    comment_url = source_reference("30101", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("30101", source_kind="AUTHORITY_ADOPTION")
     revision_before = world["store"].load_current(world["project_id"])["state_revision"]
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         adopt_acceptance_policy_transition(
@@ -2303,12 +2325,14 @@ def test_forged_signature_governance_adoption_record_refuses_before_any_commit(
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=adopted_ref,
             decision_owner="SHUKOU",
-            source_reference=source_reference("30101", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=governance_adoption_record(
                 project_id=world["project_id"],
                 governing_issue=GOVERNING_ISSUE,
                 adopted_ref=adopted_ref,
-                comment_url=comment_url,
+                source_reference=sr,
+                project_binding_id=world["project_binding_id"],
+                decided_at="2026-09-13T05:00:00Z",
                 signature_override={
                     "algorithm": "ed25519",
                     "key_id": human_authority_signing_key()["key_id"],
@@ -2337,19 +2361,41 @@ def test_a_locally_fabricated_but_internally_self_consistent_signature_refuses(
     world = bound_world(tmp_path)
     baseline = _open_baseline(world)
     adopted_ref = _baseline_ref(baseline)
-    comment_url = source_reference("30102", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("30102", source_kind="AUTHORITY_ADOPTION")
     reviewed_sha = "a" * 40
+    decided_at = "2026-09-13T05:00:01Z"
 
     attacker_key = Ed25519PrivateKey.from_private_bytes(b"\x07" * 32)
+    # the attacker's own record core, self-consistent, over which they genuinely sign --
+    # identical shape to what governance_adoption_record() itself would build.
+    attacker_record_core = {
+        "schema_version": "0.1",
+        "adoption_id": "ADOPT_TEST_FIXTURE",
+        "governing_issue": f"#{GOVERNING_ISSUE}",
+        "comment_url": sr["comment_url"],
+        "decision_authority": "SHUKOU",
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": {
+            "adoption_id": "ADOPT_TEST_FIXTURE",
+            "governing_issue": f"#{GOVERNING_ISSUE}",
+            "reviewed_sha": reviewed_sha,
+            "comment_url": sr["comment_url"],
+            "decision_authority": "SHUKOU",
+            "decision_status": "RATIFIED",
+        },
+        "reviewed_sha": reviewed_sha,
+        "authorized_target_sha": reviewed_sha,
+    }
     payload = identity.governance_adoption_authority_signing_payload(
         {
             "project_id": world["project_id"],
             "governing_issue": GOVERNING_ISSUE,
             "adopted_ref": adopted_ref,
             "decision_owner": "SHUKOU",
-            "comment_url": comment_url,
-            "reviewed_sha": reviewed_sha,
-            "authorized_target_sha": reviewed_sha,
+            "source_reference": sr,
+            "governance_adoption_record_core": attacker_record_core,
+            "project_binding_id": world["project_binding_id"],
+            "decided_at": decided_at,
         }
     )
     attacker_signature = {
@@ -2365,18 +2411,11 @@ def test_a_locally_fabricated_but_internally_self_consistent_signature_refuses(
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=adopted_ref,
             decision_owner="SHUKOU",
-            source_reference=source_reference("30102", source_kind="AUTHORITY_ADOPTION"),
-            governance_adoption_record=governance_adoption_record(
-                project_id=world["project_id"],
-                governing_issue=GOVERNING_ISSUE,
-                adopted_ref=adopted_ref,
-                comment_url=comment_url,
-                reviewed_sha=reviewed_sha,
-                signature_override=attacker_signature,
-            ),
+            source_reference=sr,
+            governance_adoption_record={**attacker_record_core, "signature": attacker_signature},
             project_binding_id=world["project_binding_id"],
-            decided_at="2026-09-13T05:00:01Z",
-            committed_at="2026-09-13T05:00:01Z",
+            decided_at=decided_at,
+            committed_at=decided_at,
         )
     revision_after = world["store"].load_current(world["project_id"])["state_revision"]
     assert revision_before == revision_after
@@ -2437,14 +2476,16 @@ def test_a_valid_signed_adoption_record_reused_unchanged_for_a_different_target_
         committed_at="2026-09-13T05:00:03Z",
     )
 
-    comment_url = source_reference("30203", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("30203", source_kind="AUTHORITY_ADOPTION")
     t1_ref = {"kind": "acceptance_policy_transition", "id": t1["acceptance_policy_transition_id"]}
     t2_ref = {"kind": "acceptance_policy_transition", "id": t2["acceptance_policy_transition_id"]}
     shared_record = governance_adoption_record(
         project_id=project_id,
         governing_issue=GOVERNING_ISSUE,
         adopted_ref=t1_ref,
-        comment_url=comment_url,
+        source_reference=sr,
+        project_binding_id=world["project_binding_id"],
+        decided_at="2026-09-13T05:00:04Z",
     )
 
     adopt_acceptance_policy_transition(
@@ -2453,7 +2494,7 @@ def test_a_valid_signed_adoption_record_reused_unchanged_for_a_different_target_
         governing_issue=GOVERNING_ISSUE,
         adopted_ref=t1_ref,
         decision_owner="SHUKOU",
-        source_reference=source_reference("30203", source_kind="AUTHORITY_ADOPTION"),
+        source_reference=sr,
         governance_adoption_record=shared_record,
         project_binding_id=world["project_binding_id"],
         decided_at="2026-09-13T05:00:04Z",
@@ -2468,7 +2509,7 @@ def test_a_valid_signed_adoption_record_reused_unchanged_for_a_different_target_
             governing_issue=GOVERNING_ISSUE,
             adopted_ref=t2_ref,
             decision_owner="SHUKOU",
-            source_reference=source_reference("30203", source_kind="AUTHORITY_ADOPTION"),
+            source_reference=sr,
             governance_adoption_record=deepcopy(shared_record),
             project_binding_id=world["project_binding_id"],
             decided_at="2026-09-13T05:00:05Z",
@@ -2645,7 +2686,7 @@ def test_full_cycle_restart_succeeds_past_unrelated_contention_and_stays_idempot
         )
 
     wrapped_store = _CompetitorInjectingStore(real_store, _inject_unrelated_competitor)
-    comment_url = source_reference("30404", source_kind="AUTHORITY_ADOPTION")["comment_url"]
+    sr = source_reference("30404", source_kind="AUTHORITY_ADOPTION")
     worker_ref = {
         "kind": "acceptance_policy_transition",
         "id": worker_transition["acceptance_policy_transition_id"],
@@ -2656,7 +2697,9 @@ def test_full_cycle_restart_succeeds_past_unrelated_contention_and_stays_idempot
         project_id=project_id,
         governing_issue=GOVERNING_ISSUE,
         adopted_ref=worker_ref,
-        comment_url=comment_url,
+        source_reference=sr,
+        project_binding_id=world["project_binding_id"],
+        decided_at="2026-09-13T06:10:03Z",
     )
     worker_adoption = adopt_acceptance_policy_transition(
         wrapped_store,
@@ -2664,7 +2707,7 @@ def test_full_cycle_restart_succeeds_past_unrelated_contention_and_stays_idempot
         governing_issue=GOVERNING_ISSUE,
         adopted_ref=worker_ref,
         decision_owner="SHUKOU",
-        source_reference=source_reference("30404", source_kind="AUTHORITY_ADOPTION"),
+        source_reference=sr,
         governance_adoption_record=worker_record,
         project_binding_id=world["project_binding_id"],
         decided_at="2026-09-13T06:10:03Z",
@@ -2755,3 +2798,684 @@ def test_preview_detaches_before_any_store_call_surviving_a_mid_call_mutation_of
     assert preview["new_blockers"] == [
         {"clause_id": _GATE_CLAUSE_ID, "blocking_effect_field": "merge"}
     ]
+
+
+# --- Structural Review Round 4 (PR #82, P82-R4-F1..F4) -------------------------------------- #
+
+
+def test_a_second_project_binding_under_the_same_project_label_with_an_attacker_key_refuses(
+    tmp_path: Path,
+) -> None:
+    """P82-R4-F1: an additional, internally-valid ``project_binding`` record -- committed
+    under this project's own namespace, but never part of its own ``TX-GENESIS`` manifest --
+    carrying an attacker-controlled ``human_authority_signing_key``, is never selected as the
+    trusted signing authority merely because a caller names its own ``project_binding_id``.
+    The adoption below is *fully* self-consistent: genuinely signed by the attacker's own
+    private key, over exactly the bound payload this package would recompute, naming the
+    attacker's own real, resolvable, schema-valid, identity-verified ``project_binding_id`` --
+    everything a resolver that selected by caller choice would accept. It still refuses,
+    because the trusted signing key is derived only from the project's own genesis manifest
+    membership, never from this caller-supplied id."""
+
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    from tests.fixtures.product_binding import bind_project_kwargs
+
+    from manosube_agent_civilization.binding.engine import assemble_project_binding
+
+    world = bound_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    baseline = _open_baseline(world)
+    adopted_ref = _baseline_ref(baseline)
+
+    attacker_private_key = Ed25519PrivateKey.from_private_bytes(b"\x09" * 32)
+    attacker_public_bytes = attacker_private_key.public_key().public_bytes(
+        encoding=Encoding.Raw, format=PublicFormat.Raw
+    )
+    attacker_signing_key = {
+        "algorithm": "ed25519",
+        "key_id": "AUTH-KEY-ATTACKER",
+        "public_key": attacker_public_bytes.hex(),
+    }
+
+    kwargs = bind_project_kwargs()
+    attacker_binding = assemble_project_binding(
+        project_id=project_id,
+        objective_revision_ref={
+            "kind": "objective_revision",
+            "id": kwargs["objective_revision"]["objective_revision_id"],
+        },
+        boundary=kwargs["boundary"],
+        authority_policy_ref=kwargs["authority_policy_ref"],
+        source_registrations=kwargs["source_registrations"],
+        command_policy=kwargs["command_policy"],
+        secret_exclusion_policy=kwargs["secret_exclusion_policy"],
+        human_authority_ref=kwargs["human_authority_ref"],
+        human_authority_signing_key=attacker_signing_key,
+        bound_at="2026-09-13T07:00:00Z",
+    )
+    # a real, resolvable, schema-valid, identity-verified record under this project's own
+    # namespace -- but never through TX-GENESIS, and never selected by this package's own
+    # trust-root derivation, which reads only the genesis manifest's own membership.
+    ap_route._commit_one_record(
+        store,
+        project_id,
+        "project_binding",
+        attacker_binding["project_binding_id"],
+        attacker_binding,
+        "2026-09-13T07:00:00Z",
+    )
+
+    sr = source_reference("40001", source_kind="AUTHORITY_ADOPTION")
+    reviewed_sha = "a" * 40
+    decided_at = "2026-09-13T07:00:01Z"
+    record_core = {
+        "schema_version": "0.1",
+        "adoption_id": "ADOPT_ATTACKER",
+        "governing_issue": f"#{GOVERNING_ISSUE}",
+        "comment_url": sr["comment_url"],
+        "decision_authority": "SHUKOU",
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": {
+            "adoption_id": "ADOPT_ATTACKER",
+            "governing_issue": f"#{GOVERNING_ISSUE}",
+            "reviewed_sha": reviewed_sha,
+            "comment_url": sr["comment_url"],
+            "decision_authority": "SHUKOU",
+            "decision_status": "RATIFIED",
+        },
+        "reviewed_sha": reviewed_sha,
+        "authorized_target_sha": reviewed_sha,
+    }
+    payload = identity.governance_adoption_authority_signing_payload(
+        {
+            "project_id": project_id,
+            "governing_issue": GOVERNING_ISSUE,
+            "adopted_ref": adopted_ref,
+            "decision_owner": "SHUKOU",
+            "source_reference": sr,
+            "governance_adoption_record_core": record_core,
+            "project_binding_id": attacker_binding["project_binding_id"],
+            "decided_at": decided_at,
+        }
+    )
+    attacker_signature = {
+        "algorithm": "ed25519",
+        "key_id": attacker_signing_key["key_id"],
+        "value": attacker_private_key.sign(payload).hex(),
+    }
+    forged_record = {**record_core, "signature": attacker_signature}
+
+    revision_before = store.load_current(project_id)["state_revision"]
+    with pytest.raises(PolicyProvenanceError):
+        adopt_acceptance_policy_transition(
+            store,
+            project_id,
+            governing_issue=GOVERNING_ISSUE,
+            adopted_ref=adopted_ref,
+            decision_owner="SHUKOU",
+            source_reference=sr,
+            governance_adoption_record=forged_record,
+            project_binding_id=attacker_binding["project_binding_id"],
+            decided_at=decided_at,
+            committed_at=decided_at,
+        )
+    revision_after = store.load_current(project_id)["state_revision"]
+    assert revision_before == revision_after
+
+
+def test_a_genuine_signature_cannot_be_reused_after_mutating_the_gars_own_identity_project_binding_id_source_reference_or_decided_at(
+    tmp_path: Path,
+) -> None:
+    """P82-R4-F2: the signed Human-Authority payload binds the complete act -- the Governance
+    Adoption Record's own ``adoption_id``/receipt identity, this adoption's own
+    ``project_binding_id``, its complete ``source_reference``, and ``decided_at`` -- not merely
+    Round 3's narrower comment/reviewed/authorized-target-only projection. Each of the four
+    mutations below leaves a genuine signature standing but changes one field the signed
+    payload now covers; every one refuses."""
+
+    world = bound_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    baseline = _open_baseline(world)
+    adopted_ref = _baseline_ref(baseline)
+    project_binding_id = world["project_binding_id"]
+
+    def _attempt(
+        *,
+        comment_id: str,
+        decided_at: str,
+        mutate_record: Any = None,
+        record_project_binding_id: str | None = None,
+        record_decided_at: str | None = None,
+        record_source_kind: str | None = None,
+    ) -> None:
+        sr = source_reference(comment_id, source_kind="AUTHORITY_ADOPTION")
+        signing_source_reference = (
+            {**sr, "source_kind": record_source_kind} if record_source_kind is not None else sr
+        )
+        record = governance_adoption_record(
+            project_id=project_id,
+            governing_issue=GOVERNING_ISSUE,
+            adopted_ref=adopted_ref,
+            source_reference=signing_source_reference,
+            project_binding_id=(
+                record_project_binding_id
+                if record_project_binding_id is not None
+                else project_binding_id
+            ),
+            decided_at=record_decided_at if record_decided_at is not None else decided_at,
+        )
+        if mutate_record is not None:
+            record = mutate_record(deepcopy(record))
+        revision_before = store.load_current(project_id)["state_revision"]
+        with pytest.raises(UnauthorizedPolicyAdoptionError):
+            adopt_acceptance_policy_transition(
+                store,
+                project_id,
+                governing_issue=GOVERNING_ISSUE,
+                adopted_ref=adopted_ref,
+                decision_owner="SHUKOU",
+                source_reference=sr,
+                governance_adoption_record=record,
+                project_binding_id=project_binding_id,
+                decided_at=decided_at,
+                committed_at=decided_at,
+            )
+        revision_after = store.load_current(project_id)["state_revision"]
+        assert revision_before == revision_after
+
+    def _mutate_adoption_id_and_receipt(record: dict[str, Any]) -> dict[str, Any]:
+        # the record's own adoption_id/receipt mutated *after* it was genuinely signed --
+        # still internally self-consistent (receipt mutated alongside adoption_id, so
+        # evaluate_adoption_record itself would still admit it), but no longer the exact
+        # content the signature was produced over.
+        record["adoption_id"] = "ADOPT_MUTATED"
+        record["api_read_back_receipt"] = {
+            **record["api_read_back_receipt"],
+            "adoption_id": "ADOPT_MUTATED",
+        }
+        return record
+
+    # the record's own adoption_id/receipt identity was mutated after signing.
+    _attempt(
+        comment_id="40101",
+        decided_at="2026-09-13T07:10:00Z",
+        mutate_record=_mutate_adoption_id_and_receipt,
+    )
+    # the record was genuinely signed for a *different* project_binding_id than this
+    # adoption's own real, canonical one.
+    _attempt(
+        comment_id="40102",
+        decided_at="2026-09-13T07:10:01Z",
+        record_project_binding_id="PROJBIND-" + "9" * 64,
+    )
+    # the record was genuinely signed for a *different* decided_at than this adoption's own.
+    _attempt(
+        comment_id="40103",
+        decided_at="2026-09-13T07:10:02Z",
+        record_decided_at="2026-01-01T00:00:00Z",
+    )
+    # the record was genuinely signed for a source_reference carrying the identical
+    # comment_url (so the record's own embedded comment_url field still agrees) but
+    # different other source metadata than this adoption's own complete source_reference.
+    _attempt(
+        comment_id="40104",
+        decided_at="2026-09-13T07:10:03Z",
+        record_source_kind="ORIGINAL_ISSUE",
+    )
+
+
+def test_resolve_and_verify_adoption_refuses_when_the_adopted_target_is_missing(
+    tmp_path: Path,
+) -> None:
+    """P82-R4-F3: ``resolve_and_verify_adoption`` re-resolves *adopted_ref* itself, not merely
+    the Adoption's own schema/id/fingerprint/signature -- a cryptographically valid Adoption
+    whose own referenced Baseline was never committed still refuses on direct read."""
+
+    world = bound_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+
+    missing_baseline_ref = {
+        "kind": "acceptance_policy_baseline",
+        "id": "AP-BASE-" + "0" * 64,
+    }
+    sr = source_reference("40201", source_kind="AUTHORITY_ADOPTION")
+    forged_adoption = ap_engine.build_adoption(
+        project_id=project_id,
+        governing_issue=GOVERNING_ISSUE,
+        adopted_ref=missing_baseline_ref,
+        decision_owner="SHUKOU",
+        source_reference=sr,
+        governance_adoption_record=governance_adoption_record(
+            project_id=project_id,
+            governing_issue=GOVERNING_ISSUE,
+            adopted_ref=missing_baseline_ref,
+            source_reference=sr,
+            project_binding_id=world["project_binding_id"],
+            decided_at="2026-09-13T07:20:00Z",
+        ),
+        project_binding_id=world["project_binding_id"],
+        signing_key=human_authority_signing_key(),
+        decided_at="2026-09-13T07:20:00Z",
+    )
+    ap_route._commit_one_record(
+        store,
+        project_id,
+        "acceptance_policy_adoption",
+        forged_adoption["acceptance_policy_adoption_id"],
+        forged_adoption,
+        "2026-09-13T07:20:00Z",
+    )
+    with pytest.raises(PolicyProvenanceError):
+        resolve_and_verify_adoption(
+            store, project_id, forged_adoption["acceptance_policy_adoption_id"]
+        )
+
+
+def test_resolve_and_verify_adoption_refuses_when_the_adopted_target_is_schema_invalid(
+    tmp_path: Path,
+) -> None:
+    """P82-R4-F3: an Adoption whose own referenced Baseline genuinely resolves, but is itself
+    schema-invalid (committed by bypassing this package's own construction boundary, exactly
+    as ``test_a_malformed_record_on_disk_refuses_at_resolve_time_not_only_at_commit_time``
+    constructs its own malformed baseline), still refuses on direct
+    ``resolve_and_verify_adoption`` -- never only when someone separately resolves the
+    baseline on its own."""
+
+    world = bound_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+
+    malformed_baseline = ap_engine.build_baseline(
+        project_id=project_id,
+        governing_issue=GOVERNING_ISSUE,
+        source_reference=source_reference("40202", source_kind="ORIGINAL_ISSUE"),
+        clauses=[
+            clause(
+                _ACTIONS_CLAUSE_ID,
+                policy_class="AUTHORITY",
+                project_id=project_id,
+                existed_in_original_contract=True,
+            )
+        ],
+    )
+    malformed_baseline["unexpected_extra_field"] = "not part of the schema"
+    ap_route._commit_one_record(
+        store,
+        project_id,
+        "acceptance_policy_baseline",
+        malformed_baseline["acceptance_policy_baseline_id"],
+        malformed_baseline,
+        "2026-09-13T07:20:01Z",
+    )
+    malformed_baseline_ref = {
+        "kind": "acceptance_policy_baseline",
+        "id": malformed_baseline["acceptance_policy_baseline_id"],
+    }
+    sr = source_reference("40203", source_kind="AUTHORITY_ADOPTION")
+    forged_adoption = ap_engine.build_adoption(
+        project_id=project_id,
+        governing_issue=GOVERNING_ISSUE,
+        adopted_ref=malformed_baseline_ref,
+        decision_owner="SHUKOU",
+        source_reference=sr,
+        governance_adoption_record=governance_adoption_record(
+            project_id=project_id,
+            governing_issue=GOVERNING_ISSUE,
+            adopted_ref=malformed_baseline_ref,
+            source_reference=sr,
+            project_binding_id=world["project_binding_id"],
+            decided_at="2026-09-13T07:20:02Z",
+        ),
+        project_binding_id=world["project_binding_id"],
+        signing_key=human_authority_signing_key(),
+        decided_at="2026-09-13T07:20:02Z",
+    )
+    ap_route._commit_one_record(
+        store,
+        project_id,
+        "acceptance_policy_adoption",
+        forged_adoption["acceptance_policy_adoption_id"],
+        forged_adoption,
+        "2026-09-13T07:20:02Z",
+    )
+    with pytest.raises(AcceptancePolicyValidationError):
+        resolve_and_verify_adoption(
+            store, project_id, forged_adoption["acceptance_policy_adoption_id"]
+        )
+
+
+def test_resolve_and_verify_adoption_refuses_when_the_adopted_target_is_a_different_work_unit(
+    tmp_path: Path,
+) -> None:
+    """P82-R4-F3: an Adoption whose own ``governing_issue`` names this work unit, but whose
+    ``adopted_ref`` resolves to a Baseline genuinely committed for a *different* work unit,
+    refuses on direct ``resolve_and_verify_adoption`` -- the cross-work-unit check is part of
+    re-resolving the target, not merely a side effect of effective-policy folding."""
+
+    other_issue = GOVERNING_ISSUE + 9000
+    world = bound_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+
+    other_baseline = open_acceptance_policy_baseline(
+        store,
+        project_id,
+        governing_issue=other_issue,
+        source_reference=source_reference(
+            "40204", source_kind="ORIGINAL_ISSUE", path="issues/9997"
+        ),
+        clauses=[
+            clause(
+                "CROSS_WORK_UNIT_CLAUSE",
+                policy_class="AUTHORITY",
+                project_id=project_id,
+                existed_in_original_contract=True,
+            )
+        ],
+        committed_at="2026-09-13T07:20:03Z",
+    )
+    other_baseline_ref = {
+        "kind": "acceptance_policy_baseline",
+        "id": other_baseline["acceptance_policy_baseline_id"],
+    }
+    sr = source_reference("40205", source_kind="AUTHORITY_ADOPTION")
+    forged_adoption = ap_engine.build_adoption(
+        project_id=project_id,
+        governing_issue=GOVERNING_ISSUE,
+        adopted_ref=other_baseline_ref,
+        decision_owner="SHUKOU",
+        source_reference=sr,
+        governance_adoption_record=governance_adoption_record(
+            project_id=project_id,
+            governing_issue=GOVERNING_ISSUE,
+            adopted_ref=other_baseline_ref,
+            source_reference=sr,
+            project_binding_id=world["project_binding_id"],
+            decided_at="2026-09-13T07:20:04Z",
+        ),
+        project_binding_id=world["project_binding_id"],
+        signing_key=human_authority_signing_key(),
+        decided_at="2026-09-13T07:20:04Z",
+    )
+    ap_route._commit_one_record(
+        store,
+        project_id,
+        "acceptance_policy_adoption",
+        forged_adoption["acceptance_policy_adoption_id"],
+        forged_adoption,
+        "2026-09-13T07:20:04Z",
+    )
+    with pytest.raises(PolicyLineageConflictError):
+        resolve_and_verify_adoption(
+            store, project_id, forged_adoption["acceptance_policy_adoption_id"]
+        )
+
+
+def test_resolve_and_verify_adoption_refuses_when_a_transitions_own_baseline_lineage_is_missing(
+    tmp_path: Path,
+) -> None:
+    """P82-R4-F3: for a Transition target, its own canonical Baseline lineage is
+    independently resolved and reproduced too -- an Adoption naming a Transition whose own
+    ``baseline_ref`` has been tampered to point at a Baseline that was never committed
+    refuses on direct ``resolve_and_verify_adoption``."""
+
+    world = bound_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    baseline = _open_and_adopt_baseline(world)
+    baseline_ref = _baseline_ref(baseline)
+
+    proposed = clause(
+        _GATE_CLAUSE_ID,
+        policy_class="REQUIRED_EVIDENCE",
+        project_id=project_id,
+        existed_in_original_contract=False,
+        merge=True,
+    )
+    real_transition = propose_acceptance_policy_transition(
+        store,
+        project_id,
+        governing_issue=GOVERNING_ISSUE,
+        baseline_ref=baseline_ref,
+        clause_id=_GATE_CLAUSE_ID,
+        policy_operation="ADD",
+        proposed_by="STRUCTURAL_ADVISOR",
+        proposed_clause=proposed,
+        source_reference=source_reference("40206", source_kind="STRUCTURAL_REVIEW"),
+        rollback_condition="r",
+        committed_at="2026-09-13T07:20:05Z",
+    )
+    tampered_transition = deepcopy(real_transition)
+    tampered_transition["baseline_ref"] = {
+        "kind": "acceptance_policy_baseline",
+        "id": "AP-BASE-" + "7" * 64,
+    }
+    tampered_transition["transition_semantic_fingerprint"] = (
+        identity.transition_semantic_fingerprint(tampered_transition)
+    )
+    tampered_transition["acceptance_policy_transition_id"] = identity.transition_id(
+        tampered_transition
+    )
+    ap_route._commit_one_record(
+        store,
+        project_id,
+        "acceptance_policy_transition",
+        tampered_transition["acceptance_policy_transition_id"],
+        tampered_transition,
+        "2026-09-13T07:20:06Z",
+    )
+    tampered_transition_ref = {
+        "kind": "acceptance_policy_transition",
+        "id": tampered_transition["acceptance_policy_transition_id"],
+    }
+    sr = source_reference("40207", source_kind="AUTHORITY_ADOPTION")
+    forged_adoption = ap_engine.build_adoption(
+        project_id=project_id,
+        governing_issue=GOVERNING_ISSUE,
+        adopted_ref=tampered_transition_ref,
+        decision_owner="SHUKOU",
+        source_reference=sr,
+        governance_adoption_record=governance_adoption_record(
+            project_id=project_id,
+            governing_issue=GOVERNING_ISSUE,
+            adopted_ref=tampered_transition_ref,
+            source_reference=sr,
+            project_binding_id=world["project_binding_id"],
+            decided_at="2026-09-13T07:20:07Z",
+        ),
+        project_binding_id=world["project_binding_id"],
+        signing_key=human_authority_signing_key(),
+        decided_at="2026-09-13T07:20:07Z",
+    )
+    ap_route._commit_one_record(
+        store,
+        project_id,
+        "acceptance_policy_adoption",
+        forged_adoption["acceptance_policy_adoption_id"],
+        forged_adoption,
+        "2026-09-13T07:20:07Z",
+    )
+    with pytest.raises(PolicyProvenanceError):
+        resolve_and_verify_adoption(
+            store, project_id, forged_adoption["acceptance_policy_adoption_id"]
+        )
+
+
+class _FirstLoadMutatingStore:
+    """P82-R4-F4: a Store wrapper whose ``load_current`` -- the literal first Store call
+    ``adopt_acceptance_policy_transition``'s own retry loop makes -- mutates the caller's
+    original, still-retained ``adopted_ref``/``source_reference``/``governance_adoption_
+    record`` objects in place, once, before delegating to the real Store. Used to prove the
+    adoption boundary never observes that mutation: only the values already detached as this
+    function's own literal first operations, before ``_require_source_reference`` or any
+    Store call at all, are ever built, simulated, or committed."""
+
+    def __init__(self, real_store: Any, on_first_load_current: Any) -> None:
+        self._real_store = real_store
+        self._on_first_load_current = on_first_load_current
+        self._triggered = False
+
+    def load_current(self, *args: Any, **kwargs: Any) -> Any:
+        if not self._triggered:
+            self._triggered = True
+            self._on_first_load_current()
+        return self._real_store.load_current(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real_store, name)
+
+
+def test_adopt_detaches_all_three_caller_owned_inputs_before_any_store_call_surviving_a_mid_call_mutation(
+    tmp_path: Path,
+) -> None:
+    """P82-R4-F4: ``adopted_ref``, ``source_reference``, and ``governance_adoption_record``
+    are detached (deep-copied) as ``adopt_acceptance_policy_transition``'s own literal first
+    operations. Proven here by mutating the caller's *original*, still-retained objects for
+    all three in place, from inside a Store hook that fires during ``load_current`` -- this
+    function's own first Store call, deep inside its retry loop -- to a different, fully
+    valid, correctly re-signed target B. The adoption actually committed still names the
+    original target A; B's own adoption is never committed at all."""
+
+    world = bound_world(tmp_path)
+    real_store = world["store"]
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+    baseline = _open_and_adopt_baseline(world)
+    baseline_ref = _baseline_ref(baseline)
+
+    original_clause_id = "MUTATION_TARGET_ORIGINAL"
+    substituted_clause_id = "MUTATION_TARGET_SUBSTITUTED"
+    t_original = propose_acceptance_policy_transition(
+        real_store,
+        project_id,
+        governing_issue=GOVERNING_ISSUE,
+        baseline_ref=baseline_ref,
+        clause_id=original_clause_id,
+        policy_operation="ADD",
+        proposed_by="STRUCTURAL_ADVISOR",
+        proposed_clause=clause(
+            original_clause_id,
+            policy_class="REQUIRED_EVIDENCE",
+            project_id=project_id,
+            existed_in_original_contract=False,
+        ),
+        source_reference=source_reference("40301", source_kind="STRUCTURAL_REVIEW"),
+        rollback_condition="r",
+        committed_at="2026-09-13T07:30:00Z",
+    )
+    t_substituted = propose_acceptance_policy_transition(
+        real_store,
+        project_id,
+        governing_issue=GOVERNING_ISSUE,
+        baseline_ref=baseline_ref,
+        clause_id=substituted_clause_id,
+        policy_operation="ADD",
+        proposed_by="STRUCTURAL_ADVISOR",
+        proposed_clause=clause(
+            substituted_clause_id,
+            policy_class="REQUIRED_EVIDENCE",
+            project_id=project_id,
+            existed_in_original_contract=False,
+        ),
+        source_reference=source_reference("40302", source_kind="STRUCTURAL_REVIEW"),
+        rollback_condition="r",
+        committed_at="2026-09-13T07:30:01Z",
+    )
+
+    original_adopted_ref = {
+        "kind": "acceptance_policy_transition",
+        "id": t_original["acceptance_policy_transition_id"],
+    }
+    original_sr = source_reference("40303", source_kind="AUTHORITY_ADOPTION")
+    original_decided_at = "2026-09-13T07:30:02Z"
+    original_record = governance_adoption_record(
+        project_id=project_id,
+        governing_issue=GOVERNING_ISSUE,
+        adopted_ref=original_adopted_ref,
+        source_reference=original_sr,
+        project_binding_id=project_binding_id,
+        decided_at=original_decided_at,
+    )
+
+    substituted_adopted_ref = {
+        "kind": "acceptance_policy_transition",
+        "id": t_substituted["acceptance_policy_transition_id"],
+    }
+    substituted_sr = source_reference("40304", source_kind="AUTHORITY_ADOPTION")
+    substituted_decided_at = "2026-09-13T07:30:03Z"
+    substituted_record = governance_adoption_record(
+        project_id=project_id,
+        governing_issue=GOVERNING_ISSUE,
+        adopted_ref=substituted_adopted_ref,
+        source_reference=substituted_sr,
+        project_binding_id=project_binding_id,
+        decided_at=substituted_decided_at,
+    )
+    substituted_adoption_preview = ap_engine.build_adoption(
+        project_id=project_id,
+        governing_issue=GOVERNING_ISSUE,
+        adopted_ref=substituted_adopted_ref,
+        decision_owner="SHUKOU",
+        source_reference=substituted_sr,
+        governance_adoption_record=substituted_record,
+        project_binding_id=project_binding_id,
+        signing_key=human_authority_signing_key(),
+        decided_at=substituted_decided_at,
+    )
+
+    def _substitute_b_for_a() -> None:
+        # a mid-call mutation of the caller's own retained objects -- never the already-
+        # detached copies, if the fix is correct.
+        original_adopted_ref.clear()
+        original_adopted_ref.update(substituted_adopted_ref)
+        original_sr.clear()
+        original_sr.update(substituted_sr)
+        original_record.clear()
+        original_record.update(substituted_record)
+
+    wrapped_store = _FirstLoadMutatingStore(real_store, _substitute_b_for_a)
+
+    committed_adoption = adopt_acceptance_policy_transition(
+        wrapped_store,
+        project_id,
+        governing_issue=GOVERNING_ISSUE,
+        adopted_ref=original_adopted_ref,
+        decision_owner="SHUKOU",
+        source_reference=original_sr,
+        governance_adoption_record=original_record,
+        project_binding_id=project_binding_id,
+        decided_at=original_decided_at,
+        committed_at=original_decided_at,
+    )
+
+    # the hook genuinely fired and genuinely corrupted the caller's own retained objects --
+    # otherwise this test would be vacuous.
+    assert original_adopted_ref == substituted_adopted_ref
+    assert original_sr == substituted_sr
+    assert original_record == substituted_record
+
+    # the adoption actually committed still names the original target A, never B.
+    assert committed_adoption["adopted_ref"] == {
+        "kind": "acceptance_policy_transition",
+        "id": t_original["acceptance_policy_transition_id"],
+    }
+    assert committed_adoption["source_reference"]["comment_id"] == "40303"
+
+    # B's own adoption -- fully valid, and would have committed cleanly on its own -- was
+    # never committed at all.
+    assert (
+        real_store.resolve_record(
+            project_id,
+            "acceptance_policy_adoption",
+            substituted_adoption_preview["acceptance_policy_adoption_id"],
+        )
+        is None
+    )
+
+    view = resolve_and_verify_effective_policy(real_store, project_id, baseline_ref)
+    effective_clause_ids = {c["clause_id"] for c in view["effective_clauses"]}
+    assert original_clause_id in effective_clause_ids
+    assert substituted_clause_id not in effective_clause_ids

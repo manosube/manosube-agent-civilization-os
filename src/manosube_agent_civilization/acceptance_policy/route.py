@@ -11,6 +11,12 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, cast
 
+from manosube_agent_civilization.binding import (
+    BindingIdentityError,
+    BindingValidationError,
+    identity as binding_identity,
+    validation as binding_validation,
+)
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.commit import commit_state_transition
@@ -46,6 +52,12 @@ _ADOPTION_KIND = "acceptance_policy_adoption"
 #: protection against genuine, unrelated contention only.
 _MAX_COMMIT_RETRIES = 8
 
+#: The one genesis transaction identity every ``FileStateStore.initialize`` call stages
+#: and promotes records under -- the identical transaction id
+#: ``binding.route._read_committed_genesis_manifest_keys`` already reads through the same
+#: public ``resolve_transaction_manifest`` this module reuses below (P82-R4-F1).
+_GENESIS_TRANSACTION_ID = "TX-GENESIS"
+
 
 def _require_source_reference(source_reference: Any) -> dict[str, Any]:
     if not isinstance(source_reference, dict):
@@ -71,26 +83,75 @@ def _require_source_reference(source_reference: Any) -> dict[str, Any]:
     return source_reference
 
 
+def _resolve_canonical_genesis_project_binding(store: Any, project_id: str) -> dict[str, Any]:
+    """P82-R4-F1: derive the trust root from *project_id*'s own canonical genesis manifest --
+    the identical ``TX-GENESIS`` manifest ``binding.route.bind_project``'s own replay
+    detection already reads through the Store's public, Binding-agnostic
+    ``resolve_transaction_manifest`` -- never from a caller-supplied ``project_binding_id``.
+    "Store-resolved" alone is not "canonical trust root": a second, additional, internally
+    valid ``project_binding`` record carrying the same ``project_id`` and an attacker key
+    could otherwise be selected by caller choice. This function never trusts caller choice at
+    all -- it derives the one canonical id itself, from the project's own immutable genesis
+    membership, and reuses the existing Binding owner's own schema validator and identity
+    reverification (never restates either) to prove the resolved record is genuinely what
+    genesis adopted."""
+
+    manifest = store.resolve_transaction_manifest(project_id, _GENESIS_TRANSACTION_ID)
+    if manifest is None:
+        raise PolicyProvenanceError(
+            f"project {project_id!r} has no resolvable genesis transaction manifest"
+        )
+    genesis_project_binding_ids = {
+        record_id for kind, record_id in manifest if kind == "project_binding"
+    }
+    if len(genesis_project_binding_ids) != 1:
+        raise PolicyProvenanceError(
+            f"project {project_id!r}'s own genesis manifest does not name exactly one "
+            f"project_binding record: {sorted(genesis_project_binding_ids)!r}"
+        )
+    canonical_project_binding_id = next(iter(genesis_project_binding_ids))
+    real_project_binding = store.resolve_record(
+        project_id, "project_binding", canonical_project_binding_id
+    )
+    if real_project_binding is None:
+        raise PolicyProvenanceError(
+            f"project_binding {canonical_project_binding_id!r} named by project {project_id!r}'s "
+            "own genesis manifest does not resolve"
+        )
+    try:
+        binding_validation.validate_record(real_project_binding, "project_binding.schema.json")
+        binding_identity.verify_project_binding_identity(real_project_binding)
+    except (BindingValidationError, BindingIdentityError) as exc:
+        raise PolicyProvenanceError(
+            f"project {project_id!r}'s own canonical genesis project_binding is invalid: {exc}"
+        ) from exc
+    if real_project_binding["project_id"] != project_id:
+        raise PolicyLineageConflictError(
+            f"project_binding {canonical_project_binding_id!r} is bound to a different project "
+            f"({real_project_binding['project_id']!r}) than requested ({project_id!r})"
+        )
+    return cast("dict[str, Any]", real_project_binding)
+
+
 def _resolve_trusted_signing_key(
     store: Any, project_id: str, project_binding_id: str
 ) -> dict[str, Any]:
-    """P82-R3-F1: resolve the real, already-committed Project Binding named by
-    *project_binding_id* and return its own ``human_authority_signing_key`` -- the one
-    non-forgeable trusted capability this package ever consults, reused rather than
-    duplicated (the identical record :mod:`manosube_agent_civilization.binding` itself
-    resolves for ``declare_human_grant``/``declare_github_projection_grant``). Never a
-    caller-supplied key: a caller can name *which* Project Binding governs an adoption, but
-    never *what* that Project Binding's own trusted key is."""
+    """P82-R4-F1: resolve the real, canonical genesis Project Binding's own trusted
+    ``human_authority_signing_key`` -- the one non-forgeable trusted capability this package
+    ever consults, reused rather than duplicated (the identical record
+    :mod:`manosube_agent_civilization.binding` itself resolves for
+    ``declare_human_grant``/``declare_github_projection_grant``). *project_binding_id* is
+    checked for equality against the derived canonical id -- a caller may assert *which*
+    Project Binding it believes governs this adoption, but never select which record is
+    trusted, and never learn what that Project Binding's own trusted key is beyond this
+    resolver's own return."""
 
-    real_project_binding = store.resolve_record(project_id, "project_binding", project_binding_id)
-    if real_project_binding is None:
+    real_project_binding = _resolve_canonical_genesis_project_binding(store, project_id)
+    if real_project_binding["project_binding_id"] != project_binding_id:
         raise PolicyProvenanceError(
-            f"project_binding does not resolve for project {project_id!r}: {project_binding_id!r}"
-        )
-    if real_project_binding["project_id"] != project_id:
-        raise PolicyLineageConflictError(
-            f"project_binding {project_binding_id!r} is bound to a different project "
-            f"({real_project_binding['project_id']!r}) than requested ({project_id!r})"
+            f"project_binding_id {project_binding_id!r} does not name project {project_id!r}'s "
+            f"own canonical genesis project_binding "
+            f"({real_project_binding['project_binding_id']!r})"
         )
     return cast("dict[str, Any]", real_project_binding["human_authority_signing_key"])
 
@@ -299,6 +360,40 @@ def resolve_and_verify_transition(
     return resolved
 
 
+def _resolve_and_verify_adopted_target(
+    store: Any, project_id: str, governing_issue: int, adopted_ref: dict[str, str]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """P82-R2-F2/P82-R4-F3: independently Store-resolve and reproduce *adopted_ref*'s own
+    exact target -- shared by :func:`adopt_acceptance_policy_transition` (before ever
+    building the Adoption) and :func:`resolve_and_verify_adoption` (re-resolved and
+    re-verified on every subsequent read, never only at commit time) so the two can never
+    silently diverge on what "the real target" means. For a Transition target, its own
+    canonical Baseline lineage is independently resolved and reproduced too. Returns
+    ``(target, baseline_for_lineage)``."""
+
+    if adopted_ref["kind"] == _BASELINE_KIND:
+        target = resolve_and_verify_baseline(store, project_id, adopted_ref["id"])
+        baseline_for_lineage = target
+    elif adopted_ref["kind"] == _TRANSITION_KIND:
+        target = resolve_and_verify_transition(store, project_id, adopted_ref["id"])
+        baseline_for_lineage = resolve_and_verify_baseline(
+            store, project_id, target["baseline_ref"]["id"]
+        )
+    else:
+        raise AcceptancePolicyValidationError(f"unknown adopted_ref.kind: {adopted_ref['kind']!r}")
+
+    if target["governing_issue"] != governing_issue or target["project_id"] != project_id:
+        # P82-R2-F2: cross-work-unit adoption is refused -- the resolved target's own
+        # (project_id, governing_issue) must agree with this adoption's own, never merely
+        # with the caller's own separately-declared label.
+        raise PolicyLineageConflictError(
+            f"adopted_ref {adopted_ref!r} resolves to a record bound to "
+            f"(project_id={target['project_id']!r}, governing_issue={target['governing_issue']!r}), "
+            f"not this adoption's own (project_id={project_id!r}, governing_issue={governing_issue!r})"
+        )
+    return target, baseline_for_lineage
+
+
 def resolve_and_verify_adoption(
     store: Any, project_id: str, adoption_id_value: str
 ) -> dict[str, Any]:
@@ -337,18 +432,28 @@ def resolve_and_verify_adoption(
             f"{resolved['decision_owner']!r}, not {HUMAN_AUTHORITY!r}"
         )
     _require_source_reference(resolved["source_reference"])
-    # P82-R2-F1/P82-R3-F1: re-evaluate the Governance Adoption Record binding -- including its
-    # own signature, against the real, freshly Store-resolved Project Binding's own trusted
-    # signing key, never a cached or caller-supplied one -- every time this adoption is read,
-    # never only at commit time.
+    # P82-R4-F3: re-resolve and reproduce the exact adopted target itself on every read --
+    # Round 3 only re-verified the Governance Adoption Record binding, never the target
+    # `adopted_ref` itself names, so a cryptographically valid Adoption could be returned even
+    # when its own referenced Baseline/Transition is missing, malformed, or bound to a
+    # different lineage.
+    _resolve_and_verify_adopted_target(
+        store, resolved["project_id"], resolved["governing_issue"], resolved["adopted_ref"]
+    )
+    # P82-R2-F1/P82-R3-F1/P82-R4-F1/P82-R4-F2: re-evaluate the Governance Adoption Record
+    # binding -- including its own signature, against the real, freshly re-derived canonical
+    # genesis Project Binding's own trusted signing key, never a cached or caller-supplied one
+    # -- every time this adoption is read, never only at commit time.
     signing_key = _resolve_trusted_signing_key(store, project_id, resolved["project_binding_id"])
     engine.verify_governance_adoption_record(
         resolved["governance_adoption_record"],
-        comment_url=resolved["source_reference"]["comment_url"],
+        source_reference=resolved["source_reference"],
         governing_issue=resolved["governing_issue"],
         adopted_ref=resolved["adopted_ref"],
         decision_owner=resolved["decision_owner"],
         project_id=resolved["project_id"],
+        project_binding_id=resolved["project_binding_id"],
+        decided_at=resolved["decided_at"],
         signing_key=signing_key,
     )
     return resolved
@@ -590,35 +695,30 @@ def adopt_acceptance_policy_transition(
     this cycle's own commit lands cleanly against the exact snapshot its own simulation used, or
     the Store's own Compare-And-Swap rejects it and the entire cycle -- including the poisoning
     simulation -- restarts against the now-current State.
+
+    P82-R4-F4: *adopted_ref*, *source_reference*, and *governance_adoption_record* -- the three
+    mutable caller-owned mappings this call reads -- are detached (deep-copied) as this
+    function's own literal first operations, before ``_require_source_reference`` or any Store
+    call, the identical first-boundary discipline P82-R3-F3 already established for
+    ``preview_acceptance_policy_transition``'s own candidate. Only these retained, detached
+    values are ever used from that point on, across every retry: a stale-State retry re-reads
+    canonical Store state, never the caller's own mappings again -- closing the gap where a
+    Store hook could otherwise replace the originally supplied target/authority claim with a
+    different, fully self-consistent signed set before detachment ever happened.
     """
+
+    adopted_ref = deepcopy(adopted_ref)
+    source_reference = deepcopy(source_reference)
+    governance_adoption_record = deepcopy(governance_adoption_record)
 
     _require_source_reference(source_reference)
 
     for _ in range(_MAX_COMMIT_RETRIES):
         current_state = store.load_current(project_id)
 
-        if adopted_ref["kind"] == _BASELINE_KIND:
-            target = resolve_and_verify_baseline(store, project_id, adopted_ref["id"])
-            baseline_for_simulation = target
-        elif adopted_ref["kind"] == _TRANSITION_KIND:
-            target = resolve_and_verify_transition(store, project_id, adopted_ref["id"])
-            baseline_for_simulation = resolve_and_verify_baseline(
-                store, project_id, target["baseline_ref"]["id"]
-            )
-        else:
-            raise AcceptancePolicyValidationError(
-                f"unknown adopted_ref.kind: {adopted_ref['kind']!r}"
-            )
-
-        if target["governing_issue"] != governing_issue or target["project_id"] != project_id:
-            # P82-R2-F2: cross-work-unit adoption is refused before any commit -- the resolved
-            # target's own (project_id, governing_issue) must agree with this adoption's own,
-            # never merely with the caller's own separately-declared label.
-            raise PolicyLineageConflictError(
-                f"adopted_ref {adopted_ref!r} resolves to a record bound to "
-                f"(project_id={target['project_id']!r}, governing_issue={target['governing_issue']!r}), "
-                f"not this adoption's own (project_id={project_id!r}, governing_issue={governing_issue!r})"
-            )
+        _target, baseline_for_simulation = _resolve_and_verify_adopted_target(
+            store, project_id, governing_issue, adopted_ref
+        )
 
         signing_key = _resolve_trusted_signing_key(store, project_id, project_binding_id)
 

@@ -28,6 +28,13 @@ from manosube_agent_civilization.acceptance_policy import (
 
 _PROJECT_ID = "PRJ-AP-0001"
 _PROJECT_BINDING_ID = "PROJBIND-" + "A" * 64
+_SOURCE_REFERENCE = {
+    "comment_url": "https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-1",
+    "comment_id": "1",
+    "comment_author": "manosube",
+    "comment_author_association": "OWNER",
+    "source_kind": "ORIGINAL_ISSUE",
+}
 
 
 _BLOCKING_FIELDS = (
@@ -67,13 +74,7 @@ def _baseline() -> dict[str, Any]:
     return build_baseline(
         project_id=_PROJECT_ID,
         governing_issue=77,
-        source_reference={
-            "comment_url": "https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-1",
-            "comment_id": "1",
-            "comment_author": "manosube",
-            "comment_author_association": "OWNER",
-            "source_kind": "ORIGINAL_ISSUE",
-        },
+        source_reference=_SOURCE_REFERENCE,
         clauses=[_clause("ORIGINAL_CLAUSE")],
     )
 
@@ -82,21 +83,15 @@ def _governance_adoption_record(
     *,
     adopted_ref: dict[str, str],
     decision_owner: str = "SHUKOU",
-    comment_url: str = "https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-1",
+    comment_url: str = _SOURCE_REFERENCE["comment_url"],
     governing_issue: int = 77,
+    source_reference: dict[str, Any] = _SOURCE_REFERENCE,
+    project_binding_id: str = _PROJECT_BINDING_ID,
+    decided_at: str = "2026-09-13T14:00:00Z",
 ) -> dict[str, Any]:
     reviewed_sha = "a" * 40
     governing_issue_str = f"#{governing_issue}"
-    signature = sign_governance_adoption_authority(
-        project_id=_PROJECT_ID,
-        governing_issue=governing_issue,
-        adopted_ref=adopted_ref,
-        decision_owner=decision_owner,
-        comment_url=comment_url,
-        reviewed_sha=reviewed_sha,
-        authorized_target_sha=reviewed_sha,
-    )
-    return {
+    core = {
         "schema_version": "0.1",
         "adoption_id": "ADOPT_TEST_FIXTURE",
         "governing_issue": governing_issue_str,
@@ -113,8 +108,18 @@ def _governance_adoption_record(
         },
         "reviewed_sha": reviewed_sha,
         "authorized_target_sha": reviewed_sha,
-        "signature": signature,
     }
+    signature = sign_governance_adoption_authority(
+        project_id=_PROJECT_ID,
+        governing_issue=governing_issue,
+        adopted_ref=adopted_ref,
+        decision_owner=decision_owner,
+        source_reference=source_reference,
+        project_binding_id=project_binding_id,
+        decided_at=decided_at,
+        governance_adoption_record_core=core,
+    )
+    return {**core, "signature": signature}
 
 
 def test_require_valid_clause_accepts_a_well_formed_clause() -> None:

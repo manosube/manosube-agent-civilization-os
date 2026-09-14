@@ -9,7 +9,7 @@ STATUS=CANONICAL_DESIGN
 KERNEL_ELEMENT=NONE_ACCEPTANCE_POLICY_LINEAGE_ADAPTER
 ACCEPTANCE_POLICY_OWNER_COUNT=1
 PUBLIC_ACCEPTANCE_POLICY_ENTRY_POINT_COUNT=9
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=4
 TEST_SUITE_PRESENT_AT_DELIVERY=true
 NEW_SCHEMA_COUNT=7
 ```
@@ -836,6 +836,111 @@ STRUCTURAL_REVIEW_ROUND_3_FINDINGS_CLOSED=3
 STRUCTURAL_REVIEW_ROUND_3_NEW_SCHEMA_FILES=0
 STRUCTURAL_REVIEW_ROUND_3_SCHEMA_COUNT_UNCHANGED=true
 STRUCTURAL_REVIEW_ROUND_3_TEST_COUNT=113
+NET_NEW_MYPY_FINDINGS=0
+NET_NEW_RUFF_FINDINGS=0
+```
+
+## 13. Structural Review Round 4 corrections (PR #82, P82-R4-F1..F4)
+
+SHUKOU adopted Structural Review Round 4's four findings on PR #82
+(review `...#issuecomment-5658959454`, adoption `...#issuecomment-5658969907`, handoff
+`...#issuecomment-5658973082`). All four are closed on the same branch/PR, with no new schema
+*file* (`NEW_SCHEMA_FILES=0`, `EXPECTED_SCHEMA_COUNT=86` unchanged, no closed field set on any
+existing schema changed) and no scope expansion beyond the four findings.
+
+**P82-R4-F1 (prove the canonical genesis Project Binding trust root, never merely a resolvable
+record):** `_resolve_trusted_signing_key` previously checked only that a caller-supplied
+`project_binding_id` resolved and that its own `project_id` matched -- "Store-resolved" was
+being treated as equivalent to "canonical trust root". A second, additional, internally-valid
+`project_binding` record carrying the same `project_id` label and an attacker-controlled
+`human_authority_signing_key` could be selected by caller choice, and the attacker could then
+produce a signature that verifies against the very key the resolver was tricked into selecting.
+A new `route._resolve_canonical_genesis_project_binding` derives the trust root instead from
+the project's own immutable genesis manifest membership -- the identical `TX-GENESIS`
+transaction manifest `binding.route._read_committed_genesis_manifest_keys` already reads
+through the Store's public, Binding-agnostic `resolve_transaction_manifest` -- finding the
+exactly-one `project_binding` record genesis itself committed, with no caller input at all, and
+reverifying it via the existing Binding owner's own schema (`binding.validation.
+validate_record`) and identity (`binding.identity.verify_project_binding_identity`) checks --
+composition, not a second Authority owner. `_resolve_trusted_signing_key` now checks a
+caller-supplied `project_binding_id` for equality against this derived canonical id only --
+never for selection -- and `resolve_and_verify_adoption` re-derives the canonical trust root on
+every read, never only at commit time. A decisive test injects a second, real, resolvable,
+schema-valid, identity-verified `project_binding` record under the same project label carrying
+an attacker's own Ed25519 key (via the existing `binding.engine.assemble_project_binding`
+owner, never a second constructor), genuinely signs the adoption with the attacker's own
+private key over exactly the bound payload naming the attacker's own real
+`project_binding_id`, and proves the adoption still refuses (`PolicyProvenanceError`) before
+any commit.
+
+**P82-R4-F2 (sign the complete Human-Authority act with one shared canonical payload):** Round
+3's signature payload covered only `project_id`/`governing_issue`/`adopted_ref`/
+`decision_owner`/`comment_url`/`reviewed_sha`/`authorized_target_sha`, leaving the Governance
+Adoption Record's own `adoption_id`/`decision_status`/receipt identity, this adoption's own
+`project_binding_id`, the complete `source_reference`, and `decided_at` unsigned -- a genuine
+signature could in principle be replayed into a different content-addressed Adoption by
+changing any of these unsigned fields. A new `identity.governance_adoption_record_core`
+projects a record's own closed fields excluding its own `signature` (a signature can never
+cover the message containing its own bytes), and a new
+`identity.governance_adoption_authority_signing_payload` signs exactly the same closed field
+set `identity.ADOPTION_SEMANTIC_FIELDS` already uses for the adoption's own content identity --
+`project_id`/`governing_issue`/`adopted_ref`/`decision_owner`/`source_reference`/
+`governance_adoption_record_core`/`project_binding_id`/`decided_at` -- so the signed
+authority-binding projection and the adoption's own full content identity can never drift into
+two different notions of what this Human act was. `engine.verify_governance_adoption_record`
+derives this payload from the adoption's own already-validated call arguments, the complete
+`source_reference`, the canonical Store-derived `project_binding_id`, and the record's own
+`governance_adoption_record_core` -- never a caller-supplied restatement. Four decisive
+mutation/replay controls prove a genuine signature standing cannot be reused after separately
+mutating: the record's own `adoption_id`/receipt identity (post-signing, without re-signing);
+signing the record for a *different* `project_binding_id` than the adoption's own real,
+canonical one; signing for a *different* `decided_at`; and signing against a `source_reference`
+carrying the identical `comment_url` but different other source metadata than the adoption's
+own complete `source_reference` -- each refuses (`UnauthorizedPolicyAdoptionError`).
+
+**P82-R4-F3 (re-resolve and verify the exact adopted target on every adoption read):**
+`resolve_and_verify_adoption` previously re-verified the Adoption's own schema/id/fingerprint/
+signature, but never resolved `adopted_ref` itself -- a cryptographically valid Adoption could
+be returned even when its own referenced Baseline/Transition was missing, malformed, or bound
+to a different lineage. A new shared helper, `route._resolve_and_verify_adopted_target`,
+factored out of `adopt_acceptance_policy_transition`'s own pre-existing inline target
+resolution (so the commit path and the read path can never silently diverge on what "the real
+target" means), resolves `adopted_ref` through `resolve_and_verify_baseline`/
+`resolve_and_verify_transition`, checks the resolved target's own `(project_id,
+governing_issue)` against the adoption's own, and, for a Transition target, independently
+resolves and reproduces its own canonical Baseline lineage too. `resolve_and_verify_adoption`
+now calls this helper on every read, before re-evaluating the Governance Adoption Record
+binding. Four decisive direct-resolver negative controls (constructed via `engine.
+build_adoption` + `route._commit_one_record`, bypassing `adopt_acceptance_policy_transition`'s
+own pre-commit checks, exactly as the existing `test_missing_predecessor_transition_refuses`
+control does) prove `resolve_and_verify_adoption` itself refuses when the adopted target is
+missing, schema-invalid, bound to a different work unit, or (for a Transition target) has a
+tampered/missing own Baseline lineage.
+
+**P82-R4-F4 (detach all caller-owned adoption inputs before any Store call):**
+`adopt_acceptance_policy_transition` receives three mutable caller mappings (`adopted_ref`,
+`source_reference`, `governance_adoption_record`), and previously validated
+`source_reference` and performed `load_current`/multiple Store resolutions before ever reading
+all three again inside its own retry loop -- a Store hook could in principle replace the
+originally supplied target/authority claim with a different, fully self-consistent signed set
+before detachment ever happened. All three are now `deepcopy`d as this function's own literal
+first statements, before `_require_source_reference` or any Store call, the identical
+first-boundary discipline P82-R3-F3 already established for
+`preview_acceptance_policy_transition`'s own candidate; only these retained, detached values
+are ever used, across every retry -- a stale-State retry re-reads canonical Store state, never
+the caller's own mappings again. A decisive `_FirstLoadMutatingStore` test wrapper hooks
+`load_current` -- the literal first Store call this function's retry loop makes -- to mutate
+the caller's *original*, still-retained `adopted_ref`/`source_reference`/
+`governance_adoption_record` objects in place, in one shot, to a different, fully valid,
+correctly re-signed target B (a second real, proposed transition under the same lineage). The
+adoption actually committed still names the original target A; B's own fully-valid adoption is
+never committed at all, proving the mutation happened too late to be observed.
+
+```text
+STRUCTURAL_REVIEW_ROUND_4_FINDINGS_CLOSED=4
+STRUCTURAL_REVIEW_ROUND_4_NEW_SCHEMA_FILES=0
+STRUCTURAL_REVIEW_ROUND_4_SCHEMA_COUNT_UNCHANGED=true
+STRUCTURAL_REVIEW_ROUND_4_TEST_COUNT=120
 NET_NEW_MYPY_FINDINGS=0
 NET_NEW_RUFF_FINDINGS=0
 ```

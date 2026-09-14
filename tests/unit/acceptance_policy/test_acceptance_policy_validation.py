@@ -36,6 +36,7 @@ _SOURCE_REFERENCE = {
     "comment_author_association": "OWNER",
     "source_kind": "ORIGINAL_ISSUE",
 }
+_ADOPTION_SOURCE_REFERENCE = {**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"}
 
 
 _BLOCKING_FIELDS = (
@@ -92,19 +93,13 @@ def _governance_adoption_record(
     adopted_ref: dict[str, str] | None = None,
     comment_url: str = _SOURCE_REFERENCE["comment_url"],
     governing_issue: int = 77,
+    source_reference: dict[str, Any] = _ADOPTION_SOURCE_REFERENCE,
+    project_binding_id: str = _PROJECT_BINDING_ID,
+    decided_at: str = "2026-09-13T14:00:00Z",
 ) -> dict[str, Any]:
     reviewed_sha = "a" * 40
     governing_issue_str = f"#{governing_issue}"
-    signature = sign_governance_adoption_authority(
-        project_id=_PROJECT_ID,
-        governing_issue=governing_issue,
-        adopted_ref=adopted_ref if adopted_ref is not None else _adopted_baseline_ref(),
-        decision_owner="SHUKOU",
-        comment_url=comment_url,
-        reviewed_sha=reviewed_sha,
-        authorized_target_sha=reviewed_sha,
-    )
-    return {
+    core = {
         "schema_version": "0.1",
         "adoption_id": "ADOPT_TEST_FIXTURE",
         "governing_issue": governing_issue_str,
@@ -121,8 +116,18 @@ def _governance_adoption_record(
         },
         "reviewed_sha": reviewed_sha,
         "authorized_target_sha": reviewed_sha,
-        "signature": signature,
     }
+    signature = sign_governance_adoption_authority(
+        project_id=_PROJECT_ID,
+        governing_issue=governing_issue,
+        adopted_ref=adopted_ref if adopted_ref is not None else _adopted_baseline_ref(),
+        decision_owner="SHUKOU",
+        source_reference=source_reference,
+        project_binding_id=project_binding_id,
+        decided_at=decided_at,
+        governance_adoption_record_core=core,
+    )
+    return {**core, "signature": signature}
 
 
 def test_a_well_formed_baseline_validates() -> None:

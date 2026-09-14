@@ -86,23 +86,43 @@ ADOPTION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "decided_at",
 )
 
-#: P82-R3-F1: the exact fields a genuine Human Authority signature over one Acceptance Policy
-#: adoption must cover -- binding the signature to the precise policy target it authorizes
-#: (``adopted_ref``, whose own content-addressed id already transitively binds the exact
-#: policy operation/body identity of the baseline-or-transition it names), the exact work unit
-#: (``governing_issue``), the exact project, the exact claimed decision_owner, and the exact
-#: recorded comment/reviewed/authorized-target identity this adoption's own Governance
-#: Adoption Record claims -- so a signature genuinely produced for one policy target can never
-#: verify for a substituted one (a different ``adopted_ref``, a different work unit, or a
-#: different claimed comment/head) even when the rest of the record is byte-identical.
+
+def governance_adoption_record_core(record: dict[str, Any]) -> dict[str, Any]:
+    """P82-R4-F2: *record*'s own closed fields, excluding its own ``signature`` -- a
+    signature can never cover the message containing its own bytes. This is exactly the set
+    ``development_binding.adoption_record.evaluate_adoption_record`` itself requires
+    (``adoption_id``, ``governing_issue``, ``comment_url``, ``decision_authority``,
+    ``decision_status``, ``api_read_back_receipt`` -- which itself recursively carries the
+    read-back receipt's own six fields -- ``reviewed_sha``, ``authorized_target_sha``), so
+    binding this core into the signed payload binds the record's own complete identity and
+    read-back receipt status, never only a hand-picked projection of it."""
+
+    return {key: value for key, value in record.items() if key != "signature"}
+
+
+#: P82-R4-F2: the complete Human-Authority act this package ever recognises a genuine
+#: signature as proof of -- superseding P82-R3-F1's narrower projection (target plus
+#: comment/reviewed/authorized identity only), which left the Governance Adoption Record's
+#: own ``adoption_id``/``decision_status``/receipt identity, this adoption's own
+#: ``project_binding_id``, its complete ``source_reference``, and ``decided_at`` unsigned --
+#: exactly the split between "what the Human signed" and "what the canonical record says the
+#: Human did" the existing Binding declaration precedent (Structural Review Round 5-R1,
+#: Issue #51/P13-R5-R1) already avoids by using one complete shared identity/signing payload.
+#: Deliberately the same closed field set :data:`ADOPTION_SEMANTIC_FIELDS` covers, except
+#: ``governance_adoption_record`` is replaced by its own signature-excluded
+#: :func:`governance_adoption_record_core` -- the payload a signature signs can never depend
+#: on the signature that will be produced over it -- so the signed authority-binding
+#: projection and the adoption's own full content identity can never drift into two
+#: different notions of what this Human act was.
 GOVERNANCE_ADOPTION_AUTHORITY_SIGNING_FIELDS: tuple[str, ...] = (
     "project_id",
     "governing_issue",
     "adopted_ref",
     "decision_owner",
-    "comment_url",
-    "reviewed_sha",
-    "authorized_target_sha",
+    "source_reference",
+    "governance_adoption_record_core",
+    "project_binding_id",
+    "decided_at",
 )
 
 
@@ -110,9 +130,9 @@ def governance_adoption_authority_signing_payload(binding: dict[str, Any]) -> by
     """The exact canonical bytes a genuine Human Authority signature over one Acceptance
     Policy adoption must cover -- see :data:`GOVERNANCE_ADOPTION_AUTHORITY_SIGNING_FIELDS`.
     *binding* is assembled by the verifier itself from already-validated fields (this
-    adoption's own call arguments plus its own Governance Adoption Record's own declared
-    ``comment_url``/``reviewed_sha``/``authorized_target_sha``), never a caller-supplied
-    restatement of them."""
+    adoption's own call arguments, its complete ``source_reference``, the canonical,
+    Store-derived ``project_binding_id``, and its Governance Adoption Record's own
+    :func:`governance_adoption_record_core`), never a caller-supplied restatement of them."""
 
     return canonical_json_bytes(
         {field: binding[field] for field in GOVERNANCE_ADOPTION_AUTHORITY_SIGNING_FIELDS}
