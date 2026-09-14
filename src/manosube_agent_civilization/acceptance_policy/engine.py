@@ -11,11 +11,18 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from manosube_agent_civilization.development_binding import (
+    ADOPTION_RECORD_ADMITTED,
+    AdoptionRecordError,
+    evaluate_adoption_record,
+)
+
 from . import identity
 from .errors import (
     AcceptancePolicyValidationError,
     PolicyLineageConflictError,
     PolicyProvenanceError,
+    UnauthorizedPolicyAdoptionError,
     UndeclaredPolicyChangeError,
 )
 from .types import BLOCKING_EFFECT_FIELDS, POLICY_CLASSES, POLICY_OPERATIONS
@@ -293,6 +300,49 @@ def build_transition(
     return transition
 
 
+def verify_governance_adoption_record(
+    record: Any, *, comment_url: str, governing_issue: int
+) -> dict[str, Any]:
+    """P82-R2-F1: compose with the repository's existing, non-substitutable Governance
+    Adoption Record owner (``development_binding.adoption_record.evaluate_adoption_record``,
+    Issue #53) rather than trusting a caller-asserted ``decision_owner``/comment-association
+    string pair as sufficient Human-Authority proof on its own.
+
+    *record* must independently evaluate to ``ADOPTION_RECORD_ADMITTED`` -- a malformed shape
+    raises (nothing to admit or refuse), and a readable-but-insufficient record (forged
+    authority, forged read-back receipt, wrong decision status, unshaped/mismatched SHAs) is
+    refused, never silently accepted. Its own declared ``comment_url``/``governing_issue`` must
+    also agree with *this exact* acceptance-policy adoption's own source comment and governing
+    work unit -- an admitted record for a *different* comment or work unit is not authority for
+    *this* one.
+    """
+
+    shaped = _require_object(record, "governance_adoption_record")
+    try:
+        decision = evaluate_adoption_record(shaped)
+    except AdoptionRecordError as exc:
+        raise UnauthorizedPolicyAdoptionError(
+            f"governance_adoption_record is unreadable: {exc}"
+        ) from exc
+    if decision["decision"] != ADOPTION_RECORD_ADMITTED:
+        raise UnauthorizedPolicyAdoptionError(
+            "governance_adoption_record was refused by the existing Governance Adoption "
+            f"Record owner: {decision['decision_reason_codes']}"
+        )
+    if shaped["comment_url"] != comment_url:
+        raise UnauthorizedPolicyAdoptionError(
+            "governance_adoption_record.comment_url does not match this adoption's own "
+            f"source_reference.comment_url: {shaped['comment_url']!r} != {comment_url!r}"
+        )
+    expected_governing_issue = f"#{governing_issue}"
+    if shaped["governing_issue"] != expected_governing_issue:
+        raise UnauthorizedPolicyAdoptionError(
+            "governance_adoption_record.governing_issue does not match this adoption's own "
+            f"governing_issue: {shaped['governing_issue']!r} != {expected_governing_issue!r}"
+        )
+    return shaped
+
+
 def build_adoption(
     *,
     project_id: str,
@@ -300,10 +350,13 @@ def build_adoption(
     adopted_ref: dict[str, Any],
     decision_owner: str,
     source_reference: dict[str, Any],
+    governance_adoption_record: dict[str, Any],
     decided_at: str,
 ) -> dict[str, Any]:
     """FD4-C3: construct one Adoption binding. Refuses (rather than silently accepting) any
-    ``decision_owner`` other than the sole recognised Human Authority."""
+    ``decision_owner`` other than the sole recognised Human Authority, or a
+    ``governance_adoption_record`` that does not independently evaluate to an admitted,
+    exactly-bound Governance Adoption Record (P82-R2-F1)."""
 
     from .types import HUMAN_AUTHORITY
 
@@ -311,6 +364,11 @@ def build_adoption(
         raise AcceptancePolicyValidationError(
             f"decision_owner must be {HUMAN_AUTHORITY!r}, got {decision_owner!r}"
         )
+    verified_record = verify_governance_adoption_record(
+        governance_adoption_record,
+        comment_url=source_reference["comment_url"],
+        governing_issue=governing_issue,
+    )
 
     adoption = {
         "schema_version": SCHEMA_VERSION,
@@ -319,6 +377,7 @@ def build_adoption(
         "adopted_ref": deepcopy(adopted_ref),
         "decision_owner": decision_owner,
         "source_reference": deepcopy(source_reference),
+        "governance_adoption_record": deepcopy(verified_record),
         "decided_at": decided_at,
     }
     adoption["adoption_semantic_fingerprint"] = identity.adoption_semantic_fingerprint(adoption)

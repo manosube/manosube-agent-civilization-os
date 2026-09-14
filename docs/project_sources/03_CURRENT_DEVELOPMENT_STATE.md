@@ -4024,3 +4024,80 @@ ISSUE_80_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 54. PR #82 Structural Review Round 2 (P82-R2-F1..F4) bounded addendum
+
+本節も§52・§53と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/acceptance_policy/`配下の変更に対応付ける
+ためだけの、最小限の事実記録である。
+
+PR #82上で構造参謀レビュー`https://github.com/manosube/manosube-agent-civilization-os/pull/82#issuecomment-5656963531`
+(4件のfinding、`STRUCTURAL_DECISION=CHANGES_REQUIRED`)、SHUKOU正式採択
+`...#issuecomment-5656976873`、実装handoff`...#issuecomment-5656979990`が投稿された。本記録
+作成者はこれら3件全てを、著者login/id/association(`manosube`/OWNER)・本文・live PR #82状態
+(OPEN・未マージ)・head/base SHA(`865be02c486016f4ce34891600b43ce1647f4c7a`/
+`3791831884e7419f7f2f3497666da68842b8e276`、いずれも未変化)について、本記録作成直前にGitHub
+API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-13
+GOVERNING_PR=#82
+REVIEW_ROUND=2
+STRUCTURAL_REVIEW_COMMENT_ID=5656963531
+ADOPTION_COMMENT_ID=5656976873
+HANDOFF_COMMENT_ID=5656979990
+PRE_ROUND_HEAD_SHA=865be02c486016f4ce34891600b43ce1647f4c7a
+BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された4件のfinding(P82-R2-F1..F4)はいずれも`15_ACCEPTANCE_POLICY/`の既存contractが
+pinする`EXPECTED_SCHEMA_COUNT=86`を変更せず(既存`acceptance_policy_adoption.schema.json`への
+`governance_adoption_record`必須プロパティおよび2件の新規`$defs`追加のみ、新規schemaファイルは
+0件)、`src/manosube_agent_civilization/acceptance_policy/`(`engine.py`・`route.py`・
+`identity.py`・`validation.py`)の変更のみで修正した。
+
+F1(実在するGovernance Adoption Record ownerとの実合成): caller供給の
+`decision_owner="SHUKOU"`と`source_reference.comment_author_association="OWNER"`の組は、
+もはやそれ単独ではHuman Authority証明として不十分である。`engine.build_adoption`は新規必須
+引数`governance_adoption_record`を要求し、新規`engine.verify_governance_adoption_record`が
+既存の非代替可能なowner`development_binding.adoption_record.evaluate_adoption_record`
+(Issue #53)と実合成する -- ad hocな文字列比較による再検証ではない。recordは独立に
+`ADOPTION_RECORD_ADMITTED`へ評価され、かつその`comment_url`/`governing_issue`が本adoption
+自身の`source_reference.comment_url`/`governing_issue`と厳密一致しなければならない。
+`route.resolve_and_verify_adoption`はこの結合をevery読み取り時に再評価する(commit時のみでは
+ない)。adoptionのcontent-addressed identity(`identity.ADOPTION_SEMANTIC_FIELDS`)は
+`governance_adoption_record`を含むようになった。F2(commit前のpermanent-poisoning防止):
+`adopt_acceptance_policy_transition`はtarget(baselineまたはtransition)をadoption構築前に
+独立解決・再現し、その`(project_id, governing_issue)`を呼び出し自身のものと照合する
+(cross-work-unit adoptionはcommit前に拒否)。新規private helper
+`route._assert_adoption_does_not_poison_the_canonical_lineage`は、候補adoptionを現在の正準
+adoption lineageへ畳み込むsimulationを`engine.derive_effective_policy`の同一foldを再利用して
+commit前に実行し、`PolicyLineageConflictError`が上がればcommitをblockする。F3(preview候補の
+detach・schema/identity/fingerprint/lineage検証): 新規private helper
+`route._verify_candidate_transition_for_preview`は候補transitionを即座に`deepcopy`し
+(caller自身のmutable objectからdetach)、schema検証・id/fingerprint再現・
+project_id/governing_issue/baseline_ref結合検証・実効 view由来のprior_clause_binding検証・
+独立再計算したsemantic diffとdeclared operationの一致検証を行う。この検証済みcopyのみが
+`engine.build_impact_preview`へ渡される。F4(mypy net-new findingを実際にゼロへ): Round 1の
+`acceptance_policy/validation.py`が導入した1件のnet-new mypy finding(`jsonschema`
+importのuntyped stub欠如)へ、targeted `# type: ignore[import-untyped]`を追加した。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、既存84件を新API(`governance_adoption_record`引数)へ
+書き換え、F1-F4それぞれの決定的positive/negative controlおよび六operation全てのpreview
+matrixを新規追加、107 tests)は本記録作成者自身が独立に実行し検証済み(`107 passed`)。
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=86`、変更な
+し)。full repository test suite・`ruff check`・`ruff format --check`・
+`mypy --namespace-packages`(`NET_NEW_MYPY_FINDINGS=0`)の独立再実行結果は、本Roundの新head
+到達後にPR #82への返却Evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_80_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

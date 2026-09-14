@@ -73,6 +73,32 @@ def _baseline() -> dict[str, Any]:
     )
 
 
+def _governance_adoption_record(
+    *,
+    comment_url: str = "https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-1",
+    governing_issue: str = "#77",
+) -> dict[str, Any]:
+    reviewed_sha = "a" * 40
+    return {
+        "schema_version": "0.1",
+        "adoption_id": "ADOPT_TEST_FIXTURE",
+        "governing_issue": governing_issue,
+        "comment_url": comment_url,
+        "decision_authority": "SHUKOU",
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": {
+            "adoption_id": "ADOPT_TEST_FIXTURE",
+            "governing_issue": governing_issue,
+            "reviewed_sha": reviewed_sha,
+            "comment_url": comment_url,
+            "decision_authority": "SHUKOU",
+            "decision_status": "RATIFIED",
+        },
+        "reviewed_sha": reviewed_sha,
+        "authorized_target_sha": reviewed_sha,
+    }
+
+
 def test_require_valid_clause_accepts_a_well_formed_clause() -> None:
     require_valid_clause(_clause("C1"))
 
@@ -242,6 +268,7 @@ def test_adoption_id_and_fingerprint_reproduce_and_require_shukou() -> None:
         },
         decision_owner="SHUKOU",
         source_reference=_baseline()["source_reference"],
+        governance_adoption_record=_governance_adoption_record(),
         decided_at="2026-09-13T14:00:00Z",
     )
     assert ap_identity.adoption_id(adoption) == adoption["acceptance_policy_adoption_id"]
@@ -262,6 +289,60 @@ def test_build_adoption_refuses_a_non_shukou_decision_owner() -> None:
             },
             decision_owner="CLAUDE_CODE",
             source_reference=_baseline()["source_reference"],
+            governance_adoption_record=_governance_adoption_record(),
+            decided_at="2026-09-13T14:00:00Z",
+        )
+
+
+def test_build_adoption_refuses_a_governance_adoption_record_that_is_not_admitted() -> None:
+    """P82-R2-F1: even a correctly-shaped ``decision_owner="SHUKOU"`` is not sufficient any
+    more -- the composed ``governance_adoption_record`` must independently evaluate to
+    ``ADOPTION_RECORD_ADMITTED`` through the existing, non-substitutable
+    ``development_binding.adoption_record`` owner."""
+
+    from manosube_agent_civilization.acceptance_policy import UnauthorizedPolicyAdoptionError
+
+    forged_record = _governance_adoption_record()
+    forged_record["decision_authority"] = "STRUCTURAL_ADVISOR"
+    forged_record["api_read_back_receipt"] = {
+        **forged_record["api_read_back_receipt"],
+        "decision_authority": "STRUCTURAL_ADVISOR",
+    }
+    with pytest.raises(UnauthorizedPolicyAdoptionError):
+        build_adoption(
+            project_id=_PROJECT_ID,
+            governing_issue=77,
+            adopted_ref={
+                "kind": "acceptance_policy_baseline",
+                "id": _baseline()["acceptance_policy_baseline_id"],
+            },
+            decision_owner="SHUKOU",
+            source_reference=_baseline()["source_reference"],
+            governance_adoption_record=forged_record,
+            decided_at="2026-09-13T14:00:00Z",
+        )
+
+
+def test_build_adoption_refuses_a_governance_adoption_record_for_a_different_comment() -> None:
+    """P82-R2-F1: an admitted record is not authority for *this* adoption unless its own
+    comment_url agrees with this exact adoption's own source_reference.comment_url."""
+
+    from manosube_agent_civilization.acceptance_policy import UnauthorizedPolicyAdoptionError
+
+    mismatched_record = _governance_adoption_record(
+        comment_url="https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-999",
+    )
+    with pytest.raises(UnauthorizedPolicyAdoptionError):
+        build_adoption(
+            project_id=_PROJECT_ID,
+            governing_issue=77,
+            adopted_ref={
+                "kind": "acceptance_policy_baseline",
+                "id": _baseline()["acceptance_policy_baseline_id"],
+            },
+            decision_owner="SHUKOU",
+            source_reference=_baseline()["source_reference"],
+            governance_adoption_record=mismatched_record,
             decided_at="2026-09-13T14:00:00Z",
         )
 

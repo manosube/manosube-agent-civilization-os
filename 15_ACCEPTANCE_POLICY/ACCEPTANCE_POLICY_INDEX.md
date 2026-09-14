@@ -10,7 +10,7 @@ KERNEL_ELEMENT=NONE_ACCEPTANCE_POLICY_LINEAGE_ADAPTER
 CANONICAL_KERNEL_COUNT=1
 ACCEPTANCE_POLICY_OWNER_COUNT=1
 PUBLIC_ACCEPTANCE_POLICY_ENTRY_POINT_COUNT=9
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
 ```
 
 ---
@@ -30,9 +30,9 @@ never as prose, never as a side effect of an unrelated record.
                                     non-claims
 ```
 
-This delivery has passed one round of Structural Review: `STRUCTURAL_REVIEW_ROUNDS_APPLIED=1`
-(P82-R1-F1..F5, `ACCEPTANCE_POLICY_CONTRACT.md` §10). Issue #80's own adopted
-FD-0004 contract, restated structurally:
+This delivery has passed two rounds of Structural Review: `STRUCTURAL_REVIEW_ROUNDS_APPLIED=2`
+(P82-R1-F1..F5, `ACCEPTANCE_POLICY_CONTRACT.md` §10; P82-R2-F1..F4, `ACCEPTANCE_POLICY_CONTRACT.md`
+§11). Issue #80's own adopted FD-0004 contract, restated structurally:
 
 ```text
 one immutable genesis Baseline (every original clause, ORIGINAL_ISSUE-sourced)

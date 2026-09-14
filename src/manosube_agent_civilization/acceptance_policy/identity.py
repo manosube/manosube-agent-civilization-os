@@ -70,12 +70,16 @@ TRANSITION_SEMANTIC_FIELDS: tuple[str, ...] = (
 #: genesis) into effect, from where, and when. ``decided_at`` is included -- unlike a Change's
 #: excluded lifecycle timestamps -- because two textually-identical SHUKOU decisions recorded
 #: at genuinely different times are two different Human acts, not the same one replayed.
+#: P82-R2-F1: ``governance_adoption_record`` is part of the adoption's own identity -- two
+#: adoptions that differ only in which real Governance Adoption Record backs them are two
+#: different Human acts, never the same one replayed under a substituted record.
 ADOPTION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "project_id",
     "governing_issue",
     "adopted_ref",
     "decision_owner",
     "source_reference",
+    "governance_adoption_record",
     "decided_at",
 )
 

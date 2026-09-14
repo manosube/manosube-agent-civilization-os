@@ -54,6 +54,48 @@ def source_reference(
     }
 
 
+def governance_adoption_record(
+    *,
+    comment_url: str,
+    governing_issue: int,
+    adoption_id: str = "ADOPT_TEST_FIXTURE",
+    reviewed_sha: str = "a" * 40,
+    authorized_target_sha: str | None = None,
+    decision_authority: str = "SHUKOU",
+    decision_status: str = "RATIFIED",
+    receipt_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """P82-R2-F1: a well-formed Governance Adoption Record
+    (``development_binding.adoption_record``'s own closed shape) that
+    ``evaluate_adoption_record`` admits by default -- callers pass ``receipt_overrides`` or
+    override a top-level field directly to construct the decisive forged/mismatched controls
+    F1 requires."""
+
+    governing_issue_str = f"#{governing_issue}"
+    target_sha = authorized_target_sha if authorized_target_sha is not None else reviewed_sha
+    receipt = {
+        "adoption_id": adoption_id,
+        "governing_issue": governing_issue_str,
+        "reviewed_sha": reviewed_sha,
+        "comment_url": comment_url,
+        "decision_authority": decision_authority,
+        "decision_status": decision_status,
+    }
+    if receipt_overrides:
+        receipt.update(receipt_overrides)
+    return {
+        "schema_version": "0.1",
+        "adoption_id": adoption_id,
+        "governing_issue": governing_issue_str,
+        "comment_url": comment_url,
+        "decision_authority": decision_authority,
+        "decision_status": decision_status,
+        "api_read_back_receipt": receipt,
+        "reviewed_sha": reviewed_sha,
+        "authorized_target_sha": target_sha,
+    }
+
+
 def clause(
     clause_id: str,
     *,

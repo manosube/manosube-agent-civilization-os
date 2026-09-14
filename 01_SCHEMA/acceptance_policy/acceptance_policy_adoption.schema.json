@@ -12,6 +12,7 @@
     "adopted_ref",
     "decision_owner",
     "source_reference",
+    "governance_adoption_record",
     "decided_at",
     "adoption_semantic_fingerprint"
   ],
@@ -23,6 +24,7 @@
     "adopted_ref": {"$ref": "#/$defs/adopted_ref"},
     "decision_owner": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"},
     "source_reference": {"$ref": "acceptance_policy_baseline.schema.json#/$defs/source_reference"},
+    "governance_adoption_record": {"$ref": "#/$defs/governance_adoption_record"},
     "decided_at": {"$ref": "../common/timestamp.schema.json"},
     "adoption_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
   },
@@ -34,6 +36,53 @@
       "properties": {
         "kind": {"enum": ["acceptance_policy_baseline", "acceptance_policy_transition"]},
         "id": {"type": "string", "pattern": "^AP-(?:BASE|TRANS)-[0-9A-F]{64}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    },
+    "governance_adoption_record": {
+      "description": "P82-R2-F1: the caller-supplied Governance Adoption Record this adoption is bound to -- evaluated at commit and every subsequent read through the existing, non-substitutable manosube_agent_civilization.development_binding.adoption_record.evaluate_adoption_record owner (Issue #53), never a second reimplementation. Wire shape mirrors that module's own REQUIRED_REQUEST_KEYS/RECEIPT_KEYS exactly; the deeper regex/semantic checks (comment URL grammar, SHA shape, receipt agreement) are that module's own responsibility, not restated here.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "adoption_id",
+        "governing_issue",
+        "comment_url",
+        "decision_authority",
+        "decision_status",
+        "api_read_back_receipt",
+        "reviewed_sha",
+        "authorized_target_sha"
+      ],
+      "properties": {
+        "schema_version": {"type": "string", "minLength": 1},
+        "adoption_id": {"type": "string", "minLength": 1},
+        "governing_issue": {"type": "string", "minLength": 1},
+        "comment_url": {"type": "string", "minLength": 1},
+        "decision_authority": {"type": "string", "minLength": 1},
+        "decision_status": {"type": "string", "minLength": 1},
+        "api_read_back_receipt": {"$ref": "#/$defs/governance_adoption_record_receipt"},
+        "reviewed_sha": {"type": "string", "minLength": 1},
+        "authorized_target_sha": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "governance_adoption_record_receipt": {
+      "type": "object",
+      "required": [
+        "adoption_id",
+        "governing_issue",
+        "reviewed_sha",
+        "comment_url",
+        "decision_authority",
+        "decision_status"
+      ],
+      "properties": {
+        "adoption_id": {"type": "string", "minLength": 1},
+        "governing_issue": {"type": "string", "minLength": 1},
+        "reviewed_sha": {"type": "string", "minLength": 1},
+        "comment_url": {"type": "string", "minLength": 1},
+        "decision_authority": {"type": "string", "minLength": 1},
+        "decision_status": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false
     }

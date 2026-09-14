@@ -9,7 +9,7 @@ STATUS=CANONICAL_DESIGN
 KERNEL_ELEMENT=NONE_ACCEPTANCE_POLICY_LINEAGE_ADAPTER
 ACCEPTANCE_POLICY_OWNER_COUNT=1
 PUBLIC_ACCEPTANCE_POLICY_ENTRY_POINT_COUNT=9
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=2
 TEST_SUITE_PRESENT_AT_DELIVERY=true
 NEW_SCHEMA_COUNT=7
 ```
@@ -655,4 +655,81 @@ STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=5
 STRUCTURAL_REVIEW_ROUND_1_NEW_SCHEMA_FILES=0
 STRUCTURAL_REVIEW_ROUND_1_SCHEMA_COUNT_UNCHANGED=true
 STRUCTURAL_REVIEW_ROUND_1_TEST_COUNT=84
+```
+
+## 11. Structural Review Round 2 corrections (PR #82, P82-R2-F1..F4)
+
+SHUKOU adopted Structural Review Round 2's four findings on PR #82
+(review `...#issuecomment-5656963531`, adoption `...#issuecomment-5656976873`, handoff
+`...#issuecomment-5656979990`). All four are closed on the same branch/PR, with no new schema
+*file* (`NEW_SCHEMA_FILES=0`, `EXPECTED_SCHEMA_COUNT=86` unchanged) -- the existing
+`acceptance_policy_adoption.schema.json` gained a required `governance_adoption_record` property
+and two new `$defs` -- and no scope expansion beyond the four findings.
+
+**P82-R2-F1 (compose with the real Governance Adoption Record owner):** a caller-authored
+`decision_owner="SHUKOU"` plus a `source_reference.comment_author_association="OWNER"` string
+pair is no longer, by itself, sufficient Human Authority proof for an Acceptance Policy adoption.
+`engine.build_adoption` now requires a new `governance_adoption_record: dict[str, Any]` parameter,
+and a new `engine.verify_governance_adoption_record` function composes with the repository's
+existing, non-substitutable Governance Adoption Record owner --
+`development_binding.adoption_record.evaluate_adoption_record` (Issue #53) -- rather than
+re-verifying via ad hoc literal string comparisons. The record must independently evaluate to
+`ADOPTION_RECORD_ADMITTED`, and its own declared `comment_url`/`governing_issue` must exactly
+match this adoption's own `source_reference.comment_url` and `governing_issue` -- an admitted
+record for a *different* comment or work unit is not authority for *this* one.
+`route.resolve_and_verify_adoption` re-evaluates this binding again on every read, never only at
+commit time, the same discipline the existing `decision_owner`/`source_reference` checks already
+held themselves to. The adoption's own content-addressed identity
+(`identity.ADOPTION_SEMANTIC_FIELDS`) now includes `governance_adoption_record`, so two adoptions
+differing only in which real record backs them are two different Human acts, never the same one
+replayed under a substituted record. This is the first cross-domain consumer of
+`evaluate_adoption_record` in the repository.
+
+**P82-R2-F2 (permanent-poisoning prevention before any commit):** because Acceptance Policy
+adoptions are immutable and the canonical adoption set always includes every committed one, a
+lineage-conflicting adoption (cross-work-unit target, stale or forked predecessor binding, or a
+duplicate genesis-baseline adoption) previously could be committed and only discovered later, the
+next time someone resolved the effective policy against an already-poisoned set.
+`adopt_acceptance_policy_transition` now independently resolves and reproduces its own target
+(baseline or transition) *before* building the adoption, and checks that target's own
+`(project_id, governing_issue)` against the call's own -- a cross-work-unit adoption is refused
+before any commit. A new private helper,
+`route._assert_adoption_does_not_poison_the_canonical_lineage`, then simulates folding the
+candidate adoption onto the current canonical adoption lineage via the exact same
+`engine.derive_effective_policy` fold already used for resolution, before the candidate is
+durably committed; any raised `PolicyLineageConflictError` blocks the commit. An adoption whose
+own id already appears in the canonical set (an exact replay) skips the simulation, since it was
+already proven non-poisoning at its own original commit -- `_commit_one_record`'s own idempotency
+check handles the no-op replay from there.
+
+**P82-R2-F3 (detach, schema/identity/fingerprint/lineage-verify the preview candidate):**
+`preview_acceptance_policy_transition`'s candidate transition is no longer trusted as-is. A new
+private helper, `route._verify_candidate_transition_for_preview`, immediately `deepcopy`s the
+candidate -- detaching it from the caller's own mutable object before any validation or use --
+then schema-validates it, independently reproduces its own declared id and semantic fingerprint,
+checks its own `project_id`/`governing_issue`/`baseline_ref` binding against this lineage's own,
+checks its own `prior_clause_binding` against the real current predecessor derived from the
+Store-resolved effective view (via a new shared helper,
+`route._resolve_expected_prior_clause_binding`, extracted so the propose path and this verify
+path can never silently diverge on what "the real current predecessor" means), and recomputes the
+semantic diff against the independently classified operation. Only this retained, fully-verified
+copy is ever passed to `engine.build_impact_preview` -- the caller's own original object, and any
+further mutation of it, has no effect on the preview actually built or on any subsequent call
+made with the still-mutated, now-inconsistent object (its own fingerprint no longer reproduces).
+
+**P82-R2-F4 (zero net-new mypy findings, genuinely):** Round 1's `acceptance_policy/validation.py`
+introduced one net-new mypy finding (`import jsonschema` has no inline type stubs), justified in
+the Round 1 return-evidence comment as "the same pre-existing accepted class every domain's own
+`validation.py` copy already carries" -- Structural Review Round 2 rejected that reasoning ("a
+pre-existing finding of the same category in another file does not make a newly introduced
+finding baseline-equivalent"). The import now carries a targeted
+`# type: ignore[import-untyped]`, eliminating the net-new finding without touching the
+pre-existing identical-class findings in unrelated files.
+
+```text
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=4
+STRUCTURAL_REVIEW_ROUND_2_NEW_SCHEMA_FILES=0
+STRUCTURAL_REVIEW_ROUND_2_SCHEMA_COUNT_UNCHANGED=true
+STRUCTURAL_REVIEW_ROUND_2_TEST_COUNT=107
+NET_NEW_MYPY_FINDINGS=0
 ```

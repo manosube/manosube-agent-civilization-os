@@ -75,6 +75,30 @@ def _baseline() -> dict[str, Any]:
     )
 
 
+def _governance_adoption_record(
+    *, comment_url: str = _SOURCE_REFERENCE["comment_url"], governing_issue: str = "#77"
+) -> dict[str, Any]:
+    reviewed_sha = "a" * 40
+    return {
+        "schema_version": "0.1",
+        "adoption_id": "ADOPT_TEST_FIXTURE",
+        "governing_issue": governing_issue,
+        "comment_url": comment_url,
+        "decision_authority": "SHUKOU",
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": {
+            "adoption_id": "ADOPT_TEST_FIXTURE",
+            "governing_issue": governing_issue,
+            "reviewed_sha": reviewed_sha,
+            "comment_url": comment_url,
+            "decision_authority": "SHUKOU",
+            "decision_status": "RATIFIED",
+        },
+        "reviewed_sha": reviewed_sha,
+        "authorized_target_sha": reviewed_sha,
+    }
+
+
 def test_a_well_formed_baseline_validates() -> None:
     ap_validation.validate_record(_baseline(), "acceptance_policy_baseline.schema.json")
 
@@ -160,6 +184,7 @@ def test_a_well_formed_adoption_validates() -> None:
         },
         decision_owner="SHUKOU",
         source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
+        governance_adoption_record=_governance_adoption_record(),
         decided_at="2026-09-13T14:00:00Z",
     )
     ap_validation.validate_record(adoption, "acceptance_policy_adoption.schema.json")
@@ -175,6 +200,7 @@ def test_an_adoption_missing_a_required_field_refuses() -> None:
         },
         decision_owner="SHUKOU",
         source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
+        governance_adoption_record=_governance_adoption_record(),
         decided_at="2026-09-13T14:00:00Z",
     )
     del adoption["decided_at"]
@@ -197,6 +223,7 @@ def test_a_well_formed_effective_view_validates() -> None:
                 },
                 decision_owner="SHUKOU",
                 source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
+                governance_adoption_record=_governance_adoption_record(),
                 decided_at="2026-09-13T14:00:00Z",
             )
         ],
@@ -219,6 +246,7 @@ def test_an_effective_view_with_a_wrong_typed_field_refuses() -> None:
                 },
                 decision_owner="SHUKOU",
                 source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
+                governance_adoption_record=_governance_adoption_record(),
                 decided_at="2026-09-13T14:00:00Z",
             )
         ],
@@ -287,3 +315,43 @@ def test_an_impact_preview_with_a_missing_required_field_refuses() -> None:
 def test_an_unregistered_schema_name_refuses() -> None:
     with pytest.raises(AcceptancePolicyValidationError):
         ap_validation.validate_record({}, "acceptance_policy_does_not_exist.schema.json")
+
+
+def test_an_adoption_with_a_governance_adoption_record_missing_a_required_key_refuses() -> None:
+    """P82-R2-F4: the new ``governance_adoption_record`` field is itself schema-validated --
+    a missing required key is caught at the wire-shape layer, independent of whatever
+    ``evaluate_adoption_record`` itself would separately decide."""
+
+    adoption = build_adoption(
+        project_id=_PROJECT_ID,
+        governing_issue=77,
+        adopted_ref={
+            "kind": "acceptance_policy_baseline",
+            "id": _baseline()["acceptance_policy_baseline_id"],
+        },
+        decision_owner="SHUKOU",
+        source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
+        governance_adoption_record=_governance_adoption_record(),
+        decided_at="2026-09-13T14:00:00Z",
+    )
+    del adoption["governance_adoption_record"]["authorized_target_sha"]
+    with pytest.raises(AcceptancePolicyValidationError):
+        ap_validation.validate_record(adoption, "acceptance_policy_adoption.schema.json")
+
+
+def test_an_adoption_with_a_governance_adoption_record_carrying_an_unknown_key_refuses() -> None:
+    adoption = build_adoption(
+        project_id=_PROJECT_ID,
+        governing_issue=77,
+        adopted_ref={
+            "kind": "acceptance_policy_baseline",
+            "id": _baseline()["acceptance_policy_baseline_id"],
+        },
+        decision_owner="SHUKOU",
+        source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
+        governance_adoption_record=_governance_adoption_record(),
+        decided_at="2026-09-13T14:00:00Z",
+    )
+    adoption["governance_adoption_record"]["unexpected_extra_field"] = "smuggled"
+    with pytest.raises(AcceptancePolicyValidationError):
+        ap_validation.validate_record(adoption, "acceptance_policy_adoption.schema.json")

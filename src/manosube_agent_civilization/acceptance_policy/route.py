@@ -8,6 +8,7 @@ never a direct/internal Store mutation of its own (FD4-C10).
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
@@ -23,8 +24,10 @@ from . import engine, identity, validation
 from .errors import (
     AcceptancePolicyValidationError,
     ConflictingPolicyReplayError,
+    PolicyLineageConflictError,
     PolicyProvenanceError,
     UnauthorizedPolicyAdoptionError,
+    UndeclaredPolicyChangeError,
 )
 from .types import HUMAN_AUTHORITY, REQUIRED_COMMENT_AUTHOR_ASSOCIATION
 
@@ -281,6 +284,14 @@ def resolve_and_verify_adoption(
             f"{resolved['decision_owner']!r}, not {HUMAN_AUTHORITY!r}"
         )
     _require_source_reference(resolved["source_reference"])
+    # P82-R2-F1: re-evaluate the Governance Adoption Record binding every time this adoption
+    # is read, never only at commit time -- the same discipline the decision_owner/source_
+    # reference checks above already hold themselves to.
+    engine.verify_governance_adoption_record(
+        resolved["governance_adoption_record"],
+        comment_url=resolved["source_reference"]["comment_url"],
+        governing_issue=resolved["governing_issue"],
+    )
     return resolved
 
 
@@ -345,6 +356,48 @@ def resolve_and_verify_effective_policy(
     return effective_view
 
 
+def _resolve_expected_prior_clause_binding(
+    store: Any,
+    project_id: str,
+    baseline: dict[str, Any],
+    effective_view: dict[str, Any],
+    clause_id: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The one place ``prior_clause_binding``/the prior clause body used for the semantic-diff
+    recomputation is derived from the real, current effective view -- shared by
+    :func:`propose_acceptance_policy_transition` (to construct a new transition) and
+    :func:`_verify_candidate_transition_for_preview` (P82-R2-F3, to verify a caller-supplied
+    candidate's own claimed binding against this exact same derivation), so the two can never
+    silently diverge on what "the real current predecessor" means.
+    """
+
+    effective_by_id = {c["clause_id"]: c for c in effective_view["effective_clauses"]}
+    prior_effective = effective_by_id.get(clause_id)
+
+    if prior_effective is None:
+        prior_clause_binding = {
+            "source": "BASELINE",
+            "source_ref": {
+                "kind": "acceptance_policy_baseline",
+                "id": baseline["acceptance_policy_baseline_id"],
+            },
+        }
+        return prior_clause_binding, None
+
+    prior_ref = prior_effective["provenance_chain"][-1]
+    prior_clause_binding = {
+        "source": "TRANSITION" if prior_ref["kind"] == _TRANSITION_KIND else "BASELINE",
+        "source_ref": prior_ref,
+    }
+    if prior_ref["kind"] == _TRANSITION_KIND:
+        prior_clause_for_diff = resolve_and_verify_transition(store, project_id, prior_ref["id"])[
+            "proposed_clause"
+        ]
+    else:
+        prior_clause_for_diff = next(c for c in baseline["clauses"] if c["clause_id"] == clause_id)
+    return prior_clause_binding, prior_clause_for_diff
+
+
 def propose_acceptance_policy_transition(
     store: Any,
     project_id: str,
@@ -370,33 +423,18 @@ def propose_acceptance_policy_transition(
 
     _require_source_reference(source_reference)
     baseline = resolve_and_verify_baseline(store, project_id, baseline_ref["id"])
+    if baseline["governing_issue"] != governing_issue:
+        # P82-R2-F2: a proposal declaring a different governing_issue than its own resolved
+        # baseline is refused before any commit -- never silently accepted under the caller's
+        # own label.
+        raise PolicyLineageConflictError(
+            f"baseline {baseline_ref['id']!r} is bound to governing_issue "
+            f"{baseline['governing_issue']!r}, not this proposal's own {governing_issue!r}"
+        )
     effective_view = resolve_and_verify_effective_policy(store, project_id, baseline_ref)
-    effective_by_id = {c["clause_id"]: c for c in effective_view["effective_clauses"]}
-    prior_effective = effective_by_id.get(clause_id)
-
-    if prior_effective is None:
-        prior_clause_binding = {
-            "source": "BASELINE",
-            "source_ref": {
-                "kind": "acceptance_policy_baseline",
-                "id": baseline["acceptance_policy_baseline_id"],
-            },
-        }
-        prior_clause_for_diff: dict[str, Any] | None = None
-    else:
-        prior_ref = prior_effective["provenance_chain"][-1]
-        prior_clause_binding = {
-            "source": "TRANSITION" if prior_ref["kind"] == _TRANSITION_KIND else "BASELINE",
-            "source_ref": prior_ref,
-        }
-        if prior_ref["kind"] == _TRANSITION_KIND:
-            prior_clause_for_diff = resolve_and_verify_transition(
-                store, project_id, prior_ref["id"]
-            )["proposed_clause"]
-        else:
-            prior_clause_for_diff = next(
-                c for c in baseline["clauses"] if c["clause_id"] == clause_id
-            )
+    prior_clause_binding, prior_clause_for_diff = _resolve_expected_prior_clause_binding(
+        store, project_id, baseline, effective_view, clause_id
+    )
 
     transition = engine.build_transition(
         project_id=project_id,
@@ -424,6 +462,39 @@ def propose_acceptance_policy_transition(
     return transition
 
 
+def _assert_adoption_does_not_poison_the_canonical_lineage(
+    store: Any,
+    project_id: str,
+    baseline: dict[str, Any],
+    candidate_adoption: dict[str, Any],
+) -> None:
+    """P82-R2-F2: simulate folding *candidate_adoption* onto the current canonical adoption
+    lineage -- using the exact same fold :func:`engine.derive_effective_policy` already
+    performs -- before it is durably committed. A cross-Issue/cross-baseline target, a stale or
+    forked predecessor binding, or a duplicate genesis-baseline adoption is refused here, before
+    any write, rather than discovered only the next time someone resolves the effective policy
+    against an already-immutable, already-poisoned adoption set.
+    """
+
+    canonical_adoptions = _resolve_canonical_adoptions(store, project_id, baseline)
+    candidate_id = candidate_adoption["acceptance_policy_adoption_id"]
+    if any(a["acceptance_policy_adoption_id"] == candidate_id for a in canonical_adoptions):
+        # An exact replay of an adoption already part of the canonical lineage was already
+        # proven non-poisoning at its own original commit; _commit_one_record's own
+        # idempotency check handles the no-op replay from here.
+        return
+
+    prospective_adoptions = [*canonical_adoptions, candidate_adoption]
+    transitions_by_id: dict[str, dict[str, Any]] = {}
+    for adoption in prospective_adoptions:
+        adopted_ref = adoption["adopted_ref"]
+        if adopted_ref["kind"] == _TRANSITION_KIND and adopted_ref["id"] not in transitions_by_id:
+            transitions_by_id[adopted_ref["id"]] = resolve_and_verify_transition(
+                store, project_id, adopted_ref["id"]
+            )
+    engine.derive_effective_policy(baseline, transitions_by_id, prospective_adoptions)
+
+
 def adopt_acceptance_policy_transition(
     store: Any,
     project_id: str,
@@ -432,26 +503,47 @@ def adopt_acceptance_policy_transition(
     adopted_ref: dict[str, str],
     decision_owner: str,
     source_reference: dict[str, Any],
+    governance_adoption_record: dict[str, Any],
     decided_at: str,
     committed_at: str,
 ) -> dict[str, Any]:
     """FD4-C3: commit the identity-bound SHUKOU decision that activates *adopted_ref* -- the
     one baseline genesis or one proposed transition it names. Refuses (before any commit) any
-    ``decision_owner`` other than SHUKOU, or a ``source_reference`` not carrying the OWNER
-    association -- the only Human Authority this package ever recognises.
+    ``decision_owner`` other than SHUKOU, a ``source_reference`` not carrying the OWNER
+    association, or a ``governance_adoption_record`` that does not independently evaluate to an
+    admitted, exactly-bound Governance Adoption Record (P82-R2-F1) -- the only Human Authority
+    this package ever recognises.
 
     The referenced target is independently Store-resolved and reproduced *before* the adoption
     itself is built, so an adoption can never be minted for a target that does not genuinely
-    exist under the identity it names.
+    exist under the identity it names, and is required to agree with this call's own
+    project/governing_issue (P82-R2-F2) -- never merely under the caller's own label. The
+    candidate adoption is also simulated against the current canonical lineage before commit,
+    so a stale, forked, or duplicate-baseline adoption is refused before it can ever poison the
+    immutable canonical set.
     """
 
     _require_source_reference(source_reference)
     if adopted_ref["kind"] == _BASELINE_KIND:
-        resolve_and_verify_baseline(store, project_id, adopted_ref["id"])
+        target = resolve_and_verify_baseline(store, project_id, adopted_ref["id"])
+        baseline_for_simulation = target
     elif adopted_ref["kind"] == _TRANSITION_KIND:
-        resolve_and_verify_transition(store, project_id, adopted_ref["id"])
+        target = resolve_and_verify_transition(store, project_id, adopted_ref["id"])
+        baseline_for_simulation = resolve_and_verify_baseline(
+            store, project_id, target["baseline_ref"]["id"]
+        )
     else:
         raise AcceptancePolicyValidationError(f"unknown adopted_ref.kind: {adopted_ref['kind']!r}")
+
+    if target["governing_issue"] != governing_issue or target["project_id"] != project_id:
+        # P82-R2-F2: cross-work-unit adoption is refused before any commit -- the resolved
+        # target's own (project_id, governing_issue) must agree with this adoption's own,
+        # never merely with the caller's own separately-declared label.
+        raise PolicyLineageConflictError(
+            f"adopted_ref {adopted_ref!r} resolves to a record bound to "
+            f"(project_id={target['project_id']!r}, governing_issue={target['governing_issue']!r}), "
+            f"not this adoption's own (project_id={project_id!r}, governing_issue={governing_issue!r})"
+        )
 
     adoption = engine.build_adoption(
         project_id=project_id,
@@ -459,9 +551,13 @@ def adopt_acceptance_policy_transition(
         adopted_ref=adopted_ref,
         decision_owner=decision_owner,
         source_reference=source_reference,
+        governance_adoption_record=governance_adoption_record,
         decided_at=decided_at,
     )
     validation.validate_record(adoption, _ADOPTION_SCHEMA)
+    _assert_adoption_does_not_poison_the_canonical_lineage(
+        store, project_id, baseline_for_simulation, adoption
+    )
     _commit_one_record(
         store,
         project_id,
@@ -473,6 +569,76 @@ def adopt_acceptance_policy_transition(
     return adoption
 
 
+def _verify_candidate_transition_for_preview(
+    store: Any,
+    project_id: str,
+    baseline: dict[str, Any],
+    effective_view: dict[str, Any],
+    candidate_transition: dict[str, Any],
+) -> dict[str, Any]:
+    """P82-R2-F3: detach *candidate_transition* from the caller's own mutable object and
+    independently verify it before it is ever used to build a preview -- schema, identity,
+    fingerprint, project/governing_issue/baseline binding, the prior-clause binding against the
+    real current effective view, and the declared operation against the independently
+    recomputed semantic diff. Only this retained, fully-verified copy is ever passed to
+    :func:`engine.build_impact_preview` -- the caller's own original object, and any further
+    mutation of it, has no effect on the preview actually built.
+    """
+
+    candidate = deepcopy(candidate_transition)
+    validation.validate_record(candidate, _TRANSITION_SCHEMA)
+
+    if (
+        identity.transition_semantic_fingerprint(candidate)
+        != candidate["transition_semantic_fingerprint"]
+    ):
+        raise PolicyProvenanceError(
+            "candidate_transition fingerprint does not reproduce from its own content"
+        )
+    if identity.transition_id(candidate) != candidate["acceptance_policy_transition_id"]:
+        raise PolicyProvenanceError(
+            "candidate_transition id does not reproduce from its own content"
+        )
+
+    if candidate["project_id"] != project_id:
+        raise PolicyLineageConflictError(
+            f"candidate_transition is bound to project_id {candidate['project_id']!r}, not "
+            f"this preview's own {project_id!r}"
+        )
+    if candidate["governing_issue"] != baseline["governing_issue"]:
+        raise PolicyLineageConflictError(
+            f"candidate_transition is bound to governing_issue {candidate['governing_issue']!r}, "
+            f"not this lineage's own {baseline['governing_issue']!r}"
+        )
+    if candidate["baseline_ref"]["id"] != baseline["acceptance_policy_baseline_id"]:
+        raise PolicyLineageConflictError(
+            "candidate_transition does not bind to this lineage's own baseline"
+        )
+
+    clause_id = candidate["clause_id"]
+    expected_prior_clause_binding, prior_clause_for_diff = _resolve_expected_prior_clause_binding(
+        store, project_id, baseline, effective_view, clause_id
+    )
+    if candidate["prior_clause_binding"] != expected_prior_clause_binding:
+        raise PolicyLineageConflictError(
+            f"candidate_transition binds prior_clause_binding to "
+            f"{candidate['prior_clause_binding']!r}, but the currently-effective predecessor "
+            f"for {clause_id!r} is {expected_prior_clause_binding!r} (stale, forked, or wrong "
+            "predecessor)"
+        )
+
+    computed_operation = engine.classify_operation(
+        prior_clause_for_diff, candidate.get("proposed_clause")
+    )
+    if computed_operation != candidate["policy_operation"]:
+        raise UndeclaredPolicyChangeError(
+            f"candidate_transition declares policy_operation={candidate['policy_operation']!r} "
+            f"but the independently recomputed operation is {computed_operation!r}"
+        )
+
+    return candidate
+
+
 def preview_acceptance_policy_transition(
     store: Any,
     project_id: str,
@@ -482,10 +648,15 @@ def preview_acceptance_policy_transition(
     """FD4-C7: the bounded before/after impact preview, computed against the real,
     Store-resolved current effective policy (P82-R1-F1: the canonical, Store-derived adoption
     set, never a caller-supplied list). Makes no Store mutation -- *candidate_transition* need
-    not even be committed yet."""
+    not even be committed yet, but is independently detached and verified (P82-R2-F3) before
+    it is ever used to build the preview."""
 
+    baseline = resolve_and_verify_baseline(store, project_id, baseline_ref["id"])
     effective_view = resolve_and_verify_effective_policy(store, project_id, baseline_ref)
-    preview = engine.build_impact_preview(effective_view, candidate_transition)
+    verified_candidate = _verify_candidate_transition_for_preview(
+        store, project_id, baseline, effective_view, candidate_transition
+    )
+    preview = engine.build_impact_preview(effective_view, verified_candidate)
     validation.validate_record(preview, _IMPACT_PREVIEW_SCHEMA)
     return preview
 
