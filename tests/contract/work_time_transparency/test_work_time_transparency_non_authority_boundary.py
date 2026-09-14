@@ -47,11 +47,13 @@ from manosube_agent_civilization.reflow.reference_registry import (
     reference_edges,
 )
 import manosube_agent_civilization.work_time_transparency.adapters as adapters_module
+import manosube_agent_civilization.work_time_transparency.clock as clock_module
 import manosube_agent_civilization.work_time_transparency.engine as engine_module
 import manosube_agent_civilization.work_time_transparency.errors as errors_module
 import manosube_agent_civilization.work_time_transparency.identity as identity_module
 import manosube_agent_civilization.work_time_transparency.route as route_module
 import manosube_agent_civilization.work_time_transparency.types as types_module
+import manosube_agent_civilization.work_time_transparency.verify as verify_module
 
 _WORK_TIME_TRANSPARENCY_KINDS = (
     "work_time_coordination_open",
@@ -66,6 +68,8 @@ _ALL_PACKAGE_MODULES = (
     types_module,
     errors_module,
     adapters_module,
+    clock_module,
+    verify_module,
 )
 
 

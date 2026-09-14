@@ -15,7 +15,7 @@ structural boundary.
 
 from __future__ import annotations
 
-from .adapters import with_work_time_coordination
+from .adapters import ProgressReporter, with_work_time_coordination
 from .route import (
     open_work_time_coordination,
     record_work_time_progress_update,
@@ -27,6 +27,7 @@ __all__ = [
     "ADAPTER_KINDS",
     "POSITION_KINDS",
     "TERMINAL_OUTCOMES",
+    "ProgressReporter",
     "open_work_time_coordination",
     "record_work_time_progress_update",
     "record_work_time_terminal_notice",

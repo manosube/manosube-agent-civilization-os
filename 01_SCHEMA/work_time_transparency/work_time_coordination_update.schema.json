@@ -20,6 +20,8 @@
     "revised_remaining_duration_lower_minutes",
     "revised_remaining_duration_upper_minutes",
     "human_action_required",
+    "next_progress_update_due_minutes",
+    "heartbeat_deadline_breached",
     "recorded_at"
   ],
   "properties": {
@@ -61,6 +63,8 @@
       "oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]
     },
     "human_action_required": {"type": "boolean"},
+    "next_progress_update_due_minutes": {"type": "integer", "minimum": 0},
+    "heartbeat_deadline_breached": {"type": "boolean"},
     "recorded_at": {"$ref": "../common/timestamp.schema.json"}
   },
   "$defs": {

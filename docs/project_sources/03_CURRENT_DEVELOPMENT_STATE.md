@@ -4420,3 +4420,108 @@ ISSUE_22_CLOSE_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 ```
+
+# 59. PR #84 Structural Review Round 1 (P84-R1-F1..F6) bounded addendum
+
+本節も§53〜§56と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/work_time_transparency/`配下の本Round是正に
+対応付けるためだけの、最小限の事実記録である。§58は本deliveryの初回draftを記録しており、
+本節はその後のStructural Review Round 1による是正を記録する -- §58自身の宣言は、本節が記録
+する採択済みafter-stateによって置き換えられる。
+
+PR #84上で構造参謀レビュー
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5660655523`
+(6件のfinding、P84-R1-F1..F6)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5660679037`
+(`ADOPT_P84_R1_F1_F6_HUMAN_WAIT_TIME_TRANSPARENCY_CORRECTION`)が投稿された。本記録作成者は
+これら2件を、著者login/id/association(`manosube`/OWNER)・本文冒頭の一致について、実装開始
+直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#84
+REVIEW_ROUND=1
+STRUCTURAL_REVIEW_COMMENT_ID=5660655523
+ADOPTION_COMMENT_ID=5660679037
+ADOPTION_ID=ADOPT_P84_R1_F1_F6_HUMAN_WAIT_TIME_TRANSPARENCY_CORRECTION
+PRE_ROUND_HEAD_SHA=e961becf2ed7d0a01ad35fb1147e81842a6c3248
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された6件のfinding(P84-R1-F1..F6)はいずれも`01_SCHEMA/work_time_transparency/`の既存3
+schemaファイルの変更(`work_time_coordination_update`/`terminal`への
+`heartbeat_deadline_breached`追加、`update`への`next_progress_update_due_minutes`追加、
+schema総数86→89は不変)と`src/manosube_agent_civilization/work_time_transparency/`
+(`route.py`・`engine.py`・`identity.py`・`adapters.py`・`errors.py`・`__init__.py`の6
+既存モジュール変更、新規`clock.py`・`verify.py`の2モジュール追加、9モジュール構成)のみで
+修正した。schemaファイル数(3)・新規record kind数(0)は不変。
+
+F1(8アダプター全ての実本番entrypoint統合): 従来はBootのみが実本番`boot_project`呼び出しで
+証明され、残り7 adapter(CLI、Temporary Agent、Model Runtime、Multi-Agent、Change Executor、
+Independent Verification、GitHub Projection)は代表callableのみで証明されていた。
+`tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py`
+を全面書き換えし、8adapter全ての実本番entrypoint(`cli.main.run`、
+`agent_runtime.start_temporary_agent`、`model_runtime.open_model_work_unit`、
+`multi_agent.open_dynamic_execution_plan`、`change_executor.compose_change_executor`、
+`independent_verification.run_independent_verification`、`projection.project_to_github`)を、
+各adapter自身の既存test-side fixture builder(`tests/fixtures/model_runtime_world.py`等)を
+再利用した実precondition chain(実Difference/Boundary/Grant、実Ed25519署名、実git worktree、
+実`FakeGitHubAdapter`)越しに、`with_work_time_coordination`経由で実証した。
+
+F2(lineage resolve-and-verify): 新規`verify.py`モジュールが、`open_ref`/`predecessor_ref`を
+caller供給record bodyとしてではなく、このprojectのStore自身からkind/id参照として解決・再
+検証する(`resolve_open`・`resolve_predecessor_at_sequence`・`resolve_tip`・
+`verify_predecessor_matches`・`verify_monotonic_continuation`・`verify_binding_congruity`)。
+存在しないopen・cross-project/cross-coordination predecessor・スキップ/並べ替え/分岐した
+sequence・terminal-before-open・update-after-terminal・非単調timeはいずれも、record構築や
+commit試行より前にこの境界で拒否される。
+
+F3(is_material_reestimate/heartbeat_deadline_breachedの導出化): 従来caller供給boolean
+だった両fieldを、`route.py`が解決済みcanonical predecessorから自身で導出するよう変更(`route.
+py`が`engine.is_material_reestimate`/独自の直接比較を呼び出す)。opening-deadline rule
+(upper estimateが10分超の場合、最初のupdateは10分以内に必須)を`build_work_time_coordination_
+open`に追加。
+
+F4(clock所有権の一元化): `with_work_time_coordination`のみが実wall clockを読む唯一の箇所
+(新規`clock.default_clock`)となり、open時・terminal時の2回のみ読み取る。非単調terminal
+観測は新規`WorkTimeTransparencyClockError`で拒否される。実行中のadapter呼び出しが進捗を
+post できる新規`ProgressReporter`クラス(`.report()`)を追加し、Change ExecutorとIndependent
+Verificationの実adapter呼び出し中に実際にheartbeatをpostすることで証明した。
+
+F5(resolve-and-verify境界の本番保証化): F2の`verify.py`境界は、テストコードが独自に
+fingerprintを再計算するのではなく、本番route.py自身が呼び出す共有境界として実装されている
+(`tests/contract/work_time_transparency/test_work_time_transparency_static_conformance.py`の
+AST検証によりsource位置で確認)。
+
+F6(caller入力detach-firstと adapter_kind/work_unit_ref kind binding): `route.py`の3公開
+entrypoint全てが、`boot_project`呼び出しより前の文字通り最初の操作として`_detach(...)`
+(deepcopy)を実行する(AST検証済み)。`open_work_time_coordination`は`adapter_kind`と
+`work_unit_ref.kind`が`ADAPTER_KIND_TO_WORK_UNIT_REF_KIND`と一致しない場合を拒否する。両者
+とも、mutation-during-Boot control・mismatched-kind controlの決定的negative testで証明した。
+
+targeted test suite(`tests/unit/work_time_transparency/`・
+`tests/contract/work_time_transparency/`・`tests/integration/work_time_transparency/`、
+6 test files + 1 fixture module、127 tests、うち新規adapter conformance実entrypoint test 7件・
+lineage/mutation/kind-binding negative control 12件を新規追加)は本記録作成者自身が独立に
+実行し検証済み(`127 passed`)。`ruff check`・`ruff format --check`はこの新規/変更package
+全体に対してclean。`mypy --namespace-packages`は本packageに対し新規finding 0件(repository
+全体で確認された既存findingはいずれも本Roundが変更していない`multi_agent`/`model_runtime`
+route.pyに限定されており、本Round自身の変更ファイルには一件も現れない)。
+`python scripts/validate_schemas.py`・`python scripts/source_impact_gate.py`・full
+repository test suiteの独立再実行結果は、本Roundの新head到達後にPR #84への返却Evidenceコメ
+ント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

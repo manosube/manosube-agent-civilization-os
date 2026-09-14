@@ -13,6 +13,7 @@
     "predecessor_ref",
     "terminal_outcome",
     "actual_elapsed_minutes",
+    "heartbeat_deadline_breached",
     "explanation",
     "recorded_at"
   ],
@@ -50,6 +51,7 @@
       "PAUSED_BY_HUMAN"
     ]},
     "actual_elapsed_minutes": {"type": "integer", "minimum": 0},
+    "heartbeat_deadline_breached": {"type": "boolean"},
     "explanation": {"type": "string", "maxLength": 4096},
     "recorded_at": {"$ref": "../common/timestamp.schema.json"}
   },

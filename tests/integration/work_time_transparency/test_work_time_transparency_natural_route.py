@@ -2,6 +2,13 @@
 canonical entrypoints called exactly as a real caller would -- open, two heartbeats (one plain,
 one material re-estimate), then a terminal notice -- proving the full coordination chain commits,
 resolves, and validates end to end, not merely in isolated unit construction.
+
+Structural Review Round 1 (P84-R1-F2/F3): ``is_material_reestimate`` is no longer a caller-
+supplied argument to :func:`record_work_time_progress_update` -- it is derived server-side from
+the resolved predecessor -- and ``actual_elapsed_minutes`` is no longer a caller-supplied
+argument to :func:`record_work_time_terminal_notice` -- it is derived server-side from the
+resolved open record's own ``opened_at`` and this call's own ``recorded_at``. Both derivations
+are asserted below against the fixed, deterministic timestamps this test already uses.
 """
 
 from __future__ import annotations
@@ -57,11 +64,11 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
         position_kind="WORK_RUNNING",
         current_position="boundary resolved, executing",
         material_result_or_blocker="",
-        is_material_reestimate=False,
         remaining_duration_unknown=False,
         revised_remaining_duration_lower_minutes=3,
         revised_remaining_duration_upper_minutes=8,
         human_action_required=False,
+        next_progress_update_due_minutes=20,
         recorded_at="2026-09-14T06:10:00Z",
     )
     heartbeat_ref = {
@@ -72,6 +79,10 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
         store.resolve_record(project_id, "work_time_coordination_update", heartbeat_ref["id"])
         == heartbeat
     )
+    # revised remaining (3-8) vs the original estimate (5-15): both bounds moved by >= 5 --
+    # derived server-side from the resolved open record, never a raw caller-supplied boolean.
+    assert heartbeat["is_material_reestimate"] is True
+    assert heartbeat["heartbeat_deadline_breached"] is False
 
     reestimate = record_work_time_progress_update(
         store,
@@ -83,11 +94,11 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
         position_kind="EXTERNAL_REVIEW_WAIT",
         current_position="waiting on external filesystem lock release",
         material_result_or_blocker="an unrelated process is holding a lock on the target path",
-        is_material_reestimate=True,
         remaining_duration_unknown=True,
         revised_remaining_duration_lower_minutes=None,
         revised_remaining_duration_upper_minutes=None,
         human_action_required=False,
+        next_progress_update_due_minutes=27,
         recorded_at="2026-09-14T06:20:00Z",
     )
     reestimate_ref = {
@@ -96,6 +107,8 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
     }
     assert reestimate["remaining_duration_unknown"] is True
     assert reestimate_ref["id"] != heartbeat_ref["id"]
+    # a transition into "unknown remaining duration" is always material.
+    assert reestimate["is_material_reestimate"] is True
 
     terminal = record_work_time_terminal_notice(
         store,
@@ -104,7 +117,6 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
         open_ref=open_ref,
         predecessor_ref=reestimate_ref,
         terminal_outcome="COMPLETED",
-        actual_elapsed_minutes=27,
         explanation="lock released, execution completed within the revised (unknown-then-bounded) window",
         recorded_at="2026-09-14T06:27:00Z",
     )
@@ -117,6 +129,8 @@ def test_the_full_open_heartbeat_reestimate_terminal_chain_commits_and_resolves(
         == terminal
     )
     assert terminal["terminal_outcome"] == "COMPLETED"
+    # derived from open.opened_at (06:00:00) and this call's own recorded_at (06:27:00).
+    assert terminal["actual_elapsed_minutes"] == 27
 
     final_state = store.load_current(project_id)
     assert final_state["state_revision"] == world["genesis_state"]["state_revision"] + 4
@@ -140,7 +154,7 @@ def test_short_work_can_go_directly_from_open_to_terminal_with_zero_heartbeats(
         estimated_duration_upper_minutes=1,
         estimate_confidence="HIGH",
         major_steps=["boot"],
-        next_progress_update_due_minutes=10,
+        next_progress_update_due_minutes=1,
         variability_factors="none",
         opened_at="2026-09-14T07:00:00Z",
     )
@@ -156,8 +170,8 @@ def test_short_work_can_go_directly_from_open_to_terminal_with_zero_heartbeats(
         open_ref=open_ref,
         predecessor_ref=open_ref,
         terminal_outcome="COMPLETED",
-        actual_elapsed_minutes=1,
         explanation="",
-        recorded_at="2026-09-14T07:00:30Z",
+        recorded_at="2026-09-14T07:01:00Z",
     )
     assert terminal["predecessor_ref"] == open_ref
+    assert terminal["actual_elapsed_minutes"] == 1

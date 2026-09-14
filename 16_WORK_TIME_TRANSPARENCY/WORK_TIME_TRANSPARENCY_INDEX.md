@@ -11,7 +11,8 @@ CANONICAL_TIMING_OWNER_COUNT=1
 PUBLIC_WORK_TIME_TRANSPARENCY_ENTRY_POINT_COUNT=3
 ROADMAP_PHASE_ADDED=false
 GOVERNING_ISSUE=#22
-STRUCTURAL_REVIEW_ROUNDS_APPLIED=0
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=1
+LATEST_ROUND_ADOPTION_ID=ADOPT_P84_R1_F1_F6_HUMAN_WAIT_TIME_TRANSPARENCY_CORRECTION
 ```
 
 ---
@@ -32,12 +33,19 @@ completion.
                                          the required proof layers, and the explicit non-claims
 ```
 
-This is a **first delivery** (`STRUCTURAL_REVIEW_ROUNDS_APPLIED=0`), implemented under SHUKOU's
-formal adoption of the Structural Advisor's rebind determination
-(`ADOPT_ISSUE_22_HUMAN_WAIT_TIME_TRANSPARENCY_VERTICAL`, Issue #22 comment
+This delivery's first draft was implemented under SHUKOU's formal adoption of the Structural
+Advisor's rebind determination (`ADOPT_ISSUE_22_HUMAN_WAIT_TIME_TRANSPARENCY_VERTICAL`, Issue #22
+comment
 [5659817582](https://github.com/manosube/manosube-agent-civilization-os/issues/22#issuecomment-5659817582)),
 against authorized base `main@279572fb51775bd8a13665376aa751a63c1d0c35` (the PR #83 / FD-0004
-merge commit).
+merge commit). `STRUCTURAL_REVIEW_ROUNDS_APPLIED=1`: SHUKOU's formal adoption of Structural
+Review Round 1's 6 findings (`ADOPT_P84_R1_F1_F6_HUMAN_WAIT_TIME_TRANSPARENCY_CORRECTION`, PR #84
+comment 5660679037, citing the Structural Advisor's review comment 5660655523) required the
+corrections this document pair now reflects -- real adapter integration for all 8
+`ADAPTER_KINDS` (not just Boot), resolve-and-verify lineage at the public route boundary, derived
+(never caller-asserted) material-reestimate/heartbeat-breach/elapsed-time fields, a single
+injected clock plus a real in-flight progress channel, and caller-input detachment as the literal
+first operation of every public entrypoint.
 
 Issue #22's own contract, `00_KERNEL/HUMAN_AGENT_WORK_COMMUNICATION.md`, already exists on
 `main` and is not restated in full here; this document pair is the **closed schema,
@@ -87,17 +95,20 @@ WORK_TIME_TRANSPARENCY_DECLARES_COMPLETION=false
 ## 3. This is not a scheduler, a progress UI, or a ninth execution adapter
 
 No shell, subprocess, network, or credential surface is opened anywhere in this package
-(`test_no_module_imports_a_network_subprocess_or_filesystem_i_o_surface`). This package reads no
-clock itself -- every timestamp (`opened_at`, `recorded_at`, `completed_at`) is caller-supplied,
-identical to the discipline `change_executor`'s own builders already keep. It does not modify,
-wrap, or gate any of the 8 existing execution-capable adapters' own route.py files; it composes
-with them from the outside, once, through `adapters.with_work_time_coordination`.
+(`test_no_module_imports_a_network_subprocess_or_filesystem_i_o_surface`). Exactly one function in
+this package ever reads the real wall clock -- `clock.default_clock`, used only as
+`with_work_time_coordination`'s own default `clock=` argument, always overridable by an injected
+deterministic clock (Structural Review Round 1, P84-R1-F4, correcting this section's own original
+"this package reads no clock" claim); `route.py`/`engine.py` still never read a clock themselves,
+only convert already-observed timestamps. It does not modify, wrap, or gate any of the 8 existing
+execution-capable adapters' own route.py files; it composes with them from the outside, once,
+through `adapters.with_work_time_coordination`.
 
 ```text
 SCHEDULER_IMPLEMENTED=false
 PROGRESS_UI_IMPLEMENTED=false
 NINTH_EXECUTION_ADAPTER_IMPLEMENTED=false
-CLOCK_READ_BY_THIS_PACKAGE=false
+CLOCK_READ_BY_THIS_PACKAGE=1_FUNCTION_ONLY
 ```
 
 ---
@@ -123,9 +134,10 @@ record_work_time_terminal_notice      Issue #22's own "Terminal Notice" -- the o
 ```
 
 Plus one composition primitive, not itself a fourth public route entrypoint:
-`adapters.with_work_time_coordination` -- opens, calls a caller-supplied zero-argument `perform`
-wrapping one real adapter entrypoint call unmodified, and closes (`COMPLETED` on return,
-`FAILED_TERMINAL` with the original exception re-raised on an unhandled exception).
+`adapters.with_work_time_coordination` -- opens, calls a caller-supplied `perform` (receiving one
+`ProgressReporter` for real in-flight heartbeats, Structural Review Round 1, P84-R1-F4) wrapping
+one real adapter entrypoint call unmodified, and closes (`COMPLETED` on return, `FAILED_TERMINAL`
+with the original exception re-raised on an unhandled exception).
 
 ### 4.2 The three new record kinds
 
@@ -170,21 +182,22 @@ Restated here so the index and the contract cannot drift; `WORK_TIME_TRANSPARENC
   own three new record kinds, proves no causality, establishes no sufficient Evidence, closes no
   Difference, and declares no completion of the underlying project work -- structurally proven,
   not only documented (§2 above; `WORK_TIME_TRANSPARENCY_CONTRACT.md` §12).
-- Adapter conformance is delivered as: one fully-real, unmodified-production-entrypoint proof
-  (Boot, success and failure paths, against a real `FileStateStore`), plus a uniform-composition
-  proof that the one shared primitive (`with_work_time_coordination`) behaves identically for
-  every one of the 8 declared `ADAPTER_KINDS`. The other 7 adapters' own real production
-  entrypoints (CLI, Temporary Agent, Model Runtime, Multi-Agent, Change Executor, Independent
-  Verification, GitHub Projection) each carry a substantial precondition chain of their own
-  (Authority Rules, Execution Boundaries, Model Execution Grants, kill switches, verifier
-  selections, GitHub projection grants) that this bounded work unit does not reconstruct
-  wholesale -- doing so would risk 7 already-accepted, already-reviewed verticals for no
-  correctness benefit to any of them. This is a **disclosed scope decision**, recorded in
-  `adapters.py`'s own module docstring and in
-  `tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py`'s
-  own module docstring, not a hidden gap. Wiring each remaining adapter's own `route.py` through
-  this primitive, with that domain's own full fixture world, is this delivery's own disclosed
-  follow-up.
+- Adapter conformance is delivered as: a fully-real, unmodified-production-entrypoint proof for
+  every one of the 8 declared `ADAPTER_KINDS` (Boot, CLI, Temporary Agent, Model Runtime,
+  Multi-Agent, Change Executor, Independent Verification, GitHub Projection -- Structural Review
+  Round 1, P84-R1-F1, `REAL_ADAPTER_INTEGRATION_TESTS_REQUIRED=8_OF_8`, superseding this
+  delivery's own first draft, which proved only Boot this way), plus a retained
+  uniform-composition proof that the one shared primitive (`with_work_time_coordination`) behaves
+  identically for every one of the 8 declared `ADAPTER_KINDS`. Each real adapter's own substantial
+  precondition chain (Authority Rules, Execution Boundaries, Model Execution Grants, kill
+  switches, verifier selections, GitHub projection grants) is built genuinely -- real committed
+  Differences/Boundaries/Grants, real Ed25519 signatures, a real git worktree -- through each
+  adapter's own existing test-side fixture builders, never reconstructed from scratch or
+  duplicated inside this package. `work_time_transparency` still never imports, wraps, or gates
+  any of the 8 adapters' own `route.py` files -- this remains a deliberate, permanent design
+  decision (§3 above), not something Round 1 asked to change; what Round 1 corrected was only
+  this document's own prior disclosure of a narrower proof scope. See
+  `WORK_TIME_TRANSPARENCY_CONTRACT.md` §11 for the full per-adapter account.
 - This package never implements a scheduler, a progress UI, or a ninth execution adapter (§3).
 - A `work_time_coordination_*` record is never treated, by this package or by any existing
   owner it touches, as sufficient Authority, Evidence, Difference closure, Issue closure, or

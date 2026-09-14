@@ -61,6 +61,8 @@ UPDATE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "revised_remaining_duration_lower_minutes",
     "revised_remaining_duration_upper_minutes",
     "human_action_required",
+    "next_progress_update_due_minutes",
+    "heartbeat_deadline_breached",
     "recorded_at",
 )
 
@@ -71,6 +73,7 @@ TERMINAL_SEMANTIC_FIELDS: tuple[str, ...] = (
     "predecessor_ref",
     "terminal_outcome",
     "actual_elapsed_minutes",
+    "heartbeat_deadline_breached",
     "explanation",
     "recorded_at",
 )

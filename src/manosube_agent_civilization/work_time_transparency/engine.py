@@ -83,6 +83,12 @@ def build_work_time_coordination_open(
         )
     if not major_steps:
         raise WorkTimeTransparencyValidationError("major_steps must name at least one step")
+    if estimated_duration_upper_minutes > 10 and next_progress_update_due_minutes > 10:
+        raise WorkTimeTransparencyValidationError(
+            "next_progress_update_due_minutes must be <= 10 when "
+            "estimated_duration_upper_minutes > 10 (Issue #22's own opening-deadline rule, "
+            "Structural Review Round 1 P84-R1-F3)"
+        )
 
     open_id = work_time_coordination_open_id(project_id, work_unit_ref)
     record: dict[str, Any] = {
@@ -167,11 +173,21 @@ def build_work_time_coordination_update(
     revised_remaining_duration_lower_minutes: int | None,
     revised_remaining_duration_upper_minutes: int | None,
     human_action_required: bool,
+    next_progress_update_due_minutes: int,
+    heartbeat_deadline_breached: bool,
     recorded_at: str,
 ) -> dict[str, Any]:
     """Build one canonical ``work_time_coordination_update`` record -- Issue #22's own "Progress
     Heartbeat" / "Estimate Revision" / "External Wait" sections, unified into one record kind
-    discriminated by *position_kind*."""
+    discriminated by *position_kind*.
+
+    *is_material_reestimate* and *heartbeat_deadline_breached* are never taken from a raw
+    caller-supplied boolean -- :mod:`~manosube_agent_civilization.work_time_transparency.route`
+    derives both from the resolved canonical predecessor and the coordination's own declared
+    deadlines (:func:`is_material_reestimate`, :func:`~manosube_agent_civilization.
+    work_time_transparency.clock.is_monotonic`) before calling this builder (Structural Review
+    Round 1, P84-R1-F3). This builder itself stays a pure, Store-free function; it only embeds
+    values its caller already derived."""
 
     if position_kind not in POSITION_KINDS:
         raise WorkTimeTransparencyValidationError(f"unrecognized position_kind: {position_kind!r}")
@@ -213,6 +229,8 @@ def build_work_time_coordination_update(
         "revised_remaining_duration_lower_minutes": revised_remaining_duration_lower_minutes,
         "revised_remaining_duration_upper_minutes": revised_remaining_duration_upper_minutes,
         "human_action_required": human_action_required,
+        "next_progress_update_due_minutes": next_progress_update_due_minutes,
+        "heartbeat_deadline_breached": heartbeat_deadline_breached,
         "recorded_at": recorded_at,
         "work_time_coordination_update_semantic_fingerprint": "",
     }
@@ -235,11 +253,16 @@ def build_work_time_coordination_terminal(
     predecessor_ref: Mapping[str, str],
     terminal_outcome: str,
     actual_elapsed_minutes: int,
+    heartbeat_deadline_breached: bool,
     explanation: str,
     recorded_at: str,
 ) -> dict[str, Any]:
     """Build one canonical ``work_time_coordination_terminal`` record -- Issue #22's own
-    "Terminal Notice": "Every work unit ends with exactly one observable outcome." """
+    "Terminal Notice": "Every work unit ends with exactly one observable outcome."
+
+    *heartbeat_deadline_breached* is never a raw caller-supplied boolean -- see
+    :func:`build_work_time_coordination_update`'s own docstring for why (Structural Review
+    Round 1, P84-R1-F3)."""
 
     if terminal_outcome not in TERMINAL_OUTCOMES:
         raise WorkTimeTransparencyValidationError(
@@ -256,6 +279,7 @@ def build_work_time_coordination_terminal(
         "predecessor_ref": dict(predecessor_ref),
         "terminal_outcome": terminal_outcome,
         "actual_elapsed_minutes": actual_elapsed_minutes,
+        "heartbeat_deadline_breached": heartbeat_deadline_breached,
         "explanation": explanation,
         "recorded_at": recorded_at,
         "work_time_coordination_terminal_semantic_fingerprint": "",

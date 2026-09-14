@@ -21,11 +21,13 @@ from types import ModuleType
 import manosube_agent_civilization
 import manosube_agent_civilization.work_time_transparency as work_time_transparency_module
 import manosube_agent_civilization.work_time_transparency.adapters as adapters_module
+import manosube_agent_civilization.work_time_transparency.clock as clock_module
 import manosube_agent_civilization.work_time_transparency.engine as engine_module
 import manosube_agent_civilization.work_time_transparency.errors as errors_module
 import manosube_agent_civilization.work_time_transparency.identity as identity_module
 import manosube_agent_civilization.work_time_transparency.route as route_module
 import manosube_agent_civilization.work_time_transparency.types as types_module
+import manosube_agent_civilization.work_time_transparency.verify as verify_module
 
 _ALL_PACKAGE_MODULES = (
     route_module,
@@ -34,6 +36,8 @@ _ALL_PACKAGE_MODULES = (
     types_module,
     errors_module,
     adapters_module,
+    clock_module,
+    verify_module,
 )
 
 _SHIPPED_PACKAGE_ROOT = pathlib.Path(manosube_agent_civilization.__file__).resolve().parent
@@ -124,6 +128,7 @@ def test_package_init_reexports_exactly_the_public_entry_points_and_composition_
     assert set(work_time_transparency_module.__all__) == {
         "ADAPTER_KINDS",
         "POSITION_KINDS",
+        "ProgressReporter",
         "TERMINAL_OUTCOMES",
         "open_work_time_coordination",
         "record_work_time_progress_update",
@@ -149,6 +154,48 @@ def test_route_module_boots_fresh_on_every_public_entry_point_never_caches_boot_
             )
             body_source = ast.unparse(node)
             assert "boot_project(" in body_source, f"{node.name} never calls boot_project"
+
+
+def test_every_public_route_entry_point_detaches_caller_input_before_boot_project() -> None:
+    """Structural Review Round 1 (P84-R1-F6): ``_detach(...)`` must appear, textually, before
+    the first ``boot_project(...)`` call inside every public entry point's own source -- proving
+    detachment happens as the *literal first operation*, not merely somewhere before the commit."""
+
+    tree = _tree(route_module)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+            body_source = ast.unparse(node)
+            detach_index = body_source.find("_detach(")
+            boot_index = body_source.find("boot_project(")
+            assert detach_index != -1, f"{node.name} never calls _detach"
+            assert boot_index != -1, f"{node.name} never calls boot_project"
+            assert detach_index < boot_index, (
+                f"{node.name} calls boot_project before _detach -- inputs must be detached first"
+            )
+
+
+def test_continuation_entry_points_resolve_and_verify_lineage_through_verify_py() -> None:
+    """Structural Review Round 1 (P84-R1-F2/F5): the two continuation entry points must resolve
+    ``open_ref``/``predecessor_ref`` through :mod:`~manosube_agent_civilization.
+    work_time_transparency.verify`'s own canonical boundary, never trust a caller-supplied record
+    body directly."""
+
+    tree = _tree(route_module)
+    common_required_calls = (
+        "resolve_open(",
+        "verify_predecessor_matches(",
+        "verify_monotonic_continuation(",
+        "verify_binding_congruity(",
+    )
+    per_function_required_calls = {
+        "record_work_time_progress_update": ("resolve_predecessor_at_sequence(",),
+        "record_work_time_terminal_notice": ("resolve_tip(",),
+    }
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in per_function_required_calls:
+            body_source = ast.unparse(node)
+            for call in (*common_required_calls, *per_function_required_calls[node.name]):
+                assert call in body_source, f"{node.name} never calls {call}"
 
 
 def test_no_schema_carries_a_human_authority_ref_or_signature_field() -> None:

@@ -127,6 +127,10 @@ def test_open_semantic_fingerprint_is_sensitive_to_each_declared_field(field: st
             "upper_minutes",
         ),
         ({"major_steps": []}, "major_steps"),
+        (
+            {"estimated_duration_upper_minutes": 15, "next_progress_update_due_minutes": 11},
+            "next_progress_update_due_minutes",
+        ),
     ],
 )
 def test_build_work_time_coordination_open_refuses_invalid_input(
@@ -134,6 +138,22 @@ def test_build_work_time_coordination_open_refuses_invalid_input(
 ) -> None:
     with pytest.raises(WorkTimeTransparencyValidationError, match=match):
         build_work_time_coordination_open(**_open_kwargs(**kwargs))
+
+
+def test_build_work_time_coordination_open_allows_a_late_first_deadline_for_short_work() -> None:
+    """Structural Review Round 1 (P84-R1-F3): the opening-deadline rule
+    (``next_progress_update_due_minutes`` must be ``<= 10`` when ``estimated_duration_upper_
+    minutes > 10``) only binds when the work is forecast to run long -- Issue #22's own "For work
+    expected to finish within two minutes, a compact estimate is sufficient" allowance."""
+
+    record = build_work_time_coordination_open(
+        **_open_kwargs(
+            estimated_duration_lower_minutes=1,
+            estimated_duration_upper_minutes=2,
+            next_progress_update_due_minutes=2,
+        )
+    )
+    assert record["next_progress_update_due_minutes"] == 2
 
 
 @pytest.mark.parametrize(
@@ -200,6 +220,8 @@ def _update_kwargs(**overrides: Any) -> dict[str, Any]:
         "revised_remaining_duration_lower_minutes": 5,
         "revised_remaining_duration_upper_minutes": 10,
         "human_action_required": False,
+        "next_progress_update_due_minutes": 10,
+        "heartbeat_deadline_breached": False,
         "recorded_at": "2026-09-14T06:10:00Z",
     }
     kwargs.update(overrides)
@@ -289,6 +311,7 @@ def _terminal_kwargs(**overrides: Any) -> dict[str, Any]:
         "predecessor_ref": open_ref,
         "terminal_outcome": "COMPLETED",
         "actual_elapsed_minutes": 12,
+        "heartbeat_deadline_breached": False,
         "explanation": "",
         "recorded_at": "2026-09-14T06:12:00Z",
     }
