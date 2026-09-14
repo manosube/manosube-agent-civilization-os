@@ -963,5 +963,5 @@ PARALLEL_CANONICAL_AUTHORITY=0
 CANONICAL_STATE_OWNER_COUNT=1
 ```
 
-Phase 20は、このaccepted architectureにはまだ実装されていない。Phase 20実装には、Issue #80
+Phase 20は、このaccepted architectureにはまだ実装されていない。Phase 20実装には、Phase 20
 専用Issue上のObjective / Boundary / AuthorityへのSHUKOUの明示採択が別途必要である。
