@@ -72,7 +72,9 @@ TRANSITION_SEMANTIC_FIELDS: tuple[str, ...] = (
 #: at genuinely different times are two different Human acts, not the same one replayed.
 #: P82-R2-F1: ``governance_adoption_record`` is part of the adoption's own identity -- two
 #: adoptions that differ only in which real Governance Adoption Record backs them are two
-#: different Human acts, never the same one replayed under a substituted record.
+#: different Human acts, never the same one replayed under a substituted record. P82-R3-F1:
+#: ``project_binding_id`` is included too -- two adoptions differing only in which real
+#: Project Binding's own trusted signing key vouches for them are likewise two different acts.
 ADOPTION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "project_id",
     "governing_issue",
@@ -80,8 +82,42 @@ ADOPTION_SEMANTIC_FIELDS: tuple[str, ...] = (
     "decision_owner",
     "source_reference",
     "governance_adoption_record",
+    "project_binding_id",
     "decided_at",
 )
+
+#: P82-R3-F1: the exact fields a genuine Human Authority signature over one Acceptance Policy
+#: adoption must cover -- binding the signature to the precise policy target it authorizes
+#: (``adopted_ref``, whose own content-addressed id already transitively binds the exact
+#: policy operation/body identity of the baseline-or-transition it names), the exact work unit
+#: (``governing_issue``), the exact project, the exact claimed decision_owner, and the exact
+#: recorded comment/reviewed/authorized-target identity this adoption's own Governance
+#: Adoption Record claims -- so a signature genuinely produced for one policy target can never
+#: verify for a substituted one (a different ``adopted_ref``, a different work unit, or a
+#: different claimed comment/head) even when the rest of the record is byte-identical.
+GOVERNANCE_ADOPTION_AUTHORITY_SIGNING_FIELDS: tuple[str, ...] = (
+    "project_id",
+    "governing_issue",
+    "adopted_ref",
+    "decision_owner",
+    "comment_url",
+    "reviewed_sha",
+    "authorized_target_sha",
+)
+
+
+def governance_adoption_authority_signing_payload(binding: dict[str, Any]) -> bytes:
+    """The exact canonical bytes a genuine Human Authority signature over one Acceptance
+    Policy adoption must cover -- see :data:`GOVERNANCE_ADOPTION_AUTHORITY_SIGNING_FIELDS`.
+    *binding* is assembled by the verifier itself from already-validated fields (this
+    adoption's own call arguments plus its own Governance Adoption Record's own declared
+    ``comment_url``/``reviewed_sha``/``authorized_target_sha``), never a caller-supplied
+    restatement of them."""
+
+    return canonical_json_bytes(
+        {field: binding[field] for field in GOVERNANCE_ADOPTION_AUTHORITY_SIGNING_FIELDS}
+    )
+
 
 #: What a derived Effective View *is*: the resolved snapshot itself, plus exactly which
 #: Adoptions were folded to produce it -- so two views computed from a differently-ordered or

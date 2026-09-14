@@ -11,6 +11,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from manosube_agent_civilization.binding.signature import verify_ed25519_signature
 from manosube_agent_civilization.development_binding import (
     ADOPTION_RECORD_ADMITTED,
     AdoptionRecordError,
@@ -301,12 +302,19 @@ def build_transition(
 
 
 def verify_governance_adoption_record(
-    record: Any, *, comment_url: str, governing_issue: int
+    record: Any,
+    *,
+    comment_url: str,
+    governing_issue: int,
+    adopted_ref: dict[str, Any],
+    decision_owner: str,
+    project_id: str,
+    signing_key: dict[str, Any],
 ) -> dict[str, Any]:
-    """P82-R2-F1: compose with the repository's existing, non-substitutable Governance
-    Adoption Record owner (``development_binding.adoption_record.evaluate_adoption_record``,
-    Issue #53) rather than trusting a caller-asserted ``decision_owner``/comment-association
-    string pair as sufficient Human-Authority proof on its own.
+    """P82-R2-F1/P82-R3-F1: compose with the repository's existing, non-substitutable
+    Governance Adoption Record owner (``development_binding.adoption_record.evaluate_adoption_
+    record``, Issue #53) rather than trusting a caller-asserted ``decision_owner``/comment-
+    association string pair as sufficient Human-Authority proof on its own.
 
     *record* must independently evaluate to ``ADOPTION_RECORD_ADMITTED`` -- a malformed shape
     raises (nothing to admit or refuse), and a readable-but-insufficient record (forged
@@ -315,11 +323,33 @@ def verify_governance_adoption_record(
     also agree with *this exact* acceptance-policy adoption's own source comment and governing
     work unit -- an admitted record for a *different* comment or work unit is not authority for
     *this* one.
+
+    P82-R3-F1: that alone only proves the record is an internally-consistent *claim* -- never
+    that a trusted Human Authority actually produced it, nor that it authorizes *this exact*
+    policy target rather than some other one the identical claim could be replayed against.
+    *record* must additionally carry a genuine Ed25519 ``signature``, over exactly the bound
+    payload :func:`identity.governance_adoption_authority_signing_payload` derives from this
+    adoption's own already-validated fields (never a caller-supplied restatement of them),
+    verified against *signing_key* -- the real, Store-resolved Project Binding's own
+    ``human_authority_signing_key``, never a caller-supplied key. Reuses the existing
+    ``binding.signature.verify_ed25519_signature`` primitive rather than a second verifier.
     """
 
     shaped = _require_object(record, "governance_adoption_record")
+    signature = shaped.get("signature")
+    if not isinstance(signature, dict):
+        raise UnauthorizedPolicyAdoptionError(
+            "governance_adoption_record.signature is missing or is not an object -- an "
+            "internally-consistent claim alone is never sufficient Human Authority proof"
+        )
+    #: P82-R3-F1: ``signature`` is this package's own extension, layered on top of --
+    #: never merged into -- the existing ``development_binding.adoption_record`` closed
+    #: shape (Issue #53). That owner's own ``REQUIRED_REQUEST_KEYS`` has no notion of a
+    #: signature and refuses any record carrying an unknown key, so it is evaluated on the
+    #: record with ``signature`` withheld rather than on the whole ``shaped`` record.
+    gar_core = {key: value for key, value in shaped.items() if key != "signature"}
     try:
-        decision = evaluate_adoption_record(shaped)
+        decision = evaluate_adoption_record(gar_core)
     except AdoptionRecordError as exc:
         raise UnauthorizedPolicyAdoptionError(
             f"governance_adoption_record is unreadable: {exc}"
@@ -340,6 +370,35 @@ def verify_governance_adoption_record(
             "governance_adoption_record.governing_issue does not match this adoption's own "
             f"governing_issue: {shaped['governing_issue']!r} != {expected_governing_issue!r}"
         )
+
+    if signature.get("key_id") != signing_key.get("key_id"):
+        raise UnauthorizedPolicyAdoptionError(
+            "governance_adoption_record.signature.key_id does not name the real Project "
+            f"Binding's own signing key: {signature.get('key_id')!r} != "
+            f"{signing_key.get('key_id')!r}"
+        )
+    signing_payload = identity.governance_adoption_authority_signing_payload(
+        {
+            "project_id": project_id,
+            "governing_issue": governing_issue,
+            "adopted_ref": adopted_ref,
+            "decision_owner": decision_owner,
+            "comment_url": shaped["comment_url"],
+            "reviewed_sha": shaped["reviewed_sha"],
+            "authorized_target_sha": shaped["authorized_target_sha"],
+        }
+    )
+    signature_value = signature.get("value")
+    if not isinstance(signature_value, str) or not verify_ed25519_signature(
+        public_key_hex=signing_key.get("public_key", ""),
+        message=signing_payload,
+        signature_hex=signature_value,
+    ):
+        raise UnauthorizedPolicyAdoptionError(
+            "governance_adoption_record.signature does not verify against the real Project "
+            "Binding's own trusted signing key for this exact policy target -- forged, "
+            "replayed from a different target, or produced by an untrusted key"
+        )
     return shaped
 
 
@@ -351,12 +410,17 @@ def build_adoption(
     decision_owner: str,
     source_reference: dict[str, Any],
     governance_adoption_record: dict[str, Any],
+    project_binding_id: str,
+    signing_key: dict[str, Any],
     decided_at: str,
 ) -> dict[str, Any]:
     """FD4-C3: construct one Adoption binding. Refuses (rather than silently accepting) any
     ``decision_owner`` other than the sole recognised Human Authority, or a
     ``governance_adoption_record`` that does not independently evaluate to an admitted,
-    exactly-bound Governance Adoption Record (P82-R2-F1)."""
+    exactly-bound, genuinely-signed Governance Adoption Record (P82-R2-F1/P82-R3-F1).
+    *signing_key* must be the real, Store-resolved Project Binding's own
+    ``human_authority_signing_key`` -- this function never resolves it itself (it is pure),
+    so a caller-supplied key can never substitute for the real one."""
 
     from .types import HUMAN_AUTHORITY
 
@@ -368,6 +432,10 @@ def build_adoption(
         governance_adoption_record,
         comment_url=source_reference["comment_url"],
         governing_issue=governing_issue,
+        adopted_ref=adopted_ref,
+        decision_owner=decision_owner,
+        project_id=project_id,
+        signing_key=signing_key,
     )
 
     adoption = {
@@ -378,6 +446,7 @@ def build_adoption(
         "decision_owner": decision_owner,
         "source_reference": deepcopy(source_reference),
         "governance_adoption_record": deepcopy(verified_record),
+        "project_binding_id": project_binding_id,
         "decided_at": decided_at,
     }
     adoption["adoption_semantic_fingerprint"] = identity.adoption_semantic_fingerprint(adoption)

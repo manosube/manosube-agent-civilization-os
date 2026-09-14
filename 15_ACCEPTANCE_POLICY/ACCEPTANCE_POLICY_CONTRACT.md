@@ -733,3 +733,109 @@ STRUCTURAL_REVIEW_ROUND_2_SCHEMA_COUNT_UNCHANGED=true
 STRUCTURAL_REVIEW_ROUND_2_TEST_COUNT=107
 NET_NEW_MYPY_FINDINGS=0
 ```
+
+## 12. Structural Review Round 3 corrections (PR #82, P82-R3-F1..F3)
+
+SHUKOU adopted Structural Review Round 3's three findings on PR #82
+(review `...#issuecomment-5657494008`, adoption `...#issuecomment-5657529350`, handoff
+`...#issuecomment-5657531457`). All three are closed on the same branch/PR, with no new schema
+*file* (`NEW_SCHEMA_FILES=0`, `EXPECTED_SCHEMA_COUNT=86` unchanged) -- the existing
+`acceptance_policy_adoption.schema.json` gained a required `project_binding_id` property, a
+required `signature` property on `governance_adoption_record`, and one new `$defs.signature` --
+and no scope expansion beyond the three findings.
+
+**P82-R3-F1 (trusted, target-bound Adoption Evidence, never a caller-self-attested claim alone):**
+`governance_adoption_record` was, by itself, only ever an internally-consistent caller *claim* --
+`evaluate_adoption_record` proves it is well-shaped and self-consistent, never that a trusted Human
+Authority actually produced it, and it carried no binding to *this exact* `adopted_ref`, so a
+byte-identical admitted record could in principle be replayed to activate a different target. Round
+3 closes this by reusing, rather than reimplementing, the repository's existing non-forgeable
+trusted-capability pattern (the `binding/` package's Ed25519 Project-Binding-signing-key mechanism
+SHUKOU's own prior Round 5-R1 correction established for the analogous Verifier Selection Grant
+problem, Issue #51/P13-R5-R1) -- never a second general Authority owner. A new required top-level
+field, `project_binding_id: str`, names which already-committed, Store-resolved Project Binding's
+own `human_authority_signing_key` (never a secret; the public verification key a genesis record
+already canonically holds, per `03_BINDING/TRUST_MODEL.md` §5) must have produced the record's own
+new required `signature` field. A new `route._resolve_trusted_signing_key` resolves that real
+record fresh from the Store -- a caller can name *which* Project Binding governs an adoption, never
+*what* that Project Binding's own trusted key is. A new
+`identity.governance_adoption_authority_signing_payload` derives the exact signed payload from this
+adoption's own already-validated `project_id`/`governing_issue`/`adopted_ref`/`decision_owner` plus
+the record's own `comment_url`/`reviewed_sha`/`authorized_target_sha` -- the identical closed
+field-list this function's own content-address discipline signs and hashes, so the content address
+and the signed message never drift into two different notions of what this record adopted (the
+same principle `binding/identity.py` states for its own analogous payloads). `engine.
+verify_governance_adoption_record` now additionally requires this signature to verify, via the
+existing `binding.signature.verify_ed25519_signature` primitive (composition, not a second
+verifier), against the real, freshly Store-resolved signing key -- never a caller-supplied one --
+and `route.resolve_and_verify_adoption` re-resolves and re-verifies this binding on every read,
+never only at commit time. Because the signed payload includes `adopted_ref`, a signature genuinely
+produced for one exact target can never verify for a substituted one -- proven by a decisive test
+that reuses a byte-identical, genuinely-signed record (valid for adopting one transition) unchanged
+as the `governance_adoption_record` for adopting a *different* transition, which refuses before any
+commit. A separate decisive test proves a locally-fabricated-but-internally-self-consistent record
+-- an attacker's own genuine Ed25519 keypair, signing the attacker's own well-formed record, even
+claiming the real key's own `key_id` label -- still refuses, because the signature does not verify
+against the real Project Binding's own public key. A third proves a structurally-forged signature
+(garbage of the correct shape) refuses the same way. The adoption's own content-addressed identity
+(`identity.ADOPTION_SEMANTIC_FIELDS`) now includes `project_binding_id`, so two adoptions differing
+only in which real Project Binding's key vouches for them are two different Human acts.
+
+**P82-R3-F2 (bind lineage validation to commit, restart the full cycle on stale State):**
+`adopt_acceptance_policy_transition`'s pre-commit poisoning simulation and the actual commit were
+previously separated by a retryable TOCTOU window -- `_commit_one_record`'s own `StaleStateError`
+retry only rebuilt the commit envelope against fresh State, never reran the simulation, so a
+competing adoption landing mid-window could in principle let a now-stale candidate commit anyway.
+`adopt_acceptance_policy_transition` is now one outer retry loop (bounded by the same
+`_MAX_COMMIT_RETRIES` every other commit path in this package already uses) that reads
+`current_state = store.load_current(project_id)` first on *every* iteration, then resolves and
+reproduces the target, resolves the trusted signing key, builds and schema-validates the adoption,
+checks for an exact-replay short-circuit, runs
+`_assert_adoption_does_not_poison_the_canonical_lineage`, and only then attempts the commit -- via a
+new `route._attempt_commit_at_state` helper that binds the write to the exact `current_state`
+snapshot this same iteration read, and never retries internally. On `StaleStateError` the *entire*
+cycle restarts against genuinely fresh State; the underlying Store's own Compare-And-Swap remains
+the ultimate correctness guarantee (a commit only succeeds if nothing else committed since the
+snapshot the simulation ran against, so a landed commit's simulation was necessarily accurate for
+what actually committed). `_commit_one_record` (the baseline/transition propose paths) is refactored
+onto the same `_attempt_commit_at_state` primitive inside its own existing retry loop --
+behavior-preserving, no change to those two routes' own observable semantics. Two decisive,
+deterministically-forced race tests prove this: a `_CompetitorInjectingStore` test wrapper hooks the
+one Store call (`commit`) the final write goes through and injects a real, independent competing
+commit immediately before delegating to the real one, making the one interleaving this finding is
+about -- a competitor landing between this call's own simulation and its own write -- reproducible
+every time (a true concurrent race is nondeterministic; a hook is not). The first proves a
+competitor that *would* have poisoned the candidate (the exact fork shape
+`test_a_fork_two_transitions_claiming_the_same_predecessor_refuses` already proves is poisoning
+sequentially) is still caught after the forced stale-state restart -- the second, later commit
+attempt never lands. The second proves a competitor whose own change is unrelated never spuriously
+blocks the worker's own eventual, correctly-restarted commit, and that the record the restarted
+cycle actually commits remains correctly content-addressed and replay-safe under an identical
+repeat call afterward (FD4-C9's idempotent-exact-replay guarantee, now also proven to survive a
+race).
+
+**P82-R3-F3 (detach the preview candidate at the first public boundary operation, before any Store
+call):** `preview_acceptance_policy_transition` previously resolved the baseline and effective
+policy (Store calls) *before* the candidate was ever detached -- the `deepcopy` Round 2 (P82-R2-F3)
+introduced lived inside the later `_verify_candidate_transition_for_preview` helper, leaving a
+window where a mid-call mutation during those intervening Store calls could in principle substitute
+a different but still schema/id/fingerprint-consistent candidate before detachment ever happened.
+`preview_acceptance_policy_transition` now performs `candidate = deepcopy(candidate_transition)` as
+its own literal first statement, before `resolve_and_verify_baseline` or any other call; only this
+one detached value is ever used from that point on, and
+`_verify_candidate_transition_for_preview`'s own internal `deepcopy` is removed (its docstring now
+states the caller must already have detached). A decisive `_MutatingReadStore` test wrapper hooks
+`resolve_record` -- the one Store call `resolve_and_verify_baseline` makes as this function's own
+first Store call -- to mutate the caller's *original*, still-retained `candidate_transition` object
+in place, from inside that very first Store call. The resulting preview still reflects the value
+exactly as it stood *before* the mutation, proving the detach happened first: only the
+already-detached copy was ever used, whatever happened to the caller's own object afterward.
+
+```text
+STRUCTURAL_REVIEW_ROUND_3_FINDINGS_CLOSED=3
+STRUCTURAL_REVIEW_ROUND_3_NEW_SCHEMA_FILES=0
+STRUCTURAL_REVIEW_ROUND_3_SCHEMA_COUNT_UNCHANGED=true
+STRUCTURAL_REVIEW_ROUND_3_TEST_COUNT=113
+NET_NEW_MYPY_FINDINGS=0
+NET_NEW_RUFF_FINDINGS=0
+```

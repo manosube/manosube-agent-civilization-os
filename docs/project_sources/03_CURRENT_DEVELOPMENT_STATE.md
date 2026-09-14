@@ -4101,3 +4101,89 @@ ISSUE_80_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 55. PR #82 Structural Review Round 3 (P82-R3-F1..F3) bounded addendum
+
+本節も§53・§54と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/acceptance_policy/`配下の変更に対応付ける
+ためだけの、最小限の事実記録である。
+
+PR #82上で構造参謀レビュー`https://github.com/manosube/manosube-agent-civilization-os/pull/82#issuecomment-5657494008`
+(3件のfinding、`STRUCTURAL_DECISION=CHANGES_REQUIRED`)、SHUKOU正式採択
+`...#issuecomment-5657529350`、実装handoff`...#issuecomment-5657531457`が投稿された。本記録
+作成者はこれら3件全てを、著者login/id/association(`manosube`/OWNER)・本文・live PR #82状態
+(OPEN・未マージ)・head/base SHA(`479b293b40aa252a81ea2d6b679087677a77b2b4`/
+`3791831884e7419f7f2f3497666da68842b8e276`、いずれも未変化)について、本記録作成直前にGitHub
+API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#82
+REVIEW_ROUND=3
+STRUCTURAL_REVIEW_COMMENT_ID=5657494008
+ADOPTION_COMMENT_ID=5657529350
+HANDOFF_COMMENT_ID=5657531457
+PRE_ROUND_HEAD_SHA=479b293b40aa252a81ea2d6b679087677a77b2b4
+BASE_SHA=3791831884e7419f7f2f3497666da68842b8e276
+BRANCH=agent/issue-80-acceptance-policy-lineage
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された3件のfinding(P82-R3-F1..F3)はいずれも`15_ACCEPTANCE_POLICY/`の既存contractが
+pinする`EXPECTED_SCHEMA_COUNT=86`を変更せず(既存`acceptance_policy_adoption.schema.json`への
+`project_binding_id`必須プロパティ・`governance_adoption_record`への`signature`必須プロパティ・
+1件の新規`$defs.signature`追加のみ、新規schemaファイルは0件)、
+`src/manosube_agent_civilization/acceptance_policy/`(`engine.py`・`route.py`・
+`identity.py`)の変更のみで修正した。
+
+F1(信頼可能かつ対象拘束されたAdoption Evidence、caller自己申告claimのみでは不十分): 既存の
+`governance_adoption_record`は、それ単独では内部整合性のあるcaller claimに過ぎず、trusted
+Human Authorityが実際に作成した証明ではなく、また`adopted_ref`への結合も持たなかった
+(同一recordを異なるtargetへreplay可能な余地)。Round 3は、既存の非forgeable trusted capability
+パターン(`binding/`パッケージのEd25519 Project-Binding-signing-key機構、SHUKOU自身の先行
+Round 5-R1が類似問題へ確立した同一機構、Issue #51/P13-R5-R1)を再利用する形で閉じた -- 第二の
+汎用Authority ownerを新設しない。新規必須top-levelフィールド`project_binding_id: str`が、
+どの既に committed 済みStore-resolved Project Bindingの`human_authority_signing_key`が
+recordの新規必須`signature`フィールドを生成すべきかを指名する。新規`route.
+_resolve_trusted_signing_key`が当該recordをStoreから都度fresh解決する。新規`identity.
+governance_adoption_authority_signing_payload`が、本adoption自身の既検証済み
+`project_id`/`governing_issue`/`adopted_ref`/`decision_owner`とrecord自身の
+`comment_url`/`reviewed_sha`/`authorized_target_sha`から署名対象payloadを導出する。`engine.
+verify_governance_adoption_record`はこの署名を既存`binding.signature.
+verify_ed25519_signature`(合成、第二verifierではない)で実Project Bindingの実鍵に対し検証し、
+`route.resolve_and_verify_adoption`はevery読み取り時にこの結合を再解決・再検証する。
+adoptionのcontent-addressed identity(`identity.ADOPTION_SEMANTIC_FIELDS`)は
+`project_binding_id`を含むようになった。F2(lineage検証をcommitへ拘束、stale State時は
+full cycle再実行): `adopt_acceptance_policy_transition`のpre-commit poisoning simulationと
+実際のcommitは、従来retryable TOCTOU windowで分離されていた(`_commit_one_record`の
+`StaleStateError`retryはcommit envelopeのみ再構築し、simulationは再実行しなかった)。同関数は
+今や単一のouter retry loopとなり、each iterationの先頭で`current_state = store.
+load_current(project_id)`を読み直し、target解決・signing key解決・adoption構築・
+poisoning simulation・commit試行(新規`route._attempt_commit_at_state`、渡された
+`current_state`snapshotへ拘束)の全体を、`StaleStateError`発生時は毎回ゼロから再実行する。
+`_commit_one_record`も同一の`_attempt_commit_at_state`primitiveを自身の既存retry loop内で
+再利用するよう refactor した(挙動不変)。F3(preview候補をpublic boundaryの最初の操作として
+detach): `preview_acceptance_policy_transition`は従来baseline/effective policy解決
+(Store呼び出し)の後でのみdetachしていた(Round 2が導入した`deepcopy`は後続helper内部に
+あった)。同関数は今や`candidate = deepcopy(candidate_transition)`を自身の文字通り最初の文へ
+移動し、いかなるStore呼び出しよりも前に実行する。
+
+targeted test suite(`tests/unit/acceptance_policy/`・`tests/contract/acceptance_policy/`・
+`tests/integration/acceptance_policy/`、既存107件を新API(`project_binding_id`/`signing_key`
+引数)へ書き換え、F1-F3それぞれの決定的positive/negative control(F1の偽造署名・攻撃者自前
+鍵・target間replay、F2の competitor-wins/worker-wins決定的race、F3のmid-call mutation)を
+新規追加、113 tests)は本記録作成者自身が独立に実行し検証済み(`113 passed`)。
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=86`、変更な
+し)。`python scripts/source_impact_gate.py`は`decision: PASS`。`mypy --namespace-packages`
+は`NET_NEW_MYPY_FINDINGS=0`(29件、Round 2 baselineと同数)。`ruff check`/`ruff format --check`
+は`NET_NEW_RUFF_FINDINGS=0`。full repository test suiteの独立再実行結果は、本Roundの新head
+到達後にPR #82への返却Evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_80_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

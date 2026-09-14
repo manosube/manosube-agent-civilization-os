@@ -11,6 +11,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from tests.fixtures.product_binding import (
+    human_authority_signing_key,
+    sign_governance_adoption_authority,
+)
 
 from manosube_agent_civilization.acceptance_policy import (
     AcceptancePolicyValidationError,
@@ -23,6 +27,7 @@ from manosube_agent_civilization.acceptance_policy import (
 )
 
 _PROJECT_ID = "PRJ-AP-0001"
+_PROJECT_BINDING_ID = "PROJBIND-" + "A" * 64
 
 _SOURCE_REFERENCE = {
     "comment_url": "https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-1",
@@ -75,20 +80,40 @@ def _baseline() -> dict[str, Any]:
     )
 
 
+def _adopted_baseline_ref() -> dict[str, str]:
+    return {
+        "kind": "acceptance_policy_baseline",
+        "id": _baseline()["acceptance_policy_baseline_id"],
+    }
+
+
 def _governance_adoption_record(
-    *, comment_url: str = _SOURCE_REFERENCE["comment_url"], governing_issue: str = "#77"
+    *,
+    adopted_ref: dict[str, str] | None = None,
+    comment_url: str = _SOURCE_REFERENCE["comment_url"],
+    governing_issue: int = 77,
 ) -> dict[str, Any]:
     reviewed_sha = "a" * 40
+    governing_issue_str = f"#{governing_issue}"
+    signature = sign_governance_adoption_authority(
+        project_id=_PROJECT_ID,
+        governing_issue=governing_issue,
+        adopted_ref=adopted_ref if adopted_ref is not None else _adopted_baseline_ref(),
+        decision_owner="SHUKOU",
+        comment_url=comment_url,
+        reviewed_sha=reviewed_sha,
+        authorized_target_sha=reviewed_sha,
+    )
     return {
         "schema_version": "0.1",
         "adoption_id": "ADOPT_TEST_FIXTURE",
-        "governing_issue": governing_issue,
+        "governing_issue": governing_issue_str,
         "comment_url": comment_url,
         "decision_authority": "SHUKOU",
         "decision_status": "RATIFIED",
         "api_read_back_receipt": {
             "adoption_id": "ADOPT_TEST_FIXTURE",
-            "governing_issue": governing_issue,
+            "governing_issue": governing_issue_str,
             "reviewed_sha": reviewed_sha,
             "comment_url": comment_url,
             "decision_authority": "SHUKOU",
@@ -96,6 +121,7 @@ def _governance_adoption_record(
         },
         "reviewed_sha": reviewed_sha,
         "authorized_target_sha": reviewed_sha,
+        "signature": signature,
     }
 
 
@@ -185,6 +211,8 @@ def test_a_well_formed_adoption_validates() -> None:
         decision_owner="SHUKOU",
         source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
         governance_adoption_record=_governance_adoption_record(),
+        project_binding_id=_PROJECT_BINDING_ID,
+        signing_key=human_authority_signing_key(),
         decided_at="2026-09-13T14:00:00Z",
     )
     ap_validation.validate_record(adoption, "acceptance_policy_adoption.schema.json")
@@ -201,6 +229,8 @@ def test_an_adoption_missing_a_required_field_refuses() -> None:
         decision_owner="SHUKOU",
         source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
         governance_adoption_record=_governance_adoption_record(),
+        project_binding_id=_PROJECT_BINDING_ID,
+        signing_key=human_authority_signing_key(),
         decided_at="2026-09-13T14:00:00Z",
     )
     del adoption["decided_at"]
@@ -224,6 +254,8 @@ def test_a_well_formed_effective_view_validates() -> None:
                 decision_owner="SHUKOU",
                 source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
                 governance_adoption_record=_governance_adoption_record(),
+                project_binding_id=_PROJECT_BINDING_ID,
+                signing_key=human_authority_signing_key(),
                 decided_at="2026-09-13T14:00:00Z",
             )
         ],
@@ -247,6 +279,8 @@ def test_an_effective_view_with_a_wrong_typed_field_refuses() -> None:
                 decision_owner="SHUKOU",
                 source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
                 governance_adoption_record=_governance_adoption_record(),
+                project_binding_id=_PROJECT_BINDING_ID,
+                signing_key=human_authority_signing_key(),
                 decided_at="2026-09-13T14:00:00Z",
             )
         ],
@@ -332,6 +366,8 @@ def test_an_adoption_with_a_governance_adoption_record_missing_a_required_key_re
         decision_owner="SHUKOU",
         source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
         governance_adoption_record=_governance_adoption_record(),
+        project_binding_id=_PROJECT_BINDING_ID,
+        signing_key=human_authority_signing_key(),
         decided_at="2026-09-13T14:00:00Z",
     )
     del adoption["governance_adoption_record"]["authorized_target_sha"]
@@ -350,6 +386,8 @@ def test_an_adoption_with_a_governance_adoption_record_carrying_an_unknown_key_r
         decision_owner="SHUKOU",
         source_reference={**_SOURCE_REFERENCE, "source_kind": "AUTHORITY_ADOPTION"},
         governance_adoption_record=_governance_adoption_record(),
+        project_binding_id=_PROJECT_BINDING_ID,
+        signing_key=human_authority_signing_key(),
         decided_at="2026-09-13T14:00:00Z",
     )
     adoption["governance_adoption_record"]["unexpected_extra_field"] = "smuggled"

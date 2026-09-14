@@ -240,6 +240,46 @@ def sign_github_projection_grant_declaration(
     }
 
 
+def sign_governance_adoption_authority(
+    *,
+    project_id: str,
+    governing_issue: int,
+    adopted_ref: dict[str, Any],
+    decision_owner: str,
+    comment_url: str,
+    reviewed_sha: str,
+    authorized_target_sha: str,
+) -> dict[str, Any]:
+    """Sign the exact canonical payload :func:`~manosube_agent_civilization.acceptance_policy.
+    identity.governance_adoption_authority_signing_payload` recomputes once ``engine.
+    verify_governance_adoption_record`` verifies the real record built from these same fields
+    (Structural Review Round 3, PR #82, P82-R3-F1) -- the identical shared-signing-helper
+    discipline :func:`sign_human_grant_declaration` and :func:`sign_github_projection_grant_
+    declaration` already establish, over an Acceptance Policy adoption's own bound payload
+    instead of a Binding declaration's."""
+
+    from manosube_agent_civilization.acceptance_policy.identity import (
+        governance_adoption_authority_signing_payload,
+    )
+
+    payload_record = {
+        "project_id": project_id,
+        "governing_issue": governing_issue,
+        "adopted_ref": adopted_ref,
+        "decision_owner": decision_owner,
+        "comment_url": comment_url,
+        "reviewed_sha": reviewed_sha,
+        "authorized_target_sha": authorized_target_sha,
+    }
+    message = governance_adoption_authority_signing_payload(payload_record)
+    signature_bytes = _signing_private_key().sign(message)
+    return {
+        "algorithm": "ed25519",
+        "key_id": human_authority_signing_key()["key_id"],
+        "value": signature_bytes.hex(),
+    }
+
+
 def authority_rule() -> dict[str, Any]:
     """A real, schema-valid Authority Rule body -- the Human-declared input Product Binding
     accepts, validates against Authority's own schema, identity-reverifies via Authority's

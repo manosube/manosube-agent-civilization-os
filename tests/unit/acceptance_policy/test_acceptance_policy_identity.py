@@ -11,6 +11,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from tests.fixtures.product_binding import (
+    human_authority_signing_key,
+    sign_governance_adoption_authority,
+)
 
 from manosube_agent_civilization.acceptance_policy import (
     AcceptancePolicyValidationError,
@@ -23,6 +27,7 @@ from manosube_agent_civilization.acceptance_policy import (
 )
 
 _PROJECT_ID = "PRJ-AP-0001"
+_PROJECT_BINDING_ID = "PROJBIND-" + "A" * 64
 
 
 _BLOCKING_FIELDS = (
@@ -75,20 +80,32 @@ def _baseline() -> dict[str, Any]:
 
 def _governance_adoption_record(
     *,
+    adopted_ref: dict[str, str],
+    decision_owner: str = "SHUKOU",
     comment_url: str = "https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-1",
-    governing_issue: str = "#77",
+    governing_issue: int = 77,
 ) -> dict[str, Any]:
     reviewed_sha = "a" * 40
+    governing_issue_str = f"#{governing_issue}"
+    signature = sign_governance_adoption_authority(
+        project_id=_PROJECT_ID,
+        governing_issue=governing_issue,
+        adopted_ref=adopted_ref,
+        decision_owner=decision_owner,
+        comment_url=comment_url,
+        reviewed_sha=reviewed_sha,
+        authorized_target_sha=reviewed_sha,
+    )
     return {
         "schema_version": "0.1",
         "adoption_id": "ADOPT_TEST_FIXTURE",
-        "governing_issue": governing_issue,
+        "governing_issue": governing_issue_str,
         "comment_url": comment_url,
         "decision_authority": "SHUKOU",
         "decision_status": "RATIFIED",
         "api_read_back_receipt": {
             "adoption_id": "ADOPT_TEST_FIXTURE",
-            "governing_issue": governing_issue,
+            "governing_issue": governing_issue_str,
             "reviewed_sha": reviewed_sha,
             "comment_url": comment_url,
             "decision_authority": "SHUKOU",
@@ -96,6 +113,7 @@ def _governance_adoption_record(
         },
         "reviewed_sha": reviewed_sha,
         "authorized_target_sha": reviewed_sha,
+        "signature": signature,
     }
 
 
@@ -259,16 +277,19 @@ def test_transition_id_and_fingerprint_reproduce_and_bind_to_baseline() -> None:
 
 
 def test_adoption_id_and_fingerprint_reproduce_and_require_shukou() -> None:
+    adopted_ref = {
+        "kind": "acceptance_policy_baseline",
+        "id": _baseline()["acceptance_policy_baseline_id"],
+    }
     adoption = build_adoption(
         project_id=_PROJECT_ID,
         governing_issue=77,
-        adopted_ref={
-            "kind": "acceptance_policy_baseline",
-            "id": _baseline()["acceptance_policy_baseline_id"],
-        },
+        adopted_ref=adopted_ref,
         decision_owner="SHUKOU",
         source_reference=_baseline()["source_reference"],
-        governance_adoption_record=_governance_adoption_record(),
+        governance_adoption_record=_governance_adoption_record(adopted_ref=adopted_ref),
+        project_binding_id=_PROJECT_BINDING_ID,
+        signing_key=human_authority_signing_key(),
         decided_at="2026-09-13T14:00:00Z",
     )
     assert ap_identity.adoption_id(adoption) == adoption["acceptance_policy_adoption_id"]
@@ -279,17 +300,22 @@ def test_adoption_id_and_fingerprint_reproduce_and_require_shukou() -> None:
 
 
 def test_build_adoption_refuses_a_non_shukou_decision_owner() -> None:
+    adopted_ref = {
+        "kind": "acceptance_policy_baseline",
+        "id": _baseline()["acceptance_policy_baseline_id"],
+    }
     with pytest.raises(AcceptancePolicyValidationError):
         build_adoption(
             project_id=_PROJECT_ID,
             governing_issue=77,
-            adopted_ref={
-                "kind": "acceptance_policy_baseline",
-                "id": _baseline()["acceptance_policy_baseline_id"],
-            },
+            adopted_ref=adopted_ref,
             decision_owner="CLAUDE_CODE",
             source_reference=_baseline()["source_reference"],
-            governance_adoption_record=_governance_adoption_record(),
+            governance_adoption_record=_governance_adoption_record(
+                adopted_ref=adopted_ref, decision_owner="CLAUDE_CODE"
+            ),
+            project_binding_id=_PROJECT_BINDING_ID,
+            signing_key=human_authority_signing_key(),
             decided_at="2026-09-13T14:00:00Z",
         )
 
@@ -302,7 +328,11 @@ def test_build_adoption_refuses_a_governance_adoption_record_that_is_not_admitte
 
     from manosube_agent_civilization.acceptance_policy import UnauthorizedPolicyAdoptionError
 
-    forged_record = _governance_adoption_record()
+    adopted_ref = {
+        "kind": "acceptance_policy_baseline",
+        "id": _baseline()["acceptance_policy_baseline_id"],
+    }
+    forged_record = _governance_adoption_record(adopted_ref=adopted_ref)
     forged_record["decision_authority"] = "STRUCTURAL_ADVISOR"
     forged_record["api_read_back_receipt"] = {
         **forged_record["api_read_back_receipt"],
@@ -312,13 +342,12 @@ def test_build_adoption_refuses_a_governance_adoption_record_that_is_not_admitte
         build_adoption(
             project_id=_PROJECT_ID,
             governing_issue=77,
-            adopted_ref={
-                "kind": "acceptance_policy_baseline",
-                "id": _baseline()["acceptance_policy_baseline_id"],
-            },
+            adopted_ref=adopted_ref,
             decision_owner="SHUKOU",
             source_reference=_baseline()["source_reference"],
             governance_adoption_record=forged_record,
+            project_binding_id=_PROJECT_BINDING_ID,
+            signing_key=human_authority_signing_key(),
             decided_at="2026-09-13T14:00:00Z",
         )
 
@@ -329,20 +358,24 @@ def test_build_adoption_refuses_a_governance_adoption_record_for_a_different_com
 
     from manosube_agent_civilization.acceptance_policy import UnauthorizedPolicyAdoptionError
 
+    adopted_ref = {
+        "kind": "acceptance_policy_baseline",
+        "id": _baseline()["acceptance_policy_baseline_id"],
+    }
     mismatched_record = _governance_adoption_record(
+        adopted_ref=adopted_ref,
         comment_url="https://github.com/manosube/manosube-agent-civilization-os/issues/77#issuecomment-999",
     )
     with pytest.raises(UnauthorizedPolicyAdoptionError):
         build_adoption(
             project_id=_PROJECT_ID,
             governing_issue=77,
-            adopted_ref={
-                "kind": "acceptance_policy_baseline",
-                "id": _baseline()["acceptance_policy_baseline_id"],
-            },
+            adopted_ref=adopted_ref,
             decision_owner="SHUKOU",
             source_reference=_baseline()["source_reference"],
             governance_adoption_record=mismatched_record,
+            project_binding_id=_PROJECT_BINDING_ID,
+            signing_key=human_authority_signing_key(),
             decided_at="2026-09-13T14:00:00Z",
         )
 

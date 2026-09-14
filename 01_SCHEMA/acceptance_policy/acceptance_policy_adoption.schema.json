@@ -13,6 +13,7 @@
     "decision_owner",
     "source_reference",
     "governance_adoption_record",
+    "project_binding_id",
     "decided_at",
     "adoption_semantic_fingerprint"
   ],
@@ -25,6 +26,7 @@
     "decision_owner": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*(?![\\s\\S])"},
     "source_reference": {"$ref": "acceptance_policy_baseline.schema.json#/$defs/source_reference"},
     "governance_adoption_record": {"$ref": "#/$defs/governance_adoption_record"},
+    "project_binding_id": {"$ref": "../binding/project_binding.schema.json#/properties/project_binding_id"},
     "decided_at": {"$ref": "../common/timestamp.schema.json"},
     "adoption_semantic_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
   },
@@ -40,7 +42,7 @@
       "additionalProperties": false
     },
     "governance_adoption_record": {
-      "description": "P82-R2-F1: the caller-supplied Governance Adoption Record this adoption is bound to -- evaluated at commit and every subsequent read through the existing, non-substitutable manosube_agent_civilization.development_binding.adoption_record.evaluate_adoption_record owner (Issue #53), never a second reimplementation. Wire shape mirrors that module's own REQUIRED_REQUEST_KEYS/RECEIPT_KEYS exactly; the deeper regex/semantic checks (comment URL grammar, SHA shape, receipt agreement) are that module's own responsibility, not restated here.",
+      "description": "P82-R2-F1/P82-R3-F1: the caller-supplied Governance Adoption Record this adoption is bound to -- evaluated at commit and every subsequent read through the existing, non-substitutable manosube_agent_civilization.development_binding.adoption_record.evaluate_adoption_record owner (Issue #53), never a second reimplementation. That evaluation alone proves only that this record is a well-shaped, internally-consistent *claim*, never that a trusted Human Authority actually produced it nor that it authorizes this exact policy target (P82-R3-F1) -- ``signature`` closes that gap: a genuine Ed25519 signature, by the real Project Binding's own ``human_authority_signing_key``, over the exact bound fields (this adoption's own project_id/governing_issue/adopted_ref/decision_owner plus this record's own comment_url/reviewed_sha/authorized_target_sha), reusing the existing manosube_agent_civilization.binding.signature verifier rather than a second one. Wire shape otherwise mirrors development_binding.adoption_record's own REQUIRED_REQUEST_KEYS/RECEIPT_KEYS exactly; the deeper regex/semantic checks (comment URL grammar, SHA shape, receipt agreement) are that module's own responsibility, not restated here.",
       "type": "object",
       "required": [
         "schema_version",
@@ -51,7 +53,8 @@
         "decision_status",
         "api_read_back_receipt",
         "reviewed_sha",
-        "authorized_target_sha"
+        "authorized_target_sha",
+        "signature"
       ],
       "properties": {
         "schema_version": {"type": "string", "minLength": 1},
@@ -62,7 +65,18 @@
         "decision_status": {"type": "string", "minLength": 1},
         "api_read_back_receipt": {"$ref": "#/$defs/governance_adoption_record_receipt"},
         "reviewed_sha": {"type": "string", "minLength": 1},
-        "authorized_target_sha": {"type": "string", "minLength": 1}
+        "authorized_target_sha": {"type": "string", "minLength": 1},
+        "signature": {"$ref": "#/$defs/signature"}
+      },
+      "additionalProperties": false
+    },
+    "signature": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {
+        "algorithm": {"const": "ed25519"},
+        "key_id": {"$ref": "../common/identity.schema.json"},
+        "value": {"type": "string", "pattern": "^[0-9a-f]{128}(?![\\s\\S])"}
       },
       "additionalProperties": false
     },

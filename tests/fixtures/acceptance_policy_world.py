@@ -12,7 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tests.fixtures.product_binding import bind_project_kwargs, genesis_records
+from tests.fixtures.product_binding import (
+    bind_project_kwargs,
+    genesis_records,
+    sign_governance_adoption_authority,
+)
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.binding import bind_project
@@ -24,14 +28,19 @@ GOVERNING_ISSUE = 80
 def bound_world(tmp_path: Path) -> dict[str, Any]:
     """One real, freshly bound project over a real ``FileStateStore`` -- nothing this
     package's own records need beyond a valid ``project_id`` to bind their own ``scope`` and
-    ``project_id`` fields to."""
+    ``project_id`` fields to. P82-R3-F1: also exposes the real, committed Project Binding's
+    own id, so tests can name it as the trusted signing authority an adoption is bound to."""
 
     store = FileStateStore(tmp_path / "backend", schema_root=SCHEMA_ROOT)
     kwargs = bind_project_kwargs()
-    bind_project(
+    result = bind_project(
         store, **kwargs, additional_genesis_records=genesis_records(), schema_root=SCHEMA_ROOT
     )
-    return {"store": store, "project_id": kwargs["project_id"]}
+    return {
+        "store": store,
+        "project_id": kwargs["project_id"],
+        "project_binding_id": result["project_binding_id"],
+    }
 
 
 def source_reference(
@@ -56,20 +65,27 @@ def source_reference(
 
 def governance_adoption_record(
     *,
-    comment_url: str,
+    project_id: str,
     governing_issue: int,
+    adopted_ref: dict[str, str],
+    comment_url: str,
+    decision_owner: str = "SHUKOU",
     adoption_id: str = "ADOPT_TEST_FIXTURE",
     reviewed_sha: str = "a" * 40,
     authorized_target_sha: str | None = None,
     decision_authority: str = "SHUKOU",
     decision_status: str = "RATIFIED",
     receipt_overrides: dict[str, Any] | None = None,
+    signature_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """P82-R2-F1: a well-formed Governance Adoption Record
-    (``development_binding.adoption_record``'s own closed shape) that
-    ``evaluate_adoption_record`` admits by default -- callers pass ``receipt_overrides`` or
-    override a top-level field directly to construct the decisive forged/mismatched controls
-    F1 requires."""
+    """P82-R2-F1/P82-R3-F1: a well-formed Governance Adoption Record
+    (``development_binding.adoption_record``'s own closed shape), genuinely signed (by
+    :func:`~tests.fixtures.product_binding.sign_governance_adoption_authority`'s fixed test
+    Ed25519 key) over exactly the fields it is bound to -- *project_id*, *governing_issue*,
+    *adopted_ref*, *decision_owner*, *comment_url*, *reviewed_sha*, *authorized_target_sha* --
+    so it verifies against the real Project Binding's own trusted public key by default.
+    Callers pass ``receipt_overrides``, ``signature_override``, or override a top-level field
+    directly to construct the decisive forged/mismatched/replayed controls F1 requires."""
 
     governing_issue_str = f"#{governing_issue}"
     target_sha = authorized_target_sha if authorized_target_sha is not None else reviewed_sha
@@ -83,6 +99,19 @@ def governance_adoption_record(
     }
     if receipt_overrides:
         receipt.update(receipt_overrides)
+    signature = (
+        signature_override
+        if signature_override is not None
+        else sign_governance_adoption_authority(
+            project_id=project_id,
+            governing_issue=governing_issue,
+            adopted_ref=adopted_ref,
+            decision_owner=decision_owner,
+            comment_url=comment_url,
+            reviewed_sha=reviewed_sha,
+            authorized_target_sha=target_sha,
+        )
+    )
     return {
         "schema_version": "0.1",
         "adoption_id": adoption_id,
@@ -93,6 +122,7 @@ def governance_adoption_record(
         "api_read_back_receipt": receipt,
         "reviewed_sha": reviewed_sha,
         "authorized_target_sha": target_sha,
+        "signature": signature,
     }
 
 

@@ -9,7 +9,7 @@ never a direct/internal Store mutation of its own (FD4-C10).
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
@@ -71,6 +71,30 @@ def _require_source_reference(source_reference: Any) -> dict[str, Any]:
     return source_reference
 
 
+def _resolve_trusted_signing_key(
+    store: Any, project_id: str, project_binding_id: str
+) -> dict[str, Any]:
+    """P82-R3-F1: resolve the real, already-committed Project Binding named by
+    *project_binding_id* and return its own ``human_authority_signing_key`` -- the one
+    non-forgeable trusted capability this package ever consults, reused rather than
+    duplicated (the identical record :mod:`manosube_agent_civilization.binding` itself
+    resolves for ``declare_human_grant``/``declare_github_projection_grant``). Never a
+    caller-supplied key: a caller can name *which* Project Binding governs an adoption, but
+    never *what* that Project Binding's own trusted key is."""
+
+    real_project_binding = store.resolve_record(project_id, "project_binding", project_binding_id)
+    if real_project_binding is None:
+        raise PolicyProvenanceError(
+            f"project_binding does not resolve for project {project_id!r}: {project_binding_id!r}"
+        )
+    if real_project_binding["project_id"] != project_id:
+        raise PolicyLineageConflictError(
+            f"project_binding {project_binding_id!r} is bound to a different project "
+            f"({real_project_binding['project_id']!r}) than requested ({project_id!r})"
+        )
+    return cast("dict[str, Any]", real_project_binding["human_authority_signing_key"])
+
+
 def _commit_one_record(
     store: Any,
     project_id: str,
@@ -102,48 +126,77 @@ def _commit_one_record(
             "this is a conflicting replay, not an exact one"
         )
 
-    transaction_id = record_id
     for _ in range(_MAX_COMMIT_RETRIES):
-        current_state = store.load_current(project_id)
-        next_state = dict(current_state)
-        next_state["state_revision"] = current_state["state_revision"] + 1
-        next_state["previous_state_fingerprint"] = current_state["semantic_fingerprint"]
-        next_state["lineage_head_ref"] = {"kind": "state_transition", "id": transaction_id}
-        next_state["semantic_fingerprint"] = fingerprint_project_state(next_state).as_dict()
-        transition = {
-            "schema_version": "0.1",
-            "transaction_id": transaction_id,
-            "event_type": "TRANSITION",
-            "project_id": project_id,
-            "from_revision": current_state["state_revision"],
-            "to_revision": next_state["state_revision"],
-            "before_fingerprint": current_state["semantic_fingerprint"],
-            "after_fingerprint": next_state["semantic_fingerprint"],
-            "after_state": next_state,
-            "evidence_refs": [],
-            "committed_at": committed_at,
-        }
         try:
-            return commit_state_transition(
+            return _attempt_commit_at_state(
                 store,
                 project_id,
-                current_state["state_revision"],
-                current_state["semantic_fingerprint"],
-                next_state,
-                transition,
-                records=[(kind, record_id, body)],
+                kind,
+                record_id,
+                body,
+                committed_at,
+                store.load_current(project_id),
             )
-        except (RecordConflictError, TransactionConflictError) as exc:
-            raise ConflictingPolicyReplayError(
-                f"a different {kind} record already exists under identity {record_id!r} -- "
-                "this is a conflicting replay, not an exact one"
-            ) from exc
         except StaleStateError:
             continue
     raise AcceptancePolicyValidationError(
         f"could not durably commit {kind} {record_id!r} after {_MAX_COMMIT_RETRIES} "
         "Compare-And-Swap retries -- sustained unrelated contention on this project's own State"
     )
+
+
+def _attempt_commit_at_state(
+    store: Any,
+    project_id: str,
+    kind: str,
+    record_id: str,
+    body: dict[str, Any],
+    committed_at: str,
+    current_state: dict[str, Any],
+) -> dict[str, Any]:
+    """Attempt exactly one Compare-And-Swap commit of *body* under *record_id*, bound to the
+    exact *current_state* snapshot the caller has already read (and, where the caller's own
+    body content depends on other Store-resolved state, already used to validate that content
+    against -- P82-R3-F2). Never retries internally: raises ``StaleStateError`` up to the
+    caller if the Store's own State has moved since *current_state* was read, so a caller whose
+    own validation is only as fresh as the snapshot it read can restart its complete cycle
+    against genuinely fresh State, rather than silently retrying only the write against
+    content that may since have gone stale.
+    """
+
+    next_state = dict(current_state)
+    next_state["state_revision"] = current_state["state_revision"] + 1
+    next_state["previous_state_fingerprint"] = current_state["semantic_fingerprint"]
+    next_state["lineage_head_ref"] = {"kind": "state_transition", "id": record_id}
+    next_state["semantic_fingerprint"] = fingerprint_project_state(next_state).as_dict()
+    transition = {
+        "schema_version": "0.1",
+        "transaction_id": record_id,
+        "event_type": "TRANSITION",
+        "project_id": project_id,
+        "from_revision": current_state["state_revision"],
+        "to_revision": next_state["state_revision"],
+        "before_fingerprint": current_state["semantic_fingerprint"],
+        "after_fingerprint": next_state["semantic_fingerprint"],
+        "after_state": next_state,
+        "evidence_refs": [],
+        "committed_at": committed_at,
+    }
+    try:
+        return commit_state_transition(
+            store,
+            project_id,
+            current_state["state_revision"],
+            current_state["semantic_fingerprint"],
+            next_state,
+            transition,
+            records=[(kind, record_id, body)],
+        )
+    except (RecordConflictError, TransactionConflictError) as exc:
+        raise ConflictingPolicyReplayError(
+            f"a different {kind} record already exists under identity {record_id!r} -- "
+            "this is a conflicting replay, not an exact one"
+        ) from exc
 
 
 def open_acceptance_policy_baseline(
@@ -284,13 +337,19 @@ def resolve_and_verify_adoption(
             f"{resolved['decision_owner']!r}, not {HUMAN_AUTHORITY!r}"
         )
     _require_source_reference(resolved["source_reference"])
-    # P82-R2-F1: re-evaluate the Governance Adoption Record binding every time this adoption
-    # is read, never only at commit time -- the same discipline the decision_owner/source_
-    # reference checks above already hold themselves to.
+    # P82-R2-F1/P82-R3-F1: re-evaluate the Governance Adoption Record binding -- including its
+    # own signature, against the real, freshly Store-resolved Project Binding's own trusted
+    # signing key, never a cached or caller-supplied one -- every time this adoption is read,
+    # never only at commit time.
+    signing_key = _resolve_trusted_signing_key(store, project_id, resolved["project_binding_id"])
     engine.verify_governance_adoption_record(
         resolved["governance_adoption_record"],
         comment_url=resolved["source_reference"]["comment_url"],
         governing_issue=resolved["governing_issue"],
+        adopted_ref=resolved["adopted_ref"],
+        decision_owner=resolved["decision_owner"],
+        project_id=resolved["project_id"],
+        signing_key=signing_key,
     )
     return resolved
 
@@ -504,6 +563,7 @@ def adopt_acceptance_policy_transition(
     decision_owner: str,
     source_reference: dict[str, Any],
     governance_adoption_record: dict[str, Any],
+    project_binding_id: str,
     decided_at: str,
     committed_at: str,
 ) -> dict[str, Any]:
@@ -511,62 +571,99 @@ def adopt_acceptance_policy_transition(
     one baseline genesis or one proposed transition it names. Refuses (before any commit) any
     ``decision_owner`` other than SHUKOU, a ``source_reference`` not carrying the OWNER
     association, or a ``governance_adoption_record`` that does not independently evaluate to an
-    admitted, exactly-bound Governance Adoption Record (P82-R2-F1) -- the only Human Authority
-    this package ever recognises.
+    admitted, exactly-bound, genuinely-signed Governance Adoption Record (P82-R2-F1/P82-R3-F1)
+    -- the only Human Authority this package ever recognises. *project_binding_id* names which
+    already-committed Project Binding's own trusted ``human_authority_signing_key`` must have
+    produced that signature; this function resolves the real record fresh (never a
+    caller-supplied key).
 
     The referenced target is independently Store-resolved and reproduced *before* the adoption
     itself is built, so an adoption can never be minted for a target that does not genuinely
     exist under the identity it names, and is required to agree with this call's own
-    project/governing_issue (P82-R2-F2) -- never merely under the caller's own label. The
-    candidate adoption is also simulated against the current canonical lineage before commit,
-    so a stale, forked, or duplicate-baseline adoption is refused before it can ever poison the
-    immutable canonical set.
+    project/governing_issue (P82-R2-F2) -- never merely under the caller's own label.
+
+    P82-R3-F2: the complete resolve -> verify Authority -> build -> simulate-fold -> commit
+    cycle is bound to one Store State snapshot per attempt and re-run wholesale, from scratch,
+    on every stale-state conflict -- never merely the final write retried against fresh State
+    while reusing conclusions (the poisoning simulation in particular) drawn from a now-stale
+    snapshot. A competing adoption committed mid-cycle can therefore never be raced past: either
+    this cycle's own commit lands cleanly against the exact snapshot its own simulation used, or
+    the Store's own Compare-And-Swap rejects it and the entire cycle -- including the poisoning
+    simulation -- restarts against the now-current State.
     """
 
     _require_source_reference(source_reference)
-    if adopted_ref["kind"] == _BASELINE_KIND:
-        target = resolve_and_verify_baseline(store, project_id, adopted_ref["id"])
-        baseline_for_simulation = target
-    elif adopted_ref["kind"] == _TRANSITION_KIND:
-        target = resolve_and_verify_transition(store, project_id, adopted_ref["id"])
-        baseline_for_simulation = resolve_and_verify_baseline(
-            store, project_id, target["baseline_ref"]["id"]
-        )
-    else:
-        raise AcceptancePolicyValidationError(f"unknown adopted_ref.kind: {adopted_ref['kind']!r}")
 
-    if target["governing_issue"] != governing_issue or target["project_id"] != project_id:
-        # P82-R2-F2: cross-work-unit adoption is refused before any commit -- the resolved
-        # target's own (project_id, governing_issue) must agree with this adoption's own,
-        # never merely with the caller's own separately-declared label.
-        raise PolicyLineageConflictError(
-            f"adopted_ref {adopted_ref!r} resolves to a record bound to "
-            f"(project_id={target['project_id']!r}, governing_issue={target['governing_issue']!r}), "
-            f"not this adoption's own (project_id={project_id!r}, governing_issue={governing_issue!r})"
+    for _ in range(_MAX_COMMIT_RETRIES):
+        current_state = store.load_current(project_id)
+
+        if adopted_ref["kind"] == _BASELINE_KIND:
+            target = resolve_and_verify_baseline(store, project_id, adopted_ref["id"])
+            baseline_for_simulation = target
+        elif adopted_ref["kind"] == _TRANSITION_KIND:
+            target = resolve_and_verify_transition(store, project_id, adopted_ref["id"])
+            baseline_for_simulation = resolve_and_verify_baseline(
+                store, project_id, target["baseline_ref"]["id"]
+            )
+        else:
+            raise AcceptancePolicyValidationError(
+                f"unknown adopted_ref.kind: {adopted_ref['kind']!r}"
+            )
+
+        if target["governing_issue"] != governing_issue or target["project_id"] != project_id:
+            # P82-R2-F2: cross-work-unit adoption is refused before any commit -- the resolved
+            # target's own (project_id, governing_issue) must agree with this adoption's own,
+            # never merely with the caller's own separately-declared label.
+            raise PolicyLineageConflictError(
+                f"adopted_ref {adopted_ref!r} resolves to a record bound to "
+                f"(project_id={target['project_id']!r}, governing_issue={target['governing_issue']!r}), "
+                f"not this adoption's own (project_id={project_id!r}, governing_issue={governing_issue!r})"
+            )
+
+        signing_key = _resolve_trusted_signing_key(store, project_id, project_binding_id)
+
+        adoption = engine.build_adoption(
+            project_id=project_id,
+            governing_issue=governing_issue,
+            adopted_ref=adopted_ref,
+            decision_owner=decision_owner,
+            source_reference=source_reference,
+            governance_adoption_record=governance_adoption_record,
+            project_binding_id=project_binding_id,
+            signing_key=signing_key,
+            decided_at=decided_at,
+        )
+        validation.validate_record(adoption, _ADOPTION_SCHEMA)
+        record_id = adoption["acceptance_policy_adoption_id"]
+
+        already_committed = store.resolve_record(project_id, _ADOPTION_KIND, record_id)
+        if already_committed is not None:
+            if canonical_json_bytes(already_committed) == canonical_json_bytes(adoption):
+                # FD4-C9: an exact replay is a no-op -- content-addressed identity already
+                # proves the two calls agree on every semantic field.
+                return adoption
+            raise ConflictingPolicyReplayError(
+                f"a different {_ADOPTION_KIND} record already exists under identity "
+                f"{record_id!r} -- this is a conflicting replay, not an exact one"
+            )
+
+        _assert_adoption_does_not_poison_the_canonical_lineage(
+            store, project_id, baseline_for_simulation, adoption
         )
 
-    adoption = engine.build_adoption(
-        project_id=project_id,
-        governing_issue=governing_issue,
-        adopted_ref=adopted_ref,
-        decision_owner=decision_owner,
-        source_reference=source_reference,
-        governance_adoption_record=governance_adoption_record,
-        decided_at=decided_at,
+        try:
+            _attempt_commit_at_state(
+                store, project_id, _ADOPTION_KIND, record_id, adoption, committed_at, current_state
+            )
+            return adoption
+        except StaleStateError:
+            continue
+
+    raise AcceptancePolicyValidationError(
+        f"could not durably commit acceptance_policy_adoption after {_MAX_COMMIT_RETRIES} "
+        "full resolve-verify-simulate-commit cycles -- sustained contention on this project's "
+        "own State"
     )
-    validation.validate_record(adoption, _ADOPTION_SCHEMA)
-    _assert_adoption_does_not_poison_the_canonical_lineage(
-        store, project_id, baseline_for_simulation, adoption
-    )
-    _commit_one_record(
-        store,
-        project_id,
-        _ADOPTION_KIND,
-        adoption["acceptance_policy_adoption_id"],
-        adoption,
-        committed_at,
-    )
-    return adoption
 
 
 def _verify_candidate_transition_for_preview(
@@ -574,18 +671,20 @@ def _verify_candidate_transition_for_preview(
     project_id: str,
     baseline: dict[str, Any],
     effective_view: dict[str, Any],
-    candidate_transition: dict[str, Any],
+    candidate: dict[str, Any],
 ) -> dict[str, Any]:
-    """P82-R2-F3: detach *candidate_transition* from the caller's own mutable object and
-    independently verify it before it is ever used to build a preview -- schema, identity,
-    fingerprint, project/governing_issue/baseline binding, the prior-clause binding against the
-    real current effective view, and the declared operation against the independently
-    recomputed semantic diff. Only this retained, fully-verified copy is ever passed to
-    :func:`engine.build_impact_preview` -- the caller's own original object, and any further
-    mutation of it, has no effect on the preview actually built.
+    """P82-R2-F3/P82-R3-F3: independently verify the already-detached *candidate* before it is
+    ever used to build a preview -- schema, identity, fingerprint, project/governing_issue/
+    baseline binding, the prior-clause binding against the real current effective view, and the
+    declared operation against the independently recomputed semantic diff. *candidate* must
+    already be a value the caller's own public entry point (:func:`preview_acceptance_policy_
+    transition`) detached from the caller's own mutable object as its first operation, before
+    any Store call this function or its own caller make -- P82-R3-F3 closes the gap where a
+    detach performed only after those Store calls could still observe a value a mid-call
+    mutation (of the caller's own object, or one an instrumented Store made) had already
+    substituted for the one actually named at the public boundary.
     """
 
-    candidate = deepcopy(candidate_transition)
     validation.validate_record(candidate, _TRANSITION_SCHEMA)
 
     if (
@@ -648,13 +747,21 @@ def preview_acceptance_policy_transition(
     """FD4-C7: the bounded before/after impact preview, computed against the real,
     Store-resolved current effective policy (P82-R1-F1: the canonical, Store-derived adoption
     set, never a caller-supplied list). Makes no Store mutation -- *candidate_transition* need
-    not even be committed yet, but is independently detached and verified (P82-R2-F3) before
-    it is ever used to build the preview."""
+    not even be committed yet, but is independently detached and verified (P82-R2-F3/P82-R3-F3)
+    before it is ever used to build the preview.
 
+    P82-R3-F3: the detach is this function's own *first* operation, before any Store call --
+    ``resolve_and_verify_baseline``/``resolve_and_verify_effective_policy`` are themselves
+    arbitrary calls that could, in principle, be instrumented to mutate a caller's own mutable
+    object mid-call; detaching first means only the value actually named at this public
+    boundary is ever validated or previewed, never a value substituted for it afterward.
+    """
+
+    candidate = deepcopy(candidate_transition)
     baseline = resolve_and_verify_baseline(store, project_id, baseline_ref["id"])
     effective_view = resolve_and_verify_effective_policy(store, project_id, baseline_ref)
     verified_candidate = _verify_candidate_transition_for_preview(
-        store, project_id, baseline, effective_view, candidate_transition
+        store, project_id, baseline, effective_view, candidate
     )
     preview = engine.build_impact_preview(effective_view, verified_candidate)
     validation.validate_record(preview, _IMPACT_PREVIEW_SCHEMA)
