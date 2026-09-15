@@ -4890,3 +4890,77 @@ ISSUE_22_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 64. Issue #22 post-merge acceptance source-sync (`ADOPT_ISSUE_22_POST_MERGE_ACCEPTANCE_SOURCE_SYNC`) bounded receipt
+
+本節はPR #84自身のRound是正記録(§53〜§63)とは異なり、PR #84がSHUKOUによりmergeされた後、
+構造参謀のpost-merge determination
+`https://github.com/manosube/manosube-agent-civilization-os/issues/22#issuecomment-5678683310`
+とSHUKOU正式採択・Claude Codeハンドオフ
+`...#issuecomment-5678733150`
+(`ADOPTION_ID=ADOPT_ISSUE_22_POST_MERGE_ACCEPTANCE_SOURCE_SYNC`、`GOVERNING_ISSUE=#22`)に基づき、
+限定されたappend-only source-syncとして本記録作成者自身が追加するものである。本記録作成者は
+これら2件のコメントを、著者login/id/association(`manosube`/OWNER)・本文一致、およびPR #84の
+実際のmerge状態・live `main`のSHAについて、本branch作成直前にGitHub API経由で独立readbackし
+一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-15
+GOVERNING_ISSUE=#22
+MERGED_PR=#84
+ADOPTION_ID=ADOPT_ISSUE_22_POST_MERGE_ACCEPTANCE_SOURCE_SYNC
+STRUCTURAL_DETERMINATION_COMMENT_ID=5678683310
+ADOPTION_COMMENT_ID=5678733150
+BRANCH=source/issue-22-work-time-transparency-sync
+AUTHORIZED_BASE_MAIN_SHA=786036a818d7446429b95d98ed46e6e28bed7b6e
+NEW_BRANCH_ALLOWED=true
+NEW_PR_ALLOWED=true
+EXISTING_BRANCH_REUSE_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+## Current-state receipt (restated as of this source-sync)
+
+```text
+MAIN_ACCEPTED_BASE_SHA=786036a818d7446429b95d98ed46e6e28bed7b6e
+PR84_DELIVERY_HEAD=0db879b43700af91030f53567d1a361b4ef0630d
+PR84_MERGE_SHA=786036a818d7446429b95d98ed46e6e28bed7b6e
+MERGE_PARENT_BASE=279572fb51775bd8a13665376aa751a63c1d0c35
+MERGE_PARENT_DELIVERY=0db879b43700af91030f53567d1a361b4ef0630d
+LIVE_MAIN_EQUALS_MERGE_SHA=true
+STRUCTURAL_REVIEW_ROUNDS=5
+STRUCTURAL_REVIEW_FINDINGS_OPEN=0
+TARGETED_TEST_COUNT_AT_DELIVERY_HEAD=643_PASSED
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=21838_PASSED_10_PRE_EXISTING_FAILED_11_SKIPPED
+NET_NEW_TEST_FAILURES_AT_DELIVERY_HEAD=0
+SCHEMA_VALIDATION_AT_DELIVERY_HEAD=PASS_89_SCHEMAS
+SOURCE_IMPACT_GATE_AT_DELIVERY_HEAD=PASS
+```
+
+PR #84は、5回のStructural Review Roundを経てfinding open 0件に到達したexact delivery head
+`0db879b43700af91030f53567d1a361b4ef0630d`を保持したままSHUKOU(`manosube`)によりmergeされた。
+merge commit `786036a818d7446429b95d98ed46e6e28bed7b6e`のfirst parentはRound 1が採択された
+authorized base `279572fb51775bd8a13665376aa751a63c1d0c35`、second parentはこのdelivery head
+であり、live `main`は本source-sync branch作成直前のGitHub API独立readbackで同一SHAであることを
+確認済みである。
+
+Issue #22はこのPR #84によって直接completeされる作業単位であり、roadmap Phaseではない。
+Issue #22のcloseはPhase 20の完了・着手を意味せず、Phase 20実装には別途専用IssueとSHUKOUの
+明示採択が必要である。PR #84自体のcode deliveryは完了しているが、本source-sync PRがfresh
+Structural Reviewを経てmergeされ、resulting `main`がGitHub API経由で再観測されるまで、
+Issue #22のsource-sync自体は完了しない。
+
+```text
+ISSUE_22_DIRECT_COMPLETION_RECEIPT=true
+ISSUE_22_IS_NOT_A_ROADMAP_PHASE=true
+ISSUE_22_DOES_NOT_COMPLETE_OR_ENTER_PHASE_20=true
+PHASE_20_REQUIRES_A_SEPARATE_DEDICATED_ISSUE_AND_SHUKOU_ADOPTION=true
+PR84_CODE_DELIVERY_COMPLETE=true
+SOURCE_SYNC_NOT_YET_COMPLETE_UNTIL_THIS_NEW_PR_IS_REVIEWED_AND_MERGED=true
+
+SOURCE_SYNC_MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+```
