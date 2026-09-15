@@ -1028,3 +1028,50 @@ FD-0004のkernel実装完了・受入は、Phase 20実装開始の前提条件�
 receipt(§25)を遡及無効化しない。Issue #80のcloseは、本receiptの記録元となった
 post-merge source-sync work unitがSHUKOU mergeされ、resulting `main`がGitHub API経由で
 再観測された後にのみ許可される。
+
+---
+
+# 27. Issue #22 (Human Wait-Time Transparency) direct completion receipt
+
+Issue #22は新規roadmap Phaseではなく、Human／Agent間cross-cutting coordination semanticsを
+扱うdirect-completion work unitであり、PR #84によりkernelへ統合された。本節は既存の
+Phase番号付きreceipt(§4〜§25)およびFD receipt(§26)とは区別される。
+
+| Difference | Governing Issue | Merged PR | Accepted merge SHA | Receipt class | Accepted capability |
+|---|---:|---:|---|---|---|
+| Issue #22 | [#22](https://github.com/manosube/manosube-agent-civilization-os/issues/22) | [#84](https://github.com/manosube/manosube-agent-civilization-os/pull/84) | `786036a818d7446429b95d98ed46e6e28bed7b6e` | `DIRECT_COMPLETION_RECEIPT` | Human Wait-Time Transparency: closed coordination schemas, Store-owned Project-State-orthogonal ledger, seven mandatory real adapter integrations, exact outer work-unit join binding |
+
+```text
+OBSERVED_AT_UTC=2026-09-15
+GOVERNING_ISSUE=#22
+MERGED_PR=#84
+ISSUE_22_DELIVERY_HEAD=0db879b43700af91030f53567d1a361b4ef0630d
+ISSUE_22_MERGE_PARENT_BASE=279572fb51775bd8a13665376aa751a63c1d0c35
+ISSUE_22_MERGE_PARENT_DELIVERY=0db879b43700af91030f53567d1a361b4ef0630d
+ISSUE_22_MERGE_SHA=786036a818d7446429b95d98ed46e6e28bed7b6e
+MERGED_EXACT_REVIEWED_HEAD=true
+ISSUE_22_STRUCTURAL_REVIEW_ROUNDS=5
+ISSUE_22_STRUCTURAL_FINDINGS_OPEN=0
+
+TARGETED_TEST_COUNT_AT_DELIVERY_HEAD=643_PASSED
+SCHEMA_VALIDATION_AT_DELIVERY_HEAD=PASS_89_SCHEMAS
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=21838_PASSED_10_PRE_EXISTING_FAILED_11_SKIPPED
+NET_NEW_TEST_FAILURES_AT_DELIVERY_HEAD=0
+
+ISSUE_22_IS_ROADMAP_PHASE=false
+ISSUE_22_IS_PHASE_20_PREREQUISITE=false
+ISSUE_22_DOES_NOT_COMPLETE_OR_ENTER_PHASE_20=true
+PHASE_20_REQUIRES_A_SEPARATE_DEDICATED_ISSUE_AND_SHUKOU_ADOPTION=true
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+```
+
+merge commit `786036a818d7446429b95d98ed46e6e28bed7b6e`のfirst parentは、5回のStructural
+Reviewを経てfinding open 0件に到達したPR #84の採択base(元PR #84 Round 1採択base
+`279572fb51775bd8a13665376aa751a63c1d0c35`)であり、second parentはexact delivery head
+`0db879b43700af91030f53567d1a361b4ef0630d`である。live `main`が本merge SHAと一致することは、
+本source-sync branch作成直前のGitHub API独立readbackで確認済みである。
+
+PR #84自体のcode deliveryは完了しているが、Issue #22のcloseは、本節の記録元となった
+post-merge source-sync PRがSHUKOUによりmergeされ、resulting `main`がGitHub API経由で
+再観測された後にのみ許可される。

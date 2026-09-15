@@ -965,3 +965,63 @@ CANONICAL_STATE_OWNER_COUNT=1
 
 Phase 20は、このaccepted architectureにはまだ実装されていない。Phase 20実装には、Phase 20
 専用Issue上のObjective / Boundary / AuthorityへのSHUKOUの明示採択が別途必要である。
+
+---
+
+# 25. Accepted architecture through PR #84 (Issue #22 — Human Wait-Time Transparency vertical)
+
+```text
+OBSERVED_AT_UTC=2026-09-15
+AS_BUILT_REF=786036a818d7446429b95d98ed46e6e28bed7b6e
+AS_BUILT_TREE_ENTRY_COUNT=838
+AS_BUILT_BLOB_COUNT=682
+AS_BUILT_DIRECTORY_COUNT=156
+AS_BUILT_TREE_TRUNCATED=false
+
+GOVERNING_ISSUE=#22
+MERGED_PR=#84
+PHASE_20_IMPLEMENTED=false
+```
+
+Issue #22(Human Wait-Time Transparency contract)は、新規roadmap Phaseではなく、
+Human／Agent間のcross-cutting coordination semanticsを扱う専用work unitとして、
+PR #84によりkernelへ統合された。
+
+追加されたas-built surfaceは、3件の closed Work-Time Transparency schema(`01_SCHEMA/
+work_time_transparency/`: `work_time_coordination_open`・`work_time_coordination_update`・
+`work_time_coordination_terminal`、schema count 86→89)、新package
+`src/manosube_agent_civilization/work_time_transparency/`(narrow-key識別方式と単一の
+composition primitive `with_work_time_coordination`)、Store所有のProject-State-orthogonal
+append-only coordination ledger(`coordination/ledger.jsonl`)、および7つの必須adapter
+(CLI・Temporary Agent・Model Runtime・Multi-Agent・Change Executor・Independent
+Verification・GitHub Projection)全経路への統合である。
+
+```text
+WORK_TIME_TRANSPARENCY_ROLE=CROSS_CUTTING_HUMAN_AGENT_COORDINATION_SEMANTICS_ADAPTER
+COORDINATION_LEDGER_OWNER=STORE
+COORDINATION_LEDGER_PROJECT_STATE_ORTHOGONAL=true
+MANDATORY_REAL_ADAPTER_INTEGRATION_COUNT=7
+BOOT_READ_ONLY_AND_RECURSION_FREE_EXCLUSION=true
+RESOLVE_AND_VERIFY_LINEAGE_BOUNDARY=true
+ATOMIC_TIP_GUARD_AND_DUPLICATE_FACT_REFUSAL=true
+SEVEN_STAGE_CRASH_RECOVERY_FAULT_MATRIX=true
+EXACT_OUTER_WORK_UNIT_JOIN_BINDING=true
+STRUCTURAL_REVIEW_ROUNDS_APPLIED=5
+STRUCTURAL_REVIEW_FINDINGS_OPEN=0
+SECOND_STATE_OWNER=false
+SECOND_AUTHORITY_OWNER=false
+SECOND_EVIDENCE_OWNER=false
+SECOND_REFLOW_OWNER=false
+SECOND_HUMAN_AUTHORITY_OWNER=false
+PARALLEL_CANONICAL_AUTHORITY=0
+CANONICAL_STATE_OWNER_COUNT=1
+```
+
+exact outer work-unit join binding(Round 5、`P84-R5-F1`)は、`multi_agent.route.
+open_dynamic_execution_plan`が自身のnested `model_runtime`呼び出しへ渡すjoined coordination
+reporterを、自身が実際に開いたoutermost work unitの正確な識別子と一致することを要求し、
+同一Store/project/bindingで同時に生存する別のMULTI_AGENT coordinationからの生きた
+reporterの取り違えを拒否する。
+
+Phase 20は、このaccepted architectureにはまだ実装されていない。Phase 20実装には、Phase 20
+専用Issue上のObjective / Boundary / AuthorityへのSHUKOUの明示採択が別途必要である。
