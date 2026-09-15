@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.fixtures import long_running_proof as lrp
 from tests.long_running_proof import agent_swap, cycle, metrics, runtime_reachability
 from tests.long_running_proof.orchestrator import run_long_running_proof
 
@@ -110,24 +111,23 @@ def test_a_cycle_index_run_out_of_order_produces_a_genuinely_different_differenc
     tmp_path: Path,
 ) -> None:
     """Cycle 5's own Difference is derived from predicate/subject 5, never predicate/subject 0
-    -- running cycle index 5 first against the genesis State produces a Difference whose own
-    identity does not match what a caller *expecting* cycle 0's Difference would accept, so a
-    corpus consumer checking the identity ledger it was promised (rather than trusting
-    position alone) refuses the substitution."""
+    -- running cycle index 5 first against the genesis State (where zero of this proof's own
+    cycles have committed) is a reordering :func:`~tests.long_running_proof.cycle.
+    verify_expected_corpus_position` refuses outright (P87-R1-F5), before ``reflow()`` is ever
+    called: there is no route by which a caller could silently accept cycle 5's Difference in
+    place of the cycle 0 the corpus's own order promises."""
 
     store = cycle.build_store(tmp_path)
     committed_state = cycle.initialize_genesis(store)
-    result_5 = cycle.run_one_cycle(store, k=5, committed_state=committed_state)
-    assert result_5["assembly"]["difference"]["difference_id"] != "EXPECTED_CYCLE_0_DIFFERENCE_ID"
-    # The genuine cycle-0 Difference, derived separately, has a different identity than what
-    # was just committed under the out-of-order index 5.
+    with pytest.raises(cycle.CorpusPositionError):
+        cycle.run_one_cycle(store, k=5, committed_state=committed_state)
+
+    # The genuine cycle-0 Difference, derived separately, is accepted -- proving the refusal
+    # above is about corpus position, not some unrelated failure.
     store_0 = cycle.build_store(tmp_path / "control")
     committed_state_0 = cycle.initialize_genesis(store_0)
     result_0 = cycle.run_one_cycle(store_0, k=0, committed_state=committed_state_0)
-    assert (
-        result_0["assembly"]["difference"]["difference_id"]
-        != result_5["assembly"]["difference"]["difference_id"]
-    )
+    assert result_0["assembly"]["difference"]["target_predicate_ref"]["id"] == lrp.predicate_id(0)
 
 
 def test_a_duplicate_cycle_committed_against_a_stale_predecessor_state_is_refused(
@@ -192,7 +192,15 @@ def test_recording_a_swap_between_two_executions_from_the_identical_adapter_iden
     )
     from manosube_agent_civilization.model_runtime.errors import ModelRuntimeRequirementError
 
-    world = agent_swap.build_agent_swap_world(tmp_path, project_id="PRJ-P20-SWAP-FORGE-0001")
+    store = cycle.build_store(tmp_path)
+    bind_result = cycle.bind_genesis(store)
+    world = agent_swap.build_agent_swap_world(
+        store,
+        project_id=lrp.PROJECT_ID,
+        project_binding_id=bind_result["project_binding_id"],
+        human_authority_ref=lrp.HUMAN_AUTHORITY,
+        transaction_prefix="TX-SWAP-FORGE",
+    )
     store, project_id, project_binding_id = (
         world["store"],
         world["project_id"],
@@ -261,7 +269,14 @@ def test_recording_a_swap_between_two_executions_from_the_identical_adapter_iden
 def test_unreachable_and_unknown_runtime_classifications_are_never_conflated(
     tmp_path: Path,
 ) -> None:
-    world = runtime_reachability.build_runtime_reachability_world(tmp_path)
+    store = cycle.build_store(tmp_path)
+    bind_result = cycle.bind_genesis(store)
+    world = runtime_reachability.build_runtime_reachability_world(
+        store,
+        project_id=lrp.PROJECT_ID,
+        project_binding_id=bind_result["project_binding_id"],
+        human_authority_ref=lrp.HUMAN_AUTHORITY,
+    )
     measurements = runtime_reachability.run_reachability_measurements(world)
     classifications = [m["classification"] for m in measurements]
     assert "UNREACHABLE" in classifications

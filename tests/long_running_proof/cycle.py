@@ -19,7 +19,6 @@ code follows the identical convention.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from copy import deepcopy
 import hashlib
 from pathlib import Path
@@ -127,7 +126,7 @@ def bind_genesis(store: FileStateStore) -> dict[str, Any]:
     from manosube_agent_civilization.binding.route import bind_project
 
     genesis = genesis_project_state()
-    genesis_records: list[tuple[str, str, Mapping[str, Any]]] = [
+    genesis_records: list[tuple[str, str, dict[str, Any]]] = [
         (kind, record_id, body)
         for kind, record_id, body in genesis_source_snapshot_records(genesis)
     ]
@@ -147,7 +146,8 @@ def initialize_genesis(store: FileStateStore) -> dict[str, Any]:
     caller now goes through :func:`bind_genesis` directly so it can thread
     ``project_binding_id`` onward to the Agent-swap/runtime-reachability slices."""
 
-    return bind_genesis(store)["committed_state"]
+    committed_state: dict[str, Any] = bind_genesis(store)["committed_state"]
+    return committed_state
 
 
 def observe_before(k: int, current_state: dict[str, Any]) -> dict[str, Any]:

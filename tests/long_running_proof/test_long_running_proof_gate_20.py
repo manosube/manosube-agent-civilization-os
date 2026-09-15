@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from tests.fixtures import long_running_proof as lrp
+from tests.long_running_proof.cycle import committed_cycle_count
 from tests.long_running_proof.orchestrator import run_long_running_proof
 
 pytestmark = pytest.mark.integration
@@ -36,7 +37,12 @@ def test_gate_20_required_tier_completes_with_zero_refused_cycles(
     assert result["tier"] == tier
     assert result["metrics"]["committed_cycle_count"] == tier
     assert result["metrics"]["refused_cycle_count"] == 0
-    assert result["final_committed_state"]["state_revision"] == tier
+    # The Store's own generic state_revision counter also advances on every Agent-swap/
+    # runtime-reachability slice commit sharing this run's Project Binding (P87-R1-F4), so it is
+    # no longer literally equal to tier -- committed_cycle_count (derived from
+    # semantic_state.lineage.identity_refs, touched only by a real reflow() cycle commit) is the
+    # revision-counter-independent proof that exactly `tier` cycles committed.
+    assert committed_cycle_count(result["final_committed_state"]) == tier
 
     # Gate 20's own required facts, recomputed here from the real raw event dataset --
     # LONG_RUNNING_STATE_CONTINUITY_PROVEN, STATE_RECONSTRUCTION_REPEATABLE,
