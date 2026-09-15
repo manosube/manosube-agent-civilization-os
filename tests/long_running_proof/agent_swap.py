@@ -18,14 +18,14 @@ constructed from nothing but the Store and the Work Unit's own content address).
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.fixtures.model_runtime_world import authorized_world, open_kwargs
+from tests.fixtures.model_runtime_world import commit_boundary, commit_difference, commit_grant, open_kwargs
 
 from manosube_agent_civilization.agent_runtime import start_temporary_agent
 from manosube_agent_civilization.agent_runtime.errors import AgentReleasedError
+from manosube_agent_civilization.store import FileStateStore
 from manosube_agent_civilization.model_runtime import (
     FakeModelAdapter,
     execute_model_work_unit,
@@ -50,12 +50,50 @@ SWAP_ADAPTER_IDENTITIES = [
 ]
 
 
-def build_agent_swap_world(tmp_path: Path, *, project_id: str) -> dict[str, Any]:
-    """One real, genuinely bound Project with one committed Difference/Boundary/Grant --
-    everything :func:`~manosube_agent_civilization.model_runtime.open_model_work_unit` needs
-    and nothing it does not (identical to the V3 proof's own ``authorized_world``)."""
+def build_agent_swap_world(
+    store: FileStateStore,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    human_authority_ref: dict[str, Any],
+    transaction_prefix: str,
+) -> dict[str, Any]:
+    """One real, committed Difference/Boundary/Grant bound into *store*'s own already-real
+    Project Binding (P87-R1-F4) -- the identical (Difference, Boundary, Grant) shape the V3
+    proof's own ``authorized_world`` builds, but committed into the long-running cycle
+    sequence's own Store/Project/Binding rather than a second, unrelated fixture world, so the
+    Agent-swap slice's own Work Unit shares the exact ``project_binding_id`` and lineage every
+    cycle Difference/Reflow commit also advances."""
 
-    return authorized_world(tmp_path, subdir=f"agent_swap_{project_id}", project_id=project_id)
+    difference_ref, difference = commit_difference(
+        store, project_id, transaction_id=f"{transaction_prefix}-DIFF"
+    )
+    boundary_ref, boundary = commit_boundary(
+        store,
+        project_id,
+        project_binding_id,
+        transaction_id=f"{transaction_prefix}-BOUND",
+        declared_by=dict(human_authority_ref),
+    )
+    grant_ref, grant = commit_grant(
+        store,
+        project_id,
+        difference_ref,
+        boundary_ref,
+        transaction_id=f"{transaction_prefix}-GRANT",
+        granted_by=dict(human_authority_ref),
+    )
+    return {
+        "store": store,
+        "project_id": project_id,
+        "project_binding_id": project_binding_id,
+        "difference_ref": difference_ref,
+        "difference": difference,
+        "boundary_ref": boundary_ref,
+        "boundary": boundary,
+        "grant_ref": grant_ref,
+        "grant": grant,
+    }
 
 
 def _discard_session(agent: Any) -> None:

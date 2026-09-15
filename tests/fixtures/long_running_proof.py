@@ -436,6 +436,40 @@ def authority_rule(*, project_id: str) -> dict[str, Any]:
     return record
 
 
+def bind_project_kwargs(genesis_state: dict[str, Any]) -> dict[str, Any]:
+    """Every keyword :func:`~manosube_agent_civilization.binding.route.bind_project` needs
+    for one real, atomic genesis+Binding admission of :data:`PROJECT_ID` (P87-R1-F4/F7's own
+    required correction: the long-running cycle sequence, Agent swap, and runtime observation
+    slices must all share one real Project Binding, not three unrelated fixture worlds).
+    Reuses ``tests/fixtures/product_binding.py``'s own generic, non-project-scoped fixtures
+    (``boundary``/``source_registrations``/``command_policy``/``secret_exclusion_policy``/
+    ``human_authority_signing_key``) verbatim -- only ``project_id``, ``objective_revision``,
+    ``authority_rule``, ``authority_policy_ref``, ``human_authority_ref``, and *genesis_state*
+    itself are this fixture world's own. ``human_authority_ref`` is :data:`HUMAN_AUTHORITY`
+    (not ``product_binding``'s own ``AUTH-BIND-0001``), matching the ``owner_authority_ref``/
+    ``human_authority_ref``/``declared_by`` every one of :func:`objective_revision` and
+    :func:`authority_rule` already carry -- ``bind_project``'s own four-way Human Authority
+    canonical-reference exact match requires all four to agree."""
+
+    from tests.fixtures import product_binding as pb
+
+    rule = authority_rule(project_id=PROJECT_ID)
+    return {
+        "project_id": PROJECT_ID,
+        "objective_revision": objective_revision(),
+        "boundary": pb.boundary(),
+        "authority_policy_ref": {"kind": "authority_rule", "id": rule["authority_rule_id"]},
+        "authority_rule": rule,
+        "source_registrations": pb.source_registrations(),
+        "command_policy": pb.command_policy(),
+        "secret_exclusion_policy": pb.secret_exclusion_policy(),
+        "human_authority_ref": dict(HUMAN_AUTHORITY),
+        "human_authority_signing_key": pb.human_authority_signing_key(),
+        "bound_at": OBJECTIVE_RECORDED_AT,
+        "genesis_state": genesis_state,
+    }
+
+
 def requested_action(k: int) -> dict[str, Any]:
     from manosube_agent_civilization.authority.identity import action_fingerprint
 

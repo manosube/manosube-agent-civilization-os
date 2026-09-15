@@ -116,15 +116,38 @@ def genesis_project_state() -> dict[str, Any]:
     return state
 
 
-def initialize_genesis(store: FileStateStore) -> dict[str, Any]:
+def bind_genesis(store: FileStateStore) -> dict[str, Any]:
+    """The one real, atomic genesis+Project Binding admission for :data:`lrp.PROJECT_ID`
+    (P87-R1-F4/F7): every cycle, the Agent-swap slice, and the runtime-reachability slice all
+    resolve their own Project Binding identity from this exact call's own returned
+    ``project_binding_id`` -- never three separately bound fixture worlds. Reuses the real,
+    canonical :func:`~manosube_agent_civilization.binding.route.bind_project` producer, never
+    a manual Binding record construction."""
+
+    from manosube_agent_civilization.binding.route import bind_project
+
     genesis = genesis_project_state()
     genesis_records: list[tuple[str, str, Mapping[str, Any]]] = [
         (kind, record_id, body)
         for kind, record_id, body in genesis_source_snapshot_records(genesis)
     ]
-    store.initialize(lrp.PROJECT_ID, genesis, records=genesis_records)
-    current: dict[str, Any] = store.load_current(lrp.PROJECT_ID)
-    return current
+    kwargs = lrp.bind_project_kwargs(genesis)
+    result = bind_project(
+        store, **kwargs, additional_genesis_records=genesis_records, schema_root=SCHEMA_ROOT
+    )
+    return {
+        "project_binding_id": result["project_binding_id"],
+        "committed_state": result["committed_state"],
+    }
+
+
+def initialize_genesis(store: FileStateStore) -> dict[str, Any]:
+    """Back-compatible wrapper over :func:`bind_genesis` for callers that only need the
+    committed genesis State (not the Project Binding identity) -- every current cycle-sequence
+    caller now goes through :func:`bind_genesis` directly so it can thread
+    ``project_binding_id`` onward to the Agent-swap/runtime-reachability slices."""
+
+    return bind_genesis(store)["committed_state"]
 
 
 def observe_before(k: int, current_state: dict[str, Any]) -> dict[str, Any]:
