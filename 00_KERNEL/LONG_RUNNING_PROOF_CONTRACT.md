@@ -29,21 +29,35 @@ Evidence, Reflow, or Completion.
 tests/fixtures/long_running_proof.py         # deterministic, cycle-indexed fixture world
 tests/fixtures/long_running_proof/*.txt      # 2 reused physical Source Snapshot files
 tests/long_running_proof/cycle.py            # repeatable single-Difference natural-route cycle
-tests/long_running_proof/session_loss.py     # real process-boundary restart + reconstruct()
+tests/long_running_proof/crash_worker.py     # P87-R1-F1/F2: real subprocess crash/continuation worker
+tests/long_running_proof/session_loss.py     # P87-R1-F1/F2: real two-process crash-and-recover
 tests/long_running_proof/agent_swap.py       # >=3 swaps / >=2 distinct adapter identities
 tests/long_running_proof/runtime_reachability.py  # REACHABLE/UNREACHABLE/UNKNOWN measurement
 tests/long_running_proof/metrics.py          # raw events + deterministic aggregator
 tests/long_running_proof/orchestrator.py     # ties the above into one tier-parametrized run
 tests/long_running_proof/test_long_running_proof_gate_20.py         # T10/T30/T50/T100
 tests/long_running_proof/test_long_running_proof_negative_controls.py  # required control matrix
+tests/contract/long_running_proof_artifact/  # P87-R1-F8: fast unit/contract proof of the bundle package
+
+src/manosube_agent_civilization/long_running_proof_artifact/  # P87-R1-F8 (see section 11.8)
+01_SCHEMA/long_running_proof_artifact/long_running_proof_artifact_bundle.schema.json
 ```
 
-Nothing here lives under `src/manosube_agent_civilization/`: this proof creates no new
-production package, no new schema family, and no new Canonical record kind
-(`HARNESS_OWNS_CANONICAL_STATE=false`). It is proof/harness infrastructure, exactly the role
-`00_KERNEL/VERTICAL_PROOF_CONTRACT.md` already establishes for Phase 8's own one-cycle proof --
-this contract's own package is this repository's second, and last, instance of that role, one
-level up in scale.
+Everything above `tests/contract/long_running_proof_artifact/` lives under `tests/`: the
+orchestration, session-loss, agent-swap, and runtime-reachability harness itself still creates no
+new Canonical record kind, and owns no Canonical State/Authority/Evidence/Reflow/Completion
+decision of its own (`HARNESS_OWNS_CANONICAL_STATE=false`) -- exactly the role
+`00_KERNEL/VERTICAL_PROOF_CONTRACT.md` already establishes for Phase 8's own one-cycle proof.
+
+**Correction (P87-R1-F8, Structural Review Round 1).** The original claim that this proof
+"creates no new production package" is retracted: Issue #86 section 10's own required Canonical
+outputs (a versioned corpus, long-running lineage, failure/recovery receipts, a metric dataset,
+an environment manifest, raw output, and a reproduction procedure) have no existing owner in this
+Kernel, so SHUKOU's own P87-R1-F8 adoption authorized (`PHASE_20_PRODUCTION_PACKAGE_ALLOWED=true`)
+exactly one new, minimal `src/` package -- see section 11.8 -- to durably publish them. It commits
+through the Store's own orthogonal coordination ledger, never through `commit_state_transition`,
+so it still cannot become a new owner of Canonical State, Authority, Evidence, Reflow, or
+Completion (`NEW_CANONICAL_STATE_OWNER=false` is unaffected, see section 10).
 
 ## 3. The repeatable cycle (`cycle.py`)
 
@@ -65,31 +79,49 @@ T10/T30/T50/T100 are the first 10/30/50/100 entries of this identical, ordered p
 sequence -- literal prefixes of one corpus, never four independently generated or reshuffled
 ones (`TIER_PREFIX_RELATION_REQUIRED=true`).
 
-## 4. Session-loss recovery (`session_loss.py`)
+## 4. Session-loss recovery (`crash_worker.py`, `session_loss.py`)
 
-Reuses the identical, already-accepted real-process-boundary restart precedent
+**Corrected in full, Structural Review Round 1 (P87-R1-F1/F2, `ADOPT_P87_R1_F1_THROUGH_F9`).**
+The original design only started a *reader* child process that reconstructed State and printed
+it back as JSON, after a cycle had already run to completion, committed, *in the parent
+process*; the parent that had just run the cycle stayed alive and went on to run the next one.
+That proved object-identity independence, never that the process actually holding a cycle's own
+execution state (process-local cache/imports/open handles) had been lost and replaced, and every
+injected boundary landed only between two already-completed cycles, never mid-cycle -- so none of
+the four documented recovery paths were ever actually exercised.
+
+`session_loss.crash_mid_cycle_and_recover` is the real fix: cycle *k* itself now runs, up through
+one of `crash_worker.BOUNDARIES`'s four named positions, inside a dedicated child process
+(`subprocess.run`, the identical real-process-boundary precedent
 `tests/integration/boot/test_boot_project_route.py::test_a_fresh_python_process_boots_
-successfully` establishes: `subprocess.run([sys.executable, "-c", script], ...)`, never an
-in-process stand-in. The child process reconstructs canonical State solely from the Store's own
-on-disk files via `FileStateStore.reconstruct` -- the `CANONICAL_BOOT_OR_RECONSTRUCTION_
-REQUIRED=true` alternative to a full `boot_project` call Issue #86's own Boundary explicitly
-permits (this proof's fixture world admits no Project Binding, so a bare reconstruction is the
-correct natural-route boundary here, not a shortcut around one).
+successfully` already establishes) that terminates via `os._exit()` -- a real, unconditional
+kill that skips interpreter shutdown, `atexit`, and Python-level stack unwinding, never a
+catchable exception a caller could quietly carry on from. A second, later, entirely separate
+child process then performs the actual continuation, holding no object the first child ever
+built -- it resolves the corpus position and committed State from the Store's own on-disk files
+alone. Both processes' real, distinct PIDs are captured and asserted unequal
+(`FRESH_WORKER_CONTINUATION_PROOF=true`).
 
-Of the four session-loss boundaries Issue #86 names (work-unit-open-before-Change,
-Change-admission-after-before-Evidence, Evidence-after-before-Reflow, Reflow-after-before-
-terminal-projection): direct inspection of every owner `cycle.py` calls before `reflow()` shows
-none of them ever calls `store.commit` (`topology.py`'s own K-003/R-001 static scan already
-proves exactly one module in the installed package, `reflow/commit.py`, ever does). A crash at
-any of the first three named boundaries is therefore, by construction, identical in observable
-effect to a crash before `reflow()` was ever called for that cycle -- nothing durable exists yet
-to reconcile, and the sound recovery is to re-derive the identical cycle and retry, which this
-proof's own negative-control matrix proves cannot duplicate a commit (Reflow's own Compare-And-
-Swap staleness refusal). The fourth boundary -- during/after Reflow's own atomic commit -- is
-covered by this repository's own already-accepted `FaultInjectingStore`/`fault` seam and crash-
-recovery test matrix (Phase 8, `tests/natural_cycle/proof.py`; PR #84 Round 4's 7-stage
-coordination-ledger matrix is the same discipline applied to a different ledger); this proof
-does not re-derive that matrix a second time for the identical Reflow commit path.
+Of the four session-loss boundaries Issue #86 names (`WORK_UNIT_BEFORE_CHANGE`,
+`CHANGE_BEFORE_EVIDENCE`, `EVIDENCE_BEFORE_REFLOW`, `REFLOW_COMMIT_INTERRUPTION`): direct
+inspection of every owner `cycle.py` calls before `reflow()` shows none of them ever calls
+`store.commit` (`topology.py`'s own K-003/R-001 static scan already proves exactly one module in
+the installed package, `reflow/commit.py`, ever does). A crash at any of the first three named
+boundaries therefore always finds the Store untouched by that cycle -- nothing durable exists to
+reconcile, and the sound recovery is to re-derive cycle *k* fresh, through the identical real
+public entrypoints `cycle.py` itself calls, in the same order, proven decisively by three
+distinct, separately-invoked partial call sequences, each ending in a real process kill. The
+fourth boundary crashes *inside* `reflow()`'s own atomic Store commit, via the identical `fault`
+crash-injection seam `tests/natural_cycle/proof.py`'s own `FaultInjectingStore` already
+establishes, except the fault hook calls `os._exit()` rather than raising; the crash lands at
+`AFTER_COMMIT_INTENT` -- durably journaled, but before the transaction's own event reaches the
+lineage log -- the exact case `FileStateStore.recover` exists to forward-complete, so the
+continuation process calls `store.recover(project_id)`, never a raw retried `reflow()` call.
+
+The orchestrator injects one real crash-and-recover at each of these four boundaries, round-robin
+across a tier run's own declared positions (`orchestrator.SESSION_LOSS_BOUNDARY_FRACTIONS`), in
+place of that position's own normal `attempt_cycle` call -- so every required Gate 20 tier run
+exercises all four boundaries at least once (`FOUR_MID_CYCLE_LOSS_BOUNDARIES_PROVEN=true`).
 
 ## 5. Agent/runtime-identity swap (`agent_swap.py`)
 
@@ -131,16 +163,42 @@ running counter a caller without the raw events could not also reproduce
 silently substituted `0.0`/`1.0` (`ZERO_DENOMINATOR_HANDLING_DECLARED=true`). `UNKNOWN` runtime
 observations are counted as `UNKNOWN`, never folded into `0` (`UNKNOWN_NE_ZERO=true`). A
 `cycle_refused` raw event is never dropped from the dataset (`FAILURES_NOT_EXCLUDED_FROM_
-DATASET=true`) -- the negative-control matrix proves this directly.
+DATASET=true`) -- the negative-control matrix proves this directly, and (Structural Review Round
+1, P87-R1-F3) that event is now always captured from the real orchestrated route's own actual
+refusal (`cycle.CorpusPositionError`/`reflow`'s own `StaleReflowError`), never a synthetic dict a
+caller hand-authors after the fact.
+
+**Corrected (P87-R1-F9).** `time_to_structural_closure_seconds` is computed from two real
+`datetime.now(UTC)` reads bracketing each cycle's own actual execution (`orchestrator.
+_observed_now`), including any real session-loss restart/retry time a boundary injected --
+never the fixed one-minute-per-cycle placeholder the original delivery used. This observation
+clock is deliberately kept separate from the corpus's own deterministic identity (`predicate_id`/
+`subject`/`REFLOW_INSTANT`), which never varies with how long a cycle actually took.
 
 ## 8. Orchestration (`orchestrator.py`)
 
 `run_long_running_proof(tmp_path, tier=N)` is the one Gate 20 proof entry point: it runs `N`
-sequential cycles (with real process-boundary session-loss restarts injected at ~25%/50%/75% of
-the run), one agent/runtime-identity swap slice, and one runtime-reachability slice, then
-aggregates every raw event. It owns no Canonical State/Authority/Evidence/Reflow/Completion
-decision of its own -- every commit, decision, and terminal status is produced by the real owner
-it called.
+sequential cycles (with real process-boundary session-loss restarts injected at four declared
+positions, one per named boundary, round-robin -- see section 4), one agent/runtime-identity swap
+slice, and one runtime-reachability slice, then aggregates every raw event. It owns no Canonical
+State/Authority/Evidence/Reflow/Completion decision of its own -- every commit, decision, and
+terminal status is produced by the real owner it called.
+
+**Corrected (P87-R1-F7, `ADOPT_P87_R1_F1_THROUGH_F9`).** The whole run is now WTT-coordinated
+under one real `LONG_RUNNING_PROOF` Work Coordination (`work_time_transparency.adapters.
+with_work_time_coordination`), a new `adapter_kind`/`work_unit_ref.kind` pair SHUKOU's own
+adoption authorized (`WTT_BOUNDED_SCHEMA_ENUM_ADAPTER_CHANGE_ALLOWED=true`) -- correcting the
+original delivery's declaration that this production proof entrypoint was un-coordinated because
+no matching kind yet existed (`WORK_TIME_COORDINATION_REQUIRED=true`,
+`UNCOORDINATED_LONG_RUNNING_WORK_ALLOWED=false`). Runtime reachability itself (section 6) remains
+deliberately un-wrapped for the reason section 6 already gives.
+
+**Added (P87-R1-F8).** As its own last step, once every cycle/swap/observation slice has run,
+`run_long_running_proof` builds and durably commits one artifact bundle -- see section 11.8 --
+gathering this run's own raw events, aggregated metrics, lineage refs, session-loss receipts
+(including each crash boundary's own two real, distinct PIDs), Agent-swap refs, runtime-
+observation refs, an environment manifest, the corpus manifest, and a reproduction procedure, and
+returns its `artifact_bundle_id` alongside the pre-existing return fields.
 
 ## 9. Gate 20
 
@@ -155,11 +213,26 @@ AUTHORITY_VIOLATIONS_RECORDED=true          (metrics.py's own authority_violatio
                                               control matrix)
 FAILURES_NOT_EXCLUDED_FROM_DATASET=true     (section 7, proven directly)
 
+FRESH_WORKER_CONTINUATION_PROOF=true        (section 4, P87-R1-F1)
+FOUR_MID_CYCLE_LOSS_BOUNDARIES_PROVEN=true  (section 4, P87-R1-F2, every required Gate 20 run)
+REAL_REFUSAL_DURABLY_RECORDED=true          (section 7, P87-R1-F3)
+SAME_PROJECT_AND_BINDING_TOPOLOGY_PROOF=true (section 3/8, P87-R1-F4: cycles, swaps, and runtime
+                                              observations share one project_id/Project Binding)
+CORPUS_ORDER_OMISSION_DUPLICATE_PREFIX_REFUSAL=true  (cycle.verify_expected_corpus_position,
+                                              P87-R1-F5)
+CLOSED_RUNTIME_OUTCOME_TOTALITY=true        (runtime_reachability.py, P87-R1-F6)
+WTT_ENFORCED_AT_PRODUCTION_PROOF_ENTRYPOINT=true  (section 8, P87-R1-F7)
+DURABLE_VERSIONED_ARTIFACT_RELOAD_AND_TAMPER_PROOF=true  (section 11.8, P87-R1-F8)
+ACTUAL_ELAPSED_TIME_RECORDED=true           (section 7, P87-R1-F9)
+
 ALL_PROOF_TIERS_COMPLETE=true               (test_long_running_proof_gate_20.py, all 4 tiers)
 NATURAL_ROUTE_PROVEN=true                   (sections 3-6, every mechanism reuses an existing,
                                               already-accepted public production entrypoint)
-CANONICAL_OWNER_COUNT_UNCHANGED=true        (no new src/ package, no new schema family, no new
-                                              record kind, no new adapter_kind)
+CANONICAL_OWNER_COUNT_UNCHANGED=true        (no new Canonical State/Authority/Evidence/Reflow/
+                                              Completion owner -- P87-R1-F7/F8 add one new WTT
+                                              adapter_kind and one new orthogonal-ledger-only
+                                              src/ package, neither of which is one of those
+                                              five owners; see section 11.7/11.8)
 ```
 
 Phase 20 is not complete until SHUKOU accepts the exact reviewed delivery head, that head is
@@ -182,3 +255,99 @@ MERGE_ALLOWED=false
 ISSUE_86_CLOSE_ALLOWED=false
 PHASE_21_ALLOWED=false
 ```
+
+## 11. Structural Review Round 1 corrections (P87-R1, `ADOPT_P87_R1_F1_THROUGH_F9`)
+
+PR #87's structural review found nine gaps between the original delivery and what Issue #86
+actually requires; SHUKOU adopted all nine for correction on the existing branch/PR. Sections
+3-9 above are already updated in place for each; this section is the one consolidated index.
+
+```text
+P87-R1-F1  FRESH_WORKER_CONTINUATION_PROOF        -- section 4
+P87-R1-F2  FOUR_MID_CYCLE_LOSS_BOUNDARIES_PROVEN  -- section 4
+P87-R1-F3  REAL_REFUSAL_DURABLY_RECORDED          -- section 7
+P87-R1-F4  SAME_PROJECT_AND_BINDING_TOPOLOGY_PROOF -- sections 3/8
+P87-R1-F5  CORPUS_ORDER_OMISSION_DUPLICATE_PREFIX_REFUSAL -- section 3 (cycle.py)
+P87-R1-F6  CLOSED_RUNTIME_OUTCOME_TOTALITY        -- section 6
+P87-R1-F7  WTT_ENFORCED_AT_PRODUCTION_PROOF_ENTRYPOINT -- section 8
+P87-R1-F8  DURABLE_VERSIONED_ARTIFACT_RELOAD_AND_TAMPER_PROOF -- section 11.8 (below)
+P87-R1-F9  ACTUAL_ELAPSED_TIME_RECORDED           -- section 7
+```
+
+### 11.8 The Long-Running Proof Artifact Bundle (P87-R1-F8)
+
+Issue #86 section 10 requires canonical outputs this proof's own raw Python return dict never
+durably published: a versioned corpus, the long-running lineage, failure/recovery receipts, the
+metric dataset, an environment manifest, raw output, and a reproduction procedure -- with an
+explicit constraint that the artifact "must never become a new owner of Project Completion,
+Evidence sufficiency, or Canonical State." SHUKOU's own adoption additionally required the bundle
+carry Agent-swap refs, runtime-observation refs, a corpus manifest/prefix identity, and a content
+address or stable fingerprint, and required decisive proof of both reload equality and tamper
+refusal (`ARTIFACT_BUNDLE_RELOAD_PROOF=true`, `ARTIFACT_TAMPER_REFUSAL=true`).
+
+```text
+src/manosube_agent_civilization/long_running_proof_artifact/
+    errors.py     # ArtifactBundleError / ArtifactBundleValidationError
+    identity.py   # artifact_bundle_id (run identity only) / artifact_bundle_semantic_fingerprint
+                  # (full content address) -- deliberately two different hashes, see below
+    engine.py     # build_artifact_bundle: pure builder + schema validation + stringify_floats
+    route.py      # commit_artifact_bundle / resolve_artifact_bundle
+01_SCHEMA/long_running_proof_artifact/long_running_proof_artifact_bundle.schema.json
+```
+
+**Never a new Canonical State/Authority/Evidence/Reflow/Completion owner, structurally.** Every
+bundle commits through `FileStateStore.commit_coordination_record_at_tip` -- the same orthogonal,
+append-only coordination ledger `work_time_transparency/route.py` already uses (never
+`commit_state_transition`/`store.commit`) -- so a bundle commit never reads or advances
+`state_revision`, never touches `semantic_fingerprint`/`lineage_head_ref`, and stages no
+Project-State transition. Each bundle is the single, self-chained entry of its own coordination
+chain (`chain_id == artifact_bundle_id`, `expected_predecessor=None`): one run publishes its own
+bundle exactly once (a same-body retry is an idempotent replay; a differently-bodied re-commit
+for the identical run's own identity is refused, `RecordConflictError`).
+
+**Two deliberately distinct hashes** (`identity.py`), for the identical reason P87-R1-F9 keeps
+observation time out of corpus identity: `artifact_bundle_id` is a pure function of *which run*
+the bundle is for (`project_id`, `project_binding_ref`, `tier`, `lineage_refs`) -- excluding
+`generated_at` and every other genuinely nondeterministic field, so two commit attempts
+describing the identical completed run collide at the identical Store slot.
+`artifact_bundle_semantic_fingerprint` is a full content address (`"sha256:" + sha256(canonical_
+json_bytes(...))`, the identical convention `change_executor`/`evidence`/`work_time_transparency`
+already use) over every field, including `generated_at` -- the bundle's own required content
+address.
+
+**Floats never reach the canonical serializer.** `state.canonicalize.canonical_json_bytes`
+prohibits floating-point values repository-wide; `metrics.aggregate`'s own rate/duration fields
+are genuine floats. `engine.stringify_floats` recursively replaces every float with `repr(x)` --
+Python's own shortest round-tripping decimal string -- before a metrics dataset is embedded or
+fingerprinted; any caller proving raw-to-summary derivation equality after reload must apply the
+identical function to a freshly recomputed dataset before comparing it to the reloaded bundle's
+own `metrics` field.
+
+**Reload and tamper proof.** `resolve_artifact_bundle` is a thin wrapper over
+`FileStateStore.resolve_coordination_record`, which always re-derives the bundle's authoritative
+body from the coordination ledger itself -- never trusting a materialized on-disk cache file on
+its own -- and raises `CorruptStoreError` if a directly-edited copy of that cache diverges from
+the ledger fact (the identical class of check
+`tests/integration/runtime/test_runtime_failure_tamper_matrix.py` already establishes for an
+ordinary Store record). `tests/long_running_proof/test_long_running_proof_negative_controls.py`
+section 12 proves, against a real Gate 20 run's own committed bundle: reload equality, raw-events-
+to-summary re-derivation equality (recomputing `metrics.aggregate` from the reloaded bundle's own
+raw events and comparing, through `stringify_floats`, to the reloaded `metrics` field), refusal
+of a directly-edited materialized cache file, and that committing the bundle never advanced the
+Project's own `state_revision`. `tests/contract/long_running_proof_artifact/` proves the same
+package's identity/idempotency/conflict-refusal semantics at the fast, minimal-genesis level.
+
+**Fields carried by the bundle**: `corpus_manifest` (`corpus_kind`, `max_cycles`, `tier`, the
+resolved `predicate_id(k)` list for `range(tier)` -- the actual resolved prefix, not merely a
+pointer to how to regenerate it); `lineage_refs` (`final_state_revision`,
+`cycle.committed_cycle_count`, and the committed State's own `lineage.identity_refs`);
+`raw_events` and `metrics` (unchanged from sections 7-8); `session_loss_receipts` (one entry per
+crash boundary, including that boundary's own two real, distinct `crash_pid`/`continuation_pid`
+values `orchestrator.py` now threads through from `session_loss.crash_mid_cycle_and_recover`,
+previously discarded); `agent_swap_refs`/`runtime_observation_refs` (extracted from the identical
+raw events sections 5-6 already produce); `environment_manifest` (`python_implementation`,
+`python_version`, `platform`); `reproduction_procedure` (the entrypoint, `tier`, `corpus_kind`,
+and `lrp.PROJECT_ID`); `generated_at` (a real wall-clock reading via `work_time_transparency.
+clock.default_clock`, which strips trailing-zero fractional digits to satisfy `01_SCHEMA/common/
+timestamp.schema.json`'s own canonical pattern -- `orchestrator._observed_now`'s raw `%f` output
+does not).

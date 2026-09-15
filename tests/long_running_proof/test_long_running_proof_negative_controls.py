@@ -11,6 +11,7 @@ protection exists somewhere in the repository.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -25,8 +26,13 @@ from tests.long_running_proof import (
     session_loss,
 )
 from tests.long_running_proof.orchestrator import run_long_running_proof
+from tests.state_helpers import SCHEMA_ROOT
 
+from manosube_agent_civilization.long_running_proof_artifact import route as artifact_route
+from manosube_agent_civilization.long_running_proof_artifact.engine import stringify_floats
 from manosube_agent_civilization.reflow.errors import StaleReflowError
+from manosube_agent_civilization.store import FileStateStore
+from manosube_agent_civilization.store.errors import CorruptStoreError
 
 pytestmark = pytest.mark.integration
 
@@ -428,3 +434,113 @@ def test_harness_modules_call_only_public_producer_entrypoints_never_private_sto
                     f"{path.name}: private attribute access `.{node.attr}` found -- the "
                     "harness must call only public owner entrypoints"
                 )
+
+
+# --------------------------------------------------------------------------- #
+# 12. The durable artifact bundle reloads to an identical, raw-to-summary-consistent body, and
+#     a directly-edited on-disk copy is refused, not silently trusted (P87-R1-F8)
+# --------------------------------------------------------------------------- #
+
+
+def test_artifact_bundle_reloads_identically_and_raw_to_summary_derivation_still_holds(
+    shared_run: dict[str, Any],
+) -> None:
+    """The real bundle :func:`~tests.long_running_proof.orchestrator.run_long_running_proof`
+    committed for :data:`shared_run` reloads, through a *fresh* :class:`FileStateStore` handle
+    holding no object the run itself ever built, to a body byte-for-byte identical to what was
+    committed (``ARTIFACT_BUNDLE_RELOAD_PROOF``). Recomputing :func:`~tests.long_running_proof.
+    metrics.aggregate` from the reloaded bundle's own ``raw_events`` -- the identical function
+    :mod:`~tests.long_running_proof.orchestrator` itself calls -- and applying the identical
+    :func:`~manosube_agent_civilization.long_running_proof_artifact.engine.stringify_floats`
+    encoding this package's own content-addressing requires still equals the reloaded bundle's
+    own ``metrics`` field: the bundle's summary is genuinely derivable from its own raw data,
+    never a second, independently-asserted fact."""
+
+    store_root = Path(shared_run["store_root"])
+    bundle_id = shared_run["artifact_bundle_id"]
+    committed = shared_run["artifact_bundle"]
+
+    fresh_store = FileStateStore(store_root, schema_root=SCHEMA_ROOT)
+    reloaded = artifact_route.resolve_artifact_bundle(
+        fresh_store, project_id=lrp.PROJECT_ID, artifact_bundle_id=bundle_id
+    )
+    assert reloaded is not None
+    assert reloaded == committed
+
+    recomputed_metrics = stringify_floats(metrics.aggregate(reloaded["raw_events"]))
+    assert recomputed_metrics == reloaded["metrics"]
+
+
+def test_artifact_bundle_resolves_to_none_for_an_id_that_was_never_committed(
+    shared_run: dict[str, Any],
+) -> None:
+    """A syntactically well-formed but never-committed ``artifact_bundle_id`` resolves to
+    ``None`` -- never fabricates a bundle body, and never confuses "not committed" with a
+    tamper/corruption refusal."""
+
+    store_root = Path(shared_run["store_root"])
+    fresh_store = FileStateStore(store_root, schema_root=SCHEMA_ROOT)
+    never_committed_id = "LRPA-" + ("0" * 64)
+    assert (
+        artifact_route.resolve_artifact_bundle(
+            fresh_store, project_id=lrp.PROJECT_ID, artifact_bundle_id=never_committed_id
+        )
+        is None
+    )
+
+
+def test_a_directly_edited_materialized_artifact_bundle_is_refused_not_silently_trusted(
+    shared_run: dict[str, Any],
+) -> None:
+    """Directly editing the artifact bundle's own materialized on-disk cache file -- the same
+    class of attack ``tests/integration/runtime/test_runtime_failure_tamper_matrix.py`` already
+    proves the Store's own manifest check catches for an ordinary Store record -- is refused
+    here too (``ARTIFACT_TAMPER_REFUSAL``): the Store always re-derives the bundle's own
+    authoritative fact from the coordination ledger itself and requires the cache file's bytes
+    to still match it exactly."""
+
+    store_root = Path(shared_run["store_root"])
+    bundle_id = shared_run["artifact_bundle_id"]
+    record_path = (
+        store_root
+        / "projects"
+        / lrp.PROJECT_ID
+        / "coordination"
+        / "records"
+        / artifact_route.RECORD_KIND
+        / f"{bundle_id}.json"
+    )
+    assert record_path.exists()
+
+    original_bytes = record_path.read_bytes()
+    tampered = json.loads(original_bytes.decode("utf-8"))
+    tampered["tier"] = tampered["tier"] + 1
+    record_path.write_bytes(json.dumps(tampered).encode("utf-8"))
+    try:
+        with pytest.raises(CorruptStoreError):
+            artifact_route.resolve_artifact_bundle(
+                FileStateStore(store_root, schema_root=SCHEMA_ROOT),
+                project_id=lrp.PROJECT_ID,
+                artifact_bundle_id=bundle_id,
+            )
+    finally:
+        record_path.write_bytes(original_bytes)
+
+
+def test_committing_the_artifact_bundle_never_advances_canonical_state(
+    shared_run: dict[str, Any],
+) -> None:
+    """The artifact bundle commits through the Store's own orthogonal coordination ledger
+    (:meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
+    commit_coordination_record_at_tip`), never :func:`~manosube_agent_civilization.store.
+    commit.commit_state_transition` -- so it structurally cannot become a new owner of
+    Canonical State. This proves it decisively for a real run: the Project's own committed
+    ``state_revision`` after the whole run (which already includes the bundle's own commit,
+    since :func:`~tests.long_running_proof.orchestrator.run_long_running_proof` commits the
+    bundle as its own last step) equals the ``final_committed_state`` this run's own last real
+    cycle/swap/observation produced -- the bundle commit added no further transition."""
+
+    store_root = Path(shared_run["store_root"])
+    fresh_store = FileStateStore(store_root, schema_root=SCHEMA_ROOT)
+    current = fresh_store.load_current(lrp.PROJECT_ID)
+    assert current["state_revision"] == shared_run["final_committed_state"]["state_revision"]

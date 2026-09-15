@@ -18,16 +18,20 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+import platform
+import sys
 from typing import Any
 
 from tests.fixtures import long_running_proof as lrp
 
+from manosube_agent_civilization.long_running_proof_artifact.route import commit_artifact_bundle
 from manosube_agent_civilization.reflow.errors import StaleReflowError
 from manosube_agent_civilization.work_time_transparency.adapters import (
     ProgressReporter,
     verify_joined_coordination,
     with_work_time_coordination,
 )
+from manosube_agent_civilization.work_time_transparency.clock import default_clock
 
 from . import agent_swap, crash_worker, cycle, metrics, runtime_reachability, session_loss
 
@@ -185,6 +189,7 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
         }
 
         raw_events: list[dict[str, Any]] = []
+        session_loss_receipts: list[dict[str, Any]] = []
         committed_state = bind_result["committed_state"]
 
         for k in range(tier):
@@ -198,14 +203,26 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
                 closed_at = _observed_now()
                 committed_state = crash_result["committed_state"]
                 identity = crash_result["identity"]
+                post_revision = committed_state["state_revision"]
                 raw_events.append(
                     metrics.session_loss_boundary_event(
                         after_cycle=k,
                         boundary=boundary,
                         pre_restart_revision=pre_revision,
-                        post_restart_revision=committed_state["state_revision"],
+                        post_restart_revision=post_revision,
                         recovered=True,
                     )
+                )
+                session_loss_receipts.append(
+                    {
+                        "after_cycle": k,
+                        "boundary": boundary,
+                        "crash_pid": crash_result["crash_pid"],
+                        "continuation_pid": crash_result["continuation_pid"],
+                        "pre_restart_revision": pre_revision,
+                        "post_restart_revision": post_revision,
+                        "recovered": True,
+                    }
                 )
                 raw_events.append(
                     metrics.cycle_committed_event(
@@ -255,7 +272,11 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
                 )
                 committed_state = store.load_current(lrp.PROJECT_ID)
 
-        return {"raw_events": raw_events, "final_committed_state": committed_state}
+        return {
+            "raw_events": raw_events,
+            "final_committed_state": committed_state,
+            "session_loss_receipts": session_loss_receipts,
+        }
 
     _open_record, _terminal_record, sequential = with_work_time_coordination(
         store,
@@ -278,12 +299,72 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
     )
 
     raw_events = sequential["raw_events"]
+    final_committed_state = sequential["final_committed_state"]
+    aggregated_metrics = metrics.aggregate(raw_events)
+
+    lineage_identity_refs = final_committed_state["semantic_state"]["lineage"]["identity_refs"]
+    lineage_refs = {
+        "final_state_revision": final_committed_state["state_revision"],
+        "committed_cycle_count": cycle.committed_cycle_count(final_committed_state),
+        "identity_refs": lineage_identity_refs,
+    }
+    corpus_manifest = {
+        "corpus_kind": "long_running_proof",
+        "max_cycles": lrp.MAX_CYCLES,
+        "tier": tier,
+        "predicate_ids": [lrp.predicate_id(k) for k in range(tier)],
+    }
+    agent_swap_refs = [
+        {
+            "swap_index": e["swap_index"],
+            "predecessor_identity": e["predecessor_identity"],
+            "successor_identity": e["successor_identity"],
+            "succeeded": e["succeeded"],
+        }
+        for e in raw_events
+        if e["kind"] == "agent_swap"
+    ]
+    runtime_observation_refs = [
+        {"classification": e["classification"], "transport_outcome": e["transport_outcome"]}
+        for e in raw_events
+        if e["kind"] == "runtime_observation"
+    ]
+    environment_manifest = {
+        "python_implementation": platform.python_implementation(),
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+    }
+    reproduction_procedure = {
+        "entrypoint": "tests.long_running_proof.orchestrator.run_long_running_proof",
+        "tier": tier,
+        "corpus_kind": "long_running_proof",
+        "project_id_constant": lrp.PROJECT_ID,
+    }
+
+    artifact_bundle = commit_artifact_bundle(
+        store,
+        project_id=lrp.PROJECT_ID,
+        project_binding_ref={"kind": "project_binding", "id": project_binding_id},
+        tier=tier,
+        corpus_manifest=corpus_manifest,
+        lineage_refs=lineage_refs,
+        raw_events=raw_events,
+        metrics=aggregated_metrics,
+        session_loss_receipts=sequential["session_loss_receipts"],
+        agent_swap_refs=agent_swap_refs,
+        runtime_observation_refs=runtime_observation_refs,
+        environment_manifest=environment_manifest,
+        reproduction_procedure=reproduction_procedure,
+        generated_at=default_clock(),
+    )
 
     return {
         "tier": tier,
         "raw_events": raw_events,
-        "final_committed_state": sequential["final_committed_state"],
-        "metrics": metrics.aggregate(raw_events),
+        "final_committed_state": final_committed_state,
+        "metrics": aggregated_metrics,
         "store_root": str(store.root),
         "project_binding_id": project_binding_id,
+        "artifact_bundle": artifact_bundle,
+        "artifact_bundle_id": artifact_bundle["artifact_bundle_id"],
     }

@@ -5078,3 +5078,71 @@ ADDITIONAL_PR_ALLOWED=false
 UNRELATED_CLEANUP_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 66. PR #87 Structural Review Round 1 (P87-R1-F1..F9) bounded addendum(Issue #86)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、本Roundで新設された`src/manosube_agent_civilization/long_running_proof_artifact/`
+という新規kernel_surface(P87-R1-F8)に対応付けるための、最小限の事実記録である。
+
+PR #87に対する構造参謀の審査コメント(comment id `5682457295`、author `manosube`、OWNER)は
+9件の構造的finding(P87-R1-F1〜F9)を指摘し、SHUKOU自身の採択コメント(comment id
+`5682496461`、author `manosube`、OWNER、`ADOPTION_ID=ADOPT_P87_R1_F1_THROUGH_F9`)がその全9件を
+既存branch `agent/issue-86-phase20-long-running-proof`・既存PR #87上でのみ修正するよう指示した。
+本記録作成者は、両コメントの本文・author・association をGitHub API経由で独立readbackし一致を
+確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-15
+GOVERNING_ISSUE=#86
+GOVERNING_PR=#87
+ADOPTION_ID=ADOPT_P87_R1_F1_THROUGH_F9
+REVIEW_COMMENT_ID=5682457295
+ADOPTION_COMMENT_ID=5682496461
+EXISTING_BRANCH_ONLY=agent/issue-86-phase20-long-running-proof
+EXISTING_PR_ONLY=#87
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+9件のfindingとその修正内容は`00_KERNEL/LONG_RUNNING_PROOF_CONTRACT.md`section 11に完全に
+記録されている(本節は重複させない)。source-impact上重要な事実はP87-R1-F8のみである:
+Issue #86 section 10の要求する正準出力(versioned corpus, long-running lineage,
+failure/recovery receipts, metric dataset, environment manifest, raw output, reproduction
+procedure)を永続化する所有者がKernelに存在しなかったため、SHUKOU自身の採択が
+`PHASE_20_PRODUCTION_PACKAGE_ALLOWED=true`として権限付与した、1件の新規最小`src/`package
+`long_running_proof_artifact/`(および対応する1件のschema
+`01_SCHEMA/long_running_proof_artifact/long_running_proof_artifact_bundle.schema.json`)が
+新設された。この新package は Store自身の直交的coordination ledger commit
+(`FileStateStore.commit_coordination_record_at_tip`、`work_time_transparency`が既に用いる
+機構と同一)のみを通じて記録を永続化し、`commit_state_transition`/`store.commit`へは一切到達
+しない -- 構造的に、Canonical State/Authority/Evidence/Reflow/Completionのいずれの新規owner
+にもなり得ない(Issue #86 section 11、SHUKOU自身のP87-R1-F8採択により再確認)。
+
+```text
+NEW_SRC_PACKAGE_ADDED=true
+NEW_SRC_PACKAGE_PATH=src/manosube_agent_civilization/long_running_proof_artifact/
+NEW_SCHEMA_ADDED=true
+NEW_SCHEMA_PATH=01_SCHEMA/long_running_proof_artifact/long_running_proof_artifact_bundle.schema.json
+NEW_CANONICAL_STATE_OWNER=false
+NEW_AUTHORITY_OWNER=false
+NEW_EVIDENCE_OWNER=false
+NEW_REFLOW_OWNER=false
+NEW_COMPLETION_OWNER=false
+ARTIFACT_BUNDLE_RELOAD_PROOF=true
+ARTIFACT_TAMPER_REFUSAL=true
+```
+
+```text
+MERGE_ALLOWED=false
+ISSUE_86_CLOSE_ALLOWED=false
+PHASE_21_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+```
