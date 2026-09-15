@@ -321,11 +321,21 @@ def test_evidence_handoff_reuses_the_routes_own_commit_helper_rather_than_a_seco
 
 
 def test_model_runtime_execution_routes_are_reused_not_reimplemented() -> None:
-    assert _call_site_count(route_module, "open_model_work_unit") == 1
+    """Structural Review Round 4 (P84-R4-F1, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_
+    CLOSURE``): the nested call now reaches Model Runtime's own genesis body through its
+    internal, Store-verified ``_open_model_work_unit_joined`` rather than the public
+    ``open_model_work_unit`` -- whose public signature no longer accepts a join capability at
+    all (Round 3's own ``joined_coordination`` parameter was the caller-forgeable bypass this
+    Round closes). It is still the identical Authority evaluator/genesis body being reused
+    exactly once, never reimplemented; this package never calls the public entrypoint at all."""
+
+    assert _call_site_count(route_module, "_open_model_work_unit_joined") == 1
+    assert _call_site_count(route_module, "open_model_work_unit") == 0
     assert _call_site_count(route_module, "execute_model_work_unit") == 1
     for module in _ALL_PACKAGE_MODULES:
         if module is route_module:
             continue
+        assert _call_site_count(module, "_open_model_work_unit_joined") == 0, module.__name__
         assert _call_site_count(module, "open_model_work_unit") == 0, module.__name__
         assert _call_site_count(module, "execute_model_work_unit") == 0, module.__name__
 

@@ -18,6 +18,15 @@ update-vs-terminal race even when the two racing writes carry different ``record
 authoritative ledger fact, refusing a schema-valid substituted cache body and a duplicate
 divergent ledger entry (P84-R3-F2); and tolerance of (and healing for) an interrupted, torn
 trailing ledger write, at every persistence stage a crash could land in (P84-R3-F3).
+
+Round 4 (``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE``) retracts Round 3's own tolerance
+of a byte-identical duplicate ledger entry as harmless: an authoritative ledger now permits at
+most one publication fact per record identity, full stop -- refused across resolve, recovery, a
+subsequent same-body commit, and a subsequent conflicting commit alike (P84-R4-F2). It also adds
+real fault injection, through this Store's own :data:`FaultInjector` mechanism, at every one of
+:data:`~manosube_agent_civilization.store.file_store.COORDINATION_STAGES`'s seven named
+persistence-stage boundaries, each followed by a fresh :class:`FileStateStore` instance
+simulating restart (P84-R4-F3).
 """
 
 from __future__ import annotations
@@ -38,7 +47,9 @@ from manosube_agent_civilization.store.errors import (
     CoordinationTipConflictError,
     CorruptStoreError,
     RecordConflictError,
+    SimulatedCrash,
 )
+from manosube_agent_civilization.store.file_store import COORDINATION_STAGES
 
 
 def _prepared_initial() -> dict[str, Any]:
@@ -529,7 +540,13 @@ def test_resolve_refuses_duplicate_divergent_ledger_entries(tmp_path: Path) -> N
         s.resolve_coordination_record(project_id, "work_time_coordination_open", "WTC-OPEN-A")
 
 
-def test_resolve_tolerates_duplicate_identical_ledger_entries(tmp_path: Path) -> None:
+def test_resolve_refuses_duplicate_identical_ledger_entries(tmp_path: Path) -> None:
+    """Structural Review Round 4 (P84-R4-F2, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_
+    CLOSURE``): Round 3's own position that a byte-identical duplicate ledger line is harmless
+    is retracted here -- an authoritative append-only ledger permits at most **one** publication
+    fact per record identity, so even an identical duplicate is refused, exactly like a
+    divergent one."""
+
     s, project_id, _ = _bounded_project(tmp_path)
     body = {"kind": "work_time_coordination_open", "id": "WTC-OPEN-A", "value": 1}
     _commit_singleton(s, project_id, "work_time_coordination_open", "WTC-OPEN-A", body)
@@ -539,8 +556,61 @@ def test_resolve_tolerates_duplicate_identical_ledger_entries(tmp_path: Path) ->
     with ledger_path.open("ab") as stream:
         stream.write(existing_line)  # append the identical line a second time
 
-    resolved = s.resolve_coordination_record(project_id, "work_time_coordination_open", "WTC-OPEN-A")
-    assert resolved == body
+    with pytest.raises(CorruptStoreError):
+        s.resolve_coordination_record(project_id, "work_time_coordination_open", "WTC-OPEN-A")
+
+
+def test_recover_coordination_ledger_refuses_duplicate_ledger_entries(tmp_path: Path) -> None:
+    """P84-R4-F2's own refusal must also hold on the recovery path, not only on resolve --
+    recovery must never silently heal past a corrupted duplicate publication fact."""
+
+    s, project_id, _ = _bounded_project(tmp_path)
+    body = {"kind": "work_time_coordination_open", "id": "WTC-OPEN-A", "value": 1}
+    _commit_singleton(s, project_id, "work_time_coordination_open", "WTC-OPEN-A", body)
+
+    ledger_path = _ledger_path(tmp_path, project_id)
+    existing_line = ledger_path.read_bytes()
+    with ledger_path.open("ab") as stream:
+        stream.write(existing_line)
+
+    with pytest.raises(CorruptStoreError):
+        s.recover_coordination_ledger(project_id)
+
+
+def test_a_subsequent_same_body_commit_refuses_a_duplicated_ledger(tmp_path: Path) -> None:
+    """P84-R4-F2's own refusal must also hold when a *later* commit call resolves the existing
+    (now-duplicated) entry for a same-body replay -- the duplicate is caught before the replay
+    fast path can ever return through it."""
+
+    s, project_id, _ = _bounded_project(tmp_path)
+    body = {"kind": "work_time_coordination_open", "id": "WTC-OPEN-A", "value": 1}
+    _commit_singleton(s, project_id, "work_time_coordination_open", "WTC-OPEN-A", body)
+
+    ledger_path = _ledger_path(tmp_path, project_id)
+    existing_line = ledger_path.read_bytes()
+    with ledger_path.open("ab") as stream:
+        stream.write(existing_line)
+
+    with pytest.raises(CorruptStoreError):
+        _commit_singleton(s, project_id, "work_time_coordination_open", "WTC-OPEN-A", body)
+
+
+def test_a_subsequent_conflicting_commit_refuses_a_duplicated_ledger(tmp_path: Path) -> None:
+    """P84-R4-F2's own refusal must also hold when a *later* commit call would otherwise have
+    raised the ordinary :class:`RecordConflictError` -- the duplicate is caught first."""
+
+    s, project_id, _ = _bounded_project(tmp_path)
+    body = {"kind": "work_time_coordination_open", "id": "WTC-OPEN-A", "value": 1}
+    _commit_singleton(s, project_id, "work_time_coordination_open", "WTC-OPEN-A", body)
+
+    ledger_path = _ledger_path(tmp_path, project_id)
+    existing_line = ledger_path.read_bytes()
+    with ledger_path.open("ab") as stream:
+        stream.write(existing_line)
+
+    conflicting = {"kind": "work_time_coordination_open", "id": "WTC-OPEN-A", "value": 999}
+    with pytest.raises(CorruptStoreError):
+        _commit_singleton(s, project_id, "work_time_coordination_open", "WTC-OPEN-A", conflicting)
 
 
 def test_resolve_refuses_an_orphaned_cache_with_no_ledger_backing(tmp_path: Path) -> None:
@@ -672,3 +742,119 @@ def test_a_genuinely_malformed_non_trailing_line_is_still_treated_as_corruption(
 
     with pytest.raises(CorruptStoreError):
         s.resolve_coordination_record(project_id, "work_time_coordination_open", "WTC-OPEN-B")
+
+
+# --------------------------------------------------------------------------------------- #
+# Structural Review Round 4, P84-R4-F3: complete persistence-stage fault-injection matrix.
+# --------------------------------------------------------------------------------------- #
+
+#: Whether the attempted record must be deterministically present in the ledger (i.e. this
+#: Store's own commit point was already reached) after a real crash injected at each named
+#: :data:`COORDINATION_STAGES` boundary. A crash strictly before the record's own complete,
+#: newline-terminated line reaches the file (``BEFORE_APPEND``, ``DURING_PARTIAL_APPEND``)
+#: leaves it absent; a crash at or after that point (through both fsync boundaries, durable
+#: publication, and both materialization boundaries, since materialization only ever runs
+#: *after* the ledger append itself already succeeded) leaves it durably present.
+_COORDINATION_STAGE_MUST_BE_PRESENT = {
+    "BEFORE_APPEND": False,
+    "DURING_PARTIAL_APPEND": False,
+    "AFTER_COMPLETE_LINE_BEFORE_FILE_FSYNC": True,
+    "AFTER_FILE_FSYNC_BEFORE_DIRECTORY_FSYNC": True,
+    "AFTER_DURABLE_LEDGER_PUBLICATION": True,
+    "DURING_MATERIALIZATION": True,
+    "AFTER_MATERIALIZATION": True,
+}
+
+
+@pytest.mark.parametrize("stage", COORDINATION_STAGES)
+def test_every_coordination_ledger_persistence_stage_crash_and_restart_recovery(
+    tmp_path: Path, stage: str
+) -> None:
+    """Structural Review Round 4 (P84-R4-F3, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_
+    CLOSURE``): real fault injection, through this call's own actual commit path (never a
+    post-success file edit/delete), at every one of :data:`COORDINATION_STAGES`'s seven named
+    boundaries, each followed by a fresh :class:`FileStateStore` instance simulating restart.
+    Proves, at every single stage: the previously committed prefix remains durably readable;
+    the attempted record is deterministically either absent or committed according to
+    :data:`_COORDINATION_STAGE_MUST_BE_PRESENT`; :meth:`FileStateStore.
+    recover_coordination_ledger` never raises and never changes that presence verdict (no
+    recovery path ever promotes a record that never reached its own declared commit point);
+    Project State remains byte-identical throughout; and a retry of the identical commit is
+    deterministic and never duplicates the ledger publication -- exactly one physical ledger
+    entry for the attempted identity exists at the end, regardless of which stage crashed."""
+
+    s, project_id, _ = _bounded_project(tmp_path)
+    prefix_body = {"kind": "work_time_coordination_open", "id": "WTC-PREFIX", "value": 0}
+    _commit_singleton(s, project_id, "work_time_coordination_open", "WTC-PREFIX", prefix_body)
+    state_before = s.load_current(project_id)
+
+    attempted_body = {"kind": "work_time_coordination_open", "id": "WTC-STAGE", "value": 1}
+
+    def fault(hit_stage: str) -> None:
+        if hit_stage == stage:
+            raise SimulatedCrash(hit_stage)
+
+    with pytest.raises(SimulatedCrash):
+        s.commit_coordination_record_at_tip(
+            project_id,
+            "WTC-STAGE",
+            "work_time_coordination_open",
+            "WTC-STAGE",
+            attempted_body,
+            expected_predecessor=None,
+            fault=fault,
+        )
+
+    def assert_post_crash_invariants(store: FileStateStore) -> None:
+        assert (
+            store.resolve_coordination_record(
+                project_id, "work_time_coordination_open", "WTC-PREFIX"
+            )
+            == prefix_body
+        )
+        assert store.load_current(project_id) == state_before
+        resolved = store.resolve_coordination_record(
+            project_id, "work_time_coordination_open", "WTC-STAGE"
+        )
+        if _COORDINATION_STAGE_MUST_BE_PRESENT[stage]:
+            assert resolved == attempted_body
+        else:
+            assert resolved is None
+
+    # Restart: a fresh Store instance over the same on-disk root -- never the same object the
+    # crash happened on.
+    restarted = _store(tmp_path)
+    assert_post_crash_invariants(restarted)
+
+    healed = restarted.recover_coordination_ledger(project_id)
+    assert healed in (0, 1)
+    assert_post_crash_invariants(restarted)
+
+    # Retry: the identical commit either genuinely lands (a stage where it never reached the
+    # ledger) or replays idempotently (a stage where it already did) -- either way, exactly one
+    # physical ledger fact for this identity exists afterward, never a duplicate publication.
+    retried = restarted.commit_coordination_record_at_tip(
+        project_id,
+        "WTC-STAGE",
+        "work_time_coordination_open",
+        "WTC-STAGE",
+        attempted_body,
+        expected_predecessor=None,
+    )
+    assert retried == attempted_body
+    assert (
+        restarted.resolve_coordination_record(
+            project_id, "work_time_coordination_open", "WTC-STAGE"
+        )
+        == attempted_body
+    )
+    all_entries = [
+        json.loads(line) for line in _ledger_path(tmp_path, project_id).read_bytes().split(b"\n") if line
+    ]
+    matches = [
+        entry
+        for entry in all_entries
+        if entry["kind"] == "work_time_coordination_open" and entry["id"] == "WTC-STAGE"
+    ]
+    assert len(matches) == 1, "retry after crash must never duplicate the ledger publication"
+    assert restarted.load_current(project_id) == state_before

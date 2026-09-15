@@ -1382,3 +1382,18 @@ full rationale and required decisive tests, including
 `tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py::
 test_multi_agent_nested_model_runtime_call_joins_the_outer_coordination_root`, which reads this
 project's own coordination ledger directly and asserts the exact expected topology.
+
+## 23. Structural Review Round 4 correction (P84-R4-F1, `ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_
+RECOVERY_CLOSURE`)
+
+§22's own nested call now goes through `model_runtime.route._open_model_work_unit_joined`
+instead of the public `open_model_work_unit(..., joined_coordination=reporter)`: the Structural
+Advisor found the public parameter itself a caller-forgeable suppression of Model Runtime's own
+mandatory Work Coordination, so `open_model_work_unit`'s public signature no longer accepts a
+join capability at all (`11_MODEL_RUNTIME/MODEL_RUNTIME_CONTRACT.md` §20). This module's own
+call site is otherwise unchanged -- it still passes its own bound `ProgressReporter` as
+`joined_coordination`, now a keyword this internal function accepts and, unlike Round 3's public
+parameter, fully re-verifies (`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §16)
+before ever joining it -- confirming it is a genuine `ProgressReporter` bound to the identical
+Store/project/binding, naming a currently open, non-terminal `MULTI_AGENT` coordination, which
+this route's own real call always genuinely is.

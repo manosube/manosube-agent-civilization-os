@@ -4725,3 +4725,92 @@ ISSUE_22_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 62. PR #84 Structural Review Round 4 -- WTT join and ledger-recovery closure
+(P84-R4-F1..F3, ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE) bounded addendum
+
+本節も§53〜§61と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/store/file_store.py`・
+`src/manosube_agent_civilization/work_time_transparency/adapters.py`・
+`src/manosube_agent_civilization/model_runtime/route.py`・
+`src/manosube_agent_civilization/multi_agent/route.py`配下の本Round是正に対応付けるための、
+最小限の事実記録である。
+
+PR #84上で構造参謀レビュー
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5671894456`
+(3件のfinding、P84-R4-F1..F3)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5671906971`
+(`ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE`、`GOVERNING_ISSUE=#22`)が投稿された。
+本記録作成者はこれら2件を、著者login/id/association(`manosube`/OWNER)・本文一致について、
+実装開始直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#84
+DETERMINATION_ID=P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE (implicit in the Structural Advisor review)
+ADOPTION_ID=ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE
+STRUCTURAL_REVIEW_COMMENT_ID=5671894456
+ADOPTION_COMMENT_ID=5671906971
+PRE_ROUND_HEAD_SHA=8df493b7d2f51923a05e516ea8d2eaea3231024b
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本Roundが是正した3件は、Round 3自身が導入した設計に残っていた構造的欠陥である。
+
+P84-R4-F1(caller-forgeable joined coordinationの閉鎖):
+`model_runtime.open_model_work_unit`公開関数から`joined_coordination`引数を完全に撤去した
+-- 公開シグネチャはこの抑制能力を一切受け付けず、あらゆる標準呼び出しが常に自分自身の
+Work Coordination rootを開く。唯一の正当なnested join(Multi-AgentからModel Runtimeへ)は
+新規internal-only関数`_open_model_work_unit_joined`経由でのみ到達可能であり、これは
+`multi_agent.route`の内部合成からのみimportされる。この内部関数も、渡された
+`joined_coordination`を無条件には信頼せず、新規
+`work_time_transparency.adapters.verify_joined_coordination`によって、
+(1)`ProgressReporter`の真正なinstanceであること(duck-typed代替品ではないこと)、
+(2)同一のStore instance・project_id・project_binding_idに束縛されていること、
+(3)`open_ref`が本物の・検証済みの・期待される`adapter_kind`(`"MULTI_AGENT"`)を持つ
+`work_time_coordination_open`recordに解決すること、(4)そのcoordinationがまだterminal
+notice未到達であること、を全て要求してから初めてjoinを許可する。
+
+P84-R4-F2(重複authoritative ledger factの拒否): 新規`_coordination_ledger_match`により、
+`(kind, record_id)`に対する物理的なledger entryが2件以上存在する場合、それがbyte単位で
+identicalであっても`CorruptStoreError`で拒否するようにした -- Round 3自身が「identicalな
+重複は無害として許容する」としていた立場を撤回する。この拒否は`resolve_coordination_record`・
+`recover_coordination_ledger`・後続のsame-body commit・後続のconflicting commitの全経路で
+共有される単一の境界を通じて一貫して適用される。
+
+P84-R4-F3(全persistence stageへのcrash/fault-injection):
+`FileStateStore.commit`が既に持つ`FaultInjector`機構と同一の仕組みを、coordination ledger
+自身の新規7段階(`BEFORE_APPEND`・`DURING_PARTIAL_APPEND`・
+`AFTER_COMPLETE_LINE_BEFORE_FILE_FSYNC`・`AFTER_FILE_FSYNC_BEFORE_DIRECTORY_FSYNC`・
+`AFTER_DURABLE_LEDGER_PUBLICATION`・`DURING_MATERIALIZATION`・`AFTER_MATERIALIZATION`)に
+対して実装した。`commit_coordination_record_at_tip`は任意でこの`fault`を受け取り、実際の
+commit経路上でこれらの境界を通過する。
+
+schema変更は不要であった(3 WTT schemaファイルは既存のまま、`SCHEMA_COUNT=89`は不変)。
+
+targeted test suite(`tests/integration/store/test_coordination_ledger.py`に重複ledger fact
+拒否4 test・7段階crash matrix parametrized test(stage毎に前回commit prefix保持・
+Project State byte一致・retry非重複を検証)を追加、
+`tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py`
+に fake duck-typed reporter・cross-project reporter・unrelated genuine reporter・
+terminal coordination・replayed capability・direct public suppression attemptの計6件の
+拒否テストを追加)は本記録作成者自身が独立に実行し検証済みである。`ruff check`・
+`mypy --namespace-packages`はいずれも本Round変更ファイル全体に対してclean(既存baseline
+findingとの差分をコミット単位で確認済み)。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。full repository test suiteの独立再実行結果
+は、本Roundの新head到達後にPR #84への最終return-evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

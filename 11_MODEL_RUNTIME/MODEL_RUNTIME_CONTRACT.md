@@ -945,3 +945,23 @@ supplies its own bound `ProgressReporter` as `joined_coordination`, this entrypo
 coordination root of its own at all -- it composes straight into its own body with the caller's
 already-open reporter, so real production nesting has one root, never two (P84-R3-F4; see
 `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §15 for the full rationale).
+
+## 20. Structural Review Round 4 correction (P84-R4-F1, `ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_
+RECOVERY_CLOSURE`)
+
+§19's own `joined_coordination` public parameter is retracted: the Structural Advisor identified
+that an ordinary public keyword argument, checked only for `is not None`, is a caller-forgeable
+suppression of `open_model_work_unit`'s own mandatory Work Coordination -- satisfiable by a
+duck-typed object, or by a genuine reporter resolved against a different project, binding, or
+coordination entirely. `open_model_work_unit`'s public signature no longer accepts any join
+capability at all: every call always opens its own independent coordination root, unconditionally.
+
+The one legitimate nested join (Multi-Agent's own already-open `MULTI_AGENT` coordination) is now
+reached exclusively through a new internal function this module does not export,
+`_open_model_work_unit_joined(store, agent, *, project_id, project_binding_id, difference_ref,
+required_capability, boundary_ref, model_execution_grant_refs, opened_at, joined_coordination)` --
+only `multi_agent.route`'s own internal composition imports and calls it. The passed
+`joined_coordination` is still fully re-verified there, never merely trusted because of who is
+presumed to have called it: see `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md`
+§16 for the full `verify_joined_coordination` boundary this now requires (genuine `ProgressReporter`
+instance, same Store/project/binding, correct `adapter_kind`, not yet terminal).

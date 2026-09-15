@@ -103,7 +103,10 @@ from manosube_agent_civilization.independent_verification import (
     VerificationResult,
     run_independent_verification,
 )
-from manosube_agent_civilization.model_runtime.route import open_model_work_unit
+from manosube_agent_civilization.model_runtime.route import (
+    _open_model_work_unit_joined,
+    open_model_work_unit,
+)
 from manosube_agent_civilization.multi_agent.route import open_dynamic_execution_plan
 from manosube_agent_civilization.projection import FakeGitHubAdapter, project_to_github
 from manosube_agent_civilization.projection.identity import projection_payload_fingerprint
@@ -114,6 +117,9 @@ from manosube_agent_civilization.work_time_transparency.adapters import (
     with_work_time_coordination,
 )
 from manosube_agent_civilization.work_time_transparency.clock import parse_canonical_timestamp
+from manosube_agent_civilization.work_time_transparency.errors import (
+    WorkTimeTransparencyLineageError,
+)
 from manosube_agent_civilization.work_time_transparency.identity import (
     work_time_coordination_open_id,
     work_time_coordination_terminal_id,
@@ -531,6 +537,236 @@ def test_multi_agent_nested_model_runtime_call_joins_the_outer_coordination_root
     model_runtime_opens = [e for e in open_entries if e["body"]["adapter_kind"] == "MODEL_RUNTIME"]
     assert len(multi_agent_opens) == 1
     assert model_runtime_opens == []
+
+
+class _FakeProgressReporter:
+    """A caller-forgeable object exposing the identical public attribute names a genuine
+    :class:`ProgressReporter` exposes -- but never an actual instance of it. Used by Structural
+    Review Round 4's own P84-R4-F1 negative controls below to prove
+    :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    verify_joined_coordination`'s own ``isinstance`` check, not merely attribute-shape matching,
+    is what closes the duck-typed-substitute bypass."""
+
+    def __init__(self, store: Any, *, project_id: str, project_binding_id: str) -> None:
+        self.store = store
+        self.project_id = project_id
+        self.project_binding_id = project_binding_id
+        self.open_ref = {"kind": "work_time_coordination_open", "id": "FAKE-OPEN-REF"}
+
+    def report(self, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+
+def _capture_a_genuine_completed_reporter(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    adapter_kind: str,
+    work_unit_ref: dict[str, str],
+) -> ProgressReporter:
+    """Open one real, genuinely-verified Work Coordination of *adapter_kind* through the
+    identical :func:`with_work_time_coordination` primitive every real adapter uses, capture the
+    bound :class:`ProgressReporter` *perform* itself receives, and let the coordination complete
+    normally -- returning that now-terminal reporter object, exactly the shape a captured/
+    replayed capability or an unrelated already-closed genuine coordination would have."""
+
+    captured: list[ProgressReporter] = []
+
+    def _perform(reporter: ProgressReporter) -> None:
+        captured.append(reporter)
+
+    with_work_time_coordination(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind=adapter_kind,
+        work_unit_ref=work_unit_ref,
+        estimated_duration_lower_minutes=0,
+        estimated_duration_upper_minutes=1,
+        estimate_confidence="HIGH",
+        major_steps=["capture a reporter for a Round 4 negative control"],
+        next_progress_update_due_minutes=10,
+        variability_factors="none",
+        perform=_perform,
+        clock=_deterministic_clock(start="2026-09-14T09:00:00Z"),
+    )
+    return captured[0]
+
+
+def test_open_model_work_unit_joined_refuses_a_fake_duck_typed_reporter(tmp_path: Path) -> None:
+    """Structural Review Round 4 (P84-R4-F1, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_
+    CLOSURE``): a caller-forgeable object exposing the identical attribute names as a genuine
+    :class:`ProgressReporter` -- but never an actual instance of it -- must fail closed rather
+    than silently suppress this call's own mandatory Work Coordination."""
+
+    world = model_runtime_authorized_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+
+    fake = _FakeProgressReporter(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+    with pytest.raises(WorkTimeTransparencyLineageError):
+        _open_model_work_unit_joined(
+            store,
+            agent,
+            **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:40:00Z"),
+            joined_coordination=fake,  # type: ignore[arg-type]
+        )
+
+
+def test_open_model_work_unit_joined_refuses_a_cross_project_reporter(tmp_path: Path) -> None:
+    """A genuine reporter, genuinely bound to a *different* project (and, since every
+    ``authorized_world`` call constructs its own :class:`FileStateStore` instance, a different
+    Store object too) must be refused -- never joined as if it named the operating project's own
+    coordination."""
+
+    world = model_runtime_authorized_world(tmp_path, project_id="PRJ-R4-JOIN-0001")
+    other_world = model_runtime_authorized_world(tmp_path, project_id="PRJ-R4-JOIN-0002")
+    agent = start_temporary_agent(
+        world["store"], project_id=world["project_id"], project_binding_id=world["project_binding_id"]
+    )
+
+    foreign_reporter = _capture_a_genuine_completed_reporter(
+        other_world["store"],
+        project_id=other_world["project_id"],
+        project_binding_id=other_world["project_binding_id"],
+        adapter_kind="MULTI_AGENT",
+        work_unit_ref={"kind": "multi_agent_execution_plan", "id": "WORK-UNIT-CROSS-PROJECT"},
+    )
+
+    with pytest.raises(WorkTimeTransparencyLineageError):
+        _open_model_work_unit_joined(
+            world["store"],
+            agent,
+            **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:41:00Z"),
+            joined_coordination=foreign_reporter,
+        )
+
+
+def test_open_model_work_unit_joined_refuses_an_unrelated_genuine_reporter(tmp_path: Path) -> None:
+    """A genuine reporter, bound to the *same* project/Store, but naming a coordination opened
+    under a different ``adapter_kind`` (a standalone ``MODEL_RUNTIME`` coordination, not the
+    expected outer ``MULTI_AGENT`` one) must be refused -- an unrelated genuine coordination is
+    not a substitute for the specific outer coordination this nested call must join."""
+
+    world = model_runtime_authorized_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+
+    unrelated_reporter = _capture_a_genuine_completed_reporter(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="MODEL_RUNTIME",
+        work_unit_ref={"kind": "model_runtime_work_unit", "id": "WORK-UNIT-UNRELATED-ADAPTER"},
+    )
+
+    with pytest.raises(WorkTimeTransparencyLineageError):
+        _open_model_work_unit_joined(
+            store,
+            agent,
+            **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:42:00Z"),
+            joined_coordination=unrelated_reporter,
+        )
+
+
+def test_open_model_work_unit_joined_refuses_a_terminal_coordination(tmp_path: Path) -> None:
+    """A genuine reporter naming the correct project/binding/adapter_kind, but whose own
+    coordination already has a terminal notice, must still be refused -- joining a closed
+    coordination is never permitted, even by an otherwise-genuine reporter."""
+
+    world = model_runtime_authorized_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+
+    terminal_reporter = _capture_a_genuine_completed_reporter(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="MULTI_AGENT",
+        work_unit_ref={"kind": "multi_agent_execution_plan", "id": "WORK-UNIT-ALREADY-TERMINAL"},
+    )
+
+    with pytest.raises(WorkTimeTransparencyLineageError):
+        _open_model_work_unit_joined(
+            store,
+            agent,
+            **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:43:00Z"),
+            joined_coordination=terminal_reporter,
+        )
+
+
+def test_open_model_work_unit_joined_refuses_a_replayed_reporter_from_an_earlier_invocation(
+    tmp_path: Path,
+) -> None:
+    """A reporter genuinely produced by one, now-finished nested invocation must not be
+    replayable into a later, unrelated nested invocation attempt -- captured once, then reused
+    here for a completely different (later ``opened_at``, independent) Work Unit open attempt,
+    exactly the shape a captured/replayed capability would take."""
+
+    world = model_runtime_authorized_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+
+    replayed_reporter = _capture_a_genuine_completed_reporter(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="MULTI_AGENT",
+        work_unit_ref={"kind": "multi_agent_execution_plan", "id": "WORK-UNIT-EARLIER-INVOCATION"},
+    )
+
+    with pytest.raises(WorkTimeTransparencyLineageError):
+        _open_model_work_unit_joined(
+            store,
+            agent,
+            **model_runtime_open_kwargs(world, opened_at="2026-09-14T11:00:00Z"),
+            joined_coordination=replayed_reporter,
+        )
+
+
+def test_open_model_work_unit_public_signature_accepts_no_join_capability(tmp_path: Path) -> None:
+    """Structural Review Round 4 (P84-R4-F1): the public :func:`open_model_work_unit` no longer
+    accepts a ``joined_coordination`` parameter at all -- a direct public suppression attempt
+    fails closed structurally, at call time, before any Store call ever happens, rather than
+    being merely checked and refused at runtime."""
+
+    world = model_runtime_authorized_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+    fake = _FakeProgressReporter(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+
+    with pytest.raises(TypeError):
+        open_model_work_unit(
+            store,
+            agent,
+            **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:44:00Z"),
+            joined_coordination=fake,  # type: ignore[call-arg]
+        )
 
 
 # --- Change Executor ----------------------------------------------------------------------- #

@@ -35,6 +35,15 @@ from .errors import (
 from .interface import FaultInjector
 
 STAGES=("AFTER_JOURNAL_CREATED","AFTER_STAGED_STATE_WRITTEN","AFTER_STAGED_RECORDS_WRITTEN","AFTER_COMMIT_INTENT","AFTER_LINEAGE_APPEND","AFTER_RECORDS_PROMOTED","BEFORE_CURRENT_REPLACE","AFTER_CURRENT_REPLACE","BEFORE_COMMITTED_MARKER")
+#: Structural Review Round 4 (P84-R4-F3, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE``)
+#: -- the coordination ledger's own named fault-injection boundaries, exercised by
+#: :meth:`FileStateStore.commit_coordination_record_at_tip` through the identical
+#: :data:`FaultInjector` mechanism :meth:`FileStateStore.commit` already accepts. The first five
+#: name boundaries inside the ledger append itself (:meth:`FileStateStore.
+#: _commit_coordination_ledger_line`); the final two name boundaries inside the immutable-cache
+#: materialization that follows a successful append
+#: (:meth:`FileStateStore._materialize_coordination_record`).
+COORDINATION_STAGES=("BEFORE_APPEND","DURING_PARTIAL_APPEND","AFTER_COMPLETE_LINE_BEFORE_FILE_FSYNC","AFTER_FILE_FSYNC_BEFORE_DIRECTORY_FSYNC","AFTER_DURABLE_LEDGER_PUBLICATION","DURING_MATERIALIZATION","AFTER_MATERIALIZATION")
 TRANSITION_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_transition.schema.json"
 GENESIS_RECEIPT_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json"
 #: MANOSUBE-GENESIS-MANIFEST-DIGEST-SHA256-0.1 -- the same sha256+domain-separator+profile
@@ -360,16 +369,66 @@ class FileStateStore:
             os.fsync(stream.fileno())
         fsync_directory(path.parent)
 
-    def _commit_coordination_ledger_line(self, project_id: str, entry: Mapping[str, Any]) -> None:
+    def _commit_coordination_ledger_line(
+        self,
+        project_id: str,
+        entry: Mapping[str, Any],
+        *,
+        fault: FaultInjector | None = None,
+    ) -> None:
+        """Durably append one coordination ledger line, hitting each of
+        :data:`COORDINATION_STAGES`'s own first five named boundaries in order (Structural
+        Review Round 4, P84-R4-F3) -- the identical :data:`FaultInjector` mechanism
+        :meth:`commit` already exercises against :data:`STAGES`. The line is always written in
+        two physical ``write`` calls (never one) specifically so ``DURING_PARTIAL_APPEND`` names
+        a real boundary between genuinely separate bytes-on-disk states, not a hook positioned
+        around a single atomic call with nothing distinct to inject between -- a fault raised
+        there leaves the file's own trailing bytes exactly as torn as a real crash mid-``write``
+        would, healed the identical way by :meth:`_heal_coordination_ledger_tail`."""
+
+        def hit(stage: str) -> None:
+            if fault:
+                fault(stage)
+
         ledger_path = self._coordination_ledger_path(project_id)
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        line = canonical_json_bytes(entry) + b"\n"
+        split = max(1, len(line) // 2)
+        hit(COORDINATION_STAGES[0])  # BEFORE_APPEND
         with ledger_path.open("ab") as stream:
-            stream.write(canonical_json_bytes(entry) + b"\n")
+            stream.write(line[:split])
+            stream.flush()
+            hit(COORDINATION_STAGES[1])  # DURING_PARTIAL_APPEND
+            stream.write(line[split:])
+            hit(COORDINATION_STAGES[2])  # AFTER_COMPLETE_LINE_BEFORE_FILE_FSYNC
             stream.flush()
             os.fsync(stream.fileno())
+            hit(COORDINATION_STAGES[3])  # AFTER_FILE_FSYNC_BEFORE_DIRECTORY_FSYNC
         fsync_directory(ledger_path.parent)
+        hit(COORDINATION_STAGES[4])  # AFTER_DURABLE_LEDGER_PUBLICATION
 
-    def _materialize_coordination_record(self, project_id: str, entry: Mapping[str, Any]) -> None:
+    def _materialize_coordination_record(
+        self,
+        project_id: str,
+        entry: Mapping[str, Any],
+        *,
+        fault: FaultInjector | None = None,
+    ) -> None:
+        """Heal (or, on a fresh commit, create) *entry*'s own immutable materialized cache file,
+        hitting :data:`COORDINATION_STAGES`'s own final two named boundaries (Structural Review
+        Round 4, P84-R4-F3) only when a new cache file is actually about to be written --
+        exactly the write :meth:`~manosube_agent_civilization.store.atomic_write.atomic_write`
+        itself performs atomically (temp file + ``os.replace``), so a crash between the two
+        boundaries below can never leave a half-written cache file on disk, only a durably
+        published ledger fact with no cache file materialized yet -- which the identical
+        fingerprint-and-byte-equality check this method always runs first heals on the very next
+        call, from :meth:`resolve_coordination_record`, :meth:`commit_coordination_record_at_tip`
+        or :meth:`recover_coordination_ledger` alike."""
+
+        def hit(stage: str) -> None:
+            if fault:
+                fault(stage)
+
         canonical = canonical_json_bytes(entry["body"])
         digest = hashlib.sha256(canonical).hexdigest()
         if digest != entry["fingerprint"]:
@@ -385,7 +444,9 @@ class FileStateStore:
                     f"{entry['kind']}/{entry['id']}"
                 )
             return
+        hit(COORDINATION_STAGES[5])  # DURING_MATERIALIZATION
         atomic_write(target, canonical)
+        hit(COORDINATION_STAGES[6])  # AFTER_MATERIALIZATION
 
     def _coordination_entry_chain_id(self, entry: Mapping[str, Any]) -> str | None:
         """*entry*'s own chain identity: the explicit ``chain_id`` field every entry this
@@ -428,6 +489,34 @@ class FileStateStore:
                 tip = (entry["kind"], entry["id"])
         return tip
 
+    def _coordination_ledger_match(
+        self, kind: str, record_id: str, entries: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        """The one ledger entry among *entries* claiming ``(kind, record_id)``, or ``None`` if
+        none does.
+
+        Structural Review Round 4 (P84-R4-F2, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_
+        CLOSURE``): an authoritative append-only ledger permits at most **one** publication fact
+        per immutable record identity -- a second physical line claiming the same ``(kind,
+        record_id)``, even a byte-for-byte identical duplicate, is never a normal replay (the
+        one commit path below that could ever legitimately produce a second reference to an
+        already-published identity always resolves and returns *before* ever appending a second
+        line, so it structurally cannot be the source of one) and therefore always indicates
+        ledger corruption, an interrupted or ambiguous publication protocol, or a hand-edited/
+        substituted file. Refused here, unconditionally, as :class:`CorruptStoreError` -- the one
+        shared duplicate-detecting boundary every caller below goes through, so ``resolve``,
+        ``recover``, a subsequent same-body commit, and a subsequent conflicting commit all
+        refuse the identical way (superseding Round 3's own "multiple identical entries are
+        tolerated as harmless" position, which this Round's own adoption record retracts)."""
+
+        matches = [entry for entry in entries if entry["kind"] == kind and entry["id"] == record_id]
+        if len(matches) > 1:
+            raise CorruptStoreError(
+                f"coordination ledger carries {len(matches)} entries for {kind}/{record_id} -- "
+                "an authoritative ledger permits at most one publication fact per record identity"
+            )
+        return matches[0] if matches else None
+
     def commit_coordination_record_at_tip(
         self,
         project_id: str,
@@ -437,6 +526,7 @@ class FileStateStore:
         body: Mapping[str, Any],
         *,
         expected_predecessor: Mapping[str, str] | None,
+        fault: FaultInjector | None = None,
     ) -> dict[str, Any]:
         """Durably commit one immutable coordination record as the next entry of *chain_id*,
         entirely orthogonal to Project State (see this section's own module-level note above).
@@ -460,18 +550,28 @@ class FileStateStore:
         guard above never applies to it, since nothing about this chain has moved on from a
         record it has already durably admitted): no new ledger line, the existing committed body
         is simply returned. Same ``(kind, record_id)`` with a *different* body is still refused
-        with :class:`RecordConflictError`, exactly as before."""
+        with :class:`RecordConflictError`, exactly as before. Structural Review Round 4
+        (P84-R4-F2): both of those lookups now go through :meth:`_coordination_ledger_match`, so
+        a ledger a crash or hand-edit has left carrying more than one physical entry for the
+        identical identity is refused as corruption *before* either the replay or the conflict
+        check ever runs -- a corrupted duplicate can never be silently resolved through, in
+        either direction.
+
+        *fault* is the coordination ledger's own :data:`FaultInjector` hook (Structural Review
+        Round 4, P84-R4-F3), raised at each of :data:`COORDINATION_STAGES`'s named boundaries in
+        order, threaded through unchanged into :meth:`_commit_coordination_ledger_line` and
+        :meth:`_materialize_coordination_record`."""
 
         canonical = canonical_json_bytes(body)
         with self._lock(project_id):
             self._heal_coordination_ledger_tail(project_id)
             entries = self._coordination_ledger_entries(project_id)
-            for entry in entries:
-                if entry["kind"] == kind and entry["id"] == record_id:
-                    if canonical_json_bytes(entry["body"]) != canonical:
-                        raise RecordConflictError(f"{kind}/{record_id}")
-                    self._materialize_coordination_record(project_id, entry)
-                    return deepcopy(dict(entry["body"]))
+            existing = self._coordination_ledger_match(kind, record_id, entries)
+            if existing is not None:
+                if canonical_json_bytes(existing["body"]) != canonical:
+                    raise RecordConflictError(f"{kind}/{record_id}")
+                self._materialize_coordination_record(project_id, existing, fault=fault)
+                return deepcopy(dict(existing["body"]))
             actual_tip = self._coordination_chain_tip(project_id, chain_id, entries)
             expected = (
                 None
@@ -493,8 +593,8 @@ class FileStateStore:
                 "fingerprint": digest,
                 "body": json.loads(canonical.decode("utf-8")),
             }
-            self._commit_coordination_ledger_line(project_id, entry)
-            self._materialize_coordination_record(project_id, entry)
+            self._commit_coordination_ledger_line(project_id, entry, fault=fault)
+            self._materialize_coordination_record(project_id, entry, fault=fault)
             return deepcopy(dict(body))
 
     def resolve_coordination_record(
@@ -511,19 +611,20 @@ class FileStateStore:
         before) before returning it -- refusing (:class:`CorruptStoreError`) a schema-valid,
         internally self-consistent cache body that has been substituted for a different one, a
         divergence the pre-Round-3 design's own return-the-cache-file-directly fast path could
-        never catch. Multiple divergent ledger entries claiming the identical ``(kind,
-        record_id)`` (which correct commit logic never produces, but a hand-edited ledger file
-        could) are refused the same way; multiple *identical* entries are tolerated as harmless.
-        A materialized cache file that exists with no ledger entry backing it at all -- an
-        orphan correct commit logic also never produces -- is refused rather than trusted."""
+        never catch.
+
+        Structural Review Round 4 (P84-R4-F2): resolving the ledger's own unique fact for
+        ``(kind, record_id)`` now goes through :meth:`_coordination_ledger_match`, which refuses
+        **any** second physical ledger entry for the identical identity -- divergent or
+        byte-identical alike -- as :class:`CorruptStoreError`; Round 3's own tolerance of an
+        identical duplicate as harmless is retracted by this Round's own adoption record. A
+        materialized cache file that exists with no ledger entry backing it at all -- an orphan
+        correct commit logic also never produces -- is refused rather than trusted."""
 
         with self._lock(project_id):
-            matches = [
-                entry
-                for entry in self._coordination_ledger_entries(project_id)
-                if entry["kind"] == kind and entry["id"] == record_id
-            ]
-            if not matches:
+            entries = self._coordination_ledger_entries(project_id)
+            entry = self._coordination_ledger_match(kind, record_id, entries)
+            if entry is None:
                 path = self._coordination_record_path(project_id, kind, record_id)
                 if path.exists():
                     raise CorruptStoreError(
@@ -531,12 +632,6 @@ class FileStateStore:
                         "backing ledger entry -- refusing an orphaned cache"
                     )
                 return None
-            canonical_bodies = {canonical_json_bytes(entry["body"]) for entry in matches}
-            if len(canonical_bodies) > 1:
-                raise CorruptStoreError(
-                    f"coordination ledger carries divergent entries for {kind}/{record_id}"
-                )
-            entry = matches[0]
             self._materialize_coordination_record(project_id, entry)
             return deepcopy(dict(entry["body"]))
 
@@ -545,12 +640,21 @@ class FileStateStore:
         trailing line (Structural Review Round 3, P84-R3-F3), then materialize any committed
         entry whose permanent record file a crash left missing. Returns the count of record
         files healed. Safe to call at any time, including when nothing needs healing (returns
-        ``0``) -- the same idempotent, side-effect-free-when-current shape as :meth:`recover`."""
+        ``0``) -- the same idempotent, side-effect-free-when-current shape as :meth:`recover`.
+
+        Structural Review Round 4 (P84-R4-F2): before healing anything, this also refuses --
+        unconditionally, as :class:`CorruptStoreError` -- a ledger carrying more than one
+        physical entry for the identical ``(kind, id)``, through the identical
+        :meth:`_coordination_ledger_match` boundary every other coordination read path now
+        shares; recovery must never silently heal past a corrupted duplicate publication fact."""
 
         healed = 0
         with self._lock(project_id):
             self._heal_coordination_ledger_tail(project_id)
-            for entry in self._coordination_ledger_entries(project_id):
+            entries = self._coordination_ledger_entries(project_id)
+            for kind, record_id in {(entry["kind"], entry["id"]) for entry in entries}:
+                self._coordination_ledger_match(kind, record_id, entries)
+            for entry in entries:
                 target = self._coordination_record_path(project_id, entry["kind"], entry["id"])
                 if not target.exists():
                     self._materialize_coordination_record(project_id, entry)

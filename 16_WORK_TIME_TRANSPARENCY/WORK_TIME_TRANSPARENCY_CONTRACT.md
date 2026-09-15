@@ -718,3 +718,81 @@ MERGE_ALLOWED=false
 ISSUE_22_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 ```
+
+## 16. Structural Review Round 4 -- WTT join and ledger-recovery closure (`ADOPT_P84_R4_
+WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE`)
+
+Structural Review Round 3's own two designs -- the nested-join parameter (P84-R3-F4) and the
+duplicate-tolerant ledger read (part of P84-R3-F2) -- each left a gap the Structural Advisor
+identified against the live head Round 3 reached (`8df493b7d2f51923a05e516ea8d2eaea3231024b`):
+`open_model_work_unit`'s own `joined_coordination` parameter was an ordinary public keyword
+argument, checked only for `is not None`, reachable by any direct caller and satisfiable by a
+duck-typed object or a genuine-but-unrelated reporter (P84-R4-F1); the coordination ledger
+tolerated a byte-identical duplicate physical entry for the same `(kind, id)` as harmless, when
+an authoritative append-only ledger must permit at most one publication fact per identity
+(P84-R4-F2); and the required persistence-stage fault-injection matrix for the ledger itself had
+not yet been built at all (P84-R4-F3).
+
+**P84-R4-F1 (close the public nested-join bypass).** `open_model_work_unit`'s public signature no
+longer accepts `joined_coordination` at all -- every call through the public entrypoint always
+opens (and later closes) its own independent coordination root, unconditionally. The one
+legitimate nested join (Multi-Agent's own already-open `MULTI_AGENT` coordination, joined by its
+own nested Model Runtime call) is now reached exclusively through a new internal function,
+`model_runtime.route._open_model_work_unit_joined`, which no public route parameter exposes a
+path to. Even there, the passed reporter is never merely trusted: new
+`work_time_transparency.adapters.verify_joined_coordination(store, reporter, *, project_id,
+project_binding_id, expected_adapter_kind)` requires it to be a genuine `ProgressReporter`
+instance (never a duck-typed substitute -- Python's `isinstance` cannot be satisfied by attribute
+shape alone), bound to the identical `store` object, `project_id`, and `project_binding_id`, whose
+own `open_ref` resolves (through this package's own canonical `resolve_open`/
+`verify_binding_congruity` boundary) to a real, schema-valid, binding-congruent
+`work_time_coordination_open` record carrying the expected `adapter_kind`, and whose coordination
+has no terminal notice yet (`resolve_terminal_if_exists`). `ProgressReporter` gains three new
+read-only properties -- `store`, `project_id`, `project_binding_id` -- alongside the existing
+`open_ref`, so this verification never has to reach into the class's own private attributes from
+outside the module.
+
+**P84-R4-F2 (one authoritative publication per identity).** New `FileStateStore.
+_coordination_ledger_match(kind, record_id, entries)` is the one shared boundary every duplicate-
+detecting caller now goes through: it refuses (`CorruptStoreError`) as soon as more than one
+physical ledger entry claims the identical `(kind, record_id)`, divergent or byte-identical alike
+-- retracting Round 3's own "an identical duplicate is harmless" position. `commit_coordination_
+record_at_tip`'s same-body-replay/conflict check, `resolve_coordination_record`, and `recover_
+coordination_ledger`'s own pre-healing duplicate scan all resolve through this identical helper,
+so a corrupted duplicate is refused consistently across every read and write path, never silently
+resolved through in one direction while refused in another.
+
+**P84-R4-F3 (complete persistence-stage fault injection).** `commit_coordination_record_at_tip`
+gains an optional `fault: FaultInjector | None = None` parameter -- the identical mechanism
+`FileStateStore.commit` already exercises against its own `STAGES` -- threaded through a new
+`COORDINATION_STAGES` tuple of seven named boundaries: `BEFORE_APPEND`, `DURING_PARTIAL_APPEND`,
+`AFTER_COMPLETE_LINE_BEFORE_FILE_FSYNC`, `AFTER_FILE_FSYNC_BEFORE_DIRECTORY_FSYNC`,
+`AFTER_DURABLE_LEDGER_PUBLICATION` (all inside `_commit_coordination_ledger_line`, which now
+writes each line in two physical `write` calls specifically so `DURING_PARTIAL_APPEND` names a
+real boundary between genuinely separate on-disk byte states, not a hook around one atomic call),
+and `DURING_MATERIALIZATION`/`AFTER_MATERIALIZATION` (inside `_materialize_coordination_record`,
+fired only when a new cache file is actually about to be written).
+
+**Required decisive tests (Structural Review Round 4).** `tests/integration/store/
+test_coordination_ledger.py` gains: a duplicate-identical-entry refusal on resolve (replacing
+Round 3's own tolerance test), the identical refusal on `recover_coordination_ledger`, on a
+subsequent same-body commit, and on a subsequent conflicting commit (P84-R4-F2); and one
+`pytest.mark.parametrize`d test iterating all seven `COORDINATION_STAGES`, each injecting a real
+`SimulatedCrash` through the actual commit path, then restarting through a fresh `FileStateStore`
+instance to prove: the previously committed prefix remains readable, the attempted record is
+deterministically either absent or committed per the declared commit point, `recover_
+coordination_ledger` never raises and never changes that verdict, Project State remains
+byte-identical throughout, and a retry never duplicates the ledger publication (P84-R4-F3).
+`tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py`
+gains six negative controls against `_open_model_work_unit_joined`: a fake duck-typed reporter, a
+cross-project reporter, an unrelated genuine reporter (opened under a different `adapter_kind`), a
+terminal coordination, a replayed reporter captured from an earlier, finished invocation -- each
+refused with `WorkTimeTransparencyLineageError` -- and one proving the public
+`open_model_work_unit` raises `TypeError` for a `joined_coordination` keyword argument it no
+longer accepts at all (P84-R4-F1).
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+```

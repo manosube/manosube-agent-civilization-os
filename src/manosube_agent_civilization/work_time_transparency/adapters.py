@@ -33,7 +33,13 @@ in-flight heartbeats/external-wait notices through the identical, fully-verified
 :func:`~manosube_agent_civilization.work_time_transparency.route.record_work_time_progress_
 update` boundary, rather than the coordination being limited to only an open and a terminal
 notice around one opaque, silent call.
-"""
+
+**Structural Review Round 4 correction (P84-R4-F1, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_
+CLOSURE``).** :func:`verify_joined_coordination` is the Store-verified boundary a nested-join
+composition must pass through -- see that function's own docstring for the full defect this
+replaces (Round 3's own ``joined_coordination`` public parameter accepted any object without
+verifying it named a real, currently-open, correctly-adapter-kinded, non-terminal coordination
+bound to the same Store/project/binding)."""
 
 from __future__ import annotations
 
@@ -41,12 +47,13 @@ from collections.abc import Callable
 from typing import Any
 
 from .clock import default_clock, is_monotonic
-from .errors import WorkTimeTransparencyClockError
+from .errors import WorkTimeTransparencyClockError, WorkTimeTransparencyLineageError
 from .route import (
     open_work_time_coordination,
     record_work_time_progress_update,
     record_work_time_terminal_notice,
 )
+from .verify import resolve_open, resolve_terminal_if_exists, verify_binding_congruity
 
 
 class ProgressReporter:
@@ -90,6 +97,28 @@ class ProgressReporter:
 
         return self._open_ref
 
+    @property
+    def store(self) -> Any:
+        """This coordination's own bound Store instance (Structural Review Round 4, P84-R4-F1)
+        -- read, never write, and used only by :func:`verify_joined_coordination` to confirm a
+        reporter presented for a nested join is bound to the same Store instance the joining
+        call itself is operating on."""
+
+        return self._store
+
+    @property
+    def project_id(self) -> str:
+        """This coordination's own bound project id (Structural Review Round 4, P84-R4-F1)."""
+
+        return self._project_id
+
+    @property
+    def project_binding_id(self) -> str:
+        """This coordination's own bound project binding id (Structural Review Round 4,
+        P84-R4-F1)."""
+
+        return self._project_binding_id
+
     def report(
         self,
         *,
@@ -131,6 +160,90 @@ class ProgressReporter:
             "id": record["work_time_coordination_update_id"],
         }
         return record
+
+
+def verify_joined_coordination(
+    store: Any,
+    reporter: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    expected_adapter_kind: str,
+) -> dict[str, Any]:
+    """Verify that *reporter* genuinely names a currently open, non-terminal Work Coordination
+    of *expected_adapter_kind*, bound to this exact *store*/*project_id*/*project_binding_id* --
+    the one shared, Store-verified boundary a nested-join composition must pass through before
+    it may post through *reporter* instead of opening its own coordination root (Structural
+    Review Round 4, P84-R4-F1, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE``).
+
+    Round 3's own ``joined_coordination`` design (P84-R3-F4) exposed this join as an ordinary
+    public parameter on :func:`~manosube_agent_civilization.model_runtime.route.
+    open_model_work_unit`, checked only for ``is not None`` -- a caller-forgeable duck-typed
+    object with a no-op ``report`` method, a genuine reporter resolved against a different
+    project or a different (or already-closed) coordination, or a captured/replayed reporter
+    object could all suppress that call's own mandatory Work Coordination. This function is the
+    correction: it is never reachable from any public route parameter (the public
+    ``open_model_work_unit`` no longer accepts a join capability at all -- see that function's
+    own docstring), and is called only by an adapter's own internal nested-join composition
+    (today, only :mod:`~manosube_agent_civilization.model_runtime.route`'s own private
+    ``_open_model_work_unit_joined``, itself reachable only from
+    :mod:`~manosube_agent_civilization.multi_agent.route`'s internal composition) -- but even
+    there, the reporter it receives is still fully re-verified here, never merely trusted
+    because of who is presumed to have called this:
+
+    - *reporter* must be a genuine :class:`ProgressReporter` instance -- refusing a duck-typed
+      substitute, since Python's own ``isinstance`` cannot be satisfied by an object that merely
+      happens to expose the same attribute names.
+    - *reporter* must be bound to this exact *store* object (by identity, not equality) and to
+      this exact *project_id*/*project_binding_id* -- refusing a genuine reporter resolved
+      against a different Store, project, or binding.
+    - *reporter*'s own ``open_ref`` must resolve, through this package's own canonical
+      resolve-and-verify boundary (:func:`~manosube_agent_civilization.work_time_transparency.
+      verify.resolve_open`), to a real, schema-valid, content-addressed, binding-congruent
+      ``work_time_coordination_open`` record -- refusing a fabricated or substituted reference.
+    - that open record's own ``adapter_kind`` must equal *expected_adapter_kind* -- refusing an
+      unrelated genuine coordination opened under a different adapter (a standalone
+      ``MODEL_RUNTIME`` coordination, say) from ever being joined as if it were the expected
+      outer coordination.
+    - that coordination must not already have a terminal notice
+      (:func:`~manosube_agent_civilization.work_time_transparency.verify.
+      resolve_terminal_if_exists`) -- refusing a join onto an already-closed coordination,
+      including one closed since the reporter object was first created (a replayed capability).
+
+    Every refusal here is :class:`~manosube_agent_civilization.work_time_transparency.errors.
+    WorkTimeTransparencyLineageError`, raised before the nested call ever starts model work.
+    Returns the resolved, verified open record on success."""
+
+    if not isinstance(reporter, ProgressReporter):
+        raise WorkTimeTransparencyLineageError(
+            "joined coordination must be a genuine ProgressReporter instance -- refusing a "
+            f"duck-typed substitute ({type(reporter)!r})"
+        )
+    if reporter.store is not store:
+        raise WorkTimeTransparencyLineageError(
+            "joined coordination is bound to a different Store instance -- refusing"
+        )
+    if reporter.project_id != project_id or reporter.project_binding_id != project_binding_id:
+        raise WorkTimeTransparencyLineageError(
+            f"joined coordination is bound to project {reporter.project_id!r}/"
+            f"{reporter.project_binding_id!r}, not the operating project "
+            f"{project_id!r}/{project_binding_id!r} -- cross-project/binding join refused"
+        )
+    open_record = resolve_open(store, project_id, reporter.open_ref)
+    verify_binding_congruity(open_record=open_record, project_binding_id=project_binding_id)
+    if open_record.get("adapter_kind") != expected_adapter_kind:
+        raise WorkTimeTransparencyLineageError(
+            "joined coordination's own open was recorded under adapter_kind "
+            f"{open_record.get('adapter_kind')!r}, not the expected "
+            f"{expected_adapter_kind!r} -- unrelated coordination join refused"
+        )
+    open_id = open_record["work_time_coordination_open_id"]
+    if resolve_terminal_if_exists(store, project_id, open_id) is not None:
+        raise WorkTimeTransparencyLineageError(
+            f"coordination {open_id!r} already has a terminal notice -- joining a closed "
+            "coordination refused"
+        )
+    return open_record
 
 
 def with_work_time_coordination[T](
@@ -242,4 +355,4 @@ def with_work_time_coordination[T](
     return open_record, terminal_record, result
 
 
-__all__ = ["ProgressReporter", "with_work_time_coordination"]
+__all__ = ["ProgressReporter", "verify_joined_coordination", "with_work_time_coordination"]

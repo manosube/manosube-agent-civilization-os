@@ -83,8 +83,8 @@ from manosube_agent_civilization.model_runtime.claim_identity import (
 )
 from manosube_agent_civilization.model_runtime.identity import model_execution_request_identity
 from manosube_agent_civilization.model_runtime.route import (
+    _open_model_work_unit_joined,
     execute_model_work_unit,
-    open_model_work_unit,
     resolve_and_verify_committed_authority_decision,
     resolve_and_verify_committed_envelope,
     resolve_and_verify_committed_work_unit,
@@ -1117,12 +1117,15 @@ def open_dynamic_execution_plan(
 
     Resolves and re-verifies the named Difference, derives its bounded slot selection (P19-C1),
     opens the one Model Work Unit every slot of this plan will share (reusing
-    :func:`~manosube_agent_civilization.model_runtime.open_model_work_unit` unchanged -- the
-    existing Authority evaluator runs exactly once here, never reimplemented), and commits the
-    plan. Genesis-once for the resulting ``plan_ref``: once committed, resolving that reference
-    again always resolves the identical, immutable record -- this function itself is not
-    required to land on the same plan across two *separate* calls, since the Canonical State
-    two separate calls observe can genuinely differ (the identical precedent
+    :func:`~manosube_agent_civilization.model_runtime.route._open_model_work_unit_body` -- the
+    identical genesis body :func:`~manosube_agent_civilization.model_runtime.open_model_work_unit`
+    itself composes, joined here rather than independently reopened; see Structural Review Round
+    4's own P84-R4-F1 note on this file's own nested call below -- the existing Authority
+    evaluator runs exactly once here, never reimplemented), and commits the plan. Genesis-once
+    for the resulting ``plan_ref``: once committed, resolving that reference again always
+    resolves the identical, immutable record -- this function itself is not required to land on
+    the same plan across two *separate* calls, since the Canonical State two separate calls
+    observe can genuinely differ (the identical precedent
     :func:`~manosube_agent_civilization.model_runtime.open_model_work_unit` itself already
     establishes; see this package's own contract doc for the disclosed reasoning).
 
@@ -1278,11 +1281,13 @@ def _open_dynamic_execution_plan_body(
         next_progress_update_due_minutes=10,
         remaining_duration_unknown=True,
     )
-    # Structural Review Round 3 (P84-R3-F4, ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``):
-    # join this call's own already-open MULTI_AGENT coordination rather than letting
-    # open_model_work_unit open a second, independent coordination root of its own -- there is
-    # only ever the one root this nested invocation actually has.
-    opened = open_model_work_unit(
+    # Structural Review Round 3 (P84-R3-F4, ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``), hardened
+    # Structural Review Round 4 (P84-R4-F1, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE``):
+    # join this call's own already-open MULTI_AGENT coordination through the internal, Store-
+    # verified _open_model_work_unit_joined rather than the public open_model_work_unit -- which
+    # no longer accepts any join capability at all -- opening a second, independent coordination
+    # root of its own. There is only ever the one root this nested invocation actually has.
+    opened = _open_model_work_unit_joined(
         store,
         agent,
         project_id=project_id,

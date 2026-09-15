@@ -105,6 +105,7 @@ from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
 from manosube_agent_civilization.work_time_transparency.adapters import (
     ProgressReporter,
+    verify_joined_coordination,
     with_work_time_coordination,
 )
 from manosube_agent_civilization.work_time_transparency.clock import default_clock
@@ -1074,6 +1075,49 @@ def _open_model_work_unit_body(
     }
 
 
+def _validate_open_model_work_unit_inputs(
+    *,
+    project_id: str,
+    project_binding_id: str,
+    opened_at: str,
+    required_capability: str,
+    difference_ref: Mapping[str, Any],
+    boundary_ref: Mapping[str, Any],
+    model_execution_grant_refs: list[Mapping[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """The eager, pure-shape admission checks (none of which reads the Store) that both
+    :func:`open_model_work_unit` and its internal nested-join counterpart,
+    :func:`_open_model_work_unit_joined`, require before either ever opens or joins a Work
+    Coordination -- factored out once so the two entrypoints' own admission rules can never
+    silently drift apart (Structural Review Round 4, P84-R4-F1)."""
+
+    _require_canonical_identity("project_id", project_id)
+    _require_canonical_identity("project_binding_id", project_binding_id)
+    require_valid_timestamp(opened_at, "opened_at")
+    if required_capability not in MODEL_EXECUTION_CAPABILITIES:
+        raise ModelRuntimeRequirementError(
+            f"required_capability is not a recognized capability: {required_capability!r}"
+        )
+    checked_difference_ref = _require_reference(
+        difference_ref, context="difference_ref", kind=DIFFERENCE_RECORD_KIND
+    )
+    checked_boundary_ref = _require_reference(
+        boundary_ref, context="boundary_ref", kind=BOUNDARY_RECORD_KIND
+    )
+    if not isinstance(model_execution_grant_refs, list) or not model_execution_grant_refs:
+        raise ModelRuntimeRequirementError(
+            "model_execution_grant_refs must be a non-empty list of references -- a Work Unit "
+            "opened against no Human Authority grant at all is never authorized"
+        )
+    checked_grant_refs = [
+        _require_reference(
+            reference, context=f"model_execution_grant_refs[{position}]", kind=GRANT_RECORD_KIND
+        )
+        for position, reference in enumerate(model_execution_grant_refs)
+    ]
+    return checked_difference_ref, checked_boundary_ref, checked_grant_refs
+
+
 def open_model_work_unit(
     store: Any,
     agent: TemporaryAgent,
@@ -1092,7 +1136,6 @@ def open_model_work_unit(
     next_progress_update_due_minutes: int = 10,
     variability_factors: str = "none",
     work_time_coordination_clock: Callable[[], str] = default_clock,
-    joined_coordination: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     """Open one canonical, immutable, State-bound Model Work Unit and return it.
 
@@ -1119,45 +1162,32 @@ def open_model_work_unit(
     ``work_time_coordination_clock`` parameters are all optional, each defaulting to this route's
     own canonical estimate, so every existing caller's own call syntax remains valid unchanged.
 
-    Structural Review Round 3 (P84-R3-F4, ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``).
-    *joined_coordination* is ``None`` by default -- every existing standalone caller keeps
-    opening (and later closing) its own independent Work Coordination root, exactly as before.
-    A caller that is itself already running *inside* another adapter's own already-open
-    coordination (today, only :func:`~manosube_agent_civilization.multi_agent.route.
-    open_dynamic_execution_plan`'s own nested call) instead passes that outer coordination's own
-    bound :class:`~manosube_agent_civilization.work_time_transparency.adapters.ProgressReporter`
-    here: this call then opens **no** Work Coordination root of its own at all -- it joins the
-    caller's own already-open one, posting through the identical reporter, and this call's own
-    result is returned directly, with no independent open/terminal record ever committed. This
-    closes the nested-coordination-ownership gap by construction, not by a verified parent/child
-    reference between two roots: there is only ever the one root a human-visible nested
-    invocation actually has, so no second root, no cycle between roots, and no orphan-parent
-    substitution can ever arise, because no second root is ever created to reason about."""
+    Structural Review Round 4 (P84-R4-F1, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_
+    CLOSURE``). This public entrypoint no longer accepts any parameter that could let a caller
+    suppress this call's own mandatory Work Coordination: every call always opens (and later
+    closes) its own independent coordination root, unconditionally, exactly as every standalone
+    caller has always experienced. Round 3's own ``joined_coordination`` parameter (P84-R3-F4)
+    made that suppression an ordinary public keyword argument, checked only for ``is not None``
+    -- reachable by any direct caller, satisfiable by a duck-typed object, and blind to whether a
+    passed-in genuine reporter actually named the *expected* outer coordination. The one
+    legitimate nested join this vertical has (a Model Work Unit opened from inside Multi-Agent's
+    own already-open ``MULTI_AGENT`` coordination) is now reached exclusively through
+    :func:`_open_model_work_unit_joined`, an internal function this public signature never
+    exposes a path to -- see that function's own docstring for the Store-verified boundary
+    (:func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    verify_joined_coordination`) it requires before it ever joins anything."""
 
-    _require_canonical_identity("project_id", project_id)
-    _require_canonical_identity("project_binding_id", project_binding_id)
-    require_valid_timestamp(opened_at, "opened_at")
-    if required_capability not in MODEL_EXECUTION_CAPABILITIES:
-        raise ModelRuntimeRequirementError(
-            f"required_capability is not a recognized capability: {required_capability!r}"
+    checked_difference_ref, checked_boundary_ref, checked_grant_refs = (
+        _validate_open_model_work_unit_inputs(
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            opened_at=opened_at,
+            required_capability=required_capability,
+            difference_ref=difference_ref,
+            boundary_ref=boundary_ref,
+            model_execution_grant_refs=model_execution_grant_refs,
         )
-    checked_difference_ref = _require_reference(
-        difference_ref, context="difference_ref", kind=DIFFERENCE_RECORD_KIND
     )
-    checked_boundary_ref = _require_reference(
-        boundary_ref, context="boundary_ref", kind=BOUNDARY_RECORD_KIND
-    )
-    if not isinstance(model_execution_grant_refs, list) or not model_execution_grant_refs:
-        raise ModelRuntimeRequirementError(
-            "model_execution_grant_refs must be a non-empty list of references -- a Work Unit "
-            "opened against no Human Authority grant at all is never authorized"
-        )
-    checked_grant_refs = [
-        _require_reference(
-            reference, context=f"model_execution_grant_refs[{position}]", kind=GRANT_RECORD_KIND
-        )
-        for position, reference in enumerate(model_execution_grant_refs)
-    ]
 
     def _perform_open(reporter: ProgressReporter) -> dict[str, Any]:
         return _open_model_work_unit_body(
@@ -1172,12 +1202,6 @@ def open_model_work_unit(
             opened_at=opened_at,
             reporter=reporter,
         )
-
-    if joined_coordination is not None:
-        # Structural Review Round 3 (P84-R3-F4): join the caller's own already-open
-        # coordination -- no independent Work Coordination root is opened or closed by this
-        # call at all, so there is only ever the one root a nested invocation actually has.
-        return _perform_open(joined_coordination)
 
     _attempt_marker = work_time_coordination_clock()
     _work_unit_id = (
@@ -1203,6 +1227,71 @@ def open_model_work_unit(
         clock=work_time_coordination_clock,
     )
     return result
+
+
+def _open_model_work_unit_joined(
+    store: Any,
+    agent: TemporaryAgent,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    difference_ref: Mapping[str, Any],
+    required_capability: str,
+    boundary_ref: Mapping[str, Any],
+    model_execution_grant_refs: list[Mapping[str, Any]],
+    opened_at: str,
+    joined_coordination: ProgressReporter,
+) -> dict[str, Any]:
+    """The internal-only nested-join counterpart to :func:`open_model_work_unit` (Structural
+    Review Round 3's own P84-R3-F4 design, hardened by Round 4's own P84-R4-F1): opens **no**
+    Work Coordination root of its own at all, and instead posts through *joined_coordination* --
+    the caller's own already-open outer coordination's bound
+    :class:`~manosube_agent_civilization.work_time_transparency.adapters.ProgressReporter`.
+
+    This is never reachable from :func:`open_model_work_unit`'s own public signature, which
+    accepts no join capability at all -- only :mod:`~manosube_agent_civilization.multi_agent.
+    route`'s own internal composition (the one production caller with a genuine outer
+    coordination to join) imports and calls this directly. *joined_coordination* is still fully
+    verified here, never merely trusted because of who is presumed to have called this:
+    :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    verify_joined_coordination` confirms it is a genuine
+    :class:`~manosube_agent_civilization.work_time_transparency.adapters.ProgressReporter`
+    (never a duck-typed substitute), bound to this exact *store*/*project_id*/
+    *project_binding_id*, naming a currently open, non-terminal, ``MULTI_AGENT``-opened
+    coordination -- refusing a cross-project reporter, an unrelated genuine reporter (opened
+    under a different adapter_kind or a different coordination entirely), and a reporter whose
+    coordination has already closed, before this call ever starts model work."""
+
+    checked_difference_ref, checked_boundary_ref, checked_grant_refs = (
+        _validate_open_model_work_unit_inputs(
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            opened_at=opened_at,
+            required_capability=required_capability,
+            difference_ref=difference_ref,
+            boundary_ref=boundary_ref,
+            model_execution_grant_refs=model_execution_grant_refs,
+        )
+    )
+    verify_joined_coordination(
+        store,
+        joined_coordination,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        expected_adapter_kind="MULTI_AGENT",
+    )
+    return _open_model_work_unit_body(
+        store,
+        agent,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        checked_difference_ref=checked_difference_ref,
+        required_capability=required_capability,
+        checked_boundary_ref=checked_boundary_ref,
+        checked_grant_refs=checked_grant_refs,
+        opened_at=opened_at,
+        reporter=joined_coordination,
+    )
 
 
 # --------------------------------------------------------------------------- #
