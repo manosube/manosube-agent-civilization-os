@@ -48,11 +48,17 @@ def cycle_refused_event(*, k: int, reason: str, started_at: str) -> dict[str, An
 
 
 def session_loss_boundary_event(
-    *, after_cycle: int, pre_restart_revision: int, post_restart_revision: int, recovered: bool
+    *,
+    after_cycle: int,
+    boundary: str,
+    pre_restart_revision: int,
+    post_restart_revision: int,
+    recovered: bool,
 ) -> dict[str, Any]:
     return {
         "kind": "session_loss_boundary",
         "after_cycle": after_cycle,
+        "boundary": boundary,
         "pre_restart_revision": pre_restart_revision,
         "post_restart_revision": post_restart_revision,
         "recovered": recovered,

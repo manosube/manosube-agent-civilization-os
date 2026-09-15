@@ -29,17 +29,20 @@ from manosube_agent_civilization.work_time_transparency.adapters import (
     with_work_time_coordination,
 )
 
-from . import agent_swap, cycle, metrics, runtime_reachability, session_loss
+from . import agent_swap, crash_worker, cycle, metrics, runtime_reachability, session_loss
 
 #: The one Work-Time Transparency adapter_kind SHUKOU's P87-R1-F7 correction authorized
 #: (``types.py``/schema both amended) for this exact production long-running-proof entrypoint.
 ADAPTER_KIND = "LONG_RUNNING_PROOF"
 WORK_UNIT_REF_KIND = "long_running_proof_run"
 
-#: Session-loss real process-boundary restarts are injected after these 0-indexed cycle
-#: numbers complete (clamped to the actual tier length) -- at least 2 distinct positions for
-#: any tier >= 4, spread across the run rather than clustered at one point.
-SESSION_LOSS_BOUNDARY_FRACTIONS = (0.25, 0.5, 0.75)
+#: A real, genuine mid-cycle crash-and-recover (P87-R1-F1/F2, :mod:`tests.long_running_proof.
+#: crash_worker`) is injected -- in place of that cycle's own normal :func:`attempt_cycle` --
+#: at these 0-indexed cycle positions (clamped to the actual tier length), one position per
+#: :data:`crash_worker.BOUNDARIES` member, round-robin, so a Gate 20 tier run exercises every
+#: one of the four named boundaries at least once, spread across the run rather than clustered
+#: at one point.
+SESSION_LOSS_BOUNDARY_FRACTIONS = (0.2, 0.4, 0.6, 0.8)
 
 
 def _observed_now() -> str:
@@ -169,24 +172,61 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
             expected_work_unit_ref=work_unit_ref,
         )
 
-        session_loss_boundaries = {
-            min(tier - 1, max(0, int(tier * f) - 1))
-            for f in SESSION_LOSS_BOUNDARY_FRACTIONS
-            if tier * f >= 1
+        boundary_positions = sorted(
+            {
+                min(tier - 1, max(0, int(tier * f) - 1))
+                for f in SESSION_LOSS_BOUNDARY_FRACTIONS
+                if tier * f >= 1
+            }
+        )
+        boundary_for_position = {
+            pos: crash_worker.BOUNDARIES[i % len(crash_worker.BOUNDARIES)]
+            for i, pos in enumerate(boundary_positions)
         }
 
         raw_events: list[dict[str, Any]] = []
         committed_state = bind_result["committed_state"]
 
         for k in range(tier):
-            attempt = attempt_cycle(store, k=k, committed_state=committed_state)
-            raw_events.append(attempt["event"])
-            if attempt["outcome"] == "refused":
-                raise AssertionError(
-                    f"cycle {k}: real orchestrated route refused during the positive Gate 20 "
-                    f"route -- {attempt['event']['reason']}"
+            if k in boundary_for_position:
+                boundary = boundary_for_position[k]
+                pre_revision = committed_state["state_revision"]
+                started_at = _observed_now()
+                crash_result = session_loss.crash_mid_cycle_and_recover(
+                    store.root, project_id=lrp.PROJECT_ID, k=k, boundary=boundary
                 )
-            committed_state = attempt["committed_state"]
+                closed_at = _observed_now()
+                committed_state = crash_result["committed_state"]
+                identity = crash_result["identity"]
+                raw_events.append(
+                    metrics.session_loss_boundary_event(
+                        after_cycle=k,
+                        boundary=boundary,
+                        pre_restart_revision=pre_revision,
+                        post_restart_revision=committed_state["state_revision"],
+                        recovered=True,
+                    )
+                )
+                raw_events.append(
+                    metrics.cycle_committed_event(
+                        k=k,
+                        difference_id=identity["difference_id"],
+                        state_revision=identity["final_state_revision"],
+                        evidence_item_count=2,
+                        evidence_required_count=2,
+                        started_at=started_at,
+                        closed_at=closed_at,
+                    )
+                )
+            else:
+                attempt = attempt_cycle(store, k=k, committed_state=committed_state)
+                raw_events.append(attempt["event"])
+                if attempt["outcome"] == "refused":
+                    raise AssertionError(
+                        f"cycle {k}: real orchestrated route refused during the positive "
+                        f"Gate 20 route -- {attempt['event']['reason']}"
+                    )
+                committed_state = attempt["committed_state"]
 
             if k == swap_after_cycle:
                 raw_events += run_agent_swap_slice(
@@ -214,28 +254,6 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
                     remaining_duration_unknown=True,
                 )
                 committed_state = store.load_current(lrp.PROJECT_ID)
-
-            if k in session_loss_boundaries and k < tier - 1:
-                pre_revision = committed_state["state_revision"]
-                reconstructed = session_loss.restart_and_reconstruct_state(
-                    store.root, lrp.PROJECT_ID
-                )
-                recovered = reconstructed["state_revision"] == pre_revision
-                raw_events.append(
-                    metrics.session_loss_boundary_event(
-                        after_cycle=k,
-                        pre_restart_revision=pre_revision,
-                        post_restart_revision=reconstructed["state_revision"],
-                        recovered=recovered,
-                    )
-                )
-                if not recovered:
-                    raise AssertionError(
-                        f"session-loss boundary after cycle {k}: real process restart "
-                        f"reconstructed revision {reconstructed['state_revision']!r}, "
-                        f"expected {pre_revision!r}"
-                    )
-                committed_state = reconstructed
 
         return {"raw_events": raw_events, "final_committed_state": committed_state}
 

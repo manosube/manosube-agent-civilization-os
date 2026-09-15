@@ -32,11 +32,10 @@ from typing import Any
 
 from tests.fixtures.runtime_world import boundary_for, commit_target_identity
 
-from manosube_agent_civilization.store import FileStateStore
-
 from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
 from manosube_agent_civilization.runtime.route import observe_runtime_target
 from manosube_agent_civilization.runtime.types import RUNTIME_OBSERVATION_OUTCOMES
+from manosube_agent_civilization.store import FileStateStore
 
 REACHABLE = "REACHABLE"
 UNREACHABLE = "UNREACHABLE"

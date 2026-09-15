@@ -16,7 +16,14 @@ from typing import Any
 
 import pytest
 from tests.fixtures import long_running_proof as lrp
-from tests.long_running_proof import agent_swap, cycle, metrics, runtime_reachability
+from tests.long_running_proof import (
+    agent_swap,
+    crash_worker,
+    cycle,
+    metrics,
+    runtime_reachability,
+    session_loss,
+)
 from tests.long_running_proof.orchestrator import run_long_running_proof
 
 from manosube_agent_civilization.reflow.errors import StaleReflowError
@@ -329,15 +336,74 @@ def test_time_to_structural_closure_is_a_metric_not_evidence_admitted_to_closure
 
 
 # --------------------------------------------------------------------------- #
+# 11. Every named mid-cycle crash boundary genuinely kills the executing process, and a
+#     distinct, later, fresh process performs the real continuation (P87-R1-F1/F2)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("boundary", crash_worker.BOUNDARIES)
+def test_a_mid_cycle_crash_at_every_named_boundary_kills_one_process_and_a_distinct_fresh_process_completes_the_cycle(
+    tmp_path: Path, boundary: str
+) -> None:
+    """For each of the four boundaries Issue #86 documents (work-unit-before-Change,
+    Change-before-Evidence, Evidence-before-Reflow, commit-interruption): cycle 0 is crashed
+    genuinely mid-execution in one real, dedicated child process (proven by that process's own
+    real ``os._exit`` exit code, captured and asserted on inside :func:`~tests.long_running_
+    proof.session_loss.crash_mid_cycle_and_recover` itself -- a wrong exit code there raises),
+    and a second, later, entirely separate real child process -- a genuinely different PID --
+    completes cycle 0 using only what the Store's own on-disk files make resolvable. No cycle
+    is lost (exactly one cycle is committed, never zero or two)."""
+
+    store = cycle.build_store(tmp_path)
+    bind_result = cycle.bind_genesis(store)
+    assert cycle.committed_cycle_count(bind_result["committed_state"]) == 0
+
+    result = session_loss.crash_mid_cycle_and_recover(
+        store.root, project_id=lrp.PROJECT_ID, k=0, boundary=boundary
+    )
+
+    assert result["crash_pid"] != result["continuation_pid"]
+    assert cycle.committed_cycle_count(result["committed_state"]) == 1
+    assert result["identity"]["difference_id"]
+
+
+def test_a_crash_that_never_fires_the_injected_boundary_is_refused_not_silently_treated_as_success(
+    tmp_path: Path,
+) -> None:
+    """If the crash worker somehow ran cycle 0 to completion without ever hitting the injected
+    boundary (a real bug in the boundary placement, say), it would exit ``0`` rather than the
+    required :data:`~tests.long_running_proof.crash_worker.CRASH_EXIT_CODE` -- this proves
+    :func:`~tests.long_running_proof.session_loss.crash_mid_cycle_and_recover` refuses that
+    case rather than quietly accepting it, by directly exercising an unrecognized boundary name
+    (the identical, real fail-closed check every recognized boundary passes through)."""
+
+    store = cycle.build_store(tmp_path)
+    cycle.bind_genesis(store)
+
+    with pytest.raises(ValueError, match="unrecognized crash boundary"):
+        session_loss.crash_mid_cycle_and_recover(
+            store.root, project_id=lrp.PROJECT_ID, k=0, boundary="NOT_A_REAL_BOUNDARY"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # 10. The benchmark harness cannot mutate canonical owners through a generic extension surface
 # --------------------------------------------------------------------------- #
+
+
+#: The one, narrow, explicitly-justified exception to the private-attribute scan below:
+#: ``os._exit`` is a real stdlib process-control primitive (P87-R1-F1's own required genuine
+#: process kill), not a private canonical-owner method this scan exists to catch -- naming the
+#: exact ``(module alias, attribute)`` pair keeps the scan maximally strict everywhere else.
+_ALLOWED_PRIVATE_ATTRIBUTES: frozenset[tuple[str, str]] = frozenset({("os", "_exit")})
 
 
 def test_harness_modules_call_only_public_producer_entrypoints_never_private_store_writes() -> None:
     """Static check: every ``tests/long_running_proof/*.py`` module (excluding this test file)
     calls ``store.commit``/``store.initialize`` at most through the identical public Store
     surface every other accepted proof in this repository uses -- never a private, underscore-
-    prefixed method, and never a second persistence primitive of its own."""
+    prefixed method, and never a second persistence primitive of its own (``os._exit`` excepted,
+    see :data:`_ALLOWED_PRIVATE_ATTRIBUTES`)."""
 
     import ast
 
@@ -351,6 +417,10 @@ def test_harness_modules_call_only_public_producer_entrypoints_never_private_sto
                 isinstance(node, ast.Attribute)
                 and node.attr.startswith("_")
                 and not node.attr.startswith("__")
+                and not (
+                    isinstance(node.value, ast.Name)
+                    and (node.value.id, node.attr) in _ALLOWED_PRIVATE_ATTRIBUTES
+                )
             ):
                 # A private-attribute access anywhere in this proof's own harness code is a
                 # structural violation of "the harness may orchestrate and measure only."

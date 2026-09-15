@@ -1,37 +1,28 @@
 """Phase 20 -- real process-boundary session-loss recovery (Issue #86 section 6).
 
-Reuses the identical, already-accepted real interpreter-level restart precedent
-``tests/integration/boot/test_boot_project_route.py::test_a_fresh_python_process_boots_
-successfully`` establishes: a genuinely separate Python process (``subprocess.run([sys.
-executable, "-c", script], ...)``), never an in-process "pretend restart" that only proves
-object-identity independence. This module's own restart kills every in-memory Python object
-the parent process holds and reconstructs canonical State solely from the Store's own on-disk
-files, through :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.reconstruct`
--- the explicit ``CANONICAL_BOOT_OR_RECONSTRUCTION_REQUIRED=true`` alternative to a full
-``boot_project`` call this Issue's own fixture world does not otherwise need (no Project
-Binding is admitted in this proof's fixture world; a bare, real Store reconstruction is
-Issue #86's own named natural-route boundary, not a shortcut around it).
+**P87-R1-F1/F2 (PR #87 structural review).** The Round 0 delivery's own ``restart_and_
+reconstruct_state`` only started a *reader* child process (one that opened the Store,
+reconstructed State, and printed it back as JSON) after a cycle had already run to completion,
+committed, *in the parent process* -- the process that had just run the cycle stayed alive and
+went on to run the next one, so the proof could report successful process-loss recovery without
+ever destroying the executing process's own in-memory state (F1), and every injected boundary
+landed only between two already-completed cycles, never mid-cycle, so the four documented
+recovery paths (work-unit-before-Change, Change-before-Evidence, Evidence-before-Reflow,
+commit-interruption) were never actually exercised (F2).
 
-**Why the four named crash boundaries collapse to two real mechanisms, not four.** Issue #86
-names four positions: work-unit-open-before-Change, Change-admission-after-before-Evidence,
-Evidence-after-before-Reflow, and Reflow-after-before-terminal-projection. Direct inspection of
-every owner :mod:`tests.long_running_proof.cycle` calls before ``reflow()`` --
-:func:`~manosube_agent_civilization.observation.observe`, :func:`~manosube_agent_civilization.
-difference.derive_differences`, :func:`~manosube_agent_civilization.authority.
-evaluate_authority`, :func:`~manosube_agent_civilization.change.derive_change`,
-:func:`~manosube_agent_civilization.evidence.engine.derive_evidence` -- shows none of them ever
-calls ``store.commit`` or any other Store write path (``topology.py``'s own K-003/R-001 static
-scan already proves exactly one module in the installed package, ``reflow/commit.py``, ever
-calls ``FileStateStore.commit``). A crash at any of the first three named boundaries is
-therefore, by construction, identical in observable effect to a crash before this cycle's
-``reflow()`` call was ever made: nothing durable exists yet to reconcile, and the correct
-(and only sound) recovery is to re-derive the identical cycle fresh and retry -- proven here by
-:func:`restart_before_reflow`. The fourth boundary -- crash during/after Reflow's own atomic
-commit -- is the one boundary with real durable state to reconcile, and is proven by reusing
-the identical, already-accepted ``FaultInjectingStore``/``fault`` crash-injection seam
-``tests/natural_cycle/proof.py`` already established for exactly this purpose, together with
-the Store's own real :meth:`~manosube_agent_civilization.store.file_store.FileStateStore.
-recover` and a retried ``reflow()`` call -- see :func:`crash_during_reflow_commit_and_recover`.
+:func:`crash_mid_cycle_and_recover` is the fix for both, together: cycle *k* itself now runs,
+up through one of :mod:`tests.long_running_proof.crash_worker`'s four named boundaries, inside a
+dedicated child process that terminates via ``os._exit`` -- a real, unconditional kill, not a
+catchable exception -- and a second, later, entirely separate child process performs the actual
+continuation, holding no object the first child ever built. Both are genuine, separate operating
+system processes (``subprocess.run``), the identical real-interpreter-restart precedent
+``tests/integration/boot/test_boot_project_route.py::test_a_fresh_python_process_boots_
+successfully`` already establishes -- never an in-process "pretend restart" that only proves
+object-identity independence. See :mod:`tests.long_running_proof.crash_worker`'s own module
+docstring for why the first three boundaries share one real mechanism (nothing is ever durably
+committed before ``reflow()``) while the fourth -- a real crash inside ``reflow()``'s own atomic
+Store commit -- is the one boundary :meth:`~manosube_agent_civilization.store.file_store.
+FileStateStore.recover` exists to reconcile.
 """
 
 from __future__ import annotations
@@ -40,51 +31,87 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
+from tests.long_running_proof import crash_worker
 from tests.state_helpers import SCHEMA_ROOT
 
 ROOT = SCHEMA_ROOT.parent
 
+#: How long a single crash or continuation child process may run before this proof treats it as
+#: hung rather than crashed/completed -- generous enough for the slowest real cycle assembly
+#: (schema validation, signing) this repository's own suites already tolerate elsewhere.
+SUBPROCESS_TIMEOUT_SECONDS = 120
 
-def restart_and_reconstruct_state(store_root: Path, project_id: str) -> dict[str, Any]:
-    """Genuinely restart in a fresh Python process (a real interpreter, not an in-process
-    stand-in) and reconstruct canonical State solely from *store_root*'s own on-disk files.
-    Returns the **full** reconstructed State, printed back by the child process as JSON on its
-    final stdout line -- nothing from the parent process's own memory is trusted, and the
-    caller may (and, for a genuine continuation proof, must) resume the next cycle directly
-    from this returned value rather than any object the now-dead process held."""
 
-    script = (
-        "import json\n"
-        "from pathlib import Path\n"
-        "from manosube_agent_civilization.store import FileStateStore\n"
-        f"store = FileStateStore(Path({str(store_root)!r}), schema_root=Path({str(SCHEMA_ROOT)!r}))\n"
-        f"state = store.reconstruct({project_id!r})\n"
-        "print(json.dumps(state))\n"
-    )
-    proc = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        cwd=str(ROOT),
-        timeout=120,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"real process-boundary restart failed (exit {proc.returncode}): {proc.stderr}"
+def _run_worker(mode: str, store_root: Path, project_id: str, k: int, boundary: str) -> Any:
+    with tempfile.TemporaryDirectory() as tmp:
+        pid_file = Path(tmp) / "pid.json"
+        proc = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-m",
+                "tests.long_running_proof.crash_worker",
+                mode,
+                str(store_root),
+                project_id,
+                str(k),
+                boundary,
+                str(pid_file),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(ROOT),
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
         )
-    last_line = proc.stdout.strip().splitlines()[-1]
-    return dict(json.loads(last_line))
+        pid = json.loads(pid_file.read_text(encoding="utf-8"))["pid"] if pid_file.exists() else None
+        return proc, pid
 
 
-def restart_before_reflow(store_root: Path, project_id: str) -> dict[str, Any]:
-    """The work-unit-open/Change-admission/Evidence session-loss boundaries, collapsed:
-    a real process restart injected after this cycle's own pre-``reflow()`` steps have run
-    (in the now-dead parent process) but before its own ``reflow()`` call was ever made.
-    Nothing was durably committed by any of those steps (see module docstring), so the
-    correct post-restart observation is that canonical State is still at its pre-cycle
-    revision -- returned here, from a genuinely fresh process, for the caller to assert
-    against and then safely retry the identical cycle."""
+def crash_mid_cycle_and_recover(
+    store_root: Path,
+    *,
+    project_id: str,
+    k: int,
+    boundary: str,
+) -> dict[str, Any]:
+    """Genuinely crash cycle *k* mid-execution at *boundary* in one real, dedicated child
+    process, then complete it in a second, later, entirely separate real child process.
 
-    return restart_and_reconstruct_state(store_root, project_id)
+    Raises if the first process did not actually terminate via the injected ``os._exit`` (proof
+    that the boundary really fired, not merely that some unrelated failure occurred), if the
+    second process did not exit cleanly, or if the two child processes turn out to share a PID
+    (proof they are genuinely two separate operating-system processes, not one process this
+    caller merely invoked twice)."""
+
+    if boundary not in crash_worker.BOUNDARIES:
+        raise ValueError(f"unrecognized crash boundary: {boundary!r}")
+
+    crash_proc, crash_pid = _run_worker("crash", store_root, project_id, k, boundary)
+    if crash_proc.returncode != crash_worker.CRASH_EXIT_CODE:
+        raise RuntimeError(
+            f"boundary {boundary} (cycle {k}): crash worker did not terminate via the "
+            f"injected os._exit (exit {crash_proc.returncode}, expected "
+            f"{crash_worker.CRASH_EXIT_CODE}) -- stderr:\n{crash_proc.stderr}"
+        )
+
+    continue_proc, continue_pid = _run_worker("continue", store_root, project_id, k, boundary)
+    if continue_proc.returncode != 0:
+        raise RuntimeError(
+            f"boundary {boundary} (cycle {k}): continuation worker failed (exit "
+            f"{continue_proc.returncode}) -- stderr:\n{continue_proc.stderr}"
+        )
+
+    if crash_pid is None or continue_pid is None or crash_pid == continue_pid:
+        raise RuntimeError(
+            f"boundary {boundary} (cycle {k}): crash and continuation must be genuinely "
+            f"distinct operating-system processes -- got crash_pid={crash_pid!r}, "
+            f"continue_pid={continue_pid!r}"
+        )
+
+    last_line = continue_proc.stdout.strip().splitlines()[-1]
+    result: dict[str, Any] = json.loads(last_line)
+    result["crash_pid"] = crash_pid
+    result["continuation_pid"] = continue_pid
+    return result

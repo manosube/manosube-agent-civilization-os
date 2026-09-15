@@ -21,11 +21,15 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from tests.fixtures.model_runtime_world import commit_boundary, commit_difference, commit_grant, open_kwargs
+from tests.fixtures.model_runtime_world import (
+    commit_boundary,
+    commit_difference,
+    commit_grant,
+    open_kwargs,
+)
 
 from manosube_agent_civilization.agent_runtime import start_temporary_agent
 from manosube_agent_civilization.agent_runtime.errors import AgentReleasedError
-from manosube_agent_civilization.store import FileStateStore
 from manosube_agent_civilization.model_runtime import (
     FakeModelAdapter,
     execute_model_work_unit,
@@ -33,6 +37,7 @@ from manosube_agent_civilization.model_runtime import (
     record_model_swap,
     recover_model_execution_session,
 )
+from manosube_agent_civilization.store import FileStateStore
 
 ENVELOPE_KIND = "model_execution_envelope"
 WORK_UNIT_KIND = "model_work_unit"
