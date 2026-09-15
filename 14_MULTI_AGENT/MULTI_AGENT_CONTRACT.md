@@ -1341,3 +1341,76 @@ verifier and every Round 1-10 proof continue to pass unmodified.
 `GENUINE_REPLAY_ZERO_DUPLICATE_ADAPTER_CALLS=true`, `GENUINE_EVIDENCE_HANDOFF=unchanged`. No
 second Authority evaluator, execution route, Store owner, Model Runtime owner, or Multi-Agent
 owner is introduced by either finding.
+
+## 21. Structural Review Round 12 Work Coordination wrap (Issue #22, `ADOPT_P84_PROJECT_STATE_
+ORTHOGONAL_COORDINATION_REBIND`, PR #84)
+
+`open_dynamic_execution_plan` is now composed inside the Human Wait-Time Transparency vertical's
+own `with_work_time_coordination` (`work_time_transparency.adapters`), below its own eager,
+pure-shape identity checks and above everything that was its prior body -- renamed `_open_
+dynamic_execution_plan_body`, otherwise byte-identical. Every normal invocation reaching this
+route's own Difference/slot-selection/Model Work Unit sequence, or any refusal beyond the eager
+checks, now durably commits a Work Coordination `open`/`terminal` record pair through the
+Store's own orthogonal `coordination/` ledger (`FileStateStore.commit_coordination_record`) --
+never through `commit_state_transition`/`store.commit`, so a coordination commit can never
+advance `state_revision`, authorize a Plan, or otherwise mutate canonical Project State.
+`work_unit_ref` is content-addressed from this project's own id, the resolved Difference's own
+id, and one real clock reading taken before the coordination opens. The route gained seven
+optional `estimated_duration_*`/`estimate_confidence`/`major_steps`/`next_progress_update_due_
+minutes`/`variability_factors`/`work_time_coordination_clock` keyword parameters, each
+defaulting to this route's own canonical estimate for opening a dynamic execution plan, so every
+existing caller's own call syntax remains valid unchanged. A genuine in-flight heartbeat is
+posted immediately before this route's own one real, potentially long-running composed call into
+`model_runtime.open_model_work_unit`. `derive_multi_agent_dynamic_execution_plan`'s own `dict[str,
+Any]`-typed parameters are passed `dict(checked_difference_ref)`/`dict(checked_adapter_identity)`
+copies at this call site -- the values were always caller-detached (`_detach`'d) dicts already;
+this is a typing-only tightening at the boundary, not a behavior change. See `16_WORK_TIME_
+TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §5 and `tests/integration/store/test_
+coordination_ledger.py` for the ledger's own proof.
+
+## 22. Structural Review Round 3 nested coordination ownership (P84-R3-F4,
+`ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE`)
+
+The nested call into `model_runtime.open_model_work_unit` now passes this route's own bound
+`ProgressReporter` (the same one `with_work_time_coordination` handed to `_perform`) as that
+entrypoint's new `joined_coordination` parameter, rather than letting it open a second,
+independent Work Coordination root of its own. This is the only change: `open_model_work_unit`
+itself decides, from that one parameter, whether to open its own root or join the caller's --
+this route makes no other change to how it calls it. See `11_MODEL_RUNTIME/MODEL_RUNTIME_
+CONTRACT.md` §19 and `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §15 for the
+full rationale and required decisive tests, including
+`tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py::
+test_multi_agent_nested_model_runtime_call_joins_the_outer_coordination_root`, which reads this
+project's own coordination ledger directly and asserts the exact expected topology.
+
+## 23. Structural Review Round 4 correction (P84-R4-F1, `ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_
+RECOVERY_CLOSURE`)
+
+§22's own nested call now goes through `model_runtime.route._open_model_work_unit_joined`
+instead of the public `open_model_work_unit(..., joined_coordination=reporter)`: the Structural
+Advisor found the public parameter itself a caller-forgeable suppression of Model Runtime's own
+mandatory Work Coordination, so `open_model_work_unit`'s public signature no longer accepts a
+join capability at all (`11_MODEL_RUNTIME/MODEL_RUNTIME_CONTRACT.md` §20). This module's own
+call site is otherwise unchanged -- it still passes its own bound `ProgressReporter` as
+`joined_coordination`, now a keyword this internal function accepts and, unlike Round 3's public
+parameter, fully re-verifies (`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §16)
+before ever joining it -- confirming it is a genuine `ProgressReporter` bound to the identical
+Store/project/binding, naming a currently open, non-terminal `MULTI_AGENT` coordination, which
+this route's own real call always genuinely is.
+
+## 24. Structural Review Round 5 correction (P84-R5-F1, `ADOPT_P84_R5_F1_EXACT_OUTER_WORK_
+UNIT_JOIN_BINDING`)
+
+§23's own checks alone did not bind the joined reporter to *this specific* invocation's own outer
+work unit -- a live reporter genuinely naming some *other*, simultaneously open `MULTI_AGENT`
+coordination in the identical Store/project/binding passed every one of them. `open_dynamic_
+execution_plan` now derives its own exact outer identity, `{"kind": "multi_agent_execution_plan",
+"id": _work_unit_id}`, exactly once -- at the same point `_work_unit_id` is already computed for
+`with_work_time_coordination`'s own `work_unit_ref`, before this call's own coordination ever
+opens -- and carries that single value, unchanged, through `_open_dynamic_execution_plan_body`
+into the nested `_open_model_work_unit_joined(..., expected_outer_work_unit_ref=...)` call. This
+module's own call site otherwise still passes its own bound `ProgressReporter` as
+`joined_coordination` exactly as §23 established; the new parameter only adds the one additional
+fact `verify_joined_coordination` now checks against the resolved coordination
+(`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §17): that its own `work_unit_ref`
+equals this exact expected identity, not merely some correctly-shaped one.

@@ -4332,3 +4332,561 @@ SOURCE_SYNC_MERGE_ALLOWED=false
 ISSUE_80_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 ```
+
+# 58. Issue #22 (Human Wait-Time Transparency vertical) implementation-delivery bounded addendum
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる採択
+記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、`src/`および`01_SCHEMA/`配下の新規kernel_surface変更
+(`src/manosube_agent_civilization/work_time_transparency/`、
+`01_SCHEMA/work_time_transparency/`)に対応付けるためだけの、最小限の事実記録である。
+
+Issue #22「Human Wait-Time Transparency」はSHUKOU正式採択・実装handoffコメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/22#issuecomment-5659817582`
+(`ADOPT_ISSUE_22_HUMAN_WAIT_TIME_TRANSPARENCY_VERTICAL`)によって、構造参謀rebind determination
+`...#issuecomment-5659798986`を正式採択する形で指示された。本記録作成者は、この2件について
+著者login/id/association(`manosube`/OWNER)・本文・live `main` head
+(`279572fb51775bd8a13665376aa751a63c1d0c35`、authorized baseと一致)を、実装開始直前に
+GitHub API経由で独立readbackし一致を確認済みである。branch
+`agent/issue-22-human-wait-time-transparency`はこのexact base SHAから分岐している。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_ISSUE=#22
+ADOPTION_ID=ADOPT_ISSUE_22_HUMAN_WAIT_TIME_TRANSPARENCY_VERTICAL
+ADOPTION_COMMENT_ID=5659817582
+STRUCTURAL_ADVISOR_REBIND_COMMENT_ID=5659798986
+AUTHORIZED_BASE_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+IMPLEMENTATION_TARGET=NEW_BRANCH_THIS_SESSION
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+追加されたas-built ownerは`16_WORK_TIME_TRANSPARENCY/`
+(`WORK_TIME_TRANSPARENCY_INDEX.md`・`WORK_TIME_TRANSPARENCY_CONTRACT.md`)、
+`src/manosube_agent_civilization/work_time_transparency/`
+(`route.py`・`engine.py`・`identity.py`・`types.py`・`errors.py`・`adapters.py`・
+`__init__.py`の7モジュール)、`01_SCHEMA/work_time_transparency/`
+(`work_time_coordination_open`・`work_time_coordination_update`・
+`work_time_coordination_terminal`の3schema、schema総数86→89)である。
+`scripts/validate_schemas.py`自身のasserted schema countも86から89へ更新した。既存の
+State・Authority・Evidence・Reflow・Boot・8つの既存execution-capable adapter(CLI、Boot、
+Temporary Agent、Model Runtime、Multi-Agent、Change Executor、Independent Verification、
+GitHub Projection)のいずれのownerも置換・変更しない -- `work_time_transparency`は
+`commit_state_transition`(`route.py`一箇所のみ)と`boot_project`(3公開entrypoint全てが
+fresh呼び出し、キャッシュなし)を再利用し、Authority/Evidence/Reflow/Differenceのいずれの
+既存ownerもimportしない(AST-levelで検証済み)、自己完結した新規record種別3種の追加のみで
+ある。
+
+3新規record種別(`work_time_coordination_open`/`update`/`terminal`)のid設計は、
+`change_executor`自身のmapping-slot key技術を再利用した決定論的narrow-key方式である --
+open idは`(project_id, work_unit_ref)`のみの、update idは`(open_id, sequence_number)`のみの、
+terminal idは`open_id`単独の純関数であり、Storeの既存same-id-same-body replay許容と
+same-id-different-body`RecordConflictError`拒否機構が、冪等リプレイ・衝突検知・
+「coordinationごとに terminal はちょうど1つ」の強制を、新規機構なしに提供する。
+Authority境界は構造的に証明されている: 3schemaいずれも`human_authority_ref`/signature
+フィールドを持たず、`reflow.reference_registry.STORE_OWNED_REFERENCE_KINDS`に3種いずれも
+登録されておらず(実際の`reference_edges()`がfail-closedで拒否することも確認済み)、
+`evidence.engine.EVIDENCE_REFERENCE_KIND`は`"observation_evidence"`固定定数であり、
+本packageの全モジュールが`reflow`/`evidence`/`authority`/`difference.graph`を一切importしない
+ことをAST走査で確認済みである。
+
+adapter conformanceは、disclosed scope decisionとして、Boot(唯一の本番未改変entrypointに
+対する完全実証、成功・失敗両経路)と、全8 `ADAPTER_KINDS`にわたる共有composition primitive
+(`with_work_time_coordination`)の一様合成証明として提供される。残り7 adapter
+(CLI、Temporary Agent、Model Runtime、Multi-Agent、Change Executor、Independent
+Verification、GitHub Projection)それぞれの持つ実質的なprecondition chain
+(Authority Rule、Execution Boundary、Model Execution Grant、kill switch、verifier
+selection、GitHub projection grant)を本bounded work unitで全面再構築することは、
+UX/coordination-onlyな関心事のために8件の既受理済みverticalへ不要なリスクを負わせるとして
+意図的に見送られており、この決定は`adapters.py`自身のmodule docstringおよびテストファイル
+自身のdocstringに明示開示されている(隠された欠落ではない) -- `16_WORK_TIME_TRANSPARENCY/
+WORK_TIME_TRANSPARENCY_CONTRACT.md`§11。
+
+targeted test suite(`tests/unit/work_time_transparency/`・
+`tests/contract/work_time_transparency/`・`tests/integration/work_time_transparency/`、
+6 test files + 1 fixture module、101 tests)は本記録作成者自身が独立に実行し検証済み
+(`101 passed`)。`ruff check`・`ruff format --check`・`mypy --namespace-packages`はいずれも
+この新規packageに対してclean。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。full repository test suiteの独立再実行結果、
+および`tests/contract/governance/test_source_freshness_drift_detection.py`配下の
+pre-existing failureとの一致確認は、本Issue #22への最終return-evidence本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+```
+
+# 59. PR #84 Structural Review Round 1 (P84-R1-F1..F6) bounded addendum
+
+本節も§53〜§56と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/work_time_transparency/`配下の本Round是正に
+対応付けるためだけの、最小限の事実記録である。§58は本deliveryの初回draftを記録しており、
+本節はその後のStructural Review Round 1による是正を記録する -- §58自身の宣言は、本節が記録
+する採択済みafter-stateによって置き換えられる。
+
+PR #84上で構造参謀レビュー
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5660655523`
+(6件のfinding、P84-R1-F1..F6)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5660679037`
+(`ADOPT_P84_R1_F1_F6_HUMAN_WAIT_TIME_TRANSPARENCY_CORRECTION`)が投稿された。本記録作成者は
+これら2件を、著者login/id/association(`manosube`/OWNER)・本文冒頭の一致について、実装開始
+直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#84
+REVIEW_ROUND=1
+STRUCTURAL_REVIEW_COMMENT_ID=5660655523
+ADOPTION_COMMENT_ID=5660679037
+ADOPTION_ID=ADOPT_P84_R1_F1_F6_HUMAN_WAIT_TIME_TRANSPARENCY_CORRECTION
+PRE_ROUND_HEAD_SHA=e961becf2ed7d0a01ad35fb1147e81842a6c3248
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択された6件のfinding(P84-R1-F1..F6)はいずれも`01_SCHEMA/work_time_transparency/`の既存3
+schemaファイルの変更(`work_time_coordination_update`/`terminal`への
+`heartbeat_deadline_breached`追加、`update`への`next_progress_update_due_minutes`追加、
+schema総数86→89は不変)と`src/manosube_agent_civilization/work_time_transparency/`
+(`route.py`・`engine.py`・`identity.py`・`adapters.py`・`errors.py`・`__init__.py`の6
+既存モジュール変更、新規`clock.py`・`verify.py`の2モジュール追加、9モジュール構成)のみで
+修正した。schemaファイル数(3)・新規record kind数(0)は不変。
+
+F1(8アダプター全ての実本番entrypoint統合): 従来はBootのみが実本番`boot_project`呼び出しで
+証明され、残り7 adapter(CLI、Temporary Agent、Model Runtime、Multi-Agent、Change Executor、
+Independent Verification、GitHub Projection)は代表callableのみで証明されていた。
+`tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py`
+を全面書き換えし、8adapter全ての実本番entrypoint(`cli.main.run`、
+`agent_runtime.start_temporary_agent`、`model_runtime.open_model_work_unit`、
+`multi_agent.open_dynamic_execution_plan`、`change_executor.compose_change_executor`、
+`independent_verification.run_independent_verification`、`projection.project_to_github`)を、
+各adapter自身の既存test-side fixture builder(`tests/fixtures/model_runtime_world.py`等)を
+再利用した実precondition chain(実Difference/Boundary/Grant、実Ed25519署名、実git worktree、
+実`FakeGitHubAdapter`)越しに、`with_work_time_coordination`経由で実証した。
+
+F2(lineage resolve-and-verify): 新規`verify.py`モジュールが、`open_ref`/`predecessor_ref`を
+caller供給record bodyとしてではなく、このprojectのStore自身からkind/id参照として解決・再
+検証する(`resolve_open`・`resolve_predecessor_at_sequence`・`resolve_tip`・
+`verify_predecessor_matches`・`verify_monotonic_continuation`・`verify_binding_congruity`)。
+存在しないopen・cross-project/cross-coordination predecessor・スキップ/並べ替え/分岐した
+sequence・terminal-before-open・update-after-terminal・非単調timeはいずれも、record構築や
+commit試行より前にこの境界で拒否される。
+
+F3(is_material_reestimate/heartbeat_deadline_breachedの導出化): 従来caller供給boolean
+だった両fieldを、`route.py`が解決済みcanonical predecessorから自身で導出するよう変更(`route.
+py`が`engine.is_material_reestimate`/独自の直接比較を呼び出す)。opening-deadline rule
+(upper estimateが10分超の場合、最初のupdateは10分以内に必須)を`build_work_time_coordination_
+open`に追加。
+
+F4(clock所有権の一元化): `with_work_time_coordination`のみが実wall clockを読む唯一の箇所
+(新規`clock.default_clock`)となり、open時・terminal時の2回のみ読み取る。非単調terminal
+観測は新規`WorkTimeTransparencyClockError`で拒否される。実行中のadapter呼び出しが進捗を
+post できる新規`ProgressReporter`クラス(`.report()`)を追加し、Change ExecutorとIndependent
+Verificationの実adapter呼び出し中に実際にheartbeatをpostすることで証明した。
+
+F5(resolve-and-verify境界の本番保証化): F2の`verify.py`境界は、テストコードが独自に
+fingerprintを再計算するのではなく、本番route.py自身が呼び出す共有境界として実装されている
+(`tests/contract/work_time_transparency/test_work_time_transparency_static_conformance.py`の
+AST検証によりsource位置で確認)。
+
+F6(caller入力detach-firstと adapter_kind/work_unit_ref kind binding): `route.py`の3公開
+entrypoint全てが、`boot_project`呼び出しより前の文字通り最初の操作として`_detach(...)`
+(deepcopy)を実行する(AST検証済み)。`open_work_time_coordination`は`adapter_kind`と
+`work_unit_ref.kind`が`ADAPTER_KIND_TO_WORK_UNIT_REF_KIND`と一致しない場合を拒否する。両者
+とも、mutation-during-Boot control・mismatched-kind controlの決定的negative testで証明した。
+
+targeted test suite(`tests/unit/work_time_transparency/`・
+`tests/contract/work_time_transparency/`・`tests/integration/work_time_transparency/`、
+6 test files + 1 fixture module、127 tests、うち新規adapter conformance実entrypoint test 7件・
+lineage/mutation/kind-binding negative control 12件を新規追加)は本記録作成者自身が独立に
+実行し検証済み(`127 passed`)。`ruff check`・`ruff format --check`はこの新規/変更package
+全体に対してclean。`mypy --namespace-packages`は本packageに対し新規finding 0件(repository
+全体で確認された既存findingはいずれも本Roundが変更していない`multi_agent`/`model_runtime`
+route.pyに限定されており、本Round自身の変更ファイルには一件も現れない)。
+`python scripts/validate_schemas.py`・`python scripts/source_impact_gate.py`・full
+repository test suiteの独立再実行結果は、本Roundの新head到達後にPR #84への返却Evidenceコメ
+ント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
+
+# 60. PR #84 Structural Review Round 2 -- Project-State-orthogonal coordination rebind
+(P84-R2-F1/F4/F5, superseded by ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND)
+bounded addendum
+
+本節も§53〜§59と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/work_time_transparency/`・
+`src/manosube_agent_civilization/store/file_store.py`配下の本Round是正に対応付けるためだけ
+の、最小限の事実記録である。
+
+PR #84上でStructural Advisor authority correction
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5662926716`
+(`P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND`)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5662942651`
+(`ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND`、`GOVERNING_ISSUE=#22`)が投稿さ
+れた。本記録作成者はこれら2件を、著者login/id/association(`manosube`/OWNER)・本文一致に
+ついて、実装開始直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#84
+DETERMINATION_ID=P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND
+ADOPTION_ID=ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND
+STRUCTURAL_REVIEW_COMMENT_ID=5662926716
+ADOPTION_COMMENT_ID=5662942651
+PRE_ROUND_HEAD_SHA=e4d6fed0222a3d98e882914fddfd808295c2a8cb
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本Roundが是正した設計上の誤りは、`multi_agent.open_dynamic_execution_plan`が内部で
+`model_runtime.open_model_work_unit`(`require_exact_state=True`)に委譲するため、WTTの
+openを`commit_state_transition`経由でProject Stateに書き込むと、そのタイミングUX記録の
+コミットだけでcanonical State revisionが進み、直前に取得したTemporary Agentのexact-state
+snapshotが無効化されてしまう、という構造的競合であった。是正は、WTT recordの永続化先を
+Project State(`state/`・`events/`・`records/`)から、Storeが所有する直交な
+append-only coordination ledger(`coordination/ledger.jsonl`、
+`FileStateStore.commit_coordination_record`/`resolve_coordination_record`/
+`recover_coordination_ledger`)へ全面的に置き換えることで行った。
+
+`commit_coordination_record`/`resolve_coordination_record`は、Storeの既存per-project
+`fcntl`排他ロックを再利用し、同一(kind, id)に対するsame-body replayを冪等に許容し、
+different-bodyを`RecordConflictError`で拒否し、ledger append後にmaterializationが完了
+していない場合の crash-between-append-and-materialize を`resolve`時・
+`recover_coordination_ledger`呼び出し時の双方で healする。3 record kind
+(`work_time_coordination_open`/`update`/`terminal`)いずれも、`reflow.reference_registry.
+STORE_OWNED_REFERENCE_KINDS`に登録されておらず、`human_authority_ref`/signatureフィール
+ドを持たず、Authority・Evidence・Change・Reflow closure・Issue closure・merge認可のいず
+れも構成しない。WTT recordの`open`はもはやProject State revision・semantic fingerprint・
+lineage head・resolved stateのいずれも変更しない -- `tests/integration/store/
+test_coordination_ledger.py`の`test_no_coordination_commit_ever_touches_project_state`
+がこれを直接証明する。
+
+`work_time_transparency/route.py`・`verify.py`は、`open_ref`/`predecessor_ref`を
+resolve-and-verify境界(`resolve_coordination_record`経由)越しに解決するよう更新され、
+`work_time_transparency/adapters.py`(`with_work_time_coordination`)経由で統合される
+本番entrypointは、BOOT(read-only・recursion-freeのまま除外)を除く7/7
+(CLI、Temporary Agent、Model Runtime、Multi-Agent、Change Executor、Independent
+Verification、GitHub Projection)全てで、実precondition chain越しに実証されている
+(`tests/integration/work_time_transparency/
+test_work_time_transparency_adapter_conformance.py`)。`multi_agent.
+open_dynamic_execution_plan`が実`model_runtime.open_model_work_unit`(`require_exact_
+state=True`不変)に到達することは、TemporaryAgentを`with_work_time_coordination`の
+`perform`内部(WTTのopen commitが完了した後)で起動する同ファイルの実entrypoint testが
+直接証明する。`boot_project`自身(`src/manosube_agent_civilization/boot/route.py`)は本
+Roundにより一切変更されておらず、coordination commit呼び出しを含まない(grep確認済み)。
+
+schema変更は不要であった(3 WTT schemaファイルは既存のまま、新規record kindは
+Store所有の非schema化ledger entryとして実装されており、`SCHEMA_COUNT=89`は不変)。
+
+targeted test suite(`tests/unit/work_time_transparency/`・
+`tests/contract/work_time_transparency/`・`tests/integration/work_time_transparency/`・
+`tests/integration/store/test_coordination_ledger.py`、および本Roundが変更した
+`tests/integration/multi_agent/test_multi_agent_replay_and_recovery.py`の該当タイミング
+較正修正2箇所)は本記録作成者自身が独立に実行し検証済みである。`ruff check`・
+`ruff format --check`・`mypy --namespace-packages`はいずれも本Round変更ファイル全体に
+対してclean(既存baseline findingとの差分をコミット単位で確認済み)。
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。
+`python scripts/source_impact_gate.py`は`decision=PASS`・`merge_blocked=false`・
+`required_source_update_missing=false`。full repository test suiteの独立再実行結果、
+および`tests/contract/governance/test_source_freshness_drift_detection.py`配下の
+pre-existing failureとの一致確認、本Roundの新head到達後の正確な値は、PR #84への最終
+return-evidenceコメント本文を参照。
+
+開示済み・本Round scope外の既知の限界(隠された欠落ではない): (1) coordination
+ledgerの`commit_coordination_record`/`resolve_coordination_record`は、呼び出しごとに
+`coordination/ledger.jsonl`全体を線形走査・parseする(O(n))設計特性であり、正しさには
+影響しないが、実行時間には影響する。将来のindexing最適化は本Roundのscope
+(永続化先の付け替えそのもの)外として意図的に見送られている。(2) 単一project内での
+非ロック読み取り同士の間に存在する既存(本Round導入ではない)潜在的race condition
+(`CorruptStoreError: current view differs from lineage`)が、WTT wrapが追加する
+呼び出しごとの遅延によって、そのwindowが広がる形で偶発的に露見しうることを、本Round中の
+診断調査で確認した。これは本Roundが作り出したものではなく、修正は本Round scope外である。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
+
+# 61. PR #84 Structural Review Round 3 -- coordination ledger closure
+(P84-R3-F1..F4, ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE) bounded addendum
+
+本節も§53〜§60と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/store/file_store.py`・
+`src/manosube_agent_civilization/work_time_transparency/`・
+`src/manosube_agent_civilization/model_runtime/route.py`・
+`src/manosube_agent_civilization/multi_agent/route.py`配下の本Round是正に対応付けるための、
+最小限の事実記録である。
+
+PR #84上で構造参謀レビュー
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5670482392`
+(4件のfinding、P84-R3-F1..F4)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5670497927`
+(`ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE`、`GOVERNING_ISSUE=#22`)が投稿された。本記録
+作成者はこれら2件を、著者login/id/association(`manosube`/OWNER)・本文一致について、実装
+開始直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#84
+DETERMINATION_ID=P84_R3_COORDINATION_LEDGER_CLOSURE (implicit in the Structural Advisor review)
+ADOPTION_ID=ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE
+STRUCTURAL_REVIEW_COMMENT_ID=5670482392
+ADOPTION_COMMENT_ID=5670497927
+PRE_ROUND_HEAD_SHA=cf3f6c079d66a92f95b3fedd0268891f41fb3502
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本Roundが是正した4件は、Round 2の直交coordination ledger自体に残っていた4つのclosure
+gapである。
+
+P84-R3-F1(atomic coordination-tip admission): `FileStateStore.commit_coordination_record`を
+`commit_coordination_record_at_tip(project_id, chain_id, kind, record_id, body, *,
+expected_predecessor)`に置き換えた。単一のexclusive lock保持下で、*chain_id*の実際の現在
+tip(そのchain_idを持つledgerの最終entry、ledger自身の単一append順で決定)を再導出し、
+*expected_predecessor*と一致することを要求してから初めて新entryを許可する -- 解決と
+コミットが別々のlock取得にまたがることは二度となく、update-vs-terminal race(異なる
+record_idを持つ2つの書き込みが同一の期限切れpredecessorを解決する場合)も、新規
+`CoordinationTipConflictError`によってatomicに拒否される。
+
+P84-R3-F2(authoritative-ledger read verification): `resolve_coordination_record`は
+materialized cache fileを直接返さなくなった。毎回、ledger自身の一意な権威的factを再導出
+し、そのcacheの実バイト列がledger factの正準バイト列と厳密に一致することを要求してから
+返す -- schema-valid・内部整合的な差し替えcache bodyも、重複した相違するledger entryも、
+backing ledger entryのないorphan cacheも、いずれも`CorruptStoreError`で拒否する。
+
+P84-R3-F3(interrupted-append recovery boundary): `_coordination_ledger_entries`は、
+ledger fileの末尾行が(このStore自身が常に書き込む)終端`b"\n"`を持たない場合、それを
+crashによる未完了の書き込みとして静かに除外する(append-onlyな`"ab"`モードでは、末尾行
+以外が壊れることは構造的にありえないため、これは正しい)。`_heal_coordination_ledger_tail`
+は、全てのcoordination commitおよび`recover_coordination_ledger`の最初のステップとして、
+その不完全な末尾断片を物理的に切り詰める -- 以降のappendが壊れた書き込みの上に新content
+を黙って連結することは二度とない。
+
+P84-R3-F4(nested coordination ownership): `model_runtime.open_model_work_unit`に新規
+optional引数`joined_coordination: ProgressReporter | None = None`を追加した。既存の
+standalone呼び出し元は全て影響を受けない(デフォルトの`None`のまま、従来通り自分自身の
+coordination rootを開閉する)。`multi_agent.open_dynamic_execution_plan`自身のnested呼び
+出しは、自らの既にopen済みの`ProgressReporter`を`joined_coordination`として渡すように
+なった -- `open_model_work_unit`はこの場合、自分自身のcoordination rootを一切開かない。
+実際のnested呼び出しが持つcoordination rootは常にただ1つであり、第二のrootが存在しない
+以上、root間のcycleもorphan-parent substitutionも構造的に発生しえない。
+
+schema変更は不要であった(3 WTT schemaファイルは既存のまま、`SCHEMA_COUNT=89`は不変)。
+
+targeted test suite(`tests/integration/store/test_coordination_ledger.py`が22 testへ全面
+書き換え -- 新規tip-guard race・cache-substitution・duplicate-ledger-entry・torn-tail
+crash injectionの各シナリオを追加、`tests/integration/work_time_transparency/
+test_work_time_transparency_adapter_conformance.py`に実本番nested-call topology test 1件
+を追加)は本記録作成者自身が独立に実行し検証済みである。`ruff check`・
+`ruff format --check`・`mypy --namespace-packages`はいずれも本Round変更ファイル全体に
+対してclean(既存baseline findingとの差分をコミット単位で確認済み -- `store/errors.py`へ
+新規error class 1件を、file_store.pyと異なりdense-styleではなく標準styleで追加すること
+でnet-new finding 0件を維持)。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。full repository test suiteの独立再実行結果
+は、本Roundの新head到達後にPR #84への最終return-evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
+
+# 62. PR #84 Structural Review Round 4 -- WTT join and ledger-recovery closure
+(P84-R4-F1..F3, ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE) bounded addendum
+
+本節も§53〜§61と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/store/file_store.py`・
+`src/manosube_agent_civilization/work_time_transparency/adapters.py`・
+`src/manosube_agent_civilization/model_runtime/route.py`・
+`src/manosube_agent_civilization/multi_agent/route.py`配下の本Round是正に対応付けるための、
+最小限の事実記録である。
+
+PR #84上で構造参謀レビュー
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5671894456`
+(3件のfinding、P84-R4-F1..F3)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5671906971`
+(`ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE`、`GOVERNING_ISSUE=#22`)が投稿された。
+本記録作成者はこれら2件を、著者login/id/association(`manosube`/OWNER)・本文一致について、
+実装開始直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-14
+GOVERNING_PR=#84
+DETERMINATION_ID=P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE (implicit in the Structural Advisor review)
+ADOPTION_ID=ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE
+STRUCTURAL_REVIEW_COMMENT_ID=5671894456
+ADOPTION_COMMENT_ID=5671906971
+PRE_ROUND_HEAD_SHA=8df493b7d2f51923a05e516ea8d2eaea3231024b
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本Roundが是正した3件は、Round 3自身が導入した設計に残っていた構造的欠陥である。
+
+P84-R4-F1(caller-forgeable joined coordinationの閉鎖):
+`model_runtime.open_model_work_unit`公開関数から`joined_coordination`引数を完全に撤去した
+-- 公開シグネチャはこの抑制能力を一切受け付けず、あらゆる標準呼び出しが常に自分自身の
+Work Coordination rootを開く。唯一の正当なnested join(Multi-AgentからModel Runtimeへ)は
+新規internal-only関数`_open_model_work_unit_joined`経由でのみ到達可能であり、これは
+`multi_agent.route`の内部合成からのみimportされる。この内部関数も、渡された
+`joined_coordination`を無条件には信頼せず、新規
+`work_time_transparency.adapters.verify_joined_coordination`によって、
+(1)`ProgressReporter`の真正なinstanceであること(duck-typed代替品ではないこと)、
+(2)同一のStore instance・project_id・project_binding_idに束縛されていること、
+(3)`open_ref`が本物の・検証済みの・期待される`adapter_kind`(`"MULTI_AGENT"`)を持つ
+`work_time_coordination_open`recordに解決すること、(4)そのcoordinationがまだterminal
+notice未到達であること、を全て要求してから初めてjoinを許可する。
+
+P84-R4-F2(重複authoritative ledger factの拒否): 新規`_coordination_ledger_match`により、
+`(kind, record_id)`に対する物理的なledger entryが2件以上存在する場合、それがbyte単位で
+identicalであっても`CorruptStoreError`で拒否するようにした -- Round 3自身が「identicalな
+重複は無害として許容する」としていた立場を撤回する。この拒否は`resolve_coordination_record`・
+`recover_coordination_ledger`・後続のsame-body commit・後続のconflicting commitの全経路で
+共有される単一の境界を通じて一貫して適用される。
+
+P84-R4-F3(全persistence stageへのcrash/fault-injection):
+`FileStateStore.commit`が既に持つ`FaultInjector`機構と同一の仕組みを、coordination ledger
+自身の新規7段階(`BEFORE_APPEND`・`DURING_PARTIAL_APPEND`・
+`AFTER_COMPLETE_LINE_BEFORE_FILE_FSYNC`・`AFTER_FILE_FSYNC_BEFORE_DIRECTORY_FSYNC`・
+`AFTER_DURABLE_LEDGER_PUBLICATION`・`DURING_MATERIALIZATION`・`AFTER_MATERIALIZATION`)に
+対して実装した。`commit_coordination_record_at_tip`は任意でこの`fault`を受け取り、実際の
+commit経路上でこれらの境界を通過する。
+
+schema変更は不要であった(3 WTT schemaファイルは既存のまま、`SCHEMA_COUNT=89`は不変)。
+
+targeted test suite(`tests/integration/store/test_coordination_ledger.py`に重複ledger fact
+拒否4 test・7段階crash matrix parametrized test(stage毎に前回commit prefix保持・
+Project State byte一致・retry非重複を検証)を追加、
+`tests/integration/work_time_transparency/test_work_time_transparency_adapter_conformance.py`
+に fake duck-typed reporter・cross-project reporter・unrelated genuine reporter・
+terminal coordination・replayed capability・direct public suppression attemptの計6件の
+拒否テストを追加)は本記録作成者自身が独立に実行し検証済みである。`ruff check`・
+`mypy --namespace-packages`はいずれも本Round変更ファイル全体に対してclean(既存baseline
+findingとの差分をコミット単位で確認済み)。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。full repository test suiteの独立再実行結果
+は、本Roundの新head到達後にPR #84への最終return-evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
+
+# 63. PR #84 Structural Review Round 5 -- exact outer work-unit join binding
+(P84-R5-F1, ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING) bounded addendum
+
+本節も§53〜§62と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/work_time_transparency/adapters.py`・
+`src/manosube_agent_civilization/model_runtime/route.py`・
+`src/manosube_agent_civilization/multi_agent/route.py`配下の本Round是正に対応付けるための、
+最小限の事実記録である。
+
+PR #84上で構造参謀レビュー
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5676131540`
+(1件のfinding、P84-R5-F1)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5676152208`
+(`ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING`、`GOVERNING_ISSUE=#22`)が投稿された。
+本記録作成者はこれら2件を、著者login/id/association(`manosube`/OWNER)・本文一致について、
+実装開始直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-15
+GOVERNING_PR=#84
+DETERMINATION_ID=P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING (implicit in the Structural Advisor review)
+ADOPTION_ID=ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING
+STRUCTURAL_REVIEW_COMMENT_ID=5676131540
+ADOPTION_COMMENT_ID=5676152208
+AUTHORIZED_TARGET_HEAD=6c0cad2c2d6cbaed33048554956d8e8c84b2dcc0
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本Roundが是正した1件は、Round 4自身が導入した設計に残っていた構造的欠陥である。
+
+P84-R5-F1(exact outer work-unit binding): Round 4の`verify_joined_coordination`は、
+genuine `ProgressReporter`・同一Store・同一project/binding・期待される`adapter_kind`
+(`"MULTI_AGENT"`)・未terminalであることまでしか検証しておらず、同一Store・同一project/
+bindingで同時に生存している「別の」`MULTI_AGENT` coordinationのreporterも全ての検査を
+通過してしまう欠陥があった。本Roundでは`verify_joined_coordination`に必須引数
+`expected_work_unit_ref`を追加し、resolved open recordの`work_unit_ref`がこの期待値と
+完全一致することを新たに要求する。`model_runtime.route._open_model_work_unit_joined`は
+対応する`expected_outer_work_unit_ref`引数を追加してこの呼び出しへ橋渡しする。公開
+`open_model_work_unit`のシグネチャはRound 4のまま不変(join/suppression引数を一切
+受け付けない)。`multi_agent.route.open_dynamic_execution_plan`は、自身のWork
+Coordinationを開く直前(`with_work_time_coordination`自身の`work_unit_ref`を計算する
+のと同じ地点)で一度だけ`{"kind": "multi_agent_execution_plan", "id": _work_unit_id}`
+という自身の正確な outer identity を導出し、その単一の値をnested
+`_open_model_work_unit_joined`呼び出しへそのまま運ぶ -- coordination内部やnested呼び出し
+自身によって再導出されることは一切ない。
+
+schema変更は不要であった(3 WTT schemaファイルは既存のまま、`SCHEMA_COUNT=89`は不変)。
+
+targeted test suite(`tests/integration/work_time_transparency/
+test_work_time_transparency_adapter_conformance.py`に、2つの独立した
+`with_work_time_coordination`呼び出しをnestし、outer coordination A・Bを共に
+生存させたまま互いのreporterを入れ替えて`_open_model_work_unit_joined`へ渡す決定的
+negative testを1件追加、既存Round 4の5件のnegative controlは呼び出し側が自身の
+`expected_outer_work_unit_ref`を渡すよう更新した上でそのまま保持)は本記録作成者自身が
+独立に実行し検証済みである(targeted suite 643 tests, 0 failures)。`ruff check`・
+`mypy --namespace-packages`はいずれも本Round変更ファイル全体に対してclean(既存baseline
+findingとの差分をコミット単位で確認済み)。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。full repository test suiteの独立再実行結果
+は21838 passed, 10 failed(既存baselineと完全一致するtest名), 11 skipped -- net-new
+failure 0件。本Roundの新head到達後にPR #84への最終return-evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

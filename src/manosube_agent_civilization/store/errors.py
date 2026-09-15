@@ -10,3 +10,7 @@ class TransactionConflictError(StoreError): pass
 class RecordConflictError(StoreError): pass
 class CorruptStoreError(StoreError): pass
 class SimulatedCrash(StoreError): pass
+
+
+class CoordinationTipConflictError(StoreError):
+    pass

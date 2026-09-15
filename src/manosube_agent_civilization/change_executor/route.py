@@ -431,6 +431,11 @@ from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store.commit import commit_state_transition
 from manosube_agent_civilization.store.errors import RecordConflictError, StaleStateError
+from manosube_agent_civilization.work_time_transparency.adapters import (
+    ProgressReporter,
+    with_work_time_coordination,
+)
+from manosube_agent_civilization.work_time_transparency.clock import default_clock
 
 from .boundary import (
     canonicalize_inert_data,
@@ -1015,16 +1020,14 @@ def compose_change_executor(
         "sha256:" + hashlib.sha256(canonical_json_bytes(canonical_adapter_identity)).hexdigest()
     )
 
-    def execute(
+    def _execute_body(
         change_id: str,
         *,
         claim_token: str,
         execution_instant: str,
-        permit_semantic_reuse: bool = False,
+        permit_semantic_reuse: bool,
+        reporter: ProgressReporter,
     ) -> dict[str, Any]:
-        _require_canonical_identity("change_id", change_id)
-        _require_non_empty_string("claim_token", claim_token)
-
         # (2) idempotency-slot resolution -- deliberately *before* time-window/kill-switch #1/
         # Boot/Change/Authority/staleness (P18-R1-F5, Structural Review Round 1, extending this
         # module's own disclosed judgment call 5: slot resolution already ran before Boot/
@@ -1477,6 +1480,12 @@ def compose_change_executor(
         # already durably committed by this point, so a bare exception here would strand the slot
         # behind ExecutionReconciliationRequiredError forever, with no terminal receipt for any
         # future caller -- or any embedded reobservation_request -- to resolve against.
+        reporter.report(
+            position_kind="WORK_RUNNING",
+            current_position=f"calling the bound executor adapter for change {change_id!r}",
+            next_progress_update_due_minutes=10,
+            remaining_duration_unknown=True,
+        )
         try:
             raw_report = adapter.execute(checked_operation, worktree_root=frozen_worktree_root)
         except Exception:
@@ -1574,6 +1583,74 @@ def compose_change_executor(
 
         # (18) return.
         return {"receipt": receipt, "replay": False, "semantic_reuse": False}
+
+    def execute(
+        change_id: str,
+        *,
+        claim_token: str,
+        execution_instant: str,
+        permit_semantic_reuse: bool = False,
+        estimated_duration_lower_minutes: int = 0,
+        estimated_duration_upper_minutes: int = 15,
+        estimate_confidence: str = "MEDIUM",
+        major_steps: list[str] | None = None,
+        next_progress_update_due_minutes: int = 10,
+        variability_factors: str = "none",
+        work_time_coordination_clock: Callable[[], str] = default_clock,
+    ) -> dict[str, Any]:
+        """Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_
+        COORDINATION_REBIND``): every call below the two eager, pure-shape identity checks
+        (*change_id*/*claim_token*) is composed inside :func:`~manosube_agent_civilization.
+        work_time_transparency.adapters.with_work_time_coordination` -- every normal invocation,
+        a replay/semantic-reuse short-circuit included, durably commits a Work Coordination
+        timing record chain (never a Project State mutation -- the ledger this composes against
+        is orthogonal to ``commit_state_transition``). ``work_unit_ref`` is content-addressed
+        from *project_id*, *change_id*, *claim_token*, and one real clock reading taken before
+        the coordination opens -- never those alone, since a genuine same-attempt retry
+        legitimately presents an identical ``(change_id, claim_token)`` pair again. The new
+        ``estimated_duration_*``/``estimate_confidence``/``major_steps``/
+        ``next_progress_update_due_minutes``/``variability_factors``/
+        ``work_time_coordination_clock`` parameters are all optional, each defaulting to this
+        route's own canonical estimate, so every existing caller's own call syntax remains valid
+        unchanged. A genuine in-flight heartbeat is posted immediately before this route's own
+        one real adapter call (``adapter.execute``)."""
+
+        _require_canonical_identity("change_id", change_id)
+        _require_non_empty_string("claim_token", claim_token)
+
+        def _perform(reporter: ProgressReporter) -> dict[str, Any]:
+            return _execute_body(
+                change_id,
+                claim_token=claim_token,
+                execution_instant=execution_instant,
+                permit_semantic_reuse=permit_semantic_reuse,
+                reporter=reporter,
+            )
+
+        _attempt_marker = work_time_coordination_clock()
+        _work_unit_id = (
+            "CHEXEC-"
+            + hashlib.sha256(f"{project_id}|{change_id}|{claim_token}|{_attempt_marker}".encode())
+            .hexdigest()
+            .upper()
+        )
+
+        _open_record, _terminal_record, result = with_work_time_coordination(
+            store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            adapter_kind="CHANGE_EXECUTOR",
+            work_unit_ref={"kind": "change_executor_execution", "id": _work_unit_id},
+            estimated_duration_lower_minutes=estimated_duration_lower_minutes,
+            estimated_duration_upper_minutes=estimated_duration_upper_minutes,
+            estimate_confidence=estimate_confidence,
+            major_steps=major_steps or ["execute"],
+            next_progress_update_due_minutes=next_progress_update_due_minutes,
+            variability_factors=variability_factors,
+            perform=_perform,
+            clock=work_time_coordination_clock,
+        )
+        return result
 
     return execute
 

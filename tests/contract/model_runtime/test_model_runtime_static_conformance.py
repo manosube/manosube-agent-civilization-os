@@ -674,8 +674,24 @@ def test_phase_12s_public_surface_is_exactly_what_it_was() -> None:
     with pytest.raises(TypeError):
         temporary_agent()  # type: ignore[abstract]
 
+    # Structural Review Round 2 (P84-R2-F1/F4, ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_
+    # REBIND) adds six optional Work Coordination tuning parameters to start_temporary_agent,
+    # each defaulting to that route's own canonical estimate -- every pre-Round-2 caller's own
+    # call syntax stays valid unchanged, and the three original parameters keep their own exact
+    # kind (store positional-or-keyword, project_id/project_binding_id keyword-only).
     signature = inspect.signature(agent_runtime_package.start_temporary_agent)
-    assert list(signature.parameters) == ["store", "project_id", "project_binding_id"]
+    assert list(signature.parameters) == [
+        "store",
+        "project_id",
+        "project_binding_id",
+        "estimated_duration_lower_minutes",
+        "estimated_duration_upper_minutes",
+        "estimate_confidence",
+        "major_steps",
+        "next_progress_update_due_minutes",
+        "variability_factors",
+        "work_time_coordination_clock",
+    ]
     assert signature.parameters["store"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     for name in ("project_id", "project_binding_id"):
         assert signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY

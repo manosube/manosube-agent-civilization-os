@@ -116,6 +116,38 @@ def _snapshot(store_root: Path, project_id: str) -> dict[str, str]:
     }
 
 
+#: Structural Review Round 2 (P84-R2-F1/F4): every normal ``run_independent_verification`` call
+#: now durably commits its own Work Coordination timing chain, but -- since Structural Review
+#: Round 2 (P84-R2-F1/F4, ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_REBIND``) moved that
+#: persistence entirely off ``commit_state_transition`` onto the Store's own orthogonal
+#: coordination ledger -- every one of those commits lands only under this project's own
+#: ``coordination/`` directory, never under ``state/``, ``events/`` or Project State's own
+#: ``records/``. This module's own "zero Store mutation" guarantee is therefore corrected to
+#: "no mutation outside the orthogonal coordination ledger" (see
+#: :func:`_assert_no_mutation_beyond_work_time_coordination`) -- strictly narrower than the
+#: pre-Round-2 version, which had to additionally tolerate ``state/current.json``/
+#: ``events/transitions.jsonl`` changing: this route can no longer touch canonical Project State
+#: at all, proven here by their exact absence from the allowed prefix below, and never widened to
+#: tolerate a genuine domain-record (``observation_evidence``, ``verifier_selection_grant``,
+#: ``human_grant_declaration``, or any other) write this route itself must still never make.
+_WORK_TIME_COORDINATION_PATH_PREFIXES = ("coordination/",)
+
+
+def _assert_no_mutation_beyond_work_time_coordination(
+    store_root: Path, project_id: str, before: dict[str, str]
+) -> None:
+    after = _snapshot(store_root, project_id)
+    new_paths = set(after) - set(before)
+    changed_paths = {path for path in set(after) & set(before) if after[path] != before[path]}
+    touched = new_paths | changed_paths
+    unexpected = {
+        path for path in touched if not path.startswith(_WORK_TIME_COORDINATION_PATH_PREFIXES)
+    }
+    assert not unexpected, (
+        f"unexpected Store mutation beyond Work Coordination: {sorted(unexpected)}"
+    )
+
+
 def _bound(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     store_root = tmp_path / "backend"
     store = FileStateStore(store_root, schema_root=SCHEMA_ROOT)
@@ -578,7 +610,7 @@ def test_successful_route_returns_a_verified_result_with_zero_store_mutation(
     assert dict(result.input_refs[0]) == {"kind": "source_snapshot", "id": "SS-INDEPENDENT-0001"}
     assert dict(result.observations) == {"summary": "independently reproduced the reported outcome"}
     assert calls == [1]
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_result_fields_are_immutable(_real_route: dict[str, Any]) -> None:
@@ -636,6 +668,14 @@ def test_deep_freeze_rejects_a_set_and_other_unsupported_mutable_values(
 
 
 def test_wrong_requested_project_id_is_rejected(_real_route: dict[str, Any]) -> None:
+    """Structural Review Round 2 (P84-R2-F1/F4): ``run_independent_verification`` now opens its
+    own mandatory Work Coordination -- itself resolved against *project_id* through the existing
+    Boot owner -- before this route's own ``verification_requirement.project_id != project_id``
+    cross-consistency check ever runs. A *project_id* that names no bound Project at all (as
+    here) is caught by Boot's own ``BootNotFoundError`` first, never reaching that later check;
+    the invariant this test actually protects -- the verifier is never called for a wrong
+    project -- still holds exactly as before."""
+
     requirement = _requirement(
         _real_route["evidence_id"], _real_route["difference_id"], _real_route["human_authority_ref"]
     )
@@ -644,7 +684,7 @@ def test_wrong_requested_project_id_is_rejected(_real_route: dict[str, Any]) -> 
         {"status": "VERIFIED", "input_refs": [], "observations": {}}
     )
 
-    with pytest.raises(VerificationRequirementError):
+    with pytest.raises(BootNotFoundError):
         _run(_real_route, requirement, selection, verifier, project_id="OTHER-PROJECT")
     assert calls == []
 
@@ -697,7 +737,7 @@ def test_requirement_selection_mismatches_are_rejected_before_the_verifier_runs(
     with pytest.raises(VerificationRequirementError, match=expected_message_fragment):
         _run(_real_route, requirement, selection, verifier)
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_a_fabricated_but_self_consistent_authority_ref_is_rejected(
@@ -729,7 +769,7 @@ def test_a_fabricated_but_self_consistent_authority_ref_is_rejected(
     with pytest.raises(VerificationRequirementError, match="Human Authority"):
         _run(_real_route, requirement, selection, verifier)
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_an_empty_authority_ref_agreed_by_both_callers_is_rejected(
@@ -757,7 +797,7 @@ def test_an_empty_authority_ref_agreed_by_both_callers_is_rejected(
     with pytest.raises(VerificationRequirementError):
         _run(_real_route, requirement, selection, verifier)
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 @pytest.mark.parametrize(
@@ -791,7 +831,7 @@ def test_malformed_or_out_of_vocabulary_target_refs_are_rejected(
     with pytest.raises(VerificationRequirementError):
         _run(_real_route, requirement, selection, verifier)
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_unresolvable_evidence_target_is_rejected_and_never_reaches_the_verifier(
@@ -815,7 +855,7 @@ def test_unresolvable_evidence_target_is_rejected_and_never_reaches_the_verifier
     with pytest.raises(VerificationRequirementError, match="does not resolve"):
         _run(_real_route, requirement, selection, verifier)
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_a_difference_or_change_target_is_never_resolved_against_the_store(
@@ -870,7 +910,7 @@ def test_a_callable_whose_declared_identity_mismatches_the_selection_is_never_in
     with pytest.raises(VerificationRequirementError):
         _run(_real_route, requirement, selection, verifier)
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_a_callable_with_no_declared_identity_is_never_invoked(
@@ -959,7 +999,7 @@ def test_malformed_verifier_output_is_rejected(_real_route: dict[str, Any], payl
 
     with pytest.raises(VerifierOutputError):
         _run(_real_route, requirement, selection, verifier)
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_verifier_citing_no_input_at_all_is_rejected(
@@ -1112,7 +1152,7 @@ def test_no_verifier_selection_grants_is_rejected_and_never_calls_the_verifier(
     with pytest.raises(VerificationRequirementError, match="SELECTED"):
         _run(_real_route, requirement, selection, verifier, grant_refs=[])
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 # --- required rejection proofs: grant provenance is Store-resolved, never caller-supplied --- #
@@ -1143,7 +1183,7 @@ def test_a_grant_ref_naming_an_uncommitted_record_is_rejected_and_never_calls_th
     with pytest.raises(VerificationRequirementError, match="does not resolve"):
         _run(_real_route, requirement, selection, verifier, grant_refs=[_ref(never_committed)])
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_grant_content_supplied_directly_instead_of_a_reference_is_rejected(
@@ -1350,7 +1390,7 @@ def test_no_declaration_refs_is_rejected_and_never_calls_the_verifier(
     with pytest.raises(VerificationRequirementError, match="DECLARATION_MISSING"):
         _run(_real_route, requirement, selection, verifier, declaration_refs=[])
     assert calls == []
-    assert _snapshot(store.root, project_id) == before
+    _assert_no_mutation_beyond_work_time_coordination(store.root, project_id, before)
 
 
 def test_a_declaration_ref_naming_an_uncommitted_record_is_rejected_and_never_calls_the_verifier(

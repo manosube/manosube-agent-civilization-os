@@ -194,21 +194,43 @@ def test_composed_execute_closure_has_exactly_the_request_facing_parameter_set(
         adapter=_StubAdapter(),
         kill_switch_trust_anchor_public_key_hex="ab" * 32,
     )
+    # Structural Review Round 2 (P84-R2-F1/F4, ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_
+    # REBIND) adds six optional Work Coordination tuning parameters, each defaulting to this
+    # route's own canonical estimate -- every pre-Round-2 caller's own call syntax stays valid
+    # unchanged, and none of them is a trust-sensitive composition-time value (store/Boundary/
+    # adapter/worktree_root remain absent below, unchanged).
+    _WORK_TIME_COORDINATION_TUNING_PARAMETERS = {
+        "estimated_duration_lower_minutes",
+        "estimated_duration_upper_minutes",
+        "estimate_confidence",
+        "major_steps",
+        "next_progress_update_due_minutes",
+        "variability_factors",
+        "work_time_coordination_clock",
+    }
     code = execute.__code__
     varnames = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
-    assert set(varnames) == {
-        "change_id",
-        "claim_token",
-        "execution_instant",
-        "permit_semantic_reuse",
-    }
+    assert (
+        set(varnames)
+        == {
+            "change_id",
+            "claim_token",
+            "execution_instant",
+            "permit_semantic_reuse",
+        }
+        | _WORK_TIME_COORDINATION_TUNING_PARAMETERS
+    )
     signature = inspect.signature(execute)
-    assert set(signature.parameters) == {
-        "change_id",
-        "claim_token",
-        "execution_instant",
-        "permit_semantic_reuse",
-    }
+    assert (
+        set(signature.parameters)
+        == {
+            "change_id",
+            "claim_token",
+            "execution_instant",
+            "permit_semantic_reuse",
+        }
+        | _WORK_TIME_COORDINATION_TUNING_PARAMETERS
+    )
     for forbidden in (
         "store",
         "project_id",

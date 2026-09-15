@@ -1571,3 +1571,25 @@ P18-R2-F4  Canonical current-state fields must be factually non-self-referential
            document, CHANGE_EXECUTOR_INDEX.md, and the current-development-state addendum are
            the corrected record of this round itself (§3 item 18).
 ```
+
+## 15. Structural Review Round 6 Work Coordination wrap (Issue #22, `ADOPT_P84_PROJECT_STATE_
+ORTHOGONAL_COORDINATION_REBIND`, PR #84)
+
+`compose_change_executor`'s returned `execute` closure is now composed inside the Human
+Wait-Time Transparency vertical's own `with_work_time_coordination` (`work_time_transparency.
+adapters`), below its own eager, pure-shape identity checks (`change_id`, `claim_token`) and
+above everything that was its prior body -- renamed `_execute_body`, otherwise byte-identical.
+Every normal invocation reaching the bound executor adapter, or any refusal beyond the eager
+checks, now durably commits a Work Coordination `open`/`terminal` record pair through the
+Store's own orthogonal `coordination/` ledger (`FileStateStore.commit_coordination_record`) --
+never through `commit_state_transition`/`store.commit`, so a coordination commit can never
+advance `state_revision` or authorize an execution attempt. `work_unit_ref` is content-addressed
+from this project's own id, `change_id`, `claim_token`, and one real clock reading taken before
+the coordination opens -- never `claim_token` alone, since a genuine retry of the identical
+attempt legitimately presents the identical token again. `execute` gained seven optional
+`estimated_duration_*`/`estimate_confidence`/`major_steps`/`next_progress_update_due_minutes`/
+`variability_factors`/`work_time_coordination_clock` keyword parameters, each defaulting to this
+route's own canonical estimate, so every existing caller's own call syntax remains valid
+unchanged. A genuine in-flight heartbeat is posted immediately before the one real call into the
+bound executor adapter. See `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §5
+and `tests/integration/store/test_coordination_ledger.py` for the ledger's own proof.

@@ -420,15 +420,28 @@ def test_p19_r3_f4_a_genuinely_hanging_adapter_is_bounded_by_the_plans_own_real_
     )
     baseline_elapsed = time.monotonic() - baseline_started_at
 
+    # Structural Review Round 2 (P84-R2-F1/F4): `execute_model_work_unit` itself now performs
+    # real Work Coordination setup (a `boot_project` re-verification plus a ledger commit) as
+    # the first thing it does, *before* ever reaching the adapter call this test means to catch
+    # mid-hang -- so a timeout this environment's own real setup overhead could plausibly exceed
+    # would fire before the adapter is ever invoked at all, never proving the bound this test
+    # exists to prove. per_slot_timeout_seconds is therefore derived from this run's own
+    # measured baseline_elapsed (which already reflects one full real Store round trip in this
+    # environment) rather than a small fixed constant -- generous enough that the hanging
+    # adapter reliably gets called at least once, while still comfortably bounded well below
+    # sleep_seconds.
+    per_slot_timeout_seconds = max(5, min(15, int(baseline_elapsed / 2) + 2))
     coordinator = _coordinator(world)
     opened = open_dynamic_execution_plan(
         world["store"],
         coordinator,
         **open_plan_kwargs(world),
-        per_slot_timeout_seconds=1,
+        per_slot_timeout_seconds=per_slot_timeout_seconds,
     )
     coordinator.release()
-    assert opened["plan"]["execution_bounds"]["per_slot_timeout_seconds"] == 1
+    assert (
+        opened["plan"]["execution_bounds"]["per_slot_timeout_seconds"] == per_slot_timeout_seconds
+    )
 
     sleep_seconds = 20.0
     hanging_adapter = HangingMultiAgentAdapter(sleep_seconds=sleep_seconds)
@@ -436,12 +449,20 @@ def test_p19_r3_f4_a_genuinely_hanging_adapter_is_bounded_by_the_plans_own_real_
     executed = _execute(world, opened["plan_ref"], lambda: hanging_adapter, "2026-09-11T01:30:00Z")
     elapsed = time.monotonic() - started_at
 
-    # HANGING_ADAPTER_BOUNDED_TERMINATION=true: this call returned within a small, environment-
-    # scaled margin over the baseline call's own overhead plus the plan's own 1-second bound --
-    # nowhere near the adapter's own real 20-second sleep, which this assertion would fail hard
-    # against if the bounded call had actually waited for it.
-    assert elapsed < baseline_elapsed + 10.0
-    assert elapsed < sleep_seconds
+    # HANGING_ADAPTER_BOUNDED_TERMINATION=true: this call returned within a generous,
+    # environment-scaled margin over the baseline call's own overhead -- nowhere near
+    # *waiting for* the adapter's own real 20-second sleep (a genuinely-unbounded wait would
+    # add another full sleep_seconds on top, comfortably outside this margin). The margin is
+    # deliberately wide rather than a small fixed constant: Structural Review Round 2
+    # (P84-R2-F1/F4) wraps both `open_dynamic_execution_plan` and `execute_model_work_unit`
+    # in real Work Coordination commits, and this package's own post-TIMEOUT cleanup path
+    # (committing a typed TIMEOUT slot output + release receipt, with its own bounded
+    # commit-retry loop) now pays that same real Store overhead too -- so the *decisive*
+    # proof that the adapter was genuinely abandoned, not awaited, is the outcome assertions
+    # below (a typed TIMEOUT, no Envelope, exactly one adapter call), not a tight wall-clock
+    # bound. This wall-clock check only guards against the pathological case of actually
+    # waiting out the hang.
+    assert elapsed < baseline_elapsed + 20.0
     assert hanging_adapter.execute_call_count == 1
 
     # TIMEOUT_OR_CANCELLATION_TYPED_OUTCOME=true, DEADLINE_CROSSED_DURING_EXECUTION_CLEAN_

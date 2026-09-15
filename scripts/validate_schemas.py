@@ -130,7 +130,14 @@ def main() -> int:
     # `acceptance_policy_refusal_outcome` (the closed conflict/refusal shape, schema-declared for
     # wire-shape completeness though this delivery's own production code raises typed exceptions
     # rather than committing one -- see ACCEPTANCE_POLICY_CONTRACT.md §3 item 7) -- making 86.
-    if len(paths) != 86 or len(set(ids)) != len(paths) or None in ids:
+    # Issue #22's own Human Wait-Time Transparency delivery adds three more, all owned by the new
+    # `work_time_transparency` package: `work_time_coordination_open` (the immutable start-
+    # estimate record), `work_time_coordination_update` (the hash-linked heartbeat/re-estimate/
+    # external-wait/blocker chain), and `work_time_coordination_terminal` (the one terminal
+    # notice a coordination ever admits) -- deliberately carrying no `human_authority_ref`/
+    # signature field, unlike every Authority-bearing kind in this repository, since a timing
+    # record must never be able to present itself as a Human Authority declaration -- making 89.
+    if len(paths) != 89 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

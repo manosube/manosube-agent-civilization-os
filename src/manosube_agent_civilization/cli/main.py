@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping, Sequence
+import hashlib
 from pathlib import Path
 import sys
 from typing import Any, NoReturn
@@ -52,6 +53,11 @@ from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 from manosube_agent_civilization.state.errors import CanonicalizationError
 from manosube_agent_civilization.store import FileStateStore
 from manosube_agent_civilization.store.errors import StoreError
+from manosube_agent_civilization.work_time_transparency.adapters import (
+    ProgressReporter,
+    with_work_time_coordination,
+)
+from manosube_agent_civilization.work_time_transparency.clock import default_clock
 
 from .errors import CLIArgumentError, CLIError, CLIInvalidRootError
 
@@ -155,7 +161,19 @@ def _emit(stream: Any, payload: bytes) -> None:
 
 def run(argv: Sequence[str] | None = None) -> int:
     """Parse *argv*, invoke Boot once, and write the deterministic result. Returns the
-    process exit status; never itself calls ``sys.exit``."""
+    process exit status; never itself calls ``sys.exit``.
+
+    Structural Review Round 2 (P84-R2-F1/F4, ``ADOPT_P84_PROJECT_STATE_ORTHOGONAL_COORDINATION_
+    REBIND``): the Boot call and the stdout write are composed inside
+    :func:`~manosube_agent_civilization.work_time_transparency.adapters.
+    with_work_time_coordination`, through the Store's own orthogonal coordination ledger --
+    never through ``commit_state_transition``, so this route still cannot mutate or authorize
+    canonical Project State. Any exception ``boot_project`` raises still propagates out of the
+    coordination wrap unchanged (P84-R2-F5) and is still caught, unchanged, by this function's
+    own existing ``except`` clauses below -- the observable CLI contract (stdout/stderr shape,
+    exit code) is identical to before this rebind. There is no adapter call to report progress
+    against (``boot_project`` alone is fast and local), so no in-flight ``ProgressReporter.
+    report`` call is made here."""
 
     try:
         parser = _build_parser()
@@ -169,8 +187,36 @@ def run(argv: Sequence[str] | None = None) -> int:
             raise CLIInvalidRootError(f"--schema-root is not an existing directory: {schema_root}")
 
         store = FileStateStore(store_root, schema_root=schema_root)
-        context = boot_project(
-            store, project_id=args.project_id, project_binding_id=args.project_binding_id
+
+        def _perform(reporter: ProgressReporter) -> BootContext:
+            return boot_project(
+                store, project_id=args.project_id, project_binding_id=args.project_binding_id
+            )
+
+        _attempt_marker = default_clock()
+        _work_unit_id = (
+            "CLI-"
+            + hashlib.sha256(
+                f"{args.project_id}|{args.project_binding_id}|{_attempt_marker}".encode()
+            )
+            .hexdigest()
+            .upper()
+        )
+
+        _open_record, _terminal_record, context = with_work_time_coordination(
+            store,
+            project_id=args.project_id,
+            project_binding_id=args.project_binding_id,
+            adapter_kind="CLI",
+            work_unit_ref={"kind": "cli_invocation", "id": _work_unit_id},
+            estimated_duration_lower_minutes=0,
+            estimated_duration_upper_minutes=2,
+            estimate_confidence="HIGH",
+            major_steps=["boot"],
+            next_progress_update_due_minutes=5,
+            variability_factors="none",
+            perform=_perform,
+            clock=default_clock,
         )
         # Projection, canonical serialization, and the stdout write itself all stay inside
         # this same try -- a downstream pipe closing mid-write (BrokenPipeError) or any other

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/work_time_transparency/work_time_coordination_terminal.schema.json",
+  "title": "Human Wait-Time Transparency: Work Coordination Terminal Notice",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "work_time_coordination_terminal_id",
+    "work_time_coordination_terminal_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "open_ref",
+    "predecessor_ref",
+    "terminal_outcome",
+    "actual_elapsed_minutes",
+    "heartbeat_deadline_breached",
+    "explanation",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "work_time_coordination_terminal_id": {"$ref": "#/$defs/terminal_id"},
+    "work_time_coordination_terminal_semantic_fingerprint": {"$ref": "#/$defs/sha256"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "project_binding"}}}
+      ]
+    },
+    "open_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "work_time_coordination_open"}}}
+      ]
+    },
+    "predecessor_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"enum": [
+          "work_time_coordination_open",
+          "work_time_coordination_update"
+        ]}}}
+      ]
+    },
+    "terminal_outcome": {"enum": [
+      "COMPLETED",
+      "BLOCKED_HUMAN_ACTION_REQUIRED",
+      "FAILED_RETRYABLE",
+      "FAILED_TERMINAL",
+      "PAUSED_BY_HUMAN"
+    ]},
+    "actual_elapsed_minutes": {"type": "integer", "minimum": 0},
+    "heartbeat_deadline_breached": {"type": "boolean"},
+    "explanation": {"type": "string", "maxLength": 4096},
+    "recorded_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "$defs": {
+    "terminal_id": {"type": "string", "pattern": "^WTC-TERMINAL-[0-9A-F]{64}(?![\\s\\S])"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false
+}

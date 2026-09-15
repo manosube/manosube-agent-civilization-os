@@ -211,3 +211,26 @@ NEW_STATE_OWNER=false
 NEW_AUTHORITY_OWNER=false
 NEW_PERSISTED_ARTIFACT=false
 ```
+
+## 8. Structural Review Round 2 Work Coordination wrap (Issue #22, `ADOPT_P84_PROJECT_STATE_
+ORTHOGONAL_COORDINATION_REBIND`, PR #84)
+
+`start_temporary_agent` is now composed inside the Human Wait-Time Transparency vertical's own
+`with_work_time_coordination` (`work_time_transparency.adapters`), around its entire prior body
+(renamed `_start_temporary_agent_body`, otherwise byte-identical -- it still only calls
+`boot_project` and constructs `_ActiveTemporaryAgent`, no in-flight adapter call to heartbeat
+around). Every normal invocation, or any refusal from `boot_project` itself, now durably commits
+a Work Coordination `open`/`terminal` record pair through the Store's own orthogonal
+`coordination/` ledger (`FileStateStore.commit_coordination_record`) -- never through
+`commit_state_transition`/`store.commit`, so a coordination commit can never advance
+`state_revision` or otherwise authorize a Boot. `work_unit_ref` is content-addressed from this
+project's own id, `project_binding_id`, and one real clock reading taken before the coordination
+opens. `start_temporary_agent` gained seven optional `estimated_duration_*`/`estimate_
+confidence`/`major_steps`/`next_progress_update_due_minutes`/`variability_factors`/`work_time_
+coordination_clock` keyword parameters, each defaulting to this route's own canonical estimate,
+so every existing caller's own call syntax remains valid unchanged (`multi_agent.route`'s own
+call sites required no changes). This is the one exception among the mandatory `ADAPTER_KINDS`
+noted in `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_INDEX.md`'s own list -- BOOT itself
+stays outside every wrap (§6's own zero-write invariant); this wrap sits one call above
+`boot_project`, never inside it. See `WORK_TIME_TRANSPARENCY_CONTRACT.md` §5 and `tests/
+integration/store/test_coordination_ledger.py` for the ledger's own proof.

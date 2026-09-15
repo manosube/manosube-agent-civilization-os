@@ -1778,3 +1778,26 @@ pair above, reflecting that the interface it names now actually ships.
 P14_R13_F1_CLOSED=true
 P14_R13_F2_CLOSED=true
 ```
+
+## 21. Structural Review Round 14 Work Coordination wrap (Issue #22, `ADOPT_P84_BOOT_READ_ONLY_
+BOUNDARY_REBIND`, PR #84)
+
+`project_to_github` is now composed inside the Human Wait-Time Transparency vertical's own
+`with_work_time_coordination` (`work_time_transparency.adapters`), below its own eager, pure-
+shape identity checks (`project_id`, `project_binding_id`, `attempt_claim_token`) and above
+everything that was its prior admission/authority/adapter sequence. Every normal invocation
+reaching a real GitHub Adapter call, or any refusal beyond the eager checks, now durably commits
+a Work Coordination `open`/`terminal` record pair through the Store's own orthogonal
+`coordination/` ledger (`FileStateStore.commit_coordination_record`) -- never through
+`commit_state_transition`/`store.commit`. `work_unit_ref` is content-addressed from `project_id`,
+`attempt_claim_token`, and one real clock reading taken before the coordination opens -- never
+`attempt_claim_token` alone, since a genuine same-attempt retry legitimately presents the
+identical token again, and `work_time_coordination_open` is itself a fresh "one open per work
+unit, ever" identity, never idempotent across two separately-timed invocations. The route gained
+seven optional `estimated_duration_*`/`estimate_confidence`/`major_steps`/`next_progress_update_
+due_minutes`/`variability_factors`/`work_time_coordination_clock` keyword parameters, each
+defaulting to this route's own canonical estimate, so every existing caller's own call syntax
+remains valid unchanged. A genuine in-flight heartbeat is posted immediately before this route's
+own first real external GitHub Adapter call (`find_by_correlation_key`), on both the reuse and
+the fresh-materialize path alike. See `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.
+md` §5 and `tests/integration/store/test_coordination_ledger.py` for the ledger's own proof.

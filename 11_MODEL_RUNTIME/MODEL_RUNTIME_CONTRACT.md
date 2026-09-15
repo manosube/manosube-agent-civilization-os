@@ -904,3 +904,80 @@ already a freshly built dict literal at each call (with its own `plan_ref` a fre
 ref)` copy), never handed to the adapter it constructs, so nothing in that package could ever
 mutate it. No import of `multi_agent` was added to this package; no second caller-provided
 comparator, hidden equivalent hook, or second Store/State/Authority owner was introduced.
+
+## 18. Structural Review Round 2 Work Coordination wrap (Issue #22, `ADOPT_P84_PROJECT_STATE_
+ORTHOGONAL_COORDINATION_REBIND`, PR #84)
+
+`open_model_work_unit` and `execute_model_work_unit` are now each composed inside the Human
+Wait-Time Transparency vertical's own `with_work_time_coordination` (`work_time_transparency.
+adapters`), below their own eager, pure-shape identity checks and above everything that was
+their prior body -- renamed `_open_model_work_unit_body`/`_execute_model_work_unit_body`,
+otherwise byte-identical. Every normal invocation reaching this module's own Store/Authority/
+Boot admission sequence, or any refusal beyond the eager checks, now durably commits a Work
+Coordination `open`/`terminal` record pair through the Store's own orthogonal `coordination/`
+ledger (`FileStateStore.commit_coordination_record`) -- a second, independent append-only lane
+this module's own State/Authority/Evidence surface never reads or writes, so nothing here can
+ever be authorized or mutated by a Work Coordination commit. `work_unit_ref` is content-
+addressed from this project's own id, the resolved Difference/Work Unit id, and one real clock
+reading taken before the coordination opens -- never reused across two distinct attempts. Both
+entrypoints gained seven optional `estimated_duration_*`/`estimate_confidence`/`major_steps`/
+`next_progress_update_due_minutes`/`variability_factors`/`work_time_coordination_clock` keyword
+parameters, each defaulting to this module's own canonical estimate, so every existing caller's
+call syntax remains valid unchanged (`multi_agent.route`'s own call sites required no changes).
+`MODEL_RUNTIME_EXACT_STATE_WEAKENING_ALLOWED=false` holds unmodified: the wrap never touches
+`_live_contract(require_exact_state=True)`, only wraps around the two public entrypoints that
+already called it. See `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §5 and
+`tests/integration/store/test_coordination_ledger.py` for the ledger's own proof.
+
+## 19. Structural Review Round 3 Work Coordination hardening (P84-R3-F1/F2/F3/F4,
+`ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE`)
+
+`commit_coordination_record` is replaced by the Store's own atomically tip-guarded
+`commit_coordination_record_at_tip` (see `16_WORK_TIME_TRANSPARENCY/
+WORK_TIME_TRANSPARENCY_CONTRACT.md` §15) -- `work_time_transparency/route.py`'s own callers,
+this module included, require no call-site changes.
+
+`open_model_work_unit` gains one new optional parameter, `joined_coordination:
+work_time_transparency.adapters.ProgressReporter | None = None`. `None` (the default) is every
+existing caller's own behavior, unchanged: an independent Work Coordination root is opened and
+closed exactly as before. When `multi_agent.open_dynamic_execution_plan`'s own nested call
+supplies its own bound `ProgressReporter` as `joined_coordination`, this entrypoint opens **no**
+coordination root of its own at all -- it composes straight into its own body with the caller's
+already-open reporter, so real production nesting has one root, never two (P84-R3-F4; see
+`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §15 for the full rationale).
+
+## 20. Structural Review Round 4 correction (P84-R4-F1, `ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_
+RECOVERY_CLOSURE`)
+
+§19's own `joined_coordination` public parameter is retracted: the Structural Advisor identified
+that an ordinary public keyword argument, checked only for `is not None`, is a caller-forgeable
+suppression of `open_model_work_unit`'s own mandatory Work Coordination -- satisfiable by a
+duck-typed object, or by a genuine reporter resolved against a different project, binding, or
+coordination entirely. `open_model_work_unit`'s public signature no longer accepts any join
+capability at all: every call always opens its own independent coordination root, unconditionally.
+
+The one legitimate nested join (Multi-Agent's own already-open `MULTI_AGENT` coordination) is now
+reached exclusively through a new internal function this module does not export,
+`_open_model_work_unit_joined(store, agent, *, project_id, project_binding_id, difference_ref,
+required_capability, boundary_ref, model_execution_grant_refs, opened_at, joined_coordination)` --
+only `multi_agent.route`'s own internal composition imports and calls it. The passed
+`joined_coordination` is still fully re-verified there, never merely trusted because of who is
+presumed to have called it: see `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md`
+§16 for the full `verify_joined_coordination` boundary this now requires (genuine `ProgressReporter`
+instance, same Store/project/binding, correct `adapter_kind`, not yet terminal).
+
+## 21. Structural Review Round 5 correction (P84-R5-F1, `ADOPT_P84_R5_F1_EXACT_OUTER_WORK_
+UNIT_JOIN_BINDING`)
+
+§20's own checks alone admitted a live reporter genuinely naming some *other*, simultaneously
+open `MULTI_AGENT` coordination in the identical Store/project/binding -- everything Round 4
+checked was individually true of it, since nothing there compared the resolved coordination's own
+`work_unit_ref` against the specific outer work unit the joining call actually opened for.
+`_open_model_work_unit_joined` gains a required `expected_outer_work_unit_ref` parameter, threaded
+into `verify_joined_coordination` as its own new `expected_work_unit_ref` argument (see
+`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §17 for the full boundary). The
+public `open_model_work_unit` signature remains exactly as §20 left it -- no join or suppression
+parameter of any kind. `expected_outer_work_unit_ref` is never derived inside this module: it is
+`multi_agent.route.open_dynamic_execution_plan`'s own already-computed outer identity, carried
+unchanged through the nested call (see `14_MULTI_AGENT/MULTI_AGENT_CONTRACT.md` §24 for the
+caller-side derivation).
