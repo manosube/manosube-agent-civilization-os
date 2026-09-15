@@ -16,13 +16,25 @@ existing natural-route modules above, in order, and records what happened as raw
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from tests.fixtures import long_running_proof as lrp
 
+from manosube_agent_civilization.reflow.errors import StaleReflowError
+from manosube_agent_civilization.work_time_transparency.adapters import (
+    ProgressReporter,
+    verify_joined_coordination,
+    with_work_time_coordination,
+)
+
 from . import agent_swap, cycle, metrics, runtime_reachability, session_loss
+
+#: The one Work-Time Transparency adapter_kind SHUKOU's P87-R1-F7 correction authorized
+#: (``types.py``/schema both amended) for this exact production long-running-proof entrypoint.
+ADAPTER_KIND = "LONG_RUNNING_PROOF"
+WORK_UNIT_REF_KIND = "long_running_proof_run"
 
 #: Session-loss real process-boundary restarts are injected after these 0-indexed cycle
 #: numbers complete (clamped to the actual tier length) -- at least 2 distinct positions for
@@ -30,77 +42,61 @@ from . import agent_swap, cycle, metrics, runtime_reachability, session_loss
 SESSION_LOSS_BOUNDARY_FRACTIONS = (0.25, 0.5, 0.75)
 
 
-def _cycle_clock(k: int) -> tuple[str, str]:
-    """Deterministic, monotonically advancing wall-clock stand-ins for cycle *k*'s own
-    ``started_at``/``closed_at`` raw-event timestamps -- fixture-owned, not a real time.Time()
-    read, so the metric dataset stays reproducible run to run."""
+def _observed_now() -> str:
+    """The one real wall-clock read this proof's own metric dataset uses for cycle
+    ``started_at``/``closed_at`` (P87-R1-F9) -- genuinely non-deterministic observation time,
+    deliberately never the corpus's own deterministic identity (``predicate_id``/``subject``/
+    ``REFLOW_INSTANT``, all of which stay fixed regardless of how long a cycle actually took,
+    including any real failure/restart/retry time a session-loss boundary injected)."""
 
-    base = datetime(2026, 9, 15, 15, 0, 0, tzinfo=UTC) + timedelta(minutes=2 * k)
-    started = base.strftime("%Y-%m-%dT%H:%M:%SZ")
-    closed = (base + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return started, closed
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def run_sequential_differences(
-    store: Any, *, tier: int, session_loss_boundaries: set[int] | None = None
-) -> dict[str, Any]:
-    """Run cycles ``0..tier-1`` sequentially against *store*, injecting a real process-boundary
-    restart after each cycle index named in *session_loss_boundaries* (default: computed from
-    :data:`SESSION_LOSS_BOUNDARY_FRACTIONS`). Returns the raw events produced and the final
-    committed State."""
+def attempt_cycle(store: Any, *, k: int, committed_state: dict[str, Any]) -> dict[str, Any]:
+    """Run cycle *k* through the real orchestrated route, returning a real, durable raw event
+    either way (P87-R1-F3): a ``cycle_committed`` event on success, or -- if
+    :func:`~tests.long_running_proof.cycle.run_one_cycle` itself refuses (a real
+    :class:`~tests.long_running_proof.cycle.CorpusPositionError` or Reflow's own
+    ``StaleReflowError``) -- a real ``cycle_refused`` event captured from that actual refusal,
+    never a synthetic dict a caller hand-authors after the fact. *committed_state* is returned
+    unchanged on refusal (``NO_STATE_ADVANCE_ON_ORDERING_REFUSAL=true``)."""
 
-    if session_loss_boundaries is None:
-        session_loss_boundaries = {
-            min(tier - 1, max(0, int(tier * f) - 1))
-            for f in SESSION_LOSS_BOUNDARY_FRACTIONS
-            if tier * f >= 1
-        }
-
-    raw_events: list[dict[str, Any]] = []
-    committed_state = cycle.initialize_genesis(store)
-
-    for k in range(tier):
-        started_at, closed_at = _cycle_clock(k)
+    started_at = _observed_now()
+    try:
         result = cycle.run_one_cycle(store, k=k, committed_state=committed_state)
-        committed_state = result["reflow_result"]["committed_state"]
-        raw_events.append(
-            metrics.cycle_committed_event(
-                k=k,
-                difference_id=result["identity"]["difference_id"],
-                state_revision=result["identity"]["final_state_revision"],
-                evidence_item_count=2,
-                evidence_required_count=2,
-                started_at=started_at,
-                closed_at=closed_at,
-            )
-        )
-
-        if k in session_loss_boundaries and k < tier - 1:
-            pre_revision = committed_state["state_revision"]
-            reconstructed = session_loss.restart_and_reconstruct_state(store.root, lrp.PROJECT_ID)
-            recovered = reconstructed["state_revision"] == pre_revision
-            raw_events.append(
-                metrics.session_loss_boundary_event(
-                    after_cycle=k,
-                    pre_restart_revision=pre_revision,
-                    post_restart_revision=reconstructed["state_revision"],
-                    recovered=recovered,
-                )
-            )
-            if not recovered:
-                raise AssertionError(
-                    f"session-loss boundary after cycle {k}: real process restart reconstructed "
-                    f"revision {reconstructed['state_revision']!r}, expected {pre_revision!r}"
-                )
-            # The next cycle resumes from the subprocess's own reconstruction alone -- never
-            # from any object the parent process still happens to hold.
-            committed_state = reconstructed
-
-    return {"raw_events": raw_events, "final_committed_state": committed_state}
+    except (cycle.CorpusPositionError, StaleReflowError) as exc:
+        return {
+            "outcome": "refused",
+            "event": metrics.cycle_refused_event(k=k, reason=str(exc), started_at=started_at),
+            "committed_state": committed_state,
+        }
+    closed_at = _observed_now()
+    return {
+        "outcome": "committed",
+        "event": metrics.cycle_committed_event(
+            k=k,
+            difference_id=result["identity"]["difference_id"],
+            state_revision=result["identity"]["final_state_revision"],
+            evidence_item_count=2,
+            evidence_required_count=2,
+            started_at=started_at,
+            closed_at=closed_at,
+        ),
+        "committed_state": result["reflow_result"]["committed_state"],
+        "result": result,
+    }
 
 
-def run_agent_swap_slice(tmp_path: Path, *, project_id: str) -> list[dict[str, Any]]:
-    world = agent_swap.build_agent_swap_world(tmp_path, project_id=project_id)
+def run_agent_swap_slice(
+    store: Any, *, project_id: str, project_binding_id: str, transaction_prefix: str
+) -> list[dict[str, Any]]:
+    world = agent_swap.build_agent_swap_world(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        human_authority_ref=lrp.HUMAN_AUTHORITY,
+        transaction_prefix=transaction_prefix,
+    )
     result = agent_swap.run_agent_swap_sequence(world)
     raw_events: list[dict[str, Any]] = []
     for i, receipt in enumerate(result["swap_receipts"]):
@@ -120,8 +116,15 @@ def run_agent_swap_slice(tmp_path: Path, *, project_id: str) -> list[dict[str, A
     return raw_events
 
 
-def run_runtime_reachability_slice(tmp_path: Path) -> list[dict[str, Any]]:
-    world = runtime_reachability.build_runtime_reachability_world(tmp_path)
+def run_runtime_reachability_slice(
+    store: Any, *, project_id: str, project_binding_id: str
+) -> list[dict[str, Any]]:
+    world = runtime_reachability.build_runtime_reachability_world(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        human_authority_ref=lrp.HUMAN_AUTHORITY,
+    )
     measurements = runtime_reachability.run_reachability_measurements(world)
     return [
         metrics.runtime_observation_event(
@@ -134,18 +137,129 @@ def run_runtime_reachability_slice(tmp_path: Path) -> list[dict[str, Any]]:
 def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
     """The one Gate 20 proof entry point: run *tier* sequential Differences (with real
     process-boundary session-loss recovery injected along the way), one real agent/runtime-
-    identity swap slice, and one runtime-reachability measurement slice, then deterministically
-    aggregate every raw event into the required metric dataset.
+    identity swap slice, and one runtime-reachability measurement slice -- all three bound into
+    the exact same Store/``project_id``/``project_binding_id`` and interleaved at declared
+    positions within the tier run (P87-R1-F4), the whole run WTT-coordinated under one real
+    ``LONG_RUNNING_PROOF`` work unit (P87-R1-F7) -- then deterministically aggregate every raw
+    event into the required metric dataset.
 
     ``tier`` must be one of the four required values (10, 30, 50, 100) for a genuine Gate 20
     run; smaller values are accepted for fast, non-Gate-20 smoke verification only."""
 
     store = cycle.build_store(tmp_path / "sequential_differences")
-    sequential = run_sequential_differences(store, tier=tier)
+    bind_result = cycle.bind_genesis(store)
+    project_binding_id = bind_result["project_binding_id"]
 
-    raw_events: list[dict[str, Any]] = list(sequential["raw_events"])
-    raw_events += run_agent_swap_slice(tmp_path, project_id=f"PRJ-P20-SWAP-{tier:04d}")
-    raw_events += run_runtime_reachability_slice(tmp_path)
+    #: Declared interleave positions within the tier run: the Agent-swap slice runs after the
+    #: cycle at roughly 1/3 through, the runtime-reachability slice after roughly 2/3 through --
+    #: both genuinely inside the same sequential run, sharing its own advancing state_revision,
+    #: never a separate post-hoc call against an unrelated store.
+    swap_after_cycle = max(0, tier // 3 - 1)
+    runtime_after_cycle = max(swap_after_cycle + 1, (2 * tier) // 3 - 1)
+
+    work_unit_ref = {"kind": WORK_UNIT_REF_KIND, "id": f"WORK-UNIT-LRP-T{tier:04d}"}
+
+    def _perform(reporter: ProgressReporter) -> dict[str, Any]:
+        verify_joined_coordination(
+            store,
+            reporter,
+            project_id=lrp.PROJECT_ID,
+            project_binding_id=project_binding_id,
+            expected_adapter_kind=ADAPTER_KIND,
+            expected_work_unit_ref=work_unit_ref,
+        )
+
+        session_loss_boundaries = {
+            min(tier - 1, max(0, int(tier * f) - 1))
+            for f in SESSION_LOSS_BOUNDARY_FRACTIONS
+            if tier * f >= 1
+        }
+
+        raw_events: list[dict[str, Any]] = []
+        committed_state = bind_result["committed_state"]
+
+        for k in range(tier):
+            attempt = attempt_cycle(store, k=k, committed_state=committed_state)
+            raw_events.append(attempt["event"])
+            if attempt["outcome"] == "refused":
+                raise AssertionError(
+                    f"cycle {k}: real orchestrated route refused during the positive Gate 20 "
+                    f"route -- {attempt['event']['reason']}"
+                )
+            committed_state = attempt["committed_state"]
+
+            if k == swap_after_cycle:
+                raw_events += run_agent_swap_slice(
+                    store,
+                    project_id=lrp.PROJECT_ID,
+                    project_binding_id=project_binding_id,
+                    transaction_prefix=f"TX-LRP-T{tier:04d}-SWAP",
+                )
+                reporter.report(
+                    position_kind="WORK_RUNNING",
+                    current_position=f"agent-swap slice complete after cycle {k}",
+                    next_progress_update_due_minutes=10,
+                    remaining_duration_unknown=True,
+                )
+                committed_state = store.load_current(lrp.PROJECT_ID)
+
+            if k == runtime_after_cycle:
+                raw_events += run_runtime_reachability_slice(
+                    store, project_id=lrp.PROJECT_ID, project_binding_id=project_binding_id
+                )
+                reporter.report(
+                    position_kind="WORK_RUNNING",
+                    current_position=f"runtime-reachability slice complete after cycle {k}",
+                    next_progress_update_due_minutes=10,
+                    remaining_duration_unknown=True,
+                )
+                committed_state = store.load_current(lrp.PROJECT_ID)
+
+            if k in session_loss_boundaries and k < tier - 1:
+                pre_revision = committed_state["state_revision"]
+                reconstructed = session_loss.restart_and_reconstruct_state(
+                    store.root, lrp.PROJECT_ID
+                )
+                recovered = reconstructed["state_revision"] == pre_revision
+                raw_events.append(
+                    metrics.session_loss_boundary_event(
+                        after_cycle=k,
+                        pre_restart_revision=pre_revision,
+                        post_restart_revision=reconstructed["state_revision"],
+                        recovered=recovered,
+                    )
+                )
+                if not recovered:
+                    raise AssertionError(
+                        f"session-loss boundary after cycle {k}: real process restart "
+                        f"reconstructed revision {reconstructed['state_revision']!r}, "
+                        f"expected {pre_revision!r}"
+                    )
+                committed_state = reconstructed
+
+        return {"raw_events": raw_events, "final_committed_state": committed_state}
+
+    _open_record, _terminal_record, sequential = with_work_time_coordination(
+        store,
+        project_id=lrp.PROJECT_ID,
+        project_binding_id=project_binding_id,
+        adapter_kind=ADAPTER_KIND,
+        work_unit_ref=work_unit_ref,
+        estimated_duration_lower_minutes=5,
+        estimated_duration_upper_minutes=60,
+        estimate_confidence="LOW",
+        major_steps=[
+            "sequential difference cycles",
+            "agent-swap slice",
+            "runtime-reachability slice",
+            "session-loss recovery boundaries",
+        ],
+        next_progress_update_due_minutes=10,
+        variability_factors="tier size, crash-injection retry rounds",
+        perform=_perform,
+    )
+
+    raw_events = sequential["raw_events"]
 
     return {
         "tier": tier,
@@ -153,4 +267,5 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
         "final_committed_state": sequential["final_committed_state"],
         "metrics": metrics.aggregate(raw_events),
         "store_root": str(store.root),
+        "project_binding_id": project_binding_id,
     }

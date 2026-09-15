@@ -203,9 +203,15 @@ def _safe_rate(numerator: int, denominator: int) -> float | None:
 
 
 def _elapsed_seconds(started_at: str, ended_at: str) -> float:
+    """Real elapsed wall-clock seconds between two :func:`~tests.long_running_proof.
+    orchestrator._observed_now` reads (P87-R1-F9) -- microsecond-precision
+    ``%Y-%m-%dT%H:%M:%S.%fZ``, genuinely variable across cycles (including any real
+    session-loss restart/retry time a boundary injected), never the fixed-second corpus clock
+    a deterministic identity timestamp would produce."""
+
     from datetime import datetime
 
-    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    fmt = "%Y-%m-%dT%H:%M:%S.%fZ"
     start = datetime.strptime(started_at, fmt).replace(tzinfo=UTC)
     end = datetime.strptime(ended_at, fmt).replace(tzinfo=UTC)
     return (end - start).total_seconds()

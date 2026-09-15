@@ -41,7 +41,8 @@
           "multi_agent_execution_plan",
           "change_executor_execution",
           "independent_verification_run",
-          "github_projection_attempt"
+          "github_projection_attempt",
+          "long_running_proof_run"
         ]}}}
       ]
     },
@@ -53,7 +54,8 @@
       "MULTI_AGENT",
       "CHANGE_EXECUTOR",
       "INDEPENDENT_VERIFICATION",
-      "GITHUB_PROJECTION"
+      "GITHUB_PROJECTION",
+      "LONG_RUNNING_PROOF"
     ]},
     "estimated_duration_lower_minutes": {"type": "integer", "minimum": 0},
     "estimated_duration_upper_minutes": {"type": "integer", "minimum": 0},

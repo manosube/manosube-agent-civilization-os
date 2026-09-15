@@ -711,6 +711,72 @@ def assemble_one_cycle(
     }
 
 
+class CorpusPositionError(Exception):
+    """Raised by :func:`verify_expected_corpus_position` (P87-R1-F5): the requested cycle
+    index *k* does not name the exact next, in-order corpus position -- refuses reorder,
+    omission, duplicate re-commit, and prefix substitution before ``reflow()`` is ever called,
+    so no State advance happens on refusal."""
+
+
+def committed_cycle_count(committed_state: dict[str, Any]) -> int:
+    """How many of this proof's own cycles have actually been committed through
+    :func:`run_one_cycle`'s own ``reflow()`` call, derived from *committed_state* alone.
+
+    Every real ``reflow()`` commit -- and only a ``reflow()`` commit -- unconditionally appends
+    exactly one entry to ``semantic_state.lineage.identity_refs``
+    (``reflow.bookkeeping.apply_reflow_bookkeeping``, regardless of the cycle's own closure
+    ``to_status``), so this count is exactly the number of cycles this Difference-and-Reflow
+    sequence has run. The Agent-swap and runtime-reachability slices sharing this same Project
+    Binding (P87-R1-F4) commit through a generic, reflow()-free ``store.commit()`` whose
+    ``next_state`` carries the *unchanged* ``semantic_state`` forward -- so unlike the Store's
+    own generic ``state_revision`` (which every commit, cycle or slice, advances), this count is
+    immune to interleaved slice commits. (``semantic_state.code.claims``, which
+    :func:`next_semantic_state` computes per cycle, is never itself what ``reflow()`` commits --
+    ``apply_reflow_bookkeeping`` only ever updates the Kernel's own generic bookkeeping fields --
+    so it cannot be used for this count.)"""
+
+    return len(committed_state["semantic_state"]["lineage"]["identity_refs"])
+
+
+def verify_expected_corpus_position(
+    k: int, committed_state: dict[str, Any], difference: dict[str, Any]
+) -> None:
+    """The one real, decisive corpus-order guard: cycle *k* is only ever the exact next
+    position in this proof's own single ordered corpus (``lrp.predicate_id(k)``) when exactly
+    cycles ``0..k-1``'s own claims are already committed -- reordering (running index 5 while
+    only cycle 0 has committed), duplicating (re-running an already-committed index), omitting
+    (skipping ahead), and prefix substitution (a Difference bound to some other predicate) are
+    all the identical single violation this one check refuses. Deliberately keyed off
+    :func:`committed_cycle_claim_keys` rather than the Store's own generic ``state_revision``:
+    the latter also advances on every Agent-swap/runtime-reachability slice commit sharing this
+    same Project Binding (P87-R1-F4), so it no longer equals the corpus cycle count once those
+    slices are interleaved into the same run."""
+
+    expected_predicate_id = lrp.predicate_id(k)
+    actual_predicate_id = difference.get("target_predicate_ref", {}).get("id")
+    if actual_predicate_id != expected_predicate_id:
+        raise CorpusPositionError(
+            f"cycle {k}: derived Difference is bound to Target Predicate "
+            f"{actual_predicate_id!r}, expected the corpus's own position-{k} predicate "
+            f"{expected_predicate_id!r} -- refusing before any commit"
+        )
+    if difference.get("observed_state_revision") != committed_state["state_revision"]:
+        raise CorpusPositionError(
+            f"cycle {k}: derived Difference observed state_revision "
+            f"{difference.get('observed_state_revision')!r}, but the caller's own "
+            f"committed_state is at revision {committed_state['state_revision']!r} -- "
+            "refusing a reordered, duplicate, or omitted corpus position before any commit"
+        )
+    actual_cycle_count = committed_cycle_count(committed_state)
+    if actual_cycle_count != k:
+        raise CorpusPositionError(
+            f"cycle {k}: this proof's own corpus requires cycle k to run exactly when "
+            f"{k} of this Difference-and-Reflow sequence's own cycles have already committed, "
+            f"but {actual_cycle_count} have -- refusing a reordered, duplicate, omitted, or "
+            "prefix-substituted corpus position before any commit"
+        )
+
+
 def run_one_cycle(
     store: FileStateStore,
     *,
@@ -724,6 +790,7 @@ def run_one_cycle(
     a real process-boundary restart -- see :mod:`tests.long_running_proof.session_loss`)."""
 
     assembly = assemble_one_cycle(store, k=k, committed_state=committed_state)
+    verify_expected_corpus_position(k, committed_state, assembly["difference"])
     result = reflow(store, **assembly["reflow_kwargs"])
     return {
         "assembly": assembly,
