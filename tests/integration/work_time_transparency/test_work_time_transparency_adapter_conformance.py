@@ -617,6 +617,10 @@ def test_open_model_work_unit_joined_refuses_a_fake_duck_typed_reporter(tmp_path
             agent,
             **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:40:00Z"),
             joined_coordination=fake,  # type: ignore[arg-type]
+            expected_outer_work_unit_ref={
+                "kind": "multi_agent_execution_plan",
+                "id": "IRRELEVANT-EXPECTED-REF",
+            },
         )
 
 
@@ -646,6 +650,10 @@ def test_open_model_work_unit_joined_refuses_a_cross_project_reporter(tmp_path: 
             agent,
             **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:41:00Z"),
             joined_coordination=foreign_reporter,
+            expected_outer_work_unit_ref={
+                "kind": "multi_agent_execution_plan",
+                "id": "IRRELEVANT-EXPECTED-REF",
+            },
         )
 
 
@@ -677,6 +685,10 @@ def test_open_model_work_unit_joined_refuses_an_unrelated_genuine_reporter(tmp_p
             agent,
             **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:42:00Z"),
             joined_coordination=unrelated_reporter,
+            expected_outer_work_unit_ref={
+                "kind": "multi_agent_execution_plan",
+                "id": "IRRELEVANT-EXPECTED-REF",
+            },
         )
 
 
@@ -693,12 +705,16 @@ def test_open_model_work_unit_joined_refuses_a_terminal_coordination(tmp_path: P
         store, project_id=project_id, project_binding_id=project_binding_id
     )
 
+    terminal_work_unit_ref = {
+        "kind": "multi_agent_execution_plan",
+        "id": "WORK-UNIT-ALREADY-TERMINAL",
+    }
     terminal_reporter = _capture_a_genuine_completed_reporter(
         store,
         project_id=project_id,
         project_binding_id=project_binding_id,
         adapter_kind="MULTI_AGENT",
-        work_unit_ref={"kind": "multi_agent_execution_plan", "id": "WORK-UNIT-ALREADY-TERMINAL"},
+        work_unit_ref=terminal_work_unit_ref,
     )
 
     with pytest.raises(WorkTimeTransparencyLineageError):
@@ -707,6 +723,9 @@ def test_open_model_work_unit_joined_refuses_a_terminal_coordination(tmp_path: P
             agent,
             **model_runtime_open_kwargs(world, opened_at="2026-09-14T10:43:00Z"),
             joined_coordination=terminal_reporter,
+            # matches the reporter's own real work_unit_ref exactly -- this test proves the
+            # *terminal* check refuses it, not the Round 5 work_unit_ref-mismatch check.
+            expected_outer_work_unit_ref=terminal_work_unit_ref,
         )
 
 
@@ -726,12 +745,16 @@ def test_open_model_work_unit_joined_refuses_a_replayed_reporter_from_an_earlier
         store, project_id=project_id, project_binding_id=project_binding_id
     )
 
+    replayed_work_unit_ref = {
+        "kind": "multi_agent_execution_plan",
+        "id": "WORK-UNIT-EARLIER-INVOCATION",
+    }
     replayed_reporter = _capture_a_genuine_completed_reporter(
         store,
         project_id=project_id,
         project_binding_id=project_binding_id,
         adapter_kind="MULTI_AGENT",
-        work_unit_ref={"kind": "multi_agent_execution_plan", "id": "WORK-UNIT-EARLIER-INVOCATION"},
+        work_unit_ref=replayed_work_unit_ref,
     )
 
     with pytest.raises(WorkTimeTransparencyLineageError):
@@ -740,7 +763,120 @@ def test_open_model_work_unit_joined_refuses_a_replayed_reporter_from_an_earlier
             agent,
             **model_runtime_open_kwargs(world, opened_at="2026-09-14T11:00:00Z"),
             joined_coordination=replayed_reporter,
+            # matches the reporter's own real work_unit_ref exactly -- this test proves the
+            # *terminal* (replay) check refuses it, not the Round 5 work_unit_ref-mismatch check.
+            expected_outer_work_unit_ref=replayed_work_unit_ref,
         )
+
+
+def test_open_model_work_unit_joined_refuses_a_live_reporter_swapped_between_two_simultaneously_open_multi_agent_coordinations(
+    tmp_path: Path,
+) -> None:
+    """Structural Review Round 5 (P84-R5-F1, ``ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_
+    BINDING``): Round 4's own checks alone (genuine reporter, same Store, same project/binding,
+    the expected ``MULTI_AGENT`` adapter_kind, not yet terminal) are satisfied equally by *two
+    distinct, genuinely and simultaneously open* MULTI_AGENT coordinations A and B in the
+    identical Store/project/binding -- so this test builds exactly that shape (nesting A's own
+    ``with_work_time_coordination`` call around B's, so neither has committed a terminal notice
+    when the swap is attempted) and proves that handing invocation B's own reporter to a call
+    that declares invocation A's own ``expected_outer_work_unit_ref`` (and vice versa) is refused
+    -- solely because the resolved ``work_unit_ref`` is not the exact expected outer identity --
+    before any nested model work begins and before any ``model_work_unit``/
+    ``model_execution_decision`` record is ever committed."""
+
+    world = model_runtime_authorized_world(tmp_path)
+    store = world["store"]
+    project_id = world["project_id"]
+    project_binding_id = world["project_binding_id"]
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
+
+    work_unit_ref_a = {"kind": "multi_agent_execution_plan", "id": "WORK-UNIT-LIVE-SWAP-A"}
+    work_unit_ref_b = {"kind": "multi_agent_execution_plan", "id": "WORK-UNIT-LIVE-SWAP-B"}
+    captured: dict[str, ProgressReporter] = {}
+    revision_at_swap: dict[str, int] = {}
+
+    def _perform_b(reporter_b: ProgressReporter) -> None:
+        captured["b"] = reporter_b
+        reporter_a = captured["a"]
+
+        # Both A and B are genuinely open right now -- neither has committed a terminal notice --
+        # each individually a genuine, live, same-Store, same-project/binding, correctly-
+        # MULTI_AGENT-adapter-kinded coordination, exactly what Round 4's own checks alone admit.
+        revision_at_swap["value"] = store.load_current(project_id)["state_revision"]
+
+        with pytest.raises(WorkTimeTransparencyLineageError):
+            _open_model_work_unit_joined(
+                store,
+                agent,
+                **model_runtime_open_kwargs(world, opened_at="2026-09-14T12:00:00Z"),
+                joined_coordination=reporter_a,
+                expected_outer_work_unit_ref=work_unit_ref_b,
+            )
+        with pytest.raises(WorkTimeTransparencyLineageError):
+            _open_model_work_unit_joined(
+                store,
+                agent,
+                **model_runtime_open_kwargs(world, opened_at="2026-09-14T12:01:00Z"),
+                joined_coordination=reporter_b,
+                expected_outer_work_unit_ref=work_unit_ref_a,
+            )
+
+        # Neither refused attempt ever started nested model work or committed a Store record --
+        # the Canonical State revision is exactly what it was the instant before the swap.
+        assert store.load_current(project_id)["state_revision"] == revision_at_swap["value"]
+
+    def _perform_a(reporter_a: ProgressReporter) -> None:
+        captured["a"] = reporter_a
+        with_work_time_coordination(
+            store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            adapter_kind="MULTI_AGENT",
+            work_unit_ref=work_unit_ref_b,
+            estimated_duration_lower_minutes=0,
+            estimated_duration_upper_minutes=1,
+            estimate_confidence="HIGH",
+            major_steps=["open the second simultaneously-live MULTI_AGENT coordination"],
+            next_progress_update_due_minutes=10,
+            variability_factors="none",
+            perform=_perform_b,
+            clock=_deterministic_clock(start="2026-09-14T11:55:00Z"),
+        )
+
+    with_work_time_coordination(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        adapter_kind="MULTI_AGENT",
+        work_unit_ref=work_unit_ref_a,
+        estimated_duration_lower_minutes=0,
+        estimated_duration_upper_minutes=1,
+        estimate_confidence="HIGH",
+        major_steps=["open the first simultaneously-live MULTI_AGENT coordination"],
+        next_progress_update_due_minutes=10,
+        variability_factors="none",
+        perform=_perform_a,
+        clock=_deterministic_clock(start="2026-09-14T11:50:00Z"),
+    )
+
+    # both individually genuine, live-at-the-time-of-swap coordinations still resolve as their
+    # own, distinct, independently correct roots -- the refused cross-joins never corrupted them.
+    open_id_a = work_time_coordination_open_id(project_id, work_unit_ref_a)
+    open_id_b = work_time_coordination_open_id(project_id, work_unit_ref_b)
+    assert (
+        store.resolve_coordination_record(project_id, "work_time_coordination_open", open_id_a)[
+            "work_unit_ref"
+        ]
+        == work_unit_ref_a
+    )
+    assert (
+        store.resolve_coordination_record(project_id, "work_time_coordination_open", open_id_b)[
+            "work_unit_ref"
+        ]
+        == work_unit_ref_b
+    )
 
 
 def test_open_model_work_unit_public_signature_accepts_no_join_capability(tmp_path: Path) -> None:

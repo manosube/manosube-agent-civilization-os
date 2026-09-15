@@ -4814,3 +4814,79 @@ ISSUE_22_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 63. PR #84 Structural Review Round 5 -- exact outer work-unit join binding
+(P84-R5-F1, ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING) bounded addendum
+
+本節も§53〜§62と同じ理由によるbounded addendumであり、構造参謀による審査結果でもSHUKOUに
+よる採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document
+paired updateを、`src/manosube_agent_civilization/work_time_transparency/adapters.py`・
+`src/manosube_agent_civilization/model_runtime/route.py`・
+`src/manosube_agent_civilization/multi_agent/route.py`配下の本Round是正に対応付けるための、
+最小限の事実記録である。
+
+PR #84上で構造参謀レビュー
+`https://github.com/manosube/manosube-agent-civilization-os/pull/84#issuecomment-5676131540`
+(1件のfinding、P84-R5-F1)、SHUKOU正式採択・実装handoff
+`...#issuecomment-5676152208`
+(`ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING`、`GOVERNING_ISSUE=#22`)が投稿された。
+本記録作成者はこれら2件を、著者login/id/association(`manosube`/OWNER)・本文一致について、
+実装開始直前にGitHub API経由で独立readbackし一致を確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-15
+GOVERNING_PR=#84
+DETERMINATION_ID=P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING (implicit in the Structural Advisor review)
+ADOPTION_ID=ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING
+STRUCTURAL_REVIEW_COMMENT_ID=5676131540
+ADOPTION_COMMENT_ID=5676152208
+AUTHORIZED_TARGET_HEAD=6c0cad2c2d6cbaed33048554956d8e8c84b2dcc0
+AUTHORIZED_BASE_MAIN_SHA=279572fb51775bd8a13665376aa751a63c1d0c35
+BRANCH=agent/issue-22-human-wait-time-transparency
+EXISTING_BRANCH_ONLY=true
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本Roundが是正した1件は、Round 4自身が導入した設計に残っていた構造的欠陥である。
+
+P84-R5-F1(exact outer work-unit binding): Round 4の`verify_joined_coordination`は、
+genuine `ProgressReporter`・同一Store・同一project/binding・期待される`adapter_kind`
+(`"MULTI_AGENT"`)・未terminalであることまでしか検証しておらず、同一Store・同一project/
+bindingで同時に生存している「別の」`MULTI_AGENT` coordinationのreporterも全ての検査を
+通過してしまう欠陥があった。本Roundでは`verify_joined_coordination`に必須引数
+`expected_work_unit_ref`を追加し、resolved open recordの`work_unit_ref`がこの期待値と
+完全一致することを新たに要求する。`model_runtime.route._open_model_work_unit_joined`は
+対応する`expected_outer_work_unit_ref`引数を追加してこの呼び出しへ橋渡しする。公開
+`open_model_work_unit`のシグネチャはRound 4のまま不変(join/suppression引数を一切
+受け付けない)。`multi_agent.route.open_dynamic_execution_plan`は、自身のWork
+Coordinationを開く直前(`with_work_time_coordination`自身の`work_unit_ref`を計算する
+のと同じ地点)で一度だけ`{"kind": "multi_agent_execution_plan", "id": _work_unit_id}`
+という自身の正確な outer identity を導出し、その単一の値をnested
+`_open_model_work_unit_joined`呼び出しへそのまま運ぶ -- coordination内部やnested呼び出し
+自身によって再導出されることは一切ない。
+
+schema変更は不要であった(3 WTT schemaファイルは既存のまま、`SCHEMA_COUNT=89`は不変)。
+
+targeted test suite(`tests/integration/work_time_transparency/
+test_work_time_transparency_adapter_conformance.py`に、2つの独立した
+`with_work_time_coordination`呼び出しをnestし、outer coordination A・Bを共に
+生存させたまま互いのreporterを入れ替えて`_open_model_work_unit_joined`へ渡す決定的
+negative testを1件追加、既存Round 4の5件のnegative controlは呼び出し側が自身の
+`expected_outer_work_unit_ref`を渡すよう更新した上でそのまま保持)は本記録作成者自身が
+独立に実行し検証済みである(targeted suite 643 tests, 0 failures)。`ruff check`・
+`mypy --namespace-packages`はいずれも本Round変更ファイル全体に対してclean(既存baseline
+findingとの差分をコミット単位で確認済み)。`python scripts/validate_schemas.py`は
+`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`)。full repository test suiteの独立再実行結果
+は21838 passed, 10 failed(既存baselineと完全一致するtest名), 11 skipped -- net-new
+failure 0件。本Roundの新head到達後にPR #84への最終return-evidenceコメント本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

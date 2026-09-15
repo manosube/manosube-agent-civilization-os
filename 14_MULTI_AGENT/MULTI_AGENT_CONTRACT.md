@@ -1397,3 +1397,20 @@ parameter, fully re-verifies (`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_
 before ever joining it -- confirming it is a genuine `ProgressReporter` bound to the identical
 Store/project/binding, naming a currently open, non-terminal `MULTI_AGENT` coordination, which
 this route's own real call always genuinely is.
+
+## 24. Structural Review Round 5 correction (P84-R5-F1, `ADOPT_P84_R5_F1_EXACT_OUTER_WORK_
+UNIT_JOIN_BINDING`)
+
+§23's own checks alone did not bind the joined reporter to *this specific* invocation's own outer
+work unit -- a live reporter genuinely naming some *other*, simultaneously open `MULTI_AGENT`
+coordination in the identical Store/project/binding passed every one of them. `open_dynamic_
+execution_plan` now derives its own exact outer identity, `{"kind": "multi_agent_execution_plan",
+"id": _work_unit_id}`, exactly once -- at the same point `_work_unit_id` is already computed for
+`with_work_time_coordination`'s own `work_unit_ref`, before this call's own coordination ever
+opens -- and carries that single value, unchanged, through `_open_dynamic_execution_plan_body`
+into the nested `_open_model_work_unit_joined(..., expected_outer_work_unit_ref=...)` call. This
+module's own call site otherwise still passes its own bound `ProgressReporter` as
+`joined_coordination` exactly as §23 established; the new parameter only adds the one additional
+fact `verify_joined_coordination` now checks against the resolved coordination
+(`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §17): that its own `work_unit_ref`
+equals this exact expected identity, not merely some correctly-shaped one.

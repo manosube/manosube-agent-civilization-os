@@ -965,3 +965,19 @@ only `multi_agent.route`'s own internal composition imports and calls it. The pa
 presumed to have called it: see `16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md`
 §16 for the full `verify_joined_coordination` boundary this now requires (genuine `ProgressReporter`
 instance, same Store/project/binding, correct `adapter_kind`, not yet terminal).
+
+## 21. Structural Review Round 5 correction (P84-R5-F1, `ADOPT_P84_R5_F1_EXACT_OUTER_WORK_
+UNIT_JOIN_BINDING`)
+
+§20's own checks alone admitted a live reporter genuinely naming some *other*, simultaneously
+open `MULTI_AGENT` coordination in the identical Store/project/binding -- everything Round 4
+checked was individually true of it, since nothing there compared the resolved coordination's own
+`work_unit_ref` against the specific outer work unit the joining call actually opened for.
+`_open_model_work_unit_joined` gains a required `expected_outer_work_unit_ref` parameter, threaded
+into `verify_joined_coordination` as its own new `expected_work_unit_ref` argument (see
+`16_WORK_TIME_TRANSPARENCY/WORK_TIME_TRANSPARENCY_CONTRACT.md` §17 for the full boundary). The
+public `open_model_work_unit` signature remains exactly as §20 left it -- no join or suppression
+parameter of any kind. `expected_outer_work_unit_ref` is never derived inside this module: it is
+`multi_agent.route.open_dynamic_execution_plan`'s own already-computed outer identity, carried
+unchanged through the nested call (see `14_MULTI_AGENT/MULTI_AGENT_CONTRACT.md` §24 for the
+caller-side derivation).

@@ -1120,8 +1120,9 @@ def open_dynamic_execution_plan(
     :func:`~manosube_agent_civilization.model_runtime.route._open_model_work_unit_body` -- the
     identical genesis body :func:`~manosube_agent_civilization.model_runtime.open_model_work_unit`
     itself composes, joined here rather than independently reopened; see Structural Review Round
-    4's own P84-R4-F1 note on this file's own nested call below -- the existing Authority
-    evaluator runs exactly once here, never reimplemented), and commits the plan. Genesis-once
+    4's own P84-R4-F1 and Round 5's own P84-R5-F1 notes on this file's own nested call below --
+    the existing Authority evaluator runs exactly once here, never reimplemented), and commits
+    the plan. Genesis-once
     for the resulting ``plan_ref``: once committed, resolving that reference again always
     resolves the identical, immutable record -- this function itself is not required to land on
     the same plan across two *separate* calls, since the Canonical State two separate calls
@@ -1194,6 +1195,20 @@ def open_dynamic_execution_plan(
         require_exact_state=True,
     )
 
+    _attempt_marker = work_time_coordination_clock()
+    _work_unit_id = (
+        "MAPLAN-"
+        + hashlib.sha256(f"{project_id}|{checked_difference_ref['id']}|{_attempt_marker}".encode())
+        .hexdigest()
+        .upper()
+    )
+    # Structural Review Round 5 (P84-R5-F1, ``ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_
+    # BINDING``): this call's own exact outer work-unit identity, derived exactly once, here,
+    # before this call's own Work Coordination ever opens -- carried unchanged through the
+    # internal join path below, never re-derived inside the coordination or by the nested call
+    # itself, so there is exactly one answer to "which outer work unit did this invocation open".
+    _expected_outer_work_unit_ref = {"kind": "multi_agent_execution_plan", "id": _work_unit_id}
+
     def _perform(reporter: ProgressReporter) -> dict[str, Any]:
         return _open_dynamic_execution_plan_body(
             store,
@@ -1210,22 +1225,15 @@ def open_dynamic_execution_plan(
             checked_grant_refs=checked_grant_refs,
             fresh=fresh,
             reporter=reporter,
+            expected_outer_work_unit_ref=_expected_outer_work_unit_ref,
         )
-
-    _attempt_marker = work_time_coordination_clock()
-    _work_unit_id = (
-        "MAPLAN-"
-        + hashlib.sha256(f"{project_id}|{checked_difference_ref['id']}|{_attempt_marker}".encode())
-        .hexdigest()
-        .upper()
-    )
 
     _open_record, _terminal_record, result = with_work_time_coordination(
         store,
         project_id=project_id,
         project_binding_id=project_binding_id,
         adapter_kind="MULTI_AGENT",
-        work_unit_ref={"kind": "multi_agent_execution_plan", "id": _work_unit_id},
+        work_unit_ref=_expected_outer_work_unit_ref,
         estimated_duration_lower_minutes=estimated_duration_lower_minutes,
         estimated_duration_upper_minutes=estimated_duration_upper_minutes,
         estimate_confidence=estimate_confidence,
@@ -1254,12 +1262,16 @@ def _open_dynamic_execution_plan_body(
     checked_grant_refs: list[Mapping[str, Any]],
     fresh: Mapping[str, Any],
     reporter: ProgressReporter,
+    expected_outer_work_unit_ref: Mapping[str, Any],
 ) -> dict[str, Any]:
     """The full pre-existing ``open_dynamic_execution_plan`` route body, now called exclusively
     from inside the public :func:`open_dynamic_execution_plan`'s own
     ``with_work_time_coordination`` composition (Structural Review Round 2, P84-R2-F1/F4).
     *fresh* is this call's own Phase 12 execution contract, already re-verified for exactness
-    *before* the Work Coordination above ever opened (see that function's own comment)."""
+    *before* the Work Coordination above ever opened (see that function's own comment).
+    *expected_outer_work_unit_ref* is that same call's own exact outer work-unit identity,
+    derived once before the coordination opened and carried unchanged here (Structural Review
+    Round 5, P84-R5-F1)."""
 
     difference = _resolve_difference(store, project_id, checked_difference_ref)
     slots = select_agent_slots(difference)
@@ -1282,11 +1294,15 @@ def _open_dynamic_execution_plan_body(
         remaining_duration_unknown=True,
     )
     # Structural Review Round 3 (P84-R3-F4, ``ADOPT_P84_R3_COORDINATION_LEDGER_CLOSURE``), hardened
-    # Structural Review Round 4 (P84-R4-F1, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE``):
-    # join this call's own already-open MULTI_AGENT coordination through the internal, Store-
-    # verified _open_model_work_unit_joined rather than the public open_model_work_unit -- which
-    # no longer accepts any join capability at all -- opening a second, independent coordination
-    # root of its own. There is only ever the one root this nested invocation actually has.
+    # Structural Review Round 4 (P84-R4-F1, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE``)
+    # and Round 5 (P84-R5-F1, ``ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING``): join this
+    # call's own already-open MULTI_AGENT coordination through the internal, Store-verified
+    # _open_model_work_unit_joined rather than the public open_model_work_unit -- which no longer
+    # accepts any join capability at all -- opening a second, independent coordination root of
+    # its own. There is only ever the one root this nested invocation actually has, and
+    # expected_outer_work_unit_ref (derived once, above, before this call's own coordination ever
+    # opened) is what proves *this* reporter genuinely names *that* exact root, not some other,
+    # simultaneously live MULTI_AGENT coordination in the same Store/project/binding.
     opened = _open_model_work_unit_joined(
         store,
         agent,
@@ -1298,6 +1314,7 @@ def _open_dynamic_execution_plan_body(
         model_execution_grant_refs=checked_grant_refs,
         opened_at=opened_at,
         joined_coordination=reporter,
+        expected_outer_work_unit_ref=expected_outer_work_unit_ref,
     )
     work_unit_ref = opened["model_work_unit_ref"]
     decision = opened["model_execution_decision"]

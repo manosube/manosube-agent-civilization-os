@@ -39,11 +39,22 @@ CLOSURE``).** :func:`verify_joined_coordination` is the Store-verified boundary 
 composition must pass through -- see that function's own docstring for the full defect this
 replaces (Round 3's own ``joined_coordination`` public parameter accepted any object without
 verifying it named a real, currently-open, correctly-adapter-kinded, non-terminal coordination
-bound to the same Store/project/binding)."""
+bound to the same Store/project/binding).
+
+**Structural Review Round 5 correction (P84-R5-F1, ``ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_
+BINDING``).** Round 4's own checks -- genuine reporter, same Store, same project/binding, the
+expected ``adapter_kind``, not yet terminal -- still admitted a *substitution* among two distinct,
+simultaneously live coordinations that all shared those same facts: a live reporter genuinely
+naming outer coordination A could still be joined into a nested call that was actually opened
+*for* outer coordination B, wherever A and B were both open ``MULTI_AGENT`` coordinations in the
+same Store/project/binding. :func:`verify_joined_coordination` now additionally requires an
+explicit *expected_work_unit_ref* argument and refuses unless the resolved open record's own
+``work_unit_ref`` equals it exactly -- so a reporter is never accepted as *the* expected outer
+coordination merely because it is *a* genuine, live, correctly-kinded one."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .clock import default_clock, is_monotonic
@@ -169,6 +180,7 @@ def verify_joined_coordination(
     project_id: str,
     project_binding_id: str,
     expected_adapter_kind: str,
+    expected_work_unit_ref: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Verify that *reporter* genuinely names a currently open, non-terminal Work Coordination
     of *expected_adapter_kind*, bound to this exact *store*/*project_id*/*project_binding_id* --
@@ -205,6 +217,19 @@ def verify_joined_coordination(
       unrelated genuine coordination opened under a different adapter (a standalone
       ``MODEL_RUNTIME`` coordination, say) from ever being joined as if it were the expected
       outer coordination.
+    - that open record's own ``work_unit_ref`` must equal *expected_work_unit_ref* exactly
+      (Structural Review Round 5, P84-R5-F1, ``ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_
+      BINDING``) -- refusing a live reporter *substituted* from a different, simultaneously open
+      coordination that happens to share this exact Store/project/binding/adapter_kind. Round 4's
+      own checks alone admit this: two distinct outer ``open_dynamic_execution_plan`` invocations
+      A and B, both genuinely live at once, both ``MULTI_AGENT``, both in the identical
+      project/binding, each produce a reporter that passes every Round 4 check when handed to the
+      *other* invocation's own nested join -- since nothing there ever asked "is this the
+      specific outer work unit *this* invocation opened". *expected_work_unit_ref* is the
+      caller's own answer to exactly that question, derived once before its own coordination
+      opens and carried unchanged through its own internal join path -- never re-derived here,
+      since this function's job is to verify the caller's claim against the Store, not to trust a
+      second copy of it.
     - that coordination must not already have a terminal notice
       (:func:`~manosube_agent_civilization.work_time_transparency.verify.
       resolve_terminal_if_exists`) -- refusing a join onto an already-closed coordination,
@@ -236,6 +261,14 @@ def verify_joined_coordination(
             "joined coordination's own open was recorded under adapter_kind "
             f"{open_record.get('adapter_kind')!r}, not the expected "
             f"{expected_adapter_kind!r} -- unrelated coordination join refused"
+        )
+    if dict(open_record.get("work_unit_ref") or {}) != dict(expected_work_unit_ref):
+        raise WorkTimeTransparencyLineageError(
+            "joined coordination's own open was recorded under work_unit_ref "
+            f"{open_record.get('work_unit_ref')!r}, not this invocation's own exact expected "
+            f"outer work unit {dict(expected_work_unit_ref)!r} -- refusing a live reporter "
+            "substituted from a different, simultaneously open coordination of the same "
+            "Store/project/binding/adapter_kind"
         )
     open_id = open_record["work_time_coordination_open_id"]
     if resolve_terminal_if_exists(store, project_id, open_id) is not None:

@@ -1241,11 +1241,12 @@ def _open_model_work_unit_joined(
     model_execution_grant_refs: list[Mapping[str, Any]],
     opened_at: str,
     joined_coordination: ProgressReporter,
+    expected_outer_work_unit_ref: Mapping[str, Any],
 ) -> dict[str, Any]:
     """The internal-only nested-join counterpart to :func:`open_model_work_unit` (Structural
-    Review Round 3's own P84-R3-F4 design, hardened by Round 4's own P84-R4-F1): opens **no**
-    Work Coordination root of its own at all, and instead posts through *joined_coordination* --
-    the caller's own already-open outer coordination's bound
+    Review Round 3's own P84-R3-F4 design, hardened by Round 4's own P84-R4-F1 and Round 5's own
+    P84-R5-F1): opens **no** Work Coordination root of its own at all, and instead posts through
+    *joined_coordination* -- the caller's own already-open outer coordination's bound
     :class:`~manosube_agent_civilization.work_time_transparency.adapters.ProgressReporter`.
 
     This is never reachable from :func:`open_model_work_unit`'s own public signature, which
@@ -1258,9 +1259,17 @@ def _open_model_work_unit_joined(
     :class:`~manosube_agent_civilization.work_time_transparency.adapters.ProgressReporter`
     (never a duck-typed substitute), bound to this exact *store*/*project_id*/
     *project_binding_id*, naming a currently open, non-terminal, ``MULTI_AGENT``-opened
-    coordination -- refusing a cross-project reporter, an unrelated genuine reporter (opened
-    under a different adapter_kind or a different coordination entirely), and a reporter whose
-    coordination has already closed, before this call ever starts model work."""
+    coordination whose own ``work_unit_ref`` equals *expected_outer_work_unit_ref* exactly --
+    refusing a cross-project reporter, an unrelated genuine reporter (opened under a different
+    adapter_kind or a different coordination entirely), a reporter whose coordination has already
+    closed, and -- Structural Review Round 5, P84-R5-F1, ``ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_
+    JOIN_BINDING`` -- a live reporter genuinely naming some *other*, simultaneously open
+    ``MULTI_AGENT`` coordination in this same Store/project/binding, substituted for the one this
+    call actually opened for. *expected_outer_work_unit_ref* is never re-derived here: it is
+    the caller's own already-derived exact identity (:mod:`~manosube_agent_civilization.
+    multi_agent.route`'s own ``open_dynamic_execution_plan`` derives it exactly once, before its
+    own outer coordination ever opens, and carries it unchanged through to this call), before
+    this call ever starts model work."""
 
     checked_difference_ref, checked_boundary_ref, checked_grant_refs = (
         _validate_open_model_work_unit_inputs(
@@ -1279,6 +1288,7 @@ def _open_model_work_unit_joined(
         project_id=project_id,
         project_binding_id=project_binding_id,
         expected_adapter_kind="MULTI_AGENT",
+        expected_work_unit_ref=expected_outer_work_unit_ref,
     )
     return _open_model_work_unit_body(
         store,

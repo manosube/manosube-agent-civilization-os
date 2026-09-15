@@ -796,3 +796,57 @@ MERGE_ALLOWED=false
 ISSUE_22_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 ```
+
+## 17. Structural Review Round 5 -- exact outer work-unit join binding (`ADOPT_P84_R5_F1_
+EXACT_OUTER_WORK_UNIT_JOIN_BINDING`)
+
+Structural Advisor identified that Round 4's own `verify_joined_coordination` checks -- genuine
+`ProgressReporter`, same Store, same project/binding, the expected `adapter_kind`, not yet
+terminal -- are all satisfied equally by *any* live, correctly-adapter-kinded coordination in the
+identical Store/project/binding, not only the one the joining call actually opened for. Two
+distinct, genuinely and simultaneously open `MULTI_AGENT` coordinations (two separate
+`open_dynamic_execution_plan` invocations) each produce a reporter that would pass every Round 4
+check when handed to the *other* invocation's own nested join, since nothing there ever asked "is
+this the specific outer work unit *this* invocation opened". SHUKOU adopted the correction
+(`ADOPT_P84_R5_F1_EXACT_OUTER_WORK_UNIT_JOIN_BINDING`).
+
+**P84-R5-F1 (exact outer work-unit binding).** `verify_joined_coordination` gains a required
+`expected_work_unit_ref` argument and now additionally requires the resolved open record's own
+`work_unit_ref` to equal it exactly -- refusing a live reporter substituted from a different,
+simultaneously open coordination of the same Store/project/binding/adapter_kind, not only an
+unrelated or terminal one. `model_runtime.route._open_model_work_unit_joined` gains the
+corresponding `expected_outer_work_unit_ref` parameter, threaded straight into that call. The
+public `open_model_work_unit` signature is untouched -- it still accepts no join or suppression
+parameter of any kind. `multi_agent.route.open_dynamic_execution_plan` derives its own exact outer
+identity (`{"kind": "multi_agent_execution_plan", "id": _work_unit_id}`) exactly once, before its
+own Work Coordination ever opens (the identical moment `work_unit_ref` is already computed for
+`with_work_time_coordination` itself), and carries that single value unchanged through to the
+nested `_open_model_work_unit_joined` call -- never re-derived inside the coordination or by the
+nested call, so there is exactly one authoritative answer to "which outer work unit did this
+invocation open" for `verify_joined_coordination` to check the resolved fact against.
+
+No schema change was required or made; schema count remains 89.
+
+**Required decisive test (Structural Review Round 5).** `tests/integration/work_time_
+transparency/test_work_time_transparency_adapter_conformance.py` gains `test_open_model_work_
+unit_joined_refuses_a_live_reporter_swapped_between_two_simultaneously_open_multi_agent_
+coordinations`: nests one `with_work_time_coordination` call for outer coordination A around a
+second, independent one for outer coordination B (so neither has committed a terminal notice when
+the swap is attempted -- both are genuinely open at once, and each is individually a genuine,
+live, same-Store, same-project/binding, correctly-`MULTI_AGENT`-adapter-kinded coordination,
+exactly the shape Round 4's own checks alone admit), then proves that handing B's own reporter to
+`_open_model_work_unit_joined` declaring A's own `expected_outer_work_unit_ref` is refused with
+`WorkTimeTransparencyLineageError` (and the reverse swap, A's own reporter into a call declaring
+B's own identity, is refused symmetrically) -- both before any nested model work begins and before
+any `model_work_unit`/`model_execution_decision` record is ever committed (the Canonical State
+revision is asserted unchanged across both refused attempts). The existing five Round 4 negative
+controls are retained and updated to pass the caller's own already-known expected identity, so
+each continues to isolate the specific check it was written to prove (fake reporter, cross-project
+reporter, unrelated-adapter-kind reporter, terminal coordination, replayed reporter) rather than
+incidentally tripping the new work-unit-ref check instead.
+
+```text
+MERGE_ALLOWED=false
+ISSUE_22_CLOSE_ALLOWED=false
+PHASE_20_IMPLEMENTATION_ALLOWED=false
+```
