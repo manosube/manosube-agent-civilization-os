@@ -75,7 +75,9 @@ def run_agent_swap_sequence(world: dict[str, Any]) -> dict[str, Any]:
     project_id = world["project_id"]
     project_binding_id = world["project_binding_id"]
 
-    agent = start_temporary_agent(store, project_id=project_id, project_binding_id=project_binding_id)
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
     opened = open_model_work_unit(store, agent, **open_kwargs(world))
     work_unit_ref = {"kind": WORK_UNIT_KIND, "id": opened["model_work_unit"]["model_work_unit_id"]}
 

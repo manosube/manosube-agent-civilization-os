@@ -60,7 +60,11 @@ def session_loss_boundary_event(
 
 
 def agent_swap_event(
-    *, swap_index: int, predecessor_identity: dict[str, Any], successor_identity: dict[str, Any], succeeded: bool
+    *,
+    swap_index: int,
+    predecessor_identity: dict[str, Any],
+    successor_identity: dict[str, Any],
+    succeeded: bool,
 ) -> dict[str, Any]:
     return {
         "kind": "agent_swap",

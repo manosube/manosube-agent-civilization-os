@@ -51,9 +51,11 @@ def build_runtime_reachability_world(tmp_path: Path) -> dict[str, Any]:
 
     store, ctx = bound(tmp_path)
     target_identity = commit_target_identity(
-        store, ctx["project_id"], ctx["project_binding_id"], ctx["genesis_state"]["state_metadata"].get(
-            "human_authority_ref"
-        ) or {"kind": "human_authority", "id": "AUTH-BIND-0001"},
+        store,
+        ctx["project_id"],
+        ctx["project_binding_id"],
+        ctx["genesis_state"]["state_metadata"].get("human_authority_ref")
+        or {"kind": "human_authority", "id": "AUTH-BIND-0001"},
     )
     boundary = boundary_for(issued_at="2026-09-15T13:00:00Z", expires_at="2026-09-15T18:00:00Z")
     return {
@@ -87,7 +89,11 @@ def observe_reachability(
     )
     transport_outcome = outcome["receipt"].observations["observation_outcome"]
     classification = _OUTCOME_TO_CLASSIFICATION.get(transport_outcome, UNKNOWN)
-    return {"outcome": outcome, "transport_outcome": transport_outcome, "classification": classification}
+    return {
+        "outcome": outcome,
+        "transport_outcome": transport_outcome,
+        "classification": classification,
+    }
 
 
 def run_reachability_measurements(world: dict[str, Any]) -> list[dict[str, Any]]:
@@ -98,9 +104,7 @@ def run_reachability_measurements(world: dict[str, Any]) -> list[dict[str, Any]]
     results = []
 
     reachable_adapter = FakeRuntimeAdapter()
-    reachable_adapter.seed_target(
-        target_identity=world["target_identity"], fields={"status": "ok"}
-    )
+    reachable_adapter.seed_target(target_identity=world["target_identity"], fields={"status": "ok"})
     results.append(
         observe_reachability(world, adapter=reachable_adapter, observed_at="2026-09-15T14:00:00Z")
     )

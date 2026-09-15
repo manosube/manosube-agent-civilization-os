@@ -19,6 +19,7 @@ code follows the identical convention.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 import hashlib
 from pathlib import Path
@@ -82,7 +83,7 @@ def genesis_semantic_state() -> dict[str, Any]:
     pattern Phase 8's own ``genesis_semantic_state`` uses). Only the ``code`` domain is
     overridden; its ``claims`` grows by exactly one key per committed cycle."""
 
-    state = initial_state()["semantic_state"]
+    state: dict[str, Any] = initial_state()["semantic_state"]
     state["code"] = {
         "status": "UNKNOWN",
         "claims": {},
@@ -117,7 +118,11 @@ def genesis_project_state() -> dict[str, Any]:
 
 def initialize_genesis(store: FileStateStore) -> dict[str, Any]:
     genesis = genesis_project_state()
-    store.initialize(lrp.PROJECT_ID, genesis, records=genesis_source_snapshot_records(genesis))
+    genesis_records: list[tuple[str, str, Mapping[str, Any]]] = [
+        (kind, record_id, body)
+        for kind, record_id, body in genesis_source_snapshot_records(genesis)
+    ]
+    store.initialize(lrp.PROJECT_ID, genesis, records=genesis_records)
     current: dict[str, Any] = store.load_current(lrp.PROJECT_ID)
     return current
 
@@ -202,7 +207,9 @@ def observe_before(k: int, current_state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def derive_difference(k: int, current_state: dict[str, Any], before: dict[str, Any]) -> dict[str, Any]:
+def derive_difference(
+    k: int, current_state: dict[str, Any], before: dict[str, Any]
+) -> dict[str, Any]:
     request = lrp.derivation_request(
         k,
         observation_bundle=before["bundle"],
@@ -295,7 +302,9 @@ def observe_change_result(
     }
 
 
-def observe_verification(k: int, current_state: dict[str, Any], before: dict[str, Any]) -> dict[str, Any]:
+def observe_verification(
+    k: int, current_state: dict[str, Any], before: dict[str, Any]
+) -> dict[str, Any]:
     difference_request = lrp.derivation_request(
         k,
         observation_bundle=before["bundle"],

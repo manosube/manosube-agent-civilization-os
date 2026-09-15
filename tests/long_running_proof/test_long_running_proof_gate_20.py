@@ -28,7 +28,9 @@ REQUIRED_TIERS = (10, 30, 50, 100)
 
 
 @pytest.mark.parametrize("tier", REQUIRED_TIERS)
-def test_gate_20_required_tier_completes_with_zero_refused_cycles(tier: int, tmp_path: Path) -> None:
+def test_gate_20_required_tier_completes_with_zero_refused_cycles(
+    tier: int, tmp_path: Path
+) -> None:
     result = run_long_running_proof(tmp_path, tier=tier)
 
     assert result["tier"] == tier

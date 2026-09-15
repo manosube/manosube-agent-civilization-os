@@ -12,6 +12,7 @@ protection exists somewhere in the repository.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tests.long_running_proof import agent_swap, cycle, metrics, runtime_reachability
@@ -23,7 +24,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(scope="module")
-def shared_run(tmp_path_factory: pytest.TempPathFactory) -> dict:
+def shared_run(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     """One real, tier-6 :func:`run_long_running_proof` call, shared read-only across every test
     in this file that only needs a genuine raw-event dataset to slice/tamper/re-aggregate --
     never re-run per test. Each such call already includes real process-boundary session-loss
@@ -42,7 +43,9 @@ def shared_run(tmp_path_factory: pytest.TempPathFactory) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_single_short_run_does_not_by_itself_constitute_a_gate_20_proof(shared_run: dict) -> None:
+def test_a_single_short_run_does_not_by_itself_constitute_a_gate_20_proof(
+    shared_run: dict[str, Any],
+) -> None:
     """A tier-6 run is a real, successful proof of the *mechanism* -- but Gate 20 itself
     requires all four tiers (10/30/50/100), a fact this proof's own contract states and this
     test does not attempt to launder: it proves a short run succeeds and nothing more."""
@@ -57,7 +60,7 @@ def test_a_single_short_run_does_not_by_itself_constitute_a_gate_20_proof(shared
 
 
 def test_metrics_recomputed_from_a_prefix_of_raw_events_cannot_be_passed_off_as_the_full_run(
-    shared_run: dict,
+    shared_run: dict[str, Any],
 ) -> None:
     """Aggregating only a prefix of a run's own raw events yields a genuinely smaller
     ``committed_cycle_count`` than the real full run -- the aggregator has no way to inflate a
@@ -77,14 +80,14 @@ def test_metrics_recomputed_from_a_prefix_of_raw_events_cannot_be_passed_off_as_
 # --------------------------------------------------------------------------- #
 
 
-def test_removing_a_raw_event_changes_the_aggregated_metrics(shared_run: dict) -> None:
+def test_removing_a_raw_event_changes_the_aggregated_metrics(shared_run: dict[str, Any]) -> None:
     full = metrics.aggregate(shared_run["raw_events"])
     with_one_removed = metrics.aggregate(shared_run["raw_events"][:-1])
     assert with_one_removed != full
 
 
 def test_editing_a_committed_events_evidence_count_changes_evidence_completeness(
-    shared_run: dict,
+    shared_run: dict[str, Any],
 ) -> None:
     events = [dict(e) for e in shared_run["raw_events"]]
     for e in events:
@@ -92,9 +95,10 @@ def test_editing_a_committed_events_evidence_count_changes_evidence_completeness
             e["evidence_item_count"] = 0
             break
     tampered = metrics.aggregate(events)
-    assert tampered["evidence_completeness"]["numerator"] < metrics.aggregate(shared_run["raw_events"])[
-        "evidence_completeness"
-    ]["numerator"]
+    assert (
+        tampered["evidence_completeness"]["numerator"]
+        < metrics.aggregate(shared_run["raw_events"])["evidence_completeness"]["numerator"]
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -120,9 +124,10 @@ def test_a_cycle_index_run_out_of_order_produces_a_genuinely_different_differenc
     store_0 = cycle.build_store(tmp_path / "control")
     committed_state_0 = cycle.initialize_genesis(store_0)
     result_0 = cycle.run_one_cycle(store_0, k=0, committed_state=committed_state_0)
-    assert result_0["assembly"]["difference"]["difference_id"] != result_5["assembly"]["difference"][
-        "difference_id"
-    ]
+    assert (
+        result_0["assembly"]["difference"]["difference_id"]
+        != result_5["assembly"]["difference"]["difference_id"]
+    )
 
 
 def test_a_duplicate_cycle_committed_against_a_stale_predecessor_state_is_refused(
@@ -193,7 +198,9 @@ def test_recording_a_swap_between_two_executions_from_the_identical_adapter_iden
         world["project_id"],
         world["project_binding_id"],
     )
-    agent = start_temporary_agent(store, project_id=project_id, project_binding_id=project_binding_id)
+    agent = start_temporary_agent(
+        store, project_id=project_id, project_binding_id=project_binding_id
+    )
     opened = open_model_work_unit(store, agent, **open_kwargs(world))
 
     same_identity = {"adapter": "not_a_real_swap", "version": "0.1"}
@@ -251,7 +258,9 @@ def test_recording_a_swap_between_two_executions_from_the_identical_adapter_iden
 # --------------------------------------------------------------------------- #
 
 
-def test_unreachable_and_unknown_runtime_classifications_are_never_conflated(tmp_path: Path) -> None:
+def test_unreachable_and_unknown_runtime_classifications_are_never_conflated(
+    tmp_path: Path,
+) -> None:
     world = runtime_reachability.build_runtime_reachability_world(tmp_path)
     measurements = runtime_reachability.run_reachability_measurements(world)
     classifications = [m["classification"] for m in measurements]
@@ -267,7 +276,9 @@ def test_unreachable_and_unknown_runtime_classifications_are_never_conflated(tmp
 # --------------------------------------------------------------------------- #
 
 
-def test_a_refused_cycle_event_stays_in_the_dataset_and_is_counted(shared_run: dict) -> None:
+def test_a_refused_cycle_event_stays_in_the_dataset_and_is_counted(
+    shared_run: dict[str, Any],
+) -> None:
     raw_events = list(shared_run["raw_events"])
     raw_events.append(
         metrics.cycle_refused_event(
@@ -321,7 +332,11 @@ def test_harness_modules_call_only_public_producer_entrypoints_never_private_sto
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr.startswith("_") and not node.attr.startswith("__"):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr.startswith("_")
+                and not node.attr.startswith("__")
+            ):
                 # A private-attribute access anywhere in this proof's own harness code is a
                 # structural violation of "the harness may orchestrate and measure only."
                 raise AssertionError(

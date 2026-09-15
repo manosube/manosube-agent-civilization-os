@@ -51,7 +51,9 @@ def run_sequential_differences(
 
     if session_loss_boundaries is None:
         session_loss_boundaries = {
-            min(tier - 1, max(0, int(tier * f) - 1)) for f in SESSION_LOSS_BOUNDARY_FRACTIONS if tier * f >= 1
+            min(tier - 1, max(0, int(tier * f) - 1))
+            for f in SESSION_LOSS_BOUNDARY_FRACTIONS
+            if tier * f >= 1
         }
 
     raw_events: list[dict[str, Any]] = []
