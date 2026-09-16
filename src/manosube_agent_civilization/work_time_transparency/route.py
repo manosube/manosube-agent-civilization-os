@@ -233,9 +233,7 @@ def record_work_time_progress_update(
     boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
     project_binding_ref = {"kind": "project_binding", "id": boot_context.project_binding_id}
 
-    def _resolve_verify_and_build() -> tuple[
-        str, str, dict[str, Any], str, dict[str, str]
-    ]:
+    def _resolve_verify_and_build() -> tuple[str, str, dict[str, Any], str, dict[str, str]]:
         open_record = resolve_open(store, project_id, open_ref)
         verify_binding_congruity(
             open_record=open_record, project_binding_id=boot_context.project_binding_id
@@ -361,9 +359,7 @@ def record_work_time_terminal_notice(
     boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
     project_binding_ref = {"kind": "project_binding", "id": boot_context.project_binding_id}
 
-    def _resolve_verify_and_build() -> tuple[
-        str, str, dict[str, Any], str, dict[str, str]
-    ]:
+    def _resolve_verify_and_build() -> tuple[str, str, dict[str, Any], str, dict[str, str]]:
         open_record = resolve_open(store, project_id, open_ref)
         verify_binding_congruity(
             open_record=open_record, project_binding_id=boot_context.project_binding_id

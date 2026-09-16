@@ -144,7 +144,19 @@ def main() -> int:
     # ledger (never `commit_state_transition`), gathering that run's raw events, metrics,
     # lineage refs, session-loss receipts, Agent-swap refs, runtime-observation refs, an
     # environment manifest, a corpus manifest, and a reproduction procedure -- making 90.
-    if len(paths) != 90 or len(set(ids)) != len(paths) or None in ids:
+    # Issue #89's own Phase 21 Comparative Benchmark delivery (`ADOPT_PHASE_21_COMPARATIVE_
+    # BENCHMARK`) adds three more, all owned by the new `comparative_benchmark` package:
+    # `comparative_benchmark_protocol_freeze` (the immutable, content-addressed pre-result
+    # declaration -- group/treatment identity, corpus, metrics, thresholds, exclusion policy,
+    # claim vocabulary -- committed before any benchmark result is executed or observed),
+    # `comparative_benchmark_result_bundle` (the raw-event/metric/claim bundle a comparison
+    # run commits, metrics and claims always rederived from raw_events and the bound protocol
+    # freeze alone), and `comparative_benchmark_reproduction_receipt` (the independent
+    # reproducer's own MATCH/DIVERGENT/INCOMPARABLE verdict, always self-computed, never a
+    # caller-supplied claim) -- all three committed, like `long_running_proof_artifact`, only
+    # through the Store's own orthogonal coordination ledger, never `commit_state_transition`
+    # -- making 93.
+    if len(paths) != 93 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
