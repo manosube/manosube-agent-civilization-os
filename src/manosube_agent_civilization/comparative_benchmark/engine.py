@@ -329,6 +329,47 @@ def derive_bounded_claims(
     return claims
 
 
+def verify_exact_frozen_corpus(
+    raw_events: Sequence[Mapping[str, Any]],
+    protocol_freeze: Mapping[str, Any],
+    *,
+    error_cls: type[Exception] = ResultBundleValidationError,
+) -> None:
+    """P90-R2-F4: refuse *raw_events* unless, for every `comparison_group_id`
+    *protocol_freeze* itself declares, that group's own raw events name exactly
+    *protocol_freeze*'s own `corpus_manifest.task_ids` list, in that exact order, with no gap
+    and no repeat. This is the production builder's own fail-closed corpus-fidelity gate
+    (moved here from a test-only orchestrator guard so it can never be bypassed by calling
+    `build_result_bundle`/`commit_result_bundle` directly) -- a partial, reordered, omitted,
+    duplicated, substituted, or success-only-subset raw event set can never reach a durable
+    commit through the public route. *error_cls* lets each caller raise its own record kind's
+    own error type (`build_reproduction_receipt` passes `ReproductionReceiptValidationError`) --
+    the failure is still the identical corpus-fidelity fact, never a different check."""
+
+    expected_task_ids = tuple(protocol_freeze["corpus_manifest"]["task_ids"])
+    declared_group_ids = [
+        group["comparison_group_id"] for group in protocol_freeze["comparison_groups"]
+    ]
+    by_group: dict[str, list[str]] = {group_id: [] for group_id in declared_group_ids}
+    for event in raw_events:
+        group_id = event["comparison_group_id"]
+        if group_id not in by_group:
+            raise error_cls(
+                f"raw event references comparison_group_id {group_id!r} the bound protocol "
+                "freeze never declared"
+            )
+        by_group[group_id].append(event["task_id"])
+    for group_id, task_ids in by_group.items():
+        actual = tuple(task_ids)
+        if actual != expected_task_ids:
+            raise error_cls(
+                f"comparison_group_id={group_id!r} attempted task_ids {actual!r}, expected "
+                f"exactly the frozen corpus {expected_task_ids!r} in that exact order -- "
+                "refusing a reordered, omitted, duplicated, substituted, or partial-scale "
+                "corpus attempt before any result bundle is committed"
+            )
+
+
 def build_result_bundle(
     *,
     project_id: str,
@@ -347,9 +388,13 @@ def build_result_bundle(
     merely which id -- a same-id, different-content freeze can never be silently substituted).
     `generation_process_id` records the real OS process id this bundle was built in, so a later
     reproduction receipt can machine-verify it ran in a genuinely separate process
-    (P90-R1-F3)."""
+    (P90-R1-F3). Refuses fail-closed, before constructing any record, unless *raw_events*
+    covers exactly the frozen corpus for every declared comparison group (P90-R2-F4, see
+    :func:`verify_exact_frozen_corpus`) -- no partial, reordered, duplicated, omitted, or
+    success-only-subset dataset can ever reach a durable commit through this builder."""
 
     raw_events = [_detach(event) for event in raw_events]
+    verify_exact_frozen_corpus(raw_events, protocol_freeze)
     metrics = aggregate_metrics(raw_events, protocol_freeze)
     claims = derive_bounded_claims(metrics, protocol_freeze)
     threshold_evaluations = evaluate_numeric_thresholds(metrics, protocol_freeze)
@@ -409,7 +454,18 @@ def build_reproduction_receipt(
     `generation_process_id` -- a reproduction that shares its OS process with the run it claims
     to independently reproduce is a self-assertion, not a genuinely separate execution
     (P90-R1-F3), and this function itself enforces that boundary rather than trusting a caller's
-    own `is_original_author`/process-identity claim."""
+    own `is_original_author`/process-identity claim. Also refuses, via the identical
+    :func:`verify_exact_frozen_corpus` gate `build_result_bundle` itself uses, any
+    *reproduced_raw_events* that does not cover exactly the frozen corpus (P90-R2-F4), and
+    persists *reproduced_raw_events* itself in the committed record -- not only their
+    aggregated `reproduced_metrics` -- so a third party can rederive `reproduced_metrics`/
+    `agreement` from the published raw bytes after reload, never trust a stored aggregate alone
+    (P90-R2-F3)."""
+
+    reproduced_raw_events = [_detach(event) for event in reproduced_raw_events]
+    verify_exact_frozen_corpus(
+        reproduced_raw_events, protocol_freeze, error_cls=ReproductionReceiptValidationError
+    )
 
     reproduction_process_id = reproducer_identity.get("reproduction_process_id")
     if not isinstance(reproduction_process_id, int) or isinstance(reproduction_process_id, bool):
@@ -465,6 +521,7 @@ def build_reproduction_receipt(
             **_detach(reproducer_identity),
             "is_original_author": is_original_author,
         },
+        "reproduced_raw_events": reproduced_raw_events,
         "reproduced_metrics": reproduced_metrics,
         "agreement": agreement,
         "generated_at": generated_at,
@@ -492,4 +549,5 @@ __all__ = [
     "derive_bounded_claims",
     "evaluate_numeric_thresholds",
     "stringify_floats",
+    "verify_exact_frozen_corpus",
 ]

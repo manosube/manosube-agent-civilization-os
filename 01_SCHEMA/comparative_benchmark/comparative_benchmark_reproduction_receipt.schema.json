@@ -12,6 +12,7 @@
     "protocol_freeze_ref",
     "original_result_bundle_ref",
     "reproducer_identity",
+    "reproduced_raw_events",
     "reproduced_metrics",
     "agreement",
     "generated_at"
@@ -69,6 +70,26 @@
         }
       },
       "additionalProperties": false
+    },
+    "reproduced_raw_events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind", "comparison_group_id", "task_id", "outcome"],
+        "properties": {
+          "kind": {"const": "task_attempt"},
+          "comparison_group_id": {"type": "string", "minLength": 1},
+          "task_id": {"type": "string", "minLength": 1},
+          "outcome": {
+            "enum": ["COMPLETED_VERIFIED", "REFUSED", "RETAINED_INCOMPLETE", "FAILED", "TIMED_OUT"]
+          },
+          "started_at": {"$ref": "../common/timestamp.schema.json"},
+          "closed_at": {"$ref": "../common/timestamp.schema.json"},
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
     },
     "reproduced_metrics": {
       "type": "object",

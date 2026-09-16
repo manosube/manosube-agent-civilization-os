@@ -66,6 +66,12 @@ PROTOCOL_FREEZE_SEMANTIC_FIELDS: tuple[str, ...] = (
 #: divergent trial) never collide.
 RESULT_BUNDLE_ID_FIELDS: tuple[str, ...] = ("project_id", "protocol_freeze_ref", "raw_events")
 
+#: P90-R2-F5: every field the result bundle schema itself requires (except the id/fingerprint
+#: fields the record carries its own identity in) must be covered by this projection -- a
+#: `threshold_evaluations` or `generation_process_id` tamper must change the semantic
+#: fingerprint exactly like a `metrics`/`claims` tamper already does. This tuple is asserted,
+#: by a dedicated static test, to equal the schema's own `required` field set minus
+#: `result_bundle_id`/`result_bundle_semantic_fingerprint`.
 RESULT_BUNDLE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "project_id",
@@ -74,7 +80,9 @@ RESULT_BUNDLE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "raw_events",
     "metrics",
     "claims",
+    "threshold_evaluations",
     "environment_manifest",
+    "generation_process_id",
     "generated_at",
 )
 
@@ -88,6 +96,10 @@ REPRODUCTION_RECEIPT_ID_FIELDS: tuple[str, ...] = (
     "reproducer_identity",
 )
 
+#: P90-R2-F3: `reproduced_raw_events` -- the reproducer's own raw per-task outcomes, not just
+#: their aggregated `reproduced_metrics` -- is now part of this record's own required schema
+#: shape and must therefore be part of its semantic fingerprint too, for the identical
+#: tamper-detection reason `RESULT_BUNDLE_SEMANTIC_FIELDS` above states.
 REPRODUCTION_RECEIPT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "project_id",
@@ -95,6 +107,7 @@ REPRODUCTION_RECEIPT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "protocol_freeze_ref",
     "original_result_bundle_ref",
     "reproducer_identity",
+    "reproduced_raw_events",
     "reproduced_metrics",
     "agreement",
     "generated_at",

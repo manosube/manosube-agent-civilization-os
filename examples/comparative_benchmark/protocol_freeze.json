@@ -93,7 +93,7 @@
     "raw_result_deletion_forbidden": true,
     "success_only_subset_forbidden": true
   },
-  "generated_at": "2026-09-16T09:49:31.757752Z",
+  "generated_at": "2026-09-16T14:55:51.13196Z",
   "metric_definitions": [
     {
       "denominator": "raw_event_count for that comparison_group_id",
@@ -143,7 +143,7 @@
   },
   "project_id": "PRJ-CB21-0001",
   "protocol_freeze_id": "CBPF-3D16E4E3B4E69AD40DB14A75EAB7C4D541DBD7FC087C4285AAA5287F3934B5CF",
-  "protocol_freeze_semantic_fingerprint": "sha256:ce73f5198a4bd23c031652471b9dd5f4ee7db5450beb1ed10aae28b9b7dea142",
+  "protocol_freeze_semantic_fingerprint": "sha256:fecc3e101a7c6896422e789d9c9f82a09c13529be8520bfa5cbabc40eb2fb30d",
   "reproduction_procedure": {
     "corpus_kind": "comparative_benchmark",
     "entrypoint": "tests.comparative_benchmark.orchestrator.run_comparative_benchmark"

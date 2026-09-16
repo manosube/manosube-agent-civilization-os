@@ -171,6 +171,34 @@ def test_package_init_reexports_exactly_the_public_entry_points() -> None:
     }
 
 
+# --- P90-R2-F5: the semantic-fingerprint projection covers every schema-required field --------#
+
+
+def _schema_required_fields(name: str) -> set[str]:
+    path = _REPO_ROOT / "01_SCHEMA" / "comparative_benchmark" / name
+    return set(json.loads(path.read_text())["required"])
+
+
+def test_result_bundle_semantic_fields_equal_schema_required_minus_id_and_fingerprint() -> None:
+    required = _schema_required_fields("comparative_benchmark_result_bundle.schema.json") - {
+        "result_bundle_id",
+        "result_bundle_semantic_fingerprint",
+    }
+    assert set(identity_module.RESULT_BUNDLE_SEMANTIC_FIELDS) == required
+    assert len(identity_module.RESULT_BUNDLE_SEMANTIC_FIELDS) == len(required)
+
+
+def test_reproduction_receipt_semantic_fields_equal_schema_required_minus_id_and_fingerprint() -> (
+    None
+):
+    required = _schema_required_fields("comparative_benchmark_reproduction_receipt.schema.json") - {
+        "reproduction_receipt_id",
+        "reproduction_receipt_semantic_fingerprint",
+    }
+    assert set(identity_module.REPRODUCTION_RECEIPT_SEMANTIC_FIELDS) == required
+    assert len(identity_module.REPRODUCTION_RECEIPT_SEMANTIC_FIELDS) == len(required)
+
+
 def test_no_schema_carries_a_human_authority_ref_or_signature_field() -> None:
     """Structural, not conventional: a comparative-benchmark record must be unable to present
     itself as a Human Authority declaration or Completion Evidence."""

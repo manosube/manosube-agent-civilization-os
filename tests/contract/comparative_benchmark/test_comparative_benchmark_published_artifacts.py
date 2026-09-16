@@ -216,6 +216,35 @@ def test_published_reproduction_receipt_agreement_rederives_from_published_bytes
     assert receipt["agreement"] == expected_agreement
 
 
+def test_published_reproduction_receipt_metrics_rederive_from_published_reproduced_raw_events() -> (
+    None
+):
+    """P90-R2-F3: `reproduced_raw_events` is itself part of the published bytes -- a third party
+    can rederive `reproduced_metrics` from those raw bytes alone, never merely trust the stored
+    aggregate on its own."""
+
+    protocol_freeze = _protocol_freeze()
+    receipt = _reproduction_receipt()
+    rederived = aggregate_metrics(receipt["reproduced_raw_events"], protocol_freeze)
+    assert rederived == receipt["reproduced_metrics"]
+
+
+def test_published_reproduced_raw_events_cover_every_declared_group_and_the_full_frozen_corpus() -> (
+    None
+):
+    protocol_freeze = _protocol_freeze()
+    receipt = _reproduction_receipt()
+    expected_task_ids = tuple(protocol_freeze["corpus_manifest"]["task_ids"])
+    for group in protocol_freeze["comparison_groups"]:
+        group_id = group["comparison_group_id"]
+        actual_task_ids = tuple(
+            event["task_id"]
+            for event in receipt["reproduced_raw_events"]
+            if event["comparison_group_id"] == group_id
+        )
+        assert actual_task_ids == expected_task_ids
+
+
 def test_published_reproduction_receipt_is_a_genuinely_separate_process_reproduction() -> None:
     """P90-R1-F3: the published receipt's own reproducer identity records a real, separate
     reproduction process id -- distinct from the published result bundle's own

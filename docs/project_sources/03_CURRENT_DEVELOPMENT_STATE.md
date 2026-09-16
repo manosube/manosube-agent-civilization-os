@@ -5628,3 +5628,203 @@ ADDITIONAL_PR_ALLOWED=false
 UNRELATED_CLEANUP_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 71. PR #90 Structural Review Round 2 (P90-R2-F3〜F5是正 + F1/F2 blocker)bounded addendum
+(Issue #89)
+
+本節もClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。§70と同一の理由で、既存branch
+`agent/issue-89-phase21-comparative-benchmark`・既存PR #90上で行われた本Round是正(新規
+schemaファイル追加なし -- 既存`comparative_benchmark_reproduction_receipt.schema.json`への
+field追加のみ、既存package/tests/`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`・既存
+`examples/comparative_benchmark/`の再生成)に対応付けるための、最小限の事実記録である。
+
+PR #90に対する構造参謀のRound 2審査コメント(comment id `5699255260`、author `manosube`、
+OWNER)は、§70で納品されたRound 1是正deliveryに対し5件の新規finding(P90-R2-F1〜F5、全て
+`SEVERITY=P1`)を指摘し、SHUKOU自身のRound 2採択・実装handoffコメント(comment id
+`5699291360`、author `manosube`、OWNER、`ADOPTION_ID=ADOPT_P90_R2_F1_THROUGH_F5`)がこれを
+正式に採択した。本記録作成者(本session)は、両コメントの本文・author・association・PR #90
+自身のlive head/base/stateをGitHub API経由で独立readbackし、供給されたtask brief記載の
+内容と完全一致することを確認済みである。本記録作成者自身が投稿したWTT start-noticeコメント
+(comment id `5699339010`)は、F1/F2の実現可能性調査を最初のstepとして明示的に宣言している。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-16
+GOVERNING_ISSUE=#89
+GOVERNING_PR=#90
+STRUCTURAL_REVIEW_COMMENT_ID=5699255260
+ADOPTION_ID=ADOPT_P90_R2_F1_THROUGH_F5
+ADOPTION_COMMENT_ID=5699291360
+WTT_START_NOTICE_COMMENT_ID=5699339010
+AUTHORIZED_TARGET_HEAD=415a794eaa42150d90b465163bbc741bfd960aad
+AUTHORIZED_BASE_MAIN_SHA=f97ba6fa973ba07e7674690d158cc156a10da04a
+EXISTING_BRANCH_ONLY=agent/issue-89-phase21-comparative-benchmark
+EXISTING_PR_ONLY=#90
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW_OR_BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
+```
+
+**F4 (`PRODUCTION_BUILDER_ENFORCES_EXACT_FROZEN_CORPUS`)。** 新規
+`engine.verify_exact_frozen_corpus`を追加し、`engine.build_result_bundle`と
+`engine.build_reproduction_receipt`の両方から、raw_events detach直後・他の一切の処理より
+先に無条件で呼び出すよう変更した。これにより、従来`tests/comparative_benchmark/
+orchestrator.py`にのみ存在した`verify_corpus_fidelity`(test-suite-level guard)を経由せず
+`build_result_bundle`/`commit_result_bundle`/`build_reproduction_receipt`/
+`commit_reproduction_receipt`を直接呼び出しても、reordered/omitted/duplicated/substituted/
+partial-scale raw_eventsは`ResultBundleValidationError`/`ReproductionReceiptValidationError`
+で拒否され、durable commitへ到達できない。`verify_exact_frozen_corpus`は呼び出し元に応じた
+`error_cls`引数を受け取り、result bundle経路とreproduction receipt経路それぞれ正しい例外
+型を送出する(実装当初は両経路とも`ResultBundleValidationError`固定で、
+`build_reproduction_receipt`経路の新規decisive testが誤った例外型を検出したため、この
+`error_cls`パラメータ化で是正した)。決定的proof: `tests/contract/comparative_benchmark/
+test_comparative_benchmark_records.py`の
+`test_build_result_bundle_refuses_reordered_omitted_duplicated_or_substituted_corpus`/
+`test_build_reproduction_receipt_refuses_a_non_full_corpus_reproduced_raw_events_set`が、
+orchestratorを一切経由せずproduction builderを直接呼び出して証明する。orchestrator自身の
+`verify_corpus_fidelity`は冗長なtest-suite-level guardとしてそのまま残した。
+
+**F5 (`RESULT_SEMANTIC_FINGERPRINT_COVERS_ALL_REQUIRED_SEMANTIC_FIELDS`)。**
+`identity.RESULT_BUNDLE_SEMANTIC_FIELDS`を9 fieldsから11 fieldsへ拡張し、schema自身が
+requireするが従来semantic fingerprintから除外されていた`threshold_evaluations`と
+`generation_process_id`を追加した。これにより、両fieldのいずれかを改変すると
+`result_bundle_semantic_fingerprint`が必ず変化するようになった。F5自身が要求する
+`ASSERT_SCHEMA_REQUIRED_FIELDS_EQUAL_SEMANTIC_PROJECTION_FIELDS_PLUS_ID_FINGERPRINT`の
+decisive static testとして、`tests/contract/comparative_benchmark/
+test_comparative_benchmark_static_conformance.py`に
+`test_result_bundle_semantic_fields_equal_schema_required_minus_id_and_fingerprint`(result
+bundle schema自身の`required` setから`result_bundle_id`/`result_bundle_semantic_fingerprint`
+を除いた集合と`RESULT_BUNDLE_SEMANTIC_FIELDS`の完全一致を証明)を追加した。同一の総体性proof
+義務は`REPRODUCTION_RECEIPT_SEMANTIC_FIELDS`にも(F3のfield追加を受けて)適用し、対になる
+`test_reproduction_receipt_semantic_fields_equal_schema_required_minus_id_and_fingerprint`を
+追加した。field-by-field mutation proofとして、`test_comparative_benchmark_records.py`へ
+`test_result_bundle_semantic_fingerprint_changes_when_threshold_evaluations_tamper`/
+`test_result_bundle_semantic_fingerprint_changes_when_generation_process_id_tampers`を追加した。
+
+**F3 (`DURABLE_PUBLIC_REPRODUCED_RAW_EVENTS_AND_REDERIVATION`)。**
+`comparative_benchmark_reproduction_receipt.schema.json`の`required`へ
+`reproduced_raw_events`を追加し(result bundle schema自身の`raw_events`と同一shape --
+`kind`/`comparison_group_id`/`task_id`/`outcome`必須、`started_at`/`closed_at`/`reason`
+任意)、`identity.REPRODUCTION_RECEIPT_SEMANTIC_FIELDS`へも追加した(`REPRODUCTION_RECEIPT_
+ID_FIELDS`へは意図的に追加していない -- raw eventsはreproduction attemptの「発見内容」自体
+であり、「この bundle/reproducer に対する attempt が既に存在するか」というidentityの一部
+ではないため)。`engine.build_reproduction_receipt`は既にparameterとして受け取っていた
+`reproduced_raw_events`を、`reproduced_metrics`とともにcommitted recordへ実際に永続化する
+よう変更した(F4のcorpus-fidelity gateも同じ変数へ適用される)。これにより、第三者は
+published bytesのみから`reproduced_metrics`/`agreement`を再導出できる。決定的proof:
+`test_reproduction_receipt_persists_reproduced_raw_events_and_rederives_reproduced_metrics`
+(engine層)と、published-artifact suiteの
+`test_published_reproduction_receipt_metrics_rederive_from_published_reproduced_raw_events`/
+`test_published_reproduced_raw_events_cover_every_declared_group_and_the_full_frozen_corpus`
+(disk上のcheck-in済みbytesのみから)。
+
+**既存test suiteの更新。** F4のcorpus-fidelity gateが`build_result_bundle`内で
+`aggregate_metrics`より先に実行されるようになったため、既存
+`test_build_result_bundle_rejects_an_unrecognized_outcome`(1件のみの不完全raw_eventsで
+outcome vocabularyのみを検証しようとしていた)は、まず`ResultBundleValidationError`
+("expected exactly the frozen corpus"文言)で失敗するようになった。これは正しい新しい
+挙動(corpus-fidelityがoutcome vocabularyより先に検証される)であり、testの意図
+(outcome vocabulary checkの単体検証)を保ったまま、完全なcorpus-fidelity-valid
+raw_events集合を構築し最後の1 eventのoutcomeのみを改変する形へ書き換えた。
+
+**Published example artifactsの再生成。** `scripts/generate_comparative_benchmark_
+artifacts.py`を再実行し、`examples/comparative_benchmark/{protocol_freeze,result_bundle,
+reproduction_receipt}.json`をF3/F4/F5是正後のschema/identity/engineに対して再生成した
+(`reproduction_receipt.json`は新規必須fieldである`reproduced_raw_events`を含むようになり、
+`result_bundle.json`は widened semantic fingerprintのもとで再計算されたfingerprint値を
+含むようになった -- いずれも同一の real run(`run_comparative_benchmark`)から生成した
+genuine bytesであり、手書き・fabricatedではない)。
+
+`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`は、F4(section 6)、F5(section 4)、F3
+(section 8)の是正内容を反映し、新規section 13("P90-R2-F1/F2: capability/authority
+blocker (not closed)")を追加した(既存section 12〜13をsection 13〜14へ繰り下げ、
+section 0のheader blockへRound 2 finding状況を追記)。
+
+## F1/F2: capability/authority blocker(SHUKOU採択自身が予見した停止条件)
+
+Round 2採択コメント(`5699291360`)自身が、F1・F2について実装より先の実現可能性調査を明示的に
+要求し(「Claude Code shall first inventory whether a real identical-Agent present/absent
+execution and a genuinely independent third-party receipt can be produced inside the
+already-authorized local/runtime boundary. If yes, implement and prove it. If no, stop and
+return an explicit capability/authority blocker to SHUKOU.」)、simulated/relabeled
+substituteでの偽装を明示的に禁止している(「A Python child process, PID inequality, a
+fixture label, or the MANOSUBE natural route relabeled as 'Agent alone' may not satisfy F1
+or F2.」)。本sessionはこの調査を実装より先に行い、以下の結論に至った。
+
+**F1(`EXECUTE_THE_IDENTICAL_REAL_AGENT_IN_BOTH_CONDITIONS`)は現行Authority境界内では
+実現不能である。** Round 2審査自身が明示するとおり、これはMANOSUBEの
+Observation→Difference→Authority→Change→Evidence→Reflow composerを別labelで呼ぶことでは
+満たされない -- Claude Code/Codex/既存frameworkという実在のAgent製品自体を、MANOSUBE present
+条件とabsent条件の両方で実際に起動し、同一のruntime/adapter/model/tool identityを証明する
+ことを要求する。これは実在のmodel/製品への実credential呼び出しを構造的に必要とし、Issue #89
+section 7の`PRODUCTION_CREDENTIAL_USE_ALLOWED=false`(Round 2採択コメント自身が「remain
+unchanged」と明記)がこれを禁止する。本session自身の実行環境には実際に機能する`claude` CLI
+(`/opt/node22/bin/claude`, `claude --version`→`2.1.273 (Claude Code)`確認済み)が存在するが、
+その認証情報はこのsession固有・非移植的であり、それを「Agent under test」として起動する
+ことは、まさにこの採択コメントが明示的に禁じる`PRODUCTION_CREDENTIAL_USE`そのものに該当する。
+
+**F2(`BIND_REPRODUCTION_TO_A_VERIFIABLY_INDEPENDENT_ACTOR_OR_AUTHORITY`)も同一の構造的
+理由で実現不能である。** 採択コメント自身が`SEPARATE_PROCESS_ONLY_IS_NOT_ACCEPTED_AS_
+THIRD_PARTY=true`と明記しており、Round 1のsubprocess-basedな独立性証明(P90-R1-F3)は
+「genuinely separate OS process」であることは証明するが「genuinely independent third-party
+actor」であることは証明しない -- 同一operator・同一repository・同一credential setの子
+processに過ぎない。真に独立した第三者actor/authorityをこのsession単独から作り出すことは
+コード変更で解決できる問題ではなく、実在の別actorの参加(本session自身が生成できるものでは
+ない)か、`REMOTE_COMMAND_AUTHORITY_ALLOWED=true`(現在`false`のまま不変)のいずれかを
+要求する。
+
+**この結論はIssue #89自身の原初採択コメント(`5692107525`)が既に予見していたものである。**
+同コメントは`PRODUCTION_CREDENTIAL_USE_ALLOWED=false`/`REMOTE_COMMAND_AUTHORITY_ALLOWED=
+false`という同一境界のもとで、「this cannot mean live external product invocation; it
+means a closed, honestly-labeled adapter-identity/capability-manifest model」という設計
+指針を既に与えていた。`13_CHANGE_EXECUTOR/CHANGE_EXECUTOR_CONTRACT.md`(決定済みChangeのみを
+disposable worktree上で実行し、Agentに行動を決めさせることは一切ない)と
+`10_RUNTIME/RUNTIME_CONTRACT.md`(`FakeRuntimeAdapter`はin-memory、`LocalHttpRuntimeAdapter`
+はloopback限定、実外部targetへの"no redirect ever")を確認したところ、この repository の
+18以上の既存Phase全体を通じて、実在する外部AI製品・modelを実際に呼び出すshipped codeは
+一件も存在しない。本Roundもその前例を破らない。
+
+```text
+F1_STATUS=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
+F2_STATUS=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
+F1_BLOCKING_CONSTRAINT=PRODUCTION_CREDENTIAL_USE_ALLOWED_FALSE
+F2_BLOCKING_CONSTRAINT=REMOTE_COMMAND_AUTHORITY_ALLOWED_FALSE_AND_NO_REAL_THIRD_PARTY_AVAILABLE
+SIMULATED_OR_RELABELED_SUBSTITUTE_PROVIDED=false
+GATE_21_WEAKENED_OR_OBJECTIVE_REWRITTEN=false
+STOP_CONDITION_TAKEN=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
+```
+
+## Local gate sweep (本session自身が独立実行、Round 2)
+
+```text
+TARGETED_SUITE_COMMAND=pytest tests/comparative_benchmark tests/contract/comparative_benchmark -q
+TARGETED_SUITE_RESULT=75_PASSED (14 net-new tests added this Round: 2 F4 production-level
+  corpus-fidelity refusal tests, 2 F5 field-by-field mutation-proof tests, 1 F3 rederivation
+  test in test_comparative_benchmark_records.py; 2 F5 schema-required-field-totality static
+  tests in test_comparative_benchmark_static_conformance.py; 2 F3 rederivation/full-corpus
+  tests in test_comparative_benchmark_published_artifacts.py; plus the pre-existing 66 from
+  §70, one of which -- test_build_result_bundle_rejects_an_unrecognized_outcome -- was
+  rewritten, not net-new, to isolate the outcome-vocabulary check from the new corpus-fidelity
+  gate that now runs first)
+SCHEMA_VALIDATION_COMMAND=python scripts/validate_schemas.py
+SCHEMA_VALIDATION_RESULT=PASS (SCHEMA_COUNT=93, unchanged -- this Round adds a `required` field
+  to an existing schema file, never a new schema file)
+SOURCE_IMPACT_GATE_COMMAND=python scripts/source_impact_gate.py --changed-paths-file <diff of
+  authorized base f97ba6fa9..working tree>
+SOURCE_IMPACT_GATE_RESULT=PASS (decision=PASS, merge_blocked=false,
+  required_source_update_missing=false, required_governance_update_missing=false)
+RUFF_CHECK_RESULT=clean (0 findings) over every file this Round touched
+RUFF_FORMAT_RESULT=clean (0 findings) over every file this Round touched (1 file --
+  test_comparative_benchmark_static_conformance.py -- needed `ruff format` reformatting after
+  being authored; reformatted and reverified clean)
+MYPY_SRC_COMMAND=mypy --namespace-packages src/
+MYPY_SRC_RESULT=29 errors in 15 files (checked 197 source files) -- exactly the pre-existing
+  repository-wide baseline §70/§71 itself already recorded. NET_NEW_MYPY_FINDINGS=0.
+  (`mypy --namespace-packages src/manosube_agent_civilization/comparative_benchmark/` on its
+  own reports 0 issues.)
+FULL_REPOSITORY_SUITE_COMMAND=pytest -q
+FULL_REPOSITORY_SUITE_RESULT=<FILLED_BELOW_AFTER_RUN_COMPLETES>
+```

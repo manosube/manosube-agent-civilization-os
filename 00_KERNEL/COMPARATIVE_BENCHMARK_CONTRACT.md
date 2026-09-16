@@ -12,6 +12,10 @@ ADOPTION_COMMENT_AUTHOR=manosube (OWNER)
 STRUCTURAL_REVIEW_ROUND_1_ID=P90-R1
 STRUCTURAL_REVIEW_ROUND_1_ADOPTION_COMMENT_ID=5694898062
 STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=F1,F2,F3,F4,F5,F6,F7
+STRUCTURAL_REVIEW_ROUND_2_ID=P90-R2
+STRUCTURAL_REVIEW_ROUND_2_ADOPTION_COMMENT_ID=5699291360
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=F3,F4,F5
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_BLOCKED=F1,F2
 ```
 
 This contract documents the proof `tests/comparative_benchmark/` and the durable package
@@ -25,6 +29,17 @@ folds in PR #90's Structural Review Round 1 (P90-R1-F1/F2/F3/F4/F5/F6/F7), repla
 initial delivery's own now-superseded description of the ungated reference harness (former
 section 6), the protocol-freeze identity fields (former section 3/4), and reproduction
 independence (former section 8) with the corrected design -- see sections 6, 8, and 12 below.
+
+**Round 2 (P90-R2).** Three of Round 2's five adopted findings are closed in this revision:
+F4 (frozen-corpus-fidelity now enforced inside the production builder itself, section 6), F5
+(the result bundle's own semantic fingerprint now covers every schema-required field, section
+4), and F3 (a reproduction receipt now durably persists its own `reproduced_raw_events`,
+section 8). The remaining two, F1 (`EXECUTE_THE_IDENTICAL_REAL_AGENT_IN_BOTH_CONDITIONS`) and
+F2 (`BIND_REPRODUCTION_TO_A_VERIFIABLY_INDEPENDENT_ACTOR_OR_AUTHORITY`), are recorded as an
+explicit, honest capability/authority blocker rather than closed -- see section 13. This is not
+a partial or deferred implementation of F1/F2; it is the adoption's own anticipated, authorized
+outcome (`STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW OR BLOCKED_REQUIRES_SHUKOU_AUTHORITY_
+DECISION`, comment 5699291360).
 
 ## 1. Purpose
 
@@ -155,6 +170,19 @@ NUMERIC_THRESHOLDS_MACHINE_CHECKED=true      (P90-R1-F7: `engine.evaluate_numeri
                                                its own `actual_value`/`passed` verdict in
                                                `result_bundle.threshold_evaluations` -- never an
                                                informational-only free-text rule)
+RESULT_SEMANTIC_FINGERPRINT_COVERS_ALL_REQUIRED_FIELDS=true  (P90-R2-F5:
+                                               `identity.RESULT_BUNDLE_SEMANTIC_FIELDS` widened
+                                               to include `threshold_evaluations` and
+                                               `generation_process_id` -- the two schema-required
+                                               fields it previously excluded -- so tampering
+                                               either now changes `result_bundle_semantic_
+                                               fingerprint`; a dedicated static test asserts this
+                                               tuple equals the schema's own `required` set minus
+                                               `result_bundle_id`/`result_bundle_semantic_
+                                               fingerprint` exactly, and the identical proof
+                                               obligation is discharged for
+                                               `REPRODUCTION_RECEIPT_SEMANTIC_FIELDS` against its
+                                               own schema)
 ```
 
 `derive_bounded_claims` (P90-R1-F5) renders each claim's own `statement` by formatting its
@@ -232,11 +260,23 @@ vs. `MANOSUBE_PRESENT`'s live, load-bearing pre-flight Authority gate -- is reco
 protocol freeze's own `comparability_loss_receipts` and `authority_boundary_equivalence_
 manifest` (NC-3), never presented as true product-for-product parity.
 
-`orchestrator.verify_corpus_fidelity` is the one test-suite-level decisive guard (mirroring
-`tests.long_running_proof.cycle.CorpusPositionError`'s own identical role) that every declared
+**P90-R2-F4: frozen-corpus fidelity is now enforced by the production builder itself, not only
+by a test-only orchestrator guard.** `engine.verify_exact_frozen_corpus` -- called
+unconditionally, first, inside both `engine.build_result_bundle` and `engine.
+build_reproduction_receipt` -- refuses (`ResultBundleValidationError`/
+`ReproductionReceiptValidationError`, via its own `error_cls` parameter) unless every declared
 comparison group's own raw events name exactly the frozen `task_ids`, in that exact order, once
-each -- refusing reordering, omission, duplication, substitution, and partial-scale corpus
-attempts (NC-2, NC-5, NC-10) before any result bundle or reproduction receipt is ever committed.
+each. This means the guard can no longer be bypassed by calling `build_result_bundle`/
+`commit_result_bundle`/`build_reproduction_receipt`/`commit_reproduction_receipt` directly,
+skipping `tests.comparative_benchmark.orchestrator.verify_corpus_fidelity` entirely -- decisive
+proof: `tests/contract/comparative_benchmark/test_comparative_benchmark_records.py::
+test_build_result_bundle_refuses_reordered_omitted_duplicated_or_substituted_corpus`/
+`test_build_reproduction_receipt_refuses_a_non_full_corpus_reproduced_raw_events_set`, both
+calling the production builders directly with no orchestrator involved. The orchestrator's own
+`verify_corpus_fidelity` still runs as an additional, redundant test-suite-level guard (NC-2,
+NC-5, NC-10) -- refusing reordering, omission, duplication, substitution, and partial-scale
+corpus attempts before any result bundle or reproduction receipt is ever committed through
+either surface.
 
 ## 7. Work-Time Transparency coordination
 
@@ -278,6 +318,20 @@ is structurally guaranteed to differ from the parent's `generation_process_id`
 (`REAL_SAME_AGENT_PRESENT_ABSENT_EXECUTION`-adjacent: `INDEPENDENT_REPRODUCER_PROVENANCE_
 VERIFIED=true`). The committed reproduction receipt's own raw events are that child's own real
 raw events (NC-13's positive counterpart; see Gate 21's own `THIRD_PARTY_REPRODUCIBLE`).
+
+**P90-R2-F3: `reproduced_raw_events` is now durably persisted in the receipt itself, not only
+its aggregated `reproduced_metrics`.** `REPRODUCTION_RECEIPT_SEMANTIC_FIELDS` and the
+`comparative_benchmark_reproduction_receipt.schema.json`'s own `required` set both now include
+`reproduced_raw_events` (schema shape identical to the result bundle's own `raw_events` --
+`kind`/`comparison_group_id`/`task_id`/`outcome` required, `started_at`/`closed_at`/`reason`
+optional); `REPRODUCTION_RECEIPT_ID_FIELDS` deliberately excludes it (raw events are the
+finding a reproduction attempt produces, not part of "does an attempt for this bundle/reproducer
+already exist"). `engine.build_reproduction_receipt` persists the caller's own
+`reproduced_raw_events` verbatim in the committed record, so a third party can rederive
+`reproduced_metrics` from the published raw bytes alone after reload -- decisive proof:
+`test_reproduction_receipt_persists_reproduced_raw_events_and_rederives_reproduced_metrics` and
+the published-artifact suite's own
+`test_published_reproduction_receipt_metrics_rederive_from_published_reproduced_raw_events`.
 
 ## 9. Published artifacts (`examples/comparative_benchmark/`)
 
@@ -382,7 +436,82 @@ CLAIMS_BOUNDED_BY_EVIDENCE=true        (section 4/9-NC-12; test_gate21_claims_bo
 Phase 21 is not complete until SHUKOU accepts the exact reviewed delivery head, that head is
 merged, and resulting `main` is independently re-observed.
 
-## 12. Explicit non-claims
+## 13. P90-R2-F1/F2: capability/authority blocker (not closed)
+
+Round 2's own Structural Advisor review (PR #90 comment 5699255260) and SHUKOU's adoption
+(comment 5699291360) required two further corrections this contract does **not** claim to have
+implemented:
+
+```text
+F1=EXECUTE_THE_IDENTICAL_REAL_AGENT_IN_BOTH_CONDITIONS
+   (a genuine real invocation of the Agent under test -- Claude Code/Codex/an existing
+   framework's own real runtime/adapter/model -- run once with MANOSUBE present and once with
+   MANOSUBE genuinely absent from the execution path, never MANOSUBE's own Observation ->
+   Difference -> Authority -> Change -> Evidence -> Reflow composer re-labeled as "the Agent
+   alone")
+F2=BIND_REPRODUCTION_TO_A_VERIFIABLY_INDEPENDENT_ACTOR_OR_AUTHORITY
+   (a reproduction receipt whose independence rests on a real, separate third-party actor or
+   authority -- explicitly not satisfied by "separate OS process" alone, per the adoption's own
+   `SEPARATE_PROCESS_ONLY_IS_NOT_ACCEPTED_AS_THIRD_PARTY=true`)
+```
+
+The adoption itself anticipates this outcome: it requires a feasibility inventory *before* any
+implementation attempt, and states explicitly that "a Python child process, PID inequality, a
+fixture label, or the MANOSUBE natural route relabeled as 'Agent alone' may not satisfy F1 or
+F2," that Claude Code "may not weaken Gate 21, rewrite the objective, or turn an unavailable
+capability into a passing test," and sets a two-way stop condition
+(`READY_FOR_STRUCTURAL_REVIEW OR BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION`).
+
+**F1 is infeasible inside the existing Authority boundary.** A genuine real invocation of an
+Agent product (Claude Code, Codex, or an existing agent framework) as the actual subject under
+test -- not MANOSUBE's own natural-route composer, whatever it is labeled -- requires calling a
+real model/product with real credentials. `PRODUCTION_CREDENTIAL_USE_ALLOWED=false` (Issue #89
+section 7, reaffirmed unchanged by this adoption) forecloses this outright: there is no way to
+execute "the identical real Agent" against this repository's own frozen corpus, present and
+absent MANOSUBE, without production credential use. This is not a missing implementation; it is
+a capability this session's own Authority grant does not extend, by the founding adoption's own
+explicit, still-unchanged design.
+
+**F2 is infeasible for the identical structural reason.** A "verifiably independent third-party
+actor or authority" is, by definition, a party other than the one operator/session/credential
+set that produced the original result bundle. Manufacturing one from inside a single Claude Code
+session -- the only executor this adoption authorizes -- is not a code change; it requires either
+a real external actor to genuinely participate (something no code path this session owns can
+conjure into existing) or `REMOTE_COMMAND_AUTHORITY_ALLOWED=true` to command one, which remains
+`false`. A separate OS process, however genuinely distinct its `os.getpid()` (P90-R1-F3's own
+proof), is still the identical operator's own repository, credentials, and authorization --
+exactly what the adoption's own `SEPARATE_PROCESS_ONLY_IS_NOT_ACCEPTED_AS_THIRD_PARTY=true`
+already states is insufficient.
+
+**This is the outcome Issue #89's own founding adoption (comment 5692107525) already
+anticipated**, in its own original design guidance for this exact boundary: given
+`PRODUCTION_CREDENTIAL_USE_ALLOWED=false`/`REMOTE_COMMAND_AUTHORITY_ALLOWED=false`, real external
+product invocation was never something this benchmark could mean -- only a closed,
+honestly-labeled, disclosed-asymmetry model, which is what P90-R1-F1's ungated-reference-harness
+design and this Round's own F4/F5/F3 corrections continue to be. Repository-wide precedent is
+unbroken across all 18+ prior phases (`13_CHANGE_EXECUTOR/CHANGE_EXECUTOR_CONTRACT.md`'s executor
+only ever runs already-decided Changes on disposable worktrees, never lets an Agent decide an
+action; `10_RUNTIME/RUNTIME_CONTRACT.md`'s own adapters are in-memory or loopback-only, "no
+redirect ever" to a real external target): no shipped code in this repository has ever invoked a
+real external AI product or model, and this contract does not introduce the first instance to
+satisfy F1/F2.
+
+```text
+F1_STATUS=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
+F2_STATUS=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
+F1_BLOCKING_CONSTRAINT=PRODUCTION_CREDENTIAL_USE_ALLOWED_FALSE
+F2_BLOCKING_CONSTRAINT=REMOTE_COMMAND_AUTHORITY_ALLOWED_FALSE_AND_NO_REAL_THIRD_PARTY_AVAILABLE
+SIMULATED_OR_RELABELED_SUBSTITUTE_PROVIDED=false
+GATE_21_WEAKENED_OR_OBJECTIVE_REWRITTEN=false
+```
+
+Gate 21's own `SAME_AGENT_COMPARISON_AVAILABLE` and `THIRD_PARTY_REPRODUCIBLE` booleans (section
+11) therefore remain proven only under Round 1's own disclosed, honestly-labeled design -- not
+under Round 2's stricter, real-external-invocation reading of F1/F2. Phase 21 is not complete;
+SHUKOU's own next decision (widen the Authority boundary, accept the Round 1 reading as
+sufficient, or another disposition) is required before this specific pair can be closed.
+
+## 14. Explicit non-claims
 
 ```text
 PHASE_22_V1_0_DECLARATION=false
@@ -399,4 +528,6 @@ REMOTE_COMMAND_AUTHORITY=false
 GITHUB_MERGE_OR_ISSUE_CLOSE_AUTOMATION=false
 MERGE_ALLOWED=false
 ISSUE_89_CLOSE_ALLOWED=false
+P90_R2_F1_CLOSED=false
+P90_R2_F2_CLOSED=false
 ```

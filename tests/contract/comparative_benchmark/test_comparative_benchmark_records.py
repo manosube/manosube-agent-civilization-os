@@ -18,12 +18,14 @@ from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.comparative_benchmark import route as cb_route
 from manosube_agent_civilization.comparative_benchmark.engine import (
+    aggregate_metrics,
     build_protocol_freeze,
     build_reproduction_receipt,
     build_result_bundle,
 )
 from manosube_agent_civilization.comparative_benchmark.errors import (
     ProtocolFreezeValidationError,
+    ReproductionReceiptValidationError,
     ResultBundleValidationError,
 )
 from manosube_agent_civilization.comparative_benchmark.identity import (
@@ -31,6 +33,7 @@ from manosube_agent_civilization.comparative_benchmark.identity import (
     protocol_freeze_semantic_fingerprint,
     reproduction_receipt_id,
     result_bundle_id,
+    result_bundle_semantic_fingerprint,
 )
 from manosube_agent_civilization.store import FileStateStore
 from manosube_agent_civilization.store.errors import RecordConflictError
@@ -312,14 +315,11 @@ def test_build_result_bundle_rejects_an_undeclared_comparison_group_id() -> None
 
 def test_build_result_bundle_rejects_an_unrecognized_outcome() -> None:
     protocol_freeze = build_protocol_freeze(project_id=cb.PROJECT_ID, **_freeze_kwargs())
-    bad_events = [
-        {
-            "kind": "task_attempt",
-            "comparison_group_id": protocol_freeze["comparison_groups"][0]["comparison_group_id"],
-            "task_id": protocol_freeze["corpus_manifest"]["task_ids"][0],
-            "outcome": "NOT_A_REAL_OUTCOME",
-        }
-    ]
+    # A full, corpus-fidelity-valid raw-event set (every group attempts every task, in order)
+    # so this test isolates the outcome-vocabulary check itself, not P90-R2-F4's own
+    # corpus-fidelity gate (which now runs first in build_result_bundle).
+    bad_events = _minimal_raw_events(protocol_freeze)
+    bad_events[-1] = {**bad_events[-1], "outcome": "NOT_A_REAL_OUTCOME"}
     with pytest.raises(ResultBundleValidationError, match="unrecognized task outcome"):
         build_result_bundle(
             project_id=cb.PROJECT_ID,
@@ -471,3 +471,157 @@ def test_commit_reproduction_receipt_is_idempotent_and_resolves(tmp_path: Path) 
         reproduction_receipt_id=first["reproduction_receipt_id"],
     )
     assert resolved == first
+
+
+# --- P90-R2-F4: production-level corpus-fidelity enforcement, never bypassable via engine ----- #
+
+
+def test_build_result_bundle_refuses_reordered_omitted_duplicated_or_substituted_corpus() -> None:
+    """P90-R2-F4: the frozen-corpus-fidelity gate now lives in `build_result_bundle` itself, not
+    only in the test-only `tests.comparative_benchmark.orchestrator.verify_corpus_fidelity`
+    guard -- so calling this production builder directly, bypassing that orchestrator-level guard
+    entirely, still refuses a reordered, omitted, duplicated, or substituted raw-event set for
+    any declared comparison group."""
+
+    protocol_freeze = build_protocol_freeze(project_id=cb.PROJECT_ID, **_freeze_kwargs())
+    good = _minimal_raw_events(protocol_freeze)
+    present_id = protocol_freeze["comparison_groups"][0]["comparison_group_id"]
+    task_ids = list(protocol_freeze["corpus_manifest"]["task_ids"])
+
+    def _events_for_present(ids: list[str]) -> list[dict[str, Any]]:
+        others = [e for e in good if e["comparison_group_id"] != present_id]
+        mine = [
+            {
+                "kind": "task_attempt",
+                "comparison_group_id": present_id,
+                "task_id": task_id,
+                "outcome": "FAILED",
+            }
+            for task_id in ids
+        ]
+        return others + mine
+
+    def _build(events: list[dict[str, Any]]) -> None:
+        build_result_bundle(
+            project_id=cb.PROJECT_ID,
+            project_binding_ref=_PROJECT_BINDING_REF,
+            protocol_freeze=protocol_freeze,
+            raw_events=events,
+            environment_manifest=_ENVIRONMENT_MANIFEST,
+            generated_at=_GENERATED_AT,
+        )
+
+    _build(good)  # baseline is accepted
+
+    with pytest.raises(ResultBundleValidationError, match="expected exactly the frozen corpus"):
+        _build(_events_for_present(list(reversed(task_ids))))
+    with pytest.raises(ResultBundleValidationError, match="expected exactly the frozen corpus"):
+        _build(_events_for_present(task_ids[:-1]))
+    with pytest.raises(ResultBundleValidationError, match="expected exactly the frozen corpus"):
+        _build(_events_for_present([*task_ids[:-1], task_ids[0]]))
+    with pytest.raises(ResultBundleValidationError, match="expected exactly the frozen corpus"):
+        _build(_events_for_present([*task_ids[:-1], "TSK-NOT-IN-CORPUS-0000"]))
+
+
+def test_build_reproduction_receipt_refuses_a_non_full_corpus_reproduced_raw_events_set() -> None:
+    """The identical P90-R2-F4 gate `build_result_bundle` uses also guards
+    `build_reproduction_receipt`'s own `reproduced_raw_events` -- a reproducer cannot submit a
+    partial reproduction and have it accepted, whatever `reproducer_identity` claims."""
+
+    protocol_freeze = build_protocol_freeze(project_id=cb.PROJECT_ID, **_freeze_kwargs())
+    raw_events = _minimal_raw_events(protocol_freeze)
+    original_bundle = build_result_bundle(
+        project_id=cb.PROJECT_ID,
+        project_binding_ref=_PROJECT_BINDING_REF,
+        protocol_freeze=protocol_freeze,
+        raw_events=raw_events,
+        environment_manifest=_ENVIRONMENT_MANIFEST,
+        generated_at=_GENERATED_AT,
+    )
+    partial = raw_events[:-1]
+    with pytest.raises(
+        ReproductionReceiptValidationError, match="expected exactly the frozen corpus"
+    ):
+        build_reproduction_receipt(
+            project_id=cb.PROJECT_ID,
+            project_binding_ref=_PROJECT_BINDING_REF,
+            protocol_freeze=protocol_freeze,
+            original_result_bundle=original_bundle,
+            reproducer_identity=_reproducer_identity(
+                reproduction_process_id=original_bundle["generation_process_id"] + 1
+            ),
+            reproduced_raw_events=partial,
+            generated_at=_GENERATED_AT,
+        )
+
+
+# --- P90-R2-F5: threshold_evaluations/generation_process_id tampering changes the fingerprint - #
+
+
+def test_result_bundle_semantic_fingerprint_changes_when_threshold_evaluations_tamper() -> None:
+    protocol_freeze = build_protocol_freeze(project_id=cb.PROJECT_ID, **_freeze_kwargs())
+    raw_events = _minimal_raw_events(protocol_freeze)
+    bundle = build_result_bundle(
+        project_id=cb.PROJECT_ID,
+        project_binding_ref=_PROJECT_BINDING_REF,
+        protocol_freeze=protocol_freeze,
+        raw_events=raw_events,
+        environment_manifest=_ENVIRONMENT_MANIFEST,
+        generated_at=_GENERATED_AT,
+    )
+    assert bundle["threshold_evaluations"], "expected at least one threshold_evaluations entry"
+    original_fingerprint = bundle["result_bundle_semantic_fingerprint"]
+
+    tampered = dict(bundle)
+    tampered["threshold_evaluations"] = [
+        {**entry, "passed": not entry["passed"]} for entry in bundle["threshold_evaluations"]
+    ]
+    assert result_bundle_semantic_fingerprint(tampered) != original_fingerprint
+
+
+def test_result_bundle_semantic_fingerprint_changes_when_generation_process_id_tampers() -> None:
+    protocol_freeze = build_protocol_freeze(project_id=cb.PROJECT_ID, **_freeze_kwargs())
+    raw_events = _minimal_raw_events(protocol_freeze)
+    bundle = build_result_bundle(
+        project_id=cb.PROJECT_ID,
+        project_binding_ref=_PROJECT_BINDING_REF,
+        protocol_freeze=protocol_freeze,
+        raw_events=raw_events,
+        environment_manifest=_ENVIRONMENT_MANIFEST,
+        generated_at=_GENERATED_AT,
+    )
+    original_fingerprint = bundle["result_bundle_semantic_fingerprint"]
+    tampered = {**bundle, "generation_process_id": bundle["generation_process_id"] + 1}
+    assert result_bundle_semantic_fingerprint(tampered) != original_fingerprint
+
+
+# --- P90-R2-F3: reproduced_raw_events is persisted and rederives reproduced_metrics ------------ #
+
+
+def test_reproduction_receipt_persists_reproduced_raw_events_and_rederives_reproduced_metrics() -> (
+    None
+):
+    protocol_freeze = build_protocol_freeze(project_id=cb.PROJECT_ID, **_freeze_kwargs())
+    raw_events = _minimal_raw_events(protocol_freeze)
+    original_bundle = build_result_bundle(
+        project_id=cb.PROJECT_ID,
+        project_binding_ref=_PROJECT_BINDING_REF,
+        protocol_freeze=protocol_freeze,
+        raw_events=raw_events,
+        environment_manifest=_ENVIRONMENT_MANIFEST,
+        generated_at=_GENERATED_AT,
+    )
+    receipt = build_reproduction_receipt(
+        project_id=cb.PROJECT_ID,
+        project_binding_ref=_PROJECT_BINDING_REF,
+        protocol_freeze=protocol_freeze,
+        original_result_bundle=original_bundle,
+        reproducer_identity=_reproducer_identity(
+            reproduction_process_id=original_bundle["generation_process_id"] + 1
+        ),
+        reproduced_raw_events=raw_events,
+        generated_at=_GENERATED_AT,
+    )
+    assert receipt["reproduced_raw_events"] == raw_events
+    rederived = aggregate_metrics(receipt["reproduced_raw_events"], protocol_freeze)
+    assert rederived == receipt["reproduced_metrics"]
