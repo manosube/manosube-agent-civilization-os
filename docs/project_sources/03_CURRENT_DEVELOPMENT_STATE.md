@@ -5826,5 +5826,47 @@ MYPY_SRC_RESULT=29 errors in 15 files (checked 197 source files) -- exactly the 
   (`mypy --namespace-packages src/manosube_agent_civilization/comparative_benchmark/` on its
   own reports 0 issues.)
 FULL_REPOSITORY_SUITE_COMMAND=pytest -q
-FULL_REPOSITORY_SUITE_RESULT=<FILLED_BELOW_AFTER_RUN_COMPLETES>
+FULL_REPOSITORY_SUITE_RESULT=21986_PASSED_10_FAILED_11_SKIPPED_7395.59_SECONDS -- the 10
+  failures are the exact known baseline, identical test names to §70's own recorded baseline,
+  all in tests/contract/governance/test_source_freshness_drift_detection.py:
+  test_extract_fields_on_the_real_current_development_state_document,
+  test_no_drift_when_the_predecessor_matches_every_recorded_copy,
+  test_drift_is_detected_and_fully_reported_when_the_predecessor_mismatches,
+  test_current_main_sha_never_participates_in_the_drift_comparison,
+  test_required_proof_the_initial_pr_55_merge_scenario_converges,
+  test_cli_exits_zero_on_no_drift_even_with_fail_on_drift,
+  test_repository_architecture_as_built_ref_agrees_across_header_table_and_receipt,
+  test_repository_architecture_observed_at_utc_agrees_across_header_and_receipt,
+  test_current_development_state_observed_at_utc_agrees_across_header_and_receipt,
+  test_current_development_state_main_accepted_base_sha_agrees_across_all_copies (this doc-
+  drift-detection suite's own hardcoded occurrence-count expectations grow stale every time
+  03_CURRENT_DEVELOPMENT_STATE.md itself gains another dated section, including this Round's
+  own §71; a pre-existing, unrelated gap this Round neither introduces nor is asked to fix).
+  An earlier run at the pre-fix head (0025f6e) surfaced one genuinely net-new failure --
+  tests/contract/binding/test_active_document_terminal_state.py::
+  test_a_document_stating_the_route_is_in_the_swept_set[COMPARATIVE_BENCHMARK_CONTRACT.md] --
+  caused by this Round's own new prose in COMPARATIVE_BENCHMARK_CONTRACT.md using the literal
+  ratified handoff-state token READY_FOR_STRUCTURAL_REVIEW inside a document outside the
+  governance-swept ROUTE_BEARING set; fixed by rephrasing both occurrences without that
+  literal token (commit 24fd628), re-verified clean (593/593 in that file's own full suite,
+  and the second, reported-here full-repository run shows it absent from the failure list).
+NET_NEW_TEST_FAILURES=0
+```
+
+
+```text
+MERGE_ALLOWED=false
+ISSUE_89_CLOSE_ALLOWED=false
+PHASE_22_ALLOWED=false
+V1_0_DECLARATION_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+CREDENTIAL_ACQUISITION_ALLOWED=false
+REMOTE_EXECUTION_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+P90_R2_F1_STATUS=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
+P90_R2_F2_STATUS=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
 ```
