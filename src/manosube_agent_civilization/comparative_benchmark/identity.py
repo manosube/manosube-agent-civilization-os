@@ -1,0 +1,158 @@
+"""Deterministic identity and content-addressing for the Comparative Benchmark package
+(Issue #89, `ADOPT_PHASE_21_COMPARATIVE_BENCHMARK`).
+
+Follows the identical narrow-id/broad-fingerprint split every other package's own
+`identity.py` in this repository already establishes (see
+`long_running_proof_artifact/identity.py`'s own module docstring): the *id* is a pure
+function of *which record this is* -- deliberately excluding `generated_at` and every other
+genuinely nondeterministic field -- so a same-body re-commit collides at the identical Store
+slot (idempotent replay), while the *semantic fingerprint* is a full content address over
+every field, the record's own tamper-detection value.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+import hashlib
+from typing import Any
+
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
+
+#: A protocol freeze's own identity: which project/binding/corpus/comparison-group-set this
+#: is -- excludes `generated_at` and every predeclared policy field, so the *content* of the
+#: freeze (metrics, thresholds, claim vocabulary, ...) is part of the semantic fingerprint
+#: only, never the id -- a caller resolving "the protocol freeze for this corpus" gets the
+#: identical slot regardless of how verbosely its policy fields are phrased.
+PROTOCOL_FREEZE_ID_FIELDS: tuple[str, ...] = (
+    "project_id",
+    "project_binding_ref",
+    "corpus_manifest",
+    "comparison_groups",
+)
+
+PROTOCOL_FREEZE_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_ref",
+    "corpus_manifest",
+    "comparison_groups",
+    "authority_boundary_equivalence_manifest",
+    "resource_budget_manifest",
+    "metric_definitions",
+    "numeric_thresholds",
+    "unknown_missing_handling",
+    "exclusion_policy",
+    "claim_vocabulary",
+    "reproduction_procedure",
+    "comparability_loss_receipts",
+    "generated_at",
+)
+
+#: A result bundle's own identity: which protocol freeze it ran, and its own raw events --
+#: two runs of the identical protocol against the identical raw events collide at the
+#: identical slot (idempotent replay); two runs with genuinely different raw events (a real
+#: divergent trial) never collide.
+RESULT_BUNDLE_ID_FIELDS: tuple[str, ...] = ("project_id", "protocol_freeze_ref", "raw_events")
+
+RESULT_BUNDLE_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_ref",
+    "protocol_freeze_ref",
+    "raw_events",
+    "metrics",
+    "claims",
+    "environment_manifest",
+    "generated_at",
+)
+
+#: A reproduction receipt's own identity: which original result bundle, by which declared
+#: reproducer -- excludes the reproducer's own recomputed metrics/agreement outcome, so a
+#: caller can resolve "did this reproducer already attempt this bundle" before knowing what
+#: they found.
+REPRODUCTION_RECEIPT_ID_FIELDS: tuple[str, ...] = (
+    "project_id",
+    "original_result_bundle_ref",
+    "reproducer_identity",
+)
+
+REPRODUCTION_RECEIPT_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_ref",
+    "protocol_freeze_ref",
+    "original_result_bundle_ref",
+    "reproducer_identity",
+    "reproduced_metrics",
+    "agreement",
+    "generated_at",
+)
+
+
+def _projection(record: Mapping[str, Any], fields: tuple[str, ...], *, kind: str) -> dict[str, Any]:
+    missing = [field for field in fields if field not in record]
+    if missing:
+        raise KeyError(
+            f"{kind} carries no readable {', '.join(missing)} -- its own identity cannot be recomputed"
+        )
+    return {field: record[field] for field in fields}
+
+
+def protocol_freeze_id(record: Mapping[str, Any]) -> str:
+    payload = _projection(
+        record, PROTOCOL_FREEZE_ID_FIELDS, kind="comparative_benchmark_protocol_freeze"
+    )
+    return "CBPF-" + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
+
+
+def protocol_freeze_semantic_fingerprint(record: Mapping[str, Any]) -> str:
+    projection = _projection(
+        record, PROTOCOL_FREEZE_SEMANTIC_FIELDS, kind="comparative_benchmark_protocol_freeze"
+    )
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
+
+
+def result_bundle_id(record: Mapping[str, Any]) -> str:
+    payload = _projection(
+        record, RESULT_BUNDLE_ID_FIELDS, kind="comparative_benchmark_result_bundle"
+    )
+    return "CBRB-" + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
+
+
+def result_bundle_semantic_fingerprint(record: Mapping[str, Any]) -> str:
+    projection = _projection(
+        record, RESULT_BUNDLE_SEMANTIC_FIELDS, kind="comparative_benchmark_result_bundle"
+    )
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
+
+
+def reproduction_receipt_id(record: Mapping[str, Any]) -> str:
+    payload = _projection(
+        record, REPRODUCTION_RECEIPT_ID_FIELDS, kind="comparative_benchmark_reproduction_receipt"
+    )
+    return "CBRR-" + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
+
+
+def reproduction_receipt_semantic_fingerprint(record: Mapping[str, Any]) -> str:
+    projection = _projection(
+        record,
+        REPRODUCTION_RECEIPT_SEMANTIC_FIELDS,
+        kind="comparative_benchmark_reproduction_receipt",
+    )
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
+
+
+__all__ = [
+    "PROTOCOL_FREEZE_ID_FIELDS",
+    "PROTOCOL_FREEZE_SEMANTIC_FIELDS",
+    "REPRODUCTION_RECEIPT_ID_FIELDS",
+    "REPRODUCTION_RECEIPT_SEMANTIC_FIELDS",
+    "RESULT_BUNDLE_ID_FIELDS",
+    "RESULT_BUNDLE_SEMANTIC_FIELDS",
+    "protocol_freeze_id",
+    "protocol_freeze_semantic_fingerprint",
+    "reproduction_receipt_id",
+    "reproduction_receipt_semantic_fingerprint",
+    "result_bundle_id",
+    "result_bundle_semantic_fingerprint",
+]

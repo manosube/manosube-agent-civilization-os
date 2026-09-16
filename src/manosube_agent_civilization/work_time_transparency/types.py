@@ -18,6 +18,13 @@ the one caller Issue #86 itself requires to be WTT-coordinated (``WORK_TIME_COOR
 REQUIRED=true``) but that the original Round 0 delivery incorrectly left un-coordinated on the
 mistaken premise that this enum could never be extended without a full re-adoption. No other
 kind is minted or reused for an unrelated caller.
+
+A second, identically-scoped exception: Issue #89's own SHUKOU adoption
+(``ADOPT_PHASE_21_COMPARATIVE_BENCHMARK``) itself sets ``WORK_TIME_COORDINATION_REQUIRED=true``
+for the comparison-group runner that drives a MANOSUBE_PRESENT trial through the real natural
+route -- so this enum gains exactly one tenth member, ``COMPARATIVE_BENCHMARK``, for that one
+caller, following the identical P87-R1-F7 precedent (a single named caller the adopting Issue
+itself requires WTT-coordinated, not a generic extension point).
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ ADAPTER_KINDS: tuple[str, ...] = (
     "INDEPENDENT_VERIFICATION",
     "GITHUB_PROJECTION",
     "LONG_RUNNING_PROOF",
+    "COMPARATIVE_BENCHMARK",
 )
 
 #: The ``work_unit_ref.kind`` each :data:`ADAPTER_KINDS` entry, at the identical index, opens a
@@ -48,6 +56,7 @@ WORK_UNIT_REF_KINDS: tuple[str, ...] = (
     "independent_verification_run",
     "github_projection_attempt",
     "long_running_proof_run",
+    "comparative_benchmark_run",
 )
 
 ADAPTER_KIND_TO_WORK_UNIT_REF_KIND: dict[str, str] = dict(

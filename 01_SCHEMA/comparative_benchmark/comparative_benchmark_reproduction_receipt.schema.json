@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/comparative_benchmark/comparative_benchmark_reproduction_receipt.schema.json",
+  "title": "Phase 21 Comparative Benchmark: independent reproduction receipt (Issue #89, ADOPT_PHASE_21_COMPARATIVE_BENCHMARK)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "reproduction_receipt_id",
+    "reproduction_receipt_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "protocol_freeze_ref",
+    "original_result_bundle_ref",
+    "reproducer_identity",
+    "reproduced_metrics",
+    "agreement",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "reproduction_receipt_id": {"$ref": "#/$defs/receipt_id"},
+    "reproduction_receipt_semantic_fingerprint": {"$ref": "#/$defs/sha256"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "project_binding"}}}
+      ]
+    },
+    "protocol_freeze_ref": {
+      "type": "object",
+      "required": ["protocol_freeze_id"],
+      "properties": {"protocol_freeze_id": {"type": "string", "minLength": 1}},
+      "additionalProperties": false
+    },
+    "original_result_bundle_ref": {
+      "type": "object",
+      "required": ["result_bundle_id"],
+      "properties": {"result_bundle_id": {"type": "string", "minLength": 1}},
+      "additionalProperties": false
+    },
+    "reproducer_identity": {
+      "type": "object",
+      "required": ["reproducer", "is_original_author"],
+      "properties": {
+        "reproducer": {"type": "string", "minLength": 1},
+        "is_original_author": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "reproduced_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "agreement": {"enum": ["MATCH", "DIVERGENT", "INCOMPARABLE"]},
+    "generated_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "$defs": {
+    "receipt_id": {"type": "string", "pattern": "^CBRR-[0-9A-F]{64}(?![\\s\\S])"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false
+}
