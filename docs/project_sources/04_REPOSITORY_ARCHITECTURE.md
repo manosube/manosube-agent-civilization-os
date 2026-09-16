@@ -1025,3 +1025,60 @@ reporterの取り違えを拒否する。
 
 Phase 20は、このaccepted architectureにはまだ実装されていない。Phase 20実装には、Phase 20
 専用Issue上のObjective / Boundary / AuthorityへのSHUKOUの明示採択が別途必要である。
+
+# 26. Accepted architecture through PR #87 (Phase 20 — Long-running Project Proof)
+
+```text
+OBSERVED_AT_UTC=2026-09-16T04:19:18Z
+AS_BUILT_REF=23c1861163369fa5e12685677eca8f0a2dfafabf
+AS_BUILT_TREE_ENTRY_COUNT=854
+AS_BUILT_BLOB_COUNT=703
+AS_BUILT_DIRECTORY_COUNT=151
+AS_BUILT_TREE_TRUNCATED=false
+
+GOVERNING_ISSUE=#86
+MERGED_PR=#87
+PHASE_20_IMPLEMENTED=true
+PHASE_21_IMPLEMENTED=false
+```
+
+Phase 20(Long-running Project Proof、Issue #86)は、既存の自然routeのみを通じて、長期間に
+わたる多数の連続Structural Difference処理(T10/T30/T50/T100、単一corpusの literal prefix)を、
+Canonical State/LineageがReal process/session loss・繰り返しAgent/runtime-identity swap・
+runtime reachability不確実性を実際に生存させることで証明する、PR #87によりkernelへ統合された
+roadmap Phaseである。
+
+追加されたas-built surfaceは、`00_KERNEL/LONG_RUNNING_PROOF_CONTRACT.md`(contract)、1件の
+新規closed schema`01_SCHEMA/long_running_proof_artifact/long_running_proof_artifact_bundle.
+schema.json`(schema count 89→90)、新package`src/manosube_agent_civilization/
+long_running_proof_artifact/`(durable content-addressed artifact bundle -- `run_outcome`
+`COMMITTED`/`FAILED`を含む -- をStore自身の直交的coordination ledger経由でのみ永続化し、
+`commit_state_transition`へは一切到達しない)、および`tests/long_running_proof/`・
+`tests/fixtures/long_running_proof.py`・`tests/contract/long_running_proof_artifact/`
+(test-onlyのproof harnessとcontract suite)である。
+
+```text
+LONG_RUNNING_PROOF_ROLE=SEQUENTIAL_STRUCTURAL_DIFFERENCE_SCALE_PROOF_HARNESS
+ARTIFACT_BUNDLE_LEDGER_OWNER=STORE
+ARTIFACT_BUNDLE_PROJECT_STATE_ORTHOGONAL=true
+GATE_20_ALL_FOUR_TIERS_PROVEN=true
+REAL_PROCESS_BOUNDARY_SESSION_LOSS_RECOVERY=true
+AGENT_SWAP_MINIMUM_PROVEN=true
+RUNTIME_REACHABILITY_TOTALITY_PROVEN=true
+REAL_ORCHESTRATED_ROUTE_REFUSAL_DURABLY_RECORDED=true
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=9
+STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=1
+STRUCTURAL_REVIEW_FINDINGS_OPEN=0
+SECOND_STATE_OWNER=false
+SECOND_AUTHORITY_OWNER=false
+SECOND_EVIDENCE_OWNER=false
+SECOND_REFLOW_OWNER=false
+SECOND_HUMAN_AUTHORITY_OWNER=false
+PARALLEL_CANONICAL_AUTHORITY=0
+CANONICAL_STATE_OWNER_COUNT=1
+```
+
+Phase 21は、このaccepted architectureにはまだ実装されていない。Issue #86のcloseとPhase 21
+専用Issueの作成は、本節の記録元となったpost-merge source-sync PR自身がSHUKOUによりmergeされ、
+resulting`main`がGitHub API経由で再観測された後にのみ許可される。Phase 21実装には、その専用
+Issue上でのSHUKOUの別途明示的な採択が必要である。

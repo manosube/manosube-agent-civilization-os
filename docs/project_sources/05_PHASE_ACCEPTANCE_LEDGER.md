@@ -1075,3 +1075,64 @@ Reviewを経てfinding open 0件に到達したPR #84の採択base(元PR #84 Rou
 PR #84自体のcode deliveryは完了しているが、Issue #22のcloseは、本節の記録元となった
 post-merge source-sync PRがSHUKOUによりmergeされ、resulting `main`がGitHub API経由で
 再観測された後にのみ許可される。
+
+---
+
+# 28. Phase 20 acceptance receipt
+
+| Phase | Governing Issue | Merged PR | Accepted merge SHA | Receipt class | Accepted capability |
+|---:|---:|---:|---|---|---|
+| 20 | [#86](https://github.com/manosube/manosube-agent-civilization-os/issues/86) | [#87](https://github.com/manosube/manosube-agent-civilization-os/pull/87) | `23c1861163369fa5e12685677eca8f0a2dfafabf` | `DIRECT_COMPLETION_RECEIPT` | Long-running Project Proof: T10/T30/T50/T100 sequential Structural Difference scale, real process/session-loss recovery, repeated Agent/runtime-identity swap, runtime-reachability totality, durable content-addressed artifact bundle (including real-refusal `FAILED` bundles) |
+
+Phase 20のexact delivery headは`b1fec5e8c378e776fc9e58b7744bbf8b60d49f8b`であり、merge commit
+の第二parentと一致する。第一parentはPhase 20 Round 1採択base
+`4a3bce0858b9fe8ee74db922cf0376b33d229427`である。reviewed delivery headとmerge commitは
+同一tree(`2a73b3115616b3aa0ace427a00e5510bc428e68e`)を持ち、file diffは0である。2回の
+Structural Review(Round 1: `P87-R1-F1`〜`F9`、Round 2: `P87-R2-F1`)はいずれもexact delivery
+headに対してfinding open 0件に到達し、その後SHUKOU(`manosube`)がPR #87を手動mergeした。
+
+post-merge受入観測とsource-sync境界はIssue #86コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/86#issuecomment-5691957356`
+(構造参謀post-merge determination)およびSHUKOU採択コメント
+`...#issuecomment-5691973899`
+へ固定し、本source-sync branch作成直前にGitHub API独立readback、およびローカル`git`による
+merge commit親関係・tree一致の直接検証の両方で確認済みである。
+
+```text
+OBSERVED_AT_UTC=2026-09-16T04:19:18Z
+ACCEPTED_PHASE_RANGE=0..20
+ACCEPTED_PHASE_COUNT=21
+LAST_ACCEPTED_PHASE=20_LONG_RUNNING_PROJECT_PROOF
+LAST_ACCEPTED_MAIN_SHA=23c1861163369fa5e12685677eca8f0a2dfafabf
+
+PHASE_20_DELIVERY_HEAD=b1fec5e8c378e776fc9e58b7744bbf8b60d49f8b
+PHASE_20_MERGE_PARENT_BASE=4a3bce0858b9fe8ee74db922cf0376b33d229427
+PHASE_20_MERGE_PARENT_DELIVERY=b1fec5e8c378e776fc9e58b7744bbf8b60d49f8b
+PHASE_20_MERGE_SHA=23c1861163369fa5e12685677eca8f0a2dfafabf
+PHASE_20_REVIEWED_TREE=2a73b3115616b3aa0ace427a00e5510bc428e68e
+PHASE_20_MERGED_TREE=2a73b3115616b3aa0ace427a00e5510bc428e68e
+MERGED_EXACT_REVIEWED_HEAD=true
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+PHASE_20_STRUCTURAL_REVIEW_ROUND_1=PASS
+PHASE_20_STRUCTURAL_REVIEW_ROUND_2=PASS
+PHASE_20_STRUCTURAL_FINDINGS_OPEN=0
+
+GATE_20_ALL_FOUR_TIERS_PASSED=true
+NEGATIVE_CONTROL_MATRIX=21_PASSED
+ARTIFACT_BUNDLE_CONTRACT_SUITE=7_PASSED
+SCHEMA_VALIDATION=PASS_90_SCHEMAS
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=21890_PASSED_10_PRE_EXISTING_FAILED_11_SKIPPED
+NET_NEW_TEST_FAILURES_AT_DELIVERY_HEAD=0
+
+PHASE_20_CURRENT_ROUTE_BLOCKERS=0
+PHASE_20_COMPLETE=true
+ISSUE_86_CLOSE_ALLOWED_AFTER_THIS_SOURCE_SYNC=true
+PHASE_21_ALLOWED_AFTER_THIS_SOURCE_SYNC=true
+PHASE_21_IMPLEMENTATION_ALLOWED=false
+```
+
+Phase 20 acceptanceは、Phase 21の着手・実装、roadmap変更、または本受入以外のいかなる新規
+Canonical State/Authority/Evidence/Reflow/Completion ownerの成立も主張しない。Issue #86の
+closeとPhase 21専用Issueの作成は、本節の記録元となったpost-merge source-sync PR自身がSHUKOU
+によりmergeされ、resulting `main`がGitHub API経由で再観測された後にのみ許可される。Phase 21
+実装は、その専用Issue上での別途明示的なSHUKOU採択を経てから初めて許可される。
