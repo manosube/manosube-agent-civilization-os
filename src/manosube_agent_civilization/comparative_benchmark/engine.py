@@ -11,10 +11,10 @@ either the real natural route or the disclosed ungated baseline harness) live in
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import operator as _operator
 import os
-from typing import Any, Callable
+from typing import Any
 
 from manosube_agent_civilization.difference.errors import DifferenceValidationError
 from manosube_agent_civilization.difference.validation import (
