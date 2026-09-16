@@ -5303,3 +5303,119 @@ ISSUE_86_CLOSE_ALLOWED=false
 PHASE_21_ISSUE_CREATION_ALLOWED=false
 PHASE_21_IMPLEMENTATION_ALLOWED=false
 ```
+
+# 69. Phase 21「Comparative Benchmark」実装delivery bounded addendum(Issue #89)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、新規kernel_surface変更(新規package `src/manosube_agent_civilization/
+comparative_benchmark/`・新規schema 3件・`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`・
+`work_time_transparency`のadapter_kind enum拡張)に対応付けるための、最小限の事実記録である。
+
+Issue #89「[Phase 21] Comparative Benchmark」はSHUKOU正式採択・実装handoffコメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/89#issuecomment-5692107525`
+(`ADOPTION_ID=ADOPT_PHASE_21_COMPARATIVE_BENCHMARK`、author `manosube`、association `OWNER`)
+によって指示された。本記録作成者は、Issue #89本文・この採択コメント・live `main` head
+(`f97ba6fa973ba07e7674690d158cc156a10da04a`、authorized baseと一致)を、実装開始直前に
+GitHub API経由で独立readbackし一致を確認済みである。branch
+`agent/issue-89-phase21-comparative-benchmark`はこのexact base SHAから分岐している。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-16
+GOVERNING_ISSUE=#89
+ADOPTION_ID=ADOPT_PHASE_21_COMPARATIVE_BENCHMARK
+ADOPTION_COMMENT_ID=5692107525
+AUTHORIZED_BASE_SHA=f97ba6fa973ba07e7674690d158cc156a10da04a
+BRANCH=agent/issue-89-phase21-comparative-benchmark
+IMPLEMENTATION_TARGET=NEW_BRANCH_THIS_SESSION
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+Issue #89は、同じAgent・同じ8-task frozen corpus・比較可能なAuthority境界のもとで、MANOSUBEの
+有無による差を第三者が再現できる形で測定する、という比較benchmark単位である。新規publish
+packageは`src/manosube_agent_civilization/comparative_benchmark/`一つのみ(`types.py`/
+`identity.py`/`errors.py`/`engine.py`/`route.py`/`__init__.py`、公開entry point 6個)であり、
+既存の`long_running_proof_artifact`と同一の規律(`store.commit_coordination_record_at_tip`の
+みを経由し、`commit_state_transition`を一切呼ばない)によって、Canonical State/Authority/
+Change/Evidence-sufficiency/Reflow/Completionのいずれの新規ownerにもならない構造を持つ
+(`HARNESS_OWNS_CANONICAL_STATE=false`、Issue #89 section 7)。新規schemaは3件
+(`comparative_benchmark_protocol_freeze`/`comparative_benchmark_result_bundle`/
+`comparative_benchmark_reproduction_receipt`)。`work_time_transparency.types.ADAPTER_KINDS`は
+採択コメント自身が要求する`WORK_TIME_COORDINATION_REQUIRED=true`に基づき、Phase 20自身の
+P87-R1-F7 precedentと同一の方式で10番目のmember`COMPARATIVE_BENCHMARK`/
+`comparative_benchmark_run`を獲得した(schema側`work_time_coordination_open.schema.json`の
+2箇所のenumも同時に更新)。
+
+`tests/fixtures/comparative_benchmark.py`(自己完結、frozen 8-task corpus + 4 comparison
+groups宣言)と`tests/comparative_benchmark/`(`orchestrator.py`が`MANOSUBE_PRESENT`群を
+`tests.long_running_proof.cycle`の既受理per-cycle composer経由で実natural routeへ、
+`MANOSUBE_ABSENT`群3件を開示済み・決定的な"ungated reference harness"へ駆動し、Gate 21の7
+booleanの直接的証拠・NC-1からNC-13までの13件の決定的negative control・control/treatment
+equivalence testsを含む)は、Phase 8/Phase 20自身の`VERTICAL_PROOF_CONTRACT.md`/
+`LONG_RUNNING_PROOF_CONTRACT.md`と同一の役割で、新規Canonical record kindを一切生成しない。
+
+```text
+GATE_21_ALL_SEVEN_BOOLEANS_PASSED=true
+NEGATIVE_CONTROL_COUNT=13
+NEGATIVE_CONTROLS_PASSED=13
+COMPARATIVE_BENCHMARK_AND_CONTRACT_AND_WTT_CONFORMANCE_SUITE=110_PASSED
+SCHEMA_VALIDATION_AT_DELIVERY_HEAD=PASS_93_SCHEMAS
+RUFF_NET_NEW_FINDINGS=0
+RUFF_FORMAT_NET_NEW_FINDINGS=0
+MYPY_NET_NEW_FINDINGS=0
+```
+
+`ruff check`・`ruff format --check`はこのbranch全体に対し、baseline(authorized base
+`f97ba6fa9`)と完全に同数のfinding(それぞれ178件・120件、いずれもこのPhase 21 delivery以前
+から存在する既存箇所)を報告し、`comparative_benchmark`/`work_time_transparency`配下には1件の
+findingも残っていない -- net-new findingは0件。`mypy --namespace-packages src/`は、baselineと
+完全に同数(29件)を報告し、net-new findingは0件(baseline 191 source files → delivery head
+197 source files、差の6ファイルは全て新規`comparative_benchmark`自身)。
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=93`、90から
+comparative_benchmarkの3schema分増加)。
+
+Full repository test suiteは同一delivery headに対して2回独立実行した。1回目
+(`21938 passed, 26 failed, 11 skipped, 8 errors in 4297.11s`)は、`tests/long_running_proof/`・
+`tests/integration/binding/`・`tests/integration/boot/`・`tests/natural_cycle/`配下の
+"fresh python process"サブプロセス起動testを中心とする本Phase 21が一切変更していない既存
+packageの一時的な失敗を含んでいたため、そのうち代表的な3件(`test_boot_project_route.py::
+test_a_fresh_python_process_boots_successfully`、`test_long_running_proof_gate_20.py`の
+tier 10、`test_request_grammar_inventory.py::
+test_the_declared_unconstrained_locations_match_the_schemas_in_both_directions`)を隔離実行し、
+未変更main branch(worktree)上でも独立に再現するかを検証した。前2件はmain上で単独実行すると
+即座にPASSし(単一の約71分間serial runにおける資源競合由来の一時的失敗であることを示す)、
+3件目のみが本Phase 21自身の新規schema(`comparative_benchmark_result_bundle`/
+`comparative_benchmark_reproduction_receipt`の`metrics`/`reproduced_metrics`フィールドが
+`additionalProperties: true`という真に無制約のlocationを開いていた)による真の新規finding
+であることが判明した。`engine.aggregate_metrics`が常に生成する既知の固定shape
+(`raw_event_count`+5 outcome、いずれも非負整数)へ両schemaを締め直す修正
+(`required`+`additionalProperties: false`)をcommitした後、2回目のfull repository test suite
+を同一delivery headに対して独立再実行し、以下の通りbaselineと完全に一致する結果を得た。
+
+```text
+FULL_REPOSITORY_SUITE_RUN_1_AT_PRE_SCHEMA_FIX_HEAD=21938_PASSED_26_FAILED_11_SKIPPED_8_ERRORS
+FULL_REPOSITORY_SUITE_RUN_1_NON_BASELINE_FAILURES_REPRODUCED_ON_UNMODIFIED_MAIN_IN_ISOLATION=true
+FULL_REPOSITORY_SUITE_RUN_2_AT_POST_SCHEMA_FIX_HEAD=21962_PASSED_10_FAILED_11_SKIPPED_0_ERRORS
+FULL_REPOSITORY_SUITE_RUN_2_DURATION_SECONDS=7275.94
+NET_NEW_TEST_FAILURES_AT_DELIVERY_HEAD=0
+KNOWN_BASELINE_FAILURES_COUNT=10
+KNOWN_BASELINE_FAILURES_FILE=tests/contract/governance/test_source_freshness_drift_detection.py
+KNOWN_BASELINE_FAILURES_EXACT_NAMES=test_extract_fields_on_the_real_current_development_state_document,test_no_drift_when_the_predecessor_matches_every_recorded_copy,test_drift_is_detected_and_fully_reported_when_the_predecessor_mismatches,test_current_main_sha_never_participates_in_the_drift_comparison,test_required_proof_the_initial_pr_55_merge_scenario_converges,test_cli_exits_zero_on_no_drift_even_with_fail_on_drift,test_repository_architecture_as_built_ref_agrees_across_header_table_and_receipt,test_repository_architecture_observed_at_utc_agrees_across_header_and_receipt,test_current_development_state_observed_at_utc_agrees_across_header_and_receipt,test_current_development_state_main_accepted_base_sha_agrees_across_all_copies
+```
+
+Source-impact gateは本節自身の追加によって、本delivery全体が触れたkernel_surface(新規
+`comparative_benchmark`package/schema・`scripts/validate_schemas.py`・
+`work_time_transparency`の2ファイル)を`03_CURRENT_DEVELOPMENT_STATE.md`(本節)とpairする
+ことで解消される。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_89_CLOSE_ALLOWED=false
+PHASE_22_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
