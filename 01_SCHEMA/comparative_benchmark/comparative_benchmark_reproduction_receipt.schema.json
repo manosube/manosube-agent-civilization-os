@@ -52,7 +52,23 @@
       "type": "object",
       "additionalProperties": {
         "type": "object",
-        "additionalProperties": true
+        "required": [
+          "raw_event_count",
+          "COMPLETED_VERIFIED",
+          "REFUSED",
+          "RETAINED_INCOMPLETE",
+          "FAILED",
+          "TIMED_OUT"
+        ],
+        "properties": {
+          "raw_event_count": {"type": "integer", "minimum": 0},
+          "COMPLETED_VERIFIED": {"type": "integer", "minimum": 0},
+          "REFUSED": {"type": "integer", "minimum": 0},
+          "RETAINED_INCOMPLETE": {"type": "integer", "minimum": 0},
+          "FAILED": {"type": "integer", "minimum": 0},
+          "TIMED_OUT": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
       }
     },
     "agreement": {"enum": ["MATCH", "DIVERGENT", "INCOMPARABLE"]},
