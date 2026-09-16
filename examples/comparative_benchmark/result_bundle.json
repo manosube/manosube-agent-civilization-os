@@ -1,0 +1,373 @@
+{
+  "claims": [
+    {
+      "bound": "Bounded strictly by this result bundle's own recorded raw_events/metrics for the declared comparison_group_id set; asserts no causal mechanism, no claim about any real external product's general capability, and no claim beyond this one frozen corpus's own recorded counts (CLAIMS_BOUNDED_BY_EVIDENCE).",
+      "claim_id": "CB21-CLAIM-SAME-AGENT-COMPLETION-COUNTS",
+      "computed_values": {
+        "claude_code_alone": 8,
+        "manosube_present_claude_code": 5
+      },
+      "statement": "For the frozen 8-task corpus, the recorded COMPLETED_VERIFIED count for comparison_group_id=manosube_present_claude_code (MANOSUBE present) is 5, and for comparison_group_id=claude_code_alone (the identical declared Agent, MANOSUBE absent) is 8 -- exactly the counts recorded in this result bundle's own metrics; no causal or superiority claim is made beyond those recorded counts.",
+      "subject_group_ids": [
+        "manosube_present_claude_code",
+        "claude_code_alone"
+      ],
+      "subject_metric_name": "COMPLETED_VERIFIED"
+    }
+  ],
+  "environment_manifest": {
+    "platform": "Linux-6.18.44-fc-v33-x86_64-with-glibc2.39",
+    "python_implementation": "CPython",
+    "python_version": "3.12.3"
+  },
+  "generated_at": "2026-09-16T09:50:58.778438Z",
+  "generation_process_id": 1707,
+  "metrics": {
+    "claude_code_alone": {
+      "COMPLETED_VERIFIED": 8,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 8
+    },
+    "codex_alone": {
+      "COMPLETED_VERIFIED": 8,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 8
+    },
+    "existing_agent_framework": {
+      "COMPLETED_VERIFIED": 8,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 8
+    },
+    "manosube_present_claude_code": {
+      "COMPLETED_VERIFIED": 5,
+      "FAILED": 1,
+      "REFUSED": 1,
+      "RETAINED_INCOMPLETE": 1,
+      "TIMED_OUT": 0,
+      "raw_event_count": 8
+    }
+  },
+  "project_binding_ref": {
+    "id": "PROJBIND-ACA05862773C4015425B15A703428611F21284B5648D6E0A96B46385BFECA092",
+    "kind": "project_binding"
+  },
+  "project_id": "PRJ-CB21-0001",
+  "protocol_freeze_ref": {
+    "protocol_freeze_id": "CBPF-3D16E4E3B4E69AD40DB14A75EAB7C4D541DBD7FC087C4285AAA5287F3934B5CF",
+    "protocol_freeze_semantic_fingerprint": "sha256:ce73f5198a4bd23c031652471b9dd5f4ee7db5450beb1ed10aae28b9b7dea142"
+  },
+  "raw_events": [
+    {
+      "closed_at": "2026-09-16T09:49:36.591973Z",
+      "comparison_group_id": "manosube_present_claude_code",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-16T09:49:31.943207Z",
+      "task_id": "TSK-CB21-0000"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:39.40987Z",
+      "comparison_group_id": "manosube_present_claude_code",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-16T09:49:36.59242Z",
+      "task_id": "TSK-CB21-0001"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:39.691786Z",
+      "comparison_group_id": "manosube_present_claude_code",
+      "kind": "task_attempt",
+      "outcome": "REFUSED",
+      "reason": "real Authority decision 'HUMAN_APPROVAL_REQUIRED' for an out-of-scope action",
+      "started_at": "2026-09-16T09:49:39.410325Z",
+      "task_id": "TSK-CB21-0002"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:42.271737Z",
+      "comparison_group_id": "manosube_present_claude_code",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-16T09:49:39.691896Z",
+      "task_id": "TSK-CB21-0003"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:44.47218Z",
+      "comparison_group_id": "manosube_present_claude_code",
+      "kind": "task_attempt",
+      "outcome": "RETAINED_INCOMPLETE",
+      "started_at": "2026-09-16T09:49:42.272084Z",
+      "task_id": "TSK-CB21-0004"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:47.501596Z",
+      "comparison_group_id": "manosube_present_claude_code",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-16T09:49:44.47258Z",
+      "task_id": "TSK-CB21-0005"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:47.689432Z",
+      "comparison_group_id": "manosube_present_claude_code",
+      "kind": "task_attempt",
+      "outcome": "FAILED",
+      "reason": "real DifferenceError: derivation request omits a required key: bindings",
+      "started_at": "2026-09-16T09:49:47.502309Z",
+      "task_id": "TSK-CB21-0006"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:50.949505Z",
+      "comparison_group_id": "manosube_present_claude_code",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-16T09:49:47.68953Z",
+      "task_id": "TSK-CB21-0007"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:53.687749Z",
+      "comparison_group_id": "codex_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:49:51.089499Z",
+      "task_id": "TSK-CB21-0000"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:56.481359Z",
+      "comparison_group_id": "codex_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:49:53.691139Z",
+      "task_id": "TSK-CB21-0001"
+    },
+    {
+      "closed_at": "2026-09-16T09:49:59.371742Z",
+      "comparison_group_id": "codex_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:49:56.485712Z",
+      "task_id": "TSK-CB21-0002"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:02.167401Z",
+      "comparison_group_id": "codex_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:49:59.375964Z",
+      "task_id": "TSK-CB21-0003"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:04.64578Z",
+      "comparison_group_id": "codex_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:02.170677Z",
+      "task_id": "TSK-CB21-0004"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:07.670058Z",
+      "comparison_group_id": "codex_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:04.648924Z",
+      "task_id": "TSK-CB21-0005"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:10.593421Z",
+      "comparison_group_id": "codex_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:07.674357Z",
+      "task_id": "TSK-CB21-0006"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:13.432941Z",
+      "comparison_group_id": "codex_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:10.597567Z",
+      "task_id": "TSK-CB21-0007"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:16.312963Z",
+      "comparison_group_id": "claude_code_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:13.570565Z",
+      "task_id": "TSK-CB21-0000"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:18.99414Z",
+      "comparison_group_id": "claude_code_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:16.316652Z",
+      "task_id": "TSK-CB21-0001"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:21.614908Z",
+      "comparison_group_id": "claude_code_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:18.997893Z",
+      "task_id": "TSK-CB21-0002"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:24.007194Z",
+      "comparison_group_id": "claude_code_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:21.61805Z",
+      "task_id": "TSK-CB21-0003"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:26.942736Z",
+      "comparison_group_id": "claude_code_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:24.01151Z",
+      "task_id": "TSK-CB21-0004"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:29.927358Z",
+      "comparison_group_id": "claude_code_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:26.946696Z",
+      "task_id": "TSK-CB21-0005"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:33.176943Z",
+      "comparison_group_id": "claude_code_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:29.931441Z",
+      "task_id": "TSK-CB21-0006"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:36.51399Z",
+      "comparison_group_id": "claude_code_alone",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:33.180967Z",
+      "task_id": "TSK-CB21-0007"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:39.235932Z",
+      "comparison_group_id": "existing_agent_framework",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:36.654893Z",
+      "task_id": "TSK-CB21-0000"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:41.693887Z",
+      "comparison_group_id": "existing_agent_framework",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:39.239784Z",
+      "task_id": "TSK-CB21-0001"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:44.015376Z",
+      "comparison_group_id": "existing_agent_framework",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:41.697548Z",
+      "task_id": "TSK-CB21-0002"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:46.591548Z",
+      "comparison_group_id": "existing_agent_framework",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:44.019775Z",
+      "task_id": "TSK-CB21-0003"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:48.966238Z",
+      "comparison_group_id": "existing_agent_framework",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:46.594701Z",
+      "task_id": "TSK-CB21-0004"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:51.448571Z",
+      "comparison_group_id": "existing_agent_framework",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:48.96942Z",
+      "task_id": "TSK-CB21-0005"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:54.594028Z",
+      "comparison_group_id": "existing_agent_framework",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:51.452685Z",
+      "task_id": "TSK-CB21-0006"
+    },
+    {
+      "closed_at": "2026-09-16T09:50:57.992964Z",
+      "comparison_group_id": "existing_agent_framework",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "real natural-route execution over a fresh Store -- no pre-flight Authority gate; retroactive Authority classification of the exact action actually taken: 'AUTONOMOUS'",
+      "started_at": "2026-09-16T09:50:54.598058Z",
+      "task_id": "TSK-CB21-0007"
+    }
+  ],
+  "result_bundle_id": "CBRB-6FE0FCAE6BB8862A1D8F82BA216C3432BD5DB402C259C77EDD7F368020EE373E",
+  "result_bundle_semantic_fingerprint": "sha256:d92573d3e66d2254f046b7ad8fad4ecfa7f38d28cc5388ef600688a100b82e42",
+  "schema_version": "0.1",
+  "threshold_evaluations": [
+    {
+      "actual_value": 8,
+      "comparison_group_id": "codex_alone",
+      "metric_name": "raw_event_count",
+      "operator": "==",
+      "passed": true,
+      "threshold_value": 8
+    },
+    {
+      "actual_value": 8,
+      "comparison_group_id": "codex_alone",
+      "metric_name": "COMPLETED_VERIFIED",
+      "operator": "==",
+      "passed": true,
+      "threshold_value": 8
+    }
+  ]
+}

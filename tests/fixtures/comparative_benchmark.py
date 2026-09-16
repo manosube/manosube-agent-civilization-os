@@ -29,17 +29,22 @@ corpus below (``CB_TASK_TO_NATURAL_ROUTE_CYCLE_INDEX``). This module itself neve
 fixture world -- only the orchestrator does, and only to drive real records, never to mint one by
 hand.
 
-**The ungated reference harness is fabricated, deterministic, disclosed fixture data -- never a
-claim about any real product.** :data:`ABSENT_OUTCOME_TABLE` names a fixed per-(group, task)
-outcome for each ``MANOSUBE_ABSENT`` comparison group. No real Codex, Claude Code, or third-party
-agent-framework binary is ever invoked here or anywhere in this delivery
-(``PRODUCTION_CREDENTIAL_USE_ALLOWED=false``, ``REMOTE_COMMAND_AUTHORITY_ALLOWED=false``) -- the
-table is a bounded, honestly-labeled stand-in whose only real property this test suite exercises
-is structural: it is produced by a mechanism that never touches this repository's own Authority/
-Change/Evidence/Reflow owners, so it can never itself produce ``CLOSED`` Canonical State
-(:data:`~manosube_agent_civilization.comparative_benchmark.types.COMPARISON_GROUP_ROLES`'s own
-``MANOSUBE_ABSENT`` role). :data:`COMPARABILITY_LOSS_RECEIPTS` discloses this tool-surface/
-Authority-boundary asymmetry explicitly, rather than presenting the harness as genuine parity.
+**P90-R1-F1: the ungated reference harness is a real, structurally-ungated execution -- never a
+fixture table.** Every ``MANOSUBE_ABSENT`` comparison group (``codex_alone``,
+``claude_code_alone``, ``existing_agent_framework``) is driven, by
+``tests/comparative_benchmark/orchestrator.py``'s own
+:func:`~tests.comparative_benchmark.orchestrator.run_ungated_reference_harness_group`, through
+the identical real natural-route mechanism the ``MANOSUBE_PRESENT`` group's own real ``CLOSED``
+tasks use (a fresh Store, a fresh genesis/Project Binding, the real Observation/Difference/
+Authority/Change/Evidence/Reflow owners, reused through :mod:`tests.long_running_proof.cycle`)
+-- never a hand-authored outcome table, and never a real invocation of any named external
+product (``PRODUCTION_CREDENTIAL_USE_ALLOWED=false``, ``REMOTE_COMMAND_AUTHORITY_ALLOWED=
+false``). "Ungated" names a structural fact, not an absence of Authority: no pre-flight Authority
+decision ever gates whether a ``MANOSUBE_ABSENT`` task is *attempted*, but this module's own
+:func:`resource_budget_manifest`/:func:`authority_boundary_equivalence_manifest` and
+:data:`comparability_loss_receipts` still disclose the real, narrower asymmetry that remains
+against ``MANOSUBE_PRESENT`` -- see their own docstrings/bodies below, never presented as
+genuine product-for-product parity.
 """
 
 from __future__ import annotations
@@ -88,43 +93,11 @@ PRESENT_TASK_PLAN: dict[str, str] = {
     TASK_IDS[7]: "CLOSED",
 }
 
-#: This corpus's own predeclared, frozen, per-``MANOSUBE_ABSENT``-group outcome table -- one
-#: entry per :data:`TASK_IDS` position, for each of the three required absent groups. Literal,
-#: hand-authored fixture data (never a hash or a real invocation) so it is trivially auditable
-#: and reproducible byte-for-byte by a third party re-reading this file, exactly as a frozen
-#: protocol requires.
-ABSENT_OUTCOME_TABLE: dict[str, tuple[str, ...]] = {
-    "codex_alone": (
-        "FAILED",
-        "FAILED",
-        "FAILED",
-        "COMPLETED_VERIFIED",
-        "FAILED",
-        "FAILED",
-        "FAILED",
-        "COMPLETED_VERIFIED",
-    ),
-    "claude_code_alone": (
-        "COMPLETED_VERIFIED",
-        "COMPLETED_VERIFIED",
-        "FAILED",
-        "COMPLETED_VERIFIED",
-        "FAILED",
-        "COMPLETED_VERIFIED",
-        "FAILED",
-        "RETAINED_INCOMPLETE",
-    ),
-    "existing_agent_framework": (
-        "COMPLETED_VERIFIED",
-        "FAILED",
-        "FAILED",
-        "COMPLETED_VERIFIED",
-        "RETAINED_INCOMPLETE",
-        "COMPLETED_VERIFIED",
-        "FAILED",
-        "COMPLETED_VERIFIED",
-    ),
-}
+#: The three required ``MANOSUBE_ABSENT`` comparison group ids (P90-R1-F1: each is now a real,
+#: structurally-ungated execution of the identical natural-route mechanism, never a hand-
+#: authored outcome table -- see the module docstring and ``orchestrator.
+#: run_ungated_reference_harness_group``).
+ABSENT_GROUP_IDS: tuple[str, ...] = ("codex_alone", "claude_code_alone", "existing_agent_framework")
 
 #: The one ``MANOSUBE_PRESENT`` comparison group. Its own ``agent_label`` is deliberately
 #: identical to the ``claude_code_alone`` absent group's own ``agent_label`` below -- the
@@ -176,7 +149,6 @@ COMPARISON_GROUPS: tuple[dict[str, Any], ...] = (
 )
 
 ALL_GROUP_IDS: tuple[str, ...] = tuple(group["comparison_group_id"] for group in COMPARISON_GROUPS)
-ABSENT_GROUP_IDS: tuple[str, ...] = tuple(ABSENT_OUTCOME_TABLE)
 
 
 def corpus_manifest() -> dict[str, Any]:
@@ -195,10 +167,13 @@ def authority_boundary_equivalence_manifest() -> dict[str, Any]:
     return {
         "boundary_ref": {"kind": "authority_boundary", "id": "CBB-AUTH-BOUNDARY-0001"},
         "equivalence_statement": (
-            "The MANOSUBE_PRESENT group's real natural-route Authority check and every "
-            "MANOSUBE_ABSENT group's own declared tool surface are not asserted equivalent -- "
-            "see comparability_loss_receipts. This manifest exists so that asymmetry is "
-            "recorded and checkable (NC-3), never silently assumed away."
+            "The MANOSUBE_PRESENT group's own live, pre-flight Authority check (load-bearing --"
+            " Change/Reflow only proceed on its decision) and every MANOSUBE_ABSENT group's own"
+            " retroactive, audit-only Authority classification (applied after the real Reflow"
+            " closure, never gating whether a task is attempted) are not asserted equivalent --"
+            " see comparability_loss_receipts. This manifest exists so that this Authority-"
+            "boundary/tool-surface asymmetry is recorded and checkable (NC-3), never silently"
+            " assumed away."
         ),
     }
 
@@ -245,10 +220,13 @@ def numeric_thresholds() -> list[dict[str, Any]]:
     """Machine-checkable, predeclared thresholds (P90-R1-F7) -- each names a real
     `(metric_name, comparison_group_id, operator, threshold_value)` tuple `engine.
     evaluate_numeric_thresholds` itself evaluates against the recomputed metrics, never an
-    informational-only free-text rule. Bounded to the three ``MANOSUBE_ABSENT`` groups' own
-    fully fixed fixture outcome table (:data:`ABSENT_OUTCOME_TABLE`) so these thresholds hold
-    true independent of how the ``MANOSUBE_PRESENT`` group's real natural-route mechanism is
-    later wired (``THRESHOLDS_PREDECLARED_BEFORE_RESULTS=true``)."""
+    informational-only free-text rule. Bounded to a fact that is structurally true of every
+    ``MANOSUBE_ABSENT`` group's own real, deterministic mechanism (P90-R1-F1): the identical
+    fixed Authority Rule fixture (:func:`tests.fixtures.long_running_proof.authority_rule`)
+    always authorizes this corpus's one in-scope ``WRITE_FILE`` action, so a fresh-Store,
+    uniformly-plain-routed run over this frozen corpus deterministically closes every task --
+    predeclared here before any result exists (``THRESHOLDS_PREDECLARED_BEFORE_RESULTS=true``),
+    not fitted to a run's own observed counts after the fact."""
 
     return [
         {
@@ -263,15 +241,17 @@ def numeric_thresholds() -> list[dict[str, Any]]:
             ),
         },
         {
-            "metric_name": "FAILED",
+            "metric_name": "COMPLETED_VERIFIED",
             "comparison_group_id": "codex_alone",
-            "operator": ">=",
-            "threshold_value": 4,
+            "operator": "==",
+            "threshold_value": len(TASK_IDS),
             "comparison_decision_rule": (
-                "the codex_alone ungated reference harness's own frozen fixture outcome table "
-                "(ABSENT_OUTCOME_TABLE) records FAILED for at least 4 of the 8 frozen corpus "
-                "tasks -- predeclared before any result exists, never adjusted after seeing "
-                "this bundle's own recomputed count"
+                "the codex_alone ungated reference harness's own real, structurally-ungated "
+                "mechanism (P90-R1-F1) deterministically closes every one of this frozen "
+                "corpus's 8 tasks under the identical fixed Authority Rule fixture the "
+                "MANOSUBE_PRESENT group's own real natural route uses -- predeclared before "
+                "any result exists, never adjusted after seeing this bundle's own recomputed "
+                "count"
             ),
         },
     ]
@@ -337,13 +317,25 @@ def comparability_loss_receipts() -> list[dict[str, Any]]:
             "receipt_id": "CLR-CB21-0001",
             "description": (
                 "The three MANOSUBE_ABSENT comparison groups (codex_alone, claude_code_alone, "
-                "existing_agent_framework) are driven by an in-repo, deterministic 'ungated "
-                "reference harness' -- never a real invocation of any named external product "
-                "(PRODUCTION_CREDENTIAL_USE_ALLOWED=false, REMOTE_COMMAND_AUTHORITY_ALLOWED="
-                "false) -- that never passes through this repository's own Authority/Change/"
-                "Evidence/Reflow owners at all. This is a disclosed tool-surface and Authority-"
-                "boundary asymmetry versus the MANOSUBE_PRESENT group's real natural route, "
-                "never a claim of true product-for-product parity (NC-3)."
+                "existing_agent_framework) are driven by a real, structurally-ungated execution "
+                "of the identical natural-route mechanism the MANOSUBE_PRESENT group uses "
+                "(P90-R1-F1) -- the same real Observation/Difference/Authority/Change/Evidence/"
+                "Reflow owners, the same frozen 8-task corpus, the same fixed Authority Rule, "
+                "each group against its own fresh Store/genesis -- never a real invocation of "
+                "any named external product (PRODUCTION_CREDENTIAL_USE_ALLOWED=false, "
+                "REMOTE_COMMAND_AUTHORITY_ALLOWED=false). The remaining disclosed Authority-"
+                "boundary and tool-surface asymmetry against MANOSUBE_PRESENT is narrower but "
+                "real: (1) MANOSUBE_PRESENT's own frozen task-routing policy deliberately "
+                "drives distinct tasks through out-of-scope, malformed-request, or evidence-"
+                "emptied branches to exercise REFUSED/FAILED/RETAINED_INCOMPLETE outcomes, "
+                "while every MANOSUBE_ABSENT task always attempts the identical plain in-scope "
+                "action uniformly -- this uniform routing is a fact about this frozen fixture "
+                "plan, never a claim that a real ungated agent could never fail, refuse, or be "
+                "retained; and (2) MANOSUBE_ABSENT's own Authority evaluation is applied "
+                "retroactively, for audit/classification only, never as a live pre-flight gate "
+                "deciding whether a task is attempted, while MANOSUBE_PRESENT's identical "
+                "Authority evaluation is load-bearing before Change/Reflow ever proceeds. Never "
+                "a claim of true product-for-product parity (NC-3)."
             ),
         }
     ]

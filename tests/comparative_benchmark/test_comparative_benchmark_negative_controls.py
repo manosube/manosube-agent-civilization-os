@@ -7,6 +7,7 @@ never a vacuous assertion."""
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +26,35 @@ from manosube_agent_civilization.comparative_benchmark.engine import (
 )
 from manosube_agent_civilization.comparative_benchmark.errors import (
     ProtocolFreezeValidationError,
+    ReproductionReceiptValidationError,
     ResultBundleValidationError,
 )
 import manosube_agent_civilization.comparative_benchmark.route as cb_route_module
 from manosube_agent_civilization.store.errors import RecordConflictError
 
 _GENERATED_AT = "2026-01-01T00:00:00.000001Z"
+_ENVIRONMENT_MANIFEST = {
+    "python_implementation": "CPython",
+    "python_version": "3.12.0",
+    "platform": "test-platform",
+}
+
+
+def _reproducer_identity(
+    *, reproduction_process_id: int, is_original_author: bool = False, reproducer: str = "nc-test"
+) -> dict[str, Any]:
+    """A real, schema-shaped ``reproducer_identity`` for a fast, in-process negative-control
+    test (P90-R1-F3): *reproduction_process_id* is supplied explicitly by the caller rather than
+    read from ``os.getpid()`` here, since a same-process negative control must be able to pass
+    the identical pid this test process is itself running under, and a positive control must be
+    able to pass a genuinely different one."""
+
+    return {
+        "reproducer": reproducer,
+        "is_original_author": is_original_author,
+        "reproduction_process_id": reproduction_process_id,
+        "reproduction_environment_manifest": dict(_ENVIRONMENT_MANIFEST),
+    }
 
 
 def _built_protocol_freeze() -> dict[str, Any]:
@@ -201,7 +225,10 @@ def test_nc6_a_tampered_or_deleted_raw_event_invalidates_recomputed_metrics(
         project_binding_ref=dict(result_bundle["project_binding_ref"]),
         protocol_freeze=protocol_freeze,
         original_result_bundle=result_bundle,
-        reproducer_identity={"reproducer": "nc6-tamper-attempt", "is_original_author": False},
+        reproducer_identity=_reproducer_identity(
+            reproduction_process_id=result_bundle["generation_process_id"] + 1,
+            reproducer="nc6-tamper-attempt",
+        ),
         reproduced_raw_events=edited,
         generated_at=_GENERATED_AT,
     )
@@ -211,7 +238,18 @@ def test_nc6_a_tampered_or_deleted_raw_event_invalidates_recomputed_metrics(
 # --- NC-7: post-hoc metric, denominator or threshold change is rejected ----------------------- #
 
 
-def test_nc7_a_post_hoc_metric_definition_change_collides_and_is_refused(tmp_path: Path) -> None:
+def test_nc7_a_post_hoc_metric_or_threshold_change_mints_a_new_identity_never_retroactive(
+    tmp_path: Path,
+) -> None:
+    """P90-R1-F4 widened ``identity.PROTOCOL_FREEZE_ID_FIELDS`` to include
+    ``metric_definitions``/``numeric_thresholds`` themselves (previously excluded) -- so a
+    post-hoc change to either now mints a genuinely *new* ``protocol_freeze_id``, never a
+    same-id collision. This is the decisive proof for the required
+    ``POST_HOC_THRESHOLD_MUTATION_REFUSED`` flag: the mutated policy content can never overwrite
+    or retroactively apply to the original, already-committed protocol identity -- it can only
+    ever exist as its own, separately identified, separately committed protocol freeze, and the
+    original identity's own already-committed body is provably unchanged by the attempt."""
+
     from tests.long_running_proof import cycle as lrp_cycle
 
     from manosube_agent_civilization.store import FileStateStore
@@ -222,30 +260,56 @@ def test_nc7_a_post_hoc_metric_definition_change_collides_and_is_refused(tmp_pat
     kwargs = cb.protocol_freeze_kwargs(generated_at=_GENERATED_AT)
     first = cb_route.commit_protocol_freeze(store, project_id=cb.PROJECT_ID, **kwargs)
 
-    # protocol_freeze_id excludes metric_definitions/numeric_thresholds from its own identity
-    # (identity.py's PROTOCOL_FREEZE_ID_FIELDS) -- a post-hoc change to either collides at the
-    # identical already-committed id with a genuinely different body, and is refused.
-    mutated_kwargs = dict(kwargs)
-    mutated_kwargs["metric_definitions"] = [
+    mutated_metrics_kwargs = dict(kwargs)
+    mutated_metrics_kwargs["metric_definitions"] = [
         {
             "metric_name": "a_new_metric_added_after_the_fact",
             "formula": "post-hoc",
             "denominator": "post-hoc",
         }
     ]
-    with pytest.raises(RecordConflictError):
-        cb_route.commit_protocol_freeze(store, project_id=cb.PROJECT_ID, **mutated_kwargs)
+    mutated_metrics = build_protocol_freeze(project_id=cb.PROJECT_ID, **mutated_metrics_kwargs)
+    assert mutated_metrics["protocol_freeze_id"] != first["protocol_freeze_id"]
+    committed_mutated_metrics = cb_route.commit_protocol_freeze(
+        store, project_id=cb.PROJECT_ID, **mutated_metrics_kwargs
+    )
+    assert committed_mutated_metrics["protocol_freeze_id"] == mutated_metrics["protocol_freeze_id"]
 
-    mutated_thresholds = dict(kwargs)
-    mutated_thresholds["numeric_thresholds"] = [
-        {"metric_name": "completed_verified_count", "comparison_decision_rule": "post-hoc rule"}
+    mutated_thresholds_kwargs = dict(kwargs)
+    mutated_thresholds_kwargs["numeric_thresholds"] = [
+        {
+            "metric_name": "raw_event_count",
+            "comparison_group_id": cb.PRESENT_GROUP_ID,
+            "operator": ">=",
+            "threshold_value": 0,
+            "comparison_decision_rule": "post-hoc rule",
+        }
     ]
-    with pytest.raises(RecordConflictError):
-        cb_route.commit_protocol_freeze(store, project_id=cb.PROJECT_ID, **mutated_thresholds)
+    mutated_thresholds = build_protocol_freeze(
+        project_id=cb.PROJECT_ID, **mutated_thresholds_kwargs
+    )
+    assert mutated_thresholds["protocol_freeze_id"] != first["protocol_freeze_id"]
+    assert mutated_thresholds["protocol_freeze_id"] != mutated_metrics["protocol_freeze_id"]
 
-    # The original, unmutated re-commit is still a harmless idempotent replay.
+    # Decisive: the original, already-committed identity's own body is provably unchanged by
+    # either post-hoc mutation attempt -- neither ever retroactively applies to it.
+    resolved_original = cb_route.resolve_protocol_freeze(
+        store, project_id=cb.PROJECT_ID, protocol_freeze_id=first["protocol_freeze_id"]
+    )
+    assert resolved_original == first
+
+    # The original, unmutated re-commit is still a harmless idempotent replay at its own id.
     replay = cb_route.commit_protocol_freeze(store, project_id=cb.PROJECT_ID, **kwargs)
     assert replay == first
+
+    # A genuinely conflicting re-commit at an *already-used* id (same id, different body) is
+    # still refused -- P90-R1-F4 widened which fields mint a new identity, it did not remove
+    # the underlying conflict guard for the one field ``protocol_freeze_id`` still excludes:
+    # ``generated_at`` alone (the one genuinely nondeterministic field, per identity.py).
+    conflicting_generated_at = dict(kwargs)
+    conflicting_generated_at["generated_at"] = "2027-01-01T00:00:00.000001Z"
+    with pytest.raises(RecordConflictError):
+        cb_route.commit_protocol_freeze(store, project_id=cb.PROJECT_ID, **conflicting_generated_at)
 
 
 # --- NC-8: cross-group/cross-project/cross-binding/cross-environment substitutions fail closed  #
@@ -279,7 +343,9 @@ def test_nc8_a_foreign_result_bundle_reproduction_is_incomparable_never_silently
     protocol_freeze = _built_protocol_freeze()
     foreign_original_bundle = {
         "result_bundle_id": "CBRB-" + ("0" * 64),
+        "result_bundle_semantic_fingerprint": "sha256:" + ("0" * 64),
         "metrics": {"a-completely-different-group-id": {"raw_event_count": 0}},
+        "generation_process_id": os.getpid() + 1,
     }
     reproduced = _full_raw_events(protocol_freeze)
     receipt = build_reproduction_receipt(
@@ -287,10 +353,9 @@ def test_nc8_a_foreign_result_bundle_reproduction_is_incomparable_never_silently
         project_binding_ref={"kind": "project_binding", "id": cb.PROJECT_BINDING_ID},
         protocol_freeze=protocol_freeze,
         original_result_bundle=foreign_original_bundle,
-        reproducer_identity={
-            "reproducer": "nc8-cross-binding-attempt",
-            "is_original_author": False,
-        },
+        reproducer_identity=_reproducer_identity(
+            reproduction_process_id=os.getpid(), reproducer="nc8-cross-binding-attempt"
+        ),
         reproduced_raw_events=reproduced,
         generated_at=_GENERATED_AT,
     )
@@ -369,29 +434,51 @@ def test_nc11_only_route_py_calls_commit_coordination_record_at_tip() -> None:
 # --- NC-12: unsupported causal/superiority claims cannot exceed recorded Evidence -------------- #
 
 
-def test_nc12_claim_text_is_verbatim_from_the_frozen_vocabulary_never_synthesized_from_metrics() -> (
-    None
-):
-    protocol_freeze = _built_protocol_freeze()
+def test_nc12_claim_text_is_only_ever_the_frozen_templates_own_placeholders_filled_in() -> None:
+    """P90-R1-F5 made `derive_bounded_claims` genuinely read `metrics` into a claim's own
+    rendered `statement` (`.format(**computed_values)` against the frozen template) -- so a
+    claim's *text* now legitimately varies with the metrics handed in. NC-12's own decisive
+    proof updates accordingly: nothing beyond the frozen `claim_statement_template`'s own
+    declared placeholders, filled in with the real `computed_values` this function itself
+    derived, is ever present in a claim's `statement` -- no causal or superiority language is
+    ever synthesized beyond that frozen template, however favorable the metrics handed in."""
 
-    tiny_metrics = {cb.PRESENT_GROUP_ID: {"raw_event_count": 0, "COMPLETED_VERIFIED": 0}}
+    protocol_freeze = _built_protocol_freeze()
+    declared = {c["claim_id"]: c for c in protocol_freeze["claim_vocabulary"]}
+
+    tiny_metrics = {
+        cb.PRESENT_GROUP_ID: {"raw_event_count": 0, "COMPLETED_VERIFIED": 0},
+        "claude_code_alone": {"raw_event_count": 0, "COMPLETED_VERIFIED": 0},
+    }
     fabricated_favorable_metrics = {
-        cb.PRESENT_GROUP_ID: {"raw_event_count": 1000, "COMPLETED_VERIFIED": 1000}
+        cb.PRESENT_GROUP_ID: {"raw_event_count": 1000, "COMPLETED_VERIFIED": 1000},
+        "claude_code_alone": {"raw_event_count": 1000, "COMPLETED_VERIFIED": 1000},
     }
 
     claims_a = derive_bounded_claims(tiny_metrics, protocol_freeze)
     claims_b = derive_bounded_claims(fabricated_favorable_metrics, protocol_freeze)
 
-    # The claims text is identical regardless of the metrics content handed in -- proving no
-    # numeric superiority or causal language is ever synthesized from a favorable-looking
-    # metrics dict; the claim text is only ever the frozen vocabulary's own template, verbatim.
-    assert claims_a == claims_b
-    declared = {
-        (c["claim_id"], c["claim_statement_template"], c["bound"])
-        for c in protocol_freeze["claim_vocabulary"]
-    }
-    actual = {(c["claim_id"], c["statement"], c["bound"]) for c in claims_a}
-    assert actual == declared
+    # Each claim's own rendered statement is exactly its frozen template, formatted against
+    # exactly its own recomputed computed_values -- nothing more, nothing less.
+    for claim in (*claims_a, *claims_b):
+        entry = declared[claim["claim_id"]]
+        expected_statement = entry["claim_statement_template"].format(**claim["computed_values"])
+        assert claim["statement"] == expected_statement
+        assert claim["bound"] == entry["bound"]
+
+    # Every field except the rendered statement/computed_values is identical regardless of the
+    # metrics content handed in -- a favorable-looking metrics dict changes only the
+    # substituted numeric counts, never the claim's own identity, bound, or subject fields.
+    def _stable(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {k: v for k, v in c.items() if k not in ("statement", "computed_values")}
+            for c in claims
+        ]
+
+    assert _stable(claims_a) == _stable(claims_b)
+    # And the two DO genuinely differ, precisely in the substituted numbers -- proving the
+    # statement really is metrics-bound (P90-R1-F5), not independent boilerplate.
+    assert claims_a != claims_b
 
 
 # --- NC-13: a self-run reproduction cannot impersonate an independent third-party receipt ----- #
@@ -412,6 +499,11 @@ def test_nc13_a_self_claimed_original_author_cannot_force_a_match_verdict() -> N
         },
         generated_at=_GENERATED_AT,
     )
+    # A distinct-from-this-process pid stands in for "a genuinely separate reproduction
+    # process" in this fast, in-process test -- see P90-R1-F3's own dedicated proof
+    # (test_p90_r1_f3_self_asserted_independence_via_identical_process_id_is_refused below)
+    # for the decisive same-process-refusal test itself.
+    distinct_pid = original_bundle["generation_process_id"] + 1
 
     # A genuinely divergent re-run (one outcome flipped), claimed as the *original author*
     # ("is_original_author": True) -- the self-claim must never override the real, independent
@@ -423,7 +515,9 @@ def test_nc13_a_self_claimed_original_author_cannot_force_a_match_verdict() -> N
         project_binding_ref={"kind": "project_binding", "id": cb.PROJECT_BINDING_ID},
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
-        reproducer_identity={"reproducer": "self", "is_original_author": True},
+        reproducer_identity=_reproducer_identity(
+            reproduction_process_id=distinct_pid, is_original_author=True, reproducer="self"
+        ),
         reproduced_raw_events=tampered,
         generated_at=_GENERATED_AT,
     )
@@ -441,11 +535,52 @@ def test_nc13_a_self_claimed_original_author_cannot_force_a_match_verdict() -> N
         project_binding_ref={"kind": "project_binding", "id": cb.PROJECT_BINDING_ID},
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
-        reproducer_identity={
-            "reproducer": "independent-reproducer-002",
-            "is_original_author": False,
-        },
+        reproducer_identity=_reproducer_identity(
+            reproduction_process_id=distinct_pid, reproducer="independent-reproducer-002"
+        ),
         reproduced_raw_events=original_events,
         generated_at=_GENERATED_AT,
     )
     assert honest_receipt["agreement"] == "MATCH"
+
+
+def test_p90_r1_f3_self_asserted_independence_via_identical_process_id_is_refused() -> None:
+    """P90-R1-F3's own decisive mechanical proof (``SELF_ASSERTED_INDEPENDENCE_REFUSED=true``):
+    a caller that attempts to pass ``reproduction_process_id=os.getpid()`` -- the identical OS
+    process that produced the original bundle -- is refused outright with
+    ``ReproductionReceiptValidationError``, whatever ``is_original_author`` claims and whatever
+    the reproduced raw events actually contain. Independence can never be a caller-supplied
+    boolean nobody verifies; it is refused fail-closed the moment the two processes are
+    provably the same one."""
+
+    protocol_freeze = _built_protocol_freeze()
+    original_events = _full_raw_events(protocol_freeze)
+    original_bundle = build_result_bundle(
+        project_id=cb.PROJECT_ID,
+        project_binding_ref={"kind": "project_binding", "id": cb.PROJECT_BINDING_ID},
+        protocol_freeze=protocol_freeze,
+        raw_events=original_events,
+        environment_manifest={
+            "python_implementation": "CPython",
+            "python_version": "3.12.0",
+            "platform": "test",
+        },
+        generated_at=_GENERATED_AT,
+    )
+    # This test process is the same OS process that just built original_bundle above, so its
+    # own os.getpid() is genuinely identical to original_bundle["generation_process_id"].
+    assert os.getpid() == original_bundle["generation_process_id"]
+
+    for is_original_author in (False, True):
+        with pytest.raises(ReproductionReceiptValidationError, match="genuinely separate"):
+            build_reproduction_receipt(
+                project_id=cb.PROJECT_ID,
+                project_binding_ref={"kind": "project_binding", "id": cb.PROJECT_BINDING_ID},
+                protocol_freeze=protocol_freeze,
+                original_result_bundle=original_bundle,
+                reproducer_identity=_reproducer_identity(
+                    reproduction_process_id=os.getpid(), is_original_author=is_original_author
+                ),
+                reproduced_raw_events=original_events,
+                generated_at=_GENERATED_AT,
+            )

@@ -9,6 +9,9 @@ PHASE_NAME=COMPARATIVE_BENCHMARK
 ADOPTION_ID=ADOPT_PHASE_21_COMPARATIVE_BENCHMARK
 ADOPTION_COMMENT_ID=5692107525
 ADOPTION_COMMENT_AUTHOR=manosube (OWNER)
+STRUCTURAL_REVIEW_ROUND_1_ID=P90-R1
+STRUCTURAL_REVIEW_ROUND_1_ADOPTION_COMMENT_ID=5694898062
+STRUCTURAL_REVIEW_ROUND_1_FINDINGS_CLOSED=F1,F2,F3,F4,F5,F6,F7
 ```
 
 This contract documents the proof `tests/comparative_benchmark/` and the durable package
@@ -17,7 +20,11 @@ adopted required comparison groups (section 4), metrics discipline (section 5), 
 boundary (section 7), required decisive negative controls (section 8), and Gate 21 (section 9),
 together with the adoption comment's own additional invariants (`WORK_TIME_COORDINATION_
 REQUIRED=true`, verification-policy requirements). It does not redefine canonical roadmap
-Gate 21 (`02_CANONICAL_ROADMAP.md`); it instantiates it.
+Gate 21 (`02_CANONICAL_ROADMAP.md`); it instantiates it. This revision of the contract also
+folds in PR #90's Structural Review Round 1 (P90-R1-F1/F2/F3/F4/F5/F6/F7), replacing the
+initial delivery's own now-superseded description of the ungated reference harness (former
+section 6), the protocol-freeze identity fields (former section 3/4), and reproduction
+independence (former section 8) with the corrected design -- see sections 6, 8, and 12 below.
 
 ## 1. Purpose
 
@@ -46,13 +53,22 @@ src/manosube_agent_civilization/comparative_benchmark/
 tests/fixtures/comparative_benchmark.py        # frozen 8-task corpus + protocol-freeze
                                                 # declarations (self-contained, see section 6)
 tests/comparative_benchmark/orchestrator.py    # drives both group families over the frozen
-                                                # corpus, commits all 3 record kinds
+                                                # corpus, commits all 3 record kinds, spawns the
+                                                # separate-process reproduction (section 8)
+tests/comparative_benchmark/reproduction_subprocess_entrypoint.py  # the P90-R1-F3 child-process
+                                                # entrypoint the orchestrator spawns
 tests/comparative_benchmark/conftest.py        # session-scoped shared real run
 tests/comparative_benchmark/test_comparative_benchmark_gate_21.py
 tests/comparative_benchmark/test_comparative_benchmark_negative_controls.py   # NC-1..NC-13
 tests/comparative_benchmark/test_comparative_benchmark_control_treatment_equivalence.py
 tests/contract/comparative_benchmark/test_comparative_benchmark_records.py       # fast unit proof
 tests/contract/comparative_benchmark/test_comparative_benchmark_static_conformance.py
+tests/contract/comparative_benchmark/test_comparative_benchmark_published_artifacts.py  # P90-R1-F2
+
+scripts/generate_comparative_benchmark_artifacts.py  # regenerates the checked-in artifact bundle
+examples/comparative_benchmark/{protocol_freeze,result_bundle,reproduction_receipt}.json
+                                                # P90-R1-F2's own checked-in public bundle
+examples/comparative_benchmark/README.md
 ```
 
 Everything under `tests/comparative_benchmark/` and `tests/fixtures/comparative_benchmark.py`
@@ -118,15 +134,34 @@ RETAINED_NE_CLOSED=true                      (RETAINED_INCOMPLETE is never count
 FAILURE_AND_STOP_TIME_INCLUDED=true          (every raw_event carries its own started_at/
                                                closed_at, including REFUSED/FAILED/RETAINED_
                                                INCOMPLETE tasks)
-POST_HOC_METRIC_SUBSTITUTION_FORBIDDEN=true  (protocol_freeze_id excludes metric_definitions/
-                                               numeric_thresholds/claim_vocabulary from its own
-                                               identity -- a post-hoc change collides at the
-                                               identical already-committed id with a different
-                                               body and is refused, RecordConflictError; NC-7)
+POST_HOC_METRIC_SUBSTITUTION_FORBIDDEN=true  (P90-R1-F4: `identity.PROTOCOL_FREEZE_ID_FIELDS`
+                                               was widened to include `metric_definitions`/
+                                               `numeric_thresholds`/`claim_vocabulary` themselves
+                                               -- the *only* field the id still excludes is
+                                               `generated_at`. A post-hoc change to policy
+                                               content therefore never overwrites or retroactively
+                                               applies to the original, already-committed
+                                               protocol identity: it mints a genuinely new
+                                               `protocol_freeze_id` of its own, and the original
+                                               id's own already-committed body is provably
+                                               unchanged (NC-7). A same-id, different-body
+                                               re-commit -- the one remaining, genuinely
+                                               conflicting case, a `generated_at`-only change --
+                                               is still refused, `RecordConflictError`)
+NUMERIC_THRESHOLDS_MACHINE_CHECKED=true      (P90-R1-F7: `engine.evaluate_numeric_thresholds`
+                                               evaluates every predeclared `(metric_name,
+                                               comparison_group_id, operator, threshold_value)`
+                                               tuple against the recomputed metrics, embedding
+                                               its own `actual_value`/`passed` verdict in
+                                               `result_bundle.threshold_evaluations` -- never an
+                                               informational-only free-text rule)
 ```
 
-`derive_bounded_claims` never reads `metrics`' own numeric content into a claim's text -- every
-claim is the frozen `claim_vocabulary` entry, verbatim (NC-12).
+`derive_bounded_claims` (P90-R1-F5) renders each claim's own `statement` by formatting its
+frozen `claim_statement_template` against the real, recomputed `computed_values` for its
+declared `subject_metric_name`/`subject_group_ids` -- the rendered text is always bound to the
+metrics that produced it (NC-12), never independent boilerplate that merely sits beside a
+metric, and never anything beyond what the frozen template itself declares.
 
 ## 5. Authority boundary and Completion-Evidence exclusion (`route.py`, `engine.py`)
 
@@ -167,17 +202,35 @@ Each of the 8 tasks is driven to one predeclared, frozen real outcome
 derivation request (`FAILED`) -- so `FAILURES_INCLUDED` is a fact about this frozen plan, never
 assembled after seeing results.
 
-The 3 `MANOSUBE_ABSENT` groups (`codex_alone`, `claude_code_alone`, `existing_agent_framework`)
-are driven by a small, honestly-named, in-repo "ungated reference harness"
-(`orchestrator.run_ungated_reference_harness_group`): a deterministic function, reading a fixed,
-hand-authored outcome table (`tests.fixtures.comparative_benchmark.ABSENT_OUTCOME_TABLE`), that
-never invokes any real external Codex/Claude Code/other-framework product
-(`PRODUCTION_CREDENTIAL_USE_ALLOWED=false`, `REMOTE_COMMAND_AUTHORITY_ALLOWED=false`) and never
-passes through Observation/Difference/Authority/Change/Evidence/Reflow at all -- so it
-structurally cannot itself produce `CLOSED` Canonical State, making its own `mechanism_identity`
-genuinely disjoint from the `MANOSUBE_PRESENT` group's real natural route, not merely a
-relabeling. This disclosed asymmetry is recorded in the protocol freeze's own
-`comparability_loss_receipts` (NC-3), never presented as true product-for-product parity.
+**P90-R1-F1 (Structural Review Round 1): the ungated reference harness is a real execution, not
+a fixture table.** The 3 `MANOSUBE_ABSENT` groups (`codex_alone`, `claude_code_alone`,
+`existing_agent_framework`) are driven by `orchestrator.run_ungated_reference_harness_group`
+through the *identical real* natural-route mechanism the `MANOSUBE_PRESENT` group's own
+`CLOSED` tasks use: its own fresh Store and fresh genesis/Project Binding
+(`tests.long_running_proof.cycle.build_store`/`bind_genesis`), the real `cycle.
+assemble_one_cycle` + the real, unmodified `reflow()`, over the byte-identical frozen 8-task
+corpus -- never a hand-authored outcome-table lookup, and never a real invocation of any named
+external product (`PRODUCTION_CREDENTIAL_USE_ALLOWED=false`, `REMOTE_COMMAND_AUTHORITY_
+ALLOWED=false`, unchanged). Every task is always driven through the plain natural-route path --
+never the deliberately-crafted out-of-scope/malformed-request/evidence-emptied branches the
+`MANOSUBE_PRESENT` group's own frozen task-routing policy uses for some of its tasks, since that
+routing choice is itself MANOSUBE's own deliberate policy, absent by definition in the
+`MANOSUBE_ABSENT` condition. After each task's own real Reflow closure, the harness retroactively
+(audit/classification only, never a live pre-flight gate) re-evaluates the identical real
+Authority Rule fixture against the exact action actually taken, recording that classification in
+the raw event's own free-text `reason` field. "Ungated" is therefore a structural fact about
+*when* Authority is consulted (after the fact, never gating the attempt), not a claim that no
+real Authority/Reflow mechanism is ever reached -- `codex_alone`/`existing_agent_framework` are
+driven by the identical real mechanism, differing from `claude_code_alone` only in their
+protocol freeze's own predeclared `agent_label`, never a real invocation of Codex or any other
+third-party product.
+
+The remaining, narrower disclosed asymmetry against `MANOSUBE_PRESENT` -- (1) `MANOSUBE_ABSENT`'s
+uniform plain-route attempt vs. `MANOSUBE_PRESENT`'s own deliberate REFUSED/FAILED/RETAINED
+task-routing policy, and (2) `MANOSUBE_ABSENT`'s retroactive, audit-only Authority classification
+vs. `MANOSUBE_PRESENT`'s live, load-bearing pre-flight Authority gate -- is recorded in the
+protocol freeze's own `comparability_loss_receipts` and `authority_boundary_equivalence_
+manifest` (NC-3), never presented as true product-for-product parity.
 
 `orchestrator.verify_corpus_fidelity` is the one test-suite-level decisive guard (mirroring
 `tests.long_running_proof.cycle.CorpusPositionError`'s own identical role) that every declared
@@ -204,12 +257,57 @@ own identical composition.
 alone; `agreement` (`MATCH`/`DIVERGENT`/`INCOMPARABLE`) is always independently derived by
 comparing that recomputation against the *original* bundle's own stored `metrics` -- never
 accepted as a caller-supplied verdict (the function's own signature carries no `agreement`
-parameter at all). `orchestrator.run_comparative_benchmark` performs a genuinely second,
-independent full pass -- a fresh Store, a fresh project genesis/binding, its own reproducer
-identity -- and commits its own raw events as the reproduction receipt's `reproduced_raw_events`
-(NC-13's positive counterpart; see Gate 21's own `THIRD_PARTY_REPRODUCIBLE`).
+parameter at all).
 
-## 9. The 13 required decisive negative controls
+**P90-R1-F3: independence is structurally verified, never a caller-supplied boolean.**
+`reproducer_identity` requires an integer `reproduction_process_id` and a 3-field
+`reproduction_environment_manifest`; `build_reproduction_receipt` refuses fail-closed
+(`ReproductionReceiptValidationError`) whenever `reproduction_process_id` equals the *original*
+bundle's own `generation_process_id` -- a reproduction sharing its OS process with the run it
+claims to reproduce is a self-assertion, never a genuinely separate execution, whatever
+`is_original_author` claims (`SELF_ASSERTED_INDEPENDENCE_REFUSED=true`). `orchestrator.
+run_comparative_benchmark` makes this check meaningful in practice: it spawns a real, separate
+Python OS process (`python -m tests.comparative_benchmark.reproduction_subprocess_entrypoint`,
+the identical `sys.executable`/fresh-process idiom `tests/integration/boot/
+test_boot_project_route.py::test_a_fresh_python_process_boots_successfully` already establishes)
+to run the reproduction pass -- its own fresh Store, fresh genesis/Project Binding, the identical
+comparison-group mechanism the original run used -- and reads that child's own real
+`os.getpid()`/environment manifest from its stdout JSON payload, never guessing or forwarding
+values on the parent's behalf. Since the child is a genuinely different OS process, its own pid
+is structurally guaranteed to differ from the parent's `generation_process_id`
+(`REAL_SAME_AGENT_PRESENT_ABSENT_EXECUTION`-adjacent: `INDEPENDENT_REPRODUCER_PROVENANCE_
+VERIFIED=true`). The committed reproduction receipt's own raw events are that child's own real
+raw events (NC-13's positive counterpart; see Gate 21's own `THIRD_PARTY_REPRODUCIBLE`).
+
+## 9. Published artifacts (`examples/comparative_benchmark/`)
+
+**P90-R1-F2: a public, versioned, checked-in artifact bundle.** `scripts/
+generate_comparative_benchmark_artifacts.py` runs the full, real `run_comparative_benchmark`
+against a disposable temp directory and writes the resulting `protocol_freeze`, `result_bundle`,
+and `reproduction_receipt` bodies, pretty-printed (`json.dumps(..., indent=2, sort_keys=True)`),
+to `examples/comparative_benchmark/{protocol_freeze,result_bundle,reproduction_receipt}.json`
+-- real, genuine bytes this repository ships and versions, never hand-authored or fabricated
+JSON, and never an ephemeral per-test `FileStateStore` that vanishes after the test run
+(`PUBLIC_VERSIONED_PROTOCOL_FREEZE=true`, `PUBLIC_VERSIONED_RAW_RESULT_BUNDLE=true`,
+`PUBLIC_VERSIONED_REPRODUCTION_RECEIPT=true`). This is a *display* serialization only -- the
+records' own internal content addressing (`state.canonicalize.canonical_json_bytes`) is entirely
+unaffected by how the checked-in copy is pretty-printed.
+
+`tests/contract/comparative_benchmark/test_comparative_benchmark_published_artifacts.py` loads
+the three files directly off disk (`json.loads(Path(...).read_text())` alone -- no Store, no
+fixture module, no orchestrator call) and proves: each validates against its own canonical
+schema; each record's own declared id/semantic-fingerprint fields are recomputed from the loaded
+body and match exactly (`PUBLISHED_BYTES_RELOADABLE=true`); the result bundle's own `metrics`/
+`claims`/`threshold_evaluations` are recomputed from its own loaded `raw_events` and the loaded
+protocol freeze alone, matching the stored values byte-for-byte
+(`REPRODUCED_RAW_EVENTS_DURABLY_REDERIVABLE=true`); the loaded raw events include at least one
+real non-`COMPLETED_VERIFIED` outcome (`FAILURES_PRESENT_IN_PUBLISHED_RAW_DATA=true` --
+real failures/refusals/retained outcomes survive into the published data, never a success-only
+subset); and the reproduction receipt's own `agreement` verdict is recomputed from its own
+loaded `reproduced_metrics` compared against the loaded result bundle's own `metrics`, using the
+identical rule `engine.build_reproduction_receipt` itself applies, and matches the stored value.
+
+## 10. The 13 required decisive negative controls
 
 ```text
 NC-1   different Agent/runtime/configuration cannot be mislabeled as same-agent comparison
@@ -226,8 +324,12 @@ NC-6   raw-result deletion/edit invalidates derived metrics and claims
        -- aggregate_metrics/build_reproduction_receipt recompute independently; a tampered/
           deleted raw_event set diverges from the stored bundle's own metrics
 NC-7   post-hoc metric/denominator/threshold change is rejected
-       -- protocol_freeze_id excludes policy fields; a changed body collides at the identical id
-          (RecordConflictError)
+       -- P90-R1-F4: protocol_freeze_id now includes metric_definitions/numeric_thresholds/
+          claim_vocabulary in its own identity, so a post-hoc change mints a genuinely new
+          protocol_freeze_id, never overwriting or retroactively applying to the original,
+          already-committed identity (proven: the original id's own body is unchanged after the
+          attempt); a same-id, different-body re-commit -- a generated_at-only change, the one
+          field the id still excludes -- is still refused (RecordConflictError)
 NC-8   cross-group/cross-project/cross-binding/cross-environment substitutions fail closed
        -- ResultBundleValidationError on an undeclared comparison_group_id; build_reproduction_
           receipt returns INCOMPARABLE against a foreign bundle's own differing group-id set
@@ -238,18 +340,24 @@ NC-10  shorter or partial runs cannot impersonate the adopted benchmark scale
 NC-11  the benchmark harness cannot mutate existing Canonical owners through an extension surface
        -- route.py/engine.py never call commit_state_transition; only route.py commits (static)
 NC-12  unsupported causal/superiority claims cannot exceed recorded Evidence
-       -- derive_bounded_claims' own claim text is verbatim from claim_vocabulary regardless of
-          the metrics content handed to it
+       -- P90-R1-F5: derive_bounded_claims' own rendered claim statement is exactly its frozen
+          claim_statement_template formatted against its own recomputed computed_values -- never
+          anything beyond that frozen template's own declared placeholders, however favorable
+          the metrics handed in; every other claim field (id/bound/subject_*) is unaffected by
+          the metrics content
 NC-13  a self-run reproduction cannot impersonate an independent third-party receipt
        -- build_reproduction_receipt always independently recomputes agreement; a self-claimed
-          is_original_author=True with divergent reproduced_raw_events still yields DIVERGENT
+          is_original_author=True with divergent reproduced_raw_events still yields DIVERGENT;
+          P90-R1-F3's own sibling proof: a reproduction_process_id identical to the original
+          bundle's own generation_process_id is refused outright (ReproductionReceiptValidation
+          Error), whatever is_original_author claims
 ```
 
 Every NC above has its own dedicated, non-skipped test in `tests/comparative_benchmark/
 test_comparative_benchmark_negative_controls.py`, numbered `test_nc1_...` through
 `test_nc13_...`.
 
-## 10. Gate 21
+## 11. Gate 21
 
 ```text
 SAME_AGENT_COMPARISON_AVAILABLE=true   (section 3; test_gate21_same_agent_comparison_available_
@@ -274,7 +382,7 @@ CLAIMS_BOUNDED_BY_EVIDENCE=true        (section 4/9-NC-12; test_gate21_claims_bo
 Phase 21 is not complete until SHUKOU accepts the exact reviewed delivery head, that head is
 merged, and resulting `main` is independently re-observed.
 
-## 11. Explicit non-claims
+## 12. Explicit non-claims
 
 ```text
 PHASE_22_V1_0_DECLARATION=false

@@ -1,0 +1,64 @@
+{
+  "agreement": "MATCH",
+  "generated_at": "2026-09-16T09:52:25.689005Z",
+  "original_result_bundle_ref": {
+    "result_bundle_id": "CBRB-6FE0FCAE6BB8862A1D8F82BA216C3432BD5DB402C259C77EDD7F368020EE373E",
+    "result_bundle_semantic_fingerprint": "sha256:d92573d3e66d2254f046b7ad8fad4ecfa7f38d28cc5388ef600688a100b82e42"
+  },
+  "project_binding_ref": {
+    "id": "PROJBIND-ACA05862773C4015425B15A703428611F21284B5648D6E0A96B46385BFECA092",
+    "kind": "project_binding"
+  },
+  "project_id": "PRJ-CB21-0001",
+  "protocol_freeze_ref": {
+    "protocol_freeze_id": "CBPF-3D16E4E3B4E69AD40DB14A75EAB7C4D541DBD7FC087C4285AAA5287F3934B5CF",
+    "protocol_freeze_semantic_fingerprint": "sha256:ce73f5198a4bd23c031652471b9dd5f4ee7db5450beb1ed10aae28b9b7dea142"
+  },
+  "reproduced_metrics": {
+    "claude_code_alone": {
+      "COMPLETED_VERIFIED": 8,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 8
+    },
+    "codex_alone": {
+      "COMPLETED_VERIFIED": 8,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 8
+    },
+    "existing_agent_framework": {
+      "COMPLETED_VERIFIED": 8,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 8
+    },
+    "manosube_present_claude_code": {
+      "COMPLETED_VERIFIED": 5,
+      "FAILED": 1,
+      "REFUSED": 1,
+      "RETAINED_INCOMPLETE": 1,
+      "TIMED_OUT": 0,
+      "raw_event_count": 8
+    }
+  },
+  "reproducer_identity": {
+    "is_original_author": false,
+    "reproducer": "independent-reproducer-001",
+    "reproduction_environment_manifest": {
+      "platform": "Linux-6.18.44-fc-v33-x86_64-with-glibc2.39",
+      "python_implementation": "CPython",
+      "python_version": "3.12.3"
+    },
+    "reproduction_process_id": 1861
+  },
+  "reproduction_receipt_id": "CBRR-33CD843A67D233F59E5D997BBDE6CEE071AC79ACF6517DDE8870D8D33D2508E0",
+  "reproduction_receipt_semantic_fingerprint": "sha256:92530ebb30f79a4cd2eeae588f7f372cc63a67bbf1b0c2c88b0ce6239cdab147",
+  "schema_version": "0.1"
+}

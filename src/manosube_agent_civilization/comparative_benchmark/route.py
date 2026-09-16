@@ -88,10 +88,13 @@ def commit_result_bundle(store: Any, *, project_id: str, **build_kwargs: Any) ->
 
     caller_protocol_freeze = build_kwargs.get("protocol_freeze")
     if not isinstance(caller_protocol_freeze, Mapping):
-        raise ResultBundleValidationError(
-            "commit_result_bundle requires a protocol_freeze mapping"
-        )
+        raise ResultBundleValidationError("commit_result_bundle requires a protocol_freeze mapping")
     freeze_id = caller_protocol_freeze.get("protocol_freeze_id")
+    if not isinstance(freeze_id, str) or not freeze_id:
+        raise ResultBundleValidationError(
+            "commit_result_bundle requires protocol_freeze to carry a non-empty string "
+            "protocol_freeze_id"
+        )
     resolved_freeze = resolve_protocol_freeze(
         store, project_id=project_id, protocol_freeze_id=freeze_id
     )
@@ -156,6 +159,11 @@ def commit_reproduction_receipt(
             "commit_reproduction_receipt requires a protocol_freeze mapping"
         )
     freeze_id = caller_protocol_freeze.get("protocol_freeze_id")
+    if not isinstance(freeze_id, str) or not freeze_id:
+        raise ReproductionReceiptValidationError(
+            "commit_reproduction_receipt requires protocol_freeze to carry a non-empty string "
+            "protocol_freeze_id"
+        )
     resolved_freeze = resolve_protocol_freeze(
         store, project_id=project_id, protocol_freeze_id=freeze_id
     )
@@ -180,7 +188,14 @@ def commit_reproduction_receipt(
             "commit_reproduction_receipt requires an original_result_bundle mapping"
         )
     bundle_id = caller_original_result_bundle.get("result_bundle_id")
-    resolved_bundle = resolve_result_bundle(store, project_id=project_id, result_bundle_id=bundle_id)
+    if not isinstance(bundle_id, str) or not bundle_id:
+        raise ReproductionReceiptValidationError(
+            "commit_reproduction_receipt requires original_result_bundle to carry a non-empty "
+            "string result_bundle_id"
+        )
+    resolved_bundle = resolve_result_bundle(
+        store, project_id=project_id, result_bundle_id=bundle_id
+    )
     if resolved_bundle is None:
         raise ReproductionReceiptValidationError(
             f"no comparative_benchmark_result_bundle is committed at result_bundle_id "

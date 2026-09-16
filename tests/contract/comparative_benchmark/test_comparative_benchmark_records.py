@@ -8,6 +8,7 @@ real run rather than paying for a second one here)."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,22 @@ _ENVIRONMENT_MANIFEST = {
     "python_version": "3.12.0",
     "platform": "test-platform",
 }
+
+
+def _reproducer_identity(
+    *, reproduction_process_id: int, reproducer: str = "reproducer-a"
+) -> dict[str, Any]:
+    """A real, schema-shaped ``reproducer_identity`` for this fast, in-process contract test
+    (P90-R1-F3) -- *reproduction_process_id* is supplied explicitly rather than read from
+    ``os.getpid()`` here, so a test can pass a genuinely distinct value from whatever
+    ``generation_process_id`` the original bundle it is reproducing carries."""
+
+    return {
+        "reproducer": reproducer,
+        "is_original_author": False,
+        "reproduction_process_id": reproduction_process_id,
+        "reproduction_environment_manifest": dict(_ENVIRONMENT_MANIFEST),
+    }
 
 
 def _store(tmp_path: Path) -> FileStateStore:
@@ -86,12 +103,15 @@ def test_build_protocol_freeze_produces_a_schema_valid_content_addressed_record(
     assert record["resource_budget_manifest"]["per_task_timeout_seconds"] == repr(30.0)
 
 
-def test_protocol_freeze_id_is_independent_of_policy_and_generated_at_fields() -> None:
+def test_protocol_freeze_id_is_independent_of_generated_at_alone() -> None:
+    """P90-R1-F4 widened `identity.PROTOCOL_FREEZE_ID_FIELDS` to nearly every protocol-freeze
+    field -- the *only* field it still excludes is `generated_at`, the one genuinely
+    nondeterministic field. A byte-identical re-freeze of the identical policy, at a later wall-
+    clock time, still collides at the identical id (idempotent replay); its semantic fingerprint
+    still differs (it captures every field, including `generated_at`)."""
+
     first = build_protocol_freeze(project_id=cb.PROJECT_ID, **_freeze_kwargs())
     later_kwargs = _freeze_kwargs(generated_at=_LATER_GENERATED_AT)
-    later_kwargs["metric_definitions"] = [
-        {"metric_name": "a_different_metric", "formula": "x", "denominator": "y"}
-    ]
     second = build_protocol_freeze(project_id=cb.PROJECT_ID, **later_kwargs)
 
     assert first["protocol_freeze_id"] == second["protocol_freeze_id"]
@@ -99,6 +119,37 @@ def test_protocol_freeze_id_is_independent_of_policy_and_generated_at_fields() -
         first["protocol_freeze_semantic_fingerprint"]
         != second["protocol_freeze_semantic_fingerprint"]
     )
+
+
+def test_protocol_freeze_id_changes_when_metric_definitions_or_numeric_thresholds_change() -> None:
+    """P90-R1-F4's own decisive corollary: unlike `generated_at`, a change to
+    `metric_definitions`/`numeric_thresholds` (or any other policy field) mints a genuinely
+    *different* `protocol_freeze_id` -- never a same-id collision a caller could silently
+    retroactively apply to an already-committed protocol identity (see also NC-7)."""
+
+    first = build_protocol_freeze(project_id=cb.PROJECT_ID, **_freeze_kwargs())
+
+    changed_metrics_kwargs = _freeze_kwargs()
+    changed_metrics_kwargs["metric_definitions"] = [
+        {"metric_name": "a_different_metric", "formula": "x", "denominator": "y"}
+    ]
+    changed_metrics = build_protocol_freeze(project_id=cb.PROJECT_ID, **changed_metrics_kwargs)
+    assert changed_metrics["protocol_freeze_id"] != first["protocol_freeze_id"]
+
+    changed_thresholds_kwargs = _freeze_kwargs()
+    changed_thresholds_kwargs["numeric_thresholds"] = [
+        {
+            "metric_name": "raw_event_count",
+            "comparison_group_id": cb.PRESENT_GROUP_ID,
+            "operator": ">=",
+            "threshold_value": 0,
+            "comparison_decision_rule": "a different threshold",
+        }
+    ]
+    changed_thresholds = build_protocol_freeze(
+        project_id=cb.PROJECT_ID, **changed_thresholds_kwargs
+    )
+    assert changed_thresholds["protocol_freeze_id"] != first["protocol_freeze_id"]
 
 
 def test_build_protocol_freeze_rejects_fewer_than_two_comparison_groups() -> None:
@@ -166,14 +217,18 @@ def test_commit_protocol_freeze_is_idempotent_for_an_identical_body(tmp_path: Pa
 def test_commit_protocol_freeze_refuses_a_conflicting_body_for_the_identical_identity(
     tmp_path: Path,
 ) -> None:
+    """A same-id, different-body re-commit is refused -- but P90-R1-F4 widened
+    `PROTOCOL_FREEZE_ID_FIELDS` to nearly every field, so the only field left that can produce
+    a genuine same-id collision is the one it still excludes: `generated_at` (see
+    `test_protocol_freeze_id_changes_when_metric_definitions_or_numeric_thresholds_change` for
+    the sibling proof that every *other* field instead mints a new id)."""
+
     store = _store(tmp_path)
     kwargs = _freeze_kwargs()
     cb_route.commit_protocol_freeze(store, project_id=cb.PROJECT_ID, **kwargs)
 
     conflicting = dict(kwargs)
-    conflicting["metric_definitions"] = [
-        {"metric_name": "conflicting_metric", "formula": "x", "denominator": "y"}
-    ]
+    conflicting["generated_at"] = _LATER_GENERATED_AT
     with pytest.raises(RecordConflictError):
         cb_route.commit_protocol_freeze(store, project_id=cb.PROJECT_ID, **conflicting)
 
@@ -326,13 +381,15 @@ def test_build_reproduction_receipt_matches_diverges_and_is_incomparable() -> No
         generated_at=_GENERATED_AT,
     )
 
+    distinct_pid = original_bundle["generation_process_id"] + 1
+
     # MATCH: an honest, identical re-run.
     match_receipt = build_reproduction_receipt(
         project_id=cb.PROJECT_ID,
         project_binding_ref=_PROJECT_BINDING_REF,
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
-        reproducer_identity={"reproducer": "reproducer-a", "is_original_author": False},
+        reproducer_identity=_reproducer_identity(reproduction_process_id=distinct_pid),
         reproduced_raw_events=raw_events,
         generated_at=_GENERATED_AT,
     )
@@ -347,7 +404,9 @@ def test_build_reproduction_receipt_matches_diverges_and_is_incomparable() -> No
         project_binding_ref=_PROJECT_BINDING_REF,
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
-        reproducer_identity={"reproducer": "reproducer-b", "is_original_author": False},
+        reproducer_identity=_reproducer_identity(
+            reproduction_process_id=distinct_pid, reproducer="reproducer-b"
+        ),
         reproduced_raw_events=divergent_events,
         generated_at=_GENERATED_AT,
     )
@@ -357,14 +416,18 @@ def test_build_reproduction_receipt_matches_diverges_and_is_incomparable() -> No
     # comparison_group_id set entirely.
     foreign_bundle = {
         "result_bundle_id": "CBRB-" + ("1" * 64),
+        "result_bundle_semantic_fingerprint": "sha256:" + ("1" * 64),
         "metrics": {"a-totally-different-group": {"raw_event_count": 0}},
+        "generation_process_id": os.getpid() + 1,
     }
     incomparable_receipt = build_reproduction_receipt(
         project_id=cb.PROJECT_ID,
         project_binding_ref=_PROJECT_BINDING_REF,
         protocol_freeze=protocol_freeze,
         original_result_bundle=foreign_bundle,
-        reproducer_identity={"reproducer": "reproducer-c", "is_original_author": False},
+        reproducer_identity=_reproducer_identity(
+            reproduction_process_id=os.getpid(), reproducer="reproducer-c"
+        ),
         reproduced_raw_events=raw_events,
         generated_at=_GENERATED_AT,
     )
@@ -390,7 +453,9 @@ def test_commit_reproduction_receipt_is_idempotent_and_resolves(tmp_path: Path) 
         "project_binding_ref": _PROJECT_BINDING_REF,
         "protocol_freeze": protocol_freeze,
         "original_result_bundle": original_bundle,
-        "reproducer_identity": {"reproducer": "reproducer-a", "is_original_author": False},
+        "reproducer_identity": _reproducer_identity(
+            reproduction_process_id=original_bundle["generation_process_id"] + 1
+        ),
         "reproduced_raw_events": raw_events,
         "generated_at": _GENERATED_AT,
     }

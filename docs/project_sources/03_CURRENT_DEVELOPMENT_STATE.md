@@ -5419,3 +5419,211 @@ ADDITIONAL_PR_ALLOWED=false
 UNRELATED_CLEANUP_ALLOWED=false
 PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 ```
+
+# 70. PR #90 Structural Review Round 1 (P90-R1-F1〜F3) 是正delivery bounded addendum(Issue #89)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、既存branch`agent/issue-89-phase21-comparative-benchmark`・既存PR #90上で行われた
+本Round是正(新規schemaファイル追加なし、既存`comparative_benchmark`package/schema/tests/
+`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`・新規`examples/comparative_benchmark/`・新規
+`scripts/generate_comparative_benchmark_artifacts.py`)に対応付けるための、最小限の事実記録
+である。
+
+PR #90に対する構造参謀の審査コメント(comment id `5694859821`、author `manosube`、OWNER)は
+§69で納品されたPhase 21初期deliveryに対し7件のfinding(P90-R1-F1〜F7、うちF1〜F6は
+`SEVERITY=P1`、F7は`SEVERITY=P2`)を指摘し、SHUKOU自身の採択・実装handoffコメント
+(comment id `5694898062`、author `manosube`、OWNER、
+`ADOPTION_ID=ADOPT_P90_R1_F1_THROUGH_F7`)が全7件の是正を既存branch・既存PR #90上でのみ
+行うよう指示した。本記録作成者(本session)は、両コメントの本文・author・association・
+PR #90自身のlive head/base/stateをGitHub API経由で独立readbackし、供給されたtask brief記載
+の内容と完全一致することを確認済みである。本記録作成者自身が投稿したWTT start-notice
+コメント(comment id `5694920333`)は、この7件のうちF1・F2・F3を本sessionの担当範囲として
+明示的に宣言している(F4・F5・F6・F7は本branchの先行sessionが既に実装・検証済み)。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-16
+GOVERNING_ISSUE=#89
+GOVERNING_PR=#90
+STRUCTURAL_REVIEW_COMMENT_ID=5694859821
+ADOPTION_ID=ADOPT_P90_R1_F1_THROUGH_F7
+ADOPTION_COMMENT_ID=5694898062
+WTT_START_NOTICE_COMMENT_ID=5694920333
+AUTHORIZED_TARGET_HEAD=716078135d15d223e5be930ea7bc01808e396b5f
+AUTHORIZED_BASE_MAIN_SHA=f97ba6fa973ba07e7674690d158cc156a10da04a
+EXISTING_BRANCH_ONLY=agent/issue-89-phase21-comparative-benchmark
+EXISTING_PR_ONLY=#90
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+本sessionの担当はF1・F2・F3の3件(F4〜F7は既にこのbranch上で先行session実装済みであり、
+本sessionはそれらのshapeを読み取ってのみ用いた)。
+
+**F1 (`EXECUTE_A_REAL_IDENTICAL_AGENT_IN_PRESENT_AND_ABSENT_CONDITIONS`)。**
+`tests/fixtures/comparative_benchmark.py`の`ABSENT_OUTCOME_TABLE`(fabricated fixture outcome
+table)を完全に削除し、`tests/comparative_benchmark/orchestrator.py`の
+`run_ungated_reference_harness_group`を、3つの`MANOSUBE_ABSENT`群それぞれに専用のfresh
+Store・fresh genesis/Project Bindingを与えたうえで、`MANOSUBE_PRESENT`群のCLOSED taskと
+同一の実mechanism(`tests.long_running_proof.cycle.assemble_one_cycle` + 実`reflow()`)を
+frozen 8-task corpus全体に対し一律に駆動する実装へ置き換えた。`MANOSUBE_PRESENT`群自身が
+一部taskをREFUSED/FAILED/RETAINEDへ意図的に誘導する既存task-routing policyは、MANOSUBE不在
+条件には構造的に存在しないため、`MANOSUBE_ABSENT`群は常にplainなnatural-route pathのみを
+試行する。各taskの実Reflow closure後、同一の実Authority Rule fixtureに対して
+`evaluate_authority`を再度(retroactiveに、live gateとしてではなく分類・監査目的のみで)
+呼び出し、その結果をraw eventの`reason`自由記述fieldへ記録する(新規schema fieldは追加
+していない)。`codex_alone`/`existing_agent_framework`も同一の実mechanismで駆動され、
+実際の第三者製品(Codex等)の実invocationは一切行っていない
+(`PRODUCTION_CREDENTIAL_USE_ALLOWED=false`/`REMOTE_COMMAND_AUTHORITY_ALLOWED=false`は
+Issue #89自身の既存制約のまま不変)。`run_ungated_reference_harness_group`/
+`run_all_comparison_groups`/`run_one_full_pass`の各signatureへ`tmp_path`引数を追加し、
+`run_comparative_benchmark`から各群専用のfresh Store root(`tmp_path`配下の別subdirectory)を
+threadした。`tests/fixtures/comparative_benchmark.py`の`numeric_thresholds()`は、この新しい
+実mechanism下で実際に真となる値(`codex_alone`のCOMPLETED_VERIFIED==8、すなわち固定
+Authority Ruleが常にこの corpus の唯一のin-scope actionを承認する構造的事実)へ更新した。
+
+**F2 (`MATERIALIZE_VERSIONED_PUBLIC_PROTOCOL_RESULT_AND_REPRODUCTION_ARTIFACTS`)。**
+新規`examples/comparative_benchmark/`(このrepositoryに前例のないpattern -- 既存
+`examples/`は`.gitkeep`のみの空placeholderであったため新規に設計した。task brief自身は
+当初`artifacts/comparative_benchmark/`という配置を提案していたが、本session自身が
+`.gitignore`を独立確認した結果、repository自身のboundary contractとして`/artifacts/`
+ディレクトリ全体が明示的にgit-ignore対象("Generated observations, evidence, receipts, and
+external projections. Canonical examples and deterministic fixtures belong under tests/ or
+examples/"というcomment付き)であることが判明したため、この既存contractに従い
+`examples/comparative_benchmark/`へ配置先を変更した。これはtask brief記載の設計からの
+意図的な逸脱であり、その理由をここに明記する)に、実`run_comparative_benchmark`を
+実行して得た`protocol_freeze.json`/`result_bundle.json`/`reproduction_receipt.json`の3
+ファイルを`json.dumps(..., indent=2, sort_keys=True)`でpretty-printしてcheck-inした
+(内部content addressingである`canonical_json_bytes`はこのdisplay serializationとは独立で
+不変)。新規`scripts/generate_comparative_benchmark_artifacts.py`(既存
+`scripts/validate_schemas.py`/`scripts/source_impact_gate.py`のargparse/exit-code
+conventionに従う)がこの3ファイルを再生成する。新規contract test
+`tests/contract/comparative_benchmark/test_comparative_benchmark_published_artifacts.py`は、
+この3ファイルをdisk上から直接`json.loads`のみで読み込み(Store・fixture・orchestrator呼び
+出しなし)、各schemaへのvalidity、各recordのid/semantic fingerprintのrecomputation一致、
+result bundleの`metrics`/`claims`/`threshold_evaluations`のraw_events+protocol freezeからの
+byte-for-byte rederivation、published raw_eventsに実際の非COMPLETED_VERIFIED outcomeが
+最低1件含まれること、reproduction receiptの`agreement`がpublished
+`reproduced_metrics`/`result_bundle.metrics`から再導出可能であることを証明する。
+
+**F3 (`REQUIRE_A_GENUINELY_SEPARATE_REPRODUCTION_EXECUTION`)。**
+`engine.build_reproduction_receipt`は既に(先行sessionのF3関連下地実装により)
+`reproducer_identity["reproduction_process_id"]`が原本result bundleの
+`generation_process_id`と一致する場合`ReproductionReceiptValidationError`を送出する仕組みを
+備えていたが、実際にそれを別OS processで走らせる仕組みは未実装であった。本sessionは新規
+`tests/comparative_benchmark/reproduction_subprocess_entrypoint.py`を追加し、
+`orchestrator.run_comparative_benchmark`が`subprocess.run([sys.executable, "-m",
+"tests.comparative_benchmark.reproduction_subprocess_entrypoint"], cwd=REPO_ROOT)`で真に
+独立したOS子processを起動する設計へ変更した(既存
+`tests/integration/boot/test_boot_project_route.py::
+test_a_fresh_python_process_boots_successfully`と同一のfresh-process idiom)。子process自身が
+fresh Store・fresh genesis/Project Bindingを構築し`run_one_full_pass`を実行、自らの実
+`os.getpid()`と実環境manifestをJSON payloadとしてstdoutへ出力し、親process(orchestrator)が
+それをparseして`reproducer_identity`へ渡す。子processのpidは親processと構造的に異なるため、
+既存の同一process拒否checkが実質を持つようになった。決定的negative testとして
+`tests/comparative_benchmark/test_comparative_benchmark_negative_controls.py`に
+`test_p90_r1_f3_self_asserted_independence_via_identical_process_id_is_refused`を追加し、
+`reproduction_process_id=os.getpid()`(原本と同一process)を渡す試みが
+`is_original_author`の真偽に関わらず`ReproductionReceiptValidationError`で拒否されることを
+証明した。
+
+**既存test suiteの更新。** F4(protocol_freeze_idの識別field拡大)により
+`test_nc7_a_post_hoc_metric_definition_change_collides_and_is_refused`(post-hoc変更が
+同一idへcollideすると想定していた)と
+`test_protocol_freeze_id_is_independent_of_policy_and_generated_at_fields`(metric_definitions
+変更後もidが不変と想定していた)は、変更後の正しい挙動(post-hoc変更は新しい
+protocol_freeze_idを生成し、既存commit済みidの本体は不変のまま)を証明する形へ書き換えた
+(`test_nc7_a_post_hoc_metric_or_threshold_change_mints_a_new_identity_never_retroactive`/
+`test_protocol_freeze_id_changes_when_metric_definitions_or_numeric_thresholds_change`)。
+F5(`derive_bounded_claims`が実際にmetricsを読むよう変更)により、
+`test_nc12_claim_text_is_verbatim_from_the_frozen_vocabulary_never_synthesized_from_metrics`
+(claim文がmetrics内容と無関係に一定と想定)も、正しい新しい不変条件(claim文はfrozen
+templateへ実際のcomputed_valuesを`.format()`したものと厳密一致し、それ以外の要素は
+metrics非依存)を証明する形へ書き換えた
+(`test_nc12_claim_text_is_only_ever_the_frozen_templates_own_placeholders_filled_in`)。加えて
+`reproducer_identity`が新規必須field(`reproduction_process_id`/
+`reproduction_environment_manifest`)を要求するようになったF3下地実装に合わせ、全ての既存
+`build_reproduction_receipt`/`commit_reproduction_receipt`呼び出し(NC-6/NC-8/NC-13、
+`test_comparative_benchmark_records.py`の3箇所)を更新した。
+
+`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`は、fabricated fixture harnessの記述(旧
+section 6)、post-hoc mutation collision(旧section 4/9のNC-7)、claim textがverbatimである
+という記述(旧section 4/9のNC-12)、reproducer独立性が未検証caller-supplied booleanである
+という記述(旧section 8)を全て是正後の設計へ書き換え、新規section("9. Published
+artifacts")を追加した(既存section 9〜11をsection 10〜12へ繰り下げ)。
+
+```text
+GENUINE_RUN_OBSERVED=true
+RESULT_BUNDLE_METRICS_MANOSUBE_PRESENT=COMPLETED_VERIFIED:5,REFUSED:1,RETAINED_INCOMPLETE:1,FAILED:1
+RESULT_BUNDLE_METRICS_CLAUDE_CODE_ALONE=COMPLETED_VERIFIED:8
+RESULT_BUNDLE_METRICS_CODEX_ALONE=COMPLETED_VERIFIED:8
+RESULT_BUNDLE_METRICS_EXISTING_AGENT_FRAMEWORK=COMPLETED_VERIFIED:8
+REPRODUCTION_RECEIPT_AGREEMENT=MATCH
+REPRODUCTION_PROCESS_ID_DISTINCT_FROM_ORIGINAL=true
+THRESHOLD_EVALUATIONS_ALL_PASSED=true
+```
+
+## Local gate sweep (本session自身が独立実行)
+
+```text
+TARGETED_SUITE_COMMAND=pytest tests/comparative_benchmark tests/contract/comparative_benchmark -q
+TARGETED_SUITE_RESULT=66_PASSED
+SCHEMA_VALIDATION_COMMAND=python scripts/validate_schemas.py
+SCHEMA_VALIDATION_RESULT=PASS (SCHEMA_COUNT=93, unchanged -- no schema file added/removed by
+  this Round; F1/F2/F3 are purely orchestrator/artifact/test-layer changes)
+SOURCE_IMPACT_GATE_COMMAND=python scripts/source_impact_gate.py --changed-paths-file <diff of
+  authorized base f97ba6fa9..working tree>
+SOURCE_IMPACT_GATE_RESULT=PASS (decision=PASS, merge_blocked=false,
+  required_source_update_missing=false, required_governance_update_missing=false)
+RUFF_CHECK_RESULT=clean over every file this Round touched (0 findings after adding 2
+  `# noqa: T201` comments on this Round's own new stdout-JSON-return-channel/CLI-report print
+  calls, mirroring the existing `tests/long_running_proof/crash_worker.py` precedent)
+RUFF_FORMAT_RESULT=clean over every file this Round touched (2 files needed `ruff format`
+  reformatting after being authored; both reformatted and reverified clean)
+MYPY_SRC_COMMAND=mypy --namespace-packages src/
+MYPY_SRC_RESULT=32 errors in 16 files (checked 197 source files) -- unchanged by this Round
+  (this Round made zero src/ edits; `git diff` over every src/ file this Round could have
+  touched is empty). Of these 32, 29 are the pre-existing repository-wide baseline this
+  branch's own §69 already recorded; the remaining 3 (all in
+  `comparative_benchmark/route.py`'s own `resolve_protocol_freeze`/`resolve_result_bundle`
+  call sites, `Argument ... has incompatible type "Any | None"; expected "str"`) were already
+  present in this branch before this Round's own work began (introduced by the prior F4/F6
+  session's own commit `8c27fdb`, confirmed via independent `git diff` against that commit --
+  this Round neither introduced nor fixed them; flagged below as an open concern for the
+  supervising session)
+FULL_REPOSITORY_SUITE_COMMAND=pytest -q
+FULL_REPOSITORY_SUITE_RESULT=21977_PASSED_10_FAILED_11_SKIPPED_7447.06_SECONDS (10 failures are
+  the exact known baseline, all in
+  tests/contract/governance/test_source_freshness_drift_detection.py, identical test names to
+  the baseline §69 already recorded: test_extract_fields_on_the_real_current_development_state_
+  document, test_no_drift_when_the_predecessor_matches_every_recorded_copy,
+  test_drift_is_detected_and_fully_reported_when_the_predecessor_mismatches,
+  test_current_main_sha_never_participates_in_the_drift_comparison,
+  test_required_proof_the_initial_pr_55_merge_scenario_converges,
+  test_cli_exits_zero_on_no_drift_even_with_fail_on_drift,
+  test_repository_architecture_as_built_ref_agrees_across_header_table_and_receipt,
+  test_repository_architecture_observed_at_utc_agrees_across_header_and_receipt,
+  test_current_development_state_observed_at_utc_agrees_across_header_and_receipt,
+  test_current_development_state_main_accepted_base_sha_agrees_across_all_copies -- this doc-
+  drift-detection suite's own hardcoded OBSERVED_AT_UTC/MAIN_ACCEPTED_BASE_SHA occurrence counts
+  grow stale every time 03_CURRENT_DEVELOPMENT_STATE.md itself gains another dated section,
+  including this §70; a pre-existing, unrelated gap this Round neither introduces nor is asked
+  to fix)
+NET_NEW_TEST_FAILURES=0
+```
+
+
+```text
+MERGE_ALLOWED=false
+ISSUE_89_CLOSE_ALLOWED=false
+PHASE_22_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```

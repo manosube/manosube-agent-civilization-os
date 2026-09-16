@@ -1,28 +1,61 @@
 """Phase 21 Comparative Benchmark -- the orchestrator (``00_KERNEL/
-COMPARATIVE_BENCHMARK_CONTRACT.md``, Issue #89, ``ADOPT_PHASE_21_COMPARATIVE_BENCHMARK``).
+COMPARATIVE_BENCHMARK_CONTRACT.md``, Issue #89, ``ADOPT_PHASE_21_COMPARATIVE_BENCHMARK``;
+Structural Review Round 1, P90-R1-F1/F2/F3).
 
 Composes the real natural-route mechanism (:mod:`tests.long_running_proof.cycle`, reused
-directly -- see ``tests/fixtures/comparative_benchmark.py``'s own module docstring for why) and
-a small, honestly-disclosed, deterministic "ungated reference harness" into one comparative-
-benchmark run over :data:`tests.fixtures.comparative_benchmark.TASK_IDS`' single frozen corpus,
-then commits the three real :mod:`manosube_agent_civilization.comparative_benchmark` record
-kinds through their own real, public ``route.py`` entrypoints.
+directly -- see ``tests/fixtures/comparative_benchmark.py``'s own module docstring for why) into
+one comparative-benchmark run over :data:`tests.fixtures.comparative_benchmark.TASK_IDS`' single
+frozen corpus, then commits the three real :mod:`manosube_agent_civilization.comparative_
+benchmark` record kinds through their own real, public ``route.py`` entrypoints.
+
+**P90-R1-F1: the ``MANOSUBE_ABSENT`` groups are a real, structurally-ungated execution, never a
+fixture table.** :func:`run_ungated_reference_harness_group` drives each of the 3
+``MANOSUBE_ABSENT`` comparison groups (``codex_alone``, ``claude_code_alone``,
+``existing_agent_framework``) through the identical real natural-route mechanism the
+``MANOSUBE_PRESENT`` group's own real ``CLOSED`` tasks use -- a fresh Store, a fresh genesis/
+Project Binding, the real :func:`tests.long_running_proof.cycle.observe_before`/
+``assemble_one_cycle``, and the real, unmodified ``reflow()`` -- over the byte-identical frozen
+8-task corpus, never the deliberately-crafted ``REFUSED``/``FAILED``/``RETAINED`` branches the
+``MANOSUBE_PRESENT`` group's own task-routing policy uses (that routing choice is itself
+MANOSUBE's own deliberate policy, which by definition does not exist in the ``MANOSUBE_ABSENT``
+condition). "Ungated" is structural, not an absence of Authority: no pre-flight Authority
+decision ever gates whether an absent-group task is *attempted* -- every task is driven
+uniformly -- but after each task's own real Reflow closure, this module retroactively
+re-evaluates the identical real Authority Rule fixture against the exact action actually taken,
+purely for audit/classification, and records that classification in the raw event's own
+free-text ``reason`` field (never a live gate, never a new schema field). ``codex_alone`` and
+``existing_agent_framework`` are driven by the identical real mechanism, differing from
+``claude_code_alone`` only in their protocol freeze's own predeclared, honest ``agent_label`` --
+never a real invocation of Codex, Claude Code, or any other third-party product
+(``PRODUCTION_CREDENTIAL_USE_ALLOWED=false``, ``REMOTE_COMMAND_AUTHORITY_ALLOWED=false``, Issue
+#89's own unchanged constraint).
+
+**P90-R1-F3: the independent reproduction pass runs in a genuinely separate OS process.**
+:func:`run_comparative_benchmark` spawns a real child Python process
+(``tests.comparative_benchmark.reproduction_subprocess_entrypoint``) to produce
+``reproduced_raw_events`` and that child's own real ``os.getpid()``/environment manifest, read
+from *inside* the child, never guessed by the parent -- so
+``engine.build_reproduction_receipt``'s own same-process-refusal check
+(``reproduction_process_id == original_result_bundle["generation_process_id"]``) is checking
+something real.
 
 This module owns no Canonical State, Authority, Evidence, Reflow, or Completion decision of its
-own (Issue #89 section 7) -- every canonical record the ``MANOSUBE_PRESENT`` group produces is
-minted by calling the real, existing owner (:mod:`~manosube_agent_civilization.observation`,
-``.difference``, ``.authority``, ``.reflow``, all reused unmodified through
-:mod:`tests.long_running_proof.cycle`); this module only decides *which* real route each task
-runs (the frozen :data:`~tests.fixtures.comparative_benchmark.PRESENT_TASK_PLAN`) and records
-what happened as raw events for :mod:`manosube_agent_civilization.comparative_benchmark.engine`
-to aggregate.
+own (Issue #89 section 7) -- every canonical record either group produces is minted by calling
+the real, existing owner (:mod:`~manosube_agent_civilization.observation`, ``.difference``,
+``.authority``, ``.reflow``, all reused unmodified through :mod:`tests.long_running_proof.
+cycle`); this module only decides *which* real route each task runs (the frozen
+:data:`~tests.fixtures.comparative_benchmark.PRESENT_TASK_PLAN` for ``MANOSUBE_PRESENT``, the
+uniform plain natural route for every ``MANOSUBE_ABSENT`` group) and records what happened as
+raw events for :mod:`manosube_agent_civilization.comparative_benchmark.engine` to aggregate.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import json
 from pathlib import Path
 import platform
+import subprocess
 import sys
 from typing import Any
 
@@ -40,6 +73,11 @@ from manosube_agent_civilization.work_time_transparency.adapters import (
     with_work_time_coordination,
 )
 from manosube_agent_civilization.work_time_transparency.clock import default_clock
+
+#: This file's own repository root -- the child reproduction-subprocess's own required ``cwd``
+#: (P90-R1-F3), the identical convention ``tests/integration/boot/test_boot_project_route.py::
+#: test_a_fresh_python_process_boots_successfully`` already establishes for a fresh-process proof.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: The one Work-Time Transparency adapter_kind the adoption comment for Issue #89 itself
 #: requires (``WORK_TIME_COORDINATION_REQUIRED=true`` for the comparison-group runner),
@@ -330,21 +368,67 @@ def run_present_group(store: Any, *, committed_state: dict[str, Any]) -> list[di
     return raw_events
 
 
-def run_ungated_reference_harness_group(group_id: str) -> list[dict[str, Any]]:
-    """The disclosed, deterministic ``MANOSUBE_ABSENT`` baseline (see ``tests/fixtures/
-    comparative_benchmark.py``'s own module docstring): reads :data:`tests.fixtures.
-    comparative_benchmark.ABSENT_OUTCOME_TABLE` and emits one raw event per
-    :data:`tests.fixtures.comparative_benchmark.TASK_IDS` entry. Deliberately imports and calls
-    nothing from :mod:`manosube_agent_civilization.observation`, ``.difference``, ``.authority``,
-    ``.change``, ``.evidence``, or ``.reflow`` -- proved statically by ``tests/contract/
-    comparative_benchmark/test_comparative_benchmark_static_conformance.py`` -- so it structurally
-    cannot itself produce ``CLOSED`` Canonical State."""
+#: A real ``MANOSUBE_ABSENT`` task's own real Reflow terminal status, mapped to the closed
+#: :data:`~manosube_agent_civilization.comparative_benchmark.types.TASK_OUTCOMES` vocabulary --
+#: the identical mapping :func:`_run_closed_task`/``_run_retained_task`` already use for the
+#: ``MANOSUBE_PRESENT`` group, so a real ``RETAINED`` closure is never silently miscounted here
+#: either. Deliberately has no entry for any other real terminal status (e.g. ``BLOCKED``):
+#: :func:`run_ungated_reference_harness_group` raises rather than guess at an unmapped one.
+_ABSENT_TERMINAL_STATUS_TO_OUTCOME: dict[str, str] = {
+    "CLOSED": "COMPLETED_VERIFIED",
+    "RETAINED": "RETAINED_INCOMPLETE",
+}
 
-    outcomes = cb.ABSENT_OUTCOME_TABLE[group_id]
+
+def run_ungated_reference_harness_group(tmp_path: Path, *, group_id: str) -> list[dict[str, Any]]:
+    """P90-R1-F1: the real, structurally-ungated ``MANOSUBE_ABSENT`` baseline -- a fresh Store
+    and a fresh genesis/Project Binding (:func:`tests.long_running_proof.cycle.build_store`/
+    ``bind_genesis``, the identical pattern this module's own independent-reproducer pass uses),
+    driven through the real natural route (:func:`tests.long_running_proof.cycle.
+    assemble_one_cycle` + the real, unmodified ``reflow()``) for every task in
+    :data:`tests.fixtures.comparative_benchmark.TASK_IDS`, in order -- always the plain
+    natural-route path, never the deliberately-crafted REFUSED/FAILED/RETAINED branches
+    :func:`_run_refused_task`/``_run_failed_task``/``_run_retained_task`` use for
+    ``MANOSUBE_PRESENT`` (that routing choice is itself MANOSUBE's own deliberate policy, which
+    by definition does not exist in the ``MANOSUBE_ABSENT`` condition).
+
+    After each task's own real Reflow closure, retroactively (audit/classification only, never
+    a live pre-flight gate -- ``MANOSUBE_ABSENT`` structurally means no such gate exists) calls
+    the real :func:`~manosube_agent_civilization.authority.evaluate_authority` again, against
+    the exact real Authority request the real closure itself already used, and records that
+    classification in the raw event's own free-text ``reason`` field -- the identical real
+    Authority Rule/mechanism/runtime/resource boundary the ``MANOSUBE_PRESENT`` group uses
+    (``SAME_AUTHORITY_RUNTIME_RESOURCE_BOUNDARY=true``), never a second schema field. Every
+    outcome here is the real terminal status a real ``reflow()`` call actually returned --
+    never a fixture-table lookup (``FABRICATED_CONTROL_OUTCOMES_COUNTED_AS_RESULTS=false``)."""
+
+    store = cycle.build_store(tmp_path / group_id)
+    bind_result = cycle.bind_genesis(store)
+    committed_state = bind_result["committed_state"]
+
     events: list[dict[str, Any]] = []
-    for task_id, outcome in zip(cb.TASK_IDS, outcomes, strict=True):
+    for task_id in cb.TASK_IDS:
+        k = cb.CB_TASK_TO_NATURAL_ROUTE_CYCLE_INDEX[task_id]
         started_at = _observed_now()
+        assembly = cycle.assemble_one_cycle(store, k=k, committed_state=committed_state)
+        result = reflow(store, **assembly["reflow_kwargs"])
         closed_at = _observed_now()
+
+        to_status = result["decision"]["to_status"]
+        outcome = _ABSENT_TERMINAL_STATUS_TO_OUTCOME.get(to_status)
+        if outcome is None:
+            raise AssertionError(
+                f"{group_id}: task {task_id} produced a real Reflow terminal status "
+                f"{to_status!r} this ungated reference harness does not yet map to a declared "
+                "TASK_OUTCOMES member -- refusing to silently miscount it"
+            )
+
+        retroactive_decision = evaluate_authority(assembly["authority"]["request"])
+        reason = (
+            "real natural-route execution over a fresh Store -- no pre-flight Authority gate; "
+            "retroactive Authority classification of the exact action actually taken: "
+            f"{retroactive_decision['decision']!r}"
+        )
         events.append(
             _task_event(
                 group_id=group_id,
@@ -352,33 +436,38 @@ def run_ungated_reference_harness_group(group_id: str) -> list[dict[str, Any]]:
                 outcome=outcome,
                 started_at=started_at,
                 closed_at=closed_at,
-                reason="ungated reference harness -- fabricated, disclosed fixture outcome",
+                reason=reason,
             )
         )
+        committed_state = result["committed_state"]
     return events
 
 
 def run_all_comparison_groups(
-    store: Any, *, committed_state: dict[str, Any]
+    store: Any, *, committed_state: dict[str, Any], tmp_path: Path
 ) -> list[dict[str, Any]]:
     """Run every comparison group this protocol freeze declares -- the real natural route for
-    ``MANOSUBE_PRESENT``, the ungated reference harness for every ``MANOSUBE_ABSENT`` group --
+    ``MANOSUBE_PRESENT`` against *store*, the real, structurally-ungated reference harness (its
+    own fresh Store rooted under *tmp_path*, per group) for every ``MANOSUBE_ABSENT`` group --
     over the identical frozen task corpus, in the identical declared order
     (``COMPARABLE_PROJECT_AND_TASK_CORPUS_REQUIRED=true``)."""
 
     raw_events = run_present_group(store, committed_state=committed_state)
     for group_id in cb.ABSENT_GROUP_IDS:
-        raw_events += run_ungated_reference_harness_group(group_id)
+        raw_events += run_ungated_reference_harness_group(tmp_path, group_id=group_id)
     return raw_events
 
 
 def run_one_full_pass(
-    store: Any, *, project_binding_id: str, run_label: str
+    store: Any, *, project_binding_id: str, run_label: str, tmp_path: Path
 ) -> list[dict[str, Any]]:
     """Open one real Work Coordination (``WORK_TIME_COORDINATION_REQUIRED=true`` for this
     comparison-group runner, per the Issue #89 adoption comment) around the full run -- both
-    the real natural-route driving of the ``MANOSUBE_PRESENT`` group and the ungated-harness
-    driving of every ``MANOSUBE_ABSENT`` group -- and return every raw event collected."""
+    the real natural-route driving of the ``MANOSUBE_PRESENT`` group and the real, structurally-
+    ungated driving of every ``MANOSUBE_ABSENT`` group -- and return every raw event collected.
+    *tmp_path* roots every ``MANOSUBE_ABSENT`` group's own fresh Store (one subdirectory per
+    group), kept separate from *store*'s own root so neither family's own advancing State
+    history ever collides with the other's."""
 
     work_unit_ref = {
         "kind": WORK_UNIT_REF_KIND,
@@ -387,7 +476,9 @@ def run_one_full_pass(
 
     def _perform(reporter: ProgressReporter) -> list[dict[str, Any]]:
         committed_state = store.load_current(lrp.PROJECT_ID)
-        raw_events = run_all_comparison_groups(store, committed_state=committed_state)
+        raw_events = run_all_comparison_groups(
+            store, committed_state=committed_state, tmp_path=tmp_path
+        )
         reporter.report(
             position_kind="WORK_RUNNING",
             current_position=(
@@ -426,13 +517,46 @@ def _environment_manifest() -> dict[str, Any]:
     }
 
 
+#: The child reproduction-subprocess's own module path -- run with ``-m`` so its own
+#: ``if __name__ == "__main__"`` guard fires, exactly the ``sys.executable``/``cwd``-rooted
+#: fresh-process idiom ``tests/integration/boot/test_boot_project_route.py::
+#: test_a_fresh_python_process_boots_successfully`` already establishes for a real, separate-
+#: process proof.
+_REPRODUCTION_SUBPROCESS_MODULE = "tests.comparative_benchmark.reproduction_subprocess_entrypoint"
+
+
+def _run_reproduction_subprocess() -> dict[str, Any]:
+    """P90-R1-F3: spawn a genuinely separate OS process to perform the independent reproduction
+    run, and return that child's own reported ``reproduced_raw_events``/
+    ``reproduction_process_id``/``reproduction_environment_manifest`` -- all three read from
+    *inside* the child (never guessed or forwarded by this, the parent, process), so
+    ``engine.build_reproduction_receipt``'s own same-process-refusal check has something real to
+    check against this run's own ``result_bundle["generation_process_id"]``."""
+
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", _REPRODUCTION_SUBPROCESS_MODULE],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        timeout=600,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"reproduction subprocess ({_REPRODUCTION_SUBPROCESS_MODULE}) exited "
+            f"{proc.returncode}: stderr={proc.stderr}"
+        )
+    payload: dict[str, Any] = json.loads(proc.stdout.strip().splitlines()[-1])
+    return payload
+
+
 def run_comparative_benchmark(tmp_path: Path) -> dict[str, Any]:
     """The one Gate 21 proof entry point: freeze the protocol before any result exists
     (``PROTOCOL_FROZEN_BEFORE_RESULTS=true``), run every comparison group's tasks over the
-    identical frozen corpus once (the original run) and once more, entirely independently -- a
-    fresh Store, a fresh project genesis+binding, its own reproducer identity -- (the
-    reproduction run), and commit all three real record kinds through the real
-    ``comparative_benchmark.route`` entrypoints."""
+    identical frozen corpus once (the original run, in this process) and once more, entirely
+    independently, in a genuinely separate OS process (P90-R1-F3: its own fresh Store, its own
+    fresh project genesis+binding, its own reproducer identity -- see
+    :func:`_run_reproduction_subprocess`), and commit all three real record kinds through the
+    real ``comparative_benchmark.route`` entrypoints."""
 
     store = cycle.build_store(tmp_path / "original")
     bind_result = cycle.bind_genesis(store)
@@ -446,7 +570,10 @@ def run_comparative_benchmark(tmp_path: Path) -> dict[str, Any]:
     )
 
     raw_events = run_one_full_pass(
-        store, project_binding_id=project_binding_id, run_label="original"
+        store,
+        project_binding_id=project_binding_id,
+        run_label="original",
+        tmp_path=tmp_path / "original-absent-groups",
     )
     verify_corpus_fidelity(protocol_freeze, raw_events)
 
@@ -460,13 +587,8 @@ def run_comparative_benchmark(tmp_path: Path) -> dict[str, Any]:
         generated_at=default_clock(),
     )
 
-    reproducer_store = cycle.build_store(tmp_path / "reproducer")
-    reproducer_bind_result = cycle.bind_genesis(reproducer_store)
-    reproduced_raw_events = run_one_full_pass(
-        reproducer_store,
-        project_binding_id=reproducer_bind_result["project_binding_id"],
-        run_label="independent-reproducer",
-    )
+    reproduction_payload = _run_reproduction_subprocess()
+    reproduced_raw_events: list[dict[str, Any]] = reproduction_payload["reproduced_raw_events"]
     verify_corpus_fidelity(protocol_freeze, reproduced_raw_events)
 
     reproduction_receipt = cb_route.commit_reproduction_receipt(
@@ -478,6 +600,10 @@ def run_comparative_benchmark(tmp_path: Path) -> dict[str, Any]:
         reproducer_identity={
             "reproducer": "independent-reproducer-001",
             "is_original_author": False,
+            "reproduction_process_id": reproduction_payload["reproduction_process_id"],
+            "reproduction_environment_manifest": reproduction_payload[
+                "reproduction_environment_manifest"
+            ],
         },
         reproduced_raw_events=reproduced_raw_events,
         generated_at=default_clock(),
@@ -489,7 +615,6 @@ def run_comparative_benchmark(tmp_path: Path) -> dict[str, Any]:
         "protocol_freeze": protocol_freeze,
         "raw_events": raw_events,
         "result_bundle": result_bundle,
-        "reproducer_store": reproducer_store,
         "reproduced_raw_events": reproduced_raw_events,
         "reproduction_receipt": reproduction_receipt,
     }
