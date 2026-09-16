@@ -5218,3 +5218,88 @@ NEW_ISSUE_ALLOWED=false
 ADDITIONAL_PR_ALLOWED=false
 UNRELATED_CLEANUP_ALLOWED=false
 ```
+
+# 68. Phase 20 post-merge acceptance source-sync (`ADOPT_PHASE_20_POST_MERGE_ACCEPTANCE_SOURCE_SYNC`) bounded receipt
+
+本節はPR #87自身のRound是正記録(§65〜§67)とは異なり、PR #87がSHUKOUによりmergeされた後、
+構造参謀のpost-merge determination
+`https://github.com/manosube/manosube-agent-civilization-os/issues/86#issuecomment-5691957356`
+とSHUKOU正式採択・Claude Codeハンドオフ
+`...#issuecomment-5691973899`
+(`ADOPTION_ID=ADOPT_PHASE_20_POST_MERGE_ACCEPTANCE_SOURCE_SYNC`、`GOVERNING_ISSUE=#86`)に基づき、
+限定されたappend-only source-syncとして本記録作成者自身が追加するものである。本記録作成者は
+これら2件のコメントを、著者login/id/association(`manosube`/OWNER)・本文一致、およびPR #87の
+実際のmerge状態・live `main`のSHAについて、本branch作成直前にGitHub API独立readback、および
+ローカル`git`によるmerge commit親関係・tree一致の直接検証の両方で確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-16
+GOVERNING_ISSUE=#86
+MERGED_PR=#87
+ADOPTION_ID=ADOPT_PHASE_20_POST_MERGE_ACCEPTANCE_SOURCE_SYNC
+STRUCTURAL_DETERMINATION_COMMENT_ID=5691957356
+ADOPTION_COMMENT_ID=5691973899
+BRANCH=source/phase-20-post-merge-acceptance-sync
+AUTHORIZED_BASE_MAIN_SHA=23c1861163369fa5e12685677eca8f0a2dfafabf
+NEW_BRANCH_ALLOWED=true
+NEW_PR_ALLOWED=true
+EXISTING_BRANCH_REUSE_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+## Current-state receipt (restated as of this source-sync)
+
+```text
+MAIN_ACCEPTED_BASE_SHA=23c1861163369fa5e12685677eca8f0a2dfafabf
+PR87_DELIVERY_HEAD=b1fec5e8c378e776fc9e58b7744bbf8b60d49f8b
+PR87_MERGE_SHA=23c1861163369fa5e12685677eca8f0a2dfafabf
+MERGE_PARENT_BASE=4a3bce0858b9fe8ee74db922cf0376b33d229427
+MERGE_PARENT_DELIVERY=b1fec5e8c378e776fc9e58b7744bbf8b60d49f8b
+LIVE_MAIN_EQUALS_MERGE_SHA=true
+MERGED_TREE_EQUALS_DELIVERY_TREE=true
+STRUCTURAL_REVIEW_ROUNDS=2
+STRUCTURAL_REVIEW_FINDINGS_OPEN=0
+GATE_20_ALL_FOUR_TIERS_PASSED=true
+NEGATIVE_CONTROL_MATRIX_AT_DELIVERY_HEAD=21_PASSED
+ARTIFACT_BUNDLE_CONTRACT_SUITE_AT_DELIVERY_HEAD=7_PASSED
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=21890_PASSED_10_PRE_EXISTING_FAILED_11_SKIPPED
+NET_NEW_TEST_FAILURES_AT_DELIVERY_HEAD=0
+SCHEMA_VALIDATION_AT_DELIVERY_HEAD=PASS_90_SCHEMAS
+SOURCE_IMPACT_GATE_AT_DELIVERY_HEAD=PASS
+```
+
+PR #87は、Round 1(P87-R1-F1〜F9)・Round 2(P87-R2-F1)の2回のStructural Reviewを経てfinding
+open 0件に到達したexact delivery head`b1fec5e8c378e776fc9e58b7744bbf8b60d49f8b`を保持したまま
+SHUKOU(`manosube`)によりmergeされた。merge commit`23c1861163369fa5e12685677eca8f0a2dfafabf`
+のfirst parentはRound 1が採択されたauthorized base`4a3bce0858b9fe8ee74db922cf0376b33d229427`、
+second parentはこのdelivery headであり、両者の`git diff`は空、treeは同一
+(`2a73b3115616b3aa0ace427a00e5510bc428e68e`)であることをローカルで直接確認済みである。live
+`main`は本source-sync branch作成直前のGitHub API独立readbackで同一SHAであることを確認済みで
+ある。
+
+Issue #22の直接completion(§64)とは異なり、Phase 20はIssue #86自身が対象とするroadmap Phase
+そのものである。構造参謀のpost-merge determinationは、Gate 20・全Structural Review finding
+closed・exact-head merge・post-merge再観測が成立していることを理由に、Phase 20の実装受入
+(`PHASE_20_COMPLETE=true`)を記録するよう本source-syncへ指示した。ただしIssue #86のclose、
+およびPhase 21専用Issue作成の許可は、本節の記録元となった本source-sync PR自身がSHUKOUにより
+mergeされ、resulting`main`がGitHub API経由で再観測された後にのみ発効する -- 本節はその条件付き
+資格を記録するものであり、本delivery自身がIssue #86をcloseしたりPhase 21 Issueを作成する権限
+を意味しない。
+
+```text
+PHASE_20_IMPLEMENTATION_ACCEPTED=true
+PHASE_20_GATE_20_ACCEPTED=true
+PHASE_20_EXACT_REVIEWED_HEAD_MERGED=true
+PHASE_20_POST_MERGE_REOBSERVATION=PASS
+PHASE_20_COMPLETE=true
+ISSUE_86_CLOSE_ALLOWED_AFTER_THIS_SOURCE_SYNC_MERGE_AND_REOBSERVATION=true
+PHASE_21_DEDICATED_ISSUE_ALLOWED_AFTER_THIS_SOURCE_SYNC_MERGE_AND_REOBSERVATION=true
+PHASE_21_IMPLEMENTATION_REQUIRES_SEPARATE_SHUKOU_ADOPTION=true
+
+SOURCE_SYNC_MERGE_ALLOWED=false
+ISSUE_86_CLOSE_ALLOWED=false
+PHASE_21_ISSUE_CREATION_ALLOWED=false
+PHASE_21_IMPLEMENTATION_ALLOWED=false
+```
