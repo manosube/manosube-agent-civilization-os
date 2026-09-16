@@ -12,7 +12,9 @@ either the real natural route or the disclosed ungated baseline harness) live in
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+import operator as _operator
+import os
+from typing import Any, Callable
 
 from manosube_agent_civilization.difference.errors import DifferenceValidationError
 from manosube_agent_civilization.difference.validation import (
@@ -37,6 +39,17 @@ from .types import COMPARISON_GROUP_ROLES, REPRODUCTION_AGREEMENTS, TASK_OUTCOME
 
 SCHEMA_VERSION = "0.1"
 COMPARATIVE_BENCHMARK_SCHEMA_BASE = _CANONICAL_SCHEMA_BASE + "comparative_benchmark/"
+
+#: The five machine-checkable comparison operators a `numeric_thresholds`/`threshold_evaluations`
+#: entry may declare (P90-R1-F7: thresholds carry a real, evaluable operator/value, never an
+#: informational-only free-text rule).
+_THRESHOLD_OPERATORS: dict[str, Callable[[int, int], bool]] = {
+    ">=": _operator.ge,
+    "<=": _operator.le,
+    ">": _operator.gt,
+    "<": _operator.lt,
+    "==": _operator.eq,
+}
 
 
 def _detach(value: Any) -> Any:
@@ -118,6 +131,7 @@ def build_protocol_freeze(
     present_mechanisms: set[tuple[Any, ...]] = set()
     absent_mechanisms: set[tuple[Any, ...]] = set()
     seen_ids: set[str] = set()
+    group_ids: set[str] = set()
     for group in comparison_groups:
         role = group.get("comparison_group_role")
         if role not in COMPARISON_GROUP_ROLES:
@@ -133,6 +147,7 @@ def build_protocol_freeze(
         if group_id in seen_ids:
             raise ProtocolFreezeValidationError(f"duplicate comparison_group_id: {group_id!r}")
         seen_ids.add(group_id)
+        group_ids.add(group_id)
         mechanism = group.get("mechanism_identity", {})
         mechanism_key = tuple(sorted(mechanism.items()))
         (present_mechanisms if role == "MANOSUBE_PRESENT" else absent_mechanisms).add(mechanism_key)
@@ -147,6 +162,29 @@ def build_protocol_freeze(
             "at least one MANOSUBE_PRESENT and one MANOSUBE_ABSENT comparison group is required"
         )
 
+    numeric_thresholds = [_detach(item) for item in numeric_thresholds]
+    for entry in numeric_thresholds:
+        threshold_group_id = entry.get("comparison_group_id")
+        if threshold_group_id not in group_ids:
+            raise ProtocolFreezeValidationError(
+                f"numeric_thresholds entry references comparison_group_id "
+                f"{threshold_group_id!r} that comparison_groups never declares"
+            )
+        if entry.get("operator") not in _THRESHOLD_OPERATORS:
+            raise ProtocolFreezeValidationError(
+                f"numeric_thresholds entry declares unrecognized operator {entry.get('operator')!r}"
+            )
+
+    claim_vocabulary = [_detach(item) for item in claim_vocabulary]
+    for entry in claim_vocabulary:
+        for claim_group_id in entry.get("subject_group_ids", []):
+            if claim_group_id not in group_ids:
+                raise ProtocolFreezeValidationError(
+                    f"claim_vocabulary entry {entry.get('claim_id')!r} references "
+                    f"comparison_group_id {claim_group_id!r} that comparison_groups never "
+                    "declares"
+                )
+
     project_id = str(project_id)
     record: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -159,10 +197,10 @@ def build_protocol_freeze(
         "authority_boundary_equivalence_manifest": _detach(authority_boundary_equivalence_manifest),
         "resource_budget_manifest": stringify_floats(_detach(resource_budget_manifest)),
         "metric_definitions": [_detach(item) for item in metric_definitions],
-        "numeric_thresholds": [_detach(item) for item in numeric_thresholds],
+        "numeric_thresholds": numeric_thresholds,
         "unknown_missing_handling": _detach(unknown_missing_handling),
         "exclusion_policy": _detach(exclusion_policy),
-        "claim_vocabulary": [_detach(item) for item in claim_vocabulary],
+        "claim_vocabulary": claim_vocabulary,
         "reproduction_procedure": _detach(reproduction_procedure),
         "comparability_loss_receipts": [_detach(item) for item in comparability_loss_receipts],
         "generated_at": generated_at,
@@ -208,22 +246,84 @@ def aggregate_metrics(
     return metrics
 
 
+def evaluate_numeric_thresholds(
+    metrics: Mapping[str, Mapping[str, Any]], protocol_freeze: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Evaluate every `numeric_thresholds` entry *protocol_freeze* predeclares against the
+    already-recomputed *metrics*, returning one `threshold_evaluations` entry per declared
+    threshold with its own machine-checked `actual_value`/`passed` (P90-R1-F7: a threshold is a
+    real, evaluable `(metric_name, comparison_group_id, operator, threshold_value)` tuple this
+    function itself checks -- never an informational-only free-text rule a caller could claim
+    passed or failed by assertion)."""
+
+    evaluations: list[dict[str, Any]] = []
+    for entry in protocol_freeze["numeric_thresholds"]:
+        metric_name = entry["metric_name"]
+        comparison_group_id = entry["comparison_group_id"]
+        operator_symbol = entry["operator"]
+        threshold_value = entry["threshold_value"]
+        if comparison_group_id not in metrics:
+            raise ResultBundleValidationError(
+                f"numeric_thresholds entry references comparison_group_id "
+                f"{comparison_group_id!r} the bound protocol freeze never declared"
+            )
+        if operator_symbol not in _THRESHOLD_OPERATORS:
+            raise ResultBundleValidationError(
+                f"numeric_thresholds entry declares unrecognized operator {operator_symbol!r}"
+            )
+        actual_value = metrics[comparison_group_id][metric_name]
+        passed = _THRESHOLD_OPERATORS[operator_symbol](actual_value, threshold_value)
+        evaluations.append(
+            {
+                "metric_name": metric_name,
+                "comparison_group_id": comparison_group_id,
+                "operator": operator_symbol,
+                "threshold_value": threshold_value,
+                "actual_value": actual_value,
+                "passed": passed,
+            }
+        )
+    return evaluations
+
+
 def derive_bounded_claims(
     metrics: Mapping[str, Mapping[str, Any]], protocol_freeze: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
     """Derive claims strictly from *metrics* and *protocol_freeze*'s own predeclared
     `claim_vocabulary` -- never a claim outside that closed, pre-registered vocabulary
-    (`POST_HOC_METRIC_SUBSTITUTION_FORBIDDEN`-equivalent for claims). Each derived claim
-    restates its own `bound` from the frozen vocabulary entry verbatim; this function invents
-    no new claim text and computes no comparison this protocol did not predeclare."""
+    (`POST_HOC_METRIC_SUBSTITUTION_FORBIDDEN`-equivalent for claims). Each derived claim's own
+    `statement` is produced by formatting the frozen `claim_statement_template` against the
+    actual recomputed `computed_values` for its declared `subject_metric_name`/
+    `subject_group_ids` (P90-R1-F5: a claim's rendered text is bound to the metrics that
+    produced it, never independent boilerplate that happens to sit beside a metric)."""
 
     claims: list[dict[str, Any]] = []
     for entry in protocol_freeze["claim_vocabulary"]:
+        subject_metric_name = entry["subject_metric_name"]
+        subject_group_ids = list(entry["subject_group_ids"])
+        computed_values: dict[str, int] = {}
+        for group_id in subject_group_ids:
+            if group_id not in metrics:
+                raise ResultBundleValidationError(
+                    f"claim_vocabulary entry {entry['claim_id']!r} references "
+                    f"comparison_group_id {group_id!r} the bound protocol freeze never declared"
+                )
+            computed_values[group_id] = metrics[group_id][subject_metric_name]
+        try:
+            statement = entry["claim_statement_template"].format(**computed_values)
+        except (KeyError, IndexError) as error:
+            raise ResultBundleValidationError(
+                f"claim_vocabulary entry {entry['claim_id']!r} claim_statement_template "
+                f"references a placeholder outside its own declared subject_group_ids: {error}"
+            ) from error
         claims.append(
             {
                 "claim_id": entry["claim_id"],
-                "statement": entry["claim_statement_template"],
+                "statement": statement,
                 "bound": entry["bound"],
+                "subject_metric_name": subject_metric_name,
+                "subject_group_ids": subject_group_ids,
+                "computed_values": computed_values,
             }
         )
     return claims
@@ -238,14 +338,21 @@ def build_result_bundle(
     environment_manifest: Mapping[str, Any],
     generated_at: str,
 ) -> dict[str, Any]:
-    """Build one canonical `comparative_benchmark_result_bundle` record. `metrics` and
-    `claims` are always recomputed here from *raw_events* and *protocol_freeze* alone
-    (`SUMMARY_DERIVABLE_FROM_RAW_DATA=true`) -- this function accepts no caller-supplied
-    metrics/claims shortcut."""
+    """Build one canonical `comparative_benchmark_result_bundle` record. `metrics`, `claims`,
+    and `threshold_evaluations` are always recomputed here from *raw_events* and
+    *protocol_freeze* alone (`SUMMARY_DERIVABLE_FROM_RAW_DATA=true`) -- this function accepts
+    no caller-supplied metrics/claims/threshold-evaluation shortcut. `protocol_freeze_ref`
+    carries both the bound protocol freeze's own id and its full semantic fingerprint
+    (P90-R1-F4/F6: a child record names which exact frozen policy content it ran against, not
+    merely which id -- a same-id, different-content freeze can never be silently substituted).
+    `generation_process_id` records the real OS process id this bundle was built in, so a later
+    reproduction receipt can machine-verify it ran in a genuinely separate process
+    (P90-R1-F3)."""
 
     raw_events = [_detach(event) for event in raw_events]
     metrics = aggregate_metrics(raw_events, protocol_freeze)
     claims = derive_bounded_claims(metrics, protocol_freeze)
+    threshold_evaluations = evaluate_numeric_thresholds(metrics, protocol_freeze)
 
     project_id = str(project_id)
     record: dict[str, Any] = {
@@ -254,11 +361,18 @@ def build_result_bundle(
         "result_bundle_semantic_fingerprint": "",
         "project_id": project_id,
         "project_binding_ref": _detach(project_binding_ref),
-        "protocol_freeze_ref": {"protocol_freeze_id": protocol_freeze["protocol_freeze_id"]},
+        "protocol_freeze_ref": {
+            "protocol_freeze_id": protocol_freeze["protocol_freeze_id"],
+            "protocol_freeze_semantic_fingerprint": protocol_freeze[
+                "protocol_freeze_semantic_fingerprint"
+            ],
+        },
         "raw_events": raw_events,
         "metrics": metrics,
         "claims": claims,
+        "threshold_evaluations": threshold_evaluations,
         "environment_manifest": _detach(environment_manifest),
+        "generation_process_id": os.getpid(),
         "generated_at": generated_at,
     }
     record["result_bundle_id"] = result_bundle_id(record)
@@ -288,7 +402,33 @@ def build_reproduction_receipt(
     against the *original* bundle's own `metrics` -- a reproducer's own claimed agreement can
     never substitute for this function's own independent recomputation
     (`SELF_RUN_REPRODUCTION_CANNOT_IMPERSONATE_INDEPENDENT_RECEIPT`-equivalent: this function
-    performs the comparison itself, no matter what *reproducer_identity* claims)."""
+    performs the comparison itself, no matter what *reproducer_identity* claims).
+
+    Refuses fail-closed (`ReproductionReceiptValidationError`) whenever
+    `reproducer_identity["reproduction_process_id"]` equals the *original* bundle's own
+    `generation_process_id` -- a reproduction that shares its OS process with the run it claims
+    to independently reproduce is a self-assertion, not a genuinely separate execution
+    (P90-R1-F3), and this function itself enforces that boundary rather than trusting a caller's
+    own `is_original_author`/process-identity claim."""
+
+    reproduction_process_id = reproducer_identity.get("reproduction_process_id")
+    if not isinstance(reproduction_process_id, int) or isinstance(reproduction_process_id, bool):
+        raise ReproductionReceiptValidationError(
+            "reproducer_identity requires an integer reproduction_process_id"
+        )
+    original_process_id = original_result_bundle.get("generation_process_id")
+    if reproduction_process_id == original_process_id:
+        raise ReproductionReceiptValidationError(
+            f"reproduction_process_id {reproduction_process_id!r} is identical to the original "
+            f"result bundle's own generation_process_id {original_process_id!r} -- a "
+            "reproduction must run in a genuinely separate OS process; a reproducer cannot "
+            "assert independence from within the same process that produced the original result"
+        )
+    reproduction_environment_manifest = reproducer_identity.get("reproduction_environment_manifest")
+    if not isinstance(reproduction_environment_manifest, Mapping):
+        raise ReproductionReceiptValidationError(
+            "reproducer_identity requires a reproduction_environment_manifest object"
+        )
 
     is_original_author = bool(reproducer_identity.get("is_original_author", False))
     reproduced_metrics = aggregate_metrics(reproduced_raw_events, protocol_freeze)
@@ -309,9 +449,17 @@ def build_reproduction_receipt(
         "reproduction_receipt_semantic_fingerprint": "",
         "project_id": project_id,
         "project_binding_ref": _detach(project_binding_ref),
-        "protocol_freeze_ref": {"protocol_freeze_id": protocol_freeze["protocol_freeze_id"]},
+        "protocol_freeze_ref": {
+            "protocol_freeze_id": protocol_freeze["protocol_freeze_id"],
+            "protocol_freeze_semantic_fingerprint": protocol_freeze[
+                "protocol_freeze_semantic_fingerprint"
+            ],
+        },
         "original_result_bundle_ref": {
-            "result_bundle_id": original_result_bundle["result_bundle_id"]
+            "result_bundle_id": original_result_bundle["result_bundle_id"],
+            "result_bundle_semantic_fingerprint": original_result_bundle[
+                "result_bundle_semantic_fingerprint"
+            ],
         },
         "reproducer_identity": {
             **_detach(reproducer_identity),
@@ -342,5 +490,6 @@ __all__ = [
     "build_reproduction_receipt",
     "build_result_bundle",
     "derive_bounded_claims",
+    "evaluate_numeric_thresholds",
     "stringify_floats",
 ]

@@ -22,15 +22,26 @@ idempotent replay; a same-id-different-body re-commit collides and is refused
 ALLOWED=false` and `RAW_RESULT_DELETION_ALLOWED=false` structural facts, not merely stated
 policy: a protocol freeze or a result bundle, once committed, is immutable at that identity.
 
+`commit_result_bundle` and `commit_reproduction_receipt` never trust a caller-supplied parent
+record body on its own (P90-R1-F6): each first resolves its own declared parent
+(`protocol_freeze`/`original_result_bundle`) from this Store's own coordination ledger by the
+id the caller supplied, refuses fail-closed if that parent was never genuinely committed there,
+refuses fail-closed if the caller's own copy diverges byte-for-byte from the ledger's
+authoritative body, and then builds the child exclusively from the *resolved* body -- a caller
+can never fabricate an unlisted or tampered parent and have a child record accepted merely
+because it happens to be shaped correctly.
+
 Every `resolve_*` function is a thin, direct wrapper over `FileStateStore.
 resolve_coordination_record`, which always re-derives the record's authoritative body from the
 coordination ledger itself, never trusting a materialized cache file on its own."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 from .engine import build_protocol_freeze, build_reproduction_receipt, build_result_bundle
+from .errors import ReproductionReceiptValidationError, ResultBundleValidationError
 
 PROTOCOL_FREEZE_RECORD_KIND = "comparative_benchmark_protocol_freeze"
 RESULT_BUNDLE_RECORD_KIND = "comparative_benchmark_result_bundle"
@@ -68,11 +79,40 @@ def resolve_protocol_freeze(
 
 def commit_result_bundle(store: Any, *, project_id: str, **build_kwargs: Any) -> dict[str, Any]:
     """Build and durably commit one result bundle against an already-committed protocol
-    freeze. *build_kwargs* must include `protocol_freeze` -- the caller's own already-resolved
-    freeze body, never a freshly-rebuilt one -- so a result bundle can only ever bind to a
-    freeze that genuinely exists in the ledger."""
+    freeze. *build_kwargs* must include `protocol_freeze` -- the caller's own belief about
+    which freeze this bundle ran against. This route itself resolves the authoritative
+    `protocol_freeze_id` from the Store's own coordination ledger and refuses fail-closed
+    (`ResultBundleValidationError`) both when no such freeze was ever committed there and when
+    the caller's own copy diverges from the ledger's body (P90-R1-F6) -- the child record is
+    always built from the *resolved* body, never the caller-supplied one."""
 
-    record = build_result_bundle(project_id=project_id, **build_kwargs)
+    caller_protocol_freeze = build_kwargs.get("protocol_freeze")
+    if not isinstance(caller_protocol_freeze, Mapping):
+        raise ResultBundleValidationError(
+            "commit_result_bundle requires a protocol_freeze mapping"
+        )
+    freeze_id = caller_protocol_freeze.get("protocol_freeze_id")
+    resolved_freeze = resolve_protocol_freeze(
+        store, project_id=project_id, protocol_freeze_id=freeze_id
+    )
+    if resolved_freeze is None:
+        raise ResultBundleValidationError(
+            f"no comparative_benchmark_protocol_freeze is committed at protocol_freeze_id "
+            f"{freeze_id!r} in this project's own coordination ledger -- a result bundle can "
+            "only bind to a protocol freeze that genuinely exists in the Store, never a "
+            "caller-supplied body accepted on trust"
+        )
+    if resolved_freeze != dict(caller_protocol_freeze):
+        raise ResultBundleValidationError(
+            "the protocol_freeze passed to commit_result_bundle diverges from the Store's own "
+            f"committed record at protocol_freeze_id {freeze_id!r} -- a result bundle must "
+            "bind to the ledger's own authoritative freeze body, never a caller-supplied "
+            "look-alike"
+        )
+
+    record = build_result_bundle(
+        project_id=project_id, **{**build_kwargs, "protocol_freeze": resolved_freeze}
+    )
     bundle_id = record["result_bundle_id"]
     return cast(
         "dict[str, Any]",
@@ -100,13 +140,70 @@ def commit_reproduction_receipt(
     store: Any, *, project_id: str, **build_kwargs: Any
 ) -> dict[str, Any]:
     """Build and durably commit one independent reproduction receipt against an
-    already-committed original result bundle. *build_kwargs* must include
-    `original_result_bundle` -- the caller's own already-resolved bundle body, never a
-    freshly-rebuilt one -- so a reproduction receipt can only ever bind to a bundle that
-    genuinely exists in the ledger, and this route's own `engine.build_reproduction_receipt`
-    always recomputes `agreement` itself rather than trusting any caller-supplied verdict."""
+    already-committed protocol freeze and original result bundle. *build_kwargs* must include
+    `protocol_freeze` and `original_result_bundle` -- the caller's own belief about which
+    records this reproduction ran against. This route itself resolves both parents'
+    authoritative bodies from the Store's own coordination ledger and refuses fail-closed
+    (`ReproductionReceiptValidationError`) whenever either parent was never genuinely committed
+    there or the caller's own copy diverges from the ledger's body (P90-R1-F6); the child
+    record is always built from the *resolved* bodies. `engine.build_reproduction_receipt`
+    itself still recomputes `agreement` and enforces the separate-process boundary
+    (P90-R1-F3) -- this route never overrides either."""
 
-    record = build_reproduction_receipt(project_id=project_id, **build_kwargs)
+    caller_protocol_freeze = build_kwargs.get("protocol_freeze")
+    if not isinstance(caller_protocol_freeze, Mapping):
+        raise ReproductionReceiptValidationError(
+            "commit_reproduction_receipt requires a protocol_freeze mapping"
+        )
+    freeze_id = caller_protocol_freeze.get("protocol_freeze_id")
+    resolved_freeze = resolve_protocol_freeze(
+        store, project_id=project_id, protocol_freeze_id=freeze_id
+    )
+    if resolved_freeze is None:
+        raise ReproductionReceiptValidationError(
+            f"no comparative_benchmark_protocol_freeze is committed at protocol_freeze_id "
+            f"{freeze_id!r} in this project's own coordination ledger -- a reproduction "
+            "receipt can only bind to a protocol freeze that genuinely exists in the Store, "
+            "never a caller-supplied body accepted on trust"
+        )
+    if resolved_freeze != dict(caller_protocol_freeze):
+        raise ReproductionReceiptValidationError(
+            "the protocol_freeze passed to commit_reproduction_receipt diverges from the "
+            f"Store's own committed record at protocol_freeze_id {freeze_id!r} -- a "
+            "reproduction receipt must bind to the ledger's own authoritative freeze body, "
+            "never a caller-supplied look-alike"
+        )
+
+    caller_original_result_bundle = build_kwargs.get("original_result_bundle")
+    if not isinstance(caller_original_result_bundle, Mapping):
+        raise ReproductionReceiptValidationError(
+            "commit_reproduction_receipt requires an original_result_bundle mapping"
+        )
+    bundle_id = caller_original_result_bundle.get("result_bundle_id")
+    resolved_bundle = resolve_result_bundle(store, project_id=project_id, result_bundle_id=bundle_id)
+    if resolved_bundle is None:
+        raise ReproductionReceiptValidationError(
+            f"no comparative_benchmark_result_bundle is committed at result_bundle_id "
+            f"{bundle_id!r} in this project's own coordination ledger -- a reproduction "
+            "receipt can only bind to an original result bundle that genuinely exists in the "
+            "Store, never a caller-supplied body accepted on trust"
+        )
+    if resolved_bundle != dict(caller_original_result_bundle):
+        raise ReproductionReceiptValidationError(
+            "the original_result_bundle passed to commit_reproduction_receipt diverges from "
+            f"the Store's own committed record at result_bundle_id {bundle_id!r} -- a "
+            "reproduction receipt must bind to the ledger's own authoritative bundle body, "
+            "never a caller-supplied look-alike"
+        )
+
+    record = build_reproduction_receipt(
+        project_id=project_id,
+        **{
+            **build_kwargs,
+            "protocol_freeze": resolved_freeze,
+            "original_result_bundle": resolved_bundle,
+        },
+    )
     receipt_id = record["reproduction_receipt_id"]
     return cast(
         "dict[str, Any]",

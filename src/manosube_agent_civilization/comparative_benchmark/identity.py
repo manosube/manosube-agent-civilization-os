@@ -18,16 +18,28 @@ from typing import Any
 
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
-#: A protocol freeze's own identity: which project/binding/corpus/comparison-group-set this
-#: is -- excludes `generated_at` and every predeclared policy field, so the *content* of the
-#: freeze (metrics, thresholds, claim vocabulary, ...) is part of the semantic fingerprint
-#: only, never the id -- a caller resolving "the protocol freeze for this corpus" gets the
-#: identical slot regardless of how verbosely its policy fields are phrased.
+#: A protocol freeze's own identity: the complete pre-result protocol content -- every
+#: predeclared field except `schema_version` and `generated_at` -- so a change to *any*
+#: policy content (metrics, thresholds, exclusion policy, claim vocabulary, resource/
+#: authority manifests, reproduction procedure) mints a genuinely new protocol identity,
+#: never a same-id collision (P90-R1-F4: "subsequent protocol change creates a new protocol
+#: identity ... never retroactively applied to prior results"). Only `generated_at` is
+#: excluded, since it is the one genuinely nondeterministic field a byte-identical re-freeze
+#: of the identical policy should still collide on (idempotent replay).
 PROTOCOL_FREEZE_ID_FIELDS: tuple[str, ...] = (
     "project_id",
     "project_binding_ref",
     "corpus_manifest",
     "comparison_groups",
+    "authority_boundary_equivalence_manifest",
+    "resource_budget_manifest",
+    "metric_definitions",
+    "numeric_thresholds",
+    "unknown_missing_handling",
+    "exclusion_policy",
+    "claim_vocabulary",
+    "reproduction_procedure",
+    "comparability_loss_receipts",
 )
 
 PROTOCOL_FREEZE_SEMANTIC_FIELDS: tuple[str, ...] = (

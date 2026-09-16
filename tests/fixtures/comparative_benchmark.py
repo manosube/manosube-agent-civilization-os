@@ -242,15 +242,38 @@ def metric_definitions() -> list[dict[str, Any]]:
 
 
 def numeric_thresholds() -> list[dict[str, Any]]:
+    """Machine-checkable, predeclared thresholds (P90-R1-F7) -- each names a real
+    `(metric_name, comparison_group_id, operator, threshold_value)` tuple `engine.
+    evaluate_numeric_thresholds` itself evaluates against the recomputed metrics, never an
+    informational-only free-text rule. Bounded to the three ``MANOSUBE_ABSENT`` groups' own
+    fully fixed fixture outcome table (:data:`ABSENT_OUTCOME_TABLE`) so these thresholds hold
+    true independent of how the ``MANOSUBE_PRESENT`` group's real natural-route mechanism is
+    later wired (``THRESHOLDS_PREDECLARED_BEFORE_RESULTS=true``)."""
+
     return [
         {
-            "metric_name": "completed_verified_count",
+            "metric_name": "raw_event_count",
+            "comparison_group_id": "codex_alone",
+            "operator": "==",
+            "threshold_value": len(TASK_IDS),
             "comparison_decision_rule": (
-                "informational only -- this protocol freeze declares no PASS/FAIL gate beyond "
-                "the recorded per-group counts themselves (THRESHOLDS_PREDECLARED_BEFORE_"
-                "RESULTS=true; no threshold is added or altered after results exist)"
+                "every comparison group must record exactly one raw event per corpus task "
+                "(COMPARABLE_PROJECT_AND_TASK_CORPUS_REQUIRED=true) -- a structural "
+                "completeness check, predeclared before any result exists"
             ),
-        }
+        },
+        {
+            "metric_name": "FAILED",
+            "comparison_group_id": "codex_alone",
+            "operator": ">=",
+            "threshold_value": 4,
+            "comparison_decision_rule": (
+                "the codex_alone ungated reference harness's own frozen fixture outcome table "
+                "(ABSENT_OUTCOME_TABLE) records FAILED for at least 4 of the 8 frozen corpus "
+                "tasks -- predeclared before any result exists, never adjusted after seeing "
+                "this bundle's own recomputed count"
+            ),
+        },
     ]
 
 
@@ -271,15 +294,23 @@ def exclusion_policy() -> dict[str, Any]:
 
 
 def claim_vocabulary() -> list[dict[str, Any]]:
+    """Predeclared claim vocabulary (P90-R1-F5) -- each entry names the real
+    `subject_metric_name`/`subject_group_ids` `engine.derive_bounded_claims` itself reads from
+    the recomputed metrics, and a `claim_statement_template` whose `{comparison_group_id}`
+    placeholders that same function fills in via `.format(**computed_values)`. A claim's
+    rendered `statement` is therefore always bound to the actual recomputed counts, never
+    independent boilerplate."""
+
     return [
         {
             "claim_id": "CB21-CLAIM-SAME-AGENT-COMPLETION-COUNTS",
             "claim_statement_template": (
                 "For the frozen 8-task corpus, the recorded COMPLETED_VERIFIED count for "
-                f"comparison_group_id={PRESENT_GROUP_ID} (MANOSUBE present) and comparison_group_id=claude_code_"
-                "alone (the identical declared Agent, MANOSUBE absent) are exactly the counts "
-                "recorded in this result bundle's own metrics -- no causal or superiority claim "
-                "is made beyond those recorded counts."
+                f"comparison_group_id={PRESENT_GROUP_ID} (MANOSUBE present) is "
+                f"{{{PRESENT_GROUP_ID}}}, and for comparison_group_id=claude_code_alone (the "
+                "identical declared Agent, MANOSUBE absent) is {claude_code_alone} -- exactly "
+                "the counts recorded in this result bundle's own metrics; no causal or "
+                "superiority claim is made beyond those recorded counts."
             ),
             "bound": (
                 "Bounded strictly by this result bundle's own recorded raw_events/metrics for "
@@ -287,6 +318,8 @@ def claim_vocabulary() -> list[dict[str, Any]]:
                 "about any real external product's general capability, and no claim beyond "
                 "this one frozen corpus's own recorded counts (CLAIMS_BOUNDED_BY_EVIDENCE)."
             ),
+            "subject_metric_name": "COMPLETED_VERIFIED",
+            "subject_group_ids": [PRESENT_GROUP_ID, "claude_code_alone"],
         }
     ]
 

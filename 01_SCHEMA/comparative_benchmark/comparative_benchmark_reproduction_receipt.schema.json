@@ -29,22 +29,44 @@
     },
     "protocol_freeze_ref": {
       "type": "object",
-      "required": ["protocol_freeze_id"],
-      "properties": {"protocol_freeze_id": {"type": "string", "minLength": 1}},
+      "required": ["protocol_freeze_id", "protocol_freeze_semantic_fingerprint"],
+      "properties": {
+        "protocol_freeze_id": {"type": "string", "minLength": 1},
+        "protocol_freeze_semantic_fingerprint": {"type": "string", "minLength": 1}
+      },
       "additionalProperties": false
     },
     "original_result_bundle_ref": {
       "type": "object",
-      "required": ["result_bundle_id"],
-      "properties": {"result_bundle_id": {"type": "string", "minLength": 1}},
+      "required": ["result_bundle_id", "result_bundle_semantic_fingerprint"],
+      "properties": {
+        "result_bundle_id": {"type": "string", "minLength": 1},
+        "result_bundle_semantic_fingerprint": {"type": "string", "minLength": 1}
+      },
       "additionalProperties": false
     },
     "reproducer_identity": {
       "type": "object",
-      "required": ["reproducer", "is_original_author"],
+      "required": [
+        "reproducer",
+        "is_original_author",
+        "reproduction_process_id",
+        "reproduction_environment_manifest"
+      ],
       "properties": {
         "reproducer": {"type": "string", "minLength": 1},
-        "is_original_author": {"type": "boolean"}
+        "is_original_author": {"type": "boolean"},
+        "reproduction_process_id": {"type": "integer", "minimum": 0},
+        "reproduction_environment_manifest": {
+          "type": "object",
+          "required": ["python_implementation", "python_version", "platform"],
+          "properties": {
+            "python_implementation": {"type": "string", "minLength": 1},
+            "python_version": {"type": "string", "minLength": 1},
+            "platform": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
