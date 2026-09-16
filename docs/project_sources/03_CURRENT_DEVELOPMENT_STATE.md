@@ -5584,16 +5584,17 @@ RUFF_CHECK_RESULT=clean over every file this Round touched (0 findings after add
 RUFF_FORMAT_RESULT=clean over every file this Round touched (2 files needed `ruff format`
   reformatting after being authored; both reformatted and reverified clean)
 MYPY_SRC_COMMAND=mypy --namespace-packages src/
-MYPY_SRC_RESULT=32 errors in 16 files (checked 197 source files) -- unchanged by this Round
-  (this Round made zero src/ edits; `git diff` over every src/ file this Round could have
-  touched is empty). Of these 32, 29 are the pre-existing repository-wide baseline this
-  branch's own §69 already recorded; the remaining 3 (all in
-  `comparative_benchmark/route.py`'s own `resolve_protocol_freeze`/`resolve_result_bundle`
-  call sites, `Argument ... has incompatible type "Any | None"; expected "str"`) were already
-  present in this branch before this Round's own work began (introduced by the prior F4/F6
-  session's own commit `8c27fdb`, confirmed via independent `git diff` against that commit --
-  this Round neither introduced nor fixed them; flagged below as an open concern for the
-  supervising session)
+MYPY_SRC_RESULT=29 errors in 15 files (checked 197 source files), exactly the pre-existing
+  repository-wide baseline this branch's own §69 already recorded (0 net-new). The 3
+  `comparative_benchmark/route.py` findings this Round's own delivery flagged as an open
+  concern (introduced by the prior F4/F6 commit `8c27fdb`, `Argument ... has incompatible type
+  "Any | None"; expected "str"` on `resolve_protocol_freeze`/`resolve_result_bundle` call
+  sites) were fixed by the supervising session in a follow-up commit on this same head:
+  `freeze_id`/`bundle_id` are now narrowed to `str` with an explicit
+  `ResultBundleValidationError`/`ReproductionReceiptValidationError` refusal before the resolve
+  call, rather than passed through as an untyped `Any | None` -- re-verified clean
+  (`mypy --namespace-packages src/manosube_agent_civilization/comparative_benchmark/` reports
+  0 issues) and the full 66-test targeted suite re-passed unchanged after the fix.
 FULL_REPOSITORY_SUITE_COMMAND=pytest -q
 FULL_REPOSITORY_SUITE_RESULT=21977_PASSED_10_FAILED_11_SKIPPED_7447.06_SECONDS (10 failures are
   the exact known baseline, all in
