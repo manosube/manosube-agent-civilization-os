@@ -33,6 +33,7 @@ def _minimal_kwargs(
     return {
         "project_binding_ref": {"kind": "project_binding", "id": "PB-TEST-0001"},
         "tier": tier,
+        "run_outcome": "COMMITTED",
         "corpus_manifest": {
             "corpus_kind": "long_running_proof",
             "max_cycles": lrp.MAX_CYCLES,

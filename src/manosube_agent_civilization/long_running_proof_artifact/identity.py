@@ -46,6 +46,7 @@ BUNDLE_SEMANTIC_FIELDS: tuple[str, ...] = (
     "project_id",
     "project_binding_ref",
     "tier",
+    "run_outcome",
     "corpus_manifest",
     "lineage_refs",
     "raw_events",

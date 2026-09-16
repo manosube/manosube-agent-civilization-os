@@ -49,6 +49,34 @@ WORK_UNIT_REF_KIND = "long_running_proof_run"
 SESSION_LOSS_BOUNDARY_FRACTIONS = (0.2, 0.4, 0.6, 0.8)
 
 
+class RunRefusedError(Exception):
+    """Raised by :func:`run_long_running_proof` when a real orchestrated-route refusal
+    (P87-R2-F1) stops the run -- carries the id and full body of the FAILED run's own
+    already-committed artifact bundle (:attr:`artifact_bundle_id`/:attr:`artifact_bundle`) and
+    the Store root (:attr:`store_root`) a caller needs to reload it through a fresh Store
+    handle, so the real refusal's own evidence is never lost when the run stops.
+
+    A refusal during a genuine Gate 20 tier run is still a real bug (the deterministic corpus
+    is walked in order, so :func:`attempt_cycle` should never organically refuse there) and this
+    exception still propagates uncaught exactly as the previous bare ``AssertionError`` did --
+    the only change is that the failed run's own durable artifact is committed first, never
+    lost by aborting before that commit (Structural Advisor review comment 5690668629, SHUKOU
+    adoption ``ADOPT_P87_R2_F1_REAL_REFUSAL_DURABLE_ARTIFACT``)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        artifact_bundle_id: str,
+        artifact_bundle: dict[str, Any],
+        store_root: str,
+    ) -> None:
+        super().__init__(message)
+        self.artifact_bundle_id = artifact_bundle_id
+        self.artifact_bundle = artifact_bundle
+        self.store_root = store_root
+
+
 def _observed_now() -> str:
     """The one real wall-clock read this proof's own metric dataset uses for cycle
     ``started_at``/``closed_at`` (P87-R1-F9) -- genuinely non-deterministic observation time,
@@ -141,7 +169,85 @@ def run_runtime_reachability_slice(
     ]
 
 
-def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
+def _build_and_commit_artifact_bundle(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    tier: int,
+    run_outcome: str,
+    raw_events: list[dict[str, Any]],
+    aggregated_metrics: dict[str, Any],
+    final_committed_state: dict[str, Any],
+    session_loss_receipts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build and durably commit this run's own artifact bundle (P87-R1-F8), shared unchanged by
+    both the successful route (``run_outcome="COMMITTED"``) and a real-refusal route
+    (``run_outcome="FAILED"``, P87-R2-F1) -- so a FAILED run's own bundle carries exactly the
+    same closed set of canonical outputs a COMMITTED one does, never a smaller or differently-
+    shaped one."""
+
+    lineage_identity_refs = final_committed_state["semantic_state"]["lineage"]["identity_refs"]
+    lineage_refs = {
+        "final_state_revision": final_committed_state["state_revision"],
+        "committed_cycle_count": cycle.committed_cycle_count(final_committed_state),
+        "identity_refs": lineage_identity_refs,
+    }
+    corpus_manifest = {
+        "corpus_kind": "long_running_proof",
+        "max_cycles": lrp.MAX_CYCLES,
+        "tier": tier,
+        "predicate_ids": [lrp.predicate_id(k) for k in range(tier)],
+    }
+    agent_swap_refs = [
+        {
+            "swap_index": e["swap_index"],
+            "predecessor_identity": e["predecessor_identity"],
+            "successor_identity": e["successor_identity"],
+            "succeeded": e["succeeded"],
+        }
+        for e in raw_events
+        if e["kind"] == "agent_swap"
+    ]
+    runtime_observation_refs = [
+        {"classification": e["classification"], "transport_outcome": e["transport_outcome"]}
+        for e in raw_events
+        if e["kind"] == "runtime_observation"
+    ]
+    environment_manifest = {
+        "python_implementation": platform.python_implementation(),
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+    }
+    reproduction_procedure = {
+        "entrypoint": "tests.long_running_proof.orchestrator.run_long_running_proof",
+        "tier": tier,
+        "corpus_kind": "long_running_proof",
+        "project_id_constant": lrp.PROJECT_ID,
+    }
+
+    return commit_artifact_bundle(
+        store,
+        project_id=project_id,
+        project_binding_ref={"kind": "project_binding", "id": project_binding_id},
+        tier=tier,
+        run_outcome=run_outcome,
+        corpus_manifest=corpus_manifest,
+        lineage_refs=lineage_refs,
+        raw_events=raw_events,
+        metrics=aggregated_metrics,
+        session_loss_receipts=session_loss_receipts,
+        agent_swap_refs=agent_swap_refs,
+        runtime_observation_refs=runtime_observation_refs,
+        environment_manifest=environment_manifest,
+        reproduction_procedure=reproduction_procedure,
+        generated_at=default_clock(),
+    )
+
+
+def run_long_running_proof(
+    tmp_path: Path, *, tier: int, refuse_at_cycle: int | None = None
+) -> dict[str, Any]:
     """The one Gate 20 proof entry point: run *tier* sequential Differences (with real
     process-boundary session-loss recovery injected along the way), one real agent/runtime-
     identity swap slice, and one runtime-reachability measurement slice -- all three bound into
@@ -151,7 +257,19 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
     event into the required metric dataset.
 
     ``tier`` must be one of the four required values (10, 30, 50, 100) for a genuine Gate 20
-    run; smaller values are accepted for fast, non-Gate-20 smoke verification only."""
+    run; smaller values are accepted for fast, non-Gate-20 smoke verification only.
+
+    *refuse_at_cycle*, when given, is a required decisive-negative-control seam (P87-R2-F1):
+    at that 0-indexed cycle position, this function deliberately calls the real
+    :func:`attempt_cycle` for the *next* corpus position instead of the expected one --
+    genuinely violating :func:`~tests.long_running_proof.cycle.verify_expected_corpus_position`,
+    exactly the omission case the existing corpus-order negative controls already exercise
+    directly against ``cycle.py`` -- so the resulting refusal is a real one, organically
+    produced by the real orchestrated route's own real code, never a synthetic event a caller
+    fabricates. On such a refusal this function commits a FAILED artifact bundle capturing
+    everything gathered so far (including the real ``cycle_refused`` event) and raises
+    :class:`RunRefusedError` carrying that bundle's id, rather than losing the evidence by
+    raising before any artifact is ever committed."""
 
     store = cycle.build_store(tmp_path / "sequential_differences")
     bind_result = cycle.bind_genesis(store)
@@ -236,12 +354,32 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
                     )
                 )
             else:
-                attempt = attempt_cycle(store, k=k, committed_state=committed_state)
+                #: P87-R2-F1's own decisive-negative-control seam: deliberately request the
+                #: *next* corpus position instead of the expected one, so the real route's own
+                #: real ``cycle.verify_expected_corpus_position`` genuinely refuses -- never a
+                #: hand-authored synthetic refusal event.
+                attempt_k = k + 1 if refuse_at_cycle == k else k
+                attempt = attempt_cycle(store, k=attempt_k, committed_state=committed_state)
                 raw_events.append(attempt["event"])
                 if attempt["outcome"] == "refused":
-                    raise AssertionError(
+                    failed_metrics = metrics.aggregate(raw_events)
+                    failed_bundle = _build_and_commit_artifact_bundle(
+                        store,
+                        project_id=lrp.PROJECT_ID,
+                        project_binding_id=project_binding_id,
+                        tier=tier,
+                        run_outcome="FAILED",
+                        raw_events=raw_events,
+                        aggregated_metrics=failed_metrics,
+                        final_committed_state=committed_state,
+                        session_loss_receipts=session_loss_receipts,
+                    )
+                    raise RunRefusedError(
                         f"cycle {k}: real orchestrated route refused during the positive "
-                        f"Gate 20 route -- {attempt['event']['reason']}"
+                        f"Gate 20 route -- {attempt['event']['reason']}",
+                        artifact_bundle_id=failed_bundle["artifact_bundle_id"],
+                        artifact_bundle=failed_bundle,
+                        store_root=str(store.root),
                     )
                 committed_state = attempt["committed_state"]
 
@@ -302,60 +440,16 @@ def run_long_running_proof(tmp_path: Path, *, tier: int) -> dict[str, Any]:
     final_committed_state = sequential["final_committed_state"]
     aggregated_metrics = metrics.aggregate(raw_events)
 
-    lineage_identity_refs = final_committed_state["semantic_state"]["lineage"]["identity_refs"]
-    lineage_refs = {
-        "final_state_revision": final_committed_state["state_revision"],
-        "committed_cycle_count": cycle.committed_cycle_count(final_committed_state),
-        "identity_refs": lineage_identity_refs,
-    }
-    corpus_manifest = {
-        "corpus_kind": "long_running_proof",
-        "max_cycles": lrp.MAX_CYCLES,
-        "tier": tier,
-        "predicate_ids": [lrp.predicate_id(k) for k in range(tier)],
-    }
-    agent_swap_refs = [
-        {
-            "swap_index": e["swap_index"],
-            "predecessor_identity": e["predecessor_identity"],
-            "successor_identity": e["successor_identity"],
-            "succeeded": e["succeeded"],
-        }
-        for e in raw_events
-        if e["kind"] == "agent_swap"
-    ]
-    runtime_observation_refs = [
-        {"classification": e["classification"], "transport_outcome": e["transport_outcome"]}
-        for e in raw_events
-        if e["kind"] == "runtime_observation"
-    ]
-    environment_manifest = {
-        "python_implementation": platform.python_implementation(),
-        "python_version": sys.version.split()[0],
-        "platform": platform.platform(),
-    }
-    reproduction_procedure = {
-        "entrypoint": "tests.long_running_proof.orchestrator.run_long_running_proof",
-        "tier": tier,
-        "corpus_kind": "long_running_proof",
-        "project_id_constant": lrp.PROJECT_ID,
-    }
-
-    artifact_bundle = commit_artifact_bundle(
+    artifact_bundle = _build_and_commit_artifact_bundle(
         store,
         project_id=lrp.PROJECT_ID,
-        project_binding_ref={"kind": "project_binding", "id": project_binding_id},
+        project_binding_id=project_binding_id,
         tier=tier,
-        corpus_manifest=corpus_manifest,
-        lineage_refs=lineage_refs,
+        run_outcome="COMMITTED",
         raw_events=raw_events,
-        metrics=aggregated_metrics,
+        aggregated_metrics=aggregated_metrics,
+        final_committed_state=final_committed_state,
         session_loss_receipts=sequential["session_loss_receipts"],
-        agent_swap_refs=agent_swap_refs,
-        runtime_observation_refs=runtime_observation_refs,
-        environment_manifest=environment_manifest,
-        reproduction_procedure=reproduction_procedure,
-        generated_at=default_clock(),
     )
 
     return {

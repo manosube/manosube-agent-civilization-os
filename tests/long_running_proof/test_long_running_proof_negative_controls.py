@@ -25,7 +25,7 @@ from tests.long_running_proof import (
     runtime_reachability,
     session_loss,
 )
-from tests.long_running_proof.orchestrator import run_long_running_proof
+from tests.long_running_proof.orchestrator import RunRefusedError, run_long_running_proof
 from tests.state_helpers import SCHEMA_ROOT
 
 from manosube_agent_civilization.long_running_proof_artifact import route as artifact_route
@@ -304,18 +304,51 @@ def test_unreachable_and_unknown_runtime_classifications_are_never_conflated(
 # --------------------------------------------------------------------------- #
 
 
-def test_a_refused_cycle_event_stays_in_the_dataset_and_is_counted(
-    shared_run: dict[str, Any],
-) -> None:
-    raw_events = list(shared_run["raw_events"])
-    raw_events.append(
-        metrics.cycle_refused_event(
-            k=99, reason="deliberate negative-control refusal", started_at="2026-09-15T17:00:00Z"
-        )
+def test_a_refused_cycle_event_stays_in_the_dataset_and_is_counted(tmp_path: Path) -> None:
+    """P87-R2-F1: this control's own original design (Round 1's own accepted F3 correction)
+    proved that *if* a real ``cycle_refused`` event were present, the aggregator counts it and
+    never drops it. Structural Review Round 2 found the original test never actually drove one
+    -- it manually appended a hand-authored dict onto a successful run's own event list, the
+    identical synthetic-event shortcut P87-R1-F3 itself had already ruled out as a decisive
+    proof. This is the corrected version: :func:`run_long_running_proof` with
+    ``refuse_at_cycle=0`` deliberately requests the corpus's own next position (1) before any
+    cycle has committed (0 committed), so ``cycle.verify_expected_corpus_position`` itself
+    refuses for real, through the real orchestrated route (:func:`attempt_cycle`) -- never a
+    caller-fabricated event. ``tier=1`` keeps this fast: at that tier none of the four session-
+    loss boundary fractions round up to a real cycle position, so no crash-injection subprocess
+    ever runs before the refusal fires.
+
+    The resulting real refusal is not lost when the run stops: :func:`run_long_running_proof`
+    commits a FAILED artifact bundle carrying it before raising :class:`RunRefusedError`. This
+    test reloads that bundle through a *fresh* :class:`FileStateStore` handle (holding no
+    object the failed run itself ever built) and proves, against the reloaded body alone: the
+    real refusal event is present, recomputed metrics count it, and Canonical State never
+    advanced for the refused cycle."""
+
+    with pytest.raises(RunRefusedError) as exc_info:
+        run_long_running_proof(tmp_path, tier=1, refuse_at_cycle=0)
+    error = exc_info.value
+
+    fresh_store = FileStateStore(Path(error.store_root), schema_root=SCHEMA_ROOT)
+    reloaded = artifact_route.resolve_artifact_bundle(
+        fresh_store, project_id=lrp.PROJECT_ID, artifact_bundle_id=error.artifact_bundle_id
     )
-    aggregated = metrics.aggregate(raw_events)
-    assert aggregated["refused_cycle_count"] == 1
-    assert aggregated["raw_event_count"] == len(shared_run["raw_events"]) + 1
+    assert reloaded is not None
+    assert reloaded == error.artifact_bundle
+    assert reloaded["run_outcome"] == "FAILED"
+
+    refusal_events = [e for e in reloaded["raw_events"] if e["kind"] == "cycle_refused"]
+    assert len(refusal_events) == 1
+
+    recomputed_metrics = stringify_floats(metrics.aggregate(reloaded["raw_events"]))
+    assert recomputed_metrics == reloaded["metrics"]
+    assert recomputed_metrics["refused_cycle_count"] == 1
+    assert recomputed_metrics["raw_event_count"] == len(reloaded["raw_events"])
+
+    current = fresh_store.load_current(lrp.PROJECT_ID)
+    assert current["state_revision"] == reloaded["lineage_refs"]["final_state_revision"]
+    assert cycle.committed_cycle_count(current) == 0
+    assert reloaded["lineage_refs"]["committed_cycle_count"] == 0
 
 
 # --------------------------------------------------------------------------- #

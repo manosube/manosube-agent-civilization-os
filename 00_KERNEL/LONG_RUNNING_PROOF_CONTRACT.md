@@ -166,7 +166,11 @@ observations are counted as `UNKNOWN`, never folded into `0` (`UNKNOWN_NE_ZERO=t
 DATASET=true`) -- the negative-control matrix proves this directly, and (Structural Review Round
 1, P87-R1-F3) that event is now always captured from the real orchestrated route's own actual
 refusal (`cycle.CorpusPositionError`/`reflow`'s own `StaleReflowError`), never a synthetic dict a
-caller hand-authors after the fact.
+caller hand-authors after the fact. **Corrected (P87-R2-F1).** The decisive negative control for
+this now drives that refusal through the orchestrated entrypoint itself (`run_long_running_proof`'s
+own `refuse_at_cycle` parameter), rather than manually appending a hand-authored `cycle_refused`
+dict onto an otherwise-successful run's own event list -- the identical synthetic-event shortcut
+P87-R1-F3 itself had already ruled out as decisive proof. See section 11.9.
 
 **Corrected (P87-R1-F9).** `time_to_structural_closure_seconds` is computed from two real
 `datetime.now(UTC)` reads bracketing each cycle's own actual execution (`orchestrator.
@@ -200,6 +204,14 @@ gathering this run's own raw events, aggregated metrics, lineage refs, session-l
 observation refs, an environment manifest, the corpus manifest, and a reproduction procedure, and
 returns its `artifact_bundle_id` alongside the pre-existing return fields.
 
+**Corrected (P87-R2-F1).** A real refusal at the orchestrated route (`attempt_cycle` returning
+`outcome="refused"` during the positive Gate 20 route) no longer aborts before any artifact is
+ever committed. `run_long_running_proof` now durably commits a `run_outcome="FAILED"` artifact
+bundle -- carrying every raw event gathered so far, including the real `cycle_refused` event, and
+`lineage_refs` reflecting Canonical State exactly as of the last cycle that actually committed --
+before raising `RunRefusedError`, which carries that bundle's id/body/Store root so a caller can
+independently reload it through a fresh Store handle. See section 11.9.
+
 ## 9. Gate 20
 
 ```text
@@ -224,6 +236,9 @@ CLOSED_RUNTIME_OUTCOME_TOTALITY=true        (runtime_reachability.py, P87-R1-F6)
 WTT_ENFORCED_AT_PRODUCTION_PROOF_ENTRYPOINT=true  (section 8, P87-R1-F7)
 DURABLE_VERSIONED_ARTIFACT_RELOAD_AND_TAMPER_PROOF=true  (section 11.8, P87-R1-F8)
 ACTUAL_ELAPSED_TIME_RECORDED=true           (section 7, P87-R1-F9)
+REAL_REFUSAL_DURABLY_RECORDED_AT_ORCHESTRATED_ROUTE=true  (section 11.9, P87-R2-F1: a real
+                                              orchestrated-route refusal commits a FAILED
+                                              artifact bundle before raising, never lost)
 
 ALL_PROOF_TIERS_COMPLETE=true               (test_long_running_proof_gate_20.py, all 4 tiers)
 NATURAL_ROUTE_PROVEN=true                   (sections 3-6, every mechanism reuses an existing,
@@ -272,6 +287,13 @@ P87-R1-F6  CLOSED_RUNTIME_OUTCOME_TOTALITY        -- section 6
 P87-R1-F7  WTT_ENFORCED_AT_PRODUCTION_PROOF_ENTRYPOINT -- section 8
 P87-R1-F8  DURABLE_VERSIONED_ARTIFACT_RELOAD_AND_TAMPER_PROOF -- section 11.8 (below)
 P87-R1-F9  ACTUAL_ELAPSED_TIME_RECORDED           -- section 7
+```
+
+Structural Review Round 2 reopened one finding against the just-delivered P87-R1-F8 work,
+adopted by SHUKOU as `ADOPT_P87_R2_F1_REAL_REFUSAL_DURABLE_ARTIFACT`:
+
+```text
+P87-R2-F1  REAL_REFUSAL_DURABLY_RECORDED_AT_ORCHESTRATED_ROUTE -- section 11.9 (below)
 ```
 
 ### 11.8 The Long-Running Proof Artifact Bundle (P87-R1-F8)
@@ -336,6 +358,55 @@ raw events and comparing, through `stringify_floats`, to the reloaded `metrics` 
 of a directly-edited materialized cache file, and that committing the bundle never advanced the
 Project's own `state_revision`. `tests/contract/long_running_proof_artifact/` proves the same
 package's identity/idempotency/conflict-refusal semantics at the fast, minimal-genesis level.
+
+### 11.9 Real orchestrated-route refusal, durably recorded (P87-R2-F1)
+
+Structural Review Round 2 found one reopened finding against the just-delivered P87-R1-F8 work:
+the positive `run_long_running_proof` route immediately raised a bare `AssertionError` on a real
+cycle refusal and never reached artifact-bundle build/commit, so a real refusal's own evidence was
+lost; and the existing negative-control test for this still manually appended a synthetic
+`cycle_refused` dict rather than driving a real one -- the identical shortcut P87-R1-F3 itself had
+already banned.
+
+**`run_outcome`, a new required bundle field.** `long_running_proof_artifact_bundle.schema.json`
+now requires `run_outcome`, one of `COMMITTED` (every cycle up to `tier` committed with zero
+refusals -- the required Gate 20 positive route) or `FAILED` (the run stopped at a real
+orchestrated-route refusal; `raw_events`/`metrics` still carry that real `cycle_refused` event, and
+`lineage_refs` reflects Canonical State exactly as of the last cycle that actually committed, never
+advanced for the refused cycle itself). `identity.BUNDLE_SEMANTIC_FIELDS` includes `run_outcome` (a
+`FAILED` bundle's own content address differs from a `COMMITTED` one); `identity.BUNDLE_ID_FIELDS`
+deliberately excludes it -- `run_outcome` is "how the run ended," never part of "which run this is."
+
+**A real refusal is never lost.** `orchestrator.run_long_running_proof` gained a
+`_build_and_commit_artifact_bundle` helper shared, unchanged, by both routes, so a `FAILED` bundle
+carries exactly the same closed set of canonical outputs a `COMMITTED` one does. On a real
+orchestrated-route refusal (`attempt_cycle` returning `outcome="refused"` during the positive Gate
+20 route), the run now commits a `run_outcome="FAILED"` bundle -- everything gathered so far,
+including the real `cycle_refused` event -- before raising `orchestrator.RunRefusedError`, which
+carries that bundle's `artifact_bundle_id`/full body/Store root as attributes, so a caller can
+independently reload the evidence through a fresh Store handle after the exception propagates. The
+refusal itself still propagates uncaught exactly as the previous bare `AssertionError` did --
+a refusal during a genuine Gate 20 tier run remains a real bug, since the deterministic corpus is
+walked in order and `attempt_cycle` should never organically refuse there; the only change is that
+the failed run's own durable artifact is committed first.
+
+**Decisive negative control, corrected.** `run_long_running_proof` gained a `refuse_at_cycle`
+parameter: at that 0-indexed cycle position, the function deliberately calls the real
+`attempt_cycle` for the *next* corpus position instead of the expected one -- genuinely violating
+`cycle.verify_expected_corpus_position`, the identical omission case the existing corpus-order
+negative controls already exercise directly against `cycle.py` (P87-R1-F5) -- so the resulting
+refusal is a real one, organically produced by the real orchestrated route's own real code, never a
+synthetic event a caller fabricates. `tests/long_running_proof/
+test_long_running_proof_negative_controls.py`'s `test_a_refused_cycle_event_stays_in_the_dataset_
+and_is_counted` drives this at `tier=1` (the fastest tier at which every session-loss boundary
+fraction still rounds below one real cycle position, so no crash-injection subprocess ever runs
+before the refusal fires) and proves, against the reloaded `FAILED` bundle alone, through a fresh
+`FileStateStore` handle holding no object the failed run itself ever built: reload equality to
+`RunRefusedError`'s own carried body, exactly one real `cycle_refused` event present,
+`metrics.aggregate` recomputed from the reloaded raw events (through `stringify_floats`) equals the
+reloaded `metrics` field with `refused_cycle_count == 1`, and Canonical State never advanced for the
+refused cycle (`committed_cycle_count == 0` both on the freshly-loaded current State and in the
+bundle's own `lineage_refs`).
 
 **Fields carried by the bundle**: `corpus_manifest` (`corpus_kind`, `max_cycles`, `tier`, the
 resolved `predicate_id(k)` list for `range(tier)` -- the actual resolved prefix, not merely a

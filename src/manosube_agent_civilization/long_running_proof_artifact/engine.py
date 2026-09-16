@@ -27,6 +27,13 @@ from .identity import artifact_bundle_id, artifact_bundle_semantic_fingerprint
 SCHEMA_VERSION = "0.1"
 LONG_RUNNING_PROOF_ARTIFACT_SCHEMA_BASE = _CANONICAL_SCHEMA_BASE + "long_running_proof_artifact/"
 
+#: The closed, schema-mirrored vocabulary for a bundle's own ``run_outcome`` (P87-R2-F1):
+#: ``COMMITTED`` for a run that reached ``tier`` with zero refusals (the required Gate 20
+#: positive route), ``FAILED`` for a run that stopped at a real orchestrated-route refusal --
+#: the artifact still durably carries that real ``cycle_refused`` event rather than the run
+#: aborting before any artifact was ever committed.
+RUN_OUTCOMES: frozenset[str] = frozenset({"COMMITTED", "FAILED"})
+
 
 def _detach(value: Any) -> Any:
     if isinstance(value, Mapping):
@@ -76,6 +83,7 @@ def build_artifact_bundle(
     project_id: str,
     project_binding_ref: Mapping[str, str],
     tier: int,
+    run_outcome: str,
     corpus_manifest: Mapping[str, Any],
     lineage_refs: Mapping[str, Any],
     raw_events: list[Mapping[str, Any]],
@@ -97,6 +105,11 @@ def build_artifact_bundle(
     already-committed data this bundle only republishes for durable, versioned, tamper-evident
     reading -- never a second, competing source of truth for any of it."""
 
+    if run_outcome not in RUN_OUTCOMES:
+        raise ArtifactBundleValidationError(
+            f"unrecognized run_outcome: {run_outcome!r} -- must be one of {sorted(RUN_OUTCOMES)!r}"
+        )
+
     project_id = str(project_id)
     project_binding_ref = _detach(project_binding_ref)
     corpus_manifest = _detach(corpus_manifest)
@@ -116,6 +129,7 @@ def build_artifact_bundle(
         "project_id": project_id,
         "project_binding_ref": project_binding_ref,
         "tier": tier,
+        "run_outcome": run_outcome,
         "corpus_manifest": corpus_manifest,
         "lineage_refs": lineage_refs,
         "raw_events": raw_events,
@@ -139,6 +153,7 @@ def build_artifact_bundle(
 
 __all__ = [
     "LONG_RUNNING_PROOF_ARTIFACT_SCHEMA_BASE",
+    "RUN_OUTCOMES",
     "SCHEMA_VERSION",
     "build_artifact_bundle",
     "stringify_floats",

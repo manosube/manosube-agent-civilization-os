@@ -10,6 +10,7 @@
     "project_id",
     "project_binding_ref",
     "tier",
+    "run_outcome",
     "corpus_manifest",
     "lineage_refs",
     "raw_events",
@@ -33,6 +34,10 @@
       ]
     },
     "tier": {"type": "integer", "minimum": 1},
+    "run_outcome": {
+      "enum": ["COMMITTED", "FAILED"],
+      "description": "COMMITTED: every cycle up to `tier` committed with zero refusals (the required Gate 20 positive route). FAILED: the run stopped at a real orchestrated-route refusal (P87-R2-F1) -- `raw_events`/`metrics` still carry that real `cycle_refused` event and `lineage_refs` reflects Canonical State exactly as of the last cycle that actually committed, never advanced for the refused cycle."
+    },
     "corpus_manifest": {
       "type": "object",
       "required": ["corpus_kind", "max_cycles", "tier", "predicate_ids"],

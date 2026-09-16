@@ -5146,3 +5146,75 @@ NEW_ISSUE_ALLOWED=false
 ADDITIONAL_PR_ALLOWED=false
 UNRELATED_CLEANUP_ALLOWED=false
 ```
+
+# 67. PR #87 Structural Review Round 2 (P87-R2-F1) bounded addendum(Issue #86)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、本Roundで`01_SCHEMA/long_running_proof_artifact/`および
+`src/manosube_agent_civilization/long_running_proof_artifact/`という既存kernel_surfaceに
+加えられた変更(P87-R2-F1、新規フィールド`run_outcome`の追加)に対応付けるための、最小限の
+事実記録である。
+
+PR #87に対する構造参謀の審査コメント(comment id `5690668629`、author `manosube`、OWNER)は
+直前に納品されたP87-R1-F8実装に対して1件の再開findingを指摘し(`P87-R2-F1`)、SHUKOU自身の
+採択コメント(comment id `5690681457`、author `manosube`、OWNER、
+`ADOPTION_ID=ADOPT_P87_R2_F1_REAL_REFUSAL_DURABLE_ARTIFACT`)がその修正を既存branch
+`agent/issue-86-phase20-long-running-proof`・既存PR #87上でのみ行うよう指示した。本記録
+作成者は、両コメントの本文・author・associationをGitHub API経由で独立readbackし一致を確認
+済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-16
+GOVERNING_ISSUE=#86
+GOVERNING_PR=#87
+ADOPTION_ID=ADOPT_P87_R2_F1_REAL_REFUSAL_DURABLE_ARTIFACT
+REVIEW_COMMENT_ID=5690668629
+ADOPTION_COMMENT_ID=5690681457
+EXISTING_BRANCH_ONLY=agent/issue-86-phase20-long-running-proof
+EXISTING_PR_ONLY=#87
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+findingの内容とその修正内容は`00_KERNEL/LONG_RUNNING_PROOF_CONTRACT.md`section 11.9に完全に
+記録されている(本節は重複させない)。source-impact上重要な事実は次の通り: 正の
+`run_long_running_proof`ルートが実際のcycle refusalに遭遇した際、artifact bundle build/commit
+に一切到達せずbare `AssertionError`を送出しており、実際のrefusalのevidenceが失われていた点、
+および既存のnegative-control testがP87-R1-F3自身が既に禁じたのと同一のshortcut(手動で
+`cycle_refused` dictを合成events列に追加する)を再度用いていた点である。修正は新規owner/新規
+package/新規schemaファイルを一切追加せず、既存`long_running_proof_artifact_bundle.schema.json`
+へ1件の必須フィールド`run_outcome`(`COMMITTED`/`FAILED`)を追加し、既存`engine.py`/
+`identity.py`をそれに追随させ、既存test-only orchestrator (`tests/long_running_proof/
+orchestrator.py`)に、実際のrefusal時にFAILED bundleをcommitしてから例外を送出する経路
+(`RunRefusedError`)を追加したのみである。
+
+```text
+NEW_SRC_PACKAGE_ADDED=false
+NEW_SCHEMA_FILE_ADDED=false
+SCHEMA_FIELD_ADDED=run_outcome
+NEW_CANONICAL_STATE_OWNER=false
+NEW_AUTHORITY_OWNER=false
+NEW_EVIDENCE_OWNER=false
+NEW_REFLOW_OWNER=false
+NEW_COMPLETION_OWNER=false
+ACTUAL_ROUTE_REFUSAL=true
+REAL_REFUSAL_DURABLY_RECORDED=true
+FAILURE_CHANGES_DERIVED_METRICS=true
+ARTIFACT_RELOAD_PROOF=true
+NO_STATE_ADVANCE_ON_REFUSAL=true
+SYNTHETIC_EVENT_IS_NOT_THE_DECISIVE_PROOF=true
+```
+
+```text
+MERGE_ALLOWED=false
+ISSUE_86_CLOSE_ALLOWED=false
+PHASE_21_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+```
