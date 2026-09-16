@@ -4964,3 +4964,257 @@ SOURCE_SYNC_MERGE_ALLOWED=false
 ISSUE_22_CLOSE_ALLOWED=false
 PHASE_20_IMPLEMENTATION_ALLOWED=false
 ```
+
+# 65. Phase 20「Long-running Project Proof」実装delivery bounded addendum(Issue #86)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、新規kernel_surface変更(`00_KERNEL/LONG_RUNNING_PROOF_CONTRACT.md`)に対応付けるため
+だけの、最小限の事実記録である。
+
+Issue #86「[Phase 20] Long-running Project Proof」はSHUKOU正式採択・実装handoffコメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/86#issuecomment-5679195926`
+(`ADOPTION_ID=ADOPT_PHASE_20_LONG_RUNNING_PROJECT_PROOF`)によって指示された。本記録作成者は、
+Issue #86本文・この採択コメント・live `main` head
+(`4a3bce0858b9fe8ee74db922cf0376b33d229427`、authorized baseと一致)を、実装開始直前に
+GitHub API経由で独立readbackし一致を確認済みである。branch
+`agent/issue-86-phase20-long-running-proof`はこのexact base SHAから分岐している。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-15
+GOVERNING_ISSUE=#86
+ADOPTION_ID=ADOPT_PHASE_20_LONG_RUNNING_PROJECT_PROOF
+ADOPTION_COMMENT_ID=5679195926
+AUTHORIZED_BASE_SHA=4a3bce0858b9fe8ee74db922cf0376b33d229427
+BRANCH=agent/issue-86-phase20-long-running-proof
+IMPLEMENTATION_TARGET=NEW_BRANCH_THIS_SESSION
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+Issue #86は、既存の自然な本番ルート(`difference.derive_differences` -> `authority.
+evaluate_authority` -> `change.derive_change` -> `observation.observe`/`evidence.engine.
+derive_evidence`/`evidence.sufficiency.evaluate_sufficiency` -> `reflow.route.reflow`)のみを
+通じて、1つの長期稼働Projectが多数の逐次的Structural Difference(T10/T30/T50/T100 tier、単一
+100件corpusの文字通りのprefix)を処理し続けられることを、実プロセス/セッション消失下での
+Canonical State/Lineageの生存、Agent/runtime識別子の反復swap(3回以上、2つ以上の相異なる
+identity)、runtime到達可能性のREACHABLE/UNREACHABLE/UNKNOWN三値の真の区別とともに証明する、
+という証明単位である。追加された本番packageは存在しない
+(`HARNESS_OWNS_CANONICAL_STATE=false`、Issue #86 section 11) -- 全ての新規ownerは`tests/`
+配下のharnessコードと、この`00_KERNEL/LONG_RUNNING_PROOF_CONTRACT.md`という1件の契約文書
+のみである。
+
+追加されたas-built ownerは`00_KERNEL/LONG_RUNNING_PROOF_CONTRACT.md`(Phase 8自身の
+`VERTICAL_PROOF_CONTRACT.md`と同じ役割)、`tests/fixtures/long_running_proof.py`と
+`tests/fixtures/long_running_proof/`(cycle-index parametrized fixture world、100件の
+Target Predicateを最初から全て宣言する1つのObjective Revision、2つの実物理Source Snapshot
+ファイル)、`tests/long_running_proof/`(`cycle.py`・`session_loss.py`・`agent_swap.py`・
+`runtime_reachability.py`・`metrics.py`・`orchestrator.py`の6モジュールと、
+`test_long_running_proof_gate_20.py`・`test_long_running_proof_negative_controls.py`の
+2テストファイル)である。`src/manosube_agent_civilization/`配下には一切の変更がない。
+
+4つの「困難な技術的リスク」はいずれも既存の受理済み機構の再利用によって、独立に構築・検証
+された: (1) 逐次サイクル処理はPhase 8自身の`tests/natural_cycle/proof.py`パターンを
+cycle-index `k`へ一般化したものであり、各サイクルの`current_state`は前サイクルの実際に
+committedされたReflow結果からのみ導出される(決してメモリ内に保持され続けない)。(2)
+セッション消失recoveryは、`tests/integration/boot/test_boot_project_route.py`が既に確立した
+実インタプリタレベルの`subprocess.run([sys.executable, "-c", script], ...)`パターンを再利用し、
+親プロセスの一切のメモリを信頼せず`FileStateStore.reconstruct(project_id)`のみからState全体を
+再構築する。(3) Agent/runtime識別子swapは、既に受理済みのV3 model-swap機構
+(`model_runtime.route.record_model_swap`の`adapter_identity`比較)を`tests/fixtures/
+model_runtime_world.py`ごと直接再利用し、3回のswap・2つの相異なるadapter_identity(A→B→A)を
+証明する。(4) runtime到達可能性は、既存のRuntime Observation Contract
+(`runtime.route.observe_runtime_target`・`FakeRuntimeAdapter`)の生の transport outcome
+(`OBSERVED`/`TIMEOUT`/`UNAVAILABLE`/`NOT_FOUND`等)を、このharness自身がREACHABLE/
+UNREACHABLE/UNKNOWNへ分類することで証明する -- `work_time_transparency.types.ADAPTER_KINDS`
+は閉じた8員enumであり`RUNTIME`を持たないため、この測定は意図的に`with_work_time_coordination`
+で包まれていない(9番目のadapter_kindを新設すること、または無関係な既存kindを流用することは
+いずれも未採択のKernel schema/enum変更または呼び出し元偽装になるため)。
+
+Issue #86 section 12の要求する決定的negative/tamper controlは12件、`test_long_running_proof_
+negative_controls.py`に実装され、いずれも本記録作成者自身が独立に実行し検証済み(`12 passed`)
+-- 1回の短時間実行だけではGate 20を満たせないこと、prefixから全体成績を捏造できないこと、
+raw eventの欠落/編集が派生metricsを変化させること、cycle順序の入れ替え/重複commitが
+Reflow自身のCompare-And-Swap staleness機構により拒否されること、session-loss recoveryが
+volatileな消失前オブジェクトを再利用できないこと、Agent swapが同一identityの使い回しを
+`ModelRuntimeRequirementError`により拒否されること、REACHABLE/UNREACHABLE/UNKNOWNが
+決して混同されないこと、拒否されたcycleがdatasetに残り metricsへ反映され続けること、
+timing/WTT記録がCompletion Evidenceへ昇格しないこと、harnessコードが一切のprivate属性
+書き込みを行わないこと(AST静的検査)、を含む。
+
+Gate 20自身の要求する正のtest suite(`test_long_running_proof_gate_20.py`)は、T10/T30/T50/
+T100の4tier全てについて、`committed_cycle_count == tier`・`refused_cycle_count == 0`・
+state_reconstruction_success/session_loss_recovery_success/agent_swap_successの各rate
+1.0・runtime_reachabilityのreachable/unreachable/unknown各カテゴリ1件以上、を本記録作成者
+自身が独立に実行し検証済み(`6 passed in 2370.66s`、うちT100は単独で約8分)。T10がT30/T50/
+T100の corpus位置の文字通りのprefixであることも別途確認済みである。
+
+```text
+GATE_20_ALL_FOUR_TIERS_PASSED=true
+GATE_20_RUN_DURATION_SECONDS=2370.66
+NEGATIVE_CONTROL_COUNT=12
+NEGATIVE_CONTROLS_PASSED=12
+SCHEMA_VALIDATION_AT_DELIVERY_HEAD=PASS_89_SCHEMAS_UNCHANGED
+MYPY_NET_NEW_FINDINGS=0
+RUFF_NET_NEW_FINDINGS=0
+```
+
+`ruff check`・`ruff format --check`はこの新規package全体に対してclean。`mypy
+--namespace-packages`は、修正後、baseline(authorized base `4a3bce085`)と完全に同数の
+findingを報告し(276件、いずれもこのPhase 20 delivery以前から存在する既存箇所)、
+`tests/long_running_proof/`配下には1件のfindingも残っていない -- net-new findingは0件。
+`python scripts/validate_schemas.py`は`SCHEMA_VALIDATION=PASS`(`SCHEMA_COUNT=89`、
+本delivery前から不変)。full repository test suiteの独立再実行結果、および
+`tests/contract/governance/test_source_freshness_drift_detection.py`配下の
+pre-existing failureとの一致確認は、本Issue #86への最終return-evidence本文を参照。
+
+```text
+MERGE_ALLOWED=false
+ISSUE_86_CLOSE_ALLOWED=false
+PHASE_21_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+```
+
+# 66. PR #87 Structural Review Round 1 (P87-R1-F1..F9) bounded addendum(Issue #86)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、本Roundで新設された`src/manosube_agent_civilization/long_running_proof_artifact/`
+という新規kernel_surface(P87-R1-F8)に対応付けるための、最小限の事実記録である。
+
+PR #87に対する構造参謀の審査コメント(comment id `5682457295`、author `manosube`、OWNER)は
+9件の構造的finding(P87-R1-F1〜F9)を指摘し、SHUKOU自身の採択コメント(comment id
+`5682496461`、author `manosube`、OWNER、`ADOPTION_ID=ADOPT_P87_R1_F1_THROUGH_F9`)がその全9件を
+既存branch `agent/issue-86-phase20-long-running-proof`・既存PR #87上でのみ修正するよう指示した。
+本記録作成者は、両コメントの本文・author・association をGitHub API経由で独立readbackし一致を
+確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-15
+GOVERNING_ISSUE=#86
+GOVERNING_PR=#87
+ADOPTION_ID=ADOPT_P87_R1_F1_THROUGH_F9
+REVIEW_COMMENT_ID=5682457295
+ADOPTION_COMMENT_ID=5682496461
+EXISTING_BRANCH_ONLY=agent/issue-86-phase20-long-running-proof
+EXISTING_PR_ONLY=#87
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+9件のfindingとその修正内容は`00_KERNEL/LONG_RUNNING_PROOF_CONTRACT.md`section 11に完全に
+記録されている(本節は重複させない)。source-impact上重要な事実はP87-R1-F8のみである:
+Issue #86 section 10の要求する正準出力(versioned corpus, long-running lineage,
+failure/recovery receipts, metric dataset, environment manifest, raw output, reproduction
+procedure)を永続化する所有者がKernelに存在しなかったため、SHUKOU自身の採択が
+`PHASE_20_PRODUCTION_PACKAGE_ALLOWED=true`として権限付与した、1件の新規最小`src/`package
+`long_running_proof_artifact/`(および対応する1件のschema
+`01_SCHEMA/long_running_proof_artifact/long_running_proof_artifact_bundle.schema.json`)が
+新設された。この新package は Store自身の直交的coordination ledger commit
+(`FileStateStore.commit_coordination_record_at_tip`、`work_time_transparency`が既に用いる
+機構と同一)のみを通じて記録を永続化し、`commit_state_transition`/`store.commit`へは一切到達
+しない -- 構造的に、Canonical State/Authority/Evidence/Reflow/Completionのいずれの新規owner
+にもなり得ない(Issue #86 section 11、SHUKOU自身のP87-R1-F8採択により再確認)。
+
+```text
+NEW_SRC_PACKAGE_ADDED=true
+NEW_SRC_PACKAGE_PATH=src/manosube_agent_civilization/long_running_proof_artifact/
+NEW_SCHEMA_ADDED=true
+NEW_SCHEMA_PATH=01_SCHEMA/long_running_proof_artifact/long_running_proof_artifact_bundle.schema.json
+NEW_CANONICAL_STATE_OWNER=false
+NEW_AUTHORITY_OWNER=false
+NEW_EVIDENCE_OWNER=false
+NEW_REFLOW_OWNER=false
+NEW_COMPLETION_OWNER=false
+ARTIFACT_BUNDLE_RELOAD_PROOF=true
+ARTIFACT_TAMPER_REFUSAL=true
+```
+
+```text
+MERGE_ALLOWED=false
+ISSUE_86_CLOSE_ALLOWED=false
+PHASE_21_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+```
+
+# 67. PR #87 Structural Review Round 2 (P87-R2-F1) bounded addendum(Issue #86)
+
+本節はClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。`MERGE_SOURCE_REFLOW_CONTRACT.md`の要求するsource_document paired
+updateを、本Roundで`01_SCHEMA/long_running_proof_artifact/`および
+`src/manosube_agent_civilization/long_running_proof_artifact/`という既存kernel_surfaceに
+加えられた変更(P87-R2-F1、新規フィールド`run_outcome`の追加)に対応付けるための、最小限の
+事実記録である。
+
+PR #87に対する構造参謀の審査コメント(comment id `5690668629`、author `manosube`、OWNER)は
+直前に納品されたP87-R1-F8実装に対して1件の再開findingを指摘し(`P87-R2-F1`)、SHUKOU自身の
+採択コメント(comment id `5690681457`、author `manosube`、OWNER、
+`ADOPTION_ID=ADOPT_P87_R2_F1_REAL_REFUSAL_DURABLE_ARTIFACT`)がその修正を既存branch
+`agent/issue-86-phase20-long-running-proof`・既存PR #87上でのみ行うよう指示した。本記録
+作成者は、両コメントの本文・author・associationをGitHub API経由で独立readbackし一致を確認
+済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-16
+GOVERNING_ISSUE=#86
+GOVERNING_PR=#87
+ADOPTION_ID=ADOPT_P87_R2_F1_REAL_REFUSAL_DURABLE_ARTIFACT
+REVIEW_COMMENT_ID=5690668629
+ADOPTION_COMMENT_ID=5690681457
+EXISTING_BRANCH_ONLY=agent/issue-86-phase20-long-running-proof
+EXISTING_PR_ONLY=#87
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+REVIEW_STATE=NOT_YET_STRUCTURALLY_REVIEWED
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+findingの内容とその修正内容は`00_KERNEL/LONG_RUNNING_PROOF_CONTRACT.md`section 11.9に完全に
+記録されている(本節は重複させない)。source-impact上重要な事実は次の通り: 正の
+`run_long_running_proof`ルートが実際のcycle refusalに遭遇した際、artifact bundle build/commit
+に一切到達せずbare `AssertionError`を送出しており、実際のrefusalのevidenceが失われていた点、
+および既存のnegative-control testがP87-R1-F3自身が既に禁じたのと同一のshortcut(手動で
+`cycle_refused` dictを合成events列に追加する)を再度用いていた点である。修正は新規owner/新規
+package/新規schemaファイルを一切追加せず、既存`long_running_proof_artifact_bundle.schema.json`
+へ1件の必須フィールド`run_outcome`(`COMMITTED`/`FAILED`)を追加し、既存`engine.py`/
+`identity.py`をそれに追随させ、既存test-only orchestrator (`tests/long_running_proof/
+orchestrator.py`)に、実際のrefusal時にFAILED bundleをcommitしてから例外を送出する経路
+(`RunRefusedError`)を追加したのみである。
+
+```text
+NEW_SRC_PACKAGE_ADDED=false
+NEW_SCHEMA_FILE_ADDED=false
+SCHEMA_FIELD_ADDED=run_outcome
+NEW_CANONICAL_STATE_OWNER=false
+NEW_AUTHORITY_OWNER=false
+NEW_EVIDENCE_OWNER=false
+NEW_REFLOW_OWNER=false
+NEW_COMPLETION_OWNER=false
+ACTUAL_ROUTE_REFUSAL=true
+REAL_REFUSAL_DURABLY_RECORDED=true
+FAILURE_CHANGES_DERIVED_METRICS=true
+ARTIFACT_RELOAD_PROOF=true
+NO_STATE_ADVANCE_ON_REFUSAL=true
+SYNTHETIC_EVENT_IS_NOT_THE_DECISIVE_PROOF=true
+```
+
+```text
+MERGE_ALLOWED=false
+ISSUE_86_CLOSE_ALLOWED=false
+PHASE_21_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+```

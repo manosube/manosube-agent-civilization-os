@@ -137,7 +137,14 @@ def main() -> int:
     # notice a coordination ever admits) -- deliberately carrying no `human_authority_ref`/
     # signature field, unlike every Authority-bearing kind in this repository, since a timing
     # record must never be able to present itself as a Human Authority declaration -- making 89.
-    if len(paths) != 89 or len(set(ids)) != len(paths) or None in ids:
+    # PR #87 Structural Review Round 1's own P87-R1-F8 (Issue #86 section 10's required durable
+    # artifact bundle) adds one more, owned by the new `long_running_proof_artifact` package:
+    # `long_running_proof_artifact_bundle` -- the one immutable, content-addressed record a
+    # Phase 20 long-running proof run commits, through the Store's own orthogonal coordination
+    # ledger (never `commit_state_transition`), gathering that run's raw events, metrics,
+    # lineage refs, session-loss receipts, Agent-swap refs, runtime-observation refs, an
+    # environment manifest, a corpus manifest, and a reproduction procedure -- making 90.
+    if len(paths) != 90 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

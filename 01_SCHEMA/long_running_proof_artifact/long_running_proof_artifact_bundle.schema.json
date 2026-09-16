@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/long_running_proof_artifact/long_running_proof_artifact_bundle.schema.json",
+  "title": "Phase 20 Long-Running Proof: durable, versioned, content-addressed artifact bundle (Issue #86 section 10, P87-R1-F8)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_bundle_id",
+    "artifact_bundle_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "tier",
+    "run_outcome",
+    "corpus_manifest",
+    "lineage_refs",
+    "raw_events",
+    "metrics",
+    "session_loss_receipts",
+    "agent_swap_refs",
+    "runtime_observation_refs",
+    "environment_manifest",
+    "reproduction_procedure",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "artifact_bundle_id": {"$ref": "#/$defs/bundle_id"},
+    "artifact_bundle_semantic_fingerprint": {"$ref": "#/$defs/sha256"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "project_binding"}}}
+      ]
+    },
+    "tier": {"type": "integer", "minimum": 1},
+    "run_outcome": {
+      "enum": ["COMMITTED", "FAILED"],
+      "description": "COMMITTED: every cycle up to `tier` committed with zero refusals (the required Gate 20 positive route). FAILED: the run stopped at a real orchestrated-route refusal (P87-R2-F1) -- `raw_events`/`metrics` still carry that real `cycle_refused` event and `lineage_refs` reflects Canonical State exactly as of the last cycle that actually committed, never advanced for the refused cycle."
+    },
+    "corpus_manifest": {
+      "type": "object",
+      "required": ["corpus_kind", "max_cycles", "tier", "predicate_ids"],
+      "properties": {
+        "corpus_kind": {"const": "long_running_proof"},
+        "max_cycles": {"type": "integer", "minimum": 1},
+        "tier": {"type": "integer", "minimum": 1},
+        "predicate_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "lineage_refs": {
+      "type": "object",
+      "required": ["final_state_revision", "committed_cycle_count", "identity_refs"],
+      "properties": {
+        "final_state_revision": {"type": "integer", "minimum": 0},
+        "committed_cycle_count": {"type": "integer", "minimum": 0},
+        "identity_refs": {
+          "type": "array",
+          "items": {"$ref": "../common/reference.schema.json"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "raw_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {"kind": {"type": "string", "minLength": 1}}
+      }
+    },
+    "metrics": {"type": "object"},
+    "session_loss_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "after_cycle",
+          "boundary",
+          "crash_pid",
+          "continuation_pid",
+          "pre_restart_revision",
+          "post_restart_revision",
+          "recovered"
+        ],
+        "properties": {
+          "after_cycle": {"type": "integer", "minimum": 0},
+          "boundary": {"type": "string", "minLength": 1},
+          "crash_pid": {"type": "integer", "minimum": 0},
+          "continuation_pid": {"type": "integer", "minimum": 0},
+          "pre_restart_revision": {"type": "integer", "minimum": 0},
+          "post_restart_revision": {"type": "integer", "minimum": 0},
+          "recovered": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "agent_swap_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["swap_index", "predecessor_identity", "successor_identity", "succeeded"],
+        "properties": {
+          "swap_index": {"type": "integer", "minimum": 0},
+          "predecessor_identity": {"type": "object"},
+          "successor_identity": {"type": "object"},
+          "succeeded": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "runtime_observation_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["classification", "transport_outcome"],
+        "properties": {
+          "classification": {"type": "string", "minLength": 1},
+          "transport_outcome": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "environment_manifest": {
+      "type": "object",
+      "required": ["python_implementation", "python_version", "platform"],
+      "properties": {
+        "python_implementation": {"type": "string", "minLength": 1},
+        "python_version": {"type": "string", "minLength": 1},
+        "platform": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "reproduction_procedure": {
+      "type": "object",
+      "required": ["entrypoint", "tier", "corpus_kind", "project_id_constant"],
+      "properties": {
+        "entrypoint": {"type": "string", "minLength": 1},
+        "tier": {"type": "integer", "minimum": 1},
+        "corpus_kind": {"const": "long_running_proof"},
+        "project_id_constant": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "generated_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "$defs": {
+    "bundle_id": {"type": "string", "pattern": "^LRPA-[0-9A-F]{64}(?![\\s\\S])"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false
+}
