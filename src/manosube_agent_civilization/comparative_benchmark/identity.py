@@ -114,6 +114,40 @@ REPRODUCTION_RECEIPT_SEMANTIC_FIELDS: tuple[str, ...] = (
 )
 
 
+#: P90-R3-F2: an independent reproduction submission's own identity: which original result
+#: bundle, by which declared reproducer actor/authority -- the identical narrow-id shape
+#: `REPRODUCTION_RECEIPT_ID_FIELDS` already establishes for "did this reproducer already
+#: submit against this bundle."
+INDEPENDENT_REPRODUCTION_SUBMISSION_ID_FIELDS: tuple[str, ...] = (
+    "project_id",
+    "original_result_bundle_ref",
+    "reproducer_actor_or_authority_id",
+)
+
+#: Every other field this record's own schema requires except its own id/semantic-fingerprint/
+#: signature -- literally everything a genuine reproducer actor/authority must have committed
+#: to before submitting, so this projection doubles as the exact bytes
+#: :func:`independent_reproduction_submission_signing_payload` signs: the content address and
+#: the signed message are never allowed to drift apart (the identical discipline
+#: `binding.identity.human_grant_declaration_signing_payload` already establishes).
+INDEPENDENT_REPRODUCTION_SUBMISSION_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_ref",
+    "reproducer_actor_or_authority_id",
+    "provenance_mechanism",
+    "original_result_bundle_ref",
+    "protocol_freeze_ref",
+    "reproduced_raw_events",
+    "reproduced_raw_events_content_address",
+    "agent_runtime_model_configuration_identity",
+    "execution_environment_manifest",
+    "reproduced_metrics",
+    "agreement",
+    "submission_time",
+)
+
+
 def _projection(record: Mapping[str, Any], fields: tuple[str, ...], *, kind: str) -> dict[str, Any]:
     missing = [field for field in fields if field not in record]
     if missing:
@@ -167,13 +201,46 @@ def reproduction_receipt_semantic_fingerprint(record: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
 
 
+def independent_reproduction_submission_signing_payload(record: Mapping[str, Any]) -> bytes:
+    """Return the exact canonical bytes a genuine reproducer signature over *record* must
+    cover -- :data:`INDEPENDENT_REPRODUCTION_SUBMISSION_SEMANTIC_FIELDS`'s own projection.
+    Excludes `independent_reproduction_submission_id`/`..._semantic_fingerprint` (an identity
+    cannot be computed over itself) and `signature` (a signature cannot cover its own value)."""
+
+    projection = _projection(
+        record,
+        INDEPENDENT_REPRODUCTION_SUBMISSION_SEMANTIC_FIELDS,
+        kind="comparative_benchmark_independent_reproduction_submission",
+    )
+    return canonical_json_bytes(projection)
+
+
+def independent_reproduction_submission_id(record: Mapping[str, Any]) -> str:
+    payload = _projection(
+        record,
+        INDEPENDENT_REPRODUCTION_SUBMISSION_ID_FIELDS,
+        kind="comparative_benchmark_independent_reproduction_submission",
+    )
+    return "CBIRS-" + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
+
+
+def independent_reproduction_submission_semantic_fingerprint(record: Mapping[str, Any]) -> str:
+    digest = hashlib.sha256(independent_reproduction_submission_signing_payload(record)).hexdigest()
+    return "sha256:" + digest
+
+
 __all__ = [
+    "INDEPENDENT_REPRODUCTION_SUBMISSION_ID_FIELDS",
+    "INDEPENDENT_REPRODUCTION_SUBMISSION_SEMANTIC_FIELDS",
     "PROTOCOL_FREEZE_ID_FIELDS",
     "PROTOCOL_FREEZE_SEMANTIC_FIELDS",
     "REPRODUCTION_RECEIPT_ID_FIELDS",
     "REPRODUCTION_RECEIPT_SEMANTIC_FIELDS",
     "RESULT_BUNDLE_ID_FIELDS",
     "RESULT_BUNDLE_SEMANTIC_FIELDS",
+    "independent_reproduction_submission_id",
+    "independent_reproduction_submission_semantic_fingerprint",
+    "independent_reproduction_submission_signing_payload",
     "protocol_freeze_id",
     "protocol_freeze_semantic_fingerprint",
     "reproduction_receipt_id",

@@ -5870,3 +5870,201 @@ PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 P90_R2_F1_STATUS=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
 P90_R2_F2_STATUS=BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION
 ```
+
+# 72. PR #90 Structural Review Round 3 (`ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_
+REPRODUCER_LANE`) bounded addendum (Issue #89)
+
+本節もClaude Codeが記録するbounded addendumであり、構造参謀による審査結果でもSHUKOUによる
+採択記録そのものでもない。§70/§71と同一の理由で、既存branch
+`agent/issue-89-phase21-comparative-benchmark`・既存PR #90上で行われた本Round是正に対応付ける
+ための、最小限の事実記録である。
+
+SHUKOU自身のRound 3採択・実装handoffコメント(comment id `5705039613`、author `manosube`、
+OWNER association、`ADOPTION_ID=ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_
+LANE`)が、§71で記録されたF1/F2 capability/authority blockerに対する新しいAuthority境界を
+narrowly widenした。本記録作成者(本session)は、当該採択コメントおよびそれが参照する構造参謀
+determinationコメント(comment id `5705006904`)の本文・author・association、ならびにPR #90
+自身のlive head/base/stateをGitHub API経由で独立readbackし、供給されたtask brief記載の内容と
+完全一致することを確認済みである。作業開始時点のPR #90 headは`ba3dc83f04bb7057046935af20e21391
+f925b696`(採択コメント自身が明記する`AUTHORIZED_TARGET_HEAD`と一致)、baseは
+`f97ba6fa973ba07e7674690d158cc156a10da04a`であった。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-16
+GOVERNING_ISSUE=#89
+GOVERNING_PR=#90
+ADOPTION_ID=ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE
+ADOPTION_COMMENT_ID=5705039613
+GOVERNING_STRUCTURAL_ADVISOR_DETERMINATION_COMMENT_ID=5705006904
+AUTHORIZED_TARGET_HEAD=ba3dc83f04bb7057046935af20e21391f925b696
+AUTHORIZED_BASE_MAIN_SHA=f97ba6fa973ba07e7674690d158cc156a10da04a
+EXISTING_BRANCH_ONLY=agent/issue-89-phase21-comparative-benchmark
+EXISTING_PR_ONLY=#90
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+STOP_CONDITION=THREE_WAY (ready to advance / BLOCKED_NO_PRECONFIGURED_REAL_AGENT /
+  BLOCKED_AWAITING_INDEPENDENT_REPRODUCER)
+```
+
+**F1: narrow credential grant received, but the real blocker proved to be corpus-structural, not
+credential-availability.** 採択コメント自身が、F1に限り`PRODUCTION_CREDENTIAL_USE_ALLOWED=true`
+(既存の単一preconfigured Agent identityを、Phase 21 frozen corpusに対する二条件比較でのみ使う
+範囲に限定; `NEW_CREDENTIAL_ACQUISITION_ALLOWED=false`/`CREDENTIAL_EXTRACTION_OR_DISCLOSURE_
+ALLOWED=false`/`CREDENTIAL_PERSISTENCE_CHANGE_ALLOWED=false`/`UNBOUNDED_EXTERNAL_INVOCATION_
+ALLOWED=false`は不変)を新たに許可した。本sessionはこの新しいAuthority境界のもとで、現行の
+frozen corpus定義をそのまま用いて実Agentを走らせることでF1を満たせるかを、実装より先に独立
+調査した。結論は否である -- ただし理由はcredential availabilityではない。`tests/fixtures/
+long_running_proof.py`(`MANOSUBE_PRESENT`比較groupのorchestratorが再利用するfixture world、
+section 6参照)を直接読み込み検証した結果、この`MANOSUBE_PRESENT`条件は、これまで一度も実際の
+Agent(LLM/tool-using process)がtaskを実行したことがない -- 8つのtaskすべてが、二つの静的・
+汎用的なchecked-in prose fixture file(`before_source_world.txt`/`after_source_world.txt`、
+どのtaskについても内容は同一)に対する100% Kernel-internal決定論的bookkeeping
+(Observation→Difference→Authority→Evidence→Reflow)のみを通過し、Evidence値`"READY"`は
+実行結果ではなくPython literalとしてhardcodeされており、唯一authorizeされた`WRITE_FILE`
+actionの宣言target`src/long_running_proof_target.py`はこのrepository内のどこにも存在せず
+実際に書き込まれることも一度もない、という構造的事実が判明した。
+
+これはcredentialが利用できないという問題ではなく、frozen corpus自身の「task」定義の問題である
+-- F1を真にするには、`MANOSUBE_PRESENT`条件自身が実Agent実行stepを持つよう、corpus/protocol
+自体を再定義する必要がある。これはroadmap/protocol semantic decisionであり、本session単独が
+下せるものではない -- Issue #89 section 4自身が「same-Agent comparison」をmodel/runtime/
+version/adapter identity/configuration/tool surface/resource budgetの固定に結び付けており、
+構造参謀自身のprior review(comment `5705006904`)は正にこの種の再定義を、SHUKOU専属の
+"Option 3"として位置付けている。本Round採択自身も`ROADMAP_REDEFINITION_ALLOWED=false`/
+`GATE_21_WEAKENING_ALLOWED=false`によりこれを明示的に禁じている。fixtureの再実行・既存natural
+routeのrelabeling・新規corpusの発明のいずれによっても偽装のpassing resultを作らず、この構造的
+finding自体をそのまま記録した(`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`section 13a)。
+
+```text
+F1_STATUS=BLOCKED_NO_PRECONFIGURED_REAL_AGENT
+F1_IS_A_CREDENTIAL_AVAILABILITY_PROBLEM=false
+F1_IS_A_CORPUS_PROTOCOL_DEFINITION_PROBLEM=true
+SIMULATED_OR_RELABELED_SUBSTITUTE_PROVIDED=false
+GATE_21_WEAKENED_OR_OBJECTIVE_REWRITTEN=false
+```
+
+**F2: admission surface built, Claude Code never self-issues the receipt.** 採択コメント自身が
+`CLAUDE_CODE_MAY_SELF_ISSUE_INDEPENDENT_RECEIPT=false`/`ORIGINAL_OPERATOR_MAY_SELF_ISSUE_
+INDEPENDENT_RECEIPT=false`/`SEPARATE_PROCESS_ALONE_SUFFICIENT=false`/`DISTINCT_ACTOR_OR_
+AUTHORITY_PROVENANCE_REQUIRED=true`を明示した。本sessionが実装したのは検証/admission surface
+のみであり、独立reproducer自体を作り出すことは一切行っていない。新規record kind
+`comparative_benchmark_independent_reproduction_submission`(schema:
+`01_SCHEMA/comparative_benchmark/comparative_benchmark_independent_reproduction_submission.
+schema.json`)は、`reproducer_actor_or_authority_id`/`provenance_mechanism`(`ED25519_
+SIGNATURE`のみ)/`original_result_bundle_ref`/`protocol_freeze_ref`/`reproduced_raw_events`/
+`reproduced_raw_events_content_address`/`agent_runtime_model_configuration_identity`/
+`execution_environment_manifest`/`reproduced_metrics`/`agreement`/`submission_time`/
+`signature`(`{algorithm: "ed25519", public_key, value}`)を要求する -- 採択コメント自身が
+列挙した最小限のsubmission fieldそのものである。
+
+独立性の構造的証明として、Ed25519署名を採用した -- GitHub loginは本repositoryのこの環境では
+独立性の証明にならない(Claude Code自身のcommentも`manosube`自身のcommentも同一の
+`user.login`を持つ)ため、代わりにこのcodebaseが構造的に証明できる事実 -- 本repositoryは
+この目的のためのprivate keyを一切生成・保持しておらず、新規取得も許可されていない
+(`NEW_CREDENTIAL_ACQUISITION_ALLOWED=false`) -- を用いた。submissionの`signature`が、
+自ら宣言する`signature.public_key`に対して検証できるなら、それは他者のkeyによってのみ
+生成され得たことになる。これは`binding.signature`/`binding.identity.
+human_grant_declaration_signing_payload`が既に確立しているHuman Grant Declarationの
+precedentを、この新しい独立record kindに対して適用したものである。
+
+`engine.verify_independent_reproduction_submission`は、schema妥当性・
+id/semantic_fingerprintの自己整合性・`protocol_freeze_ref`/`original_result_bundle_ref`の
+Store-resolved parentへの厳密一致(既存`commit_reproduction_receipt`と同一のP90-R1-F6
+discipline)・`reproduced_raw_events`のfrozen corpus完全一致(`verify_exact_frozen_corpus`
+再利用)・`reproduced_raw_events_content_address`の再導出一致・`reproduced_metrics`の
+`aggregate_metrics`による独立再計算一致(submitter自身の申告値は一切信頼しない)・
+`agreement`の`build_reproduction_receipt`と同一のMATCH/DIVERGENT/INCOMPARABLE規則による
+独立再導出一致・そして宣言された`public_key`に対する`signature`の genuine Ed25519検証、
+のすべてをfail-closedで要求する(`IndependentReproductionSubmissionValidationError`)。
+`route.admit_independent_reproduction_submission`はStoreから両parentを解決した後この
+verifierを呼び出し、通過した場合のみ、外部供給されたrecordをbyte-for-byte改変せず
+`commit_coordination_record_at_tip`経由でcommitする。
+
+**import境界の純度: `binding.signature`のimportではなく、local duplicationを選択した。**
+`binding.signature.verify_ed25519_signature`は単体では再利用可能だが、`binding`のいかなる
+部分をimportしても`binding/route.py`自身の`from manosube_agent_civilization.authority.
+identity import rule_id`が(`binding/__init__.py`経由で)transitiveに実行される。本package
+自身の既存static-conformance testが証明するNC-9/NC-11(「Authorityの第二のownerに一切
+ならない」)は、この5 module自身のliteral import文のみをASTスキャンする字面上の保証ではなく
+実質的な保証であるべきだと判断し、`engine.py`へ小さく汎用的なEd25519検証(挙動は
+`binding.signature.verify_ed25519_signature`と同一 -- fail-closed-as-a-value、不正な
+key/signatureで例外を投げない)をlocalに複製した。
+
+```text
+P90_R3_F2_ADMISSION_SURFACE_BUILT=true
+P90_R3_F2_CLAUDE_CODE_SELF_ISSUED_RECEIPT=false
+P90_R3_F2_INDEPENDENT_SUBMISSION_RECEIVED=false
+P90_R3_F2_STATUS=BLOCKED_AWAITING_INDEPENDENT_REPRODUCER
+```
+
+**追加/変更したファイル。** `01_SCHEMA/comparative_benchmark/comparative_benchmark_
+independent_reproduction_submission.schema.json`(新規); `src/manosube_agent_civilization/
+comparative_benchmark/{identity,errors,engine,route,__init__}.py`(F2の record kind追加、
+entry point数6→8); `tests/fixtures/comparative_benchmark.py`(ephemeral Ed25519 test-double
+keypair生成、独立reproducer testのagent_runtime/execution_environment fixture); `tests/
+contract/comparative_benchmark/test_comparative_benchmark_independent_reproduction_submission.
+py`(新規、有効submission/署名tamper/異なるkeyでの署名/署名後field tamper/partial corpus/
+metrics rederivation不一致/agreement rederivation不一致/DIVERGENTの正の証明/idempotent
+replay/conflicting resubmissionを含む13 decisive test); `tests/contract/comparative_
+benchmark/test_comparative_benchmark_static_conformance.py`(entry point count/schema count
+更新、`comparative_benchmark_independent_reproduction_submission.schema.json`のみ`signature`
+fieldを許可する例外を追加); `scripts/validate_schemas.py`(schema総数93→94);
+`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`(section 0 header block、section 2 package
+layout、新規section 8a・13a、section 14 non-claims更新)。
+
+## Local gate sweep (本session自身が独立実行、Round 3)
+
+```text
+TARGETED_SUITE_COMMAND=pytest tests/contract/comparative_benchmark -q
+TARGETED_SUITE_RESULT=60_PASSED (13 net-new tests in
+  test_comparative_benchmark_independent_reproduction_submission.py; the pre-existing 47 from
+  test_comparative_benchmark_records.py/test_comparative_benchmark_static_conformance.py/
+  test_comparative_benchmark_published_artifacts.py unchanged in count, 2 assertions in
+  static_conformance updated for the new entry-point/schema counts)
+SCHEMA_VALIDATION_COMMAND=python scripts/validate_schemas.py
+SCHEMA_VALIDATION_RESULT=PASS (SCHEMA_COUNT=94, UNIQUE_SCHEMA_ID_COUNT=94, up from 93 -- exactly
+  the one new comparative_benchmark_independent_reproduction_submission schema file)
+RUFF_CHECK_RESULT=clean (0 net-new findings) over every file this Round touched
+RUFF_FORMAT_RESULT=clean (0 findings) after one `ruff format` pass over 4 files authored this
+  Round
+MYPY_COMMAND=mypy --namespace-packages src/manosube_agent_civilization/comparative_benchmark/
+MYPY_RESULT=Success: no issues found in 6 source files
+MYPY_REPOSITORY_WIDE_COMMAND=mypy --namespace-packages
+MYPY_REPOSITORY_WIDE_RESULT=279 errors in 57 files (checked 446 source files) -- confirmed
+  identical to the baseline at this Round's own unmodified starting head (ba3dc83) via git
+  stash/re-run. NET_NEW_MYPY_FINDINGS=0.
+GOVERNANCE_ROUTE_TOKEN_SWEEP_COMMAND=pytest tests/contract/binding/
+  test_active_document_terminal_state.py -q
+GOVERNANCE_ROUTE_TOKEN_SWEEP_RESULT=PASS -- this Round's own first draft of
+  COMPARATIVE_BENCHMARK_CONTRACT.md section 13a used the literal ratified token
+  `READY_FOR_STRUCTURAL_REVIEW` in prose, reproducing the exact class of finding §71's own
+  postscript already recorded once (a document outside the governance-swept ROUTE_BEARING set
+  stating a ratified handoff-state token); caught and rephrased before running the full suite,
+  never reaching a committed head.
+NET_NEW_TEST_FAILURES=0 (not yet re-run against the full repository suite as of this addendum's
+  own writing -- see the PR #90 return-evidence comment for the final full-suite figure recorded
+  at commit time)
+```
+
+```text
+MERGE_ALLOWED=false
+ISSUE_89_CLOSE_ALLOWED=false
+PHASE_22_ALLOWED=false
+V1_0_DECLARATION_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+NEW_CREDENTIAL_ACQUISITION_ALLOWED=false
+CREDENTIAL_EXTRACTION_OR_DISCLOSURE_ALLOWED=false
+CREDENTIAL_PERSISTENCE_CHANGE_ALLOWED=false
+UNBOUNDED_EXTERNAL_INVOCATION_ALLOWED=false
+UNRELATED_REMOTE_ACTION_ALLOWED=false
+REAL_MONEY_OR_EXTERNAL_SIDE_EFFECT_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+P90_R3_F1_STATUS=BLOCKED_NO_PRECONFIGURED_REAL_AGENT
+P90_R3_F2_STATUS=BLOCKED_AWAITING_INDEPENDENT_REPRODUCER
+```

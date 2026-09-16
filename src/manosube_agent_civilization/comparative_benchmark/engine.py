@@ -12,22 +12,31 @@ either the real natural route or the disclosed ungated baseline harness) live in
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+import hashlib
 import operator as _operator
 import os
 from typing import Any
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from manosube_agent_civilization.difference.errors import DifferenceValidationError
 from manosube_agent_civilization.difference.validation import (
     SCHEMA_BASE as _CANONICAL_SCHEMA_BASE,
     validate_record as _validate_record,
 )
+from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 from .errors import (
+    IndependentReproductionSubmissionValidationError,
     ProtocolFreezeValidationError,
     ReproductionReceiptValidationError,
     ResultBundleValidationError,
 )
 from .identity import (
+    independent_reproduction_submission_id,
+    independent_reproduction_submission_semantic_fingerprint,
+    independent_reproduction_submission_signing_payload,
     protocol_freeze_id,
     protocol_freeze_semantic_fingerprint,
     reproduction_receipt_id,
@@ -36,6 +45,19 @@ from .identity import (
     result_bundle_semantic_fingerprint,
 )
 from .types import COMPARISON_GROUP_ROLES, REPRODUCTION_AGREEMENTS, TASK_OUTCOMES
+
+#: P90-R3-F2: the one signature algorithm an independent reproduction submission may declare.
+#: Verification is duplicated here, deliberately, rather than imported from
+#: `binding.signature.verify_ed25519_signature` -- importing `binding` at all transitively
+#: executes `binding/route.py`'s own `from manosube_agent_civilization.authority.identity
+#: import rule_id`, which would make this package a runtime importer of Authority even though
+#: no single line inside this package's own five modules names it. This package's own static
+#: conformance test (NC-9/NC-11: "never a second owner of / never imports Authority") is a
+#: guarantee about substance, not merely about what an AST scan of this package's own literal
+#: `import` statements happens to catch -- so this small, generic Ed25519 check (identical in
+#: behavior to `binding.signature.verify_ed25519_signature`: fail-closed-as-a-value, never
+#: raises on malformed key/signature material) is duplicated locally instead.
+SUPPORTED_SIGNATURE_ALGORITHM = "ed25519"
 
 SCHEMA_VERSION = "0.1"
 COMPARATIVE_BENCHMARK_SCHEMA_BASE = _CANONICAL_SCHEMA_BASE + "comparative_benchmark/"
@@ -539,9 +561,169 @@ def build_reproduction_receipt(
     return record
 
 
+def verify_ed25519_signature(*, public_key_hex: str, message: bytes, signature_hex: str) -> bool:
+    """Whether *signature_hex* (a raw 64-byte Ed25519 signature, hex-encoded) is a genuine
+    signature over *message* by the holder of the private key matching *public_key_hex* (a raw
+    32-byte Ed25519 public key, hex-encoded). Never raises on a bad signature or malformed key/
+    signature material -- returns ``False``, identical to
+    `binding.signature.verify_ed25519_signature`'s own convention (see this module's own
+    :data:`SUPPORTED_SIGNATURE_ALGORITHM` docstring for why this is a local duplicate rather
+    than an import)."""
+
+    try:
+        public_key_bytes = bytes.fromhex(public_key_hex)
+        signature_bytes = bytes.fromhex(signature_hex)
+    except ValueError:
+        return False
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+        public_key.verify(signature_bytes, message)
+    except (InvalidSignature, ValueError):
+        return False
+    return True
+
+
+def _reproduced_raw_events_content_address(
+    reproduced_raw_events: Sequence[Mapping[str, Any]],
+) -> str:
+    digest = hashlib.sha256(canonical_json_bytes(list(reproduced_raw_events))).hexdigest()
+    return "sha256:" + digest
+
+
+def verify_independent_reproduction_submission(
+    record: Mapping[str, Any],
+    *,
+    protocol_freeze: Mapping[str, Any],
+    original_result_bundle: Mapping[str, Any],
+) -> None:
+    """P90-R3-F2: refuse *record* fail-closed (`IndependentReproductionSubmissionValidationError`)
+    unless every one of the following independently holds -- this function only ever verifies
+    an externally-supplied submission, it never builds or signs one itself
+    (`CLAUDE_CODE_MAY_SELF_ISSUE_INDEPENDENT_RECEIPT=false`):
+
+    * *record* validates against its own schema;
+    * `independent_reproduction_submission_id`/`..._semantic_fingerprint` genuinely rederive
+      from *record*'s own remaining fields (self-consistent identity, not a caller-asserted
+      label);
+    * `protocol_freeze_ref`/`original_result_bundle_ref` name exactly the already-resolved,
+      Store-authoritative *protocol_freeze*/*original_result_bundle* this route itself resolved
+      -- never a caller-supplied look-alike (the identical P90-R1-F6 discipline
+      `commit_reproduction_receipt` already applies);
+    * `reproduced_raw_events` covers exactly the frozen corpus (`verify_exact_frozen_corpus`);
+    * `reproduced_raw_events_content_address` genuinely rederives from `reproduced_raw_events`;
+    * `reproduced_metrics` genuinely rederives from `reproduced_raw_events` via
+      `aggregate_metrics` -- a submitter's own claimed aggregate can never substitute for this
+      function's own independent recomputation;
+    * `agreement` genuinely rederives by the identical MATCH/DIVERGENT/INCOMPARABLE rule
+      `build_reproduction_receipt` itself already uses, comparing against
+      *original_result_bundle*'s own `metrics`;
+    * `signature` is a genuine Ed25519 signature, by the holder of the private key matching
+      `signature.public_key`, over exactly
+      `independent_reproduction_submission_signing_payload(record)` -- the one fact this
+      package treats as structural proof of a genuinely separate actor
+      (`DISTINCT_ACTOR_OR_AUTHORITY_PROVENANCE_REQUIRED=true`): this repository never generates
+      or holds a private key for this purpose, so a validating signature could only have been
+      produced by someone else's key, never fabricated from within this codebase."""
+
+    _validate(
+        dict(record),
+        "comparative_benchmark_independent_reproduction_submission.schema.json",
+        "independent reproduction submission",
+        IndependentReproductionSubmissionValidationError,
+    )
+
+    if record["independent_reproduction_submission_id"] != independent_reproduction_submission_id(
+        record
+    ):
+        raise IndependentReproductionSubmissionValidationError(
+            "independent_reproduction_submission_id does not rederive from this submission's "
+            "own remaining fields"
+        )
+    if record[
+        "independent_reproduction_submission_semantic_fingerprint"
+    ] != independent_reproduction_submission_semantic_fingerprint(record):
+        raise IndependentReproductionSubmissionValidationError(
+            "independent_reproduction_submission_semantic_fingerprint does not rederive from "
+            "this submission's own remaining fields"
+        )
+
+    declared_freeze_ref = record["protocol_freeze_ref"]
+    if declared_freeze_ref != {
+        "protocol_freeze_id": protocol_freeze["protocol_freeze_id"],
+        "protocol_freeze_semantic_fingerprint": protocol_freeze[
+            "protocol_freeze_semantic_fingerprint"
+        ],
+    }:
+        raise IndependentReproductionSubmissionValidationError(
+            "protocol_freeze_ref diverges from the Store's own resolved protocol freeze -- an "
+            "independent reproduction submission must bind to the ledger's own authoritative "
+            "freeze body, never a caller-supplied look-alike"
+        )
+    declared_bundle_ref = record["original_result_bundle_ref"]
+    if declared_bundle_ref != {
+        "result_bundle_id": original_result_bundle["result_bundle_id"],
+        "result_bundle_semantic_fingerprint": original_result_bundle[
+            "result_bundle_semantic_fingerprint"
+        ],
+    }:
+        raise IndependentReproductionSubmissionValidationError(
+            "original_result_bundle_ref diverges from the Store's own resolved result bundle "
+            "-- an independent reproduction submission must bind to the ledger's own "
+            "authoritative bundle body, never a caller-supplied look-alike"
+        )
+
+    reproduced_raw_events = record["reproduced_raw_events"]
+    verify_exact_frozen_corpus(
+        reproduced_raw_events,
+        protocol_freeze,
+        error_cls=IndependentReproductionSubmissionValidationError,
+    )
+
+    if record["reproduced_raw_events_content_address"] != _reproduced_raw_events_content_address(
+        reproduced_raw_events
+    ):
+        raise IndependentReproductionSubmissionValidationError(
+            "reproduced_raw_events_content_address does not rederive from reproduced_raw_events"
+        )
+
+    recomputed_metrics = aggregate_metrics(reproduced_raw_events, protocol_freeze)
+    if record["reproduced_metrics"] != recomputed_metrics:
+        raise IndependentReproductionSubmissionValidationError(
+            "reproduced_metrics does not rederive from reproduced_raw_events -- a submitter's "
+            "own claimed aggregate can never substitute for independent recomputation"
+        )
+
+    original_metrics = original_result_bundle["metrics"]
+    if set(recomputed_metrics) != set(original_metrics):
+        recomputed_agreement = "INCOMPARABLE"
+    elif recomputed_metrics == original_metrics:
+        recomputed_agreement = "MATCH"
+    else:
+        recomputed_agreement = "DIVERGENT"
+    if record["agreement"] != recomputed_agreement:
+        raise IndependentReproductionSubmissionValidationError(
+            f"declared agreement {record['agreement']!r} does not match the recomputed "
+            f"agreement {recomputed_agreement!r} between reproduced_metrics and the original "
+            "result bundle's own metrics"
+        )
+
+    signature = record["signature"]
+    if not verify_ed25519_signature(
+        public_key_hex=signature["public_key"],
+        message=independent_reproduction_submission_signing_payload(record),
+        signature_hex=signature["value"],
+    ):
+        raise IndependentReproductionSubmissionValidationError(
+            "signature does not verify against its own declared public_key over this "
+            "submission's own signing payload -- refusing a submission whose own signature "
+            "cannot structurally establish it came from a distinct actor"
+        )
+
+
 __all__ = [
     "COMPARATIVE_BENCHMARK_SCHEMA_BASE",
     "SCHEMA_VERSION",
+    "SUPPORTED_SIGNATURE_ALGORITHM",
     "aggregate_metrics",
     "build_protocol_freeze",
     "build_reproduction_receipt",
@@ -549,5 +731,7 @@ __all__ = [
     "derive_bounded_claims",
     "evaluate_numeric_thresholds",
     "stringify_floats",
+    "verify_ed25519_signature",
     "verify_exact_frozen_corpus",
+    "verify_independent_reproduction_submission",
 ]

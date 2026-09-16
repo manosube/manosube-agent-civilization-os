@@ -155,8 +155,14 @@ def main() -> int:
     # reproducer's own MATCH/DIVERGENT/INCOMPARABLE verdict, always self-computed, never a
     # caller-supplied claim) -- all three committed, like `long_running_proof_artifact`, only
     # through the Store's own orthogonal coordination ledger, never `commit_state_transition`
-    # -- making 93.
-    if len(paths) != 93 or len(set(ids)) != len(paths) or None in ids:
+    # -- making 93. PR #90 Structural Review Round 3 (`ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_
+    # INDEPENDENT_REPRODUCER_LANE`) adds one more, owned by the same `comparative_benchmark`
+    # package: `comparative_benchmark_independent_reproduction_submission` (an externally-
+    # supplied, Ed25519-signed independent reproduction submission this package only ever
+    # verifies -- schema, self-consistent identity, exact corpus fidelity, independently
+    # rederived content-address/metrics/agreement, and a genuine signature against its own
+    # declared public key -- never one this package builds or signs itself) -- making 94.
+    if len(paths) != 94 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

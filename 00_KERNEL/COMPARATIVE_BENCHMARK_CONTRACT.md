@@ -16,6 +16,10 @@ STRUCTURAL_REVIEW_ROUND_2_ID=P90-R2
 STRUCTURAL_REVIEW_ROUND_2_ADOPTION_COMMENT_ID=5699291360
 STRUCTURAL_REVIEW_ROUND_2_FINDINGS_CLOSED=F3,F4,F5
 STRUCTURAL_REVIEW_ROUND_2_FINDINGS_BLOCKED=F1,F2
+STRUCTURAL_REVIEW_ROUND_3_ID=P90-R3
+STRUCTURAL_REVIEW_ROUND_3_ADOPTION_ID=ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE
+STRUCTURAL_REVIEW_ROUND_3_ADOPTION_COMMENT_ID=5705039613
+STRUCTURAL_REVIEW_ROUND_3_FINDINGS_STATUS=F1_BLOCKED_NO_PRECONFIGURED_REAL_AGENT,F2_ADMISSION_SURFACE_BUILT_BLOCKED_AWAITING_INDEPENDENT_REPRODUCER
 ```
 
 This contract documents the proof `tests/comparative_benchmark/` and the durable package
@@ -41,6 +45,16 @@ a partial or deferred implementation of F1/F2; it is the adoption's own anticipa
 outcome under its own explicit two-way stop condition (`BLOCKED_REQUIRES_SHUKOU_AUTHORITY_
 DECISION` as a legitimate alternative to advancing to the next review step, comment 5699291360).
 
+**Round 3 (P90-R3, `ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE`, comment
+5705039613)** narrowly widened the Authority boundary Round 2's own F1 blocker rested on
+(`PRODUCTION_CREDENTIAL_USE_ALLOWED=true`, scoped strictly to one preconfigured Agent identity
+against the Phase 21 frozen corpus, evidence generation only) and explicitly forbade Claude Code
+from self-issuing F2's independent-reproduction receipt. F1 remains blocked, but for a different,
+corpus-*structural* reason this Round discovered rather than a credential-availability one -- see
+section 13a. F2's admission surface (schema, engine verification, route commit) is now built --
+see section 8a -- but remains `BLOCKED_AWAITING_INDEPENDENT_REPRODUCER` absent a real external
+submission, per this Round's own three-way stop condition.
+
 ## 1. Purpose
 
 Prove, through real production routes only, that MANOSUBE's presence or absence is a genuinely
@@ -56,17 +70,25 @@ src/manosube_agent_civilization/comparative_benchmark/
   types.py      # COMPARISON_GROUP_ROLES, TASK_OUTCOMES, REPRODUCTION_AGREEMENTS
   identity.py   # narrow-id/broad-fingerprint content addressing for all 3 record kinds
   errors.py     # ProtocolFreezeValidationError / ResultBundleValidationError /
-                # ReproductionReceiptValidationError
+                # ReproductionReceiptValidationError /
+                # IndependentReproductionSubmissionValidationError (P90-R3-F2)
   engine.py     # build_protocol_freeze / aggregate_metrics / derive_bounded_claims /
-                # build_result_bundle / build_reproduction_receipt (pure, no Store I/O)
-  route.py      # commit_/resolve_{protocol_freeze,result_bundle,reproduction_receipt} --
-                # the package's only 6 public entry points, all via
+                # build_result_bundle / build_reproduction_receipt (pure, no Store I/O) /
+                # verify_independent_reproduction_submission (P90-R3-F2 -- verifies only,
+                # never builds or signs; a local Ed25519 verifier duplicated from
+                # binding.signature rather than imported -- see section 8a)
+  route.py      # commit_/resolve_{protocol_freeze,result_bundle,reproduction_receipt},
+                # admit_/resolve_independent_reproduction_submission (P90-R3-F2) --
+                # the package's 8 public entry points, all via
                 # store.commit_coordination_record_at_tip, never commit_state_transition
 01_SCHEMA/comparative_benchmark/comparative_benchmark_{protocol_freeze,result_bundle,
-  reproduction_receipt}.schema.json
+  reproduction_receipt,independent_reproduction_submission}.schema.json
 
 tests/fixtures/comparative_benchmark.py        # frozen 8-task corpus + protocol-freeze
-                                                # declarations (self-contained, see section 6)
+                                                # declarations (self-contained, see section 6);
+                                                # also a fresh, ephemeral Ed25519 test-double
+                                                # keypair generator for P90-R3-F2 tests -- never
+                                                # a real or committed credential
 tests/comparative_benchmark/orchestrator.py    # drives both group families over the frozen
                                                 # corpus, commits all 3 record kinds, spawns the
                                                 # separate-process reproduction (section 8)
@@ -79,6 +101,8 @@ tests/comparative_benchmark/test_comparative_benchmark_control_treatment_equival
 tests/contract/comparative_benchmark/test_comparative_benchmark_records.py       # fast unit proof
 tests/contract/comparative_benchmark/test_comparative_benchmark_static_conformance.py
 tests/contract/comparative_benchmark/test_comparative_benchmark_published_artifacts.py  # P90-R1-F2
+tests/contract/comparative_benchmark/test_comparative_benchmark_independent_reproduction_submission.py
+                                                # P90-R3-F2's own decisive admission-surface proof
 
 scripts/generate_comparative_benchmark_artifacts.py  # regenerates the checked-in artifact bundle
 examples/comparative_benchmark/{protocol_freeze,result_bundle,reproduction_receipt}.json
@@ -333,6 +357,78 @@ already exist"). `engine.build_reproduction_receipt` persists the caller's own
 the published-artifact suite's own
 `test_published_reproduction_receipt_metrics_rederive_from_published_reproduced_raw_events`.
 
+## 8a. P90-R3-F2: independent reproduction submission admission (`engine.
+verify_independent_reproduction_submission`, `route.admit_independent_reproduction_submission`)
+
+Round 3's own adoption (comment 5705039613) explicitly forbids Claude Code from self-issuing
+F2's independent reproduction receipt (`CLAUDE_CODE_MAY_SELF_ISSUE_INDEPENDENT_RECEIPT=false`,
+`ORIGINAL_OPERATOR_MAY_SELF_ISSUE_INDEPENDENT_RECEIPT=false`,
+`SEPARATE_PROCESS_ALONE_SUFFICIENT=false`) while requiring
+`DISTINCT_ACTOR_OR_AUTHORITY_PROVENANCE_REQUIRED=true`. What this contract implements is
+strictly the **verification/admission surface** for a genuinely independent submission -- never
+the submission itself, never a fabricated independent actor.
+
+**Structural proof of independence: a validating Ed25519 signature against a self-declared
+public key.** A GitHub login alone cannot prove independence in this repository's own
+environment (both Claude Code's own comments and `manosube`'s own comments on PR #90 carry the
+identical `user.login`), so the design instead relies on a fact this codebase can prove
+structurally: this repository never generates, holds, or is authorized to acquire a private key
+for this purpose (`NEW_CREDENTIAL_ACQUISITION_ALLOWED=false`). A submission whose own `signature`
+validates against its own declared `signature.public_key` could therefore only have been
+produced by someone else's key -- the identical precedent
+`binding.signature`/`binding.identity.human_grant_declaration_signing_payload` already
+establishes for a Human Grant Declaration, applied here to a new, disjoint record kind.
+
+**A new record kind, `comparative_benchmark_independent_reproduction_submission`
+(`01_SCHEMA/comparative_benchmark/comparative_benchmark_independent_reproduction_submission.
+schema.json`)**, carries `reproducer_actor_or_authority_id`, `provenance_mechanism`
+(`ED25519_SIGNATURE` only), `original_result_bundle_ref`/`protocol_freeze_ref`,
+`reproduced_raw_events`/`reproduced_raw_events_content_address`,
+`agent_runtime_model_configuration_identity`, `execution_environment_manifest`,
+`reproduced_metrics`, `agreement`, `submission_time`, and `signature`
+(`{algorithm: "ed25519", public_key, value}`) -- the minimum submission fields the adoption
+itself names. `identity.independent_reproduction_submission_signing_payload` derives the exact
+canonical bytes a genuine signature must cover (every field except the id/fingerprint/signature
+themselves), mirroring `human_grant_declaration_signing_payload`'s own discipline.
+
+**Verification only, never construction.** `engine.verify_independent_reproduction_submission`
+refuses fail-closed (`IndependentReproductionSubmissionValidationError`) unless *all* of: schema
+validity; `independent_reproduction_submission_id`/`..._semantic_fingerprint` genuinely rederive
+from the record's own remaining fields; `protocol_freeze_ref`/`original_result_bundle_ref` name
+exactly the Store-resolved parents (the identical P90-R1-F6 discipline
+`commit_reproduction_receipt` already applies); `reproduced_raw_events` covers exactly the frozen
+corpus (`verify_exact_frozen_corpus`, reused); `reproduced_raw_events_content_address`
+genuinely rederives; `reproduced_metrics` genuinely rederives via `aggregate_metrics` -- never a
+submitter's own claimed aggregate; `agreement` genuinely rederives by the identical
+MATCH/DIVERGENT/INCOMPARABLE rule `build_reproduction_receipt` itself already uses; and
+`signature` is a genuine Ed25519 signature, by the holder of the declared `public_key`, over
+exactly the submission's own signing payload. `route.admit_independent_reproduction_submission`
+resolves both parents from the Store first (refusing fail-closed if either was never genuinely
+committed), then calls this verifier, then commits the unmodified, externally-supplied record
+verbatim through the identical `commit_coordination_record_at_tip` mechanism every other record
+kind in this package uses -- byte-for-byte, no field added, removed, or recomputed.
+
+**Import-boundary purity: a local, duplicated Ed25519 verifier, not an import of
+`binding.signature`.** `binding.signature.verify_ed25519_signature` is directly reusable in
+isolation, but importing any part of `binding` transitively executes `binding/route.py`'s own
+`from manosube_agent_civilization.authority.identity import rule_id` (via `binding/__init__.py`).
+This package's own static-conformance test (NC-9/NC-11: "never a second owner of / never imports
+Authority") is a guarantee about substance, not merely about what an AST scan of this package's
+own five modules' literal `import` statements happens to catch -- so `engine.py` duplicates the
+small, generic Ed25519 check locally (identical behavior: fail-closed-as-a-value, never raises on
+malformed key/signature material) rather than accepting a transitive Authority import that would
+pass the letter of the existing test while breaking its spirit.
+
+```text
+P90_R3_F2_ADMISSION_SURFACE_BUILT=true
+P90_R3_F2_CLAUDE_CODE_SELF_ISSUED_RECEIPT=false
+P90_R3_F2_INDEPENDENT_SUBMISSION_RECEIVED=false
+P90_R3_F2_STATUS=BLOCKED_AWAITING_INDEPENDENT_REPRODUCER
+```
+
+No genuine external submission exists as of this revision -- the surface exists to admit one when
+a genuinely independent actor or authority submits it; this contract does not claim F2 is closed.
+
 ## 9. Published artifacts (`examples/comparative_benchmark/`)
 
 **P90-R1-F2: a public, versioned, checked-in artifact bundle.** `scripts/
@@ -511,6 +607,66 @@ under Round 2's stricter, real-external-invocation reading of F1/F2. Phase 21 is
 SHUKOU's own next decision (widen the Authority boundary, accept the Round 1 reading as
 sufficient, or another disposition) is required before this specific pair can be closed.
 
+## 13a. P90-R3-F1: the real blocker is the frozen corpus's own definition, not credential
+availability
+
+Round 3's adoption (comment 5705039613) narrowly widened the Authority boundary Round 2's F1
+blocker rested on:
+
+```text
+PRODUCTION_CREDENTIAL_USE_ALLOWED=true
+PRODUCTION_CREDENTIAL_USE_SCOPE=ONE_PREEXISTING_CONFIGURED_AGENT_IDENTITY,PHASE_21_FROZEN_
+  CORPUS_ONLY,PR_90_EVIDENCE_GENERATION_ONLY
+NEW_CREDENTIAL_ACQUISITION_ALLOWED=false
+CREDENTIAL_EXTRACTION_OR_DISCLOSURE_ALLOWED=false
+CREDENTIAL_PERSISTENCE_CHANGE_ALLOWED=false
+UNBOUNDED_EXTERNAL_INVOCATION_ALLOWED=false
+```
+
+This session independently re-examined whether F1 (`EXECUTE_THE_IDENTICAL_REAL_AGENT_IN_BOTH_
+CONDITIONS`) could now be satisfied by running the *currently-defined* frozen corpus with a real
+Agent against this widened boundary. It cannot -- not because a real Agent identity is
+unavailable, but because of a structural fact about the corpus itself, discovered by direct
+inspection of `tests/fixtures/long_running_proof.py` (the fixture world the `MANOSUBE_PRESENT`
+comparison group's own orchestrator reuses, see section 6): the `MANOSUBE_PRESENT` group's own
+"present" condition has never involved a real Agent (an LLM or tool-using process) performing any
+task at all. Every one of its 8 tasks routes through 100% Kernel-internal, deterministic
+bookkeeping (Observation -> Difference -> Authority -> Evidence -> Reflow) over two static,
+generic, checked-in prose fixture files (`before_source_world.txt`/`after_source_world.txt`,
+identical content regardless of which of the 8 tasks is running); the fixture's own `"READY"`
+Evidence value is a hardcoded Python literal, not the output of any executed action; and the one
+authorized `WRITE_FILE` action's own declared target, `src/long_running_proof_target.py`, does
+not exist anywhere in this repository and is never actually written.
+
+```text
+F1_STATUS=BLOCKED_NO_PRECONFIGURED_REAL_AGENT
+F1_BLOCKING_CONSTRAINT=FROZEN_CORPUS_MANOSUBE_PRESENT_CONDITION_NEVER_INVOLVES_A_REAL_AGENT_
+  PERFORMING_A_TASK
+F1_IS_A_CREDENTIAL_AVAILABILITY_PROBLEM=false
+F1_IS_A_CORPUS_PROTOCOL_DEFINITION_PROBLEM=true
+```
+
+Making F1 true would require redefining what a "task" in the frozen corpus means -- giving the
+`MANOSUBE_PRESENT` condition a real Agent-performed step to compare against a real Agent-alone
+step, rather than comparing Kernel bookkeeping against Agent execution. That is a roadmap/protocol
+semantic decision, not a code change this session may make on its own: Issue #89's own section 4
+already ties "same-Agent comparison" to fixing the Agent's model/runtime/version/adapter
+identity/configuration/tool surface/resource budget across *both* conditions, and the Structural
+Advisor's own prior review (comment 5705006904) frames exactly this kind of redefinition as its
+own "Option 3," reserved to SHUKOU. This Round's own adoption forbids it explicitly:
+
+```text
+ROADMAP_REDEFINITION_ALLOWED=false
+GATE_21_WEAKENING_ALLOWED=false
+SIMULATED_OR_RELABELED_SUBSTITUTE_PROVIDED=false
+```
+
+No fixture re-execution, relabeling of the existing natural route, or newly-invented corpus was
+attempted to manufacture a passing result; this section records the honest structural finding
+instead, one of the adoption's own three named stop outcomes -- ready to advance,
+`BLOCKED_NO_PRECONFIGURED_REAL_AGENT`, or `BLOCKED_AWAITING_INDEPENDENT_REPRODUCER` -- rather
+than a simulated or relabeled pass.
+
 ## 14. Explicit non-claims
 
 ```text
@@ -530,4 +686,8 @@ MERGE_ALLOWED=false
 ISSUE_89_CLOSE_ALLOWED=false
 P90_R2_F1_CLOSED=false
 P90_R2_F2_CLOSED=false
+P90_R3_F1_CLOSED=false
+P90_R3_F2_CLOSED=false
+P90_R3_F2_ADMISSION_SURFACE_BUILT=true
+CLAUDE_CODE_SELF_ISSUED_INDEPENDENT_RECEIPT=false
 ```

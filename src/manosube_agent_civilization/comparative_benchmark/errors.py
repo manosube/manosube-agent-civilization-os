@@ -25,8 +25,15 @@ class ReproductionReceiptValidationError(ComparativeBenchmarkError):
     original run's."""
 
 
+class IndependentReproductionSubmissionValidationError(ComparativeBenchmarkError):
+    """An independent reproduction submission (P90-R3-F2) failed schema validation, its own
+    signature does not verify against its own declared public key, or it does not genuinely
+    bind to an already-committed protocol freeze/result bundle."""
+
+
 __all__ = [
     "ComparativeBenchmarkError",
+    "IndependentReproductionSubmissionValidationError",
     "ProtocolFreezeValidationError",
     "ReproductionReceiptValidationError",
     "ResultBundleValidationError",

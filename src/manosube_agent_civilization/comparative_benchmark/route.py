@@ -40,12 +40,24 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
-from .engine import build_protocol_freeze, build_reproduction_receipt, build_result_bundle
-from .errors import ReproductionReceiptValidationError, ResultBundleValidationError
+from .engine import (
+    build_protocol_freeze,
+    build_reproduction_receipt,
+    build_result_bundle,
+    verify_independent_reproduction_submission,
+)
+from .errors import (
+    IndependentReproductionSubmissionValidationError,
+    ReproductionReceiptValidationError,
+    ResultBundleValidationError,
+)
 
 PROTOCOL_FREEZE_RECORD_KIND = "comparative_benchmark_protocol_freeze"
 RESULT_BUNDLE_RECORD_KIND = "comparative_benchmark_result_bundle"
 REPRODUCTION_RECEIPT_RECORD_KIND = "comparative_benchmark_reproduction_receipt"
+INDEPENDENT_REPRODUCTION_SUBMISSION_RECORD_KIND = (
+    "comparative_benchmark_independent_reproduction_submission"
+)
 
 
 def commit_protocol_freeze(store: Any, *, project_id: str, **build_kwargs: Any) -> dict[str, Any]:
@@ -242,13 +254,110 @@ def resolve_reproduction_receipt(
     return cast("dict[str, Any] | None", result)
 
 
+def admit_independent_reproduction_submission(
+    store: Any, *, project_id: str, submission: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Admit one externally-supplied, already-signed independent reproduction submission
+    (P90-R3-F2, `ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE`) against this
+    project's own already-committed protocol freeze and original result bundle. This route
+    never builds, signs, or in any way authors *submission* itself
+    (`CLAUDE_CODE_MAY_SELF_ISSUE_INDEPENDENT_RECEIPT=false`,
+    `SEPARATE_PROCESS_ALONE_SUFFICIENT=false`) -- it only resolves *submission*'s own declared
+    parents from the Store's own coordination ledger exactly like `commit_reproduction_receipt`
+    already does, refuses fail-closed
+    (`IndependentReproductionSubmissionValidationError`) if either parent was never genuinely
+    committed there, hands the unmodified, externally-supplied record to
+    `engine.verify_independent_reproduction_submission` for a total check (schema,
+    self-consistent identity, exact ref binding to the *resolved* parents, exact corpus
+    fidelity, independently rederived content-address/metrics/agreement, and a genuine Ed25519
+    signature over the submission's own payload against its own declared public key), and
+    commits *submission* verbatim -- byte-for-byte, no field added, removed, or recomputed by
+    this route -- once every check passes."""
+
+    freeze_ref = submission.get("protocol_freeze_ref")
+    if not isinstance(freeze_ref, Mapping):
+        raise IndependentReproductionSubmissionValidationError(
+            "admit_independent_reproduction_submission requires a protocol_freeze_ref mapping"
+        )
+    freeze_id = freeze_ref.get("protocol_freeze_id")
+    if not isinstance(freeze_id, str) or not freeze_id:
+        raise IndependentReproductionSubmissionValidationError(
+            "admit_independent_reproduction_submission requires protocol_freeze_ref to carry a "
+            "non-empty string protocol_freeze_id"
+        )
+    resolved_freeze = resolve_protocol_freeze(
+        store, project_id=project_id, protocol_freeze_id=freeze_id
+    )
+    if resolved_freeze is None:
+        raise IndependentReproductionSubmissionValidationError(
+            f"no comparative_benchmark_protocol_freeze is committed at protocol_freeze_id "
+            f"{freeze_id!r} in this project's own coordination ledger -- an independent "
+            "reproduction submission can only bind to a protocol freeze that genuinely exists "
+            "in the Store, never a caller-supplied body accepted on trust"
+        )
+
+    bundle_ref = submission.get("original_result_bundle_ref")
+    if not isinstance(bundle_ref, Mapping):
+        raise IndependentReproductionSubmissionValidationError(
+            "admit_independent_reproduction_submission requires an original_result_bundle_ref "
+            "mapping"
+        )
+    bundle_id = bundle_ref.get("result_bundle_id")
+    if not isinstance(bundle_id, str) or not bundle_id:
+        raise IndependentReproductionSubmissionValidationError(
+            "admit_independent_reproduction_submission requires original_result_bundle_ref to "
+            "carry a non-empty string result_bundle_id"
+        )
+    resolved_bundle = resolve_result_bundle(
+        store, project_id=project_id, result_bundle_id=bundle_id
+    )
+    if resolved_bundle is None:
+        raise IndependentReproductionSubmissionValidationError(
+            f"no comparative_benchmark_result_bundle is committed at result_bundle_id "
+            f"{bundle_id!r} in this project's own coordination ledger -- an independent "
+            "reproduction submission can only bind to an original result bundle that genuinely "
+            "exists in the Store, never a caller-supplied body accepted on trust"
+        )
+
+    record = dict(submission)
+    verify_independent_reproduction_submission(
+        record, protocol_freeze=resolved_freeze, original_result_bundle=resolved_bundle
+    )
+    submission_id = record["independent_reproduction_submission_id"]
+    return cast(
+        "dict[str, Any]",
+        store.commit_coordination_record_at_tip(
+            project_id,
+            submission_id,
+            INDEPENDENT_REPRODUCTION_SUBMISSION_RECORD_KIND,
+            submission_id,
+            record,
+            expected_predecessor=None,
+        ),
+    )
+
+
+def resolve_independent_reproduction_submission(
+    store: Any, *, project_id: str, independent_reproduction_submission_id: str
+) -> dict[str, Any] | None:
+    result = store.resolve_coordination_record(
+        project_id,
+        INDEPENDENT_REPRODUCTION_SUBMISSION_RECORD_KIND,
+        independent_reproduction_submission_id,
+    )
+    return cast("dict[str, Any] | None", result)
+
+
 __all__ = [
+    "INDEPENDENT_REPRODUCTION_SUBMISSION_RECORD_KIND",
     "PROTOCOL_FREEZE_RECORD_KIND",
     "REPRODUCTION_RECEIPT_RECORD_KIND",
     "RESULT_BUNDLE_RECORD_KIND",
+    "admit_independent_reproduction_submission",
     "commit_protocol_freeze",
     "commit_reproduction_receipt",
     "commit_result_bundle",
+    "resolve_independent_reproduction_submission",
     "resolve_protocol_freeze",
     "resolve_reproduction_receipt",
     "resolve_result_bundle",

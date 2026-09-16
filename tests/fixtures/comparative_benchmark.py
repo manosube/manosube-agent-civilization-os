@@ -51,6 +51,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
 #: This comparative benchmark's own dedicated project identity -- distinct from every other
 #: phase's own fixture-world project id, so a defect in this fixture world can never be masked
 #: or amplified by an unrelated suite's fixture state, and vice versa. (The orchestrator's real
@@ -339,6 +342,41 @@ def comparability_loss_receipts() -> list[dict[str, Any]]:
             ),
         }
     ]
+
+
+#: P90-R3-F2: an independent reproduction submission's own structural proof of a genuinely
+#: distinct actor is a validating Ed25519 signature against a self-declared public key -- this
+#: fixture module never holds a *real* reproducer's private key (there is no such thing here;
+#: see ``ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE``'s own
+#: ``CLAUDE_CODE_MAY_SELF_ISSUE_INDEPENDENT_RECEIPT=false``). It only generates a fresh,
+#: ephemeral test-double keypair -- exists solely so test code can construct a submission the
+#: *shape* a genuinely independent, separately-keyed actor would submit, never a real credential
+#: or anything persisted beyond one test's own process.
+def generate_test_ed25519_keypair() -> tuple[Ed25519PrivateKey, str]:
+    private_key = Ed25519PrivateKey.generate()
+    public_key_hex = (
+        private_key.public_key().public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw).hex()
+    )
+    return private_key, public_key_hex
+
+
+def independent_reproducer_agent_runtime_model_configuration_identity() -> dict[str, str]:
+    return {
+        "agent_family": "independent-reproducer-test-double",
+        "version": "0.1",
+        "runtime": "pytest",
+        "model": "n/a",
+        "configuration": "default",
+        "tool_surface": "none",
+    }
+
+
+def independent_reproducer_execution_environment_manifest() -> dict[str, str]:
+    return {
+        "python_implementation": "CPython",
+        "python_version": "3.12.0",
+        "platform": "test-platform",
+    }
 
 
 def protocol_freeze_kwargs(*, generated_at: str) -> dict[str, Any]:

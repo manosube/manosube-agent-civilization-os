@@ -5,11 +5,16 @@ A real AST/source walk over the ``comparative_benchmark`` package's own module s
 identical technique ``tests/contract/work_time_transparency/
 test_work_time_transparency_static_conformance.py`` and ``tests/contract/change_executor/
 test_change_executor_static_conformance.py`` already establish -- pinning
-``PUBLIC_COMPARATIVE_BENCHMARK_ENTRY_POINT_COUNT=6`` and proving (NC-9, NC-11) that this package
-can never become a new owner of Canonical State, Authority, Change, Evidence, Reflow, or
-Completion: it never calls ``commit_state_transition``, only ``route.py`` ever calls
-``commit_coordination_record_at_tip``, and it ships no ``evidence_handoff.py`` and never imports
-the Evidence owner."""
+``PUBLIC_COMPARATIVE_BENCHMARK_ENTRY_POINT_COUNT=8`` (P90-R3-F2 added
+``admit_independent_reproduction_submission``/``resolve_independent_reproduction_submission``)
+and proving (NC-9, NC-11) that this package can never become a new owner of Canonical State,
+Authority, Change, Evidence, Reflow, or Completion: it never calls ``commit_state_transition``,
+only ``route.py`` ever calls ``commit_coordination_record_at_tip``, it ships no
+``evidence_handoff.py`` and never imports the Evidence owner, and it never imports ``binding``
+or ``authority`` either -- P90-R3-F2's own Ed25519 verification is a small, local duplicate of
+``binding.signature.verify_ed25519_signature``, never an import of it, precisely because
+``binding`` itself transitively imports ``authority`` (see ``engine.py``'s own
+``SUPPORTED_SIGNATURE_ALGORITHM`` docstring)."""
 
 from __future__ import annotations
 
@@ -143,12 +148,14 @@ def test_no_module_imports_the_evidence_reflow_or_wtt_owners() -> None:
 # --- public surface count / package inventory ---------------------------------------------------#
 
 
-def test_public_comparative_benchmark_entry_point_count_is_exactly_six() -> None:
+def test_public_comparative_benchmark_entry_point_count_is_exactly_eight() -> None:
     public_route_functions = _top_level_function_names(route_module)
     assert public_route_functions == {
+        "admit_independent_reproduction_submission",
         "commit_protocol_freeze",
         "commit_reproduction_receipt",
         "commit_result_bundle",
+        "resolve_independent_reproduction_submission",
         "resolve_protocol_freeze",
         "resolve_reproduction_receipt",
         "resolve_result_bundle",
@@ -162,9 +169,11 @@ def test_public_comparative_benchmark_entry_point_count_is_exactly_six() -> None
 def test_package_init_reexports_exactly_the_public_entry_points() -> None:
     assert set(comparative_benchmark_module.__all__) == {
         "PUBLIC_COMPARATIVE_BENCHMARK_ENTRY_POINT_COUNT",
+        "admit_independent_reproduction_submission",
         "commit_protocol_freeze",
         "commit_reproduction_receipt",
         "commit_result_bundle",
+        "resolve_independent_reproduction_submission",
         "resolve_protocol_freeze",
         "resolve_reproduction_receipt",
         "resolve_result_bundle",
@@ -199,16 +208,33 @@ def test_reproduction_receipt_semantic_fields_equal_schema_required_minus_id_and
     assert len(identity_module.REPRODUCTION_RECEIPT_SEMANTIC_FIELDS) == len(required)
 
 
+#: P90-R3-F2: the one schema this package ships that is permitted a `signature` field -- an
+#: independent reproduction submission's own Ed25519 signature is the one structural proof of a
+#: genuinely distinct external actor this whole design turns on
+#: (`DISTINCT_ACTOR_OR_AUTHORITY_PROVENANCE_REQUIRED=true`), never a Human Authority
+#: declaration or Completion Evidence in disguise: its shape, `$id`, and required fields are
+#: wholly disjoint from `01_SCHEMA/binding/human_grant_declaration.schema.json`'s own, and it
+#: still may never carry `human_authority_ref` or `evidence_id` -- see below.
+_SCHEMA_PERMITTED_A_SIGNATURE_FIELD = (
+    "comparative_benchmark_independent_reproduction_submission.schema.json"
+)
+
+
 def test_no_schema_carries_a_human_authority_ref_or_signature_field() -> None:
     """Structural, not conventional: a comparative-benchmark record must be unable to present
-    itself as a Human Authority declaration or Completion Evidence."""
+    itself as a Human Authority declaration or Completion Evidence. `signature` is exempted for
+    exactly the one schema P90-R3-F2 introduces -- see
+    :data:`_SCHEMA_PERMITTED_A_SIGNATURE_FIELD`'s own docstring."""
 
     schema_dir = _REPO_ROOT / "01_SCHEMA" / "comparative_benchmark"
     schema_paths = sorted(schema_dir.glob("*.schema.json"))
-    assert len(schema_paths) == 3
+    assert len(schema_paths) == 4
     for path in schema_paths:
         schema = json.loads(path.read_text())
         properties = schema.get("properties", {})
         assert "human_authority_ref" not in properties, f"{path.name} carries human_authority_ref"
-        assert "signature" not in properties, f"{path.name} carries a signature field"
         assert "evidence_id" not in properties, f"{path.name} carries an evidence_id field"
+        if path.name == _SCHEMA_PERMITTED_A_SIGNATURE_FIELD:
+            assert "signature" in properties, f"{path.name} must declare its own signature field"
+        else:
+            assert "signature" not in properties, f"{path.name} carries a signature field"
