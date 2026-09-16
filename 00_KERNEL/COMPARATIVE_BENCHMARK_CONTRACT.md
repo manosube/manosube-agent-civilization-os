@@ -38,8 +38,8 @@ section 8). The remaining two, F1 (`EXECUTE_THE_IDENTICAL_REAL_AGENT_IN_BOTH_CON
 F2 (`BIND_REPRODUCTION_TO_A_VERIFIABLY_INDEPENDENT_ACTOR_OR_AUTHORITY`), are recorded as an
 explicit, honest capability/authority blocker rather than closed -- see section 13. This is not
 a partial or deferred implementation of F1/F2; it is the adoption's own anticipated, authorized
-outcome (`STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW OR BLOCKED_REQUIRES_SHUKOU_AUTHORITY_
-DECISION`, comment 5699291360).
+outcome under its own explicit two-way stop condition (`BLOCKED_REQUIRES_SHUKOU_AUTHORITY_
+DECISION` as a legitimate alternative to advancing to the next review step, comment 5699291360).
 
 ## 1. Purpose
 
@@ -459,8 +459,8 @@ The adoption itself anticipates this outcome: it requires a feasibility inventor
 implementation attempt, and states explicitly that "a Python child process, PID inequality, a
 fixture label, or the MANOSUBE natural route relabeled as 'Agent alone' may not satisfy F1 or
 F2," that Claude Code "may not weaken Gate 21, rewrite the objective, or turn an unavailable
-capability into a passing test," and sets a two-way stop condition
-(`READY_FOR_STRUCTURAL_REVIEW OR BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION`).
+capability into a passing test," and sets a two-way stop condition: advance to the next review
+step, or `BLOCKED_REQUIRES_SHUKOU_AUTHORITY_DECISION`.
 
 **F1 is infeasible inside the existing Authority boundary.** A genuine real invocation of an
 Agent product (Claude Code, Codex, or an existing agent framework) as the actual subject under
