@@ -8,25 +8,33 @@ composer), kept as its own independent module rather than importing/parametrizin
 own docstrings already establish for keeping each phase/round's composer independently kept.
 
 The one deliberate, load-bearing structural difference from both predecessors: between the
-Change record's derivation and the post-change Observation, this composer calls a caller-
-supplied ``perform_real_change`` callback -- the real Agent action itself (the identical write
-this corpus's ``MANOSUBE_ABSENT`` condition already performed directly, per ``RAW_EVENTS.md``)
--- and only *then* takes the post-change Observation, of the real, now-changed bytes on disk.
-Every intermediate canonical record downstream of that point is still produced only by calling
-its own real, public producer (``NO_MANUAL_INTERMEDIATE_CANONICAL_RECORD_CONSTRUCTION=true``);
-what is new here is *what the Observation reads*, not how the Observation, Difference,
-Authority Decision, Change, Evidence, Sufficiency, or Reflow records are derived.
+Change record's derivation and the post-change Observation, this composer resolves and
+verifies a caller-supplied real ``AgentExecutionReceipt`` (P90-R6-IF1 correction, Structural
+Advisor interim finding, comment 5715107317) -- never a callback this module or its caller
+would invoke to *perform* the action. The real Agent action the receipt attests to already
+happened, for real, before this function was ever called (identical in mechanism to how this
+corpus's ``MANOSUBE_ABSENT`` condition performs its own write directly, per ``RAW_EVENTS.md``):
+this composer only resolves that receipt's own claims -- Agent identity, condition, task
+input, tool surface, resource budget, and output digest -- against what this task/condition
+expects, and only *then* takes the post-change Observation, of the real, now-changed bytes on
+disk. A receipt that fails verification raises before any Observation is taken
+(``tests.comparative_benchmark.agent_execution_receipt.verify_agent_execution_receipt`` raises
+fail-closed on the first mismatch). Every intermediate canonical record downstream of that
+point is still produced only by calling its own real, public producer
+(``NO_MANUAL_INTERMEDIATE_CANONICAL_RECORD_CONSTRUCTION=true``); what is new here is *what the
+Observation reads*, not how the Observation, Difference, Authority Decision, Change, Evidence,
+Sufficiency, or Reflow records are derived.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
 from pathlib import Path
 from typing import Any
 
+from tests.comparative_benchmark import agent_execution_receipt as aer
 from tests.fixtures import comparative_benchmark_real_agent as ra
 from tests.reflow_helpers import mandatory_x003_claim_binding_and_event
 from tests.state_helpers import (
@@ -556,31 +564,27 @@ def invariant_bindings_and_evaluations(
     return bindings, evaluations
 
 
-def run_one_task(
+def begin_present_task(
     store: FileStateStore,
     *,
     k: int,
     committed_state: dict[str, Any],
-    perform_real_change: Callable[[], None],
     instant: str,
 ) -> dict[str, Any]:
-    """Run the real Difference -> Authority -> Change -> (real Agent action) ->
-    Observation -> Evidence -> Sufficiency -> Reflow cycle for corpus task *k*, given the
-    Store's own real current committed State.
+    """Items 1-3 of the ``MANOSUBE_PRESENT`` lifecycle for corpus task *k*: the real
+    before-Observation, the real Difference derived from it, and the real Authority Decision
+    and Change that authorize the task's write -- everything that must happen *before* the
+    real Agent action itself, given the Store's own real current committed State.
 
-    *perform_real_change* is called exactly once, after the Change record is derived and
-    before the post-change Observation reads the real world -- it is where the real Agent
-    action itself happens (identical to what ``MANOSUBE_ABSENT`` already performed
-    directly): this function never simulates, asserts, or pre-computes that side effect
-    itself.
-    """
+    Split from :func:`resolve_present_task` (P90-R6-IF1 correction, Structural Advisor
+    interim finding, comment 5715107317) so that the real Agent action -- and only that
+    action -- happens between the two calls, as a genuinely external, already-completed
+    real event this module observes the result of, never a callback either half of this
+    split invokes."""
 
     before_instant = _offset(instant, seconds=0)
     authority_instant = _offset(instant, seconds=300)
-    change_result_instant = _offset(instant, seconds=900)
-    verification_instant = _offset(instant, seconds=1200)
     evidence_instant = _offset(instant, seconds=1500)
-    closure_instant = _offset(instant, seconds=1800)
 
     before_snapshot = ra.status_source_snapshot(captured_at=before_instant)
     before = observe_before(
@@ -597,10 +601,73 @@ def run_one_task(
     authority = check_authority(k, difference, instant=authority_instant)
     change = derive_the_change(authority)
 
-    # The real Agent action -- the identical write MANOSUBE_ABSENT already performed
-    # directly for this same task, per RAW_EVENTS.md -- happens here, for real, only now
-    # that a real Authority Decision has authorized it.
-    perform_real_change()
+    return {
+        "before": before,
+        "before_snapshot": before_snapshot,
+        "diff": diff,
+        "difference": difference,
+        "policy": policy,
+        "authority": authority,
+        "change": change,
+        "instant": instant,
+    }
+
+
+def resolve_present_task(
+    store: FileStateStore,
+    *,
+    k: int,
+    committed_state: dict[str, Any],
+    assembly: dict[str, Any],
+    receipt: dict[str, Any],
+    expected_agent_identity: dict[str, str],
+    expected_task_input: str,
+    expected_tool_surface: list[str],
+    expected_resource_budget: dict[str, Any],
+) -> dict[str, Any]:
+    """Items 4-9: resolve and verify the real Agent action's receipt, then run the real
+    Observation -> Evidence -> Sufficiency -> Reflow cycle to close corpus task *k*, given
+    *assembly* from :func:`begin_present_task`.
+
+    *receipt* is a real :mod:`tests.comparative_benchmark.agent_execution_receipt` built
+    from an already-completed real Agent action (identical in mechanism to what
+    ``MANOSUBE_ABSENT`` already performs directly, per ``RAW_EVENTS.md``) -- this function
+    never performs that action itself and never accepts a callable in its place. It is
+    resolved and verified, before any post-change Observation reads the real world, against
+    the expected Agent identity/condition/task input/tool surface/resource budget/output
+    digest for this exact task and condition; verification raises fail-closed on the first
+    mismatch, before any Observation is taken.
+    """
+
+    before = assembly["before"]
+    before_snapshot = assembly["before_snapshot"]
+    diff = assembly["diff"]
+    difference = assembly["difference"]
+    policy = assembly["policy"]
+    authority = assembly["authority"]
+    change = assembly["change"]
+    instant = assembly["instant"]
+
+    change_result_instant = _offset(instant, seconds=900)
+    verification_instant = _offset(instant, seconds=1200)
+    evidence_instant = _offset(instant, seconds=1500)
+    closure_instant = _offset(instant, seconds=1800)
+
+    # The real Agent action already happened, for real, between begin_present_task and
+    # this call (identical in mechanism to MANOSUBE_ABSENT's own direct write, per
+    # RAW_EVENTS.md) -- what happens here, now that a real Authority Decision has
+    # authorized it, is resolving and verifying its receipt. A receipt that fails any of
+    # these checks raises before any Observation is taken.
+    aer.verify_agent_execution_receipt(
+        receipt,
+        expected_agent_identity=expected_agent_identity,
+        expected_condition="MANOSUBE_PRESENT",
+        expected_task_key=ra.TASK_KEYS[k],
+        expected_task_input=expected_task_input,
+        expected_tool_surface=expected_tool_surface,
+        expected_resource_budget=expected_resource_budget,
+        expected_output_path=receipt["output_path"],
+    )
 
     change_result_snapshot = ra.status_source_snapshot(captured_at=change_result_instant)
     change_result_obs = observe_change_result(

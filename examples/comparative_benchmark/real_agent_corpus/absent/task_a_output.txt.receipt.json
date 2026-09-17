@@ -1,0 +1,29 @@
+{
+  "agent_identity": {
+    "actor_kind": "claude_code_native_tool_using_agent",
+    "session_ref": "https://claude.ai/code/session_0154miaUnGA543JWmVrxqamk"
+  },
+  "condition": "MANOSUBE_ABSENT",
+  "output_path": "examples/comparative_benchmark/real_agent_corpus/absent/task_a_output.txt",
+  "output_sha256": "da8fdd66d9a1fc4b90a668911f142158731c23556423cfbf21b4202ae00abb50",
+  "receipt_id": "AGENT-RECEIPT-35517C37C5F1C9804AE084AB163383C8A16CF82C66B5BF6E3C8CFCCD688A2BAC",
+  "resource_budget": {
+    "max_turns": 1,
+    "retries_allowed": 0
+  },
+  "schema_version": "0.1",
+  "task_input": "Compute the SHA-256 hex digest of the literal ASCII string MANOSUBE_PHASE21_ROUND6_TASK_A and write only that digest to the task's output file.",
+  "task_key": "task_a",
+  "tool_call_events": [
+    {
+      "action": "printf '%s' 'MANOSUBE_PHASE21_ROUND6_TASK_A' | sha256sum | awk '{printf \"%s\", $1}' > examples/comparative_benchmark/real_agent_corpus/absent/task_a_output.txt",
+      "ended_at": "2026-09-17T13:01:07.593796545Z",
+      "started_at": "2026-09-17T13:01:03.540796014Z",
+      "tool": "Bash"
+    }
+  ],
+  "tool_surface": [
+    "Bash",
+    "Write"
+  ]
+}
