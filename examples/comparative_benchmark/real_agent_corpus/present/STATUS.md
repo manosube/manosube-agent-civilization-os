@@ -1,2 +1,2 @@
-task_a: NOT-READY
+task_a: READY
 task_b: READY
