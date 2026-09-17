@@ -1,5 +1,19 @@
 # Round 6 real-Agent corpus -- raw events
 
+**EXPLORATORY_NON_ACCEPTANCE_EVIDENCE.** Per the Structural Advisor's governance correction
+(comment 5715630976) and SHUKOU's adoption of the corrected Round 6 rebind (comment 5715652626,
+`ADOPT_P90_R6_REBIND_PRE_RESULT_FREEZE_AND_FRESH_RUN`): the events and identity ledger below --
+committed at heads `dd7db5c` through `df13c4b` -- were produced **before** this protocol's own
+final `comparative_benchmark_protocol_freeze` was committed, which reverses the founding Issue
+#89 adoption's own required order (`PROTOCOL_FROZEN_BEFORE_RESULTS=true`). They remain valid,
+real design/feasibility observations (a genuine Difference→Authority→Change→Observation→
+Evidence→Reflow route, a genuine receipt-bound real Agent action per P90-R6-IF1), and are
+retained here, untouched, exactly as they were -- but they are **not** the final Phase 21
+benchmark result and may **not** be retroactively placed under a later protocol freeze
+(`RETROACTIVE_PROTOCOL_FREEZE_ALLOWED=false`). The final, frozen-protocol-first run is published
+separately at `examples/comparative_benchmark/real_agent_corpus/frozen_protocol/RAW_EVENTS.md`
+and `examples/comparative_benchmark/frozen_protocol_r6/`.
+
 Published in full, including nothing withheld -- there were no failures in this batch.
 Agent identity for every event below: this session's own native tool-using agent (Claude
 Sonnet 5 running inside Claude Code, session

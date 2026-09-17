@@ -1,0 +1,30 @@
+{
+  "agent_identity": {
+    "agent_family": "claude_code",
+    "session_ref": "https://claude.ai/code/session_0154miaUnGA543JWmVrxqamk",
+    "version": "claude-sonnet-5"
+  },
+  "condition": "MANOSUBE_ABSENT",
+  "output_path": "examples/comparative_benchmark/real_agent_corpus/frozen_protocol/absent/task_b_output.txt",
+  "output_sha256": "05c8aa7a3726942e58bf67ac79a6f501ac497286de73805d4ad5324cd63e588e",
+  "receipt_id": "AGENT-RECEIPT-46E0CBA4E8ECD1A04C5E0CC70028C2CC69231CCDF8FC89A41258929E117F2B26",
+  "resource_budget": {
+    "max_turns": 1,
+    "retries_allowed": 0
+  },
+  "schema_version": "0.1",
+  "task_input": "List every prime number p with 2 <= p <= 50, ascending, comma-separated, no spaces, and write only that line to the task's output file.",
+  "task_key": "task_b",
+  "tool_call_events": [
+    {
+      "action": "python3 -c print(,.join(str(p) for p in range(2,51) if all(p % d for d in range(2, int(p**0.5)+1)))) > examples/comparative_benchmark/real_agent_corpus/frozen_protocol/absent/task_b_output.txt",
+      "ended_at": "2026-09-17T14:12:01.898601838Z",
+      "started_at": "2026-09-17T14:12:01.884835964Z",
+      "tool": "Bash"
+    }
+  ],
+  "tool_surface": [
+    "Bash",
+    "Write"
+  ]
+}

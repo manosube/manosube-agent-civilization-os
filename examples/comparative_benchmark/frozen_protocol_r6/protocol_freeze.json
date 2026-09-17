@@ -1,0 +1,153 @@
+{
+  "authority_boundary_equivalence_manifest": {
+    "boundary_ref": {
+      "id": "CBB-R6F-AUTH-BOUNDARY-0001",
+      "kind": "authority_boundary"
+    },
+    "equivalence_statement": "The MANOSUBE_PRESENT group's own live, pre-flight Authority check (load-bearing -- Change/Reflow only proceed on its decision) and the MANOSUBE_ABSENT group's own direct action (no MANOSUBE owner touches the path at all) are not asserted equivalent -- see comparability_loss_receipts. Both groups use the identical real tool surface (Bash/Write), the identical resource budget, and the identical declared Agent identity; the only declared treatment difference is whether MANOSUBE's real Difference/Authority/Change/Observation/Evidence/Reflow lifecycle wraps the identical real write (NC-3)."
+  },
+  "claim_vocabulary": [
+    {
+      "bound": "Bounded strictly by this result bundle's own recorded raw_events/metrics for the declared comparison_group_id set; asserts no causal mechanism, no claim about any real external product's general capability, and no claim beyond this one frozen corpus's own recorded counts (CLAIMS_BOUNDED_BY_EVIDENCE).",
+      "claim_id": "CB21-R6F-CLAIM-SAME-AGENT-COMPLETION-COUNTS",
+      "claim_statement_template": "For this round's frozen 2-task real-Agent corpus, the recorded COMPLETED_VERIFIED count for comparison_group_id=manosube_present_real_agent_frozen_protocol (MANOSUBE present) is {manosube_present_real_agent_frozen_protocol}, and for comparison_group_id=claude_code_alone_real_agent_frozen_protocol (the identical declared Agent, MANOSUBE absent) is {claude_code_alone_real_agent_frozen_protocol} -- exactly the counts recorded in this result bundle's own metrics; no causal or superiority claim is made beyond those recorded counts.",
+      "subject_group_ids": [
+        "manosube_present_real_agent_frozen_protocol",
+        "claude_code_alone_real_agent_frozen_protocol"
+      ],
+      "subject_metric_name": "COMPLETED_VERIFIED"
+    }
+  ],
+  "comparability_loss_receipts": [
+    {
+      "description": "MANOSUBE_PRESENT's own real Agent action is bound to a real, machine-verifiable execution receipt (tests.comparative_benchmark.agent_execution_receipt, P90-R6-IF1's own required correction) that independently re-derives and re-checks the real output bytes' own SHA-256 digest and the declared Agent identity/condition/task input/tool surface/resource budget against caller-supplied expectations. Per the Structural Advisor's own P90-R6-IF2 finding and the corrected rebind adoption (comment 5715630976/5715652626), this content-addressed receipt is disclosed honestly as integrity/provenance evidence, never as a claim of platform-issued executor authentication (CONTENT_ADDRESS_IS_EXECUTOR_SIGNATURE=false, PLATFORM_ATTESTATION_CLAIMED=false): no independently verifiable native-Agent issuer signature or attestation is available in this execution environment (BLOCKED_NO_MACHINE_VERIFIABLE_NATIVE_AGENT_ISSUER=true, comment 5715524639).",
+      "receipt_id": "CLR-CB21-R6F-0001"
+    },
+    {
+      "description": "This frozen corpus's own two tasks are fully deterministic and independently computable without any native-Agent capability (a SHA-256 digest of a fixed literal string; the ascending prime list in [2, 50]). This protocol's own reproduction_procedure therefore names a plain, native-Agent-free mechanical recomputation entrypoint -- a narrower, honest THIRD_PARTY_REPRODUCIBLE claim than 're-invoking the original native Agent execution', which this repository has no capability to offer any third party (see receipt CLR-CB21-R6F-0001).",
+      "receipt_id": "CLR-CB21-R6F-0002"
+    },
+    {
+      "description": "MANOSUBE_PRESENT's own Authority evaluation is load-bearing (Change/Reflow only proceed on its decision); MANOSUBE_ABSENT's own direct action has no such gate at all -- the identical asymmetry ``tests/fixtures/comparative_benchmark.py``'s own comparability_loss_receipts discloses for the Round 1-5 fixture, never a claim of true product-for-product parity (NC-3).",
+      "receipt_id": "CLR-CB21-R6F-0003"
+    }
+  ],
+  "comparison_groups": [
+    {
+      "agent_label": {
+        "agent_family": "claude_code",
+        "version": "claude-sonnet-5"
+      },
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "comparison_group_role": "MANOSUBE_PRESENT",
+      "mechanism_identity": {
+        "mechanism": "manosube_real_agent_receipt_route",
+        "version": "0.1"
+      }
+    },
+    {
+      "agent_label": {
+        "agent_family": "claude_code",
+        "version": "claude-sonnet-5"
+      },
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "comparison_group_role": "MANOSUBE_ABSENT",
+      "mechanism_identity": {
+        "mechanism": "direct_real_agent_action",
+        "version": "0.1"
+      }
+    }
+  ],
+  "corpus_manifest": {
+    "corpus_kind": "comparative_benchmark",
+    "task_count": 2,
+    "task_ids": [
+      "task_a",
+      "task_b"
+    ]
+  },
+  "exclusion_policy": {
+    "post_hoc_protocol_mutation_forbidden": true,
+    "raw_result_deletion_forbidden": true,
+    "success_only_subset_forbidden": true
+  },
+  "generated_at": "2026-09-17T14:11:52.7081Z",
+  "metric_definitions": [
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == COMPLETED_VERIFIED) per comparison_group_id",
+      "metric_name": "completed_verified_count"
+    },
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == REFUSED) per comparison_group_id",
+      "metric_name": "refused_count"
+    },
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == RETAINED_INCOMPLETE) per comparison_group_id",
+      "metric_name": "retained_incomplete_count"
+    },
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == FAILED) per comparison_group_id",
+      "metric_name": "failed_count"
+    },
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == TIMED_OUT) per comparison_group_id",
+      "metric_name": "timed_out_count"
+    }
+  ],
+  "numeric_thresholds": [
+    {
+      "comparison_decision_rule": "every comparison group must record exactly one raw event per corpus task (COMPARABLE_PROJECT_AND_TASK_CORPUS_REQUIRED=true)",
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "metric_name": "raw_event_count",
+      "operator": "==",
+      "threshold_value": 2
+    },
+    {
+      "comparison_decision_rule": "this frozen 2-task corpus's own fixed, always-authorizing Authority Rule deterministically completes every task in every declared group -- predeclared before any result exists, never adjusted after seeing this bundle's own recomputed count",
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "metric_name": "COMPLETED_VERIFIED",
+      "operator": "==",
+      "threshold_value": 2
+    },
+    {
+      "comparison_decision_rule": "every comparison group must record exactly one raw event per corpus task (COMPARABLE_PROJECT_AND_TASK_CORPUS_REQUIRED=true)",
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "metric_name": "raw_event_count",
+      "operator": "==",
+      "threshold_value": 2
+    },
+    {
+      "comparison_decision_rule": "this frozen 2-task corpus's own fixed, always-authorizing Authority Rule deterministically completes every task in every declared group -- predeclared before any result exists, never adjusted after seeing this bundle's own recomputed count",
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "metric_name": "COMPLETED_VERIFIED",
+      "operator": "==",
+      "threshold_value": 2
+    }
+  ],
+  "project_binding_ref": {
+    "id": "PB-CB21-R6-0001",
+    "kind": "project_binding"
+  },
+  "project_id": "PRJ-CB21-R6-0001",
+  "protocol_freeze_id": "CBPF-7734C3D061B73E03690A7D3C11DFFCA92C831040E373E17FDC1EE8D9457E088F",
+  "protocol_freeze_semantic_fingerprint": "sha256:f9638411d54c5fcd61ac85ea770674383d768abe9e30afe8ee583e6396664bca",
+  "reproduction_procedure": {
+    "corpus_kind": "comparative_benchmark",
+    "entrypoint": "tests.comparative_benchmark.frozen_protocol_reproduction.reproduce_raw_events"
+  },
+  "resource_budget_manifest": {
+    "per_task_timeout_seconds": "60.0",
+    "total_time_budget_seconds": "120.0"
+  },
+  "schema_version": "0.1",
+  "unknown_missing_handling": {
+    "refusal_ne_system_failure": true,
+    "retained_ne_closed": true,
+    "unknown_ne_zero": true
+  }
+}
