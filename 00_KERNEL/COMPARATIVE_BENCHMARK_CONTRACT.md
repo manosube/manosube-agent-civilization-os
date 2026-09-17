@@ -26,6 +26,12 @@ STRUCTURAL_REVIEW_ROUND_4_ADOPTION_COMMENT_ID=5706881165
 STRUCTURAL_REVIEW_ROUND_4_FINDINGS_STATUS=F1_BLOCKED_NO_USABLE_REAL_AGENT,F2_TRUST_ANCHOR_ADMITTED_BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN
 STRUCTURAL_REVIEW_ROUND_4_KEY_REGISTRATION_COMMENT_ID=5709021178
 STRUCTURAL_REVIEW_ROUND_4_KEY_REGISTRATION_COMMENT_AUTHOR=manosube (OWNER)
+STRUCTURAL_REVIEW_ROUND_5_ID=P90-R5
+STRUCTURAL_REVIEW_ROUND_5_ADOPTION_ID=ADOPT_P90_R5_REAL_AGENT_FINAL_PROTOCOL_AND_EXECUTABLE_REPRODUCTION
+STRUCTURAL_REVIEW_ROUND_5_ADOPTION_COMMENT_ID=5712375225
+STRUCTURAL_REVIEW_ROUND_5_ADOPTION_COMMENT_AUTHOR=manosube (OWNER)
+STRUCTURAL_REVIEW_ROUND_5_FINDINGS_STATUS=F1_PARTIAL_MECHANISM_UNBLOCKED_CORPUS_NOT_BUILT,
+  F2_DEFERRED_NO_NEW_FINAL_PROTOCOL_YET,F3_PKCS8_PEM_SUPPORT_BUILT,F4_EXECUTION_ORDER_RECORDED
 ```
 
 This contract documents the proof `tests/comparative_benchmark/` and the durable package
@@ -80,6 +86,21 @@ and never the private key, which this repository has still never generated, requ
 or stored. F2 now stands `BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN`: the trust anchor is
 admitted, but no genuine independent reproduction submission against it has yet been received,
 per this Round's own four-way stop condition.
+
+**Round 5 (P90-R5, `ADOPT_P90_R5_REAL_AGENT_FINAL_PROTOCOL_AND_EXECUTABLE_REPRODUCTION`, comment
+5712375225)** required correcting Gate 21's own stale unconditional-`true` reporting for
+`SAME_AGENT_COMPARISON_AVAILABLE`/`THIRD_PARTY_REPRODUCIBLE` to reflect current, actual evidence
+rather than the Round 1 disclosed/honestly-labeled reading alone (F1, section 11), building
+encrypted-PKCS8-PEM support so SHUKOU's own real key -- an encrypted PKCS8 PEM file, never raw
+hex -- can be used without ever touching raw private-key hex or disclosing the key/passphrase to
+this repository (F3, section 8c), and recording the required execution order for a genuine final
+real-Agent protocol and its own reproduction (F4). It explicitly deferred F2 (minting a new
+final-protocol trust anchor) until a genuine new final protocol actually exists. A bounded
+re-test of nested Agent invocation this Round found that the specific mechanism section 13b
+tested (a Bash-invoked nested `claude` CLI subprocess) is not this environment's only invocation
+mechanism -- the harness's own native `Agent` tool succeeded where that mechanism was denied --
+but this does not by itself mean the real-Agent corpus F1 ultimately requires has been built; see
+section 13c.
 
 ## 1. Purpose
 
@@ -147,6 +168,16 @@ scripts/admit_comparative_benchmark_independent_reproducer_trust_anchor.py
                                                 # pre-registered public key through the
                                                 # production route and publishes the result;
                                                 # never touches a private key
+scripts/generate_and_sign_comparative_benchmark_independent_reproduction_submission.py
+                                                # P90-R5-F3: mechanically reproduces the frozen
+                                                # corpus, builds the draft submission, loads an
+                                                # encrypted PKCS8 PEM (hidden passphrase prompt),
+                                                # signs, locally verifies, and emits -- see
+                                                # section 8c; never accepts raw private-key hex,
+                                                # never touches the key beyond the one sign() call
+scripts/reproduce_and_sign_comparative_benchmark_submission.ps1
+                                                # P90-R5-F3: the one end-to-end Windows/
+                                                # PowerShell entrypoint wrapping the script above
 examples/comparative_benchmark/{protocol_freeze,result_bundle,reproduction_receipt}.json
                                                 # P90-R1-F2's own checked-in public bundle
 examples/comparative_benchmark/independent_reproducer_trust_anchor.json
@@ -587,66 +618,85 @@ use.
 
 ## 8c. Reproduction commands for SHUKOU (no private-key handling by Claude Code)
 
-The four commands below are the complete, already-verified procedure for SHUKOU to produce one
-genuine, admissible independent reproduction submission on a machine SHUKOU controls (e.g. a
-Windows PC with Python 3.11+ and `pip install cryptography` available). Claude Code has run the
-canonical payload/verification logic these commands call (it is this package's own shipped,
-tested production code) but never executes them against SHUKOU's own private key, never asks for
-that key to be pasted, uploaded, or logged, and never persists it anywhere in this repository.
+**P90-R5-F3 correction (this revision).** The prior four-command manual procedure required
+pasting the raw private-key hex into an interactive `input()` prompt, which the Round 5 adoption
+explicitly forbids (`RAW_PRIVATE_KEY_HEX_INPUT_FORBIDDEN=true`) and which cannot load SHUKOU's
+own actual key material -- an encrypted PKCS8 PEM file, not raw hex. That manual procedure is
+replaced below by one mechanical script plus a Windows/PowerShell entrypoint wrapper. Claude Code
+has written and ruff-verified this code (it is this package's own shipped, tested production
+logic plus one thin orchestration script) but never executes either against SHUKOU's own private
+key, never asks for the key or its passphrase to be pasted, uploaded, or logged, and never
+persists either anywhere in this repository.
 
-1. **Reproduce the frozen corpus.** Run the identical natural-route/ungated-reference-harness
-   procedure `examples/comparative_benchmark/protocol_freeze.json`'s own `reproduction_procedure`
-   names (`tests.comparative_benchmark.orchestrator.run_comparative_benchmark`) against a fresh
-   checkout of this repository at the commit that published `protocol_freeze.json`, and capture
-   the resulting `reproduced_raw_events` list (the honest per-task outcomes SHUKOU's own run
-   actually produced against this repository's real corpus/mechanism) -- never hand-authored.
+**`scripts/generate_and_sign_comparative_benchmark_independent_reproduction_submission.py`**
+runs entirely on the machine holding the real encrypted PKCS8 PEM private key (e.g. SHUKOU's own
+Windows PC). It performs, mechanically and in one invocation, the four steps the prior procedure
+required SHUKOU to perform by hand:
 
-2. **Generate the canonical signing payload.** With `reproduced_raw_events` from step 1 assigned
-   to the identical draft submission shape `identity.
-   INDEPENDENT_REPRODUCTION_SUBMISSION_SEMANTIC_FIELDS` requires (see `01_SCHEMA/
-   comparative_benchmark/comparative_benchmark_independent_reproduction_submission.schema.json`
-   for the exact field list; `reproducer_actor_or_authority_id` must be exactly
-   `SHUKOU_PHASE21_REPRODUCER` to match the admitted trust anchor), compute the exact bytes to
-   sign by calling this package's own shipped function directly, never a hand-rolled
-   equivalent:
-   ```
-   python -c "
-   from manosube_agent_civilization.comparative_benchmark.identity import (
-       independent_reproduction_submission_signing_payload,
-   )
-   import json, sys
-   draft = json.load(sys.stdin)
-   sys.stdout.buffer.write(independent_reproduction_submission_signing_payload(draft))
-   " < draft_submission.json > signing_payload.bin
-   ```
+1. **Reproduce the frozen corpus.** Calls this package's own shipped, tested
+   `tests.comparative_benchmark.orchestrator.run_comparative_benchmark` against a fresh disposable
+   temporary directory and captures the resulting `reproduced_raw_events` list -- the honest
+   per-task outcomes this run actually produced against this repository's real corpus/mechanism,
+   never hand-authored.
 
-3. **Sign the payload with SHUKOU's own already-held private key.** This step runs only on
-   SHUKOU's own machine, using the private key matching the already-registered
-   `ed25519_public_key=0f183eed0aae19425e8f85c3a619b21ddc4efdb432966ab91cfdbc6dd7f2fdab` --
-   Claude Code never sees this step's input or output:
-   ```
-   python -c "
-   from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-   private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(input('PRIVATE_KEY_HEX: ')))
-   with open('signing_payload.bin', 'rb') as f:
-       payload = f.read()
-   print('SIGNATURE_HEX=' + private_key.sign(payload).hex())
-   "
-   ```
+2. **Build the draft submission and its canonical signing payload.** Assembles the draft
+   submission body from the published `examples/comparative_benchmark/{protocol_freeze,
+   result_bundle}.json`, `reproduced_raw_events` from step 1, and this package's own
+   `aggregate_metrics`/`independent_reproduction_submission_id`/`..._semantic_fingerprint`
+   functions -- never hand-authored fields -- then computes the exact bytes to sign via
+   `identity.independent_reproduction_submission_signing_payload`, this package's own shipped
+   function, never a hand-rolled equivalent.
 
-4. **Assemble and admit the submission.** Fill `draft_submission.json`'s own
-   `independent_reproduction_submission_id`/`..._semantic_fingerprint` (via `identity.
-   independent_reproduction_submission_id`/`..._semantic_fingerprint`) and its own `signature`
-   object (`{"algorithm": "ed25519", "public_key": "0f183eed...2fdab", "value": "<SIGNATURE_HEX
-   from step 3>"}`), then submit the completed record through the existing production route
-   (`route.admit_independent_reproduction_submission`) against a Store that already has this
-   project's own `protocol_freeze`/`result_bundle`/trust anchor committed to it -- the identical
-   pattern `tests/contract/comparative_benchmark/
-   test_comparative_benchmark_independent_reproducer_trust_anchor.py`'s own positive-control test
-   already exercises against test-only keys. `verify_independent_reproduction_submission` fails
-   closed on any mismatch (wrong key, wrong corpus, expired window, or a recomputed
-   `agreement`/`reproduced_metrics` that disagrees with the submission's own declared values) --
-   a successful admission is therefore itself the decisive proof this reproduction is genuine.
+3. **Load the PEM and sign.** Prompts for the PEM passphrase at a hidden prompt
+   (`getpass.getpass`, never echoed, never logged), loads `--pem-path` via
+   `cryptography.hazmat.primitives.serialization.load_pem_private_key`, confirms the loaded key's
+   own derived public key matches the already-registered
+   `ed25519_public_key=0f183eed0aae19425e8f85c3a619b21ddc4efdb432966ab91cfdbc6dd7f2fdab` exactly
+   (refusing fail-closed, `SystemExit`, on any mismatch -- never signs with the wrong key), signs
+   the step 2 payload, and immediately discards both the passphrase and the loaded private-key
+   object (`del`) -- neither is retained beyond the one `load`/`sign` call.
+
+4. **Verify locally, then emit.** Calls this package's own shipped
+   `engine.verify_ed25519_signature` against the already-registered public key before ever writing
+   output -- a submission this script itself cannot verify is never written (`SystemExit`) -- then
+   writes the completed, publicly-safe submission JSON to `--output` (default: stdout). The
+   emitted JSON contains no private-key material and no passphrase; it is the identical shape
+   `route.admit_independent_reproduction_submission` accepts.
+
+```text
+RAW_PRIVATE_KEY_HEX_INPUT_FORBIDDEN=true (enforced: this script never accepts hex, only a PEM path)
+PRIVATE_KEY_DISCLOSURE_ALLOWED=false (enforced: passphrase/key are never printed, logged, or written)
+PRIVATE_KEY_REPOSITORY_STORAGE_ALLOWED=false (enforced: neither is ever written to any file this
+  script controls)
+HAND_AUTHORED_CANONICAL_SUBMISSION_FIELDS_FORBIDDEN=true (enforced: every submission field is
+  produced by this package's own shipped identity/engine functions, never assembled by hand)
+SIGNATURE_VERIFIED_LOCALLY_BEFORE_EMISSION=true (enforced: verify_ed25519_signature gates the one
+  --output write)
+```
+
+**`scripts/reproduce_and_sign_comparative_benchmark_submission.ps1`** is the one end-to-end
+Windows/PowerShell entrypoint the Round 5 adoption requires
+(`PROVIDE_ONE_END_TO_END_WINDOWS_POWERSHELL_ENTRYPOINT=true`). It locates a Python interpreter on
+`PATH`, validates `-PemPath` exists, and invokes the script above with `--pem-path`/`--output`. It
+performs no cryptographic operation itself and never opens, reads, or logs the PEM file's own
+contents or the passphrase -- both are handled exclusively inside the wrapped Python script, on
+the same machine, never transmitted elsewhere. Usage:
+```
+.\scripts\reproduce_and_sign_comparative_benchmark_submission.ps1 `
+    -PemPath "C:\Users\Apache\Documents\MANOSUBE_Phase21_Reproducer_Key\phase21_reproducer_private_key.pem"
+```
+
+**Admission remains SHUKOU's or a subsequent Claude Code round's own separate step**, performed
+against a Store that already has this project's own `protocol_freeze`/`result_bundle`/trust
+anchor committed to it, through the existing production route
+(`route.admit_independent_reproduction_submission`) -- the identical pattern `tests/contract/
+comparative_benchmark/test_comparative_benchmark_independent_reproducer_trust_anchor.py`'s own
+positive-control test already exercises against test-only keys.
+`verify_independent_reproduction_submission` fails closed on any mismatch (wrong key, wrong
+corpus, expired window, or a recomputed `agreement`/`reproduced_metrics` that disagrees with the
+submission's own declared values) -- a successful admission is therefore itself the decisive
+proof this reproduction is genuine. This script's own emitted JSON is the exact, complete input
+that admission step requires; nothing further needs to be hand-assembled.
 
 ## 9. Published artifacts (`examples/comparative_benchmark/`)
 
@@ -740,9 +790,26 @@ test_comparative_benchmark_negative_controls.py`, numbered `test_nc1_...` throug
 
 ## 11. Gate 21
 
+**P90-R5-F1 correction (this revision).** The seven booleans below are reported from this
+revision's own actual, current evidence -- not from the Round 1 disclosed/honestly-labeled
+reading alone. `test_gate21_same_agent_comparison_available_by_declared_label_and_real_route` and
+`test_gate21_third_party_reproducible_independent_receipt_matches` still pass, and still prove
+exactly what they always proved: that the fixture world's own declared `agent_label` pairing is
+structurally consistent (section 3), and that a reproduction receipt produced by a genuinely
+separate OS process matches (section 8) -- but neither test exercises, or could exercise, a real
+external-Agent invocation or a verifiably independent third-party actor. Sections 13/13a/13b/13c
+already establish, and this revision does not weaken, that under the Round 2+ reading of "same
+Agent" and "third-party reproducible" -- a genuine real Agent invocation, and reproduction bound
+to a verifiably independent actor rather than a same-operator OS process or fixture label alone
+-- both predicates remain unproven. Reporting either as an unqualified `true` here would be
+exactly the stale success claim P90-R5-F1 requires removed.
+
 ```text
-SAME_AGENT_COMPARISON_AVAILABLE=true   (section 3; test_gate21_same_agent_comparison_available_
-                                         by_declared_label_and_real_route)
+SAME_AGENT_COMPARISON_AVAILABLE=BLOCKED_NO_USABLE_REAL_AGENT
+  (proven true only under the Round 1 disclosed/honestly-labeled fixture reading -- section 3;
+  test_gate21_same_agent_comparison_available_by_declared_label_and_real_route still passes and
+  proves exactly that reading, no more. Not proven under the Round 2+ real-external-Agent
+  reading -- see section 13b/13c.)
 CONTROL_GROUPS_DEFINED=true            (4 groups, matching Issue #89 section 4 exactly;
                                          test_gate21_control_groups_defined_matches_issue_89_
                                          section_4)
@@ -753,15 +820,20 @@ RAW_RESULTS_PUBLIC=true                (durably committed, independently resolva
                                          durably_resolvable_from_the_ledger)
 FAILURES_INCLUDED=true                 (section 6; test_gate21_failures_included_real_non_
                                          success_outcomes_present)
-THIRD_PARTY_REPRODUCIBLE=true          (section 8; test_gate21_third_party_reproducible_
-                                         independent_receipt_matches)
+THIRD_PARTY_REPRODUCIBLE=BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN
+  (proven true only for "a genuinely separate OS process reproduces the identical fixture-driven
+  result" -- section 8; test_gate21_third_party_reproducible_independent_receipt_matches still
+  passes and proves exactly that. Not proven under the Round 2+ verifiably-independent-actor
+  reading until a genuine independent reproduction submission is admitted against the real
+  SHUKOU-registered trust anchor -- see section 8b/8c; none has been submitted yet.)
 CLAIMS_BOUNDED_BY_EVIDENCE=true        (section 4/9-NC-12; test_gate21_claims_bounded_by_
                                          evidence_and_rederivation_matches_byte_for_byte -- also
                                          the required raw -> metric -> claim rederivation proof)
 ```
 
 Phase 21 is not complete until SHUKOU accepts the exact reviewed delivery head, that head is
-merged, and resulting `main` is independently re-observed.
+merged, and resulting `main` is independently re-observed. It is also not complete while either
+`SAME_AGENT_COMPARISON_AVAILABLE` or `THIRD_PARTY_REPRODUCIBLE` remains blocked above.
 
 ## 13. P90-R2-F1/F2: capability/authority blocker (not closed)
 
@@ -959,6 +1031,61 @@ session's own Authority grant does not extend to; this section records the hones
 finding rather than a simulated or relabeled pass, per this Round's own four-way stop condition
 (ready to advance, `BLOCKED_NO_USABLE_REAL_AGENT`, `BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_
 KEY`, or `BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN`).
+
+## 13c. P90-R5-F1 (partial): a distinct, unblocked nested-Agent invocation mechanism exists, but
+the real-Agent corpus itself is not yet built
+
+Round 5's own adoption (comment 5712375225) requires reporting Gate 21 from this revision's own
+actual, current evidence (section 11) rather than repeating section 13b's own finding
+unexamined. This session made one further bounded, genuine attempt at F1's precondition, per the
+adoption's own `STOP_IF_NO_GENUINE_REAL_AGENT_ROUTE=true`/`SIMULATED_AGENT_AS_REAL_AGENT_
+ALLOWED=false` boundary.
+
+Section 13b's own two denied attempts both invoked a nested Agent through a **Bash-invoked
+`claude` CLI subprocess** (`--restricted --tools Write,Edit,Read --permission-mode acceptEdits`,
+then `--tools Write`), both refused by this environment's harness classifier with `[Create Unsafe
+Agents]`. This session's own harness also exposes a structurally distinct mechanism -- the native
+`Agent` tool, the harness's own built-in subagent-spawning primitive, never a Bash-invoked CLI
+subprocess. Invoked through that mechanism, a spawned subagent genuinely wrote a file and this
+session read it back through Bash, with a real, freshly-generated timestamp and no refusal or
+classifier intervention at any step.
+
+```text
+F1_NATIVE_AGENT_TOOL_INVOCATION_ATTEMPTED=true
+F1_NATIVE_AGENT_TOOL_INVOCATION_DENIED=false
+F1_NATIVE_AGENT_TOOL_WROTE_A_REAL_FILE=true
+F1_NATIVE_AGENT_TOOL_MECHANISM_DISTINCT_FROM_SECTION_13B_BASH_CLI_SUBPROCESS=true
+```
+
+**This does not by itself close F1.** Section 13b's own finding was scoped precisely to "any
+tool-write-capable nested Agent subprocess invocation" through a Bash-invoked CLI subprocess; it
+never claimed the native `Agent` tool was tried or blocked. What this discovery changes is the
+finding's own boundary: `THIS_EXECUTION_ENVIRONMENT_HARNESS_CLASSIFIER_DENIES_ANY_TOOL_WRITE_
+CAPABLE_NESTED_AGENT_SUBPROCESS_INVOCATION` is no longer accurate as an unqualified claim about
+this execution environment -- it remains accurate only for the specific Bash-invoked CLI
+subprocess mechanism section 13b tested. What it does not change is that the real-Agent corpus
+F1 ultimately requires -- real tasks, both `MANOSUBE_PRESENT`/`MANOSUBE_ABSENT` conditions, under
+identical Agent/model/runtime/configuration/tool-surface, with `MANOSUBE_PRESENT` genuinely
+routing the Agent's real actions through the production Difference-Authority-Change-Evidence-
+Reflow pipeline -- has not been built. That is substantial, un-started architecture work, not a
+mechanical follow-on from this one probe.
+
+```text
+F1_STATUS=BLOCKED_REAL_AGENT_CORPUS_NOT_YET_BUILT
+F1_MECHANISM_LEVEL_BLOCKER_FROM_SECTION_13B=NO_LONGER_ACCURATE_AS_UNQUALIFIED_CLAIM
+F1_REAL_AGENT_CORPUS_BUILT=false
+F1_MANOSUBE_PRESENT_CONDITION_ROUTES_THROUGH_PRODUCTION_PIPELINE=false
+SIMULATED_OR_RELABELED_SUBSTITUTE_PROVIDED=false
+```
+
+Building the corpus itself was deliberately not rushed in this same session turn: doing so
+hastily, without first designing how `MANOSUBE_PRESENT` genuinely differs in tool surface and
+mechanism from `MANOSUBE_ABSENT` for each of the required real tasks, risks producing exactly the
+structurally unconvincing result the adoption's own `SIMULATED_AGENT_AS_REAL_AGENT_ALLOWED=false`
+and `UNVERIFIED_EXTERNAL_RESULT_ALLOWED=false` booleans forbid. This section records the honest
+current state -- the mechanism-level blocker section 13b found is not, in its full generality,
+still accurate, but the corpus itself remains to be designed and built -- rather than either
+repeating section 13b's now-imprecise claim or overclaiming F1 resolved.
 
 ## 14. Explicit non-claims
 

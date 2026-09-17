@@ -6443,3 +6443,134 @@ PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 P90_R4_F1_STATUS=BLOCKED_NO_USABLE_REAL_AGENT
 P90_R4_F2_STATUS=BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN
 ```
+
+## Round 5 (本session自身が独立実行): P90-R5, ADOPT_P90_R5_REAL_AGENT_FINAL_PROTOCOL_AND_EXECUTABLE_REPRODUCTION
+
+SHUKOU posted PR #90 comment 5712375225 (author `manosube`, `author_association=OWNER`,
+`created_at=2026-09-17T09:51:24Z`), independently re-verified via the GitHub API before acting
+on it. Four findings were adopted:
+
+- **P90-R5-F1** (Gate 21 stale-success-claim correction): `00_KERNEL/COMPARATIVE_BENCHMARK_
+  CONTRACT.md` section 11 declared `SAME_AGENT_COMPARISON_AVAILABLE=true`/
+  `THIRD_PARTY_REPRODUCIBLE=true` unconditionally despite sections 13/13a/13b already
+  establishing both remain unproven under the Round 2+ reading. Rewritten to report both as
+  `BLOCKED_*`, precisely qualified by what the still-passing tests do and don't prove. A new
+  section 13c records this round's own bounded re-test of nested Agent invocation: the harness's
+  native `Agent` tool (distinct from section 13b's Bash-invoked nested `claude` CLI subprocess)
+  succeeded where that mechanism was denied, but this does not by itself mean the real-Agent
+  corpus F1 ultimately requires has been built -- that remains substantial, un-started work.
+- **P90-R5-F2** (deferred, correctly): no new final real-Agent protocol exists yet to mint a new
+  trust anchor for; the existing trust anchor (Round 4) remains valid, immutable historical
+  evidence for the old protocol; reproducing the old protocol still cannot close Gate 21.
+- **P90-R5-F3** (encrypted PKCS8 PEM support): the old §8c manual procedure required pasting raw
+  private-key hex into an interactive prompt -- forbidden by this round's own
+  `RAW_PRIVATE_KEY_HEX_INPUT_FORBIDDEN=true`, and unable to load SHUKOU's own actual key (an
+  encrypted PKCS8 PEM file). Replaced with `scripts/generate_and_sign_comparative_benchmark_
+  independent_reproduction_submission.py` (mechanically reproduces the frozen corpus, builds the
+  draft submission from this package's own shipped identity/engine functions, loads the PEM via
+  a hidden `getpass` passphrase prompt, confirms the loaded key's own derived public key matches
+  the already-registered one before ever signing, locally verifies via `verify_ed25519_signature`
+  before ever writing output) and `scripts/reproduce_and_sign_comparative_benchmark_submission.
+  ps1` (the one end-to-end Windows/PowerShell entrypoint). Neither script ever accepts raw
+  private-key hex, prints/logs the key or passphrase, or persists either anywhere in this
+  repository. Five new decisive tests
+  (`tests/comparative_benchmark/test_generate_and_sign_independent_reproduction_submission_
+  script.py`) prove: wrong-key refusal, wrong-passphrase failure, correct-key acceptance,
+  mechanically self-consistent draft construction, and the complete reproduce -> sign -> locally
+  verify -> emit -> real-admission round trip against a disposable test keypair (never SHUKOU's
+  own key) -- a successful admission through the real production route is the decisive proof.
+- **P90-R5-F4** (execution order): recorded in the contract's own Round 5 intro paragraph --
+  real Agent executable corpus and identical-Agent adapter, then real MANOSUBE-present/absent
+  original run, then final protocol/result bundle, then final-protocol-specific trust anchor,
+  then independent Windows reproduction, then local encrypted-PEM signature, then submission
+  admission, then Gate 21 rederivation. Reproduction of the old, non-real-Agent protocol cannot
+  close Gate 21.
+
+This round never requested, read, stored, or logged any private key or passphrase -- both new
+scripts operate exclusively on disposable/ephemeral test-double key material in this session's
+own tests, and are designed to accept only SHUKOU's own encrypted PEM path on SHUKOU's own
+machine when actually run against the real key. `NEW_BRANCH_ALLOWED=false`/`NEW_PR_ALLOWED=
+false` respected -- all work stayed on the existing branch/PR #90.
+
+```text
+P90_R5_F1_STATUS=PARTIAL_MECHANISM_LEVEL_BLOCKER_NO_LONGER_ACCURATE_UNQUALIFIED_CORPUS_NOT_BUILT
+P90_R5_F2_STATUS=DEFERRED_NO_NEW_FINAL_PROTOCOL_YET
+P90_R5_F3_STATUS=PKCS8_PEM_SUPPORT_BUILT_AND_DECISIVELY_TESTED
+P90_R5_F4_STATUS=EXECUTION_ORDER_RECORDED
+```
+
+## Local gate sweep (本session自身が独立実行、Round 5)
+
+```text
+TARGETED_SUITE_COMMAND=pytest tests/comparative_benchmark/test_generate_and_sign_independent_
+  reproduction_submission_script.py -v
+TARGETED_SUITE_RESULT=5 passed (wrong-key refusal, wrong-passphrase failure, correct-key
+  acceptance, mechanically self-consistent draft construction, and the complete reproduce ->
+  sign -> locally verify -> emit -> real-admission round trip against a disposable test keypair)
+SCHEMA_VALIDATION_COMMAND=python scripts/validate_schemas.py
+SCHEMA_VALIDATION_RESULT=SCHEMA_VALIDATION=PASS (unchanged -- no new schema this round)
+SOURCE_IMPACT_GATE_COMMAND=python scripts/source_impact_gate.py --changed-paths-file <the 5
+  actually-changed paths: 00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md,
+  docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md,
+  scripts/generate_and_sign_comparative_benchmark_independent_reproduction_submission.py,
+  scripts/reproduce_and_sign_comparative_benchmark_submission.ps1,
+  tests/comparative_benchmark/test_generate_and_sign_independent_reproduction_submission_
+  script.py>
+SOURCE_IMPACT_GATE_RESULT=decision: PASS (00_KERNEL/ kernel_surface paired with this very
+  docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md update)
+RUFF_CHECK_COMMAND=ruff check .
+RUFF_CHECK_RESULT=178 errors, identical to this Round's own unmodified starting head (3a2f59a)
+  via git stash/re-run. NET_NEW_RUFF_FINDINGS=0. The two new .py files are themselves fully
+  clean (0 findings each).
+RUFF_FORMAT_COMMAND=ruff format --check .
+RUFF_FORMAT_RESULT=119 files would be reformatted, identical to the baseline via git stash/
+  re-run (462 -> 464 already-formatted after adding the two new, already-formatted .py files).
+  NET_NEW_FORMAT_FINDINGS=0.
+MYPY_REPOSITORY_WIDE_COMMAND=mypy --namespace-packages
+MYPY_REPOSITORY_WIDE_RESULT=279 errors in 57 files (checked 448 source files), identical count
+  to Round 4 follow-up's own recorded baseline. NET_NEW_MYPY_FINDINGS=0 -- independently
+  confirmed 0 mypy findings attributed to either new .py file itself (the 74 errors mypy
+  reports when checking the new script/test files alone are all pre-existing, in
+  tests/comparative_benchmark/orchestrator.py and tests/long_running_proof/cycle.py, which
+  these new files merely import).
+FULL_REPOSITORY_SUITE_COMMAND=pytest -q -n 4
+FULL_REPOSITORY_SUITE_RESULT=22024 passed, 10 failed, 11 skipped in 7836.11s (2:10:36)
+FULL_REPOSITORY_SUITE_FAILURE_TRIAGE=all 10 failures are the identical 10 test names in the
+  single file tests/contract/governance/test_source_freshness_drift_detection.py already
+  recorded as the pre-existing baseline in prior rounds (Round 4 follow-up: 10 failed at that
+  round's own unmodified starting head). Independently reproduced again at this Round's own
+  unmodified starting head (3a2f59a) via git stash/re-run of that one test file alone: 10
+  failed, byte-for-byte identical failure set. Pre-existing, unrelated to this round's own
+  change (which touches only 00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md, this document,
+  scripts/generate_and_sign_comparative_benchmark_independent_reproduction_submission.py,
+  scripts/reproduce_and_sign_comparative_benchmark_submission.ps1, and one new test file --
+  none of which this failing test file's own drift-detection logic reads). 5 more tests pass
+  than Round 4 follow-up's own recorded baseline (22024 vs 22019), exactly this round's own 5
+  new decisive tests.
+NET_NEW_TEST_FAILURES=0
+```
+
+```text
+MERGE_ALLOWED=false
+ISSUE_89_CLOSE_ALLOWED=false
+PHASE_22_ALLOWED=false
+V1_0_DECLARATION_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+NEW_CREDENTIAL_ACQUISITION_ALLOWED=false
+CREDENTIAL_EXTRACTION_OR_DISCLOSURE_ALLOWED=false
+CREDENTIAL_PERSISTENCE_CHANGE_ALLOWED=false
+UNBOUNDED_EXTERNAL_INVOCATION_ALLOWED=false
+UNRELATED_REMOTE_ACTION_ALLOWED=false
+REAL_MONEY_OR_EXTERNAL_SIDE_EFFECT_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+PRIVATE_KEY_DISCLOSURE_ALLOWED=false
+PRIVATE_KEY_REPOSITORY_STORAGE_ALLOWED=false
+RAW_PRIVATE_KEY_HEX_INPUT_FORBIDDEN=true
+P90_R5_F1_STATUS=PARTIAL_MECHANISM_LEVEL_BLOCKER_NO_LONGER_ACCURATE_UNQUALIFIED_CORPUS_NOT_BUILT
+P90_R5_F2_STATUS=DEFERRED_NO_NEW_FINAL_PROTOCOL_YET
+P90_R5_F3_STATUS=PKCS8_PEM_SUPPORT_BUILT_AND_DECISIVELY_TESTED
+P90_R5_F4_STATUS=EXECUTION_ORDER_RECORDED
+```
