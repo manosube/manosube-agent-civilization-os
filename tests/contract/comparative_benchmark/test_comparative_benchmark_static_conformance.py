@@ -5,8 +5,10 @@ A real AST/source walk over the ``comparative_benchmark`` package's own module s
 identical technique ``tests/contract/work_time_transparency/
 test_work_time_transparency_static_conformance.py`` and ``tests/contract/change_executor/
 test_change_executor_static_conformance.py`` already establish -- pinning
-``PUBLIC_COMPARATIVE_BENCHMARK_ENTRY_POINT_COUNT=8`` (P90-R3-F2 added
-``admit_independent_reproduction_submission``/``resolve_independent_reproduction_submission``)
+``PUBLIC_COMPARATIVE_BENCHMARK_ENTRY_POINT_COUNT=10`` (P90-R3-F2 added
+``admit_independent_reproduction_submission``/``resolve_independent_reproduction_submission``;
+P90-R4-F2 added ``admit_independent_reproducer_trust_anchor``/
+``resolve_independent_reproducer_trust_anchor``)
 and proving (NC-9, NC-11) that this package can never become a new owner of Canonical State,
 Authority, Change, Evidence, Reflow, or Completion: it never calls ``commit_state_transition``,
 only ``route.py`` ever calls ``commit_coordination_record_at_tip``, it ships no
@@ -148,13 +150,15 @@ def test_no_module_imports_the_evidence_reflow_or_wtt_owners() -> None:
 # --- public surface count / package inventory ---------------------------------------------------#
 
 
-def test_public_comparative_benchmark_entry_point_count_is_exactly_eight() -> None:
+def test_public_comparative_benchmark_entry_point_count_is_exactly_ten() -> None:
     public_route_functions = _top_level_function_names(route_module)
     assert public_route_functions == {
+        "admit_independent_reproducer_trust_anchor",
         "admit_independent_reproduction_submission",
         "commit_protocol_freeze",
         "commit_reproduction_receipt",
         "commit_result_bundle",
+        "resolve_independent_reproducer_trust_anchor",
         "resolve_independent_reproduction_submission",
         "resolve_protocol_freeze",
         "resolve_reproduction_receipt",
@@ -169,10 +173,12 @@ def test_public_comparative_benchmark_entry_point_count_is_exactly_eight() -> No
 def test_package_init_reexports_exactly_the_public_entry_points() -> None:
     assert set(comparative_benchmark_module.__all__) == {
         "PUBLIC_COMPARATIVE_BENCHMARK_ENTRY_POINT_COUNT",
+        "admit_independent_reproducer_trust_anchor",
         "admit_independent_reproduction_submission",
         "commit_protocol_freeze",
         "commit_reproduction_receipt",
         "commit_result_bundle",
+        "resolve_independent_reproducer_trust_anchor",
         "resolve_independent_reproduction_submission",
         "resolve_protocol_freeze",
         "resolve_reproduction_receipt",
@@ -214,7 +220,9 @@ def test_reproduction_receipt_semantic_fields_equal_schema_required_minus_id_and
 #: (`DISTINCT_ACTOR_OR_AUTHORITY_PROVENANCE_REQUIRED=true`), never a Human Authority
 #: declaration or Completion Evidence in disguise: its shape, `$id`, and required fields are
 #: wholly disjoint from `01_SCHEMA/binding/human_grant_declaration.schema.json`'s own, and it
-#: still may never carry `human_authority_ref` or `evidence_id` -- see below.
+#: still may never carry `human_authority_ref` or `evidence_id` -- see below. P90-R4-F2's own
+#: independent reproducer trust anchor schema carries no `signature` field of its own (it is the
+#: pre-registered public key, not a signed claim) and is not exempted here.
 _SCHEMA_PERMITTED_A_SIGNATURE_FIELD = (
     "comparative_benchmark_independent_reproduction_submission.schema.json"
 )
@@ -228,7 +236,7 @@ def test_no_schema_carries_a_human_authority_ref_or_signature_field() -> None:
 
     schema_dir = _REPO_ROOT / "01_SCHEMA" / "comparative_benchmark"
     schema_paths = sorted(schema_dir.glob("*.schema.json"))
-    assert len(schema_paths) == 4
+    assert len(schema_paths) == 5
     for path in schema_paths:
         schema = json.loads(path.read_text())
         properties = schema.get("properties", {})

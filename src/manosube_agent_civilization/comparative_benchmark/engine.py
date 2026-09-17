@@ -28,12 +28,15 @@ from manosube_agent_civilization.difference.validation import (
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 from .errors import (
+    IndependentReproducerTrustAnchorValidationError,
     IndependentReproductionSubmissionValidationError,
     ProtocolFreezeValidationError,
     ReproductionReceiptValidationError,
     ResultBundleValidationError,
 )
 from .identity import (
+    independent_reproducer_trust_anchor_id,
+    independent_reproducer_trust_anchor_semantic_fingerprint,
     independent_reproduction_submission_id,
     independent_reproduction_submission_semantic_fingerprint,
     independent_reproduction_submission_signing_payload,
@@ -590,16 +593,91 @@ def _reproduced_raw_events_content_address(
     return "sha256:" + digest
 
 
+def build_independent_reproducer_trust_anchor(
+    *,
+    project_id: str,
+    project_binding_ref: Mapping[str, str],
+    reproducer_actor_or_authority_id: str,
+    ed25519_public_key: str,
+    key_id: str,
+    adoption_ref: Mapping[str, str],
+    authorized_protocol_or_corpus_ref: Mapping[str, str],
+    valid_from: str,
+    valid_until: str | None,
+    revocation_status: str,
+    generated_at: str,
+) -> dict[str, Any]:
+    """Build one canonical `comparative_benchmark_independent_reproducer_trust_anchor` record
+    (P90-R4-F2) -- the pre-registered admission of a distinct reproducer actor/authority's own
+    Ed25519 public key, committed *before* that actor ever submits a reproduction, so
+    `verify_independent_reproduction_submission` can resolve trust from this Store-committed
+    record rather than the submission's own self-declared key
+    (`DO_NOT_TRUST_A_PUBLIC_KEY_SUPPLIED_ONLY_BY_THE_SUBMISSION_BEING_VERIFIED`).
+
+    `role` is always `"INDEPENDENT_PHASE_21_REPRODUCER"` and `admitted_by` is always
+    `"HUMAN_AUTHORITY"` -- neither is a caller-supplied parameter, so this production builder can
+    never admit a trust anchor under any other label
+    (`ORIGINAL_OPERATOR_IDENTITY_REFUSED`/`CLAUDE_CODE_SESSION_IDENTITY_REFUSED`-equivalent at
+    the builder itself); it also never generates the key pair this record names -- this module
+    imports only `Ed25519PublicKey`, never the private-key counterpart (see the package's own
+    static-conformance proof)."""
+
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(ed25519_public_key))
+    except ValueError as error:
+        raise IndependentReproducerTrustAnchorValidationError(
+            f"ed25519_public_key {ed25519_public_key!r} is not a structurally valid Ed25519 "
+            f"public key: {error}"
+        ) from error
+
+    if valid_until is not None and valid_until <= valid_from:
+        raise IndependentReproducerTrustAnchorValidationError(
+            f"valid_until {valid_until!r} must be strictly after valid_from {valid_from!r}"
+        )
+
+    project_id = str(project_id)
+    record: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "trust_anchor_id": "",
+        "trust_anchor_semantic_fingerprint": "",
+        "project_id": project_id,
+        "project_binding_ref": _detach(project_binding_ref),
+        "reproducer_actor_or_authority_id": reproducer_actor_or_authority_id,
+        "role": "INDEPENDENT_PHASE_21_REPRODUCER",
+        "ed25519_public_key": ed25519_public_key,
+        "key_id": key_id,
+        "admitted_by": "HUMAN_AUTHORITY",
+        "adoption_ref": _detach(adoption_ref),
+        "authorized_protocol_or_corpus_ref": _detach(authorized_protocol_or_corpus_ref),
+        "valid_from": valid_from,
+        "valid_until": valid_until,
+        "revocation_status": revocation_status,
+        "generated_at": generated_at,
+    }
+    record["trust_anchor_id"] = independent_reproducer_trust_anchor_id(record)
+    record["trust_anchor_semantic_fingerprint"] = (
+        independent_reproducer_trust_anchor_semantic_fingerprint(record)
+    )
+    _validate(
+        record,
+        "comparative_benchmark_independent_reproducer_trust_anchor.schema.json",
+        "generated comparative_benchmark_independent_reproducer_trust_anchor",
+        IndependentReproducerTrustAnchorValidationError,
+    )
+    return record
+
+
 def verify_independent_reproduction_submission(
     record: Mapping[str, Any],
     *,
     protocol_freeze: Mapping[str, Any],
     original_result_bundle: Mapping[str, Any],
+    trust_anchor: Mapping[str, Any],
 ) -> None:
-    """P90-R3-F2: refuse *record* fail-closed (`IndependentReproductionSubmissionValidationError`)
-    unless every one of the following independently holds -- this function only ever verifies
-    an externally-supplied submission, it never builds or signs one itself
-    (`CLAUDE_CODE_MAY_SELF_ISSUE_INDEPENDENT_RECEIPT=false`):
+    """P90-R3-F2/P90-R4-F2: refuse *record* fail-closed
+    (`IndependentReproductionSubmissionValidationError`) unless every one of the following
+    independently holds -- this function only ever verifies an externally-supplied submission,
+    it never builds or signs one itself (`CLAUDE_CODE_MAY_SELF_ISSUE_INDEPENDENT_RECEIPT=false`):
 
     * *record* validates against its own schema;
     * `independent_reproduction_submission_id`/`..._semantic_fingerprint` genuinely rederive
@@ -617,13 +695,22 @@ def verify_independent_reproduction_submission(
     * `agreement` genuinely rederives by the identical MATCH/DIVERGENT/INCOMPARABLE rule
       `build_reproduction_receipt` itself already uses, comparing against
       *original_result_bundle*'s own `metrics`;
+    * *trust_anchor* -- a Store-resolved `comparative_benchmark_independent_reproducer_trust_
+      anchor`, never the submission's own declared key alone
+      (`DO_NOT_TRUST_A_PUBLIC_KEY_SUPPLIED_ONLY_BY_THE_SUBMISSION_BEING_VERIFIED`) -- is
+      `revocation_status="ACTIVE"`, its own `reproducer_actor_or_authority_id` matches
+      *record*'s declared one, its own `authorized_protocol_or_corpus_ref` matches *record*'s
+      own `protocol_freeze_ref` (refusing cross-protocol/corpus replay of a trust anchor
+      admitted for a different frozen protocol), and *record*'s own `submission_time` falls
+      inside `[valid_from, valid_until)` (an unbounded `valid_until=None` never expires);
+    * *record*'s own `signature.public_key` equals *trust_anchor*'s own registered
+      `ed25519_public_key` exactly (`SUBMISSION_KEY_EQUALS_PRETRUSTED_KEY=true`,
+      `SELF_DECLARED_KEY_ALONE_INSUFFICIENT=true` -- a self-declared key that merely matches
+      itself is never sufficient);
     * `signature` is a genuine Ed25519 signature, by the holder of the private key matching
-      `signature.public_key`, over exactly
-      `independent_reproduction_submission_signing_payload(record)` -- the one fact this
-      package treats as structural proof of a genuinely separate actor
-      (`DISTINCT_ACTOR_OR_AUTHORITY_PROVENANCE_REQUIRED=true`): this repository never generates
-      or holds a private key for this purpose, so a validating signature could only have been
-      produced by someone else's key, never fabricated from within this codebase."""
+      *trust_anchor*'s own pre-registered `ed25519_public_key` -- never *record*'s own declared
+      key, even though the two are also checked equal above -- over exactly
+      `independent_reproduction_submission_signing_payload(record)`."""
 
     _validate(
         dict(record),
@@ -707,16 +794,61 @@ def verify_independent_reproduction_submission(
             "result bundle's own metrics"
         )
 
+    if trust_anchor.get("revocation_status") != "ACTIVE":
+        raise IndependentReproductionSubmissionValidationError(
+            "the resolved independent reproducer trust anchor is not ACTIVE -- a revoked trust "
+            "anchor can never admit a submission, however genuine its signature"
+        )
+    if (
+        trust_anchor.get("reproducer_actor_or_authority_id")
+        != record["reproducer_actor_or_authority_id"]
+    ):
+        raise IndependentReproductionSubmissionValidationError(
+            "the resolved independent reproducer trust anchor's own "
+            "reproducer_actor_or_authority_id diverges from this submission's declared one"
+        )
+    if trust_anchor.get("authorized_protocol_or_corpus_ref") != declared_freeze_ref:
+        raise IndependentReproductionSubmissionValidationError(
+            "the resolved independent reproducer trust anchor was admitted for a different "
+            "protocol_freeze_ref -- refusing cross-protocol/corpus replay of a trust anchor "
+            "admitted for a different frozen protocol"
+        )
+    submission_time = record["submission_time"]
+    valid_from = trust_anchor.get("valid_from")
+    valid_until = trust_anchor.get("valid_until")
+    if not (isinstance(valid_from, str) and submission_time >= valid_from):
+        raise IndependentReproductionSubmissionValidationError(
+            "this submission's own submission_time is before the resolved independent "
+            "reproducer trust anchor's own valid_from -- refusing a submission the trust "
+            "anchor was not yet in force for"
+        )
+    if valid_until is not None and submission_time >= valid_until:
+        raise IndependentReproductionSubmissionValidationError(
+            "this submission's own submission_time is at or after the resolved independent "
+            "reproducer trust anchor's own valid_until -- refusing a submission made under a "
+            "revoked or expired trust anchor"
+        )
+
     signature = record["signature"]
+    trust_anchor_public_key = trust_anchor.get("ed25519_public_key")
+    if signature.get("public_key") != trust_anchor_public_key:
+        raise IndependentReproductionSubmissionValidationError(
+            "this submission's own declared signature.public_key diverges from the resolved "
+            "independent reproducer trust anchor's own registered ed25519_public_key -- a "
+            "self-declared key that merely matches itself is never sufficient "
+            "(SELF_DECLARED_KEY_ALONE_INSUFFICIENT=true); only the pre-registered trust-anchor "
+            "key is ever trusted"
+        )
     if not verify_ed25519_signature(
-        public_key_hex=signature["public_key"],
+        public_key_hex=trust_anchor_public_key,
         message=independent_reproduction_submission_signing_payload(record),
         signature_hex=signature["value"],
     ):
         raise IndependentReproductionSubmissionValidationError(
-            "signature does not verify against its own declared public_key over this "
-            "submission's own signing payload -- refusing a submission whose own signature "
-            "cannot structurally establish it came from a distinct actor"
+            "signature does not verify against the resolved independent reproducer trust "
+            "anchor's own pre-registered public key over this submission's own signing payload "
+            "-- refusing a submission whose own signature cannot structurally establish it came "
+            "from the pre-trusted distinct actor"
         )
 
 
@@ -725,6 +857,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "SUPPORTED_SIGNATURE_ALGORITHM",
     "aggregate_metrics",
+    "build_independent_reproducer_trust_anchor",
     "build_protocol_freeze",
     "build_reproduction_receipt",
     "build_result_bundle",

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/comparative_benchmark/comparative_benchmark_independent_reproducer_trust_anchor.schema.json",
+  "title": "Phase 21 Comparative Benchmark: independent reproducer trust anchor (Issue #89, PR #90 Round 4, ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_REPRODUCER)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trust_anchor_id",
+    "trust_anchor_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "reproducer_actor_or_authority_id",
+    "role",
+    "ed25519_public_key",
+    "key_id",
+    "admitted_by",
+    "adoption_ref",
+    "authorized_protocol_or_corpus_ref",
+    "valid_from",
+    "valid_until",
+    "revocation_status",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "trust_anchor_id": {"$ref": "#/$defs/trust_anchor_id"},
+    "trust_anchor_semantic_fingerprint": {"$ref": "#/$defs/sha256"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "project_binding"}}}
+      ]
+    },
+    "reproducer_actor_or_authority_id": {"type": "string", "minLength": 1},
+    "role": {"const": "INDEPENDENT_PHASE_21_REPRODUCER"},
+    "ed25519_public_key": {"type": "string", "pattern": "^[0-9a-f]{64}(?![\\s\\S])"},
+    "key_id": {"type": "string", "minLength": 1},
+    "admitted_by": {"const": "HUMAN_AUTHORITY"},
+    "adoption_ref": {
+      "type": "object",
+      "required": ["adoption_id", "comment_id", "comment_url"],
+      "properties": {
+        "adoption_id": {"type": "string", "minLength": 1},
+        "comment_id": {"type": "string", "pattern": "^[0-9]+(?![\\s\\S])"},
+        "comment_url": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "authorized_protocol_or_corpus_ref": {
+      "type": "object",
+      "required": ["protocol_freeze_id", "protocol_freeze_semantic_fingerprint"],
+      "properties": {
+        "protocol_freeze_id": {"type": "string", "minLength": 1},
+        "protocol_freeze_semantic_fingerprint": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "valid_from": {"$ref": "../common/timestamp.schema.json"},
+    "valid_until": {
+      "anyOf": [
+        {"$ref": "../common/timestamp.schema.json"},
+        {"type": "null"}
+      ]
+    },
+    "revocation_status": {"enum": ["ACTIVE", "REVOKED"]},
+    "generated_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "$defs": {
+    "trust_anchor_id": {"type": "string", "pattern": "^CBTA-[0-9A-F]{64}(?![\\s\\S])"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false
+}

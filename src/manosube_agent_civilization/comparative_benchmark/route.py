@@ -14,8 +14,9 @@ sufficiency, Reflow closure, or Project Completion"). MANOSUBE's own timing/WTT/
 likewise never become Completion Evidence through this package -- there is deliberately no
 `evidence_handoff.py` here.
 
-Each of the three record kinds (protocol freeze, result bundle, reproduction receipt) is
-committed as the single, self-chained entry of its own coordination chain
+Each of the five record kinds (protocol freeze, result bundle, reproduction receipt,
+independent reproducer trust anchor, independent reproduction submission) is committed as the
+single, self-chained entry of its own coordination chain
 (`chain_id == <record>_id`, `expected_predecessor=None`): a same-id-same-body re-commit is an
 idempotent replay; a same-id-different-body re-commit collides and is refused
 (`RecordConflictError`) -- exactly the discipline that makes `POST_HOC_PROTOCOL_MUTATION_
@@ -41,6 +42,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from .engine import (
+    build_independent_reproducer_trust_anchor,
     build_protocol_freeze,
     build_reproduction_receipt,
     build_result_bundle,
@@ -51,12 +53,16 @@ from .errors import (
     ReproductionReceiptValidationError,
     ResultBundleValidationError,
 )
+from .identity import independent_reproducer_trust_anchor_id
 
 PROTOCOL_FREEZE_RECORD_KIND = "comparative_benchmark_protocol_freeze"
 RESULT_BUNDLE_RECORD_KIND = "comparative_benchmark_result_bundle"
 REPRODUCTION_RECEIPT_RECORD_KIND = "comparative_benchmark_reproduction_receipt"
 INDEPENDENT_REPRODUCTION_SUBMISSION_RECORD_KIND = (
     "comparative_benchmark_independent_reproduction_submission"
+)
+INDEPENDENT_REPRODUCER_TRUST_ANCHOR_RECORD_KIND = (
+    "comparative_benchmark_independent_reproducer_trust_anchor"
 )
 
 
@@ -254,6 +260,42 @@ def resolve_reproduction_receipt(
     return cast("dict[str, Any] | None", result)
 
 
+def admit_independent_reproducer_trust_anchor(
+    store: Any, *, project_id: str, **build_kwargs: Any
+) -> dict[str, Any]:
+    """Build and durably commit one independent reproducer trust anchor (P90-R4-F2) --
+    SHUKOU's own pre-registration of a distinct reproducer actor/authority's Ed25519 public
+    key, before that actor ever submits a reproduction. Committed through the identical
+    `commit_coordination_record_at_tip` mechanism every other record kind in this package uses;
+    `identity.TRUST_ANCHOR_ID_FIELDS` excludes the key itself, so a same-identity re-admission
+    that declares a *different* key for the same (project, actor, protocol) is a same-id-
+    different-body conflict (`RecordConflictError`), never a silent overwrite
+    (`POST_ADMISSION_KEY_MUTATION_REFUSED=true`, `ACTOR_KEY_SUBSTITUTION_REFUSED=true`)."""
+
+    record = build_independent_reproducer_trust_anchor(project_id=project_id, **build_kwargs)
+    trust_anchor_id = record["trust_anchor_id"]
+    return cast(
+        "dict[str, Any]",
+        store.commit_coordination_record_at_tip(
+            project_id,
+            trust_anchor_id,
+            INDEPENDENT_REPRODUCER_TRUST_ANCHOR_RECORD_KIND,
+            trust_anchor_id,
+            record,
+            expected_predecessor=None,
+        ),
+    )
+
+
+def resolve_independent_reproducer_trust_anchor(
+    store: Any, *, project_id: str, trust_anchor_id: str
+) -> dict[str, Any] | None:
+    result = store.resolve_coordination_record(
+        project_id, INDEPENDENT_REPRODUCER_TRUST_ANCHOR_RECORD_KIND, trust_anchor_id
+    )
+    return cast("dict[str, Any] | None", result)
+
+
 def admit_independent_reproduction_submission(
     store: Any, *, project_id: str, submission: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -320,8 +362,41 @@ def admit_independent_reproduction_submission(
         )
 
     record = dict(submission)
+    reproducer_actor_or_authority_id = record.get("reproducer_actor_or_authority_id")
+    if (
+        not isinstance(reproducer_actor_or_authority_id, str)
+        or not reproducer_actor_or_authority_id
+    ):
+        raise IndependentReproductionSubmissionValidationError(
+            "admit_independent_reproduction_submission requires a non-empty string "
+            "reproducer_actor_or_authority_id"
+        )
+    expected_trust_anchor_id = independent_reproducer_trust_anchor_id(
+        {
+            "project_id": project_id,
+            "reproducer_actor_or_authority_id": reproducer_actor_or_authority_id,
+            "role": "INDEPENDENT_PHASE_21_REPRODUCER",
+            "authorized_protocol_or_corpus_ref": freeze_ref,
+        }
+    )
+    resolved_trust_anchor = resolve_independent_reproducer_trust_anchor(
+        store, project_id=project_id, trust_anchor_id=expected_trust_anchor_id
+    )
+    if resolved_trust_anchor is None:
+        raise IndependentReproductionSubmissionValidationError(
+            "no comparative_benchmark_independent_reproducer_trust_anchor is registered for "
+            f"reproducer_actor_or_authority_id {reproducer_actor_or_authority_id!r} against "
+            f"protocol_freeze_ref {freeze_ref!r} -- an independent reproduction submission can "
+            "only be admitted against a trust anchor SHUKOU pre-registered before this "
+            "submission, never the submission's own self-declared key alone "
+            "(SELF_DECLARED_UNREGISTERED_KEY_REFUSED=true)"
+        )
+
     verify_independent_reproduction_submission(
-        record, protocol_freeze=resolved_freeze, original_result_bundle=resolved_bundle
+        record,
+        protocol_freeze=resolved_freeze,
+        original_result_bundle=resolved_bundle,
+        trust_anchor=resolved_trust_anchor,
     )
     submission_id = record["independent_reproduction_submission_id"]
     return cast(
@@ -349,14 +424,17 @@ def resolve_independent_reproduction_submission(
 
 
 __all__ = [
+    "INDEPENDENT_REPRODUCER_TRUST_ANCHOR_RECORD_KIND",
     "INDEPENDENT_REPRODUCTION_SUBMISSION_RECORD_KIND",
     "PROTOCOL_FREEZE_RECORD_KIND",
     "REPRODUCTION_RECEIPT_RECORD_KIND",
     "RESULT_BUNDLE_RECORD_KIND",
+    "admit_independent_reproducer_trust_anchor",
     "admit_independent_reproduction_submission",
     "commit_protocol_freeze",
     "commit_reproduction_receipt",
     "commit_result_bundle",
+    "resolve_independent_reproducer_trust_anchor",
     "resolve_independent_reproduction_submission",
     "resolve_protocol_freeze",
     "resolve_reproduction_receipt",

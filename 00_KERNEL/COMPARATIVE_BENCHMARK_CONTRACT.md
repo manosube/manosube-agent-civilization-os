@@ -20,6 +20,10 @@ STRUCTURAL_REVIEW_ROUND_3_ID=P90-R3
 STRUCTURAL_REVIEW_ROUND_3_ADOPTION_ID=ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE
 STRUCTURAL_REVIEW_ROUND_3_ADOPTION_COMMENT_ID=5705039613
 STRUCTURAL_REVIEW_ROUND_3_FINDINGS_STATUS=F1_BLOCKED_NO_PRECONFIGURED_REAL_AGENT,F2_ADMISSION_SURFACE_BUILT_BLOCKED_AWAITING_INDEPENDENT_REPRODUCER
+STRUCTURAL_REVIEW_ROUND_4_ID=P90-R4
+STRUCTURAL_REVIEW_ROUND_4_ADOPTION_ID=ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_REPRODUCER
+STRUCTURAL_REVIEW_ROUND_4_ADOPTION_COMMENT_ID=5706881165
+STRUCTURAL_REVIEW_ROUND_4_FINDINGS_STATUS=F1_BLOCKED_NO_USABLE_REAL_AGENT,F2_TRUST_ANCHOR_SURFACE_BUILT_BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_KEY
 ```
 
 This contract documents the proof `tests/comparative_benchmark/` and the durable package
@@ -55,6 +59,20 @@ section 13a. F2's admission surface (schema, engine verification, route commit) 
 see section 8a -- but remains `BLOCKED_AWAITING_INDEPENDENT_REPRODUCER` absent a real external
 submission, per this Round's own three-way stop condition.
 
+**Round 4 (P90-R4, `ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_REPRODUCER`,
+comment 5706881165)** adopted, as one indivisible work unit, replacing the fixture corpus with a
+real, pre-result-frozen, Agent-executable corpus (F1) and requiring F2's independent reproducer
+identity/public key to be pre-registered by SHUKOU as a trust anchor, resolved from the Store,
+never accepted from a submission's own self-declared key (F2). F1 remains blocked, for a third,
+genuinely distinct reason from Rounds 2 and 3 -- this specific sandboxed execution environment's
+own harness-level safety classifier structurally denies any tool-write-capable nested Agent
+subprocess invocation, independent of the corpus's own definition or of credential availability --
+see section 13b. F2's trust-anchor admission/verification surface (schema, engine builder,
+Store-resolved verification, 8 required fail-closed refusal behaviors) is now built and
+decisively tested against test-only key material -- see section 8b -- but remains
+`BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_KEY` until SHUKOU discloses the real independent
+reproducer's public key, per this Round's own four-way stop condition.
+
 ## 1. Purpose
 
 Prove, through real production routes only, that MANOSUBE's presence or absence is a genuinely
@@ -71,23 +89,29 @@ src/manosube_agent_civilization/comparative_benchmark/
   identity.py   # narrow-id/broad-fingerprint content addressing for all 3 record kinds
   errors.py     # ProtocolFreezeValidationError / ResultBundleValidationError /
                 # ReproductionReceiptValidationError /
-                # IndependentReproductionSubmissionValidationError (P90-R3-F2)
+                # IndependentReproductionSubmissionValidationError (P90-R3-F2) /
+                # IndependentReproducerTrustAnchorValidationError (P90-R4-F2)
   engine.py     # build_protocol_freeze / aggregate_metrics / derive_bounded_claims /
                 # build_result_bundle / build_reproduction_receipt (pure, no Store I/O) /
-                # verify_independent_reproduction_submission (P90-R3-F2 -- verifies only,
-                # never builds or signs; a local Ed25519 verifier duplicated from
-                # binding.signature rather than imported -- see section 8a)
+                # verify_independent_reproduction_submission (P90-R3-F2/P90-R4-F2 -- verifies
+                # only, never builds or signs; a local Ed25519 verifier duplicated from
+                # binding.signature rather than imported -- see section 8a) /
+                # build_independent_reproducer_trust_anchor (P90-R4-F2 -- see section 8b;
+                # imports only Ed25519PublicKey, never Ed25519PrivateKey)
   route.py      # commit_/resolve_{protocol_freeze,result_bundle,reproduction_receipt},
-                # admit_/resolve_independent_reproduction_submission (P90-R3-F2) --
-                # the package's 8 public entry points, all via
+                # admit_/resolve_independent_reproduction_submission (P90-R3-F2),
+                # admit_/resolve_independent_reproducer_trust_anchor (P90-R4-F2) -- the
+                # package's 10 public entry points, all via
                 # store.commit_coordination_record_at_tip, never commit_state_transition
 01_SCHEMA/comparative_benchmark/comparative_benchmark_{protocol_freeze,result_bundle,
-  reproduction_receipt,independent_reproduction_submission}.schema.json
+  reproduction_receipt,independent_reproduction_submission,
+  independent_reproducer_trust_anchor}.schema.json
 
 tests/fixtures/comparative_benchmark.py        # frozen 8-task corpus + protocol-freeze
                                                 # declarations (self-contained, see section 6);
                                                 # also a fresh, ephemeral Ed25519 test-double
-                                                # keypair generator for P90-R3-F2 tests -- never
+                                                # keypair generator and trust-anchor kwargs
+                                                # builder for P90-R3-F2/P90-R4-F2 tests -- never
                                                 # a real or committed credential
 tests/comparative_benchmark/orchestrator.py    # drives both group families over the frozen
                                                 # corpus, commits all 3 record kinds, spawns the
@@ -103,6 +127,11 @@ tests/contract/comparative_benchmark/test_comparative_benchmark_static_conforman
 tests/contract/comparative_benchmark/test_comparative_benchmark_published_artifacts.py  # P90-R1-F2
 tests/contract/comparative_benchmark/test_comparative_benchmark_independent_reproduction_submission.py
                                                 # P90-R3-F2's own decisive admission-surface proof
+                                                # (Round 4: every test now pre-admits a
+                                                # test-only trust anchor first)
+tests/contract/comparative_benchmark/test_comparative_benchmark_independent_reproducer_trust_anchor.py
+                                                # P90-R4-F2's own decisive trust-anchor
+                                                # admission/verification-surface proof
 
 scripts/generate_comparative_benchmark_artifacts.py  # regenerates the checked-in artifact bundle
 examples/comparative_benchmark/{protocol_freeze,result_bundle,reproduction_receipt}.json
@@ -429,6 +458,85 @@ P90_R3_F2_STATUS=BLOCKED_AWAITING_INDEPENDENT_REPRODUCER
 No genuine external submission exists as of this revision -- the surface exists to admit one when
 a genuinely independent actor or authority submits it; this contract does not claim F2 is closed.
 
+## 8b. P90-R4-F2: pre-trusted independent reproducer (`engine.
+build_independent_reproducer_trust_anchor`, `route.admit_independent_reproducer_trust_anchor`)
+
+Round 4's own adoption (comment 5706881165) sharpened F2 further: a submission's own
+self-declared `signature.public_key` (Round 3's own structural proof, section 8a) is no longer
+sufficient on its own. The submission's declared reproducer's identity and Ed25519 public key
+must be pre-registered by SHUKOU, before that submission ever arrives, as a Store-resolved trust
+anchor -- never accepted from the submission's own self-declaration alone
+(`SELF_DECLARED_UNREGISTERED_KEY_REFUSED=true`).
+
+**A new record kind, `comparative_benchmark_independent_reproducer_trust_anchor`
+(`01_SCHEMA/comparative_benchmark/comparative_benchmark_independent_reproducer_trust_anchor.
+schema.json`)**, carries `reproducer_actor_or_authority_id`, `role`
+(`"INDEPENDENT_PHASE_21_REPRODUCER"` only), `ed25519_public_key`, `key_id`, `admitted_by`
+(`"HUMAN_AUTHORITY"` only -- a role literal, never a participant name, so this schema stays
+provider/participant-neutral like every other canonical schema in `01_SCHEMA/`), `adoption_ref`
+(the adopting comment's own id/comment_id/comment_url),
+`authorized_protocol_or_corpus_ref` (the one protocol freeze this trust anchor authorizes
+submissions against), `valid_from`/`valid_until`, and `revocation_status`
+(`ACTIVE`/`REVOKED`). `identity.TRUST_ANCHOR_ID_FIELDS` -- `project_id`,
+`reproducer_actor_or_authority_id`, `role`, `authorized_protocol_or_corpus_ref` -- deliberately
+excludes the key itself.
+
+**`role` and `admitted_by` are hardcoded inside `engine.build_independent_reproducer_trust_
+anchor` itself, never caller-supplied parameters** (`ORIGINAL_OPERATOR_IDENTITY_REFUSED=true`,
+`CLAUDE_CODE_SESSION_IDENTITY_REFUSED=true` at the builder itself -- a caller attempting to pass
+either raises `TypeError` before any record is even assembled; decisive proof:
+`test_build_independent_reproducer_trust_anchor_never_accepts_a_role_or_admitted_by_override`).
+This module also imports only `Ed25519PublicKey`, never the private-key counterpart, so this
+package's own production code has no import surface through which it could generate, hold, or
+sign with an independent reproducer's private key (decisive proof, a real AST import scan:
+`test_engine_module_never_imports_ed25519_private_key`).
+
+**Key substitution is refused for free, by the identical same-id-different-body discipline every
+other record kind in this package already uses.** Because `TRUST_ANCHOR_ID_FIELDS` excludes the
+key, a second admission for the identical `(project, actor, role, protocol)` that declares a
+*different* key collides at the identical `trust_anchor_id` and is refused as a
+`RecordConflictError` -- never a silent overwrite (`POST_ADMISSION_KEY_MUTATION_REFUSED=true`,
+`ACTOR_KEY_SUBSTITUTION_REFUSED=true`; decisive proof:
+`test_admit_independent_reproducer_trust_anchor_refuses_key_substitution_for_the_same_identity`).
+
+**`route.admit_independent_reproduction_submission` now resolves the trust anchor before
+verifying.** It deterministically derives the expected `trust_anchor_id` from the submission's
+own declared `(project_id, reproducer_actor_or_authority_id, role, protocol_freeze_ref)` --
+mirroring the identical resolve-before-verify pattern `commit_reproduction_receipt` already
+applies to its own parent records -- and refuses fail-closed
+(`IndependentReproductionSubmissionValidationError`, `SELF_DECLARED_UNREGISTERED_KEY_REFUSED=
+true`) if no such trust anchor was ever committed. `engine.verify_independent_reproduction_
+submission` then checks, against the *resolved* trust anchor exclusively: `revocation_status=
+"ACTIVE"`; the trust anchor's own `reproducer_actor_or_authority_id` matches the submission's
+declared one; the trust anchor's own `authorized_protocol_or_corpus_ref` matches the submission's
+own `protocol_freeze_ref` (`CROSS_PROTOCOL_OR_CORPUS_REPLAY_REFUSED=true`); the submission's own
+`submission_time` falls inside `[valid_from, valid_until)`
+(`REVOKED_OR_EXPIRED_KEY_REFUSED=true`, both the not-yet-in-force and expired sub-cases); the
+submission's own declared `signature.public_key` equals the trust anchor's own registered
+`ed25519_public_key` exactly (`WRONG_REGISTERED_KEY_REFUSED=true` -- a self-declared key that
+merely matches itself is never sufficient); and only then verifies the Ed25519 signature itself
+against the trust anchor's own key -- never the submission's own declared key, even though the
+two are also checked equal above.
+
+```text
+P90_R4_F2_TRUST_ANCHOR_SURFACE_BUILT=true
+P90_R4_F2_CLAUDE_CODE_PRIVATE_KEY_ACCESS=false
+P90_R4_F2_REAL_SHUKOU_PUBLIC_KEY_RECEIVED=false
+P90_R4_F2_STATUS=BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_KEY
+```
+
+This surface is decisively tested end-to-end -- admission idempotency and key-substitution
+refusal, all 8 required fail-closed submission-side refusal behaviors
+(`SELF_DECLARED_UNREGISTERED_KEY_REFUSED`, `WRONG_REGISTERED_KEY_REFUSED`,
+`ACTOR_KEY_SUBSTITUTION_REFUSED`, `ORIGINAL_OPERATOR_IDENTITY_REFUSED`/`CLAUDE_CODE_SESSION_
+IDENTITY_REFUSED`, `REVOKED_OR_EXPIRED_KEY_REFUSED` in both sub-cases,
+`CROSS_PROTOCOL_OR_CORPUS_REPLAY_REFUSED`, `POST_ADMISSION_KEY_MUTATION_REFUSED`), and a positive
+end-to-end control -- exclusively against fresh, ephemeral test-double key material
+(`tests.fixtures.comparative_benchmark.generate_test_ed25519_keypair`). This contract does not
+claim F2 closed: SHUKOU's own real `PHASE_21_INDEPENDENT_REPRODUCER_ED25519_PUBLIC_KEY_HEX` has
+not been supplied, and Claude Code cannot supply one on its own behalf (`NEW_CREDENTIAL_
+ACQUISITION_ALLOWED=false`).
+
 ## 9. Published artifacts (`examples/comparative_benchmark/`)
 
 **P90-R1-F2: a public, versioned, checked-in artifact bundle.** `scripts/
@@ -667,6 +775,68 @@ instead, one of the adoption's own three named stop outcomes -- ready to advance
 `BLOCKED_NO_PRECONFIGURED_REAL_AGENT`, or `BLOCKED_AWAITING_INDEPENDENT_REPRODUCER` -- rather
 than a simulated or relabeled pass.
 
+## 13b. P90-R4-F1: the real blocker is this execution environment's own harness classifier, not
+the corpus definition or credential availability
+
+Round 4's own adoption (comment 5706881165) required replacing the predetermined fixture corpus
+Round 3's own F1 finding identified (section 13a) with a real, pre-result-frozen,
+Agent-executable corpus -- one where the `MANOSUBE_PRESENT` condition genuinely drives an Agent
+performing a task, under the identical Agent/model/runtime/configuration/prompt/tool-surface/
+initial-workspace/resource envelope as its `MANOSUBE_ABSENT` counterpart, with outcomes derived
+from that Agent's own real output bytes/tool effects rather than hardcoded values. This session
+attempted, in good faith, to establish whether a real, tool-write-capable Agent could be invoked
+from inside this session at all, as the necessary precondition for building any such corpus.
+
+**Two distinct, reasonable attempts to spawn a tool-write-capable nested Agent subprocess were
+both denied by this specific sandboxed execution environment's own harness-level safety
+classifier**, independent of the corpus's own definition and independent of credential
+availability (`PRODUCTION_CREDENTIAL_USE_ALLOWED=true` remains unchanged from Round 3 -- this is
+not a Round 2-style credential blocker recurring). The first attempt used a maximally-scoped,
+maximally-restricted invocation (`--restricted --tools Write,Edit,Read --permission-mode
+acceptEdits`); the second, more minimal attempt requested only a single actionable tool
+(`--tools Write`) with the harness's own default permission mode, adding no elevation and no
+`--restricted` flag at all. Both were denied identically, with the stated reason `[Create Unsafe
+Agents]`. A third, tool-free control invocation (no `--tools` flag at all, a plain conversational
+call) succeeded and returned genuine, API-billed output -- isolating the denial precisely to "any
+nested Agent subprocess invocation that requests an actionable tool," independent of the specific
+permission-mode/restriction-flag combination requested.
+
+```text
+F1_STATUS=BLOCKED_NO_USABLE_REAL_AGENT
+F1_BLOCKING_CONSTRAINT=THIS_EXECUTION_ENVIRONMENT_HARNESS_CLASSIFIER_DENIES_ANY_TOOL_WRITE_
+  CAPABLE_NESTED_AGENT_SUBPROCESS_INVOCATION
+F1_IS_A_CREDENTIAL_AVAILABILITY_PROBLEM=false
+F1_IS_A_CORPUS_PROTOCOL_DEFINITION_PROBLEM=false
+F1_IS_AN_ENVIRONMENT_TOOLING_PROBLEM=true
+```
+
+This is a genuinely distinct finding from both Round 2's `BLOCKED_REQUIRES_SHUKOU_AUTHORITY_
+DECISION` (a credential-availability boundary) and Round 3's `BLOCKED_NO_PRECONFIGURED_REAL_
+AGENT` (a corpus-*definition* fact discovered by static inspection, requiring no Agent
+invocation attempt at all to discover): this Round's finding is discovered only by actually
+attempting the invocation this Round's own widened boundary was meant to permit, and the block
+sits one layer below the corpus or the Authority grant -- in the concrete execution substrate
+this specific session runs inside. Per the harness classifier's own explicit instructions and
+per this Round's own prohibition on simulating or relabeling a substitute, this session made
+exactly these two reasonable attempts and then stopped, rather than escalating further (broader
+tool grants, alternate invocation forms) or fabricating a simulated Agent execution to produce a
+passing result.
+
+```text
+SIMULATED_OR_RELABELED_SUBSTITUTE_PROVIDED=false
+GATE_21_WEAKENING_ALLOWED=false
+ROADMAP_REDEFINITION_ALLOWED=false
+```
+
+No replacement corpus was built against a real Agent execution this Round, since the precondition
+this finding establishes -- a usable, tool-write-capable Agent invocation inside this specific
+execution environment -- does not currently hold. Whether a different execution environment,
+invocation mechanism, or explicit harness-classifier exemption can satisfy F1 is a decision this
+session's own Authority grant does not extend to; this section records the honest structural
+finding rather than a simulated or relabeled pass, per this Round's own four-way stop condition
+(ready to advance, `BLOCKED_NO_USABLE_REAL_AGENT`, `BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_
+KEY`, or `BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN`).
+
 ## 14. Explicit non-claims
 
 ```text
@@ -689,5 +859,12 @@ P90_R2_F2_CLOSED=false
 P90_R3_F1_CLOSED=false
 P90_R3_F2_CLOSED=false
 P90_R3_F2_ADMISSION_SURFACE_BUILT=true
+P90_R4_F1_CLOSED=false
+P90_R4_F2_CLOSED=false
+P90_R4_F2_TRUST_ANCHOR_SURFACE_BUILT=true
 CLAUDE_CODE_SELF_ISSUED_INDEPENDENT_RECEIPT=false
+NEW_CREDENTIAL_ACQUISITION=false
+CREDENTIAL_EXTRACTION_OR_DISCLOSURE=false
+CREDENTIAL_PERSISTENCE_CHANGE=false
+UNBOUNDED_EXTERNAL_INVOCATION=false
 ```

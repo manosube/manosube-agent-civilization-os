@@ -379,6 +379,50 @@ def independent_reproducer_execution_environment_manifest() -> dict[str, str]:
     }
 
 
+#: P90-R4-F2's own governing adoption comment -- this fixture module's `adoption_ref` for every
+#: test-only trust anchor it builds names the real SHUKOU adoption comment this whole surface was
+#: built against, never a placeholder identifier.
+INDEPENDENT_REPRODUCER_TRUST_ANCHOR_ADOPTION_REF: dict[str, str] = {
+    "adoption_id": "ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_REPRODUCER",
+    "comment_id": "5706881165",
+    "comment_url": (
+        "https://github.com/manosube/manosube-agent-civilization-os/pull/90#issuecomment-5706881165"
+    ),
+}
+
+
+def independent_reproducer_trust_anchor_kwargs(
+    *,
+    reproducer_actor_or_authority_id: str,
+    ed25519_public_key: str,
+    key_id: str,
+    authorized_protocol_or_corpus_ref: dict[str, str],
+    valid_from: str,
+    generated_at: str,
+    valid_until: str | None = None,
+    revocation_status: str = "ACTIVE",
+) -> dict[str, Any]:
+    """Every keyword ``engine.build_independent_reproducer_trust_anchor`` needs to build one
+    P90-R4-F2 trust anchor against this fixture world's own project binding -- this module never
+    holds a *real* independent reproducer's private key (see
+    :func:`generate_test_ed25519_keypair`'s own docstring); *ed25519_public_key* here is always
+    either a fresh test-double public key or, once SHUKOU discloses it,
+    ``PHASE_21_INDEPENDENT_REPRODUCER_ED25519_PUBLIC_KEY_HEX`` -- never a private key."""
+
+    return {
+        "project_binding_ref": {"kind": "project_binding", "id": PROJECT_BINDING_ID},
+        "reproducer_actor_or_authority_id": reproducer_actor_or_authority_id,
+        "ed25519_public_key": ed25519_public_key,
+        "key_id": key_id,
+        "adoption_ref": dict(INDEPENDENT_REPRODUCER_TRUST_ANCHOR_ADOPTION_REF),
+        "authorized_protocol_or_corpus_ref": dict(authorized_protocol_or_corpus_ref),
+        "valid_from": valid_from,
+        "valid_until": valid_until,
+        "revocation_status": revocation_status,
+        "generated_at": generated_at,
+    }
+
+
 def protocol_freeze_kwargs(*, generated_at: str) -> dict[str, Any]:
     """Every keyword ``manosube_agent_civilization.comparative_benchmark.engine.
     build_protocol_freeze`` needs to build this corpus's own one protocol freeze -- the complete

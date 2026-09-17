@@ -161,8 +161,15 @@ def main() -> int:
     # supplied, Ed25519-signed independent reproduction submission this package only ever
     # verifies -- schema, self-consistent identity, exact corpus fidelity, independently
     # rederived content-address/metrics/agreement, and a genuine signature against its own
-    # declared public key -- never one this package builds or signs itself) -- making 94.
-    if len(paths) != 94 or len(set(ids)) != len(paths) or None in ids:
+    # declared public key -- never one this package builds or signs itself) -- making 94. PR #90
+    # Structural Review Round 4 (`ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_
+    # REPRODUCER`) adds one more, owned by the same `comparative_benchmark` package:
+    # `comparative_benchmark_independent_reproducer_trust_anchor` (SHUKOU's own pre-registration
+    # of a distinct independent reproducer actor/authority's Ed25519 public key, committed
+    # before that actor ever submits a reproduction, so an independent reproduction submission
+    # is only ever admitted against a Store-resolved trust anchor, never the submission's own
+    # self-declared key alone) -- making 95.
+    if len(paths) != 95 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

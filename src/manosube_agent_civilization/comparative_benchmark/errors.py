@@ -26,13 +26,23 @@ class ReproductionReceiptValidationError(ComparativeBenchmarkError):
 
 
 class IndependentReproductionSubmissionValidationError(ComparativeBenchmarkError):
-    """An independent reproduction submission (P90-R3-F2) failed schema validation, its own
-    signature does not verify against its own declared public key, or it does not genuinely
-    bind to an already-committed protocol freeze/result bundle."""
+    """An independent reproduction submission (P90-R3-F2/P90-R4-F2) failed schema validation,
+    its own signature does not verify against the pre-registered trust-anchor public key, its
+    declared key diverges from that trust anchor's own registered key, no trust anchor is
+    registered at all for its declared reproducer/protocol, or it does not genuinely bind to an
+    already-committed protocol freeze/result bundle."""
+
+
+class IndependentReproducerTrustAnchorValidationError(ComparativeBenchmarkError):
+    """An independent reproducer trust anchor (P90-R4-F2) failed schema validation, one of its
+    own fail-closed structural checks (a malformed Ed25519 public key, `valid_until` not after
+    `valid_from`), or -- at the admission route -- its own `admitted_by`/`adoption_ref` do not
+    structurally name SHUKOU's own adopting comment."""
 
 
 __all__ = [
     "ComparativeBenchmarkError",
+    "IndependentReproducerTrustAnchorValidationError",
     "IndependentReproductionSubmissionValidationError",
     "ProtocolFreezeValidationError",
     "ReproductionReceiptValidationError",

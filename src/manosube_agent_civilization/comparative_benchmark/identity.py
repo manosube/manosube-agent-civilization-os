@@ -229,6 +229,56 @@ def independent_reproduction_submission_semantic_fingerprint(record: Mapping[str
     return "sha256:" + digest
 
 
+#: P90-R4-F2: an independent reproducer trust anchor's own identity: one actor/authority, one
+#: declared role, admitted for exactly one authorized protocol/corpus -- deliberately excludes
+#: `ed25519_public_key`/`key_id` themselves, so a same-identity re-admission that tries to
+#: declare a *different* key for the identical actor/protocol collides at the identical Store
+#: slot as a same-id-different-body conflict (`POST_ADMISSION_KEY_MUTATION_REFUSED=true`,
+#: `ACTOR_KEY_SUBSTITUTION_REFUSED=true`) rather than silently minting a second, competing
+#: trust anchor for the same actor.
+TRUST_ANCHOR_ID_FIELDS: tuple[str, ...] = (
+    "project_id",
+    "reproducer_actor_or_authority_id",
+    "role",
+    "authorized_protocol_or_corpus_ref",
+)
+
+TRUST_ANCHOR_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "project_id",
+    "project_binding_ref",
+    "reproducer_actor_or_authority_id",
+    "role",
+    "ed25519_public_key",
+    "key_id",
+    "admitted_by",
+    "adoption_ref",
+    "authorized_protocol_or_corpus_ref",
+    "valid_from",
+    "valid_until",
+    "revocation_status",
+    "generated_at",
+)
+
+
+def independent_reproducer_trust_anchor_id(record: Mapping[str, Any]) -> str:
+    payload = _projection(
+        record,
+        TRUST_ANCHOR_ID_FIELDS,
+        kind="comparative_benchmark_independent_reproducer_trust_anchor",
+    )
+    return "CBTA-" + hashlib.sha256(canonical_json_bytes(payload)).hexdigest().upper()
+
+
+def independent_reproducer_trust_anchor_semantic_fingerprint(record: Mapping[str, Any]) -> str:
+    projection = _projection(
+        record,
+        TRUST_ANCHOR_SEMANTIC_FIELDS,
+        kind="comparative_benchmark_independent_reproducer_trust_anchor",
+    )
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(projection)).hexdigest()
+
+
 __all__ = [
     "INDEPENDENT_REPRODUCTION_SUBMISSION_ID_FIELDS",
     "INDEPENDENT_REPRODUCTION_SUBMISSION_SEMANTIC_FIELDS",
@@ -238,6 +288,10 @@ __all__ = [
     "REPRODUCTION_RECEIPT_SEMANTIC_FIELDS",
     "RESULT_BUNDLE_ID_FIELDS",
     "RESULT_BUNDLE_SEMANTIC_FIELDS",
+    "TRUST_ANCHOR_ID_FIELDS",
+    "TRUST_ANCHOR_SEMANTIC_FIELDS",
+    "independent_reproducer_trust_anchor_id",
+    "independent_reproducer_trust_anchor_semantic_fingerprint",
     "independent_reproduction_submission_id",
     "independent_reproduction_submission_semantic_fingerprint",
     "independent_reproduction_submission_signing_payload",

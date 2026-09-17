@@ -1,13 +1,21 @@
-"""P90-R3-F2 (PR #90 Round 3, ``ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE``):
-decisive proof for the independent reproduction submission admission surface.
+"""P90-R3-F2 (PR #90 Round 3, ``ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE``)
+and P90-R4-F2 (PR #90 Round 4, ``ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_
+REPRODUCER``): decisive proof for the independent reproduction submission admission surface.
 
 Claude Code never builds or signs a submission itself here -- every submission this suite
 constructs is signed with a fresh, ephemeral test-double keypair
 (``tests.fixtures.comparative_benchmark.generate_test_ed25519_keypair``), standing in for the
-*shape* a genuinely separate, self-keyed actor would submit. The point of every test below is
-that ``admit_independent_reproduction_submission`` verifies, and only verifies, an
-externally-supplied record -- it never trusts a caller's own claimed identity, aggregate, or
-agreement, and it refuses fail-closed the moment any one of its independent checks fails."""
+*shape* a genuinely separate, self-keyed actor would submit. Since P90-R4-F2, admission also
+requires a Store-resolved ``comparative_benchmark_independent_reproducer_trust_anchor`` to
+already be committed for the submission's own declared reproducer/protocol before any submission
+can be admitted at all -- every test below that expects admission to reach its own real check
+(rather than the trust-anchor-missing refusal) first admits one test-only trust anchor via
+``_admit_trust_anchor`` below, itself built exclusively from test-double key material, never a
+real independent reproducer's key. The point of every test below is that
+``admit_independent_reproduction_submission`` verifies, and only verifies, an externally-supplied
+record against Store-resolved parents/trust anchor -- it never trusts a caller's own claimed
+identity, aggregate, or agreement, and it refuses fail-closed the moment any one of its
+independent checks fails."""
 
 from __future__ import annotations
 
@@ -83,6 +91,42 @@ def _committed_freeze_and_bundle(store: FileStateStore) -> tuple[dict[str, Any],
         generated_at=_GENERATED_AT,
     )
     return protocol_freeze, original_bundle
+
+
+def _admit_trust_anchor(
+    store: FileStateStore,
+    *,
+    protocol_freeze: dict[str, Any],
+    public_key_hex: str,
+    reproducer_actor_or_authority_id: str = "independent-reproducer-a",
+    valid_from: str = _GENERATED_AT,
+    valid_until: str | None = None,
+    revocation_status: str = "ACTIVE",
+) -> dict[str, Any]:
+    """Pre-register one P90-R4-F2 trust anchor -- SHUKOU's own admission, standing in here for
+    a test-only keypair -- authorizing *reproducer_actor_or_authority_id* to submit against
+    *protocol_freeze*, before any submission naming that same (actor, protocol) pair can be
+    admitted at all (``SELF_DECLARED_UNREGISTERED_KEY_REFUSED=true``)."""
+
+    freeze_ref = {
+        "protocol_freeze_id": protocol_freeze["protocol_freeze_id"],
+        "protocol_freeze_semantic_fingerprint": protocol_freeze[
+            "protocol_freeze_semantic_fingerprint"
+        ],
+    }
+    kwargs = cb.independent_reproducer_trust_anchor_kwargs(
+        reproducer_actor_or_authority_id=reproducer_actor_or_authority_id,
+        ed25519_public_key=public_key_hex,
+        key_id="test-key-1",
+        authorized_protocol_or_corpus_ref=freeze_ref,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        revocation_status=revocation_status,
+        generated_at=_GENERATED_AT,
+    )
+    return cb_route.admit_independent_reproducer_trust_anchor(
+        store, project_id=cb.PROJECT_ID, **kwargs
+    )
 
 
 def _submission(
@@ -176,6 +220,7 @@ def test_admit_independent_reproduction_submission_commits_and_resolves(tmp_path
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     submission = _submission(
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
@@ -203,6 +248,7 @@ def test_admit_independent_reproduction_submission_is_idempotent_for_an_identica
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     submission = _submission(
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
@@ -230,6 +276,7 @@ def test_admit_independent_reproduction_submission_refuses_a_conflicting_resubmi
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     first_submission = _submission(
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
@@ -316,6 +363,7 @@ def test_admit_independent_reproduction_submission_refuses_a_tampered_signature_
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     submission = _submission(
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
@@ -343,6 +391,7 @@ def test_admit_independent_reproduction_submission_refuses_a_signature_from_a_di
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     real_private_key, _real_public_key_hex = cb.generate_test_ed25519_keypair()
     _other_private_key, other_public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=other_public_key_hex)
     submission = _submission(
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
@@ -365,6 +414,7 @@ def test_admit_independent_reproduction_submission_refuses_a_post_signature_fiel
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     submission = _submission(
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
@@ -393,6 +443,7 @@ def test_admit_independent_reproduction_submission_refuses_a_partial_reproduced_
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     partial_events = _minimal_raw_events(protocol_freeze)[:-1]
     submission = _submission(
         protocol_freeze=protocol_freeze,
@@ -418,6 +469,7 @@ def test_admit_independent_reproduction_submission_refuses_a_reproduced_metrics_
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     raw_events = _minimal_raw_events(protocol_freeze)
     real_metrics = aggregate_metrics(raw_events, protocol_freeze)
     false_metrics = {
@@ -449,6 +501,7 @@ def test_admit_independent_reproduction_submission_refuses_a_declared_agreement_
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     submission = _submission(
         protocol_freeze=protocol_freeze,
         original_result_bundle=original_bundle,
@@ -475,6 +528,7 @@ def test_admit_independent_reproduction_submission_records_a_genuinely_divergent
     store = _store(tmp_path)
     protocol_freeze, original_bundle = _committed_freeze_and_bundle(store)
     private_key, public_key_hex = cb.generate_test_ed25519_keypair()
+    _admit_trust_anchor(store, protocol_freeze=protocol_freeze, public_key_hex=public_key_hex)
     divergent_events = _minimal_raw_events(protocol_freeze, outcome="TIMED_OUT")
     submission = _submission(
         protocol_freeze=protocol_freeze,
