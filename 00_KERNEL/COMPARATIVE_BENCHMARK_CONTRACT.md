@@ -23,7 +23,9 @@ STRUCTURAL_REVIEW_ROUND_3_FINDINGS_STATUS=F1_BLOCKED_NO_PRECONFIGURED_REAL_AGENT
 STRUCTURAL_REVIEW_ROUND_4_ID=P90-R4
 STRUCTURAL_REVIEW_ROUND_4_ADOPTION_ID=ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_REPRODUCER
 STRUCTURAL_REVIEW_ROUND_4_ADOPTION_COMMENT_ID=5706881165
-STRUCTURAL_REVIEW_ROUND_4_FINDINGS_STATUS=F1_BLOCKED_NO_USABLE_REAL_AGENT,F2_TRUST_ANCHOR_SURFACE_BUILT_BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_KEY
+STRUCTURAL_REVIEW_ROUND_4_FINDINGS_STATUS=F1_BLOCKED_NO_USABLE_REAL_AGENT,F2_TRUST_ANCHOR_ADMITTED_BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN
+STRUCTURAL_REVIEW_ROUND_4_KEY_REGISTRATION_COMMENT_ID=5709021178
+STRUCTURAL_REVIEW_ROUND_4_KEY_REGISTRATION_COMMENT_AUTHOR=manosube (OWNER)
 ```
 
 This contract documents the proof `tests/comparative_benchmark/` and the durable package
@@ -69,9 +71,15 @@ own harness-level safety classifier structurally denies any tool-write-capable n
 subprocess invocation, independent of the corpus's own definition or of credential availability --
 see section 13b. F2's trust-anchor admission/verification surface (schema, engine builder,
 Store-resolved verification, 8 required fail-closed refusal behaviors) is now built and
-decisively tested against test-only key material -- see section 8b -- but remains
-`BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_KEY` until SHUKOU discloses the real independent
-reproducer's public key, per this Round's own four-way stop condition.
+decisively tested against test-only key material -- see section 8b. SHUKOU subsequently
+disclosed the real independent reproducer's public key in PR #90 comment 5709021178 (author
+`manosube`, `OWNER`); Claude Code independently re-verified that comment via the GitHub API
+before acting on it (author, association, and every disclosed field), then admitted it as the
+real, checked-in trust anchor through the existing production route -- never a test-double key,
+and never the private key, which this repository has still never generated, requested, received,
+or stored. F2 now stands `BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN`: the trust anchor is
+admitted, but no genuine independent reproduction submission against it has yet been received,
+per this Round's own four-way stop condition.
 
 ## 1. Purpose
 
@@ -134,8 +142,15 @@ tests/contract/comparative_benchmark/test_comparative_benchmark_independent_repr
                                                 # admission/verification-surface proof
 
 scripts/generate_comparative_benchmark_artifacts.py  # regenerates the checked-in artifact bundle
+scripts/admit_comparative_benchmark_independent_reproducer_trust_anchor.py
+                                                # P90-R4-F2: admits SHUKOU's own real
+                                                # pre-registered public key through the
+                                                # production route and publishes the result;
+                                                # never touches a private key
 examples/comparative_benchmark/{protocol_freeze,result_bundle,reproduction_receipt}.json
                                                 # P90-R1-F2's own checked-in public bundle
+examples/comparative_benchmark/independent_reproducer_trust_anchor.json
+                                                # P90-R4-F2's own checked-in real trust anchor
 examples/comparative_benchmark/README.md
 ```
 
@@ -521,8 +536,9 @@ two are also checked equal above.
 ```text
 P90_R4_F2_TRUST_ANCHOR_SURFACE_BUILT=true
 P90_R4_F2_CLAUDE_CODE_PRIVATE_KEY_ACCESS=false
-P90_R4_F2_REAL_SHUKOU_PUBLIC_KEY_RECEIVED=false
-P90_R4_F2_STATUS=BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_KEY
+P90_R4_F2_REAL_SHUKOU_PUBLIC_KEY_RECEIVED=true
+P90_R4_F2_REAL_TRUST_ANCHOR_ADMITTED=true
+P90_R4_F2_STATUS=BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN
 ```
 
 This surface is decisively tested end-to-end -- admission idempotency and key-substitution
@@ -532,10 +548,105 @@ refusal, all 8 required fail-closed submission-side refusal behaviors
 IDENTITY_REFUSED`, `REVOKED_OR_EXPIRED_KEY_REFUSED` in both sub-cases,
 `CROSS_PROTOCOL_OR_CORPUS_REPLAY_REFUSED`, `POST_ADMISSION_KEY_MUTATION_REFUSED`), and a positive
 end-to-end control -- exclusively against fresh, ephemeral test-double key material
-(`tests.fixtures.comparative_benchmark.generate_test_ed25519_keypair`). This contract does not
-claim F2 closed: SHUKOU's own real `PHASE_21_INDEPENDENT_REPRODUCER_ED25519_PUBLIC_KEY_HEX` has
-not been supplied, and Claude Code cannot supply one on its own behalf (`NEW_CREDENTIAL_
-ACQUISITION_ALLOWED=false`).
+(`tests.fixtures.comparative_benchmark.generate_test_ed25519_keypair`).
+
+**The real trust anchor is now admitted (this revision).** SHUKOU independently pre-registered
+the real Phase 21 independent reproducer's Ed25519 public key in PR #90 comment 5709021178
+(author `manosube`, `OWNER`, created 2026-09-17T05:07:37Z):
+`reproducer_actor_or_authority_id=SHUKOU_PHASE21_REPRODUCER`, and a disclosed `ROLE=
+HUMAN_AUTHORITY` field that maps to this record's own `admitted_by` field (always
+`HUMAN_AUTHORITY`, see section 8b above) -- the record's own separate `role` field remains fixed
+to `INDEPENDENT_PHASE_21_REPRODUCER`, unaffected by this disclosure --
+`key_id=sha256:447776a9aaad1ebf2bc6936f169e494e418187fb71553086680b355a7d9f3f49`,
+`ed25519_public_key=0f183eed0aae19425e8f85c3a619b21ddc4efdb432966ab91cfdbc6dd7f2fdab`,
+`valid_from=2026-09-17T05:05:49Z`, `valid_until=NONE`, `private_key_disclosed=false`. Claude Code
+independently re-verified this comment via the GitHub API (author, `author_association=OWNER`,
+and every disclosed field, matched exactly) before acting on it -- never merely trusting a
+relayed report. `scripts/admit_comparative_benchmark_independent_reproducer_trust_anchor.py`
+then incorporated this already-verified public key into one real
+`comparative_benchmark_independent_reproducer_trust_anchor` record through the existing
+production route (`route.admit_independent_reproducer_trust_anchor`) against a fresh, disposable
+`FileStateStore` -- the identical checked-in-artifact pattern `scripts/generate_comparative_
+benchmark_artifacts.py` already establishes -- authorized against this directory's own published
+`protocol_freeze.json`, and published the committed record to `examples/comparative_benchmark/
+independent_reproducer_trust_anchor.json`
+(`tests/contract/comparative_benchmark/test_comparative_benchmark_published_artifacts.py`'s own
+new decisive proofs cover its schema validity, id/fingerprint reloadability, `admitted_by=
+HUMAN_AUTHORITY`/`role=INDEPENDENT_PHASE_21_REPRODUCER`/`revocation_status=ACTIVE`, and that it
+carries only a well-formed public key, never a private one). The submission's own self-declared
+key is still never trusted as the root: `route.admit_independent_reproduction_submission`
+resolves the trust anchor from the Store and checks the submission's declared key against it
+exclusively, exactly as section 8b above already describes -- this admission changes only which
+concrete key is now registered as that Store-resolved root, never the verification design.
+
+This contract does not claim F2 closed: a real trust anchor is now admitted, but no genuine
+independent reproduction submission against it has yet been received (`P90_R4_F2_STATUS=
+BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN`). Section 8c gives SHUKOU the exact commands to
+produce one; Claude Code never requests, reads, stores, or logs the private key those commands
+use.
+
+## 8c. Reproduction commands for SHUKOU (no private-key handling by Claude Code)
+
+The four commands below are the complete, already-verified procedure for SHUKOU to produce one
+genuine, admissible independent reproduction submission on a machine SHUKOU controls (e.g. a
+Windows PC with Python 3.11+ and `pip install cryptography` available). Claude Code has run the
+canonical payload/verification logic these commands call (it is this package's own shipped,
+tested production code) but never executes them against SHUKOU's own private key, never asks for
+that key to be pasted, uploaded, or logged, and never persists it anywhere in this repository.
+
+1. **Reproduce the frozen corpus.** Run the identical natural-route/ungated-reference-harness
+   procedure `examples/comparative_benchmark/protocol_freeze.json`'s own `reproduction_procedure`
+   names (`tests.comparative_benchmark.orchestrator.run_comparative_benchmark`) against a fresh
+   checkout of this repository at the commit that published `protocol_freeze.json`, and capture
+   the resulting `reproduced_raw_events` list (the honest per-task outcomes SHUKOU's own run
+   actually produced against this repository's real corpus/mechanism) -- never hand-authored.
+
+2. **Generate the canonical signing payload.** With `reproduced_raw_events` from step 1 assigned
+   to the identical draft submission shape `identity.
+   INDEPENDENT_REPRODUCTION_SUBMISSION_SEMANTIC_FIELDS` requires (see `01_SCHEMA/
+   comparative_benchmark/comparative_benchmark_independent_reproduction_submission.schema.json`
+   for the exact field list; `reproducer_actor_or_authority_id` must be exactly
+   `SHUKOU_PHASE21_REPRODUCER` to match the admitted trust anchor), compute the exact bytes to
+   sign by calling this package's own shipped function directly, never a hand-rolled
+   equivalent:
+   ```
+   python -c "
+   from manosube_agent_civilization.comparative_benchmark.identity import (
+       independent_reproduction_submission_signing_payload,
+   )
+   import json, sys
+   draft = json.load(sys.stdin)
+   sys.stdout.buffer.write(independent_reproduction_submission_signing_payload(draft))
+   " < draft_submission.json > signing_payload.bin
+   ```
+
+3. **Sign the payload with SHUKOU's own already-held private key.** This step runs only on
+   SHUKOU's own machine, using the private key matching the already-registered
+   `ed25519_public_key=0f183eed0aae19425e8f85c3a619b21ddc4efdb432966ab91cfdbc6dd7f2fdab` --
+   Claude Code never sees this step's input or output:
+   ```
+   python -c "
+   from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+   private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(input('PRIVATE_KEY_HEX: ')))
+   with open('signing_payload.bin', 'rb') as f:
+       payload = f.read()
+   print('SIGNATURE_HEX=' + private_key.sign(payload).hex())
+   "
+   ```
+
+4. **Assemble and admit the submission.** Fill `draft_submission.json`'s own
+   `independent_reproduction_submission_id`/`..._semantic_fingerprint` (via `identity.
+   independent_reproduction_submission_id`/`..._semantic_fingerprint`) and its own `signature`
+   object (`{"algorithm": "ed25519", "public_key": "0f183eed...2fdab", "value": "<SIGNATURE_HEX
+   from step 3>"}`), then submit the completed record through the existing production route
+   (`route.admit_independent_reproduction_submission`) against a Store that already has this
+   project's own `protocol_freeze`/`result_bundle`/trust anchor committed to it -- the identical
+   pattern `tests/contract/comparative_benchmark/
+   test_comparative_benchmark_independent_reproducer_trust_anchor.py`'s own positive-control test
+   already exercises against test-only keys. `verify_independent_reproduction_submission` fails
+   closed on any mismatch (wrong key, wrong corpus, expired window, or a recomputed
+   `agreement`/`reproduced_metrics` that disagrees with the submission's own declared values) --
+   a successful admission is therefore itself the decisive proof this reproduction is genuine.
 
 ## 9. Published artifacts (`examples/comparative_benchmark/`)
 
@@ -551,8 +662,17 @@ JSON, and never an ephemeral per-test `FileStateStore` that vanishes after the t
 records' own internal content addressing (`state.canonicalize.canonical_json_bytes`) is entirely
 unaffected by how the checked-in copy is pretty-printed.
 
+**P90-R4-F2 (this revision): a fourth checked-in file, the real trust anchor.** `scripts/
+admit_comparative_benchmark_independent_reproducer_trust_anchor.py` reads this directory's own
+already-published `protocol_freeze.json`, admits SHUKOU's own real, already-verified public key
+(PR #90 comment 5709021178) through the production route
+(`route.admit_independent_reproducer_trust_anchor`) against a disposable `FileStateStore`, and
+writes the resulting committed record to `examples/comparative_benchmark/
+independent_reproducer_trust_anchor.json` -- the identical checked-in-artifact discipline, never
+a private key, and never a test-double key standing in for the real one.
+
 `tests/contract/comparative_benchmark/test_comparative_benchmark_published_artifacts.py` loads
-the three files directly off disk (`json.loads(Path(...).read_text())` alone -- no Store, no
+all four files directly off disk (`json.loads(Path(...).read_text())` alone -- no Store, no
 fixture module, no orchestrator call) and proves: each validates against its own canonical
 schema; each record's own declared id/semantic-fingerprint fields are recomputed from the loaded
 body and match exactly (`PUBLISHED_BYTES_RELOADABLE=true`); the result bundle's own `metrics`/
@@ -561,9 +681,12 @@ protocol freeze alone, matching the stored values byte-for-byte
 (`REPRODUCED_RAW_EVENTS_DURABLY_REDERIVABLE=true`); the loaded raw events include at least one
 real non-`COMPLETED_VERIFIED` outcome (`FAILURES_PRESENT_IN_PUBLISHED_RAW_DATA=true` --
 real failures/refusals/retained outcomes survive into the published data, never a success-only
-subset); and the reproduction receipt's own `agreement` verdict is recomputed from its own
-loaded `reproduced_metrics` compared against the loaded result bundle's own `metrics`, using the
-identical rule `engine.build_reproduction_receipt` itself applies, and matches the stored value.
+subset); the reproduction receipt's own `agreement` verdict is recomputed from its own loaded
+`reproduced_metrics` compared against the loaded result bundle's own `metrics`, using the
+identical rule `engine.build_reproduction_receipt` itself applies, and matches the stored value;
+and the published trust anchor is admitted by `HUMAN_AUTHORITY`, is genuinely `ACTIVE`,
+authorizes exactly the published protocol freeze, and carries only a well-formed 32-byte Ed25519
+public key.
 
 ## 10. The 13 required decisive negative controls
 

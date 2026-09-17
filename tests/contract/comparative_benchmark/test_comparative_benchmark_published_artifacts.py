@@ -19,7 +19,16 @@ identical MATCH/DIVERGENT/INCOMPARABLE rule ``engine.build_reproduction_receipt`
 and matches the stored value exactly.
 
 Regenerate the three files with ``python scripts/generate_comparative_benchmark_artifacts.py``
-(see ``examples/comparative_benchmark/README.md``)."""
+(see ``examples/comparative_benchmark/README.md``).
+
+P90-R4-F2 (PR #90 Round 4): the fourth published file, ``independent_reproducer_trust_anchor.
+json``, is SHUKOU's own real, independently-verified pre-registration of the Phase 21 independent
+reproducer's Ed25519 public key (PR #90 comment 5709021178, author ``manosube``, ``OWNER``) --
+admitted through the existing production route (``comparative_benchmark.route.
+admit_independent_reproducer_trust_anchor``) against a disposable Store and published here by
+``scripts/admit_comparative_benchmark_independent_reproducer_trust_anchor.py``, the identical
+checked-in-artifact pattern the other three files already establish. It carries only a *public*
+key -- this repository never generates, requests, receives, or stores the matching private key."""
 
 from __future__ import annotations
 
@@ -34,6 +43,8 @@ from manosube_agent_civilization.comparative_benchmark.engine import (
     evaluate_numeric_thresholds,
 )
 from manosube_agent_civilization.comparative_benchmark.identity import (
+    independent_reproducer_trust_anchor_id,
+    independent_reproducer_trust_anchor_semantic_fingerprint,
     protocol_freeze_id,
     protocol_freeze_semantic_fingerprint,
     reproduction_receipt_id,
@@ -62,6 +73,10 @@ def _result_bundle() -> dict[str, Any]:
 
 def _reproduction_receipt() -> dict[str, Any]:
     return _load("reproduction_receipt")
+
+
+def _independent_reproducer_trust_anchor() -> dict[str, Any]:
+    return _load("independent_reproducer_trust_anchor")
 
 
 # --- schema validity (loaded straight off disk, no in-process builder involved) --------------- #
@@ -263,3 +278,66 @@ def test_published_reproduction_receipt_is_a_genuinely_separate_process_reproduc
         "python_version",
         "platform",
     }
+
+
+# --- P90-R4-F2: the published independent reproducer trust anchor ------------------------------ #
+
+
+def test_published_independent_reproducer_trust_anchor_is_schema_valid() -> None:
+    validate_record(
+        _independent_reproducer_trust_anchor(),
+        "comparative_benchmark_independent_reproducer_trust_anchor.schema.json",
+        base=COMPARATIVE_BENCHMARK_SCHEMA_BASE,
+    )
+
+
+def test_published_independent_reproducer_trust_anchor_id_and_fingerprint_are_reloadable() -> None:
+    trust_anchor = _independent_reproducer_trust_anchor()
+    assert trust_anchor["trust_anchor_id"] == independent_reproducer_trust_anchor_id(trust_anchor)
+    assert trust_anchor[
+        "trust_anchor_semantic_fingerprint"
+    ] == independent_reproducer_trust_anchor_semantic_fingerprint(trust_anchor)
+
+
+def test_published_independent_reproducer_trust_anchor_authorizes_the_published_protocol_freeze() -> (
+    None
+):
+    protocol_freeze = _protocol_freeze()
+    trust_anchor = _independent_reproducer_trust_anchor()
+    assert trust_anchor["authorized_protocol_or_corpus_ref"] == {
+        "protocol_freeze_id": protocol_freeze["protocol_freeze_id"],
+        "protocol_freeze_semantic_fingerprint": protocol_freeze[
+            "protocol_freeze_semantic_fingerprint"
+        ],
+    }
+
+
+def test_published_independent_reproducer_trust_anchor_is_admitted_by_human_authority_and_active() -> (
+    None
+):
+    """`ORIGINAL_OPERATOR_IDENTITY_REFUSED`/`CLAUDE_CODE_SESSION_IDENTITY_REFUSED`-equivalent:
+    the published trust anchor's own `admitted_by`/`role` are the fixed, non-caller-supplied
+    labels `engine.build_independent_reproducer_trust_anchor` always mints -- never a
+    Claude-Code- or session-specific identity -- and it is genuinely `ACTIVE`, not a revoked or
+    withdrawn registration."""
+
+    trust_anchor = _independent_reproducer_trust_anchor()
+    assert trust_anchor["admitted_by"] == "HUMAN_AUTHORITY"
+    assert trust_anchor["role"] == "INDEPENDENT_PHASE_21_REPRODUCER"
+    assert trust_anchor["revocation_status"] == "ACTIVE"
+    assert trust_anchor["reproducer_actor_or_authority_id"] == "SHUKOU_PHASE21_REPRODUCER"
+
+
+def test_published_independent_reproducer_trust_anchor_carries_only_a_public_key() -> None:
+    """This repository never generates, requests, receives, or stores a real independent
+    reproducer's private key (standing constraint, PR #90 Round 4 adoption) -- the published
+    trust anchor's own schema is closed (`additionalProperties: false`) and structurally cannot
+    carry a private-key field; this test additionally proves the one key field it does carry is
+    a well-formed 32-byte Ed25519 *public* key, never private-key material."""
+
+    trust_anchor = _independent_reproducer_trust_anchor()
+    assert "private_key" not in trust_anchor
+    assert "ed25519_private_key" not in trust_anchor
+    public_key_hex = trust_anchor["ed25519_public_key"]
+    assert len(public_key_hex) == 64
+    assert bytes.fromhex(public_key_hex)

@@ -6298,3 +6298,148 @@ PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
 P90_R4_F1_STATUS=BLOCKED_NO_USABLE_REAL_AGENT
 P90_R4_F2_STATUS=BLOCKED_AWAITING_SHUKOU_REPRODUCER_PUBLIC_KEY
 ```
+
+## Round 4 follow-up: real SHUKOU public key independently verified and admitted (本session自身が独立実行)
+
+SHUKOU independently pre-registered a real Ed25519 public key for the Phase 21 independent
+reproducer via PR #90 comment 5709021178, and relayed the registration content along with an
+explicit instruction (verbatim, Japanese) to independently re-verify it via the GitHub API before
+acting, incorporate it through the existing production builder/route, never use the submission's
+own self-declared key as trust root, publish the exact Windows-runnable reproduction commands for
+SHUKOU, never request/read/store/log the private key, never conflate F1's
+`BLOCKED_NO_USABLE_REAL_AGENT` with F2's work, use only the existing branch/PR #90, and perform no
+merge/Issue #89 close/Phase 22/v1.0 work.
+
+```text
+INDEPENDENT_RE_VERIFICATION_METHOD=mcp__github__pull_request_read (get_comments, perPage=3
+  page=7 to reach the target comment past earlier pagination)
+EXPECTED_COMMENT_ID=5709021178
+ACTUAL_COMMENT_ID=5709021178 (MATCH)
+EXPECTED_AUTHOR=manosube
+ACTUAL_AUTHOR=manosube (MATCH)
+EXPECTED_AUTHOR_ASSOCIATION=OWNER
+ACTUAL_AUTHOR_ASSOCIATION=OWNER (MATCH)
+EXPECTED_ACTOR_ID=SHUKOU_PHASE21_REPRODUCER
+EXPECTED_PUBLIC_KEY_HEX=0f183eed0aae19425e8f85c3a619b21ddc4efdb432966ab91cfdbc6dd7f2fdab
+EXPECTED_KEY_ID=sha256:447776a9aaad1ebf2bc6936f169e494e418187fb71553086680b355a7d9f3f49
+EXPECTED_VALID_FROM=2026-09-17T05:05:49Z
+EXPECTED_VALID_UNTIL=NONE
+PRIVATE_KEY_DISCLOSED=false
+ALL_FIELDS_MATCH_COMMENT_BODY=true
+KEY_ID_INDEPENDENTLY_RECOMPUTED=sha256(bytes.fromhex(public_key_hex)) -- matches exactly (the
+  alternate sha256(public_key_hex_as_ascii_string) derivation does NOT match, resolving the
+  ambiguity in favor of "SHA-256 of the raw 32-byte key")
+PUBLIC_KEY_STRUCTURAL_VALIDITY=independently confirmed via
+  cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PublicKey.from_public_bytes
+```
+
+**Never merely trusted the user's relay.** The independent GitHub API re-verification above was
+performed before any code change or admission call, per the standing protocol -- a genuine
+SHUKOU/OWNER registration comment, matched field-for-field, not assumed from the relayed report
+alone.
+
+**新規/変更ファイル。** `scripts/admit_comparative_benchmark_independent_reproducer_trust_
+anchor.py`(新規 -- SHUKOUの実公開鍵を、既存production route`route.
+admit_independent_reproducer_trust_anchor`経由で、使い捨てFileStateStoreに対して取り込み、
+`examples/comparative_benchmark/independent_reproducer_trust_anchor.json`へ公開する。私有鍵には
+一切触れない); `examples/comparative_benchmark/independent_reproducer_trust_anchor.json`(新規
+-- 生成された実trust anchor record。`reproducer_actor_or_authority_id=
+SHUKOU_PHASE21_REPRODUCER`、`admitted_by=HUMAN_AUTHORITY`、`role=
+INDEPENDENT_PHASE_21_REPRODUCER`、`revocation_status=ACTIVE`、`authorized_protocol_or_corpus_
+ref`はこのディレクトリの`protocol_freeze.json`自身のid/fingerprintを指す); `tests/contract/
+comparative_benchmark/test_comparative_benchmark_published_artifacts.py`(独立ロード+
+schema検証+id/fingerprint再導出+`authorized_protocol_or_corpus_ref`一致+`admitted_by`/`role`/
+`revocation_status`確認+公開鍵のみ保持確認の5つのdecisive testを追加); `examples/
+comparative_benchmark/README.md`(4つ目のfileの説明、生成コマンドを追加);
+`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`(section 0 header block --
+`STRUCTURAL_REVIEW_ROUND_4_FINDINGS_STATUS`を`F2_TRUST_ANCHOR_ADMITTED_BLOCKED_AWAITING_
+INDEPENDENT_REPRODUCTION_RUN`へ更新、Round 4導入段落の更新、section 2 package layout、section
+8bのstatus block更新+実admission記述追加、新規section 8c(SHUKOU向けWindows実行コマンド4種)、
+section 9公開artifact記述更新)。
+
+**F1とF2の分離を維持。** F1(`BLOCKED_NO_USABLE_REAL_AGENT`、このsandboxed実行環境自身の
+harness安全分類器が、tool-write可能なnested Agent subprocess呼び出しを構造的に拒否する)は
+このfollow-upで一切変更されていない。今回変更したのはF2(独立reproducer trust anchor)のみ。
+
+**セキュリティ制約の遵守。** このsession全体を通じて、私有鍵の生成・要求・受信・読取・
+repository保存・ログ出力は一度も行っていない。`scripts/admit_comparative_benchmark_
+independent_reproducer_trust_anchor.py`は`ed25519_public_key`(公開鍵hex)と`key_id`のみを
+定数として保持し、`engine.build_independent_reproducer_trust_anchor`自身も
+`Ed25519PublicKey`のみをimportし、`Ed25519PrivateKey`を一切importしない(既存の
+static-conformance testで検証済み)。
+
+## Local gate sweep (本session自身が独立実行、Round 4 follow-up)
+
+```text
+TARGETED_SUITE_COMMAND=pytest tests/contract/comparative_benchmark -q
+TARGETED_SUITE_RESULT=81_PASSED (76 pre-existing from Round 4 + 5 net-new in
+  test_comparative_benchmark_published_artifacts.py for the published trust anchor)
+SCHEMA_VALIDATION_COMMAND=python scripts/validate_schemas.py
+SCHEMA_VALIDATION_RESULT=PASS (unchanged -- no new schema file this follow-up, only a new
+  checked-in example artifact and a new script)
+SOURCE_IMPACT_GATE_COMMAND=python scripts/source_impact_gate.py --changed-paths-file <the 5
+  actually-changed paths: 00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md,
+  examples/comparative_benchmark/README.md,
+  examples/comparative_benchmark/independent_reproducer_trust_anchor.json,
+  scripts/admit_comparative_benchmark_independent_reproducer_trust_anchor.py,
+  tests/contract/comparative_benchmark/test_comparative_benchmark_published_artifacts.py>
+SOURCE_IMPACT_GATE_RESULT=decision: PASS (00_KERNEL/ kernel_surface paired with this very
+  docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md update)
+RUFF_CHECK_COMMAND=ruff check .
+RUFF_CHECK_RESULT=178 errors, identical to the baseline at this follow-up's own unmodified
+  starting head (4ebda84) via git stash/re-run. NET_NEW_RUFF_FINDINGS=0.
+RUFF_FORMAT_COMMAND=ruff format --check .
+RUFF_FORMAT_RESULT=114 files would be reformatted, identical to the baseline via git stash/
+  re-run (the two touched/new .py files both already formatted). NET_NEW_FORMAT_FINDINGS=0.
+MYPY_COMMAND=mypy --namespace-packages src/manosube_agent_civilization/comparative_benchmark/
+MYPY_RESULT=Success: no issues found in 6 source files (package itself unchanged this
+  follow-up)
+MYPY_NEW_SCRIPT_COMMAND=mypy --namespace-packages
+  scripts/admit_comparative_benchmark_independent_reproducer_trust_anchor.py
+MYPY_NEW_SCRIPT_RESULT=1 pre-existing finding in tests/state_helpers.py (a file this follow-up
+  never touched, confirmed pre-existing by running mypy on that file alone); 0 findings in the
+  new script itself
+MYPY_REPOSITORY_WIDE_COMMAND=mypy --namespace-packages
+MYPY_REPOSITORY_WIDE_RESULT=279 errors in 57 files, identical count to Round 4's own recorded
+  baseline. NET_NEW_MYPY_FINDINGS=0.
+GOVERNANCE_ROUTE_TOKEN_SWEEP_COMMAND=pytest tests/contract/binding/
+  test_active_document_terminal_state.py -q
+GOVERNANCE_ROUTE_TOKEN_SWEEP_RESULT=593 passed, unchanged from Round 4's own recorded baseline.
+FULL_REPOSITORY_SUITE_COMMAND=pytest -q -n 4 (pytest-xdist installed ad hoc into the local
+  verification venv only, never added to this repository's own dependencies, purely to
+  parallelize this one local gate-sweep run across the 4 available CPUs -- the identical
+  sequential command, `pytest -q`, was also run partway and showed the identical failure set
+  before being superseded by the parallel run for wall-clock reasons)
+FULL_REPOSITORY_SUITE_RESULT=22019 passed, 10 failed, 11 skipped in 7898.25s (2:11:38)
+FULL_REPOSITORY_SUITE_FAILURE_TRIAGE=all 10 failures are in the single file
+  tests/contract/governance/test_source_freshness_drift_detection.py, and were independently
+  reproduced as byte-for-byte identical (same 10 test names, same exact assertion counts --
+  e.g. `assert 16 == 2`, `assert 8 == 2`) at this Round's own unmodified starting head (4ebda84)
+  via git stash/re-run of that one test file alone (10 failed, 44 passed in 0.41s at baseline).
+  Independently confirmed this follow-up's own diff to docs/project_sources/
+  03_CURRENT_DEVELOPMENT_STATE.md contains zero occurrences of the two field names these
+  failures assert on (`OBSERVED_AT_UTC`, `MAIN_ACCEPTED_BASE_SHA`) -- this follow-up's own
+  prose additions cannot be their cause. Pre-existing, unrelated to this follow-up's change.
+NET_NEW_TEST_FAILURES=0
+```
+
+```text
+MERGE_ALLOWED=false
+ISSUE_89_CLOSE_ALLOWED=false
+PHASE_22_ALLOWED=false
+V1_0_DECLARATION_ALLOWED=false
+NEW_ISSUE_ALLOWED=false
+NEW_BRANCH_ALLOWED=false
+NEW_PR_ALLOWED=false
+ADDITIONAL_PR_ALLOWED=false
+NEW_CREDENTIAL_ACQUISITION_ALLOWED=false
+CREDENTIAL_EXTRACTION_OR_DISCLOSURE_ALLOWED=false
+CREDENTIAL_PERSISTENCE_CHANGE_ALLOWED=false
+UNBOUNDED_EXTERNAL_INVOCATION_ALLOWED=false
+UNRELATED_REMOTE_ACTION_ALLOWED=false
+REAL_MONEY_OR_EXTERNAL_SIDE_EFFECT_ALLOWED=false
+UNRELATED_CLEANUP_ALLOWED=false
+PHASE_ACCEPTANCE_LEDGER_ENTRY_ADDED=false
+P90_R4_F1_STATUS=BLOCKED_NO_USABLE_REAL_AGENT
+P90_R4_F2_STATUS=BLOCKED_AWAITING_INDEPENDENT_REPRODUCTION_RUN
+```
