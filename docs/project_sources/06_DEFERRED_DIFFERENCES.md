@@ -14,7 +14,7 @@ OBSERVED_AT_UTC=2026-09-08T00:20:57Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
 ACTIVE_DEFERRED_RECORD_COUNT=2
 DEFERRED_DESIGN_CANDIDATE_COUNT=1
-FOLLOW_ON_DIFFERENCE_COUNT=3
+FOLLOW_ON_DIFFERENCE_COUNT=4
 CURRENT_PHASE_BLOCKER_STORED_HERE=false
 ```
 
@@ -520,6 +520,99 @@ PHASE_ORDER_CHANGED=false
 
 ---
 
+# 8a. Follow-on Difference FD-0004
+
+## Phase 21 eight roadmap proof-dimension measurement gap
+
+```text
+DIFFERENCE_ID=FD-0004
+TITLE=PHASE_21_EIGHT_PROOF_DIMENSION_MEASUREMENT_GAP
+CLASSIFICATION=FOLLOW_ON_DIFFERENCE
+CURRENT_STATUS=OPEN_NON_BLOCKING_DEFERRED
+ORIGINATING_PHASE=21_COMPARATIVE_BENCHMARK
+GOVERNING_ISSUE=89
+ORIGINATING_PR=90
+PHASE_21_REOPENED=false
+GATE_21_RESULT_WEAKENED=false
+```
+
+Source: [Issue #89](https://github.com/manosube/manosube-agent-civilization-os/issues/89) §5, [PR #90](https://github.com/manosube/manosube-agent-civilization-os/pull/90) §11a (`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`, P90-R7/P90-R8), Structural Advisor post-merge determination [comment `5730959589`](https://github.com/manosube/manosube-agent-civilization-os/issues/89#issuecomment-5730959589), SHUKOU adoption [comment `5730978669`](https://github.com/manosube/manosube-agent-civilization-os/issues/89#issuecomment-5730978669) (`ADOPTION_ID=ADOPT_PHASE_21_POST_MERGE_CANONICAL_SOURCE_SYNC`).
+
+## Originating expectation
+
+Issue #89 §5 states the roadmap's own eight comparison axes MANOSUBE must measure:
+
+```text
+fewer false completions
+better long-term state retention
+more successful runtime arrival
+less human re-explanation
+less rework
+safe Agent replacement
+fewer Authority violations
+more complete Evidence
+```
+
+with `UNKNOWN_NE_ZERO=true` — an unmeasured dimension must never be reported as a negative or zero result.
+
+## Expected state
+
+All eight dimensions are demonstrated with genuine comparative evidence across all four canonical comparison roles (Codex alone; Claude Code alone; existing agent framework; MANOSUBE + the same Agent) named in Issue #89 §4.
+
+## Observed state
+
+Accepted main at `c850ee99fa9a16c0c982fa18a3c9264a7f1e1931` (PR #90 merge) demonstrates two of the four canonical roles with real evidence (`Claude Code alone`, `MANOSUBE + the same Agent`, both `PRJ-CB21-R6-0001`); the other two (`Codex alone`, `existing agent framework`) remain `BLOCKED_NO_REAL_INVOCATION_CAPABILITY` under this repository's own standing `PRODUCTION_CREDENTIAL_USE_SCOPE`/`NEW_CREDENTIAL_ACQUISITION_ALLOWED=false` boundary.
+
+```text
+EIGHT_DIMENSIONS_FULLY_MEASURED=0
+EIGHT_DIMENSIONS_PARTIALLY_MEASURED=2
+  (fewer Authority violations; more complete Evidence -- as harness-behavior evidence from
+  the two available roles, not full cross-product comparative evidence)
+EIGHT_DIMENSIONS_NOT_MEASURED=6
+  (each for a stated structural reason: the frozen real-Agent corpus's own two deterministic,
+  single-turn tasks and the missing two comparison roles)
+GATE_21_ALL_SEVEN_BOOLEANS_SATISFIED=true
+  (Issue #89 §9 -- unaffected by this Difference; Gate 21 itself names no eight-dimension-
+  measurement boolean)
+```
+
+## Scheduling and authority
+
+```text
+CURRENT_PHASE_BLOCKING_EFFECT=NONE_FOR_PHASE_21_ACCEPTANCE
+PLACEMENT_DECISION_DEADLINE=UNSET_REQUIRES_SHUKOU_DECISION
+IMPLEMENTATION_DEADLINE=UNSET_REQUIRES_SHUKOU_DECISION
+PLACEMENT_AUTHORITY=SHUKOU
+IMPLEMENTATION_AUTHORITY=REQUIRES_SEPARATE_SHUKOU_ADOPTION
+DEFAULT_PLACEMENT_INFERENCE_ALLOWED=false
+```
+
+Before SHUKOU disposition, this record does not authorize either of the two paths the Structural Advisor's own Round 7 review already identified: (1) narrowly-scoped real credentials for the missing two comparison roles plus a materially richer multi-turn task corpus, or (2) a formal roadmap amendment narrowing Issue #89 §5's own requirement. Neither is chosen here.
+
+## Closure evidence requirement
+
+```text
+UNKNOWN_NE_ZERO=true
+CROSS_CORPUS_METRIC_OR_EVIDENCE_SUBSTITUTION_ALLOWED=false
+GATE_21_SEVEN_BOOLEANS_UNWEAKENED=true
+UNSUPPORTED_SUPERIORITY_OR_CAUSAL_CLAIM_ALLOWED=false
+STRUCTURAL_REVIEW_PASS=UNKNOWN_PENDING
+SHUKOU_ACCEPTED=false
+MERGE_RECEIPT_CONFIRMED=false
+AFTER_STATE_REOBSERVED=false
+```
+
+## Phase reopening effect
+
+```text
+PHASE_21_REOPENED=false
+GATE_21_RESULT_WEAKENED=false
+ROADMAP_PHASE_ADDED=false
+PHASE_22_STARTED=false
+```
+
+---
+
 # 9. Current Phase 13 exclusion
 
 The following is not Deferred:
@@ -662,7 +755,7 @@ Do not change current status without live re-observation where GitHub facts are 
 # 15. Register receipt
 
 ```text
-OBSERVED_AT_UTC=2026-09-08T00:20:57Z
+OBSERVED_AT_UTC=2026-09-18T13:52:24Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
 
 ACTIVE_DEFERRED_RECORDS=
@@ -676,6 +769,7 @@ FOLLOW_ON_DIFFERENCES=
   FD-0001 STRUCTURAL_ADVISOR_ADOPTION_RECORDING_GOVERNANCE
   FD-0002 README_CURRENT_STATUS_STALENESS
   FD-0003 OBJECTIVE_MECHANISM_SEPARATION_AND_OBJECTIVE_RETURN_GATE
+  FD-0004 PHASE_21_EIGHT_PROOF_DIMENSION_MEASUREMENT_GAP
 
 CLOSED_DEFERRED_RECORD_COUNT=0
 CANCELLED_DEFERRED_RECORD_COUNT=0
@@ -683,8 +777,10 @@ CURRENT_PHASE_BLOCKER_STORED_HERE=false
 
 PHASE_12_REOPENED=false
 PHASE_3_REOPENED=false
+PHASE_21_REOPENED=false
 ROADMAP_RENUMBERED=false
 PHASE_14_ALLOWED=false
+PHASE_22_ALLOWED=false
 ```
 
 This register preserves unresolved truth. It grants no implementation Authority and declares no Phase complete.

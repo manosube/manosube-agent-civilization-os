@@ -1136,3 +1136,81 @@ Canonical State/Authority/Evidence/Reflow/Completion ownerの成立も主張し�
 closeとPhase 21専用Issueの作成は、本節の記録元となったpost-merge source-sync PR自身がSHUKOU
 によりmergeされ、resulting `main`がGitHub API経由で再観測された後にのみ許可される。Phase 21
 実装は、その専用Issue上での別途明示的なSHUKOU採択を経てから初めて許可される。
+
+---
+
+# 29. Phase 21 acceptance receipt
+
+| Phase | Governing Issue | Merged PR | Accepted merge SHA | Receipt class | Accepted capability |
+|---:|---:|---:|---|---|---|
+| 21 | [#89](https://github.com/manosube/manosube-agent-civilization-os/issues/89) | [#90](https://github.com/manosube/manosube-agent-civilization-os/pull/90) | `c850ee99fa9a16c0c982fa18a3c9264a7f1e1931` | `DIRECT_COMPLETION_RECEIPT` | Comparative Benchmark: all seven canonical Gate 21 booleans (Issue #89 §9) satisfied via explicit layered evidence across two never-conflated corpora — the original 8-task corpus (`PRJ-CB21-0001`) and the frozen real-Agent protocol corpus (`PRJ-CB21-R6-0001`), including a genuine third-party (SHUKOU) independent reproduction admitted through the production route |
+
+Phase 21のexact delivery headは`61478122630cbd0bd1c601431f072fa77cc47d7a`であり、merge
+commitの第二parentと一致する。第一parentはRound 1採択base
+`f97ba6fa973ba07e7674690d158cc156a10da04a`である。reviewed delivery headとmerge commitの
+file diffは0、treeは同一であることをローカル`git`で直接検証済みである。8回のStructural
+Review Round(P90-R1〜P90-R8、うちP90-R7は自身のRound 6/6-WINDOWS-F1是正評価を含み、P90-R8が
+P90-R7自身の過剰制約を是正)はいずれも最終的にexact delivery headに対してfinding open 0件へ
+到達し、その後SHUKOU(`manosube`)がPR #90を手動mergeした。
+
+post-merge受入観測とsource-sync境界はIssue #89コメント
+`https://github.com/manosube/manosube-agent-civilization-os/issues/89#issuecomment-5730959589`
+(構造参謀post-merge determination、`DETERMINATION_ID=P90-POST-MERGE-PHASE21`)およびSHUKOU
+採択コメント
+`...#issuecomment-5730978669`
+(`ADOPTION_ID=ADOPT_PHASE_21_POST_MERGE_CANONICAL_SOURCE_SYNC`)へ固定し、本source-sync
+branch作成直前にGitHub API独立readback、およびローカル`git`によるmerge commit親関係・tree
+一致の直接検証の両方で確認済みである。
+
+```text
+OBSERVED_AT_UTC=2026-09-18T13:52:24Z
+ACCEPTED_PHASE_RANGE=0..21
+ACCEPTED_PHASE_COUNT=22
+LAST_ACCEPTED_PHASE=21_COMPARATIVE_BENCHMARK
+LAST_ACCEPTED_MAIN_SHA=c850ee99fa9a16c0c982fa18a3c9264a7f1e1931
+
+PHASE_21_DELIVERY_HEAD=61478122630cbd0bd1c601431f072fa77cc47d7a
+PHASE_21_MERGE_PARENT_BASE=f97ba6fa973ba07e7674690d158cc156a10da04a
+PHASE_21_MERGE_PARENT_DELIVERY=61478122630cbd0bd1c601431f072fa77cc47d7a
+PHASE_21_MERGE_SHA=c850ee99fa9a16c0c982fa18a3c9264a7f1e1931
+MERGED_EXACT_REVIEWED_HEAD=true
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+PHASE_21_STRUCTURAL_REVIEW_ROUNDS=8
+PHASE_21_STRUCTURAL_FINDINGS_OPEN=0
+
+GATE_21_SAME_AGENT_COMPARISON_AVAILABLE=true
+GATE_21_CONTROL_GROUPS_DEFINED=true
+GATE_21_METRICS_PREDECLARED=true
+GATE_21_RAW_RESULTS_PUBLIC=true
+GATE_21_FAILURES_INCLUDED=true
+GATE_21_THIRD_PARTY_REPRODUCIBLE=true
+GATE_21_CLAIMS_BOUNDED_BY_EVIDENCE=true
+GATE_21_ALL_SEVEN_BOOLEANS_PASSED=true
+
+EIGHT_ROADMAP_PROOF_DIMENSIONS_MEASUREMENT_STATUS=0_FULLY_2_PARTIALLY_6_NOT_MEASURED
+EIGHT_DIMENSION_GAP_DEFERRED_TO=06_DEFERRED_DIFFERENCES.md_FD-0004
+UNKNOWN_NE_ZERO=true
+BENCHMARK_DECLARATION_EQUALS_PRODUCT_SUPERIORITY=false
+
+SCHEMA_VALIDATION_AT_DELIVERY_HEAD=PASS
+SOURCE_IMPACT_GATE_AT_DELIVERY_HEAD=PASS
+RUFF_NET_NEW_FINDINGS_AT_DELIVERY_HEAD=0
+MYPY_NET_NEW_FINDINGS_AT_DELIVERY_HEAD=0
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=22064_PASSED_10_PRE_EXISTING_FAILED_11_SKIPPED
+NET_NEW_TEST_FAILURES_AT_DELIVERY_HEAD=0
+
+PHASE_21_CURRENT_ROUTE_BLOCKERS=0
+PHASE_21_COMPLETE=true
+ISSUE_89_CLOSE_ALLOWED_AFTER_THIS_SOURCE_SYNC=true
+PHASE_22_ALLOWED_AFTER_THIS_SOURCE_SYNC=true
+PHASE_22_IMPLEMENTATION_ALLOWED=false
+```
+
+Phase 21 acceptanceは、Phase 22の着手・実装、roadmap変更、または本受入以外のいかなる新規
+Canonical State/Authority/Evidence/Reflow/Completion ownerの成立も主張しない。全七Gate 21
+booleanの受入は、8個のroadmap比較軸(Issue #89 §5)全ての完全測定、製品優越性の主張、または
+causal generalizationのいずれも意味しない — 残る測定gapは`06_DEFERRED_DIFFERENCES.md`
+FD-0004としてnon-blocking Deferred Differenceに保持される。Issue #89のcloseとPhase 22
+専用Issueの作成は、本節の記録元となったpost-merge source-sync PR自身がSHUKOUによりmergeされ、
+resulting `main`がGitHub API経由で再観測された後にのみ許可される。Phase 22実装は、その専用
+Issue上での別途明示的なSHUKOU採択を経てから初めて許可される。
