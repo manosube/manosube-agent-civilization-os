@@ -11,20 +11,40 @@ own two comparison groups, and returns ``reproduced_raw_events`` in exactly the 
 never a native-Agent re-invocation this repository has no capability to offer any third party
 (:mod:`tests.fixtures.comparative_benchmark_rebind_protocol`'s own comparability_loss_receipts
 disclose this honestly). Any actor holding a Python interpreter can run this module and
-independently confirm the frozen corpus's own declared per-group outcome counts."""
+independently confirm the frozen corpus's own declared per-group outcome counts.
+
+**P90-R6-WINDOWS-F1**: this module deliberately never imports ``manosube_agent_civilization.
+work_time_transparency`` (not even only its own ``clock`` submodule) for a timestamp --
+importing it at all executes that package's eager ``__init__.py``, which transitively imports
+``store.file_store``'s own POSIX-only ``fcntl``, breaking this module (and every Windows-facing
+script that imports it) on Windows before it ever reaches a real reproduction step. See
+:func:`_canonical_utc_timestamp`."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import hashlib
 from typing import Any
 
 from tests.fixtures import comparative_benchmark_rebind_protocol as rb
 
-from manosube_agent_civilization.work_time_transparency.clock import default_clock
-
 #: The literal ASCII string this frozen corpus's own ``task_a`` hashes -- identical to
 #: ``examples/comparative_benchmark/real_agent_corpus/TASK_CORPUS.md``'s own declared task.
 TASK_A_LITERAL = "MANOSUBE_PHASE21_ROUND6_TASK_A"
+
+
+def _canonical_utc_timestamp() -> str:
+    """A real wall-clock reading, canonically formatted with microsecond precision (trailing
+    zero fractional digits stripped, per ``01_SCHEMA/common/timestamp.schema.json``'s own
+    pattern) -- byte-identical output format to ``manosube_agent_civilization.
+    work_time_transparency.clock.default_clock``, deliberately reimplemented here as a pure-
+    stdlib, platform-independent function (P90-R6-WINDOWS-F1) rather than imported from that
+    package."""
+
+    now = datetime.now(UTC)
+    base = now.strftime("%Y-%m-%dT%H:%M:%S")
+    fraction = now.strftime("%f").rstrip("0")
+    return f"{base}.{fraction}Z" if fraction else f"{base}Z"
 
 
 def _task_a_digest() -> str:
@@ -56,7 +76,7 @@ def reproduce_raw_events() -> list[dict[str, Any]]:
             "frozen corpus's own published prime list"
         )
 
-    now = default_clock()
+    now = _canonical_utc_timestamp()
     events: list[dict[str, Any]] = []
     for group_id in (rb.PRESENT_GROUP_ID, rb.ABSENT_GROUP_ID):
         for task_id in rb.TASK_IDS:

@@ -28,6 +28,7 @@ this script for PowerShell/Windows."""
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import getpass
 import json
 from pathlib import Path
@@ -37,6 +38,25 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_DIR = ROOT / "examples" / "comparative_benchmark" / "frozen_protocol_r6"
+
+
+def _canonical_utc_timestamp() -> str:
+    """A real wall-clock reading, canonically formatted with microsecond precision (trailing
+    zero fractional digits stripped, per ``01_SCHEMA/common/timestamp.schema.json``'s own
+    pattern) -- byte-identical output format to ``manosube_agent_civilization.
+    work_time_transparency.clock.default_clock``, deliberately reimplemented here as a pure-
+    stdlib, platform-independent function (P90-R6-WINDOWS-F1): importing ``work_time_
+    transparency`` at all -- even only its own ``clock`` submodule -- executes that package's
+    eager ``__init__.py``, which transitively imports ``store.file_store``'s own POSIX-only
+    ``fcntl``, breaking this Windows-facing entrypoint before the passphrase prompt is ever
+    reached. This script's own reproduction/signing semantics never needed anything from that
+    package beyond this one timestamp string."""
+
+    now = datetime.now(UTC)
+    base = now.strftime("%Y-%m-%dT%H:%M:%S")
+    fraction = now.strftime("%f").rstrip("0")
+    return f"{base}.{fraction}Z" if fraction else f"{base}Z"
+
 
 #: SHUKOU's own real, already-verified, pre-registered public key for the Phase 21 independent
 #: reproducer (PR #90 comment 5709021178, author `manosube`, `OWNER`) -- unchanged from the
@@ -192,7 +212,6 @@ def main(argv: list[str] | None = None) -> int:
     from manosube_agent_civilization.comparative_benchmark.identity import (
         independent_reproduction_submission_signing_payload,
     )
-    from manosube_agent_civilization.work_time_transparency.clock import default_clock
 
     print(  # noqa: T201 -- this script's own CLI progress report, to stderr
         "Reproducing the frozen corpus (this round's own mechanical, native-Agent-free "
@@ -201,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     reproduced_raw_events = _reproduce_raw_events()
 
-    submission_time = default_clock()
+    submission_time = _canonical_utc_timestamp()
     draft = _build_draft_submission(
         reproduced_raw_events=reproduced_raw_events, submission_time=submission_time
     )

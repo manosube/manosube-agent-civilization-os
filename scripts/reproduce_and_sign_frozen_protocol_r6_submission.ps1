@@ -26,9 +26,41 @@
     examples\comparative_benchmark\frozen_protocol_r6 next to this script's own repository
     root. Never contains the private key or passphrase.
 
+.NOTES
+    Windows bootstrap (P90-R6-WINDOWS-F1, PR #90 comment 5723625948) -- run these exact
+    commands, in order, in PowerShell, before invoking this script:
+
+        # 1. Clone (or update an existing clone of) the repository.
+        git clone https://github.com/manosube/manosube-agent-civilization-os.git
+        cd manosube-agent-civilization-os
+
+        # 2. Check out the exact reviewed head this fix was verified against. Replace this
+        #    with the current PR #90 head if SHUKOU has been told to re-run against a newer
+        #    commit; otherwise use this literal commit.
+        git checkout e66475ce0290c7f715515d76c609414caecc8ae4
+
+        # 3. Create and activate a dedicated virtual environment. Requires Python 3.12 or
+        #    later on PATH (this repository's own pyproject.toml requires-python = ">=3.12";
+        #    SHUKOU's own prior run used Python 3.12.10).
+        py -3.12 -m venv .venv
+        .\.venv\Scripts\Activate.ps1
+
+        # 4. Install this repository (and its "cryptography" dependency) into that venv.
+        #    This is the one command that makes "python", "cryptography", and this
+        #    repository's own packages resolvable -- do not skip it.
+        pip install -e .
+
+        # 5. Confirm "cryptography" installed correctly before proceeding.
+        python -c "import cryptography; print(cryptography.__version__)"
+
+    Only after all five steps succeed, run this script itself (see .EXAMPLE below). The
+    -PemPath value in that example is illustrative and must be replaced with the real,
+    absolute path to SHUKOU's own encrypted PKCS8 PEM private key file on this machine (never
+    committed to, read from, or inferred by this repository).
+
 .EXAMPLE
     .\scripts\reproduce_and_sign_frozen_protocol_r6_submission.ps1 `
-        -PemPath "C:\Users\Apache\Documents\MANOSUBE_Phase21_Reproducer_Key\phase21_reproducer_private_key.pem"
+        -PemPath "C:\path\to\your\encrypted_private_key.pem"
 #>
 
 [CmdletBinding()]
