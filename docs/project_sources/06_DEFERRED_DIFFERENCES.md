@@ -520,12 +520,12 @@ PHASE_ORDER_CHANGED=false
 
 ---
 
-# 8a. Follow-on Difference FD-0004
+# 8a. Follow-on Difference FD-0005
 
 ## Phase 21 eight roadmap proof-dimension measurement gap
 
 ```text
-DIFFERENCE_ID=FD-0004
+DIFFERENCE_ID=FD-0005
 TITLE=PHASE_21_EIGHT_PROOF_DIMENSION_MEASUREMENT_GAP
 CLASSIFICATION=FOLLOW_ON_DIFFERENCE
 CURRENT_STATUS=OPEN_NON_BLOCKING_DEFERRED
@@ -557,7 +557,7 @@ with `UNKNOWN_NE_ZERO=true` — an unmeasured dimension must never be reported a
 
 ## Expected state
 
-All eight dimensions are demonstrated with genuine comparative evidence across all four canonical comparison roles (Codex alone; Claude Code alone; existing agent framework; MANOSUBE + the same Agent) named in Issue #89 §4.
+All eight dimensions are eventually demonstrated with comparative evidence across the canonical comparison roles (Codex alone; Claude Code alone; existing agent framework; MANOSUBE + the same Agent) named in Issue #89 §4, as a roadmap-level measurement ambition. This is a non-blocking ambition, not a Gate 21 requirement: Issue #89 §9 names no eighth "all dimensions measured" boolean, and Gate 21's own seven booleans are satisfied independently of this ambition's current state (see `GATE_21_ALL_SEVEN_BOOLEANS_SATISFIED=true` below).
 
 ## Observed state
 
@@ -585,9 +585,12 @@ IMPLEMENTATION_DEADLINE=UNSET_REQUIRES_SHUKOU_DECISION
 PLACEMENT_AUTHORITY=SHUKOU
 IMPLEMENTATION_AUTHORITY=REQUIRES_SEPARATE_SHUKOU_ADOPTION
 DEFAULT_PLACEMENT_INFERENCE_ALLOWED=false
+FOUR_REAL_EXTERNAL_PRODUCT_INVOCATIONS_REQUIRED=false
+SECOND_REAL_PRODUCT_CREDENTIAL_GRANT_REQUIRED=false
+ROADMAP_AMENDMENT_REQUIRED=false
 ```
 
-Before SHUKOU disposition, this record does not authorize either of the two paths the Structural Advisor's own Round 7 review already identified: (1) narrowly-scoped real credentials for the missing two comparison roles plus a materially richer multi-turn task corpus, or (2) a formal roadmap amendment narrowing Issue #89 §5's own requirement. Neither is chosen here.
+This record does not mandate any particular resolution path. A richer task corpus, an additional real comparison-role identity, new credential use, or a changed closure policy would each require their own explicit, separate SHUKOU adoption before implementation; none is selected, required, or foreclosed by this source-sync. The four comparison-group identities named in Issue #89 §4 remain exactly as already defined and are not reduced or rewritten by this record.
 
 ## Closure evidence requirement
 
@@ -755,7 +758,7 @@ Do not change current status without live re-observation where GitHub facts are 
 # 15. Register receipt
 
 ```text
-OBSERVED_AT_UTC=2026-09-18T13:52:24Z
+OBSERVED_AT_UTC=2026-09-18T16:51:14Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
 
 ACTIVE_DEFERRED_RECORDS=
@@ -769,7 +772,7 @@ FOLLOW_ON_DIFFERENCES=
   FD-0001 STRUCTURAL_ADVISOR_ADOPTION_RECORDING_GOVERNANCE
   FD-0002 README_CURRENT_STATUS_STALENESS
   FD-0003 OBJECTIVE_MECHANISM_SEPARATION_AND_OBJECTIVE_RETURN_GATE
-  FD-0004 PHASE_21_EIGHT_PROOF_DIMENSION_MEASUREMENT_GAP
+  FD-0005 PHASE_21_EIGHT_PROOF_DIMENSION_MEASUREMENT_GAP
 
 CLOSED_DEFERRED_RECORD_COUNT=0
 CANCELLED_DEFERRED_RECORD_COUNT=0

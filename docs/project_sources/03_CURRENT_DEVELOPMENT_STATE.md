@@ -6641,8 +6641,9 @@ Round 6 frozen real-Agentコーパス(`PRJ-CB21-R6-0001`、section 13d)という
 2つのコーパス自身が個別に提供する証拠のexplicit conjunctionとして受入済みである
 (`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`section 11a)。roadmap自身が求める8個の比較軸
 (Issue #89 §5)は、0 fully / 2 partially / 6 not measuredという残る測定gapを保持しており、この
-gapはGate 21自身の受入を弱めるものではなく、`06_DEFERRED_DIFFERENCES.md`FD-0004として
-non-blocking Deferred Differenceに保持される。
+gapはGate 21自身の受入を弱めるものではなく、`06_DEFERRED_DIFFERENCES.md`FD-0005として
+non-blocking Deferred Differenceに保持される(`FD-0004`はIssue #80 Acceptance Policy
+Lineageの既存識別子であり、本節はそれと衝突しない)。
 
 構造参謀のpost-merge determinationは、Gate 21・全Structural Review finding closed・
 exact-head merge・post-merge再観測が成立していることを理由に、Phase 21の実装受入

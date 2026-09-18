@@ -1188,7 +1188,7 @@ GATE_21_CLAIMS_BOUNDED_BY_EVIDENCE=true
 GATE_21_ALL_SEVEN_BOOLEANS_PASSED=true
 
 EIGHT_ROADMAP_PROOF_DIMENSIONS_MEASUREMENT_STATUS=0_FULLY_2_PARTIALLY_6_NOT_MEASURED
-EIGHT_DIMENSION_GAP_DEFERRED_TO=06_DEFERRED_DIFFERENCES.md_FD-0004
+EIGHT_DIMENSION_GAP_DEFERRED_TO=06_DEFERRED_DIFFERENCES.md_FD-0005
 UNKNOWN_NE_ZERO=true
 BENCHMARK_DECLARATION_EQUALS_PRODUCT_SUPERIORITY=false
 
@@ -1210,7 +1210,8 @@ Phase 21 acceptanceは、Phase 22の着手・実装、roadmap変更、または�
 Canonical State/Authority/Evidence/Reflow/Completion ownerの成立も主張しない。全七Gate 21
 booleanの受入は、8個のroadmap比較軸(Issue #89 §5)全ての完全測定、製品優越性の主張、または
 causal generalizationのいずれも意味しない — 残る測定gapは`06_DEFERRED_DIFFERENCES.md`
-FD-0004としてnon-blocking Deferred Differenceに保持される。Issue #89のcloseとPhase 22
+FD-0005としてnon-blocking Deferred Differenceに保持される(`FD-0004`はIssue #80 Acceptance
+Policy Lineageの既存識別子であり、本節はそれと衝突しない)。Issue #89のcloseとPhase 22
 専用Issueの作成は、本節の記録元となったpost-merge source-sync PR自身がSHUKOUによりmergeされ、
 resulting `main`がGitHub API経由で再観測された後にのみ許可される。Phase 22実装は、その専用
 Issue上での別途明示的なSHUKOU採択を経てから初めて許可される。

@@ -1142,8 +1142,9 @@ CANONICAL_STATE_OWNER_COUNT=1
 ```
 
 Phase 21のGate 21全七booleanが受入済みであることは、8個のroadmap比較軸(Issue #89 §5)全ての
-完全測定を意味しない -- `06_DEFERRED_DIFFERENCES.md`FD-0004が、この残る測定gap
-(`0 FULLY / 2 PARTIALLY / 6 NOT_MEASURED`)をnon-blocking Deferred Differenceとして保持する。
+完全測定を意味しない -- `06_DEFERRED_DIFFERENCES.md`FD-0005が、この残る測定gap
+(`0 FULLY / 2 PARTIALLY / 6 NOT_MEASURED`)をnon-blocking Deferred Differenceとして保持する
+(`FD-0004`はIssue #80 Acceptance Policy Lineageの既存識別子であり、本節はそれと衝突しない)。
 Phase 22は、このaccepted architectureにはまだ実装されていない。Issue #89のcloseとPhase 22の
 着手は、本節の記録元となったpost-merge source-sync PR自身がSHUKOUによりmergeされ、resulting
 `main`がGitHub API経由で再観測された後にのみ許可される。Phase 22実装には、その専用Issue上での
