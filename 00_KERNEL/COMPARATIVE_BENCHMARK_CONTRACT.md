@@ -835,6 +835,14 @@ Phase 21 is not complete until SHUKOU accepts the exact reviewed delivery head, 
 merged, and resulting `main` is independently re-observed. It is also not complete while either
 `SAME_AGENT_COMPARISON_AVAILABLE` or `THIRD_PARTY_REPRODUCIBLE` remains blocked above.
 
+**Section 13d update (P90-R6/P90-R6-WINDOWS-F1):** a structurally distinct, later-built frozen
+corpus (`project_id=PRJ-CB21-R6-0001`) now satisfies both predicates' Round 2+ reading in full --
+a real, identical-declared-Agent execution in both conditions, and a genuine, admitted,
+signature-verified third-party reproduction from SHUKOU. This does **not** change either boolean
+above, which remain scoped to this section's own original 8-task corpus and its own dedicated
+Gate 21 test suite; see section 13d for the full, separately-scoped evidence and its own honest
+bounds.
+
 ## 13. P90-R2-F1/F2: capability/authority blocker (not closed)
 
 Round 2's own Structural Advisor review (PR #90 comment 5699255260) and SHUKOU's adoption
@@ -1086,6 +1094,121 @@ and `UNVERIFIED_EXTERNAL_RESULT_ALLOWED=false` booleans forbid. This section rec
 current state -- the mechanism-level blocker section 13b found is not, in its full generality,
 still accurate, but the corpus itself remains to be designed and built -- rather than either
 repeating section 13b's now-imprecise claim or overclaiming F1 resolved.
+
+## 13d. P90-R6/P90-R6-WINDOWS-F1: the real-Agent corpus F1 required is now built and executed,
+and a genuine third-party reproduction is admitted -- for a structurally distinct corpus
+
+Section 13c's own outstanding gap -- "the real-Agent corpus F1 ultimately requires... has not
+been built" -- is now closed, but by a **structurally distinct corpus and project** from the one
+sections 3-11 describe, never by silently reinterpreting evidence across the two. The original
+8-task fixture (`tests/fixtures/comparative_benchmark.py`, `project_id=PRJ-CB21-0001`) and its
+own dedicated Gate 21 test suite (`tests/comparative_benchmark/test_comparative_benchmark_
+gate_21.py`) are **unchanged by this section**; section 11's own booleans remain exactly as
+P90-R5-F1 reported them for that corpus specifically.
+
+`ADOPT_P90_R6_REBIND_PRE_RESULT_FREEZE_AND_FRESH_RUN` (comment 5715652626) authorized building a
+new, separate, frozen 2-task real-Agent corpus (`tests/fixtures/comparative_benchmark_frozen_
+protocol.py` + `tests/fixtures/comparative_benchmark_rebind_protocol.py`,
+`project_id=PRJ-CB21-R6-0001`, protocol freeze `CBPF-7734C3D061B73E03690A7D3C11DFFCA92C831040E
+373E17FDC1EE8D9457E088F`) -- frozen *before* any result existed
+(`PROTOCOL_FROZEN_BEFORE_RESULTS=true`, enforced structurally by `route.commit_result_bundle`'s
+own refusal to commit against an unresolvable freeze, not merely by call order) -- with both its
+`MANOSUBE_PRESENT` and `MANOSUBE_ABSENT` comparison groups genuinely executed:
+
+```text
+F1_REAL_AGENT_CORPUS_BUILT=true                (this section corrects section 13c's own
+                                                 F1_REAL_AGENT_CORPUS_BUILT=false, for this
+                                                 distinct corpus only)
+F1_SAME_DECLARED_AGENT_IDENTITY_BOTH_CONDITIONS=true
+  (both comparison groups declare the identical agent_label -- {"agent_family": "claude_code",
+  "version": "claude-sonnet-5"} -- tests/fixtures/comparative_benchmark_rebind_protocol.py's own
+  SAME_AGENT_LABEL, schema-fixed to exactly agent_family/version)
+F1_BOTH_CONDITIONS_PERFORMED_A_REAL_TASK=true
+  (examples/comparative_benchmark/real_agent_corpus/frozen_protocol/RAW_EVENTS.md records real
+  commands run by this session's own native tool-using agent in both conditions -- a real
+  sha256sum invocation and a real prime-enumeration script, producing real, byte-identical-
+  across-conditions output files -- never a hardcoded literal or an unexecuted fixture)
+F1_MANOSUBE_PRESENT_CONDITION_ROUTES_THROUGH_PRODUCTION_PIPELINE=true
+  (tests/comparative_benchmark/frozen_protocol_present_cycle.py's begin_present_task/
+  resolve_present_task drives the real action through this repository's own real Difference ->
+  Authority Decision -> Change -> Observation -> Evidence -> Reflow route, never a fixture
+  composer relabeled as "the Agent alone" -- P90-R6-IF1's own required correction)
+F1_MANOSUBE_ABSENT_CONDITION_IS_A_DIRECT_UNWRAPPED_ACTION=true
+  (no Difference/Authority/Observation/Evidence/Reflow wraps the identical real write --
+  RAW_EVENTS.md's own MANOSUBE_ABSENT section)
+SIMULATED_OR_RELABELED_SUBSTITUTE_PROVIDED=false
+```
+
+Each real write is bound to a real, machine-verifiable content-addressed execution receipt
+(`tests.comparative_benchmark.agent_execution_receipt`), disclosed honestly as integrity/
+provenance evidence, never as platform-issued executor authentication
+(`CONTENT_ADDRESS_IS_EXECUTOR_SIGNATURE=false`, `PLATFORM_ATTESTATION_CLAIMED=false` -- no
+independently verifiable native-Agent issuer signature is available in this execution
+environment, comment 5715524639, receipt `CLR-CB21-R6F-0001`).
+
+**P90-R6-WINDOWS-F1 (this delivery): a genuine third-party reproduction is now admitted for
+this same frozen corpus.** SHUKOU independently re-verified this PR's live state via the GitHub
+API, then executed the published Windows reproduction procedure on SHUKOU's own separate
+machine (Git for Windows, Python 3.12.10, a dedicated venv, this repository installed at the
+exact reviewed head, the encrypted PKCS8 PEM present only locally) -- distinct hardware,
+operating system, and process from every prior execution of this corpus -- and posted the
+resulting, already-signed, already-locally-verified submission (PR #90 comment 5725221638,
+author `manosube`, `OWNER`). This session admitted that exact submission, byte-for-byte,
+through the production `route.admit_independent_reproduction_submission` path (`scripts.
+admit_frozen_protocol_r6_independent_reproduction_submission`), which independently:
+
+```text
+SUBMISSION_ID_AND_FINGERPRINT_REDERIVED_FROM_SUBMISSION_S_OWN_BODY=true
+PROTOCOL_FREEZE_REF_RESOLVED_FROM_THE_LEDGER_NOT_TRUSTED_ON_FACE=true
+ORIGINAL_RESULT_BUNDLE_REF_RESOLVED_FROM_THE_LEDGER_NOT_TRUSTED_ON_FACE=true
+TRUST_ANCHOR_RESOLVED_AGAINST_SHUKOU_S_OWN_PRE_REGISTERED_KEY=true
+  (comment 5709021178's own registered public key
+  0f183eed0aae19425e8f85c3a619b21ddc4efdb432966ab91cfdbc6dd7f2fdab -- never a self-declared,
+  unregistered key)
+ED25519_SIGNATURE_VERIFIED_AGAINST_THE_REGISTERED_PUBLIC_KEY=true
+RESOLVE_AFTER_COMMIT_ROUND_TRIP_PROVED_BYTE_FOR_BYTE=true
+AGREEMENT=MATCH
+```
+
+Published: `examples/comparative_benchmark/frozen_protocol_r6/independent_reproduction_
+submission.json` (`independent_reproduction_submission_id=CBIRS-66B2AF00F34DF88183B1F23C523B0E
+6981DE78532ABEC582DCCADF86AB09FBA1`), with a decisive regression suite
+(`tests/comparative_benchmark/test_admit_frozen_protocol_r6_independent_reproduction_submission_
+script.py`) proving this exact admission is durably repeatable (re-running it reproduces the
+identical committed record) and that a tampered raw event or a forged signature is refused, never
+silently accepted.
+
+**Honest scope of this THIRD_PARTY_REPRODUCIBLE claim, for this corpus specifically** (receipt
+`CLR-CB21-R6F-0002`, unchanged by this admission): both of this corpus's own tasks are fully
+deterministic and independently computable without any native-Agent capability (a SHA-256 digest
+of a fixed literal string; the ascending prime list in `[2, 50]`). SHUKOU's submission mechanically
+recomputed those declared outcomes and signed the result -- this proves the frozen corpus's own
+declared outcome counts are independently reproducible by a real, separate, pre-registered
+third-party actor, satisfying the Round 2+ `SEPARATE_PROCESS_ONLY_IS_NOT_ACCEPTED_AS_THIRD_
+PARTY=true` reading (SHUKOU is a distinct human Authority on distinct hardware using a key this
+repository has never held, not merely a separate OS process). It does **not** re-invoke or
+re-attest the native Agent execution itself, which this repository has no capability to offer any
+third party (`BLOCKED_NO_MACHINE_VERIFIABLE_NATIVE_AGENT_ISSUER=true`, comment 5715524639).
+
+```text
+F1_STATUS_FOR_PRJ_CB21_R6_0001=SATISFIED
+F2_STATUS_FOR_PRJ_CB21_R6_0001=SATISFIED_UNDER_THE_HONEST_MECHANICAL_REPRODUCTION_SCOPE_CLR_
+  CB21_R6F_0002
+F1_F2_STATUS_FOR_THE_ORIGINAL_PRJ_CB21_0001_CORPUS=UNCHANGED_SEE_SECTION_11
+PHASE_21_COMPLETE=false
+MERGE_ALLOWED=false
+ISSUE_89_CLOSE_ALLOWED=false
+PHASE_22_ALLOWED=false
+V1_0_DECLARATION_ALLOWED=false
+```
+
+Whether this second, later-built corpus's own now-satisfied F1/F2 is the disposition Issue #89's
+Gate 21 (section 11) itself should adopt for the *original* corpus -- superseding it, running
+both corpora in parallel, or another disposition -- is a roadmap/protocol decision reserved to
+SHUKOU and the Structural Advisor (identical reasoning to section 13a's own
+`ROADMAP_REDEFINITION_ALLOWED=false`), not one this section resolves on its own. This section
+records the honest, narrowly-scoped structural fact -- a real, separate, third-party-signed
+reproduction is now durably admitted for this specific frozen corpus -- and stops there.
 
 ## 14. Explicit non-claims
 

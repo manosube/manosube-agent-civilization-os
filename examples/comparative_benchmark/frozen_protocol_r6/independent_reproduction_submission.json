@@ -1,0 +1,97 @@
+{
+  "agent_runtime_model_configuration_identity": {
+    "agent_family": "independent-reproducer-shukou",
+    "configuration": "default",
+    "model": "n/a",
+    "runtime": "cpython",
+    "tool_surface": "none",
+    "version": "0.1"
+  },
+  "agreement": "MATCH",
+  "execution_environment_manifest": {
+    "platform": "Windows-11-10.0.22631-SP0",
+    "python_implementation": "CPython",
+    "python_version": "3.12.10"
+  },
+  "independent_reproduction_submission_id": "CBIRS-66B2AF00F34DF88183B1F23C523B0E6981DE78532ABEC582DCCADF86AB09FBA1",
+  "independent_reproduction_submission_semantic_fingerprint": "sha256:8aeea5bdd99f76949942a3cdb9748bba809572b6e827b3f9cd65f50d6088381f",
+  "original_result_bundle_ref": {
+    "result_bundle_id": "CBRB-D3496F4F5A7909CCA20074376009D92046CA96210DAFBDDEED7F0CF3B3F2D45A",
+    "result_bundle_semantic_fingerprint": "sha256:7cc8aebb00bbbd78669db2890fe086d702183242360c7dd7e997c102e4c5373d"
+  },
+  "project_binding_ref": {
+    "id": "PB-CB21-R6-0001",
+    "kind": "project_binding"
+  },
+  "project_id": "PRJ-CB21-R6-0001",
+  "protocol_freeze_ref": {
+    "protocol_freeze_id": "CBPF-7734C3D061B73E03690A7D3C11DFFCA92C831040E373E17FDC1EE8D9457E088F",
+    "protocol_freeze_semantic_fingerprint": "sha256:f9638411d54c5fcd61ac85ea770674383d768abe9e30afe8ee583e6396664bca"
+  },
+  "provenance_mechanism": "ED25519_SIGNATURE",
+  "reproduced_metrics": {
+    "claude_code_alone_real_agent_frozen_protocol": {
+      "COMPLETED_VERIFIED": 2,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 2
+    },
+    "manosube_present_real_agent_frozen_protocol": {
+      "COMPLETED_VERIFIED": 2,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 2
+    }
+  },
+  "reproduced_raw_events": [
+    {
+      "closed_at": "2026-09-18T04:33:42.15706Z",
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "mechanical, native-Agent-free deterministic recomputation (tests.comparative_benchmark.frozen_protocol_reproduction) -- see this protocol's own comparability_loss_receipts CLR-CB21-R6F-0002",
+      "started_at": "2026-09-18T04:33:42.15706Z",
+      "task_id": "task_a"
+    },
+    {
+      "closed_at": "2026-09-18T04:33:42.15706Z",
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "mechanical, native-Agent-free deterministic recomputation (tests.comparative_benchmark.frozen_protocol_reproduction) -- see this protocol's own comparability_loss_receipts CLR-CB21-R6F-0002",
+      "started_at": "2026-09-18T04:33:42.15706Z",
+      "task_id": "task_b"
+    },
+    {
+      "closed_at": "2026-09-18T04:33:42.15706Z",
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "mechanical, native-Agent-free deterministic recomputation (tests.comparative_benchmark.frozen_protocol_reproduction) -- see this protocol's own comparability_loss_receipts CLR-CB21-R6F-0002",
+      "started_at": "2026-09-18T04:33:42.15706Z",
+      "task_id": "task_a"
+    },
+    {
+      "closed_at": "2026-09-18T04:33:42.15706Z",
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "reason": "mechanical, native-Agent-free deterministic recomputation (tests.comparative_benchmark.frozen_protocol_reproduction) -- see this protocol's own comparability_loss_receipts CLR-CB21-R6F-0002",
+      "started_at": "2026-09-18T04:33:42.15706Z",
+      "task_id": "task_b"
+    }
+  ],
+  "reproduced_raw_events_content_address": "sha256:a7a980956435ca2606c19caedccaaae732f6a7e5d686872bf4f0c9d6fe7b9026",
+  "reproducer_actor_or_authority_id": "SHUKOU_PHASE21_REPRODUCER",
+  "schema_version": "0.1",
+  "signature": {
+    "algorithm": "ed25519",
+    "public_key": "0f183eed0aae19425e8f85c3a619b21ddc4efdb432966ab91cfdbc6dd7f2fdab",
+    "value": "e8ac70102bc004e28bf3e3acd2e1e9dcacabefc5a7e1295b8fbedbad62eb7d65a3965ebd02bb108511028422efcceeb03d59094c995859278d237d85a244d50c"
+  },
+  "submission_time": "2026-09-18T04:33:42.15706Z"
+}
