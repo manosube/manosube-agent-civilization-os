@@ -1,0 +1,161 @@
+{
+  "authority_boundary_equivalence_manifest": {
+    "boundary_ref": {
+      "id": "CBB-AUTH-BOUNDARY-0001",
+      "kind": "authority_boundary"
+    },
+    "equivalence_statement": "The MANOSUBE_PRESENT group's own live, pre-flight Authority check (load-bearing -- Change/Reflow only proceed on its decision) and every MANOSUBE_ABSENT group's own retroactive, audit-only Authority classification (applied after the real Reflow closure, never gating whether a task is attempted) are not asserted equivalent -- see comparability_loss_receipts. This manifest exists so that this Authority-boundary/tool-surface asymmetry is recorded and checkable (NC-3), never silently assumed away."
+  },
+  "claim_vocabulary": [
+    {
+      "bound": "Bounded strictly by this result bundle's own recorded raw_events/metrics for the declared comparison_group_id set; asserts no causal mechanism, no claim about any real external product's general capability, and no claim beyond this one frozen corpus's own recorded counts (CLAIMS_BOUNDED_BY_EVIDENCE).",
+      "claim_id": "CB21-CLAIM-SAME-AGENT-COMPLETION-COUNTS",
+      "claim_statement_template": "For the frozen 8-task corpus, the recorded COMPLETED_VERIFIED count for comparison_group_id=manosube_present_claude_code (MANOSUBE present) is {manosube_present_claude_code}, and for comparison_group_id=claude_code_alone (the identical declared Agent, MANOSUBE absent) is {claude_code_alone} -- exactly the counts recorded in this result bundle's own metrics; no causal or superiority claim is made beyond those recorded counts.",
+      "subject_group_ids": [
+        "manosube_present_claude_code",
+        "claude_code_alone"
+      ],
+      "subject_metric_name": "COMPLETED_VERIFIED"
+    }
+  ],
+  "comparability_loss_receipts": [
+    {
+      "description": "The three MANOSUBE_ABSENT comparison groups (codex_alone, claude_code_alone, existing_agent_framework) are driven by a real, structurally-ungated execution of the identical natural-route mechanism the MANOSUBE_PRESENT group uses (P90-R1-F1) -- the same real Observation/Difference/Authority/Change/Evidence/Reflow owners, the same frozen 8-task corpus, the same fixed Authority Rule, each group against its own fresh Store/genesis -- never a real invocation of any named external product (PRODUCTION_CREDENTIAL_USE_ALLOWED=false, REMOTE_COMMAND_AUTHORITY_ALLOWED=false). The remaining disclosed Authority-boundary and tool-surface asymmetry against MANOSUBE_PRESENT is narrower but real: (1) MANOSUBE_PRESENT's own frozen task-routing policy deliberately drives distinct tasks through out-of-scope, malformed-request, or evidence-emptied branches to exercise REFUSED/FAILED/RETAINED_INCOMPLETE outcomes, while every MANOSUBE_ABSENT task always attempts the identical plain in-scope action uniformly -- this uniform routing is a fact about this frozen fixture plan, never a claim that a real ungated agent could never fail, refuse, or be retained; and (2) MANOSUBE_ABSENT's own Authority evaluation is applied retroactively, for audit/classification only, never as a live pre-flight gate deciding whether a task is attempted, while MANOSUBE_PRESENT's identical Authority evaluation is load-bearing before Change/Reflow ever proceeds. Never a claim of true product-for-product parity (NC-3).",
+      "receipt_id": "CLR-CB21-0001"
+    }
+  ],
+  "comparison_groups": [
+    {
+      "agent_label": {
+        "agent_family": "claude_code",
+        "version": "claude-sonnet-5"
+      },
+      "comparison_group_id": "manosube_present_claude_code",
+      "comparison_group_role": "MANOSUBE_PRESENT",
+      "mechanism_identity": {
+        "mechanism": "manosube_natural_route",
+        "version": "0.1"
+      }
+    },
+    {
+      "agent_label": {
+        "agent_family": "claude_code",
+        "version": "claude-sonnet-5"
+      },
+      "comparison_group_id": "claude_code_alone",
+      "comparison_group_role": "MANOSUBE_ABSENT",
+      "mechanism_identity": {
+        "mechanism": "ungated_reference_harness",
+        "version": "0.1"
+      }
+    },
+    {
+      "agent_label": {
+        "agent_family": "codex",
+        "version": "reference-0.1"
+      },
+      "comparison_group_id": "codex_alone",
+      "comparison_group_role": "MANOSUBE_ABSENT",
+      "mechanism_identity": {
+        "mechanism": "ungated_reference_harness",
+        "version": "0.1"
+      }
+    },
+    {
+      "agent_label": {
+        "agent_family": "existing_agent_framework",
+        "version": "reference-0.1"
+      },
+      "comparison_group_id": "existing_agent_framework",
+      "comparison_group_role": "MANOSUBE_ABSENT",
+      "mechanism_identity": {
+        "mechanism": "ungated_reference_harness",
+        "version": "0.1"
+      }
+    }
+  ],
+  "corpus_manifest": {
+    "corpus_kind": "comparative_benchmark",
+    "task_count": 8,
+    "task_ids": [
+      "TSK-CB21-0000",
+      "TSK-CB21-0001",
+      "TSK-CB21-0002",
+      "TSK-CB21-0003",
+      "TSK-CB21-0004",
+      "TSK-CB21-0005",
+      "TSK-CB21-0006",
+      "TSK-CB21-0007"
+    ]
+  },
+  "exclusion_policy": {
+    "post_hoc_protocol_mutation_forbidden": true,
+    "raw_result_deletion_forbidden": true,
+    "success_only_subset_forbidden": true
+  },
+  "generated_at": "2026-09-16T14:55:51.13196Z",
+  "metric_definitions": [
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == COMPLETED_VERIFIED) per comparison_group_id",
+      "metric_name": "completed_verified_count"
+    },
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == REFUSED) per comparison_group_id",
+      "metric_name": "refused_count"
+    },
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == RETAINED_INCOMPLETE) per comparison_group_id",
+      "metric_name": "retained_incomplete_count"
+    },
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == FAILED) per comparison_group_id",
+      "metric_name": "failed_count"
+    },
+    {
+      "denominator": "raw_event_count for that comparison_group_id",
+      "formula": "count(outcome == TIMED_OUT) per comparison_group_id",
+      "metric_name": "timed_out_count"
+    }
+  ],
+  "numeric_thresholds": [
+    {
+      "comparison_decision_rule": "every comparison group must record exactly one raw event per corpus task (COMPARABLE_PROJECT_AND_TASK_CORPUS_REQUIRED=true) -- a structural completeness check, predeclared before any result exists",
+      "comparison_group_id": "codex_alone",
+      "metric_name": "raw_event_count",
+      "operator": "==",
+      "threshold_value": 8
+    },
+    {
+      "comparison_decision_rule": "the codex_alone ungated reference harness's own real, structurally-ungated mechanism (P90-R1-F1) deterministically closes every one of this frozen corpus's 8 tasks under the identical fixed Authority Rule fixture the MANOSUBE_PRESENT group's own real natural route uses -- predeclared before any result exists, never adjusted after seeing this bundle's own recomputed count",
+      "comparison_group_id": "codex_alone",
+      "metric_name": "COMPLETED_VERIFIED",
+      "operator": "==",
+      "threshold_value": 8
+    }
+  ],
+  "project_binding_ref": {
+    "id": "PB-CB21-0001",
+    "kind": "project_binding"
+  },
+  "project_id": "PRJ-CB21-0001",
+  "protocol_freeze_id": "CBPF-3D16E4E3B4E69AD40DB14A75EAB7C4D541DBD7FC087C4285AAA5287F3934B5CF",
+  "protocol_freeze_semantic_fingerprint": "sha256:fecc3e101a7c6896422e789d9c9f82a09c13529be8520bfa5cbabc40eb2fb30d",
+  "reproduction_procedure": {
+    "corpus_kind": "comparative_benchmark",
+    "entrypoint": "tests.comparative_benchmark.orchestrator.run_comparative_benchmark"
+  },
+  "resource_budget_manifest": {
+    "per_task_timeout_seconds": "30.0",
+    "total_time_budget_seconds": "600.0"
+  },
+  "schema_version": "0.1",
+  "unknown_missing_handling": {
+    "refusal_ne_system_failure": true,
+    "retained_ne_closed": true,
+    "unknown_ne_zero": true
+  }
+}

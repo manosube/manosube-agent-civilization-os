@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/comparative_benchmark/comparative_benchmark_reproduction_receipt.schema.json",
+  "title": "Phase 21 Comparative Benchmark: independent reproduction receipt (Issue #89, ADOPT_PHASE_21_COMPARATIVE_BENCHMARK)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "reproduction_receipt_id",
+    "reproduction_receipt_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "protocol_freeze_ref",
+    "original_result_bundle_ref",
+    "reproducer_identity",
+    "reproduced_raw_events",
+    "reproduced_metrics",
+    "agreement",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "reproduction_receipt_id": {"$ref": "#/$defs/receipt_id"},
+    "reproduction_receipt_semantic_fingerprint": {"$ref": "#/$defs/sha256"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "project_binding"}}}
+      ]
+    },
+    "protocol_freeze_ref": {
+      "type": "object",
+      "required": ["protocol_freeze_id", "protocol_freeze_semantic_fingerprint"],
+      "properties": {
+        "protocol_freeze_id": {"type": "string", "minLength": 1},
+        "protocol_freeze_semantic_fingerprint": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "original_result_bundle_ref": {
+      "type": "object",
+      "required": ["result_bundle_id", "result_bundle_semantic_fingerprint"],
+      "properties": {
+        "result_bundle_id": {"type": "string", "minLength": 1},
+        "result_bundle_semantic_fingerprint": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "reproducer_identity": {
+      "type": "object",
+      "required": [
+        "reproducer",
+        "is_original_author",
+        "reproduction_process_id",
+        "reproduction_environment_manifest"
+      ],
+      "properties": {
+        "reproducer": {"type": "string", "minLength": 1},
+        "is_original_author": {"type": "boolean"},
+        "reproduction_process_id": {"type": "integer", "minimum": 0},
+        "reproduction_environment_manifest": {
+          "type": "object",
+          "required": ["python_implementation", "python_version", "platform"],
+          "properties": {
+            "python_implementation": {"type": "string", "minLength": 1},
+            "python_version": {"type": "string", "minLength": 1},
+            "platform": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "reproduced_raw_events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind", "comparison_group_id", "task_id", "outcome"],
+        "properties": {
+          "kind": {"const": "task_attempt"},
+          "comparison_group_id": {"type": "string", "minLength": 1},
+          "task_id": {"type": "string", "minLength": 1},
+          "outcome": {
+            "enum": ["COMPLETED_VERIFIED", "REFUSED", "RETAINED_INCOMPLETE", "FAILED", "TIMED_OUT"]
+          },
+          "started_at": {"$ref": "../common/timestamp.schema.json"},
+          "closed_at": {"$ref": "../common/timestamp.schema.json"},
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "reproduced_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "raw_event_count",
+          "COMPLETED_VERIFIED",
+          "REFUSED",
+          "RETAINED_INCOMPLETE",
+          "FAILED",
+          "TIMED_OUT"
+        ],
+        "properties": {
+          "raw_event_count": {"type": "integer", "minimum": 0},
+          "COMPLETED_VERIFIED": {"type": "integer", "minimum": 0},
+          "REFUSED": {"type": "integer", "minimum": 0},
+          "RETAINED_INCOMPLETE": {"type": "integer", "minimum": 0},
+          "FAILED": {"type": "integer", "minimum": 0},
+          "TIMED_OUT": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "agreement": {"enum": ["MATCH", "DIVERGENT", "INCOMPARABLE"]},
+    "generated_at": {"$ref": "../common/timestamp.schema.json"}
+  },
+  "$defs": {
+    "receipt_id": {"type": "string", "pattern": "^CBRR-[0-9A-F]{64}(?![\\s\\S])"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"}
+  },
+  "additionalProperties": false
+}

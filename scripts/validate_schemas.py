@@ -144,7 +144,32 @@ def main() -> int:
     # ledger (never `commit_state_transition`), gathering that run's raw events, metrics,
     # lineage refs, session-loss receipts, Agent-swap refs, runtime-observation refs, an
     # environment manifest, a corpus manifest, and a reproduction procedure -- making 90.
-    if len(paths) != 90 or len(set(ids)) != len(paths) or None in ids:
+    # Issue #89's own Phase 21 Comparative Benchmark delivery (`ADOPT_PHASE_21_COMPARATIVE_
+    # BENCHMARK`) adds three more, all owned by the new `comparative_benchmark` package:
+    # `comparative_benchmark_protocol_freeze` (the immutable, content-addressed pre-result
+    # declaration -- group/treatment identity, corpus, metrics, thresholds, exclusion policy,
+    # claim vocabulary -- committed before any benchmark result is executed or observed),
+    # `comparative_benchmark_result_bundle` (the raw-event/metric/claim bundle a comparison
+    # run commits, metrics and claims always rederived from raw_events and the bound protocol
+    # freeze alone), and `comparative_benchmark_reproduction_receipt` (the independent
+    # reproducer's own MATCH/DIVERGENT/INCOMPARABLE verdict, always self-computed, never a
+    # caller-supplied claim) -- all three committed, like `long_running_proof_artifact`, only
+    # through the Store's own orthogonal coordination ledger, never `commit_state_transition`
+    # -- making 93. PR #90 Structural Review Round 3 (`ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_
+    # INDEPENDENT_REPRODUCER_LANE`) adds one more, owned by the same `comparative_benchmark`
+    # package: `comparative_benchmark_independent_reproduction_submission` (an externally-
+    # supplied, Ed25519-signed independent reproduction submission this package only ever
+    # verifies -- schema, self-consistent identity, exact corpus fidelity, independently
+    # rederived content-address/metrics/agreement, and a genuine signature against its own
+    # declared public key -- never one this package builds or signs itself) -- making 94. PR #90
+    # Structural Review Round 4 (`ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_
+    # REPRODUCER`) adds one more, owned by the same `comparative_benchmark` package:
+    # `comparative_benchmark_independent_reproducer_trust_anchor` (SHUKOU's own pre-registration
+    # of a distinct independent reproducer actor/authority's Ed25519 public key, committed
+    # before that actor ever submits a reproduction, so an independent reproduction submission
+    # is only ever admitted against a Store-resolved trust anchor, never the submission's own
+    # self-declared key alone) -- making 95.
+    if len(paths) != 95 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:

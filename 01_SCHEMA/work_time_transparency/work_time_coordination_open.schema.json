@@ -42,7 +42,8 @@
           "change_executor_execution",
           "independent_verification_run",
           "github_projection_attempt",
-          "long_running_proof_run"
+          "long_running_proof_run",
+          "comparative_benchmark_run"
         ]}}}
       ]
     },
@@ -55,7 +56,8 @@
       "CHANGE_EXECUTOR",
       "INDEPENDENT_VERIFICATION",
       "GITHUB_PROJECTION",
-      "LONG_RUNNING_PROOF"
+      "LONG_RUNNING_PROOF",
+      "COMPARATIVE_BENCHMARK"
     ]},
     "estimated_duration_lower_minutes": {"type": "integer", "minimum": 0},
     "estimated_duration_upper_minutes": {"type": "integer", "minimum": 0},

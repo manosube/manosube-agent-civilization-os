@@ -1,0 +1,123 @@
+{
+  "claims": [
+    {
+      "bound": "Bounded strictly by this result bundle's own recorded raw_events/metrics for the declared comparison_group_id set; asserts no causal mechanism, no claim about any real external product's general capability, and no claim beyond this one frozen corpus's own recorded counts (CLAIMS_BOUNDED_BY_EVIDENCE).",
+      "claim_id": "CB21-R6F-CLAIM-SAME-AGENT-COMPLETION-COUNTS",
+      "computed_values": {
+        "claude_code_alone_real_agent_frozen_protocol": 2,
+        "manosube_present_real_agent_frozen_protocol": 2
+      },
+      "statement": "For this round's frozen 2-task real-Agent corpus, the recorded COMPLETED_VERIFIED count for comparison_group_id=manosube_present_real_agent_frozen_protocol (MANOSUBE present) is 2, and for comparison_group_id=claude_code_alone_real_agent_frozen_protocol (the identical declared Agent, MANOSUBE absent) is 2 -- exactly the counts recorded in this result bundle's own metrics; no causal or superiority claim is made beyond those recorded counts.",
+      "subject_group_ids": [
+        "manosube_present_real_agent_frozen_protocol",
+        "claude_code_alone_real_agent_frozen_protocol"
+      ],
+      "subject_metric_name": "COMPLETED_VERIFIED"
+    }
+  ],
+  "environment_manifest": {
+    "platform": "Linux-6.18.44-fc-v33-x86_64-with-glibc2.39",
+    "python_implementation": "CPython",
+    "python_version": "3.12.3"
+  },
+  "generated_at": "2026-09-17T14:13:49.841401Z",
+  "generation_process_id": 557,
+  "metrics": {
+    "claude_code_alone_real_agent_frozen_protocol": {
+      "COMPLETED_VERIFIED": 2,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 2
+    },
+    "manosube_present_real_agent_frozen_protocol": {
+      "COMPLETED_VERIFIED": 2,
+      "FAILED": 0,
+      "REFUSED": 0,
+      "RETAINED_INCOMPLETE": 0,
+      "TIMED_OUT": 0,
+      "raw_event_count": 2
+    }
+  },
+  "project_binding_ref": {
+    "id": "PB-CB21-R6-0001",
+    "kind": "project_binding"
+  },
+  "project_id": "PRJ-CB21-R6-0001",
+  "protocol_freeze_ref": {
+    "protocol_freeze_id": "CBPF-7734C3D061B73E03690A7D3C11DFFCA92C831040E373E17FDC1EE8D9457E088F",
+    "protocol_freeze_semantic_fingerprint": "sha256:f9638411d54c5fcd61ac85ea770674383d768abe9e30afe8ee583e6396664bca"
+  },
+  "raw_events": [
+    {
+      "closed_at": "2026-09-17T14:11:57.845020216Z",
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-17T14:11:57.840554974Z",
+      "task_id": "task_a"
+    },
+    {
+      "closed_at": "2026-09-17T14:12:01.898601838Z",
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-17T14:12:01.884835964Z",
+      "task_id": "task_b"
+    },
+    {
+      "closed_at": "2026-09-17T14:12:40.746507579Z",
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-17T14:12:40.742297983Z",
+      "task_id": "task_a"
+    },
+    {
+      "closed_at": "2026-09-17T14:13:17.035813513Z",
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "kind": "task_attempt",
+      "outcome": "COMPLETED_VERIFIED",
+      "started_at": "2026-09-17T14:13:17.022287163Z",
+      "task_id": "task_b"
+    }
+  ],
+  "result_bundle_id": "CBRB-D3496F4F5A7909CCA20074376009D92046CA96210DAFBDDEED7F0CF3B3F2D45A",
+  "result_bundle_semantic_fingerprint": "sha256:7cc8aebb00bbbd78669db2890fe086d702183242360c7dd7e997c102e4c5373d",
+  "schema_version": "0.1",
+  "threshold_evaluations": [
+    {
+      "actual_value": 2,
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "metric_name": "raw_event_count",
+      "operator": "==",
+      "passed": true,
+      "threshold_value": 2
+    },
+    {
+      "actual_value": 2,
+      "comparison_group_id": "manosube_present_real_agent_frozen_protocol",
+      "metric_name": "COMPLETED_VERIFIED",
+      "operator": "==",
+      "passed": true,
+      "threshold_value": 2
+    },
+    {
+      "actual_value": 2,
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "metric_name": "raw_event_count",
+      "operator": "==",
+      "passed": true,
+      "threshold_value": 2
+    },
+    {
+      "actual_value": 2,
+      "comparison_group_id": "claude_code_alone_real_agent_frozen_protocol",
+      "metric_name": "COMPLETED_VERIFIED",
+      "operator": "==",
+      "passed": true,
+      "threshold_value": 2
+    }
+  ]
+}

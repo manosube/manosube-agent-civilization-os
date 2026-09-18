@@ -1,0 +1,28 @@
+{
+  "admitted_by": "HUMAN_AUTHORITY",
+  "adoption_ref": {
+    "adoption_id": "ADOPT_P90_R4_REAL_AGENT_CORPUS_AND_PRETRUSTED_INDEPENDENT_REPRODUCER",
+    "comment_id": "5709021178",
+    "comment_url": "https://github.com/manosube/manosube-agent-civilization-os/pull/90#issuecomment-5709021178"
+  },
+  "authorized_protocol_or_corpus_ref": {
+    "protocol_freeze_id": "CBPF-3D16E4E3B4E69AD40DB14A75EAB7C4D541DBD7FC087C4285AAA5287F3934B5CF",
+    "protocol_freeze_semantic_fingerprint": "sha256:fecc3e101a7c6896422e789d9c9f82a09c13529be8520bfa5cbabc40eb2fb30d"
+  },
+  "ed25519_public_key": "0f183eed0aae19425e8f85c3a619b21ddc4efdb432966ab91cfdbc6dd7f2fdab",
+  "generated_at": "2026-09-17T05:16:14Z",
+  "key_id": "sha256:447776a9aaad1ebf2bc6936f169e494e418187fb71553086680b355a7d9f3f49",
+  "project_binding_ref": {
+    "id": "PB-CB21-0001",
+    "kind": "project_binding"
+  },
+  "project_id": "PRJ-CB21-0001",
+  "reproducer_actor_or_authority_id": "SHUKOU_PHASE21_REPRODUCER",
+  "revocation_status": "ACTIVE",
+  "role": "INDEPENDENT_PHASE_21_REPRODUCER",
+  "schema_version": "0.1",
+  "trust_anchor_id": "CBTA-DF0449293C6605D788B9FF9B6FB7C92CB6292B4E968326C09F2C67B13E6C5600",
+  "trust_anchor_semantic_fingerprint": "sha256:91b17d282f12d1d6c5a158f19d4e3c2786755b44a4184b3bd68a69045ed29871",
+  "valid_from": "2026-09-17T05:05:49Z",
+  "valid_until": null
+}

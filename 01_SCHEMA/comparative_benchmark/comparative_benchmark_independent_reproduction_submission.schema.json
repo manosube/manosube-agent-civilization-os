@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.manosube.org/agent-civilization-os/v0.1/comparative_benchmark/comparative_benchmark_independent_reproduction_submission.schema.json",
+  "title": "Phase 21 Comparative Benchmark: independent reproduction submission (Issue #89, PR #90 Round 3, ADOPT_P90_R3_BOUNDED_REAL_AGENT_AND_INDEPENDENT_REPRODUCER_LANE)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "independent_reproduction_submission_id",
+    "independent_reproduction_submission_semantic_fingerprint",
+    "project_id",
+    "project_binding_ref",
+    "reproducer_actor_or_authority_id",
+    "provenance_mechanism",
+    "original_result_bundle_ref",
+    "protocol_freeze_ref",
+    "reproduced_raw_events",
+    "reproduced_raw_events_content_address",
+    "agent_runtime_model_configuration_identity",
+    "execution_environment_manifest",
+    "reproduced_metrics",
+    "agreement",
+    "submission_time",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "independent_reproduction_submission_id": {"$ref": "#/$defs/submission_id"},
+    "independent_reproduction_submission_semantic_fingerprint": {"$ref": "#/$defs/sha256"},
+    "project_id": {"$ref": "../common/identity.schema.json"},
+    "project_binding_ref": {
+      "allOf": [
+        {"$ref": "../common/reference.schema.json"},
+        {"properties": {"kind": {"const": "project_binding"}}}
+      ]
+    },
+    "reproducer_actor_or_authority_id": {"type": "string", "minLength": 1},
+    "provenance_mechanism": {"enum": ["ED25519_SIGNATURE"]},
+    "original_result_bundle_ref": {
+      "type": "object",
+      "required": ["result_bundle_id", "result_bundle_semantic_fingerprint"],
+      "properties": {
+        "result_bundle_id": {"type": "string", "minLength": 1},
+        "result_bundle_semantic_fingerprint": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "protocol_freeze_ref": {
+      "type": "object",
+      "required": ["protocol_freeze_id", "protocol_freeze_semantic_fingerprint"],
+      "properties": {
+        "protocol_freeze_id": {"type": "string", "minLength": 1},
+        "protocol_freeze_semantic_fingerprint": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "reproduced_raw_events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind", "comparison_group_id", "task_id", "outcome"],
+        "properties": {
+          "kind": {"const": "task_attempt"},
+          "comparison_group_id": {"type": "string", "minLength": 1},
+          "task_id": {"type": "string", "minLength": 1},
+          "outcome": {
+            "enum": ["COMPLETED_VERIFIED", "REFUSED", "RETAINED_INCOMPLETE", "FAILED", "TIMED_OUT"]
+          },
+          "started_at": {"$ref": "../common/timestamp.schema.json"},
+          "closed_at": {"$ref": "../common/timestamp.schema.json"},
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "reproduced_raw_events_content_address": {"$ref": "#/$defs/sha256"},
+    "agent_runtime_model_configuration_identity": {
+      "type": "object",
+      "required": ["agent_family", "version", "runtime", "model", "configuration", "tool_surface"],
+      "properties": {
+        "agent_family": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "runtime": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "configuration": {"type": "string", "minLength": 1},
+        "tool_surface": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "execution_environment_manifest": {
+      "type": "object",
+      "required": ["python_implementation", "python_version", "platform"],
+      "properties": {
+        "python_implementation": {"type": "string", "minLength": 1},
+        "python_version": {"type": "string", "minLength": 1},
+        "platform": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "reproduced_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "raw_event_count",
+          "COMPLETED_VERIFIED",
+          "REFUSED",
+          "RETAINED_INCOMPLETE",
+          "FAILED",
+          "TIMED_OUT"
+        ],
+        "properties": {
+          "raw_event_count": {"type": "integer", "minimum": 0},
+          "COMPLETED_VERIFIED": {"type": "integer", "minimum": 0},
+          "REFUSED": {"type": "integer", "minimum": 0},
+          "RETAINED_INCOMPLETE": {"type": "integer", "minimum": 0},
+          "FAILED": {"type": "integer", "minimum": 0},
+          "TIMED_OUT": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "agreement": {"enum": ["MATCH", "DIVERGENT", "INCOMPARABLE"]},
+    "submission_time": {"$ref": "../common/timestamp.schema.json"},
+    "signature": {"$ref": "#/$defs/signature"}
+  },
+  "$defs": {
+    "submission_id": {"type": "string", "pattern": "^CBIRS-[0-9A-F]{64}(?![\\s\\S])"},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"},
+    "signature": {
+      "type": "object",
+      "required": ["algorithm", "public_key", "value"],
+      "properties": {
+        "algorithm": {"const": "ed25519"},
+        "public_key": {"type": "string", "pattern": "^[0-9a-f]{64}(?![\\s\\S])"},
+        "value": {"type": "string", "pattern": "^[0-9a-f]{128}(?![\\s\\S])"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
