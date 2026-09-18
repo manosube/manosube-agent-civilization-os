@@ -843,19 +843,53 @@ above, which remain scoped to this section's own original 8-task corpus and its 
 Gate 21 test suite; see section 13d for the full, separately-scoped evidence and its own honest
 bounds.
 
-## 11a. P90-R7: canonical Gate 21 disposition (the single current result)
+## 11a. P90-R7/P90-R8: canonical Gate 21 disposition (the single current result)
 
 `ADOPT_P90_R7_CANONICAL_GATE_21_COMPLETION` (comment 5726787466, adopting the Structural
-Advisor's Round 7 review, comment 5726770137) requires exactly one current, mechanically
+Advisor's Round 7 review, comment 5726770137) required exactly one current, mechanically
 rederivable Gate 21 result -- accounting explicitly for Issue #89's own four canonical
 comparison roles (section 4) and eight canonical proof dimensions (section 5), the same-
 Boundary/comparable-Authority requirement, and the relationship between the two corpora --
-without conflating them. This section is that single current disposition. Section 11's own
-booleans (the original 8-task corpus) and section 13d's own booleans (the Round 6 frozen
-corpus) are **not rewritten or deleted**; this section states, in one place, what the union of
-both durable evidence sets does and does not canonically prove, and why.
+without conflating them. Section 11's own booleans (the original 8-task corpus) and section
+13d's own booleans (the Round 6 frozen corpus) are **not rewritten or deleted**; this section
+states, in one place, what the union of both durable evidence sets does and does not canonically
+prove, and why.
 
-### P90-R7-F1: the four canonical comparison roles
+**P90-R8 correction (this revision).** `ADOPT_P90_R8_AUTHORITY_DRIFT_CORRECTION` (comment
+5728797305, adopting the Structural Advisor's authority-drift review, comment 5728778060)
+formally withdrew five over-constraints the Round 7 review and this section's own prior text had
+introduced without Issue #89 itself requiring them:
+
+```text
+FOUR_REAL_EXTERNAL_PRODUCT_INVOCATIONS_REQUIRED=false
+SECOND_REAL_PRODUCT_CREDENTIAL_GRANT_REQUIRED=false
+ALL_EIGHT_DIMENSIONS_MUST_HAVE_POSITIVE_FULL_MEASUREMENTS=false
+AUTHORITY_GATE_LITERAL_IDENTITY_REQUIRED=false
+ROADMAP_AMENDMENT_REQUIRED=false
+```
+
+Issue #89 section 4's own text ("実施時に実在する製品・framework identityへ置換または追加でき
+る") permits, but never mandates, replacing the four named roles with real products; the
+invariants it actually fixes are `SAME_AGENT_COMPARISON_REQUIRED`, `MANOSUBE_PRESENT_AND_
+ABSENT_REQUIRED`, `CONTROL_GROUP_IDENTITY_FROZEN_BEFORE_RUN`, `COMPARABLE_PROJECT_AND_TASK_
+CORPUS_REQUIRED`, `COMPARABLE_AUTHORITY_BOUNDARY_REQUIRED`, `COMPARABLE_RUNTIME_AND_RESOURCE_
+ENVELOPE_REQUIRED`, `SUCCESS_ONLY_SUBSET_FORBIDDEN`. Issue #89 section 11 simultaneously fixes
+`PRODUCTION_CREDENTIAL_USE=false` and `REMOTE_COMMAND_AUTHORITY=false` as out of scope --
+requiring live Codex/external-framework credentials to close Gate 21 was therefore internally
+inconsistent with the same Issue's own boundary. Issue #89 section 9's own Gate 21 definition
+contains exactly seven booleans; none of them is an eight-dimension-measurement gate --
+section 5's eight dimensions are the roadmap's own stated measurement *ambition*
+(`UNKNOWN_NE_ZERO=true`), tracked honestly below, never a precondition this section may invent
+for Gate 21's own seven booleans. And `COMPARABLE_AUTHORITY_BOUNDARY_REQUIRED` cannot mean
+*literal* Authority-evaluation identity without erasing the very treatment (MANOSUBE's own
+presence or absence) Issue #89's own Objective (section 2) exists to measure.
+
+The underlying factual evidence this section's Round 7 text already established -- per-role
+status, per-dimension measurement status, the Authority-boundary comparability-loss disclosure
+-- is **not weakened or removed** by this correction; only the incorrect *blocking* conclusions
+Round 7 drew from that evidence are withdrawn.
+
+### P90-R8-F1 (supersedes P90-R7-F1): the four canonical comparison roles
 
 ```text
 ROLE=Claude Code alone
@@ -907,14 +941,30 @@ own one-identity limit, and `NEW_CREDENTIAL_ACQUISITION_ALLOWED=false`/`CREDENTI
 ALLOWED=false` forbid acquiring one. Per the adoption's own fail-closed feasibility rule
 (`UNAVAILABLE_EXTERNAL_PRODUCT_INVOCATION_MAY_BE_FABRICATED=false`, `SIMULATED_OR_RELABELED_
 SUBSTITUTE_ALLOWED=false`), this contract does not fabricate, simulate, or relabel a
-substitute for either role.
+substitute for either role -- `codex_alone`/`existing_agent_framework` remain, exactly as they
+have since section 6/13, an honestly disclosed ungated reference harness, never claimed as a
+real invocation.
+
+**P90-R8 correction:** Issue #89 section 4's own text permits, but never requires, replacing
+these two roles with real products (`実施時に実在する製品・framework identityへ置換または追加
+できる`); it does not state `FOUR_REAL_EXTERNAL_PRODUCT_INVOCATIONS_REQUIRED`. `CONTROL_GROUPS_
+DEFINED` (Gate 21's own boolean, Issue #89 section 9) asks only that the four comparison-group
+identities be frozen and defined before any run, matching Issue #89 section 4 exactly --
+already proven for `PRJ-CB21-0001` by `test_gate21_control_groups_defined_matches_issue_89_
+section_4` (section 11). It was Round 7's own added text, not Issue #89, that required all four
+roles be *live real-product invocations* to count the boolean satisfied.
 
 ```text
-CANONICAL_CONTROL_GROUP_SET_COMPLETE=false
-  (2 of 4 canonical roles have real evidence; 2 of 4 are BLOCKED_NO_REAL_INVOCATION_CAPABILITY)
+FOUR_REAL_EXTERNAL_PRODUCT_INVOCATIONS_REQUIRED=false      (withdrawn, P90-R8)
+SECOND_REAL_PRODUCT_CREDENTIAL_GRANT_REQUIRED=false         (withdrawn, P90-R8; also structurally
+  self-contradictory with Issue #89 section 11's own PRODUCTION_CREDENTIAL_USE=false)
+CONTROL_GROUPS_DEFINED=true
+  (PRJ-CB21-0001, section 11, unchanged -- matches Issue #89 section 4 exactly; 2 of 4 roles are
+  additionally REAL_EVIDENCE_AVAILABLE via PRJ-CB21-R6-0001, section 13d, above what Issue #89
+  section 4 itself requires)
 ```
 
-### P90-R7-F1 (continued): the eight canonical proof dimensions
+### P90-R8-F1 (continued, supersedes P90-R7-F1 continued): the eight canonical proof dimensions
 
 Issue #89 section 5's own eight dimensions, mapped against the two roles that do have real
 evidence (`Claude Code alone`, `MANOSUBE + the same Agent`, both PRJ-CB21-R6-0001):
@@ -958,14 +1008,21 @@ more complete Evidence            = PARTIALLY_MEASURED (MANOSUBE_PRESENT's own r
 ```
 
 ```text
-CANONICAL_EIGHT_PROOF_DIMENSIONS_MEASURED=false
-  (0 of 8 fully measured; 2 of 8 partially measured as harness-behavior evidence, not
-  cross-product comparative evidence; 6 of 8 require either the missing two roles, a
-  materially richer multi-turn/longitudinal task corpus, or both -- none of which exists
-  today)
+EIGHT_PROOF_DIMENSIONS_MEASUREMENT_STATUS=0_FULLY / 2_PARTIALLY / 6_NOT_MEASURED
+UNKNOWN_NE_ZERO=true                        (Issue #89 section 5 itself; a NOT_MEASURED
+                                              dimension is reported honestly, never fabricated
+                                              as a negative/zero result)
 ```
 
-### P90-R7-F2: comparable Boundary and Authority conditions
+**P90-R8 correction:** Issue #89 section 9's own Gate 21 definition (the seven booleans in
+section 11 above) contains no eighth "all proof dimensions measured" boolean. Section 5's eight
+dimensions are the roadmap's own stated measurement *ambition* for what MANOSUBE must eventually
+demonstrate, tracked honestly here -- they are not, and Round 7's text incorrectly treated them
+as, a precondition Gate 21 itself requires satisfied. `ALL_EIGHT_DIMENSIONS_MUST_HAVE_POSITIVE_
+FULL_MEASUREMENTS_REQUIRED=false` (withdrawn, P90-R8). The measurement matrix above is preserved
+unweakened as honest documentation of what is and is not yet demonstrated.
+
+### P90-R8-F2 (supersedes P90-R7-F2): comparable Boundary and Authority conditions
 
 `COMPARABLE_RUNTIME_AND_RESOURCE_ENVELOPE_REQUIRED=true` and `COMPARABLE_PROJECT_AND_TASK_
 CORPUS_REQUIRED=true` (Issue #89 section 4) are satisfied for the two available roles: identical
@@ -990,46 +1047,79 @@ PROJECT_AND_TASK_CORPUS_COMPARABLE=true          (for the two available roles)
 AUTHORITY_BOUNDARY_LITERAL_IDENTITY_ACHIEVED=false
 AUTHORITY_BOUNDARY_ASYMMETRY_IS_THE_STUDIED_VARIABLE_NOT_A_CONFOUND=true
   (disclosed honestly, per CLR-CB21-R6F-0003, not claimed as full comparability)
-COMPARABLE_AUTHORITY_CONDITIONS_PROVED=false
-  (in the literal-identity sense the Round 7 review names; the disclosed-asymmetry sense is
-  proved and was already proved at section 13d)
 ```
 
-### P90-R7-F3: one current Gate 21 result, corpora never conflated
+**P90-R8 correction:** Issue #89 section 4's own `COMPARABLE_AUTHORITY_BOUNDARY_REQUIRED=true`
+asks for a *comparable* Authority boundary, never a *literal-identity* one -- and Issue #89
+section 2's own Objective is itself defined as measuring the difference MANOSUBE's presence or
+absence makes, so requiring literal Authority-evaluation identity on both sides would erase the
+very variable the benchmark exists to study. `AUTHORITY_GATE_LITERAL_IDENTITY_REQUIRED=false`
+(withdrawn, P90-R8; it was never Issue #89's own requirement to begin with).
 
 ```text
-CANONICAL_GATE_21_STATUS=BLOCKED_REQUIRES_SHUKOU_DECISION
-CANONICAL_CONTROL_GROUP_SET_COMPLETE=false        (2 of 4 roles; see P90-R7-F1)
-CANONICAL_EIGHT_PROOF_DIMENSIONS_MEASURED=false   (0 fully, 2 partially; see P90-R7-F1)
-COMPARABLE_AUTHORITY_CONDITIONS_PROVED=false      (literal-identity sense; see P90-R7-F2)
-PRJ_CB21_0001_SECTION_11_BOOLEANS=UNCHANGED
-PRJ_CB21_R6_0001_SECTION_13D_BOOLEANS=UNCHANGED
-CROSS_CORPUS_METRIC_OR_EVIDENCE_SUBSTITUTION=false
-PHASE_21_COMPLETE=false
-MERGE_ALLOWED=false
+COMPARABLE_AUTHORITY_BOUNDARY_REQUIRED=true
+  (Issue #89 section 4's own requirement, satisfied via the disclosed-asymmetry-as-treatment-
+  variable reading proved at section 13d and restated above; not the literal-identity reading,
+  which Issue #89 never asked for)
 ```
 
-### Smallest Human decision required
+### P90-R8-F3 (supersedes P90-R7-F3): one current Gate 21 result, corpora never conflated
 
-Both options the Structural Advisor's own review names remain open, and only SHUKOU's own
-Authority can choose between them:
+Per P90-R8's own explicit instruction, composite proof is an explicit conjunction of two
+separately-owned propositions, never a cross-corpus metric substitution. Each of Issue #89
+section 9's seven Gate 21 booleans is satisfied by exactly one corpus's own genuine evidence
+(mechanically rederived in one place by `test_all_seven_gate_21_booleans_hold_via_explicit_
+per_corpus_evidence_never_cross_corpus`, `tests/contract/comparative_benchmark/test_p90_r7_
+canonical_gate21_disposition.py`):
 
-1. **Roadmap-preserving path (Structural Advisor's own recommendation):** SHUKOU authorizes and
-   provides real, narrowly-scoped credentials for at least one additional real Agent
-   product/framework (satisfying the missing `Codex alone`/`existing agent framework` roles),
-   under the identical `PRODUCTION_CREDENTIAL_USE_SCOPE`-style narrow grant precedent Round 3
-   already established for this session's own one identity -- and authorizes designing a
-   materially richer, multi-turn task corpus capable of actually differentiating the six
-   currently-unmeasured proof dimensions.
-2. **Roadmap-amendment path:** SHUKOU formally amends Issue #89's own canonical comparison-group
-   and proof-dimension requirements (section 4/5) to the narrower scope this repository's
-   current, real, non-fabricated evidence already supports -- a Human-Authority roadmap decision,
-   never an implementation-only correction Claude Code may make unilaterally
-   (`ROADMAP_AMENDMENT_ALLOWED=false`, restated by this round's own adoption).
+```text
+SAME_AGENT_COMPARISON_AVAILABLE=true     (PRJ-CB21-R6-0001, section 13d)
+CONTROL_GROUPS_DEFINED=true              (PRJ-CB21-0001, section 11)
+METRICS_PREDECLARED=true                 (PRJ-CB21-0001, section 11)
+RAW_RESULTS_PUBLIC=true                  (both corpora independently)
+FAILURES_INCLUDED=true                   (PRJ-CB21-0001, section 11)
+THIRD_PARTY_REPRODUCIBLE=true            (PRJ-CB21-R6-0001, section 13d)
+CLAIMS_BOUNDED_BY_EVIDENCE=true          (PRJ-CB21-0001, section 11)
 
-Per `BLOCKED_WITH_EXACT_REASON_IS_AN_AUTHORIZED_STOP=true`, this section records the honest
-current state and stops here, rather than choosing one of the two paths above on its own
-Authority.
+CANONICAL_GATE_21_STATUS=ALL_SEVEN_BOOLEANS_SATISFIED_VIA_EXPLICIT_LAYERED_EVIDENCE
+CROSS_CORPUS_METRIC_OR_EVIDENCE_SUBSTITUTION=false
+  (each boolean's own truth value is checked only against its own owning corpus's own
+  published artifact; no metric or evidence value is copied from one corpus to stand in for
+  the other)
+PRJ_CB21_0001_SECTION_11_BOOLEANS=UNCHANGED
+PRJ_CB21_R6_0001_SECTION_13D_BOOLEANS=UNCHANGED
+EIGHT_PROOF_DIMENSIONS_MEASUREMENT_STATUS=0_FULLY / 2_PARTIALLY / 6_NOT_MEASURED
+  (see P90-R8-F1 continued; UNKNOWN_NE_ZERO=true; tracked as roadmap ambition, not a Gate 21
+  blocker)
+BENCHMARK_DECLARATION_EQUALS_PRODUCT_SUPERIORITY=false
+  (Issue #89 section 7, restated unweakened -- Gate 21's own seven booleans being satisfied is
+  not, and is never claimed here to be, an unsupported superiority or causal-generalization
+  claim; see section 14's own non-claims)
+```
+
+`PHASE_21_COMPLETE` remains governed by Issue #89 section 7's own separate acceptance gate --
+`SHUKOU_HUMAN_ACCEPTANCE AND EXACT_REVIEWED_HEAD AND MERGE_RECEIPT AND AFTER_STATE_
+REOBSERVATION` -- none of which is a Gate-21-boolean matter, and none of which this section (or
+any prior round) has authority to satisfy on its own:
+
+```text
+PHASE_21_COMPLETE=false
+MERGE_ALLOWED=false
+ROADMAP_AMENDMENT_REQUIRED=false   (withdrawn, P90-R8 -- no roadmap amendment was needed; this
+                                     was an implementation-only interpretive correction of how
+                                     Issue #89's own already-adopted text applies to the already-
+                                     built evidence)
+```
+
+### Resolution
+
+P90-R7's own "smallest Human decision required" section (crediting narrowly-scoped second-
+product credentials or a formal roadmap amendment) is withdrawn along with the over-constraints
+that made it appear necessary. No Human decision beyond the P90-R8 adoption itself is required
+to close this section's own disposition; the remaining Human decision is the one Issue #89
+section 7 has always reserved for SHUKOU alone -- acceptance and merge of the exact reviewed
+head, which this section does not, and may not, authorize on its own
+(`MERGE_ALLOWED=false`).
 
 ## 13. P90-R2-F1/F2: capability/authority blocker (not closed)
 
