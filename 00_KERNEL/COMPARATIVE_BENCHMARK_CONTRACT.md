@@ -843,6 +843,194 @@ above, which remain scoped to this section's own original 8-task corpus and its 
 Gate 21 test suite; see section 13d for the full, separately-scoped evidence and its own honest
 bounds.
 
+## 11a. P90-R7: canonical Gate 21 disposition (the single current result)
+
+`ADOPT_P90_R7_CANONICAL_GATE_21_COMPLETION` (comment 5726787466, adopting the Structural
+Advisor's Round 7 review, comment 5726770137) requires exactly one current, mechanically
+rederivable Gate 21 result -- accounting explicitly for Issue #89's own four canonical
+comparison roles (section 4) and eight canonical proof dimensions (section 5), the same-
+Boundary/comparable-Authority requirement, and the relationship between the two corpora --
+without conflating them. This section is that single current disposition. Section 11's own
+booleans (the original 8-task corpus) and section 13d's own booleans (the Round 6 frozen
+corpus) are **not rewritten or deleted**; this section states, in one place, what the union of
+both durable evidence sets does and does not canonically prove, and why.
+
+### P90-R7-F1: the four canonical comparison roles
+
+```text
+ROLE=Claude Code alone
+  STATUS=REAL_EVIDENCE_AVAILABLE
+  SOURCE=PRJ-CB21-R6-0001 claude_code_alone_real_agent_frozen_protocol (section 13d) -- a
+    genuine native tool-using Agent execution, real Bash/Write commands, real output bytes,
+    machine-verifiable execution receipts (tests.comparative_benchmark.agent_execution_receipt).
+    The original 8-task corpus's own PRJ-CB21-0001 claude_code_alone group remains available as
+    a separate, explicitly disclosed ungated-reference-harness reading (section 6/13), never
+    conflated with this real-execution reading.
+ROLE=MANOSUBE + the same Agent
+  STATUS=REAL_EVIDENCE_AVAILABLE
+  SOURCE=PRJ-CB21-R6-0001 manosube_present_real_agent_frozen_protocol (section 13d) -- the
+    identical declared Agent identity, routed through the real production Difference ->
+    Authority Decision -> Change -> Observation -> Evidence -> Reflow pipeline. The original
+    8-task corpus's own PRJ-CB21-0001 MANOSUBE_PRESENT group (natural-route reuse) remains
+    available as a separate, earlier reading.
+ROLE=Codex alone
+  STATUS=BLOCKED_NO_REAL_INVOCATION_CAPABILITY
+ROLE=existing agent framework
+  STATUS=BLOCKED_NO_REAL_INVOCATION_CAPABILITY
+```
+
+Neither `Codex alone` nor `existing agent framework` has ever had, and does not now have, a real
+invocation path in this repository or this execution environment:
+
+```text
+REAL_EXTERNAL_PRODUCT_INVOCATION_EVER_SHIPPED=false
+  (unchanged since section 13's own founding finding; test_no_module_imports_a_network_
+  subprocess_or_filesystem_i_o_surface -- tests/contract/comparative_benchmark/test_
+  comparative_benchmark_static_conformance.py -- structurally proves the comparative_benchmark
+  package itself imports no socket/subprocess/urllib/requests/http.client surface at all)
+PRODUCTION_CREDENTIAL_USE_SCOPE=ONE_PREEXISTING_CONFIGURED_AGENT_IDENTITY
+  (Round 3's own still-unwidened boundary, section 13a -- one Agent identity only, never a
+  second real product's credentials)
+NEW_CREDENTIAL_ACQUISITION_ALLOWED=false
+CREDENTIAL_ACQUISITION_ALLOWED=false
+  (P90-R7's own adoption, restated unchanged from every prior round)
+FRESH_CAPABILITY_CHECK_THIS_ROUND=true
+  (this round independently re-checked, rather than assuming history repeats: a direct attempt
+  to enumerate any Codex/external-framework credential or invocation path in this execution
+  environment was itself denied by this harness's own auto-mode classifier, reason "Credential
+  Exploration" -- the platform itself refuses even the exploration step, let alone acquisition
+  or use, independent of and prior to any of this contract's own standing constraints)
+```
+
+No real product exists to substitute for either role under `PRODUCTION_CREDENTIAL_USE_SCOPE`'s
+own one-identity limit, and `NEW_CREDENTIAL_ACQUISITION_ALLOWED=false`/`CREDENTIAL_ACQUISITION_
+ALLOWED=false` forbid acquiring one. Per the adoption's own fail-closed feasibility rule
+(`UNAVAILABLE_EXTERNAL_PRODUCT_INVOCATION_MAY_BE_FABRICATED=false`, `SIMULATED_OR_RELABELED_
+SUBSTITUTE_ALLOWED=false`), this contract does not fabricate, simulate, or relabel a
+substitute for either role.
+
+```text
+CANONICAL_CONTROL_GROUP_SET_COMPLETE=false
+  (2 of 4 canonical roles have real evidence; 2 of 4 are BLOCKED_NO_REAL_INVOCATION_CAPABILITY)
+```
+
+### P90-R7-F1 (continued): the eight canonical proof dimensions
+
+Issue #89 section 5's own eight dimensions, mapped against the two roles that do have real
+evidence (`Claude Code alone`, `MANOSUBE + the same Agent`, both PRJ-CB21-R6-0001):
+
+```text
+fewer false completions           = NOT_MEASURED (requires a corpus with tasks a real Agent can
+                                     genuinely fail or falsely claim complete on; this frozen
+                                     corpus's own two tasks -- a SHA-256 digest, a prime list --
+                                     are deterministic and were completed correctly in both
+                                     conditions, so no false-completion contrast exists to
+                                     measure)
+better long-term state retention  = NOT_MEASURED (requires a multi-session/longitudinal task
+                                     structure; this corpus is single-turn, no retries -- see
+                                     RESOURCE_BUDGET)
+more successful runtime arrival   = NOT_MEASURED (requires tasks with a non-trivial runtime
+                                     goal beyond one deterministic write)
+less human re-explanation         = NOT_MEASURED (requires a multi-turn task with an
+                                     opportunity for a human correction step; this corpus is
+                                     explicitly single-turn)
+less rework                       = NOT_MEASURED (requires an initial-failure-then-correction
+                                     structure this corpus's always-succeeding deterministic
+                                     tasks do not exercise)
+safe Agent replacement            = NOT_MEASURED (requires comparing MANOSUBE's behavior across
+                                     more than one real Agent identity -- exactly the missing
+                                     Codex/existing-framework roles)
+fewer Authority violations        = PARTIALLY_MEASURED (PRJ-CB21-R6-0001's own 13 required
+                                     negative controls -- inherited unmodified from the
+                                     original corpus's own NC-1..NC-13 suite, reused against
+                                     this round's own fixtures where applicable -- prove
+                                     Authority/tool-surface/resource asymmetry is detected
+                                     rather than silently treated as a MANOSUBE effect; this is
+                                     evidence about the harness's own fail-closed behavior, not
+                                     a cross-product violation-rate comparison)
+more complete Evidence            = PARTIALLY_MEASURED (MANOSUBE_PRESENT's own real Evidence/
+                                     Reflow records are durably committed and independently
+                                     resolvable -- section 13d, RAW_RESULTS_PUBLIC-equivalent for
+                                     this corpus; MANOSUBE_ABSENT structurally produces no
+                                     Evidence at all by design, so the presence/absence
+                                     difference itself is trivially true rather than a measured
+                                     comparison of Evidence completeness under matched effort)
+```
+
+```text
+CANONICAL_EIGHT_PROOF_DIMENSIONS_MEASURED=false
+  (0 of 8 fully measured; 2 of 8 partially measured as harness-behavior evidence, not
+  cross-product comparative evidence; 6 of 8 require either the missing two roles, a
+  materially richer multi-turn/longitudinal task corpus, or both -- none of which exists
+  today)
+```
+
+### P90-R7-F2: comparable Boundary and Authority conditions
+
+`COMPARABLE_RUNTIME_AND_RESOURCE_ENVELOPE_REQUIRED=true` and `COMPARABLE_PROJECT_AND_TASK_
+CORPUS_REQUIRED=true` (Issue #89 section 4) are satisfied for the two available roles: identical
+declared Agent identity (`agent_label`), identical tool surface (`Bash`, `Write`), identical
+resource budget (single turn, no retries), identical task corpus, identical environment --
+`tests/fixtures/comparative_benchmark_rebind_protocol.py`'s own `SAME_AGENT_LABEL`/
+`TOOL_SURFACE`/`RESOURCE_BUDGET`, unchanged since section 13d.
+
+`COMPARABLE_AUTHORITY_BOUNDARY_REQUIRED=true` cannot mean *identical* Authority evaluation on
+both sides without erasing the very comparison Issue #89 itself asks for: MANOSUBE's own
+Authority Decision gate is the treatment variable this benchmark exists to measure the presence
+or absence of (section 1's own "MANOSUBE's presence or absence"). Requiring the ABSENT
+condition to also undergo a MANOSUBE Authority check would make it no longer the ABSENT
+condition. `protocol_freeze.json`'s own `authority_boundary_equivalence_manifest` already
+discloses this precisely (receipt `CLR-CB21-R6F-0003`, unchanged): everything *except* the
+Authority gate itself is held comparable; the gate's presence/absence is the studied variable,
+not an unaddressed confound.
+
+```text
+RUNTIME_AND_RESOURCE_ENVELOPE_COMPARABLE=true    (for the two available roles)
+PROJECT_AND_TASK_CORPUS_COMPARABLE=true          (for the two available roles)
+AUTHORITY_BOUNDARY_LITERAL_IDENTITY_ACHIEVED=false
+AUTHORITY_BOUNDARY_ASYMMETRY_IS_THE_STUDIED_VARIABLE_NOT_A_CONFOUND=true
+  (disclosed honestly, per CLR-CB21-R6F-0003, not claimed as full comparability)
+COMPARABLE_AUTHORITY_CONDITIONS_PROVED=false
+  (in the literal-identity sense the Round 7 review names; the disclosed-asymmetry sense is
+  proved and was already proved at section 13d)
+```
+
+### P90-R7-F3: one current Gate 21 result, corpora never conflated
+
+```text
+CANONICAL_GATE_21_STATUS=BLOCKED_REQUIRES_SHUKOU_DECISION
+CANONICAL_CONTROL_GROUP_SET_COMPLETE=false        (2 of 4 roles; see P90-R7-F1)
+CANONICAL_EIGHT_PROOF_DIMENSIONS_MEASURED=false   (0 fully, 2 partially; see P90-R7-F1)
+COMPARABLE_AUTHORITY_CONDITIONS_PROVED=false      (literal-identity sense; see P90-R7-F2)
+PRJ_CB21_0001_SECTION_11_BOOLEANS=UNCHANGED
+PRJ_CB21_R6_0001_SECTION_13D_BOOLEANS=UNCHANGED
+CROSS_CORPUS_METRIC_OR_EVIDENCE_SUBSTITUTION=false
+PHASE_21_COMPLETE=false
+MERGE_ALLOWED=false
+```
+
+### Smallest Human decision required
+
+Both options the Structural Advisor's own review names remain open, and only SHUKOU's own
+Authority can choose between them:
+
+1. **Roadmap-preserving path (Structural Advisor's own recommendation):** SHUKOU authorizes and
+   provides real, narrowly-scoped credentials for at least one additional real Agent
+   product/framework (satisfying the missing `Codex alone`/`existing agent framework` roles),
+   under the identical `PRODUCTION_CREDENTIAL_USE_SCOPE`-style narrow grant precedent Round 3
+   already established for this session's own one identity -- and authorizes designing a
+   materially richer, multi-turn task corpus capable of actually differentiating the six
+   currently-unmeasured proof dimensions.
+2. **Roadmap-amendment path:** SHUKOU formally amends Issue #89's own canonical comparison-group
+   and proof-dimension requirements (section 4/5) to the narrower scope this repository's
+   current, real, non-fabricated evidence already supports -- a Human-Authority roadmap decision,
+   never an implementation-only correction Claude Code may make unilaterally
+   (`ROADMAP_AMENDMENT_ALLOWED=false`, restated by this round's own adoption).
+
+Per `BLOCKED_WITH_EXACT_REASON_IS_AN_AUTHORIZED_STOP=true`, this section records the honest
+current state and stops here, rather than choosing one of the two paths above on its own
+Authority.
+
 ## 13. P90-R2-F1/F2: capability/authority blocker (not closed)
 
 Round 2's own Structural Advisor review (PR #90 comment 5699255260) and SHUKOU's adoption
