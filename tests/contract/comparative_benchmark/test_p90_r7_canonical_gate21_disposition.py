@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import inspect
 
-from tests.fixtures import comparative_benchmark as cb
-from tests.fixtures import comparative_benchmark_rebind_protocol as rb
+from tests.fixtures import comparative_benchmark as cb, comparative_benchmark_rebind_protocol as rb
 
 
 def test_the_absent_groups_are_never_disclosed_as_a_real_external_product_invocation() -> None:
