@@ -6574,3 +6574,98 @@ P90_R5_F2_STATUS=DEFERRED_NO_NEW_FINAL_PROTOCOL_YET
 P90_R5_F3_STATUS=PKCS8_PEM_SUPPORT_BUILT_AND_DECISIVELY_TESTED
 P90_R5_F4_STATUS=EXECUTION_ORDER_RECORDED
 ```
+
+# 74. Phase 21 post-merge acceptance source-sync (`ADOPT_PHASE_21_POST_MERGE_CANONICAL_SOURCE_SYNC`) bounded receipt
+
+本節は§69〜§73自身のRound是正記録とは異なり、PR #90がSHUKOUによりmergeされた後、構造参謀の
+post-merge determination
+`https://github.com/manosube/manosube-agent-civilization-os/issues/89#issuecomment-5730959589`
+(`DETERMINATION_ID=P90-POST-MERGE-PHASE21`)とSHUKOU正式採択
+`...#issuecomment-5730978669`
+(`ADOPTION_ID=ADOPT_PHASE_21_POST_MERGE_CANONICAL_SOURCE_SYNC`、`GOVERNING_ISSUE=#89`)に基づき、
+限定されたappend-only source-syncとして本記録作成者自身が追加するものである。本記録作成者は、
+これら2件のコメントを、著者login/id/association(`manosube`/OWNER)・本文一致、およびPR #90自身
+の実際のmerge状態・live `main`のSHAについて、本branch作成直前にGitHub API独立readback、および
+ローカル`git`によるmerge commit親関係・tree一致の直接検証の両方で確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-18
+GOVERNING_ISSUE=#89
+MERGED_PR=#90
+ADOPTION_ID=ADOPT_PHASE_21_POST_MERGE_CANONICAL_SOURCE_SYNC
+STRUCTURAL_DETERMINATION_COMMENT_ID=5730959589
+ADOPTION_COMMENT_ID=5730978669
+BRANCH=agent/issue-89-phase21-post-merge-source-sync
+AUTHORIZED_BASE_MAIN_SHA=c850ee99fa9a16c0c982fa18a3c9264a7f1e1931
+NEW_BRANCH_ALLOWED=true
+NEW_PR_ALLOWED=true
+EXISTING_BRANCH_REUSE_ALLOWED=false
+SCOPE_EXPANSION_ALLOWED=false
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+## Current-state receipt (restated as of this source-sync)
+
+```text
+MAIN_ACCEPTED_BASE_SHA=c850ee99fa9a16c0c982fa18a3c9264a7f1e1931
+PR90_DELIVERY_HEAD=61478122630cbd0bd1c601431f072fa77cc47d7a
+PR90_MERGE_SHA=c850ee99fa9a16c0c982fa18a3c9264a7f1e1931
+MERGE_PARENT_BASE=f97ba6fa973ba07e7674690d158cc156a10da04a
+MERGE_PARENT_DELIVERY=61478122630cbd0bd1c601431f072fa77cc47d7a
+LIVE_MAIN_EQUALS_MERGE_SHA=true
+MERGED_TREE_EQUALS_DELIVERY_TREE=true
+STRUCTURAL_REVIEW_ROUNDS=8
+STRUCTURAL_REVIEW_FINDINGS_OPEN=0
+GATE_21_ALL_SEVEN_BOOLEANS_PASSED=true
+GATE_21_SATISFACTION_BASIS=EXPLICIT_LAYERED_EVIDENCE_TWO_CORPORA_NEVER_CONFLATED
+TARGETED_SUITE_AT_DELIVERY_HEAD=157_PASSED
+FULL_REPOSITORY_SUITE_AT_DELIVERY_HEAD=22064_PASSED_10_PRE_EXISTING_FAILED_11_SKIPPED
+NET_NEW_TEST_FAILURES_AT_DELIVERY_HEAD=0
+SCHEMA_VALIDATION_AT_DELIVERY_HEAD=PASS
+SOURCE_IMPACT_GATE_AT_DELIVERY_HEAD=PASS
+```
+
+PR #90は、Round 1(P90-R1-F1〜F3)からRound 8(P90-R8、P90-R7自身の過剰制約`FOUR_REAL_EXTERNAL_
+PRODUCT_INVOCATIONS_REQUIRED`等5件を是正)までの計8回のStructural Reviewを経てfinding open 0件
+に到達したexact delivery head`61478122630cbd0bd1c601431f072fa77cc47d7a`を保持したままSHUKOU
+(`manosube`)によりmergeされた。merge commit`c850ee99fa9a16c0c982fa18a3c9264a7f1e1931`のfirst
+parentはRound 1が採択されたauthorized base`f97ba6fa973ba07e7674690d158cc156a10da04a`、second
+parentはこのdelivery headであり、両者の`git diff`は空、treeは同一
+(`005fc78d9715f60124fa70479b9473c305bd35fb`)であることをローカルで直接確認済みである。live
+`main`は本source-sync branch作成直前のGitHub API独立readbackで同一SHAであることを確認済みで
+ある。
+
+Gate 21(Issue #89 §9)の全七booleanは、原8-taskコーパス(`PRJ-CB21-0001`、section 11)と
+Round 6 frozen real-Agentコーパス(`PRJ-CB21-R6-0001`、section 13d)という、決して混同されない
+2つのコーパス自身が個別に提供する証拠のexplicit conjunctionとして受入済みである
+(`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`section 11a)。roadmap自身が求める8個の比較軸
+(Issue #89 §5)は、0 fully / 2 partially / 6 not measuredという残る測定gapを保持しており、この
+gapはGate 21自身の受入を弱めるものではなく、`06_DEFERRED_DIFFERENCES.md`FD-0005として
+non-blocking Deferred Differenceに保持される(`FD-0004`はIssue #80 Acceptance Policy
+Lineageの既存識別子であり、本節はそれと衝突しない)。
+
+構造参謀のpost-merge determinationは、Gate 21・全Structural Review finding closed・
+exact-head merge・post-merge再観測が成立していることを理由に、Phase 21の実装受入
+(`PHASE_21_COMPLETE=true`)を記録するよう本source-syncへ指示した。ただしIssue #89のclose、
+およびPhase 22専用Issue作成の許可は、本節の記録元となった本source-sync PR自身がSHUKOUにより
+mergeされ、resulting`main`がGitHub API経由で再観測された後にのみ発効する -- 本節はその条件付き
+資格を記録するものであり、本delivery自身がIssue #89をcloseしたりPhase 22 Issueを作成する権限
+を意味しない。
+
+```text
+PHASE_21_IMPLEMENTATION_ACCEPTED=true
+PHASE_21_GATE_21_ACCEPTED=true
+PHASE_21_EXACT_REVIEWED_HEAD_MERGED=true
+PHASE_21_POST_MERGE_REOBSERVATION=PASS
+PHASE_21_COMPLETE=true
+EIGHT_ROADMAP_PROOF_DIMENSIONS_DEFERRED_TO_FD_0005=true
+ISSUE_89_CLOSE_ALLOWED_AFTER_THIS_SOURCE_SYNC_MERGE_AND_REOBSERVATION=true
+PHASE_22_DEDICATED_ISSUE_ALLOWED_AFTER_THIS_SOURCE_SYNC_MERGE_AND_REOBSERVATION=true
+PHASE_22_IMPLEMENTATION_REQUIRES_SEPARATE_SHUKOU_ADOPTION=true
+
+SOURCE_SYNC_MERGE_ALLOWED=false
+ISSUE_89_CLOSE_ALLOWED=false
+PHASE_22_ISSUE_CREATION_ALLOWED=false
+PHASE_22_IMPLEMENTATION_ALLOWED=false
+```

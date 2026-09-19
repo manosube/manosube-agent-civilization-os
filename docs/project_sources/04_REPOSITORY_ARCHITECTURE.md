@@ -1082,3 +1082,70 @@ Phase 21は、このaccepted architectureにはまだ実装されていない。
 専用Issueの作成は、本節の記録元となったpost-merge source-sync PR自身がSHUKOUによりmergeされ、
 resulting`main`がGitHub API経由で再観測された後にのみ許可される。Phase 21実装には、その専用
 Issue上でのSHUKOUの別途明示的な採択が必要である。
+
+# 27. Accepted architecture through PR #90 (Phase 21 — Comparative Benchmark)
+
+```text
+OBSERVED_AT_UTC=2026-09-18T13:52:24Z
+AS_BUILT_REF=c850ee99fa9a16c0c982fa18a3c9264a7f1e1931
+AS_BUILT_TREE_ENTRY_COUNT=953
+AS_BUILT_BLOB_COUNT=780
+AS_BUILT_DIRECTORY_COUNT=173
+AS_BUILT_TREE_TRUNCATED=false
+
+GOVERNING_ISSUE=#89
+MERGED_PR=#90
+PHASE_21_IMPLEMENTED=true
+PHASE_22_IMPLEMENTED=false
+```
+
+Phase 21(Comparative Benchmark、Issue #89)は、同一Agent、同一frozen task corpus、同一
+Boundaryのもとで、MANOSUBE有無による差を第三者が再現できる形で測定するroadmap Phaseであり、
+PR #90によりkernelへ統合された。PR #90はSHUKOU(`manosube`)によりmerge commit
+`c850ee99fa9a16c0c982fa18a3c9264a7f1e1931`としてmergeされ、live `main`は本節作成直前のGitHub
+API独立readbackで同一SHAであることを確認済みである。merge commitのfirst parentはRound 1採択
+base`f97ba6fa973ba07e7674690d158cc156a10da04a`、second parentはreviewed delivery head
+`61478122630cbd0bd1c601431f072fa77cc47d7a`であり、両者のfile diffは0、treeは同一である。
+
+追加されたas-built surfaceは、`00_KERNEL/COMPARATIVE_BENCHMARK_CONTRACT.md`(contract、
+section 11a時点でP90-R7/P90-R8の是正を反映)、新package`src/manosube_agent_civilization/
+comparative_benchmark/`(10 public entry pointsが`commit_/resolve_{protocol_freeze,
+result_bundle,reproduction_receipt}`および独立reproduction submission/trust-anchor admission
+routesを提供し、いずれもStore自身の直交的coordination ledger`commit_coordination_record_at_
+tip`経由でのみ永続化され、`commit_state_transition`へは一切到達しない)、5件の新規closed
+schema`01_SCHEMA/comparative_benchmark/`、frozen 8-task corpus fixture
+`tests/fixtures/comparative_benchmark.py`とその real-Agent frozen-protocol派生
+(`tests/fixtures/comparative_benchmark_frozen_protocol.py`、
+`tests/fixtures/comparative_benchmark_rebind_protocol.py`)、および対応するorchestrator/
+contract/negative-control test suite一式である。
+
+```text
+COMPARATIVE_BENCHMARK_ROLE=MANOSUBE_PRESENT_VS_ABSENT_COMPARATIVE_MEASUREMENT_HARNESS
+COORDINATION_LEDGER_OWNER=STORE
+BENCHMARK_STATE_TRANSITION_ORTHOGONAL=true
+GATE_21_ALL_SEVEN_BOOLEANS_SATISFIED=true
+GATE_21_SATISFACTION_BASIS=EXPLICIT_LAYERED_EVIDENCE_TWO_CORPORA_NEVER_CONFLATED
+ORIGINAL_8_TASK_CORPUS_PROJECT_ID=PRJ-CB21-0001
+FROZEN_PROTOCOL_REAL_AGENT_CORPUS_PROJECT_ID=PRJ-CB21-R6-0001
+THIRD_PARTY_REPRODUCTION_RECEIPT_ADMITTED=true
+EIGHT_ROADMAP_PROOF_DIMENSIONS_MEASUREMENT_STATUS=0_FULLY_2_PARTIALLY_6_NOT_MEASURED
+UNKNOWN_NE_ZERO=true
+STRUCTURAL_REVIEW_ROUNDS_TO_MERGE=8
+STRUCTURAL_REVIEW_FINDINGS_OPEN_AT_MERGE=0
+SECOND_STATE_OWNER=false
+SECOND_AUTHORITY_OWNER=false
+SECOND_EVIDENCE_OWNER=false
+SECOND_REFLOW_OWNER=false
+SECOND_HUMAN_AUTHORITY_OWNER=false
+PARALLEL_CANONICAL_AUTHORITY=0
+CANONICAL_STATE_OWNER_COUNT=1
+```
+
+Phase 21のGate 21全七booleanが受入済みであることは、8個のroadmap比較軸(Issue #89 §5)全ての
+完全測定を意味しない -- `06_DEFERRED_DIFFERENCES.md`FD-0005が、この残る測定gap
+(`0 FULLY / 2 PARTIALLY / 6 NOT_MEASURED`)をnon-blocking Deferred Differenceとして保持する
+(`FD-0004`はIssue #80 Acceptance Policy Lineageの既存識別子であり、本節はそれと衝突しない)。
+Phase 22は、このaccepted architectureにはまだ実装されていない。Issue #89のcloseとPhase 22の
+着手は、本節の記録元となったpost-merge source-sync PR自身がSHUKOUによりmergeされ、resulting
+`main`がGitHub API経由で再観測された後にのみ許可される。Phase 22実装には、その専用Issue上での
+SHUKOUの別途明示的な採択が必要である。
