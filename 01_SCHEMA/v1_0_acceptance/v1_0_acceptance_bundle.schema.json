@@ -21,7 +21,7 @@
     "schema_version": {"const": "0.1"},
     "acceptance_bundle_id": {"$ref": "#/$defs/sha256hex"},
     "acceptance_bundle_semantic_fingerprint": {"$ref": "#/$defs/sha256hex"},
-    "repository_project": {"type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$"},
+    "repository_project": {"const": "manosube/manosube-agent-civilization-os"},
     "authorized_base_main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "delivery_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "gate_22_predicate_matrix": {

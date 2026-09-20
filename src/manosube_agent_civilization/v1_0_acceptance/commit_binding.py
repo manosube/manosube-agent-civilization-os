@@ -25,6 +25,13 @@ repository is at the right commit, cleanly, with the right ancestry says nothing
 *which* repository it is; a clone or fork carrying the exact same git objects would
 pass every commit-identity check above while belonging to an unauthorized project
 (PR #93 Structural Review Round 2, `P93-R2-F1`).
+
+The remote URL is parsed structurally, never by unanchored substring search: an HTTPS
+remote is accepted only when `urllib.parse.urlsplit` resolves its hostname to exactly
+`github.com`, and an SSH remote is accepted only in the exact SCP-style
+`git@github.com:owner/repo(.git)` form. A lookalike host such as
+`evilgithub.com` contains the substring `github.com` but is not the hostname
+`github.com`, and is rejected (PR #93 Structural Review Round 3, `P93-R3-F1`).
 """
 
 from __future__ import annotations
@@ -33,6 +40,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from urllib.parse import urlsplit
 
 from .errors import CommitResolutionError, DeliveryHeadBindingError, RepositoryProjectBindingError
 
@@ -44,11 +52,15 @@ _CANONICAL_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 #: would defeat the whole point of an independent binding check).
 AUTHORIZED_PROJECT = "manosube/manosube-agent-civilization-os"
 
-#: Matches a GitHub `owner/repo` pair out of either remote URL form
-#: (`https://github.com/owner/repo(.git)` or `git@github.com:owner/repo(.git)`).
-_REMOTE_URL_PROJECT_PATTERN = re.compile(
-    r"github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$"
+#: The exact SCP-style SSH remote form GitHub itself documents --
+#: `git@github.com:owner/repo(.git)` -- anchored end-to-end, never a substring match.
+_SSH_SCP_STYLE_PATTERN = re.compile(
+    r"^git@github\.com:(?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$"
 )
+
+#: An HTTPS remote's URL *path* (after `urlsplit` has already isolated and validated
+#: the hostname) -- `/owner/repo(.git)`, anchored end-to-end.
+_HTTPS_PATH_PATTERN = re.compile(r"^/(?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$")
 
 
 def _git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -147,22 +159,40 @@ def resolve_and_verify_authorized_base(
 def resolve_repository_project_identity(repo_root: Path, remote_name: str = "origin") -> str:
     """Resolve `repo_root`'s `remote_name` remote URL to a `owner/repo` GitHub project
     identity. Fails closed with `RepositoryProjectBindingError` if the remote does not
-    exist or its URL does not match the expected `github.com` owner/repo shape -- this
-    is git-native repository identity, entirely independent of (and never implied by)
-    any commit or tree object the repository happens to carry."""
+    exist or its URL is not exactly a `github.com` HTTPS remote or an exact
+    `git@github.com:owner/repo(.git)` SCP-style SSH remote -- this is git-native
+    repository identity, entirely independent of (and never implied by) any commit or
+    tree object the repository happens to carry.
+
+    The hostname is checked structurally (`urllib.parse.urlsplit(url).hostname`), never
+    by substring search: a lookalike host such as `evilgithub.com` contains the
+    substring `github.com` but is not the hostname `github.com`, and is rejected
+    (`P93-R3-F1`)."""
     result = _git(repo_root, "remote", "get-url", remote_name)
     if result.returncode != 0:
         raise RepositoryProjectBindingError(
             f"could not resolve remote {remote_name!r} in {repo_root}: {result.stderr.strip()}"
         )
     url = result.stdout.strip()
-    match = _REMOTE_URL_PROJECT_PATTERN.search(url)
-    if match is None:
-        raise RepositoryProjectBindingError(
-            f"remote {remote_name!r} URL {url!r} in {repo_root} does not match the "
-            "expected github.com owner/repo shape"
-        )
-    return f"{match.group('owner')}/{match.group('repo')}"
+
+    ssh_match = _SSH_SCP_STYLE_PATTERN.match(url)
+    if ssh_match is not None:
+        return f"{ssh_match.group('owner')}/{ssh_match.group('repo')}"
+
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme == "https"
+        and parsed.hostname is not None
+        and parsed.hostname.lower() == "github.com"
+    ):
+        path_match = _HTTPS_PATH_PATTERN.match(parsed.path)
+        if path_match is not None:
+            return f"{path_match.group('owner')}/{path_match.group('repo')}"
+
+    raise RepositoryProjectBindingError(
+        f"remote {remote_name!r} URL {url!r} in {repo_root} is not an exact github.com "
+        "HTTPS remote or an exact git@github.com:owner/repo SCP-style SSH remote"
+    )
 
 
 def verify_repository_project_binding(

@@ -165,9 +165,18 @@ and correct ancestry together prove nothing about *which* repository `repo_root`
 a clone or fork carrying the exact same git objects would pass every commit-identity
 check above while belonging to an unauthorized project (PR #93 Structural Review
 Round 2, `P93-R2-F1`). The resolved identity is persisted as the bundle's own
-`repository_project` field, required by the schema and included in both the bundle id
-and semantic fingerprint -- a substituted project mints a genuinely different bundle
-identity, never a same-id collision.
+`repository_project` field, required by the schema (fixed to the exact constant
+`"manosube/manosube-agent-civilization-os"` via `const`, PR #93 Structural Review
+Round 3, `P93-R3-F1`) and included in both the bundle id and semantic fingerprint --
+a substituted project mints a genuinely different bundle identity, never a same-id
+collision.
+
+The remote URL is parsed structurally, never by unanchored substring search: an HTTPS
+remote is accepted only when `urllib.parse.urlsplit(url).hostname` resolves to exactly
+`github.com`, and an SSH remote is accepted only in the exact SCP-style
+`git@github.com:owner/repo(.git)` form. A lookalike host such as `evilgithub.com`
+contains the substring `github.com` but is not the hostname `github.com`, and is
+rejected (`P93-R3-F1`).
 
 ---
 
@@ -195,7 +204,14 @@ a change `git add`-ed into the index with no further unstaged diff on top of it 
 a real pytest internal error, `pytest` exit code `3` (NC-19); a real pytest usage error,
 `pytest` exit code `4` (NC-20); and a repository carrying the exact same git objects
 (a real clone) as the authorized project, but whose `origin` remote resolves to a
-different GitHub project (NC-21). Twenty-one decisive controls total.
+different GitHub project (NC-21).
+
+One more (NC-22) was added by PR #93 Structural Review Round 3 (`P93-R3-F1`) to
+decisively prove rejection of a lookalike-hostname bypass: a remote URL on a host that
+merely *contains* the substring `github.com` (`https://evilgithub.com/manosube/
+manosube-agent-civilization-os.git`, with the exact authorized `owner/repo` in its
+path) is rejected, proving the hostname check is structural, not substring-based.
+Twenty-two decisive controls total.
 
 ---
 
@@ -299,9 +315,11 @@ branch/PR:
   (`commit_binding.AUTHORIZED_PROJECT`, `"manosube/manosube-agent-civilization-os"`).
   Called at the very start of `build_v1_0_acceptance_bundle`, before any commit binding
   or Gate 22 rederivation. The resolved identity is persisted as the bundle's own
-  `repository_project` field, required by the schema (`^[^/\s]+/[^/\s]+$`) and included
-  in `ACCEPTANCE_BUNDLE_ID_FIELDS` (so a substituted project mints a genuinely new
-  bundle id and semantic fingerprint). See section 4.
+  `repository_project` field, required by the schema and included in
+  `ACCEPTANCE_BUNDLE_ID_FIELDS` (so a substituted project mints a genuinely new bundle
+  id and semantic fingerprint; the schema field was later tightened from a shape
+  pattern to the exact `const` value by Round 3's `P93-R3-F1`, section 9). See
+  section 4.
 - **`P93-R2-F2`** -- the adopted negative-control matrix had not yet exercised every
   scenario its own implementation paths were already capable of rejecting: a purely
   staged-only dirty index (as opposed to an unstaged working-tree change), and real
@@ -312,3 +330,43 @@ branch/PR:
 Both corrections landed as real code changes plus decisive tests -- never a report,
 restated boolean, or documentation-only claim -- consistent with this package's own
 "provenance by reproduction, not by trust" principle.
+
+---
+
+## 9. PR #93 Structural Review Round 3 corrections (`ADOPT_P93_R3_F1`)
+
+```text
+GOVERNING_PR=#93
+ADOPTION_ID=ADOPT_P93_R3_F1
+ADOPTION_COMMENT_ID=5752891096
+ADOPTION_COMMENT_AUTHOR=manosube (OWNER)
+AUTHORIZED_TARGET_HEAD=9f580c7e15185d00c2afddaa6722c64644dd8873
+AUTHORIZED_BASE_MAIN=b2a5d287113d3a98e77a2212f8b89359d8e09c5d
+```
+
+One finding from Structural Review Round 3 of PR #93, corrected on the same
+branch/PR:
+
+- **`P93-R3-F1`** -- `commit_binding.py`'s Round 2 remote-URL parser
+  (`_REMOTE_URL_PROJECT_PATTERN`) matched the substring `github\.com[:/]` anywhere in
+  the URL, unanchored. A lookalike host such as
+  `https://evilgithub.com/manosube/manosube-agent-civilization-os.git` contains that
+  substring and the exact authorized `owner/repo` in its path, so it would have
+  resolved to the authorized project despite being served by an entirely different,
+  attacker-controlled host -- the real trust boundary Round 2's `P93-R2-F1` intended to
+  close was therefore bypassable through mutable remote configuration. Fixed by parsing
+  the remote URL structurally: an HTTPS remote is accepted only when
+  `urllib.parse.urlsplit(url).hostname` equals exactly `github.com`, and an SSH remote
+  is accepted only in the exact SCP-style `git@github.com:owner/repo(.git)` form --
+  never a substring match. The bundle schema's `repository_project` field was also
+  tightened from a shape pattern to the exact `const` value
+  `"manosube/manosube-agent-civilization-os"`, since this schema belongs to this one
+  authorized Phase 22 project rather than an arbitrary `owner/repo`. See section 4.
+  New decisive control NC-22 exercises the hostile lookalike host directly against the
+  real parser. See section 5.
+
+This correction landed as a real code change plus a decisive test -- never a report,
+restated boolean, or documentation-only claim -- consistent with this package's own
+"provenance by reproduction, not by trust" principle. It is a narrow boundary
+correction: it does not redesign the acceptance package, add another capability or
+public entry point, or change Gate 22 predicate ownership.

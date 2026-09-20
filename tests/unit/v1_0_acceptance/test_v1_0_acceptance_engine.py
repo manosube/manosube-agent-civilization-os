@@ -19,6 +19,7 @@ from manosube_agent_civilization.v1_0_acceptance import engine as engine_module
 from manosube_agent_civilization.v1_0_acceptance.blocking_differences import (
     DifferenceDisposition,
 )
+from manosube_agent_civilization.v1_0_acceptance.commit_binding import AUTHORIZED_PROJECT
 from manosube_agent_civilization.v1_0_acceptance.gate22 import PredicateRederivation
 from manosube_agent_civilization.v1_0_acceptance.release_identity import ReleaseIdentity
 from manosube_agent_civilization.v1_0_acceptance.types import GATE_22_PREDICATES
@@ -79,7 +80,11 @@ _FAKE_BASE_SHA = "1" * 40
 
 #: Likewise, `verify_repository_project_binding` is a real `git remote get-url` call --
 #: monkeypatched here for the same reason (PR #93 Structural Review Round 2, `P93-R2-F1`).
-_FAKE_REPOSITORY_PROJECT = "fake-owner/fake-repo"
+#: Must equal `AUTHORIZED_PROJECT` exactly: the bundle schema fixes `repository_project`
+#: to that one constant (`P93-R3-F1`), so a differently-shaped fake value here would fail
+#: `test_bundle_validates_against_its_own_schema` for reasons unrelated to what that test
+#: actually verifies.
+_FAKE_REPOSITORY_PROJECT = AUTHORIZED_PROJECT
 
 
 @pytest.fixture(autouse=True)

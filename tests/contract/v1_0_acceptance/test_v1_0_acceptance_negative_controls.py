@@ -1,7 +1,8 @@
 """Required decisive negative/tamper controls (Issue #92 section 7,
 `ADOPT_PHASE_22_V1_0_ACCEPTANCE`; extended by PR #93 Structural Review Round 1,
 `ADOPT_P93_R1_F1_F2_F3_F4_F5`, finding `P93-R1-F5`; extended again by PR #93
-Structural Review Round 2, `ADOPT_P93_R2_F1_F2`, findings `P93-R2-F1`/`P93-R2-F2`).
+Structural Review Round 2, `ADOPT_P93_R2_F1_F2`, findings `P93-R2-F1`/`P93-R2-F2`;
+extended once more by PR #93 Structural Review Round 3, `ADOPT_P93_R3_F1`).
 
 NC-1 through NC-10 are the originally adopted ten. NC-11 through NC-17 close the eight
 additional decisive scenarios `P93-R1-F5` names by id, and NC-2 is rewritten (the
@@ -9,9 +10,10 @@ original only checked object identity across two calls, which is trivially true
 regardless of mutation -- Structural Review's own "nominal, does not mutate anything"
 finding). NC-18 through NC-21 close `P93-R2-F1`'s wrong-repository/project substitution
 requirement and `P93-R2-F2`'s remaining decisive scenarios (a staged-only dirty index,
-and real pytest internal-error/usage-error outcomes). Every control here is a real
-fail-closed attempt against this package's own real code -- never a mocked assertion of
-intent.
+and real pytest internal-error/usage-error outcomes). NC-22 closes `P93-R3-F1`'s
+GitHub-hostname boundary requirement -- a lookalike host that merely contains the
+substring `github.com` in its URL. Every control here is a real fail-closed attempt
+against this package's own real code -- never a mocked assertion of intent.
 """
 
 from __future__ import annotations
@@ -463,3 +465,23 @@ def test_nc21_wrong_repository_project_binding_fails_closed(tmp_path: Path) -> N
 
     with pytest.raises(RepositoryProjectBindingError):
         verify_repository_project_binding(clone_repo)
+
+
+def test_nc22_lookalike_hostname_bypass_fails_closed(tmp_path: Path) -> None:
+    """NC-22: a remote URL on a lookalike host that merely *contains* the substring
+    `github.com` -- `https://evilgithub.com/manosube/manosube-agent-civilization-os.git`
+    -- is rejected. The exact authorized `owner/repo` appears in the URL path, so a
+    substring-based host check would have wrongly accepted this; only a structural
+    hostname check (`urllib.parse.urlsplit(url).hostname == "github.com"`) closes it
+    (`P93-R3-F1`)."""
+    _first, _second = _init_scratch_git_repo(tmp_path)
+    _run_git(
+        tmp_path,
+        "remote",
+        "add",
+        "origin",
+        "https://evilgithub.com/manosube/manosube-agent-civilization-os.git",
+    )
+
+    with pytest.raises(RepositoryProjectBindingError):
+        verify_repository_project_binding(tmp_path)
