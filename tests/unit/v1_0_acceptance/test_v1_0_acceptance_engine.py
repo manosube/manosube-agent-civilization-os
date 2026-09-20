@@ -77,6 +77,10 @@ def _fake_release_identity(repo_root: Path, commit_sha: str, version_label: str)
 _FAKE_DELIVERY_HEAD_SHA = "0" * 40
 _FAKE_BASE_SHA = "1" * 40
 
+#: Likewise, `verify_repository_project_binding` is a real `git remote get-url` call --
+#: monkeypatched here for the same reason (PR #93 Structural Review Round 2, `P93-R2-F1`).
+_FAKE_REPOSITORY_PROJECT = "fake-owner/fake-repo"
+
 
 @pytest.fixture(autouse=True)
 def _patched(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,6 +98,11 @@ def _patched(monkeypatch: pytest.MonkeyPatch) -> None:
         engine_module,
         "resolve_and_verify_authorized_base",
         lambda repo_root, base, resolved_head: _FAKE_BASE_SHA,
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "verify_repository_project_binding",
+        lambda repo_root: _FAKE_REPOSITORY_PROJECT,
     )
 
 

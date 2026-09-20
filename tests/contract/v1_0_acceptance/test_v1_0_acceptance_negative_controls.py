@@ -1,13 +1,17 @@
 """Required decisive negative/tamper controls (Issue #92 section 7,
 `ADOPT_PHASE_22_V1_0_ACCEPTANCE`; extended by PR #93 Structural Review Round 1,
-`ADOPT_P93_R1_F1_F2_F3_F4_F5`, finding `P93-R1-F5`).
+`ADOPT_P93_R1_F1_F2_F3_F4_F5`, finding `P93-R1-F5`; extended again by PR #93
+Structural Review Round 2, `ADOPT_P93_R2_F1_F2`, findings `P93-R2-F1`/`P93-R2-F2`).
 
 NC-1 through NC-10 are the originally adopted ten. NC-11 through NC-17 close the eight
 additional decisive scenarios `P93-R1-F5` names by id, and NC-2 is rewritten (the
 original only checked object identity across two calls, which is trivially true
 regardless of mutation -- Structural Review's own "nominal, does not mutate anything"
-finding). Every control here is a real fail-closed attempt against this package's own
-real code -- never a mocked assertion of intent.
+finding). NC-18 through NC-21 close `P93-R2-F1`'s wrong-repository/project substitution
+requirement and `P93-R2-F2`'s remaining decisive scenarios (a staged-only dirty index,
+and real pytest internal-error/usage-error outcomes). Every control here is a real
+fail-closed attempt against this package's own real code -- never a mocked assertion of
+intent.
 """
 
 from __future__ import annotations
@@ -32,10 +36,12 @@ from manosube_agent_civilization.v1_0_acceptance.commit_binding import (
     resolve_commit_sha,
     verify_authorized_base_ancestry,
     verify_repo_root_bound_to_commit,
+    verify_repository_project_binding,
 )
 from manosube_agent_civilization.v1_0_acceptance.errors import (
     CommitResolutionError,
     DeliveryHeadBindingError,
+    RepositoryProjectBindingError,
 )
 from manosube_agent_civilization.v1_0_acceptance.gate22 import PREDICATE_TEST_OWNERS
 from manosube_agent_civilization.v1_0_acceptance.release_identity import (
@@ -366,3 +372,94 @@ def test_nc17_corrupted_fd_0005_classification_is_not_exempted(tmp_path: Path) -
     )
     fd_0005 = next(d for d in dispositions if d.record_id == "FD-0005")
     assert fd_0005.disposition == "REGISTER_CONTENT_CONTRADICTION"
+
+
+def test_nc18_staged_only_dirty_index_fails_closed(tmp_path: Path) -> None:
+    """NC-18: a change that is staged into the index -- with no further unstaged diff on
+    top of it, i.e. the working tree exactly matches what was just staged -- still fails
+    closed. `git status --porcelain` reports a purely staged ("index-only") change too,
+    not only an unstaged working-tree change (`P93-R2-F2`)."""
+    _first, second = _init_scratch_git_repo(tmp_path)
+    (tmp_path / "b.txt").write_text("staged mutation\n", encoding="utf-8")
+    _run_git(tmp_path, "add", "b.txt")
+    with pytest.raises(DeliveryHeadBindingError):
+        verify_repo_root_bound_to_commit(tmp_path, second)
+
+
+def test_nc19_pytest_internal_error_is_unknown_not_fail(tmp_path: Path) -> None:
+    """NC-19: a real pytest internal error -- an unhandled exception inside pytest's own
+    hook machinery, `pytest`'s documented exit code 3 (`EXIT_INTERNALERROR`) -- is
+    `UNKNOWN` with `failure_category="INTERNAL_ERROR"`, never `FAIL` (`P93-R2-F2`)."""
+    owner_dir = tmp_path / "owner"
+    owner_dir.mkdir()
+    (owner_dir / "test_ok.py").write_text(
+        "def test_ok() -> None:\n    assert True\n", encoding="utf-8"
+    )
+    (tmp_path / "conftest.py").write_text(
+        "def pytest_configure(config):\n"
+        "    raise RuntimeError('simulated internal error in pytest_configure')\n",
+        encoding="utf-8",
+    )
+
+    from manosube_agent_civilization.v1_0_acceptance import gate22 as gate22_module
+
+    original = gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"]
+    try:
+        gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"] = ("owner/test_ok.py",)
+        outcome = gate22_module.rederive_predicate("COMPARATIVE_BENCHMARK_PASS", tmp_path)
+    finally:
+        gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"] = original
+
+    assert outcome.verification_result == "UNKNOWN"
+    assert outcome.exit_code == 3
+    assert outcome.failure_category == "INTERNAL_ERROR"
+
+
+def test_nc20_pytest_usage_error_is_unknown_not_fail(tmp_path: Path) -> None:
+    """NC-20: a real pytest usage error -- an unrecognized configured CLI option,
+    `pytest`'s documented exit code 4 (`EXIT_USAGEERROR`) -- is `UNKNOWN` with
+    `failure_category="USAGE_ERROR"`, never `FAIL` (`P93-R2-F2`)."""
+    owner_dir = tmp_path / "owner"
+    owner_dir.mkdir()
+    (owner_dir / "test_ok.py").write_text(
+        "def test_ok() -> None:\n    assert True\n", encoding="utf-8"
+    )
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = --this-option-does-not-exist-xyz\n", encoding="utf-8"
+    )
+
+    from manosube_agent_civilization.v1_0_acceptance import gate22 as gate22_module
+
+    original = gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"]
+    try:
+        gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"] = ("owner/test_ok.py",)
+        outcome = gate22_module.rederive_predicate("COMPARATIVE_BENCHMARK_PASS", tmp_path)
+    finally:
+        gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"] = original
+
+    assert outcome.verification_result == "UNKNOWN"
+    assert outcome.exit_code == 4
+    assert outcome.failure_category == "USAGE_ERROR"
+
+
+def test_nc21_wrong_repository_project_binding_fails_closed(tmp_path: Path) -> None:
+    """NC-21: a repository that carries the exact same git objects as the authorized
+    project -- a real `git clone` of it, identical commit SHAs and ancestry -- but whose
+    `origin` remote resolves to a different GitHub project is rejected. Commit-object
+    identity and ancestry prove nothing about *which* repository a caller-supplied
+    `repo_root` actually is (`P93-R2-F1`)."""
+    origin_repo = tmp_path / "origin_repo"
+    origin_repo.mkdir()
+    _init_scratch_git_repo(origin_repo)
+    clone_repo = tmp_path / "clone_repo"
+    _run_git(tmp_path, "clone", "-q", str(origin_repo), str(clone_repo))
+    _run_git(
+        clone_repo,
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/someone-else/unrelated-repo.git",
+    )
+
+    with pytest.raises(RepositoryProjectBindingError):
+        verify_repository_project_binding(clone_repo)

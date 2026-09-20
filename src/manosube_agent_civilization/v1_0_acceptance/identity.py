@@ -17,10 +17,12 @@ from typing import Any
 from manosube_agent_civilization.state.canonicalize import canonical_json_bytes
 
 #: A v1.0 acceptance bundle's own identity: every predeclared field except
-#: `schema_version` and `generated_at` -- a change to any Gate 22 rederivation result,
-#: Difference disposition, or release identity mints a genuinely new bundle identity,
-#: never a same-id collision across a materially different acceptance state.
+#: `schema_version` and `generated_at` -- a change to the bound repository/project
+#: identity, any Gate 22 rederivation result, Difference disposition, or release
+#: identity mints a genuinely new bundle identity, never a same-id collision across a
+#: materially different acceptance state.
 ACCEPTANCE_BUNDLE_ID_FIELDS: tuple[str, ...] = (
+    "repository_project",
     "authorized_base_main_sha",
     "delivery_head",
     "gate_22_predicate_matrix",

@@ -18,6 +18,13 @@ downstream code treats as the delivery commit -- this closes the exact substitut
 gap Structural Review found: a historical or unauthorized commit could previously be
 recorded as `delivery_head` while the actual rederivation silently ran against a
 different (or dirty) worktree.
+
+This module also binds `repo_root` to the authorized GitHub repository/project itself
+(`verify_repository_project_binding`), independent of commit identity -- proving a
+repository is at the right commit, cleanly, with the right ancestry says nothing about
+*which* repository it is; a clone or fork carrying the exact same git objects would
+pass every commit-identity check above while belonging to an unauthorized project
+(PR #93 Structural Review Round 2, `P93-R2-F1`).
 """
 
 from __future__ import annotations
@@ -27,9 +34,21 @@ import re
 import shutil
 import subprocess
 
-from .errors import CommitResolutionError, DeliveryHeadBindingError
+from .errors import CommitResolutionError, DeliveryHeadBindingError, RepositoryProjectBindingError
 
 _CANONICAL_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+#: The one authorized GitHub repository/project this package's evidence may ever be
+#: bound to -- a literal constant, never a caller-supplied value (a caller could
+#: otherwise simply supply whatever project string it wants verified against, which
+#: would defeat the whole point of an independent binding check).
+AUTHORIZED_PROJECT = "manosube/manosube-agent-civilization-os"
+
+#: Matches a GitHub `owner/repo` pair out of either remote URL form
+#: (`https://github.com/owner/repo(.git)` or `git@github.com:owner/repo(.git)`).
+_REMOTE_URL_PROJECT_PATTERN = re.compile(
+    r"github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$"
+)
 
 
 def _git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -125,10 +144,52 @@ def resolve_and_verify_authorized_base(
     return resolved_base
 
 
+def resolve_repository_project_identity(repo_root: Path, remote_name: str = "origin") -> str:
+    """Resolve `repo_root`'s `remote_name` remote URL to a `owner/repo` GitHub project
+    identity. Fails closed with `RepositoryProjectBindingError` if the remote does not
+    exist or its URL does not match the expected `github.com` owner/repo shape -- this
+    is git-native repository identity, entirely independent of (and never implied by)
+    any commit or tree object the repository happens to carry."""
+    result = _git(repo_root, "remote", "get-url", remote_name)
+    if result.returncode != 0:
+        raise RepositoryProjectBindingError(
+            f"could not resolve remote {remote_name!r} in {repo_root}: {result.stderr.strip()}"
+        )
+    url = result.stdout.strip()
+    match = _REMOTE_URL_PROJECT_PATTERN.search(url)
+    if match is None:
+        raise RepositoryProjectBindingError(
+            f"remote {remote_name!r} URL {url!r} in {repo_root} does not match the "
+            "expected github.com owner/repo shape"
+        )
+    return f"{match.group('owner')}/{match.group('repo')}"
+
+
+def verify_repository_project_binding(
+    repo_root: Path, authorized_project: str = AUTHORIZED_PROJECT, remote_name: str = "origin"
+) -> str:
+    """Fail closed unless `repo_root`'s resolved repository/project identity equals
+    `authorized_project` exactly. Returns the resolved `owner/repo` identity. A clone,
+    fork, or any other repository that happens to carry the same git objects (the same
+    commit ancestry) is never a substitute for the authorized project identity --
+    commit ancestry proves object identity, never project identity (`P93-R2-F1`)."""
+    identity = resolve_repository_project_identity(repo_root, remote_name)
+    if identity != authorized_project:
+        raise RepositoryProjectBindingError(
+            f"repo_root's {remote_name!r} remote resolves to project {identity!r}, not "
+            f"the authorized {authorized_project!r} -- a clone/fork carrying the same "
+            "git objects is not a substitute for the authorized repository/project identity"
+        )
+    return identity
+
+
 __all__ = [
+    "AUTHORIZED_PROJECT",
     "resolve_and_bind_delivery_head",
     "resolve_and_verify_authorized_base",
     "resolve_commit_sha",
+    "resolve_repository_project_identity",
     "verify_authorized_base_ancestry",
     "verify_repo_root_bound_to_commit",
+    "verify_repository_project_binding",
 ]

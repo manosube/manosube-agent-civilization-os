@@ -17,6 +17,15 @@ worktree, which otherwise has no guaranteed relationship to the caller-supplied
 `authorized_base_main_sha` and verifies it is a real ancestor of the resolved delivery
 commit -- never accepted merely because it matches the 40-hex schema pattern
 (`P93-R1-F5`).
+
+Before that commit binding, `commit_binding.verify_repository_project_binding` fails
+closed unless `repo_root` is the one authorized GitHub repository/project itself
+(`commit_binding.AUTHORIZED_PROJECT`) -- proving a repository is at the right commit,
+cleanly, with the right ancestry says nothing about *which* repository it is; a clone
+or fork carrying the exact same git objects would otherwise pass every commit-identity
+check while belonging to an unauthorized project (PR #93 Structural Review Round 2,
+`P93-R2-F1`). The resolved project identity is persisted in the bundle as
+`repository_project` and participates in the bundle's own id/semantic fingerprint.
 """
 
 from __future__ import annotations
@@ -27,7 +36,11 @@ from pathlib import Path
 from typing import Any
 
 from .blocking_differences import rederive_all_v1_0_blocking_differences_closed
-from .commit_binding import resolve_and_bind_delivery_head, resolve_and_verify_authorized_base
+from .commit_binding import (
+    resolve_and_bind_delivery_head,
+    resolve_and_verify_authorized_base,
+    verify_repository_project_binding,
+)
 from .gate22 import rederive_all_pytest_owned_predicates
 from .identity import (
     compute_acceptance_bundle_id,
@@ -46,6 +59,7 @@ def build_v1_0_acceptance_bundle(
     release_version_label: str,
     negative_control_results: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
+    repository_project = verify_repository_project_binding(repo_root)
     resolved_delivery_head = resolve_and_bind_delivery_head(repo_root, delivery_head)
     resolved_base = resolve_and_verify_authorized_base(
         repo_root, authorized_base_main_sha, resolved_delivery_head
@@ -82,6 +96,7 @@ def build_v1_0_acceptance_bundle(
 
     bundle: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
+        "repository_project": repository_project,
         "authorized_base_main_sha": resolved_base,
         "delivery_head": resolved_delivery_head,
         "gate_22_predicate_matrix": gate_22_predicate_matrix,

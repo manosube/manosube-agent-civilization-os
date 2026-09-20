@@ -45,11 +45,21 @@ class DeliveryHeadBindingError(V1_0AcceptanceError):
     `P93-R1-F5`)."""
 
 
+class RepositoryProjectBindingError(V1_0AcceptanceError):
+    """`repo_root`'s resolved GitHub `owner/repo` project identity (from its `origin`
+    remote URL) does not equal the authorized project. Commit-object identity and
+    ancestry (`CommitResolutionError`/`DeliveryHeadBindingError`) prove nothing about
+    *which* repository a caller-supplied `repo_root` actually is -- a clone or fork
+    carrying the exact same git objects is not a substitute for the authorized
+    repository/project identity (PR #93 Structural Review Round 2, `P93-R2-F1`)."""
+
+
 __all__ = [
     "CommitResolutionError",
     "DeferredDifferencesRegisterError",
     "DeliveryHeadBindingError",
     "GateRederivationError",
     "ReleaseIdentityError",
+    "RepositoryProjectBindingError",
     "V1_0AcceptanceError",
 ]

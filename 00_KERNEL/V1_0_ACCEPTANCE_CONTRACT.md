@@ -156,6 +156,19 @@ carry these resolved canonical lowercase 40-hex SHAs, never a raw caller-supplie
 like `"HEAD"`; the schema enforces this shape with a `^[0-9a-f]{40}$` pattern on all
 three fields.
 
+Before any of the above, `build_v1_0_acceptance_bundle` calls
+`commit_binding.py::verify_repository_project_binding`, which resolves `repo_root`'s
+`origin` remote URL to a `owner/repo` GitHub project identity and fails closed unless
+it equals the one authorized project (`commit_binding.AUTHORIZED_PROJECT`,
+`"manosube/manosube-agent-civilization-os"`). Commit-object identity, a clean worktree,
+and correct ancestry together prove nothing about *which* repository `repo_root` is --
+a clone or fork carrying the exact same git objects would pass every commit-identity
+check above while belonging to an unauthorized project (PR #93 Structural Review
+Round 2, `P93-R2-F1`). The resolved identity is persisted as the bundle's own
+`repository_project` field, required by the schema and included in both the bundle id
+and semantic fingerprint -- a substituted project mints a genuinely different bundle
+identity, never a same-id collision.
+
 ---
 
 ## 5. Required negative/tamper controls
@@ -175,6 +188,14 @@ real content mutation between two rederivations and asserts the result actually 
 regardless of mutation and proved nothing about re-execution); NC-8 now asserts
 `delivery_head`/`release_identity.commit_sha` share one *resolved* canonical 40-hex SHA,
 never the raw caller-supplied `"HEAD"` ref.
+
+Four more (NC-18 through NC-21) were added by PR #93 Structural Review Round 2
+(`P93-R2-F2`/`P93-R2-F1`) to decisively prove rejection of: a staged-only dirty index --
+a change `git add`-ed into the index with no further unstaged diff on top of it (NC-18);
+a real pytest internal error, `pytest` exit code `3` (NC-19); a real pytest usage error,
+`pytest` exit code `4` (NC-20); and a repository carrying the exact same git objects
+(a real clone) as the authorized project, but whose `origin` remote resolves to a
+different GitHub project (NC-21). Twenty-one decisive controls total.
 
 ---
 
@@ -248,5 +269,46 @@ branch/PR:
   section 5.
 
 All five corrections landed as real code changes plus decisive tests -- never a report,
+restated boolean, or documentation-only claim -- consistent with this package's own
+"provenance by reproduction, not by trust" principle.
+
+---
+
+## 8. PR #93 Structural Review Round 2 corrections (`ADOPT_P93_R2_F1_F2`)
+
+```text
+GOVERNING_PR=#93
+ADOPTION_ID=ADOPT_P93_R2_F1_F2
+ADOPTION_COMMENT_ID=5748918434
+ADOPTION_COMMENT_AUTHOR=manosube (OWNER)
+AUTHORIZED_TARGET_HEAD=e8d8f9f6d8b47aa60e7e8a72ecebb676f3923620
+AUTHORIZED_BASE_MAIN=b2a5d287113d3a98e77a2212f8b89359d8e09c5d
+```
+
+Two findings from Structural Review Round 2 of PR #93, corrected on the same
+branch/PR:
+
+- **`P93-R2-F1`** -- the Round 1 commit-binding checks (commit-object identity, clean
+  worktree, authorized-base ancestry) prove `repo_root` is at the right commit, cleanly,
+  with the right history, but say nothing about *which* repository it is -- a clone or
+  fork carrying the exact same git objects would pass every one of those checks while
+  belonging to an unauthorized project. Fixed by
+  `commit_binding.py::verify_repository_project_binding`, which resolves `repo_root`'s
+  `origin` remote URL to a `owner/repo` GitHub project identity and fails closed with
+  `RepositoryProjectBindingError` unless it equals the one authorized project
+  (`commit_binding.AUTHORIZED_PROJECT`, `"manosube/manosube-agent-civilization-os"`).
+  Called at the very start of `build_v1_0_acceptance_bundle`, before any commit binding
+  or Gate 22 rederivation. The resolved identity is persisted as the bundle's own
+  `repository_project` field, required by the schema (`^[^/\s]+/[^/\s]+$`) and included
+  in `ACCEPTANCE_BUNDLE_ID_FIELDS` (so a substituted project mints a genuinely new
+  bundle id and semantic fingerprint). See section 4.
+- **`P93-R2-F2`** -- the adopted negative-control matrix had not yet exercised every
+  scenario its own implementation paths were already capable of rejecting: a purely
+  staged-only dirty index (as opposed to an unstaged working-tree change), and real
+  pytest internal-error (exit `3`) / usage-error (exit `4`) outcomes specifically (as
+  opposed to the collection-error case NC-16 already covered). Fixed by four new
+  controls, NC-18 through NC-21 -- see section 5.
+
+Both corrections landed as real code changes plus decisive tests -- never a report,
 restated boolean, or documentation-only claim -- consistent with this package's own
 "provenance by reproduction, not by trust" principle.
