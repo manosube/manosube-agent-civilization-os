@@ -21,7 +21,7 @@
     "acceptance_bundle_id": {"$ref": "#/$defs/sha256hex"},
     "acceptance_bundle_semantic_fingerprint": {"$ref": "#/$defs/sha256hex"},
     "authorized_base_main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-    "delivery_head": {"type": "string", "minLength": 1},
+    "delivery_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "gate_22_predicate_matrix": {
       "type": "object",
       "required": [
@@ -48,6 +48,7 @@
             "evidence_identifier": {"type": "string", "minLength": 1},
             "verification_result": {"enum": ["PASS", "FAIL", "UNKNOWN"]},
             "exit_code": {"type": ["integer", "null"]},
+            "failure_category": {"type": ["string", "null"]},
             "disposition_count": {"type": "integer", "minimum": 0}
           },
           "additionalProperties": false
@@ -106,7 +107,7 @@
         "release_published"
       ],
       "properties": {
-        "commit_sha": {"type": "string", "minLength": 1},
+        "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "tree_entry_count": {"type": "integer", "minimum": 0},
         "blob_count": {"type": "integer", "minimum": 0},
         "directory_count": {"type": "integer", "minimum": 0},

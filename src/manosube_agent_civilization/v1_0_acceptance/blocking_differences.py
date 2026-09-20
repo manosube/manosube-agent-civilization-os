@@ -33,8 +33,20 @@ from .types import (
 #: to be explicitly adopted as non-blocking for v1.0/Phase 22 by name, rather than merely
 #: silent about it -- FD-0005 was explicitly addressed in Issue #92 section 1
 #: (`FD_0005_AUTOMATICALLY_BECOMES_V1_0_BLOCKER=false`), so its record is read as an explicit
-#: adoption, not a stale scope statement requiring re-disposition.
+#: adoption, not a stale scope statement requiring re-disposition. This is an exemption on
+#: the record's *identity*, never on its *content*: `_dispose` validates the record's own
+#: classification is recognized before this set is even consulted (PR #93 Structural Review
+#: Round 1, `P93-R1-F4`) -- a corrupted or unrecognized classification on `FD-0005` itself
+#: must still read `REGISTER_CONTENT_CONTRADICTION`, never bypass that check by record id
+#: alone.
 _EXPLICITLY_ADOPTED_NON_BLOCKING_RECORD_IDS = frozenset({"FD-0005"})
+
+#: Every classification `06_DEFERRED_DIFFERENCES.md` section 2's own table recognizes --
+#: the fail-closed gate `_dispose` checks before applying any disposition rule, including
+#: the named `FD-0005` exemption.
+_RECOGNIZED_CLASSIFICATIONS = (
+    UNCONDITIONALLY_NON_BLOCKING_CLASSIFICATIONS | CONDITIONALLY_BLOCKING_CLASSIFICATIONS
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +60,26 @@ class DifferenceDisposition:
 
 
 def _dispose(record: DeferredDifferenceRecord) -> DifferenceDisposition:
+    # Validate the record's own classification before applying any disposition rule --
+    # including the named FD-0005 exemption below. A corrupted or unrecognized
+    # classification is always a register-content contradiction, and the record's own
+    # id alone must never bypass that fail-closed check (PR #93 Structural Review
+    # Round 1, `P93-R1-F4`).
+    if record.classification not in _RECOGNIZED_CLASSIFICATIONS:
+        return DifferenceDisposition(
+            record_id=record.record_id,
+            classification=record.classification,
+            current_status=record.current_status,
+            current_phase_blocking_effect=record.current_phase_blocking_effect,
+            disposition="REGISTER_CONTENT_CONTRADICTION",
+            rationale=(
+                f"classification {record.classification!r} is not one of "
+                "06_DEFERRED_DIFFERENCES.md section 2's own six declared classifications -- "
+                f"record id {record.record_id!r} alone cannot bypass this fail-closed "
+                "validation, even for the explicitly adopted FD-0005 exemption"
+            ),
+        )
+
     if record.record_id in _EXPLICITLY_ADOPTED_NON_BLOCKING_RECORD_IDS:
         return DifferenceDisposition(
             record_id=record.record_id,
@@ -56,7 +88,8 @@ def _dispose(record: DeferredDifferenceRecord) -> DifferenceDisposition:
             current_phase_blocking_effect=record.current_phase_blocking_effect,
             disposition="NON_BLOCKING",
             rationale=(
-                "explicitly adopted as non-blocking for v1.0 by name in Issue #92 section 1"
+                "explicitly adopted as non-blocking for v1.0 by name in Issue #92 section 1, "
+                "and its own recorded classification validated as recognized"
             ),
         )
 
@@ -73,22 +106,10 @@ def _dispose(record: DeferredDifferenceRecord) -> DifferenceDisposition:
             ),
         )
 
-    if record.classification in CONDITIONALLY_BLOCKING_CLASSIFICATIONS:
-        effect = record.current_phase_blocking_effect
-        if effect is not None and effect.startswith("NONE"):
-            return DifferenceDisposition(
-                record_id=record.record_id,
-                classification=record.classification,
-                current_status=record.current_status,
-                current_phase_blocking_effect=effect,
-                disposition="REQUIRES_HUMAN_AUTHORITY_DISPOSITION",
-                rationale=(
-                    f"CURRENT_PHASE_BLOCKING_EFFECT={effect!r} is scoped to an earlier Phase, "
-                    "not re-evaluated against Phase 22/v1.0 by any recorded SHUKOU decision -- "
-                    "this package does not infer that absence of an earlier block means "
-                    "absence of a v1.0 block"
-                ),
-            )
+    # The only remaining possibility, guaranteed by the recognized-classification check
+    # above: `record.classification in CONDITIONALLY_BLOCKING_CLASSIFICATIONS`.
+    effect = record.current_phase_blocking_effect
+    if effect is not None and effect.startswith("NONE"):
         return DifferenceDisposition(
             record_id=record.record_id,
             classification=record.classification,
@@ -96,22 +117,22 @@ def _dispose(record: DeferredDifferenceRecord) -> DifferenceDisposition:
             current_phase_blocking_effect=effect,
             disposition="REQUIRES_HUMAN_AUTHORITY_DISPOSITION",
             rationale=(
-                f"classification {record.classification!r} is conditionally blocking and its "
-                f"own CURRENT_PHASE_BLOCKING_EFFECT ({effect!r}) does not read as unconditionally "
-                "clear"
+                f"CURRENT_PHASE_BLOCKING_EFFECT={effect!r} is scoped to an earlier Phase, "
+                "not re-evaluated against Phase 22/v1.0 by any recorded SHUKOU decision -- "
+                "this package does not infer that absence of an earlier block means "
+                "absence of a v1.0 block"
             ),
         )
-
-    # An unrecognized classification is a register-content issue, not this package's to resolve.
     return DifferenceDisposition(
         record_id=record.record_id,
         classification=record.classification,
         current_status=record.current_status,
-        current_phase_blocking_effect=record.current_phase_blocking_effect,
-        disposition="REGISTER_CONTENT_CONTRADICTION",
+        current_phase_blocking_effect=effect,
+        disposition="REQUIRES_HUMAN_AUTHORITY_DISPOSITION",
         rationale=(
-            f"classification {record.classification!r} is not one of "
-            "06_DEFERRED_DIFFERENCES.md section 2's own six declared classifications"
+            f"classification {record.classification!r} is conditionally blocking and its "
+            f"own CURRENT_PHASE_BLOCKING_EFFECT ({effect!r}) does not read as unconditionally "
+            "clear"
         ),
     )
 

@@ -26,8 +26,29 @@ class ReleaseIdentityError(V1_0AcceptanceError):
     this package's own fail-closed structural checks."""
 
 
+class CommitResolutionError(V1_0AcceptanceError):
+    """A caller-supplied ref (`delivery_head`, `authorized_base_main_sha`, or a
+    `release_identity` commit input) does not resolve to a real commit object in the
+    target repository -- e.g. it is a raw tree/blob object, an unresolvable ref, or
+    simply does not exist there. Never silently accepted merely because it matches a
+    40-hex schema pattern (PR #93 Structural Review Round 1, `P93-R1-F2`)."""
+
+
+class DeliveryHeadBindingError(V1_0AcceptanceError):
+    """The repository at `repo_root` is not exactly, cleanly at the resolved delivery
+    commit -- its actual checked-out `HEAD` differs from the requested commit, its
+    tracked worktree/index carries uncommitted changes, or a supplied
+    `authorized_base_main_sha` is not a real ancestor of the delivery commit. Rederiving
+    Gate 22 predicates or the Deferred Differences register against such a repository
+    would silently attach current-worktree (or unauthorized) evidence to a different
+    commit than the one being accepted (PR #93 Structural Review Round 1, `P93-R1-F1`/
+    `P93-R1-F5`)."""
+
+
 __all__ = [
+    "CommitResolutionError",
     "DeferredDifferencesRegisterError",
+    "DeliveryHeadBindingError",
     "GateRederivationError",
     "ReleaseIdentityError",
     "V1_0AcceptanceError",

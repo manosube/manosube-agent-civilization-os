@@ -6,6 +6,17 @@ predicate rederivation (`gate22.py`), the v1.0-blocking Difference disposition
 into one content-addressed record. It never itself decides Gate 22 PASS/FAIL/UNKNOWN
 for a caller -- `gate_22_all_pass` is a plain, inspectable fold over the assembled
 matrix, always re-derivable by a reader from the same `gate_22_predicate_matrix` field.
+
+Before any rederivation, `commit_binding.resolve_and_bind_delivery_head` canonicalizes
+`delivery_head` and fails closed unless `repo_root` is exactly, cleanly checked out at
+that commit -- `rederive_all_pytest_owned_predicates` and
+`rederive_all_v1_0_blocking_differences_closed` both read `repo_root`'s on-disk
+worktree, which otherwise has no guaranteed relationship to the caller-supplied
+`delivery_head` label (PR #93 Structural Review Round 1, `P93-R1-F1`).
+`commit_binding.resolve_and_verify_authorized_base` likewise canonicalizes
+`authorized_base_main_sha` and verifies it is a real ancestor of the resolved delivery
+commit -- never accepted merely because it matches the 40-hex schema pattern
+(`P93-R1-F5`).
 """
 
 from __future__ import annotations
@@ -16,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .blocking_differences import rederive_all_v1_0_blocking_differences_closed
+from .commit_binding import resolve_and_bind_delivery_head, resolve_and_verify_authorized_base
 from .gate22 import rederive_all_pytest_owned_predicates
 from .identity import (
     compute_acceptance_bundle_id,
@@ -34,9 +46,16 @@ def build_v1_0_acceptance_bundle(
     release_version_label: str,
     negative_control_results: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
+    resolved_delivery_head = resolve_and_bind_delivery_head(repo_root, delivery_head)
+    resolved_base = resolve_and_verify_authorized_base(
+        repo_root, authorized_base_main_sha, resolved_delivery_head
+    )
+
     pytest_owned = rederive_all_pytest_owned_predicates(repo_root)
     blocking_verdict, dispositions = rederive_all_v1_0_blocking_differences_closed(repo_root)
-    release_identity = compute_release_identity(repo_root, delivery_head, release_version_label)
+    release_identity = compute_release_identity(
+        repo_root, resolved_delivery_head, release_version_label
+    )
 
     gate_22_predicate_matrix: dict[str, dict[str, Any]] = {}
     for predicate in GATE_22_PREDICATES:
@@ -54,6 +73,7 @@ def build_v1_0_acceptance_bundle(
                 "evidence_identifier": ",".join(rederivation.owner_test_paths),
                 "verification_result": rederivation.verification_result,
                 "exit_code": rederivation.exit_code,
+                "failure_category": rederivation.failure_category,
             }
 
     gate_22_all_pass = all(
@@ -62,8 +82,8 @@ def build_v1_0_acceptance_bundle(
 
     bundle: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "authorized_base_main_sha": authorized_base_main_sha,
-        "delivery_head": delivery_head,
+        "authorized_base_main_sha": resolved_base,
+        "delivery_head": resolved_delivery_head,
         "gate_22_predicate_matrix": gate_22_predicate_matrix,
         "gate_22_all_pass": gate_22_all_pass,
         "v1_0_blocking_difference_disposition": [

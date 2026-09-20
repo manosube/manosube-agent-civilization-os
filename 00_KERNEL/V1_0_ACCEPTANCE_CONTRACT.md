@@ -74,13 +74,22 @@ The twelfth predicate, `ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED`, has no owning pyt
 module -- it is read directly from `docs/project_sources/06_DEFERRED_DIFFERENCES.md`
 (section 3).
 
-A predicate's `verification_result` is `PASS` only if every one of its owner test
-modules exits `0`, `FAIL` if the owning suite ran and reported a failure, and `UNKNOWN`
-if the owning module does not exist under the given repository root (never silently
-coerced to `FAIL`). `gate_22_all_pass` is `true` only if all twelve predicates read
-`PASS` -- `UNKNOWN_EQUALS_FALSE=false` and `UNKNOWN_EQUALS_TRUE=false` (Issue #92
-section 4) apply, so an `UNKNOWN` predicate blocks `gate_22_all_pass` exactly like a
-`FAIL` one, without being reported as a false negative.
+A predicate's `verification_result` is derived strictly from the owning `pytest`
+subprocess's own exit code, per pytest's own documented exit-code semantics (PR #93
+Structural Review Round 1, `P93-R1-F3`): exit `0` (`EXIT_OK`) -> `PASS`; exit `1`
+(`EXIT_TESTSFAILED`) -> `FAIL`; every other recognized pytest exit code -- `2`
+(`EXIT_INTERRUPTED`), `3` (`EXIT_INTERNALERROR`), `4` (`EXIT_USAGEERROR`), `5`
+(`EXIT_NOTESTSCOLLECTED`) -- and any negative (signal-terminated) or otherwise
+unrecognized code all read `UNKNOWN`, each tagged with an explicit
+`failure_category` (`INTERRUPTED`/`INTERNAL_ERROR`/`USAGE_ERROR`/
+`NO_TESTS_COLLECTED`/`TERMINATED_BY_SIGNAL`/`UNRECOGNIZED_EXIT_CODE`), never coerced
+to `FAIL`. The owning module not existing under the given repository root is likewise
+`UNKNOWN` with `failure_category=MISSING_OWNER`. `gate_22_all_pass` is `true` only if
+all twelve predicates read `PASS` -- `UNKNOWN_EQUALS_FALSE=false` and
+`UNKNOWN_EQUALS_TRUE=false` (Issue #92 section 4) apply, so an `UNKNOWN` predicate
+(collection failure, interrupted run, or any other pytest infrastructure outcome)
+blocks `gate_22_all_pass` exactly like a `FAIL` one, without ever being misreported as
+decisive negative predicate evidence.
 
 ---
 
@@ -100,6 +109,12 @@ table:
   be inferred by an Agent").
 - The one exception is a record explicitly named as non-blocking by Issue #92 itself:
   `FD-0005` (`FD_0005_AUTOMATICALLY_BECOMES_V1_0_BLOCKER=false`, Issue #92 section 1).
+  That exemption is on the record's *identity* alone, never on its *content*: every
+  record's own recorded `CLASSIFICATION` is validated against the register's six
+  recognized classifications *before* the `FD-0005` identity exemption is even
+  consulted, so a corrupted or unrecognized classification on `FD-0005` itself still
+  reads `REGISTER_CONTENT_CONTRADICTION`, never bypassed by record id alone (PR #93
+  Structural Review Round 1, `P93-R1-F4`).
 - An unrecognized classification (a register-content contradiction) is `FAIL`, never a
   silent pass.
 
@@ -121,12 +136,45 @@ creates a tag, and never publishes a release (`tag_created`/`release_published` 
 API call exists anywhere in this package
 (`GITHUB_RELEASE_PUBLICATION_ALLOWED=false`, `RELEASE_TAG_CREATION_ALLOWED=false`).
 
+Every commit input this package accepts -- `delivery_head`, `authorized_base_main_sha`,
+and the `commit_sha` passed to `compute_release_identity` -- is resolved through
+`commit_binding.py::resolve_commit_sha` (`git rev-parse --verify <ref>^{commit}`) before
+any use, so a raw tree/blob object or an unresolvable ref is rejected outright rather
+than silently accepted merely because it matches the 40-hex schema pattern (PR #93
+Structural Review Round 1, `P93-R1-F2`). `engine.py::build_v1_0_acceptance_bundle`
+additionally binds its resolved `delivery_head` to the live repository worktree via
+`commit_binding.py::verify_repo_root_bound_to_commit`: `repo_root`'s checked-out `HEAD`
+must equal the resolved commit, and its tracked worktree/index must be clean, before any
+pytest-owned predicate or Deferred Differences register rederivation reads that
+filesystem (`P93-R1-F1`) -- this is the fail-closed alternative to checking out a
+disposable temporary worktree. `authorized_base_main_sha` is further verified as a real
+ancestor of the resolved `delivery_head` via `git merge-base --is-ancestor`
+(`verify_authorized_base_ancestry`), never accepted merely because it is a well-formed
+commit (`P93-R1-F5`'s closing ancestry-verification requirement). The bundle's own
+`delivery_head`/`authorized_base_main_sha`/`release_identity.commit_sha` fields always
+carry these resolved canonical lowercase 40-hex SHAs, never a raw caller-supplied ref
+like `"HEAD"`; the schema enforces this shape with a `^[0-9a-f]{40}$` pattern on all
+three fields.
+
 ---
 
 ## 5. Required negative/tamper controls
 
 `tests/contract/v1_0_acceptance/test_v1_0_acceptance_negative_controls.py` implements the
-ten decisive controls Issue #92 section 7 requires, NC-1 through NC-10.
+ten decisive controls Issue #92 section 7 originally required (NC-1 through NC-10), plus
+seven more (NC-11 through NC-17) added by PR #93 Structural Review Round 1
+(`P93-R1-F5`) to decisively prove rejection of: a historical delivery SHA combined with
+current-worktree evidence (NC-11); a dirty tracked worktree at the claimed delivery
+commit (NC-12); a raw tree/blob object presented as a commit identity (NC-13); an
+unresolvable commit SHA (NC-14); an unauthorized/non-ancestor `authorized_base_main_sha`
+(NC-15); a broken/uncollectable owning test file read as `UNKNOWN` rather than `FAIL`
+(NC-16); and a corrupted `FD-0005` classification not bypassing recognized-classification
+validation (NC-17). NC-2 and NC-8 were also rewritten in that round: NC-2 now performs a
+real content mutation between two rederivations and asserts the result actually changes
+(the original only checked object identity across two calls, which is trivially true
+regardless of mutation and proved nothing about re-execution); NC-8 now asserts
+`delivery_head`/`release_identity.commit_sha` share one *resolved* canonical 40-hex SHA,
+never the raw caller-supplied `"HEAD"` ref.
 
 ---
 
@@ -146,3 +194,59 @@ RELEASE_TAG_CREATED=false
 result -- eleven predicates PASS and the twelfth (`ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED`)
 is `UNKNOWN` pending SHUKOU disposition of five Deferred Differences. No claim in this
 delivery asserts v1.0 readiness beyond this recorded state.
+
+---
+
+## 7. PR #93 Structural Review Round 1 corrections (`ADOPT_P93_R1_F1_F2_F3_F4_F5`)
+
+```text
+GOVERNING_PR=#93
+ADOPTION_ID=ADOPT_P93_R1_F1_F2_F3_F4_F5
+ADOPTION_COMMENT_ID=5746034137
+ADOPTION_COMMENT_AUTHOR=manosube (OWNER)
+AUTHORIZED_TARGET_HEAD=cdace37d1bee777c08bfbfa86206e2bcc0c54dcd
+AUTHORIZED_BASE_MAIN=b2a5d287113d3a98e77a2212f8b89359d8e09c5d
+```
+
+Five findings from Structural Review Round 1 of PR #93, corrected on the same
+branch/PR:
+
+- **`P93-R1-F1`** -- `build_v1_0_acceptance_bundle` rederived pytest-owned predicates and
+  the Deferred Differences register against `repo_root`'s live filesystem without ever
+  confirming that filesystem was actually checked out at, and clean at, the caller's
+  claimed `delivery_head`. Fixed by `commit_binding.py::verify_repo_root_bound_to_commit`
+  (worktree-binding check: `git rev-parse HEAD` must equal the resolved delivery commit,
+  and `git status --porcelain --untracked-files=no` must be empty), invoked by
+  `resolve_and_bind_delivery_head` at the top of `build_v1_0_acceptance_bundle`. See
+  section 4.
+- **`P93-R1-F2`** -- no commit input (`delivery_head`, `authorized_base_main_sha`,
+  `release_identity`'s `commit_sha`) was ever verified to resolve to a real commit
+  object; a raw tree/blob SHA or an unresolvable ref matching the 40-hex schema pattern
+  would have been silently accepted. Fixed by `commit_binding.py::resolve_commit_sha`
+  (`git rev-parse --verify <ref>^{commit}`), used by both `engine.py` (via
+  `resolve_and_bind_delivery_head`/`resolve_and_verify_authorized_base`) and
+  `release_identity.py::compute_release_identity`. See section 4.
+- **`P93-R1-F3`** -- Gate 22 predicate rederivation treated every non-zero pytest exit
+  code as `FAIL`, which misreports pytest infrastructure failures (interrupted runs,
+  internal errors, usage errors, collection failures) as decisive negative predicate
+  evidence. Fixed by `gate22.py`'s explicit pytest exit-code classification: only exit
+  `0`/`1` are ever `PASS`/`FAIL`; every other code (and any negative, signal-terminated
+  code) is `UNKNOWN` with an explicit `failure_category`. See section 2.
+- **`P93-R1-F4`** -- `blocking_differences.py`'s `FD-0005` non-blocking exemption was
+  applied by record id alone, before that record's own `CLASSIFICATION` value was
+  validated as one of the register's six recognized classifications -- a corrupted
+  `FD-0005` entry could have been silently waved through. Fixed by validating
+  `record.classification` against `_RECOGNIZED_CLASSIFICATIONS` first, unconditionally,
+  before the `FD-0005` identity exemption (or any other disposition rule) is applied.
+  See section 3.
+- **`P93-R1-F5`** -- the negative-control matrix did not decisively prove rejection of
+  several of these same fail-closed conditions (worktree substitution, non-ancestor
+  base, malformed commit identities, pytest infrastructure failures scored as `FAIL`,
+  and NC-2's original re-execution claim), and NC-2/NC-8 in particular tested only
+  incidental properties (object identity, string equality against `"HEAD"`) rather than
+  the actual guarantee. Fixed by NC-11 through NC-17 plus the NC-2/NC-8 rewrites. See
+  section 5.
+
+All five corrections landed as real code changes plus decisive tests -- never a report,
+restated boolean, or documentation-only claim -- consistent with this package's own
+"provenance by reproduction, not by trust" principle.

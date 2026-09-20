@@ -14,6 +14,7 @@ def test_package_module_inventory_is_exactly_expected() -> None:
     assert modules == {
         "__init__.py",
         "blocking_differences.py",
+        "commit_binding.py",
         "deferred_differences_register.py",
         "engine.py",
         "errors.py",

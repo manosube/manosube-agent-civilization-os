@@ -68,6 +68,16 @@ def _fake_release_identity(repo_root: Path, commit_sha: str, version_label: str)
     )
 
 
+#: A stand-in resolved delivery commit -- this module's own commit-binding checks
+#: (`resolve_and_bind_delivery_head`/`resolve_and_verify_authorized_base`) are real git
+#: operations against a real repository, exercised end-to-end by
+#: `tests/contract/v1_0_acceptance/test_gate22_rederivation.py`; here they are
+#: monkeypatched too so this module stays fast and independent of the live repo's
+#: worktree cleanliness.
+_FAKE_DELIVERY_HEAD_SHA = "0" * 40
+_FAKE_BASE_SHA = "1" * 40
+
+
 @pytest.fixture(autouse=True)
 def _patched(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(engine_module, "rederive_all_pytest_owned_predicates", _fake_pytest_owned)
@@ -75,6 +85,16 @@ def _patched(monkeypatch: pytest.MonkeyPatch) -> None:
         engine_module, "rederive_all_v1_0_blocking_differences_closed", _fake_blocking_closed
     )
     monkeypatch.setattr(engine_module, "compute_release_identity", _fake_release_identity)
+    monkeypatch.setattr(
+        engine_module,
+        "resolve_and_bind_delivery_head",
+        lambda repo_root, delivery_head: _FAKE_DELIVERY_HEAD_SHA,
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "resolve_and_verify_authorized_base",
+        lambda repo_root, base, resolved_head: _FAKE_BASE_SHA,
+    )
 
 
 def test_bundle_validates_against_its_own_schema() -> None:

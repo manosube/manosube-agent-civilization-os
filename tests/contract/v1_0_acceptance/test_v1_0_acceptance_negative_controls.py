@@ -1,13 +1,24 @@
-"""Required decisive negative/tamper controls (Issue #92 section 7, `ADOPT_PHASE_22_V1_0_ACCEPTANCE`).
+"""Required decisive negative/tamper controls (Issue #92 section 7,
+`ADOPT_PHASE_22_V1_0_ACCEPTANCE`; extended by PR #93 Structural Review Round 1,
+`ADOPT_P93_R1_F1_F2_F3_F4_F5`, finding `P93-R1-F5`).
 
-Ten controls, NC-1 through NC-10, each a real fail-closed attempt against this package's
-own real code -- never a mocked assertion of intent.
+NC-1 through NC-10 are the originally adopted ten. NC-11 through NC-17 close the eight
+additional decisive scenarios `P93-R1-F5` names by id, and NC-2 is rewritten (the
+original only checked object identity across two calls, which is trivially true
+regardless of mutation -- Structural Review's own "nominal, does not mutate anything"
+finding). Every control here is a real fail-closed attempt against this package's own
+real code -- never a mocked assertion of intent.
 """
 
 from __future__ import annotations
 
 import inspect
 from pathlib import Path
+import re
+import shutil
+import subprocess
+
+import pytest
 
 from manosube_agent_civilization.v1_0_acceptance import (
     PUBLIC_V1_0_ACCEPTANCE_ENTRY_POINT_COUNT,
@@ -17,16 +28,50 @@ from manosube_agent_civilization.v1_0_acceptance import (
 from manosube_agent_civilization.v1_0_acceptance.blocking_differences import (
     classify_v1_0_blocking_differences,
 )
-from manosube_agent_civilization.v1_0_acceptance.gate22 import (
-    PREDICATE_TEST_OWNERS,
-    rederive_predicate,
+from manosube_agent_civilization.v1_0_acceptance.commit_binding import (
+    resolve_commit_sha,
+    verify_authorized_base_ancestry,
+    verify_repo_root_bound_to_commit,
 )
+from manosube_agent_civilization.v1_0_acceptance.errors import (
+    CommitResolutionError,
+    DeliveryHeadBindingError,
+)
+from manosube_agent_civilization.v1_0_acceptance.gate22 import PREDICATE_TEST_OWNERS
 from manosube_agent_civilization.v1_0_acceptance.release_identity import (
     compute_release_identity,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_ROOT = REPO_ROOT / "src" / "manosube_agent_civilization" / "v1_0_acceptance"
+
+_GIT = shutil.which("git")
+
+
+def _run_git(repo: Path, *args: str) -> str:
+    assert _GIT is not None, "git executable not found on PATH"
+    result = subprocess.run(  # noqa: S603 -- fixed Git executable resolved via shutil.which above
+        [_GIT, *args], cwd=repo, capture_output=True, text=True, check=True
+    )
+    return result.stdout.strip()
+
+
+def _init_scratch_git_repo(repo: Path) -> tuple[str, str]:
+    """Create a minimal two-commit git repository at `repo`, returning
+    `(first_commit_sha, second_commit_sha)`. `repo`'s checked-out `HEAD` is the second
+    commit when this returns."""
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "test@example.invalid")
+    _run_git(repo, "config", "user.name", "Test")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    _run_git(repo, "add", "a.txt")
+    _run_git(repo, "commit", "-q", "-m", "first")
+    first = _run_git(repo, "rev-parse", "HEAD")
+    (repo / "b.txt").write_text("b\n", encoding="utf-8")
+    _run_git(repo, "add", "b.txt")
+    _run_git(repo, "commit", "-q", "-m", "second")
+    second = _run_git(repo, "rev-parse", "HEAD")
+    return first, second
 
 
 def test_nc1_a_failing_predicate_prevents_gate_22_all_pass(tmp_path: Path) -> None:
@@ -54,14 +99,32 @@ def test_nc1_a_failing_predicate_prevents_gate_22_all_pass(tmp_path: Path) -> No
     assert outcome.exit_code != 0
 
 
-def test_nc2_a_mutated_owning_suite_is_actually_re_executed_not_cached() -> None:
+def test_nc2_a_mutated_owning_suite_is_actually_re_executed_not_cached(tmp_path: Path) -> None:
     """NC-2: a stale/mutable receipt cannot satisfy a predicate -- the owning suite is
-    genuinely re-run every call, not memoized against an earlier pass."""
-    first = rederive_predicate("COMPARATIVE_BENCHMARK_PASS", REPO_ROOT)
-    second = rederive_predicate("COMPARATIVE_BENCHMARK_PASS", REPO_ROOT)
-    assert first.verification_result == second.verification_result == "PASS"
-    # Two independent subprocess runs, not a cached first result silently reused.
-    assert first is not second
+    genuinely re-run every call, and a real content mutation between two calls changes
+    the result. (The original NC-2 only checked object identity across two calls, which
+    is trivially true regardless of mutation and proves nothing about re-execution --
+    PR #93 Structural Review Round 1, `P93-R1-F5`.)"""
+    owner_dir = tmp_path / "owner"
+    owner_dir.mkdir()
+    test_file = owner_dir / "test_mutable.py"
+    test_file.write_text("def test_mutable() -> None:\n    assert True\n", encoding="utf-8")
+
+    from manosube_agent_civilization.v1_0_acceptance import gate22 as gate22_module
+
+    original = gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"]
+    try:
+        gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"] = (
+            "owner/test_mutable.py",
+        )
+        first = gate22_module.rederive_predicate("COMPARATIVE_BENCHMARK_PASS", tmp_path)
+        test_file.write_text("def test_mutable() -> None:\n    assert False\n", encoding="utf-8")
+        second = gate22_module.rederive_predicate("COMPARATIVE_BENCHMARK_PASS", tmp_path)
+    finally:
+        gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"] = original
+
+    assert first.verification_result == "PASS"
+    assert second.verification_result == "FAIL"
 
 
 def test_nc3_build_bundle_accepts_no_caller_supplied_predicate_verdicts() -> None:
@@ -148,17 +211,19 @@ def test_nc7_release_identity_never_collapses_distinct_commits() -> None:
     assert head.commit_sha != parent.commit_sha
 
 
-def test_nc8_delivery_head_and_release_identity_commit_share_one_source() -> None:
+def test_nc8_delivery_head_and_release_identity_commit_share_one_resolved_source() -> None:
     """NC-8: reviewed head / merge tree / release tree mismatch fails closed at the point
     this package can enforce it -- within one bundle, `delivery_head` and
-    `release_identity.commit_sha` are always bound to the identical caller-supplied value,
-    so no code path inside this package can silently diverge them. (Cross-round reviewed-
-    head vs. merged-tree equality remains the Structural Advisor/SHUKOU's own verification,
-    outside this package's scope.)"""
+    `release_identity.commit_sha` are always bound to the identical *resolved* canonical
+    40-hex commit SHA, never a raw caller-supplied ref like `"HEAD"` (PR #93 Structural
+    Review Round 1, `P93-R1-F1`/`P93-R1-F2`). Cross-round reviewed-head vs. merged-tree
+    equality remains the Structural Advisor/SHUKOU's own verification, outside this
+    package's scope."""
     bundle = build_v1_0_acceptance_bundle(
         REPO_ROOT, "b2a5d287113d3a98e77a2212f8b89359d8e09c5d", "HEAD", "v1.0-candidate"
     )
-    assert bundle["delivery_head"] == bundle["release_identity"]["commit_sha"] == "HEAD"
+    assert bundle["delivery_head"] == bundle["release_identity"]["commit_sha"]
+    assert re.fullmatch(r"[0-9a-f]{40}", bundle["delivery_head"])
 
 
 def test_nc9_no_v1_0_declaration_entry_point_exists() -> None:
@@ -201,3 +266,103 @@ def test_nc10_package_imports_no_write_route_from_another_package() -> None:
         text = path.read_text(encoding="utf-8")
         for fragment in forbidden_import_fragments:
             assert fragment not in text, f"{path.name} imports from {fragment!r}"
+
+
+def test_nc11_historical_delivery_sha_with_current_worktree_evidence_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """NC-11: a historical commit SHA cannot be delivered while the worktree it is checked
+    against is actually sitting at a later commit -- rederiving current-worktree evidence
+    while claiming it belongs to an older, already-superseded delivery_head is exactly the
+    substitution `P93-R1-F1` closes."""
+    first, _second = _init_scratch_git_repo(tmp_path)
+    with pytest.raises(DeliveryHeadBindingError):
+        verify_repo_root_bound_to_commit(tmp_path, first)
+
+
+def test_nc12_dirty_tracked_worktree_fails_closed(tmp_path: Path) -> None:
+    """NC-12: uncommitted tracked-file changes at the claimed delivery commit fail closed --
+    evidence rederived against an unclean worktree is never accepted as belonging to that
+    commit's clean, reviewed content."""
+    _first, second = _init_scratch_git_repo(tmp_path)
+    (tmp_path / "b.txt").write_text("mutated\n", encoding="utf-8")
+    with pytest.raises(DeliveryHeadBindingError):
+        verify_repo_root_bound_to_commit(tmp_path, second)
+
+
+def test_nc13_raw_tree_object_rejected_as_a_commit_identity(tmp_path: Path) -> None:
+    """NC-13: a raw tree (or blob) object -- which has no commit metadata, author, or
+    parent lineage -- is never silently accepted as a commit identity merely because it is
+    a 40-hex string."""
+    _first, second = _init_scratch_git_repo(tmp_path)
+    tree_sha = _run_git(tmp_path, "rev-parse", f"{second}^{{tree}}")
+    with pytest.raises(CommitResolutionError):
+        resolve_commit_sha(tmp_path, tree_sha)
+
+
+def test_nc14_unresolvable_commit_fails_closed() -> None:
+    """NC-14: a well-formed 40-hex value that does not resolve to any real commit object in
+    the target repository is rejected outright, never treated as a plausible identity merely
+    because it matches the SHA pattern."""
+    with pytest.raises(CommitResolutionError):
+        resolve_commit_sha(REPO_ROOT, "0" * 40)
+
+
+def test_nc15_unauthorized_non_ancestor_base_sha_fails_closed() -> None:
+    """NC-15: an `authorized_base_main_sha` that is not actually an ancestor of the
+    delivery_head -- e.g. it is a later, divergent, or unrelated commit -- fails closed
+    rather than being accepted merely because both are real, resolvable commits
+    (`P93-R1-F5`'s closing ancestry-verification requirement)."""
+    later = resolve_commit_sha(REPO_ROOT, "HEAD")
+    earlier = resolve_commit_sha(REPO_ROOT, "HEAD~3")
+    with pytest.raises(DeliveryHeadBindingError):
+        verify_authorized_base_ancestry(REPO_ROOT, later, earlier)
+
+
+def test_nc16_pytest_collection_failure_is_unknown_not_fail(tmp_path: Path) -> None:
+    """NC-16: a broken/uncollectable owning test file (e.g. a syntax error) is never
+    silently scored as a passing or failing predicate verdict -- it is UNKNOWN, with an
+    explicit infrastructure `failure_category`, never negative predicate evidence
+    (`P93-R1-F3`)."""
+    owner_dir = tmp_path / "owner"
+    owner_dir.mkdir()
+    (owner_dir / "test_broken_collection.py").write_text(
+        "def test_broken(:\n    pass\n", encoding="utf-8"
+    )
+
+    from manosube_agent_civilization.v1_0_acceptance import gate22 as gate22_module
+
+    original = gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"]
+    try:
+        gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"] = (
+            "owner/test_broken_collection.py",
+        )
+        outcome = gate22_module.rederive_predicate("COMPARATIVE_BENCHMARK_PASS", tmp_path)
+    finally:
+        gate22_module.PREDICATE_TEST_OWNERS["COMPARATIVE_BENCHMARK_PASS"] = original
+
+    assert outcome.verification_result == "UNKNOWN"
+    assert outcome.exit_code not in (0, 1)
+    assert outcome.failure_category is not None
+
+
+def test_nc17_corrupted_fd_0005_classification_is_not_exempted(tmp_path: Path) -> None:
+    """NC-17: the FD-0005-specific non-blocking exemption never overrides recognized-
+    classification validation -- a register entry claiming record id FD-0005 with a
+    corrupted/unrecognized `CLASSIFICATION` value is still rejected as a register-content
+    contradiction, not silently waved through by id (`P93-R1-F4`)."""
+    register = tmp_path / "register.md"
+    register.write_text(
+        "# 5. FD-0005 scratch\n\n```text\n"
+        "DIFFERENCE_ID=FD-0005\n"
+        "CLASSIFICATION=NOT_A_REAL_CLASSIFICATION\n"
+        "CURRENT_STATUS=OPEN_NON_BLOCKING_DEFERRED\n"
+        "CURRENT_PHASE_BLOCKING_EFFECT=NONE_FOR_PHASE_21\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    dispositions = classify_v1_0_blocking_differences(
+        tmp_path, register_relative_path="register.md"
+    )
+    fd_0005 = next(d for d in dispositions if d.record_id == "FD-0005")
+    assert fd_0005.disposition == "REGISTER_CONTENT_CONTRADICTION"

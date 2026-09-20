@@ -38,6 +38,7 @@ def test_comparative_benchmark_pass_rederives_pass() -> None:
     assert result.verification_result == "PASS"
     assert result.exit_code == 0
     assert result.missing_paths == ()
+    assert result.failure_category is None
 
 
 def test_missing_owner_path_yields_unknown_never_a_silent_fail(tmp_path: Path) -> None:
@@ -45,6 +46,7 @@ def test_missing_owner_path_yields_unknown_never_a_silent_fail(tmp_path: Path) -
     assert result.verification_result == "UNKNOWN"
     assert result.exit_code is None
     assert result.missing_paths
+    assert result.failure_category == "MISSING_OWNER"
 
 
 def test_unowned_predicate_raises() -> None:
