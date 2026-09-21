@@ -168,8 +168,12 @@ def main() -> int:
     # of a distinct independent reproducer actor/authority's Ed25519 public key, committed
     # before that actor ever submits a reproduction, so an independent reproduction submission
     # is only ever admitted against a Store-resolved trust anchor, never the submission's own
-    # self-declared key alone) -- making 95.
-    if len(paths) != 95 or len(set(ids)) != len(paths) or None in ids:
+    # self-declared key alone) -- making 95. Phase 22's own v1.0 acceptance bundle schema
+    # (Issue #92, `ADOPT_PHASE_22_V1_0_ACCEPTANCE`; `v1_0_acceptance_bundle`, the content-
+    # addressed record combining Gate 22's mechanical predicate matrix, the v1.0-blocking
+    # Difference disposition, negative-control results, and the release identity surface)
+    # adds one more, making 96.
+    if len(paths) != 96 or len(set(ids)) != len(paths) or None in ids:
         raise SystemExit("schema inventory or unique $id gate failed")
 
     for schema in schemas:
