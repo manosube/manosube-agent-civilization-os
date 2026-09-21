@@ -25,17 +25,22 @@ def test_real_register_fd_0005_is_non_blocking_by_explicit_adoption() -> None:
     assert "Issue #92" in fd_0005.rationale
 
 
-def test_real_register_conditionally_blocking_records_require_shukou_disposition() -> None:
+def test_real_register_disposed_records_are_non_blocking() -> None:
+    """`ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC` (Issue #92 comment
+    `5755827293`) closed or cancelled these five records; the register now records
+    `CLOSED_WITH_EVIDENCE`/`CANCELLED_BY_HUMAN_DECISION`, both unconditionally
+    non-blocking classifications -- never inferred, only read from the record's own
+    updated classification field."""
     dispositions = classify_v1_0_blocking_differences(REPO_ROOT)
     for record_id in ("DD-0001", "DD-0002", "FD-0001", "FD-0002", "FD-0003"):
         d = next(x for x in dispositions if x.record_id == record_id)
-        assert d.disposition == "REQUIRES_HUMAN_AUTHORITY_DISPOSITION", record_id
+        assert d.disposition == "NON_BLOCKING", record_id
 
 
-def test_predicate_12_is_unknown_not_a_false_pass() -> None:
+def test_predicate_12_is_pass_when_every_active_record_is_non_blocking() -> None:
     verdict, dispositions = rederive_all_v1_0_blocking_differences_closed(REPO_ROOT)
-    assert verdict == "UNKNOWN"
-    assert any(d.disposition == "REQUIRES_HUMAN_AUTHORITY_DISPOSITION" for d in dispositions)
+    assert verdict == "PASS"
+    assert all(d.disposition == "NON_BLOCKING" for d in dispositions)
 
 
 def test_all_non_blocking_yields_pass(tmp_path: Path) -> None:
