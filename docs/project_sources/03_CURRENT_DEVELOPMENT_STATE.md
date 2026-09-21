@@ -6774,3 +6774,116 @@ V1_0_DECLARATION_MADE=false
 NEXT_OWNER=STRUCTURAL_ADVISOR_THEN_SHUKOU
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+---
+
+# 76. Phase 22 acceptance-surface merge + final Difference disposition work unit (Issue #92, `ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`)
+
+本節は、README.mdの生成済みステータスブロックが参照する現状projectionを、Phase 22の
+実際の進行状況へ更新するため、本記録作成者自身が追加するものである。PR #93
+(`agent/issue-92-phase22-v1-0-acceptance`)は、3回のStructural Review Round是正の後、
+SHUKOU(`manosube`)により手動mergeされた(merge commit
+`03988e05fa4ce830e3f8f7324624794920c9a79f`、reviewed delivery head
+`5449f0106d6a6da86862f85be850830dd1835c4e`)。構造参謀は本merge直後にPR #93/live
+`main`/両commit objectを独立GitHub API再観測し、merged treeとreviewed treeが
+byte-for-byte同一であることを確認した
+([Issue #92コメント`5755773604`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755773604))。
+
+続いて、構造参謀の記録by-record推奨
+([コメント`5755798685`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755798685))を、
+SHUKOUが`ADOPTION_ID=ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`
+([コメント`5755827293`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755827293)、
+著者`manosube`/OWNER、`AUTHORIZED_BASE_MAIN=03988e05fa4ce830e3f8f7324624794920c9a79f`)として
+正式採択した。本記録作成者は、当該採択コメント、その先行する構造参謀推奨、および
+live `main`を、本branch (`agent/issue-92-phase22-final-difference-sync`) 作成直前に
+GitHub API独立readbackで再確認済みである。
+
+```text
+ADDENDUM_OBSERVED_AT_UTC=2026-09-21T05:30:00Z
+GOVERNING_ISSUE=#92
+PR_93_MERGE_SHA=03988e05fa4ce830e3f8f7324624794920c9a79f
+PR_93_REVIEWED_DELIVERY_HEAD=5449f0106d6a6da86862f85be850830dd1835c4e
+PR_93_MERGED_TREE_EQUALS_REVIEWED_TREE=true
+POST_MERGE_OBSERVATION_COMMENT=5755773604
+STRUCTURAL_ADVISOR_RECOMMENDATION_COMMENT=5755798685
+ADOPTION_ID=ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC
+ADOPTION_COMMENT_ID=5755827293
+BRANCH=agent/issue-92-phase22-final-difference-sync
+AUTHORIZED_BASE_MAIN_SHA=03988e05fa4ce830e3f8f7324624794920c9a79f
+AUTHOR=CLAUDE_CODE
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+SHUKOUが正式採択した五件のDeferred Difference disposition (`DD-0001`, `DD-0002`, `FD-0001`,
+`FD-0002`, `FD-0003`) のうち、`DD-0001`・`DD-0002`・`FD-0001`・`FD-0003`の四件は
+`06_DEFERRED_DIFFERENCES.md`へ`CLOSED_WITH_EVIDENCE`/`CANCELLED_BY_HUMAN_DECISION`として
+反映された。`FD-0002`はREADME現状projectionの是正そのものは本diff内で実装されたが、
+その閉鎖には採択自身が要求するmerge後のafter-state再観測が別途必要であり、本PR自身の
+delivery headではまだ`CLOSED_WITH_EVIDENCE`へ遷移しない(下記Round 1是正を参照)。
+`DC-0001`と`FD-0005`は明示的にopen・non-blockingのまま保持される。
+
+```text
+COMPLETED_THROUGH_PHASE=21
+CURRENT_PHASE=22_V1_0_ACCEPTANCE
+CURRENT_PHASE_STATE=FINAL_DIFFERENCE_DISPOSITION_AND_GATE_22_CLOSURE_IN_PROGRESS
+OBSERVED_AT_UTC=2026-09-21T05:30:00Z
+PHASE_13_COMPLETE=true
+PHASE_14_ALLOWED=true
+PHASE_22_ACCEPTANCE_SURFACE_MERGED=true
+PHASE_22_COMPLETE=false
+GATE_22_ELEVEN_PYTEST_OWNED_PREDICATES=ALL_PASS
+GATE_22_PREDICATE_12_ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED_AT_PR_94_PRE_MERGE_HEAD=UNKNOWN
+GATE_22_ALL_PASS_AT_PR_94_PRE_MERGE_HEAD=false
+ISSUE_92_CLOSE_ALLOWED=false
+RELEASE_TAG_CREATION_ALLOWED=false
+GITHUB_RELEASE_PUBLICATION_ALLOWED=false
+V1_0_DECLARATION_ALLOWED=false
+MERGE_PERFORMED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR_THEN_SHUKOU
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+## 76.1 PR #94 Structural Review Round 1 correction (`ADOPT_P94_R1_F1`)
+
+構造参謀のPR #94 Round 1レビュー
+([コメント`5760074443`](https://github.com/manosube/manosube-agent-civilization-os/pull/94#issuecomment-5760074443))は、
+`P94-R1-F1`を指摘した：`FD-0002`は、その採択自身が要求するaccepted `main`上でのREADME是正
+存在およびafter-state再観測より前に`CLOSED_WITH_EVIDENCE`へ分類されてはならない。
+`CLASSIFICATION=CLOSED_WITH_EVIDENCE`と`AFTER_STATE_REOBSERVATION_PENDING_POST_MERGE=true`
+の組み合わせは自己矛盾しており、機械的classifierが`ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED=PASS`
+および`GATE_22_ALL_PASS=true`を、記録自身がまだ未完了と述べているevidenceから導出して
+しまっていた。
+
+SHUKOUはこの指摘を`ADOPTION_ID=ADOPT_P94_R1_F1`
+([コメント`5760099935`](https://github.com/manosube/manosube-agent-civilization-os/pull/94#issuecomment-5760099935)、
+著者`manosube`/OWNER)として正式採択し、`agent/issue-92-phase22-final-difference-sync`ブランチ
+上での是正のみを許可した。本記録作成者は、当該採択コメントと先行する構造参謀レビューを、
+是正実装直前にGitHub API独立readbackで再確認済みである。
+
+是正内容：`FD-0002`を`06_DEFERRED_DIFFERENCES.md`上で`FOLLOW_ON_DIFFERENCE`/
+`README_CORRECTED_AWAITING_POST_MERGE_REOBSERVATION`へ戻し、`06_DEFERRED_DIFFERENCES.md`の
+register receipt・blocking matrix、本節上記のGate 22結果、両テストファイル、PR本文および
+return evidenceを、pre-merge headでのpredicate 12=`UNKNOWN`・`GATE_22_ALL_PASS=false`に
+整合させる。README是正自身、PR #93 receipt、および`DD-0001`/`DD-0002`/`FD-0001`/`FD-0003`の
+四件のdispositionは変更しない。
+
+```text
+CORRECTION_OBSERVED_AT_UTC=2026-09-21T12:00:00Z
+STRUCTURAL_REVIEW_COMMENT=5760074443
+CORRECTION_ADOPTION_ID=ADOPT_P94_R1_F1
+CORRECTION_ADOPTION_COMMENT=5760099935
+CORRECTION_ADOPTION_AUTHOR=manosube (OWNER)
+FD_0002_REVERTED_TO_CONDITIONALLY_BLOCKING=true
+GATE_22_PREDICATE_12_CORRECTED=UNKNOWN
+GATE_22_ALL_PASS_CORRECTED=false
+DD_0001_DD_0002_FD_0001_FD_0003_UNCHANGED=true
+README_CORRECTION_UNCHANGED=true
+```
+
+This addendum satisfies `03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` section 2's own
+requirement that a `kernel_surface` change be paired with a `docs/project_sources/*.md`
+update in the same diff, and updates the exact fields
+`scripts/generate_readme_status_block.py` echoes into `README.md`'s machine-owned status
+block (`OBSERVED_AT_UTC`, `COMPLETED_THROUGH_PHASE`, `CURRENT_PHASE`, `CURRENT_PHASE_STATE`,
+`PHASE_13_COMPLETE`, `PHASE_14_ALLOWED`), which are read as the *last* occurrence of each
+field name anywhere in this document's own fenced `text` blocks.

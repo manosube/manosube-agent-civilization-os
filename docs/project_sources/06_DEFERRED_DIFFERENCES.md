@@ -10,11 +10,13 @@ STATUS=CANONICAL_DEFERRED_WORK_REGISTER
 SOURCE_AUTHORITY_CLASS=HUMAN_GOVERNED_DIFFERENCE_REGISTER
 HUMAN_AUTHORITY=SHUKOU
 REPOSITORY=manosube/manosube-agent-civilization-os
-OBSERVED_AT_UTC=2026-09-08T00:20:57Z
+OBSERVED_AT_UTC=2026-09-21T12:00:00Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
-ACTIVE_DEFERRED_RECORD_COUNT=2
+ACTIVE_DEFERRED_RECORD_COUNT=1
+CLOSED_WITH_EVIDENCE_RECORD_COUNT=3
+CANCELLED_BY_HUMAN_DECISION_RECORD_COUNT=1
 DEFERRED_DESIGN_CANDIDATE_COUNT=1
-FOLLOW_ON_DIFFERENCE_COUNT=4
+FOLLOW_ON_DIFFERENCE_COUNT=2
 CURRENT_PHASE_BLOCKER_STORED_HERE=false
 ```
 
@@ -100,8 +102,8 @@ FUTURE_OWNER_OBLIGATION
 ```text
 DIFFERENCE_ID=DD-0001
 TITLE=TEMPORARY_AGENT_EXECUTION_CONTRACT
-CLASSIFICATION=DEFERRED_REMAINING_DIFFERENCE
-CURRENT_STATUS=OPEN_DEFERRED
+CLASSIFICATION=CLOSED_WITH_EVIDENCE
+CURRENT_STATUS=CLOSED_WITH_EVIDENCE
 ORIGINATING_PHASE=12_TEMPORARY_AGENT
 ORIGINATING_PR=50
 PHASE_12_REOPENED=false
@@ -196,6 +198,33 @@ MERGE_RECEIPT_CONFIRMED=true
 AFTER_STATE_REOBSERVED=true
 ```
 
+## Closure disposition (Issue #92 final Difference disposition)
+
+SHUKOU formally adopted this record's closure via `ADOPTION_ID=ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`
+([Issue #92 comment `5755827293`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755827293)),
+adopting the Structural Advisor's record-by-record recommendation
+([comment `5755798685`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755798685))
+under review authority `ADOPT_P92_RECORD_BY_RECORD_V1_0_DIFFERENCE_DISPOSITION_REVIEW`
+([comment `5755795472`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755795472)).
+
+This closes DD-0001 with evidence from the already-accepted Phase 16 execution-continuity
+owner ([Issue #66](https://github.com/manosube/manosube-agent-civilization-os/issues/66) /
+[PR #67](https://github.com/manosube/manosube-agent-civilization-os/pull/67), merged
+`8bc9d0e7a3784b658f8b523361904552f089b3c6`), which implements the model-independent,
+provider-neutral State/Difference/Authority/Boundary-bound execution contract this record's
+own "Expected state" section required, with Phase 12 preserved as the sole execution-contract
+owner. The record's accepted non-claims remain intact and are not weakened by this closure:
+
+```text
+LIVE_PROVIDER_CREDENTIAL_USE=false
+LIVE_PROVIDER_CALL_EXECUTED=false
+EXTERNAL_PRODUCT_INVOCATION_REQUIRED_FOR_DD_0001_CLOSURE=false
+PHASE_12_REOPENED=false
+SECOND_EXECUTION_CONTRACT=false
+CLOSURE_EVIDENCE_PR=67
+CLOSURE_EVIDENCE_MERGE_SHA=8bc9d0e7a3784b658f8b523361904552f089b3c6
+```
+
 ---
 
 # 4. Active Deferred Difference DD-0002
@@ -205,8 +234,8 @@ AFTER_STATE_REOBSERVED=true
 ```text
 DIFFERENCE_ID=DD-0002
 TITLE=DIFFERENCE_AUDITOR_ADVERSARIAL_TOTALITY_D2
-CLASSIFICATION=FUTURE_OWNER_OBLIGATION
-CURRENT_STATUS=OPEN_OWNER_DISPOSITION_REQUIRED
+CLASSIFICATION=CANCELLED_BY_HUMAN_DECISION
+CURRENT_STATUS=CANCELLED_BY_HUMAN_DECISION
 ORIGINATING_PHASE=3_DIFFERENCE
 ORIGINATING_ISSUE=24
 ORIGINATING_PR=26
@@ -281,6 +310,28 @@ SHUKOU_ACCEPTED=true
 MERGE_OR_CANONICAL_DECISION_RECEIPT_CONFIRMED=true
 ```
 
+## Closure disposition (Issue #92 final Difference disposition)
+
+SHUKOU formally adopted `CLOSE_AS_SUPERSEDED_BY_OWNER_SPECIFIC_TOTALITY` for this record via
+`ADOPTION_ID=ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`
+([Issue #92 comment `5755827293`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755827293)),
+adopting the Structural Advisor's recommendation
+([comment `5755798685`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755798685)).
+
+The historical unbounded D2 expectation -- a generic cross-record adversarial auditor total
+over arbitrary mutated bundles -- is cancelled as superseded by the owner-specific totality
+accepted through Phase 13 Independent Verification and later owner-bound verification
+surfaces. No generic cross-owner arbitrary-bundle auditor is created by this closure, and no
+duplicate auditor authority is introduced:
+
+```text
+CLASSIFICATION=CANCELLED_BY_HUMAN_DECISION
+CANCELLATION_MEANING=SUPERSEDED_BY_OWNER_SPECIFIC_TOTALITY
+GENERIC_CROSS_OWNER_ARBITRARY_BUNDLE_AUDITOR_REQUIRED=false
+DUPLICATE_AUDITOR_AUTHORITY_ALLOWED=false
+PHASE_3_REOPENED=false
+```
+
 ---
 
 # 5. Deferred design candidate DC-0001
@@ -331,8 +382,8 @@ Re-evaluation does not imply adoption. If later adopted, it must be re-derived a
 ```text
 DIFFERENCE_ID=FD-0001
 TITLE=STRUCTURAL_ADVISOR_ADOPTION_RECORDING_GOVERNANCE
-CLASSIFICATION=FOLLOW_ON_DIFFERENCE
-CURRENT_STATUS=OPEN_ISSUE_NOT_IMPLEMENTED
+CLASSIFICATION=CLOSED_WITH_EVIDENCE
+CURRENT_STATUS=CLOSED_WITH_EVIDENCE
 SOURCE_ISSUE=53
 CURRENT_PHASE_BLOCKING_EFFECT=NONE_WHILE_VERIFIED_ADOPTION_RECORD_EXISTS
 ```
@@ -365,6 +416,29 @@ IMPLEMENTATION_AUTHORITY=NOT_GRANTED_BY_ISSUE_EXISTENCE
 
 Closure requires a dedicated accepted governance change, read-back proof of its canonical record, no weakening of SHUKOU decision ownership, and after-state re-observation.
 
+## Closure disposition (Issue #92 final Difference disposition)
+
+SHUKOU formally adopted this record's closure via `ADOPTION_ID=ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`
+([Issue #92 comment `5755827293`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755827293)),
+adopting the Structural Advisor's recommendation
+([comment `5755798685`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755798685)).
+
+This closes FD-0001 with evidence from completed
+[Issue #53](https://github.com/manosube/manosube-agent-civilization-os/issues/53) and merged
+[PR #56](https://github.com/manosube/manosube-agent-civilization-os/pull/56)
+(`d489644407db1a09112974022fd0461dcea395e2`), which implemented the repository-enforced
+Governance Adoption Record rule. SHUKOU remains semantic owner and the Structural Advisor's
+API-read-back recording rule remains enforced, unweakened by this closure:
+
+```text
+CLOSURE_EVIDENCE_ISSUE=53
+CLOSURE_EVIDENCE_PR=56
+CLOSURE_EVIDENCE_MERGE_SHA=d489644407db1a09112974022fd0461dcea395e2
+SEMANTIC_DECISION_OWNER=SHUKOU
+ADOPTION_RECORDING_OPERATOR=CHATGPT_STRUCTURAL_ADVISOR
+SHUKOU_DECISION_OWNERSHIP_WEAKENED=false
+```
+
 ---
 
 # 7. Follow-on Difference FD-0002
@@ -375,7 +449,7 @@ Closure requires a dedicated accepted governance change, read-back proof of its 
 DIFFERENCE_ID=FD-0002
 TITLE=README_CURRENT_STATUS_STALENESS
 CLASSIFICATION=FOLLOW_ON_DIFFERENCE
-CURRENT_STATUS=OPEN_LOW_RISK_DOCUMENTATION
+CURRENT_STATUS=README_CORRECTED_AWAITING_POST_MERGE_REOBSERVATION
 SOURCE=README.md_ON_MAIN
 OBSERVED_MAIN_SHA=36b06d88cf779d9f04b79e41022b42d1f3d47510
 ```
@@ -410,6 +484,54 @@ CURRENT_PHASE_SCOPE_WIDENING_ALLOWED=false
 
 Closure requires a README change on accepted main, explicit synchronization with the source-authority set, and after-state re-observation. It must not rewrite the Roadmap or declare Phase completion.
 
+## Implementation status (Issue #92 final Difference disposition, PR #94)
+
+SHUKOU's adoption `ADOPTION_ID=ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`
+([Issue #92 comment `5755827293`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755827293))
+named FD-0002 the one adopted implementation blocker in this work unit -- update README from
+current canonical sources without declaring v1.0 or Phase 22 completion. This PR's own diff
+corrects `README.md`'s stale `## Status` section (removing the Phase 12/13-era projection and
+the now-complete "not yet built" claims for GitHub Adapter, Runtime Adapter, AI Model Adapter
+and Autonomous Change) and regenerates the machine-owned
+`<!-- SOURCE_STATUS:GENERATED:BEGIN -->` block via `scripts/generate_readme_status_block.py`
+from `03_CURRENT_DEVELOPMENT_STATE.md`'s own newly-restated current-state fields -- never by
+hand. README's core constitutional explanation is preserved unchanged; only its current-status
+projection was stale and is corrected here.
+
+The Structural Advisor's PR #94 Round 1 review
+([comment `5760074443`](https://github.com/manosube/manosube-agent-civilization-os/pull/94#issuecomment-5760074443)),
+adopted by SHUKOU as `ADOPTION_ID=ADOPT_P94_R1_F1`
+([comment `5760099935`](https://github.com/manosube/manosube-agent-civilization-os/pull/94#issuecomment-5760099935)),
+found `P94-R1-F1`: this record cannot read `CLOSED_WITH_EVIDENCE` at the PR #94 delivery head,
+because FD-0002's own adopted closure condition requires the README correction to exist on
+*accepted* `main`, followed by after-state re-observation -- neither has happened while PR #94
+remains open and unmerged. Recording `CLOSED_WITH_EVIDENCE` alongside
+`AFTER_STATE_REOBSERVATION_PENDING_POST_MERGE=true` was self-contradictory: it let the
+mechanical classifier derive `GATE_22_ALL_PASS=true` from evidence the record's own text said
+was still pending. Corrected: this record stays `FOLLOW_ON_DIFFERENCE`/conditionally blocking
+at this pre-merge delivery head, so `ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED` correctly reads
+`UNKNOWN` (not `PASS`) until closure is genuinely earned.
+
+```text
+README_UPDATED_ON=agent/issue-92-phase22-final-difference-sync
+README_MAY_DECLARE_V1_0=false
+README_DECLARES_V1_0=false
+README_MAY_DECLARE_PHASE_22_COMPLETE=false
+README_DECLARES_PHASE_22_COMPLETE=false
+README_STATUS_MACHINE_BLOCK_REGENERATED_BY_TOOLING=true
+SOURCE_IMPACT_GATE_PAIRING=03_CURRENT_DEVELOPMENT_STATE.md
+README_CORRECTION_MERGED_TO_MAIN=false
+AFTER_STATE_REOBSERVED=false
+CLOSED_WITH_EVIDENCE_AT_THIS_HEAD=false
+```
+
+Closure to `CLOSED_WITH_EVIDENCE` requires a separately authorized minimal post-merge
+source-sync, after PR #94 (or its corrected successor) is reviewed, adopted, and manually
+merged, and the Structural Advisor has independently re-observed the resulting `main`, the
+README after-state, the merge receipt, and tree equivalence through the GitHub API --
+consistent with how DD-0001/FD-0001/FD-0003's own closing evidence was each independently
+confirmed against already-merged prior PRs before this record could cite them.
+
 ---
 
 # 8. Follow-on Difference FD-0003
@@ -419,8 +541,8 @@ Closure requires a README change on accepted main, explicit synchronization with
 ```text
 DIFFERENCE_ID=FD-0003
 TITLE=OBJECTIVE_MECHANISM_SEPARATION_AND_OBJECTIVE_RETURN_GATE
-CLASSIFICATION=FOLLOW_ON_DIFFERENCE
-CURRENT_STATUS=GOVERNANCE_RULE_RECORDED_AWAITING_STRUCTURAL_REVIEW_AND_SHUKOU_ACCEPTANCE
+CLASSIFICATION=CLOSED_WITH_EVIDENCE
+CURRENT_STATUS=CLOSED_WITH_EVIDENCE
 GOVERNING_ISSUE=60
 ORIGINATING_EVENT=ISSUE_57_MERGE_SOURCE_REFLOW_OBJECTIVE_DRIFT
 IMPLEMENT_AFTER_PHASE_13_ACCEPTANCE=true
@@ -516,6 +638,29 @@ PHASE_13_REOPENED=false
 PHASE_14_STARTED=false
 ROADMAP_PHASE_ADDED=false
 PHASE_ORDER_CHANGED=false
+```
+
+## Closure disposition (Issue #92 final Difference disposition)
+
+SHUKOU formally adopted this record's closure via `ADOPTION_ID=ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`
+([Issue #92 comment `5755827293`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755827293)),
+adopting the Structural Advisor's recommendation
+([comment `5755798685`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755798685)).
+This closes FD-0003 with the already-recorded final SHUKOU acceptance on
+[Issue #60 comment `5577816132`](https://github.com/manosube/manosube-agent-civilization-os/issues/60#issuecomment-5577816132),
+[PR #61](https://github.com/manosube/manosube-agent-civilization-os/pull/61) merge
+`7fc597356330a0d1da7a334ef20cd913b74154de`, and its after-state observation:
+
+```text
+CLOSURE_EVIDENCE_ISSUE=60
+CLOSURE_EVIDENCE_PR=61
+CLOSURE_EVIDENCE_MERGE_SHA=7fc597356330a0d1da7a334ef20cd913b74154de
+FD_0003_CLOSED=true
+GOVERNANCE_RULE_TEXT_EXISTS=true
+STRUCTURAL_REVIEW_PASS=true
+SHUKOU_ACCEPTED=true
+MERGE_RECEIPT_CONFIRMED=true
+AFTER_STATE_REOBSERVED=true
 ```
 
 ---
@@ -667,12 +812,12 @@ Only a gap between a ratified expectation and an accepted narrower capability, o
 
 | Record | Blocks Phase 13 implementation now | Blocks Phase 13 acceptance | Blocks later work |
 |---|---:|---:|---|
-| `DD-0001` Agent Execution | No | No | Yes: before first real model execution; placement before Phase 16 design acceptance |
-| `DD-0002` D2 totality | No automatic block | Human disposition required | Depends on disposition |
+| `DD-0001` Agent Execution | No | No | No; closed with evidence (Issue #92 final Difference disposition, `ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`) |
+| `DD-0002` D2 totality | No | No | No; cancelled as superseded by owner-specific totality (same adoption) |
 | `DC-0001` PR handoff prototype | No | No | No; re-evaluate only after prerequisites |
-| `FD-0001` governance rule | No, because Round 3 adoption is recorded | No automatic block | Blocks claim that adoption-recording governance is repository-enforced |
-| `FD-0002` README status | No | No | Must close before v1.0 release |
-| `FD-0003` Objective/Mechanism separation | No, implemented as an inter-phase supporting governance correction after Phase 13 acceptance | No | Must close before Phase 14 implementation start |
+| `FD-0001` governance rule | No | No | No; closed with evidence (same adoption) |
+| `FD-0002` README status | No | No | Blocks `GATE_22_ALL_PASS=true` until post-merge closure; README corrected on this branch, awaiting merge + after-state re-observation (`ADOPT_P94_R1_F1`) |
+| `FD-0003` Objective/Mechanism separation | No | No | No; closed with evidence (same adoption) |
 
 The matrix may be changed only by new observation or SHUKOU decision, not by convenience.
 
@@ -758,32 +903,46 @@ Do not change current status without live re-observation where GitHub facts are 
 # 15. Register receipt
 
 ```text
-OBSERVED_AT_UTC=2026-09-18T16:51:14Z
+OBSERVED_AT_UTC=2026-09-21T12:00:00Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
 
-ACTIVE_DEFERRED_RECORDS=
+CLOSED_WITH_EVIDENCE_RECORDS=
   DD-0001 TEMPORARY_AGENT_EXECUTION_CONTRACT
+  FD-0001 STRUCTURAL_ADVISOR_ADOPTION_RECORDING_GOVERNANCE
+  FD-0003 OBJECTIVE_MECHANISM_SEPARATION_AND_OBJECTIVE_RETURN_GATE
+
+CANCELLED_BY_HUMAN_DECISION_RECORDS=
   DD-0002 DIFFERENCE_AUDITOR_ADVERSARIAL_TOTALITY_D2
 
 DEFERRED_DESIGN_CANDIDATES=
-  DC-0001 CLAUDE_CODE_PR_HANDOFF_BOOT_LOADER
+  DC-0001 CLAUDE_CODE_PR_HANDOFF_BOOT_LOADER (open, non-blocking, unchanged)
 
-FOLLOW_ON_DIFFERENCES=
-  FD-0001 STRUCTURAL_ADVISOR_ADOPTION_RECORDING_GOVERNANCE
-  FD-0002 README_CURRENT_STATUS_STALENESS
-  FD-0003 OBJECTIVE_MECHANISM_SEPARATION_AND_OBJECTIVE_RETURN_GATE
-  FD-0005 PHASE_21_EIGHT_PROOF_DIMENSION_MEASUREMENT_GAP
+FOLLOW_ON_DIFFERENCES_STILL_OPEN=
+  FD-0002 README_CURRENT_STATUS_STALENESS (README corrected on this branch; conditionally
+    blocking until merge + post-merge after-state re-observation, per `ADOPT_P94_R1_F1`)
+  FD-0005 PHASE_21_EIGHT_PROOF_DIMENSION_MEASUREMENT_GAP (open, non-blocking, unchanged)
 
-CLOSED_DEFERRED_RECORD_COUNT=0
-CANCELLED_DEFERRED_RECORD_COUNT=0
+CLOSED_DEFERRED_RECORD_COUNT=3
+CANCELLED_DEFERRED_RECORD_COUNT=1
 CURRENT_PHASE_BLOCKER_STORED_HERE=false
+
+CLOSURE_DISPOSITION_ADOPTION_ID=ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC
+CLOSURE_DISPOSITION_ADOPTION_COMMENT=5755827293
+CLOSURE_DISPOSITION_ADOPTION_AUTHOR=manosube (OWNER)
+STRUCTURAL_ADVISOR_RECOMMENDATION_COMMENT=5755798685
+
+CORRECTION_ADOPTION_ID=ADOPT_P94_R1_F1
+CORRECTION_ADOPTION_COMMENT=5760099935
+CORRECTION_ADOPTION_AUTHOR=manosube (OWNER)
+CORRECTION_STRUCTURAL_REVIEW_COMMENT=5760074443
+CORRECTION_FINDING=FD_0002_PREMATURELY_CLOSED_BEFORE_POST_MERGE_REOBSERVATION
 
 PHASE_12_REOPENED=false
 PHASE_3_REOPENED=false
 PHASE_21_REOPENED=false
 ROADMAP_RENUMBERED=false
-PHASE_14_ALLOWED=false
-PHASE_22_ALLOWED=false
+PHASE_14_ALLOWED=true
+PHASE_22_ALLOWED=true
 ```
 
-This register preserves unresolved truth. It grants no implementation Authority and declares no Phase complete.
+This register preserves unresolved truth. It grants no implementation Authority and declares no Phase complete. Records are not deleted: each closed or cancelled record above retains its full originating history, expectation and evidence in its own numbered section, per section 13.2.

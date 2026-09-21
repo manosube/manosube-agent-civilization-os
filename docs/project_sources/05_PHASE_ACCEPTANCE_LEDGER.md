@@ -1215,3 +1215,55 @@ Policy Lineageの既存識別子であり、本節はそれと衝突しない)�
 専用Issueの作成は、本節の記録元となったpost-merge source-sync PR自身がSHUKOUによりmergeされ、
 resulting `main`がGitHub API経由で再観測された後にのみ許可される。Phase 22実装は、その専用
 Issue上での別途明示的なSHUKOU採択を経てから初めて許可される。
+
+---
+
+# 30. Phase 22 acceptance-surface merge receipt (PR #93)
+
+| PR | Governing Issue | Merge SHA | Reviewed delivery head | Receipt class | Delivered surface |
+|---:|---:|---|---|---|---|
+| [#93](https://github.com/manosube/manosube-agent-civilization-os/pull/93) | [#92](https://github.com/manosube/manosube-agent-civilization-os/issues/92) | `03988e05fa4ce830e3f8f7324624794920c9a79f` | `5449f0106d6a6da86862f85be850830dd1835c4e` | `ACCEPTANCE_SURFACE_MERGE_RECEIPT` | Phase 22 v1.0 acceptance package: mechanical Gate 22 rederivation surface, release identity/receipt surface, 22 decisive negative controls |
+
+PR #93はSHUKOU(`manosube`)により手動mergeされた。構造参謀は独立GitHub API再観測により、
+merge commit `03988e05fa4ce830e3f8f7324624794920c9a79f`の両parent(base
+`b2a5d287113d3a98e77a2212f8b89359d8e09c5d`、delivery
+`5449f0106d6a6da86862f85be850830dd1835c4e`)、merged treeとreviewed delivery treeの
+byte-for-byte一致(`1bb350880003933f42658ef4a365626e6463e4a8`)、およびlive
+`main`がmerge commitと一致することを確認した
+([Issue #92コメント`5755773604`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5755773604))。
+本記録作成者は、本ledger更新の直前にこれらの事実を独立`git`検証で再確認済みである。
+
+```text
+OBSERVED_AT_UTC=2026-09-21T05:30:00Z
+PHASE_22_PR_93_MERGE_SHA=03988e05fa4ce830e3f8f7324624794920c9a79f
+PHASE_22_PR_93_MERGE_PARENT_BASE=b2a5d287113d3a98e77a2212f8b89359d8e09c5d
+PHASE_22_PR_93_MERGE_PARENT_DELIVERY=5449f0106d6a6da86862f85be850830dd1835c4e
+PHASE_22_PR_93_REVIEWED_TREE=1bb350880003933f42658ef4a365626e6463e4a8
+PHASE_22_PR_93_MERGE_TREE=1bb350880003933f42658ef4a365626e6463e4a8
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+LIVE_MAIN_EQUALS_MERGE_COMMIT=true
+PHASE_22_PR_93_STRUCTURAL_REVIEW_ROUNDS=3
+PHASE_22_PR_93_STRUCTURAL_FINDINGS_OPEN=0
+
+GATE_22_ELEVEN_PYTEST_OWNED_PREDICATES_AT_PR_93_HEAD=ALL_PASS
+GATE_22_PREDICATE_12_AT_PR_93_HEAD=UNKNOWN
+GATE_22_ALL_PASS_AT_PR_93_HEAD=false
+
+PHASE_22_ACCEPTANCE_SURFACE_MERGED=true
+PHASE_22_COMPLETE=false
+ISSUE_92_CLOSE_ALLOWED_AT_PR_93_HEAD=false
+V1_0_DECLARATION_ALLOWED_AT_PR_93_HEAD=false
+```
+
+This is not itself a Phase 22 acceptance receipt: it records only that the Phase 22
+acceptance-surface package merged cleanly onto `main`, with zero content drift between the
+reviewed head and the merge commit. `GATE_22_ALL_PASS` remained `false` at this exact head
+because five Deferred Differences (`DD-0001`, `DD-0002`, `FD-0001`, `FD-0002`, `FD-0003`)
+still required an explicit SHUKOU disposition, per the Deferred Differences register's own
+"must not be inferred by an Agent" rule. That disposition was subsequently adopted
+(`ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`, comment `5755827293`) and
+implemented in the separate, dedicated final Difference-disposition/Gate-22-closure work unit
+this same ledger entry's own governing Issue #92 records — see
+`06_DEFERRED_DIFFERENCES.md` for each record's individual closure evidence. No Phase 22
+acceptance, Issue #92 closure, release/tag action, or v1.0 declaration is claimed by this
+entry.

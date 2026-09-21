@@ -25,17 +25,36 @@ def test_real_register_fd_0005_is_non_blocking_by_explicit_adoption() -> None:
     assert "Issue #92" in fd_0005.rationale
 
 
-def test_real_register_conditionally_blocking_records_require_shukou_disposition() -> None:
+def test_real_register_four_disposed_records_are_non_blocking() -> None:
+    """`ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC` (Issue #92 comment
+    `5755827293`) closed or cancelled these four records; the register records
+    `CLOSED_WITH_EVIDENCE`/`CANCELLED_BY_HUMAN_DECISION`, both unconditionally
+    non-blocking classifications -- never inferred, only read from the record's own
+    updated classification field."""
     dispositions = classify_v1_0_blocking_differences(REPO_ROOT)
-    for record_id in ("DD-0001", "DD-0002", "FD-0001", "FD-0002", "FD-0003"):
+    for record_id in ("DD-0001", "DD-0002", "FD-0001", "FD-0003"):
         d = next(x for x in dispositions if x.record_id == record_id)
-        assert d.disposition == "REQUIRES_HUMAN_AUTHORITY_DISPOSITION", record_id
+        assert d.disposition == "NON_BLOCKING", record_id
 
 
-def test_predicate_12_is_unknown_not_a_false_pass() -> None:
+def test_real_register_fd_0002_still_requires_disposition_pre_merge() -> None:
+    """PR #94 Structural Review Round 1 (`P94-R1-F1`, adopted `ADOPT_P94_R1_F1`, comment
+    `5760099935`) found FD-0002 was closed prematurely: its own adopted closure condition
+    requires the README correction to exist on *accepted* `main` and its post-merge
+    after-state to be re-observed, neither of which has happened while this PR remains
+    open and unmerged. The record was reverted to `FOLLOW_ON_DIFFERENCE` (conditionally
+    blocking), so it must still require an explicit disposition at this pre-merge head --
+    the package never infers closure from a not-yet-merged correction."""
+    dispositions = classify_v1_0_blocking_differences(REPO_ROOT)
+    fd_0002 = next(d for d in dispositions if d.record_id == "FD-0002")
+    assert fd_0002.disposition == "REQUIRES_HUMAN_AUTHORITY_DISPOSITION"
+
+
+def test_predicate_12_is_unknown_while_fd_0002_awaits_post_merge_closure() -> None:
     verdict, dispositions = rederive_all_v1_0_blocking_differences_closed(REPO_ROOT)
     assert verdict == "UNKNOWN"
-    assert any(d.disposition == "REQUIRES_HUMAN_AUTHORITY_DISPOSITION" for d in dispositions)
+    fd_0002 = next(d for d in dispositions if d.record_id == "FD-0002")
+    assert fd_0002.disposition == "REQUIRES_HUMAN_AUTHORITY_DISPOSITION"
 
 
 def test_all_non_blocking_yields_pass(tmp_path: Path) -> None:
