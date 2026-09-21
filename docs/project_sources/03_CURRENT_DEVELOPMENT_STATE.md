@@ -6887,3 +6887,74 @@ update in the same diff, and updates the exact fields
 block (`OBSERVED_AT_UTC`, `COMPLETED_THROUGH_PHASE`, `CURRENT_PHASE`, `CURRENT_PHASE_STATE`,
 `PHASE_13_COMPLETE`, `PHASE_14_ALLOWED`), which are read as the *last* occurrence of each
 field name anywhere in this document's own fenced `text` blocks.
+
+# 77. Phase 22 minimal post-merge source-sync (`ADOPT_P92_FINAL_POST_MERGE_SOURCE_SYNC_R1`)
+
+PR #94（是正commit`5b343d6f9f3fd9d116d2708bc106b858b958da9f`）はSHUKOU(`manosube`)により手動
+mergeされた(merge commit`ddf906eb7cefa43a0c43ce3dc1c208c7c5602439`、両parent`03988e05f...`と
+`5b343d6...`)。構造参謀は本merge直後に独立GitHub API再観測を行い、merged treeとreviewed
+delivery treeがbyte-for-byte同一(差分ファイル0件)であること、live `main`がmerge commitと
+一致すること、およびREADME是正がaccepted `main`上に現存し、`PROJECT_STATUS=PHASE_22_V1_0_ACCEPTANCE_IN_PROGRESS`・`V1_0_DECLARED=false`を引き続き真に記録していることを確認した
+(`P94_POST_MERGE_AFTER_STATE_R1`,
+[Issue #92コメント`5768458110`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5768458110))。
+本記録作成者は、本branch (`agent/issue-92-phase22-final-source-sync`) 作成直前に、merge
+commitの両parentおよびreviewed headとmerge commit間の差分ファイル数0を、`git`による独立
+検証で再確認済みである。
+
+続いて、SHUKOUは`ADOPTION_ID=ADOPT_P92_FINAL_POST_MERGE_SOURCE_SYNC_R1`
+([Issue #92コメント`5768466436`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5768466436)、
+著者`manosube`/OWNER)として、この post-merge after-state re-observation を根拠に`FD-0002`を
+`CLOSED_WITH_EVIDENCE`へ変更する最小source-syncを正式採択した。認可対象は正準文書3ファイル
+(本ファイル、`05_PHASE_ACCEPTANCE_LEDGER.md`、`06_DEFERRED_DIFFERENCES.md`)と受入テスト2
+ファイルのみであり、`README.md`はこのevidenceが消費する対象であって書き換え対象ではないため
+変更しない。
+
+```text
+SOURCE_SYNC_OBSERVED_AT_UTC=2026-09-21T22:40:00Z
+GOVERNING_ISSUE=#92
+PR_94_MERGE_SHA=ddf906eb7cefa43a0c43ce3dc1c208c7c5602439
+PR_94_MERGE_PARENT_BASE=03988e05fa4ce830e3f8f7324624794920c9a79f
+PR_94_MERGE_PARENT_DELIVERY=5b343d6f9f3fd9d116d2708bc106b858b958da9f
+PR_94_MERGED_TREE_EQUALS_REVIEWED_TREE=true
+POST_MERGE_OBSERVATION_COMMENT=5768458110
+SOURCE_SYNC_ADOPTION_ID=ADOPT_P92_FINAL_POST_MERGE_SOURCE_SYNC_R1
+SOURCE_SYNC_ADOPTION_COMMENT=5768466436
+SOURCE_SYNC_ADOPTION_AUTHOR=manosube (OWNER)
+BRANCH=agent/issue-92-phase22-final-source-sync
+README_UNCHANGED_THIS_ROUND=true
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+`FD-0002`は`06_DEFERRED_DIFFERENCES.md`上で`CLOSED_WITH_EVIDENCE`へ変更され、PR #94の merge
+commit・reviewed head・tree一致・README after-state・構造参謀post-merge観測コメントを根拠と
+して引用する。これにより、以前開いていた5件全てのDeferred Difference disposition
+(`DD-0001`, `DD-0002`, `FD-0001`, `FD-0002`, `FD-0003`)が閉鎖または無効化された。`DC-0001`と
+`FD-0005`は引き続き明示的にopen・non-blockingのまま保持される。
+
+```text
+COMPLETED_THROUGH_PHASE=21
+CURRENT_PHASE=22_V1_0_ACCEPTANCE
+CURRENT_PHASE_STATE=GATE_22_ALL_PASS_TRUE_AWAITING_HUMAN_FINAL_DECLARATION
+OBSERVED_AT_UTC=2026-09-21T22:40:00Z
+PHASE_13_COMPLETE=true
+PHASE_14_ALLOWED=true
+PHASE_22_ACCEPTANCE_SURFACE_MERGED=true
+PHASE_22_ALL_FIVE_DIFFERENCES_DISPOSED=true
+PHASE_22_COMPLETE=false
+GATE_22_ELEVEN_PYTEST_OWNED_PREDICATES=ALL_PASS
+GATE_22_PREDICATE_12_ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED=PASS
+GATE_22_ALL_PASS=true
+ISSUE_92_CLOSE_ALLOWED=false
+RELEASE_TAG_CREATION_ALLOWED=false
+GITHUB_RELEASE_PUBLICATION_ALLOWED=false
+V1_0_DECLARATION_ALLOWED=false
+MERGE_PERFORMED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR_THEN_SHUKOU
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+`GATE_22_ALL_PASS=true`は、この最小source-syncが自らのPRの delivery head 上で
+mechanically re-derivedされた結果であり、この事実自体はv1.0宣言・Phase 22完了宣言・
+Issue #92のcloseのいずれも構成しない。Issue #92自身の最終公式が要求するHuman acceptance、
+release receipt、およびそれに続くafter-state observationは、本work unitの範囲外であり、
+別途SHUKOUの決定を要する。
