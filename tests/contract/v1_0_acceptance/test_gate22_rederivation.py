@@ -33,26 +33,30 @@ def test_full_bundle_assembles_against_the_live_repository() -> None:
     for predicate, row in bundle["gate_22_predicate_matrix"].items():
         assert row["verification_result"] in ("PASS", "FAIL", "UNKNOWN"), predicate
 
-    # All twelve predicates are owned by already-accepted, currently-passing evidence --
-    # they must mechanically rederive PASS, never FAIL or UNKNOWN, proving this
-    # repository's own accepted evidence still holds at this head.
-    for predicate in GATE_22_PREDICATES:
+    # Eleven of the twelve predicates are owned by already-accepted, currently-passing
+    # test suites -- they must mechanically rederive PASS, never FAIL or UNKNOWN, proving
+    # this repository's own accepted evidence still holds at this head.
+    for predicate in set(GATE_22_PREDICATES) - {"ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED"}:
         row = bundle["gate_22_predicate_matrix"][predicate]
         assert row["verification_result"] == "PASS", (predicate, row)
 
-    # ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED now mechanically reads PASS: SHUKOU formally
-    # adopted an explicit disposition for every record that previously required one
-    # (`ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`, Issue #92 comment
-    # `5755827293`), and the register records each disposition as a real classification
-    # change -- never inferred by this package on its own authority (see
-    # blocking_differences.py). All seven active records (DD-0001, DD-0002, DC-0001,
-    # FD-0001, FD-0002, FD-0003, FD-0005) are still present -- records are never deleted --
-    # but all seven now disposition NON_BLOCKING.
+    # ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED is honestly UNKNOWN at this pre-merge PR #94
+    # head: SHUKOU adopted an explicit disposition for four of the five previously-open
+    # records (`ADOPT_P92_V1_0_DIFFERENCE_DISPOSITION_R1_AND_FINAL_GATE22_SYNC`, Issue #92
+    # comment `5755827293`), but PR #94 Structural Review Round 1 (`P94-R1-F1`, adopted
+    # `ADOPT_P94_R1_F1`, comment `5760099935`) found FD-0002 had been closed prematurely --
+    # its own adopted closure condition requires the README correction to exist on
+    # *accepted* `main` plus post-merge after-state re-observation, neither of which has
+    # happened while this PR remains open. FD-0002 was reverted to conditionally blocking,
+    # so this predicate must still read UNKNOWN, never a silent PASS derived from evidence
+    # the record's own text says is still pending (see blocking_differences.py). All seven
+    # active records (DD-0001, DD-0002, DC-0001, FD-0001, FD-0002, FD-0003, FD-0005) are
+    # still present -- records are never deleted.
     predicate_12 = bundle["gate_22_predicate_matrix"]["ALL_V1_0_BLOCKING_DIFFERENCES_CLOSED"]
-    assert predicate_12["verification_result"] == "PASS"
+    assert predicate_12["verification_result"] == "UNKNOWN"
     assert predicate_12["disposition_count"] == 7
 
-    assert bundle["gate_22_all_pass"] is True
+    assert bundle["gate_22_all_pass"] is False
     assert bundle["release_identity"]["tag_created"] is False
     assert bundle["release_identity"]["release_published"] is False
     assert len(bundle["acceptance_bundle_id"]) == 64
