@@ -39,10 +39,11 @@ DOCS_DIR = ROOT / "docs" / "project_sources"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "source_freshness_drift_detection.yml"
 
 #: The value `MAIN_ACCEPTED_BASE_SHA`/`AS_BUILT_REF` actually record on disk right now --
-#: the exact scenario SFD-R1-F1's own required proof #2 names. Synced to PR #58's own
-#: merge commit by `ADOPT_MSR_SOURCE_AUTHORITY_SYNC_AFTER_PR58` (Issue #57); update this
+#: the exact scenario SFD-R1-F1's own required proof #2 names. Synced to the v1.0.1
+#: release-surface-consistency source-sync's own accepted base by
+#: `ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5` (Issue #96); update this
 #: constant, not the real documents, whenever a future authorized sync changes them again.
-_REAL_MAIN_SHA = "1d41f7d1e79441249382be07e8d8dbed618331c8"
+_REAL_MAIN_SHA = "f384e6acc01cd3d7a1992e931faba94e36f523a3"
 #: A later, hypothetical main SHA -- stands in for "some subsequent merge" in the SFD-R1
 #: required proofs; deliberately a different, equally SHA-shaped value.
 _LATER_MAIN_SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
@@ -581,15 +582,41 @@ def test_the_workflow_computes_a_predecessor_distinct_from_main_sha_for_both_tri
 
 
 # --------------------------------------------------------------------------- #
-# MSR-R3 (ADOPT_MSR_R3_COMPLETE_PROJECTION_REFRESH, Issue #57): every copy of the
-# same as-built ref/timestamp/tree-fact -- across a document's own header, prose
-# table, and closing receipt -- must agree with every other copy. A refresh that
-# updates one copy and misses a sibling produces exactly the kind of internally
-# self-contradictory document this suite proves can never survive.
+# MSR-R3 (ADOPT_MSR_R3_COMPLETE_PROJECTION_REFRESH, Issue #57): the document's own
+# designated copies of the same as-built ref/timestamp/tree-fact -- its header, its
+# §1.1/§3 prose table, and its own closing receipt section -- must agree with each
+# other. A refresh that updates one copy and misses a sibling produces exactly the
+# kind of internally self-contradictory document this suite proves can never survive.
+#
+# These documents are also, separately and legitimately, an append-only historical
+# log (06_DEFERRED_DIFFERENCES.md section 13.2's "records are not deleted" principle
+# applies here too): each later numbered section records its own point-in-time
+# MAIN_ACCEPTED_BASE_SHA/AS_BUILT_REF/OBSERVED_AT_UTC as part of that section's own
+# evidence, not as a restatement of the single "current" fact. Comparing literally
+# every occurrence of a field name in the whole document (as an earlier, narrower
+# version of this suite did) conflates those two different things and fails the
+# moment a second historical section is appended -- it is not itself a drift
+# detector. The real invariant -- the header/table/receipt copies of *the current
+# fact* never disagree with each other -- is instead checked by scoping the receipt
+# side to its own named section, below.
 # --------------------------------------------------------------------------- #
 
 _SHA_PATTERN = r"[0-9a-f]{40}"
 _TIMESTAMP_PATTERN = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
+
+
+def _section_block(text: str, section_heading: str) -> str:
+    """The text of one top-level numbered section, from its own heading line up to
+    (not including) the next top-level numbered heading -- so a field-name match
+    inside it can never accidentally pick up a *different*, later section's own
+    historical restatement of the same field name."""
+
+    heading_match = re.search(rf"^{re.escape(section_heading)}$", text, flags=re.MULTILINE)
+    assert heading_match is not None, section_heading
+    start = heading_match.end()
+    next_heading = re.search(r"^# \d", text[start:], flags=re.MULTILINE)
+    end = start + next_heading.start() if next_heading else len(text)
+    return text[start:end]
 
 
 def _repository_architecture_text() -> str:
@@ -602,18 +629,31 @@ def _current_development_state_text() -> str:
 
 def test_repository_architecture_as_built_ref_agrees_across_header_table_and_receipt() -> None:
     text = _repository_architecture_text()
-    fenced_refs = re.findall(rf"AS_BUILT_REF=({_SHA_PATTERN})", text)
+    header_ref = re.search(rf"AS_BUILT_REF=({_SHA_PATTERN})", text)
+    receipt_ref = re.search(
+        rf"AS_BUILT_REF=({_SHA_PATTERN})", _section_block(text, "# 19. Architecture receipt")
+    )
     table_ref = re.search(rf"\| Observed commit \| \[`({_SHA_PATTERN})`\]", text)
-    assert len(fenced_refs) == 2, "expected exactly the header block and the §19 receipt block"
+    assert header_ref is not None, "document header AS_BUILT_REF is missing"
+    assert receipt_ref is not None, "§19 receipt block AS_BUILT_REF is missing"
     assert table_ref is not None, "§1.1 table's Observed commit row is missing"
-    assert len({*fenced_refs, table_ref.group(1)}) == 1, (fenced_refs, table_ref.group(1))
+    assert len({header_ref.group(1), receipt_ref.group(1), table_ref.group(1)}) == 1, (
+        header_ref.group(1),
+        receipt_ref.group(1),
+        table_ref.group(1),
+    )
 
 
 def test_repository_architecture_observed_at_utc_agrees_across_header_and_receipt() -> None:
     text = _repository_architecture_text()
-    timestamps = re.findall(rf"OBSERVED_AT_UTC=({_TIMESTAMP_PATTERN})", text)
-    assert len(timestamps) == 2, "expected exactly the header block and the §19 receipt block"
-    assert len(set(timestamps)) == 1, timestamps
+    header_ts = re.search(rf"OBSERVED_AT_UTC=({_TIMESTAMP_PATTERN})", text)
+    receipt_ts = re.search(
+        rf"OBSERVED_AT_UTC=({_TIMESTAMP_PATTERN})",
+        _section_block(text, "# 19. Architecture receipt"),
+    )
+    assert header_ts is not None, "document header OBSERVED_AT_UTC is missing"
+    assert receipt_ts is not None, "§19 receipt block OBSERVED_AT_UTC is missing"
+    assert header_ts.group(1) == receipt_ts.group(1), (header_ts.group(1), receipt_ts.group(1))
 
 
 def test_repository_architecture_tree_counts_agree_between_1_1_table_and_19_receipt() -> None:
@@ -647,18 +687,35 @@ def test_repository_architecture_tree_counts_are_internally_consistent() -> None
 
 def test_current_development_state_observed_at_utc_agrees_across_header_and_receipt() -> None:
     text = _current_development_state_text()
-    timestamps = re.findall(rf"OBSERVED_AT_UTC=({_TIMESTAMP_PATTERN})", text)
-    assert len(timestamps) == 2, "expected exactly the header block and the §14 receipt block"
-    assert len(set(timestamps)) == 1, timestamps
+    header_ts = re.search(rf"OBSERVED_AT_UTC=({_TIMESTAMP_PATTERN})", text)
+    receipt_ts = re.search(
+        rf"OBSERVED_AT_UTC=({_TIMESTAMP_PATTERN})",
+        _section_block(text, "# 14. Current state receipt"),
+    )
+    assert header_ts is not None, "document header OBSERVED_AT_UTC is missing"
+    assert receipt_ts is not None, "§14 receipt block OBSERVED_AT_UTC is missing"
+    assert header_ts.group(1) == receipt_ts.group(1), (header_ts.group(1), receipt_ts.group(1))
 
 
 def test_current_development_state_main_accepted_base_sha_agrees_across_all_copies() -> None:
     text = _current_development_state_text()
-    fenced_shas = re.findall(rf"MAIN_ACCEPTED_BASE_SHA=({_SHA_PATTERN})", text)
+    section_3_sha = re.search(
+        rf"MAIN_ACCEPTED_BASE_SHA=({_SHA_PATTERN})",
+        _section_block(text, "# 3. Default branch state"),
+    )
+    receipt_sha = re.search(
+        rf"MAIN_ACCEPTED_BASE_SHA=({_SHA_PATTERN})",
+        _section_block(text, "# 14. Current state receipt"),
+    )
     table_sha = re.search(rf"\| Current accepted base \| `({_SHA_PATTERN})` \|", text)
-    assert len(fenced_shas) == 2, "expected exactly the §3 fenced block and the §14 receipt block"
+    assert section_3_sha is not None, "§3 fenced block MAIN_ACCEPTED_BASE_SHA is missing"
+    assert receipt_sha is not None, "§14 receipt block MAIN_ACCEPTED_BASE_SHA is missing"
     assert table_sha is not None, "§3 table's Current accepted base row is missing"
-    assert len({*fenced_shas, table_sha.group(1)}) == 1, (fenced_shas, table_sha.group(1))
+    assert len({section_3_sha.group(1), receipt_sha.group(1), table_sha.group(1)}) == 1, (
+        section_3_sha.group(1),
+        receipt_sha.group(1),
+        table_sha.group(1),
+    )
 
 
 def test_current_development_state_and_repository_architecture_agree_on_accepted_ref() -> None:

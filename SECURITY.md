@@ -739,15 +739,43 @@ SECURITY_FAILURE_FAILS_CLOSED=true
 
 ## 18. Supported Versions
 
-本プロジェクトは現在pre-release段階である。
+`v1.0.0`は公開済みである。本節は、その公開に伴いSHUKOUが正式採択したsupport windowを
+記録する。
 
 | Version | Security Support |
 |---|---|
-| Latest published pre-release | Supported |
-| Older pre-release | Best effort until superseded |
-| Unreleased development branch | No stability guarantee; reports accepted |
+| Latest published 1.x release | Supported |
+| Older 1.x releases | Best effort after supersession |
+| Pre-1.0 releases | Unsupported |
+| Unreleased `main` | No stability guarantee; security reports accepted |
 
-`v1.0.0`公開時に、正式なsupport windowを別途固定する。
+Vulnerability reportsは[section 19](#19-reporting-a-vulnerability)の経路 (GitHub Private
+Vulnerability Reporting優先) で受け付ける。
+
+### 18.1 Security decision lineage (section 21要件)
+
+本support window確定は、意味的変更(constitutional changeではない、support windowの初回
+確定)としてsection 21の必須項目を満たす。
+
+```text
+EXPLICIT_SECURITY_DIFFERENCE=PRE_RELEASE_PLACEHOLDER_SUPPORT_WINDOW_REPLACED_BY_FIXED_1_X_WINDOW
+HUMAN_SECURITY_APPROVAL=manosube (OWNER), Issue #96 comment 5772769121, ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5 (D3)
+THREAT_MODEL_UPDATE=NONE_REQUIRED_NO_NEW_ASSET_OR_BOUNDARY_INTRODUCED
+BEFORE_AUTHORITY=UNDEFINED_PLACEHOLDER_PRE_RELEASE_TABLE_SECTION_18
+AFTER_AUTHORITY=FIXED_LATEST_1_X_SUPPORT_WINDOW_PER_TABLE_ABOVE
+FAIL_CLOSED_WEAKENED=false
+HUMAN_ONLY_AUTHORITY_DELEGATED=false
+CREDENTIAL_HANDLING_CHANGED=false
+EVIDENCE_INTEGRITY_CHANGED=false
+BOUNDARY_ENFORCEMENT_CHANGED=false
+VERIFICATION=tests/contract/governance/test_release_surface_consistency.py (Issue #96 D3 regression)
+DECISION_LINEAGE_GOVERNING_ISSUE=#96
+DECISION_LINEAGE_ADOPTION_COMMENT=5772769121
+```
+
+この変更はfail-closed・Human-only Authority・credential handling・Evidence integrity・
+Boundary enforcementのいずれの不変条件も弱めない -- 単に、`v1.0.0`公開以前は未確定だった
+placeholder tableを、公開後のsupport windowとして確定させるのみである。
 
 ---
 

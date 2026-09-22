@@ -10,7 +10,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "manosube-agent-civilization-os"
-version = "0.1.0.dev0"
+version = "1.0.1"
 description = "A state-centric canonical kernel for evidence-backed, authority-bounded software development cycles."
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,7 +30,7 @@ keywords = [
   "state-machine",
 ]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Natural Language :: Japanese",
   "Operating System :: OS Independent",

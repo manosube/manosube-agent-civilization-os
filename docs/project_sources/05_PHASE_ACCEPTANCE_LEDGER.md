@@ -1320,3 +1320,67 @@ implemented in the separate, dedicated minimal post-merge source-sync work unit 
 ledger entry's own governing Issue #92 records — see `06_DEFERRED_DIFFERENCES.md` for FD-0002's
 individual closure evidence. No Phase 22 acceptance, Issue #92 closure, release/tag action, or
 v1.0 declaration is claimed by this entry.
+
+# 32. v1.0.0 final Human acceptance and public release receipt (Issue #92)
+
+| PR | Governing Issue | Merge SHA | Reviewed delivery head | Release tag | Release target commit | Receipt class |
+|---:|---:|---|---|---|---|---|
+| [#95](https://github.com/manosube/manosube-agent-civilization-os/pull/95) | [#92](https://github.com/manosube/manosube-agent-civilization-os/issues/92) | `f384e6acc01cd3d7a1992e931faba94e36f523a3` | `b53104b3688fe48fe4ffab9d57154e3905b7e16b` | `v1.0.0` | `f384e6acc01cd3d7a1992e931faba94e36f523a3` | `V1_0_FINAL_HUMAN_ACCEPTANCE_AND_RELEASE_RECEIPT` |
+
+PR #95はSHUKOU(`manosube`)により手動mergeされ、merge commit
+`f384e6acc01cd3d7a1992e931faba94e36f523a3`がlive`main`となった。構造参謀は独立GitHub API再観測に
+より、reviewed head`b53104b3688fe48fe4ffab9d57154e3905b7e16b`とmerge commitの間で`ahead_by=1`・
+`behind_by=0`・差分ファイル0件を確認し（[Issue #92コメント`5771860308`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5771860308)）、accepted`main`上で全12件のGate 22
+predicateが`PASS`、`GATE_22_ALL_PASS=true`であることを再確認した。続けて構造参謀はv1.0 release/
+final acceptance policyを提案し（[コメント`5771870126`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5771870126)）、SHUKOUはこれを`ADOPT_P92_V1_0_RELEASE_AND_FINAL_ACCEPTANCE_R1`として正式採択した
+（[コメント`5771894823`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5771894823)）。採択された通り、tag`v1.0.0`が正確に`f384e6acc01cd3d7a1992e931faba94e36f523a3`へ作成され、
+public・non-draft・non-prerelease のGitHub Release（id `393492078`、タイトル
+"MANOSUBE Agent Civilization OS v1.0.0"）が公開された。SHUKOUは最終Human acceptanceを記録し
+（[コメント`5772129243`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5772129243)）、Issue #92は`state=closed`／`state_reason=completed`として閉じられた。
+
+本記録作成者は、本ledger更新の直前に以下を独立GitHub API再確認済みである：PR #95の`base.sha`
+（`ddf906eb7cefa43a0c43ce3dc1c208c7c5602439`）・`head.sha`（`b53104b3688fe48fe4ffab9d57154e3905b7e16b`）・
+`merged=true`・`merged_by=manosube`；`GET /releases/tags/v1.0.0`（id`393492078`、
+`target_commitish=f384e6acc01cd3d7a1992e931faba94e36f523a3`、`draft=false`、`prerelease=false`、
+`published_at=2026-09-22T06:16:11Z`）；Issue #92の`get`結果（`state=closed`、
+`state_reason=completed`、`closed_by=manosube`）；並びに上記4件のコメント（`5771860308`・
+`5771870126`・`5771894823`・`5772129243`）の投稿者が全て`manosube`／`author_association=OWNER`
+であり、本文が一字一句このledger記述と一致することを確認した。
+
+```text
+OBSERVED_AT_UTC=2026-09-22T07:55:00Z
+PR_95_MERGE_SHA=f384e6acc01cd3d7a1992e931faba94e36f523a3
+PR_95_MERGE_PARENT_BASE=ddf906eb7cefa43a0c43ce3dc1c208c7c5602439
+PR_95_REVIEWED_HEAD=b53104b3688fe48fe4ffab9d57154e3905b7e16b
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+LIVE_MAIN_EQUALS_MERGE_COMMIT=true
+
+POST_MERGE_OBSERVATION_COMMENT=5771860308
+RELEASE_POLICY_RECOMMENDATION_COMMENT=5771870126
+RELEASE_POLICY_ADOPTION_ID=ADOPT_P92_V1_0_RELEASE_AND_FINAL_ACCEPTANCE_R1
+RELEASE_POLICY_ADOPTION_COMMENT=5771894823
+FINAL_ACCEPTANCE_COMMENT=5772129243
+
+RELEASE_TAG=v1.0.0
+RELEASE_TAG_TARGET_COMMIT=f384e6acc01cd3d7a1992e931faba94e36f523a3
+RELEASE_TREE_EQUALS_ACCEPTED_MAIN_TREE=true
+GITHUB_RELEASE_ID=393492078
+GITHUB_RELEASE_URL=https://github.com/manosube/manosube-agent-civilization-os/releases/tag/v1.0.0
+GITHUB_RELEASE_DRAFT=false
+GITHUB_RELEASE_PRERELEASE=false
+GITHUB_RELEASE_PUBLISHED_AT=2026-09-22T06:16:11Z
+
+GATE_22_ALL_PASS_AT_RELEASE_COMMIT=true
+SHUKOU_HUMAN_ACCEPTANCE=true
+MANOSUBE_AGENT_CIVILIZATION_OS_V1_0=true
+PHASE_22_COMPLETE=true
+ISSUE_92_STATE=CLOSED
+ISSUE_92_STATE_REASON=COMPLETED
+```
+
+This receipt records SHUKOU's final Human acceptance of MANOSUBE Agent Civilization OS v1.0,
+completing Issue #92 and Phase 22, as independently re-observed via the GitHub API rather than
+accepted from a restated summary. `DC-0001` and `FD-0005` remain open and explicitly
+non-blocking, unchanged by this entry. This entry does not itself claim, authorize, or perform
+any v1.0.1 release identity, package publication, or further tag/release action — those matters
+are governed separately by Issue #96 and its own adoption (`ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5`).

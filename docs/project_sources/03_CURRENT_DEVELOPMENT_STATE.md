@@ -6958,3 +6958,144 @@ mechanically re-derivedされた結果であり、この事実自体はv1.0宣�
 Issue #92のcloseのいずれも構成しない。Issue #92自身の最終公式が要求するHuman acceptance、
 release receipt、およびそれに続くafter-state observationは、本work unitの範囲外であり、
 別途SHUKOUの決定を要する。
+
+# 78. v1.0.0 final Human acceptance and public release receipt (Issue #92)
+
+本節は、Issue #92の最終公式が要求していたHuman acceptance・release receipt・after-state
+observationが、本記録作成者自身のPR #95が独立merge・再観測された後に別途完結したことを、
+本記録作成者自身が事後的に記録するものである。PR #95merge直後、構造参謀は独立GitHub API
+再観測を行い、PR #95のmerge commit`f384e6acc01cd3d7a1992e931faba94e36f523a3`とreviewed
+delivery head`b53104b3688fe48fe4ffab9d57154e3905b7e16b`のtreeがbyte-for-byte一致すること、
+accepted-main上のGate 22全十二述語がPASSであることを確認した
+([Issue #92コメント`5771860308`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5771860308))。
+
+続いて構造参謀はrelease/tag policyを推奨し
+([コメント`5771870126`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5771870126))、
+SHUKOUがこれを`ADOPTION_ID=ADOPT_P92_V1_0_RELEASE_AND_FINAL_ACCEPTANCE_R1`として正式採択した
+([コメント`5771894823`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5771894823)、
+著者`manosube`/OWNER)。この採択に基づき、immutable tag`v1.0.0`が正確なaccepted-main commit
+`f384e6acc01cd3d7a1992e931faba94e36f523a3`へ作成され、public・非draft・非prereleaseの
+GitHub Release「MANOSUBE Agent Civilization OS v1.0.0」が公開された。最後に、SHUKOU自身が
+最終Human acceptanceを記録し
+([コメント`5772129243`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5772129243))、
+Issue #92は`completed`として closeされた。
+
+本記録作成者は、本branch (`agent/issue-96-v101-release-surface-consistency`) 作成直前に、
+以下すべてを`git`および GitHub APIによる独立検証で再確認済みである。
+
+```text
+V1_0_0_FINAL_ACCEPTANCE_OBSERVED_AT_UTC=2026-09-22T07:35:00Z
+GOVERNING_ISSUE=#92
+RELEASE_POLICY_RECOMMENDATION_COMMENT=5771870126
+RELEASE_POLICY_ADOPTION_ID=ADOPT_P92_V1_0_RELEASE_AND_FINAL_ACCEPTANCE_R1
+RELEASE_POLICY_ADOPTION_COMMENT=5771894823
+FINAL_ACCEPTANCE_COMMENT=5772129243
+FINAL_ACCEPTANCE_AUTHOR=manosube (OWNER)
+RELEASE_TAG=v1.0.0
+RELEASE_TAG_TARGET_COMMIT=f384e6acc01cd3d7a1992e931faba94e36f523a3
+RELEASE_TAG_TARGET_VERIFIED_VIA_GIT_SHOW_REF=true
+GITHUB_RELEASE_ID=393492078
+GITHUB_RELEASE_URL=https://github.com/manosube/manosube-agent-civilization-os/releases/tag/v1.0.0
+GITHUB_RELEASE_DRAFT=false
+GITHUB_RELEASE_PRERELEASE=false
+GITHUB_RELEASE_PUBLISHED_AT=2026-09-22T06:16:11Z
+ISSUE_92_STATE=CLOSED
+ISSUE_92_STATE_REASON=COMPLETED
+ISSUE_92_CLOSED_BY=manosube
+OPEN_PR_COUNT_AT_OBSERVATION=0
+LIVE_MAIN_SHA=f384e6acc01cd3d7a1992e931faba94e36f523a3
+MANOSUBE_AGENT_CIVILIZATION_OS_V1_0=true
+```
+
+```text
+COMPLETED_THROUGH_PHASE=22
+CURRENT_PHASE=22_V1_0_ACCEPTANCE
+CURRENT_PHASE_STATE=V1_0_0_ACCEPTED_AND_PUBLICLY_RELEASED
+PHASE_22_COMPLETE=true
+PHASE_13_COMPLETE=true
+PHASE_14_ALLOWED=true
+```
+
+このrelease自身が記録する非claim (release notesおよびIssue #92自身の最終acceptanceが
+明示的に保持する境界) は本節でも保持される: `DC-0001`と`FD-0005`は引き続きopen・
+明示的non-blockingであり、本v1.0受入はuniversal autonomy、production-provider
+credentials、real-world causal superiority、またはMANOSUBE Boat Race OSの完成を主張しない。
+
+# 79. v1.0.1 public release surface consistency (Issue #96, `ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5`)
+
+v1.0.0の受入・release自体は§78の通り完結したが、README.md、`pyproject.toml`、
+`SECURITY.md`、および本書自身の最上部header/§3/§14の「現在値」は、その受入を反映して
+更新されていなかった -- README は依然「Phase 22進行中」、packageは`0.1.0.dev0`・
+`Pre-Alpha`のままであった。SHUKOUはこれを構造的Difference
+(`D-V101-PUBLIC-RELEASE-SURFACE-CONSISTENCY`)として[Issue #96](https://github.com/manosube/manosube-agent-civilization-os/issues/96)に記録し、
+Structural Advisorの提案するD1〜D5 (release identity `1.0.1`、maturity classifier
+`4 - Beta`、security support window、既存十件のfailureの実質是正、`CITATION.cff`)を
+`ADOPTION_ID=ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5`として正式採択した
+([Issue #96コメント`5772769121`](https://github.com/manosube/manosube-agent-civilization-os/issues/96#issuecomment-5772769121)、
+著者`manosube`/OWNER)。本記録作成者は、Issue #96本文・当該採択コメント、および
+live `main`(`f384e6acc01cd3d7a1992e931faba94e36f523a3`、v1.0.0タグと一致、0 open PR)を、
+本branch (`agent/issue-96-v101-release-surface-consistency`) 作成直前にGitHub API独立
+readbackで再確認済みである。
+
+```text
+SOURCE_SYNC_OBSERVED_AT_UTC=2026-09-22T07:40:00Z
+GOVERNING_ISSUE=#96
+ADOPTION_ID=ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5
+ADOPTION_COMMENT=5772769121
+ADOPTION_AUTHOR=manosube (OWNER)
+AUTHORIZED_BASE_MAIN_SHA=f384e6acc01cd3d7a1992e931faba94e36f523a3
+BRANCH=agent/issue-96-v101-release-surface-consistency
+GITHUB_API_READBACK_PERFORMED=true
+```
+
+採択されたD1〜D5は次の通り実装される:
+
+```text
+D1_RELEASE_IDENTITY=PYPROJECT_VERSION_1_0_1
+D2_MATURITY_CLASSIFIER=DEVELOPMENT_STATUS_4_BETA
+D3_SECURITY_SUPPORT_WINDOW=LATEST_PUBLISHED_1_X_RELEASE_SUPPORTED
+D4_TEN_BASELINE_FAILURES=REAL_TEST_ASSUMPTION_CORRECTED_NOT_HIDDEN
+D5_CITATION_METADATA=CITATION_CFF_ADDED_VERIFIED_FIELDS_ONLY
+V1_0_0_TAG_MUTATION_PERFORMED=false
+PHASE_22_REOPENED=false
+```
+
+D4の是正内容: `tests/contract/governance/test_source_freshness_drift_detection.py`の
+十件のfailureは、いずれもrelease-blockingな実ドリフトではなく、テスト自身の前提の
+陳腐化であった。(a) 6件は`_REAL_MAIN_SHA`定数がPhase 21当時のSHAのまま更新されて
+いなかったことによるもので、本source-syncの認可base`f384e6acc01cd3d7a1992e931faba94e36f523a3`
+へ更新して是正した。(b) 残り4件は、「header/§3/§1.1テーブルの値と、唯一の指定receipt節
+(§14/§19)の値が一致する」という元々の意図を検証するはずが、その後append-onlyで追加された
+多数の歴史的節 (各節が自らのevidenceとしてその時点のSHA/timestampを記録する、削除されない
+記録という本repositoryの統治原則そのもの) を、findallによる「文書全体でちょうど2回」という
+もはや成立しない前提で誤って巻き込んでいた。テストを、header/§3/§1.1テーブルの値と、
+指定されたreceipt節 (§14/§19) 自身の値とを個別に抽出して比較するよう是正し、本来の
+保護対象 (headerとreceiptが互いに乖離しないこと) を維持しながら、正当な歴史的
+append成長を誤検知しないようにした。虚偽のxfail化・test削除・discovery範囲の縮小は
+一切行っていない。
+
+```text
+COMPLETED_THROUGH_PHASE=22
+CURRENT_PHASE=22_V1_0_ACCEPTANCE
+CURRENT_PHASE_STATE=V1_0_0_ACCEPTED_PUBLICLY_RELEASED_V1_0_1_SURFACE_SYNC_IN_PROGRESS
+OBSERVED_AT_UTC=2026-09-22T07:40:00Z
+MAIN_ACCEPTED_BASE_SHA=f384e6acc01cd3d7a1992e931faba94e36f523a3
+PHASE_13_COMPLETE=true
+PHASE_14_ALLOWED=true
+PHASE_22_COMPLETE=true
+V1_0_0_RELEASED=true
+V1_0_1_RELEASE_CANDIDATE_PREPARED=false
+V1_0_1_TAG_CREATION_ALLOWED=false
+GITHUB_RELEASE_PUBLICATION_ALLOWED=false
+ISSUE_92_CLOSE_ALLOWED=false
+ISSUE_96_CLOSE_ALLOWED=false
+MERGE_PERFORMED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR_THEN_SHUKOU
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は`README.md`・`pyproject.toml`・`SECURITY.md`・`CITATION.cff`の同一diff内での
+更新と対になる、`03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md`section 2の`kernel_surface`
+ペアリング要件を満たすための必須projectionである。v1.0.1のtag作成・GitHub Release公開・
+Issue #92またはIssue #96のcloseは、本work unitでは一切行わない -- それらは別途SHUKOUの
+決定を要する。

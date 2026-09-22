@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "MANOSUBE Agent Civilization OS"
+type: software
+authors:
+  - name: "SHUKOU"
+version: "1.0.1"
+repository-code: "https://github.com/manosube/manosube-agent-civilization-os"
+url: "https://github.com/manosube/manosube-agent-civilization-os"
+license: Apache-2.0
