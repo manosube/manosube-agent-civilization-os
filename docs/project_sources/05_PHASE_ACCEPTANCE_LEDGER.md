@@ -1267,3 +1267,56 @@ this same ledger entry's own governing Issue #92 records — see
 `06_DEFERRED_DIFFERENCES.md` for each record's individual closure evidence. No Phase 22
 acceptance, Issue #92 closure, release/tag action, or v1.0 declaration is claimed by this
 entry.
+
+# 31. Phase 22 final Difference-disposition merge receipt (PR #94)
+
+| PR | Governing Issue | Merge SHA | Reviewed delivery head | Receipt class | Delivered surface |
+|---:|---:|---|---|---|---|
+| [#94](https://github.com/manosube/manosube-agent-civilization-os/pull/94) | [#92](https://github.com/manosube/manosube-agent-civilization-os/issues/92) | `ddf906eb7cefa43a0c43ce3dc1c208c7c5602439` | `5b343d6f9f3fd9d116d2708bc106b858b958da9f` | `ACCEPTANCE_SURFACE_MERGE_RECEIPT` | Phase 22 final Difference disposition (four records closed/cancelled) and the corrected, not-yet-closed FD-0002 README staleness record, plus the corrected `06_DEFERRED_DIFFERENCES.md`/`03_CURRENT_DEVELOPMENT_STATE.md`/acceptance-test state from PR #94 Structural Review Round 1 (`ADOPT_P94_R1_F1`) |
+
+PR #94はSHUKOU(`manosube`)により手動mergeされた。構造参謀は独立GitHub API再観測により、merge
+commit `ddf906eb7cefa43a0c43ce3dc1c208c7c5602439`の両parent(base
+`03988e05fa4ce830e3f8f7324624794920c9a79f`、delivery
+`5b343d6f9f3fd9d116d2708bc106b858b958da9f`)、merged treeとreviewed delivery treeの
+byte-for-byte一致(差分ファイル0件)、およびlive`main`がmerge commitと一致することを確認した
+([Issue #92コメント`5768458110`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5768458110))。
+本記録作成者は、本ledger更新の直前に`git diff --stat 5b343d6...origin/main`で差分ファイル数0を
+独立確認し、merge commitのparentが`03988e05f`と`5b343d6`であることを`git log`で独立確認済みである。
+
+```text
+OBSERVED_AT_UTC=2026-09-21T22:40:00Z
+PHASE_22_PR_94_MERGE_SHA=ddf906eb7cefa43a0c43ce3dc1c208c7c5602439
+PHASE_22_PR_94_MERGE_PARENT_BASE=03988e05fa4ce830e3f8f7324624794920c9a79f
+PHASE_22_PR_94_MERGE_PARENT_DELIVERY=5b343d6f9f3fd9d116d2708bc106b858b958da9f
+PHASE_22_PR_94_REVIEWED_TREE_CHANGED_FILES_VS_MERGE=0
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+LIVE_MAIN_EQUALS_MERGE_COMMIT=true
+README_CORRECTION_PRESENT_ON_ACCEPTED_MAIN=true
+FD_0002_AFTER_STATE_REOBSERVED=true
+PHASE_22_PR_94_STRUCTURAL_REVIEW_ROUNDS=1
+PHASE_22_PR_94_STRUCTURAL_FINDINGS_OPEN=0
+
+GATE_22_ELEVEN_PYTEST_OWNED_PREDICATES_AT_PR_94_HEAD=ALL_PASS
+GATE_22_PREDICATE_12_AT_PR_94_HEAD=UNKNOWN
+GATE_22_ALL_PASS_AT_PR_94_HEAD=false
+
+PHASE_22_FOUR_DIFFERENCES_DISPOSED=true
+PHASE_22_FD_0002_CLOSURE_EVIDENCE_AVAILABLE_POST_MERGE=true
+PHASE_22_FD_0002_CLOSED_ON_MAIN=false
+PHASE_22_COMPLETE=false
+ISSUE_92_CLOSE_ALLOWED_AT_PR_94_HEAD=false
+V1_0_DECLARATION_ALLOWED_AT_PR_94_HEAD=false
+```
+
+This receipt records only that PR #94 merged cleanly onto `main`, with zero content drift
+between the reviewed head and the merge commit, and that the README correction FD-0002 was
+conditioned on is now present on accepted `main` and independently re-observed
+(`P94_POST_MERGE_AFTER_STATE_R1`, Issue #92 comment `5768458110`). `GATE_22_ALL_PASS` remained
+`false` at this exact head because FD-0002 itself was still `FOLLOW_ON_DIFFERENCE` on `main` at
+merge time, per SHUKOU's own adopted ordering (`ADOPT_P94_R1_F1`, comment `5760099935`) that
+its closure requires this post-merge re-observation to exist first. That closure was
+subsequently adopted (`ADOPT_P92_FINAL_POST_MERGE_SOURCE_SYNC_R1`, comment `5768466436`) and is
+implemented in the separate, dedicated minimal post-merge source-sync work unit this same
+ledger entry's own governing Issue #92 records — see `06_DEFERRED_DIFFERENCES.md` for FD-0002's
+individual closure evidence. No Phase 22 acceptance, Issue #92 closure, release/tag action, or
+v1.0 declaration is claimed by this entry.

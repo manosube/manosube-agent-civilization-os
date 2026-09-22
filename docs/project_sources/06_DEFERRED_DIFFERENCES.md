@@ -10,13 +10,13 @@ STATUS=CANONICAL_DEFERRED_WORK_REGISTER
 SOURCE_AUTHORITY_CLASS=HUMAN_GOVERNED_DIFFERENCE_REGISTER
 HUMAN_AUTHORITY=SHUKOU
 REPOSITORY=manosube/manosube-agent-civilization-os
-OBSERVED_AT_UTC=2026-09-21T12:00:00Z
+OBSERVED_AT_UTC=2026-09-21T22:40:00Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
-ACTIVE_DEFERRED_RECORD_COUNT=1
-CLOSED_WITH_EVIDENCE_RECORD_COUNT=3
+ACTIVE_DEFERRED_RECORD_COUNT=0
+CLOSED_WITH_EVIDENCE_RECORD_COUNT=4
 CANCELLED_BY_HUMAN_DECISION_RECORD_COUNT=1
 DEFERRED_DESIGN_CANDIDATE_COUNT=1
-FOLLOW_ON_DIFFERENCE_COUNT=2
+FOLLOW_ON_DIFFERENCE_COUNT=1
 CURRENT_PHASE_BLOCKER_STORED_HERE=false
 ```
 
@@ -448,10 +448,10 @@ SHUKOU_DECISION_OWNERSHIP_WEAKENED=false
 ```text
 DIFFERENCE_ID=FD-0002
 TITLE=README_CURRENT_STATUS_STALENESS
-CLASSIFICATION=FOLLOW_ON_DIFFERENCE
-CURRENT_STATUS=README_CORRECTED_AWAITING_POST_MERGE_REOBSERVATION
+CLASSIFICATION=CLOSED_WITH_EVIDENCE
+CURRENT_STATUS=CLOSED
 SOURCE=README.md_ON_MAIN
-OBSERVED_MAIN_SHA=36b06d88cf779d9f04b79e41022b42d1f3d47510
+OBSERVED_MAIN_SHA=ddf906eb7cefa43a0c43ce3dc1c208c7c5602439
 ```
 
 Expected:
@@ -531,6 +531,40 @@ merged, and the Structural Advisor has independently re-observed the resulting `
 README after-state, the merge receipt, and tree equivalence through the GitHub API --
 consistent with how DD-0001/FD-0001/FD-0003's own closing evidence was each independently
 confirmed against already-merged prior PRs before this record could cite them.
+
+## Closure disposition (Issue #92 minimal post-merge source-sync)
+
+PR #94 (correcting commit `5b343d6f9f3fd9d116d2708bc106b858b958da9f`) was reviewed, SHUKOU-adopted, and manually merged as commit
+`ddf906eb7cefa43a0c43ce3dc1c208c7c5602439` (parents `03988e05fa4ce830e3f8f7324624794920c9a79f`
+and `5b343d6f9f3fd9d116d2708bc106b858b958da9f`). The Structural Advisor independently
+re-observed the resulting live `main` through the GitHub API and confirmed: the merged tree is
+byte-for-byte equivalent to the reviewed delivery tree (zero changed files between
+`5b343d6` and the merge commit); the exact six authorized files from PR #94 are the only ones
+that changed relative to pre-merge `main`; and the README correction itself is present on
+accepted `main`, still truthfully recording `PROJECT_STATUS=PHASE_22_V1_0_ACCEPTANCE_IN_PROGRESS`
+and `V1_0_DECLARED=false`
+([`P94_POST_MERGE_AFTER_STATE_R1`, Issue #92 comment `5768458110`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5768458110)).
+
+FD-0002's own adopted closure condition -- the README correction existing on accepted `main`
+followed by post-merge after-state re-observation -- is therefore satisfied. SHUKOU formally
+adopted this closure as `ADOPTION_ID=ADOPT_P92_FINAL_POST_MERGE_SOURCE_SYNC_R1`
+([Issue #92 comment `5768466436`](https://github.com/manosube/manosube-agent-civilization-os/issues/92#issuecomment-5768466436))
+and authorized this minimal, bounded source-sync to record it. This record is now recorded
+`CLOSED_WITH_EVIDENCE`, citing the PR #94 merge commit, the reviewed head, the zero-file tree
+difference, the accepted-`main` README after-state, and the Structural Advisor's post-merge
+observation comment above -- never inferred by this Agent on its own authority.
+
+```text
+PR_94_MERGE_COMMIT=ddf906eb7cefa43a0c43ce3dc1c208c7c5602439
+PR_94_MERGE_PARENT_BASE=03988e05fa4ce830e3f8f7324624794920c9a79f
+PR_94_MERGE_PARENT_DELIVERY=5b343d6f9f3fd9d116d2708bc106b858b958da9f
+MERGED_TREE_EQUALS_REVIEWED_TREE=true
+README_CORRECTION_MERGED_TO_MAIN=true
+AFTER_STATE_REOBSERVED=true
+POST_MERGE_OBSERVATION_COMMENT=5768458110
+SOURCE_SYNC_ADOPTION_COMMENT=5768466436
+CLOSED_WITH_EVIDENCE_AT_THIS_HEAD=true
+```
 
 ---
 
@@ -816,7 +850,7 @@ Only a gap between a ratified expectation and an accepted narrower capability, o
 | `DD-0002` D2 totality | No | No | No; cancelled as superseded by owner-specific totality (same adoption) |
 | `DC-0001` PR handoff prototype | No | No | No; re-evaluate only after prerequisites |
 | `FD-0001` governance rule | No | No | No; closed with evidence (same adoption) |
-| `FD-0002` README status | No | No | Blocks `GATE_22_ALL_PASS=true` until post-merge closure; README corrected on this branch, awaiting merge + after-state re-observation (`ADOPT_P94_R1_F1`) |
+| `FD-0002` README status | No | No | No; closed with evidence after post-merge after-state re-observation (`ADOPT_P92_FINAL_POST_MERGE_SOURCE_SYNC_R1`) |
 | `FD-0003` Objective/Mechanism separation | No | No | No; closed with evidence (same adoption) |
 
 The matrix may be changed only by new observation or SHUKOU decision, not by convenience.
@@ -903,12 +937,13 @@ Do not change current status without live re-observation where GitHub facts are 
 # 15. Register receipt
 
 ```text
-OBSERVED_AT_UTC=2026-09-21T12:00:00Z
+OBSERVED_AT_UTC=2026-09-21T22:40:00Z
 DEFERRED_DIFFERENCE_REGISTER_COUNT=1
 
 CLOSED_WITH_EVIDENCE_RECORDS=
   DD-0001 TEMPORARY_AGENT_EXECUTION_CONTRACT
   FD-0001 STRUCTURAL_ADVISOR_ADOPTION_RECORDING_GOVERNANCE
+  FD-0002 README_CURRENT_STATUS_STALENESS (closed post-merge, `ADOPT_P92_FINAL_POST_MERGE_SOURCE_SYNC_R1`)
   FD-0003 OBJECTIVE_MECHANISM_SEPARATION_AND_OBJECTIVE_RETURN_GATE
 
 CANCELLED_BY_HUMAN_DECISION_RECORDS=
@@ -918,11 +953,9 @@ DEFERRED_DESIGN_CANDIDATES=
   DC-0001 CLAUDE_CODE_PR_HANDOFF_BOOT_LOADER (open, non-blocking, unchanged)
 
 FOLLOW_ON_DIFFERENCES_STILL_OPEN=
-  FD-0002 README_CURRENT_STATUS_STALENESS (README corrected on this branch; conditionally
-    blocking until merge + post-merge after-state re-observation, per `ADOPT_P94_R1_F1`)
   FD-0005 PHASE_21_EIGHT_PROOF_DIMENSION_MEASUREMENT_GAP (open, non-blocking, unchanged)
 
-CLOSED_DEFERRED_RECORD_COUNT=3
+CLOSED_DEFERRED_RECORD_COUNT=4
 CANCELLED_DEFERRED_RECORD_COUNT=1
 CURRENT_PHASE_BLOCKER_STORED_HERE=false
 
@@ -936,6 +969,12 @@ CORRECTION_ADOPTION_COMMENT=5760099935
 CORRECTION_ADOPTION_AUTHOR=manosube (OWNER)
 CORRECTION_STRUCTURAL_REVIEW_COMMENT=5760074443
 CORRECTION_FINDING=FD_0002_PREMATURELY_CLOSED_BEFORE_POST_MERGE_REOBSERVATION
+
+FD_0002_FINAL_CLOSURE_ADOPTION_ID=ADOPT_P92_FINAL_POST_MERGE_SOURCE_SYNC_R1
+FD_0002_FINAL_CLOSURE_ADOPTION_COMMENT=5768466436
+FD_0002_FINAL_CLOSURE_ADOPTION_AUTHOR=manosube (OWNER)
+FD_0002_POST_MERGE_OBSERVATION_COMMENT=5768458110
+FD_0002_PR_94_MERGE_COMMIT=ddf906eb7cefa43a0c43ce3dc1c208c7c5602439
 
 PHASE_12_REOPENED=false
 PHASE_3_REOPENED=false
