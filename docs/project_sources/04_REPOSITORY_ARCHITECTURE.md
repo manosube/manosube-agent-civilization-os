@@ -1149,3 +1149,37 @@ Phase 22は、このaccepted architectureにはまだ実装されていない。
 着手は、本節の記録元となったpost-merge source-sync PR自身がSHUKOUによりmergeされ、resulting
 `main`がGitHub API経由で再観測された後にのみ許可される。Phase 22実装には、その専用Issue上での
 SHUKOUの別途明示的な採択が必要である。
+
+# 28. Accepted architecture through v1.0.0 release and v1.0.1 surface-consistency source-sync (Issue #92, Issue #96)
+
+Phase 22 (v1.0 Acceptance、Issue #92) はPR #93〜#95を通じて実装され、SHUKOUの最終Human
+acceptanceを経てimmutable tag`v1.0.0`がaccepted-main commit
+`f384e6acc01cd3d7a1992e931faba94e36f523a3`へ作成され、public GitHub Release
+「MANOSUBE Agent Civilization OS v1.0.0」として公開された
+(独立再確認は`03_CURRENT_DEVELOPMENT_STATE.md`§78を参照)。本節作成直前のGitHub API独立
+readbackで、live `main`が同一SHAであること、tag`v1.0.0`が同一commitを指すこと、0 open PR
+であることを確認済みである。`src/`パッケージ構成自体はPR #90 (§27) 以降変更されていない --
+本節が記録するのはtag/release identity boundaryの確定と、それに続く`ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5`
+(Issue #96) による最小限のpublic release surface (`README.md`, `pyproject.toml`,
+`SECURITY.md`, `CITATION.cff`) 同期作業のみである。
+
+```text
+OBSERVED_AT_UTC=2026-09-22T07:40:00Z
+AS_BUILT_REF=f384e6acc01cd3d7a1992e931faba94e36f523a3
+AS_BUILT_TREE_ENTRY_COUNT=978
+AS_BUILT_BLOB_COUNT=801
+AS_BUILT_DIRECTORY_COUNT=177
+AS_BUILT_TREE_TRUNCATED=false
+
+GOVERNING_ISSUE=#92
+GOVERNING_ISSUE_V101=#96
+V1_0_0_TAG=v1.0.0
+V1_0_0_RELEASED=true
+PHASE_22_IMPLEMENTED=true
+V1_0_1_SURFACE_SYNC_IN_PROGRESS=true
+```
+
+`src/`パッケージ・schema・contract一式に構造変更はなく、本節が反映するのはaccepted-main
+identity (§28自身のAS_BUILT_REF) の前進と、v1.0.0 release/tag boundaryの確定のみである。
+`CITATION.cff`はrepository rootへ新規追加される非`src/`メタデータファイルであり、architecture
+上のkernel_surfaceには属さない。
