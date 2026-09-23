@@ -36,9 +36,17 @@ def test_pyproject_version_is_1_0_1() -> None:
 
 
 def test_package_dunder_version_is_1_0_1() -> None:
-    import manosube_agent_civilization
+    """Reads the source file directly rather than importing the package: an import
+    depends on the package being installed (editable or otherwise), which is a real
+    project-environment setup step, not something this focused test should assume --
+    a plain `git clone` plus `python -m pytest` on this one file must still pass."""
 
-    assert manosube_agent_civilization.__version__ == _EXPECTED_VERSION
+    source = (ROOT / "src" / "manosube_agent_civilization" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r'^__version__\s*=\s*"([^"]+)"\s*$', source, flags=re.MULTILINE)
+    assert match is not None, "src/manosube_agent_civilization/__init__.py has no __version__"
+    assert match.group(1) == _EXPECTED_VERSION
 
 
 def test_no_stale_pre_release_version_string_remains_in_pyproject() -> None:

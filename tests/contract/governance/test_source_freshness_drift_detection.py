@@ -17,6 +17,17 @@ duplicate copy of the same as-built ref/timestamp/tree-fact -- a document's own 
 block, prose table, and closing receipt -- agrees with every other copy, and the two
 source documents agree with each other on the one accepted `main` ref they each name
 under their own field.
+
+Also proves P97-R1-F1/F2 (``ADOPT_P97_R1_LATEST_PROJECTION_INTEGRITY_F1_F2``, PR #97
+Structural Review Round 1, comment 5779529131): the MSR-R3 checks above protect only
+the historical header/§19/§14 snapshot each document was born with -- they say nothing
+about whether the document's own *latest* projection (§28 for Repository Architecture,
+§79 for Current Development State, both appended by the v1.0.1 release-surface-
+consistency work) is itself fresh, internally consistent, or in agreement with its
+siblings. The tests at the bottom of this file close that gap using the same
+production owner (``extract_fields``'s last-occurrence-wins scan) the drift validator
+and the README generator already share, so the selection stays correct for whatever
+section is appended next without editing this test file again.
 """
 
 from __future__ import annotations
@@ -25,6 +36,8 @@ import ast
 import inspect
 from pathlib import Path
 import re
+import shutil
+import subprocess
 from typing import Any
 
 import pytest
@@ -729,3 +742,227 @@ def test_current_development_state_and_repository_architecture_agree_on_accepted
     architecture = re.search(rf"AS_BUILT_REF=({_SHA_PATTERN})", _repository_architecture_text())
     assert current_state is not None and architecture is not None
     assert current_state.group(1) == architecture.group(1)
+
+
+# --------------------------------------------------------------------------- #
+# P97-R1-F1/F2 (`ADOPT_P97_R1_LATEST_PROJECTION_INTEGRITY_F1_F2`, PR #97 Structural
+# Review Round 1, comment 5779529131): the MSR-R3 checks above protect only the
+# *historical* header/§19/§14 snapshot each document was born with (frozen at genesis,
+# still mutually consistent) -- they say nothing about the document's own *latest*
+# projection, the one an actual reader or automated consumer relies on. §28
+# (Repository Architecture) and §79 (Current Development State) are that latest
+# projection as of this PR. These tests protect them directly, using the same
+# production owner (`extract_fields`'s last-occurrence-wins scan) the drift validator
+# and the README generator already share -- not a new, competing "latest section"
+# locator -- so the selection stays correct for whatever section is appended next,
+# without editing this file again.
+# --------------------------------------------------------------------------- #
+
+
+def _git(*args: str) -> str:
+    """Same fixed-executable discipline as `merge_source_reflow._git_output` and
+    `test_merge_source_reflow._git`: resolve `git` via `shutil.which` once, run it
+    read-only against this real repository's own history."""
+
+    git = shutil.which("git")
+    assert git is not None, "git executable not found on PATH"
+    return subprocess.run(  # noqa: S603 -- fixed Git executable resolved via shutil.which above
+        [git, *args], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def test_repository_architecture_latest_projection_matches_fresh_git_recomputation() -> None:
+    """P97-R1-F1: the document's *latest* AS_BUILT_REF/tree-fact block (§28 today) must
+    itself be correct, not merely internally self-consistent -- proven by independently
+    recomputing the tree stats from git at the exact ref the latest block names, the
+    same computation that block's own numbers were produced by."""
+
+    latest = freshness.extract_fields(_repository_architecture_text())
+    ref = latest["AS_BUILT_REF"]
+    assert re.fullmatch(_SHA_PATTERN, ref), ref
+    assert re.fullmatch(_TIMESTAMP_PATTERN, latest["OBSERVED_AT_UTC"])
+
+    blob_count = len(_git("ls-tree", "-r", ref).splitlines())
+    dir_count = len(_git("ls-tree", "-r", "-d", ref, "--name-only").splitlines())
+
+    assert latest["AS_BUILT_BLOB_COUNT"] == str(blob_count)
+    assert latest["AS_BUILT_DIRECTORY_COUNT"] == str(dir_count)
+    assert latest["AS_BUILT_TREE_ENTRY_COUNT"] == str(blob_count + dir_count)
+    assert latest["AS_BUILT_TREE_TRUNCATED"] == "false"
+
+
+def test_repository_architecture_latest_projection_mutation_is_detected_while_the_19_receipt_remains_valid() -> (
+    None
+):
+    """Negative control: mutating just the *latest* ``AS_BUILT_REF`` occurrence (inside
+    §28) changes what `extract_fields` -- the same function the drift validator and
+    README generator use -- resolves as the document's current fact, and that mutated
+    value no longer matches the independently-known-correct accepted base. The
+    §19-scoped historical check above is completely unaffected on the same mutated
+    text, proving the two are genuinely separated: mutating latest does not corrupt
+    historical, and a stale/wrong latest is not masked by a still-valid historical
+    section."""
+
+    text = _repository_architecture_text()
+    real_ref = freshness.extract_fields(text)["AS_BUILT_REF"]
+    forged_ref = "0" * 40
+    assert forged_ref != real_ref
+
+    needle = f"AS_BUILT_REF={real_ref}"
+    last_index = text.rfind(needle)
+    assert last_index != -1
+    mutated = text[:last_index] + f"AS_BUILT_REF={forged_ref}" + text[last_index + len(needle) :]
+
+    mutated_latest_ref = freshness.extract_fields(mutated)["AS_BUILT_REF"]
+    assert mutated_latest_ref == forged_ref
+    assert mutated_latest_ref != real_ref
+    assert mutated_latest_ref != _REAL_MAIN_SHA
+
+    original_receipt_match = re.search(
+        rf"AS_BUILT_REF=({_SHA_PATTERN})", _section_block(text, "# 19. Architecture receipt")
+    )
+    mutated_receipt_match = re.search(
+        rf"AS_BUILT_REF=({_SHA_PATTERN})", _section_block(mutated, "# 19. Architecture receipt")
+    )
+    assert original_receipt_match is not None and mutated_receipt_match is not None
+    assert mutated_receipt_match.group(1) == original_receipt_match.group(1)
+
+
+def test_repository_architecture_latest_tree_count_mutation_breaks_the_entries_identity() -> None:
+    """Negative control for the ``entries = blobs + directories`` identity on the
+    *latest* triple specifically -- the existing internally-consistent test above only
+    checks the document's first (historical, §19) occurrence of these three fields, so
+    it cannot by itself catch a stale or corrupted latest triple."""
+
+    text = _repository_architecture_text()
+    real_blob_count = freshness.extract_fields(text)["AS_BUILT_BLOB_COUNT"]
+    forged_blob_count = str(int(real_blob_count) + 1)
+
+    needle = f"AS_BUILT_BLOB_COUNT={real_blob_count}"
+    last_index = text.rfind(needle)
+    assert last_index != -1
+    mutated = (
+        text[:last_index]
+        + f"AS_BUILT_BLOB_COUNT={forged_blob_count}"
+        + text[last_index + len(needle) :]
+    )
+
+    mutated_latest = freshness.extract_fields(mutated)
+    entries = int(mutated_latest["AS_BUILT_TREE_ENTRY_COUNT"])
+    blobs = int(mutated_latest["AS_BUILT_BLOB_COUNT"])
+    dirs = int(mutated_latest["AS_BUILT_DIRECTORY_COUNT"])
+    assert entries != blobs + dirs
+
+
+def test_current_development_state_latest_projection_matches_repository_architecture_latest_ref() -> (
+    None
+):
+    """P97-R1-F2: the two documents' *latest* projections (§79 and §28 today) must agree
+    on the accepted `main` commit and its observation time, exactly as their historical
+    counterparts already do -- proven with the same `extract_fields` last-occurrence
+    scan, not a hardcoded section name, so it stays correct as later sections are
+    appended to either document."""
+
+    latest_state = freshness.extract_fields(_current_development_state_text())
+    latest_architecture = freshness.extract_fields(_repository_architecture_text())
+    assert latest_state["MAIN_ACCEPTED_BASE_SHA"] == latest_architecture["AS_BUILT_REF"]
+    assert latest_state["OBSERVED_AT_UTC"] == latest_architecture["OBSERVED_AT_UTC"]
+
+
+def test_current_development_state_latest_main_accepted_base_sha_mutation_breaks_the_cross_check() -> (
+    None
+):
+    """Negative control: mutating just the *latest* ``MAIN_ACCEPTED_BASE_SHA``
+    occurrence (inside §79) is caught by the cross-document check above, while §3's
+    historical value on the same mutated text -- and Repository Architecture's own
+    latest §28 value -- are untouched."""
+
+    text = _current_development_state_text()
+    real_sha = freshness.extract_fields(text)["MAIN_ACCEPTED_BASE_SHA"]
+    forged_sha = "1" * 40
+    assert forged_sha != real_sha
+
+    needle = f"MAIN_ACCEPTED_BASE_SHA={real_sha}"
+    last_index = text.rfind(needle)
+    assert last_index != -1
+    mutated = (
+        text[:last_index]
+        + f"MAIN_ACCEPTED_BASE_SHA={forged_sha}"
+        + text[last_index + len(needle) :]
+    )
+
+    mutated_latest_sha = freshness.extract_fields(mutated)["MAIN_ACCEPTED_BASE_SHA"]
+    latest_architecture_ref = freshness.extract_fields(_repository_architecture_text())[
+        "AS_BUILT_REF"
+    ]
+    assert mutated_latest_sha != latest_architecture_ref
+
+    original_section_3_match = re.search(
+        rf"MAIN_ACCEPTED_BASE_SHA=({_SHA_PATTERN})",
+        _section_block(text, "# 3. Default branch state"),
+    )
+    mutated_section_3_match = re.search(
+        rf"MAIN_ACCEPTED_BASE_SHA=({_SHA_PATTERN})",
+        _section_block(mutated, "# 3. Default branch state"),
+    )
+    assert original_section_3_match is not None and mutated_section_3_match is not None
+    assert mutated_section_3_match.group(1) == original_section_3_match.group(1)
+
+
+def _real_readme_generated_block() -> str:
+    real_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    begin = real_readme.index(readme_gen.BEGIN_MARKER)
+    end = real_readme.index(readme_gen.END_MARKER) + len(readme_gen.END_MARKER)
+    return real_readme[begin:end]
+
+
+def test_current_development_state_latest_projection_cross_checks_the_readme_generated_block() -> (
+    None
+):
+    """P97-R1-F2's README cross-check requirement: every field the generator echoes
+    (`readme_gen._ECHOED_FIELDS`) must carry the document's own *latest* value inside
+    the README's own generated block on disk -- not merely "the generator is
+    idempotent on whatever is already there" (already proven above), but "the value
+    actually is what the latest section currently says"."""
+
+    latest = freshness.extract_fields(_current_development_state_text())
+    generated_block = _real_readme_generated_block()
+    for key in readme_gen._ECHOED_FIELDS:
+        assert key in latest, key
+        assert f"{key}={latest[key]}" in generated_block, key
+
+
+def test_current_development_state_latest_observed_at_utc_mutation_breaks_the_readme_cross_check() -> (
+    None
+):
+    """Negative control: mutating the *latest* ``OBSERVED_AT_UTC`` occurrence (inside
+    §79) produces a rendered block that disagrees with the real, on-disk README --
+    proving the cross-check above is decisive, not vacuous."""
+
+    text = _current_development_state_text()
+    real_ts = freshness.extract_fields(text)["OBSERVED_AT_UTC"]
+    forged_ts = "2099-01-01T00:00:00Z"
+    assert forged_ts != real_ts
+
+    needle = f"OBSERVED_AT_UTC={real_ts}"
+    last_index = text.rfind(needle)
+    assert last_index != -1
+    mutated = text[:last_index] + f"OBSERVED_AT_UTC={forged_ts}" + text[last_index + len(needle) :]
+
+    mutated_block = readme_gen.render_block(freshness.extract_fields(mutated))
+    assert mutated_block != _real_readme_generated_block()
+
+
+def test_current_development_state_latest_projection_status_fields_are_well_formed() -> None:
+    """The remaining P97-R1-F2-required latest fields (`COMPLETED_THROUGH_PHASE`,
+    `CURRENT_PHASE`, `CURRENT_PHASE_STATE`, `PHASE_22_COMPLETE`, `V1_0_0_RELEASED`) are
+    present in the document's own latest projection and hold the exact values SHUKOU's
+    v1.0.0 final acceptance (Issue #92) and this PR's own summary claim -- a stale or
+    reverted latest section would fail this."""
+
+    latest = freshness.extract_fields(_current_development_state_text())
+    assert latest["COMPLETED_THROUGH_PHASE"] == "22"
+    assert latest["CURRENT_PHASE"] == "22_V1_0_ACCEPTANCE"
+    assert latest["CURRENT_PHASE_STATE"] != ""
+    assert latest["PHASE_22_COMPLETE"] == "true"
+    assert latest["V1_0_0_RELEASED"] == "true"
