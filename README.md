@@ -701,6 +701,32 @@ COMPLETED
 
 ---
 
+## Support the Project
+
+MANOSUBE Agent Civilization OS is open source.
+
+If this project helps your AI-agent development, you can support its continued development through [GitHub Sponsors](https://github.com/sponsors/manosube).
+
+Sponsorship is used to support continued development, verification, documentation, interoperability work, and third-party reproducibility.
+
+```text
+OPEN SOURCE
+↓
+USE
+↓
+VALUE
+↓
+SPONSORSHIP
+↓
+VERIFICATION / DOCUMENTATION / DEVELOPMENT
+↓
+OPEN SOURCE REFLOW
+```
+
+Sponsorship supports the project. It does not purchase Authority over the Kernel, roadmap, Evidence requirements, or technical acceptance decisions.
+
+---
+
 ## Final Principle
 
 MANOSUBE Agent Civilization OSの価値は、多くのAIを動かせることではありません。
