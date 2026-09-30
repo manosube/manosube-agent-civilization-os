@@ -7019,7 +7019,7 @@ PHASE_14_ALLOWED=true
 このrelease自身が記録する非claim (release notesおよびIssue #92自身の最終acceptanceが
 明示的に保持する境界) は本節でも保持される: `DC-0001`と`FD-0005`は引き続きopen・
 明示的non-blockingであり、本v1.0受入はuniversal autonomy、production-provider
-credentials、real-world causal superiorityを主張しない。
+credentials、real-world causal superiority、またはMANOSUBE Boat Race OSの完成を主張しない。
 
 # 79. v1.0.1 public release surface consistency (Issue #96, `ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5`)
 
