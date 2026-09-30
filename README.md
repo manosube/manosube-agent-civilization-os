@@ -55,8 +55,8 @@ Adapter、Autonomous Change、Multi-Agentはいずれも既にKernelへ自然経
 
 このREADMEは完成後の機能一覧ではなく、このOSの定義、境界、および受入済み完成条件を示します。
 
-v1.0受入は、次を意味しません -- universal autonomy、production-provider credentials、
-real-world causal superiority、またはMANOSUBE Boat Race OSの完成。`DC-0001`と`FD-0005`は
+v1.0受入は、universal autonomy、production-provider credentials、
+real-world causal superiorityを意味しません。`DC-0001`と`FD-0005`は
 引き続き明示的にopen・non-blockingなDeferred workとして可視です。
 
 ```text
