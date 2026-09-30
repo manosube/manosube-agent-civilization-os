@@ -929,3 +929,35 @@ REPOSITORY_ENFORCEMENT_GAP_PRESERVED_AS_FD_0001=true
 ```
 
 本書は開発のAuthority経路を定める。個別work unitの実装Authority、Phase completion、merge receiptまたはDeferred Difference closureを単独では宣言しない。
+
+---
+
+# 22. Copilot Development Binding proposal (Issue #102)
+
+SHUKOU requested a Kernel-compatible, interchangeable Copilot executor on
+2026-10-01 JST. The direct request is recorded by the Structural Advisor in
+[Issue #102](https://github.com/manosube/manosube-agent-civilization-os/issues/102)
+with its observed base `391378d8aeb784a62cd2bc93d96538443c754a2d`.
+The design is in `03_BINDING/COPILOT_PARTICIPATION.md`; repository guidance is
+in `.github/copilot-instructions.md`.
+
+This is a dedicated **proposal**, not a new active participant assignment.
+`CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md` and the pinned v0.2 machine policy
+continue to select Claude Code and prohibit automated external review requests.
+The proposed provider selection must evolve those existing owners and preserve
+Human finding adoption, independent structural review, final acceptance and manual
+merge. It must not create a second Kernel, Product Binding genesis or evaluator.
+
+```text
+COPILOT_DESIGN_STATUS=PREPARED_PENDING_INDEPENDENT_REVIEW_AND_HUMAN_ACCEPTANCE
+COPILOT_EXECUTABLE_ADMISSION_IMPLEMENTED=false
+COPILOT_RUNTIME_WORK_UNIT_PROVEN=false
+CURRENT_BINDING_SUPERSEDED_BY_THIS_APPENDIX=false
+COPILOT_REVIEW_AUTO_ENABLED=false
+COPILOT_FINDING_AUTO_ADOPTION=false
+ISSUE_102_CLOSE_ALLOWED=false
+```
+
+Claude Code is the next code implementation owner after the exact design is
+accepted and a verified work-unit handoff is recorded. Instructions alone do not
+authorize Copilot implementation or close the tracked Difference.
