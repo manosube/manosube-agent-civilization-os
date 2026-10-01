@@ -7099,3 +7099,44 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ペアリング要件を満たすための必須projectionである。v1.0.1のtag作成・GitHub Release公開・
 Issue #92またはIssue #96のcloseは、本work unitでは一切行わない -- それらは別途SHUKOUの
 決定を要する。
+
+---
+
+# 80. Issue #102 Copilot Development Binding machine-policy implementation (Decision 0003)
+
+[Issue #102](https://github.com/manosube/manosube-agent-civilization-os/issues/102)の
+設計(`03_BINDING/COPILOT_PARTICIPATION.md`、PR #103)はSHUKOUの採択
+([comment 5921883154](https://github.com/manosube/manosube-agent-civilization-os/pull/103#issuecomment-5921883154))を経てmainへmergeされ
+(`e2d686e68f09e739d0c93d542fd22e06be822209`)、実装handoff
+([comment 5921931690](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5921931690))がClaude Codeへ記録された。
+本節はその実装work unitを記録する。
+
+`development_binding.policy`のratified role mapへ`GITHUB_COPILOT`を、`CLAUDE_CODE`と
+同一のcapability・`may`/`must_not`・handoff transitionsで追加した
+(Decision 0003、`policy_version=0.3`、`03_BINDING/DEVELOPMENT_BINDING_POLICY.json`)。
+新module`development_binding.executor_selection`が、「資格ある名前であること」と
+「この一つのwork unitの選ばれた実行者であること」を分離し、後者をSHUKOU採用・
+read-back検証済みの記録に束縛する。既存のevaluator・adoption record機構は変更せず
+拡張した。Claude Codeは選択記録なしに以前と同じ経路で動作し続ける
+(`executor_provider_default=CLAUDE_CODE`)。
+
+```text
+GOVERNING_ISSUE=#102
+DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003
+SUPERSEDES=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002
+ACTIVE_POLICY_VERSION=0.3
+GITHUB_COPILOT_ELIGIBLE_EXECUTOR=true
+ELIGIBLE_PROVIDER_MEMBERSHIP_IS_NOT_EXECUTION_AUTHORITY=true
+CLAUDE_CODE_DEFAULT_PROVIDER_UNCHANGED=true
+COPILOT_SELF_ACCEPTANCE_OR_MERGE_REFUSED=true
+COPILOT_AUTOMATED_REVIEW_TRIGGER_STILL_PROHIBITED=true
+COPILOT_RUNTIME_WORK_UNIT_PROVEN=false
+ISSUE_102_CLOSE_ALLOWED=false
+MERGE_PERFORMED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR_THEN_SHUKOU
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節はmachine-policyの受入機構を記録する。実際にCopilotが一つの認可されたwork unitを
+実行した証跡の還流は、別途のwork unitとして観測され、Issue #102はそれと独立structural
+review・SHUKOU受入が揃うまで閉じない。

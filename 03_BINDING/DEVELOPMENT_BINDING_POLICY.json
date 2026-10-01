@@ -1,7 +1,7 @@
 {
-  "policy_version": "0.2",
-  "decision_id": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002",
-  "supersedes": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001",
+  "policy_version": "0.3",
+  "decision_id": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003",
+  "supersedes": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002",
   "decision_status": "RATIFIED",
   "decision_authority": "SHUKOU",
   "repository": "manosube/manosube-agent-civilization-os",
@@ -28,6 +28,24 @@
       ]
     },
     "CLAUDE_CODE": {
+      "capability": "IMPLEMENTATION_EXECUTOR",
+      "may": [
+        "IMPLEMENTATION",
+        "TEST_EXECUTION",
+        "EXECUTOR_SELF_REVIEW",
+        "PR_PREPARATION"
+      ],
+      "must_not": [
+        "STRUCTURAL_AUTHORITY",
+        "STRUCTURAL_REVIEW",
+        "MERGE_READINESS_RECOMMENDATION",
+        "FINAL_ACCEPTANCE_DECISION",
+        "MERGE_OPERATION",
+        "ADOPT_EXTERNAL_FINDING",
+        "REQUEST_AUTOMATED_EXTERNAL_REVIEW"
+      ]
+    },
+    "GITHUB_COPILOT": {
       "capability": "IMPLEMENTATION_EXECUTOR",
       "may": [
         "IMPLEMENTATION",
@@ -137,7 +155,14 @@
     {"from": "SHUKOU_ACCEPTED", "to": "SHUKOU_MERGED", "actor": "SHUKOU"},
     {"from": "CORRECTION_REQUIRED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "CLAUDE_CODE"},
     {"from": "MORE_EVIDENCE_REQUIRED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "CLAUDE_CODE"},
-    {"from": "SHUKOU_REJECTED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "CLAUDE_CODE"}
+    {"from": "SHUKOU_REJECTED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "CLAUDE_CODE"},
+    {"from": "IMPLEMENTATION_IN_PROGRESS", "to": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE", "actor": "GITHUB_COPILOT"},
+    {"from": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE", "to": "EXECUTOR_SELF_REVIEW_COMPLETE", "actor": "GITHUB_COPILOT"},
+    {"from": "EXECUTOR_SELF_REVIEW_COMPLETE", "to": "GITHUB_PR_READY", "actor": "GITHUB_COPILOT"},
+    {"from": "GITHUB_PR_READY", "to": "READY_FOR_STRUCTURAL_REVIEW", "actor": "GITHUB_COPILOT"},
+    {"from": "CORRECTION_REQUIRED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "GITHUB_COPILOT"},
+    {"from": "MORE_EVIDENCE_REQUIRED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "GITHUB_COPILOT"},
+    {"from": "SHUKOU_REJECTED", "to": "IMPLEMENTATION_IN_PROGRESS", "actor": "GITHUB_COPILOT"}
   ],
   "executor_terminal_state": "READY_FOR_STRUCTURAL_REVIEW",
   "advisor_only_states": [
@@ -172,5 +197,11 @@
     "EXTERNAL_BOT_COMMENT",
     "CONVENIENCE"
   ],
-  "kernel_provider_neutrality_preserved": true
+  "kernel_provider_neutrality_preserved": true,
+  "executor_providers": [
+    "CLAUDE_CODE",
+    "GITHUB_COPILOT"
+  ],
+  "executor_provider_default": "CLAUDE_CODE",
+  "executor_provider_selection_authority": "SHUKOU"
 }

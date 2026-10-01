@@ -365,6 +365,11 @@ def test_each_owner_may_do_its_own_owned_action() -> None:
 
 
 def test_the_unpinned_policy_is_the_one_that_actually_loads() -> None:
-    """A control on every `load_policy` refusal above: the shipped artifact still loads."""
+    """A control on every `load_policy` refusal above: the shipped artifact still loads.
 
-    assert load_policy()["decision_id"].endswith("0002")
+    Decision 0003 (Issue #102) superseded Decision 0002 without rewriting any of its own
+    regressions above -- every one of them is still reproduced against the live policy, by
+    the same records, and still answers the way Decision 0002 fixed it to answer.
+    """
+
+    assert load_policy()["decision_id"].endswith("0003")

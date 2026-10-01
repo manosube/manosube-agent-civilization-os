@@ -18,11 +18,22 @@ That is the same defect as the Phase 5 P1 (`ADR-0027` §3.3): a rule asserted in
 enforced nowhere, with a check that resembles it standing in the gap. Here the repair is the
 same in kind -- stop describing what the policy should contain and *hold* it.
 
-**This is not a Kernel element.** It selects the four concrete participants building *this*
+**This is not a Kernel element.** It selects the concrete participants building *this*
 repository. ``KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md`` §6 defines the observation, acceptance
 and execution capabilities without naming a provider, and that neutrality is preserved:
 nothing here appears in the kernel loop, in ``RECORD_TYPES``, or in the canonical schema
 registry, and conformance tests prove it rather than asserting it.
+
+Decision 0003 (Issue #102) evolves this module rather than replacing it: the implementation
+executor capability admits a second eligible provider, ``GITHUB_COPILOT``, alongside
+``CLAUDE_CODE``. The two hold identical ``may``/``must_not`` sets and identical handoff
+transitions -- the capability is unchanged; only the set of names that may fill it grows by
+one. Eligibility recorded here is necessary but never sufficient: this module answers "is
+``GITHUB_COPILOT`` a role this Binding recognises at all", never "is Copilot the selected
+executor for this specific work unit right now". That second, narrower question -- exact
+repository, branch, base/head SHA, and a SHUKOU-granted, read-back-verified selection record --
+is :mod:`.executor_selection`, a separate gate a caller must pass in addition to, not instead
+of, this one. ``ELIGIBLE_PROVIDER_MEMBERSHIP_IS_NOT_EXECUTION_AUTHORITY=true``.
 """
 
 from __future__ import annotations
@@ -72,18 +83,39 @@ def resolve_policy_path() -> Path:
 #: copy of the ratified record read this; the guard uses :func:`resolve_policy_path`.
 POLICY_PATH = REPOSITORY_POLICY_PATH
 
-POLICY_VERSION = "0.2"
-DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002"
-SUPERSEDED_DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001"
+POLICY_VERSION = "0.3"
+DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003"
+SUPERSEDED_DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002"
 
 #: The sole Human authority.
 HUMAN_AUTHORITY = "SHUKOU"
 #: The sole Structural Advisor.
 STRUCTURAL_ADVISOR = "CHATGPT"
-#: The sole implementation executor.
+#: The first ratified implementation executor. Decision 0002's name; kept unchanged by
+#: Decision 0003 so every historical record and every Claude Code transition continues to
+#: read exactly as it did before Copilot was admitted.
 EXECUTOR = "CLAUDE_CODE"
+#: The second eligible implementation executor (Decision 0003, Issue #102). Same capability,
+#: same ``may``/``must_not`` sets, same transitions as :data:`EXECUTOR` -- the Binding does
+#: not care which name fills the capability, only that exactly one eligible name does, for a
+#: given work unit, through :mod:`.executor_selection`.
+COPILOT_EXECUTOR = "GITHUB_COPILOT"
 
-ROLES: frozenset[str] = frozenset({STRUCTURAL_ADVISOR, EXECUTOR, "GITHUB", HUMAN_AUTHORITY})
+#: Every name this Binding currently recognises as eligible to hold the implementation
+#: executor capability. Membership here is eligibility, never authority -- see the module
+#: docstring and :mod:`.executor_selection`.
+EXECUTOR_PROVIDERS: frozenset[str] = frozenset({EXECUTOR, COPILOT_EXECUTOR})
+#: Absent any work-unit-scoped selection record naming Copilot, Claude Code continues to
+#: operate exactly as it did under Decision 0002. This is what makes Decision 0003 backward
+#: compatible rather than a breaking re-selection.
+DEFAULT_EXECUTOR_PROVIDER = EXECUTOR
+#: Only the Human authority may select, for one work unit, which eligible provider is the
+#: active executor.
+EXECUTOR_PROVIDER_SELECTION_AUTHORITY = HUMAN_AUTHORITY
+
+ROLES: frozenset[str] = frozenset(
+    {STRUCTURAL_ADVISOR, EXECUTOR, COPILOT_EXECUTOR, "GITHUB", HUMAN_AUTHORITY}
+)
 
 #: Every top-level key the policy may carry, and no other.
 POLICY_KEYS: frozenset[str] = frozenset(
@@ -118,6 +150,9 @@ POLICY_KEYS: frozenset[str] = frozenset(
         "prohibited_automated_review_triggers",
         "precedence",
         "kernel_provider_neutrality_preserved",
+        "executor_providers",
+        "executor_provider_default",
+        "executor_provider_selection_authority",
     }
 )
 
@@ -137,9 +172,30 @@ MERGE_READINESS_RECOMMENDATION = "MERGE_READINESS_RECOMMENDATION"
 FINAL_ACCEPTANCE_DECISION = "FINAL_ACCEPTANCE_DECISION"
 MERGE_OPERATION = "MERGE_OPERATION"
 
+#: The implementation executor's capability and permission sets, shared verbatim by every
+#: eligible provider in :data:`EXECUTOR_PROVIDERS`. Declared once and spread into both names
+#: below so a future third provider (or a correction to either set) cannot drift the two apart
+#: by editing one and forgetting the other.
+_EXECUTOR_CAPABILITY = "IMPLEMENTATION_EXECUTOR"
+_EXECUTOR_MAY = frozenset(
+    {"IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"}
+)
+_EXECUTOR_MUST_NOT = frozenset(
+    {
+        "STRUCTURAL_AUTHORITY",
+        STRUCTURAL_REVIEW,
+        MERGE_READINESS_RECOMMENDATION,
+        FINAL_ACCEPTANCE_DECISION,
+        MERGE_OPERATION,
+        "ADOPT_EXTERNAL_FINDING",
+        "REQUEST_AUTOMATED_EXTERNAL_REVIEW",
+    }
+)
+
 RATIFIED_CAPABILITIES: dict[str, str] = {
     STRUCTURAL_ADVISOR: "STRUCTURAL_ADVISOR",
-    EXECUTOR: "IMPLEMENTATION_EXECUTOR",
+    EXECUTOR: _EXECUTOR_CAPABILITY,
+    COPILOT_EXECUTOR: _EXECUTOR_CAPABILITY,
     "GITHUB": "HUMAN_INTENT_AND_WORK_STATE_SURFACE",
     HUMAN_AUTHORITY: "HUMAN_CONSTITUTIONAL_AUTHORITY",
 }
@@ -156,9 +212,8 @@ RATIFIED_MAY: dict[str, frozenset[str]] = {
             MERGE_READINESS_RECOMMENDATION,
         }
     ),
-    EXECUTOR: frozenset(
-        {"IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"}
-    ),
+    EXECUTOR: _EXECUTOR_MAY,
+    COPILOT_EXECUTOR: _EXECUTOR_MAY,
     "GITHUB": frozenset(
         {
             "HUMAN_INTENT_RECORD",
@@ -187,17 +242,8 @@ RATIFIED_MUST_NOT: dict[str, frozenset[str]] = {
             "REQUEST_AUTOMATED_EXTERNAL_REVIEW",
         }
     ),
-    EXECUTOR: frozenset(
-        {
-            "STRUCTURAL_AUTHORITY",
-            STRUCTURAL_REVIEW,
-            MERGE_READINESS_RECOMMENDATION,
-            FINAL_ACCEPTANCE_DECISION,
-            MERGE_OPERATION,
-            "ADOPT_EXTERNAL_FINDING",
-            "REQUEST_AUTOMATED_EXTERNAL_REVIEW",
-        }
-    ),
+    EXECUTOR: _EXECUTOR_MUST_NOT,
+    COPILOT_EXECUTOR: _EXECUTOR_MUST_NOT,
     "GITHUB": frozenset(
         {
             "CANONICAL_KERNEL_STATE",
@@ -277,12 +323,30 @@ RATIFIED_HUMAN_ONLY_STATES: frozenset[str] = frozenset(
 
 #: The complete declared transition set, as ``(actor, from, to)``. Pinned whole: a transition
 #: added to the artifact is refused, and one removed from it is refused too.
+#:
+#: Every executor-actor transition is declared once per entry in :data:`EXECUTOR_PROVIDERS`
+#: (built below by substitution) rather than hand-duplicated, so the two providers cannot
+#: drift to different transition sets by someone editing one literal block and not the other.
+#: The state names themselves are unchanged from Decision 0002 -- they describe a step in the
+#: implementation phase, not which eligible provider took it; the actor field is what the
+#: Binding actually conditions on.
+_EXECUTOR_TRANSITION_TEMPLATE: tuple[tuple[str, str], ...] = (
+    ("IMPLEMENTATION_IN_PROGRESS", "CLAUDE_CODE_IMPLEMENTATION_COMPLETE"),
+    ("CLAUDE_CODE_IMPLEMENTATION_COMPLETE", "EXECUTOR_SELF_REVIEW_COMPLETE"),
+    ("EXECUTOR_SELF_REVIEW_COMPLETE", "GITHUB_PR_READY"),
+    ("GITHUB_PR_READY", "READY_FOR_STRUCTURAL_REVIEW"),
+    ("CORRECTION_REQUIRED", "IMPLEMENTATION_IN_PROGRESS"),
+    ("MORE_EVIDENCE_REQUIRED", "IMPLEMENTATION_IN_PROGRESS"),
+    ("SHUKOU_REJECTED", "IMPLEMENTATION_IN_PROGRESS"),
+)
+
 RATIFIED_TRANSITIONS: frozenset[tuple[str, str, str]] = frozenset(
     {
-        (EXECUTOR, "IMPLEMENTATION_IN_PROGRESS", "CLAUDE_CODE_IMPLEMENTATION_COMPLETE"),
-        (EXECUTOR, "CLAUDE_CODE_IMPLEMENTATION_COMPLETE", "EXECUTOR_SELF_REVIEW_COMPLETE"),
-        (EXECUTOR, "EXECUTOR_SELF_REVIEW_COMPLETE", "GITHUB_PR_READY"),
-        (EXECUTOR, "GITHUB_PR_READY", EXECUTOR_TERMINAL_STATE),
+        (provider, source, target)
+        for provider in EXECUTOR_PROVIDERS
+        for source, target in _EXECUTOR_TRANSITION_TEMPLATE
+    }
+    | {
         (STRUCTURAL_ADVISOR, EXECUTOR_TERMINAL_STATE, "STRUCTURAL_REVIEW_RUNNING"),
         (STRUCTURAL_ADVISOR, "STRUCTURAL_REVIEW_RUNNING", "STRUCTURAL_REVIEW_PASS"),
         (STRUCTURAL_ADVISOR, "STRUCTURAL_REVIEW_RUNNING", "CORRECTION_REQUIRED"),
@@ -293,9 +357,6 @@ RATIFIED_TRANSITIONS: frozenset[tuple[str, str, str]] = frozenset(
         (HUMAN_AUTHORITY, MERGE_RECOMMENDATION_STATE, FINAL_ACCEPTANCE_STATE),
         (HUMAN_AUTHORITY, MERGE_RECOMMENDATION_STATE, "SHUKOU_REJECTED"),
         (HUMAN_AUTHORITY, FINAL_ACCEPTANCE_STATE, MERGE_OPERATION_STATE),
-        (EXECUTOR, "CORRECTION_REQUIRED", "IMPLEMENTATION_IN_PROGRESS"),
-        (EXECUTOR, "MORE_EVIDENCE_REQUIRED", "IMPLEMENTATION_IN_PROGRESS"),
-        (EXECUTOR, "SHUKOU_REJECTED", "IMPLEMENTATION_IN_PROGRESS"),
     }
 )
 
@@ -413,6 +474,21 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
     _require(
         policy["external_finding_initial_status"] == "UNVERIFIED_EXTERNAL_OBSERVATION",
         "an external finding must begin unverified",
+    )
+
+    # --- eligible executor providers, pinned whole (Decision 0003) ---------- #
+    _require(
+        frozenset(_string_list(policy["executor_providers"], "executor providers"))
+        == EXECUTOR_PROVIDERS,
+        "executor providers are not the ratified eligible set",
+    )
+    _require(
+        policy["executor_provider_default"] == DEFAULT_EXECUTOR_PROVIDER,
+        f"executor_provider_default must be {DEFAULT_EXECUTOR_PROVIDER}",
+    )
+    _require(
+        policy["executor_provider_selection_authority"] == EXECUTOR_PROVIDER_SELECTION_AUTHORITY,
+        f"executor_provider_selection_authority must be {EXECUTOR_PROVIDER_SELECTION_AUTHORITY}",
     )
 
     # --- states and transitions, pinned whole -------------------------------- #

@@ -61,6 +61,7 @@ PACKAGE = ROOT / "src" / "manosube_agent_civilization" / "development_binding"
 ROUTE_BEARING: tuple[Path, ...] = (
     ROOT / "03_BINDING" / "CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md",
     ROOT / "03_BINDING" / "GOVERNANCE_ADOPTION_RECORD_ENFORCEMENT.md",
+    ROOT / "03_BINDING" / "COPILOT_PARTICIPATION.md",
     ROOT / "03_BINDING" / "templates" / "IMPLEMENTATION_HANDOFF_TEMPLATE.md",
     ROOT / "03_BINDING" / "templates" / "PR_COMPLETION_TEMPLATE.md",
     ROOT / "00_KERNEL" / "HUMAN_AGENT_WORK_COMMUNICATION.md",
@@ -76,6 +77,10 @@ HISTORICAL: frozenset[Path] = frozenset(
         / "docs"
         / "decisions"
         / "ADR-0028-CAPABILITY_NEUTRALITY_WITHOUT_SELECTION_IS_UNBOUND.md",
+        ROOT
+        / "docs"
+        / "decisions"
+        / "ADR-0029-ELIGIBLE_PROVIDER_MEMBERSHIP_IS_NOT_EXECUTION_AUTHORITY.md",
         Path(__file__).resolve(),
         PACKAGE / "policy.py",
     }
@@ -92,6 +97,14 @@ DECLARED_FLAGS: frozenset[str] = frozenset(
         "STRUCTURAL_REVIEW_OWNER_FIXED",
         "HANDOFF_TERMINATES_AT_READY_FOR_STRUCTURAL_REVIEW",
         "EXECUTOR_SELF_REVIEW_AS_ACCEPTANCE",
+        # Decision 0003 (Issue #102): acceptance flags that read as state-shaped by sharing
+        # segments with a ratified state, but name an eligibility/compatibility fact, not a
+        # handoff state.
+        "CLAUDE_CODE_REMAINS_DEFAULT_EXECUTOR_PROVIDER",
+        "CLAUDE_CODE_REMAINS_ELIGIBLE_EXECUTOR",
+        # COPILOT_PARTICIPATION.md's own pre-existing trial-handoff template placeholder
+        # (PR #103), newly swept now that this document has joined ROUTE_BEARING.
+        "REQUIRED_EVIDENCE",
     }
 )
 

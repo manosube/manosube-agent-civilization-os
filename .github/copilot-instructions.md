@@ -13,14 +13,18 @@ ChatGPT owns independent structural review in the current Development Binding.
 Read docs/project_sources/00_SOURCE_AUTHORITY_INDEX.md to resolve source ownership.
 Read 03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md and
 03_BINDING/DEVELOPMENT_BINDING_POLICY.json for active development authority.
-Read 03_BINDING/COPILOT_PARTICIPATION.md for the enrollment proposal and status.
+Read 03_BINDING/COPILOT_PARTICIPATION.md for the enrollment design and status.
 Dated source projections and historical receipts are not current GitHub facts.
 Verify the governing Issue, adoption record, base/head SHA and permitted scope.
 
-The active v0.2 machine policy selects CLAUDE_CODE, not Copilot, as executor.
-This instructions file does not supersede that policy or grant execution.
-Until a Human-accepted policy revision admits Copilot for the exact work unit,
-limit activity to requested read-only analysis and report BLOCKED for implementation.
+The active v0.3 machine policy (Decision 0003) names GITHUB_COPILOT as an
+*eligible* executor alongside CLAUDE_CODE, with identical permissions. Eligible
+is not authorized: being named in the policy's role map grants nothing by
+itself. Executing for a specific work unit requires a separate, SHUKOU-granted,
+read-back-verified Executor Selection Record bound to the exact repository,
+branch, base/head SHA and work unit (`development_binding.executor_selection`).
+Absent that record for this exact work unit, limit activity to requested
+read-only analysis and report BLOCKED for implementation.
 Never label Copilot as CLAUDE_CODE to bypass the policy. Eligible is not authorized.
 
 ## Authorized work

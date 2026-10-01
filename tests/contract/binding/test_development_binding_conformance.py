@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from manosube_agent_civilization.development_binding import (
+    EXECUTOR_PROVIDERS,
     HUMAN_AUTHORITY,
     ROLES,
     PolicyIntegrityError,
@@ -21,8 +22,11 @@ from manosube_agent_civilization.development_binding import (
 )
 from manosube_agent_civilization.development_binding.policy import (
     BINDING_DOCUMENT_PATH,
+    COPILOT_EXECUTOR,
     DECISION_ID,
+    DEFAULT_EXECUTOR_PROVIDER,
     EXECUTOR,
+    EXECUTOR_PROVIDER_SELECTION_AUTHORITY,
     POLICY_PATH,
     RATIFIED_HUMAN_ONLY_STATES,
     RATIFIED_MAY,
@@ -52,14 +56,14 @@ COMMUNICATION = (ROOT / "00_KERNEL" / "HUMAN_AGENT_WORK_COMMUNICATION.md").read_
 
 def test_the_human_decision_is_recorded_with_its_identity() -> None:
     assert POLICY["decision_id"] == DECISION_ID
-    assert DECISION_ID.endswith("0002")
-    assert POLICY["supersedes"].endswith("0001")
+    assert DECISION_ID.endswith("0003")
+    assert POLICY["supersedes"].endswith("0002")
     assert POLICY["decision_status"] == "RATIFIED"
     assert POLICY["decision_authority"] == HUMAN_AUTHORITY
 
 
 def test_the_role_map_is_closed_and_exact() -> None:
-    assert frozenset({"CHATGPT", "CLAUDE_CODE", "GITHUB", "SHUKOU"}) == ROLES
+    assert frozenset({"CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB", "SHUKOU"}) == ROLES
     assert frozenset(POLICY["roles"]) == ROLES
 
 
@@ -68,6 +72,7 @@ def test_the_role_map_is_closed_and_exact() -> None:
     [
         ("CHATGPT", "STRUCTURAL_ADVISOR"),
         ("CLAUDE_CODE", "IMPLEMENTATION_EXECUTOR"),
+        ("GITHUB_COPILOT", "IMPLEMENTATION_EXECUTOR"),
         ("GITHUB", "HUMAN_INTENT_AND_WORK_STATE_SURFACE"),
         ("SHUKOU", "HUMAN_CONSTITUTIONAL_AUTHORITY"),
     ],
@@ -78,11 +83,30 @@ def test_each_participant_holds_exactly_its_declared_capability(
     assert POLICY["roles"][role]["capability"] == capability
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB"])
+@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB"])
 @pytest.mark.parametrize("forbidden", ["FINAL_ACCEPTANCE_DECISION", "MERGE_OPERATION"])
 def test_no_participant_but_the_human_may_accept_or_merge(role: str, forbidden: str) -> None:
     assert forbidden in POLICY["roles"][role]["must_not"]
     assert forbidden not in POLICY["roles"][role]["may"]
+
+
+def test_claude_code_and_copilot_hold_the_identical_executor_permission_sets() -> None:
+    """Decision 0003: the capability is unchanged: only the set of eligible names grows."""
+
+    assert POLICY["roles"][EXECUTOR]["may"] == POLICY["roles"][COPILOT_EXECUTOR]["may"]
+    assert (
+        POLICY["roles"][EXECUTOR]["must_not"] == POLICY["roles"][COPILOT_EXECUTOR]["must_not"]
+    )
+
+
+def test_eligible_executor_providers_are_pinned_and_claude_code_remains_default() -> None:
+    assert frozenset(POLICY["executor_providers"]) == EXECUTOR_PROVIDERS
+    assert POLICY["executor_provider_default"] == DEFAULT_EXECUTOR_PROVIDER == EXECUTOR
+    assert (
+        POLICY["executor_provider_selection_authority"]
+        == EXECUTOR_PROVIDER_SELECTION_AUTHORITY
+        == HUMAN_AUTHORITY
+    )
 
 
 @pytest.mark.parametrize("owner_field,owner", sorted(RATIFIED_OWNERS.items()))
@@ -161,8 +185,16 @@ def test_the_executor_is_never_the_actor_of_an_advisor_only_transition() -> None
     for actor, _, target in RATIFIED_TRANSITIONS:
         if target in POLICY["advisor_only_states"]:
             assert actor == STRUCTURAL_ADVISOR, (actor, target)
-        if actor == EXECUTOR:
+        if actor in EXECUTOR_PROVIDERS:
             assert target not in RATIFIED_HUMAN_ONLY_STATES
+
+
+def test_no_eligible_executor_provider_is_ever_the_actor_of_a_human_only_transition() -> None:
+    """Decision 0003: the second eligible provider inherits the same ceiling, not a new one."""
+
+    for actor, _, target in RATIFIED_TRANSITIONS:
+        if actor in EXECUTOR_PROVIDERS:
+            assert target not in RATIFIED_HUMAN_ONLY_STATES, (actor, target)
 
 
 # --------------------------------------------------------------------------- #
@@ -174,12 +206,12 @@ def test_automated_review_triggers_are_prohibited() -> None:
     assert POLICY["automated_review_trigger_allowed"] is False
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE"])
+@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT"])
 def test_no_agent_may_request_an_automated_external_review(role: str) -> None:
     assert "REQUEST_AUTOMATED_EXTERNAL_REVIEW" in POLICY["roles"][role]["must_not"]
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB"])
+@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB"])
 def test_no_agent_may_adopt_an_external_finding(role: str) -> None:
     assert "ADOPT_EXTERNAL_FINDING" in POLICY["roles"][role]["must_not"]
 
@@ -228,8 +260,12 @@ def _mutated(tmp_path: Path, **edits: object) -> Path:
         {"external_finding_initial_status": "VERIFIED"},
         {"kernel_element": "CHANGE"},
         {"kernel_provider_neutrality_preserved": False},
-        {"policy_version": "0.3"},
+        {"policy_version": "0.4"},
         {"escape_hatch": True},
+        {"executor_providers": ["CLAUDE_CODE"]},
+        {"executor_providers": ["CLAUDE_CODE", "GITHUB_COPILOT", "CODEX"]},
+        {"executor_provider_default": "GITHUB_COPILOT"},
+        {"executor_provider_selection_authority": "CLAUDE_CODE"},
     ],
     ids=lambda edits: "-".join(sorted(edits)),
 )

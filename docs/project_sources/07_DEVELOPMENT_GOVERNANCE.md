@@ -961,3 +961,44 @@ ISSUE_102_CLOSE_ALLOWED=false
 Claude Code is the next code implementation owner after the exact design is
 accepted and a verified work-unit handoff is recorded. Instructions alone do not
 authorize Copilot implementation or close the tracked Difference.
+
+---
+
+# 23. Copilot Development Binding machine-policy implementation (Issue #102, Decision 0003)
+
+SHUKOU accepted the §22 design (PR #103 merged as `e2d686e6`) and recorded a
+formal implementation handoff to Claude Code
+([Issue #102 comment 5921931690](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5921931690)).
+This section records the resulting machine-policy revision: `GITHUB_COPILOT`
+is now a second name eligible to hold the implementation executor capability,
+alongside `CLAUDE_CODE`, with the identical `may`/`must_not` sets and handoff
+transitions. The ratified decision superseding §22's referenced v0.2 policy is
+`HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003`
+(`03_BINDING/DEVELOPMENT_BINDING_POLICY.json`, `policy_version=0.3`).
+
+Eligibility is not execution authority. A new, separate gate --
+`development_binding.executor_selection` -- evaluates whether a specific,
+SHUKOU-granted, read-back-verified selection record binds one eligible
+provider to one exact work unit, repository, branch and base/head SHA. Absent
+such a record, `CLAUDE_CODE` remains the default and continues operating
+exactly as it did before this Decision. Independent structural review,
+SHUKOU's finding adoption, final acceptance and manual merge are unchanged and
+apply identically to Copilot's output. Automated external review requests
+remain prohibited by default.
+
+```text
+GOVERNING_ISSUE=#102
+MACHINE_POLICY_REVISION_DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003
+GITHUB_COPILOT_ELIGIBLE_EXECUTOR=true
+ELIGIBLE_PROVIDER_MEMBERSHIP_IS_NOT_EXECUTION_AUTHORITY=true
+EXECUTOR_SELECTION_RECORD_REQUIRED_FOR_NON_DEFAULT_PROVIDER=true
+CLAUDE_CODE_REMAINS_DEFAULT_EXECUTOR_PROVIDER=true
+STRUCTURAL_REVIEW_AND_FINAL_ACCEPTANCE_OWNERSHIP_UNCHANGED=true
+COPILOT_RUNTIME_WORK_UNIT_PROVEN=false
+ISSUE_102_CLOSE_ALLOWED=false
+```
+
+This machine-policy revision does not itself prove a real, authorized Copilot
+work unit was executed. That observation, its independent structural review,
+and SHUKOU's disposition are the remaining Difference this section does not
+close.
