@@ -405,6 +405,30 @@ _REACHABILITY_CASES: tuple[tuple[str, str, Any], ...] = (
             "actor": COPILOT_EXECUTOR,
             "action": "IMPLEMENTATION",
             "executor_selection": _copilot_selection(),
+            "paths": _COPILOT_PERMITTED_PATHS,
+        },
+    ),
+    # Structural Review Round 2 (I102-SR1 follow-up, PR #104 comment 5930926992): the
+    # invoked path scope is itself required and checked against the grant.
+    (
+        "INVOKED_PATHS_REQUIRED_AND_ABSENT",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(),
+        },
+    ),
+    (
+        "PATH_NOT_PERMITTED_BY_SELECTION",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(),
+            "paths": ["some/ungranted/path.py"],
         },
     ),
     # _evaluate_finding()

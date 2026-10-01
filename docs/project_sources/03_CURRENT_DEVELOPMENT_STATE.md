@@ -7213,3 +7213,62 @@ FRESH_STRUCTURAL_REVIEW_REQUIRED=true
 是正後、`evaluate()`は`GITHUB_COPILOT`のaction/transitionをselection recordなしでは
 拒否し、有効なselectionがあれば既存のClaude Code経路と同一に許可することを独立に
 再実行確認した。`CLAUDE_CODE`の既存3/4-key record shapeは変更されていない。
+
+---
+
+# 82. Issue #102 PR #104 Structural Review Round 2 correction (permitted_paths / transition permitted_actions)
+
+ChatGPT Structural Advisorによる§81是正への独立re-review
+([PR #104 comment 5930926992](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5930926992)、
+著者`manosube`/OWNER)は`VERDICT=CORRECTION_REQUIRED`を返し、§81で採択された
+obligationのうち二件が未完了であると指摘した。SHUKOUは当該二件を正式採択し
+([comment 5930993879](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5930993879))、
+続けてClaude Codeへ修正引継ぎを記録した
+([comment 5931011624](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5931011624))。
+いずれも再現・検証され、本節が是正を記録する。
+
+`SR2_PERMITTED_PATHS_NOT_ENFORCED`: §81時点の`_check_executor_selection`は
+`permitted_paths`をreceiptへ束縛・記録するのみで、`ACTOR_ACTION`/`HANDOFF_TRANSITION`
+のいずれもfile pathを運ばないため独立して強制できないことを明示的な非主張として
+記録していた。Reviewerは、この限界を正直に記録すること自体はobligationを満たさない
+と指摘した。是正: `ACTOR_ACTION`のrecord shapeへ新規optional key `paths`(非空の
+string list)を追加し、`_evaluate_action`が要求する。`paths`が欠落・空・非stringを
+含む場合は`INVOKED_PATHS_REQUIRED_AND_ABSENT`で拒否し、与えられた場合はselectionの
+`permitted_paths`と要素ごとに完全一致で比較し、一つでも grant外のpathがあれば
+`PATH_NOT_PERMITTED_BY_SELECTION`で拒否する。`HANDOFF_TRANSITION`はfile pathという
+概念自体を持たないため`paths`キーを追加せず、この強制対象から明示的に除外した。
+
+`SR2_TRANSITIONS_BYPASS_PERMITTED_ACTIONS`(F1/F2由来の残存obligation):
+§81時点の`_evaluate_handoff`は`_check_executor_selection`を`action`引数なしで呼んで
+いたため、`permitted_actions=["TEST_EXECUTION"]`のみのgrantでも
+`CLAUDE_CODE_IMPLEMENTATION_COMPLETE`・`EXECUTOR_SELF_REVIEW_COMPLETE`・
+`GITHUB_PR_READY`・`READY_FOR_STRUCTURAL_REVIEW`への遷移がすべて無条件に`PERMITTED`
+となっていた。Reviewerはこの正確な反例を再現して報告した。是正: 新規の決定的
+mapping `_TRANSITION_ACTION`(遷移先state → 代表するcapability名)を追加し、
+`_evaluate_handoff`が`_check_executor_selection`へ`action=_TRANSITION_ACTION.get(target)`
+を渡すよう結線した。これにより`TEST_EXECUTION`のみのgrantでの実装/self-review/
+PR準備への遷移はすべて`ACTION_NOT_PERMITTED_BY_SELECTION`で拒否され、対応する
+capabilityを含むgrantのみがその遷移を許可する。既定provider(`CLAUDE_CODE`)の経路、
+Human-only state遷移、advisor境界は変更していない。
+
+```text
+GOVERNING_ISSUE=#102
+IMPLEMENTATION_PR=#104
+REVIEW_ROUND=2
+REVIEW_VERDICT_RECEIVED=CORRECTION_REQUIRED
+ADOPTION_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5930993879
+HANDOFF_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5931011624
+SR2_PERMITTED_PATHS_NOT_ENFORCED_FIXED=true
+SR2_TRANSITIONS_BYPASS_PERMITTED_ACTIONS_FIXED=true
+ACTOR_ACTION_NOW_CARRIES_PATHS_FIELD=true
+PERMITTED_PATHS_NOW_INDEPENDENTLY_ENFORCED_FOR_ACTOR_ACTION=true
+HANDOFF_TRANSITION_NOW_BOUND_TO_TRANSITION_ACTION_MAPPING=true
+TEST_EXECUTION_ONLY_GRANT_CANNOT_ATTEST_IMPLEMENTATION_OR_SELF_REVIEW_OR_PR_PREPARATION=true
+CLAUDE_CODE_DEFAULT_PATH_UNAFFECTED=true
+FRESH_STRUCTURAL_REVIEW_REQUIRED=true
+```
+
+是正後、Reviewerが報告した両反例(`TEST_EXECUTION`のみのgrantでの`paths`無し
+implementation実行、同grantでの各遷移attestation)を独立に再現し、是正後は
+いずれも拒否されること、および全capabilityを含む完全なgrantは従来通り許可される
+ことを確認した。`CLAUDE_CODE`の既定経路は本是正でも変更されていない。

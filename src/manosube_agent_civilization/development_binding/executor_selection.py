@@ -61,13 +61,14 @@ Bindings this module checks, each answering one of the required counterexamples:
   ``ADOPT_...`` shape; a record naming one adoption while its receipt claims another is
   refused exactly as a reviewed-SHA mismatch is there.
 - ``permitted_actions``/``permitted_paths`` are receipt-bound non-empty lists. The caller of
-  :func:`evaluate` (not this module) checks a requested ``ACTOR_ACTION``'s ``action`` against
-  the grant's own ``permitted_actions`` -- an admission bounds the actions it covers, it does
-  not re-open everything the role's own ``may`` list permits in general. ``permitted_paths``
-  is bound and auditable here but is **not** independently enforced anywhere in this package:
-  neither ``ACTOR_ACTION`` nor ``HANDOFF_TRANSITION`` carries a file path for it to be checked
-  against, and claiming enforcement this evaluator cannot perform would be exactly the
-  claim-wider-than-implementation gap this repository's own guards exist to catch.
+  :func:`evaluate` (not this module) enforces both: a requested ``ACTOR_ACTION``'s ``action``
+  (or a ``HANDOFF_TRANSITION`` target's own represented capability) is checked against the
+  grant's own ``permitted_actions``, and an ``ACTOR_ACTION``'s own ``paths`` field is checked
+  against ``permitted_paths`` -- an admission bounds the actions and paths it covers, it does
+  not re-open everything the role's own ``may`` list permits in general (Structural Review
+  Round 2, I102-SR1 follow-up, PR #104 comment 5930926992: Round 1 bound ``permitted_paths``
+  to the receipt but never gave any record shape a path to check it against; Round 2 found
+  that recording the gap honestly did not close it, so ``ACTOR_ACTION`` now carries one).
 - ``work_unit_id`` must match ``invoked_work_unit_id`` (a grant issued for one work unit is
   refused when replayed to authorize a different one).
 - ``concurrently_active_provider_for_work_unit`` must be empty or equal to this record's own
