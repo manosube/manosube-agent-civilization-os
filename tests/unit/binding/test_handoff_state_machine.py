@@ -124,6 +124,7 @@ def handoff_as_selected(actor: str, source: str, target: str) -> dict[str, Any]:
     record = handoff(actor, source, target)
     if actor in EXECUTOR_PROVIDERS and actor != DEFAULT_EXECUTOR_PROVIDER:
         record["executor_selection"] = _COPILOT_SELECTION
+        record["paths"] = _COPILOT_SELECTION_PERMITTED_PATHS
     return record
 
 

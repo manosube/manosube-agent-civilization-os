@@ -431,6 +431,19 @@ _REACHABILITY_CASES: tuple[tuple[str, str, Any], ...] = (
             "paths": ["some/ungranted/path.py"],
         },
     ),
+    # Structural Review Round 3 (PR #104 comment 5934943202): a well-typed but unsafe
+    # invoked path is refused before the membership check ever runs.
+    (
+        "INVOKED_PATHS_UNSAFE",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(),
+            "paths": ["../outside.py"],
+        },
+    ),
     # _evaluate_finding()
     (
         "FINDING_UNREADABLE",

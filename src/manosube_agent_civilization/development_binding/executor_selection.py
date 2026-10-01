@@ -63,12 +63,23 @@ Bindings this module checks, each answering one of the required counterexamples:
 - ``permitted_actions``/``permitted_paths`` are receipt-bound non-empty lists. The caller of
   :func:`evaluate` (not this module) enforces both: a requested ``ACTOR_ACTION``'s ``action``
   (or a ``HANDOFF_TRANSITION`` target's own represented capability) is checked against the
-  grant's own ``permitted_actions``, and an ``ACTOR_ACTION``'s own ``paths`` field is checked
+  grant's own ``permitted_actions``, and an invoked ``paths`` field -- on ``ACTOR_ACTION``, and
+  on every ``HANDOFF_TRANSITION`` whose target represents file-scoped work -- is checked
   against ``permitted_paths`` -- an admission bounds the actions and paths it covers, it does
   not re-open everything the role's own ``may`` list permits in general (Structural Review
   Round 2, I102-SR1 follow-up, PR #104 comment 5930926992: Round 1 bound ``permitted_paths``
   to the receipt but never gave any record shape a path to check it against; Round 2 found
   that recording the gap honestly did not close it, so ``ACTOR_ACTION`` now carries one).
+- ``permitted_paths`` itself (and, by the receipt-mismatch binding above, its receipt) must
+  be a *safe* repository-relative path grammar, not merely a non-empty string: a traversal
+  segment (``..``), an absolute or drive-style/backslash form, an empty segment, or a
+  whitespace-only string is refused (``PERMITTED_PATHS_MALFORMED``) even when the record and
+  its receipt agree on it -- agreement proves only internal consistency, never that the
+  agreed-upon value is a safe grant to have made (Structural Review Round 3, PR #104 comment
+  5934943202: an unsafe grant and its matching receipt were, before this, jointly admissible).
+  :func:`is_safe_repository_relative_path` is the one grammar this module and ``evaluation``
+  both use, for a grant's own ``permitted_paths`` and for every invoked path checked against
+  it, so the two can never silently diverge.
 - ``work_unit_id`` must match ``invoked_work_unit_id`` (a grant issued for one work unit is
   refused when replayed to authorize a different one).
 - ``concurrently_active_provider_for_work_unit`` must be empty or equal to this record's own
@@ -185,6 +196,46 @@ _GOVERNING_REFERENCE_PATTERN = re.compile(r"^#[0-9]+$")
 #: a self-contained extension of the same admission grammar rather than a second one that
 #: happens to agree today.
 _ADOPTION_ID_PATTERN = re.compile(r"^ADOPT_[A-Z0-9_]+$")
+
+#: A path segment this grammar accepts: letters, digits, underscore, hyphen and dot, and never
+#: empty. Deliberately conservative -- this repository's own paths (``tests/some_file.py``,
+#: ``src/manosube_agent_civilization/development_binding/evaluation.py``) all fit it, and a
+#: narrower allowed set is easier to reason about than a denylist of unsafe characters.
+_SAFE_PATH_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+#: Segments this grammar never accepts regardless of the pattern above: empty (a leading,
+#: trailing, or doubled ``/``) and the two dot-forms that mean "here" or "my parent" to any
+#: real path resolver, even though this module never resolves one (Structural Review Round 3,
+#: PR #104 comment 5934943202).
+_UNSAFE_PATH_SEGMENTS: frozenset[str] = frozenset({"", ".", ".."})
+
+
+def is_safe_repository_relative_path(value: Any) -> bool:
+    """Whether *value* is a well-formed, repository-relative path -- lexically, only.
+
+    Refuses anything that is not a plain forward-slash-separated path relative to the
+    repository root: a leading ``/`` (absolute), a trailing ``/`` (an empty final segment), a
+    ``..``/``.`` segment (traversal or a no-op that still does not belong in a grant), a
+    doubled ``/`` (an empty segment), a backslash or a ``:`` (a Windows/drive-style absolute
+    form), leading/trailing whitespace, or any character a segment's own pattern above does
+    not list -- which includes a whitespace-only string, since no segment of one matches that
+    pattern. This performs no filesystem resolution, symlink following, or network call, and
+    is not asked to: it decides whether a string is a *safe shape* for a path, never whether
+    the path exists, is readable, or names something consequential. Exact-string membership
+    against a grant's own ``permitted_paths`` is a separate, later check; a path can be safe
+    by this grammar and still not be the one path a specific grant named.
+    """
+
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    if "\\" in value or ":" in value:
+        return False
+    if value.startswith("/") or value.endswith("/"):
+        return False
+    return all(
+        segment not in _UNSAFE_PATH_SEGMENTS and _SAFE_PATH_SEGMENT_PATTERN.match(segment)
+        for segment in value.split("/")
+    )
 
 
 def _looks_like_git_sha(value: Any) -> bool:
@@ -384,6 +435,13 @@ def evaluate_executor_selection(record: dict[str, Any]) -> dict[str, Any]:
     if not _ADOPTION_ID_PATTERN.match(adoption_id):
         reasons.append("ADOPTION_ID_MALFORMED")
 
+    # Structural Review Round 3 (PR #104 comment 5934943202): checked on the grant's own
+    # authoritative permitted_paths, not merely on the receipt's copy of it, so an unsafe
+    # value is refused even when record and receipt agree on it -- agreement proves only
+    # that the caller did not contradict itself, never that the agreed-upon grant was safe.
+    if not all(is_safe_repository_relative_path(path) for path in permitted_paths):
+        reasons.append("PERMITTED_PATHS_MALFORMED")
+
     # Distinguishes a forged or unposted grant from a real, individually addressable comment,
     # exactly as `adoption_record` distinguishes a chat draft from a recorded adoption.
     if not _COMMENT_URL_PATTERN.match(comment_url):
@@ -481,6 +539,7 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
         "DIFFERENCE_ID_MALFORMED",
         "GOVERNING_REFERENCE_MALFORMED",
         "ADOPTION_ID_MALFORMED",
+        "PERMITTED_PATHS_MALFORMED",
         "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT",
         "API_READ_BACK_RECEIPT_WORK_UNIT_ID_MISMATCH",
         "API_READ_BACK_RECEIPT_DIFFERENCE_ID_MISMATCH",

@@ -256,6 +256,7 @@ def test_a_fully_bound_grant_still_permits_its_own_covered_transition_chain() ->
                 "from_state": source,
                 "to_state": target,
                 "executor_selection": grant,
+                "paths": grant["permitted_paths"],
             }
         )
         assert verdict == {"decision": PERMITTED, "reason_codes": ["DECLARED_TRANSITION"]}, (
@@ -304,6 +305,89 @@ def test_an_implementation_action_requires_its_invoked_paths() -> None:
         }
     )
     assert right_path == {"decision": PERMITTED, "reason_codes": ["ACTION_WITHIN_ROLE"]}
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    ["../outside.py", "/tmp/outside.py", "tests/../outside.py", "   "],  # noqa: S108 -- a grammar-rejection string, never opened
+)
+def test_a_matching_unsafe_grant_and_invoked_path_is_still_refused(unsafe_path: str) -> None:
+    """Structural Review Round 3's exact reproduction: before this, an unsafe path admitted
+    by an equally unsafe grant (record and receipt agreeing on it) was PERMITTED/
+    ACTION_WITHIN_ROLE. Agreement never made the shape safe."""
+
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    base_grant = _copilot_selection_grant()
+    unsafe_receipt = {
+        **base_grant["api_read_back_receipt"],
+        "permitted_actions": full_actions,
+        "permitted_paths": [unsafe_path],
+    }
+    grant = _copilot_selection_grant(
+        permitted_actions=full_actions,
+        permitted_paths=[unsafe_path],
+        api_read_back_receipt=unsafe_receipt,
+    )
+    verdict = evaluate(
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": grant,
+            "paths": [unsafe_path],
+        }
+    )
+    assert verdict["decision"] == REFUSED
+
+
+def test_a_completion_transition_requires_its_invoked_paths() -> None:
+    """Structural Review Round 3: an implementation-completion transition is itself the
+    claim that bounded file work was done, so -- like the ACTOR_ACTION it attests -- it must
+    name the paths that work touched, within the grant's own permitted_paths."""
+
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    base_grant = _copilot_selection_grant()
+    full_receipt = {**base_grant["api_read_back_receipt"], "permitted_actions": full_actions}
+    grant = _copilot_selection_grant(
+        permitted_actions=full_actions, api_read_back_receipt=full_receipt
+    )
+
+    no_paths = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+        }
+    )
+    assert no_paths["decision"] == REFUSED
+    assert "INVOKED_PATHS_REQUIRED_AND_ABSENT" in no_paths["reason_codes"]
+
+    wrong_path = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+            "paths": ["some/ungranted/path.py"],
+        }
+    )
+    assert wrong_path["decision"] == REFUSED
+    assert "PATH_NOT_PERMITTED_BY_SELECTION" in wrong_path["reason_codes"]
+
+    right_path = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+            "paths": grant["permitted_paths"],
+        }
+    )
+    assert right_path == {"decision": PERMITTED, "reason_codes": ["DECLARED_TRANSITION"]}
 
 
 @pytest.mark.parametrize("owner_field,owner", sorted(RATIFIED_OWNERS.items()))

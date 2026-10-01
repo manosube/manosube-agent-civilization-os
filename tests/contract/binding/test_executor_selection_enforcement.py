@@ -367,6 +367,26 @@ def test_untouched_receipt_no_longer_admits_a_substituted_scope() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "unsafe_path",
+    ["../outside.py", "/tmp/outside.py", "tests/../outside.py", "   "],  # noqa: S108 -- a grammar-rejection string, never opened
+)
+def test_an_unsafe_grant_path_is_refused_even_when_its_receipt_agrees(
+    unsafe_path: str,
+) -> None:
+    """Structural Review Round 3's exact reproduction: an unsafe permitted_paths entry,
+    agreed by its own receipt, was before this admissible -- agreement proves only internal
+    consistency, never that the agreed-upon value was a safe grant to have made."""
+
+    record = _record(
+        permitted_paths=[unsafe_path],
+        api_read_back_receipt=_receipt(permitted_paths=[unsafe_path]),
+    )
+    decision = evaluate_executor_selection(record)
+    assert decision["decision"] == EXECUTOR_SELECTION_REFUSED
+    assert decision["decision_reason_codes"] == ["PERMITTED_PATHS_MALFORMED"]
+
+
 # --------------------------------------------------------------------------- #
 # every declared reason code is reachable, and nothing else escapes
 # --------------------------------------------------------------------------- #
@@ -398,6 +418,16 @@ _REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
     (
         "ADOPTION_ID_MALFORMED",
         {"adoption_id": "", "api_read_back_receipt": _receipt(adoption_id="")},
+    ),
+    # Structural Review Round 3 (PR #104 comment 5934943202): an unsafe permitted_paths
+    # entry is refused even when record and receipt agree on it -- agreement alone never
+    # made an unsafe grant safe.
+    (
+        "PERMITTED_PATHS_MALFORMED",
+        {
+            "permitted_paths": ["../outside.py"],
+            "api_read_back_receipt": _receipt(permitted_paths=["../outside.py"]),
+        },
     ),
     (
         "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT",
