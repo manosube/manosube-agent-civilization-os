@@ -475,3 +475,18 @@ ISSUE_102_CLOSE_ALLOWED=false
 本節は機械ポリシーの受入機構を実装する。実際にCopilotが一つの認可されたwork unitを
 実行し、その証跡が還流することは、別途観測され、別途証明される。Issue #102は、
 その観測と独立structural reviewおよびSHUKOUの受入が完了するまで閉じられない。
+
+## 10.5 「read-back検証済み」の意味 (Structural Review Round 1是正、PR #104)
+
+§10.1は`executor_selection`を「read-back検証済みの採用記録に束縛された記録」と述べる。
+これは、記録自身の宣言値と、呼び手が主張するread-back receiptとの**内部整合性**が
+束縛されることを述べたものであり、`executor_selection`モジュール自身が実際のGitHub
+commentを取得・検証することを述べたものではない。同モジュールはnetwork call・
+credentialを一切持たない。Structural Review Round 1(`I102-SR1-E1`)は、この区別が
+module docstring・test docstringで不明瞭だったことを指摘し、是正された。
+
+```text
+MODULE_PERFORMS_NETWORK_READBACK=false
+MODULE_PROVES_INTERNAL_CONSISTENCY_ONLY=true
+CALLER_RECEIPT_IS_A_CLAIM_NOT_A_PROOF=true
+```

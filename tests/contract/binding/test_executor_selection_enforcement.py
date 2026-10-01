@@ -4,9 +4,25 @@ authority -- this proves the mechanical check for the narrower question of which
 provider is the *selected* executor for one exact work unit, at one exact scope, right now.
 
 See `development_binding.executor_selection` and `03_BINDING/COPILOT_PARTICIPATION.md` for the
-design this suite proves: missing, forged, stale and replayed selections are refused; a scope
-or SHA mismatch is refused; two providers simultaneously active for one work unit is refused;
-and a complete, verified selection for either eligible provider is admitted.
+design this suite proves: an absent, syntactically-malformed, or internally inconsistent
+selection is refused (this module proves offline *internal consistency*, never that any real
+GitHub comment exists or reads as claimed -- see the limits section below); stale and
+replayed selections are refused; a scope mismatch is refused; two providers simultaneously
+active for one work unit is refused; and a complete, internally-consistent selection record
+for either eligible provider answers ``EXECUTOR_SELECTION_ADMITTED``.
+
+Structural Review Round 1 (Issue #102 PR #104, I102-SR1-E1, corrected per the follow-up
+handoff comment 5927538575) found two overclaims in this file's own earlier version: its
+docstring called admission "verified" and its fixtures "not a fixture", and its positive
+case reused the *real* implementation-handoff comment URL
+(`#102#issuecomment-5921931690`) while asserting a work unit, provider and SHAs that comment
+never granted -- a real URL carrying an invented claim, not a faithful read-back. Every
+fixture below now uses a syntactically well-shaped but explicitly synthetic comment URL (a
+placeholder id no real comment holds), labelled as such; none asserts to be, or is compared
+against, any actual GitHub record. Matching the URL pattern is a shape check, not proof of
+authorship or existence -- consistent with `development_binding.adoption_record`'s own
+explicit limit, this module and this suite never claim otherwise, and adding network
+credentials to close that offline gap is out of scope here.
 """
 
 from __future__ import annotations
@@ -28,24 +44,40 @@ from manosube_agent_civilization.development_binding import (
 
 pytestmark = pytest.mark.contract
 
-_REAL_COMMENT_URL = (
-    "https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5921931690"
+#: Syntactically well-shaped (matches the verifiable-comment pattern) but explicitly
+#: synthetic: no real comment with this id exists, and this fixture asserts nothing about
+#: any actual GitHub record. Never the real implementation-handoff comment -- see I102-SR1-E1
+#: in this module's own docstring.
+_SYNTHETIC_COMMENT_URL = (
+    "https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-1000000001"
 )
 _SHA_A = "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344"
 _SHA_B = "b2c3d4e5f60718293a4b5c6d7e8f901122334455"
 _WORK_UNIT_ID = "WORK-UNIT-ISSUE-102-COPILOT-TRIAL-1"
+_DIFFERENCE_ID = "D-COPILOT-EXCHANGEABLE-DEVELOPMENT-EXECUTOR"
+_ADOPTION_ID = "ADOPT_I102_P104_SR1_F1_F2_E1_CORRECTION"
 _REPOSITORY = "manosube/manosube-agent-civilization-os"
 _BRANCH = "agent/issue-102-copilot-trial-1"
+_PERMITTED_ACTIONS = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+_PERMITTED_PATHS = ["tests/contract/binding/test_executor_selection_enforcement.py"]
 
 
 def _receipt(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "work_unit_id": _WORK_UNIT_ID,
+        "difference_id": _DIFFERENCE_ID,
         "governing_issue": "#102",
+        "adoption_id": _ADOPTION_ID,
         "selected_executor_provider": "GITHUB_COPILOT",
-        "comment_url": _REAL_COMMENT_URL,
+        "comment_url": _SYNTHETIC_COMMENT_URL,
         "decision_authority": "SHUKOU",
         "decision_status": "RATIFIED",
+        "authorized_repository": _REPOSITORY,
+        "authorized_branch": _BRANCH,
+        "authorized_base_sha": _SHA_A,
+        "expected_head_sha": _SHA_A,
+        "permitted_actions": _PERMITTED_ACTIONS,
+        "permitted_paths": _PERMITTED_PATHS,
     }
     base.update(overrides)
     return base
@@ -56,9 +88,11 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "schema_version": "0.1",
         "work_unit_id": _WORK_UNIT_ID,
         "invoked_work_unit_id": _WORK_UNIT_ID,
+        "difference_id": _DIFFERENCE_ID,
         "governing_issue": "#102",
+        "adoption_id": _ADOPTION_ID,
         "selected_executor_provider": "GITHUB_COPILOT",
-        "comment_url": _REAL_COMMENT_URL,
+        "comment_url": _SYNTHETIC_COMMENT_URL,
         "decision_authority": "SHUKOU",
         "decision_status": "RATIFIED",
         "api_read_back_receipt": _receipt(),
@@ -66,6 +100,8 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "authorized_branch": _BRANCH,
         "authorized_base_sha": _SHA_A,
         "expected_head_sha": _SHA_A,
+        "permitted_actions": _PERMITTED_ACTIONS,
+        "permitted_paths": _PERMITTED_PATHS,
         "current_repository": _REPOSITORY,
         "current_branch": _BRANCH,
         "current_base_sha": _SHA_A,
@@ -239,21 +275,95 @@ def test_a_non_shukou_decision_authority_is_refused() -> None:
 def test_an_unverified_read_back_receipt_is_refused_even_when_otherwise_complete() -> None:
     empty_receipt = {
         "work_unit_id": "",
+        "difference_id": "",
         "governing_issue": "",
+        "adoption_id": "",
         "selected_executor_provider": "",
         "comment_url": "",
         "decision_authority": "",
         "decision_status": "",
+        "authorized_repository": "",
+        "authorized_branch": "",
+        "authorized_base_sha": "",
+        "expected_head_sha": "",
+        # Non-empty but deliberately different from the record's own declared lists: an
+        # empty list would itself raise (`_require_string_list` forbids it), and the point
+        # here is a *mismatch*, not an unreadable shape.
+        "permitted_actions": ["SOMETHING_ELSE"],
+        "permitted_paths": ["something/else"],
     }
     decision = evaluate_executor_selection(_record(api_read_back_receipt=empty_receipt))
     assert decision["decision"] == EXECUTOR_SELECTION_REFUSED
     assert set(decision["decision_reason_codes"]) >= {
         "API_READ_BACK_RECEIPT_WORK_UNIT_ID_MISMATCH",
+        "API_READ_BACK_RECEIPT_DIFFERENCE_ID_MISMATCH",
         "API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH",
+        "API_READ_BACK_RECEIPT_ADOPTION_ID_MISMATCH",
         "API_READ_BACK_RECEIPT_SELECTED_EXECUTOR_PROVIDER_MISMATCH",
         "API_READ_BACK_RECEIPT_COMMENT_URL_MISMATCH",
         "API_READ_BACK_RECEIPT_DECISION_AUTHORITY_MISMATCH",
         "API_READ_BACK_RECEIPT_DECISION_STATUS_MISMATCH",
+        "API_READ_BACK_RECEIPT_AUTHORIZED_REPOSITORY_MISMATCH",
+        "API_READ_BACK_RECEIPT_PERMITTED_ACTIONS_MISMATCH",
+        "API_READ_BACK_RECEIPT_PERMITTED_PATHS_MISMATCH",
+        "API_READ_BACK_RECEIPT_AUTHORIZED_BRANCH_MISMATCH",
+        "API_READ_BACK_RECEIPT_AUTHORIZED_BASE_SHA_MISMATCH",
+        "API_READ_BACK_RECEIPT_EXPECTED_HEAD_SHA_MISMATCH",
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Structural Review Round 1 (Issue #102 PR #104, I102-SR1-F2): the exact scope-
+# substitution exploit, reproduced and confirmed refused by the receipt binding above
+# --------------------------------------------------------------------------- #
+
+
+def test_untouched_receipt_no_longer_admits_a_substituted_scope() -> None:
+    """The reviewer's exact reproduction: leave the receipt as the original six-field shape
+    (now missing every field the F1/F2 follow-up correction added) and substitute an
+    ungranted branch/base/head at the record's own top level. Before I102-SR1-F2 this was
+    silently ADMITTED; it must now either raise (an incomplete receipt is unreadable) or,
+    with a receipt that does supply every field but disagrees with the substitution, be
+    refused for exactly that disagreement."""
+
+    six_field_receipt = {
+        "work_unit_id": _WORK_UNIT_ID,
+        "governing_issue": "#102",
+        "selected_executor_provider": "GITHUB_COPILOT",
+        "comment_url": _SYNTHETIC_COMMENT_URL,
+        "decision_authority": "SHUKOU",
+        "decision_status": "RATIFIED",
+    }
+    substituted = _record(
+        api_read_back_receipt=six_field_receipt,
+        authorized_branch="arbitrary-ungranted-branch",
+        current_branch="arbitrary-ungranted-branch",
+        authorized_base_sha="f" * 40,
+        current_base_sha="f" * 40,
+        expected_head_sha="e" * 40,
+        current_head_sha="e" * 40,
+    )
+    with pytest.raises(ExecutorSelectionError, match="omits required keys"):
+        evaluate_executor_selection(substituted)
+
+    # Even supplying every receipt field, the receipt must actually agree with the
+    # substitution -- a receipt that still claims the originally granted scope is refused.
+    disagreeing_receipt = _receipt()  # the real granted branch/base/head, unmodified
+    still_substituted = _record(
+        api_read_back_receipt=disagreeing_receipt,
+        authorized_branch="arbitrary-ungranted-branch",
+        current_branch="arbitrary-ungranted-branch",
+        authorized_base_sha="f" * 40,
+        current_base_sha="f" * 40,
+        expected_head_sha="e" * 40,
+        current_head_sha="e" * 40,
+    )
+    decision = evaluate_executor_selection(still_substituted)
+    assert decision["decision"] == EXECUTOR_SELECTION_REFUSED
+    assert set(decision["decision_reason_codes"]) >= {
+        "API_READ_BACK_RECEIPT_AUTHORIZED_BRANCH_MISMATCH",
+        "API_READ_BACK_RECEIPT_AUTHORIZED_BASE_SHA_MISMATCH",
+        "API_READ_BACK_RECEIPT_EXPECTED_HEAD_SHA_MISMATCH",
     }
 
 
@@ -278,8 +388,16 @@ _REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
         },
     ),
     (
+        "DIFFERENCE_ID_MALFORMED",
+        {"difference_id": "", "api_read_back_receipt": _receipt(difference_id="")},
+    ),
+    (
         "GOVERNING_REFERENCE_MALFORMED",
         {"governing_issue": "", "api_read_back_receipt": _receipt(governing_issue="")},
+    ),
+    (
+        "ADOPTION_ID_MALFORMED",
+        {"adoption_id": "", "api_read_back_receipt": _receipt(adoption_id="")},
     ),
     (
         "COMMENT_URL_NOT_A_VERIFIABLE_GITHUB_COMMENT",
@@ -290,8 +408,16 @@ _REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
         {"api_read_back_receipt": _receipt(work_unit_id="WORK-UNIT-SOMETHING-ELSE")},
     ),
     (
+        "API_READ_BACK_RECEIPT_DIFFERENCE_ID_MISMATCH",
+        {"api_read_back_receipt": _receipt(difference_id="D-SOMETHING-ELSE")},
+    ),
+    (
         "API_READ_BACK_RECEIPT_GOVERNING_ISSUE_MISMATCH",
         {"api_read_back_receipt": _receipt(governing_issue="#99")},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_ADOPTION_ID_MISMATCH",
+        {"api_read_back_receipt": _receipt(adoption_id="ADOPT_SOMETHING_ELSE")},
     ),
     (
         "API_READ_BACK_RECEIPT_SELECTED_EXECUTOR_PROVIDER_MISMATCH",
@@ -314,6 +440,30 @@ _REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
         {"api_read_back_receipt": _receipt(decision_status="DRAFT")},
     ),
     (
+        "API_READ_BACK_RECEIPT_AUTHORIZED_REPOSITORY_MISMATCH",
+        {"api_read_back_receipt": _receipt(authorized_repository="manosube/some-other-repository")},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_AUTHORIZED_BRANCH_MISMATCH",
+        {"api_read_back_receipt": _receipt(authorized_branch="some-other-branch")},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_AUTHORIZED_BASE_SHA_MISMATCH",
+        {"api_read_back_receipt": _receipt(authorized_base_sha=_SHA_B)},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_EXPECTED_HEAD_SHA_MISMATCH",
+        {"api_read_back_receipt": _receipt(expected_head_sha=_SHA_B)},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_PERMITTED_ACTIONS_MISMATCH",
+        {"api_read_back_receipt": _receipt(permitted_actions=["SOMETHING_ELSE"])},
+    ),
+    (
+        "API_READ_BACK_RECEIPT_PERMITTED_PATHS_MISMATCH",
+        {"api_read_back_receipt": _receipt(permitted_paths=["something/else"])},
+    ),
+    (
         "DECISION_AUTHORITY_NOT_HUMAN",
         {
             "decision_authority": "CLAUDE_CODE",
@@ -329,12 +479,30 @@ _REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
         {
             "authorized_repository": "manosube/some-other-repository",
             "current_repository": "manosube/some-other-repository",
+            # Must agree with the receipt too, so this case isolates the
+            # not-this-repository check rather than also tripping the (now bound)
+            # receipt mismatch for the same field.
+            "api_read_back_receipt": _receipt(
+                authorized_repository="manosube/some-other-repository"
+            ),
         },
     ),
     ("REPOSITORY_SCOPE_MISMATCH", {"current_repository": "manosube/some-other-repository"}),
     ("BRANCH_SCOPE_MISMATCH", {"current_branch": "some-other-branch"}),
-    ("AUTHORIZED_BASE_SHA_NOT_A_COMMIT_SHA", {"authorized_base_sha": "not-a-sha"}),
-    ("EXPECTED_HEAD_SHA_NOT_A_COMMIT_SHA", {"expected_head_sha": "not-a-sha"}),
+    (
+        "AUTHORIZED_BASE_SHA_NOT_A_COMMIT_SHA",
+        {
+            "authorized_base_sha": "not-a-sha",
+            "api_read_back_receipt": _receipt(authorized_base_sha="not-a-sha"),
+        },
+    ),
+    (
+        "EXPECTED_HEAD_SHA_NOT_A_COMMIT_SHA",
+        {
+            "expected_head_sha": "not-a-sha",
+            "api_read_back_receipt": _receipt(expected_head_sha="not-a-sha"),
+        },
+    ),
     ("CURRENT_BASE_SHA_NOT_A_COMMIT_SHA", {"current_base_sha": "not-a-sha"}),
     ("CURRENT_HEAD_SHA_NOT_A_COMMIT_SHA", {"current_head_sha": "not-a-sha"}),
     ("BASE_SHA_SCOPE_MISMATCH", {"current_base_sha": _SHA_B}),

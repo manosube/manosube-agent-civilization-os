@@ -32,7 +32,10 @@ from manosube_agent_civilization.development_binding import (
     load_policy,
 )
 from manosube_agent_civilization.development_binding.policy import (
+    COPILOT_EXECUTOR,
+    DEFAULT_EXECUTOR_PROVIDER,
     EXECUTOR,
+    EXECUTOR_PROVIDERS,
     EXECUTOR_TERMINAL_STATE,
     STRUCTURAL_ADVISOR,
 )
@@ -50,6 +53,78 @@ def handoff(actor: str, source: str, target: str) -> dict[str, Any]:
         "from_state": source,
         "to_state": target,
     }
+
+
+#: A complete, admissible executor-selection record naming Copilot (Decision 0003). Every
+#: eligible provider other than the ratified default must carry one of these to be granted
+#: anything at all; building it once here keeps every generic iteration test below exercising
+#: the real admission route rather than a bare role-membership check.
+_COPILOT_SELECTION_SHA = "d0cd0cd0cd0cd0cd0cd0cd0cd0cd0cd0cd0cd0cd"
+_COPILOT_SELECTION_COMMENT_URL = (
+    "https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-4000000004"
+)
+_COPILOT_SELECTION_DIFFERENCE_ID = "D-HANDOFF-STATE-MACHINE-1"
+_COPILOT_SELECTION_ADOPTION_ID = "ADOPT_HANDOFF_STATE_MACHINE_1"
+_COPILOT_SELECTION_PERMITTED_ACTIONS = [
+    "IMPLEMENTATION",
+    "TEST_EXECUTION",
+    "EXECUTOR_SELF_REVIEW",
+    "PR_PREPARATION",
+]
+_COPILOT_SELECTION_PERMITTED_PATHS = ["tests/unit/binding/test_handoff_state_machine.py"]
+_COPILOT_SELECTION_RECEIPT: dict[str, Any] = {
+    "work_unit_id": "WORK-UNIT-HANDOFF-STATE-MACHINE-1",
+    "difference_id": _COPILOT_SELECTION_DIFFERENCE_ID,
+    "governing_issue": "#102",
+    "adoption_id": _COPILOT_SELECTION_ADOPTION_ID,
+    "selected_executor_provider": COPILOT_EXECUTOR,
+    "comment_url": _COPILOT_SELECTION_COMMENT_URL,
+    "decision_authority": HUMAN_AUTHORITY,
+    "decision_status": "RATIFIED",
+    "authorized_repository": "manosube/manosube-agent-civilization-os",
+    "authorized_branch": "agent/handoff-state-machine-1",
+    "authorized_base_sha": _COPILOT_SELECTION_SHA,
+    "expected_head_sha": _COPILOT_SELECTION_SHA,
+    "permitted_actions": _COPILOT_SELECTION_PERMITTED_ACTIONS,
+    "permitted_paths": _COPILOT_SELECTION_PERMITTED_PATHS,
+}
+_COPILOT_SELECTION: dict[str, Any] = {
+    "schema_version": "0.1",
+    "work_unit_id": _COPILOT_SELECTION_RECEIPT["work_unit_id"],
+    "invoked_work_unit_id": _COPILOT_SELECTION_RECEIPT["work_unit_id"],
+    "difference_id": _COPILOT_SELECTION_DIFFERENCE_ID,
+    "governing_issue": "#102",
+    "adoption_id": _COPILOT_SELECTION_ADOPTION_ID,
+    "selected_executor_provider": COPILOT_EXECUTOR,
+    "comment_url": _COPILOT_SELECTION_COMMENT_URL,
+    "decision_authority": HUMAN_AUTHORITY,
+    "decision_status": "RATIFIED",
+    "api_read_back_receipt": _COPILOT_SELECTION_RECEIPT,
+    "authorized_repository": "manosube/manosube-agent-civilization-os",
+    "authorized_branch": "agent/handoff-state-machine-1",
+    "authorized_base_sha": _COPILOT_SELECTION_SHA,
+    "expected_head_sha": _COPILOT_SELECTION_SHA,
+    "permitted_actions": _COPILOT_SELECTION_PERMITTED_ACTIONS,
+    "permitted_paths": _COPILOT_SELECTION_PERMITTED_PATHS,
+    "current_repository": "manosube/manosube-agent-civilization-os",
+    "current_branch": "agent/handoff-state-machine-1",
+    "current_base_sha": _COPILOT_SELECTION_SHA,
+    "current_head_sha": _COPILOT_SELECTION_SHA,
+    "concurrently_active_provider_for_work_unit": "",
+}
+
+
+def handoff_as_selected(actor: str, source: str, target: str) -> dict[str, Any]:
+    """Like :func:`handoff`, plus a valid selection record for any actor that needs one.
+
+    The ratified default needs none (`handoff` alone already proves that); every other
+    eligible provider is eligible, not selected, until this is supplied.
+    """
+
+    record = handoff(actor, source, target)
+    if actor in EXECUTOR_PROVIDERS and actor != DEFAULT_EXECUTOR_PROVIDER:
+        record["executor_selection"] = _COPILOT_SELECTION
+    return record
 
 
 #: The full ratified route, Decision 0002.
@@ -84,10 +159,18 @@ def test_the_permitted_outcome_is_reachable() -> None:
 
 
 def test_every_declared_transition_is_permitted_for_its_own_actor() -> None:
-    """The route the Binding describes is a route that actually works."""
+    """The route the Binding describes is a route that actually works.
+
+    Decision 0003: a non-default eligible provider's declared transitions are only
+    *reachable* -- not bare-permitted -- without a selection; ``handoff_as_selected``
+    supplies one so this stays a proof that the route works, not that it is open to anyone
+    role membership alone would admit.
+    """
 
     for transition in POLICY["handoff_transitions"]:
-        verdict = evaluate(handoff(transition["actor"], transition["from"], transition["to"]))
+        verdict = evaluate(
+            handoff_as_selected(transition["actor"], transition["from"], transition["to"])
+        )
         assert verdict["decision"] == PERMITTED, transition
 
 

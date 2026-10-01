@@ -15,8 +15,11 @@ import pytest
 from manosube_agent_civilization.development_binding import (
     EXECUTOR_PROVIDERS,
     HUMAN_AUTHORITY,
+    PERMITTED,
+    REFUSED,
     ROLES,
     PolicyIntegrityError,
+    evaluate,
     load_policy,
     prohibited_trigger_in,
 )
@@ -107,6 +110,26 @@ def test_eligible_executor_providers_are_pinned_and_claude_code_remains_default(
         == EXECUTOR_PROVIDER_SELECTION_AUTHORITY
         == HUMAN_AUTHORITY
     )
+
+
+def test_eligible_provider_membership_alone_is_not_execution_authority() -> None:
+    """Decision 0003, Structural Review Round 1 (I102-SR1-F1): a non-default eligible
+    provider must carry an admitted selection record to be granted anything through the real
+    admission route -- role membership by itself is refused, not permitted."""
+
+    bare = evaluate(
+        {"record_type": "ACTOR_ACTION", "actor": COPILOT_EXECUTOR, "action": "IMPLEMENTATION"}
+    )
+    assert bare["decision"] == REFUSED
+    assert "EXECUTOR_SELECTION_REQUIRED_AND_ABSENT" in bare["reason_codes"]
+
+
+def test_the_default_executor_provider_needs_no_selection_record() -> None:
+    """Backward compatibility is a property of the default, not an exception: Claude Code's
+    exact pre-Decision-0003 three-key record is unaffected by the new optional field."""
+
+    verdict = evaluate({"record_type": "ACTOR_ACTION", "actor": EXECUTOR, "action": "IMPLEMENTATION"})
+    assert verdict == {"decision": PERMITTED, "reason_codes": ["ACTION_WITHIN_ROLE"]}
 
 
 @pytest.mark.parametrize("owner_field,owner", sorted(RATIFIED_OWNERS.items()))

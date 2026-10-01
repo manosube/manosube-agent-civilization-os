@@ -7140,3 +7140,76 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 本節はmachine-policyの受入機構を記録する。実際にCopilotが一つの認可されたwork unitを
 実行した証跡の還流は、別途のwork unitとして観測され、Issue #102はそれと独立structural
 review・SHUKOU受入が揃うまで閉じない。
+
+---
+
+# 81. Issue #102 PR #104 Structural Review Round 1 correction (`I102-SR1-F1`/`F2`/`E1`)
+
+ChatGPT Structural Advisorによる§80実装への独立review Round 1
+([PR #104 comment 5925938655](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5925938655)、
+著者`manosube`/OWNER)は`VERDICT=CORRECTION_REQUIRED`を返し、二件のP1と一件の
+証跡是正を指摘した。SHUKOUは当該指摘を正式採択し
+([comment 5927524112](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5927524112))、
+続けてClaude Codeへ修正引継ぎを記録した
+([comment 5927538575](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5927538575))。
+いずれも再現・検証され、本節が是正を記録する。
+
+`I102-SR1-F1`: `development_binding.executor_selection`は独立したmoduleとして存在した
+だけで、実際の受入経路`development_binding.evaluation.evaluate()`からは一度も呼ばれて
+いなかった。そのため`actor="GITHUB_COPILOT"`の`ACTOR_ACTION`/`HANDOFF_TRANSITION`は、
+selection recordなしで role membershipのみから`PERMITTED`となっていた。是正: 既定
+provider(`CLAUDE_CODE`)以外の資格あるproviderについて、`evaluate()`が
+`executor_selection`フィールド(新規・既定providerには不要なoptionalフィールド)を
+要求し、`evaluate_executor_selection()`で検証するよう結線した。この結線を正しく行う
+過程で、既存test `tests/unit/binding/test_handoff_state_machine.py`(当初の棚卸し対象
+外)がROLES全体を汎用的にparametrizeしていたためF1の欠陥に依存して偶然成立していた
+ことが判明し、該当caseへ有効なselection fixtureを与えて是正した。
+
+`I102-SR1-F2`(followup handoffによる範囲拡大を含む): `executor_selection.RECEIPT_KEYS`
+は識別情報のみを束縛し、authorized branch/base_sha/head shaなどのscopeは記録自身の
+相互比較のみで、receipt(grant自体のread-back主張)には一切束縛されていなかった。
+Reviewerは`authorized_branch`/`current_branch`等を同時に書き換えるだけでscope
+substitutionが`ADMITTED`になることを再現した。是正: `authorized_repository`/
+`authorized_branch`/`authorized_base_sha`/`expected_head_sha`に加え、採択後の追加
+引継ぎが明示した残存obligation ---`difference_id`・`adoption_id`(`adoption_record`と
+同じ`ADOPT_...`形式)・`permitted_actions`・`permitted_paths`--- もreceiptの必須field
+へ追加し、record自身の宣言値と比較するよう束縛した。さらに`evaluate()`は
+`ACTOR_ACTION`の`action`をselectionの`permitted_actions`と照合する
+(`ACTION_NOT_PERMITTED_BY_SELECTION`)。`permitted_paths`はreceiptへ束縛・記録される
+が、`ACTOR_ACTION`/`HANDOFF_TRANSITION`のいずれもfile pathを運ばないため、この
+evaluatorでは独立して強制できないことを明示的な非主張として記録する。
+
+`I102-SR1-E1`: 新規test fixtureの既定caseが、実在するhandoff comment
+(`#102#issuecomment-5921931690`、CLAUDE_CODE限定・work unit`I102-COPILOT-EXECUTABLE-
+DEVELOPMENT-BINDING-R1`を認可するもの)のURLを、別のwork unit・providerの正当な
+grantであるかのように流用していた。さらにmodule/testの記述が受入を「verified」と
+呼んでいたが、本moduleはnetwork call・credentialを一切持たず、受入が証明するのは
+記録自身の内部整合性のみであり、実在のGitHub commentの存在・内容を証明するものでは
+ない。是正: fixtureを、存在しないcomment idを用いる明示的にsyntheticなURLへ置き換え、
+「verified」の語を避け、この限界をmodule docstring・test docstring・ADR-0029の両方に
+明記した。
+
+```text
+GOVERNING_ISSUE=#102
+IMPLEMENTATION_PR=#104
+REVIEW_ROUND=1
+REVIEW_VERDICT_RECEIVED=CORRECTION_REQUIRED
+ADOPTION_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5927524112
+HANDOFF_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5927538575
+I102_SR1_F1_FIXED=true
+I102_SR1_F2_FIXED=true
+I102_SR1_E1_FIXED=true
+EXECUTOR_SELECTION_WIRED_INTO_REAL_ADMISSION_ROUTE=true
+GRANT_SCOPE_AND_DIFFERENCE_AND_ADOPTION_BOUND_TO_RECEIPT=true
+PERMITTED_ACTIONS_ENFORCED_AT_ADMISSION_ROUTE=true
+PERMITTED_PATHS_BOUND_BUT_NOT_INDEPENDENTLY_ENFORCED=true
+TEST_FIXTURE_SYNTHETIC_URL_LABELLED=true
+VERIFIED_OVERCLAIM_CORRECTED=true
+PRE_EXISTING_TEST_CONSUMER_DISCOVERED_AND_FIXED=true
+CLAUDE_CODE_DEFAULT_PATH_UNAFFECTED=true
+FRESH_STRUCTURAL_REVIEW_REQUIRED=true
+```
+
+是正後、`evaluate()`は`GITHUB_COPILOT`のaction/transitionをselection recordなしでは
+拒否し、有効なselectionがあれば既存のClaude Code経路と同一に許可することを独立に
+再実行確認した。`CLAUDE_CODE`の既存3/4-key record shapeは変更されていない。

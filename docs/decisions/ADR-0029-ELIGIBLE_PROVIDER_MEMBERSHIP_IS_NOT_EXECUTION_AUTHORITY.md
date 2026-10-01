@@ -41,9 +41,11 @@ the *selected* executor for *this* work unit, at *this* exact scope, right now.
 
 `development_binding.executor_selection` answers the second question, mechanically, the same
 way `development_binding.adoption_record` already answers the equivalent question for a
-Human-adopted finding: a structured record, checked offline, bound field-by-field to a
-SHUKOU-granted, read-back-verified comment, and refused whenever any one of its fields
-disagrees with the current, exact scope it is being invoked for.
+Human-adopted finding: a structured record, checked offline, bound field-by-field to the
+caller's own structured claim of what an independent read-back of a SHUKOU-granted comment
+showed, and refused whenever any one of its fields disagrees with the current, exact scope
+it is being invoked for. This module never performs that read-back itself and never proves
+the cited comment exists or reads as claimed -- see §6 and §7 below.
 
 ```text
 ELIGIBLE  = named in policy.EXECUTOR_PROVIDERS
@@ -119,4 +121,49 @@ remaining Difference Issue #102 stays open for.
 CONSTRUCTION_BOUND_TO_TWO_NAMES_NOW
 SELECTION_STILL_BOUND_TO_ONE_RECORD_PER_WORK_UNIT
 ARTIFACT_NEUTRAL   (unchanged -- see ADR-0028 §7)
+```
+
+## 7. Structural Review Round 1 correction (PR #104, `I102-SR1-F1`/`F2`/`E1`)
+
+Independent review of the PR implementing this decision found the gate described in §2 was
+built but never connected, and the scope it bound was narrower than §2 claimed. Both are the
+same family of defect ADR-0028 §3 already named: a claim wider than its implementation.
+
+**F1 (P1).** `development_binding.evaluation.evaluate()` never called
+`evaluate_executor_selection`. A bare `ACTOR_ACTION`/`HANDOFF_TRANSITION` record naming
+`GITHUB_COPILOT`, with no selection supplied at all, answered `PERMITTED` from role
+membership alone -- exactly the substitution §2 exists to prevent, left open because the
+module that prevents it was reachable only by a caller choosing to call it. Fixed by wiring
+an optional `executor_selection` field into both record shapes (required and validated for
+every non-default eligible provider, absent and irrelevant for the ratified default) and
+having `evaluate()` itself call `evaluate_executor_selection` before any role check runs.
+
+**F2 (P1).** The grant's identity (work unit, governing Issue, comment) was bound to the
+read-back receipt; its *scope* -- repository, branch, base/head SHA -- and the adopted
+design's own remaining obligations -- Difference, the adoption's own id, permitted actions,
+permitted paths -- were not. A caller could leave the receipt untouched and freely declare a
+different `authorized_branch`/`authorized_base_sha`/`expected_head_sha` at the record's own
+top level, because both sides of that comparison were equally caller-controlled. Fixed by
+binding `authorized_repository`/`authorized_branch`/`authorized_base_sha`/`expected_head_sha`
+and, in the same correction's own follow-up handoff, `difference_id`/`adoption_id`/
+`permitted_actions`/`permitted_paths` to the receipt as well, and by having `evaluate()`
+check a requested `ACTOR_ACTION`'s `action` against the grant's own `permitted_actions`.
+`permitted_paths` is bound to the receipt for the same audit reason but is not independently
+enforced here: neither record shape this evaluator reads carries a file path to compare it
+against, and claiming otherwise would be the same gap this section exists to close, one level
+up.
+
+**E1.** This ADR's own §2 described the receipt as binding to a "read-back-*verified*"
+comment; a module docstring and a test suite made the same overclaim, and that test suite's
+positive fixture reused the real implementation-handoff comment URL while asserting a work
+unit and SHAs that comment never granted. Corrected throughout: this module proves internal
+consistency with a caller's own claimed read-back, never that the read-back happened or that
+the cited comment exists or reads as claimed; every synthetic fixture now says so and uses an
+explicitly non-existent comment id.
+
+```text
+I102_SR1_F1_FIXED=true
+I102_SR1_F2_FIXED=true
+I102_SR1_E1_FIXED=true
+RUNTIME_ENFORCEMENT_IMPLEMENTED=false
 ```

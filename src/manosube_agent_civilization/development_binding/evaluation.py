@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .errors import ExecutorSelectionError
+from .executor_selection import EXECUTOR_SELECTION_ADMITTED, evaluate_executor_selection
 from .policy import (
     EXECUTOR_TERMINAL_STATE,
     FINAL_ACCEPTANCE_STATE,
@@ -76,6 +78,11 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
         "ADOPTION_NOT_BOUND_TO_THIS_OBSERVATION",
         "ADOPTION_NOT_BOUND_TO_THIS_DISPOSITION",
         "HUMAN_ADOPTED_OBSERVATION",
+        "EXECUTOR_SELECTION_REQUIRED_AND_ABSENT",
+        "EXECUTOR_SELECTION_UNREADABLE",
+        "EXECUTOR_SELECTION_PROVIDER_MISMATCH",
+        "EXECUTOR_SELECTION_NOT_ADMITTED",
+        "ACTION_NOT_PERMITTED_BY_SELECTION",
     }
 )
 
@@ -97,22 +104,88 @@ _FINDING_KEYS: frozenset[str] = frozenset(
 _FINDING_FIELDS: frozenset[str] = frozenset({"observation_id", "source", "status"})
 _ADOPTION_FIELDS: frozenset[str] = frozenset({"authority", "observation_id", "disposition"})
 
+#: Optional in both closed shapes above (Decision 0003, Issue #102 Structural Review Round
+#: 1, I102-SR1-F1): a non-default eligible executor provider's action or handoff transition
+#: must carry one to be admitted at all; the ratified default needs none, so every historical
+#: and future Claude Code record keeps its exact three/four-key shape unchanged.
+_EXECUTOR_SELECTION_KEY = "executor_selection"
+
 
 def _verdict(decision: str, *reason_codes: str) -> dict[str, Any]:
     return {"decision": decision, "reason_codes": sorted(set(reason_codes))}
 
 
-def _closed(record: Any, keys: frozenset[str]) -> str | None:
-    """Return a reason code when *record* is not exactly *keys*, else ``None``."""
+def _closed(
+    record: Any, keys: frozenset[str], *, optional: frozenset[str] = frozenset()
+) -> str | None:
+    """Return a reason code when *record* is not exactly *keys*, plus zero or more of
+    *optional*, else ``None``.
+
+    *optional* exists for exactly one key (``executor_selection``) and exactly one reason
+    (Decision 0003): a non-default eligible executor provider's record must carry it, but
+    the ratified default must not be required to, so every historical and future Claude Code
+    record keeps the exact required shape it always had.
+    """
 
     if not isinstance(record, dict):
         return "RECORD_UNREADABLE"
     if any(not isinstance(key, str) for key in record):
         return "RECORD_UNREADABLE"
-    if set(record) - keys:
+    if set(record) - keys - optional:
         return "RECORD_CARRIES_UNKNOWN_KEYS"
     if keys - set(record):
         return "RECORD_OMITS_REQUIRED_KEYS"
+    return None
+
+
+def _requires_executor_selection(actor: str, policy: dict[str, Any]) -> bool:
+    """Whether *actor* must carry an admitted :mod:`.executor_selection` record to act.
+
+    True for exactly the eligible executor providers other than the ratified default
+    (Decision 0003, Issue #102 Structural Review Round 1, I102-SR1-F1). The default itself
+    needs no selection record -- that is what keeps it backward compatible -- but every other
+    eligible name must prove, through this record, that it is the one actually selected for
+    this exact work unit before the role-membership check below can ever be reached.
+    """
+
+    providers = policy.get("executor_providers")
+    default = policy.get("executor_provider_default")
+    return isinstance(providers, list) and actor in providers and actor != default
+
+
+def _check_executor_selection(
+    selection: Any, actor: str, *, action: str | None = None
+) -> str | None:
+    """Return a reason code unless *selection* is an admitted grant naming *actor*.
+
+    Eligible provider membership is not execution authority (``policy`` module docstring,
+    `03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md` §10.1): this is the connection
+    between that stated boundary and the actual admission route, which previously existed
+    only as a module nothing called.
+
+    *action* is passed only for ``ACTOR_ACTION`` records (PR #104 Round 1 follow-up handoff,
+    comment 5927538575): an admitted selection grants a *bounded* set of actions, not every
+    action the role's own ``may`` list permits in general, so the requested action is checked
+    against the grant's own ``permitted_actions`` in addition to the role check that follows.
+    ``permitted_paths`` is bound to the receipt by :mod:`.executor_selection` for the same
+    audit reason but is not checked here: neither this record type nor ``HANDOFF_TRANSITION``
+    carries a file path for it to be compared against, and claiming to enforce a scope this
+    evaluator never receives would be exactly the gap between claim and implementation this
+    repository's own guards exist to catch.
+    """
+
+    if selection is None:
+        return "EXECUTOR_SELECTION_REQUIRED_AND_ABSENT"
+    try:
+        decision = evaluate_executor_selection(selection)
+    except ExecutorSelectionError:
+        return "EXECUTOR_SELECTION_UNREADABLE"
+    if decision["selected_executor_provider"] != actor:
+        return "EXECUTOR_SELECTION_PROVIDER_MISMATCH"
+    if decision["decision"] != EXECUTOR_SELECTION_ADMITTED:
+        return "EXECUTOR_SELECTION_NOT_ADMITTED"
+    if action is not None and action not in selection.get("permitted_actions", ()):
+        return "ACTION_NOT_PERMITTED_BY_SELECTION"
     return None
 
 
@@ -153,7 +226,7 @@ def evaluate(record: Any, *, policy: dict[str, Any] | None = None) -> dict[str, 
 def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     """One step of the handoff state machine, taken by one actor."""
 
-    unreadable = _closed(record, _HANDOFF_KEYS)
+    unreadable = _closed(record, _HANDOFF_KEYS, optional=frozenset({_EXECUTOR_SELECTION_KEY}))
     if unreadable:
         return _verdict(REFUSED, unreadable)
     ill_typed = _scalars(record, "actor", "from_state", "to_state")
@@ -174,6 +247,18 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
         reasons.append("UNKNOWN_TO_STATE")
     if reasons:
         return _verdict(REFUSED, *reasons)
+
+    # Checked after the shape/identity gate above (actor is now known to be a real role) but
+    # *before* the early return below, so a missing or refused selection accumulates alongside
+    # whatever drift-specific codes the same record also triggers (I102-SR1, PR #104 Round 1
+    # correction) -- a non-default provider's self-merge attempt without a selection is still
+    # reported with MERGE_OPERATION_DRIFT, not only EXECUTOR_SELECTION_REQUIRED_AND_ABSENT.
+    if _requires_executor_selection(actor, policy):
+        selection_reason = _check_executor_selection(
+            record.get(_EXECUTOR_SELECTION_KEY), actor
+        )
+        if selection_reason:
+            reasons.append(selection_reason)
 
     # Named separately from "not a declared transition" because these are the drifts the
     # Binding exists to stop, and a caller that only sees TRANSITION_NOT_DECLARED cannot tell
@@ -220,7 +305,7 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
 def _evaluate_action(record: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     """One act by one participant, against what that participant may and may not do."""
 
-    unreadable = _closed(record, _ACTION_KEYS)
+    unreadable = _closed(record, _ACTION_KEYS, optional=frozenset({_EXECUTOR_SELECTION_KEY}))
     if unreadable:
         return _verdict(REFUSED, unreadable)
     ill_typed = _scalars(record, "actor", "action")
@@ -233,6 +318,12 @@ def _evaluate_action(record: dict[str, Any], policy: dict[str, Any]) -> dict[str
         return _verdict(REFUSED, "UNKNOWN_ACTOR")
 
     reasons: list[str] = []
+    if _requires_executor_selection(actor, policy):
+        selection_reason = _check_executor_selection(
+            record.get(_EXECUTOR_SELECTION_KEY), actor, action=act
+        )
+        if selection_reason:
+            reasons.append(selection_reason)
     if act == "REQUEST_AUTOMATED_EXTERNAL_REVIEW" and not policy[
         "automated_review_trigger_allowed"
     ]:
