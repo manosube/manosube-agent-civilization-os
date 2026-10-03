@@ -1183,3 +1183,24 @@ V1_0_1_SURFACE_SYNC_IN_PROGRESS=true
 identity (§28自身のAS_BUILT_REF) の前進と、v1.0.0 release/tag boundaryの確定のみである。
 `CITATION.cff`はrepository rootへ新規追加される非`src/`メタデータファイルであり、architecture
 上のkernel_surfaceには属さない。
+
+---
+
+# 29. `development_binding.executor_selection` module addition (Issue #102, Decision 0003)
+
+既存package`development_binding/`(§7.1)内へ新module`executor_selection.py`を追加した。
+新しい`src/`トップレベルpackageもKernel elementも追加しない -- 既存の
+「Current repository development-role and command policy evaluation」責務の内側に
+留まる拡張である。`policy.py`・`evaluation.py`・`adoption_record.py`・`errors.py`は
+既存の責務を保ったまま拡張され(`policy.py`へ`GITHUB_COPILOT`・`EXECUTOR_PROVIDERS`等、
+`errors.py`へ`ExecutorSelectionError`)、新規のparallel evaluatorやparallel Kernel
+Bindingは作られていない。
+
+```text
+GOVERNING_ISSUE=#102
+NEW_TOP_LEVEL_PACKAGE_ADDED=false
+NEW_KERNEL_ELEMENT_ADDED=false
+EXISTING_PACKAGE_EXTENDED=development_binding
+NEW_MODULE=development_binding.executor_selection
+PARALLEL_EVALUATOR_CREATED=false
+```

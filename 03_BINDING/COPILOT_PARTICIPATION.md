@@ -4,15 +4,18 @@
 DOCUMENT_ID=COPILOT-PARTICIPATION-0001
 DOC_TYPE=DEVELOPMENT_BINDING_CHANGE_PROPOSAL
 KERNEL_ELEMENT=none
-STATUS=DESIGN_PREPARED_AWAITING_INDEPENDENT_REVIEW_AND_HUMAN_ACCEPTANCE
+STATUS=MACHINE_ADMISSION_IMPLEMENTED_AWAITING_INDEPENDENT_REVIEW_AND_HUMAN_ACCEPTANCE
 GOVERNING_ISSUE=#102
 DIFFERENCE_ID=D-COPILOT-EXCHANGEABLE-DEVELOPMENT-EXECUTOR
 REQUEST_RECORD=https://github.com/manosube/manosube-agent-civilization-os/issues/102
 ADOPTION_ID=ADOPT_COPILOT_DEVELOPMENT_BINDING_DESIGN_20261001
-OBSERVED_BASE_MAIN=391378d8aeb784a62cd2bc93d96538443c754a2d
+DESIGN_ACCEPTANCE_ID=ADOPT_P103_COPILOT_DESIGN_ACCEPTANCE_R1
+IMPLEMENTATION_HANDOFF_COMMENT=https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5921931690
+OBSERVED_BASE_MAIN=e2d686e68f09e739d0c93d542fd22e06be822209
 ACTIVE_BINDING=DEV-BINDING-0001
-ACTIVE_POLICY_VERSION=0.2
-COPILOT_MACHINE_ADMISSION_IMPLEMENTED=false
+ACTIVE_POLICY_VERSION=0.3
+ACTIVE_DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003
+COPILOT_MACHINE_ADMISSION_IMPLEMENTED=true
 COPILOT_NATURAL_WORK_UNIT_OBSERVED=false
 MERGE_ALLOWED=false
 ISSUE_CLOSE_ALLOWED=false
@@ -31,12 +34,19 @@ selection. It is not a new Product Binding genesis. Do not call
 add a ninth Kernel element or register a provider policy under `01_SCHEMA/`.
 `BINDING_INDEX.md` distinguishes these two binding domains.
 
-The existing Development Binding selects Claude Code for implementation. Its
-JSON policy is pinned in `development_binding.policy`; the evaluator and adoption
-record machinery are the existing admission owners. `request_copilot_review`
-is prohibited by the current policy. Instructions alone cannot change these facts.
-The active binding's participant assignment and Human authority remain in effect
-until an explicit superseding decision is independently reviewed and accepted.
+This design PR (#103) was independently reviewed and accepted by SHUKOU
+(`ADOPT_P103_COPILOT_DESIGN_ACCEPTANCE_R1`), and Claude Code has now implemented
+the machine-policy admission it described: `development_binding.policy`'s
+ratified role map admits `GITHUB_COPILOT` as a second eligible implementation
+executor (Decision 0003, `policy_version=0.3`), with the identical capability,
+`may`/`must_not` sets and handoff transitions `CLAUDE_CODE` already had. A new
+`development_binding.executor_selection` module gates the separate, narrower
+question of which eligible provider is the *selected* executor for one exact
+work unit -- eligibility is not authority. `request_copilot_review` remains
+prohibited by the active policy, and Copilot's self-acceptance, self-merge and
+automated-review-request actions are refused by the same evaluator Claude
+Code's are. This document's own status fields below record exactly what has,
+and has not, been observed since this admission landed.
 
 The file `.github/copilot-instructions.md` supplies repository guidance, including
 this current restriction. It is guidance to an AI, not a deterministic enforcement
@@ -141,10 +151,10 @@ without manufacturing runtime evidence.
 
 | Stage | Evidence needed | Current observation |
 | --- | --- | --- |
-| Design | Exact draft files and source comparison | Prepared in design PR |
-| Integration | Independent review, SHUKOU acceptance, exact merge and read-back | Pending |
-| Executable admission | Positive/negative records through existing evaluator, checkout and wheel | Not implemented |
-| Copilot operation | One actual authorized Copilot work unit returns SHA-bound PR and evidence | Unobserved |
+| Design | Exact draft files and source comparison | Prepared in design PR, merged |
+| Integration | Independent review, SHUKOU acceptance, exact merge and read-back | Accepted and merged (`e2d686e6`) |
+| Executable admission | Positive/negative records through existing evaluator, checkout and wheel | Implemented this work unit; see its own PR's terminal evidence for exact commands/exit codes |
+| Copilot operation | One actual authorized Copilot work unit returns SHA-bound PR and evidence | Unobserved -- a trial candidate is prepared, not executed |
 | Reflow | Independent structural review, Human decision and accepted after-State | Unobserved |
 
 Do not close Issue #102 from the instructions PR alone. Full closure requires the

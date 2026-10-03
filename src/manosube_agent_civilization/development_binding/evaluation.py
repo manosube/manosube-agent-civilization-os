@@ -21,6 +21,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from .errors import ExecutorSelectionError
+from .executor_selection import (
+    EXECUTOR_SELECTION_ADMITTED,
+    evaluate_executor_selection,
+    is_safe_repository_relative_path,
+)
 from .policy import (
     EXECUTOR_TERMINAL_STATE,
     FINAL_ACCEPTANCE_STATE,
@@ -76,6 +82,14 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
         "ADOPTION_NOT_BOUND_TO_THIS_OBSERVATION",
         "ADOPTION_NOT_BOUND_TO_THIS_DISPOSITION",
         "HUMAN_ADOPTED_OBSERVATION",
+        "EXECUTOR_SELECTION_REQUIRED_AND_ABSENT",
+        "EXECUTOR_SELECTION_UNREADABLE",
+        "EXECUTOR_SELECTION_PROVIDER_MISMATCH",
+        "EXECUTOR_SELECTION_NOT_ADMITTED",
+        "ACTION_NOT_PERMITTED_BY_SELECTION",
+        "INVOKED_PATHS_REQUIRED_AND_ABSENT",
+        "INVOKED_PATHS_UNSAFE",
+        "PATH_NOT_PERMITTED_BY_SELECTION",
     }
 )
 
@@ -97,23 +111,164 @@ _FINDING_KEYS: frozenset[str] = frozenset(
 _FINDING_FIELDS: frozenset[str] = frozenset({"observation_id", "source", "status"})
 _ADOPTION_FIELDS: frozenset[str] = frozenset({"authority", "observation_id", "disposition"})
 
+#: Optional in both closed shapes above (Decision 0003, Issue #102 Structural Review Round
+#: 1, I102-SR1-F1): a non-default eligible executor provider's action or handoff transition
+#: must carry one to be admitted at all; the ratified default needs none, so every historical
+#: and future Claude Code record keeps its exact three/four-key shape unchanged.
+_EXECUTOR_SELECTION_KEY = "executor_selection"
+
+#: Optional on both ``ACTOR_ACTION`` and ``HANDOFF_TRANSITION`` (Structural Review Round 2,
+#: I102-SR1 follow-up, PR #104 comment 5930926992; extended to ``HANDOFF_TRANSITION`` by
+#: Round 3, comment 5934943202): the actual invoked path scope of the operation, required and
+#: checked against the grant's own ``permitted_paths`` for exactly the same non-default-
+#: provider records that require ``executor_selection``. Round 1 recorded the absence of any
+#: path carrier as an honest, stated non-claim; Round 2 gave ``ACTOR_ACTION`` the field but
+#: left ``HANDOFF_TRANSITION`` deliberately without one, reasoning a transition carries no
+#: file scope of its own -- Round 3 found that an implementation-completion/self-review/PR-
+#: preparation transition *is* the claim that bounded file work was done, so leaving it
+#: path-blind let it attest that work without ever naming it. Both record types now carry and
+#: check the same field through :func:`_check_invoked_paths`.
+_PATHS_KEY = "paths"
+
+#: One representative action per handoff target state a non-default eligible provider can
+#: reach (Structural Review Round 2, I102-SR1 follow-up): ``permitted_actions`` bounds what a
+#: grant authorizes, and a transition is itself the claim that the bounded work was done, so
+#: each target is mapped to the capability it represents and checked the same way an
+#: ``ACTOR_ACTION`` naming that capability would be. Built from the ratified transition
+#: template (`policy._EXECUTOR_TRANSITION_TEMPLATE`) rather than listed by hand a second time,
+#: so a future transition added there is covered here without anyone remembering this map.
+_TRANSITION_ACTION: dict[str, str] = {
+    "CLAUDE_CODE_IMPLEMENTATION_COMPLETE": "IMPLEMENTATION",
+    "EXECUTOR_SELF_REVIEW_COMPLETE": "EXECUTOR_SELF_REVIEW",
+    "GITHUB_PR_READY": "PR_PREPARATION",
+    EXECUTOR_TERMINAL_STATE: "PR_PREPARATION",
+    # Returning to IMPLEMENTATION_IN_PROGRESS from a correction, an evidence request, or a
+    # Human rejection is the executor taking on implementation work again, not a no-op.
+    "IMPLEMENTATION_IN_PROGRESS": "IMPLEMENTATION",
+}
+
 
 def _verdict(decision: str, *reason_codes: str) -> dict[str, Any]:
     return {"decision": decision, "reason_codes": sorted(set(reason_codes))}
 
 
-def _closed(record: Any, keys: frozenset[str]) -> str | None:
-    """Return a reason code when *record* is not exactly *keys*, else ``None``."""
+def _closed(
+    record: Any, keys: frozenset[str], *, optional: frozenset[str] = frozenset()
+) -> str | None:
+    """Return a reason code when *record* is not exactly *keys*, plus zero or more of
+    *optional*, else ``None``.
+
+    *optional* exists for exactly one key (``executor_selection``) and exactly one reason
+    (Decision 0003): a non-default eligible executor provider's record must carry it, but
+    the ratified default must not be required to, so every historical and future Claude Code
+    record keeps the exact required shape it always had.
+    """
 
     if not isinstance(record, dict):
         return "RECORD_UNREADABLE"
     if any(not isinstance(key, str) for key in record):
         return "RECORD_UNREADABLE"
-    if set(record) - keys:
+    if set(record) - keys - optional:
         return "RECORD_CARRIES_UNKNOWN_KEYS"
     if keys - set(record):
         return "RECORD_OMITS_REQUIRED_KEYS"
     return None
+
+
+def _requires_executor_selection(actor: str, policy: dict[str, Any]) -> bool:
+    """Whether *actor* must carry an admitted :mod:`.executor_selection` record to act.
+
+    True for exactly the eligible executor providers other than the ratified default
+    (Decision 0003, Issue #102 Structural Review Round 1, I102-SR1-F1). The default itself
+    needs no selection record -- that is what keeps it backward compatible -- but every other
+    eligible name must prove, through this record, that it is the one actually selected for
+    this exact work unit before the role-membership check below can ever be reached.
+    """
+
+    providers = policy.get("executor_providers")
+    default = policy.get("executor_provider_default")
+    return isinstance(providers, list) and actor in providers and actor != default
+
+
+def _check_executor_selection(
+    selection: Any, actor: str, *, action: str | None = None
+) -> str | None:
+    """Return a reason code unless *selection* is an admitted grant naming *actor*.
+
+    Eligible provider membership is not execution authority (``policy`` module docstring,
+    `03_BINDING/CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md` §10.1): this is the connection
+    between that stated boundary and the actual admission route, which previously existed
+    only as a module nothing called.
+
+    *action* is passed for both record types (Structural Review Round 2 completed what Round
+    1's follow-up handoff, comment 5927538575, started): an admitted selection grants a
+    *bounded* set of actions, not every action the role's own ``may`` list permits in
+    general, so the requested action or represented transition capability is checked against
+    the grant's own ``permitted_actions`` in addition to the role check that follows.
+    ``_evaluate_action`` passes the record's own ``action``; ``_evaluate_handoff`` passes the
+    target state's represented capability via ``_TRANSITION_ACTION``.
+
+    ``permitted_paths`` is **not** checked in this helper -- ``_check_invoked_paths`` checks
+    it, in both ``_evaluate_action`` and ``_evaluate_handoff``, against the record's own
+    ``paths`` field, because that check needs the caller-supplied invoked paths this helper is
+    never given, not anything this helper could answer from *selection* and *actor* alone.
+    Round 1 recorded the absence of a path carrier as an honest non-claim; Round 2 gave
+    ``ACTOR_ACTION`` one; Round 3 gave the relevant ``HANDOFF_TRANSITION`` targets the same
+    one, through the same shared helper, rather than a second check that could drift from it.
+    """
+
+    if selection is None:
+        return "EXECUTOR_SELECTION_REQUIRED_AND_ABSENT"
+    try:
+        decision = evaluate_executor_selection(selection)
+    except ExecutorSelectionError:
+        return "EXECUTOR_SELECTION_UNREADABLE"
+    if decision["selected_executor_provider"] != actor:
+        return "EXECUTOR_SELECTION_PROVIDER_MISMATCH"
+    if decision["decision"] != EXECUTOR_SELECTION_ADMITTED:
+        return "EXECUTOR_SELECTION_NOT_ADMITTED"
+    if action is not None and action not in selection.get("permitted_actions", ()):
+        return "ACTION_NOT_PERMITTED_BY_SELECTION"
+    return None
+
+
+def _check_invoked_paths(
+    paths: Any, selection: Any, selection_reason: str | None
+) -> list[str]:
+    """Return zero or more reason codes for *paths*, the record's own invoked path scope.
+
+    Shared by ``_evaluate_action`` (``ACTOR_ACTION.paths``) and ``_evaluate_handoff``
+    (``HANDOFF_TRANSITION.paths``, for a target that represents file-scoped work) so the two
+    record types can never check this differently (Structural Review Round 3, PR #104 comment
+    5934943202, extending Round 2's ``ACTOR_ACTION``-only enforcement).
+
+    Absent/empty/non-string entries are refused first (``INVOKED_PATHS_REQUIRED_AND_ABSENT``);
+    a well-typed but unsafe entry -- the same :func:`.executor_selection.is_safe_repository_relative_path`
+    grammar a grant's own ``permitted_paths`` must meet -- is refused next
+    (``INVOKED_PATHS_UNSAFE``), *before* the membership check, so an invoked path cannot be
+    judged "permitted" merely because an equally unsafe grant happens to name the same string
+    (that half of the counterexample is also closed in ``executor_selection`` itself, which
+    refuses an unsafe grant regardless of what invokes it; this closes the other half). Only
+    once *paths* is both present and safe is each entry compared, by exact string membership,
+    against the admitted selection's own ``permitted_paths`` (``PATH_NOT_PERMITTED_BY_SELECTION``)
+    -- skipped when *selection_reason* already names the selection itself refused, since there
+    is then no admitted grant whose ``permitted_paths`` would mean anything.
+    """
+
+    reasons: list[str] = []
+    if not isinstance(paths, list) or not paths or not all(
+        isinstance(path, str) and path for path in paths
+    ):
+        reasons.append("INVOKED_PATHS_REQUIRED_AND_ABSENT")
+    elif not all(is_safe_repository_relative_path(path) for path in paths):
+        reasons.append("INVOKED_PATHS_UNSAFE")
+    elif selection_reason is None:
+        permitted_paths = selection.get("permitted_paths", []) if isinstance(
+            selection, dict
+        ) else []
+        if not all(path in permitted_paths for path in paths):
+            reasons.append("PATH_NOT_PERMITTED_BY_SELECTION")
+    return reasons
 
 
 def _scalars(record: dict[str, Any], *fields: str) -> str | None:
@@ -153,7 +308,9 @@ def evaluate(record: Any, *, policy: dict[str, Any] | None = None) -> dict[str, 
 def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     """One step of the handoff state machine, taken by one actor."""
 
-    unreadable = _closed(record, _HANDOFF_KEYS)
+    unreadable = _closed(
+        record, _HANDOFF_KEYS, optional=frozenset({_EXECUTOR_SELECTION_KEY, _PATHS_KEY})
+    )
     if unreadable:
         return _verdict(REFUSED, unreadable)
     ill_typed = _scalars(record, "actor", "from_state", "to_state")
@@ -174,6 +331,36 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
         reasons.append("UNKNOWN_TO_STATE")
     if reasons:
         return _verdict(REFUSED, *reasons)
+
+    # Checked after the shape/identity gate above (actor is now known to be a real role) but
+    # *before* the early return below, so a missing or refused selection accumulates alongside
+    # whatever drift-specific codes the same record also triggers (I102-SR1, PR #104 Round 1
+    # correction) -- a non-default provider's self-merge attempt without a selection is still
+    # reported with MERGE_OPERATION_DRIFT, not only EXECUTOR_SELECTION_REQUIRED_AND_ABSENT.
+    #
+    # The target state's own represented action is checked against the grant's
+    # permitted_actions (Structural Review Round 2, I102-SR1 follow-up): Round 1 wired this
+    # for ACTOR_ACTION only, so a grant naming only TEST_EXECUTION still permitted every
+    # HANDOFF_TRANSITION, including into CLAUDE_CODE_IMPLEMENTATION_COMPLETE.
+    if _requires_executor_selection(actor, policy):
+        transition_action = _TRANSITION_ACTION.get(target)
+        selection_reason = _check_executor_selection(
+            record.get(_EXECUTOR_SELECTION_KEY), actor, action=transition_action
+        )
+        if selection_reason:
+            reasons.append(selection_reason)
+        # The invoked path scope of the file-scoped work this transition attests
+        # (Structural Review Round 3, PR #104 comment 5934943202): every target
+        # _TRANSITION_ACTION maps represents implementation-completion, self-review, or
+        # PR-preparation work, so a transition into it is itself the claim that bounded
+        # file work was done -- it must name the same scope an ACTOR_ACTION for that
+        # capability would have had to name, not attest it path-blind.
+        if transition_action is not None:
+            reasons.extend(
+                _check_invoked_paths(
+                    record.get(_PATHS_KEY), record.get(_EXECUTOR_SELECTION_KEY), selection_reason
+                )
+            )
 
     # Named separately from "not a declared transition" because these are the drifts the
     # Binding exists to stop, and a caller that only sees TRANSITION_NOT_DECLARED cannot tell
@@ -220,7 +407,9 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
 def _evaluate_action(record: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     """One act by one participant, against what that participant may and may not do."""
 
-    unreadable = _closed(record, _ACTION_KEYS)
+    unreadable = _closed(
+        record, _ACTION_KEYS, optional=frozenset({_EXECUTOR_SELECTION_KEY, _PATHS_KEY})
+    )
     if unreadable:
         return _verdict(REFUSED, unreadable)
     ill_typed = _scalars(record, "actor", "action")
@@ -233,6 +422,16 @@ def _evaluate_action(record: dict[str, Any], policy: dict[str, Any]) -> dict[str
         return _verdict(REFUSED, "UNKNOWN_ACTOR")
 
     reasons: list[str] = []
+    if _requires_executor_selection(actor, policy):
+        selection = record.get(_EXECUTOR_SELECTION_KEY)
+        selection_reason = _check_executor_selection(selection, actor, action=act)
+        if selection_reason:
+            reasons.append(selection_reason)
+        # The invoked path scope, required and checked against the grant's own
+        # permitted_paths (Structural Review Round 2, I102-SR1 follow-up): an admitted
+        # selection bounds which paths it covers, and an action naming none is refused
+        # rather than silently exempted from that bound.
+        reasons.extend(_check_invoked_paths(record.get(_PATHS_KEY), selection, selection_reason))
     if act == "REQUEST_AUTOMATED_EXTERNAL_REVIEW" and not policy[
         "automated_review_trigger_allowed"
     ]:

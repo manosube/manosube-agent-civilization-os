@@ -7099,3 +7099,303 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ペアリング要件を満たすための必須projectionである。v1.0.1のtag作成・GitHub Release公開・
 Issue #92またはIssue #96のcloseは、本work unitでは一切行わない -- それらは別途SHUKOUの
 決定を要する。
+
+---
+
+# 80. Issue #102 Copilot Development Binding machine-policy implementation (Decision 0003)
+
+[Issue #102](https://github.com/manosube/manosube-agent-civilization-os/issues/102)の
+設計(`03_BINDING/COPILOT_PARTICIPATION.md`、PR #103)はSHUKOUの採択
+([comment 5921883154](https://github.com/manosube/manosube-agent-civilization-os/pull/103#issuecomment-5921883154))を経てmainへmergeされ
+(`e2d686e68f09e739d0c93d542fd22e06be822209`)、実装handoff
+([comment 5921931690](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5921931690))がClaude Codeへ記録された。
+本節はその実装work unitを記録する。
+
+`development_binding.policy`のratified role mapへ`GITHUB_COPILOT`を、`CLAUDE_CODE`と
+同一のcapability・`may`/`must_not`・handoff transitionsで追加した
+(Decision 0003、`policy_version=0.3`、`03_BINDING/DEVELOPMENT_BINDING_POLICY.json`)。
+新module`development_binding.executor_selection`が、「資格ある名前であること」と
+「この一つのwork unitの選ばれた実行者であること」を分離し、後者をSHUKOU採用・
+read-back検証済みの記録に束縛する。既存のevaluator・adoption record機構は変更せず
+拡張した。Claude Codeは選択記録なしに以前と同じ経路で動作し続ける
+(`executor_provider_default=CLAUDE_CODE`)。
+
+```text
+GOVERNING_ISSUE=#102
+DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003
+SUPERSEDES=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002
+ACTIVE_POLICY_VERSION=0.3
+GITHUB_COPILOT_ELIGIBLE_EXECUTOR=true
+ELIGIBLE_PROVIDER_MEMBERSHIP_IS_NOT_EXECUTION_AUTHORITY=true
+CLAUDE_CODE_DEFAULT_PROVIDER_UNCHANGED=true
+COPILOT_SELF_ACCEPTANCE_OR_MERGE_REFUSED=true
+COPILOT_AUTOMATED_REVIEW_TRIGGER_STILL_PROHIBITED=true
+COPILOT_RUNTIME_WORK_UNIT_PROVEN=false
+ISSUE_102_CLOSE_ALLOWED=false
+MERGE_PERFORMED=false
+NEXT_OWNER=STRUCTURAL_ADVISOR_THEN_SHUKOU
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節はmachine-policyの受入機構を記録する。実際にCopilotが一つの認可されたwork unitを
+実行した証跡の還流は、別途のwork unitとして観測され、Issue #102はそれと独立structural
+review・SHUKOU受入が揃うまで閉じない。
+
+---
+
+# 81. Issue #102 PR #104 Structural Review Round 1 correction (`I102-SR1-F1`/`F2`/`E1`)
+
+ChatGPT Structural Advisorによる§80実装への独立review Round 1
+([PR #104 comment 5925938655](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5925938655)、
+著者`manosube`/OWNER)は`VERDICT=CORRECTION_REQUIRED`を返し、二件のP1と一件の
+証跡是正を指摘した。SHUKOUは当該指摘を正式採択し
+([comment 5927524112](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5927524112))、
+続けてClaude Codeへ修正引継ぎを記録した
+([comment 5927538575](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5927538575))。
+いずれも再現・検証され、本節が是正を記録する。
+
+`I102-SR1-F1`: `development_binding.executor_selection`は独立したmoduleとして存在した
+だけで、実際の受入経路`development_binding.evaluation.evaluate()`からは一度も呼ばれて
+いなかった。そのため`actor="GITHUB_COPILOT"`の`ACTOR_ACTION`/`HANDOFF_TRANSITION`は、
+selection recordなしで role membershipのみから`PERMITTED`となっていた。是正: 既定
+provider(`CLAUDE_CODE`)以外の資格あるproviderについて、`evaluate()`が
+`executor_selection`フィールド(新規・既定providerには不要なoptionalフィールド)を
+要求し、`evaluate_executor_selection()`で検証するよう結線した。この結線を正しく行う
+過程で、既存test `tests/unit/binding/test_handoff_state_machine.py`(当初の棚卸し対象
+外)がROLES全体を汎用的にparametrizeしていたためF1の欠陥に依存して偶然成立していた
+ことが判明し、該当caseへ有効なselection fixtureを与えて是正した。
+
+`I102-SR1-F2`(followup handoffによる範囲拡大を含む): `executor_selection.RECEIPT_KEYS`
+は識別情報のみを束縛し、authorized branch/base_sha/head shaなどのscopeは記録自身の
+相互比較のみで、receipt(grant自体のread-back主張)には一切束縛されていなかった。
+Reviewerは`authorized_branch`/`current_branch`等を同時に書き換えるだけでscope
+substitutionが`ADMITTED`になることを再現した。是正: `authorized_repository`/
+`authorized_branch`/`authorized_base_sha`/`expected_head_sha`に加え、採択後の追加
+引継ぎが明示した残存obligation ---`difference_id`・`adoption_id`(`adoption_record`と
+同じ`ADOPT_...`形式)・`permitted_actions`・`permitted_paths`--- もreceiptの必須field
+へ追加し、record自身の宣言値と比較するよう束縛した。さらに`evaluate()`は
+`ACTOR_ACTION`の`action`をselectionの`permitted_actions`と照合する
+(`ACTION_NOT_PERMITTED_BY_SELECTION`)。`permitted_paths`はreceiptへ束縛・記録される
+が、`ACTOR_ACTION`/`HANDOFF_TRANSITION`のいずれもfile pathを運ばないため、この
+evaluatorでは独立して強制できないことを明示的な非主張として記録する。
+
+`I102-SR1-E1`: 新規test fixtureの既定caseが、実在するhandoff comment
+(`#102#issuecomment-5921931690`、CLAUDE_CODE限定・work unit`I102-COPILOT-EXECUTABLE-
+DEVELOPMENT-BINDING-R1`を認可するもの)のURLを、別のwork unit・providerの正当な
+grantであるかのように流用していた。さらにmodule/testの記述が受入を「verified」と
+呼んでいたが、本moduleはnetwork call・credentialを一切持たず、受入が証明するのは
+記録自身の内部整合性のみであり、実在のGitHub commentの存在・内容を証明するものでは
+ない。是正: fixtureを、存在しないcomment idを用いる明示的にsyntheticなURLへ置き換え、
+「verified」の語を避け、この限界をmodule docstring・test docstring・ADR-0029の両方に
+明記した。
+
+```text
+GOVERNING_ISSUE=#102
+IMPLEMENTATION_PR=#104
+REVIEW_ROUND=1
+REVIEW_VERDICT_RECEIVED=CORRECTION_REQUIRED
+ADOPTION_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5927524112
+HANDOFF_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5927538575
+I102_SR1_F1_FIXED=true
+I102_SR1_F2_FIXED=true
+I102_SR1_E1_FIXED=true
+EXECUTOR_SELECTION_WIRED_INTO_REAL_ADMISSION_ROUTE=true
+GRANT_SCOPE_AND_DIFFERENCE_AND_ADOPTION_BOUND_TO_RECEIPT=true
+PERMITTED_ACTIONS_ENFORCED_AT_ADMISSION_ROUTE=true
+PERMITTED_PATHS_BOUND_BUT_NOT_INDEPENDENTLY_ENFORCED=true
+TEST_FIXTURE_SYNTHETIC_URL_LABELLED=true
+VERIFIED_OVERCLAIM_CORRECTED=true
+PRE_EXISTING_TEST_CONSUMER_DISCOVERED_AND_FIXED=true
+CLAUDE_CODE_DEFAULT_PATH_UNAFFECTED=true
+FRESH_STRUCTURAL_REVIEW_REQUIRED=true
+```
+
+是正後、`evaluate()`は`GITHUB_COPILOT`のaction/transitionをselection recordなしでは
+拒否し、有効なselectionがあれば既存のClaude Code経路と同一に許可することを独立に
+再実行確認した。`CLAUDE_CODE`の既存3/4-key record shapeは変更されていない。
+
+---
+
+# 82. Issue #102 PR #104 Structural Review Round 2 correction (permitted_paths / transition permitted_actions)
+
+ChatGPT Structural Advisorによる§81是正への独立re-review
+([PR #104 comment 5930926992](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5930926992)、
+著者`manosube`/OWNER)は`VERDICT=CORRECTION_REQUIRED`を返し、§81で採択された
+obligationのうち二件が未完了であると指摘した。SHUKOUは当該二件を正式採択し
+([comment 5930993879](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5930993879))、
+続けてClaude Codeへ修正引継ぎを記録した
+([comment 5931011624](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5931011624))。
+いずれも再現・検証され、本節が是正を記録する。
+
+`SR2_PERMITTED_PATHS_NOT_ENFORCED`: §81時点の`_check_executor_selection`は
+`permitted_paths`をreceiptへ束縛・記録するのみで、`ACTOR_ACTION`/`HANDOFF_TRANSITION`
+のいずれもfile pathを運ばないため独立して強制できないことを明示的な非主張として
+記録していた。Reviewerは、この限界を正直に記録すること自体はobligationを満たさない
+と指摘した。是正: `ACTOR_ACTION`のrecord shapeへ新規optional key `paths`(非空の
+string list)を追加し、`_evaluate_action`が要求する。`paths`が欠落・空・非stringを
+含む場合は`INVOKED_PATHS_REQUIRED_AND_ABSENT`で拒否し、与えられた場合はselectionの
+`permitted_paths`と要素ごとに完全一致で比較し、一つでも grant外のpathがあれば
+`PATH_NOT_PERMITTED_BY_SELECTION`で拒否する。`HANDOFF_TRANSITION`はfile pathという
+概念自体を持たないため`paths`キーを追加せず、この強制対象から明示的に除外した。
+
+`SR2_TRANSITIONS_BYPASS_PERMITTED_ACTIONS`(F1/F2由来の残存obligation):
+§81時点の`_evaluate_handoff`は`_check_executor_selection`を`action`引数なしで呼んで
+いたため、`permitted_actions=["TEST_EXECUTION"]`のみのgrantでも
+`CLAUDE_CODE_IMPLEMENTATION_COMPLETE`・`EXECUTOR_SELF_REVIEW_COMPLETE`・
+`GITHUB_PR_READY`・`READY_FOR_STRUCTURAL_REVIEW`への遷移がすべて無条件に`PERMITTED`
+となっていた。Reviewerはこの正確な反例を再現して報告した。是正: 新規の決定的
+mapping `_TRANSITION_ACTION`(遷移先state → 代表するcapability名)を追加し、
+`_evaluate_handoff`が`_check_executor_selection`へ`action=_TRANSITION_ACTION.get(target)`
+を渡すよう結線した。これにより`TEST_EXECUTION`のみのgrantでの実装/self-review/
+PR準備への遷移はすべて`ACTION_NOT_PERMITTED_BY_SELECTION`で拒否され、対応する
+capabilityを含むgrantのみがその遷移を許可する。既定provider(`CLAUDE_CODE`)の経路、
+Human-only state遷移、advisor境界は変更していない。
+
+```text
+GOVERNING_ISSUE=#102
+IMPLEMENTATION_PR=#104
+REVIEW_ROUND=2
+REVIEW_VERDICT_RECEIVED=CORRECTION_REQUIRED
+ADOPTION_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5930993879
+HANDOFF_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5931011624
+SR2_PERMITTED_PATHS_NOT_ENFORCED_FIXED=true
+SR2_TRANSITIONS_BYPASS_PERMITTED_ACTIONS_FIXED=true
+ACTOR_ACTION_NOW_CARRIES_PATHS_FIELD=true
+PERMITTED_PATHS_NOW_INDEPENDENTLY_ENFORCED_FOR_ACTOR_ACTION=true
+HANDOFF_TRANSITION_NOW_BOUND_TO_TRANSITION_ACTION_MAPPING=true
+TEST_EXECUTION_ONLY_GRANT_CANNOT_ATTEST_IMPLEMENTATION_OR_SELF_REVIEW_OR_PR_PREPARATION=true
+CLAUDE_CODE_DEFAULT_PATH_UNAFFECTED=true
+FRESH_STRUCTURAL_REVIEW_REQUIRED=true
+```
+
+是正後、Reviewerが報告した両反例(`TEST_EXECUTION`のみのgrantでの`paths`無し
+implementation実行、同grantでの各遷移attestation)を独立に再現し、是正後は
+いずれも拒否されること、および全capabilityを含む完全なgrantは従来通り許可される
+ことを確認した。`CLAUDE_CODE`の既定経路は本是正でも変更されていない。
+
+---
+
+# 83. Issue #102 PR #104 Structural Review Round 3 correction (安全なpath文法とdelivery遷移のpath scope)
+
+ChatGPT Structural Advisorによる§82是正への独立re-review
+([PR #104 comment 5934943202](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5934943202)、
+著者`manosube`/OWNER)は`VERDICT=CORRECTION_REQUIRED`を返し、§82で採択された
+`permitted_paths`強制obligationのうち、まだ満たされていなかった二点を指摘した。
+SHUKOUは当該二件を正式採択し
+([comment 5934983183](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5934983183))、
+続けてClaude Codeへ修正引継ぎを記録した
+([comment 5935006354](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5935006354))。
+いずれも再現・検証され、本節が是正を記録する。
+
+`SR3_UNSAFE_MATCHING_PATHS_ADMITTED`: §82時点の`permitted_paths`/`paths`の検証は、
+非空文字列であることのみを要求する完全一致比較だった。Reviewerは、record側の
+`paths`とgrant/receipt側の`permitted_paths`が同一の安全でない文字列
+(`../outside.py`・`/tmp/outside.py`・`tests/../outside.py`・空白のみの文字列)で
+一致している場合、両者が合意しているという理由だけで`PERMITTED`/
+`ACTION_WITHIN_ROLE`となることを再現した。一致は内部整合性を証明するのみで、
+その値自体が安全なgrantであったことを証明しない。是正: 新規
+`executor_selection.is_safe_repository_relative_path()`という一つの決定的な
+repository-relative path文法を定義し、`executor_selection.py`の
+`permitted_paths`(record自身の権威ある値。receipt一致検査は既に別途行われている
+ため、receipt側を別途検査する必要はない)と、`evaluation.py`の`_evaluate_action`/
+`_evaluate_handoff`が検査する invoked `paths`の両方で、この同一の文法関数を使用
+するよう結線した。文法は、絶対path(先頭`/`)・trailing separator・`.`/`..`
+segment・空segment(連続する`/`)・backslashまたは`:`を含むdrive形式・前後の
+空白・空白のみの文字列を拒否し、filesystem解決やnormalizationは一切行わない
+(正規化して受理可能な形へ変換することはしない -- 安全でない入力はそのまま拒否
+する)。新規reason code: grant側は`PERMITTED_PATHS_MALFORMED`
+(`executor_selection.py`)、invoked path側は`INVOKED_PATHS_UNSAFE`
+(`evaluation.py`、既存の`INVOKED_PATHS_REQUIRED_AND_ABSENT`/
+`PATH_NOT_PERMITTED_BY_SELECTION`と並ぶ第三の区別として追加)。
+
+`SR3_COMPLETION_DELIVERY_TRANSITIONS_HIDE_PATH_SCOPE`: §82で`HANDOFF_TRANSITION`に
+`permitted_actions`強制(`_TRANSITION_ACTION`mapping経由)を結線した際、`paths`
+fieldは意図的に追加しなかった(「遷移自体はfile scopeを持たない」という理由)。
+Reviewerは、`CLAUDE_CODE_IMPLEMENTATION_COMPLETE`等のimplementation-completion/
+self-review/PR-preparation遷移こそが「bound file workが完了した」という主張
+そのものであり、この遷移がpath-blindである限り、`TEST_EXECUTION`のみの grantの
+`permitted_actions`強制とは独立に、「どのfileに対する作業かを一度も示さずに
+delivery/completionを主張できる」という欠落が残ることを再現した。是正:
+`HANDOFF_TRANSITION`の`_HANDOFF_KEYS`optional集合へ`paths`を追加し、
+`_TRANSITION_ACTION`が実際にcapabilityへmapする対象(非既定providerが到達し得る
+5つの遷移先すべて)についてのみ、`ACTOR_ACTION`と同一の新規共有helper
+`_check_invoked_paths()`を用いて、`paths`の要求・安全性・
+`permitted_paths`との一致を検査するよう結線した。これにより、
+`_evaluate_action`と`_evaluate_handoff`は同一の検証経路を共有し、両record type間で
+検証内容が分岐することはない。
+
+```text
+GOVERNING_ISSUE=#102
+IMPLEMENTATION_PR=#104
+REVIEW_ROUND=3
+REVIEW_VERDICT_RECEIVED=CORRECTION_REQUIRED
+ADOPTION_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5934983183
+HANDOFF_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5935006354
+SR3_UNSAFE_MATCHING_PATHS_ADMITTED_FIXED=true
+SR3_COMPLETION_DELIVERY_TRANSITIONS_HIDE_PATH_SCOPE_FIXED=true
+SAFE_REPOSITORY_RELATIVE_PATH_GRAMMAR_INTRODUCED=true
+GRAMMAR_SHARED_BY_GRANT_AND_INVOKED_PATH_CHECKS=true
+HANDOFF_TRANSITION_NOW_CARRIES_AND_CHECKS_PATHS_FOR_FILE_SCOPED_TARGETS=true
+ACTOR_ACTION_AND_HANDOFF_TRANSITION_SHARE_ONE_PATH_CHECK_HELPER=true
+CLAUDE_CODE_DEFAULT_PATH_UNAFFECTED=true
+FRESH_STRUCTURAL_REVIEW_REQUIRED=true
+```
+
+是正後、Reviewerが報告した反例(`../outside.py`・`/tmp/outside.py`・
+`tests/../outside.py`・空白のみの文字列がgrantとreceiptの両方で一致している
+ケース、および`TEST_EXECUTION`のみのgrantによる`paths`無し/`paths`不一致の
+completion遷移attestation)を独立に再現し、是正後はいずれも拒否されること、
+安全で許可された単一pathは従来通り許可されること、全capabilityを含む完全な
+grantによる遷移chainは従来通り許可されることを確認した。`CLAUDE_CODE`の既定
+経路は本是正でも変更されていない。
+
+---
+
+# 84. Issue #102 PR #104 Structural Review Round 4 correction (`_SAFE_PATH_SEGMENT_PATTERN`の改行hole)
+
+ChatGPT Structural Advisorによる§83是正への独立re-review
+([PR #104 comment 5973345827](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5973345827)、
+著者`manosube`/OWNER)は`VERDICT=CORRECTION_REQUIRED`を返し、§83で導入した
+`is_safe_repository_relative_path()`自体に一件のP2欠陥を指摘した。SHUKOUは
+当該指摘を正式採択し
+([comment 5973552733](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5973552733))、
+本件は採択comment自身が完全な認可範囲(authorized SHA/branch/PR・stop
+condition・merge/issue-close/trial/review-request禁止flagのすべて)を含んで
+いたため、別途の引継ぎcommentを待たず本節の是正に着手した。再現・検証され、
+本節が是正を記録する。
+
+`SR4_F1_INTERNAL_SEGMENT_LF_ACCEPTED`: `_SAFE_PATH_SEGMENT_PATTERN =
+re.compile(r"^[A-Za-z0-9_.-]+$")`を`.match()`で各segmentへ適用していたが、
+Pythonの正規表現における`$`は文字列の絶対的な末尾だけでなく、末尾に単一の
+改行(LF)が続く直前の位置にもマッチする。そのため、例えば
+`"tests\n/outside.py"`を`/`で分割した際の内部segment`"tests\n"`は、
+`match()`が`"tests"`の部分だけを消費し`$`がその直後(LF直前)でマッチして
+しまうため、`is_safe_repository_relative_path()`から`True`(安全)と判定
+されていた。Reviewerはこの反例を、selection admission・`ACTOR_ACTION`・
+`HANDOFF_TRANSITION`の三箇所すべてで独立に再現した。是正: `.match()`を
+`.fullmatch()`へ変更した(パターン自身の`^`/`$`は`fullmatch`では不要と
+なるため削除し、`re.compile(r"[A-Za-z0-9_.-]+")`とした)。`fullmatch()`は
+一致がsegment文字列の真の末尾まで到達することを要求するため、`"tests\n"`
+のような内部に改行を含むsegmentは`fullmatch`が失敗し、拒否されるように
+なった。許可される文字集合自体は変更していない(正規化や拡張は行わず、
+一致判定の厳密さのみを修正した)。
+
+```text
+GOVERNING_ISSUE=#102
+IMPLEMENTATION_PR=#104
+REVIEW_ROUND=4
+REVIEW_VERDICT_RECEIVED=CORRECTION_REQUIRED
+ADOPTION_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5973552733
+SR4_F1_INTERNAL_SEGMENT_LF_ACCEPTED_FIXED=true
+SAFE_PATH_SEGMENT_PATTERN_NOW_CHECKED_WITH_FULLMATCH=true
+ALLOWED_CHARACTER_SET_UNCHANGED=true
+NEGATIVE_CONTROL_ADDED_FOR_BOTH_ACTOR_ACTION_AND_HANDOFF_TRANSITION=true
+CLAUDE_CODE_DEFAULT_PATH_UNAFFECTED=true
+FRESH_STRUCTURAL_REVIEW_REQUIRED=true
+```
+
+是正後、Reviewerの反例(`"tests\n/outside.py"`をgrant/receipt両方のpermitted_paths
+へ設定し、同じ文字列を`ACTOR_ACTION.paths`/`HANDOFF_TRANSITION.paths`へ渡す)を
+独立に再現し、selection admission・両record typeのいずれも拒否されること、
+既存の安全なpath(`tests/some_file.py`等)は従来通り許可されることを確認した。
+`CLAUDE_CODE`の既定経路は本是正でも変更されていない。

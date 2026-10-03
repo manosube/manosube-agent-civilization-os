@@ -1,17 +1,17 @@
 # MANOSUBE Agent Civilization OS
 
-## Current-Repository Development Binding v0.2
+## Current-Repository Development Binding v0.3
 
 ```text
 DOC_TYPE=REPOSITORY_BINDING
 BINDING_SCOPE=CURRENT_REPOSITORY_DEVELOPMENT_OPERATION
 DOCUMENT_ID=DEV-BINDING-0001
-DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002
-SUPERSEDES=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0001
+DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003
+SUPERSEDES=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002
 DECISION_STATUS=RATIFIED
 DECISION_AUTHORITY=SHUKOU
 KERNEL_ELEMENT=none
-SCHEMA_VERSION=0.2
+SCHEMA_VERSION=0.3
 STATUS=CANONICAL_DESIGN
 ```
 
@@ -19,14 +19,17 @@ STATUS=CANONICAL_DESIGN
 
 # 0. Binding Position
 
-このBindingは、`manosube/manosube-agent-civilization-os`を**構築する**四者を選択する。Kernelが何であるかは述べない。
+このBindingは、`manosube/manosube-agent-civilization-os`を**構築する**参加者を選択する。Kernelが何であるかは述べない。
 
 ```text
-CHATGPT     = STRUCTURAL_ADVISOR AND STRUCTURAL REVIEWER
-CLAUDE_CODE = IMPLEMENTATION_EXECUTOR
-GITHUB      = HUMAN_INTENT_AND_WORK_STATE_SURFACE
-SHUKOU      = FINAL ACCEPTANCE AND MERGE OPERATION AUTHORITY
+CHATGPT         = STRUCTURAL_ADVISOR AND STRUCTURAL REVIEWER
+CLAUDE_CODE     = IMPLEMENTATION_EXECUTOR (eligible)
+GITHUB_COPILOT  = IMPLEMENTATION_EXECUTOR (eligible, Decision 0003 / Issue #102)
+GITHUB          = HUMAN_INTENT_AND_WORK_STATE_SURFACE
+SHUKOU          = FINAL ACCEPTANCE AND MERGE OPERATION AUTHORITY
 ```
+
+`IMPLEMENTATION_EXECUTOR`は一つのcapabilityであり、いまそれを満たす**資格**を持つ名前は二つである。資格は選択ではない——ある一つのwork unitについて、実際にどちらが実行するかは`development_binding.executor_selection`が別途評価する、より狭い問いである。§10を見よ。
 
 `KERNEL_VERTICAL_WORK_UNIT_DELIVERY.md` §6は、observation／acceptance capabilityとexecution capabilityを**provider中立に**定義し、「いかなる名前付きprovider、API、version-control product、model、Agentもprotocol適合には不要である」と述べる。その中立性は正しく、維持される。
 
@@ -74,7 +77,8 @@ CHATGPT
 − MERGE OPERATION
 − EXTERNAL FINDING ADOPTION
 
-CLAUDE CODE
+CLAUDE CODE (eligible executor)
+GITHUB COPILOT (eligible executor, Decision 0003)
 = IMPLEMENTATION
 + TEST EXECUTION
 + EXECUTOR SELF-REVIEW
@@ -86,6 +90,10 @@ CLAUDE CODE
 − MERGE OPERATION
 − EXTERNAL FINDING ADOPTION
 − AUTOMATED EXTERNAL REVIEW REQUEST
+
+両者は同一のcapability・同一のmay/must_notを持つ。片方だけに強い制約を書けば、
+もう片方がその制約を持たない実行者になる。したがって両者は常に一つの定義として
+保持される（`development_binding.policy._EXECUTOR_MAY`/`_EXECUTOR_MUST_NOT`)。
 
 GITHUB
 = HUMAN INTENT RECORD
@@ -280,6 +288,9 @@ merge readiness recommendation owner
 final acceptance owner
 merge operation owner
 external finding adoption authority
+eligible executor provider set           (Decision 0003)
+default executor provider                (Decision 0003)
+executor provider selection authority    (Decision 0003)
 ```
 
 ## 5.2 評価器は例外を投げない
@@ -369,6 +380,15 @@ INCIDENT_REGRESSION_PROVEN=true
 HUMAN_MERGE_BOUNDARY_PRESERVED=true
 KERNEL_PROVIDER_NEUTRALITY_PRESERVED=true
 UNIVERSAL_KERNEL_PROVIDER_NEUTRALITY_PRESERVED=true
+GITHUB_COPILOT_ELIGIBLE_EXECUTOR=true
+CLAUDE_CODE_REMAINS_ELIGIBLE_EXECUTOR=true
+CLAUDE_CODE_REMAINS_DEFAULT_EXECUTOR_PROVIDER=true
+ELIGIBLE_PROVIDER_MEMBERSHIP_IS_NOT_EXECUTION_AUTHORITY=true
+EXECUTOR_SELECTION_RECORD_REQUIRED_FOR_NON_DEFAULT_PROVIDER=true
+EXECUTOR_PROVIDER_SELECTION_AUTHORITY_FIXED=true
+COPILOT_SELF_ACCEPTANCE_OR_MERGE_REFUSED=true
+COPILOT_AUTOMATED_REVIEW_TRIGGER_STILL_PROHIBITED=true
+COPILOT_RUNTIME_WORK_UNIT_PROVEN=false
 ```
 
 ## 8.1 guardはinstall後も動く
@@ -397,3 +417,76 @@ RUNTIME_ENFORCEMENT_IMPLEMENTED=false
 `RUNTIME_ENFORCEMENT_IMPLEMENTED=false`は特に明示する。このBindingは記録を評価する。Agentがこの評価器を呼ばずに行動することを、Bindingは**物理的に阻止しない**。強制の所有者はRuntimeであり、v0.1にRuntimeは無い。
 
 境界を主張より狭く述べるのは、Phase 5のP1が教えたことである——主張が実装より広いとき、その差は主張した者にも見えない。
+
+# 10. Decision 0003: a second eligible name for the same capability (Issue #102)
+
+SHUKOUはKernel互換で交換可能なCopilot実行者を要請した([Issue #102](https://github.com/manosube/manosube-agent-civilization-os/issues/102))。設計は独立レビューを経て採択され([PR #103](https://github.com/manosube/manosube-agent-civilization-os/pull/103)、採択記録[comment 5921883154](https://github.com/manosube/manosube-agent-civilization-os/pull/103#issuecomment-5921883154))、実装handoffが記録された([comment 5921931690](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5921931690))。本節はその実装である。
+
+## 10.1 資格と選択は別の問いである
+
+```text
+ELIGIBLE  = EXECUTOR_PROVIDERS に名前がある   -- このBindingが答える
+SELECTED  = ある一つのwork unitについて、いまその名前が実際の実行者である -- executor_selection が答える
+ELIGIBLE_PROVIDER_MEMBERSHIP_IS_NOT_EXECUTION_AUTHORITY=true
+```
+
+`roles`マップに`GITHUB_COPILOT`が存在することは、Copilotがこのrepositoryで何かを
+実装する権限を**意味しない**。権限は、`development_binding.executor_selection`が
+評価する、exact work unit・exact repository/branch・exact base/head SHA・SHUKOUの
+read-back検証済み採用記録に束縛された、別個の記録を必要とする。
+
+## 10.2 Claude Codeは変わらず動く
+
+```text
+DEFAULT_EXECUTOR_PROVIDER=CLAUDE_CODE
+```
+
+選択記録が存在しない限り、Claude CodeはDecision 0002のときと**全く同じに**動作する。
+この決定はClaude Codeの経路を狭めない——もう一つの資格ある名前を追加するだけである。
+
+## 10.3 対称な制約
+
+`GITHUB_COPILOT`は`CLAUDE_CODE`と同一の`may`/`must_not`を持つ(§2)。したがって
+Copilotも以下を**できない**。
+
+```text
+− STRUCTURAL_REVIEW
+− MERGE_READINESS_RECOMMENDATION
+− FINAL_ACCEPTANCE_DECISION
+− MERGE_OPERATION
+− ADOPT_EXTERNAL_FINDING
+− REQUEST_AUTOMATED_EXTERNAL_REVIEW
+```
+
+Copilotの自己受入・自己マージ・自動review要求は、Claude Codeのそれと同じ経路・
+同じ理由コードで拒否される(`evaluate()`、`development_binding.evaluation`)。
+Copilotの自動review要求trigger(`prohibited_automated_review_triggers`の一つ)も
+禁止され続ける(§4)。
+
+## 10.4 この決定が主張しないこと
+
+```text
+COPILOT_MACHINE_ADMISSION_IMPLEMENTED=true
+COPILOT_RUNTIME_WORK_UNIT_PROVEN=false
+COPILOT_REVIEW_AUTO_ENABLED=false
+ISSUE_102_CLOSE_ALLOWED=false
+```
+
+本節は機械ポリシーの受入機構を実装する。実際にCopilotが一つの認可されたwork unitを
+実行し、その証跡が還流することは、別途観測され、別途証明される。Issue #102は、
+その観測と独立structural reviewおよびSHUKOUの受入が完了するまで閉じられない。
+
+## 10.5 「read-back検証済み」の意味 (Structural Review Round 1是正、PR #104)
+
+§10.1は`executor_selection`を「read-back検証済みの採用記録に束縛された記録」と述べる。
+これは、記録自身の宣言値と、呼び手が主張するread-back receiptとの**内部整合性**が
+束縛されることを述べたものであり、`executor_selection`モジュール自身が実際のGitHub
+commentを取得・検証することを述べたものではない。同モジュールはnetwork call・
+credentialを一切持たない。Structural Review Round 1(`I102-SR1-E1`)は、この区別が
+module docstring・test docstringで不明瞭だったことを指摘し、是正された。
+
+```text
+MODULE_PERFORMS_NETWORK_READBACK=false
+MODULE_PROVES_INTERNAL_CONSISTENCY_ONLY=true
+CALLER_RECEIPT_IS_A_CLAIM_NOT_A_PROOF=true
+```

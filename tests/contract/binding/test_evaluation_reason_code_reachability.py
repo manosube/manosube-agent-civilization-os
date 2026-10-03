@@ -33,6 +33,7 @@ from manosube_agent_civilization.development_binding import (
     load_policy,
 )
 from manosube_agent_civilization.development_binding.policy import (
+    COPILOT_EXECUTOR,
     EXECUTOR,
     EXECUTOR_TERMINAL_STATE,
     FINAL_ACCEPTANCE_STATE,
@@ -62,6 +63,77 @@ def _adoption(**overrides: Any) -> dict[str, Any]:
         "authority": _ADOPTION_AUTHORITY,
         "observation_id": "OBS-1",
         "disposition": _FORBIDDEN_DISPOSITION,
+    }
+    base.update(overrides)
+    return base
+
+
+# --------------------------------------------------------------------------- #
+# Decision 0003 (Issue #102 PR #104, I102-SR1-F1): executor_selection is now wired into
+# the real admission route for every eligible provider other than the ratified default.
+# --------------------------------------------------------------------------- #
+
+_COPILOT_SHA = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
+_COPILOT_COMMENT_URL = (
+    "https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-2000000002"
+)
+_COPILOT_WORK_UNIT_ID = "WORK-UNIT-REASON-CODE-REACHABILITY-1"
+_COPILOT_DIFFERENCE_ID = "D-REASON-CODE-REACHABILITY-1"
+_COPILOT_ADOPTION_ID = "ADOPT_REASON_CODE_REACHABILITY_1"
+_COPILOT_REPOSITORY = "manosube/manosube-agent-civilization-os"
+_COPILOT_BRANCH = "agent/reason-code-reachability-1"
+_COPILOT_PERMITTED_ACTIONS = ["IMPLEMENTATION", "TEST_EXECUTION"]
+_COPILOT_PERMITTED_PATHS = ["tests/contract/binding/test_evaluation_reason_code_reachability.py"]
+
+
+def _copilot_receipt(**overrides: Any) -> dict[str, Any]:
+    base = {
+        "work_unit_id": _COPILOT_WORK_UNIT_ID,
+        "difference_id": _COPILOT_DIFFERENCE_ID,
+        "governing_issue": "#102",
+        "adoption_id": _COPILOT_ADOPTION_ID,
+        "selected_executor_provider": COPILOT_EXECUTOR,
+        "comment_url": _COPILOT_COMMENT_URL,
+        "decision_authority": HUMAN_AUTHORITY,
+        "decision_status": "RATIFIED",
+        "authorized_repository": _COPILOT_REPOSITORY,
+        "authorized_branch": _COPILOT_BRANCH,
+        "authorized_base_sha": _COPILOT_SHA,
+        "expected_head_sha": _COPILOT_SHA,
+        "permitted_actions": _COPILOT_PERMITTED_ACTIONS,
+        "permitted_paths": _COPILOT_PERMITTED_PATHS,
+    }
+    base.update(overrides)
+    return base
+
+
+def _copilot_selection(**overrides: Any) -> dict[str, Any]:
+    """A complete, admissible executor-selection record naming Copilot -- the fixture every
+    reachability case below starts from and mutates exactly one field of."""
+
+    base: dict[str, Any] = {
+        "schema_version": "0.1",
+        "work_unit_id": _COPILOT_WORK_UNIT_ID,
+        "invoked_work_unit_id": _COPILOT_WORK_UNIT_ID,
+        "difference_id": _COPILOT_DIFFERENCE_ID,
+        "governing_issue": "#102",
+        "adoption_id": _COPILOT_ADOPTION_ID,
+        "selected_executor_provider": COPILOT_EXECUTOR,
+        "comment_url": _COPILOT_COMMENT_URL,
+        "decision_authority": HUMAN_AUTHORITY,
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": _copilot_receipt(),
+        "authorized_repository": _COPILOT_REPOSITORY,
+        "authorized_branch": _COPILOT_BRANCH,
+        "authorized_base_sha": _COPILOT_SHA,
+        "expected_head_sha": _COPILOT_SHA,
+        "permitted_actions": _COPILOT_PERMITTED_ACTIONS,
+        "permitted_paths": _COPILOT_PERMITTED_PATHS,
+        "current_repository": _COPILOT_REPOSITORY,
+        "current_branch": _COPILOT_BRANCH,
+        "current_base_sha": _COPILOT_SHA,
+        "current_head_sha": _COPILOT_SHA,
+        "concurrently_active_provider_for_work_unit": "",
     }
     base.update(overrides)
     return base
@@ -266,6 +338,111 @@ _REACHABILITY_CASES: tuple[tuple[str, str, Any], ...] = (
         "ACTION_NOT_GRANTED_TO_ROLE",
         REFUSED,
         {"record_type": "ACTOR_ACTION", "actor": EXECUTOR, "action": "NOT_A_GRANTED_ACTION"},
+    ),
+    # Decision 0003 (I102-SR1-F1): a non-default eligible executor provider's action is
+    # refused outright, through the real admission route, without any selection record.
+    (
+        "EXECUTOR_SELECTION_REQUIRED_AND_ABSENT",
+        REFUSED,
+        {"record_type": "ACTOR_ACTION", "actor": COPILOT_EXECUTOR, "action": "IMPLEMENTATION"},
+    ),
+    (
+        "EXECUTOR_SELECTION_UNREADABLE",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": "not even a mapping",
+        },
+    ),
+    (
+        "EXECUTOR_SELECTION_PROVIDER_MISMATCH",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(
+                selected_executor_provider=EXECUTOR,
+                api_read_back_receipt=_copilot_receipt(selected_executor_provider=EXECUTOR),
+            ),
+        },
+    ),
+    (
+        "EXECUTOR_SELECTION_NOT_ADMITTED",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(decision_status="DRAFT"),
+        },
+    ),
+    (
+        "ACTION_NOT_PERMITTED_BY_SELECTION",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            # Within the role's own `may` list, but not within this specific grant's
+            # narrower `permitted_actions` -- an admitted selection bounds the actions it
+            # covers, it does not re-open everything the role could do in general.
+            "action": "PR_PREPARATION",
+            "executor_selection": _copilot_selection(
+                permitted_actions=["IMPLEMENTATION", "TEST_EXECUTION"],
+                api_read_back_receipt=_copilot_receipt(
+                    permitted_actions=["IMPLEMENTATION", "TEST_EXECUTION"]
+                ),
+            ),
+        },
+    ),
+    (
+        "ACTION_WITHIN_ROLE",
+        PERMITTED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(),
+            "paths": _COPILOT_PERMITTED_PATHS,
+        },
+    ),
+    # Structural Review Round 2 (I102-SR1 follow-up, PR #104 comment 5930926992): the
+    # invoked path scope is itself required and checked against the grant.
+    (
+        "INVOKED_PATHS_REQUIRED_AND_ABSENT",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(),
+        },
+    ),
+    (
+        "PATH_NOT_PERMITTED_BY_SELECTION",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(),
+            "paths": ["some/ungranted/path.py"],
+        },
+    ),
+    # Structural Review Round 3 (PR #104 comment 5934943202): a well-typed but unsafe
+    # invoked path is refused before the membership check ever runs.
+    (
+        "INVOKED_PATHS_UNSAFE",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": _copilot_selection(),
+            "paths": ["../outside.py"],
+        },
     ),
     # _evaluate_finding()
     (

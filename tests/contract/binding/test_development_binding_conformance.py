@@ -13,16 +13,23 @@ from pathlib import Path
 import pytest
 
 from manosube_agent_civilization.development_binding import (
+    EXECUTOR_PROVIDERS,
     HUMAN_AUTHORITY,
+    PERMITTED,
+    REFUSED,
     ROLES,
     PolicyIntegrityError,
+    evaluate,
     load_policy,
     prohibited_trigger_in,
 )
 from manosube_agent_civilization.development_binding.policy import (
     BINDING_DOCUMENT_PATH,
+    COPILOT_EXECUTOR,
     DECISION_ID,
+    DEFAULT_EXECUTOR_PROVIDER,
     EXECUTOR,
+    EXECUTOR_PROVIDER_SELECTION_AUTHORITY,
     POLICY_PATH,
     RATIFIED_HUMAN_ONLY_STATES,
     RATIFIED_MAY,
@@ -52,14 +59,14 @@ COMMUNICATION = (ROOT / "00_KERNEL" / "HUMAN_AGENT_WORK_COMMUNICATION.md").read_
 
 def test_the_human_decision_is_recorded_with_its_identity() -> None:
     assert POLICY["decision_id"] == DECISION_ID
-    assert DECISION_ID.endswith("0002")
-    assert POLICY["supersedes"].endswith("0001")
+    assert DECISION_ID.endswith("0003")
+    assert POLICY["supersedes"].endswith("0002")
     assert POLICY["decision_status"] == "RATIFIED"
     assert POLICY["decision_authority"] == HUMAN_AUTHORITY
 
 
 def test_the_role_map_is_closed_and_exact() -> None:
-    assert frozenset({"CHATGPT", "CLAUDE_CODE", "GITHUB", "SHUKOU"}) == ROLES
+    assert frozenset({"CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB", "SHUKOU"}) == ROLES
     assert frozenset(POLICY["roles"]) == ROLES
 
 
@@ -68,6 +75,7 @@ def test_the_role_map_is_closed_and_exact() -> None:
     [
         ("CHATGPT", "STRUCTURAL_ADVISOR"),
         ("CLAUDE_CODE", "IMPLEMENTATION_EXECUTOR"),
+        ("GITHUB_COPILOT", "IMPLEMENTATION_EXECUTOR"),
         ("GITHUB", "HUMAN_INTENT_AND_WORK_STATE_SURFACE"),
         ("SHUKOU", "HUMAN_CONSTITUTIONAL_AUTHORITY"),
     ],
@@ -78,11 +86,383 @@ def test_each_participant_holds_exactly_its_declared_capability(
     assert POLICY["roles"][role]["capability"] == capability
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB"])
+@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB"])
 @pytest.mark.parametrize("forbidden", ["FINAL_ACCEPTANCE_DECISION", "MERGE_OPERATION"])
 def test_no_participant_but_the_human_may_accept_or_merge(role: str, forbidden: str) -> None:
     assert forbidden in POLICY["roles"][role]["must_not"]
     assert forbidden not in POLICY["roles"][role]["may"]
+
+
+def test_claude_code_and_copilot_hold_the_identical_executor_permission_sets() -> None:
+    """Decision 0003: the capability is unchanged: only the set of eligible names grows."""
+
+    assert POLICY["roles"][EXECUTOR]["may"] == POLICY["roles"][COPILOT_EXECUTOR]["may"]
+    assert (
+        POLICY["roles"][EXECUTOR]["must_not"] == POLICY["roles"][COPILOT_EXECUTOR]["must_not"]
+    )
+
+
+def test_eligible_executor_providers_are_pinned_and_claude_code_remains_default() -> None:
+    assert frozenset(POLICY["executor_providers"]) == EXECUTOR_PROVIDERS
+    assert POLICY["executor_provider_default"] == DEFAULT_EXECUTOR_PROVIDER == EXECUTOR
+    assert (
+        POLICY["executor_provider_selection_authority"]
+        == EXECUTOR_PROVIDER_SELECTION_AUTHORITY
+        == HUMAN_AUTHORITY
+    )
+
+
+def test_eligible_provider_membership_alone_is_not_execution_authority() -> None:
+    """Decision 0003, Structural Review Round 1 (I102-SR1-F1): a non-default eligible
+    provider must carry an admitted selection record to be granted anything through the real
+    admission route -- role membership by itself is refused, not permitted."""
+
+    bare = evaluate(
+        {"record_type": "ACTOR_ACTION", "actor": COPILOT_EXECUTOR, "action": "IMPLEMENTATION"}
+    )
+    assert bare["decision"] == REFUSED
+    assert "EXECUTOR_SELECTION_REQUIRED_AND_ABSENT" in bare["reason_codes"]
+
+
+def test_the_default_executor_provider_needs_no_selection_record() -> None:
+    """Backward compatibility is a property of the default, not an exception: Claude Code's
+    exact pre-Decision-0003 three-key record is unaffected by the new optional field."""
+
+    verdict = evaluate({"record_type": "ACTOR_ACTION", "actor": EXECUTOR, "action": "IMPLEMENTATION"})
+    assert verdict == {"decision": PERMITTED, "reason_codes": ["ACTION_WITHIN_ROLE"]}
+
+
+def _copilot_selection_grant(**overrides: object) -> dict[str, object]:
+    sha = "a" * 40
+    receipt = {
+        "work_unit_id": "WORK-UNIT-SR2-REGRESSION-1",
+        "difference_id": "D-SR2-REGRESSION-1",
+        "governing_issue": "#102",
+        "adoption_id": "ADOPT_SR2_REGRESSION_1",
+        "selected_executor_provider": COPILOT_EXECUTOR,
+        "comment_url": "https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5000000005",
+        "decision_authority": HUMAN_AUTHORITY,
+        "decision_status": "RATIFIED",
+        "authorized_repository": "manosube/manosube-agent-civilization-os",
+        "authorized_branch": "agent/sr2-regression-1",
+        "authorized_base_sha": sha,
+        "expected_head_sha": sha,
+        "permitted_actions": ["TEST_EXECUTION"],
+        "permitted_paths": ["tests/some_file.py"],
+    }
+    grant: dict[str, object] = {
+        "schema_version": "0.1",
+        "work_unit_id": receipt["work_unit_id"],
+        "invoked_work_unit_id": receipt["work_unit_id"],
+        "difference_id": receipt["difference_id"],
+        "governing_issue": "#102",
+        "adoption_id": receipt["adoption_id"],
+        "selected_executor_provider": COPILOT_EXECUTOR,
+        "comment_url": receipt["comment_url"],
+        "decision_authority": HUMAN_AUTHORITY,
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": receipt,
+        "authorized_repository": receipt["authorized_repository"],
+        "authorized_branch": receipt["authorized_branch"],
+        "authorized_base_sha": sha,
+        "expected_head_sha": sha,
+        "permitted_actions": receipt["permitted_actions"],
+        "permitted_paths": receipt["permitted_paths"],
+        "current_repository": receipt["authorized_repository"],
+        "current_branch": receipt["authorized_branch"],
+        "current_base_sha": sha,
+        "current_head_sha": sha,
+        "concurrently_active_provider_for_work_unit": "",
+    }
+    grant.update(overrides)
+    return grant
+
+
+def test_a_test_execution_only_grant_cannot_attest_implementation_via_a_transition() -> None:
+    """Structural Review Round 2 (I102-SR1 follow-up, PR #104 comment 5930926992): the
+    reviewer's exact counterexample. A grant naming only TEST_EXECUTION must not permit the
+    HANDOFF_TRANSITION into CLAUDE_CODE_IMPLEMENTATION_COMPLETE -- that transition is itself
+    the claim that implementation work was done, and the grant never authorized it."""
+
+    grant = _copilot_selection_grant()
+    verdict = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+        }
+    )
+    assert verdict["decision"] == REFUSED
+    assert "ACTION_NOT_PERMITTED_BY_SELECTION" in verdict["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "EXECUTOR_SELF_REVIEW_COMPLETE",
+        "GITHUB_PR_READY",
+        "READY_FOR_STRUCTURAL_REVIEW",
+    ],
+)
+def test_a_test_execution_only_grant_cannot_attest_self_review_or_pr_preparation(
+    target: str,
+) -> None:
+    """The same counterexample, for the other capabilities the reviewer named: a
+    TEST_EXECUTION-only grant must not permit self-review or PR-preparation transitions
+    either."""
+
+    grant = _copilot_selection_grant()
+    source = {
+        "EXECUTOR_SELF_REVIEW_COMPLETE": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+        "GITHUB_PR_READY": "EXECUTOR_SELF_REVIEW_COMPLETE",
+        "READY_FOR_STRUCTURAL_REVIEW": "GITHUB_PR_READY",
+    }[target]
+    verdict = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": source,
+            "to_state": target,
+            "executor_selection": grant,
+        }
+    )
+    assert verdict["decision"] == REFUSED
+    assert "ACTION_NOT_PERMITTED_BY_SELECTION" in verdict["reason_codes"]
+
+
+def test_a_fully_bound_grant_still_permits_its_own_covered_transition_chain() -> None:
+    """The positive control: a grant naming every capability the chain needs still works
+    end to end, so the fix above is a bound, not a lockout."""
+
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    base_grant = _copilot_selection_grant()
+    full_receipt = {**base_grant["api_read_back_receipt"], "permitted_actions": full_actions}  # type: ignore[dict-item]
+    grant = _copilot_selection_grant(
+        permitted_actions=full_actions, api_read_back_receipt=full_receipt
+    )
+    chain = [
+        ("IMPLEMENTATION_IN_PROGRESS", "CLAUDE_CODE_IMPLEMENTATION_COMPLETE"),
+        ("CLAUDE_CODE_IMPLEMENTATION_COMPLETE", "EXECUTOR_SELF_REVIEW_COMPLETE"),
+        ("EXECUTOR_SELF_REVIEW_COMPLETE", "GITHUB_PR_READY"),
+        ("GITHUB_PR_READY", "READY_FOR_STRUCTURAL_REVIEW"),
+    ]
+    for source, target in chain:
+        verdict = evaluate(
+            {
+                "record_type": "HANDOFF_TRANSITION",
+                "actor": COPILOT_EXECUTOR,
+                "from_state": source,
+                "to_state": target,
+                "executor_selection": grant,
+                "paths": grant["permitted_paths"],
+            }
+        )
+        assert verdict == {"decision": PERMITTED, "reason_codes": ["DECLARED_TRANSITION"]}, (
+            source,
+            target,
+        )
+
+
+def test_an_implementation_action_requires_its_invoked_paths() -> None:
+    """Structural Review Round 2: an IMPLEMENTATION (or other) action from a non-default
+    provider must name the paths it touches, and they must be within the grant's own
+    permitted_paths -- a grant is not evidence-free just because no network call backs it."""
+
+    grant = _copilot_selection_grant(permitted_actions=["TEST_EXECUTION"])
+
+    no_paths = evaluate(
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "TEST_EXECUTION",
+            "executor_selection": grant,
+        }
+    )
+    assert no_paths["decision"] == REFUSED
+    assert "INVOKED_PATHS_REQUIRED_AND_ABSENT" in no_paths["reason_codes"]
+
+    wrong_path = evaluate(
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "TEST_EXECUTION",
+            "executor_selection": grant,
+            "paths": ["some/ungranted/path.py"],
+        }
+    )
+    assert wrong_path["decision"] == REFUSED
+    assert "PATH_NOT_PERMITTED_BY_SELECTION" in wrong_path["reason_codes"]
+
+    right_path = evaluate(
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "TEST_EXECUTION",
+            "executor_selection": grant,
+            "paths": ["tests/some_file.py"],
+        }
+    )
+    assert right_path == {"decision": PERMITTED, "reason_codes": ["ACTION_WITHIN_ROLE"]}
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "../outside.py",
+        "/tmp/outside.py",  # noqa: S108 -- a grammar-rejection string, never opened
+        "tests/../outside.py",
+        "   ",
+        "tests\n/outside.py",
+    ],
+)
+def test_a_matching_unsafe_grant_and_invoked_path_is_still_refused(unsafe_path: str) -> None:
+    """Structural Review Round 3's exact reproduction (plus Round 4's internal-LF addition,
+    comment 5973345827): before the respective fix, an unsafe path admitted by an equally
+    unsafe grant (record and receipt agreeing on it) was PERMITTED/ACTION_WITHIN_ROLE.
+    Agreement never made the shape safe -- and ``match`` alone let a trailing-newline
+    segment through as if ``$`` meant the segment's own true end."""
+
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    base_grant = _copilot_selection_grant()
+    unsafe_receipt = {
+        **base_grant["api_read_back_receipt"],
+        "permitted_actions": full_actions,
+        "permitted_paths": [unsafe_path],
+    }
+    grant = _copilot_selection_grant(
+        permitted_actions=full_actions,
+        permitted_paths=[unsafe_path],
+        api_read_back_receipt=unsafe_receipt,
+    )
+    verdict = evaluate(
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": COPILOT_EXECUTOR,
+            "action": "IMPLEMENTATION",
+            "executor_selection": grant,
+            "paths": [unsafe_path],
+        }
+    )
+    assert verdict["decision"] == REFUSED
+
+
+def test_an_unsafe_matching_grant_and_invoked_path_is_refused_on_a_completion_transition() -> None:
+    """Structural Review Round 4 (PR #104 comment 5973558538, required-evidence point 3):
+    the same internal-LF reproduction as the ACTOR_ACTION case above, but on the completion
+    transition that attests the work -- a transition must not succeed merely because its
+    grant and its own invoked paths agree on an unsafe shape."""
+
+    unsafe_path = "tests\n/outside.py"
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    base_grant = _copilot_selection_grant()
+    unsafe_receipt = {
+        **base_grant["api_read_back_receipt"],
+        "permitted_actions": full_actions,
+        "permitted_paths": [unsafe_path],
+    }
+    grant = _copilot_selection_grant(
+        permitted_actions=full_actions,
+        permitted_paths=[unsafe_path],
+        api_read_back_receipt=unsafe_receipt,
+    )
+    verdict = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+            "paths": [unsafe_path],
+        }
+    )
+    assert verdict["decision"] == REFUSED
+
+
+@pytest.mark.parametrize(
+    "record_extra",
+    [
+        {"record_type": "ACTOR_ACTION", "action": "IMPLEMENTATION"},
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+        },
+    ],
+    ids=["ACTOR_ACTION", "HANDOFF_TRANSITION"],
+)
+def test_an_unsafe_invoked_path_is_refused_under_an_otherwise_safe_grant(
+    record_extra: dict[str, str],
+) -> None:
+    """Structural Review Round 4 (PR #104 comment 5973558538, required-evidence point 4):
+    an otherwise valid, safely-scoped grant must not admit an unsafe invoked path just
+    because the grant itself is clean -- the invocation's own shape is checked
+    independently of the grant's."""
+
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    grant = _copilot_selection_grant(permitted_actions=full_actions)
+    grant["api_read_back_receipt"] = {**grant["api_read_back_receipt"], "permitted_actions": full_actions}
+    verdict = evaluate(
+        {
+            "executor_selection": grant,
+            "actor": COPILOT_EXECUTOR,
+            "paths": ["tests\n/outside.py"],
+            **record_extra,
+        }
+    )
+    assert verdict["decision"] == REFUSED
+    assert "INVOKED_PATHS_UNSAFE" in verdict["reason_codes"]
+
+
+def test_a_completion_transition_requires_its_invoked_paths() -> None:
+    """Structural Review Round 3: an implementation-completion transition is itself the
+    claim that bounded file work was done, so -- like the ACTOR_ACTION it attests -- it must
+    name the paths that work touched, within the grant's own permitted_paths."""
+
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    base_grant = _copilot_selection_grant()
+    full_receipt = {**base_grant["api_read_back_receipt"], "permitted_actions": full_actions}
+    grant = _copilot_selection_grant(
+        permitted_actions=full_actions, api_read_back_receipt=full_receipt
+    )
+
+    no_paths = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+        }
+    )
+    assert no_paths["decision"] == REFUSED
+    assert "INVOKED_PATHS_REQUIRED_AND_ABSENT" in no_paths["reason_codes"]
+
+    wrong_path = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+            "paths": ["some/ungranted/path.py"],
+        }
+    )
+    assert wrong_path["decision"] == REFUSED
+    assert "PATH_NOT_PERMITTED_BY_SELECTION" in wrong_path["reason_codes"]
+
+    right_path = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+            "paths": grant["permitted_paths"],
+        }
+    )
+    assert right_path == {"decision": PERMITTED, "reason_codes": ["DECLARED_TRANSITION"]}
 
 
 @pytest.mark.parametrize("owner_field,owner", sorted(RATIFIED_OWNERS.items()))
@@ -161,8 +541,16 @@ def test_the_executor_is_never_the_actor_of_an_advisor_only_transition() -> None
     for actor, _, target in RATIFIED_TRANSITIONS:
         if target in POLICY["advisor_only_states"]:
             assert actor == STRUCTURAL_ADVISOR, (actor, target)
-        if actor == EXECUTOR:
+        if actor in EXECUTOR_PROVIDERS:
             assert target not in RATIFIED_HUMAN_ONLY_STATES
+
+
+def test_no_eligible_executor_provider_is_ever_the_actor_of_a_human_only_transition() -> None:
+    """Decision 0003: the second eligible provider inherits the same ceiling, not a new one."""
+
+    for actor, _, target in RATIFIED_TRANSITIONS:
+        if actor in EXECUTOR_PROVIDERS:
+            assert target not in RATIFIED_HUMAN_ONLY_STATES, (actor, target)
 
 
 # --------------------------------------------------------------------------- #
@@ -174,12 +562,12 @@ def test_automated_review_triggers_are_prohibited() -> None:
     assert POLICY["automated_review_trigger_allowed"] is False
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE"])
+@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT"])
 def test_no_agent_may_request_an_automated_external_review(role: str) -> None:
     assert "REQUEST_AUTOMATED_EXTERNAL_REVIEW" in POLICY["roles"][role]["must_not"]
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB"])
+@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB"])
 def test_no_agent_may_adopt_an_external_finding(role: str) -> None:
     assert "ADOPT_EXTERNAL_FINDING" in POLICY["roles"][role]["must_not"]
 
@@ -228,8 +616,12 @@ def _mutated(tmp_path: Path, **edits: object) -> Path:
         {"external_finding_initial_status": "VERIFIED"},
         {"kernel_element": "CHANGE"},
         {"kernel_provider_neutrality_preserved": False},
-        {"policy_version": "0.3"},
+        {"policy_version": "0.4"},
         {"escape_hatch": True},
+        {"executor_providers": ["CLAUDE_CODE"]},
+        {"executor_providers": ["CLAUDE_CODE", "GITHUB_COPILOT", "CODEX"]},
+        {"executor_provider_default": "GITHUB_COPILOT"},
+        {"executor_provider_selection_authority": "CLAUDE_CODE"},
     ],
     ids=lambda edits: "-".join(sorted(edits)),
 )

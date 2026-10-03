@@ -22,3 +22,13 @@ class AdoptionRecordError(DevelopmentBindingError):
     not admit (an unverified URL, an unconfirmed read-back, a mismatched reviewed SHA) is
     never an exception; see :func:`.adoption_record.evaluate_adoption_record`.
     """
+
+
+class ExecutorSelectionError(DevelopmentBindingError):
+    """An Executor Selection Record is absent, unreadable, or not the closed shape declared.
+
+    Raised for an *unreadable* record only, following the same grammar as
+    :class:`AdoptionRecordError`. A record that is readable but does not admit (an unknown
+    provider, a scope or SHA mismatch, a missing read-back) is never an exception; see
+    :func:`.executor_selection.evaluate_executor_selection`.
+    """
