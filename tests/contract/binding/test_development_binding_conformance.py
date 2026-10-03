@@ -348,6 +348,73 @@ def test_a_matching_unsafe_grant_and_invoked_path_is_still_refused(unsafe_path: 
     assert verdict["decision"] == REFUSED
 
 
+def test_an_unsafe_matching_grant_and_invoked_path_is_refused_on_a_completion_transition() -> None:
+    """Structural Review Round 4 (PR #104 comment 5973558538, required-evidence point 3):
+    the same internal-LF reproduction as the ACTOR_ACTION case above, but on the completion
+    transition that attests the work -- a transition must not succeed merely because its
+    grant and its own invoked paths agree on an unsafe shape."""
+
+    unsafe_path = "tests\n/outside.py"
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    base_grant = _copilot_selection_grant()
+    unsafe_receipt = {
+        **base_grant["api_read_back_receipt"],
+        "permitted_actions": full_actions,
+        "permitted_paths": [unsafe_path],
+    }
+    grant = _copilot_selection_grant(
+        permitted_actions=full_actions,
+        permitted_paths=[unsafe_path],
+        api_read_back_receipt=unsafe_receipt,
+    )
+    verdict = evaluate(
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "actor": COPILOT_EXECUTOR,
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+            "executor_selection": grant,
+            "paths": [unsafe_path],
+        }
+    )
+    assert verdict["decision"] == REFUSED
+
+
+@pytest.mark.parametrize(
+    "record_extra",
+    [
+        {"record_type": "ACTOR_ACTION", "action": "IMPLEMENTATION"},
+        {
+            "record_type": "HANDOFF_TRANSITION",
+            "from_state": "IMPLEMENTATION_IN_PROGRESS",
+            "to_state": "CLAUDE_CODE_IMPLEMENTATION_COMPLETE",
+        },
+    ],
+    ids=["ACTOR_ACTION", "HANDOFF_TRANSITION"],
+)
+def test_an_unsafe_invoked_path_is_refused_under_an_otherwise_safe_grant(
+    record_extra: dict[str, str],
+) -> None:
+    """Structural Review Round 4 (PR #104 comment 5973558538, required-evidence point 4):
+    an otherwise valid, safely-scoped grant must not admit an unsafe invoked path just
+    because the grant itself is clean -- the invocation's own shape is checked
+    independently of the grant's."""
+
+    full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
+    grant = _copilot_selection_grant(permitted_actions=full_actions)
+    grant["api_read_back_receipt"] = {**grant["api_read_back_receipt"], "permitted_actions": full_actions}
+    verdict = evaluate(
+        {
+            "executor_selection": grant,
+            "actor": COPILOT_EXECUTOR,
+            "paths": ["tests\n/outside.py"],
+            **record_extra,
+        }
+    )
+    assert verdict["decision"] == REFUSED
+    assert "INVOKED_PATHS_UNSAFE" in verdict["reason_codes"]
+
+
 def test_a_completion_transition_requires_its_invoked_paths() -> None:
     """Structural Review Round 3: an implementation-completion transition is itself the
     claim that bounded file work was done, so -- like the ACTOR_ACTION it attests -- it must
