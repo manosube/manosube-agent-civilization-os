@@ -309,12 +309,20 @@ def test_an_implementation_action_requires_its_invoked_paths() -> None:
 
 @pytest.mark.parametrize(
     "unsafe_path",
-    ["../outside.py", "/tmp/outside.py", "tests/../outside.py", "   "],  # noqa: S108 -- a grammar-rejection string, never opened
+    [
+        "../outside.py",
+        "/tmp/outside.py",  # noqa: S108 -- a grammar-rejection string, never opened
+        "tests/../outside.py",
+        "   ",
+        "tests\n/outside.py",
+    ],
 )
 def test_a_matching_unsafe_grant_and_invoked_path_is_still_refused(unsafe_path: str) -> None:
-    """Structural Review Round 3's exact reproduction: before this, an unsafe path admitted
-    by an equally unsafe grant (record and receipt agreeing on it) was PERMITTED/
-    ACTION_WITHIN_ROLE. Agreement never made the shape safe."""
+    """Structural Review Round 3's exact reproduction (plus Round 4's internal-LF addition,
+    comment 5973345827): before the respective fix, an unsafe path admitted by an equally
+    unsafe grant (record and receipt agreeing on it) was PERMITTED/ACTION_WITHIN_ROLE.
+    Agreement never made the shape safe -- and ``match`` alone let a trailing-newline
+    segment through as if ``$`` meant the segment's own true end."""
 
     full_actions = ["IMPLEMENTATION", "TEST_EXECUTION", "EXECUTOR_SELF_REVIEW", "PR_PREPARATION"]
     base_grant = _copilot_selection_grant()

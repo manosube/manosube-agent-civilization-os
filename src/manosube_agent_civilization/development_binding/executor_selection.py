@@ -201,7 +201,14 @@ _ADOPTION_ID_PATTERN = re.compile(r"^ADOPT_[A-Z0-9_]+$")
 #: empty. Deliberately conservative -- this repository's own paths (``tests/some_file.py``,
 #: ``src/manosube_agent_civilization/development_binding/evaluation.py``) all fit it, and a
 #: narrower allowed set is easier to reason about than a denylist of unsafe characters.
-_SAFE_PATH_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+#: Checked with :meth:`re.Pattern.fullmatch`, not ``match`` -- Python's ``$`` matches not only
+#: at the absolute end of a string but also immediately before a single trailing newline, so
+#: ``match`` alone let a segment ending in an embedded LF (e.g. ``"tests\n"`` inside the path
+#: ``"tests\n/outside.py"``) through as if it were the clean segment preceding that newline
+#: (Structural Review Round 4, PR #104 comment 5973345827). ``fullmatch`` requires the pattern
+#: to consume the segment through its true end, closing that hole without widening or
+#: normalizing the accepted character set itself.
+_SAFE_PATH_SEGMENT_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
 
 #: Segments this grammar never accepts regardless of the pattern above: empty (a leading,
 #: trailing, or doubled ``/``) and the two dot-forms that mean "here" or "my parent" to any
@@ -233,7 +240,7 @@ def is_safe_repository_relative_path(value: Any) -> bool:
     if value.startswith("/") or value.endswith("/"):
         return False
     return all(
-        segment not in _UNSAFE_PATH_SEGMENTS and _SAFE_PATH_SEGMENT_PATTERN.match(segment)
+        segment not in _UNSAFE_PATH_SEGMENTS and _SAFE_PATH_SEGMENT_PATTERN.fullmatch(segment)
         for segment in value.split("/")
     )
 

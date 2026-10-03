@@ -369,14 +369,23 @@ def test_untouched_receipt_no_longer_admits_a_substituted_scope() -> None:
 
 @pytest.mark.parametrize(
     "unsafe_path",
-    ["../outside.py", "/tmp/outside.py", "tests/../outside.py", "   "],  # noqa: S108 -- a grammar-rejection string, never opened
+    [
+        "../outside.py",
+        "/tmp/outside.py",  # noqa: S108 -- a grammar-rejection string, never opened
+        "tests/../outside.py",
+        "   ",
+        "tests\n/outside.py",
+    ],
 )
 def test_an_unsafe_grant_path_is_refused_even_when_its_receipt_agrees(
     unsafe_path: str,
 ) -> None:
-    """Structural Review Round 3's exact reproduction: an unsafe permitted_paths entry,
-    agreed by its own receipt, was before this admissible -- agreement proves only internal
-    consistency, never that the agreed-upon value was a safe grant to have made."""
+    """Structural Review Round 3's exact reproduction (plus Round 4's internal-LF addition,
+    comment 5973345827): an unsafe permitted_paths entry, agreed by its own receipt, was
+    before the respective fix admissible -- agreement proves only internal consistency,
+    never that the agreed-upon value was a safe grant to have made. The LF case also proves
+    ``is_safe_repository_relative_path`` requires a complete segment match, not merely a
+    match that Python's ``$`` is willing to make before a trailing newline."""
 
     record = _record(
         permitted_paths=[unsafe_path],

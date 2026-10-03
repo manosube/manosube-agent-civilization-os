@@ -7348,3 +7348,54 @@ completion遷移attestation)を独立に再現し、是正後はいずれも拒�
 安全で許可された単一pathは従来通り許可されること、全capabilityを含む完全な
 grantによる遷移chainは従来通り許可されることを確認した。`CLAUDE_CODE`の既定
 経路は本是正でも変更されていない。
+
+---
+
+# 84. Issue #102 PR #104 Structural Review Round 4 correction (`_SAFE_PATH_SEGMENT_PATTERN`の改行hole)
+
+ChatGPT Structural Advisorによる§83是正への独立re-review
+([PR #104 comment 5973345827](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5973345827)、
+著者`manosube`/OWNER)は`VERDICT=CORRECTION_REQUIRED`を返し、§83で導入した
+`is_safe_repository_relative_path()`自体に一件のP2欠陥を指摘した。SHUKOUは
+当該指摘を正式採択し
+([comment 5973552733](https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5973552733))、
+本件は採択comment自身が完全な認可範囲(authorized SHA/branch/PR・stop
+condition・merge/issue-close/trial/review-request禁止flagのすべて)を含んで
+いたため、別途の引継ぎcommentを待たず本節の是正に着手した。再現・検証され、
+本節が是正を記録する。
+
+`SR4_F1_INTERNAL_SEGMENT_LF_ACCEPTED`: `_SAFE_PATH_SEGMENT_PATTERN =
+re.compile(r"^[A-Za-z0-9_.-]+$")`を`.match()`で各segmentへ適用していたが、
+Pythonの正規表現における`$`は文字列の絶対的な末尾だけでなく、末尾に単一の
+改行(LF)が続く直前の位置にもマッチする。そのため、例えば
+`"tests\n/outside.py"`を`/`で分割した際の内部segment`"tests\n"`は、
+`match()`が`"tests"`の部分だけを消費し`$`がその直後(LF直前)でマッチして
+しまうため、`is_safe_repository_relative_path()`から`True`(安全)と判定
+されていた。Reviewerはこの反例を、selection admission・`ACTOR_ACTION`・
+`HANDOFF_TRANSITION`の三箇所すべてで独立に再現した。是正: `.match()`を
+`.fullmatch()`へ変更した(パターン自身の`^`/`$`は`fullmatch`では不要と
+なるため削除し、`re.compile(r"[A-Za-z0-9_.-]+")`とした)。`fullmatch()`は
+一致がsegment文字列の真の末尾まで到達することを要求するため、`"tests\n"`
+のような内部に改行を含むsegmentは`fullmatch`が失敗し、拒否されるように
+なった。許可される文字集合自体は変更していない(正規化や拡張は行わず、
+一致判定の厳密さのみを修正した)。
+
+```text
+GOVERNING_ISSUE=#102
+IMPLEMENTATION_PR=#104
+REVIEW_ROUND=4
+REVIEW_VERDICT_RECEIVED=CORRECTION_REQUIRED
+ADOPTION_RECORD=https://github.com/manosube/manosube-agent-civilization-os/pull/104#issuecomment-5973552733
+SR4_F1_INTERNAL_SEGMENT_LF_ACCEPTED_FIXED=true
+SAFE_PATH_SEGMENT_PATTERN_NOW_CHECKED_WITH_FULLMATCH=true
+ALLOWED_CHARACTER_SET_UNCHANGED=true
+NEGATIVE_CONTROL_ADDED_FOR_BOTH_ACTOR_ACTION_AND_HANDOFF_TRANSITION=true
+CLAUDE_CODE_DEFAULT_PATH_UNAFFECTED=true
+FRESH_STRUCTURAL_REVIEW_REQUIRED=true
+```
+
+是正後、Reviewerの反例(`"tests\n/outside.py"`をgrant/receipt両方のpermitted_paths
+へ設定し、同じ文字列を`ACTOR_ACTION.paths`/`HANDOFF_TRANSITION.paths`へ渡す)を
+独立に再現し、selection admission・両record typeのいずれも拒否されること、
+既存の安全なpath(`tests/some_file.py`等)は従来通り許可されることを確認した。
+`CLAUDE_CODE`の既定経路は本是正でも変更されていない。
