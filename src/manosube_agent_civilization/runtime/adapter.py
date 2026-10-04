@@ -75,7 +75,7 @@ from typing import Any
 import urllib.error
 import urllib.request
 
-from .errors import RuntimeAdapterError
+from .errors import RuntimeAdapterError, RuntimeRequirementError
 from .network import (
     render_ssh_command_argv,
     require_endpoint_within_network_scope,
@@ -86,7 +86,6 @@ from .transport_control import (
     require_grant_not_expired,
     require_grant_permits_transport,
 )
-from .types import SSH_PROBE_SCRIPT_SHA256
 
 
 class _OutputTooLargeError(Exception):
@@ -177,6 +176,20 @@ def _run_bounded_subprocess(
         # repository's own fail-closed-on-every-warning pytest configuration requires.
         proc.stdout.close()
         proc.stderr.close()
+
+    # PR #108 Structural Review Round 2, SR2-F3(A): the polling loop above only ever checks
+    # ``overflow.is_set()`` *before* calling ``proc.wait()`` on each iteration. A short-lived
+    # child that writes more than ``max_output_bytes`` before either drain thread has had a
+    # scheduling slot to notice can make ``proc.wait()`` return normally (the process already
+    # exited) with the overflow never caught mid-flight -- the loop then ``break``s and this
+    # function would otherwise return the full, oversized output with no error at all. The
+    # join calls above only return once each drain thread's own read-to-EOF loop has actually
+    # finished (and ``_drain_bounded`` sets ``overflow`` *before* returning whenever it saw
+    # more than the bound), so this is the one required final, authoritative check: whichever
+    # path got here, an overflow detected at any point -- mid-flight or only discovered during
+    # this join -- is never silently accepted.
+    if overflow.is_set():
+        raise _OutputTooLargeError(f"subprocess stdout/stderr exceeded {max_output_bytes} bytes")
     return b"".join(stdout_chunks), b"".join(stderr_chunks), proc.returncode
 
 
@@ -421,6 +434,21 @@ _PROBE_REPORT_KEYS: frozenset[str] = frozenset(
     {"ok", "fields", "deployment_identity", "reason", "probe_script_sha256"}
 )
 
+#: The transports :class:`SshRuntimeAdapter` itself may ever be constructed under
+#: (PR #108 Structural Review Round 2, SR2-F1) -- deliberately excludes ``MANUAL_SSH``, which
+#: is Capability A's own render-only path (:func:`~manosube_agent_civilization.runtime.
+#: transport_control.render_manual_ssh_command`): a Human copying and running a command
+#: themselves is that mode's whole authorization act, so this package must never itself
+#: construct a live adapter for it. ``GITHUB_ACTIONS`` and ``PREAUTHORIZED_UNATTENDED_SSH``
+#: each carry their own distinct authorization basis (an already-dispatched Actions job a
+#: Human authorized, versus a grant explicitly naming unattended execution with no Human
+#: present) -- :meth:`SshRuntimeAdapter.__init__` requires the grant to permit whichever one of
+#: the two this adapter is actually being constructed under, never a hardcoded assumption that
+#: every execution is the unattended case.
+_ADAPTER_EXECUTABLE_TRANSPORTS: frozenset[str] = frozenset(
+    {"GITHUB_ACTIONS", "PREAUTHORIZED_UNATTENDED_SSH"}
+)
+
 
 class SshRuntimeAdapter:
     """A complete :class:`~manosube_agent_civilization.runtime.types.RuntimeAdapter` performing
@@ -440,6 +468,32 @@ class SshRuntimeAdapter:
     ``boundary`` immediately before spawning ``ssh``, so a grant genuinely issued for one
     target can never be reused against another.
 
+    **PR #108 Structural Review Round 2, SR2-F2 -- construction-time verification is re-run,
+    live, at every attempt.** The first correction's own gate above still only ran once, at
+    construction; an adapter retained across a longer-lived process (an Actions job, an
+    unattended controller) could then observe repeatedly without ever re-proving the grant is
+    still signed, current, Boot-authentic, or permitted. ``observe()`` now re-runs the complete
+    chain -- signature, fresh ``boot_project`` restoration, transport permission, expiry --
+    immediately before anything is spawned, using this exact attempt's own
+    ``boundary["time_window"]["issued_at"]`` as the live instant (the one instant
+    :mod:`~manosube_agent_civilization.runtime.route` has already proved the whole attempt
+    genuinely occurs at). The same round also extended ``require_grant_matches_attempt`` to
+    additionally bind the attempt's own claimed ``deployment_fingerprint`` and to require the
+    attempt's own ``boundary.timeout_seconds`` never exceed the grant's own signed
+    ``max_timeout_seconds`` ceiling.
+
+    **PR #108 Structural Review Round 2, SR2-F1 -- constructed under either executable
+    transport, never a hardcoded assumption.** The first two rounds always required
+    ``PREAUTHORIZED_UNATTENDED_SSH`` specifically, as though every execution of this adapter
+    were the fully unattended, no-Human-present case. A real ``GITHUB_ACTIONS``-dispatched
+    observation now also executes through this identical adapter (never a second, parallel
+    implementation) -- an already-dispatched Actions job a Human authorized is itself that
+    attempt's own authorization act, distinct from the unattended case's own grant-only basis.
+    *transport* (one of :data:`_ADAPTER_EXECUTABLE_TRANSPORTS`, never ``MANUAL_SSH`` -- that
+    mode's whole point is that a Human runs the rendered command themselves, so this package
+    never constructs a live adapter for it) says which of the two this construction, and every
+    later live re-verification inside ``observe()``, requires the grant to explicitly permit.
+
     The V-proof target for Issue #105's ``SSH_EXEC_BOUNDED`` method: exercised in this
     delivery's own test suite against one disposable, local target the test itself controls
     when a real local SSH fixture is available without any machine/service/credential
@@ -452,9 +506,11 @@ class SshRuntimeAdapter:
     str | None, "reason": str | None, "probe_script_sha256": str}`` -- the identical closed
     shape ``scripts/runtime_observation_probe.py`` (this delivery's own pinned probe script,
     run locally for Capability A/B and remotely for this adapter) always emits.
-    ``probe_script_sha256`` must equal :data:`~manosube_agent_civilization.runtime.types.
-    SSH_PROBE_SCRIPT_SHA256` (F3 -- a probe *name* identifies nothing; this is what actually
-    proves the executed file is the reviewed artifact). A nonzero process exit code (other
+    ``probe_script_sha256`` must equal the live-reverified grant's own signed
+    ``probe_script_sha256`` field (F3; bound to the Human Authority's own signature rather than
+    to the bare public constant by SR2-F4) -- a probe *name* identifies nothing; this is what
+    actually proves the executed file is the one artifact the Human Authority approved. A
+    nonzero process exit code (other
     than ``ssh``'s own documented ``255``) is never parsed as a report at all, however
     well-formed the text happens to look (F4) -- the probe's own convention is to always exit
     ``0``, so anything else means it never ran to completion on its own terms. Subprocess
@@ -473,6 +529,7 @@ class SshRuntimeAdapter:
         project_id: str,
         project_binding_id: str,
         now: str,
+        transport: str = "PREAUTHORIZED_UNATTENDED_SSH",
         adapter_identity: Mapping[str, Any] | None = None,
         ssh_executable: str = "ssh",
     ) -> None:
@@ -483,9 +540,26 @@ class SshRuntimeAdapter:
         #: SSH fixture reached through a non-default port/executable) -- never a caller-
         #: supplied value reachable through any Boundary field.
         self._ssh_executable = ssh_executable
+        #: Retained only so ``observe()`` can re-verify the grant *again*, fresh, immediately
+        #: before it is actually used (PR #108 Structural Review Round 2, SR2-F2) -- never read
+        #: for any other purpose, and never a substitute for that live re-check.
+        self._store = store
+        self._project_id = project_id
+        self._project_binding_id = project_binding_id
+        # PR #108 Structural Review Round 2, SR2-F1: this adapter is now constructed under
+        # either of its two own executable transports -- never a hardcoded assumption that
+        # every execution is the unattended one -- and the grant must explicitly permit
+        # *that exact* transport, not merely "some" transport.
+        if transport not in _ADAPTER_EXECUTABLE_TRANSPORTS:
+            raise RuntimeRequirementError(
+                "SshRuntimeAdapter may only be constructed for one of "
+                f"{sorted(_ADAPTER_EXECUTABLE_TRANSPORTS)}, never {transport!r} -- MANUAL_SSH "
+                "is Capability A's own render-only path and never constructs a live adapter"
+            )
+        self._transport = transport
         checked_grant = require_grant_permits_transport(
             grant,
-            "PREAUTHORIZED_UNATTENDED_SSH",
+            transport,
             store=store,
             project_id=project_id,
             project_binding_id=project_binding_id,
@@ -501,10 +575,38 @@ class SshRuntimeAdapter:
     def observe(
         self, *, target_identity: Mapping[str, Any], boundary: Mapping[str, Any]
     ) -> Mapping[str, Any]:
-        # PR #108 SR1 F1: the grant verified at construction must also bind exactly this
-        # attempt's own real target and real scope.
+        # PR #108 Structural Review Round 2, SR2-F2: the grant verified at *construction* time
+        # is never trusted as still good at the moment of the actual attempt -- an adapter can
+        # be constructed once and retained for a long time (an Actions job's own runtime, a
+        # long-lived unattended controller process), during which the grant could expire, the
+        # Project Binding's own Human Authority signing key could rotate, or the grant could be
+        # superseded. The complete chain (signature, fresh Boot-restored authority, transport
+        # permission, expiry) is therefore re-run here, live, immediately before anything is
+        # spawned -- using *this exact attempt's* own ``boundary.time_window.issued_at`` as the
+        # live instant, since :mod:`~manosube_agent_civilization.runtime.route` has already
+        # proved the whole attempt genuinely occurs at that instant before this adapter is ever
+        # reached, and the fixed ``RuntimeAdapter.observe()`` Protocol signature carries no
+        # separate ``now`` parameter this adapter could otherwise demand.
+        live_now = boundary["time_window"]["issued_at"]
+        checked_grant = require_grant_permits_transport(
+            self._grant,
+            self._transport,
+            store=self._store,
+            project_id=self._project_id,
+            project_binding_id=self._project_binding_id,
+        )
+        checked_grant = require_grant_not_expired(
+            checked_grant,
+            store=self._store,
+            project_id=self._project_id,
+            project_binding_id=self._project_binding_id,
+            now=live_now,
+        )
+        # PR #108 SR1 F1 (retained): the freshly re-verified grant must also bind exactly this
+        # attempt's own real target and real scope -- now additionally the attempt's own
+        # claimed deployment_fingerprint and timeout ceiling (SR2-F2).
         checked_grant = require_grant_matches_attempt(
-            self._grant, target_identity=target_identity, boundary=boundary
+            checked_grant, target_identity=target_identity, boundary=boundary
         )
         # Independent re-enforcement of the Boundary's own closed network scope, immediately
         # before a process is spawned (P15-R1-F1's identical discipline, applied to SSH).
@@ -581,9 +683,13 @@ class SshRuntimeAdapter:
                 "observed_deployment_identity": None,
             }
 
-        # PR #108 SR1 F3: a probe *name* identifies nothing about which file actually executed
-        # on the target -- only a matching content digest does.
-        if probe_report["probe_script_sha256"] != SSH_PROBE_SCRIPT_SHA256:
+        # PR #108 SR1 F3 (SR2-F4): a probe *name* identifies nothing about which file actually
+        # executed on the target -- only a matching content digest does, and that digest is now
+        # compared against the live-reverified grant's own *signed* ``probe_script_sha256``
+        # field (never the bare public constant a same-named substitute could simply print
+        # back) -- a forged digest here can never be made to agree with the Human Authority's
+        # own genuine signature.
+        if probe_report["probe_script_sha256"] != checked_grant["probe_script_sha256"]:
             return {
                 "transport_outcome": "MALFORMED",
                 "observed_fields": None,
@@ -617,13 +723,44 @@ class SshRuntimeAdapter:
                 "observed_fields": None,
                 "observed_deployment_identity": None,
             }
-        # PR #108 SR1 F4: the grant's own max_lines bounds whatever excerpt line counts a
-        # SOURCE_LOG_EXCERPT_BOUNDED report self-reports -- a target claiming to have returned
-        # more lines than the grant ever authorized is refused rather than trusted.
+        # PR #108 SR1 F4 (SR2-F3(B)): the grant's own max_lines bounds whatever excerpt line
+        # counts a SOURCE_LOG_EXCERPT_BOUNDED report self-reports. The first correction only
+        # ever compared the report's own self-reported ``*_line_count`` integer against the
+        # bound -- never against the real excerpt string it claimed to describe -- so a report
+        # could declare an acceptable (or missing, or negative, or non-int) count while the
+        # actual ``*_excerpt`` content it shipped was arbitrarily larger, and it would still be
+        # accepted. Both self-reported counters are now independently recomputed from the real
+        # excerpt content and must *exactly* equal what was reported -- the one shape a
+        # genuinely honest probe (see ``scripts/runtime_observation_probe.py``'s own
+        # ``_bounded_excerpt``) always produces -- before the line-count bound is even checked
+        # against the real, recomputed value.
         max_lines = checked_grant["max_lines"]
-        for count_field in ("source_line_count", "log_line_count"):
-            count = fields.get(count_field)
-            if isinstance(count, int) and count > max_lines:
+        for excerpt_field, count_field, byte_length_field in (
+            ("source_excerpt", "source_line_count", "source_excerpt_byte_length"),
+            ("log_excerpt", "log_line_count", "log_excerpt_byte_length"),
+        ):
+            excerpt = fields.get(excerpt_field)
+            if excerpt is None:
+                continue
+            if not isinstance(excerpt, str):
+                return {
+                    "transport_outcome": "MALFORMED",
+                    "observed_fields": None,
+                    "observed_deployment_identity": None,
+                }
+            actual_line_count = len(excerpt.splitlines())
+            actual_byte_length = len(excerpt.encode("utf-8"))
+            reported_line_count = fields.get(count_field)
+            reported_byte_length = fields.get(byte_length_field)
+            if (
+                not isinstance(reported_line_count, int)
+                or isinstance(reported_line_count, bool)
+                or reported_line_count != actual_line_count
+                or not isinstance(reported_byte_length, int)
+                or isinstance(reported_byte_length, bool)
+                or reported_byte_length != actual_byte_length
+                or actual_line_count > max_lines
+            ):
                 return {
                     "transport_outcome": "MALFORMED",
                     "observed_fields": None,

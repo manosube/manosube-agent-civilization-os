@@ -117,6 +117,9 @@ def _ssh_adapter_for(world: dict[str, Any], **grant_overrides: Any) -> SshRuntim
         project_id=world["project_id"],
         project_binding_id=world["project_binding_id"],
         permitted_fields=grant_overrides.pop("permitted_fields", ["hostname"]),
+        deployment_fingerprint=grant_overrides.pop(
+            "deployment_fingerprint", _DEPLOYMENT_FINGERPRINT
+        ),
         **grant_overrides,
     )
     return SshRuntimeAdapter(
@@ -356,6 +359,193 @@ def test_ssh_transport_a_mismatched_probe_script_digest_is_never_observed(
             observed_at=_NOW,
         )
     assert outcome["envelope"]["observation_outcome"] == "MALFORMED"
+
+
+def test_ssh_transport_a_lying_excerpt_line_count_is_never_observed(_world: dict[str, Any]) -> None:
+    """PR #108 Structural Review Round 2, SR2-F3(B): a ``SOURCE_LOG_EXCERPT_BOUNDED`` report's
+    own self-reported ``source_line_count`` must exactly equal the real line count of its own
+    ``source_excerpt`` string content -- the first two rounds compared only the self-reported
+    integer against the grant's own ``max_lines`` bound, never against the actual content it
+    claimed to describe, so a report understating its own count while shipping more real
+    lines than the grant ever authorized was still accepted."""
+
+    target_identity = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        deployment_fingerprint=_DEPLOYMENT_FINGERPRINT,
+    )
+    boundary = ssh_boundary_for(
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED", permitted_fields=["source_excerpt"]
+    )
+    excerpt = "line1\nline2\nline3"
+    report = _probe_report(
+        fields={
+            "source_available": True,
+            "source_excerpt": excerpt,
+            "source_line_count": 1,  # lies: the real excerpt has 3 lines
+            "source_excerpt_byte_length": len(excerpt.encode("utf-8")),
+            "log_available": False,
+            "log_excerpt": None,
+            "log_line_count": None,
+            "log_excerpt_byte_length": None,
+        }
+    )
+    stdout = (json.dumps(report) + "\n").encode("utf-8")
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (stdout, b"", 0)
+        outcome = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=target_identity,
+            boundary=boundary,
+            adapter=_ssh_adapter_for(
+                _world, probe_identity="SOURCE_LOG_EXCERPT_BOUNDED", permitted_fields=["source_excerpt"]
+            ),
+            observed_at=_NOW,
+        )
+    assert outcome["envelope"]["observation_outcome"] == "MALFORMED"
+
+
+def test_ssh_transport_a_lying_excerpt_byte_length_is_never_observed(_world: dict[str, Any]) -> None:
+    target_identity = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        deployment_fingerprint=_DEPLOYMENT_FINGERPRINT,
+    )
+    boundary = ssh_boundary_for(
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED", permitted_fields=["source_excerpt"]
+    )
+    excerpt = "line1\nline2\nline3"
+    report = _probe_report(
+        fields={
+            "source_available": True,
+            "source_excerpt": excerpt,
+            "source_line_count": 3,
+            "source_excerpt_byte_length": 1,  # lies: the real byte length is longer
+            "log_available": False,
+            "log_excerpt": None,
+            "log_line_count": None,
+            "log_excerpt_byte_length": None,
+        }
+    )
+    stdout = (json.dumps(report) + "\n").encode("utf-8")
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (stdout, b"", 0)
+        outcome = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=target_identity,
+            boundary=boundary,
+            adapter=_ssh_adapter_for(
+                _world, probe_identity="SOURCE_LOG_EXCERPT_BOUNDED", permitted_fields=["source_excerpt"]
+            ),
+            observed_at=_NOW,
+        )
+    assert outcome["envelope"]["observation_outcome"] == "MALFORMED"
+
+
+def test_ssh_transport_actual_excerpt_content_exceeding_max_lines_is_never_observed(
+    _world: dict[str, Any],
+) -> None:
+    """Even a report whose self-reported counter is *internally consistent* with its own
+    excerpt content (both agree, and both are honestly computed) is still refused once the
+    real line count itself exceeds the grant's own ``max_lines`` -- never trusted merely
+    because the report is not lying about itself."""
+
+    target_identity = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        deployment_fingerprint=_DEPLOYMENT_FINGERPRINT,
+    )
+    boundary = ssh_boundary_for(
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED", permitted_fields=["source_excerpt"]
+    )
+    excerpt = "\n".join(f"line{i}" for i in range(500))
+    report = _probe_report(
+        fields={
+            "source_available": True,
+            "source_excerpt": excerpt,
+            "source_line_count": 500,
+            "source_excerpt_byte_length": len(excerpt.encode("utf-8")),
+            "log_available": False,
+            "log_excerpt": None,
+            "log_line_count": None,
+            "log_excerpt_byte_length": None,
+        }
+    )
+    stdout = (json.dumps(report) + "\n").encode("utf-8")
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (stdout, b"", 0)
+        outcome = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=target_identity,
+            boundary=boundary,
+            adapter=_ssh_adapter_for(
+                _world,
+                probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+                permitted_fields=["source_excerpt"],
+                max_lines=200,
+            ),
+            observed_at=_NOW,
+        )
+    assert outcome["envelope"]["observation_outcome"] == "MALFORMED"
+
+
+def test_ssh_transport_a_genuinely_honest_excerpt_report_is_observed(_world: dict[str, Any]) -> None:
+    """The positive control for SR2-F3(B): a report whose self-reported counters genuinely,
+    honestly match its own real excerpt content -- exactly the shape
+    ``scripts/runtime_observation_probe.py``'s own ``_bounded_excerpt`` always produces --
+    must still be accepted, so this round's own correction never rejects legitimate output."""
+
+    target_identity = commit_target_identity(
+        _world["store"],
+        _world["project_id"],
+        _world["project_binding_id"],
+        _world["human_authority_ref"],
+        deployment_fingerprint=_DEPLOYMENT_FINGERPRINT,
+    )
+    boundary = ssh_boundary_for(
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED", permitted_fields=["source_excerpt"]
+    )
+    excerpt = "line1\nline2\nline3"
+    report = _probe_report(
+        fields={
+            "source_available": True,
+            "source_excerpt": excerpt,
+            "source_line_count": len(excerpt.splitlines()),
+            "source_excerpt_byte_length": len(excerpt.encode("utf-8")),
+            "log_available": False,
+            "log_excerpt": None,
+            "log_line_count": None,
+            "log_excerpt_byte_length": None,
+        }
+    )
+    stdout = (json.dumps(report) + "\n").encode("utf-8")
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (stdout, b"", 0)
+        outcome = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=target_identity,
+            boundary=boundary,
+            adapter=_ssh_adapter_for(
+                _world, probe_identity="SOURCE_LOG_EXCERPT_BOUNDED", permitted_fields=["source_excerpt"]
+            ),
+            observed_at=_NOW,
+        )
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+    assert outcome["envelope"]["observed_fields"] == {"source_excerpt": excerpt}
 
 
 def test_ssh_transport_a_truthy_string_ok_is_never_observed(_world: dict[str, Any]) -> None:

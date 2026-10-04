@@ -311,3 +311,24 @@ def test_run_bounded_subprocess_kills_a_process_that_exceeds_the_time_ceiling() 
             timeout_seconds=0.2,
             max_output_bytes=1024,
         )
+
+
+def test_run_bounded_subprocess_catches_an_overflow_from_a_process_that_exits_immediately() -> (
+    None
+):
+    """PR #108 Structural Review Round 2, SR2-F3(A): the first correction's own polling loop
+    only ever checked ``overflow.is_set()`` *before* calling ``proc.wait()`` on each
+    iteration. A short-lived child that writes more than the declared ceiling and exits with
+    no delay whatsoever can make ``proc.wait()`` return normally -- the process already
+    exited -- before either drain thread has had a scheduling slot to notice the overflow;
+    the loop then ``break``s, and without a final, authoritative recheck performed *after*
+    the drain threads are joined, this function would return the full, oversized output with
+    no error at all. This reproduces exactly that shape (a real subprocess, no artificial
+    delay inserted anywhere) and proves the overflow is still caught."""
+
+    with pytest.raises(_OutputTooLargeError):
+        _run_bounded_subprocess(
+            [sys.executable, "-c", "import sys; sys.stdout.write('x' * 101); sys.exit(0)"],
+            timeout_seconds=5.0,
+            max_output_bytes=10,
+        )

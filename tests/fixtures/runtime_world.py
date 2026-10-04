@@ -97,6 +97,7 @@ from manosube_agent_civilization.runtime.identity import (
     runtime_root_admission_semantic_fingerprint,
     runtime_root_admission_signing_payload,
 )
+from manosube_agent_civilization.runtime.types import SSH_PROBE_SCRIPT_SHA256
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
 
@@ -873,13 +874,16 @@ def runtime_observation_grant_for(
     provider: str = "local",
     deployment_id: str = "widget-service",
     instance_identity: str = "widget-service-1",
+    deployment_fingerprint: str = DEFAULT_DEPLOYMENT_FINGERPRINT,
     host: str = "127.0.0.1",
     port: int = 22,
     user: str = "probe",
     probe_identity: str = "OS_HEALTH_SNAPSHOT_BOUNDED",
+    probe_script_sha256: str | None = None,
     permitted_fields: list[str] | None = None,
     max_output_bytes: int = 1_048_576,
     max_lines: int = 200,
+    max_timeout_seconds: int = 30,
     permitted_transports: list[str] | None = None,
     issued_at: str = "2026-01-01T00:00:00Z",
     expires_at: str = "2026-12-31T23:59:59Z",
@@ -888,8 +892,10 @@ def runtime_observation_grant_for(
     signing_key_id: str | None = None,
 ) -> dict[str, Any]:
     """A :mod:`~manosube_agent_civilization.runtime.transport_control` bounded-SSH-observation
-    grant (Issue #105; genuinely Ed25519-signed since PR #108 Structural Review Round 1, F1),
-    for tests of that module and of the grant-gated unattended path.
+    grant (Issue #105; genuinely Ed25519-signed since PR #108 Structural Review Round 1, F1;
+    ``deployment_fingerprint``/``probe_script_sha256``/``max_timeout_seconds`` added and signed
+    by Structural Review Round 2, SR2-F2/SR2-F4), for tests of that module and of the
+    grant-gated unattended path.
 
     *signer*/*signing_key_id* default to the canonical fixture Human Authority's own key pair
     -- the identical ``signer``-with-a-canonical-default convention
@@ -900,6 +906,16 @@ def runtime_observation_grant_for(
     defaults here are scope-mismatch values on purpose, for tests of
     :func:`~manosube_agent_civilization.runtime.transport_control.require_valid_grant`'s own
     pure-function shape checks that never reach a real Boot call).
+
+    *deployment_fingerprint* defaults to the identical :data:`DEFAULT_DEPLOYMENT_FINGERPRINT`
+    every ``target_identity_for``/``commit_target_identity`` call defaults to, so a grant and a
+    target minted independently from this module's own defaults already match each other
+    (SR2-F2's own ``require_grant_matches_attempt`` binding) without every call site needing to
+    pass it explicitly. *probe_script_sha256* defaults to this repository's own pinned, shipped
+    probe script digest (:data:`~manosube_agent_civilization.runtime.types.
+    SSH_PROBE_SCRIPT_SHA256`) -- the only value :func:`~manosube_agent_civilization.runtime.
+    transport_control.require_valid_grant` will ever accept (SR2-F4); pass an explicit, wrong
+    value only to build a negative control.
     """
 
     grant: dict[str, Any] = {
@@ -910,15 +926,20 @@ def runtime_observation_grant_for(
         "provider": provider,
         "deployment_id": deployment_id,
         "instance_identity": instance_identity,
+        "deployment_fingerprint": deployment_fingerprint,
         "host": host,
         "port": port,
         "user": user,
         "probe_identity": probe_identity,
+        "probe_script_sha256": (
+            probe_script_sha256 if probe_script_sha256 is not None else SSH_PROBE_SCRIPT_SHA256
+        ),
         "permitted_fields": list(
             permitted_fields if permitted_fields is not None else ["hostname"]
         ),
         "max_output_bytes": max_output_bytes,
         "max_lines": max_lines,
+        "max_timeout_seconds": max_timeout_seconds,
         "permitted_transports": list(
             permitted_transports
             if permitted_transports is not None

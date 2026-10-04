@@ -23,6 +23,7 @@ from unittest.mock import patch
 
 import pytest
 from tests.fixtures.runtime_world import (
+    DEFAULT_DEPLOYMENT_FINGERPRINT,
     alternate_signing_private_key,
     bound,
     foreign_trust_anchor_private_key,
@@ -35,12 +36,14 @@ from manosube_agent_civilization.runtime.transport_control import (
     DISPATCH_STATUSES,
     PERMITTED_TRANSPORT_MODES,
     classify_actions_dispatch,
+    compute_runtime_observation_attempt_id,
     render_manual_ssh_command,
     require_grant_matches_attempt,
     require_grant_not_expired,
     require_grant_permits_transport,
     require_valid_grant,
     select_transport,
+    select_transport_with_automatic_fallback,
 )
 
 _NOW = "2026-06-01T00:00:00Z"
@@ -191,6 +194,17 @@ def test_self_asserting_decision_status_alone_is_never_enough(_world: dict[str, 
         lambda g: g.update({"max_output_bytes": 0}),
         lambda g: g.update({"max_output_bytes": 10_000_000}),
         lambda g: g.update({"max_lines": 0}),
+        lambda g: g.update({"deployment_fingerprint": ""}),
+        lambda g: g.update({"deployment_fingerprint": 7}),
+        lambda g: g.update({"probe_script_sha256": "not-a-digest"}),
+        lambda g: g.update({"probe_script_sha256": "0" * 64}),
+        lambda g: g.update({"probe_script_sha256": "A" * 64}),
+        lambda g: g.update({"max_timeout_seconds": 0}),
+        lambda g: g.update({"max_timeout_seconds": 10_000}),
+        lambda g: g.update({"max_timeout_seconds": "30"}),
+        lambda g: g.pop("probe_script_sha256"),
+        lambda g: g.pop("deployment_fingerprint"),
+        lambda g: g.pop("max_timeout_seconds"),
         lambda g: g.update({"permitted_transports": []}),
         lambda g: g.update({"permitted_transports": ["NOT_A_TRANSPORT"]}),
         lambda g: g.update({"permitted_transports": "MANUAL_SSH"}),
@@ -305,6 +319,7 @@ def _boundary(**overrides: Any) -> dict[str, Any]:
         "observation_method": "SSH_EXEC_BOUNDED",
         "endpoint": endpoint,
         "permitted_fields": ["hostname"],
+        "timeout_seconds": 5,
     }
     boundary.update(overrides)
     return boundary
@@ -315,6 +330,7 @@ def _target(**overrides: Any) -> dict[str, Any]:
         "provider": "local",
         "deployment_id": "widget-service",
         "instance_identity": "widget-service-1",
+        "deployment_fingerprint": DEFAULT_DEPLOYMENT_FINGERPRINT,
     }
     target.update(overrides)
     return target
@@ -335,6 +351,8 @@ def test_require_grant_matches_attempt_admits_the_identical_target_and_scope(
         {"endpoint": {"user": "someone-else"}},
         {"endpoint": {"probe_identity": "SOURCE_LOG_EXCERPT_BOUNDED"}},
         {"permitted_fields": ["hostname", "uptime_seconds"]},
+        {"timeout_seconds": 999_999},
+        {"timeout_seconds": "30"},
     ],
 )
 def test_require_grant_matches_attempt_refuses_a_boundary_the_grant_does_not_authorize(
@@ -347,19 +365,35 @@ def test_require_grant_matches_attempt_refuses_a_boundary_the_grant_does_not_aut
         )
 
 
+def test_require_grant_matches_attempt_admits_a_timeout_exactly_at_the_grants_own_ceiling(
+    _world: dict[str, Any],
+) -> None:
+    """SR2-F2: the grant's own ``max_timeout_seconds`` is an inclusive ceiling -- an attempt
+    whose own ``boundary.timeout_seconds`` exactly equals it is admitted, not refused."""
+
+    grant = _grant_for_world(_world, max_timeout_seconds=30)
+    require_grant_matches_attempt(
+        grant, target_identity=_target(), boundary=_boundary(timeout_seconds=30)
+    )
+
+
 @pytest.mark.parametrize(
     "target_overrides",
     [
         {"provider": "elsewhere"},
         {"deployment_id": "billing-service"},
         {"instance_identity": "widget-service-2"},
+        {"deployment_fingerprint": "sha256:" + "f" * 64},
     ],
 )
 def test_require_grant_matches_attempt_refuses_a_different_real_target(
     _world: dict[str, Any], target_overrides: dict[str, Any]
 ) -> None:
     """The exact first-delivery gap: a grant genuinely valid for one target must never be
-    accepted for a different one, even though every other check passes."""
+    accepted for a different one, even though every other check passes. SR2-F2 extends this
+    to the target's own claimed ``deployment_fingerprint`` -- a grant issued against one
+    declared identity must never be reused once the target has rotated to a new one, even
+    though its stable provider/deployment/instance coordinates are unchanged."""
 
     grant = _grant_for_world(_world)
     with pytest.raises(RuntimeRequirementError):
@@ -524,6 +558,158 @@ def test_select_transport_refuses_an_unrecognized_actions_status(_world: dict[st
             project_binding_id=_world["project_binding_id"],
             now=_NOW,
         )
+
+
+def test_select_transport_with_automatic_fallback_resolves_once_actions_is_confirmed_unavailable(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 Structural Review Round 2, SR2-F1: a grant that already, explicitly permits
+    ``PREAUTHORIZED_UNATTENDED_SSH`` resolves to it automatically once Actions is *confirmed*
+    unavailable and no explicit transport was requested -- no per-attempt Human selection
+    required for this one case, because the authority already fully pre-exists in the signed
+    grant itself."""
+
+    grant = _grant_for_world(_world)
+    assert (
+        select_transport_with_automatic_fallback(
+            actions_status="UNAVAILABLE",
+            requested_transport=None,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+        == "PREAUTHORIZED_UNATTENDED_SSH"
+    )
+
+
+def test_select_transport_with_automatic_fallback_refuses_an_unknown_actions_status(
+    _world: dict[str, Any],
+) -> None:
+    """An ``UNKNOWN`` startup cause (Actions may still be about to allocate a runner) is never
+    treated as confirmed unavailability -- this function requires the decisive answer, never
+    the ambiguous one, however eager a caller is to fall back."""
+
+    grant = _grant_for_world(_world)
+    with pytest.raises(RuntimeRequirementError):
+        select_transport_with_automatic_fallback(
+            actions_status="UNKNOWN",
+            requested_transport=None,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+    with pytest.raises(RuntimeRequirementError):
+        select_transport_with_automatic_fallback(
+            actions_status="AVAILABLE",
+            requested_transport=None,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+
+
+def test_select_transport_with_automatic_fallback_refuses_an_explicit_request(
+    _world: dict[str, Any],
+) -> None:
+    """This function's whole purpose is the no-per-attempt-Human-selection case -- a caller
+    that already knows which transport it wants must call ``select_transport`` directly."""
+
+    grant = _grant_for_world(_world)
+    with pytest.raises(RuntimeRequirementError):
+        select_transport_with_automatic_fallback(
+            actions_status="UNAVAILABLE",
+            requested_transport="PREAUTHORIZED_UNATTENDED_SSH",
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+
+
+def test_select_transport_with_automatic_fallback_refuses_a_grant_that_does_not_permit_it(
+    _world: dict[str, Any],
+) -> None:
+    grant = _grant_for_world(_world, permitted_transports=["MANUAL_SSH"])
+    with pytest.raises(RuntimeRequirementError):
+        select_transport_with_automatic_fallback(
+            actions_status="UNAVAILABLE",
+            requested_transport=None,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+
+
+def test_select_transport_with_automatic_fallback_refuses_an_expired_grant(
+    _world: dict[str, Any],
+) -> None:
+    grant = _grant_for_world(
+        _world, issued_at="2025-01-01T00:00:00Z", expires_at="2025-02-01T00:00:00Z"
+    )
+    with pytest.raises(RuntimeRequirementError):
+        select_transport_with_automatic_fallback(
+            actions_status="UNAVAILABLE",
+            requested_transport=None,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+
+
+def test_select_transport_with_automatic_fallback_refuses_an_already_satisfied_attempt(
+    _world: dict[str, Any],
+) -> None:
+    """A caller tracking its own bounded, local attempt correlation passes
+    ``attempt_already_satisfied=True`` once it already knows this exact attempt reached a
+    transport -- refusing a second, duplicate unattended execution."""
+
+    grant = _grant_for_world(_world)
+    with pytest.raises(RuntimeRequirementError):
+        select_transport_with_automatic_fallback(
+            actions_status="UNAVAILABLE",
+            requested_transport=None,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+            attempt_already_satisfied=True,
+        )
+
+
+def test_compute_runtime_observation_attempt_id_is_a_pure_deterministic_function() -> None:
+    """The identical inputs always agree; any different input never silently collides."""
+
+    first = compute_runtime_observation_attempt_id(
+        grant_id="GRANT-1", actions_status="UNAVAILABLE", now=_NOW
+    )
+    again = compute_runtime_observation_attempt_id(
+        grant_id="GRANT-1", actions_status="UNAVAILABLE", now=_NOW
+    )
+    assert first == again
+    assert first.startswith("RUNTIME-OBSERVATION-ATTEMPT-")
+
+    different_grant = compute_runtime_observation_attempt_id(
+        grant_id="GRANT-2", actions_status="UNAVAILABLE", now=_NOW
+    )
+    different_status = compute_runtime_observation_attempt_id(
+        grant_id="GRANT-1", actions_status="UNKNOWN", now=_NOW
+    )
+    different_now = compute_runtime_observation_attempt_id(
+        grant_id="GRANT-1", actions_status="UNAVAILABLE", now="2026-07-01T00:00:00Z"
+    )
+    assert len({first, different_grant, different_status, different_now}) == 4
 
 
 def test_permitted_transport_modes_is_the_closed_vocabulary_documented() -> None:

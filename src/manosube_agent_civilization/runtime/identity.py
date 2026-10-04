@@ -400,6 +400,26 @@ def runtime_root_admission_semantic_fingerprint(admission: dict[str, Any]) -> st
 #: content-addressed (a disclosed judgment call: it is a narrower, ephemeral, offline-checked
 #: authorization object, not a canonical chain-pointer record like a deployment declaration or
 #: root admission).
+#:
+#: **PR #108 Structural Review Round 2 (SR2-F2, SR2-F4)** added three further fields, all
+#: signed exactly like every field above them -- a caller cannot widen any of the three past
+#: what the Human Authority actually approved without breaking the signature:
+#:
+#: - ``deployment_fingerprint`` binds the grant to the *current* claimed identity of the
+#:   target it names, not merely to its stable provider/deployment/instance coordinates --
+#:   :func:`~manosube_agent_civilization.runtime.transport_control.require_grant_matches_attempt`
+#:   now compares it against the real attempt's own ``target_identity.deployment_fingerprint``.
+#: - ``probe_script_sha256`` binds the grant to the exact probe artifact digest the Human
+#:   Authority approved running unattended. Closing SR2-F4's own gap: comparing a live probe
+#:   report's self-reported digest only against the public, shipped-source constant
+#:   (:data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256`) proves
+#:   nothing about what was actually approved, since that constant is visible to anyone who
+#:   can read this repository's own source. Comparing it instead against this signed grant
+#:   field means a forged or substituted digest breaks the Human Authority's own signature,
+#:   not merely a public equality check a substitute script could trivially print back.
+#: - ``max_timeout_seconds`` is the signed ceiling
+#:   :func:`~manosube_agent_civilization.runtime.transport_control.require_grant_matches_attempt`
+#:   now requires the real attempt's own ``boundary.timeout_seconds`` to never exceed.
 RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "grant_id",
@@ -408,13 +428,16 @@ RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "provider",
     "deployment_id",
     "instance_identity",
+    "deployment_fingerprint",
     "host",
     "port",
     "user",
     "probe_identity",
+    "probe_script_sha256",
     "permitted_fields",
     "max_output_bytes",
     "max_lines",
+    "max_timeout_seconds",
     "permitted_transports",
     "issued_at",
     "expires_at",

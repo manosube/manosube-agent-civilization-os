@@ -80,11 +80,41 @@ invocation through the identical :func:`~manosube_agent_civilization.runtime.net
 render_ssh_command_argv` -- the exact command a Human is shown is, field for field, the exact
 command this package would otherwise run unattended, so neither path can silently diverge from
 the other.
+
+**PR #108 Structural Review Round 2, SR2-F2 -- verification is never merely cached.** Round 1's
+own correction verified a grant completely at ``SshRuntimeAdapter`` construction, but left
+``observe()`` trusting that cached result for however long the adapter instance itself lived.
+:class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter` now calls
+:func:`require_grant_permits_transport`/:func:`require_grant_not_expired` fresh again inside
+``observe()`` itself, immediately before anything is spawned, so a grant that expired, or whose
+signing key rotated, between construction and the actual attempt is refused at the attempt --
+never admitted on the strength of a check that is by then stale. :func:`require_grant_matches_attempt`
+was also extended to bind the attempt's own claimed ``deployment_fingerprint`` (a grant issued
+against one declared target identity must never be reused once that target has rotated to a
+new one) and to require the attempt's own ``boundary.timeout_seconds`` never exceed the grant's
+own signed ``max_timeout_seconds`` ceiling.
+
+**PR #108 Structural Review Round 2, SR2-F4 -- the executed probe artifact is now a signed
+claim, not a public constant comparison.** A grant now additionally carries a signed
+``probe_script_sha256``, required here to equal this repository's own pinned, shipped probe
+script digest (:data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256`) --
+so a forged grant naming a different digest is refused by shape alone, and a genuine grant's
+own value is covered by the Human Authority's own signature. ``SshRuntimeAdapter`` compares a
+live probe report's self-reported digest against *this signed field*, never against the bare
+public constant directly -- a same-named substitute script on a target can still print back
+the public constant, but cannot forge the Human Authority's own signature over a grant naming a
+different one. This remains a disclosed, honestly bounded guarantee: no stronger remote
+attestation primitive exists over plain SSH, so what is actually proved is "the Human Authority
+signed off on exactly this digest being run", never an independent cryptographic attestation of
+what code genuinely executed on the remote target. See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §19.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
+import json
+import re
 import shlex
 from typing import Any
 
@@ -98,7 +128,12 @@ from .engine import parse_utc_instant, require_valid_timestamp
 from .errors import RuntimeRequirementError
 from .identity import runtime_observation_grant_signing_payload
 from .network import render_ssh_command_argv
-from .types import SSH_PROBE_IDENTITIES
+from .types import SSH_PROBE_IDENTITIES, SSH_PROBE_SCRIPT_SHA256
+
+#: A SHA-256 hex digest, lowercase, exactly 64 characters -- the one shape
+#: ``grant.probe_script_sha256`` (SR2-F4) and a live probe report's own self-reported digest
+#: must both satisfy before either is ever compared to the other.
+_HEX64_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 #: Every transport/mode a grant may permit. ``GITHUB_ACTIONS`` and ``MANUAL_SSH`` carry no
 #: further authorization beyond the grant's own scope and validity window -- a Human operator
@@ -129,6 +164,12 @@ _MIN_MAX_OUTPUT_BYTES = 1
 _MAX_MAX_OUTPUT_BYTES = 1_048_576
 _MIN_MAX_LINES = 1
 _MAX_MAX_LINES = 10_000
+#: Bounds on a grant's own declared ``max_timeout_seconds`` (SR2-F2) -- the signed ceiling an
+#: attempt's own ``boundary.timeout_seconds`` may never exceed. The upper bound is deliberately
+#: generous (an unattended probe should never need to run for an hour) but still closed, exactly
+#: as the byte/line bounds above are.
+_MIN_MAX_TIMEOUT_SECONDS = 1
+_MAX_MAX_TIMEOUT_SECONDS = 3600
 
 _REQUIRED_GRANT_KEYS: frozenset[str] = frozenset(
     {
@@ -139,13 +180,16 @@ _REQUIRED_GRANT_KEYS: frozenset[str] = frozenset(
         "provider",
         "deployment_id",
         "instance_identity",
+        "deployment_fingerprint",
         "host",
         "port",
         "user",
         "probe_identity",
+        "probe_script_sha256",
         "permitted_fields",
         "max_output_bytes",
         "max_lines",
+        "max_timeout_seconds",
         "permitted_transports",
         "issued_at",
         "expires_at",
@@ -252,6 +296,7 @@ def require_valid_grant(
         "provider",
         "deployment_id",
         "instance_identity",
+        "deployment_fingerprint",
         "host",
         "user",
     ):
@@ -260,6 +305,26 @@ def require_valid_grant(
             raise RuntimeRequirementError(
                 f"runtime observation grant.{key} must be a non-empty string: {value!r}"
             )
+    # SR2-F4: the grant's own signed probe-artifact digest must itself be a well-formed
+    # SHA-256 hex digest, and must equal exactly the one digest this repository's own shipped
+    # probe script carries (the same closed self-consistency
+    # ``test_the_probe_script_digest_pin_matches_the_real_shipped_script`` already proves
+    # against the real file) -- a grant can never authorize running a different artifact than
+    # the one this repository actually reviewed and ships.
+    probe_script_sha256 = checked.get("probe_script_sha256")
+    if not isinstance(probe_script_sha256, str) or not _HEX64_PATTERN.fullmatch(
+        probe_script_sha256
+    ):
+        raise RuntimeRequirementError(
+            "runtime observation grant.probe_script_sha256 must be a lowercase 64-character "
+            f"hex SHA-256 digest: {probe_script_sha256!r}"
+        )
+    if probe_script_sha256 != SSH_PROBE_SCRIPT_SHA256:
+        raise RuntimeRequirementError(
+            "runtime observation grant.probe_script_sha256 does not equal this repository's "
+            f"own pinned, shipped probe script digest: {probe_script_sha256!r} != "
+            f"{SSH_PROBE_SCRIPT_SHA256!r}"
+        )
     port = checked.get("port")
     if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
         raise RuntimeRequirementError(
@@ -300,6 +365,16 @@ def require_valid_grant(
         raise RuntimeRequirementError(
             f"runtime observation grant.max_lines must be an integer {_MIN_MAX_LINES}.."
             f"{_MAX_MAX_LINES}: {max_lines!r}"
+        )
+    max_timeout_seconds = checked.get("max_timeout_seconds")
+    if (
+        not isinstance(max_timeout_seconds, int)
+        or isinstance(max_timeout_seconds, bool)
+        or not (_MIN_MAX_TIMEOUT_SECONDS <= max_timeout_seconds <= _MAX_MAX_TIMEOUT_SECONDS)
+    ):
+        raise RuntimeRequirementError(
+            "runtime observation grant.max_timeout_seconds must be an integer "
+            f"{_MIN_MAX_TIMEOUT_SECONDS}..{_MAX_MAX_TIMEOUT_SECONDS}: {max_timeout_seconds!r}"
         )
     permitted_transports = checked.get("permitted_transports")
     if not isinstance(permitted_transports, list) or not permitted_transports:
@@ -456,6 +531,18 @@ def require_grant_matches_attempt(
                 f"attempt's own target_identity.{field}: grant names {grant.get(field)!r}, "
                 f"attempt uses {target_identity.get(field)!r}"
             )
+    # SR2-F2: beyond the target's stable provider/deployment/instance coordinates, the grant
+    # must also name the exact *current* claimed identity of that target -- a grant genuinely
+    # issued against one deployment_fingerprint must never be silently reused once the target's
+    # own declared identity has rotated to a new one, even though every coordinate above still
+    # matches.
+    if grant.get("deployment_fingerprint") != target_identity.get("deployment_fingerprint"):
+        raise RuntimeRequirementError(
+            f"runtime observation grant {grant.get('grant_id')!r} does not match this "
+            "attempt's own target_identity.deployment_fingerprint: grant names "
+            f"{grant.get('deployment_fingerprint')!r}, attempt uses "
+            f"{target_identity.get('deployment_fingerprint')!r}"
+        )
     # boundary may already be a deep-frozen copy by the time this runs (route.py hands the
     # adapter frozen structures -- lists become tuples), so a sequence is accepted generally
     # rather than requiring a literal ``list``.
@@ -467,6 +554,23 @@ def require_grant_matches_attempt(
             f"runtime observation grant {grant.get('grant_id')!r} does not authorize every "
             f"field this attempt's own boundary.permitted_fields names: {permitted_fields!r} "
             f"is not a subset of {grant.get('permitted_fields')!r}"
+        )
+    # SR2-F2: the grant's own signed max_timeout_seconds ceiling must never be exceeded by the
+    # real attempt's own boundary.timeout_seconds -- an unattended probe can otherwise be made
+    # to wait far longer than the Human Authority actually approved by a Boundary alone,
+    # without ever touching the grant.
+    timeout_seconds = boundary.get("timeout_seconds")
+    max_timeout_seconds = grant.get("max_timeout_seconds")
+    if (
+        not isinstance(timeout_seconds, int)
+        or isinstance(timeout_seconds, bool)
+        or not isinstance(max_timeout_seconds, int)
+        or timeout_seconds > max_timeout_seconds
+    ):
+        raise RuntimeRequirementError(
+            f"runtime observation grant {grant.get('grant_id')!r} own max_timeout_seconds "
+            f"({max_timeout_seconds!r}) does not cover this attempt's own "
+            f"boundary.timeout_seconds ({timeout_seconds!r})"
         )
     return dict(grant)
 
@@ -579,14 +683,130 @@ def select_transport(
     return requested_transport
 
 
+def compute_runtime_observation_attempt_id(
+    *, grant_id: str, actions_status: str, now: str
+) -> str:
+    """Return a deterministic, purely local identity for "this exact unattended-fallback
+    decision" (PR #108 Structural Review Round 2, SR2-F1) -- a pure function of the grant being
+    used, the confirmed Actions status that triggered the fallback, and the instant the
+    decision was made, computed with zero I/O and zero persistence of its own.
+
+    This module owns no attempt ledger (Issue #105's own standing prohibition on a further
+    State/Store/Evidence owner): this id is not looked up, recorded, or compared against
+    anything *here*. It exists so a caller that already keeps its own bounded, local-only
+    record of attempts it has already satisfied (``scripts/runtime_observation_transport.py``'s
+    own CLI, an Actions job's own run-scoped state, a controller process's own in-memory set)
+    can derive the identical id twice for the identical decision and compare those two values
+    itself -- the correlation is the caller's own responsibility; this function only guarantees
+    that two calls with the identical inputs always agree, and that two calls with any
+    different input never silently collide.
+    """
+
+    payload = {"grant_id": grant_id, "actions_status": actions_status, "now": now}
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return "RUNTIME-OBSERVATION-ATTEMPT-" + digest.upper()
+
+
+def select_transport_with_automatic_fallback(
+    *,
+    actions_status: str,
+    requested_transport: str | None,
+    grant: Mapping[str, Any],
+    store: Any,
+    project_id: str,
+    project_binding_id: str,
+    now: str,
+    attempt_already_satisfied: bool = False,
+) -> str:
+    """The automatic-fallback sibling of :func:`select_transport` (PR #108 Structural Review
+    Round 2, SR2-F1).
+
+    :func:`select_transport` itself is left entirely unchanged, and keeps refusing whenever
+    Actions is unavailable and no explicit *requested_transport* names a mode -- the discipline
+    its own existing tests already pin, and what every caller who has not opted into this
+    function keeps getting. This function exists for exactly the one additional, narrowly
+    scoped case design requirement 6 ("tool availability must not create Authority") does not
+    actually forbid: a verified, genuinely signed grant that *already*, explicitly, names
+    ``PREAUTHORIZED_UNATTENDED_SSH`` among its own ``permitted_transports`` has already been
+    given that authority by the Human Authority who signed it -- before this call, before
+    Actions was ever dispatched, independent of whether Actions succeeds or fails on any given
+    attempt. Automatically resolving to that already-authorized transport once Actions is
+    *confirmed* (never merely assumed) unavailable creates no new authority; it only automates
+    *which already-authorized path executes*, exactly as a Human operator reading the identical
+    facts would themselves choose -- with no per-attempt Human selection required for this one
+    case.
+
+    Every precondition below is required, and none is inferred from the others:
+
+    - *actions_status* must be exactly ``"UNAVAILABLE"`` -- never ``"UNKNOWN"``. An ``UNKNOWN``
+      startup cause (Actions may still be about to allocate a runner) is never treated as
+      confirmed unavailability merely because a caller wants to fall back quickly; call this
+      again once :func:`classify_actions_dispatch` reports a decisive answer, or require an
+      explicit Human selection through :func:`select_transport` instead.
+    - *requested_transport* must be ``None`` -- a caller that already knows which transport it
+      wants should call :func:`select_transport` directly; this function's whole purpose is the
+      *unattended*, no-per-attempt-Human-selection case, never a second way to request a mode
+      by hand.
+    - The grant must independently verify complete and explicitly permit
+      ``PREAUTHORIZED_UNATTENDED_SSH`` (:func:`require_grant_permits_transport`, run here
+      exactly as it is everywhere else this package gates that transport) and must currently be
+      within its own validity window at *now* (:func:`require_grant_not_expired`).
+    - *attempt_already_satisfied* must be ``False``. A caller tracking its own attempt
+      correlation (see :func:`compute_runtime_observation_attempt_id`) passes ``True`` once it
+      already knows this exact attempt already reached a transport -- refusing here rather
+      than risk a second, duplicate unattended execution for whatever already ran.
+
+    Returns ``"PREAUTHORIZED_UNATTENDED_SSH"`` only once every one of the above holds; raises
+    :class:`~manosube_agent_civilization.runtime.errors.RuntimeRequirementError` otherwise, with
+    zero adapter calls either way -- this function only ever returns a transport name, never
+    itself observes anything.
+    """
+
+    if attempt_already_satisfied:
+        raise RuntimeRequirementError(
+            "this attempt is already marked satisfied -- refusing to select a transport for a "
+            "second, duplicate execution of the identical attempt"
+        )
+    if actions_status != "UNAVAILABLE":
+        raise RuntimeRequirementError(
+            "automatic unattended fallback requires actions_status to be the confirmed "
+            f"'UNAVAILABLE' -- never inferred from, or substituted for, {actions_status!r}"
+        )
+    if requested_transport is not None:
+        raise RuntimeRequirementError(
+            "automatic unattended fallback never takes an explicit requested_transport -- a "
+            "caller that already knows which transport it wants must call select_transport "
+            f"directly instead: {requested_transport!r}"
+        )
+    checked_grant = require_grant_permits_transport(
+        grant,
+        "PREAUTHORIZED_UNATTENDED_SSH",
+        store=store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+    )
+    require_grant_not_expired(
+        checked_grant,
+        store=store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        now=now,
+    )
+    return "PREAUTHORIZED_UNATTENDED_SSH"
+
+
 __all__ = [
     "DISPATCH_STATUSES",
     "PERMITTED_TRANSPORT_MODES",
     "classify_actions_dispatch",
+    "compute_runtime_observation_attempt_id",
     "render_manual_ssh_command",
     "require_grant_matches_attempt",
     "require_grant_not_expired",
     "require_grant_permits_transport",
     "require_valid_grant",
     "select_transport",
+    "select_transport_with_automatic_fallback",
 ]

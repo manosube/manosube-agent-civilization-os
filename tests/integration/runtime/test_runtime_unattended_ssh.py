@@ -75,6 +75,7 @@ def _grant_for(world: dict[str, Any], **overrides: Any) -> dict[str, Any]:
         project_id=world["project_id"],
         project_binding_id=world["project_binding_id"],
         permitted_fields=overrides.pop("permitted_fields", ["hostname"]),
+        deployment_fingerprint=overrides.pop("deployment_fingerprint", _DEPLOYMENT_FINGERPRINT),
         **overrides,
     )
 
@@ -311,6 +312,222 @@ def test_actions_being_unavailable_never_by_itself_escalates_to_unattended_ssh(
                     project_binding_id=_world["project_binding_id"],
                     now=_NOW,
                 )
+    assert mock_run.call_count == 0
+
+
+def test_observe_revalidates_the_grant_live_rather_than_trusting_construction_time(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 Structural Review Round 2, SR2-F2: a grant genuinely valid at *construction*
+    time, but no longer within its own validity window by the actual instant of this exact
+    attempt, must be refused inside ``observe()`` itself -- never admitted merely because
+    construction's own check happened to pass once, earlier, against a different instant."""
+
+    grant = _grant_for(
+        _world, issued_at="2026-01-01T00:00:00Z", expires_at="2026-02-01T00:00:00Z"
+    )
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now="2026-01-15T00:00:00Z",
+    )
+    stale_boundary = ssh_boundary_for(
+        host=grant["host"],
+        port=grant["port"],
+        user=grant["user"],
+        probe_identity=grant["probe_identity"],
+        permitted_fields=list(grant["permitted_fields"]),
+        issued_at="2026-03-01T00:00:00Z",
+        expires_at="2026-03-01T01:00:00Z",
+    )
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        adapter.observe(target_identity=_world["target_identity"], boundary=stale_boundary)
+    assert mock_run.call_count == 0
+
+
+def test_observe_performs_a_fresh_live_reverification_not_merely_the_cached_construction_check(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR2-F2: ``observe()`` must itself call through to a fresh ``boot_project``
+    restoration -- the identical primitive construction already called once -- rather than
+    reusing whatever that earlier call already proved. Mocking ``boot_project`` (wrapped, so
+    it still behaves identically) and asserting it is invoked again by ``observe()`` alone is
+    the structural proof that this round's own correction is a live re-check, not a comment."""
+
+    grant = _grant_for(_world)
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+    )
+    with (
+        patch(
+            "manosube_agent_civilization.runtime.transport_control.boot_project",
+            wraps=boot_project,
+        ) as mock_boot,
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+    ):
+        mock_run.return_value = (_mocked_probe_stdout(), b"", 0)
+        adapter.observe(
+            target_identity=_world["target_identity"], boundary=_boundary_matching(grant)
+        )
+    assert mock_boot.call_count > 0
+
+
+def test_observe_refuses_a_boundary_whose_timeout_exceeds_the_grants_own_signed_ceiling(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR2-F2: ``boundary.timeout_seconds`` is bound to the grant's own signed
+    ``max_timeout_seconds`` ceiling, re-checked live at the attempt -- a Boundary alone can
+    never make an unattended probe wait longer than the Human Authority actually approved."""
+
+    grant = _grant_for(_world, max_timeout_seconds=5)
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+    )
+    boundary = ssh_boundary_for(
+        host=grant["host"],
+        port=grant["port"],
+        user=grant["user"],
+        probe_identity=grant["probe_identity"],
+        permitted_fields=list(grant["permitted_fields"]),
+        issued_at=_NOW,
+        expires_at="2026-06-01T01:00:00Z",
+        timeout_seconds=3600,
+    )
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        adapter.observe(target_identity=_world["target_identity"], boundary=boundary)
+    assert mock_run.call_count == 0
+
+
+def test_observe_refuses_a_target_whose_deployment_fingerprint_has_rotated(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR2-F2: a grant issued against one claimed ``deployment_fingerprint`` must
+    never be reused once the target's own real declared identity has rotated to a new one --
+    even though every stable coordinate (provider/deployment_id/instance_identity) still
+    matches."""
+
+    grant = _grant_for(_world)
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+    )
+    rotated_target_identity = dict(_world["target_identity"])
+    rotated_target_identity["deployment_fingerprint"] = "sha256:" + "e" * 64
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        adapter.observe(
+            target_identity=rotated_target_identity, boundary=_boundary_matching(grant)
+        )
+    assert mock_run.call_count == 0
+
+
+def test_adapter_constructed_for_github_actions_requires_the_grant_to_permit_that_transport(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 Structural Review Round 2, SR2-F1: ``SshRuntimeAdapter`` now executes for
+    either of its two own executable transports, and requires the grant to explicitly permit
+    *that exact one* -- a grant permitting only ``PREAUTHORIZED_UNATTENDED_SSH`` (never
+    ``GITHUB_ACTIONS``) must refuse construction for the Actions case, with zero subprocess
+    calls, even though it would construct perfectly well for the unattended case."""
+
+    grant = _grant_for(_world, permitted_transports=["PREAUTHORIZED_UNATTENDED_SSH"])
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        SshRuntimeAdapter(
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+            transport="GITHUB_ACTIONS",
+        )
+    assert mock_run.call_count == 0
+
+    # The identical grant genuinely constructs fine for the transport it actually permits.
+    SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        transport="PREAUTHORIZED_UNATTENDED_SSH",
+    )
+
+
+def test_adapter_executes_the_real_observation_under_the_github_actions_transport(
+    _world: dict[str, Any],
+) -> None:
+    """The positive sibling: a grant that explicitly permits ``GITHUB_ACTIONS`` genuinely
+    reaches ``OBSERVED`` through this identical adapter -- never a second, parallel
+    implementation for that transport."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS"])
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        transport="GITHUB_ACTIONS",
+    )
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (_mocked_probe_stdout(), b"", 0)
+        outcome = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=_world["target_identity"],
+            boundary=_boundary_matching(grant),
+            adapter=adapter,
+            observed_at=_NOW,
+        )
+    assert mock_run.call_count == 1
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+
+
+def test_adapter_refuses_construction_for_manual_ssh(_world: dict[str, Any]) -> None:
+    """``MANUAL_SSH``'s whole point is that a Human runs the rendered command themselves --
+    this package must never construct a live, executable adapter for it, however the grant
+    itself is scoped."""
+
+    grant = _grant_for(
+        _world, permitted_transports=["MANUAL_SSH", "PREAUTHORIZED_UNATTENDED_SSH"]
+    )
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        SshRuntimeAdapter(
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+            transport="MANUAL_SSH",
+        )
     assert mock_run.call_count == 0
 
 

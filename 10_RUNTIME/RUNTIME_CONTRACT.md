@@ -3752,3 +3752,219 @@ READY_TRANSITION_PERFORMED=false
 ISSUE_105_CLOSE_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 19. PR #108 Structural Review Round 2 corrections (SR2-F1–F4)
+
+```text
+ROUND=2
+GOVERNING_REVIEW=PR #108 comment 5979222584
+ADOPTION_ID=ADOPT_I105_PR108_SR2_F1_F4
+ADOPTION_COMMENT=5979845810
+CORRECTION_HANDOFF_COMMENT=5979856829
+REVIEWED_HEAD=ecbf956eb0dcef51daf710e8c49ea70104ff4c0d
+FINDINGS_ADOPTED=4
+FINDINGS_CLOSED=4
+```
+
+Independent structural review of Round 1's own corrected HEAD found four further ways the §18
+delivery's own claims were weaker than the code actually kept. Each is recorded below as *what
+was claimed*, *what was true*, and *what the code now does* -- the identical per-round
+accumulation this document already keeps. Where this section and §18 differ, this section
+governs.
+
+### 19.1 SR2-F1 — GitHub Actions now actually executes, and automatic unattended fallback is
+an explicit, narrowly scoped opt-in
+
+*Claimed:* "transport-independent runtime observation" -- GitHub Actions, manual SSH, and
+grant-gated unattended SSH are interchangeable transports for the identical canonical route.
+*True:* `.github/workflows/runtime_observation.yml` only ever rendered a command (never
+invoked `observe_runtime_target`), and `scripts/runtime_observation_transport.py`'s own
+`observe` subcommand refused every transport except `PREAUTHORIZED_UNATTENDED_SSH` outright --
+so a `GITHUB_ACTIONS`-resolved attempt could never actually execute the bounded observation at
+all, directly contradicting the delivery's own "transport-independent" claim for the one
+transport real operational continuity depends on most. `transport_control.select_transport`
+also had no automatic-fallback path whatsoever: Actions being unavailable always required an
+explicit Human selection, even when a grant had already, explicitly pre-authorized unattended
+execution for exactly this case.
+
+*Now:* `SshRuntimeAdapter.__init__` takes a new `transport` keyword (one of
+`{"GITHUB_ACTIONS", "PREAUTHORIZED_UNATTENDED_SSH"}`; `MANUAL_SSH` is refused outright at
+construction, since a Human running the rendered command themselves is that mode's own entire
+authorization act and this package must never construct a live adapter for it) and requires
+the grant to explicitly permit *that exact* transport, re-verified live inside `observe()`
+exactly as the cached, construction-time permission already was (§19.2). `scripts/
+runtime_observation_transport.py`'s `observe` subcommand now constructs this adapter, and
+genuinely executes, for either `GITHUB_ACTIONS` or `PREAUTHORIZED_UNATTENDED_SSH`; only
+`MANUAL_SSH` is still refused and directed to `render-command`.
+`.github/workflows/runtime_observation.yml` gains a second job, `observe`, that genuinely
+invokes the `observe` subcommand with `--actions-status AVAILABLE` (the job's own dispatch is
+itself the fact that Actions is available for this attempt) and no `--requested-transport` --
+resolving to `GITHUB_ACTIONS` automatically through `select_transport`'s own existing,
+unchanged preference order. This repository ships no bound Project Store, so a real dispatch
+of that job correctly fails closed at grant verification, demonstrating genuine invocation of
+the canonical route from inside a real Actions runner without fabricating a target to reach.
+
+A new, separate function, `select_transport_with_automatic_fallback`, is added alongside
+`select_transport` (which is itself left entirely unchanged, including every one of its own
+existing tests): it resolves to `PREAUTHORIZED_UNATTENDED_SSH` with no per-attempt Human
+selection only when `actions_status` is the *confirmed* `"UNAVAILABLE"` (never the ambiguous
+`"UNKNOWN"`), no explicit `requested_transport` was given, the grant genuinely verifies and
+explicitly permits that transport, and a caller-supplied `attempt_already_satisfied` flag is
+`False`. This creates no new authority (`FALLBACK_CREATES_AUTHORITY=false` continues to hold):
+the authority already fully pre-exists in the signed grant itself; only the mechanical trigger
+is automated. `compute_runtime_observation_attempt_id` is a new, pure, local function (no
+persistence, no second Store/Evidence/State owner) a caller may use to correlate its own
+bounded record of attempts already satisfied -- this module still owns no attempt ledger of its
+own. `scripts/runtime_observation_transport.py`'s `observe` subcommand threads both through new
+`--allow-automatic-fallback`/`--attempt-already-satisfied` flags, surfacing `attempt_id` in
+every output.
+
+### 19.2 SR2-F2 — grant verification is re-run live at the actual attempt, never merely
+trusted from construction
+
+*Claimed:* a verified grant gates every executable SSH path.
+*True:* `SshRuntimeAdapter.__init__` verified the grant's signature, Boot-restored authority,
+and transport permission exactly once, at construction, and cached the result; `observe()`
+only re-matched the *static* fields (`require_grant_matches_attempt`) against the real
+target/Boundary, never re-running the signature/Boot/expiry/permission chain itself. An adapter
+retained across a longer-lived process (an Actions job's own runtime, an unattended
+controller) could expire, have its signing authority rotate, or be superseded between
+construction and the actual attempt, with the cached, by-then-stale verification never
+re-checked.
+
+*Now:* `observe()` re-runs the complete chain -- `require_grant_permits_transport` then
+`require_grant_not_expired` -- fresh, immediately before anything is spawned, using this exact
+attempt's own `boundary["time_window"]["issued_at"]` as the live instant (the one instant
+`route.py` has already proved the whole attempt genuinely occurs at, before this adapter is
+ever reached; the fixed `RuntimeAdapter.observe()` Protocol signature carries no separate `now`
+parameter this adapter could otherwise demand). `require_grant_matches_attempt` is further
+extended to bind the attempt's own claimed `target_identity.deployment_fingerprint` against the
+grant's own newly-signed `deployment_fingerprint` field (a grant issued against one declared
+identity is refused once the target has rotated to a new one, even though every stable
+provider/deployment/instance coordinate still matches), and to require the attempt's own
+`boundary.timeout_seconds` never exceed the grant's own newly-signed `max_timeout_seconds`
+ceiling. `transport_control.py` still contains exactly one literal `boot_project` call site
+(unchanged; `observe()`'s own live re-check reaches it only by calling the existing,
+unmodified `require_valid_grant` again through these same functions, never a second, drifting
+restoration path).
+
+### 19.3 SR2-F3 — the output-cap race, self-reported excerpt counters, ancestor-directory
+symlinks, and the bounded result-return contract
+
+*Claimed:* bounded subprocess I/O, a closed report schema, and a designated bounded-contents
+return contract for Capability B.
+*True, in four respects.* (A) `_run_bounded_subprocess`'s own polling loop checked
+`overflow.is_set()` only *before* calling `proc.wait()` on each iteration; a short-lived child
+writing past the ceiling and exiting immediately could make `proc.wait()` return normally
+before either drain thread had a scheduling slot to notice, so the function returned the full,
+oversized output with no error at all. (B) a `SOURCE_LOG_EXCERPT_BOUNDED` report's own
+self-reported `source_line_count`/`log_line_count` was compared only against the grant's own
+`max_lines` -- never against the real line count of the `source_excerpt`/`log_excerpt` string
+content it claimed to describe -- so a report lying about its own counter (a negative value, a
+non-int, or simply a false one) while shipping more real content than the grant ever authorized
+was accepted. (C) the probe script's own `_open_bounded` used `O_NOFOLLOW`, which refuses only
+a symlinked *final* path component; a symlink placed in an *ancestor* directory of a configured
+excerpt path was never refused. (D) neither the `observe` nor `import-output` CLI subcommand
+ever returned the actually-acquired, bounded observed content -- only identifiers a caller
+would have to separately resolve against the Store to ever see it -- and `import-output`'s own
+file read carried no byte cap at all.
+
+*Now, in the identical order.* (A) `_run_bounded_subprocess` performs one final,
+authoritative `overflow.is_set()` recheck immediately after both drain threads are joined, on
+every exit path -- proved by a real subprocess that writes past the ceiling and exits with no
+delay whatsoever (`tests/contract/runtime/test_runtime_adapter_contract.py::
+test_run_bounded_subprocess_catches_an_overflow_from_a_process_that_exits_immediately`). (B)
+`SshRuntimeAdapter.observe()` independently recomputes the real line count and real UTF-8 byte
+length of `source_excerpt`/`log_excerpt` and requires each to *exactly* equal its own
+self-reported counterpart (the one shape a genuinely honest probe always produces) before the
+real, recomputed line count is checked against the grant's own `max_lines` bound -- a mismatch
+of any kind, in either direction, refuses (`MALFORMED`). (C) the probe script gains
+`_open_bounded_strict`, which refuses outright unless a configured path already equals its own
+`os.path.realpath` before `_open_bounded` is ever reached -- used for every path an operator
+configures (the excerpt paths, the script's own sibling configuration file; never for the
+script's own `__file__` self-digest read, which Python may hand this script as a relative path
+depending on invocation and is not an attacker-reachable value). (D) `scripts/
+runtime_observation_transport.py`'s `observe` subcommand now includes `observed_fields` (the
+already-bounded, already-redacted content the route itself derived) in its own output;
+`import-output` now reads at most `_IMPORT_OUTPUT_MAX_BYTES` (refusing outright, never silently
+truncating, a larger file) and validates the captured report against an explicit, independently
+verified grant (§19.4) rather than shape alone.
+
+### 19.4 SR2-F4 — the executed probe artifact is a signed claim, not a public-constant
+comparison, and per-deployment paths no longer require editing the reviewed script
+
+*Claimed:* a self-reported `probe_script_sha256` proves the executed file is the reviewed
+artifact.
+*True, in two respects.* First, that digest was compared only against
+`types.SSH_PROBE_SCRIPT_SHA256` -- a *public* constant, visible in this repository's own
+shipped source -- so a substitute script could simply print the public expected value back; the
+comparison proved only that *some* value matching a public constant was echoed, nothing about
+what a specific Human Authority had actually approved running. Second,
+`docs/runtime_observation_transports.md` and the probe script's own docstring both instructed
+an operator to *edit* `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` directly in the reviewed script
+before deploying it -- which changes that file's own SHA-256 content digest, directly
+contradicting the very digest pin this delivery's own F3 correction relies on.
+
+*Now, in the identical order.* First, a grant's own `RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS`
+gains a required, *signed* `probe_script_sha256` field (`identity.py`), required by
+`transport_control.require_valid_grant` to equal exactly `types.SSH_PROBE_SCRIPT_SHA256` (the
+real, current, test-kept-honest digest of the shipped script); `SshRuntimeAdapter.observe()`
+compares a live probe report's own self-reported digest against *this exact, live-reverified
+grant's own signed field* (§19.2), never against the bare public constant directly -- a forged
+or substituted digest can never be made to agree with a genuine Human Authority signature, even
+though it could always trivially be made to agree with a public constant. This is a disclosed,
+honestly bounded guarantee, stated here rather than overclaimed: no stronger remote attestation
+primitive exists over plain SSH, so what is actually proved is "the Human Authority signed off
+on exactly this digest being run," never an independent cryptographic attestation of what code
+genuinely executed on the remote target. Second, the probe script gains a sibling, non-digested
+configuration file (`runtime_observation_probe.config.json`, resolved only relative to the
+script's own real, already-resolved directory) naming `source_excerpt_path`/`log_excerpt_path`;
+an absent, unreadable, or malformed configuration file falls back to the script's own shipped
+defaults rather than breaking its fixed "always prints one JSON object and exits 0" contract.
+The "edit the script constants before deployment" instruction is withdrawn from both the probe
+script's own docstring and `docs/runtime_observation_transports.md` §5, replaced with guidance
+to configure through the sibling file and to recompute/reissue a new signed grant if this
+script's own reviewed source is ever genuinely revised.
+
+### 19.5 Round 2 declarations
+
+```text
+GITHUB_ACTIONS_TRANSPORT_EXECUTES_THE_REAL_CANONICAL_ROUTE=true
+MANUAL_SSH_EVER_CONSTRUCTS_A_LIVE_ADAPTER=false
+AUTOMATIC_UNATTENDED_FALLBACK_IS_AN_EXPLICIT_OPT_IN=true
+AUTOMATIC_FALLBACK_REQUIRES_CONFIRMED_UNAVAILABLE_NEVER_UNKNOWN=true
+FALLBACK_CREATES_AUTHORITY=false
+SELECT_TRANSPORT_ITSELF_LEFT_UNCHANGED=true
+ATTEMPT_CORRELATION_IS_LOCAL_PURE_AND_CALLER_OWNED=true
+NEW_PERSISTENT_ATTEMPT_LEDGER_CREATED=false
+OBSERVE_RERUNS_THE_COMPLETE_GRANT_CHAIN_LIVE_AT_THE_ATTEMPT=true
+GRANT_VERIFICATION_EVER_MERELY_CACHED_FROM_CONSTRUCTION=false
+GRANT_BINDS_THE_ATTEMPTS_OWN_DEPLOYMENT_FINGERPRINT=true
+GRANT_BINDS_A_SIGNED_MAX_TIMEOUT_SECONDS_CEILING=true
+TRANSPORT_CONTROL_BOOT_PROJECT_CALL_SITE_COUNT=1
+OUTPUT_CAP_RACE_CLOSED_BY_A_POST_JOIN_RECHECK=true
+RACE_PROVEN_AGAINST_A_REAL_IMMEDIATE_EXIT_SUBPROCESS=true
+EXCERPT_SELF_REPORTED_COUNTERS_CROSS_CHECKED_AGAINST_REAL_CONTENT=true
+ACTUAL_EXCERPT_CONTENT_EXCEEDING_MAX_LINES_EVER_ACCEPTED=false
+ANCESTOR_DIRECTORY_SYMLINKS_REFUSED_FOR_EVERY_CONFIGURED_PATH=true
+CLI_OBSERVE_SURFACES_OBSERVED_FIELDS=true
+IMPORT_OUTPUT_READ_IS_BYTE_BOUNDED=true
+IMPORT_OUTPUT_VALIDATES_AGAINST_AN_EXPLICIT_VERIFIED_GRANT=true
+PROBE_SCRIPT_DIGEST_IS_A_SIGNED_GRANT_FIELD=true
+PROBE_DIGEST_COMPARED_AGAINST_THE_SIGNED_GRANT_NEVER_THE_BARE_CONSTANT_ALONE=true
+REMOTE_ATTESTATION_LIMITATION_HONESTLY_DISCLOSED=true
+PER_DEPLOYMENT_PATHS_CONFIGURED_VIA_A_SIBLING_FILE_NEVER_A_SCRIPT_EDIT=true
+EDIT_SCRIPT_BEFORE_DEPLOY_INSTRUCTION_WITHDRAWN=true
+PROBE_SCRIPT_SHA256_RECOMPUTED_FOR_THE_REVISED_SCRIPT=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false
+SCRIPTS_LEVEL_CORRECTIONS_VERIFIED_BY_MANUAL_INVOCATION_NOT_A_NEW_AUTOMATED_TEST=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

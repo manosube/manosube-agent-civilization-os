@@ -41,37 +41,67 @@ A grant is a plain JSON object -- not a canonical Store record, not a new Kernel
 not resolved through Boot. It is checked entirely offline, by
 `manosube_agent_civilization.runtime.transport_control.require_valid_grant` and its siblings,
 exactly the way `development_binding`'s own executor-eligibility grants are checked in a
-different part of this Kernel. Its *fields* name a target and a window; what makes it a grant at
-all is `decision_authority`/`decision_status` -- SHUKOU's own ratification, recorded in the
-object itself, never inferred from who is running the CLI.
+different part of this Kernel. Its *fields* name a target, a probe artifact, and a window; what
+makes it a grant at all is its own `signature` -- a genuine Ed25519 signature by the exact
+Project Binding's own Human Authority, verified against a fresh Boot restoration for the exact
+`project_id`/`project_binding_id` the attempt is actually using (PR #108 Structural Review
+Round 1, F1) -- never a self-asserted `decision_status` string alone.
 
 ```jsonc
 {
   "schema_version": "0.1",
   "grant_id": "GRANT-2026-EXAMPLE-1",
   "project_id": "PRJ-EXAMPLE",
+  "project_binding_id": "PROJBIND-EXAMPLE",
+  "provider": "local",
+  "deployment_id": "widget-service",
+  "instance_identity": "widget-service-1",
+  "deployment_fingerprint": "sha256:<64 hex chars -- the target's own current claimed identity>",
   "host": "127.0.0.1",
   "port": 22,
   "user": "probe",
   "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED",
+  "probe_script_sha256": "<the real, current SHA-256 of scripts/runtime_observation_probe.py>",
+  "permitted_fields": ["hostname"],
+  "max_output_bytes": 1048576,
+  "max_lines": 200,
+  "max_timeout_seconds": 30,
   "permitted_transports": ["MANUAL_SSH"],
   "issued_at": "2026-01-01T00:00:00Z",
   "expires_at": "2026-12-31T23:59:59Z",
-  "decision_authority": "SHUKOU",
-  "decision_status": "RATIFIED"
+  "decision_status": "RATIFIED",
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "<the Project Binding's own human_authority_signing_key.key_id>",
+    "value": "<128 hex chars -- signed over every field above except signature itself>"
+  }
 }
 ```
 
 Every field is required; no field is optional and no unknown field is accepted. `probe_identity`
-must be one of exactly `OS_HEALTH_SNAPSHOT_BOUNDED` / `SOURCE_LOG_EXCERPT_BOUNDED` --
-the same closed vocabulary a Boundary's own `endpoint.probe_identity` uses.
-`permitted_transports` lists which of `GITHUB_ACTIONS` / `MANUAL_SSH` /
-`PREAUTHORIZED_UNATTENDED_SSH` this one grant authorizes; a grant that should permit both
-Capability A and the unattended half of Capability B lists both `MANUAL_SSH` and
-`PREAUTHORIZED_UNATTENDED_SSH`. `decision_authority` must be exactly `"SHUKOU"` and
-`decision_status` must be exactly `"RATIFIED"` -- there is no default-admit path, and an
-unratified or differently-authored grant is refused with the identical error every other
-malformed field is.
+must be one of exactly `OS_HEALTH_SNAPSHOT_BOUNDED` / `SOURCE_LOG_EXCERPT_BOUNDED` -- the same
+closed vocabulary a Boundary's own `endpoint.probe_identity` uses. `permitted_transports` lists
+which of `GITHUB_ACTIONS` / `MANUAL_SSH` / `PREAUTHORIZED_UNATTENDED_SSH` this one grant
+authorizes; a grant that should permit Capability A, a real Actions-executed observation, and
+the unattended half of Capability B lists all three. `decision_status` must be exactly
+`"RATIFIED"` and `signature` must genuinely verify against the real Project Binding -- there is
+no default-admit path, and an unratified or unsigned grant is refused with the identical error
+every other malformed field is.
+
+**`deployment_fingerprint` and `probe_script_sha256` (PR #108 Structural Review Round 2,
+SR2-F2/SR2-F4).** `deployment_fingerprint` binds the grant to the target's own *current* claimed
+identity, not merely its stable provider/deployment/instance coordinates -- a grant issued
+against one declared identity is refused once the real attempt's own target has rotated to a
+new one, even though every other coordinate still matches. `probe_script_sha256` must equal the
+real, current SHA-256 digest of `scripts/runtime_observation_probe.py` as this repository ships
+it (`manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256`); because this field is
+itself one of the fields the Human Authority's own signature covers, a live probe report's own
+self-reported digest is compared against *this exact grant's* signed value, never against the
+bare public constant directly -- a forged or substituted digest can never be made to agree with
+a genuine signature. This is a disclosed, honestly bounded guarantee: no stronger remote
+attestation primitive exists over plain SSH, so what is actually proved is "the Human Authority
+signed off on exactly this digest being run," not an independent cryptographic attestation of
+what code genuinely executed on the remote target.
 
 **Where a grant lives.** This delivery introduces no grant store, no schema file under
 `01_SCHEMA/`, and no Store record kind. A grant is an ordinary JSON file an operator keeps
@@ -139,14 +169,16 @@ connection this package never opens.
 
    `select_transport` prefers GitHub Actions whenever it reports `AVAILABLE` and no transport
    was explicitly requested -- Actions being unavailable never by itself selects
-   `PREAUTHORIZED_UNATTENDED_SSH`; an explicit request is always required for that mode.
-3. Run the observation:
+   `PREAUTHORIZED_UNATTENDED_SSH` through this function; an explicit request is always required
+   for that mode here.
+3. Run the observation, with an explicit request:
 
    ```bash
    python scripts/runtime_observation_transport.py observe \
      --grant-file grant.json \
      --target-identity-file target_identity.json \
      --store-root ./store \
+     --schema-root 01_SCHEMA \
      --project-id PRJ-EXAMPLE \
      --project-binding-id PROJBIND-EXAMPLE \
      --permitted-fields hostname,uptime_seconds \
@@ -157,7 +189,41 @@ connection this package never opens.
 
    This refuses, with zero SSH process ever spawned, unless the grant is valid, current, and
    actually names `PREAUTHORIZED_UNATTENDED_SSH` -- there is no path through this command that
-   skips `transport_control.select_transport`.
+   skips `transport_control.select_transport`. `GITHUB_ACTIONS` executes through this identical
+   command too (PR #108 Structural Review Round 2, SR2-F1) -- the CLI no longer refuses every
+   transport except the unattended one; only `MANUAL_SSH` is still never executed by this
+   subcommand, since that mode's whole authorization act is a Human running the rendered
+   command themselves.
+
+**Automatic unattended fallback (SR2-F1), an explicit opt-in.** A caller that does not want to
+make a per-attempt Human selection may instead pass `--allow-automatic-fallback`, with no
+`--requested-transport` at all:
+
+```bash
+python scripts/runtime_observation_transport.py observe \
+  --grant-file grant.json \
+  --target-identity-file target_identity.json \
+  --store-root ./store \
+  --schema-root 01_SCHEMA \
+  --project-id PRJ-EXAMPLE \
+  --project-binding-id PROJBIND-EXAMPLE \
+  --permitted-fields hostname,uptime_seconds \
+  --now "2026-06-01T00:00:00Z" \
+  --actions-status UNAVAILABLE \
+  --allow-automatic-fallback
+```
+
+This resolves to `PREAUTHORIZED_UNATTENDED_SSH` automatically only once `--actions-status` is
+exactly `UNAVAILABLE` (never the ambiguous `UNKNOWN`) and the grant already, explicitly permits
+that transport -- the authority already fully pre-exists in the signed grant; this flag only
+automates the mechanical trigger, never the authorization itself
+(`select_transport`'s own existing, unchanged behavior is untouched; this is a separate,
+narrowly scoped function, `select_transport_with_automatic_fallback`). Pass
+`--attempt-already-satisfied` on a retry of an attempt a caller's own bounded, local
+record already knows reached a transport, to refuse a second, duplicate unattended execution;
+this package keeps no attempt ledger of its own, so that correlation is the caller's own
+responsibility (`compute_runtime_observation_attempt_id`, surfaced in every `observe` output as
+`attempt_id`, is the pure, deterministic identity a caller correlates against).
 
 This delivery does not wire capability B into any scheduler, cron, or always-on controller; it
 ships the gate and the CLI that exercises it, so a downstream project can invoke it from
@@ -170,11 +236,30 @@ one continuously.
 copy it there, read-only, and run it once by hand to confirm `python3
 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED` prints a JSON line. It takes no
 installation step (stdlib only, Python 3.8+), reads no argument beyond the one closed
-`probe_identity` positional, and never writes anything. For `SOURCE_LOG_EXCERPT_BOUNDED`, edit
-the one `LOG_EXCERPT_PATH` constant at the top of the file to the real log path on that target
-*before* deploying it there -- that edit is the only per-target configuration this script has,
-and it is never read from an argument, an environment variable, or any other caller-reachable
-input.
+`probe_identity` positional, and never writes anything.
+
+**Per-target path configuration is a sibling file, never an edit to this reviewed script
+(PR #108 Structural Review Round 2, SR2-F4).** For `SOURCE_LOG_EXCERPT_BOUNDED`, place a
+`runtime_observation_probe.config.json` file next to the deployed script (same directory,
+resolved only relative to the script's own real location -- never a caller-supplied path):
+
+```json
+{
+  "source_excerpt_path": "/opt/widget-service/source_excerpt.txt",
+  "log_excerpt_path": "/var/log/widget-service/observed.log"
+}
+```
+
+Either key, or the whole file, may be omitted -- an omitted key or an absent/unreadable/
+malformed file falls back to this script's own shipped default for that path. **Do not edit
+`SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` directly in the script file itself** -- editing the
+reviewed script changes its own SHA-256 content digest, which breaks the exact digest pin a
+grant's own signed `probe_script_sha256` field is supposed to bind to a specific, reviewed
+artifact (the earlier version of this guide instructed exactly that edit; it is withdrawn,
+because it directly contradicted the very digest pin this delivery relies on). If this
+repository's own probe script is ever genuinely revised, its new digest must be recomputed
+(`manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256`) and a new grant issued
+naming it -- never silently carried forward from an old approval.
 
 ## 6. What this delivery has, and has not, proven against a real target
 
@@ -192,3 +277,17 @@ input.
   disposable SSH target (or a sandbox that can install `openssh-server`) is available.
 - No production SSH connection, no credential, and no key of any kind was created, requested,
   or used anywhere in this delivery.
+
+**PR #108 Structural Review Round 2 adds one further disclosed gap.** Neither
+`scripts/runtime_observation_transport.py` (the CLI) nor `scripts/runtime_observation_probe.py`
+(the probe) is part of the installed `manosube_agent_civilization` package, and this round's own
+permitted-file inventory authorizes no new test file for either (`ADDITIONAL_PATH_AUTHORIZATION_
+BY_THIS_RECORD=false`). This round's CLI-level corrections (real `GITHUB_ACTIONS`/automatic-
+fallback execution, `import-output`'s own bound and grant-bound digest check) and the probe
+script's own corrections (ancestor-symlink-safe paths, sibling configuration loading) were
+verified by direct manual invocation against a real, Boot-bound fixture world during this
+round's own correction work -- not by a permanent automated test, which a future round with
+authorization to add one should supply. The security-critical logic both scripts call
+(`transport_control.py`, `adapter.py`) is fully covered by this delivery's own automated suite
+either way -- the scripts themselves are documented as "thin CLI wrappers" around exactly that
+logic, and remain so.

@@ -34,6 +34,22 @@ value reaches a step exclusively through that step's own `env:` mapping. ``main`
 `runtime_observation.yml`'s own full contract lives in `10_RUNTIME/RUNTIME_CONTRACT.md` and
 `docs/runtime_observation_transports.md` -- this file pins only the narrow, mechanical
 file-set and input-safety facts a change to either file could silently regress.
+
+**PR #108 Structural Review Round 2 (SR2-F1)** corrects what Round 1 pinned as a permanent
+fact and was really only a first-delivery gap: `runtime_observation.yml` now ships a *second*
+job, `observe`, that genuinely executes the canonical observation route from inside a real
+Actions runner -- the first delivery's own "observe" CLI subcommand refused every transport
+except the fully unattended one, which made a real Actions-dispatched observation
+structurally impossible to ever actually perform, directly contradicting the whole point of
+"transport-independent" observation. The `render-command` job is unchanged and is still
+asserted, job-scoped, to never invoke `observe`; the new `observe` job is asserted, equally
+job-scoped, to genuinely invoke it with `--actions-status AVAILABLE` and no
+`--requested-transport` (this job's own dispatch is itself the fact that Actions is
+available, so the existing, unchanged `select_transport` preference order resolves
+`GITHUB_ACTIONS` automatically). The input-injection-safety assertion below is unchanged and
+unweakened -- it already scans the whole file text, so it covers the new job's own further
+inputs (`target_identity_json`, `permitted_fields`, `timeout_seconds`) with no further
+widening of its own.
 """
 
 from __future__ import annotations
@@ -120,15 +136,54 @@ def test_runtime_observation_workflow_never_merges_approves_comments_or_pushes()
         assert forbidden not in text
 
 
-def test_runtime_observation_workflow_only_invokes_the_render_command_subcommand() -> None:
-    """This workflow renders a command; it never invokes the ``observe`` subcommand (the one
-    that can actually spawn a real SSH process) -- it cannot execute the bounded observation
-    itself, by construction, not merely by convention."""
+def _job_body(text: str, job_name: str, next_job_names: tuple[str, ...]) -> str:
+    """Return *job_name*'s own YAML body (everything after its own top-level ``  <name>:``
+    key, up to whichever of *next_job_names* appears next, or end of file) -- a narrow,
+    regex-based job scoper, in keeping with this whole file's own no-YAML-parsing-dependency
+    discipline, used so a fact about *one job* is never accidentally proved (or disproved) by
+    text that belongs to a different job entirely."""
+
+    start_match = re.search(rf"^  {re.escape(job_name)}:\n", text, re.MULTILINE)
+    assert start_match, f"job {job_name!r} not found in {RUNTIME_OBSERVATION_PATH.name}"
+    start = start_match.end()
+    end = len(text)
+    for other in next_job_names:
+        other_match = re.search(rf"^  {re.escape(other)}:\n", text[start:], re.MULTILINE)
+        if other_match:
+            end = min(end, start + other_match.start())
+    return text[start:end]
+
+
+def test_runtime_observation_workflow_render_command_job_only_invokes_render_command() -> None:
+    """The ``render-command`` job's own whole point, unchanged by SR2-F1: it renders a
+    command; it never invokes the ``observe`` subcommand (the one that can actually spawn a
+    real SSH process) -- it cannot execute the bounded observation itself, by construction,
+    not merely by convention. Scoped to this one job's own YAML body, so the new ``observe``
+    job added below it (which genuinely does invoke ``observe``) can never make this
+    assertion vacuous."""
 
     text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
-    assert "render-command" in text
-    assert "transport.py observe" not in text
-    assert " observe \\" not in text
+    render_job = _job_body(text, "render-command", ("observe",))
+    assert "render-command" in render_job
+    assert "transport.py observe" not in render_job
+    assert " observe \\" not in render_job
+
+
+def test_runtime_observation_workflow_observe_job_genuinely_invokes_the_observe_subcommand() -> (
+    None
+):
+    """PR #108 Structural Review Round 2, SR2-F1's own decisive fact: a second job now
+    genuinely executes the canonical observation route from inside a real Actions runner --
+    never merely rendering a command for this one. ``--actions-status AVAILABLE`` with no
+    ``--requested-transport`` is the one shape that lets ``select_transport`` resolve
+    ``GITHUB_ACTIONS`` automatically (this job's own dispatch is itself the fact that Actions
+    is available for this attempt) -- never a transport this job chose for itself outside
+    that existing, unchanged preference order."""
+
+    observe_job = _job_body(_body_text(RUNTIME_OBSERVATION_PATH), "observe", ())
+    assert "transport.py observe" in observe_job
+    assert "--actions-status AVAILABLE" in observe_job
+    assert "--requested-transport" not in observe_job
 
 
 def test_runtime_observation_workflow_interpolates_no_event_input_into_run_script_text() -> None:

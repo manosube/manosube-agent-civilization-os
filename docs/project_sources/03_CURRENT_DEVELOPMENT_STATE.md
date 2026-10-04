@@ -7593,3 +7593,85 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
 経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
 これらのいずれも実行していない。
+
+# 88. Issue #105 PR #108 Structural Review Round 2是正（SR2-F1〜F4）
+
+構造参謀によるRound 1是正後HEADへの独立review
+([コメント`5979222584`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5979222584))
+は、reviewed HEAD`ecbf956eb0dcef51daf710e8c49ea70104ff4c0d`に対し、
+SR2-F1(GitHub Actions transportが実行を一切行わず・自動unattended
+fallback機構が皆無)、SR2-F2(grant検証がconstruction時に一度のみ実行され、
+実際のattempt直前に再検証されない)、SR2-F3(a. `_run_bounded_subprocess`の
+overflow検知に即終了プロセスとの間でrace条件が存在、b. 自己報告された
+excerpt行数/バイト数がgrantのmax_linesとのみ比較され実内容と未照合、
+c. probe scriptの`_open_bounded`がancestor directory symlinkを防御しない、
+d. CLIが実際に取得した観測結果を返却せず識別子のみ返す且つ
+`import-output`のファイル読込が無制限)、SR2-F4(probe script digestが
+公開定数との比較のみで、grant自体に署名されたdigest fieldが存在せず
+Human Authorityの承認とdigestが暗号学的に紐付いていない。また
+`SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH`をdeployment前にscript本体へ
+直接編集するようdocsとscript docstringが指示しており、その編集自体が
+reviewed scriptのSHA-256 digestを変化させてしまう)の4件を指摘した。
+
+SHUKOUはSR2-F1〜F4の全4件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR2_F1_F4`、
+[コメント`5979845810`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5979845810)、
+著者`manosube`/OWNER)。続けてClaude Codeへの是正引継ぎが記録された
+([コメント`5979856829`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5979856829)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`REVIEWED_HEAD`=`AUTHORIZED_START_HEAD`=
+`ecbf956eb0dcef51daf710e8c49ea70104ff4c0d`が実際のPR #108 HEADと一致する
+ことを、是正着手前に独立確認した。
+
+是正範囲はRound 1のhandoff許可ファイル一覧と完全に同一であり、本ラウンド
+による新規path追加は無い(`ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=
+false`)。是正内容の技術詳細(`SshRuntimeAdapter`への`transport`引数導入と
+GITHUB_ACTIONS実行対応、`select_transport_with_automatic_fallback`の追加、
+`observe()`内でのgrant検証チェーンの実attempt直前再実行、
+`_run_bounded_subprocess`のjoin後overflow再チェック、excerpt内容の実測
+突合、probe scriptの`_open_bounded_strict`によるancestor symlink防御、
+sibling configuration fileによるper-deployment path設定、grant自体への
+`deployment_fingerprint`/`probe_script_sha256`/`max_timeout_seconds`
+署名field追加、CLIの`observed_fields`返却と`import-output`の境界付け)は
+`10_RUNTIME/RUNTIME_CONTRACT.md`第19節に完全に記録されている。
+
+`scripts/`配下2ファイル(`runtime_observation_transport.py`、
+`runtime_observation_probe.py`)自体への新規自動テストファイルは、本ラウンド
+のpermitted-file inventoryに新規path追加が無いため作成していない
+(`NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false`)。この2ファイルの
+是正内容は、是正作業中に実際のBoot-bound worldに対する手動CLI実行で
+動作確認した(`SCRIPTS_LEVEL_CORRECTIONS_VERIFIED_BY_MANUAL_INVOCATION_
+NOT_A_NEW_AUTOMATED_TEST=true`)。両scriptが呼び出すsecurity-critical logic
+(`transport_control.py`、`adapter.py`)自体は既存の許可済みtestファイル群で
+完全に自動テストされている。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5979222584
+ADOPTION_ID=ADOPT_I105_PR108_SR2_F1_F4
+ADOPTION_COMMENT=5979845810
+HANDOFF_COMMENT=5979856829
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=ecbf956eb0dcef51daf710e8c49ea70104ff4c0d
+FINDINGS_ADOPTED=4
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+GITHUB_ACTIONS_TRANSPORT_NOW_EXECUTES=true
+AUTOMATIC_UNATTENDED_FALLBACK_ADDED_AS_EXPLICIT_OPT_IN=true
+GRANT_VERIFICATION_RERUN_LIVE_AT_EACH_ATTEMPT=true
+OUTPUT_CAP_RACE_CLOSED=true
+EXCERPT_COUNTERS_CROSS_CHECKED_AGAINST_REAL_CONTENT=true
+ANCESTOR_SYMLINKS_REFUSED=true
+PROBE_DIGEST_NOW_A_SIGNED_GRANT_FIELD=true
+EDIT_SCRIPT_BEFORE_DEPLOY_INSTRUCTION_WITHDRAWN=true
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。
